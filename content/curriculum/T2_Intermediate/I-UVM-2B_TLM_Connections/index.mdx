@@ -1,160 +1,1022 @@
 ---
 title: "I-UVM-2B: TLM Connections and Analysis Fabric"
-description: "Wire sequencers, drivers, monitors, and scoreboards using UVM's Transaction-Level Modeling (TLM) components."
+description: "Connect UVM components with ports, exports, imps and FIFOs, predict where calls block and who receives each transaction, and debug connection errors from the end-of-elaboration log."
 flashcards: "I-UVM-2B_TLM_Connections"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
-- **What it is:** Transaction-Level Modeling (TLM) is the UVM standard for moving objects between components without hardcoding pin wiggles.
-- **Why it matters:** By decoupling *what* data is moving from *how* it's carried, you can swap drivers or scoreboards freely as long as they speak the same TLM contract.
-- **The Analogy:** Think of TLM as pneumatic tubes in a pneumatic dispatch system. You define the tube shape (the TLM port) and drop the payload (the object); the infrastructure handles the delivery.
 
-> **Retention Hook:** The port calls, the imp answers. `connect()` points from caller to implementer; the data may travel either way.
+- **What it is:** **Transaction-level modeling (TLM)** is how UVM components pass whole transaction objects to each other by calling methods such as `put()`, `get()` and `write()`, instead of driving signals. A component makes the call through a **port**; the call travels along `connect()` bindings, sometimes through an **export**, and ends at an **imp** in another component that implements the method. A **TLM FIFO** stores items between a producer and a consumer that run at different speeds (IEEE 1800.2-2020 §12.2).
+- **Why it matters:** Ports keep components independent. A monitor publishes what it saw without knowing who listens, so the same agent works in a block-level bench and in a system-on-chip (SoC) bench. Most "silent scoreboard" and "test hangs" bugs in real benches are wiring bugs: a connection made backwards, a connection forgotten, a slow check in the wrong place, or one object shared by every listener.
+- **The Analogy:** An office phone system. A port is a handset: it can only place calls. An imp is the desk that answers and does the work. An export is a reception desk that forwards calls to a desk further inside the building. The extensions are wired once before the office opens, in `connect_phase`, and tested at opening time, at the start of end of elaboration (both are UVM phases, the fixed steps every test runs through, from [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). An analysis port is the office public-address system: one announcement reaches every speaker that is wired in, even none, and the announcer never waits for a listener. *Where it breaks:* a phone call carries a copy of your voice, but a TLM call passes a **handle** to one object, so every listener reads, and could scribble on, the same sheet of paper. And a TLM call has no transit time: `write()` reaches every listener at the same simulation time. Only a FIFO adds storage, like an in-tray between two desks.
+
+> **Retention Hook:** The port calls, the imp answers. `connect()` points from the caller toward the implementer, one level of hierarchy at a time; the data may travel either way.
+
+**You will be able to:**
+1. Explain the roles of port, export and imp, write legal `connect()` calls (port to parent port, port to sibling export or imp, export to child export or imp), and predict whether a wiring mistake is a compile error, a UVM error at end of elaboration, or silently legal.
+2. Predict what an analysis port's `write()` does (a zero-time function call to each of 0..N subscribers, all sharing one object, with no back-pressure, meaning no way for a subscriber to make the caller wait) and choose between a direct imp, `` `uvm_analysis_imp_decl `` and `uvm_tlm_analysis_fifo`.
+3. Write a two-input scoreboard, with two imps or with two analysis FIFOs and a `get()` thread, that reports leftover items at the end of the test.
+4. Use blocking and nonblocking put, get and peek ports with a `uvm_tlm_fifo`, and predict when `put()` and `get()` block for a given FIFO size.
+5. Debug unconnected, reversed and over-connected ports from the end-of-elaboration log, and items modified after `write()`.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
-### Three Types of TLM Connections
-In typical UVM testbenches, you'll encounter three common TLM usage patterns:
-1. **The Sequencer-Driver Handshake:** Bidirectional communication specifically designed for stimulus.
-2. **Point-to-Point TLM (Put/Get/FIFO):** Used less frequently in modern environments, but standard blocking/non-blocking FIFO interfaces.
-3. **The Analysis Fabric (Publish/Subscribe):** Used by monitors to fan-out data to 0-to-N listeners (scoreboards, coverage).
 
-Three kinds of endpoint carry every connection:
+### Why components talk through ports
 
-| Symbol | Kind | Role | Example |
+From [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index) you know the roles: a **monitor** turns pin activity into transaction objects, a **scoreboard** checks them, and a **coverage collector** records which values were seen. These are **components**: long-lived `uvm_component` objects arranged in a parent-child tree ([I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index)). A **transaction** (or **item**) is a short-lived `uvm_object` that holds one bus operation, and a variable that refers to an object is a **handle** ([I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning)).
+
+The obvious way to pass an item is a direct call: the monitor holds a handle to the scoreboard and calls `scb.check(t)`. That welds the monitor to one scoreboard class. The agent can no longer be reused in a bench that has a different scoreboard, two scoreboards, or none. TLM puts a small object between the two sides. The monitor owns a port and calls `ap.write(t)`. Someone else, usually the parent environment, decides in `connect_phase` where that call goes.
+
+Two phases from [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) matter here. In **`connect_phase`** every component wires its children together, after `build_phase` has created them all. At the start of **end of elaboration** (`end_of_elaboration_phase`, the phase after `connect_phase`) UVM **resolves** the bindings: it follows every chain of connections to the imps at its end and checks the counts. From then on the wiring is fixed.
+
+This lesson is about the TLM-1 classes in §12.2, which every UVM bench uses. TLM-2 (§12.3), used mainly to connect SystemC models, appears only in [Push Further](#expert-tlm-2-in-one-page).
+
+### The three endpoints: port, export, imp
+
+Every connection is made of these three kinds of endpoint. The symbols match the diagrams and visuals on this site.
+
+| Symbol | Kind | What it does | Who calls `connect()` | Examples |
+|---|---|---|---|---|
+| ■ | **port** | *Requires* an interface. The owning component calls methods through it. | A port calls `connect()` toward its provider. | `drv.seq_item_port`, `mon.ap`, `prod.put_port` |
+| ○ | **export** | *Forwards* an interface. It lets an outside port reach an imp inside the component that owns it. | An export calls `connect()` toward the export or imp below it. | `uvm_analysis_export` on a scoreboard or sub-environment |
+| ● | **imp** | *Implements* the interface. It calls the method of the component passed to its constructor. | Never. An imp is always the end of a chain. | `uvm_analysis_imp`, `fifo.put_export` |
+
+Several handles named "export" are really imps, so read the class, not the name. The sequencer's `seq_item_export` is a `uvm_seq_item_pull_imp`. A `uvm_subscriber`'s `analysis_export` is a `uvm_analysis_imp`, and its instance name in logs is `analysis_imp`. A TLM FIFO's `put_export`, `get_export` and `analysis_export` are imps too (uvm-core 2020.3.1, `uvm_sequencer.svh`, `uvm_subscriber.svh`, `uvm_tlm_fifo_base.svh`).
+
+**The methods.** All TLM-1 endpoints share one method set, declared in `uvm_tlm_if_base` (§12.2.4). Each port class enables a subset of it.
+
+| Method | Kind | Behaviour | Port classes that provide it |
 |---|---|---|---|
-| ■ | **port** | Requires an interface: the caller. Calls `connect()`. | `drv.seq_item_port`, `scb.get_port` |
-| ○ | **export** | Passes calls down to a child. Needs at least one imp below it. | `uvm_analysis_export` on a sub-env |
-| ● | **imp** | Implements the methods. Always the end of a chain, never the caller of `connect()`. | `sqr.seq_item_export`, `fifo.analysis_export` |
+| `put(t)` | task | may block until the provider accepts `t` | `uvm_blocking_put_port`, `uvm_put_port` |
+| `get(t)` | task | may block until an item is available, then removes it | `uvm_blocking_get_port`, `uvm_get_port`, `uvm_blocking_get_peek_port`, `uvm_get_peek_port` |
+| `peek(t)` | task | like `get`, but leaves the item in place | `uvm_blocking_peek_port`, `uvm_peek_port`, `uvm_blocking_get_peek_port`, `uvm_get_peek_port` |
+| `try_put(t)`, `try_get(t)`, `try_peek(t)` | function returning `bit` | never blocks; returns 0 if it could not complete | the `uvm_nonblocking_*` ports and the combined `uvm_put_port`, `uvm_get_port`, `uvm_peek_port`, `uvm_get_peek_port` |
+| `can_put()`, `can_get()`, `can_peek()` | function returning `bit` | asks without doing anything | the same nonblocking and combined ports |
+| `write(t)` | function | delivers `t` and returns at once | `uvm_analysis_port` |
 
-Several handles named "export" are really imps: the sequencer's `seq_item_export`, a `uvm_subscriber`'s `analysis_export`, and the analysis FIFO's `analysis_export` and `get_export`.
+The pattern is `uvm_<blocking_|nonblocking_|>` + `<put|get|peek|get_peek>` + `_port`, `_export` or `_imp`. A **task** may consume simulation time; a **function** returns in zero time and cannot wait (IEEE 1800-2023 §13.4). That one difference explains most of this lesson.
 
-### Sequencer ↔ Driver Handshake
-Sequencers manage high-level intent, drivers translate that intent into pin-wiggles. Their protocol keeps stimulus moving.
+Because every TLM-1 port class extends `uvm_port_base #(uvm_tlm_if_base #(T,T))`, the compiler lets you call any of these methods through any port. Calling `peek()` through a `uvm_get_port` compiles, then reports `UVM_ERROR [peek] UVM TLM interface task not implemented` at run time (uvm-core 2020.3.1, `uvm_tlm_ifs.svh`, `uvm_ports.svh`). Pick the port class that names every method you call.
 
-<AnimatedUvmSequenceDriverHandshakeDiagram />
-
-The driver's port calls into the sequencer, yet the item travels the other way. Pick each `connect_phase` line below, predict what happens, then step through it.
+**Predict, then step.** The driver-to-sequencer link is the most common connection in UVM, and it shows the rule best. The driver's `seq_item_port` is a port and the sequencer's `seq_item_export` is an imp. Choose each `connect_phase` line below, predict which way the item travels and what happens, then step through it.
 
 <TLMPortConnector />
 
+What the stepper showed:
+- **Call direction is not data direction.** The driver's port *calls* `get_next_item(req)` into the sequencer, and the item comes *back* as the call's output argument. `connect()` always follows the call: requirer `.connect(` provider `)`.
+- **Backwards is a run-time UVM error, not a compile error.** Both ends have the same type, so `sqr.seq_item_export.connect(drv.seq_item_port)` compiles. `connect()` itself refuses any call made on an imp, and the error stops the run at end of elaboration.
+- **Some ports may stay unconnected.** `uvm_seq_item_pull_port` is built with a minimum of 0 connections (§15.2.2.1), so a forgotten driver connection is not caught at end of elaboration. You get only a `DRVCONNECT` warning, then a null-object error at the first `get_next_item()`.
+
+That is all this lesson needs from the sequencer-driver link: it is a TLM pull connection like any other. The handshake itself (`get_next_item`, `item_done`, responses) belongs to [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index), which comes two lessons later.
+
+### Connection rules: one level at a time
+
+`connect()` is called on the requiring side and given the providing side. Each call crosses at most one level of hierarchy, and each form has its place:
+
+| Form | Direction | Written in | Example |
+|---|---|---|---|
+| port `.connect(` port `)` | **up**: child's port to its parent's port (promotion) | the parent's `connect_phase` | `mon.ap.connect(ap);` inside the agent |
+| port `.connect(` export or imp `)` | **across**: between siblings | their common parent's `connect_phase` | `agt.ap.connect(scb.item_imp);` inside the env |
+| export `.connect(` export or imp `)` | **down**: parent's export to its child's export or imp | the parent's `connect_phase` | `exp_export.connect(exp_fifo.analysis_export);` inside the scoreboard |
+
+Two directions are always illegal and always reported: an imp calling `connect()`, and an export connecting to a port (uvm-core 2020.3.1, `uvm_port_base.svh`, `connect()`; §5.5.2.14). Type mismatches are caught even earlier: connecting a `uvm_analysis_port #(bus_item)` to an imp of another item type does not compile, because `connect()` takes an argument of the port's own base type.
+
+**Picture: one item, three connections.** The diagram mirrors the builder's "Promotion through two boundaries" scenario in Practice & Reinforce. The monitor's items must reach a scoreboard that `chk_env`, a sub-environment, hides inside itself.
+
+<ArchitectureDiagram
+  title="Promotion: mon.ap up to agt.ap, across to chk_env.analysis_export, down to scb.item_imp"
+  caption="Each arrow is one connect() call, drawn from the caller to the provider, and each crosses one boundary. Left: mon.ap.connect(agt.ap) goes up, out of the agent. Middle: agt.ap.connect(chk_env.analysis_export) goes across, between siblings. Right: chk_env.analysis_export.connect(scb.item_imp) goes down, into the sub-environment. Only the imp ends the chain, and the env never reaches inside the agent or chk_env."
+  cellWidth={100}
+  gapX={72}
+  nodes={[
+    { id: "env", label: "env", kind: "env", col: 0, row: 0, colSpan: 4, container: true },
+    { id: "agt", label: "agt", sublabel: "bus_agent", kind: "agent", col: 0, row: 0, colSpan: 2, container: true },
+    { id: "mon", label: "mon", sublabel: "bus_monitor", kind: "monitor", col: 0, row: 0 },
+    { id: "chk_env", label: "chk_env", sublabel: "check_env", kind: "env", col: 2, row: 0, colSpan: 2, container: true },
+    { id: "scb", label: "scb", sublabel: "bus_scoreboard", kind: "scoreboard", col: 3, row: 0 }
+  ]}
+  ports={[
+    { id: "mon.ap", node: "mon", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "agt.ap", node: "agt", side: "right", at: 0.6, kind: "analysis_port", label: "ap" },
+    { id: "chk_env.analysis_export", node: "chk_env", side: "left", at: 0.6, kind: "export", label: "analysis_export" },
+    { id: "scb.item_imp", node: "scb", side: "left", kind: "analysis_imp", label: "item_imp" }
+  ]}
+  edges={[
+    { from: "mon.ap", to: "agt.ap", style: "data" },
+    { from: "agt.ap", to: "chk_env.analysis_export", style: "data" },
+    { from: "chk_env.analysis_export", to: "scb.item_imp", style: "data" }
+  ]}
+/>
+
 ```systemverilog
-class my_driver extends uvm_driver#(my_txn);
-  `uvm_component_utils(my_driver)
+// snippet: the three connect() calls, each in the component that owns both ends
+// bus_agent::connect_phase
+mon.ap.connect(ap);                                  // up: child port -> my port
+// bus_env::connect_phase
+agt.ap.connect(chk_env.analysis_export);   // across: sibling port -> sibling export
+// check_env::connect_phase
+analysis_export.connect(scb.item_imp);               // down: my export -> child imp
+```
 
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-  endfunction
+**When connections are checked.** Make connections in `connect_phase`. At the start of end of elaboration, `resolve_bindings()` follows every chain to its imps and compares the number of imps reached with the endpoint's minimum and maximum (§5.5.2.15):
 
-  task run_phase(uvm_phase phase);
-    forever begin
-      seq_item_port.get_next_item(req); // Block until a sequence offers an item
-      drive_transfer(req);              // Your task: translate to pins
-      seq_item_port.item_done();        // Unblock the sequence's finish_item()
-    end
-  endtask
-endclass
+| Endpoint | Minimum imps | Maximum imps | Unconnected means |
+|---|---|---|---|
+| put, get and peek ports (and their exports) | 1 | 1 | `UVM_ERROR`, then the run stops |
+| `uvm_analysis_port` | 0 | unbounded | legal: `write()` reaches nobody |
+| `uvm_analysis_export` | 1 | unbounded | `UVM_ERROR`, then the run stops |
+| `uvm_seq_item_pull_port` (driver) | 0 | 1 | legal at elaboration; fails at run time |
+| any imp | 1 | 1 | an imp counts itself, so never an error |
 
-// In the agent's connect_phase: the driver's port is the caller
+Sources: uvm-core 2020.3.1, `uvm_tlm_imps.svh` (`UVM_PORT_COMMON`, `UVM_EXPORT_COMMON`, `UVM_IMP_COMMON`, `UVM_SEQ_PORT`) and `uvm_analysis_port.svh`.
+
+A count error is reported as `UVM_ERROR [Connection Error]`. Right after resolving, `uvm_root` checks the error count and, if any `UVM_ERROR` has been reported so far, stops with `UVM_FATAL [BUILDERR] stopping due to build errors` before `run_phase` begins (uvm-core 2020.3.1, `uvm_root.svh`). A `connect()` made at or after end of elaboration is ignored with a `[Late Connection]` warning. `connect()` is also legal earlier, in the parent's `build_phase` after it creates the child, but only for ports the child created in its constructor, because the child's own `build_phase` has not run yet. `connect_phase` avoids that trap.
+
+**The one-level rule is only a convention in practice.** uvm-core checks the up, across and down forms, but the resulting `[Connection Warning]` is switched off unless you enable it (see [Push Further](#expert-relationship-checks-are-off-by-default)), and analysis ports skip the check entirely. The rule still matters: it is what keeps each component's insides private.
+
+**Silently legal: the reversed promotion.** Inside the agent, `ap.connect(mon.ap)` instead of `mon.ap.connect(ap)` passes every check. Both ends are ports, so there is no direction error; analysis ports skip the relationship check; and `mon.ap` now reaches 0 imps, which its minimum of 0 allows. The monitor's `write()` goes nowhere and the scoreboard reports zero errors. Only a check of how many items arrived catches it, which is why the worked example's scoreboard counts.
+
+So for any wiring mistake, ask three questions in order:
+1. Do the two ends have compatible types? If not: **compile error**.
+2. Is the direction illegal (imp calls `connect()`, export connects to a port), the interface incomplete, or a count outside its limits? If so: a **UVM error**, reported when `connect()` runs or when the bindings are resolved, and the run stops with `BUILDERR` at the start of end of elaboration.
+3. Otherwise it is **silently legal**, however wrong, and only the data flow reveals it.
+
+### Point-to-point: put, get, peek and `uvm_tlm_fifo`
+
+Some connections have exactly one producer and one consumer, which run at their own pace. A **predictor** (a component that computes the expected result) feeding a **reference model**, a model feeding a checker, and two threads inside one component are common examples. For these, put a **`uvm_tlm_fifo #(T)`** between them (§12.2.8.2). It is a `uvm_component` that wraps a SystemVerilog `mailbox` ([I-SV-5](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes)), so the same blocking rules apply:
+
+- `put()` blocks while the FIFO is full; `get()` and `peek()` block while it is empty.
+- `try_put()` returns 0 instead of blocking when the FIFO is full; `try_get()` and `try_peek()` return 0 when it is empty.
+- The constructor is `new(string name, uvm_component parent = null, int size = 1)`. **The default size is 1**, and size 0 means unbounded (uvm-core 2020.3.1, `uvm_tlm_fifos.svh`). This is the opposite of `mailbox::new()`, which is unbounded by default.
+- `used()`, `is_empty()`, `is_full()` and `size()` tell you its state; `flush()` empties it.
+
+The producer connects a put port to the FIFO's `put_export`, and the consumer connects a get port to its `get_export` (or `get_peek_export`, if it also peeks). Both are siblings of the FIFO, so both connections are "across" and are written in the parent:
+
+```systemverilog
+// snippet: one producer, one consumer, one FIFO in the parent env
+// prod declares:  uvm_blocking_put_port #(bus_item) put_port;
+// cons declares:  uvm_get_peek_port     #(bus_item) get_port;  // get, peek and try_*
+uvm_tlm_fifo #(bus_item) f;
+
+function void build_phase(uvm_phase phase);
+  super.build_phase(phase);
+  prod = bus_producer::type_id::create("prod", this);
+  cons = bus_consumer::type_id::create("cons", this);
+  f    = new("f", this);                       // size 1: the default
+endfunction
+
 function void connect_phase(uvm_phase phase);
-  drv.seq_item_port.connect(sqr.seq_item_export);
+  prod.put_port.connect(f.put_export);         // port -> sibling imp
+  cons.get_port.connect(f.get_peek_export);    // port -> sibling imp
 endfunction
 ```
 
-<a id="monitors-scoreboards-and-the-analysis-fabric"></a>
+**Predict.** At time 0 the producer calls `put_port.put(t1)` and then `put_port.put(t2)`. The consumer is busy and makes its first `get()` at 50 ns. When does `put(t2)` return? Decide before reading the diagram.
 
-### The Analysis Fabric (Publish/Subscribe)
-Monitors reconstruct transactions and broadcast them. They use a `uvm_analysis_port`, and every connection from it must end at an imp that provides the `write()` function.
+<SequenceDiagram
+  title="A size-1 uvm_tlm_fifo: the second put() waits for the first get()"
+  caption="f was built with the default size, so it holds one item. put(t1) returns at once; put(t2) suspends the producer until the consumer's get() at 50 ns removes t1. Arrows are calls through the ports; the dashed returns carry the results."
+  participants={[
+    { id: "prod", label: "prod", sublabel: "put_port", kind: "generic" },
+    { id: "f", label: "f", sublabel: "uvm_tlm_fifo, size 1", kind: "fifo" },
+    { id: "cons", label: "cons", sublabel: "get_port", kind: "generic" }
+  ]}
+  messages={[
+    { from: "prod", to: "f", label: "put(t1)" },
+    { kind: "return", from: "f", to: "prod", label: "returns at 0 ns (used = 1, full)" },
+    { from: "prod", to: "f", label: "put(t2)" },
+    { kind: "note", from: "prod", to: "f", label: "f is full: put(t2) blocks the producer" },
+    { kind: "divider", label: "50 ns pass" },
+    { from: "cons", to: "f", label: "get(t)" },
+    { kind: "return", from: "f", to: "cons", label: "t = t1" },
+    { kind: "return", from: "f", to: "prod", label: "put(t2) returns at 50 ns (used = 1)" }
+  ]}
+/>
 
-> **Connection rule:** An `analysis_port` may connect directly to an `analysis_imp`, or to an `analysis_export` that passes the calls down to an imp further inside a component. `uvm_subscriber::analysis_export` and `uvm_tlm_analysis_fifo::analysis_export` are themselves imps, so `ap.connect(cov.analysis_export)` is the everyday case. What is illegal is a chain that ends without an imp: an `analysis_export` must reach at least one imp by end of elaboration.
+**Debrief.** `put(t2)` returns at 50 ns, in the same time slot (the same simulation time) as the consumer's `get()`. With `new("f", this, 0)` it would have returned at time 0, and with size 2 also at time 0. The producer never loses an item: a full FIFO makes it wait, which is called **back-pressure**. To experiment with the same rule, use the mailbox visual below: a `uvm_tlm_fifo` stores its items in a `mailbox` created with its size, so `mailbox new(1)` behaves like a default `uvm_tlm_fifo`, and `new()` like size 0. Pick `new(1)` in the scripted run and predict when the producer prints "sent 2", then try two `put()` calls before any `get()` in the sandbox.
 
-Watch one `ap.write(t)` below: predict when the monitor's next statement runs, then reorder the `connect()` calls and see whether the call order changes.
+<MailboxSemaphoreGame mode="mailbox" />
+
+**Nonblocking forms.** Use them when a component must not wait, for example to sample a FIFO once per clock, or inside a function:
+
+```systemverilog
+// snippet: a consumer that must not block (its port is a uvm_get_peek_port)
+bus_item t;
+if (get_port.try_get(t))                       // 1: got one; 0: FIFO was empty
+  check_item(t);
+if (!get_port.can_peek())                      // ask first, take nothing
+  `uvm_info("CONS", "nothing waiting this cycle", UVM_HIGH)
+```
+
+**Where you meet it.** Inside agents, stimulus normally flows through the sequencer instead ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)). Point-to-point FIFOs appear between analysis-side components: a predictor and a reference model, a model and its checker, or a transaction-level model of the design. Choose the size on purpose. Size 1 couples the two sides tightly; size 0 never blocks the producer but can grow without limit if the consumer stops.
+
+### The analysis fabric: `write()` to 0..N subscribers
+
+A monitor must never wait for its listeners, because the bus does not wait for the monitor. So monitors publish through a **`uvm_analysis_port`**, whose only method is a function:
+
+- `ap.write(t)` calls the `write()` of every imp the port reaches, one after another, inside the monitor's own **process** (its running thread), at the same simulation time (§12.2.10.1).
+- There may be **0, 1 or many subscribers**. With none, `write()` does nothing, and that is legal.
+- There is **no buffer and no back-pressure**. Every subscriber's `write()` is a function, so none of them can consume time, and `ap.write(t)` returns, in zero simulation time, as soon as the last one returns.
+- Every subscriber receives **the same handle `t`**, not a copy.
+
+A **subscriber** is any component that receives `write()` calls. UVM provides a base class for the common case of one input, **`uvm_subscriber #(T)`** (§13.9). It already contains `analysis_export`, a `uvm_analysis_imp` whose instance name is `analysis_imp`, and declares `pure virtual function void write(T t)`, which you must implement. A coverage collector is the textbook subscriber. The covergroup syntax is from [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index).
+
+```systemverilog
+// snippet: the monitor publishes; a scoreboard and a coverage subscriber listen
+// bus_monitor (from I-UVM-2A):
+//   uvm_analysis_port #(bus_item) ap;
+//   t = bus_item::type_id::create("t");  ap.write(t);   // a new t per transaction
+
+class bus_scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(bus_scoreboard)
+  uvm_analysis_imp #(bus_item, bus_scoreboard) item_imp;   // calls this->write()
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    item_imp = new("item_imp", this);                       // imps take their owner
+  endfunction
+
+  function void write(bus_item t);       // a function: it must return without waiting
+    // compare t with the expected value; never modify t
+  endfunction
+endclass
+
+class bus_cov extends uvm_subscriber #(bus_item);
+  `uvm_component_utils(bus_cov)
+
+  covergroup data_cg with function sample(bit [7:0] data);
+    coverpoint data { bins low = {[8'h00:8'h7F]}; bins high = {[8'h80:8'hFF]}; }
+  endgroup
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    data_cg = new();
+  endfunction
+
+  // Overrides uvm_subscriber's pure virtual write(T t). The argument must keep
+  // the name t: overrides need identical argument names (IEEE 1800-2023 §8.20).
+  function void write(bus_item t);
+    data_cg.sample(t.data);
+  endfunction
+endclass
+
+// bus_env::connect_phase: one port, two subscribers
+agt.ap.connect(scb.item_imp);
+agt.ap.connect(cov.analysis_export);     // analysis_export is an imp
+```
+
+**Predict, then watch.** The visual below has one analysis port and three subscribers: `scb`, `cov` and a logger, `log`. The monitor calls `ap.write(t)` at 10 ns. Predict when the monitor's next statement runs. Then reorder the `connect()` calls and see whether the call order changes, and tick the bug box, in which `cov.write()` clears `t.data` after sampling.
 
 <AnalysisBroadcastVisualizer />
 
+What the trace showed:
+- The monitor's next statement runs at 10 ns, **after all three `write()` calls have returned**. Nothing runs in parallel, and no simulation time passes.
+- The order did not follow the `connect()` order. uvm-core stores the imps in an associative array indexed by full name and calls them in that (lexicographic) order, so `cov` runs before `log`, and `log` before `scb` (uvm-core 2020.3.1, `uvm_port_base.svh`; IEEE 1800-2023 §7.8.2). Treat the order as unspecified: no subscriber may depend on another having seen the item first.
+- With the bug ticked, `scb` reports a mismatch. `cov` ran first and changed the one shared object, so `log` and `scb` saw the cleared field. That is why the `uvm_analysis_imp` documentation says `write()` "must not modify the value passed to it" (uvm-core 2020.3.1, `uvm_analysis_port.svh`).
+
+### One object, every subscriber: copy before you modify
+
+Because `write()` passes a handle, the monitor and every subscriber refer to **one object**. Two rules follow.
+
+**Rule 1: the publisher creates a new object for every transaction.** Here is what goes wrong when a monitor creates its item once, before the loop, and a scoreboard stores the handles it receives:
+
 ```systemverilog
-// 1. The Broadcaster (Monitor)
-class my_monitor extends uvm_monitor;
-  `uvm_component_utils(my_monitor)
-  uvm_analysis_port #(my_txn) ap;
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-    ap = new("ap", this);
-  endfunction
-
-  task run_phase(uvm_phase phase);
-    forever begin
-      my_txn t = my_txn::type_id::create("t");  // a new item per transaction
-      collect(t);                                // your task: sample the bus
-      ap.write(t);                               // zero time: calls every subscriber's write()
-    end
-  endtask
-endclass
-
-// 2. The Subscriber (Scoreboard)
-class my_scoreboard extends uvm_scoreboard;
-  `uvm_component_utils(my_scoreboard)
-  uvm_analysis_imp #(my_txn, my_scoreboard) item_imp;
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-    item_imp = new("item_imp", this);
-  endfunction
-
-  // Must implement write(): a function, so it cannot wait
-  virtual function void write(my_txn t);
-    // compare t against the expected value; do not modify t
-  endfunction
-endclass
-
-// 3. The Connection (Environment)
-function void connect_phase(uvm_phase phase);
-  agent.ap.connect(scb.item_imp);
-endfunction
+// snippet: the bug, a monitor that reuses one object
+bus_item t = bus_item::type_id::create("t");   // created once
+forever begin
+  @(vif.mon_cb iff vif.mon_cb.valid);
+  t.data = vif.mon_cb.data;                    // overwrites the same object
+  ap.write(t);                                 // scb does: exp_q.push_back(t);
+end
 ```
 
-### One scoreboard, two inputs: `` `uvm_analysis_imp_decl ``
+Trace three transfers carrying data `11`, `22` and `33`:
 
-A class can have only one `write()` method, so a scoreboard with an expected stream and an actual stream needs two differently named write methods. The macro `` `uvm_analysis_imp_decl(SFX) `` declares an imp class whose `write()` calls `write<SFX>()` on your component:
+| After `write` number | The one object `t` holds | `scb.exp_q` holds | What `scb` reads from `exp_q` |
+|---|---|---|---|
+| 1 | `data=11` | 1 handle to `t` | `11` |
+| 2 | `data=22` | 2 handles to `t` | `22, 22` |
+| 3 | `data=33` | 3 handles to `t` | `33, 33, 33` |
+
+Every stored item equals the last one. Move `create` inside the loop and the queue holds three objects, `11, 22, 33`. The monitor code in [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index) already does this.
+
+**Rule 2: a subscriber that needs a changed version works on a copy.** A scoreboard that predicts the expected output, or a component that must edit a field, clones first:
 
 ```systemverilog
-`uvm_analysis_imp_decl(_exp)
+// snippet: predict on a copy, never on the received object
+bus_item pred;
+if (!$cast(pred, t.clone()))                   // clone() returns a uvm_object
+  `uvm_fatal("SCB", "clone() did not return a bus_item")
+pred.data = t.data + 8'd1;                     // t itself is unchanged
+```
+
+`clone()` needs the item to implement `do_copy()` (or field macros); [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) covers shallow and deep copies. Storing a received handle without copying is safe only while every publisher follows rule 1. A scoreboard that stores items for later can clone them as cheap insurance, which is what this site's code style asks for.
+
+### Decoupling a slow subscriber with `uvm_tlm_analysis_fifo`
+
+`write()` is a function, so a subscriber cannot wait inside it, directly or by calling a task: either is a compile error (IEEE 1800-2023 §13.4 a and b). Yet many checks must wait, for a response from the design under test (DUT), for the matching item on another stream, or for a clock edge.
+
+**Predict.** A new subscriber, `chk`, must wait about 25 ns for the DUT's response before it can check each item, and the monitor writes an item every 10 ns. Where can that waiting go? Answer in the visual, then compare the three implementations and move the end of the test.
+
+<AnalysisBroadcastVisualizer section="slow" />
+
+**Debrief.** The waiting must live in a thread that `chk` owns, fed by a **`uvm_tlm_analysis_fifo #(T)`** (§12.2.8.3):
+1. The monitor's analysis port connects to the FIFO's `analysis_export` (an imp). The FIFO is always unbounded, and its `write()` is `void'(try_put(t))`, which therefore always succeeds in zero time (uvm-core 2020.3.1, `uvm_tlm_fifos.svh`).
+2. The subscriber no longer implements `write()`. Its `run_phase` loops on `get()`, a task that blocks until the FIFO holds an item, and may then wait as long as it needs.
+3. The FIFO now holds the backlog, so the test must not end while it is non-empty. Keep the test's **objection** (the "still busy" vote from I-UVM-1C) raised until the checker is idle, and report anything left over in `check_phase`, the phase after `run_phase` that exists for end-of-test checks. The visual's 45 ns end showed the items that are silently lost otherwise.
+
+| Choose | When |
+|---|---|
+| a direct `uvm_analysis_imp` (or `uvm_subscriber`) | the work fits in zero time: sampling coverage, logging, an in-order compare against a queue |
+| `` `uvm_analysis_imp_decl `` | one component needs two or more zero-time `write` methods (next section) |
+| `uvm_tlm_analysis_fifo` plus a `get()` thread | the subscriber must wait, or must pair items that arrive at different times |
+
+### Two-input scoreboards
+
+A scoreboard usually compares two streams: **expected** items (from the input-side monitor, through a predictor) and **actual** items (from the output-side monitor). A class has only one method named `write`, so two plain `uvm_analysis_imp #(bus_item, bus_scoreboard)` members would both call the same `write()`, and the scoreboard could not tell which stream an item came from. There are two standard fixes.
+
+**Fix A: `` `uvm_analysis_imp_decl ``** (Annex B.5.22). `` `uvm_analysis_imp_decl(_exp) `` declares a new class, `uvm_analysis_imp_exp`, whose `write()` calls `write_exp()` on its owner. Invoke the macro outside any class, once per suffix in a given scope.
+
+```systemverilog
+// snippet: two inputs with imp_decl (the kata in Practice builds the full version)
+`uvm_analysis_imp_decl(_exp)                 // declares class uvm_analysis_imp_exp
+`uvm_analysis_imp_decl(_act)                 // declares class uvm_analysis_imp_act
+
+class bridge_scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(bridge_scoreboard)
+  uvm_analysis_imp_exp #(bus_item, bridge_scoreboard) exp_imp;   // calls write_exp()
+  uvm_analysis_imp_act #(bus_item, bridge_scoreboard) act_imp;   // calls write_act()
+  bus_item exp_q[$];
+  // new(): exp_imp = new("exp_imp", this); act_imp = new("act_imp", this);
+  function void write_exp(bus_item t);  /* queue a copy of t      */ endfunction
+  function void write_act(bus_item t);  /* pop, compare and count */ endfunction
+endclass
+
+// bus_env::connect_phase
+in_agt.ap.connect(scb.exp_imp);
+out_agt.ap.connect(scb.act_imp);
+```
+
+<ArchitectureDiagram
+  title="Two-input scoreboard with uvm_analysis_imp_decl"
+  caption="in_agt.ap reaches exp_imp, which calls scb.write_exp(); out_agt.ap reaches act_imp, which calls scb.write_act(). Both are zero-time function calls into one component, so an in-order compare can run inside write_act()."
+  cellWidth={140}
+  gapX={90}
+  gapY={40}
+  nodes={[
+    { id: "env", label: "env", kind: "env", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "in_agt", label: "in_agt", sublabel: "bus_agent (active)", kind: "agent", col: 0, row: 0 },
+    { id: "out_agt", label: "out_agt", sublabel: "bus_agent (passive)", kind: "agent", col: 0, row: 1 },
+    { id: "scb", label: "scb", sublabel: "bridge_scoreboard", kind: "scoreboard", col: 1, row: 0, rowSpan: 2 }
+  ]}
+  ports={[
+    { id: "in_agt.ap", node: "in_agt", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "out_agt.ap", node: "out_agt", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "scb.exp_imp", node: "scb", side: "left", at: 0.25, kind: "analysis_imp", label: "exp_imp" },
+    { id: "scb.act_imp", node: "scb", side: "left", at: 0.75, kind: "analysis_imp", label: "act_imp" }
+  ]}
+  edges={[
+    { from: "in_agt.ap", to: "scb.exp_imp", style: "data", label: "write(t)" },
+    { from: "out_agt.ap", to: "scb.act_imp", style: "data", label: "write(t)" }
+  ]}
+/>
+
+**Fix B: two analysis FIFOs and a `get()` thread.** The scoreboard owns two `uvm_tlm_analysis_fifo`s and one `run_phase` loop that takes one item from each and compares them. The scoreboard can wait for whichever stream is late, and it can be given time-consuming checks later without rewiring. To keep its FIFOs private, the scoreboard exposes two `uvm_analysis_export`s and connects each **down** to its FIFO. uvm-core's own `uvm_sequencer` uses the same pattern: its `rsp_export` is an analysis export connected down to an internal analysis FIFO (uvm-core 2020.3.1, `uvm_sequencer_param_base.svh`). The Make It Work example builds this version completely.
+
+**How to choose.** Start with Fix A when both streams arrive in order and every check is zero-time. Use Fix B when a check must wait, when items on the two streams arrive far apart, or when you expect the scoreboard to grow. Matching algorithms for out-of-order and keyed streams belong to [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).
+
+**Pitfalls of `` `uvm_analysis_imp_decl ``:**
+- It expands to a class declaration at the point where you invoke it. Invoke it at package or file scope, before the class that uses it, so that one declaration serves every component in the package.
+- The same suffix invoked twice in one scope (one package, or `$unit`) declares the same class twice, which does not compile. Two verification IP (VIP) packages that each declare `_exp` are fine on their own, but a file that wildcard-imports both packages and then uses `uvm_analysis_imp_exp` meets an ambiguous name. Prefix suffixes with the component name (`_scb_exp`).
+- Name the write methods after the suffix exactly: `_exp` needs `write_exp()`.
+
+### Recap
+
+- Ports call, imps implement, exports forward. `connect()` goes from the caller toward the implementer, one level at a time: up (port to port), across (port to export or imp), down (export to export or imp).
+- Bindings are made in `connect_phase` and resolved at the start of end of elaboration. Count errors stop the run with `BUILDERR`; unconnected analysis ports, reversed analysis promotions and unconnected driver ports are silent there.
+- `uvm_tlm_fifo` holds 1 item by default and gives back-pressure; `uvm_tlm_analysis_fifo` is unbounded and never blocks the writer.
+- Analysis `write()` is a zero-time function call to 0..N subscribers in an order you must not rely on, and all of them share one object. Publish a new object per transaction and copy before you modify.
+- A subscriber that must wait goes behind an analysis FIFO, and an end-of-test check proves its FIFO drained.
+
+## Make It Work
+
+### Worked example: a transaction-level bench with every connection kind
+
+This complete example needs no DUT, no virtual interface and no sequences, so it compiles with UVM alone and isolates TLM. A **producer** sends six items through a `uvm_tlm_fifo` of size 2 to a **model**, a transaction-level stand-in for a design that adds 1 to `data` after 10 ns. The producer publishes each item it sent as the expected stream, and the model publishes each result as the actual stream. A two-FIFO **scoreboard** predicts and compares, and a coverage **subscriber** samples the results. In a real bench, monitors on the DUT's buses would publish these two streams instead.
+
+<ArchitectureDiagram
+  title="Worked example topology: prod, req_fifo, model, scb and cov inside env"
+  caption="Each arrow is one connect() call, drawn from the caller to the provider. put(t) and write(t) carry the item along the arrow; get(t) is a call from model, so its item travels against the arrow. Inside scb, each export connects down to its own analysis FIFO, and scb's run_phase calls get() on those child FIFOs directly."
+  cellWidth={140}
+  cellHeight={72}
+  gapX={70}
+  gapY={84}
+  nodes={[
+    { id: "env", label: "env", sublabel: "tlm_env", kind: "env", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "prod", label: "prod", sublabel: "item_producer", kind: "generic", col: 0, row: 0 },
+    { id: "req_fifo", label: "req_fifo", sublabel: "uvm_tlm_fifo, size 2", kind: "fifo", col: 1, row: 0 },
+    { id: "model", label: "model", sublabel: "item_model", kind: "model", col: 2, row: 0 },
+    { id: "scb", label: "scb", sublabel: "bus_scoreboard", kind: "scoreboard", col: 0, row: 1, colSpan: 2, container: true },
+    { id: "exp_fifo", label: "exp_fifo", sublabel: "analysis FIFO", kind: "fifo", col: 0, row: 1 },
+    { id: "act_fifo", label: "act_fifo", sublabel: "analysis FIFO", kind: "fifo", col: 1, row: 1 },
+    { id: "cov", label: "cov", sublabel: "bus_cov", kind: "subscriber", col: 2, row: 1 }
+  ]}
+  ports={[
+    { id: "prod.put_port", node: "prod", side: "right", at: 0.85, kind: "port", label: "put_port" },
+    { id: "prod.ap", node: "prod", side: "bottom", kind: "analysis_port", label: "ap" },
+    { id: "req_fifo.put_export", node: "req_fifo", side: "left", at: 0.85, kind: "imp", label: "put_export" },
+    { id: "req_fifo.get_export", node: "req_fifo", side: "right", at: 0.85, kind: "imp", label: "get_export" },
+    { id: "model.get_port", node: "model", side: "left", at: 0.85, kind: "port", label: "get_port" },
+    { id: "model.ap", node: "model", side: "bottom", kind: "analysis_port", label: "ap" },
+    { id: "scb.exp_export", node: "scb", side: "top", at: 0.32, kind: "export", label: "exp_export" },
+    { id: "scb.act_export", node: "scb", side: "top", at: 0.78, kind: "export", label: "act_export" },
+    { id: "exp_fifo.ae", node: "exp_fifo", side: "top", at: 0.62, kind: "analysis_imp", label: "analysis_export" },
+    { id: "act_fifo.ae", node: "act_fifo", side: "top", at: 0.62, kind: "analysis_imp", label: "analysis_export" },
+    { id: "cov.ae", node: "cov", side: "top", at: 0.62, kind: "analysis_imp", label: "analysis_export" }
+  ]}
+  edges={[
+    { from: "prod.put_port", to: "req_fifo.put_export", style: "data", label: "put(t)" },
+    { from: "model.get_port", to: "req_fifo.get_export", style: "causal", label: "get(t)" },
+    { from: "prod.ap", to: "scb.exp_export", style: "data", label: "write(t)" },
+    { from: "model.ap", to: "scb.act_export", style: "data", label: "write(t)" },
+    { from: "model.ap", to: "cov.ae", style: "data" },
+    { from: "scb.exp_export", to: "exp_fifo.ae", style: "structural" },
+    { from: "scb.act_export", to: "act_fifo.ae", style: "structural" }
+  ]}
+/>
+
+```systemverilog
+// compile
+// tlm_demo.sv: compile with the UVM 1800.2 library (uvm-core 2020.3.1), top tb_top.
+`include "uvm_macros.svh"
+
+package tlm_demo_pkg;
+  timeunit 1ns; timeprecision 1ps;     // must precede every other package item
+  import uvm_pkg::*;
+
+  // ---------------------------------------------------------------- item
+  class bus_item extends uvm_sequence_item;
+    `uvm_object_utils(bus_item)
+    bit [7:0] addr;
+    bit [7:0] data;
+
+    function new(string name = "bus_item");
+      super.new(name);
+    endfunction
+
+    function void do_copy(uvm_object rhs);   // clone() relies on this
+      bus_item rhs_;
+      if (!$cast(rhs_, rhs)) `uvm_fatal("COPY", "do_copy: rhs is not a bus_item")
+      super.do_copy(rhs);
+      addr = rhs_.addr;
+      data = rhs_.data;
+    endfunction
+
+    function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+      bus_item rhs_;
+      if (!$cast(rhs_, rhs)) return 0;
+      return super.do_compare(rhs, comparer) && addr == rhs_.addr && data == rhs_.data;
+    endfunction
+
+    function string convert2string();
+      return $sformatf("addr=%02h data=%02h", addr, data);
+    endfunction
+  endclass
+
+  // ------------------------------------------------------------ producer
+  class item_producer extends uvm_component;
+    `uvm_component_utils(item_producer)
+    uvm_blocking_put_port #(bus_item) put_port;  // to the model, via req_fifo
+    uvm_analysis_port     #(bus_item) ap;        // the expected stream
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      put_port = new("put_port", this);
+      ap       = new("ap", this);
+    endfunction
+
+    // Called by the test. Returns once the last put() has been accepted.
+    task send(int unsigned n);
+      for (int unsigned i = 0; i < n; i++) begin
+        bus_item t = bus_item::type_id::create($sformatf("t%0d", i)); // new each time
+        t.addr = 8'(i);
+        t.data = 8'(8'h30 * i);
+        put_port.put(t);                 // blocks while req_fifo is full
+        `uvm_info("PROD", $sformatf("put #%0d returned: %s", i, t.convert2string()),
+                  UVM_LOW)
+        ap.write(t);                     // publish exactly what was sent
+      end
+    endtask
+  endclass
+
+  // --------------------------------------------------------------- model
+  // A transaction-level stand-in for the DUT: out.data = in.data + 1, 10 ns later.
+  class item_model extends uvm_component;
+    `uvm_component_utils(item_model)
+    uvm_blocking_get_port #(bus_item) get_port;  // from req_fifo
+    uvm_analysis_port     #(bus_item) ap;        // the actual stream
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      get_port = new("get_port", this);
+      ap       = new("ap", this);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      bus_item in_item, out_item;
+      forever begin
+        get_port.get(in_item);           // blocks while req_fifo is empty
+        #10ns;                           // models the design's latency
+        // in_item is also in the scoreboard's expected FIFO: work on a copy.
+        if (!$cast(out_item, in_item.clone())) `uvm_fatal("MODEL", "clone failed")
+        out_item.data = in_item.data + 8'd1;
+        ap.write(out_item);
+      end
+    endtask
+  endclass
+
+  // ---------------------------------------------------------- scoreboard
+  class bus_scoreboard extends uvm_scoreboard;
+    `uvm_component_utils(bus_scoreboard)
+    uvm_analysis_export   #(bus_item) exp_export;  // expected items enter here
+    uvm_analysis_export   #(bus_item) act_export;  // actual items enter here
+    uvm_tlm_analysis_fifo #(bus_item) exp_fifo;    // unbounded, never blocks a writer
+    uvm_tlm_analysis_fifo #(bus_item) act_fifo;
+    int unsigned matches, mismatches;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      exp_export = new("exp_export", this);
+      act_export = new("act_export", this);
+      exp_fifo   = new("exp_fifo", this);
+      act_fifo   = new("act_fifo", this);
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+      exp_export.connect(exp_fifo.analysis_export);  // down: my export -> child imp
+      act_export.connect(act_fifo.analysis_export);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      bus_item exp_item, act_item, pred;
+      forever begin
+        exp_fifo.get(exp_item);          // the FIFOs are my children: call get() directly
+        act_fifo.get(act_item);          // waits here until the model's result arrives
+        if (!$cast(pred, exp_item.clone())) `uvm_fatal("SCB", "clone failed")
+        pred.data = exp_item.data + 8'd1;   // the prediction, made on a copy
+        if (act_item.compare(pred)) matches++;
+        else begin
+          mismatches++;
+          `uvm_error("SCB_MISMATCH", $sformatf("expected %s, got %s",
+                     pred.convert2string(), act_item.convert2string()))
+        end
+      end
+    endtask
+
+    // Lets the test wait until n pairs have been checked.
+    task wait_checked(int unsigned n);
+      wait (matches + mismatches >= n);
+    endtask
+
+    function void check_phase(uvm_phase phase);
+      int unsigned pending = exp_fifo.used() + act_fifo.used();
+      if (pending != 0)
+        `uvm_error("SCB_PENDING", $sformatf("%0d items were never compared", pending))
+      if (matches + mismatches == 0)
+        `uvm_error("SCB_IDLE", "no item was checked: is every stream connected?")
+      `uvm_info("SCB", $sformatf("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+                matches, mismatches, pending), UVM_LOW)
+    endfunction
+  endclass
+
+  // ------------------------------------------------------------ coverage
+  class bus_cov extends uvm_subscriber #(bus_item);
+    `uvm_component_utils(bus_cov)
+
+    covergroup data_cg with function sample(bit [7:0] data);
+      coverpoint data { bins low = {[8'h00:8'h7F]}; bins high = {[8'h80:8'hFF]}; }
+    endgroup
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      data_cg = new();
+    endfunction
+
+    function void write(bus_item t);     // argument name t, as in uvm_subscriber
+      data_cg.sample(t.data);
+    endfunction
+
+    function void report_phase(uvm_phase phase);
+      `uvm_info("COV", $sformatf("data_cg coverage = %0.1f%%", data_cg.get_coverage()),
+                UVM_LOW)
+    endfunction
+  endclass
+
+  // ----------------------------------------------------------------- env
+  class tlm_env extends uvm_env;
+    `uvm_component_utils(tlm_env)
+    item_producer            prod;
+    uvm_tlm_fifo #(bus_item) req_fifo;
+    item_model               model;
+    bus_scoreboard           scb;
+    bus_cov                  cov;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      prod     = item_producer::type_id::create("prod", this);
+      req_fifo = new("req_fifo", this, 2);      // holds 2 items: back-pressure on prod
+      model    = item_model::type_id::create("model", this);
+      scb      = bus_scoreboard::type_id::create("scb", this);
+      cov      = bus_cov::type_id::create("cov", this);
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+      prod.put_port.connect(req_fifo.put_export);   // across: port -> sibling imp
+      model.get_port.connect(req_fifo.get_export);  // across: port -> sibling imp
+      prod.ap.connect(scb.exp_export);              // across: port -> sibling export
+      model.ap.connect(scb.act_export);
+      model.ap.connect(cov.analysis_export);        // a second subscriber on model.ap
+    endfunction
+  endclass
+
+  // ---------------------------------------------------------------- test
+  class tlm_test extends uvm_test;
+    `uvm_component_utils(tlm_test)
+    tlm_env env;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env = tlm_env::type_id::create("env", this);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      phase.raise_objection(this);
+      env.prod.send(6);          // in a real bench, sequences make stimulus (I-UVM-3A)
+      env.scb.wait_checked(6);   // do not end the test while items are in flight
+      phase.drop_objection(this);
+    endtask
+  endclass
+endpackage
+
+module tb_top;
+  import uvm_pkg::*;
+  import tlm_demo_pkg::*;
+  initial run_test("tlm_test");
+endmodule
+```
+
+**Run it.** Compile `tlm_demo.sv` together with the UVM library your simulator provides (or the uvm-core 2020.3.1 sources: add `src` to the include path and compile `src/uvm_pkg.sv` first), elaborate `tb_top`, and run. `run_test("tlm_test")` names the test, so no `+UVM_TESTNAME` is needed. Open-source simulators' UVM support varies; this example has not been run on one.
+
+**Expected output** (illustrative and abridged: no simulator run. File names, line numbers and the number after `@` depend on the simulator; times here are in ns):
+
+```text
+UVM_INFO tlm_demo.sv(…) @ 0: uvm_test_top.env.prod [PROD] put #0 returned: addr=00 data=00
+UVM_INFO tlm_demo.sv(…) @ 0: uvm_test_top.env.prod [PROD] put #1 returned: addr=01 data=30
+UVM_INFO tlm_demo.sv(…) @ 0: uvm_test_top.env.prod [PROD] put #2 returned: addr=02 data=60
+UVM_INFO tlm_demo.sv(…) @ 10: uvm_test_top.env.prod [PROD] put #3 returned: addr=03 data=90
+UVM_INFO tlm_demo.sv(…) @ 20: uvm_test_top.env.prod [PROD] put #4 returned: addr=04 data=c0
+UVM_INFO tlm_demo.sv(…) @ 30: uvm_test_top.env.prod [PROD] put #5 returned: addr=05 data=f0
+UVM_INFO tlm_demo.sv(…) @ 60: uvm_test_top.env.scb [SCB] SCB_SUMMARY matches=6 mismatches=0 pending=0
+UVM_INFO tlm_demo.sv(…) @ 60: uvm_test_top.env.cov [COV] data_cg coverage = 100.0%
+
+--- UVM Report Summary ---
+** Report counts by severity
+UVM_INFO :   ...
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+**Why those times.** The model takes item 0 at time 0, so `req_fifo` (size 2) accepts items 1 and 2 at once and `put(3)` blocks. Each later `get()` by the model, at 10, 20 and 30 ns, frees one slot, so `put #3`, `#4` and `#5` return at 10, 20 and 30 ns. The model publishes results at 10, 20, …, 60 ns, the scoreboard checks the sixth pair at 60 ns, and the test drops its objection. The results' data values `01`, `31`, `61`, `91`, `c1` and `f1` hit both coverage bins.
+
+### Break it on purpose
+
+Each change below is one line. Predict the log first, then read the answer.
+
+1. **The model modifies its input.** Replace the clone in `item_model` with `in_item.data = in_item.data + 8'd1; ap.write(in_item);`. The producer published the same object to `exp_fifo`, so by the time the scoreboard predicts, the "expected" item has already been incremented. The first error reads `UVM_ERROR … [SCB_MISMATCH] expected addr=00 data=02, got addr=00 data=01`, all six pairs mismatch, and the summary is `SCB_SUMMARY matches=0 mismatches=6 pending=0`. Nothing was wrong with the "design": the bug is a shared handle.
+2. **A connection is forgotten.** Delete `exp_export.connect(exp_fifo.analysis_export);`. `scb.exp_export` reaches 0 imps against a minimum of 1, so end of elaboration reports `UVM_ERROR … [Connection Error] connection count of 0 does not meet required minimum of 1`, then `UVM_FATAL … [BUILDERR] stopping due to build errors`. No time passes.
+3. **The FIFO is unbounded.** Change `new("req_fifo", this, 2)` to `new("req_fifo", this, 0)`. All six `put` lines now print at time 0, and the results are unchanged. Back-pressure only changes when the producer runs.
+4. **The test does not wait.** Delete `env.scb.wait_checked(6);`. The objection drops at 30 ns, when `send()` returns, while at least three results are still in flight. `check_phase` reports `UVM_ERROR … [SCB_PENDING] … items were never compared`, and the summary shows fewer than 6 matches and a non-zero `pending`. The exact split depends on which processes the simulator runs first in the 30 ns time slot, which is one more reason never to end a test on a guess.
+
+### How to wire a new connection
+
+1. **Name the roles.** Which component calls (the requirer) and which implements (the provider)? Is it a broadcast (analysis), a one-to-one hand-off (put or get), or a pull from a sequencer?
+2. **Pick the classes.** The caller declares a port that names every method it will call: `uvm_analysis_port`, `uvm_blocking_put_port`, `uvm_get_peek_port` and so on. The provider declares an imp, or uses a FIFO's imps, or a `uvm_subscriber`.
+3. **Add a FIFO when the two sides run at different speeds:** `uvm_tlm_fifo` (choose its size) between a put port and a get port, `uvm_tlm_analysis_fifo` behind an analysis port.
+4. **Construct** ports, exports and FIFOs with `new` in `build_phase` (or the constructor); components with `::type_id::create`.
+5. **Connect in `connect_phase`** of the component that owns both ends: up in the child's parent, across in the common parent, down in the parent of the imp. Call `connect()` on the requiring side.
+6. **Publish safely:** a new object per transaction; copy before modifying.
+7. **Prove it at end of test:** count what each subscriber received, check that every analysis FIFO is empty in `check_phase`, and read the end-of-elaboration log for `Connection Error`.
+
+### Debugging connections: symptom, cause, fix
+
+| Symptom in the log | Cause | Fix |
+|---|---|---|
+| Compile error at a `connect()` line, about the argument type | the two ends carry different item types | use the same `T` on both ends, or add a converter component |
+| `[Connection Error] connection count of 0 does not meet required minimum of 1`, then `[BUILDERR] stopping due to build errors` | a put, get or peek port, or an analysis export, was never connected | add the missing `connect()` in `connect_phase` |
+| `[Connection Error] Cannot call an imp port's connect method. An imp is connected only to the component passed in its constructor. …` | the call is written backwards, from the imp | call `connect()` on the port: `port.connect(imp)` |
+| `[Connection Error] Cannot connect exports to ports Try calling port.connect(export) instead. …` | an export was connected to a port | reverse it: `port.connect(export)` |
+| `[Connection Error] … does not provide the complete interface required of this port …` | for example a get port connected to a FIFO's `put_export`; every TLM-1 port shares one base type, so it compiles. A reversed connection whose ends enable different method sets, such as `req_fifo.put_export.connect(prod.put_port)`, also lands here, because the interface is checked before the direction | connect a get port to `get_export` or `get_peek_export`, a put port to `put_export`; call `connect()` on the port |
+| `[Connection Error] connection count of 2 exceeds maximum of 1` | a put or get port connected to two providers | keep one; to fan out, use an analysis port |
+| `[Late Connection] Attempt to connect … at or after end_of_elaboration phase.  Ignoring.` (warning) | `connect()` in `end_of_elaboration_phase` or later | move it to `connect_phase` |
+| `[peek] UVM TLM interface task not implemented` at run time | `peek()` called through a port class without peek, such as `uvm_get_port` | use `uvm_get_peek_port` or `uvm_blocking_get_peek_port` |
+| `[DRVCONNECT] seq_item_port … has not been connected to a sequencer` (warning), then a null-object error at the first `get_next_item()` | the driver's pull port was never connected (minimum 0) | `drv.seq_item_port.connect(sqr.seq_item_export)` in the agent |
+| Scoreboard silent: zero matches and zero errors | an analysis port with no subscriber, or a reversed promotion `ap.connect(mon.ap)`: both are legal | connect it; and make the scoreboard report `SCB_IDLE` when it checked nothing |
+| Every stored item equals the last one | the publisher reused one object | create a new object per transaction |
+| Expected and actual both "wrong" in the same way, or values change after they were checked | a subscriber or model modified a shared object | clone before modifying |
+| `SCB_PENDING`, or items lost at the end | the test ended while an analysis FIFO still held items | keep the objection until the checker is idle; report `used()` in `check_phase` |
+
+Sources for the message texts: uvm-core 2020.3.1, `uvm_port_base.svh`, `uvm_root.svh`, `uvm_driver.svh`, `uvm_tlm_ifs.svh`.
+
+**Checklist before moving on:**
+- [ ] I can point at each endpoint in the worked example and say whether it is a port, an export or an imp, and who calls `connect()`.
+- [ ] I can say why `put #3` returns at 10 ns, and what changes with size 0.
+- [ ] I can explain why `item_model` must clone, and predict the log when it does not.
+- [ ] I can sort a wiring mistake into compile error, end-of-elaboration error or silently legal.
+- [ ] My scoreboards report a summary line, fail when they check nothing, and fail when a FIFO is left non-empty.
+
+## Push Further
+
+### Expert: binding resolution, sizes and BUILDERR
+
+- Resolution happens in `uvm_root::phase_started()` for end of elaboration: `do_resolve_bindings()` calls `resolve_bindings()` on every port, which walks each port's providers recursively and collects the imps at the leaves (§5.5.2.15). Only after that do `size()` and `get_if()` return meaningful values (§5.5.2.12).
+- The `BUILDERR` check counts **every** `UVM_ERROR` reported so far, not only connection errors. A `build_phase` that reports a `uvm_error`, for example for a failed configuration lookup, also stops the run here. That is deliberate: a bench that built wrongly should not run.
+- The minimum and maximum come from constructor arguments. Every TLM-1 port and export constructor accepts `min_size` and `max_size`, so a port that should be allowed to stay unconnected can be built with `new("opt_port", this, 0)`. Use this sparingly: a missing connection then goes unreported.
+- `uvm_analysis_port::write()` loops over the resolved imps, and before resolution `size()` is 0. An analysis `write()` called during `build_phase` or `connect_phase` therefore reaches nobody, silently.
+
+Sources: IEEE 1800.2-2020 §5.5.2.12, §5.5.2.15; uvm-core 2020.3.1 `src/base/uvm_root.svh`, `src/base/uvm_port_base.svh`, `src/tlm1/uvm_analysis_port.svh`.
+
+### Expert: relationship checks are off by default
+
+- `connect()` always calls an internal relationship check that compares grandparents and parents to enforce the up, across and down forms. But each port's constructor sets the action for `Connection Warning` to `UVM_NO_ACTION` unless an integer configuration entry named `check_connection_relationships` exists for that port. The warnings are therefore invisible unless the test sets, before the env is built, `uvm_config_int::set(this, "*", "check_connection_relationships", 1);`.
+- Ports of type `uvm_analysis_port` skip the check entirely, and so does any connection in which either side was created with a `null` parent.
+- Consequence: an env that connects `env.agt.mon.ap` straight to `env.chk_env.scb.item_imp` works and stays silent. It also breaks encapsulation: the env now depends on the agent's and the checker's internal names, and replacing either with an implementation whose children have other names breaks the bench. Promote through the agent's `ap` and the sub-environment's export instead.
+- Teams that enable the check in a regression smoke test catch these shortcuts early, at the cost of warnings from third-party VIP that takes them.
+
+Sources: uvm-core 2020.3.1 `src/base/uvm_port_base.svh` (`new()`, `connect()`, `m_check_relationship()`); this switch is uvm-core implementation behaviour (IEEE 1800.2-2020 §5.5.2.1 defines the constructor).
+
+### Expert: write() corner cases
+
+- **Waiting inside a function.** IEEE 1800-2023 §13.4 forbids time-controlling statements and task calls in a function, but §13.4.4 allows `fork … join_none` there, and the forked block may contain anything legal in a task. A `write()` that forks a waiting thread per item compiles. It also creates one unmanaged process per transaction: nothing bounds how many run at once, nothing orders them, and no objection waits for them at the end of the test. An analysis FIFO and one `get()` thread give the same decoupling with a single, visible process.
+- **Order.** uvm-core calls subscribers in lexicographic order of the imps' full names, because it iterates a string-indexed associative array (IEEE 1800-2023 §7.8.2). Renaming a component can therefore reorder subscribers. Code that works only in one order has a hidden dependency between subscribers.
+- **Cost.** `write()` takes zero simulation time but real CPU time. A monitor with ten subscribers calls ten functions per transaction; a heavy subscriber slows every test that instantiates it, even when its results are not needed. Gate expensive subscribers with a configuration knob.
+- **Re-entrancy.** A subscriber's `write()` may itself call `write()` on another analysis port. The nested calls also complete before the monitor's `write()` returns, so a cycle of analysis connections recurses until the simulator's stack runs out.
+
+Sources: IEEE 1800-2023 §7.8.2, §13.4, §13.4.4; uvm-core 2020.3.1 `src/base/uvm_port_base.svh`, `src/tlm1/uvm_analysis_port.svh`. The CPU-cost and re-entrancy points are general practice.
+
+### Expert: FIFO sizing, memory and end of test
+
+- `uvm_tlm_fifo` defaults to `size = 1`; 0 means unbounded (§12.2.8.2). `uvm_tlm_analysis_fifo` calls `super.new(name, parent, 0)`, so it is always unbounded, and its `write()` is `void'(try_put(t))` (§12.2.8.3).
+- An unbounded FIFO whose consumer has stopped grows for the rest of the test and keeps every queued object alive. A non-zero `used()` in `check_phase` is the cheapest leak detector you will ever write.
+- `flush()` reports `UVM_ERROR "there are blocked gets preventing the flush"` if items remain while another process is blocked in `get()`. Flushing on reset therefore needs care: stop or kill the consumer first (A-UVM-9 covers reset handling).
+- In uvm-core, `can_get()` returns 0 while another process is blocked in `get()`, even if an item is present, so two consumers on one FIFO may not see what they expect. Prefer one consumer per FIFO.
+- Every `uvm_tlm_fifo` has two analysis ports, `put_ap` and `get_ap`, which publish each item put and each item taken. Connect a logger or a latency monitor to them without touching the producer or the consumer.
+
+Sources: IEEE 1800.2-2020 §12.2.8.1, §12.2.8.2, §12.2.8.3; uvm-core 2020.3.1 `src/tlm1/uvm_tlm_fifos.svh`, `src/tlm1/uvm_tlm_fifo_base.svh`.
+
+### Expert: inspecting connectivity
+
+- `get_connected_to(list)` fills an associative array with the endpoints this port or export connects to, and `get_provided_to(list)` with the endpoints that connect to it (§5.5.2.9, §5.5.2.10). `size()` returns the number of imps reached, after resolution (§5.5.2.12). A scoreboard can assert in `end_of_elaboration_phase` that each of its exports reaches exactly the imps it expects.
+- `debug_connected_to()` and `debug_provided_to()` print the whole fan-out or fan-in tree as text. They are uvm-core implementation features, marked as not part of IEEE 1800.2, and are meaningful only from end of elaboration on.
+- Imps appear in these listings under their instance names: a subscriber's imp as `…cov.analysis_imp`, a FIFO's `get_export` as `…req_fifo.get_peek_export` (the alias's real object).
+- `print_topology()` shows the component tree, with ports as children, but no connections. A clean topology printout proves nothing about wiring.
+
+Sources: IEEE 1800.2-2020 §5.5.2.9, §5.5.2.10, §5.5.2.12; uvm-core 2020.3.1 `src/base/uvm_port_base.svh`, `src/comps/uvm_subscriber.svh`, `src/tlm1/uvm_tlm_fifo_base.svh`.
+
+### Expert: TLM-2 in one page
+
+- **What it is.** UVM also implements TLM-2.0 (§12.3), modelled on the SystemC standard. Its transaction is the **generic payload**, `uvm_tlm_generic_payload` (§12.3.4), a `uvm_sequence_item` with a 64-bit address, a command (read, write or ignore), a data byte array, a length, byte enables and a response status.
+- **Sockets** (§12.3.5) replace port and imp pairs: an initiator socket connects to a target socket, for example `uvm_tlm_b_initiator_socket` to `uvm_tlm_b_target_socket`.
+- **Transport calls** carry timing as an argument instead of consuming it. `b_transport(t, delay)` is a blocking task; `nb_transport_fw(t, phase, delay)` and `nb_transport_bw(t, phase, delay)` are functions that move a transaction through phases such as `BEGIN_REQ` and `END_RESP` and return `UVM_TLM_ACCEPTED`, `UVM_TLM_UPDATED` or `UVM_TLM_COMPLETED` (§12.3.2).
+- **When you meet it.** Mostly at the boundary with SystemC or C++ virtual-platform models, and in some memory-mapped reference models. Ordinary UVM agents, scoreboards and coverage use TLM-1. [E-UVM-ML-1](/curriculum/T4_Expert/E-UVM-ML-1_Multi_Language_Verification/index) covers mixed-language connection.
+- **Other TLM-1 channels** for completeness: `uvm_tlm_req_rsp_channel` (§12.2.9.1) pairs a request FIFO and a response FIFO, and `uvm_tlm_transport_channel` (§12.2.9.2) adds a blocking `transport(req, rsp)`.
+
+Sources: IEEE 1800.2-2020 §12.2.9.1, §12.2.9.2, §12.3.2, §12.3.4, §12.3.5; uvm-core 2020.3.1 `src/tlm2/uvm_tlm2_generic_payload.svh`, `src/tlm2/uvm_tlm2_ifs.svh`, `src/tlm2/uvm_tlm2_sockets.svh`, `src/tlm1/uvm_tlm_req_rsp.svh`.
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: why is write() a function?"
+  question="An interviewer asks: 'Why did UVM make the analysis write() a function rather than a task, and what does that cost you?'"
+  options={[
+    { text: "So that a monitor never waits for its listeners: the bus does not wait, and a function cannot consume time. The cost is that any subscriber that must wait needs its own thread, usually behind a uvm_tlm_analysis_fifo.", isCorrect: true, feedback: "Right. Zero-time delivery keeps observation non-intrusive and lets any number of subscribers attach. Slow checks move into a run_phase thread fed by an unbounded analysis FIFO, and an end-of-test check proves that FIFO drained." },
+    { text: "Functions are faster to simulate than tasks, so it is a performance choice.", isCorrect: false, feedback: "Speed is not the reason. The point is semantic: a function cannot block, so a slow subscriber can never stall the monitor and make it miss bus activity." },
+    { text: "So that UVM can copy the transaction for each subscriber.", isCorrect: false, feedback: "write() copies nothing. Every subscriber receives the same handle, which is why subscribers must not modify it." },
+    { text: "Because analysis ports may have only one subscriber, and a function enforces that.", isCorrect: false, feedback: "An analysis port allows 0..N subscribers. Being a function has nothing to do with the connection count." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the scoreboard that never fails"
+  question="A scoreboard has reported zero errors on every regression for months. A designer injects an obvious bug and it still passes. What do you check first?"
+  options={[
+    { text: "Whether the scoreboard checked anything: an analysis port with no subscriber, or a reversed promotion such as ap.connect(mon.ap), is legal and silent, so I look at the match count and make zero checks an error.", isCorrect: true, feedback: "Right. Unconnected analysis ports have a minimum of 0, and analysis ports skip the relationship check, so end of elaboration reports nothing. A summary that fails on zero checks, plus a non-empty-FIFO check, closes the gap." },
+    { text: "The end-of-elaboration log: UVM reports every unconnected port.", isCorrect: false, feedback: "Only ports and exports below their minimum count are reported. Analysis ports and the driver's seq_item_port have a minimum of 0." },
+    { text: "print_topology(): if the scoreboard is in the tree, it is connected.", isCorrect: false, feedback: "print_topology() shows which components exist, not how they are connected." },
+    { text: "The random seed: the bug was probably not exercised.", isCorrect: false, feedback: "Possible, but an obvious injected bug that never fails points first at a checker that sees no data. Verify the checker before blaming the stimulus." }
+  ]}
+/>
+
+Other questions to rehearse, each answered somewhere on this page: design a scoreboard for two streams that can arrive in either order; what a scoreboard sees when the monitor reuses its item; `uvm_tlm_fifo` versus `uvm_tlm_analysis_fifo`; how you guarantee nothing is left unchecked at the end of the test; and the pitfalls of `` `uvm_analysis_imp_decl ``.
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "Where should an env make its connect() calls, and when does UVM check them?",
+      answers: [
+        { text: "In connect_phase; the bindings are resolved and counted when end of elaboration starts, and any error then stops the run with BUILDERR", correct: true, feedback: "Right. connect_phase runs after every component exists. resolve_bindings() runs at the start of end of elaboration, and uvm_root stops the run if any UVM_ERROR has been reported." },
+        { text: "In end_of_elaboration_phase, once everything is built", correct: false, feedback: "Too late: connect() at or after end of elaboration is ignored with a 'Late Connection' warning, so the connection never exists." },
+        { text: "In run_phase, just before the first write()", correct: false, feedback: "Also ignored with a 'Late Connection' warning. Wiring must be finished before the bindings are resolved." },
+        { text: "Only in build_phase, because connect_phase is too late for the children's ports", correct: false, feedback: "connect_phase is exactly the right time: every child's build_phase has run, so its ports exist. In build_phase only ports a child created in its constructor exist yet." }
+      ],
+      explanation: "Connections are made in connect_phase and resolved at the start of end of elaboration (resolve_bindings, IEEE 1800.2-2020 §5.5.2.15). Later calls are ignored with a warning; earlier calls work only for ports that already exist.",
+      objective: 1
+    },
+    {
+      question: "Inside bus_agent::connect_phase, which line compiles, passes every UVM check, and still leaves the scoreboard with no items?",
+      answers: [
+        { text: "ap.connect(mon.ap);", correct: true, feedback: "Right. Port to port is a legal direction and analysis ports skip the relationship check, but mon.ap now reaches 0 imps, which its minimum of 0 allows. The monitor's write() goes nowhere, silently." },
+        { text: "mon.ap.connect(ap);", correct: false, feedback: "This is the correct promotion: the child's port connects up to the parent's port, so everything connected to the agent's ap receives the monitor's items." },
+        { text: "sqr.seq_item_export.connect(drv.seq_item_port);", correct: false, feedback: "This is not silent: seq_item_export is an imp, connect() reports a Connection Error, and the run stops with BUILDERR." },
+        { text: "drv.seq_item_port.connect(sqr.seq_item_export);", correct: false, feedback: "This is the correct driver connection, and it has nothing to do with the analysis path." }
+      ],
+      explanation: "Connection direction is not arbitrary. The reversed promotion is legal code with legal counts, so only the data flow reveals it: make scoreboards fail when they check nothing.",
+      objective: 1
+    },
+    {
+      question: "agt.ap is a uvm_analysis_port #(bus_item), and scb.item_imp is a uvm_analysis_imp #(pkt_item, bus_scoreboard). What does agt.ap.connect(scb.item_imp) give you?",
+      answers: [
+        { text: "A compile error: connect() expects a provider with the port's own item type", correct: true, feedback: "Right. connect() takes an argument of type uvm_port_base #(uvm_tlm_if_base #(bus_item, bus_item)), and an imp of pkt_item is a different type." },
+        { text: "A Connection Error at end of elaboration", correct: false, feedback: "Run-time checks cover direction, interface masks and counts. A type mismatch never gets that far." },
+        { text: "Nothing: items that are not pkt_item are dropped silently", correct: false, feedback: "TLM never filters by type at run time. The connection cannot be compiled at all." },
+        { text: "It works: UVM casts each bus_item to pkt_item", correct: false, feedback: "UVM performs no conversion. Add a converter component if two streams use different item types." }
+      ],
+      explanation: "Sort wiring mistakes in order: type mismatch is a compile error; illegal direction, incomplete interface or a count outside its limits is a UVM error at end of elaboration; anything else is silently legal.",
+      objective: 1
+    },
+    {
+      question: "How many subscribers can one uvm_analysis_port have?",
+      answers: [
+        { text: "0 or more: none is legal, and write() then does nothing", correct: true, feedback: "Right. uvm_analysis_port is built with a minimum of 0 and an unbounded maximum." },
+        { text: "Exactly 1, like every other TLM port", correct: false, feedback: "That is the rule for put and get ports. Analysis ports exist precisely to broadcast to many listeners." },
+        { text: "At least 1, or end of elaboration reports a Connection Error", correct: false, feedback: "That is true of uvm_analysis_export (minimum 1), not of the port. An unconnected analysis port is silent, which is why scoreboards should count what they receive." },
+        { text: "One per item type", correct: false, feedback: "All subscribers of one port take the same item type, and there may be any number of them." }
+      ],
+      explanation: "An analysis port broadcasts to 0..N imps (IEEE 1800.2-2020 §12.2.10.1). Zero subscribers is legal and silent.",
+      objective: 2
+    },
+    {
+      question: "A subscriber's write() starts with #10ns to wait for the DUT. What happens?",
+      answers: [
+        { text: "A compile error: write() is a function, and a function cannot contain a delay", correct: true, feedback: "Right. IEEE 1800-2023 §13.4 forbids time-controlling statements and task calls in a function." },
+        { text: "The monitor stalls 10 ns on every ap.write()", correct: false, feedback: "That is the misconception that write() blocks the monitor. It cannot: a function never consumes time, so this code does not compile." },
+        { text: "UVM queues the item and calls write() again 10 ns later", correct: false, feedback: "Analysis ports have no buffer. Queueing is what a uvm_tlm_analysis_fifo adds, with a get() thread on the other side." },
+        { text: "Only this subscriber waits; the others run in parallel", correct: false, feedback: "Subscribers run one after another inside the monitor's process, not in parallel, and none of them may wait." }
+      ],
+      explanation: "Move the waiting into a task: connect the port to a uvm_tlm_analysis_fifo and loop on get() in run_phase. (§13.4.4 allows fork-join_none inside a function, but that spawns an unmanaged process per item.)",
+      objective: 2
+    },
+    {
+      question: "cov and scb subscribe to the same analysis port. cov's write() sets t.data = 0 after sampling. In uvm-core, cov's imp sorts before scb's. What does scb see?",
+      answers: [
+        { text: "data = 0: both receive the same object, so cov's change is visible to scb", correct: true, feedback: "Right. write() passes one handle to every subscriber. uvm-core calls them in imp-name order, so here scb sees the damage; in another order it would not, which makes the bug order-dependent." },
+        { text: "The original value: each subscriber gets its own copy", correct: false, feedback: "That is the classic misconception. No copy is made; every subscriber shares the publisher's object." },
+        { text: "A compile error: write() arguments are read-only", correct: false, feedback: "Nothing in the language prevents it. The rule that subscribers must not modify the item is a convention, stated in the uvm_analysis_imp documentation." },
+        { text: "A UVM_WARNING about a modified transaction", correct: false, feedback: "UVM does not detect it. The usual symptom is a scoreboard mismatch that nobody can explain." }
+      ],
+      explanation: "Every subscriber shares one object. Never modify t in write(); clone it if you need a changed version, and publish a new object per transaction.",
+      objective: 2
+    },
+    {
+      question: "uvm_tlm_fifo #(int) f = new(\"f\", this); At time 0 the producer calls put_port.put(1) and then put_port.put(2). The consumer's first get() happens at 50 ns. When does put(2) return?",
+      answers: [
+        { text: "At 50 ns, when the consumer's get() makes room", correct: true, feedback: "Right. The default size is 1, so the FIFO is full after put(1), and put(2) blocks the producer until a get() removes 1." },
+        { text: "At time 0: FIFOs are unbounded, like analysis FIFOs", correct: false, feedback: "Only uvm_tlm_analysis_fifo, or a uvm_tlm_fifo built with size 0, is unbounded. The default size is 1." },
+        { text: "Never: a full FIFO drops the item and the producer hangs", correct: false, feedback: "A FIFO never drops items. put() waits for room and completes as soon as there is some." },
+        { text: "At 100 ns: two gets are needed before the second put", correct: false, feedback: "One get() frees the single slot. The producer resumes in the same time slot as that get()." }
+      ],
+      explanation: "uvm_tlm_fifo's constructor is new(name, parent = null, size = 1); size 0 means unbounded (IEEE 1800.2-2020 §12.2.8.2). Bounded FIFOs give back-pressure.",
+      objective: 4
+    },
+    {
+      question: "A consumer must check a FIFO once per clock and carry on if it is empty. Its port is a uvm_get_peek_port #(bus_item). Which call fits?",
+      answers: [
+        { text: "if (get_port.try_get(t)) check_item(t);", correct: true, feedback: "Right. try_get() is a function: it returns 1 with an item, or 0 at once when the FIFO is empty." },
+        { text: "get_port.get(t); check_item(t);", correct: false, feedback: "get() is a task that blocks while the FIFO is empty, so the consumer would stop sampling clocks." },
+        { text: "get_port.peek(t); check_item(t);", correct: false, feedback: "peek() blocks like get() when the FIFO is empty, and it leaves the item in place, so the item would be processed again next cycle." },
+        { text: "if (get_port.can_put()) get_port.get(t);", correct: false, feedback: "can_put() asks about room for a put, not about items to get, and a uvm_get_peek_port does not provide it: the call compiles and then reports 'UVM TLM interface function not implemented'." }
+      ],
+      explanation: "Blocking methods (put, get, peek) are tasks that may wait; try_* and can_* are functions that never wait. Pick a port class that provides every method you call.",
+      objective: 4
+    },
+    {
+      question: "Why can't a scoreboard with expected and actual streams of the same type simply declare two uvm_analysis_imp #(bus_item, bus_scoreboard) members?",
+      answers: [
+        { text: "Both imps would call the same scb.write(), so the scoreboard could not tell the streams apart", correct: true, feedback: "Right. A class has one write() method. `uvm_analysis_imp_decl(_exp) makes an imp that calls write_exp(), or two analysis FIFOs give each stream its own queue." },
+        { text: "It does not compile: a component may not declare two imps of one type", correct: false, feedback: "It compiles fine. The problem is behavioural: both imps forward to the same write()." },
+        { text: "UVM allows only one imp per component", correct: false, feedback: "A component may have many imps. The limit is one method named write per class." },
+        { text: "It works: UVM tags each item with the port it came from", correct: false, feedback: "Items carry no source tag. Only separate methods or separate FIFOs keep the streams apart." }
+      ],
+      explanation: "Use `uvm_analysis_imp_decl (Annex B.5.22) for zero-time, in-order checking, or two uvm_tlm_analysis_fifo plus a get() thread when the check must wait.",
+      objective: 3
+    },
+    {
+      question: "A two-FIFO scoreboard runs a test that passes with matches=40 mismatches=0. In check_phase, exp_fifo.used() returns 2. What does that mean, and what should the scoreboard do?",
+      answers: [
+        { text: "Two expected items never met an actual item; report a UVM_ERROR, because the DUT dropped them or the test ended too early", correct: true, feedback: "Right. Leftovers are real failures: lost transactions, or a test that dropped its objection while items were in flight. Without this check the test passes." },
+        { text: "Nothing: UVM empties analysis FIFOs automatically at the end of run_phase", correct: false, feedback: "Nothing empties them. The items stay there, and only your check_phase sees them." },
+        { text: "The FIFO itself reports an error at the end of the test", correct: false, feedback: "uvm_tlm_analysis_fifo reports nothing about leftovers. The scoreboard must ask used() or is_empty()." },
+        { text: "Call flush() in run_phase so the summary shows pending=0", correct: false, feedback: "That hides the failure instead of reporting it." }
+      ],
+      explanation: "A scoreboard's end-of-test duty: report a summary, fail on leftovers (pending != 0), and fail when nothing was checked at all.",
+      objective: 3
+    },
+    {
+      question: "The env forgets model.get_port.connect(req_fifo.get_export). What happens?",
+      answers: [
+        { text: "UVM_ERROR [Connection Error] connection count of 0 does not meet required minimum of 1, then UVM_FATAL [BUILDERR] at the start of end of elaboration", correct: true, feedback: "Right. Get ports have a minimum of 1. The count is checked when bindings are resolved, and the error count stops the run before run_phase." },
+        { text: "The model waits forever in get()", correct: false, feedback: "The run never reaches run_phase: the missing connection is caught at end of elaboration." },
+        { text: "A null-object error at the model's first get()", correct: false, feedback: "That is the symptom for the driver's seq_item_port, whose minimum is 0. A get port's minimum of 1 is enforced earlier." },
+        { text: "Nothing: unconnected ports are legal", correct: false, feedback: "True only for analysis ports and the driver's seq_item_port. Put, get and peek ports must reach exactly one imp." }
+      ],
+      explanation: "Read the end-of-elaboration log first: a Connection Error names the port and the count. BUILDERR follows because any UVM_ERROR during build stops the run.",
+      objective: 5
+    }
+  ]}
+/>
+
+The flashcards for this lesson follow below, under "Reinforce the essentials".
+
+### Interactive: build the TLM topology
+
+Pick the endpoint that calls `connect()`, then the one it connects to, and read the verdict. When the goals look met, run to end of elaboration to see what each port really reaches. The four scenarios match this page: "Inside an agent" (the pull port and promotion), "Env with an analysis FIFO" (decoupling), "Promotion through two boundaries" (the diagram in Connection rules) and "Two-input scoreboard" (`` `uvm_analysis_imp_decl ``; the builder gives the output side its own `pkt_item` type to show that the two imps may differ). Then switch to **Spot the bug** for one broken `connect_phase` per scenario.
+
+<TlmConnectionBuilderVisualizer />
+
+For a second, guided wiring exercise, try the [scoreboard connector](/exercises/scoreboard-connector).
+
+### Kata: a two-input scoreboard with `` `uvm_analysis_imp_decl ``
+
+**Objective:** practise objectives 3 and 5 by turning the snippet from Build Your Mental Model into a working scoreboard, then into a two-FIFO version.
+
+**Spec.** An in-order bridge copies every `bus_item` from its input bus to its output bus unchanged. `in_agt.ap` publishes what entered, and `out_agt.ap` what left. Write `bridge_scoreboard`:
+1. Declare `exp_imp` and `act_imp` with `` `uvm_analysis_imp_decl(_exp) `` and `` `uvm_analysis_imp_decl(_act) ``.
+2. `write_exp()` stores a copy of each expected item in a queue. `write_act()` pops the oldest expected item, compares it with the actual item, and counts matches and mismatches. An actual item with nothing expected is an error.
+3. `check_phase` reports `SCB_SUMMARY matches=N mismatches=M pending=P`, an error if `pending` is not 0, and an error if nothing was checked.
+4. Write the env's two `connect()` lines.
+5. **Part two:** re-implement it with two `uvm_tlm_analysis_fifo`s behind `uvm_analysis_export`s and one `run_phase` loop, as in Make It Work. What does the second version allow that the first does not?
+
+**Done when** a clean run of 5 items prints `SCB_SUMMARY matches=5 mismatches=0 pending=0` with `UVM_ERROR :    0`, and deleting `out_agt.ap.connect(scb.act_imp);` makes the scoreboard fail (pending 5) instead of passing.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+```systemverilog
+// snippet: compiles inside tlm_demo_pkg, after bus_item
+`uvm_analysis_imp_decl(_exp)            // package scope, before the class
 `uvm_analysis_imp_decl(_act)
 
 class bridge_scoreboard extends uvm_scoreboard;
   `uvm_component_utils(bridge_scoreboard)
   uvm_analysis_imp_exp #(bus_item, bridge_scoreboard) exp_imp;
-  uvm_analysis_imp_act #(pkt_item, bridge_scoreboard) act_imp;
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-    exp_imp = new("exp_imp", this);
-    act_imp = new("act_imp", this);
-  endfunction
-
-  function void write_exp(bus_item t);  /* predict and queue */  endfunction
-  function void write_act(pkt_item t);  /* compare with queue */ endfunction
-endclass
-
-// env connect_phase
-in_agt.ap.connect(scb.exp_imp);
-out_agt.ap.connect(scb.act_imp);
-```
-
-## Decoupling the Scoreboard
-`write()` is a **function**. An analysis port's `write()` calls each connected subscriber's `write()` one after another, inside the monitor's own process, all at the same simulation time. It has no buffer and no back-pressure: a subscriber cannot slow the monitor down, because a function cannot consume simulation time. A delay or a task call inside `write()` does not compile.
-
-So when a subscriber needs to *wait* (for a DUT response, for the matching item on another stream, or for a clock), the waiting cannot live in `write()`. Insert a `uvm_tlm_analysis_fifo`:
-1. The monitor's `analysis_port` connects to the FIFO's `analysis_export` (an imp). The FIFO's `write()` is a zero-time `try_put()` into an unbounded queue, so it always succeeds.
-2. The scoreboard no longer implements `write()` for that stream. It runs a `forever` loop in its `run_phase`, calling `get()` (a task, which may block) through a `uvm_blocking_get_port` connected to the FIFO's `get_export`.
-3. The queue now holds the backlog. Make sure it is empty before the test ends: keep an objection until the scoreboard is idle, or report leftovers in `check_phase`.
-
-```systemverilog
-class my_env extends uvm_env;
-  `uvm_component_utils(my_env)
-  my_agent                         agt;
-  my_checker                       chk;      // has uvm_blocking_get_port #(my_txn) get_port
-  uvm_tlm_analysis_fifo #(my_txn)  chk_fifo;
+  uvm_analysis_imp_act #(bus_item, bridge_scoreboard) act_imp;
+  bus_item     exp_q[$];
+  int unsigned matches, mismatches;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -162,138 +1024,95 @@ class my_env extends uvm_env;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    agt      = my_agent::type_id::create("agt", this);
-    chk      = my_checker::type_id::create("chk", this);
-    chk_fifo = new("chk_fifo", this);
+    exp_imp = new("exp_imp", this);
+    act_imp = new("act_imp", this);
   endfunction
 
-  function void connect_phase(uvm_phase phase);
-    agt.ap.connect(chk_fifo.analysis_export);
-    chk.get_port.connect(chk_fifo.get_export);
+  function void write_exp(bus_item t);
+    bus_item c;
+    if (!$cast(c, t.clone())) `uvm_fatal("SCB", "clone failed")
+    exp_q.push_back(c);                   // store a copy: the publisher keeps t
+  endfunction
+
+  function void write_act(bus_item t);
+    bus_item e;
+    if (exp_q.size() == 0) begin
+      `uvm_error("SCB_UNEXPECTED",
+                 $sformatf("nothing expected, got %s", t.convert2string()))
+      mismatches++;
+      return;
+    end
+    e = exp_q.pop_front();
+    if (t.compare(e)) matches++;
+    else begin
+      mismatches++;
+      `uvm_error("SCB_MISMATCH", $sformatf("expected %s, got %s",
+                 e.convert2string(), t.convert2string()))
+    end
+  endfunction
+
+  function void check_phase(uvm_phase phase);
+    int unsigned pending = exp_q.size();
+    if (pending != 0)
+      `uvm_error("SCB_PENDING", $sformatf("%0d expected items never arrived", pending))
+    if (matches + mismatches == 0)
+      `uvm_error("SCB_IDLE", "no item was checked: is act_imp connected?")
+    `uvm_info("SCB", $sformatf("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+              matches, mismatches, pending), UVM_LOW)
   endfunction
 endclass
 
-// my_checker::run_phase
-task run_phase(uvm_phase phase);
-  my_txn t;
-  forever begin
-    get_port.get(t);          // blocks until the FIFO has an item
-    wait_for_response(t);     // time-consuming work is legal here
-    compare(t);
-  end
-endtask
+// bus_env::connect_phase
+// in_agt.ap.connect(scb.exp_imp);
+// out_agt.ap.connect(scb.act_imp);
 ```
 
-## Make It Work
-1. **Connect everything in `connect_phase`**: Ports exist after the `build_phase` completes. Bindings are resolved when `end_of_elaboration` starts; a `connect()` at or after that point is ignored with a "Late Connection" warning.
-2. **Analysis Ports support 0-to-N connections**: You can wire an agent's `analysis_port` to an `analysis_imp` on a subscriber, a FIFO for a scoreboard, and a logger simultaneously. Most other ports (put, get, and exports) need at least one connection, or end of elaboration reports "connection count of 0 does not meet required minimum of 1" and stops the run.
-3. **Use FIFOs when the consumer must wait**: Put a `uvm_tlm_analysis_fifo` in front of any subscriber that needs task context (waiting, pairing two streams, timing).
-4. **Be careful with references**: Items passed via TLM are handles, and every subscriber receives the same object. Create a new item per transaction in the monitor, never modify an item inside `write()`, and `clone()` anything you need to change or store.
-5. **Never rely on subscriber order**: The standard promises no order for the `write()` calls. (The reference implementation happens to call them sorted by the imps' full names, not in `connect()` order.)
+**Why it works.** Each imp class calls its own method, so the two streams stay apart. Both methods are zero-time functions, which is enough for an in-order compare: the expected item always arrives first, because the bridge cannot output an item before it receives it. With `out_agt.ap.connect(scb.act_imp)` deleted, the build is still clean (an analysis port may have no subscriber, and `act_imp` counts itself), but `check_phase` reports `SCB_PENDING` for 5 items and `SCB_IDLE`, so the test fails as it should.
 
-## Interview Pitfalls
-**Missing the `connect_phase` Hierarchy Rule:**
-Connections cross one level of hierarchy at a time:
-- **port → port goes up**: a child's port connects to its parent's port (`mon.ap.connect(ap)` inside the agent).
-- **port → export or imp goes across**: between siblings, written in their common parent's `connect_phase` (`agt.ap.connect(scb.item_imp)` in the env).
-- **export → export or imp goes down**: a parent's export connects to a child's export or imp (`analysis_export.connect(scb.item_imp)` inside a sub-env).
+**Part two.** The two-FIFO version is `bus_scoreboard` in Make It Work without the `+1` prediction. Its `run_phase` thread may wait, so it can later model latency, wait for a response or apply a timeout without rewiring the env. It also tolerates actual items that arrive before their expected partners, which the `imp_decl` version reports as unexpected.
 
-UVM checks these levels only as *warnings*, and only when `check_connection_relationships` is set; analysis ports skip the check. What it always enforces is direction: an imp can never call `connect()`, and an export can never connect to a port.
+</details>
 
-**Missing `item_done()`:**
-Interviewers will present a testbench that runs exactly one transaction and hangs. If the driver loops but never calls `item_done()`, the sequence blocks forever waiting for acknowledgment.
+### Debug challenge: read the log, find the line
 
-## Practice & Reinforce
+Each symptom comes from the Make It Work bench with one line of `tlm_env::connect_phase` changed, deleted or added. Name the line and the fix before opening the answers.
 
-<Quiz questions={[
-    {
-      "question": "Which phase is the only correct place to resolve TLM port connections?",
-      "answers": [
-        {"text": "build_phase", "correct": false},
-        {"text": "connect_phase", "correct": true},
-        {"text": "run_phase", "correct": false}
-      ],
-      "explanation": "connect_phase runs after every component and its ports exist. Bindings are resolved when end_of_elaboration starts, and a connect() at or after that point is ignored with a 'Late Connection' warning."
-    },
-    {
-      "question": "How many subscribers can connect to a single `uvm_analysis_port`?",
-      "answers": [
-        {"text": "Exactly 1", "correct": false},
-        {"text": "0 or more (unlimited)", "correct": true},
-        {"text": "A maximum of 2", "correct": false}
-      ],
-      "explanation": "Analysis ports implement publish/subscribe logic. If no one connects, the `write()` call is safely ignored. If 10 components connect, `write()` runs for all 10."
-    },
-    {
-      "question": "A subscriber's write() method starts with #10ns to wait for the DUT. What happens?",
-      "answers": [
-        {"text": "The monitor stalls 10 ns on every ap.write()", "correct": false},
-        {"text": "A compile error: write() is a function and cannot contain a delay", "correct": true},
-        {"text": "UVM queues the item and runs write() 10 ns later", "correct": false}
-      ],
-      "explanation": "A function cannot contain time-controlling statements (IEEE 1800-2023 §13.4). Move the waiting into a task, fed by a uvm_tlm_analysis_fifo and a get() loop."
-    },
-    {
-      "question": "Which connect() call is illegal?",
-      "answers": [
-        {"text": "agt.ap.connect(cov.analysis_export)   // cov is a uvm_subscriber", "correct": false},
-        {"text": "sqr.seq_item_export.connect(drv.seq_item_port)", "correct": true},
-        {"text": "mon.ap.connect(ap)   // inside the agent", "correct": false}
-      ],
-      "explanation": "seq_item_export is an imp, and an imp cannot call connect(): UVM reports a Connection Error and stops at end of elaboration. The driver's port is the caller: drv.seq_item_port.connect(sqr.seq_item_export)."
-    }
-  ]} />
+1. `UVM_ERROR … uvm_test_top.env.cov.analysis_imp [Connection Error] Cannot call an imp port's connect method. … (You attempted to bind this imp to uvm_test_top.env.model.ap)`
+2. `UVM_ERROR … uvm_test_top.env.model.get_port [Connection Error] uvm_test_top.env.req_fifo.put_export (of type uvm_put_imp) does not provide the complete interface required of this port (type uvm_blocking_get_port)`
+3. A team-mate added a second FIFO, `log_fifo` (built like `req_fifo`), and one new line in `connect_phase`. The log shows `UVM_ERROR … uvm_test_top.env.prod.put_port [Connection Error] connection count of 2 exceeds maximum of 1`.
+4. The end-of-elaboration log is clean. All six `PROD` lines print by 30 ns, then nothing happens until the run is killed by the phase timeout.
 
-### Interactive: Build the TLM Topology
+<details>
+<summary>Answers (try first)</summary>
 
-Pick the endpoint that calls `connect()`, then the one it connects to, and read the verdict. When the goals look met, run to `end_of_elaboration` to see what each port actually reaches. Try **Spot the bug** for four broken `connect_phase` listings.
+1. `cov.analysis_export.connect(model.ap);`: the call was written from the imp (the reporter's name, `cov.analysis_imp`, is the instance name of `uvm_subscriber`'s `analysis_export`). Imps never call `connect()`. Fix: `model.ap.connect(cov.analysis_export);`. The build stops with `BUILDERR`. Reversing a *put* connection, `req_fifo.put_export.connect(prod.put_port)`, gives a different first message: `connect()` checks the interface before the direction, and a `uvm_blocking_put_port` lacks the nonblocking half that the `uvm_put_imp` requires, so the log reads `… prod.put_port (of type uvm_blocking_put_port) does not provide the complete interface required of this port (type uvm_put_imp)` (uvm-core 2020.3.1, `uvm_port_base.svh`, `connect()`).
+2. `model.get_port.connect(req_fifo.put_export);`: a get port connected to a put imp. It compiles because all TLM-1 endpoints share one base type, and the interface check inside `connect()` catches it. Because that `connect()` was refused, `model.get_port` also reaches 0 imps, so a second `connection count of 0` error follows at end of elaboration. Fix: `model.get_port.connect(req_fifo.get_export);`.
+3. `prod.put_port.connect(log_fifo.put_export);` was added, so `prod.put_port` now reaches two imps. A put port reaches exactly one provider. Fix: remove the line; to send the same items to a logger as well, connect the logger to `prod.ap` (an analysis port fans out) or to `req_fifo.put_ap`.
+4. `model.ap.connect(scb.act_export);` is missing. The build stays clean: `model.ap` is an analysis port (minimum 0), and `scb.act_export` still reaches its own `act_fifo.analysis_export`, so its count is 1. At run time the scoreboard waits forever in `act_fifo.get()`, so `wait_checked(6)` never returns and the objection is never dropped. The default phase timeout (9200 s, `UVM_DEFAULT_TIMEOUT` in uvm-core) finally ends the run with a `UVM_FATAL`, and `check_phase` never runs. Fix: restore the connection. To fail faster, give the test a shorter timeout (I-UVM-1C).
 
-<TlmConnectionBuilderVisualizer />
+</details>
 
-<VisualRecap
-  title="Caller to implementer, one level at a time"
-  rule="requirer.connect(provider): ports call connect(), imps never do, and every chain must end in an imp. Analysis write() is a zero-time function call to each subscriber, so anything that must wait goes behind a uvm_tlm_analysis_fifo."
-  code={`drv.seq_item_port.connect(sqr.seq_item_export); // port -> imp
-mon.ap.connect(ap);                             // child port -> parent port
-agt.ap.connect(chk_fifo.analysis_export);       // analysis port -> imp
-chk.get_port.connect(chk_fifo.get_export);      // get port -> imp`}
-  mistake="Writing the connection backwards (an imp or export calling connect() on a port), or putting a delay in write() to model a slow scoreboard."
-  inTestbench="Agents promote their monitor's ap; the env wires agent ports to scoreboards, coverage and FIFOs in connect_phase; end_of_elaboration reports anything left unconnected."
->
-  <svg viewBox="0 0 320 120" role="img" aria-label="A square port on the driver points with a dashed arrow to a filled circle imp on the sequencer, labelled get_next_item. A solid arrow returns the item from sequencer to driver." style={{ width: "100%", maxWidth: 360 }}>
-    <rect x="8" y="30" width="110" height="56" rx="8" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
-    <text x="20" y="62" fontSize="12" fontFamily="monospace" fill="currentColor">sqr</text>
-    <circle cx="118" cy="58" r="6" fill="currentColor" />
-    <rect x="202" y="30" width="110" height="56" rx="8" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
-    <text x="250" y="62" fontSize="12" fontFamily="monospace" fill="currentColor">drv</text>
-    <rect x="196" y="52" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" />
-    <path d="M 196 58 L 128 58" fill="none" stroke="currentColor" strokeDasharray="5 3" strokeWidth="1.4" />
-    <path d="M 134 53 L 126 58 L 134 63" fill="none" stroke="currentColor" strokeWidth="1.4" />
-    <text x="130" y="50" fontSize="9" fontFamily="monospace" fill="currentColor">get_next_item()</text>
-    <path d="M 64 30 L 64 14 L 256 14 L 256 26" fill="none" stroke="rgb(6,182,212)" strokeWidth="1.6" />
-    <path d="M 251 22 L 256 30 L 261 22 Z" fill="rgb(6,182,212)" />
-    <text x="140" y="10" fontSize="9" fontFamily="monospace" fill="currentColor">req</text>
-    <text x="8" y="110" fontSize="10" fill="currentColor" fillOpacity="0.7">Dashed: the call. Solid: the item coming back.</text>
-  </svg>
-</VisualRecap>
+### Lab: decouple the scoreboard
 
-<div className="my-6 rounded-2xl border border-muted bg-muted/40 p-6">
-  <h3 className="text-lg font-semibold">Lab: Decoupling the Scoreboard</h3>
-  <p className="mt-2 text-sm text-muted-foreground">
-    Put the theory into practice: move a time-consuming check out of a scoreboard's write() function and into a run_phase loop that pulls from an analysis FIFO with a blocking get().
-  </p>
-  <div className="mt-4">
-    <a href="/practice/lab/scoreboard-decoupling" className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow ring-offset-background transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-      Start the Scoreboard Lab →
-    </a>
-  </div>
-</div>
+Put the TLM pieces from this page to work in a full bench: replace a scoreboard that blocks the monitor with one that takes transactions through analysis FIFOs, so a slow check can never stall sampling.
 
-## Capstone Checkpoint
-
-<LabLink labId="uvm-mini-capstone" />
+<LabLink labId="scoreboard-decoupling" />
 
 ## References & Next Topics
-- IEEE 1800.2-2020: §5.5 `uvm_port_base` (`connect` §5.5.2.14, `resolve_bindings` §5.5.2.15), §12.2.10 analysis port, export and imp, §15.2.2 sequence-item pull ports, §B.5.22 `` `uvm_analysis_imp_decl ``. Clause numbers taken from the `@uvm-ieee` annotations in the uvm-core 2020.3.1 source.
-- IEEE 1800-2023 §13.4: a function cannot contain time-controlling statements or call tasks.
-- Next: [/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index).
+
+**Primary sources**
+- IEEE 1800.2-2020: §5.5 `uvm_port_base` (§5.5.2.9 `get_connected_to`, §5.5.2.10 `get_provided_to`, §5.5.2.12 `size`, §5.5.2.14 `connect`, §5.5.2.15 `resolve_bindings`); §12.2.4 `uvm_tlm_if_base` (§12.2.4.2.1 to §12.2.4.2.12, the TLM-1 methods); §12.2.8.1 `uvm_tlm_fifo_base`; §12.2.8.2 `uvm_tlm_fifo`; §12.2.8.3 `uvm_tlm_analysis_fifo`; §12.2.9.1 `uvm_tlm_req_rsp_channel`; §12.2.9.2 `uvm_tlm_transport_channel`; §12.2.10 analysis port, imp and export (§12.2.10.1 to §12.2.10.3); §12.3 TLM-2 (§12.3.2 interfaces, §12.3.4 generic payload, §12.3.5 sockets); §13.9 `uvm_subscriber`; §15.2.2 sequence-item pull port, export and imp; Annex B.5.22 `` `uvm_analysis_imp_decl ``.
+- IEEE 1800-2023: §7.8.2 string-indexed associative arrays (ordering); §8.20 virtual methods (identical argument names); §13.4 functions; §13.4.4 background processes spawned by function calls; §19.8.1 overriding the built-in `sample` method.
+- uvm-core 2020.3.1 reference implementation: `src/base/uvm_port_base.svh`, `src/base/uvm_root.svh`, `src/tlm1/uvm_tlm_ifs.svh`, `src/tlm1/uvm_ports.svh`, `src/tlm1/uvm_tlm_imps.svh`, `src/tlm1/uvm_analysis_port.svh`, `src/tlm1/uvm_tlm_fifo_base.svh`, `src/tlm1/uvm_tlm_fifos.svh`, `src/tlm1/uvm_sqr_connections.svh`, `src/comps/uvm_subscriber.svh`, `src/comps/uvm_driver.svh`, `src/macros/uvm_tlm_defines.svh`, `src/seq/uvm_sequencer_param_base.svh`, `src/tlm2/`. Clause numbers above are taken from the `@uvm-ieee` annotations in this source. The annotation on `uvm_tlm_fifo` itself reads 18.2.8.2, a typo: the annotations on its methods and on `uvm_tlm_fifo_base` place it at §12.2.8.2.
+
+**Prerequisites:** [I-UVM-2A Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index) (agents, monitors, environments); [I-UVM-1C UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) (`connect_phase`, end of elaboration, objections); [I-SV-1 Copying and Cloning](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) (handles and copies).
+
+**Related**
+- [I-SV-5 Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes): the blocking rules `uvm_tlm_fifo` is built on, and a mailbox-versus-FIFO comparison.
+- [I-SV-3A Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index): covergroups for coverage subscribers.
+- [I-UVM-3A Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): the sequencer-driver handshake that runs over `seq_item_port`.
+- [I-UVM-3C Your First Complete UVM Testbench](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index): this lesson's scoreboard wired to real monitors and a DUT.
+- [A-UVM-6 Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): out-of-order and keyed matching, predictors and reference models.
+- [E-UVM-ML-1 Multi-Language Verification](/curriculum/T4_Expert/E-UVM-ML-1_Multi_Language_Verification/index): TLM-2 at the boundary with SystemC models.
+
+<NextLesson />

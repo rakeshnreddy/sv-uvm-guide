@@ -1,7 +1,77 @@
 [
   {
     "id": "iuvm2b-1",
-    "question": "Who calls write() on an analysis port, and how many subscribers may it have?",
-    "answer": "The producer, usually a monitor, calls write() on its uvm_analysis_port. The port broadcasts each transaction to every connected subscriber, and zero, one or many subscribers are all legal."
+    "question": "Who calls write() on an analysis port, how many subscribers may it have, and can a subscriber slow the caller down?",
+    "answer": "The producer, usually a monitor, calls `ap.write(t)`. It may have 0, 1 or many subscribers, and none is legal. `write()` is a zero-time function call to each subscriber in turn, so there is no buffer and no back-pressure: a subscriber cannot slow the monitor down."
+  },
+  {
+    "id": "iuvm2b-2",
+    "question": "What are the roles of a TLM port, export and imp?",
+    "answer": "A port requires an interface: its owner calls methods through it. An export forwards an interface, letting an outside port reach an imp inside its owner. An imp implements the methods by calling its owner component, and it always ends a chain."
+  },
+  {
+    "id": "iuvm2b-3",
+    "question": "Which connect() forms are legal, and which two are always reported as errors?",
+    "answer": "Legal: child port to parent port (up), port to sibling export or imp (across), export to child export or imp (down), always `requirer.connect(provider)`. Always errors: an imp calling `connect()`, and an export connecting to a port."
+  },
+  {
+    "id": "iuvm2b-4",
+    "question": "When are TLM connections made, and when does UVM check them?",
+    "answer": "Make them in `connect_phase`. UVM resolves and counts them at the start of end of elaboration; any `UVM_ERROR` by then stops the run with `UVM_FATAL [BUILDERR]`. A `connect()` at or after end of elaboration is ignored with a `[Late Connection]` warning."
+  },
+  {
+    "id": "iuvm2b-5",
+    "question": "What are the minimum and maximum connection counts for put/get ports, analysis ports, analysis exports and the driver's seq_item_port?",
+    "answer": "Put, get and peek ports: 1 and 1. `uvm_analysis_port`: 0 and unbounded. `uvm_analysis_export`: 1 and unbounded. `uvm_seq_item_pull_port`: 0 and 1, so a forgotten driver connection shows up only as a `DRVCONNECT` warning and a null-object error at run time."
+  },
+  {
+    "id": "iuvm2b-6",
+    "question": "Which handles named \"export\" are really imps?",
+    "answer": "The sequencer's `seq_item_export` (a `uvm_seq_item_pull_imp`), a `uvm_subscriber`'s `analysis_export` (instance name `analysis_imp`), and a TLM FIFO's `put_export`, `get_export` and `analysis_export`. Read the class, not the name."
+  },
+  {
+    "id": "iuvm2b-7",
+    "question": "What sizes do uvm_tlm_fifo and uvm_tlm_analysis_fifo have by default?",
+    "answer": "`uvm_tlm_fifo` defaults to size 1, so a second `put()` blocks until a `get()`; size 0 means unbounded (IEEE 1800.2-2020 §12.2.8.2). `uvm_tlm_analysis_fifo` is always unbounded, and its `write()` is a `try_put()` that always succeeds (§12.2.8.3)."
+  },
+  {
+    "id": "iuvm2b-8",
+    "question": "Why can't a subscriber's write() wait for the DUT, and what do you do instead?",
+    "answer": "`write()` is a function, so a delay or a task call inside it is a compile error (IEEE 1800-2023 §13.4). Put a `uvm_tlm_analysis_fifo` in front of the subscriber and wait in its own `run_phase` loop around a blocking `get()`."
+  },
+  {
+    "id": "iuvm2b-9",
+    "question": "Does each subscriber of an analysis port receive its own copy of the transaction?",
+    "answer": "No. Every subscriber receives the same handle, so one that modifies `t` changes what later subscribers see. Publishers create a new object per transaction, subscribers never modify `t`, and anyone who needs a changed version clones it first."
+  },
+  {
+    "id": "iuvm2b-10",
+    "question": "In what order does an analysis port call its subscribers?",
+    "answer": "Do not rely on any order. uvm-core 2020.3.1 calls the imps in lexicographic order of their full names, not in `connect()` order, so renaming a component can reorder them."
+  },
+  {
+    "id": "iuvm2b-11",
+    "question": "What does the macro call uvm_analysis_imp_decl(_exp) do, and where should you invoke it?",
+    "answer": "It declares the class `uvm_analysis_imp_exp`, whose `write()` calls `write_exp()` on its owner, so one scoreboard can have separate expected and actual inputs (Annex B.5.22). Invoke it once per suffix, at package or file scope, before the class that uses it."
+  },
+  {
+    "id": "iuvm2b-12",
+    "question": "What are the two standard ways to build a two-input scoreboard, and when do you pick each?",
+    "answer": "Two imps declared with `uvm_analysis_imp_decl`, when both streams arrive in order and every check is zero-time. Two `uvm_tlm_analysis_fifo`s plus a `run_phase` thread that calls `get()`, when a check must wait or items arrive far apart."
+  },
+  {
+    "id": "iuvm2b-13",
+    "question": "Why must a uvm_subscriber's write() keep the argument name t?",
+    "answer": "It overrides `uvm_subscriber`'s `pure virtual function void write(T t)`, and IEEE 1800-2023 §8.20 requires a virtual method override to use identical argument names. A renamed argument is illegal; whether a tool reports an error or only a warning is tool-dependent."
+  },
+  {
+    "id": "iuvm2b-14",
+    "question": "Which wiring mistakes are silent at end of elaboration, and how do you catch them?",
+    "answer": "An analysis port with no subscriber, and a reversed promotion such as `ap.connect(mon.ap)` inside the agent, are legal and report nothing. Make scoreboards count what they check, fail when they checked nothing, and fail when an analysis FIFO is not empty in `check_phase`."
+  },
+  {
+    "id": "iuvm2b-15",
+    "question": "What is TLM-2 in UVM, and where do you meet it?",
+    "answer": "IEEE 1800.2-2020 §12.3: a generic payload transaction (§12.3.4) passed through initiator and target sockets (§12.3.5) with `b_transport` or `nb_transport_fw`/`nb_transport_bw` and a timing argument. It is used mainly to connect SystemC or C++ models; ordinary UVM benches use TLM-1."
   }
 ]

@@ -1,37 +1,82 @@
 [
   {
     "id": "policy-five-classes",
-    "question": "Name the five UVM policy classes and their single-sentence purpose.",
-    "answer": "uvm_printer (formats fields for debug output), uvm_comparer (compares two objects and counts miscompares), uvm_packer (serializes fields into a bitstream), uvm_recorder (writes transaction attributes to a recording database), uvm_copier (applies the copy policy; whether nested objects are cloned or shared depends on the field flags or your do_copy())."
+    "question": "Name the five UVM policy classes and what each does.",
+    "answer": "uvm_printer formats fields for print()/sprint(); uvm_comparer compares two objects and counts miscompares; uvm_packer serialises fields for pack/unpack; uvm_recorder writes fields into a transaction record; uvm_copier copies fields for copy()/clone(). All derive from uvm_policy (IEEE 1800.2 §16.1–§16.6)."
+  },
+  {
+    "id": "i-uvm-4-1",
+    "question": "In what order does compare() (or print, copy, pack) reach an object's fields?",
+    "answer": "The method picks the policy (the default if none is passed) and flushes it at depth 0; the policy calls do_execute_op, where the field macros run (base-class fields first); then, if the user hook is enabled, it calls your do_* hook. Both run, so compare() returns 0 if the macros counted a miscompare or do_compare() returned 0. record() is the exception: it has no default recorder and does nothing without one (§5.3.7.1)."
+  },
+  {
+    "id": "i-uvm-4-2",
+    "question": "What are the default comparer's threshold, show_max, severity and verbosity, and what does each limit?",
+    "answer": "Threshold 1, show_max 1, UVM_INFO, UVM_LOW (§16.3.5–§16.3.6). The threshold makes the field macros skip remaining fields once get_result() reaches it; direct compare_field_int calls always compare and count. show_max only limits how many MISCMP lines are printed; get_result() and get_miscompares() still hold every counted miscompare."
+  },
+  {
+    "id": "i-uvm-4-3",
+    "question": "Does a failing compare() fail the test?",
+    "answer": "No. compare() returns 0 and logs each miscompare as UVM_INFO with ID MISCMP. The scoreboard must check the return value and raise its own `uvm_error, for example with cmp.get_miscompares() as the message."
+  },
+  {
+    "id": "i-uvm-4-4",
+    "question": "What does `uvm_field_int(id, UVM_NOCOMPARE) do under IEEE 1800.2 semantics?",
+    "answer": "Nothing: a flag enables only the operations it names, so id joins no operation (not print, copy, compare or pack), and uvm-core warns UVM/FIELDS/NO_FLAG once. The same happens to a radix-only flag such as UVM_HEX. Write UVM_ALL_ON | UVM_NOCOMPARE."
   },
   {
     "id": "policy-do-print",
-    "question": "When should you override `do_print()` instead of relying on `uvm_field_*` macros?",
-    "answer": "When you need custom formatting, conditional field display, or computed display values that the field macros cannot express declaratively."
+    "question": "When should you override do_print() instead of relying on field macros, and how should it print a field?",
+    "answer": "When you need computed or conditional fields, or a class without field macros. Print through the printer's API, e.g. printer.print_field_int(\"addr\", addr, $bits(addr), UVM_HEX), so the table, tree and line printers can all lay it out (§5.3.6, §16.2.3.9)."
+  },
+  {
+    "id": "i-uvm-4-5",
+    "question": "convert2string() versus print()/sprint(): who builds each, and when do you use which?",
+    "answer": "print() and sprint() are built by the printer from the field macros and do_print(); print() writes straight to the printer's file, bypassing verbosity. convert2string() returns \"\" unless you override it, and the field macros never implement it (§5.3.6.4). Use convert2string() for one-line `uvm_info messages and sprint() for full dumps."
   },
   {
     "id": "policy-printer-formats",
-    "question": "What are the three built-in UVM printer formats and which is the default?",
-    "answer": "Table (default), tree and line. In IEEE 1800.2 select the default with uvm_printer::set_default(...); the UVM 1.2 globals such as uvm_default_printer are the older style."
+    "question": "What are the three built-in printers, and how do you choose one?",
+    "answer": "uvm_table_printer, uvm_tree_printer and uvm_line_printer (§16.2.10–§16.2.12). uvm-core's default is the table printer (1800.2 leaves the default to the implementation). Select one with uvm_printer::set_default(uvm_line_printer::get_default()), or pass a printer to a single print() call; the 1.2 global uvm_default_printer is not part of 1800.2."
   },
   {
     "id": "policy-comparer-knobs",
-    "question": "How do you configure `uvm_comparer` to tolerate a ±1 mismatch on an integer field?",
-    "answer": "There is no tolerance knob on uvm_comparer. Implement do_compare(): call super.do_compare(), then check the field yourself, e.g. if (abs(len - rhs_.len) > 1) return 0 (optionally recording the miscompare through the comparer)."
-  },
-  {
-    "id": "policy-packer-use",
-    "question": "What is a common real-world use case for `uvm_packer`?",
-    "answer": "Serializing a transaction into a byte array for DPI export to a C/C++ reference model or for network socket communication in co-simulation."
+    "question": "How do you let an integer field differ by up to 1 in a scoreboard compare?",
+    "answer": "There is no tolerance knob. Subclass uvm_comparer and override compare_field_int, which the field macros call with the field name, to accept a difference within tolerance (guard against X with $isunknown); or compute a signed difference in do_compare and call comparer.compare_field_int only when it is out of range. Always check compare()'s return value."
   },
   {
     "id": "policy-copy-deep",
     "question": "Does copy() clone nested objects or share them?",
-    "answer": "It depends on how the field is registered or how you wrote do_copy(). A hand-written do_copy that does cfg = rhs_.cfg copies the handle, so both objects share one cfg — a classic aliasing bug. Clone nested objects explicitly when the copy must be independent."
+    "answer": "It depends on the code. `uvm_field_object with UVM_ALL_ON copies deep (uvm-core copies into the destination's object, creating one if the handle is null); UVM_REFERENCE copies the handle. A hand-written do_copy that writes cfg = rhs_.cfg shares one object between both copies; clone the sub-object when the copy must be independent."
+  },
+  {
+    "id": "i-uvm-4-6",
+    "question": "What is the pack/unpack symmetry rule?",
+    "answer": "do_unpack must read the same fields, in the same order, with the same widths, as do_pack wrote them (§5.3.10.2); neither order has to match the declaration order. The stream holds no field names, so a mismatch is never reported: values swap or scramble, and only a compare() after the round trip shows it."
+  },
+  {
+    "id": "policy-packer-use",
+    "question": "What is uvm_packer for, and what must you not do with its stream?",
+    "answer": "Round-tripping an object through a bit or byte stream that a compatible packer unpacks (§16.5.3.1), for example to save and restore it or move it between SV components. The stream format is implementation-defined (§16.5.3.2): uvm-core starts it with 64 bits of packer state and a 4-bit marker per object, so do not decode it in C. For a C model, pass the fields or a packed struct through DPI."
+  },
+  {
+    "id": "i-uvm-4-7",
+    "question": "An item has 64 bits of fields. In uvm-core 2020.3.1, what do pack_bytes() return and how many bytes does it produce?",
+    "answer": "It returns 68 (bits that can be unpacked: 64 field bits plus the 4-bit object marker) and fills 17 bytes. flush() starts both iterators at 64, the marker and fields move the pack iterator to 132, the return value is 132 − 64, and the array holds (132 + 7) / 8 bytes."
+  },
+  {
+    "id": "i-uvm-4-8",
+    "question": "What are do_execute_op and uvm_field_op?",
+    "answer": "do_execute_op(uvm_field_op op) is the single hook every policy calls before the do_* hook (§5.3.13); the field macros generate it. The op carries get_op_type(), get_policy() and get_rhs(), and op.disable_user_hook() stops the do_* call (§5.7.2). `uvm_object_utils_begin already defines it, so only a class registered with plain `uvm_object_utils can write its own."
   },
   {
     "id": "policy-macro-tradeoff",
-    "question": "What is the main tradeoff between `uvm_field_*` macros and manual `do_*` overrides?",
-    "answer": "Macros give all five policies free but generate heavy boilerplate code and limit control. Manual overrides are verbose but give precise per-policy behavior and better simulation performance."
+    "question": "Field macros or hand-written do_* hooks: how do you choose?",
+    "answer": "Field macros give every operation for one line per field but, per the B.2.2 NOTE, may be less run-time efficient and less flexible, and are hard to debug. Hand-written hooks need one line per field per hook but give full control and plain code; use them for high-rate items. You write convert2string() either way, and never register a field in both."
+  },
+  {
+    "id": "i-uvm-4-9",
+    "question": "In uvm-core 2020.3.1, a field flagged UVM_PACK | UVM_COMPARE packs, but comes back 0 after unpack. Why?",
+    "answer": "IEEE 1800.2 B.2.2 says UVM_PACK enables both pack and unpack, but uvm-core tests a separate UVM_UNPACK bit (tool-dependent). Write UVM_PACK | UVM_UNPACK when you list operations explicitly, or simply UVM_ALL_ON with any UVM_NO* exclusions."
   }
 ]

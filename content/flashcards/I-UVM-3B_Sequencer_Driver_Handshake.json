@@ -1,1 +1,77 @@
-[]
+[
+  {
+    "id": "i-uvm-3b-hs-1",
+    "question": "When does a sequence's `finish_item()` return with a `get_next_item()` driver, and with a `get()` driver?",
+    "answer": "With `get_next_item()` it returns when the driver calls `item_done()`, after the item has been driven. `get()` calls `item_done()` itself before it returns, so `finish_item()` returns as soon as the driver takes the item, before it is driven."
+  },
+  {
+    "id": "i-uvm-3b-hs-2",
+    "question": "What does `try_next_item(req)` do when no sequence is ready?",
+    "answer": "It waits only for the NBA region of the current time slot (one `wait_for_sequences()` call by default), finds no request, and returns `req = null` without consuming time or printing anything. The driver should then drive an idle cycle that does consume time."
+  },
+  {
+    "id": "i-uvm-3b-hs-3",
+    "question": "A driver calls `get_next_item()` twice before `item_done()`. What happens?",
+    "answer": "The second call returns the same item, because it stays in the one-slot request FIFO until `item_done()`, and the sequencer reports `UVM_ERROR` \"Get_next_item called twice without item_done or get in between\". The item is driven twice."
+  },
+  {
+    "id": "i-uvm-3b-hs-4",
+    "question": "What causes `UVM_FATAL [SQRBADITMDN] Item_done() called with no outstanding requests`?",
+    "answer": "An `item_done()` with no fetched item: after `get()` (which already completed the item), a second `item_done()` for one item, or an `item_done()` after `stop_sequences()` emptied the request FIFO."
+  },
+  {
+    "id": "i-uvm-3b-hs-5",
+    "question": "What does `rsp.set_id_info(req)` copy, and what happens without it?",
+    "answer": "It copies the request's `sequence_id` and `transaction_id` into the response (IEEE 1800.2-2020 §14.1.2.4). Without it the response has `sequence_id` -1 and the sequencer stops the test with `UVM_FATAL [SQRPUT] Driver put a response with null sequence_id`."
+  },
+  {
+    "id": "i-uvm-3b-hs-6",
+    "question": "What are the four ways a driver can send a response?",
+    "answer": "`seq_item_port.item_done(rsp)`, `seq_item_port.put_response(rsp)`, `seq_item_port.put(rsp)` (a task that never blocks), and `rsp_port.write(rsp)` with `drv.rsp_port` connected to `sqr.rsp_export`. All four end in the sequencer's `put_response()`; use exactly one per response."
+  },
+  {
+    "id": "i-uvm-3b-hs-7",
+    "question": "How deep is a sequence's response queue, and what happens when it overflows in uvm-core 2020.3.1?",
+    "answer": "8 by default; `set_response_queue_depth(-1)` makes it unbounded. Extra responses are dropped silently, because uvm-core starts the error-report bit at 0, although IEEE 1800.2-2020 §14.2.7.5 asks for an error by default. Call `set_response_queue_error_report_enabled(1)` to see the drops."
+  },
+  {
+    "id": "i-uvm-3b-hs-8",
+    "question": "What does `use_response_handler(1)` change, and what must you then never call?",
+    "answer": "Every response for that sequence goes to its `response_handler(uvm_sequence_item response)` function instead of the response queue. Never call `get_response()` afterwards: the queue stays empty and the call waits forever."
+  },
+  {
+    "id": "i-uvm-3b-hs-9",
+    "question": "Where and when does a sequence's `response_handler()` run?",
+    "answer": "The sequencer calls it inside the driver's `put()`, `put_response()`, `rsp_port.write()` or `item_done(rsp)` call, in the driver's thread. It is a function, so it cannot wait. With an `item_done(rsp)` driver it runs before `finish_item()` returns."
+  },
+  {
+    "id": "i-uvm-3b-hs-10",
+    "question": "Why must a pipelined sequence create a new item for every request?",
+    "answer": "In uvm-core `send_request()` assigns a `transaction_id` only to an item whose id is still -1, so a reused object keeps its first id. And with `get()` the driver still holds the object while the sequence re-randomizes it."
+  },
+  {
+    "id": "i-uvm-3b-hs-11",
+    "question": "What does `UVM_WARNING [Sequencer] Dropping response for sequence N, sequence not found` mean?",
+    "answer": "A response arrived for a sequence that has already exited or been killed: the sequencer unregisters a sequence id when the sequence ends. Make `body()` wait for every outstanding response before it returns."
+  },
+  {
+    "id": "i-uvm-3b-hs-12",
+    "question": "A sequence sends 12 reads, then collects them with `get_response(rsp, tid)` while all are outstanding. Why can it hang?",
+    "answer": "Responses for other ids stay in the queue. Once 8 are waiting, later responses are dropped (silently in uvm-core), and `get_response(rsp, tid)` for a dropped id waits forever. Raise the depth, collect while sending, or use a response handler."
+  },
+  {
+    "id": "i-uvm-3b-hs-13",
+    "question": "What does `UVM_FATAL [SQRSNDREQGNI]` tell you?",
+    "answer": "Two driver threads fetched from one sequencer at the same time, and the second granted item did not fit in the one-slot request FIFO. A pipelined driver must fetch from one thread only; depending on timing the second thread can get the \"called twice\" error instead."
+  },
+  {
+    "id": "i-uvm-3b-hs-14",
+    "question": "A test hangs until the timeout with no other message. What do you check first?",
+    "answer": "Where each side is blocked: the sequence in `start_item()`, `finish_item()` or `get_response()`, and the driver in a fetch call or in its own pin-level wait. Then probe the sequencer with `get_current_item()`, `last_req()`, `last_rsp()` and `convert2string()`, and look for a lock or a dropped response."
+  },
+  {
+    "id": "i-uvm-3b-hs-15",
+    "question": "What happens when a driver returns a response whose type is not the sequence's `RSP` type?",
+    "answer": "Without a response handler, the sequence's `put_response()` cannot cast it and stops the test with `UVM_FATAL [PUTRSP] Failure to cast response in put_response`. A response handler bypasses that cast, so it must `$cast` and check the type itself."
+  }
+]

@@ -2,6 +2,76 @@
   {
     "id": "iuvm3a-1",
     "question": "Which four calls make up the basic sequence-driver handshake?",
-    "answer": "The sequence calls start_item(req) and finish_item(req). The driver calls seq_item_port.get_next_item(req), drives the item, then calls seq_item_port.item_done()."
+    "answer": "The sequence calls `start_item(req)` and `finish_item(req)`. The driver calls `seq_item_port.get_next_item(req)`, drives the item, then calls `seq_item_port.item_done()`."
+  },
+  {
+    "id": "iuvm3a-2",
+    "question": "What does each handshake call wait for?",
+    "answer": "`start_item` waits for the sequencer's grant, which needs a driver request. `finish_item` waits for the driver's `item_done()`. `get_next_item` waits until a granted sequence has sent an item. `item_done` is a function and never waits."
+  },
+  {
+    "id": "iuvm3a-3",
+    "question": "Where do you randomize an item in a sequence, and how?",
+    "answer": "Between `start_item` and `finish_item` (late randomization), and always checked: if `req.randomize() with {...}` returns 0, stop the test with `uvm_fatal`. `start_item` itself never randomizes."
+  },
+  {
+    "id": "iuvm3a-4",
+    "question": "What does the log show when a `get_next_item` driver forgets `item_done()`?",
+    "answer": "On every loop: `UVM_ERROR ... Get_next_item called twice without item_done or get in between`, and the same item is driven again. The sequence stays in `finish_item()` until the phase timeout."
+  },
+  {
+    "id": "iuvm3a-5",
+    "question": "What does the `uvm_do` macro expand to for an item, and what happens if randomization fails?",
+    "answer": "Create the item through the factory, `start_item(req)`, `req.randomize()`, `finish_item(req)`. A failed randomization only prints the warning `RNDFLD`, and the item is still sent."
+  },
+  {
+    "id": "iuvm3a-6",
+    "question": "A parent starts a child with the `uvm_do` macro. Which of the child's hooks run?",
+    "answer": "`pre_start()` and `post_start()` run, but `pre_body()` and `post_body()` do not, because the macro calls `start()` with `call_pre_post = 0`. The parent's `pre_do`, `mid_do` and `post_do` still run."
+  },
+  {
+    "id": "iuvm3a-7",
+    "question": "Why must a driver call `rsp.set_id_info(req)` before `item_done(rsp)`, even when `rsp` came from `req.clone()`?",
+    "answer": "The sequencer routes responses by `sequence_id` and `transaction_id`, and neither a new item nor a clone carries them. Without them uvm-core 2020.3.1 stops with `UVM_FATAL [SQRPUT] Driver put a response with null sequence_id`."
+  },
+  {
+    "id": "iuvm3a-8",
+    "question": "What happens to responses a sequence never collects with `get_response()`?",
+    "answer": "Each sequence queues at most 8 responses by default; later ones are dropped, silently in uvm-core 2020.3.1 unless `set_response_queue_error_report_enabled(1)` was called. A later `get_response()` returns the oldest response, which may belong to an earlier item."
+  },
+  {
+    "id": "iuvm3a-9",
+    "question": "How does a driver that uses `get(req)` change when `finish_item()` returns?",
+    "answer": "`get()` calls `item_done()` itself before it returns, so `finish_item()` returns before the item is driven. A response goes back later with `put(rsp)`."
+  },
+  {
+    "id": "iuvm3a-10",
+    "question": "When should a driver use `try_next_item` instead of `get_next_item`?",
+    "answer": "When it must drive idle cycles while no sequence has work. `try_next_item` returns `null` if no item is offered within the current time slot; the driver then drives one idle cycle (consuming time) and tries again."
+  },
+  {
+    "id": "iuvm3a-11",
+    "question": "A test calls `seq.set_automatic_phase_objection(1); seq.start(env.agt.sqr);` and the run ends at 0 ns. Why?",
+    "answer": "The sequence has no starting phase, so the automatic objection raises nothing. Call `seq.set_starting_phase(phase)` first, or raise and drop an objection in the test around `start()`."
+  },
+  {
+    "id": "iuvm3a-12",
+    "question": "Who should raise the objection that keeps `run_phase` alive while a sequence runs?",
+    "answer": "The test around `start()`, or the top sequence through its starting phase. Never the driver: its `forever` loop never ends, so it would block the end of test or let the count reach 0 between items."
+  },
+  {
+    "id": "iuvm3a-13",
+    "question": "An item has `byte payload[$]` that is in no field macro and not in `do_copy`/`do_compare`. What do `clone()` and `compare()` do with it?",
+    "answer": "`clone()` leaves it empty in the copy, and `compare()` ignores it, so a scoreboard reports a match although the data differ. Queues are values, so nothing is shared; the field is simply skipped."
+  },
+  {
+    "id": "iuvm3a-14",
+    "question": "How are a sequencer, a driver and a sequence parameterized, and what must agree?",
+    "answer": "All three take `#(REQ, RSP)`, with `RSP` defaulting to `REQ`: `typedef uvm_sequencer #(bus_item) bus_sequencer;`, `uvm_driver #(bus_item)`, `uvm_sequence #(bus_item)`. The types must match, or `drv.seq_item_port.connect(sqr.seq_item_export)` does not compile."
+  },
+  {
+    "id": "iuvm3a-15",
+    "question": "How do you make a sequencer start a default sequence without touching the test?",
+    "answer": "Use the plusarg `+uvm_set_default_sequence=uvm_test_top.env.agt.sqr,main_phase,bus_rw_seq` (IEEE 1800.2 Annex G.2.9). It sets the `default_sequence` resource for the scope `<sequencer>.main_phase`; the sequencer starts it in that phase and sets its starting phase, but the sequence must object for itself."
   }
 ]

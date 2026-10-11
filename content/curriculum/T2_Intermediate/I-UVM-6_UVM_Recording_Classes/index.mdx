@@ -1,185 +1,912 @@
 ---
-title: "UVM Recording Classes"
-description: "Understand how transaction recording bridges the gap between object-oriented verification models and traditional waveform viewing tools."
-flashcardId: "I-UVM-6_UVM_Recording_Classes"
+title: "I-UVM-6: UVM Recording Classes"
+description: "Record UVM transactions into a transaction database so they appear next to the waveforms, predict when nothing (or the wrong values) will be recorded, and choose what to record in long regressions."
+flashcards: "I-UVM-6_UVM_Recording_Classes"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
-- **Why it exists:** text logs are a poor way to debug long bus transactions. Recording writes each UVM transaction — its start time, end time and field values — into a transaction database, so a waveform viewer can draw it next to the RTL signals.
-- **`uvm_recorder`**: The policy object that receives a transaction's fields. Your `do_record()` (or the field macros) calls it, for example through `` `uvm_record_field ``.
-- **`uvm_tr_stream`**: A channel of transactions, like one row in the viewer. A component opens one stream per stream name.
-- **`uvm_tr_database`**: The backend that stores everything. The UVM library's default writes a text file (`tr_db.log`); simulators plug in their own database so transactions appear in the waveform tool.
-- **The rule that bites:** recording is **off by default**. Until it is enabled on the component, `begin_tr()` returns 0 and nothing is recorded.
+
+- **What it is:** **Transaction recording** writes each transaction a component handles (its name, its start and end times, and its field values) into a **transaction database**, a store of timed records that a waveform viewer can draw as rows of boxes next to the signals. IEEE 1800.2-2020 defines the pieces: the database (`uvm_tr_database`, §7.1), **streams** that group records (`uvm_tr_stream`, §7.2), one **recorder** per record (`uvm_recorder`, §16.4), **links** between records (§7.3), and the component calls that drive them: `begin_tr`, `end_tr`, `record_error_tr` and `record_event_tr` (§13.1.7).
+- **Why it matters:** A bus transfer that spans ten clocks is ten lines of text in a log, and you have to match them to the waveform by hand. A recorded transaction is one box on the waveform, aligned with the signals that carried it, showing its fields and the sequence that caused it. That is often the fastest way to see *which* transaction a failure belongs to.
+- **The rule that bites:** recording is **off by default** on every component (§13.1.7.14). Until you enable it, `begin_tr` returns 0, opens nothing, and the database stays empty, however carefully you wrote `do_record`.
+- **The Analogy:** A warehouse ledger. Each dock (a component) has its own pages in the shared ledger (its streams). When a dock starts handling a package (`begin_tr`), it opens a new line; when the package leaves (`end_tr`), it writes the package's contents on that line and closes it. A line can point to another ("this package belongs to that order": a parent/child link). *Where it breaks:* the ledger is switched off at every dock until someone switches it on; the contents are copied from the package at the moment it leaves, not as items go in; and the ledger's format belongs to the simulator, not to UVM.
+
+**You will be able to:**
+1. Explain the recording architecture (database, streams, recorders, attributes and links) and what a component's `begin_tr` and `end_tr` do to it.
+2. Predict when nothing, or the wrong values, will be recorded: recording never enabled or enabled too late, nothing telling `record()` what to write, fields changed before `end_tr`, `end_tr` never called.
+3. Write `do_record` and component `begin_tr`/`end_tr`/`record_error_tr`/`record_event_tr` calls that produce useful records with parent/child links, and control the sequencer's automatic item recording.
+4. Choose what to record in long regressions, trading recording cost against debug value.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-Think of a UVM transaction as a cargo box filled with items (data fields). The `uvm_recorder` acts as a packing slip generator, noting down every item in the box. The `uvm_tr_stream` is the conveyor belt that moves this specific type of box, and the `uvm_tr_database` is the warehouse where all boxes are stored and cataloged for later inspection.
+**How to read this lesson.** The core path runs from why recording exists, through the architecture picture, to turning recording on and what `begin_tr`/`end_tr` write, then lets you test your predictions in the explorer. Practitioner depth follows: automatic recording by the sequencer, parent/child links, error and event records, the two kinds of database, and a table of common mistakes. Make It Work builds a complete recorded agent and reads its database line by line. Push Further holds the expert layer.
 
-When a `uvm_driver` starts executing a transaction, it tells the warehouse, "I'm starting a new box now." When it finishes, it says, "I'm done with this box" — and only then is the packing slip written. So the recorded field values are the values **at `end_tr()`**: a read's response data, filled in during the drive, is captured.
+Words this lesson leans on, all from earlier lessons:
+- A **transaction** is one complete operation, such as one bus write, held in an object. A **sequence item** is a transaction class derived from `uvm_sequence_item` that a **sequence** (a class that generates items) sends through a **sequencer** to a **driver**, which drives it onto the pins; a **monitor** watches the pins and builds a new transaction for each transfer it sees ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)).
+- `uvm_sequence_item` derives from `uvm_transaction` (§5.4), which carries begin and end times. That is why every sequence item can be recorded.
+- A **policy** is a helper object that `print()`, `compare()` or `record()` passes to your `do_*` method. `record()` passes a `uvm_recorder`, and your `do_record()` writes fields into it ([I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index)).
+- **Phases** such as `build_phase` and `run_phase` are the fixed steps every component runs; `build_phase` creates children top-down, so a parent's `build_phase` runs before its children exist ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). `uvm_config_db` passes values from a parent to the components below it ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
+- A **waveform viewer** is the simulator's tool for drawing signals over time. Whether it can also draw transactions, and how you switch that on, depends on the simulator: this lesson labels such details **tool-dependent**.
 
-Three conditions must all hold for a transaction to appear with its fields:
+### Why record transactions, and why recording does not replace logging
 
-1. Recording is **enabled** on the component that calls `begin_tr()`.
-2. Something tells `record()` **what to write**: field macros or a `do_record()`.
-3. The component calls **`end_tr()`**, which records the fields and closes the transaction.
+A report message such as `` `uvm_info `` writes one line of text at one instant. A recorded transaction is different in three ways:
 
-## Interactive: Transaction Recording Visualization
+| | Report message (`` `uvm_info ``, `` `uvm_error ``) | Recorded transaction |
+|---|---|---|
+| Time | one instant | a begin time and an end time |
+| Content | a formatted string | typed fields (name, value, width, radix) |
+| Relations | none | links to other records, such as the sequence that created an item |
+| Where you read it | the log file | the transaction database, usually drawn in the waveform viewer |
+| Decides pass or fail | yes: the report server counts errors | **no**: nothing counts records |
 
-Change one condition at a time and predict what the waveform tool's stream would show for three driven items before you look.
+The last row is the misconception to avoid: **recording does not replace logging.** A test passes or fails on its report counts ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)). Even an error record written with `record_error_tr` is invisible to the report server, so a monitor that sees a protocol error still reports it with `` `uvm_error `` and may *also* mark it in the database.
+
+### The recording architecture: database, streams, recorders, links
+
+Four kinds of object hold a recording. Each is an abstract class in the standard, and the database implementation supplies the concrete subclasses.
+
+- **`uvm_tr_database`** (§7.1) is the store. Every component asks for one through `get_tr_database()` (§13.1.7.12), which by default returns the core service's default database (§13.1.7.11, F.4.1.4.6). In uvm-core 2020.3.1 that default is `uvm_text_tr_database`, which writes a text file named `tr_db.log`. Simulators supply their own database class so that the viewer can draw the records (tool-dependent).
+- **`uvm_tr_stream`** (§7.2) is a named group of records, which a viewer usually draws as one row. A component opens one stream per stream name you pass it (`get_tr_stream`, §13.1.7.9), and the stream's **scope** is the component's full name. So `begin_tr(req, "drv")` in `uvm_test_top.env.agt.drv` writes to stream `drv` with scope `uvm_test_top.env.agt.drv`.
+- **`uvm_recorder`** (§16.4) is two things at once: one **record** (one transaction) inside a stream, and the **policy** that writes the object's fields into that record. A stream creates it with `open_recorder` (§7.2.5.1). Each field becomes an **attribute** written with `record_field_int`, `record_string` and their siblings (§16.4.6).
+- **Links** (§7.3) connect two records: `uvm_parent_child_link` (§7.3.2), `uvm_cause_effect_link` (§7.3.3) and `uvm_related_link` (§7.3.4), stored by `establish_link` (§7.1.5).
+
+Every recorder has an integer **handle** (§16.4.5.1), a number that names the record. `begin_tr` returns it, and 0 means "nothing was opened".
+
+<ArchitectureDiagram
+  title="Where a recorded transaction lives"
+  caption="Each component opens its own streams in the shared database; each stream holds one recorder per transaction, and each recorder holds that transaction's attributes. The dashed arrow is a parent/child link from the sequence's record to the driver's record of one of its items. Names match the Make It Work example."
+  nodes={[
+    { id: "sqr", label: "sqr", kind: "sequencer", col: 0, row: 0 },
+    { id: "drv", label: "drv", kind: "driver", col: 1, row: 0 },
+    { id: "mon", label: "mon", kind: "monitor", col: 2, row: 0 },
+    { id: "db", label: "uvm_tr_database (uvm-core default: tr_db.log)", kind: "generic", col: 0, row: 1, colSpan: 3, rowSpan: 2, container: true },
+    { id: "s_seq", label: "stream \"seq\"", sublabel: "scope ...agt.sqr", kind: "generic", col: 0, row: 1 },
+    { id: "s_drv", label: "stream \"drv\"", sublabel: "scope ...agt.drv", kind: "generic", col: 1, row: 1 },
+    { id: "s_mon", label: "stream \"mon\"", sublabel: "scope ...agt.mon", kind: "generic", col: 2, row: 1 },
+    { id: "r_seq", label: "recorder: seq", sublabel: "one sequence run", kind: "generic", col: 0, row: 2 },
+    { id: "r_item", label: "recorder: item0", sublabel: "addr, data, bad_parity", kind: "generic", col: 1, row: 2 },
+    { id: "r_mon", label: "recorder: mon_item", sublabel: "plus Error, Event records", kind: "generic", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "sqr", to: "s_seq", style: "data", label: "begin_tr" },
+    { from: "drv", to: "s_drv", style: "data", label: "begin_tr" },
+    { from: "mon", to: "s_mon", style: "data", label: "begin_tr" },
+    { from: "s_seq", to: "r_seq", style: "structural" },
+    { from: "s_drv", to: "r_item", style: "structural" },
+    { from: "s_mon", to: "r_mon", style: "structural" },
+    { from: "r_seq", to: "r_item", style: "causal", label: "parent/child" }
+  ]}
+/>
+
+You will rarely call `open_stream`, `open_recorder` or `establish_link` yourself. The component methods in the next sections call them for you; the picture tells you what those calls build.
+
+### Turning recording on
+
+Every component has a recording switch. **It is off until you turn it on** (§13.1.7.14: "If `set_recording_enabled` … has never been called for this component, the default is 0"). There are three ways to turn it on:
+
+```systemverilog
+// snippet: three ways to enable recording, from the test
+// 1. One component (IEEE 1800.2 §13.1.7.13)
+env.agt.drv.set_recording_enabled(1);
+
+// 2. A component and everything below it (IEEE 1800.2 D.2.3)
+env.agt.set_recording_enabled_hier(1);
+
+// 3. uvm-core only: a "recording_detail" setting that the component reads
+//    when it is created. Set it before the parent's build_phase creates it.
+uvm_config_db#(int)::set(this, "env.agt.drv", "recording_detail", UVM_FULL);
+```
+
+Calls 1 and 2 work at any time after the component exists; in a test, `end_of_elaboration_phase` (the phase that runs after every component has been built and connected) is the natural place. Way 3 is **uvm-core behaviour**, not part of IEEE 1800.2. uvm-core keeps the switch in a member called `recording_detail` (default `UVM_NONE`, which means off) and reads a configuration setting of that name **only in the component's constructor** in its default configuration mode. A setting made after the component was created is never read, not even by its own `build_phase` (see the expert note on configuration mode). The command-line form, `+uvm_set_config_int=uvm_test_top.env.agt.drv,recording_detail,1` (G.2.8), works the same way.
+
+**What "on" changes.** With recording off, `begin_tr` still sets the transaction's begin time and triggers its events, but it opens no recorder and returns 0, and `end_tr` writes nothing (§13.1.7.3, §13.1.7.5).
+
+### What a component records, and when
+
+A component brackets each transaction it handles with three calls from §13.1.7:
+
+- **`accept_tr(tr)`** (§13.1.7.1), optional: marks when the component took the transaction. It sets the accept time and records nothing.
+- **`begin_tr(tr, stream_name, label, desc, begin_time, parent_handle)`** (§13.1.7.3): marks the start. If recording is on, it opens a recorder on the stream `stream_name` (default `"main"`). **No fields are recorded at this time.** It returns the recorder's handle, or 0.
+- **`end_tr(tr, end_time, free_handle)`** (§13.1.7.5): marks the end. If recording is on, it calls `tr.record(recorder)`, which writes the fields, then closes the recorder and (by default, `free_handle = 1`) frees it.
+
+So the recorded values are the values **at `end_tr`**. Trace one READ through a driver to see why that matters. The driver fills `rdata` from the bus during the read.
+
+| Time | Driver calls | `req.rdata` | Database (recording on) |
+|---|---|---|---|
+| 10 ns | `begin_tr(req, "drv")` returns 7 | 0 | record 7 opened at 10 ns, no fields yet |
+| 10–30 ns | drives the read, samples the bus | `'h3c` from 30 ns | nothing |
+| 30 ns | `end_tr(req)` | `'h3c` | `record()` writes `rdata = 3c` and the other fields; record 7 closed at 30 ns |
+| 31 ns | `req.rdata = 0;` (a bug: reusing the item) | 0 | nothing: record 7 is already closed |
+
+Two mistakes follow directly. If you never call `end_tr`, the record stays open and holds no fields. If you change a field *after* `end_tr`, the record keeps the old value; if you change it *before* `end_tr` (for example a response field filled late), the record shows the new one.
+
+> **Who may call `begin_tr`?** Any component that produces or consumes the transaction: a driver, a monitor, a scoreboard, and the sequencer itself (next sections). `uvm_component::begin_tr` calls the transaction's own `uvm_transaction::begin_tr` (§5.4.2.4) to set its times; you do not call the transaction's method yourself. One transaction can be recorded by several components, each on its own stream.
+
+### Telling the recorder what to write
+
+`end_tr` calls `record()`, and `record()` writes only what the class tells it to: the fields registered with `` `uvm_field_* `` macros, then whatever your `do_record()` writes (§5.3.7). With neither, the record has times but no fields. In `do_record`, use the recording macros of Annex B.2.3:
+
+```systemverilog
+// snippet: do_record with the recording macros (IEEE 1800.2 B.2.3)
+virtual function void do_record(uvm_recorder recorder);
+  super.do_record(recorder);
+  `uvm_record_int("addr", addr, $bits(addr), UVM_HEX)   // B.2.3.2
+  `uvm_record_int("data", data, $bits(data), UVM_HEX)
+  `uvm_record_string("kind", kind.name())                // B.2.3.3
+endfunction
+```
+
+The macros expand to calls on the argument named `recorder` (`recorder.record_field_int`, `recorder.record_string`, §16.4.6), so keep that argument name. Prefer `` `uvm_record_int `` for integral fields: `` `uvm_record_field `` (B.2.3.6) passes the value through `record_generic` (§16.4.6.7), and uvm-core turns it into a `%p` string, so the text database loses its width and radix. Do not record the same field from both a field macro and `do_record`, or it appears twice.
+
+### Try it: why is my stream empty?
+
+The explorer below models a driver that brackets three items (a WRITE, a READ and a WRITE) with `begin_tr`/`end_tr`. You control the three things that decide what reaches the database: how recording is enabled, what `record()` writes, and whether `end_tr` runs. Before you press the reveal button each time, **predict** what the stream shows: three boxes with fields, three empty boxes, boxes that never close, or nothing.
+
+Start with the default setup and predict. Then try each of these and predict again: `set_recording_enabled(1)`; "config_db in run_phase"; "no record code"; and clearing "The driver calls end_tr".
 
 <TransactionRecordingVisualizer />
 
 <VisualRecap
   title="Enabled, described, closed"
-  rule="A transaction reaches the database only if recording is enabled on the component, record() has fields to write (field macros or do_record), and end_tr() runs — fields are recorded at end_tr()."
-  code={`// pkt_driver::build_phase
-set_recording_enabled(1);
-// pkt_driver::run_phase
-void'(begin_tr(req, "drv"));
-drive(req);
-end_tr(req);              // records req, closes it`}
-  mistake="Adding begin_tr()/end_tr() and do_record(), then wondering why the stream is empty: recording_detail is still UVM_NONE."
-  inTestbench="Drivers and monitors bracket each item with begin_tr()/end_tr(); the base test enables recording for the agents it wants in the waveform."
+  rule="A transaction reaches the database with its fields only if recording is enabled on the component that calls begin_tr(), record() has something to write (field macros or do_record), and end_tr() runs. The fields are written inside end_tr()."
+  code={`// test end_of_elaboration_phase
+env.agt.drv.set_recording_enabled(1);
+// bus_driver::run_phase
+void'(begin_tr(req, "drv"));  // opens a record, no fields
+drive(req);                   // the READ fills req.rdata
+end_tr(req);                  // writes the fields, closes`}
+  mistake="Adding begin_tr()/end_tr() and do_record(), then finding the stream empty: recording was never enabled, or recording_detail was set after the component was created."
+  inTestbench="Drivers and monitors bracket each item with begin_tr()/end_tr(); the test enables recording only on the agents it wants to see."
 >
   <ol style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.85rem", lineHeight: 1.6 }}>
-    <li>begin_tr: opens a recorder (or returns 0 if recording is off).</li>
-    <li>drive: the item's fields change.</li>
-    <li>end_tr: record() writes the fields, then the recorder closes.</li>
+    <li>Default setup: nothing recorded, and begin_tr() returned 0 three times. Recording is off by default.</li>
+    <li>config_db in run_phase: still nothing. uvm-core read recording_detail when the driver was created, long before run_phase.</li>
+    <li>No record code: three boxes with times but no fields. record() had nothing to write.</li>
+    <li>No end_tr(): three boxes that never close and hold no fields, because fields are written inside end_tr().</li>
+    <li>The READ's rdata appears: it was filled during the drive, before end_tr().</li>
   </ol>
 </VisualRecap>
 
-## Make It Work: Recording in Practice
+One detail differs from this page: the explorer's `do_record` panel uses `` `uvm_record_field ``, which works but records strings. The examples on this page use `` `uvm_record_int ``.
 
-To leverage recording effectively, you need to enable it, instrument the transaction, and instrument the component processing it.
+### Sequences, items and automatic recording
 
-### Step 0: Enable Recording on the Component
+The sequencer is a component too, so it can record. When its recording is on, it records two kinds of thing without any code from you:
 
-A component's `recording_detail` starts at `UVM_NONE`, so `get_recording_enabled()` returns 0. Enable it explicitly:
+- **Sequences.** A sequence's `start()` asks its sequencer to `begin_tr` the sequence; `end_tr` follows when the sequence finishes. A sequence started directly by the test (a **root sequence**) goes on a stream named after the sequence; a child sequence goes on its root sequence's stream, linked to its parent.
+- **Items, by default.** IEEE 1800.2 calls this **automatic item recording** (§15.3.2.22): each item is recorded around the driver's `get_next_item` and `item_done`. uvm-core 2020.3.1 does it inside the sequence's `start_item`, right after the **grant** (the moment the sequencer lets this sequence send its item, because the driver has asked for one), and in `finish_item` after `item_done`. The records go on the root sequence's stream, with the label `"Transactions"`.
 
-```sv
-// IEEE 1800.2: in the component itself (or on it, from the test)
-function void build_phase(uvm_phase phase);
-  super.build_phase(phase);
-  set_recording_enabled(1);
-endfunction
+If your driver *also* calls `begin_tr`/`end_tr` on the items, and the sequencer's recording is on, every item is recorded **twice**: once on the sequencer's stream with the handshake times, and once on the driver's stream with the drive times. A driver that records items itself therefore turns automatic recording off, and IEEE 1800.2 says when: `disable_auto_item_recording()` "needs to be called prior to the driver initiating its first request for an item" (§15.2.1, §15.2.1.2.10). Once disabled, it cannot be re-enabled.
 
-// uvm-core library behaviour (also UVM 1.2 style): set recording_detail
-// before the component is built, e.g. in the test's build_phase
-uvm_config_db#(int)::set(this, "env.agt.*", "recording_detail", UVM_FULL);
+The diagram shows one item in the Make It Work example, where the sequencer, the driver and the monitor all have recording on and the driver records items itself.
+
+<SequenceDiagram
+  title="One recorded item, with automatic item recording disabled"
+  caption="The driver turns automatic recording off before its first request, so the sequencer records only the sequence. The driver's record opens at begin_tr with no fields, gets a parent link to the sequence's record, and receives its fields at end_tr. Order as in uvm-core 2020.3.1."
+  participants={[
+    { id: "seq", label: "seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" },
+    { id: "db", label: "uvm_tr_database", kind: "generic" }
+  ]}
+  messages={[
+    { from: "seq", to: "sqr", label: "start(): begin_tr(seq, \"seq\")" },
+    { from: "sqr", to: "db", label: "open stream \"seq\", open recorder \"seq\"" },
+    { from: "drv", to: "sqr", label: "disable_auto_item_recording()" },
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { kind: "note", from: "drv", to: "sqr", label: "the driver blocks until an item is sent" },
+    { from: "seq", to: "sqr", label: "start_item(req)" },
+    { kind: "note", from: "seq", to: "sqr", label: "granted; automatic recording is off, so no sqr.begin_tr(req)" },
+    { from: "seq", to: "sqr", label: "finish_item(req)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req" },
+    { kind: "self", from: "drv", label: "begin_tr(req, \"drv\")" },
+    { from: "drv", to: "db", label: "open recorder \"item0\"; link seq to item0" },
+    { kind: "divider", label: "one clock: drive the transfer on the pins" },
+    { kind: "self", from: "drv", label: "end_tr(req)" },
+    { from: "drv", to: "db", label: "req.record(recorder): do_record; close; free" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" }
+  ]}
+/>
+
+With automatic recording left on, two more steps appear: the sequencer's own `begin_tr(req)` when `start_item` is granted, and its `end_tr(req)` just before `finish_item` returns.
+
+### Parent/child links
+
+A **parent/child link** says "this record is part of that one", so a viewer can show a sequence containing its items. Records get one in three ways:
+
+1. **The sequencer links them itself.** A child sequence's record, and an automatically recorded item's record, are linked to their parent sequence's record.
+2. **A component's `begin_tr` looks up the parent sequence (uvm-core only).** If you pass no `parent_handle` and the transaction is a sequence item, uvm-core uses the record of the item's parent sequence. The header of `uvm_component::begin_tr` calls this "an added feature" beyond the standard. It works **only if that sequence was itself recorded**, which means the *sequencer's* recording is on. Enable recording on the driver alone, and the driver's records have no parent link.
+3. **You pass `parent_handle` explicitly** (§13.1.7.3): `begin_tr(rsp, "drv", "", "", 0, req_handle)` links `rsp`'s record under the record whose handle is `req_handle`. This works in any implementation, as long as that handle is still valid: the parent record must not have been freed yet (uvm-core reports `ILLHNDL` for a handle that no longer names a recorder).
+
+A monitor builds new transaction objects from the pins, so they have no parent sequence and get no automatic link. That is correct: the monitor reports what happened on the bus, not who asked for it.
+
+### Error and event records
+
+Two more component calls write a **zero-length record**, one whose begin and end times are the same, onto a stream (§13.1.7.7, §13.1.7.8):
+
+```systemverilog
+// snippet: marking an error and an event on the monitor's stream
+void'(record_error_tr("mon", tr, "parity_error"));   // type "Error"; tr's fields
+void'(record_event_tr("mon", null, "reset_released")); // type "Event"; no fields
 ```
 
-The component reads `recording_detail` when it is constructed and when its `build_phase` applies configuration. A `config_db::set` made later (for example in `run_phase`) is never read.
+The arguments are the stream name, an optional object whose fields are recorded (`info`, through its `do_record`), a label (defaults `"error_tr"` and `"event_tr"`), a description, a time (0 means now) and `keep_active`. With `keep_active = 0` (the default) the record is closed at once; with 1 the call returns a handle you can link to. A viewer can show these as markers on the stream, so a protocol error sits right on the transaction row where it happened. Remember the logging rule: an error record does not fail the test. Report the error with `` `uvm_error `` as well.
 
-### Step 1: Implement `do_record` in the Transaction
+### Databases: the text file or the simulator's
 
-Just like `do_print` or `do_copy`, your transaction must define what fields are important to record by overriding the `do_record` method. This method receives a `uvm_recorder` object.
+- **uvm-core's default, `uvm_text_tr_database`** (uvm-core impl.), writes every stream, record, attribute and link as a line of text in `tr_db.log` in the run directory. It needs no tool support, so it is how you check recording code with any simulator. You read it in Make It Work.
+- **A simulator's database** (tool-dependent) writes records into the simulator's own waveform database, so the viewer draws them as transaction rows. Each vendor documents its own switch for this; it may replace the default database for the whole run. The UVM code on this page does not change.
 
-```sv
-class axi_transfer extends uvm_sequence_item;
-  rand bit [31:0] addr;
-  rand bit [31:0] data;
-  rand bit        is_read;
+### Common mistakes
 
-  `uvm_object_utils(axi_transfer)
+| Mistake | What you see | Why |
+|---|---|---|
+| Recording never enabled | empty stream; `begin_tr` returns 0 | off by default (§13.1.7.14) |
+| `recording_detail` set after the component was created | empty stream | uvm-core reads it only in the constructor |
+| No field macros and no `do_record` | records with times but no fields | `record()` has nothing to write |
+| `end_tr` never called | records that never close, with no fields | fields are written in `end_tr` |
+| A field changed after `end_tr` | old value in the record | the record was closed |
+| Driver records items, automatic recording still on | every item twice, on two streams | the sequencer records them too |
+| Only the driver's recording enabled | no parent links | the parent sequence was never recorded |
+| `` `uvm_record_field `` on integral fields | values as strings, no radix (text database) | it records `%p` through `record_generic` |
+| Recording used instead of `` `uvm_error `` | a failure that passes | nothing counts records |
 
-  function new(string name = "axi_transfer");
-    super.new(name);
-  endfunction
+### Recap
 
-  virtual function void do_record(uvm_recorder recorder);
-    super.do_record(recorder);
-    // The macros use the argument named 'recorder'
-    `uvm_record_field("ADDR", addr)
-    `uvm_record_field("DATA", data)
-    `uvm_record_string("CMD", (is_read ? "READ" : "WRITE"))
-  endfunction
-endclass
+- The database holds streams, streams hold one recorder per transaction, recorders hold attributes, and links connect recorders.
+- Recording is off on every component until `set_recording_enabled(1)`, `set_recording_enabled_hier(1)`, or (uvm-core) a `recording_detail` setting made before the component is created.
+- `begin_tr` opens a record with no fields; `end_tr` writes the fields and closes it.
+- `record()` writes only what field macros and `do_record` tell it to.
+- A driver that records items calls `disable_auto_item_recording()` before its first `get_next_item`; automatic parent links need the sequence to be recorded.
+- `record_error_tr` and `record_event_tr` add zero-length markers; they do not replace reports.
+
+## Make It Work
+
+### A recorded agent: sequencer, driver and monitor on three streams
+
+The example is a one-agent testbench on a tiny bus: `valid` is high for one clock per transfer, and `parity` makes `{addr, data, parity}` even. The test enables recording on the whole agent and injects one parity error on purpose. Because that error is expected, the test applies a **severity override** that turns the monitor's `PARITY` error reports into info messages ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)). It also sets a **drain time**, extra time the run phase keeps going after the last objection is dropped ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)), so the monitor can close its last record. Values are fixed rather than random so that the logs below are reproducible. Save it as `tb_top.sv`.
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+`include "uvm_macros.svh"
+
+interface bus_if (input logic clk);
+  logic       rst_n;
+  logic       valid;
+  logic [7:0] addr;
+  logic [7:0] data;
+  logic       parity;  // even parity over addr and data
+
+  clocking drv_cb @(posedge clk);
+    output valid, addr, data, parity;
+  endclocking
+
+  clocking mon_cb @(posedge clk);
+    input rst_n, valid, addr, data, parity;
+  endclocking
+endinterface
+
+package rec_pkg;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  class bus_item extends uvm_sequence_item;
+    rand bit [7:0] addr;
+    rand bit [7:0] data;
+    bit            bad_parity;  // 1: the parity bit on the bus is wrong
+
+    `uvm_object_utils(bus_item)
+
+    function new(string name = "bus_item");
+      super.new(name);
+    endfunction
+
+    // record() calls this inside end_tr: it decides what a record carries.
+    virtual function void do_record(uvm_recorder recorder);
+      super.do_record(recorder);
+      `uvm_record_int("addr", addr, 8, UVM_HEX)
+      `uvm_record_int("data", data, 8, UVM_HEX)
+      `uvm_record_int("bad_parity", bad_parity, 1, UVM_BIN)
+    endfunction
+
+    virtual function string convert2string();
+      return $sformatf("addr='h%02h data='h%02h", addr, data);
+    endfunction
+  endclass
+
+  class bus_seq extends uvm_sequence #(bus_item);
+    `uvm_object_utils(bus_seq)
+
+    function new(string name = "bus_seq");
+      super.new(name);
+    endfunction
+
+    task body();
+      for (int i = 0; i < 3; i++) begin
+        // Named items make the records easy to find: item0, item1, item2.
+        req = bus_item::type_id::create($sformatf("item%0d", i));
+        start_item(req);
+        req.addr       = 8'h10 + 8'(i * 4);
+        req.data       = 8'ha0 + 8'(i);
+        req.bad_parity = (i == 2);  // inject one parity error on purpose
+        finish_item(req);
+      end
+    endtask
+  endclass
+
+  class bus_driver extends uvm_driver #(bus_item);
+    `uvm_component_utils(bus_driver)
+    virtual bus_if vif;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(virtual bus_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "bus_driver: vif not set")
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      // This driver records items itself, so the sequencer must not record
+      // them too. The call must come before the first get_next_item.
+      seq_item_port.disable_auto_item_recording();
+      vif.drv_cb.valid <= 1'b0;
+      wait (vif.rst_n === 1'b1);
+      forever begin
+        seq_item_port.get_next_item(req);
+        @(vif.drv_cb);
+        void'(begin_tr(req, "drv"));  // opens a record: times only, no fields
+        vif.drv_cb.valid  <= 1'b1;
+        vif.drv_cb.addr   <= req.addr;
+        vif.drv_cb.data   <= req.data;
+        vif.drv_cb.parity <= ^{req.addr, req.data} ^ req.bad_parity;
+        @(vif.drv_cb);
+        vif.drv_cb.valid  <= 1'b0;
+        end_tr(req);                  // writes the fields, closes the record
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  class bus_monitor extends uvm_monitor;
+    `uvm_component_utils(bus_monitor)
+    virtual bus_if vif;
+    uvm_analysis_port #(bus_item) ap;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      ap = new("ap", this);
+      if (!uvm_config_db#(virtual bus_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "bus_monitor: vif not set")
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      bus_item tr;  // the transfer whose record is open, or null
+      do @(vif.mon_cb); while (vif.mon_cb.rst_n !== 1'b1);
+      void'(record_event_tr("mon", null, "reset_released"));
+      forever begin
+        @(vif.mon_cb);
+        // Close the record opened one clock ago. Each monitor record spans
+        // the clock after the edge where the transfer was sampled.
+        if (tr != null) begin
+          end_tr(tr);
+          tr = null;
+        end
+        if (vif.mon_cb.valid === 1'b1) begin
+          tr = bus_item::type_id::create("mon_item");  // new object per transfer
+          tr.addr       = vif.mon_cb.addr;
+          tr.data       = vif.mon_cb.data;
+          tr.bad_parity = ((^{tr.addr, tr.data}) != vif.mon_cb.parity);
+          void'(begin_tr(tr, "mon"));
+          if (tr.bad_parity) begin
+            // The report decides pass/fail; the error record marks the spot.
+            `uvm_error("PARITY", {"parity error: ", tr.convert2string()})
+            void'(record_error_tr("mon", tr, "parity_error"));
+          end
+          ap.write(tr);
+        end
+      end
+    endtask
+  endclass
+
+  class bus_agent extends uvm_agent;
+    `uvm_component_utils(bus_agent)
+    uvm_sequencer #(bus_item) sqr;
+    bus_driver                drv;
+    bus_monitor               mon;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      sqr = uvm_sequencer#(bus_item)::type_id::create("sqr", this);
+      drv = bus_driver::type_id::create("drv", this);
+      mon = bus_monitor::type_id::create("mon", this);
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  class bus_env extends uvm_env;
+    `uvm_component_utils(bus_env)
+    bus_agent agt;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      agt = bus_agent::type_id::create("agt", this);
+    endfunction
+  endclass
+
+  class rec_test extends uvm_test;
+    `uvm_component_utils(rec_test)
+    bus_env env;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env = bus_env::type_id::create("env", this);
+    endfunction
+
+    function void end_of_elaboration_phase(uvm_phase phase);
+      // Record everything this agent sees: the sequencer (sequences),
+      // the driver (items as driven) and the monitor (transfers seen).
+      env.agt.set_recording_enabled_hier(1);
+      // The parity error is injected on purpose, so demote its report.
+      env.agt.mon.set_report_severity_id_override(UVM_ERROR, "PARITY", UVM_INFO);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      bus_seq seq = bus_seq::type_id::create("seq");
+      phase.raise_objection(this);
+      // Keep running 20 ns after the drop so the monitor closes its last record.
+      phase.get_objection().set_drain_time(this, 20ns);
+      seq.start(env.agt.sqr);
+      phase.drop_objection(this);
+    endtask
+  endclass
+endpackage
+
+module tb_top;
+  import uvm_pkg::*;
+  import rec_pkg::*;
+
+  logic clk = 1'b0;
+  always #5 clk = ~clk;
+
+  bus_if bif (clk);
+
+  initial begin
+    bif.rst_n = 1'b0;
+    #22 bif.rst_n = 1'b1;  // release reset away from a clock edge
+  end
+
+  initial begin
+    uvm_config_db#(virtual bus_if)::set(null, "uvm_test_top.env.agt.*", "vif", bif);
+    run_test("rec_test");
+  end
+endmodule
 ```
 
-If the class registers its fields with `` `uvm_field_* `` macros instead, `record()` writes them for you; do not record the same field in both places.
+**Run it.** Compile `tb_top.sv` with the UVM library (uvm-core 2020.3.1) on any simulator with UVM support and run it; the test name is passed to `run_test`, so no plusarg is needed. With uvm-core's default database, `tr_db.log` appears in the run directory. If you turn on your simulator's own transaction recording (tool-dependent), the records go to its waveform database instead and may not appear in `tr_db.log`. Delete `tr_db.log` between runs, because the text database appends to it.
 
-### Step 2: Demarcate the Transaction in the Component
+**Expected output.** Illustrative: written from the uvm-core 2020.3.1 sources, not captured from a named simulator run. File names, line numbers, the banner and the exact report counts vary.
 
-In the component that executes or observes the transaction (like a driver or monitor), you must mark when the transaction begins and ends in simulation time. The base `uvm_component` provides the `begin_tr()` and `end_tr()` methods for this purpose. `accept_tr()` can be called before `begin_tr()` to mark when the component took ownership.
-
-```sv
-class axi_driver extends uvm_driver #(axi_transfer);
-  // ... constructor and registration ...
-
-  virtual task run_phase(uvm_phase phase);
-    forever begin
-      seq_item_port.get_next_item(req);
-
-      // Start recording on stream "axi_driver_stream".
-      // Returns 0 (and records nothing) while recording is disabled.
-      void'(begin_tr(req, "axi_driver_stream"));
-
-      // Drive physical signals (consume simulation time)
-      drive_transaction(req);
-
-      // Record the fields (calls req.record → do_record) and close the transaction.
-      end_tr(req);
-
-      seq_item_port.item_done();
-    end
-  endtask
-endclass
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test rec_test...
+UVM_INFO tb_top.sv(167) @ 75: uvm_test_top.env.agt.mon [PARITY] parity error: addr='h18 data='ha2
+...
+--- UVM Report Summary ---
+...
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
 ```
 
-> [!TIP]
-> The UVM library only needs recording enabled on the component. To see the transactions in your waveform tool, the simulator must also connect its own `uvm_tr_database`; each vendor documents its own switch for that. Without it, uvm-core's default database writes a text file.
+And the start of `tr_db.log`, abbreviated (`...` marks omitted lines). Handles and `inst_id` values vary. Times are shown in ns for reading; the file prints them with `%t`, so their units follow your `$timeformat` and time precision (tool- and setup-dependent). Lines written in the same time step may appear in a different order.
 
-## Push Further: Telemetry and Structured Debug
+```text
+  CREATE_STREAM @0 {NAME:seq T:TVM SCOPE:uvm_test_top.env.agt.sqr STREAM:1}
+    OPEN_RECORDER @0 {TXH:2 STREAM:1 NAME:seq TIME:0 TYPE="Begin_No_Parent, Link"}
+  CREATE_STREAM @25 {NAME:mon T:TVM SCOPE:uvm_test_top.env.agt.mon STREAM:3}
+    OPEN_RECORDER @25 {TXH:4 STREAM:3 NAME:reset_released TIME:25 TYPE="Event"}
+      SET_ATTR @25 {TXH:4 NAME:label VALUE:reset_released   RADIX:UVM_STRING BITS=22}
+    CLOSE_RECORDER @25 {TXH:4 TIME=25}
+    FREE_RECORDER @25 {TXH:4}
+  CREATE_STREAM @25 {NAME:drv T:TVM SCOPE:uvm_test_top.env.agt.drv STREAM:5}
+    OPEN_RECORDER @25 {TXH:6 STREAM:5 NAME:item0 TIME:25 TYPE="Begin_End, Link"}
+  LINK @25 {TXH1:2 TXH2:6 RELATION=child}
+      SET_ATTR @35 {TXH:6 NAME:inst_id VALUE:61   RADIX:UVM_DEC BITS=32}
+      SET_ATTR @35 {TXH:6 NAME:addr VALUE:10   RADIX:UVM_HEX BITS=8}
+      SET_ATTR @35 {TXH:6 NAME:data VALUE:a0   RADIX:UVM_HEX BITS=8}
+      SET_ATTR @35 {TXH:6 NAME:bad_parity VALUE:0   RADIX:UVM_BIN BITS=1}
+    CLOSE_RECORDER @35 {TXH:6 TIME=35}
+    FREE_RECORDER @35 {TXH:6}
+    OPEN_RECORDER @35 {TXH:7 STREAM:3 NAME:mon_item TIME:35 TYPE="Begin_No_Parent, Link"}
+      SET_ATTR @45 {TXH:7 NAME:inst_id VALUE:62   RADIX:UVM_DEC BITS=32}
+      SET_ATTR @45 {TXH:7 NAME:addr VALUE:10   RADIX:UVM_HEX BITS=8}
+      SET_ATTR @45 {TXH:7 NAME:data VALUE:a0   RADIX:UVM_HEX BITS=8}
+      SET_ATTR @45 {TXH:7 NAME:bad_parity VALUE:0   RADIX:UVM_BIN BITS=1}
+    CLOSE_RECORDER @45 {TXH:7 TIME=45}
+    FREE_RECORDER @45 {TXH:7}
+...
+    OPEN_RECORDER @75 {TXH:13 STREAM:3 NAME:parity_error TIME:75 TYPE="Error"}
+      SET_ATTR @75 {TXH:13 NAME:label VALUE:parity_error   RADIX:UVM_STRING BITS=20}
+      SET_ATTR @75 {TXH:13 NAME:inst_id VALUE:66   RADIX:UVM_DEC BITS=32}
+      SET_ATTR @75 {TXH:13 NAME:addr VALUE:18   RADIX:UVM_HEX BITS=8}
+      SET_ATTR @75 {TXH:13 NAME:data VALUE:a2   RADIX:UVM_HEX BITS=8}
+      SET_ATTR @75 {TXH:13 NAME:bad_parity VALUE:1   RADIX:UVM_BIN BITS=1}
+    CLOSE_RECORDER @75 {TXH:13 TIME=75}
+    FREE_RECORDER @75 {TXH:13}
+      SET_ATTR @75 {TXH:2 NAME:inst_id VALUE:60   RADIX:UVM_DEC BITS=32}
+    CLOSE_RECORDER @75 {TXH:2 TIME=75}
+    FREE_RECORDER @75 {TXH:2}
+...
+```
 
-Transaction recording bridges the gap between pure UVM logic and structured debug. While `uvm_info` statements are interspersed linearly in a text log, recorded transactions have rigid start/end times and hierarchical relationships.
+### Read the database
 
-This allows EDA tools to correlate a high-level `uvm_sequence_item` directly with the toggling of wires on a physical interface. When a sequence item has a parent sequence, `begin_tr()` links the two recorders (`uvm_parent_child_link`), so tools can show a parent transaction containing its children. The **Advanced UVM Debug Methodologies** module combines recording with report control to make large failures explainable.
+Each line kind comes from uvm-core's text backend (`uvm_text_tr_stream.svh`, `uvm_text_recorder` in `uvm_recorder.svh`, `uvm_text_tr_database.svh`):
+
+| Line | Written by | In this run |
+|---|---|---|
+| `CREATE_STREAM` | the first `begin_tr`, `record_error_tr` or `record_event_tr` on a stream name | three streams: `seq` (sequencer), `mon`, `drv` |
+| `OPEN_RECORDER` | `begin_tr` (and the error and event calls) | `TIME` is the record's begin time; `TYPE` is `Begin_End, Link` when the record has a parent, `Begin_No_Parent, Link` otherwise, or `Error`/`Event` |
+| `LINK ... RELATION=child` | a parent/child link | `TXH1` is the parent (the sequence, handle 2), `TXH2` the child |
+| `SET_ATTR` | `record()` inside `end_tr`, or a `label` argument | written at the end time (`@35`), not the begin time: the fields are recorded in `end_tr` |
+| `CLOSE_RECORDER`, `FREE_RECORDER` | `end_tr` with the default `free_handle = 1` | |
+
+Now trace what the run shows:
+
+1. **The sequence is recorded from 0 to 75 ns** on stream `seq`, because the sequencer's recording is on. Its record holds only `inst_id`, because `bus_seq` records no fields.
+2. **Each item appears once, on `drv`**, from the edge where it is driven (25 ns) to the next edge (35 ns), with a `LINK` to the sequence. No item appears on stream `seq`, because the driver disabled automatic item recording.
+3. **The monitor's records trail the driver's by one clock** (35 to 45 ns for the first transfer): it samples a transfer at the edge after it was driven, and closes the record one clock later. That offset is sampling, not a bug.
+4. **The monitor's records have no `LINK`**: a monitor builds new objects with no parent sequence.
+5. **The parity error is a zero-length `Error` record** at 75 ns on stream `mon`, carrying the transfer's fields. The report summary still shows `UVM_ERROR :    0` only because the test demoted that one ID; without the demotion the test would fail, as it should.
+
+### How to add recording to an agent
+
+1. In each item class, write `do_record` with `` `uvm_record_int `` and `` `uvm_record_string `` (or register the fields with field macros, not both).
+2. In the driver, decide who records items. If the driver does, call `seq_item_port.disable_auto_item_recording()` at the start of `run_phase`, before the first `get_next_item`, and bracket each item with `begin_tr(req, "drv")` when it starts on the pins and `end_tr(req)` after the last field (including any response data) is filled.
+3. In the monitor, bracket each new transaction with `begin_tr(tr, "mon")`/`end_tr(tr)`, and mark protocol errors with `record_error_tr` **as well as** `` `uvm_error ``.
+4. In the test, enable recording only where you need it: `set_recording_enabled_hier(1)` on the agent in `end_of_elaboration_phase`, ideally behind a configuration knob that is off by default.
+5. Make sure the run does not end with records open: give the last transaction time to close (a drain time, or end the test from the monitor's side).
+6. Run once with uvm-core's text database and read `tr_db.log` before relying on the viewer.
+
+### Debug it: symptom, cause, fix
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `tr_db.log` missing or no stream for the component; `begin_tr` returns 0 | recording never enabled on that component | `set_recording_enabled(1)` or `_hier(1)` in `end_of_elaboration_phase` |
+| Same, although a `recording_detail` setting exists | the setting was made after the component was created, or its path does not match | set it before the parent's `build_phase` creates the component; print the path; or call `set_recording_enabled` |
+| Records have times but no fields | no field macros and no `do_record` | add `do_record` with the recording macros |
+| A response field shows its old value | `end_tr` was called before the field was filled | move `end_tr` after the last assignment |
+| Records never close | `end_tr` missing on some path (an early `continue` or `return`), or the run ended first | close on every path; add a drain time |
+| Each item appears twice, with different times | automatic item recording plus driver recording | `disable_auto_item_recording()` before the first `get_next_item` |
+| Driver records have no parent link | the sequencer's recording is off, so the sequence was never recorded | enable recording on the sequencer too, or pass `parent_handle` |
+| Values show as strings with no radix | `` `uvm_record_field `` on integral fields | `` `uvm_record_int ``, or `recorder.record_field_int` |
+| `tr_db.log` holds several runs | the text database appends to the file | delete it before each run, or run each test in its own directory |
+| The viewer shows nothing although `tr_db.log` is full | the simulator's database is not enabled | the vendor's transaction-recording switch (tool-dependent) |
+
+**Checklist before moving on:**
+- [ ] I can draw the database, its streams, one recorder per transaction, the attributes, and a parent/child link, and name the call that creates each.
+- [ ] I can list three ways to enable recording, and say which is uvm-core only and when it must happen.
+- [ ] I can say when a record's fields are written, and predict the recorded value of a field changed before or after `end_tr`.
+- [ ] I know why a driver that records items calls `disable_auto_item_recording()`, and when.
+- [ ] I can predict whether a driver's record will have a parent link.
+- [ ] I can mark an error with `record_error_tr` and explain why `` `uvm_error `` is still needed.
+- [ ] I can read `CREATE_STREAM`, `OPEN_RECORDER`, `SET_ATTR`, `LINK` and `CLOSE_RECORDER` lines in `tr_db.log`.
+
+## Push Further
+
+### Expert: choosing what to record in long regressions
+
+Recording costs simulation time (a call into the database for every record and attribute) and disk space, and the cost grows with traffic. How much depends on the simulator and its database: **tool-dependent**, so measure it with your simulator's profiler rather than trusting a rule of thumb. The trade-off is against debug value, which is high only when someone will open the database. A sound policy:
+
+- **Off by default in regressions.** Thousands of passing seeds produce databases nobody reads. Make recording a test knob (a configuration field or your own plusarg) that defaults to 0.
+- **On for reruns of failing seeds**, and then only for the agents near the failure: `set_recording_enabled_hier(1)` on one agent, not on `uvm_test_top`. In uvm-core, `+uvm_set_config_int=uvm_test_top.env.agt.*,recording_detail,1` (G.2.8) does the same from the command line, because the agent's children are created after the command-line settings are applied.
+- **Record transactions, not internals.** Record the fields a person will look at on the waveform; leave out large arrays and derived values that the viewer can show from signals.
+- **Close and free promptly.** Keep the default `free_handle = 1` in `end_tr` unless you need the handle later (for a link). An unfreed recorder stays in uvm-core's static handle table, so its memory is never reclaimed (§13.1.7.5, §16.4.4.3; `uvm_recorder.svh`).
+- **Watch the stream count.** A sequencer opens one stream per root-sequence name, so a test that starts thousands of uniquely named root sequences (`$sformatf("seq_%0d", i)`) creates thousands of streams. Reuse names, or record the sequences on fewer agents.
+
+### Expert: automatic item recording, pipelined drivers and the "end" event
+
+IEEE 1800.2 places automatic item recording around `get_next_item` and `item_done` (§15.3.2.22); uvm-core 2020.3.1 does it in `start_item` after the grant and in `finish_item` after `item_done`. Either way it marks the handshake, not the time the item spends on the pins. For a simple in-order driver the two are close; for a **pipelined** driver, which calls `item_done` as soon as the address phase is accepted and finishes the data phase later, the automatic record ends too early. §15.2.1 gives the rule: such a driver calls `disable_auto_item_recording()` before its first request and calls `begin_tr`/`end_tr` itself at the right moments. A sequence that must wait until the item has really finished waits on the item's `"end"` event (`get_event_pool()`, §5.4.2.13), which `end_tr` triggers. uvm-core also accepts a compile-time define, `UVM_DISABLE_AUTO_ITEM_RECORDING`, that turns automatic item recording off globally (uvm-core impl.).
+
+### Expert: component-level versus transaction-level recording
+
+Everything on this page is **component-level** recording (§13.1.7): the component owns the streams and decides. A `uvm_transaction` can also record itself: `enable_recording(stream)` (§5.4.2.9) points it at a stream, and its own `begin_tr`/`end_tr` then open and close records there. The two differ in when fields are written. §5.4.2.4 says the transaction-level `begin_tr` records the current property values at begin; uvm-core 2020.3.1 records them only in `end_tr`, like the component path. Label any code that depends on begin-time values as implementation-dependent. Component-level recording is the norm in UVM testbenches because the test can switch it per component.
+
+### Expert: links beyond parent/child
+
+§7.3 defines three link classes, each created with a static `get_link(lhs, rhs)` and stored with the database's `establish_link` (§7.1.5): `uvm_parent_child_link` (§7.3.2, containment), `uvm_cause_effect_link` (§7.3.3, "this caused that", for example a request and its response) and `uvm_related_link` (§7.3.4). You need the recorders, which you get from handles with `uvm_recorder::get_recorder_from_handle` (§16.4.5.2). Two uvm-core facts to know: the automatic parent lookup in `begin_tr` is a uvm-core addition, and **the text database writes `LINK` lines only for parent/child and related links**; it drops a cause/effect link silently (`uvm_text_tr_database::do_establish_link`). A simulator's database may keep all three (tool-dependent). Where portability matters, pass `parent_handle` to `begin_tr` explicitly.
+
+### Expert: when uvm-core reads recording_detail
+
+uvm-core 2020.3.1 compiles `uvm_component::apply_config_settings` in `CONFIG_CHECK_NAMES` mode by default (`uvm_global_defines.svh`; the source calls it "a divergence from 1800.2", and `DEVIATIONS.md` item 3 explains it). In that mode `build_phase` applies only the names reported by field macros, and `uvm_component` reports none, so the `recording_detail` setting is read only by the constructor's own lookup. Compiled with `+define+UVM_COMPONENT_CONFIG_MODE_DEFAULT=CONFIG_STRICT`, `build_phase` applies it as well. The portable rule is simple: call `set_recording_enabled`, which IEEE 1800.2 defines and which works whenever you call it.
+
+### Expert: error and event records ignore the enable (uvm-core)
+
+In uvm-core 2020.3.1, `record_error_tr` and `record_event_tr` open their stream and write the record **without checking `get_recording_enabled()`** (`uvm_component.svh`), so they appear in `tr_db.log` even on a component whose recording is off. §13.1.7.7 and §13.1.7.8 do not state an enable condition either. If error markers must stay out of disabled runs, guard the calls with `if (get_recording_enabled())`.
+
+### Expert: the database plumbing
+
+- **Per component:** `set_tr_database(db)` (§13.1.7.11) makes one component record into a different database; `get_tr_database()` (§13.1.7.12) returns it.
+- **For the run:** `uvm_coreservice_t::get().set_default_tr_database(db)` (F.4.1.4.7) changes the default for components that have not asked yet. This is the hook a simulator's database uses.
+- **A custom database** extends `uvm_tr_database` and implements its protected `do_*` methods (§7.1.6), with matching `uvm_tr_stream` and `uvm_recorder` subclasses, for example to write records to a file format your own tools read.
+- **`` `uvm_record_attribute ``** (B.2.3.1) hides a tool-specific attribute call. A recorder whose `use_record_attribute()` returns 1 (§16.4.6.8) routes the recording macros through it; the default returns 0. uvm-core maps the macro to a simulator system task only under a vendor-specific define (tool-dependent).
+
+### Expert: uvm-core text database details
+
+- **Append mode.** `uvm_text_tr_database` opens `tr_db.log` with `$fopen(..., "a+")`, so reruns in one directory pile up in one file.
+- **File name.** `set_file_name("my_tr.log")` changes it, but only before the database opens (the first record); afterwards uvm-core warns `UVM/TXT_DB/SET_AFTER_OPEN` and ignores the call. Cast the default database to `uvm_text_tr_database` in the test's `build_phase` to call it.
+- **Line kinds:** `CREATE_STREAM`, `CLOSE_STREAM`, `FREE_STREAM`, `OPEN_RECORDER`, `SET_ATTR`, `CLOSE_RECORDER`, `FREE_RECORDER` and `LINK`. These names are uvm-core's, not the standard's; scripts that parse them are tied to uvm-core.
+- **`inst_id`.** Each record starts with an `inst_id` attribute, the object's instance id, because recorders record ids by default (`set_id_enabled`, §16.4.2.2).
+
+### Interview angles
+
+<InterviewQuestionPlayground
+  title="Interview angle: the empty stream"
+  question="A colleague added begin_tr()/end_tr() to a driver and a do_record() to the item, and the waveform shows no transactions. Give the most likely cause and how you would confirm it."
+  options={[
+    { text: "Recording is on by default, so the viewer must be filtering the stream out.", isCorrect: false, feedback: "Recording is off by default on every component (§13.1.7.14). Check that before blaming the viewer." },
+    { text: "Recording was never enabled on the driver, so begin_tr() returned 0. Print get_recording_enabled() or the begin_tr() return value, then call set_recording_enabled(1) from the test.", isCorrect: true, feedback: "Right. A handle of 0 from begin_tr() is the quickest proof. If recording is on, check next for the simulator's database switch (tool-dependent)." },
+    { text: "do_record() must also call print(), or the fields are not written.", isCorrect: false, feedback: "print() and record() are separate operations with separate policies; do_record() is enough." },
+    { text: "The item must be registered with uvm_field_* macros; do_record() alone is ignored.", isCorrect: false, feedback: "record() runs the field macros and then do_record(); either one is enough to write fields." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: every item twice"
+  question="In the viewer, every item of a pipelined bus appears twice: once on a stream named after the sequence, ending early, and once on the driver's stream with the real drive times. What is happening, and what is the fix?"
+  options={[
+    { text: "The driver calls end_tr() twice; remove one call.", isCorrect: false, feedback: "A second end_tr() would not create a second record on another stream." },
+    { text: "The sequencer records items automatically, and the driver records them too. Call seq_item_port.disable_auto_item_recording() in run_phase before the first get_next_item().", isCorrect: true, feedback: "Right (§15.2.1, §15.2.1.2.10). The early end is the handshake: automatic recording ends at item_done(), which a pipelined driver calls before the data phase finishes." },
+    { text: "Turn recording off on the driver, so only the sequencer's copy remains.", isCorrect: false, feedback: "That keeps the record with the wrong times. For a pipelined driver the driver's record is the accurate one." },
+    { text: "Use record_event_tr() in the driver instead of begin_tr()/end_tr().", isCorrect: false, feedback: "That writes zero-length markers, not transactions with a duration, and the sequencer's copy would remain." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: recording in a 5,000-seed regression"
+  question="Your manager asks whether to turn on transaction recording for the nightly regression of 5,000 seeds, to make failures easier to debug. What do you recommend?"
+  options={[
+    { text: "Yes, for everything: recording is free with the text database.", isCorrect: false, feedback: "Every record and attribute is a call and a write; the text file grows (and appends) with traffic. Nothing is free at 5,000 seeds." },
+    { text: "No recording at all; logs are enough.", isCorrect: false, feedback: "Recording is often the fastest way to place a failure in time. The question is when to pay for it, not whether." },
+    { text: "Off by default through a test knob; on for reruns of failing seeds, and only for the agents near the failure. Measure the cost with the profiler on your simulator.", isCorrect: true, feedback: "Right. The cost is tool-dependent, and the value exists only when someone opens the database, which is after a failure." },
+    { text: "Record only the sequences, because items are recorded automatically anyway.", isCorrect: false, feedback: "Automatic item recording happens only where the sequencer's recording is on; and the question is cost, which this answer does not address." }
+  ]}
+/>
 
 ## Practice & Reinforce
 
+Start with the quiz, which covers all four objectives. Then do the kata, which is the hands-on core of this lesson, and the debug challenge. The flashcards at the end of this section cover the whole page.
+
+### Retrieval quiz
+
 <Quiz questions={[
   {
-    "question": "A driver calls begin_tr()/end_tr() and the item has a do_record(), but the transaction stream is empty. What is the most likely cause?",
-    "answers": [
-      {"text": "Recording was never enabled on the driver, so begin_tr() returned 0 and opened nothing.", "correct": true},
-      {"text": "do_record() must call print() as well.", "correct": false},
-      {"text": "end_tr() must be called before begin_tr().", "correct": false}
+    question: "A driver calls begin_tr()/end_tr() for every item and the item has a do_record(). Nothing else in the testbench mentions recording. What does tr_db.log contain for the driver?",
+    objective: 2,
+    answers: [
+      { text: "One record per item with its fields, because recording is on by default.", correct: false, feedback: "Recording is off by default on every component (§13.1.7.14); this is the most common recording misconception." },
+      { text: "Nothing: recording was never enabled, so begin_tr() returned 0 and opened nothing.", correct: true, feedback: "Right. Enable it with set_recording_enabled(1) or set_recording_enabled_hier(1)." },
+      { text: "One record per item with times but no fields, because do_record() must also call print().", correct: false, feedback: "do_record() does not need print(). With recording off there are no records at all, not even empty ones." },
+      { text: "Nothing, because the item lacks `uvm_object_utils and the database cannot name it.", correct: false, feedback: "Factory registration is unrelated to recording; a record is named from get_name() or the type name." }
     ],
-    "explanation": "recording_detail defaults to UVM_NONE. Call set_recording_enabled(1) on the component, or set recording_detail through config_db before the component is built."
+    explanation: "With recording off, begin_tr() still sets the item's times but opens no recorder and returns 0, and end_tr() writes nothing (§13.1.7.3, §13.1.7.5). Printing, factory registration and the viewer are not involved."
   },
   {
-    "question": "The driver fills req.rdata while driving a READ. Does the recorded transaction show rdata?",
-    "answers": [
-      {"text": "Yes: fields are recorded inside end_tr(), after the drive.", "correct": true},
-      {"text": "No: fields are recorded at begin_tr(), before the drive.", "correct": false},
-      {"text": "Only if the driver calls record() itself.", "correct": false}
+    question: "A driver calls begin_tr(req, \"drv\"), drives a READ during which it fills req.rdata from the bus, then calls end_tr(req). The item's do_record() records rdata, and recording is on. What does the record show for rdata?",
+    objective: 2,
+    answers: [
+      { text: "The value read from the bus, because fields are written inside end_tr(), after the drive.", correct: true, feedback: "Right. end_tr() calls record() and then closes the recorder." },
+      { text: "0, because the fields are written at begin_tr(), before the drive.", correct: false, feedback: "begin_tr() records no properties (§13.1.7.3). Only end_tr() calls record()." },
+      { text: "Nothing, unless the driver calls req.record() itself.", correct: false, feedback: "end_tr() calls record() for you; calling record() without a recorder does nothing anyway (§5.3.7.1)." },
+      { text: "Both values, one at begin_tr() and one at end_tr().", correct: false, feedback: "Component-level recording writes the fields once, in end_tr()." }
     ],
-    "explanation": "uvm_component::end_tr() calls tr.record(recorder) and then closes the recorder, so values reflect the transaction at end_tr()."
+    explanation: "In uvm_component::end_tr the transaction's properties are recorded to the record opened by begin_tr and then the record is closed (§13.1.7.5 d). So the record holds the values at end_tr: anything filled during the drive is captured, and anything changed after end_tr is not."
   },
   {
-    "question": "Why not just use `do_print()` instead of `do_record()`?",
-    "answers": [
-      {"text": "Recording hands typed fields with begin and end times to a database the waveform tool can display; printing produces text.", "correct": true},
-      {"text": "do_print() cannot be overridden.", "correct": false},
-      {"text": "do_record() is faster than do_print() in every simulator.", "correct": false}
+    question: "Why record transactions at all, when every item is already printed with `uvm_info?",
+    objective: 1,
+    answers: [
+      { text: "Recording replaces the log, so the `uvm_info lines can be removed.", correct: false, feedback: "Recording does not replace logging: reports decide pass/fail and nothing counts records." },
+      { text: "A record has a begin and an end time, typed fields and links, so a viewer can draw it as one box aligned with the signals; a printed line is one string at one instant.", correct: true, feedback: "Right. Recording adds time spans, typed fields and relations; reports still carry errors and pass/fail." },
+      { text: "Recording is always faster than printing in every simulator.", correct: false, feedback: "Relative cost is tool-dependent, and neither is free. That is not the reason to record." },
+      { text: "Only recorded errors are counted in the report summary.", correct: false, feedback: "The opposite: the report summary counts report messages, never records." }
     ],
-    "explanation": "A recorded field such as [31:0] addr can be displayed as a value on a transaction row aligned with the RTL signals; a printed string cannot."
+    explanation: "A record is a timed span with typed attributes and links in a database a viewer can draw (Clause 7, §16.4). A report is a message that the report server counts. They complement each other; recording does not replace logging."
   },
   {
-    "question": "What happens if you forget to call `end_tr()`?",
-    "answers": [
-      {"text": "The transaction stays open with no recorded fields, because fields are written inside end_tr().", "correct": true},
-      {"text": "UVM closes it automatically at the next begin_tr().", "correct": false},
-      {"text": "The simulation stops with a fatal error.", "correct": false}
+    question: "A driver's loop has an early `continue` for one kind of item that skips its end_tr(req). What do those items look like in the database?",
+    objective: 2,
+    answers: [
+      { text: "Records that are never closed and carry no fields.", correct: true, feedback: "Right. Only end_tr() writes the fields and closes the record." },
+      { text: "Normal records: UVM closes an open record at the next begin_tr().", correct: false, feedback: "The component does not close a forgotten record for you; each begin_tr() opens a new one." },
+      { text: "The simulation stops with a UVM_FATAL about an open record.", correct: false, feedback: "No check reports open records; they simply stay open." },
+      { text: "Records with the fields as they were at begin_tr().", correct: false, feedback: "Nothing is recorded at begin_tr() (§13.1.7.3)." }
     ],
-    "explanation": "Each begin_tr() opens a recorder that only end_tr() closes. Open recorders also keep their handles alive."
+    explanation: "begin_tr() opens a recorder that only end_tr() fills and closes. Missing end_tr on any path leaves an open record without attributes, and the recorder's handle stays in use."
+  },
+  {
+    question: "A pipelined driver brackets each item with begin_tr()/end_tr() on stream \"drv\", and recording is enabled on the whole agent. The viewer shows every item twice, once on a stream named after the sequence. Which change fixes it?",
+    objective: 3,
+    answers: [
+      { text: "Call end_tr() twice so the second copy closes.", correct: false, feedback: "The second copy comes from a different component (the sequencer), not from a missing end_tr()." },
+      { text: "Call seq_item_port.disable_auto_item_recording() in run_phase before the first get_next_item().", correct: true, feedback: "Right (§15.2.1, §15.2.1.2.10). Then only the driver records items." },
+      { text: "Turn off recording on the driver.", correct: false, feedback: "That leaves the sequencer's copy, which marks the handshake, not the drive times." },
+      { text: "Use record_event_tr() in the driver instead.", correct: false, feedback: "Event records are zero-length markers; the sequencer's copy would remain." }
+    ],
+    explanation: "With the sequencer's recording on, automatic item recording (on by default, §15.3.2.22) records each item on the root sequence's stream. A driver that records items itself disables it before its first request; once disabled it cannot be re-enabled."
+  },
+  {
+    question: "A monitor detects a parity error and wants a zero-length marker on its stream \"mon\" that carries the bad transfer's fields. Which call writes it?",
+    objective: 3,
+    answers: [
+      { text: "`uvm_error(\"PARITY\", ...)", correct: false, feedback: "That is a report: it fails the test (which you also want), but it writes nothing to the transaction database." },
+      { text: "void'(record_error_tr(\"mon\", tr, \"parity_error\"))", correct: true, feedback: "Right (§13.1.7.7): a record of type Error, closed at once, with tr's fields." },
+      { text: "tr.record()", correct: false, feedback: "record() without a recorder returns immediately and writes nothing (§5.3.7.1)." },
+      { text: "begin_tr(tr, \"mon\") and end_tr(tr) in the same time step", correct: false, feedback: "That writes an ordinary transaction record, not one a viewer can tell is an error, and §13.1.7.5 wants end_time greater than begin_time." }
+    ],
+    explanation: "record_error_tr(stream_name, info, label, ...) writes a zero-length record of type Error (keep_active = 0) with info's fields. Report the error with `uvm_error too: records never affect pass/fail."
+  },
+  {
+    question: "Recording is enabled on the driver only, not on the sequencer. The driver calls begin_tr(req, \"drv\") with no parent_handle. In uvm-core 2020.3.1, does the driver's record get a parent link to the item's sequence?",
+    objective: 3,
+    answers: [
+      { text: "Yes, always: every sequence item is linked to its parent sequence.", correct: false, feedback: "The link needs a record to point to, and the sequence has none." },
+      { text: "Yes, because the item has a parent sequence.", correct: false, feedback: "Having a parent sequence is not enough; that sequence must have been recorded." },
+      { text: "No: the sequence was never recorded, because the sequencer's recording is off, so there is no parent record to link to.", correct: true, feedback: "Right. Enable recording on the sequencer too, or pass parent_handle explicitly." },
+      { text: "Only if the item uses field macros instead of do_record().", correct: false, feedback: "How fields are recorded has nothing to do with links." }
+    ],
+    explanation: "uvm-core's begin_tr uses the parent sequence's recorder when parent_handle is 0 (an addition to §13.1.7.3). The sequencer creates that recorder only when its own recording is on."
+  },
+  {
+    question: "Who may call begin_tr() for a sequence item?",
+    objective: 1,
+    answers: [
+      { text: "Only the item itself, through its own uvm_transaction::begin_tr().", correct: false, feedback: "Components call uvm_component::begin_tr(tr), which calls the item's begin_tr for you." },
+      { text: "Only the sequence that created the item.", correct: false, feedback: "Sequences do not record items; the sequencer may, and drivers and monitors do." },
+      { text: "Any component that produces or consumes it (driver, monitor, scoreboard, and the sequencer automatically), each on its own streams.", correct: true, feedback: "Right (§13.1.7: transactions the component sees, i.e. produces or consumes)." },
+      { text: "Only the test, through set_recording_enabled().", correct: false, feedback: "set_recording_enabled() switches recording on; it does not begin transactions." }
+    ],
+    explanation: "Recording is component-level (§13.1.7). uvm_component::begin_tr calls the transaction's uvm_transaction::begin_tr (§5.4.2.4) to set its times, and opens a record on the component's stream when the component's recording is on."
+  },
+  {
+    question: "In uvm-core 2020.3.1, which of these enables recording on uvm_test_top.env.agt.drv?",
+    objective: 2,
+    answers: [
+      { text: "uvm_config_db#(int)::set(this, \"env.agt.drv\", \"recording_detail\", UVM_FULL) in the test's run_phase.", correct: false, feedback: "The driver read recording_detail when it was created, long before run_phase." },
+      { text: "The same set in the test's connect_phase.", correct: false, feedback: "Still too late: the driver was created during build." },
+      { text: "The same set in the test's build_phase, before or after it creates env.", correct: true, feedback: "Right. The driver is created later, in the agent's build_phase, and reads the setting in its constructor." },
+      { text: "uvm_config_db#(int)::set(this, \"\", \"recording_detail\", UVM_FULL) in the driver's own build_phase.", correct: false, feedback: "In uvm-core's default configuration mode the setting is read only in the constructor, so a set in build_phase is never applied." }
+    ],
+    explanation: "recording_detail is uvm-core behaviour: the constructor looks it up, and the default CONFIG_CHECK_NAMES mode does not re-apply it in build_phase. The portable alternative is set_recording_enabled(1) from end_of_elaboration_phase."
+  },
+  {
+    question: "A team runs 5,000 seeds a night and wants recorded transactions available when a seed fails. Which policy fits best?",
+    objective: 4,
+    answers: [
+      { text: "Record every agent on every seed, so the database is always there.", correct: false, feedback: "That pays the recording cost 5,000 times for databases that are almost never opened." },
+      { text: "Record nothing; print every item with `uvm_info instead.", correct: false, feedback: "Printing every item has a cost too, and loses the time spans and links that make records useful." },
+      { text: "Recording off by default through a test knob; rerun failing seeds with recording on for the agents near the failure.", correct: true, feedback: "Right. Pay the cost only when someone will look." },
+      { text: "Record everything into tr_db.log, because the text database costs nothing.", correct: false, feedback: "The text database writes a line per stream, record and attribute, and appends across runs; its cost is real." }
+    ],
+    explanation: "Recording cost is tool-dependent but never zero, and debug value exists only when someone opens the database. Default off, enable per agent (set_recording_enabled_hier, D.2.3) on reruns."
+  },
+  {
+    question: "Nightly regressions run every test in one shared directory with uvm-core's text database and recording on. After a week, tr_db.log is enormous and holds records from hundreds of runs. Why?",
+    objective: 4,
+    answers: [
+      { text: "uvm_text_tr_database opens tr_db.log in append mode, so every run adds to the same file.", correct: true, feedback: "Right (uvm-core impl.). Run each test in its own directory, delete the file first, or set a per-test name with set_file_name() before the first record." },
+      { text: "free_handle defaults to 0, so records are never released.", correct: false, feedback: "free_handle defaults to 1 (§13.1.7.5), and freeing a handle does not remove lines from a file." },
+      { text: "Each record is written twice by default.", correct: false, feedback: "Duplicates come only from automatic item recording plus driver recording, and would not explain records from many runs." },
+      { text: "The simulator's database copies itself into tr_db.log.", correct: false, feedback: "A simulator's database writes its own format; tr_db.log comes from uvm-core's text database." }
+    ],
+    explanation: "uvm-core's uvm_text_tr_database opens its file with $fopen(..., \"a+\"). Recording on every run in one directory therefore accumulates without bound; it is both a disk cost and a source of confusion when reading the file."
   }
 ]} />
 
+### Kata: record an agent and read its database
+
+Take the Make It Work testbench (or your own one-agent bench) and do the following.
+
+1. Enable recording on the agent from the test, in the phase where every component exists.
+2. Record driver items on stream `drv`, with the automatic parent-sequence link, and with no duplicate copies on the sequencer's stream.
+3. Record monitor transactions on their own stream `mon`.
+4. Mark a parity error with `record_error_tr`, and keep the `` `uvm_error `` report.
+5. Run with uvm-core's text database and answer from `tr_db.log`:
+   - (a) How many streams are there, and which component owns each?
+   - (b) Which record is the child of which?
+   - (c) At what time were the attributes of `item0` written, and why that time?
+   - (d) What changes in the file if you remove the `disable_auto_item_recording()` call?
+   - (e) What changes if you enable recording on `env.agt.drv` and `env.agt.mon` only?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+1. In `end_of_elaboration_phase`: `env.agt.set_recording_enabled_hier(1);`. The agent's sequencer, driver and monitor all exist by then.
+2. In the driver's `run_phase`, call `seq_item_port.disable_auto_item_recording();` first, then `begin_tr(req, "drv")` when the item starts on the pins and `end_tr(req)` after the drive. The parent link is automatic in uvm-core because the sequencer's recording is on, so it records the sequence.
+3. In the monitor: `begin_tr(tr, "mon")` when a transfer is seen, `end_tr(tr)` when its record should close (one clock later in the example).
+4. Next to the `` `uvm_error ``: `void'(record_error_tr("mon", tr, "parity_error"));`.
+5. Answers, from the example's file:
+   - (a) Three: `seq` (scope `...agt.sqr`), `mon` (`...agt.mon`) and `drv` (`...agt.drv`). Each `CREATE_STREAM` line names the scope.
+   - (b) Each `item` record on `drv` is the child of the `seq` record: `LINK ... TXH1:2 TXH2:6 RELATION=child`, where handle 2 is the sequence. Monitor records and the `Error` record have no links.
+   - (c) At 35 ns, the `@35` on its `SET_ATTR` lines, although the record began at 25 ns: fields are written inside `end_tr`.
+   - (d) Each item also appears on stream `seq`, with the label attribute `Transactions` and the handshake times (from the grant in `start_item` to the return of `finish_item` in uvm-core), linked to the sequence.
+   - (e) Stream `seq` disappears, and the `drv` records lose their `LINK` lines: with the sequencer's recording off, the sequence is never recorded, so there is no parent record. The `mon` records are unchanged.
+
+</details>
+
+### Debug challenge: three broken configurations
+
+Each configuration below breaks the example in one way. Name the cause from the symptom alone, then check your answer.
+
+1. The test calls `uvm_config_db#(int)::set(this, "env.agt.*", "recording_detail", 1);` in its `run_phase`, and deletes the `set_recording_enabled_hier` call. Symptom: `tr_db.log` holds only the `reset_released` event and the `parity_error` record.
+2. The driver is changed to call `end_tr(req)` before it fills a new response field `req.status` from the bus. Symptom: `status` is always 0 in the records, but correct in the scoreboard.
+3. The `disable_auto_item_recording()` call is moved to just after the first `get_next_item`. Symptom: on stream `seq`, an `item0` record opens and never closes, with no fields; on `drv`, all three items look normal.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+1. The setting is made after every component was created, and uvm-core reads `recording_detail` only in the constructor, so recording stays off. The two records that do appear come from `record_event_tr` and `record_error_tr`, which uvm-core writes without checking the enable. Fix: `set_recording_enabled_hier(1)` in `end_of_elaboration_phase`, or the `set` in the test's `build_phase`.
+2. The fields are written inside `end_tr`, so a field filled afterwards is never recorded. The scoreboard sees the final object because it receives the handle. Fix: call `end_tr` after the last field is filled.
+3. Automatic item recording was still on when `start_item` was granted for `item0`, so the sequencer opened a record for it. By the time `finish_item` checked again, recording had been disabled, so the sequencer never called `end_tr` and the record stayed open (uvm-core `start_item`/`finish_item`). The standard requires the call before the driver's first request (§15.2.1). Fix: call it first in `run_phase`.
+
+</details>
+
+### Flashcards
+
+The deck for this lesson covers the four recording classes and links, the off-by-default switch and the three ways to enable it, when fields are written, `do_record` and the recording macros, automatic item recording, parent/child links and their condition, error and event records, the text database, recording versus logging, and choosing what to record.
+
 ## References & Next Topics
 
-- **IEEE 1800.2-2020 Clause 7** — Recording classes: §7.1 `uvm_tr_database`, §7.2 `uvm_tr_stream`, §7.3 links.
-- **IEEE 1800.2-2020 §16.4** — `uvm_recorder`.
-- **IEEE 1800.2-2020 §13.1.6.13–14 and §13.1.7** — `set_recording_enabled` / `get_recording_enabled` and the component transaction interface (`accept_tr`, `begin_tr`, `end_tr`).
-- **Previous:** [I-UVM-5: UVM Container Classes](/curriculum/T2_Intermediate/I-UVM-5_UVM_Container_Classes/index)
-- **Next Topic**: [Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) for applying recording and structured logs to complex verification triage.
+**Primary sources**
+
+- IEEE 1800.2-2020:
+  - Clause 7, recording classes: §7.1 `uvm_tr_database` (§7.1.4.1 `open_stream`, §7.1.5 `establish_link`, §7.1.6 implementation API); §7.2 `uvm_tr_stream` (§7.2.5.1 `open_recorder`); §7.3 links (§7.3.2 `uvm_parent_child_link`, §7.3.3 `uvm_cause_effect_link`, §7.3.4 `uvm_related_link`).
+  - §13.1.7 component recording interface: §13.1.7.1 `accept_tr`, §13.1.7.3 `begin_tr`, §13.1.7.5 `end_tr`, §13.1.7.7 `record_error_tr`, §13.1.7.8 `record_event_tr`, §13.1.7.9 `get_tr_stream`, §13.1.7.11–§13.1.7.12 `set_tr_database`/`get_tr_database`, §13.1.7.13–§13.1.7.14 `set_recording_enabled`/`get_recording_enabled`; D.2.3 `set_recording_enabled_hier`.
+  - §16.4 `uvm_recorder` (§16.4.4 close and free, §16.4.5 handles, §16.4.6 attribute recording); §5.3.7 `record`/`do_record`; Annex B.2.3 recording macros.
+  - §5.4.2.4 `uvm_transaction::begin_tr`, §5.4.2.9 `enable_recording`, §5.4.2.13 event pool.
+  - §15.2.1 and §15.2.1.2.10 `disable_auto_item_recording` (driver side), §15.3.2.22 (sequencer side); F.4.1.4.6–F.4.1.4.7 default database; G.2.8 `+uvm_set_config_int`.
+- uvm-core 2020.3.1 (behaviour labelled "uvm-core" on this page): `src/base/uvm_component.svh` (`recording_detail`, `m_begin_tr`, `end_tr`, `record_error_tr`, `record_event_tr`), `uvm_text_tr_database.svh`, `uvm_text_tr_stream.svh`, `uvm_recorder.svh` (`uvm_text_recorder`), `uvm_transaction.svh`, `src/seq/uvm_sequence_base.svh` (`start`, `start_item`, `finish_item`), `uvm_sequencer_base.svh`, `src/macros/uvm_recorder_defines.svh`, `uvm_global_defines.svh`, and `DEVIATIONS.md`.
+
+**Prerequisites:** [I-UVM-4: UVM Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) and [I-UVM-2A: Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index).
+
+**Related**
+
+- [I-UVM-3A: Sequences and the Sequencer](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): `start_item`, `finish_item` and the driver handshake that automatic recording follows.
+- [I-UVM-1D: Reporting and Run Control](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): reports, severity overrides and pass/fail, which recording does not replace.
+- [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): go deeper, combining recording with report control and selective waveforms in failure triage.
+- [E-PERF-1: UVM Performance](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index): measuring and limiting the cost of recording in regressions.
+
+<NextLesson />

@@ -1,114 +1,261 @@
 ---
 title: "I-UVM-5: UVM Container Classes"
-description: "Learn when uvm_pool and uvm_queue add value over native SystemVerilog data structures — and when plain SV is the simpler choice."
+description: "Choose between native SystemVerilog containers and uvm_pool/uvm_queue, predict their behaviour, and share named events and barriers between components without their traps."
 flashcards: "I-UVM-5_Container_Classes"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
-- **What it is:** `uvm_pool` and `uvm_queue` are UVM container classes that wrap a native associative array and a native SV queue in a `uvm_object`, so the container can be passed by handle, created through the factory, and shared through a global singleton.
-- **Why it matters:** Choosing the wrong container wastes simulation performance or forces manual boilerplate. Knowing when UVM containers add value versus when native SV is simpler prevents over-engineering.
-- **The gotchas:** `uvm_pool::get()` of a missing key **inserts** a default entry. `uvm_queue` cannot `insert()` at `size()`. Neither container implements `compare()`, so two different containers always "match".
-- **The Analogy:** UVM containers are like a shared locker with a nameplate: anyone who knows the name can open it. Native SV containers are your own backpack — faster and simpler, but nobody else can reach in.
 
-> **Signal:** If you are passing the same queue between components by copying it, or inventing a global singleton class to share a lookup table, a UVM container may help.
+- **What it is:** UVM has two general container classes. `uvm_pool #(KEY,T)` wraps a native associative array, and `uvm_queue #(T)` wraps a native queue, each inside a `uvm_object` (IEEE 1800.2-2020 §11.2, §11.3). Because the container is now an object, components can share it by **handle** (a reference to one object), pass it through `uvm_config_db`, create it with the factory, or reach one **global singleton** of it. Two specializations of the pool, `uvm_event_pool` and `uvm_barrier_pool` (§10.4), hand out named events and barriers and create them on first use.
+- **Why it matters:** Most testbench data belongs in native SystemVerilog containers, which are simpler and come with array methods. The UVM containers earn their place in two jobs: sharing one container object between components, and sharing a named event or barrier between agents that have no other connection. They also hide traps that cause silent bugs: `get()` of a missing key *adds* that key, `compare()` returns 1 whatever two containers hold, and a barrier taken from the pool starts with a threshold of 0, so it blocks nobody.
+- **The Analogy:** A native container is your backpack: fast, private, and copied whenever you hand it over. A UVM container is a locker in a shared hallway: anyone holding the key (a handle) opens the same locker, and the event pool is a row of lockers labelled by name. *Where it breaks:* the "global" locker is not chosen by name. There is exactly one per type specialization, so every piece of code that uses `uvm_pool #(string,int)`, including a vendor's **verification IP** (VIP: a ready-made, usually third-party, set of agents for a protocol), opens the same one. And a native array declared in a package is shared too; what the UVM container really adds is a handle you can pass and a factory that can create it.
+
+**You will be able to:**
+1. Choose native containers or `uvm_pool`/`uvm_queue` for a sharing scenario (a handle passed through `uvm_config_db`, a global singleton, factory creation), and justify the choice.
+2. Predict what `uvm_pool` and `uvm_queue` calls do: `get()` of a missing key, `exists`/`delete`/`num`, out-of-range `get`/`insert`/`delete`, and which global instance a specialization returns.
+3. Write code that shares a named event or barrier between components with `uvm_event_pool`/`uvm_barrier_pool`, including the threshold a pool-created barrier needs.
+4. Explain and debug what the containers do not do (no content compare, shallow copy, no `uvm_queue` print) and the hangs, false passes and null-handle errors that follow.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### The Two UVM Containers
+**How to read this lesson.** The core path runs from native containers to `uvm_pool`, its global singleton, `uvm_queue`, and the event and barrier pools, then lets you test your predictions in the explorer. Practitioner depth follows: what the containers do not do, and a decision table. Make It Work builds a complete testbench that uses all four classes, then breaks it on purpose and gives a debugging table. Push Further holds the expert corner cases.
 
-UVM provides two general-purpose container classes, plus specializations of `uvm_pool` such as `uvm_event_pool`, `uvm_barrier_pool` and `uvm_object_string_pool`. Both extend `uvm_object`, so they can be created through the factory — but they implement only part of the policy interface:
+Three words this lesson leans on, all from earlier lessons:
+- A **parameterized class** takes types as parameters; a **specialization** is the class with its parameters filled in, such as `uvm_pool #(string,int)`. Each specialization is a separate type ([I-SV-1: Parameterized Classes](/curriculum/T2_Intermediate/I-SV-1_OOP/parameterized-classes)).
+- A **static** method belongs to the class rather than to one object, so you call it with `::` and no handle, as in `uvm_pool #(string,int)::get_global_pool()`.
+- The **factory** creates objects by type with `::type_id::create` ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)), and `uvm_config_db` hands a value or a handle from a parent to the components below it ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
 
-| Container | Native SV Equivalent | Key Difference |
-| --- | --- | --- |
-| `uvm_pool #(KEY,T)` | `T aa[KEY]` | Passed by handle; one global singleton per specialization via `get_global_pool()`; type-safe |
-| `uvm_queue #(T)` | `T q[$]` | Passed by handle; `wait_until_not_empty()`; one global singleton per specialization via `get_global_queue()` |
+### Start from what you already have: native containers
 
-| Policy operation | `uvm_pool` | `uvm_queue` |
-| --- | --- | --- |
-| `copy()` | yes — shallow: class handles are shared | yes — shallow |
-| `print()` | yes, lists every value | **no** — prints only the header |
-| `compare()` | **no** — always returns 1 | **no** — always returns 1 |
-| `convert2string()` | no | yes (`%p` format) |
-
-> **IEEE 1800.2-2020 reference:** §11.2 (`uvm_pool`), §11.3 (`uvm_queue`), §10.4.1 (`uvm_event_pool`). Behaviour above checked against the uvm-core 2020.3.1 reference implementation.
-
-### `uvm_pool` — A Shared, Type-Safe Map
-
-`uvm_pool #(KEY,T)` is a parameterized associative array inside a class. Its static `get_global_pool()` returns one singleton **per specialization**: `uvm_pool #(string,int)` and `uvm_pool #(string,bit)` are two different pools.
+[F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index) taught the native containers: an associative array such as `int err_map[string]` and a queue such as `int q[$]`. They are variables, not objects. Assigning one to another, or passing one to a function without `ref`, makes a **copy**:
 
 ```systemverilog
-// Store a value from a monitor
-uvm_pool #(string, int)::get_global_pool().add("error_count", err_cnt);
-
-// Read it in the scoreboard — no handle-passing needed
-if (uvm_pool #(string, int)::get_global_pool().exists("error_count"))
-  errors = uvm_pool #(string, int)::get_global_pool().get("error_count");
+// snippet: a native queue is copied on assignment
+int q_a[$] = '{1, 2};
+int q_b[$];
+q_b = q_a;          // q_b is a new queue that holds 1, 2
+q_b.push_back(3);   // q_a still holds 1, 2
 ```
 
-**The `get()` trap:** for a missing key, `get()` stores the default value of `T` and returns it — `0` for an `int`, `null` for a class handle — and `num()` grows by one. Use `exists()` first when absence means something.
-
-**When to use `uvm_pool`:**
-- Sharing metadata across components that don't have direct TLM connections (event counters, status flags, configuration tokens)
-- Building registries or lookup tables that multiple agents read
-
-**When NOT to use it:**
-- For high-frequency data (transactions) — use TLM ports instead
-- When you need ordering guarantees beyond key order — pools are maps
-
-### `uvm_queue` — A Queue You Can Pass by Handle
-
-`uvm_queue #(T)` wraps a native SV queue (`T queue[$]`) with `push_back`, `push_front`, `pop_front`, `pop_back`, `get`, `insert`, `delete` and `size`. It is stricter than a native queue: `get(i)`, `insert(i, x)` and `delete(i)` with an index out of range only warn (`QUEUEGET`, `QUEUEINS`, `QUEUEDEL`) and do nothing — and `insert(size(), x)` counts as out of range.
+A `uvm_queue` is an object, so assignment copies the *handle* and both names reach one queue:
 
 ```systemverilog
-function void log_packet(my_packet pkt);
-  uvm_queue #(my_packet) pkt_log;
-  my_packet first;
-
-  pkt_log = uvm_queue #(my_packet)::get_global_queue();
-  pkt_log.push_back(pkt);
-  first = pkt_log.get(0);
-  `uvm_info("LOG", $sformatf("Logged %0d packets", pkt_log.size()), UVM_MEDIUM)
-  `uvm_info("LOG", pkt_log.convert2string(), UVM_HIGH)   // print() would show no elements
-endfunction
+// snippet: a uvm_queue is shared on assignment, because it is an object
+uvm_queue #(int) qa, qb;
+qa = uvm_queue #(int)::type_id::create("qa");
+qb = qa;            // qa and qb are two handles to one object
+qb.push_back(3);    // qa.size() is now 1
 ```
 
-**When to use `uvm_queue`:**
-- When one queue must be shared by handle between components (or through `config_db` as a `uvm_object`)
-- When a consumer should block until data arrives (`wait_until_not_empty()`)
+So when two components need *the same* container, you have three options: make the native container a member of an object you already share (for example a configuration object), declare it at package scope where every importer sees it, or use a UVM container and share its handle. The rest of this section is about the third option and when it is worth it.
 
-**When NOT to use it:**
-- For local iteration — native `T q[$]` is faster and has the array methods (`sort`, `find`, `unique`, `sum`)
-- When you need `compare()` or `print()` of the contents — neither is implemented
+### `uvm_pool #(KEY,T)`: a keyed table behind a handle
 
-### Native SV: When Simpler Is Better
+`uvm_pool #(KEY,T)` holds a protected associative array `T pool[KEY]` (§11.2.1; the defaults are `KEY = int` and `T = uvm_void`). You reach the entries only through methods:
 
-Most production testbenches use native SV structures for the majority of their container needs:
+| Method | What it does | Clause |
+|---|---|---|
+| `new(name)` | creates an empty pool; prefer `uvm_pool #(KEY,T)::type_id::create(name)` | §11.2.2.1 |
+| `add(key, item)` | stores `item`, overwriting any entry at `key` | §11.2.2.5 |
+| `get(key)` | returns the entry; **if `key` is missing, first stores the default value of `T` at `key`** | §11.2.2.4 |
+| `exists(key)` | 1 if `key` is present, 0 otherwise; never adds anything | §11.2.2.8 |
+| `num()` | number of keys stored | §11.2.2.6 |
+| `delete(key)` | removes `key`; there is no "delete everything" form | §11.2.2.7 |
+| `first(key)`, `last(key)`, `next(key)`, `prev(key)` | walk the keys in key order; each returns 0 when there is nothing to move to | §11.2.2.9–§11.2.2.12 |
+| `get_global_pool()`, `get_global(key)` | static: the one global pool of this specialization, and `get(key)` on it | §11.2.2.2–§11.2.2.3 |
+
+**The `get()` trap, traced.** This is the call that surprises nearly everyone. Read the code, predict the right-hand columns, then check:
 
 ```systemverilog
-// Associative array — keys iterate in order (string keys: lexicographic)
-int error_map[string];
-my_packet pkt_q[$];
-my_packet matches[$];
-
-error_map["crc"] = 0;
-error_map["timeout"] = 3;
-
-pkt_q.push_back(pkt);
-pkt_q.sort() with (item.addr);                    // sorts in place; returns nothing
-matches = pkt_q.find() with (item.addr > 'h1000); // returns a new queue
+// snippet: inside a class method
+uvm_pool #(string, int) err_pool;
+int n;
+err_pool = uvm_pool #(string, int)::type_id::create("err_pool");
+err_pool.add("crc", 2);                                    // step 1
+n = err_pool.get("timeout");                               // step 2
+if (err_pool.exists("parity")) n = err_pool.get("parity"); // step 3
+err_pool.delete("parity");                                 // step 4
 ```
 
-> **Key insight:** native SV arrays have `sort`, `find`, `unique`, `min`, `max`, `sum` and `reverse` built in. The ordering methods (`sort`, `rsort`, `reverse`, `shuffle`) are `void` functions that reorder the array in place. `uvm_queue` has none of these methods.
+| Step | Pool contents after the step | `num()` | `n` | Log |
+|---|---|---|---|---|
+| 1 `add("crc", 2)` | `crc: 2` | 1 | 0 | — |
+| 2 `get("timeout")` | `crc: 2`, **`timeout: 0`** | **2** | 0 | nothing: no warning |
+| 3 `exists("parity")` | unchanged (`exists` returned 0, so `get` was skipped) | 2 | 0 | — |
+| 4 `delete("parity")` | unchanged | 2 | 0 | `UVM_WARNING … [POOLDEL]` (uvm-core) |
 
-### Try It: Compare the Containers
+Step 2 is the trap. A native associative array behaves the other way round, which is why the habit from F2B misleads you:
 
-Step through each program. The explorer stops before the calls that surprise most engineers — `get()` of a missing key, a pool of event handles, and `insert()` at the end of a `uvm_queue` — and asks you to predict first. When a program finishes, try your own calls.
+| Action | Native `int aa[string]` | `uvm_pool #(string,int)` |
+|---|---|---|
+| Read a missing key | returns the default (0) and **adds nothing**; IEEE 1800-2023 §7.8.6 says a warning shall be issued | `get()` returns the default **and adds the key**, with no warning (§11.2.2.4) |
+| Delete a missing key | no effect and no warning (IEEE 1800-2023 §7.9.2) | no effect; uvm-core warns `POOLDEL` (the standard does not require a warning) |
+| The default value | from IEEE 1800-2023 Table 7-1 (§7.4.5) | the same table: `0` for 2-state types such as `int`, `'x` for 4-state types such as `logic`, `null` for a class handle, `""` for a `string` |
+| Walk the entries | `foreach`, or `first`/`next` | `first`/`next` only: a pool is an object, so `foreach` and the array methods do not apply |
+
+Two rules follow:
+- **When absence means something, ask `exists()` before `get()`.** Otherwise every probe adds a phantom entry, `num()` grows, and a later `first`/`next` walk lists keys nobody added.
+- **When absence means zero, the insertion is harmless and even handy.** `counts.add(k, counts.get(k) + 1);` counts occurrences without any `exists()` check, because the first `get(k)` stores and returns 0.
+
+### Global singletons: one per specialization
+
+A **singleton** is a class that keeps exactly one shared instance. `uvm_pool` keeps a static handle, and `get_global_pool()` creates the pool on its first call and returns that same object on every later call (§11.2.2.2). `get_global(key)` is shorthand for `get_global_pool().get(key)` (§11.2.2.3), so it has the same insertion behaviour. `uvm_queue` has the matching `get_global_queue()` and `get_global(index)` (§11.3.2.2, §11.3.2.3).
+
+```systemverilog
+// snippet: two components that never exchanged a handle share one counter table
+// In the monitor:
+uvm_pool #(string, int)::get_global_pool().add("parity_err", 1);
+// In the scoreboard, any time later:
+if (uvm_pool #(string, int)::get_global_pool().exists("parity_err")) ...
+```
+
+The catch is the word *one*. The singleton belongs to the **specialization**, not to your testbench or to a name you choose:
+
+<ArchitectureDiagram
+  title="One global pool per type specialization"
+  caption="Your scoreboard and a vendor's monitor both call uvm_pool #(string,int)::get_global_pool(), so they get the same object and overwrite each other's &quot;count&quot;. The uvm_pool #(string,bit) global is a different object, because it is a different specialization."
+  nodes={[
+    { id: "env", label: "my_env", kind: "env", col: 0, row: 0, container: true },
+    { id: "scb", label: "scb", kind: "scoreboard", col: 0, row: 0 },
+    { id: "vip", label: "vendor_env", kind: "env", col: 2, row: 0, container: true },
+    { id: "vmon", label: "mon", kind: "monitor", col: 2, row: 0 },
+    { id: "gp", label: "uvm_pool #(string,int)", sublabel: "the global object", kind: "generic", col: 1, row: 1, state: "error", badge: "key collides" },
+    { id: "gp2", label: "uvm_pool #(string,bit)", sublabel: "another global object", kind: "generic", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "scb", to: "gp", style: "data", label: "add(\"count\", n)" },
+    { from: "vmon", to: "gp", style: "data", label: "add(\"count\", m)" },
+    { from: "vmon", to: "gp2", style: "data", label: "add(\"busy\", 1)" }
+  ]}
+/>
+
+- A `typedef uvm_pool #(string,int) my_pool_t;` does not give you a private global: a typedef is another name for the same specialization.
+- The safer default is an **instance**: create the pool in the test or env with `type_id::create`, and pass its handle down through `uvm_config_db`. The sharing is then limited to the components you chose, and two tests in one regression cannot leak state through it. Make It Work does exactly this.
+- A native array at package scope (`int error_map[string];` in a shared package) is just as global and needs no handle at all. Both are global mutable state; prefer an explicit owner.
+
+### `uvm_queue #(T)`: a queue behind a handle
+
+`uvm_queue #(T)` holds a protected native queue `T queue[$]` (§11.3.1) behind these methods:
+
+| Method | What it does | Clause |
+|---|---|---|
+| `push_back(x)`, `push_front(x)` | add at the back or front | §11.3.2.10–§11.3.2.11 |
+| `pop_front()`, `pop_back()` | remove and return the first or last item | §11.3.2.8–§11.3.2.9 |
+| `get(i)` | return item `i` without removing it | §11.3.2.4 |
+| `insert(i, x)` | insert before item `i` | §11.3.2.6 |
+| `delete(i)` | remove item `i`; with no argument (`i = -1`) remove everything | §11.3.2.7 |
+| `size()` | number of items | §11.3.2.5 |
+| `wait_until_not_empty()` | task: returns at once if the queue holds an item, otherwise blocks until one is added | §11.3.2.12 |
+| `get_global_queue()`, `get_global(i)` | static: the one global queue of this specialization | §11.3.2.2–§11.3.2.3 |
+
+It is **stricter than a native queue** at the edges. An index equal to or greater than `size()` is rejected: the call warns and changes nothing (§11.3.2.4, §11.3.2.6). uvm-core also rejects a negative index, except the `-1` that means "everything" for `delete`.
+
+| Call on a queue holding `'{5, 9}` | Native `int q[$]` | `uvm_queue #(int)` |
+|---|---|---|
+| `insert(2, 7)`, index equal to `size()` | appends: `'{5, 9, 7}` (IEEE 1800-2023 §7.10.2.2) | ignored, `QUEUEINS` warning, still `'{5, 9}` (§11.3.2.6) |
+| `get(5)` / `q[5]` | default value (0) | default value (0) and a `QUEUEGET` warning (§11.3.2.4) |
+| `delete(5)` | no effect | no effect, `QUEUEDEL` warning (uvm-core) |
+| `insert(0, 7)` on an **empty** queue | `'{7}` | ignored: 0 is not less than `size()`, so use `push_back` |
+
+**`wait_until_not_empty()` waits; it does not take.** With one consumer, `wait_until_not_empty(); x = q.pop_front();` is fine. With two consumers, both can wake for the same item, and the second `pop_front()` finds an empty queue and returns the default (`null` for a class). IEEE 1800.2 §11.3.2.8 says an implementation shall warn in that case; uvm-core simply calls the native `pop_front`, for which IEEE 1800-2023 §7.10.2.4 says only that a warning *may* be issued, so whether you see anything is tool-dependent. For a blocking hand-off from producer to consumer, use a mailbox ([I-SV-5: Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes)) or a `uvm_tlm_fifo` ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)): their `get` waits *and* removes in one step.
+
+`uvm_queue` also has none of the native array methods (`sort`, `find`, `unique`, `sum` and the rest), and `foreach` does not work on it. Walk it with `for (int i = 0; i < q.size(); i++)` and `q.get(i)`.
+
+### Named synchronization objects: `uvm_event_pool` and `uvm_barrier_pool`
+
+[I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) taught the two objects themselves: a `uvm_event` lets one thread announce "now" to any number of waiters, and a `uvm_barrier` blocks threads until a set number of them, its **threshold**, have arrived. The problem this lesson solves is *finding* the same object from two agents that share no handle.
+
+The event and barrier pools are pools keyed by `string`, with one change that matters: **their `get()` creates the object** when the key is missing, instead of storing `null` (§10.4.1.2.4, §10.4.2.2.4). So the producer and the consumer can each call `get_global("cfg_done")` in any order and both receive the same, real event.
+
+```systemverilog
+// snippet: two agents share one event by name
+// Producer (for example, the configuration agent's sequence):
+uvm_event cfg_done = uvm_event_pool::get_global("cfg_done");
+// ... program the design ...
+cfg_done.trigger();
+
+// Consumer (for example, the data agent's sequence):
+uvm_event cfg_done = uvm_event_pool::get_global("cfg_done");
+cfg_done.wait_on();   // returns at once if cfg_done was already triggered
+```
+
+A plain `uvm_pool #(string, uvm_event)` does not do this. Its `get()` stores and returns the default value of a class handle, `null`, and the following `.trigger()` stops the run with a null-object access.
+
+**Late waiters.** Which wait you choose decides whether an agent that arrives after the trigger proceeds or hangs. The diagram uses the names from Make It Work: `data_b` starts waiting 100 ns after the trigger.
+
+<SequenceDiagram
+  title="A late waiter on a pooled event"
+  caption="wait_on() returns at once when the event is already on. wait_trigger() would make data_b wait for a second trigger() that never comes, and the test would hang until the UVM timeout."
+  participants={[
+    { id: "cfg", label: "cfg_agt", kind: "generic" },
+    { id: "ev", label: "cfg_done", sublabel: "uvm_event from uvm_event_pool", kind: "generic" },
+    { id: "da", label: "data_a", kind: "generic" },
+    { id: "db", label: "data_b", kind: "generic" }
+  ]}
+  messages={[
+    { from: "da", to: "ev", label: "wait_on()" },
+    { kind: "note", from: "ev", to: "da", label: "0 ns: the event is off, so data_a blocks" },
+    { kind: "divider", label: "100 ns" },
+    { from: "cfg", to: "ev", label: "trigger()" },
+    { kind: "return", from: "ev", to: "da", label: "wait_on returns" },
+    { kind: "divider", label: "200 ns: data_b arrives late" },
+    { from: "db", to: "ev", label: "wait_on()" },
+    { kind: "return", from: "ev", to: "db", label: "returns at once: the event is on", tone: "active" },
+    { kind: "note", from: "ev", to: "db", label: "wait_trigger() here would block until the next trigger(): a hang", tone: "error" }
+  ]}
+/>
+
+| Wait | Returns | Use when |
+|---|---|---|
+| `wait_trigger()` | at the next `trigger()` (§10.1.1.2.4) | the waiter is certainly waiting before the trigger |
+| `wait_ptrigger()` | also if the trigger happened earlier at the same simulation time (§10.1.1.2.5) | the trigger and the wait can fall at the same time |
+| `wait_on()` | at once if the event is on, that is, triggered and not reset since (§10.1.1.2.2) | the waiter may arrive any time later: the usual choice for "configuration is done" |
+
+**Barriers from the pool start at threshold 0.** `uvm_barrier_pool::get(key)` builds the barrier with `new(key)`, and the default threshold of a new barrier is 0 (§10.3.2.1). With threshold 0, the first `wait_for()` already meets the threshold, so it returns at once and nobody ever waits. Set the threshold with `set_threshold(n)` (§10.3.2.6) **before** the first waiter can arrive, for example in `build_phase`:
+
+```systemverilog
+// snippet: three parties must all arrive before any continues
+// In the test's build_phase, before any run_phase thread exists:
+uvm_barrier_pool::get_global("traffic_done").set_threshold(3);
+// In each of the three parties, in run_phase:
+uvm_barrier_pool::get_global("traffic_done").wait_for();
+```
+
+Trace the waiter count for Make It Work's barrier, first with the threshold set, then without it:
+
+| When | Call | Waiters after the call | Threshold | Result |
+|---|---|---|---|---|
+| build | `get_global("traffic_done")` | 0 | **0** | the pool creates the barrier |
+| build | `set_threshold(3)` | 0 | 3 | — |
+| 0 ns | test: `wait_for()` | 1 | 3 | blocks |
+| 120 ns | `data_a`: `wait_for()` | 2 | 3 | blocks |
+| 220 ns | `data_b`: `wait_for()` | 3, then 0 | 3 | all three released; with auto-reset on (the default, §10.3.2.4) the count returns to 0 |
+| *without `set_threshold`:* 0 ns | test: `wait_for()` | 1, then 0 | 0 | returns at once: the test drops its objection at 0 ns and "passes" with no traffic |
+
+**Keys are strings, so spell them once.** A misspelled key does not fail: `get_global("cfg_dn")` quietly creates a second event that nobody triggers. Define every key as a constant in a shared package (`localparam string CFG_DONE = "cfg_done";`) so that a typo becomes a compile error.
+
+### Try it: predict what the calls do
+
+The explorer below runs three small programs on a model of uvm-core 2020.3.1: an error counter in a `uvm_pool`, an event shared through a plain pool and through `uvm_event_pool`, and a `uvm_queue`. It stops before each surprising call and asks you to predict.
+
+**Predict first.** Before you start each program, write down your answers to these three questions: what `num()` is after `get("timeout")`; what happens at `raw.get("dma_done").trigger()`; and what `insert(q.size(), 7)` does to `'{5, 9}`. When a program finishes, try your own calls, for example `exists()` on a key you just read with `get()`.
 
 <UvmContainerVisualizer />
 
+**What it showed.** Each surprise is one rule from this section: `uvm_pool::get()` writes the default into the pool; only the event and barrier pools create objects; and `uvm_queue` rejects every out-of-range index, including `size()`. The policy table under the explorer leads into the next subsection.
+
 <VisualRecap
   title="get() writes, compare() does not look"
-  rule="uvm_pool::get(key) inserts the default value of T when the key is missing (null for a class handle); uvm_event_pool::get creates the object instead. Neither uvm_pool nor uvm_queue compares its contents."
+  rule="uvm_pool::get(key) inserts the default value of T when the key is missing (null for a class handle); uvm_event_pool::get and uvm_barrier_pool::get create the object instead. Neither uvm_pool nor uvm_queue compares its contents."
   code={`if (pool.exists("timeout")) n = pool.get("timeout");
 uvm_event_pool::get_global("dma_done").trigger();
 q.push_back(x);                 // not q.insert(q.size(), x)`}
@@ -117,89 +264,605 @@ q.push_back(x);                 // not q.insert(q.size(), x)`}
 >
   <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.85rem", lineHeight: 1.6 }}>
     <li>uvm_pool: key → value; get() on a miss adds the key.</li>
-    <li>uvm_event_pool: get() on a miss adds a new event.</li>
+    <li>uvm_event_pool and uvm_barrier_pool: get() on a miss adds a new object.</li>
     <li>uvm_queue: an SV queue behind a handle; out-of-range calls warn and do nothing.</li>
   </ul>
 </VisualRecap>
 
+### What the containers do not do
+
+Both classes extend `uvm_object`, so `copy()`, `print()`, `compare()` and the other policy operations from [I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) are callable on them. But each operation only does what the class implements, and these classes implement little. Checked against uvm-core 2020.3.1 (`uvm_pool.svh`, `uvm_queue.svh`):
+
+| Operation | `uvm_pool #(KEY,T)` | `uvm_queue #(T)` |
+|---|---|---|
+| `copy()` | **shallow**: the array is copied, but class handles in it are shared | **shallow**, the same way |
+| `print()` | lists the values; uvm-core labels every row `[-key0--]`, so the keys do not appear | **header only**: no items |
+| `convert2string()` | not implemented (empty string) | `$sformatf("%p", queue)`, for example `'{5, 9}` |
+| `compare()` | **returns 1 whatever the contents** | **returns 1 whatever the contents** |
+| `pack()`, `record()` | nothing about the contents | nothing about the contents |
+
+Three consequences:
+- **Equal-looking is not equal.** `q1.compare(q2)` returns 1 for two `uvm_queue #(int)` objects holding `'{5, 9}` and `'{1}`: there are no field macros and no `do_compare`, so nothing is compared. A scoreboard that trusts it passes every test. Compare the contents yourself:
+
+  ```systemverilog
+  // snippet: compare two queues item by item
+  function automatic bit same_items(uvm_queue #(int) a, uvm_queue #(int) b);
+    if (a.size() != b.size()) return 0;
+    for (int i = 0; i < a.size(); i++)
+      if (a.get(i) != b.get(i)) return 0;
+    return 1;
+  endfunction
+  ```
+
+- **A copy shares the objects.** After `q2.copy(q1)` on a `uvm_queue #(my_item)`, `q2` has its own list, so `q2.push_back(x)` leaves `q1` alone. But `q2.get(0)` and `q1.get(0)` are the same `my_item` object: change one and the other changes. Push Further shows the deep-copy idiom.
+- **Not faster.** A UVM container is the same native container plus a virtual method call on every access, so it is never a speed upgrade, and you lose the array methods. Choose it for sharing, never for performance.
+
+### Choosing a container
+
+| Situation | Choose | Why |
+|---|---|---|
+| A list or table used inside one component (expected items in a scoreboard, a sparse memory model) | native queue or associative array | array methods, no call overhead, no sharing needed |
+| Transactions moving between components | an analysis port or other TLM connection ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)) | ordering, fan-out, and a new object per transaction |
+| A producer hands items to a consumer that must block until one arrives | mailbox or `uvm_tlm_fifo` | `get` waits and removes in one step |
+| One table or list shared by a few components you build | a `uvm_pool`/`uvm_queue` **instance** created in the test or env and passed through `uvm_config_db` | shared by handle, scope you control, factory-creatable |
+| Data that is part of an agent's configuration | a native container inside the configuration object | travels with the configuration you already pass |
+| "Configuration is done, start traffic" between agents | `uvm_event_pool::get_global(KEY)` with `wait_on()` | created on first use; order-independent |
+| "Wait until all N agents finish reset" | `uvm_barrier_pool::get_global(KEY)` with `set_threshold(N)` set first | created on first use; threshold must be set before the first `wait_for()` |
+| A table every part of the bench must reach, with no owner | global pool or package-scope native array, with the keys defined in one package | both are global mutable state; use sparingly |
+
+### Recap
+
+- `uvm_pool` and `uvm_queue` are native containers behind a handle. Use them to share one container object; use native containers for everything else.
+- `uvm_pool::get()` adds a missing key with the default value; `exists()` does not. Event and barrier pools create the object instead.
+- The global singleton is one per specialization, shared with every other user of that type. Prefer an instance passed through `uvm_config_db`.
+- `uvm_queue` rejects every index outside `0` to `size()-1`, including `insert(size(), x)`. `wait_until_not_empty()` does not remove the item.
+- Neither container compares its contents, copies deeply, or (for `uvm_queue`) prints its items.
+- Late waiters use `wait_on()`. Pool barriers need `set_threshold(n)` before anyone waits. Keys belong in constants.
+
 ## Make It Work
 
-1. **Default to native SV.** Start with `int map[string]` and `pkt q[$]`. Only switch to UVM containers when you need to share the container by handle or through a global singleton.
-2. **Use `uvm_pool` for cross-component metadata.** Error counters, test-phase flags, and configuration tokens are good candidates. Guard reads with `exists()`.
-3. **Avoid `uvm_pool` for transactions.** TLM analysis ports are the right mechanism for moving structured data between components.
-4. **Use `uvm_event_pool` for named events.** `uvm_event_pool::get_global("name")` creates the event on first use, so the producer and consumer need no agreed start-up order.
-5. **Never rely on container `compare()` or `print()`.** Compare element by element yourself, and log a `uvm_queue` with `convert2string()`.
+### A configuration handshake with shared containers
 
-**Checklist before moving on:**
-- [ ] You know the two UVM container classes and their native SV equivalents.
-- [ ] You can predict what `get()` does for a missing key in `uvm_pool` and in `uvm_event_pool`.
-- [ ] You can explain why native SV queues have richer array methods than `uvm_queue`.
-- [ ] You know which policy operations each container implements.
+This complete testbench has no design under test (DUT): the containers are testbench plumbing, so three small components stand in for agents.
+- `cfg_agt` "programs the design" for 100 ns, fills a shared `uvm_queue` with the addresses it configured, and triggers the pooled event `cfg_done`.
+- `data_a` and `data_b` wait for `cfg_done` with `wait_on()`, send one write per address and count their writes in a shared `uvm_pool`. `data_b` is busy until 200 ns, so it arrives after the trigger.
+- The test creates both containers, passes them down through `uvm_config_db`, sets the barrier threshold, and keeps an **objection** raised (while any objection is raised, `run_phase` does not end; see [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)) until all three parties reach the `traffic_done` barrier. `check_phase` and `report_phase` read the counters safely.
 
-## Push Further: Sharing Events Between Agents
-
-A common pattern uses the global event pool as a coordination point between independent agents:
+<ArchitectureDiagram
+  title="The Make It Work testbench"
+  caption="Names match the code. addr_q and counts are instances that the test creates and passes down through uvm_config_db. The two global objects on the right have no wires: every party reaches them by name, which is both the point of a global pool and its risk."
+  nodes={[
+    { id: "test", label: "uvm_test_top (container_test)", kind: "test", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "cfg", label: "cfg_agt", sublabel: "cfg_agent", kind: "generic", col: 0, row: 0 },
+    { id: "da", label: "data_a", sublabel: "data_agent", kind: "generic", col: 1, row: 0 },
+    { id: "db", label: "data_b", sublabel: "data_agent", kind: "generic", col: 2, row: 0 },
+    { id: "q", label: "addr_q", sublabel: "uvm_queue #(int)", kind: "generic", col: 0, row: 1 },
+    { id: "cnt", label: "counts", sublabel: "uvm_pool #(string,int)", kind: "generic", col: 1, row: 1 },
+    { id: "ev", label: "\"cfg_done\"", sublabel: "uvm_event_pool global", kind: "generic", col: 3, row: 0 },
+    { id: "bar", label: "\"traffic_done\"", sublabel: "uvm_barrier_pool global", kind: "generic", col: 3, row: 1 }
+  ]}
+  edges={[
+    { from: "cfg", to: "q", style: "data", label: "push_back" },
+    { from: "da", to: "cnt", style: "data", label: "add" },
+    { from: "db", to: "cnt", style: "data", label: "add" }
+  ]}
+/>
 
 ```systemverilog
-// In agent A's sequence: announce that the DMA finished
-uvm_event_pool::get_global("dma_done").trigger();
+// compile
+// container_tb.sv: compile together with uvm-core 2020.3.1.
+`timescale 1ns/1ps
 
-// In agent B's sequence: wait for it
-uvm_event_pool::get_global("dma_done").wait_on();
+package container_pkg;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  // Every shared name in one place: a misspelled key becomes a compile
+  // error instead of a silent second event.
+  localparam string CFG_DONE     = "cfg_done";
+  localparam string TRAFFIC_DONE = "traffic_done";
+
+  typedef uvm_queue #(int)        addr_queue_t;  // filled once, read by many
+  typedef uvm_pool #(string, int) count_pool_t;  // writes per agent
+
+  // Stands in for the agent that programs the DUT's registers.
+  class cfg_agent extends uvm_component;
+    `uvm_component_utils(cfg_agent)
+    addr_queue_t addr_q;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db #(addr_queue_t)::get(this, "", "addr_q", addr_q))
+        `uvm_fatal("NOQ", "addr_q was not set")
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      uvm_event cfg_done = uvm_event_pool::get_global(CFG_DONE);
+      #100ns;   // stands in for the time it takes to program the design
+      addr_q.push_back('h1000);
+      addr_q.push_back('h2000);
+      `uvm_info("CFG", $sformatf("configured, addr_q = %s",
+                                 addr_q.convert2string()), UVM_LOW)
+      cfg_done.trigger();
+    endtask
+  endclass
+
+  // Stands in for an agent that may only send traffic after configuration.
+  class data_agent extends uvm_component;
+    `uvm_component_utils(data_agent)
+    addr_queue_t addr_q;
+    count_pool_t counts;
+    time         start_delay;   // the test makes data_b arrive late on purpose
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db #(addr_queue_t)::get(this, "", "addr_q", addr_q))
+        `uvm_fatal("NOQ", "addr_q was not set")
+      if (!uvm_config_db #(count_pool_t)::get(this, "", "counts", counts))
+        `uvm_fatal("NOPOOL", "counts was not set")
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      uvm_event   cfg_done = uvm_event_pool::get_global(CFG_DONE);
+      uvm_barrier done_bar = uvm_barrier_pool::get_global(TRAFFIC_DONE);
+      if (start_delay > 0) #(start_delay);   // busy with something else
+      cfg_done.wait_on();   // returns at once if cfg_done already fired
+      for (int i = 0; i < addr_q.size(); i++) begin
+        #10ns;   // stands in for one bus write
+        `uvm_info("DATA", $sformatf("write to 'h%0h", addr_q.get(i)), UVM_HIGH)
+        // The first get() of our name inserts 0, so counting needs no exists()
+        counts.add(get_name(), counts.get(get_name()) + 1);
+      end
+      `uvm_info("DATA", $sformatf("sent %0d writes", counts.get(get_name())), UVM_LOW)
+      done_bar.wait_for();
+    endtask
+  endclass
+
+  class container_test extends uvm_test;
+    `uvm_component_utils(container_test)
+    cfg_agent    cfg_agt;
+    data_agent   data_a, data_b;
+    addr_queue_t addr_q;
+    count_pool_t counts;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      // Instances, not globals: only the components we choose can see them.
+      addr_q = addr_queue_t::type_id::create("addr_q");
+      counts = count_pool_t::type_id::create("counts");
+      uvm_config_db #(addr_queue_t)::set(this, "*", "addr_q", addr_q);
+      uvm_config_db #(count_pool_t)::set(this, "data_*", "counts", counts);
+      // A pool-created barrier starts at threshold 0: set it before anyone waits.
+      uvm_barrier_pool::get_global(TRAFFIC_DONE).set_threshold(3);  // 2 agents + test
+      cfg_agt = cfg_agent::type_id::create("cfg_agt", this);
+      data_a  = data_agent::type_id::create("data_a", this);
+      data_b  = data_agent::type_id::create("data_b", this);
+      data_b.start_delay = 200ns;
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      phase.raise_objection(this);
+      uvm_barrier_pool::get_global(TRAFFIC_DONE).wait_for();
+      phase.drop_objection(this);
+    endtask
+
+    function void check_phase(uvm_phase phase);
+      string names[2] = '{"data_a", "data_b"};
+      foreach (names[i]) begin
+        // exists() first: get() alone would add a missing name to the pool
+        if (!counts.exists(names[i]) || counts.get(names[i]) != addr_q.size())
+          `uvm_error("COUNTS", $sformatf("%s did not send %0d writes",
+                                         names[i], addr_q.size()))
+      end
+    endfunction
+
+    function void report_phase(uvm_phase phase);
+      string key;
+      if (counts.first(key)) begin
+        do begin
+          `uvm_info("COUNTS", $sformatf("%s = %0d", key, counts.get(key)), UVM_LOW)
+        end while (counts.next(key));
+      end
+      `uvm_info("COUNTS", $sformatf("num() = %0d", counts.num()), UVM_LOW)
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  import uvm_pkg::*;
+  import container_pkg::*;
+  initial run_test("container_test");
+endmodule
 ```
 
-`uvm_event_pool` is `uvm_object_string_pool #(uvm_event #(uvm_object))`, whose `get()` creates a missing event. A plain `uvm_pool #(string, uvm_event)` would return `null` for a key nobody added.
+**Expected output** (illustrative: worked out from the uvm-core 2020.3.1 source, not captured from a simulator; banner lines, file names and line numbers omitted; times in ns; the spacing inside `%p` output is implementation-dependent, IEEE 1800-2023 §21.2.1.6):
 
-> **Caution:** `wait_trigger()` only sees triggers that happen after it starts waiting. If agent B might arrive late, use `wait_on()` (returns at once if the event is already on) or `wait_ptrigger()` (also sees a trigger earlier in the same time step). The string key couples the agents: a misspelled name silently creates a second event. Define the key names in a shared package.
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test container_test...
+UVM_INFO @ 100: uvm_test_top.cfg_agt [CFG] configured, addr_q = '{4096, 8192}
+UVM_INFO @ 120: uvm_test_top.data_a [DATA] sent 2 writes
+UVM_INFO @ 220: uvm_test_top.data_b [DATA] sent 2 writes
+UVM_INFO @ 220: uvm_test_top [COUNTS] data_a = 2
+UVM_INFO @ 220: uvm_test_top [COUNTS] data_b = 2
+UVM_INFO @ 220: uvm_test_top [COUNTS] num() = 2
+
+--- UVM Report Summary ---
+...
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+Read it against the rules:
+- `addr_q` prints its items in decimal through `convert2string()` (`'h1000` is 4096). `print()` would have shown only a header.
+- `data_a` waits from 0 ns and wakes at the trigger at 100 ns. `data_b` calls `wait_on()` at 200 ns, after the trigger, and continues at once because the event is on.
+- The test waits at the barrier from 0 ns, `data_a` joins at 120 ns, and `data_b` completes the threshold of 3 at 220 ns, so the run ends at 220 ns. The `write to` messages are at `UVM_HIGH`, below the default verbosity, so they do not print.
+- `num()` is 2: `check_phase` used `exists()` before `get()`, so it added no keys.
+
+**Run it.** Compile uvm-core 2020.3.1 (`src/uvm_pkg.sv`, with `src` on the include path) and `container_tb.sv`, then simulate `tb_top`. The switches that do this are tool-dependent, and most commercial simulators also ship a precompiled UVM library. Full UVM support in open-source simulators is limited, and this example has not been run on one.
+
+### Break it on purpose
+
+Make one change at a time, predict the log, then run it:
+
+| Change | What you should see | The rule |
+|---|---|---|
+| Delete the `set_threshold(3)` line | Only `RNTST` and `num() = 0`: the run ends at 0 ns with `UVM_ERROR :    2` from `check_phase`. Without the check, this test would *pass* with no traffic | A pool-created barrier has threshold 0, so the test's `wait_for()` returns at once |
+| In `data_agent`, change `wait_on()` to `wait_trigger()` | `data_a` still works. `data_b` waits forever, the barrier never reaches 3, and the run ends with `UVM_FATAL … [PH_TIMEOUT]` (default timeout 9200 s in uvm-core) | `wait_trigger()` only sees triggers that happen after it starts waiting |
+| In `cfg_agent`, replace `CFG_DONE` with the literal `"cfg_dn"` | Both data agents hang; same timeout | A misspelled key creates a second event that nobody triggers |
+| In `cfg_agent`, replace `uvm_event_pool::get_global(CFG_DONE)` with `uvm_pool #(string, uvm_event)::get_global(CFG_DONE)` | A run-stopping null-object access at 100 ns at `cfg_done.trigger()` (the message is tool-dependent) | A plain pool stores and returns `null` for a missing class-handle key |
+| Replace `addr_q.push_back('h2000)` with `addr_q.insert(addr_q.size(), 'h2000)` | `UVM_WARNING … [QUEUEINS]`, `addr_q = '{4096}`, each agent sends 1 write, `UVM_WARNING :    1` | `uvm_queue::insert` rejects an index equal to `size()` |
+| At the start of `report_phase`, add `if (counts.get("data_c") != 0) ;` | `data_c = 0` appears in the list and `num() = 3` | Probing with `get()` adds the key |
+
+### Debug it: symptom, cause, fix
+
+| Symptom in the log | Likely cause | Fix |
+|---|---|---|
+| Null-object access at `.trigger()` or `.wait_*()` | a plain `uvm_pool` of events or barriers returned `null` | use `uvm_event_pool` / `uvm_barrier_pool` |
+| A waiter never wakes; the run ends in `PH_TIMEOUT` | the waiter used `wait_trigger()` after the trigger, or the two sides spell the key differently | use `wait_on()`; define keys as constants; print the pool to see every key (below) |
+| The test ends at 0 ns and passes; barrier waiters return at once | the barrier's threshold is still 0 | call `set_threshold(n)` in `build_phase`, before any `wait_for()` |
+| `num()` is larger than expected; a walk lists keys nobody added | `get()` on missing keys | `exists()` before `get()` |
+| `UVM_WARNING [POOLDEL]` | `delete()` of a key that is not there | check `exists()`, or treat the warning as a sign of a wrong key |
+| `UVM_WARNING [QUEUEINS]`, `[QUEUEGET]` or `[QUEUEDEL]` | an index outside `0` to `size()-1`, often `insert(size(), x)` | `push_back`/`push_front`; check `size()` |
+| `print()` of a `uvm_queue` shows no items; a pool's print shows no keys | the containers have little or no `do_print` | log with `convert2string()` (queue) or walk with `first`/`next` (pool) |
+| `compare()` returns 1 although the contents differ | the containers do not compare contents | compare item by item |
+| Two agents, or your bench and a vendor's VIP, corrupt each other's counters | both use the global pool of the same specialization | pass an instance through `uvm_config_db`; at least prefix keys |
+| Changing an item through a copy changes the original | `copy()` is shallow | clone each item (Push Further) |
+| With two consumers, one `pop_front()` returns `null` or 0 | `wait_until_not_empty()` woke both | use a mailbox or `uvm_tlm_fifo` |
+
+To see every key in an event or barrier pool, print it: `uvm_event_pool::get_global_pool().print();`. In uvm-core the event and barrier pools print one row per key, such as `[cfg_dn]` and `[cfg_done]` side by side, which exposes a misspelling at once. (A plain `uvm_pool` prints its values without the keys, so walk it with `first`/`next` instead.)
+
+### How to share data and synchronization between components
+
+1. **Default to native containers.** Keep data local to the component that owns it; move transactions with TLM.
+2. **Need one container in several components?** Create a `uvm_pool`/`uvm_queue` instance in the test or env with `type_id::create`, `uvm_config_db #(T)::set` it for exactly the components that need it, and `get` it in their `build_phase`, with a `uvm_fatal` if it is missing.
+3. **Read safely.** Use `exists()` before `get()` whenever a missing key means something; use `push_back` rather than `insert(size(), x)`.
+4. **Need a named "now" or "all here"?** Put the key in a package constant, use `uvm_event_pool::get_global(KEY)` with `wait_on()` for late waiters, or `uvm_barrier_pool::get_global(KEY)` with `set_threshold(n)` in `build_phase`.
+5. **Check and report by content.** Compare item by item, log with `convert2string()` or a `first`/`next` walk, and make `check_phase` fail if the expected entries are missing.
+
+**Checklist before moving on:**
+- [ ] I can say, for a given sharing need, whether a native container, a container instance through `uvm_config_db`, a global pool or a TLM connection fits, and why.
+- [ ] I can predict `num()` after `get()` of a missing key, and what `insert(size(), x)` does to a `uvm_queue`.
+- [ ] I can share an event between two components with `uvm_event_pool::get_global` and choose `wait_on()` for a late waiter.
+- [ ] I set the threshold of a pool barrier before the first `wait_for()`, and I know what happens if I forget.
+- [ ] I never trust `compare()`, `copy()` or `print()` of a container for its contents.
+
+## Push Further
+
+### Expert: one global instance per specialization, and what to use instead
+
+In uvm-core 2020.3.1, `uvm_pool` declares `static protected this_type m_global_pool;` and `get_global_pool()` creates it on first call (`uvm_pool.svh`; §11.2.2.2 "Returns the singleton global pool for the item type T"). A static member of a parameterized class exists once per specialization (IEEE 1800-2023 §8.25: "Each specialization of a class has a separate set of static member variables"), so the scope of "global" is the type, not your testbench. Every library, VIP and test in the simulation that names `uvm_pool #(string,int)` shares it, and it lives, with every key anyone added, until the simulation ends.
+
+- A `typedef` is the same specialization, so it shares the global.
+- A subclass inherits the base's static `get_global_pool()`, which returns the *base* global. It gets a private global only if it redeclares the static handle and the static methods, which is exactly what uvm-core's `uvm_object_string_pool` does for the event and barrier pools.
+- A package-scope native array is equally global. Both are global mutable state; the pool adds only handle passing and factory creation.
+
+Staff-level answer to "where should shared state live?": with an owner. The env or test creates the instance and passes it down with `uvm_config_db`; global pools are for genuinely global names, with keys defined in one package and prefixed by the owner.
+
+### Expert: the standard and uvm-core declare the synchronization pools differently
+
+IEEE 1800.2-2020 declares `class uvm_event_pool extends uvm_pool #(string,uvm_event#(uvm_object))` (§10.4.1.1) and `class uvm_barrier_pool extends uvm_pool #(string,uvm_barrier)` (§10.4.2.1). uvm-core 2020.3.1 implements both as typedefs of a helper class: `typedef uvm_object_string_pool #(uvm_event#(uvm_object)) uvm_event_pool;` and `typedef uvm_object_string_pool #(uvm_barrier) uvm_barrier_pool;` (`uvm_pool.svh`). `uvm_object_string_pool` is marked `@uvm-compat` (kept for UVM 1.2 code) and is not part of IEEE 1800.2-2020, so code that names it is not portable; name `uvm_event_pool` and `uvm_barrier_pool` instead.
+
+Two consequences in uvm-core:
+- `uvm_event_pool::get_global_pool()` and `uvm_pool #(string, uvm_event#(uvm_object))::get_global_pool()` return **different** objects, because the helper class redeclares the static handle.
+- §10.4.1's overview says the event pool contains `begin`, `accept` and `end` events by default. That describes the event pool *inside each* `uvm_transaction`: in uvm-core, `accept_tr()`, `begin_tr()` and `end_tr()` fetch those three events from the transaction's own pool by name, which creates them on first use (`uvm_transaction.svh`). A pool you get from `uvm_event_pool::get_global_pool()` or create yourself starts empty in uvm-core.
+
+### Expert: shallow copy and the deep-copy idiom
+
+uvm-core's `do_copy` for both containers is one assignment: `pool = p.pool;` or `queue = p.queue;` (`uvm_pool.svh`, `uvm_queue.svh`). Assigning a native array copies its elements, and for class-typed elements an element is a handle, so the copy shares every object: the same handle-copying that IEEE 1800-2023 §8.12 describes for a shallow copy of a class. If the copy must be independent, clone each element:
+
+```systemverilog
+// snippet: deep copy of a uvm_queue of uvm_objects
+function automatic uvm_queue #(my_item) deep_copy(uvm_queue #(my_item) src);
+  uvm_queue #(my_item) dst = uvm_queue #(my_item)::type_id::create("dst");
+  for (int i = 0; i < src.size(); i++) begin
+    my_item it;
+    if (!$cast(it, src.get(i).clone()))
+      `uvm_fatal("CLONE", "clone() returned the wrong type")
+    dst.push_back(it);
+  end
+  return dst;
+endfunction
+```
+
+`clone()` is `create()` plus `copy()`, so each item is only as deep as *its* `do_copy` or field macros make it ([I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index)). A scoreboard that stores items from a monitor should clone them on entry for the same reason.
+
+### Expert: compare() returns 1, and when it does not
+
+Neither container registers fields or overrides `do_compare`, so `compare()` of two containers of the **same** specialization returns 1 whatever they hold. Two **different** specializations do miscompare in uvm-core, but only on type: the comparer's type check (§16.3.4.2, on by default) compares `get_object_type()`, which differs per specialization. Because both classes declare their type name with `` `uvm_type_name_decl("uvm_pool") `` and `("uvm_queue")`, `get_type_name()` is the same string for every specialization, and uvm-core's message reads "get_object_type() for … does not match get_object_type() for …" rather than naming the two types (`uvm_comparer.svh`). Either way, no element is ever compared.
+
+### Expert: factory registration of parameterized containers
+
+Both classes register with `` `uvm_object_param_utils `` (uvm-core source). IEEE 1800.2-2020 B.2.1.2 says the param variants "do not supply a type name when registering the object with the factory. As such, name-based lookup with the factory for parameterized classes is not possible." So `uvm_pool #(string,int)::type_id::create("counts")` and type overrides by type work, but creating or overriding a pool by the string name "uvm_pool" does not. If a project wants to override its shared table type from the command line, wrap it in a non-parameterized subclass registered with `` `uvm_object_utils ``.
+
+### Expert: memory and performance at scale (tool-dependent)
+
+- **Probes grow memory.** Every `get()` of a missing key adds an entry that lives until `delete(key)`; a monitor that probes a pool per transaction with fresh keys leaks for the whole run. `num()` in `report_phase` is a cheap leak check.
+- **No clear-all for pools.** `uvm_pool::delete` needs a key (§11.2.2.7). To empty a pool, walk and delete each key, or drop the handle and create a new instance.
+- **Calls, not speed.** Each access is a virtual method call around the same native container. The cost difference against a native container is tool-dependent and usually small next to the rest of a UVM bench, so measure with your simulator's profiler before arguing either way. Never pick a UVM container for speed.
+
+### Interview angles
+
+<InterviewQuestionPlayground
+  title="Interview angle: the counters that changed by themselves"
+  question="Your scoreboard counts parity errors in uvm_pool #(string,int)::get_global_pool() under the key &quot;count&quot;. After a vendor VIP was added, the count is sometimes larger than the number of errors in the log. What is the likely cause, and what do you change?"
+  options={[
+    { text: "The VIP's monitor creates extra parity errors on the bus.", isCorrect: false, feedback: "The log would show those errors. The count disagrees with the log, which points at the counter, not the bus." },
+    { text: "Both use the global pool of the same specialization, so the VIP writes the same &quot;count&quot; key. Create a pool instance in the env and pass it through uvm_config_db, or at least define prefixed keys in one package.", isCorrect: true, feedback: "Right. The global singleton is one object per specialization (§11.2.2.2), shared by every user of uvm_pool #(string,int), including third-party code." },
+    { text: "uvm_pool::add() is not thread-safe, so two threads lose updates.", isCorrect: false, feedback: "SystemVerilog threads do not preempt each other inside a function call; the problem is two owners of one key, not interleaving." },
+    { text: "Each component gets its own global pool, so the scoreboard is reading a stale copy.", isCorrect: false, feedback: "The opposite: there is exactly one global pool per specialization, which is why the two writers collide." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: the event that crashed"
+  question="uvm_pool #(string, uvm_event)::get_global(&quot;go&quot;).trigger(); stops the run with a null-object access, but uvm_event_pool::get_global(&quot;go&quot;).trigger(); works. Why?"
+  options={[
+    { text: "Events must be created in build_phase before they can be triggered.", isCorrect: false, feedback: "uvm_event_pool creates the event on first get(), in any phase. The difference is in get() itself." },
+    { text: "A plain uvm_pool's get() stores and returns the default value of T, which is null for a class handle; the event and barrier pools override get() to create the object.", isCorrect: true, feedback: "Right (§11.2.2.4 vs §10.4.1.2.4). Use the event pool for events, or add() a real event before anyone calls get()." },
+    { text: "trigger() needs a data argument when the pool is not an event pool.", isCorrect: false, feedback: "trigger()'s data argument is optional. The call never reaches trigger(): the handle is null." },
+    { text: "The key must be added with add() first, and get() warns when it is missing.", isCorrect: false, feedback: "get() never warns; it silently inserts the default. That silence is why the failure shows up one call later as a null access." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: is uvm_queue worth it?"
+  question="A colleague proposes replacing every int q[$] in the testbench with uvm_queue #(int) &quot;for consistency and speed&quot;. How do you respond?"
+  options={[
+    { text: "Agree: UVM classes are optimized by the simulator vendors.", isCorrect: false, feedback: "uvm_queue is ordinary SystemVerilog around the same native queue, plus a method call per access." },
+    { text: "Agree, because uvm_queue adds deep compare and print for free.", isCorrect: false, feedback: "It adds neither: compare() returns 1 and print() shows only a header." },
+    { text: "Disagree: it is not faster, it loses the array methods and foreach, and it rejects insert at size(). Use it only where one queue object must be shared by handle; keep native queues elsewhere.", isCorrect: true, feedback: "Right. The only thing uvm_queue adds is object-ness: a handle to pass, a global singleton and factory creation." },
+    { text: "Disagree, because uvm_queue cannot hold class handles.", isCorrect: false, feedback: "It can: uvm_queue #(T) takes any type T. The case against it is about value, not capability." }
+  ]}
+/>
 
 ## Practice & Reinforce
 
+Start with the quiz, which covers all four objectives. Then do the kata, which is the hands-on core of this lesson, and the debug challenge. The flashcards at the end of this section cover the whole page.
+
+### Retrieval quiz
+
 <Quiz questions={[
   {
-    "question": "When would you choose `uvm_pool` over a native SV associative array?",
-    "answers": [
-      {"text": "When you need sort/find/unique methods on the entries.", "correct": false},
-      {"text": "When multiple components need shared access without passing handles.", "correct": true},
-      {"text": "When you need maximum simulation performance.", "correct": false},
-      {"text": "When you are storing transactions between a monitor and scoreboard.", "correct": false}
+    question: "When is uvm_pool the better choice than a native associative array?",
+    objective: 1,
+    answers: [
+      { text: "When you need find(), min() or unique() on the entries.", correct: false, feedback: "Those are native array methods; uvm_pool has none of them." },
+      { text: "When one table object must be shared by handle (for example through uvm_config_db) or created by the factory.", correct: true, feedback: "Right. Being an object is the only thing the pool adds: a handle to pass, a global singleton, factory creation." },
+      { text: "When simulation speed matters most.", correct: false, feedback: "A pool is the same native array plus a method call per access. It is never a speed upgrade." },
+      { text: "When it is the only way to share data without passing handles.", correct: false, feedback: "A native array declared in a package is shared without handles too. Both are global mutable state." }
     ],
-    "explanation": "`uvm_pool` provides global singleton access via `get_global_pool()`, letting components share data without explicit handle-passing. TLM ports are better for transactions."
+    explanation: "uvm_pool wraps a native associative array in a uvm_object (§11.2). It adds handle passing, a per-specialization global singleton and factory creation, and loses the array methods. Package-scope native arrays are also shared without handles; transactions belong on TLM connections."
   },
   {
-    "question": "Which container supports built-in `sort()` and `find()` array methods?",
-    "answers": [
-      {"text": "uvm_pool", "correct": false},
-      {"text": "uvm_queue", "correct": false},
-      {"text": "Native SV queue ($)", "correct": true},
-      {"text": "Both uvm_queue and SV queue", "correct": false}
+    question: "A teammate wants to replace int exp_q[$] in the scoreboard with uvm_queue #(int) to make the scoreboard faster. What will the change do?",
+    objective: 1,
+    answers: [
+      { text: "Speed up the simulation, because uvm_queue is optimized.", correct: false, feedback: "uvm_queue is ordinary SystemVerilog around the same native queue." },
+      { text: "Add a method call to every access and lose sort(), find() and foreach, with no speed gain.", correct: true, feedback: "Right. Choose uvm_queue for sharing by handle, never for speed." },
+      { text: "Make exp_q.sort() faster.", correct: false, feedback: "uvm_queue has no sort() at all." },
+      { text: "Enable compare() of the whole queue for free.", correct: false, feedback: "uvm_queue has no do_compare; compare() returns 1 whatever it holds." }
     ],
-    "explanation": "Only native SV arrays and queues have the array manipulation methods. `uvm_queue` wraps an SV queue but does not expose them."
+    explanation: "This is the 'UVM containers are faster' misconception. uvm_queue (§11.3) adds object-ness and nothing else. A scoreboard's private queue should stay native."
   },
   {
-    "question": "`q1` and `q2` are `uvm_queue #(int)` objects holding '{5, 9} and '{1}. What does `q1.compare(q2)` return?",
-    "answers": [
-      {"text": "0, because the elements differ.", "correct": false},
-      {"text": "1, because uvm_queue registers no fields and has no do_compare, so there is nothing to compare.", "correct": true},
-      {"text": "A UVM_ERROR: queues cannot be compared.", "correct": false}
+    question: "q1 and q2 are uvm_queue #(int) objects holding '{5, 9} and '{1}. What does q1.compare(q2) return?",
+    objective: 4,
+    answers: [
+      { text: "0, because the elements differ.", correct: false, feedback: "That would need a do_compare or field macros that look at the elements; uvm_queue has neither." },
+      { text: "0, because the queues have different sizes.", correct: false, feedback: "The size is never examined either. Nothing about the contents is compared." },
+      { text: "1, because uvm_queue registers no fields and has no do_compare, so nothing is compared.", correct: true, feedback: "Right. Two containers of the same specialization always compare equal." },
+      { text: "A UVM_ERROR: queues cannot be compared.", correct: false, feedback: "compare() is a uvm_object method and runs without error; it just has nothing to compare." }
     ],
-    "explanation": "uvm_queue implements do_copy and convert2string only. compare() falls back to the default do_compare, which returns 1."
+    explanation: "uvm_queue implements do_copy and convert2string only (uvm-core 2020.3.1). compare() falls back to the empty default, which returns 1. Compare the items yourself, for example in a loop over size() and get(i)."
   },
   {
-    "question": "`err_pool` is a `uvm_pool #(string,int)` holding only the key \"crc\". What does `n = err_pool.get(\"timeout\")` do?",
-    "answers": [
-      {"text": "Returns 0 and leaves the pool unchanged.", "correct": false},
-      {"text": "Returns 0 and inserts \"timeout\" with value 0, so num() becomes 2.", "correct": true},
-      {"text": "Issues a POOLDEL warning.", "correct": false}
+    question: "err_pool is a uvm_pool #(string,int) holding only the key \"crc\". What does n = err_pool.get(\"timeout\") do?",
+    objective: 2,
+    answers: [
+      { text: "Returns 0 and leaves the pool unchanged.", correct: false, feedback: "That is how a native associative array read behaves. uvm_pool::get() writes the default into the pool." },
+      { text: "Returns 0 and inserts \"timeout\" with value 0, so num() becomes 2.", correct: true, feedback: "Right (§11.2.2.4). Use exists() first when absence matters." },
+      { text: "Returns 0 and issues a POOLGET warning.", correct: false, feedback: "There is no such warning: get() is silent. Only delete() of a missing key warns (POOLDEL in uvm-core)." },
+      { text: "Stops the run with a UVM_FATAL: the key does not exist.", correct: false, feedback: "get() never errors on a missing key." }
     ],
-    "explanation": "uvm_pool::get() stores the default value of T for a missing key. Only delete() of a missing key warns (POOLDEL)."
+    explanation: "This is the 'get() has no side effect' misconception. uvm_pool::get() allocates the missing key with the default value of T (Table 7-1 of IEEE 1800: 0 for int, 'x for logic, null for a class) and returns it, without any message."
+  },
+  {
+    question: "q is a uvm_queue #(int) holding '{5, 9}. What does q.insert(2, 7) do?",
+    objective: 2,
+    answers: [
+      { text: "Appends 7: q becomes '{5, 9, 7}.", correct: false, feedback: "That is native queue behaviour (IEEE 1800-2023 §7.10.2.2). uvm_queue rejects an index equal to size()." },
+      { text: "Inserts 7 at index 1: q becomes '{5, 7, 9}.", correct: false, feedback: "uvm_queue never adjusts an index; it either inserts exactly there or does nothing." },
+      { text: "Nothing: it issues a QUEUEINS warning and q stays '{5, 9}.", correct: true, feedback: "Right (§11.3.2.6). Append with push_back()." },
+      { text: "Stops the run with a UVM_FATAL.", correct: false, feedback: "Out-of-range calls only warn." }
+    ],
+    explanation: "uvm_queue::insert accepts only 0 to size()-1. Index 2 equals size(), so the call has no effect and uvm-core warns QUEUEINS. A native queue would have appended."
+  },
+  {
+    question: "Your scoreboard and a third-party VIP both call uvm_pool #(string,int)::get_global_pool().add(\"count\", ...). What happens?",
+    objective: 2,
+    answers: [
+      { text: "Each component gets its own global pool, so nothing collides.", correct: false, feedback: "There is one global pool per specialization, shared by everyone who names that specialization." },
+      { text: "The second add() reports an error because the key exists.", correct: false, feedback: "add() overwrites silently (§11.2.2.5)." },
+      { text: "UVM prefixes every key with the caller's hierarchical path.", correct: false, feedback: "Keys are stored exactly as given; the pool does not know who called it." },
+      { text: "They share one pool, so each overwrites the other's \"count\".", correct: true, feedback: "Right (§11.2.2.2). Pass an instance through uvm_config_db, or define prefixed keys in one package." }
+    ],
+    explanation: "get_global_pool() returns one static object per type specialization. Every user of uvm_pool #(string,int), including vendor code, reaches the same object, so equal keys collide."
+  },
+  {
+    question: "A test stops with a null-object access at this line: uvm_pool #(string, uvm_event)::get_global(\"go\").trigger(); What is the cause?",
+    objective: 3,
+    answers: [
+      { text: "Events must be created in build_phase before they can be triggered.", correct: false, feedback: "Pooled events can be created at any time; the problem is that nothing created this one." },
+      { text: "trigger() needs a data argument.", correct: false, feedback: "The data argument is optional; the handle is null before trigger() runs." },
+      { text: "A plain uvm_pool's get() stores and returns null for a missing class-handle key. Use uvm_event_pool::get_global(\"go\"), which creates the event.", correct: true, feedback: "Right (§11.2.2.4 vs §10.4.1.2.4)." },
+      { text: "The key must be added with add() first, and get() warned about it.", correct: false, feedback: "get() never warns. It silently inserted null." }
+    ],
+    explanation: "Only the event and barrier pools override get() to create the object. A plain uvm_pool of class handles returns the default value, null, and the next method call on it is a null access."
+  },
+  {
+    question: "Agent A calls uvm_event_pool::get_global(\"cfg_done\").trigger() at 100 ns. Agent B calls uvm_event_pool::get_global(\"cfg_done\").wait_trigger() at 200 ns, and nothing triggers the event again. What happens to agent B?",
+    objective: 3,
+    answers: [
+      { text: "It returns at once, because the event was already triggered.", correct: false, feedback: "That is wait_on() behaviour. wait_trigger() waits for the next trigger." },
+      { text: "It waits forever; the test hangs until the UVM timeout. wait_on() would have returned at once.", correct: true, feedback: "Right (§10.1.1.2.4 vs §10.1.1.2.2)." },
+      { text: "It returns at the next trigger, which the event pool issues automatically.", correct: false, feedback: "Nothing triggers an event except a trigger() call." },
+      { text: "It gets an error because the event was already triggered.", correct: false, feedback: "Waiting on a triggered event is legal; it simply waits for another trigger." }
+    ],
+    explanation: "wait_trigger() only sees triggers after it starts waiting. A waiter that may arrive late uses wait_on(), which returns at once while the event is on (triggered and not reset)."
+  },
+  {
+    question: "Three agents each call uvm_barrier_pool::get_global(\"reset_done\").wait_for() at different times, and nobody sets a threshold. The test passes in a few nanoseconds with no traffic. Why?",
+    objective: 3,
+    answers: [
+      { text: "The barrier pool counts components, so it releases when all three exist.", correct: false, feedback: "A barrier counts waiting calls against its threshold; it knows nothing about components." },
+      { text: "The pool-created barrier has threshold 0, so every wait_for() returns at once. Call set_threshold(3) in build_phase, before anyone waits.", correct: true, feedback: "Right (§10.3.2.1, §10.3.2.6). A barrier that blocks nobody lets every party race ahead." },
+      { text: "wait_for() needs a timeout argument.", correct: false, feedback: "wait_for() has no arguments (§10.3.2.2)." },
+      { text: "Barriers only work when created with uvm_barrier::type_id::create.", correct: false, feedback: "The pool's barrier is a normal uvm_barrier; it just starts with the default threshold, 0." }
+    ],
+    explanation: "uvm_barrier_pool::get() builds the barrier with new(key), and the default threshold is 0. The first wait_for() already meets it. Set the threshold in build_phase so that it is in place before any run_phase thread reaches the barrier."
+  },
+  {
+    question: "q1 is a uvm_queue #(my_item) holding one item whose addr is 'h10. After q2.copy(q1), you run it = q2.get(0); it.addr = 'h20; What is the addr of q1.get(0) now?",
+    objective: 4,
+    answers: [
+      { text: "'h20, because the copy is shallow: both queues hold the same my_item object.", correct: true, feedback: "Right. Clone each item for an independent copy." },
+      { text: "'h10, because copy() made q2 independent.", correct: false, feedback: "copy() gave q2 its own list, but the list holds the same item handle." },
+      { text: "'h10, because uvm_queue's copy() clones every item.", correct: false, feedback: "uvm-core's do_copy is queue = p.queue; it never calls clone()." },
+      { text: "A null access, because copy() does not copy uvm_queue contents.", correct: false, feedback: "It does copy the list of handles, so q2.get(0) is valid." }
+    ],
+    explanation: "uvm_queue::do_copy assigns the native queue, which copies its elements, and each element is a handle. q1 and q2 are different lists that point to the same objects. For an independent copy, clone each item."
   }
 ]} />
 
+### Kata: an "end of configuration" event between two agents
+
+The configuration agent runs `cfg_seq`, which writes the design's registers. The data agent runs `traffic_seq`, which must not send its first item before configuration is complete. The two agents share no handle, and the test may start `traffic_seq` before or after `cfg_seq` finishes.
+
+1. Write the lines that `cfg_seq::body()` and `traffic_seq::body()` need, using `uvm_event_pool::get_global`, so that the order of starting does not matter.
+2. **Predict:** you change the wait to `wait_trigger()`, and the test starts `traffic_seq` 50 ns after `cfg_seq` has finished. What happens, and what does the log end with?
+3. Extend it: three agents each run a reset sequence, and no traffic may start until all three have finished. Use `uvm_barrier_pool`. Who sets the threshold, and when?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+1. Put the key in a package, then fetch the event by name on both sides:
+
+   ```systemverilog
+   // snippet: kata solution, part 1
+   package keys_pkg;
+     localparam string CFG_DONE   = "cfg_done";
+     localparam string RESET_DONE = "reset_done";
+   endpackage
+
+   // In cfg_seq:
+   task body();
+     uvm_event cfg_done = uvm_event_pool::get_global(keys_pkg::CFG_DONE);
+     // ... register writes ...
+     cfg_done.trigger();
+   endtask
+
+   // In traffic_seq:
+   task body();
+     uvm_event cfg_done = uvm_event_pool::get_global(keys_pkg::CFG_DONE);
+     cfg_done.wait_on();   // returns at once if configuration already finished
+     // ... start_item / finish_item loop ...
+   endtask
+   ```
+
+   Whichever side calls `get_global` first creates the event; the other receives the same object.
+
+2. `traffic_seq` waits for a second `trigger()` that never comes. No item is ever sent, the objection that keeps the test alive is never dropped, and the run ends with `UVM_FATAL … [PH_TIMEOUT]` (default 9200 s in uvm-core, or your test's `set_timeout`). `wait_on()` avoids it because the event stays on. If configuration can happen again later in the test (after a mid-test reset, say), call `cfg_done.reset()` when reconfiguration starts, or the next `wait_on()` returns at once on the old trigger.
+
+3. The test sets the threshold in `build_phase`, because the reset sequences may reach the barrier at time 0 and a threshold set later would race them:
+
+   ```systemverilog
+   // snippet: kata solution, part 3
+   // container test, build_phase:
+   uvm_barrier_pool::get_global(keys_pkg::RESET_DONE).set_threshold(3);
+   // at the end of each agent's reset sequence body():
+   uvm_barrier_pool::get_global(keys_pkg::RESET_DONE).wait_for();
+   ```
+
+   If the test also waits at the barrier, the threshold is 4. Without `set_threshold`, the barrier's threshold is 0 and every `wait_for()` returns at once.
+
+</details>
+
+### Debug challenge: the agent that never started
+
+A test hangs until `PH_TIMEOUT`. The data agent's sequence calls `uvm_event_pool::get_global("cfg_dn").wait_on();`, and the configuration agent's sequence calls `uvm_event_pool::get_global("cfg_done").trigger();` at 100 ns. Nothing in the log mentions an error before the timeout.
+
+1. Why is there no error message?
+2. Which one line, added in the test's `report_phase` (or just before the timeout with a short `set_timeout`), shows the cause?
+3. How do you make this class of bug impossible?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+1. Nothing is wrong as far as UVM is concerned: `get_global("cfg_dn")` created a second, legal event, and waiting on an event that is never triggered is legal too.
+2. `uvm_event_pool::get_global_pool().print();` In uvm-core the event pool prints one row per key, so `[cfg_dn]` and `[cfg_done]` appear side by side, and `num()` is 2 where you expected 1. (Printing is uvm-core behaviour; the standard does not specify the format.)
+3. Define the key once as a package constant (`localparam string CFG_DONE = "cfg_done";`) and use only the constant. A typo in a constant's name is a compile error; a typo in a string literal is a silent second event.
+
+</details>
+
+### Flashcards
+
+The deck for this lesson covers the two containers and their native equivalents, the `get()` trap, the global singleton per specialization, the `uvm_queue` index rules, what `copy`, `print` and `compare` do and do not do, the event and barrier pools, late waiters, the barrier threshold, and when to choose native containers or TLM instead.
+
 ## References & Next Topics
-- **IEEE 1800.2-2020 §11.2** — `uvm_pool`.
-- **IEEE 1800.2-2020 §11.3** — `uvm_queue`.
-- **IEEE 1800.2-2020 §10.4.1** — `uvm_event_pool`.
-- **IEEE 1800-2023 §7.8, §7.10, §7.12** — Native associative arrays, queues and array manipulation methods.
-- **Previous:** [I-UVM-4: UVM Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index)
-- **Next:** [I-UVM-6: UVM Recording Classes](/curriculum/T2_Intermediate/I-UVM-6_UVM_Recording_Classes/index)
-- **Related:** [I-UVM-1A: Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) — the `uvm_object` base class the containers extend.
+
+**Primary sources**
+
+- IEEE 1800.2-2020:
+  - §11.2 `uvm_pool` (§11.2.1 declaration; §11.2.2.1–§11.2.2.12 methods, including §11.2.2.2 `get_global_pool`, §11.2.2.4 `get`, §11.2.2.8 `exists`);
+  - §11.3 `uvm_queue` (§11.3.2.1–§11.3.2.12, including §11.3.2.4 `get`, §11.3.2.6 `insert`, §11.3.2.8 `pop_front`, §11.3.2.12 `wait_until_not_empty`);
+  - §10.4 pool classes (§10.4.1 `uvm_event_pool`, §10.4.2 `uvm_barrier_pool`);
+  - §10.1.1.2.2, §10.1.1.2.4, §10.1.1.2.5 (`wait_on`, `wait_trigger`, `wait_ptrigger`); §10.3.2.1, §10.3.2.2, §10.3.2.4, §10.3.2.6 (`uvm_barrier` threshold, `wait_for`, auto-reset);
+  - §16.3.4.2 (the comparer's type check); Annex B.2.1.2 (`` `uvm_object_param_utils `` and name-based factory lookup).
+- uvm-core 2020.3.1 (behaviour labelled "uvm-core" on this page): `src/base/uvm_pool.svh` (`m_global_pool`, `get`, `POOLDEL`, `do_copy`, `do_print`, `uvm_object_string_pool`, the `uvm_event_pool` and `uvm_barrier_pool` typedefs), `uvm_queue.svh` (`QUEUEGET`, `QUEUEINS`, `QUEUEDEL`, `wait_until_not_empty`, `do_copy`, `convert2string`), `uvm_barrier.svh`, `uvm_event.svh`, `uvm_comparer.svh`, `uvm_transaction.svh`.
+- IEEE 1800-2023: §7.4.5 Table 7-1 (value read from a nonexistent entry); §7.8.6 and §7.9.2 (associative-array reads and deletes of missing keys); §7.10.2.2 and §7.10.2.4 (queue `insert` and `pop_front`); §7.12.1–§7.12.3 (array methods); §8.12 (shallow copy); §8.25 (static members per specialization); §21.2.1.6 (`%p`).
+
+**Prerequisites:** [I-UVM-1A: UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) and [F2B: Dynamic Data Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index).
+
+**Related**
+
+- [I-UVM-1C: UVM Phasing and Synchronization](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): `uvm_event` and `uvm_barrier` semantics in full, and objections.
+- [I-UVM-4: UVM Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index): what `copy`, `compare` and `print` do for classes that implement them.
+- [I-UVM-2C: Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): passing handles with `uvm_config_db`.
+- [I-UVM-2B: TLM Connections and Analysis Fabric](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index): moving transactions, and `uvm_tlm_fifo`.
+- [I-SV-5: Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes): blocking hand-off between threads.
+- [A-UVM-8: Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index): cross-agent synchronization designs that use the event pool.
+
+<NextLesson />

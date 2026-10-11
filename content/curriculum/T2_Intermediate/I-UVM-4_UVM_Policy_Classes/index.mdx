@@ -1,158 +1,689 @@
 ---
 title: "I-UVM-4: UVM Policy Classes"
-description: "Master the five utility classes — printer, comparer, packer, recorder, copier — that give you total control over how UVM objects present, compare, serialize, record, and clone themselves."
+description: "Predict what print, compare, copy and pack do to a UVM object, and customize them with field-macro flags, do_* hooks and policy knobs."
 flashcards: "I-UVM-4_Policy_Classes"
 ---
 
 ## Quick Take
-- **What it is:** UVM policy classes are pluggable strategies that define *how* an object's field data is processed — without touching the object's core logic.
-- **Why it matters:** Without understanding policies, you are stuck with the default `print()` / `compare()` / `pack()` / `record()` / `copy()` behavior and cannot customize debug output, comparison tolerance, serialization layout, transaction recording, or deep-copy semantics.
-- **The rule that bites:** `compare()` runs the field macros **and** your `do_compare()`. With the default comparer it stops counting after the **first** miscompare, and it reports miscompares as `UVM_INFO`, not errors. Your scoreboard must check the return value.
-- **The Analogy:** Think of policy classes as lenses on a camera. The subject (your `uvm_object`) stays the same, but each lens reveals a different view: wide-angle for printing, macro for comparison, fisheye for packed transport.
 
-> **Signal:** If you find yourself writing `$sformatf` wrappers around object fields instead of using `print()`, or manually copying fields one-by-one instead of `copy()`, it is time to learn policy classes.
+- **What it is:** When you call `print()`, `compare()`, `copy()`, `pack()` or `record()` on a UVM object, the work is done by a **policy object**: a `uvm_printer`, `uvm_comparer`, `uvm_copier`, `uvm_packer` or `uvm_recorder` (IEEE 1800.2-2020 §16.1–§16.6). The policy walks the object's fields. The object tells it which fields exist in two ways: the `` `uvm_field_* `` **field macros**, and the `do_*` **hooks** you write yourself (§5.3).
+- **Why it matters:** a **scoreboard**, the testbench component that checks the design under test (DUT) against expected results, decides pass or fail with `compare()`, logs are only as useful as `print()` and `convert2string()`, a copy that secretly shares a sub-object corrupts expected data, and a pack/unpack pair that disagrees on field order scrambles every value. All of these fail silently unless you know the rules.
+- **The rule that bites:** `compare()` returns a bit and logs each **miscompare** (one field whose two values differ) as a `UVM_INFO` line, not as an error. With the default comparer, the field macros stop comparing after the **first** miscompare (its **threshold**, the miscompare count at which the macros stop, is 1), and only one miscompare line is printed (its **`show_max`**, the most per-field lines it prints, is 1). Your scoreboard must check the return value and raise its own `` `uvm_error ``.
+- **The Analogy:** Policies are lenses on a camera. The subject (your object) stays the same; the printer lens shows it as a table, the comparer lens lays it over another object, the packer lens flattens it into a stream. *Where it breaks:* a lens only looks, but `copy()` and `unpack()` **write** into the object, and the comparer lens can stop looking after its first finding.
+
+**You will be able to:**
+1. **Explain** how `print`, `compare`, `copy`, `pack` and `record` reach an object's fields: the policy, then the field macros (inside `do_execute_op`), then your `do_*` hook.
+2. **Predict** what `compare()` returns, what `get_result()` counts and which `MISCMP` lines appear, for given field flags, threshold and `show_max`.
+3. **Write** `do_compare`, `do_copy`, `do_print` and `convert2string` with the policy APIs, and a `do_pack`/`do_unpack` pair that round-trips.
+4. **Configure** a comparer and a printer for a scoreboard or a log: threshold, `show_max`, severity and verbosity; table, tree or line printer.
+5. **Choose** field macros (with `UVM_ALL_ON | UVM_NO*` flags) or hand-written hooks for a class, by performance, control and debuggability.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### The Five Policies
+**How to read this lesson.** You already met the object methods in [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index): you call `compare()` and customise it in `do_compare()`. This lesson opens the box. The **core path** is the first five sections: how one call reaches your fields, the field-macro flags, `compare()` and its comparer, the Policy Explorer, and printing. **Practitioner depth** follows: copying, packing, choosing macros or hooks, and the common mistakes. Make It Work runs all of it in one test, and Push Further holds the expert corner cases.
 
-Every `uvm_object` has user hooks (`do_*`) that the policy operations call after the field automation:
+Four terms, defined once:
+- A **policy** is an object that carries out one operation on another object and holds that operation's settings (§16.1). One comparer can compare many objects; its settings, such as how many miscompares to print, are its **knobs**.
+- A **hook** is a virtual method that UVM calls at a fixed point and that you override: `do_print`, `do_compare`, `do_copy`, `do_pack`, `do_unpack`, `do_record` (§5.3).
+- **Field automation** is the code the `` `uvm_field_* `` macros generate between `` `uvm_object_utils_begin `` and `` `uvm_object_utils_end ``. It lives in a method called `do_execute_op`, and it applies the current operation to every registered field (§5.3.13, Annex B.2.2).
+- A **flag** is the second argument of a field macro, such as `UVM_ALL_ON | UVM_NOCOMPARE`. It says which operations the field joins, which radix to print it in, and how to treat object handles (Annex B.2.2, F.2.1.8–F.2.1.9).
 
-| Policy Class | Hook Method | What It Does |
-| --- | --- | --- |
-| `uvm_printer` | `do_print()` | Formats the object's fields into a debug string (table, tree, or line) |
-| `uvm_comparer` | `do_compare()` | Walks two objects field-by-field and counts miscompares |
-| `uvm_packer` | `do_pack()` / `do_unpack()` | Serializes fields into a flat bitstream and back |
-| `uvm_recorder` | `do_record()` | Writes transaction attributes to a recording database |
-| `uvm_copier` | `do_copy()` | Copies registered fields. Object fields are deep-copied unless flagged `UVM_REFERENCE`; a hand-written `do_copy()` copies exactly what you write |
+### One call, three layers: from compare() to your fields
 
-> **IEEE 1800.2-2020 reference:** `uvm_object` is §5.3. The policies are §16.2 (`uvm_printer`), §16.3 (`uvm_comparer`), §16.4 (`uvm_recorder`), §16.5 (`uvm_packer`) and §16.6 (`uvm_copier`). The field macros are in Annex B.
+Every object operation has the same three layers. You call the public method; it picks a policy; the policy asks the object for its fields twice, first through field automation, then through your hook.
 
-### How Policies Interact with Objects
+| You call | Policy (IEEE 1800.2-2020) | Your hook | What the policy does |
+| --- | --- | --- | --- |
+| `print()`, `sprint()` | `uvm_printer` (§16.2) | `do_print(printer)` | Formats fields as a table, tree or one line |
+| `compare(rhs)` | `uvm_comparer` (§16.3) | `do_compare(rhs, comparer)` | Compares two objects field by field and counts miscompares |
+| `record(recorder)` | `uvm_recorder` (§16.4) | `do_record(recorder)` | Writes fields as attributes of a transaction record; with no recorder the call is silently ignored (§5.3.7.1). Recording flow: [I-UVM-6](/curriculum/T2_Intermediate/I-UVM-6_UVM_Recording_Classes/index) |
+| `pack_bytes()`, `unpack_bytes()` | `uvm_packer` (§16.5) | `do_pack(packer)`, `do_unpack(packer)` | Serialises fields into a stream and back |
+| `copy(rhs)`, `clone()` | `uvm_copier` (§16.6) | `do_copy(rhs)` | Copies fields from `rhs` into this object |
 
-When you call `pkt.print()`, UVM picks the default printer, prints the object header, runs the field automation, then calls your hook:
+All five classes derive from `uvm_policy` (§16.1). The one carrying out the current operation travels inside a small **`uvm_field_op`** object (§5.7), which records the operation type (`get_op_type()`), the policy (`get_policy()`) and, for copy and compare, the other object (`get_rhs()`).
+
+Here is one `compare()` call from the Make It Work example, with the default comparer. `exp` and `act` are two `bus_item`s whose `addr` and `data` differ; `id` is excluded from compare by its flag. Follow the numbers, and notice that the field macros and `do_compare()` both run.
+
+<SequenceDiagram
+  title="One compare() call with the default comparer"
+  caption="Steps 4 and 5 are the comparer's entry and its handle and type checks; steps 6 to 8 are field automation (inside do_execute_op); step 9 is your hook. The comparer counts the addr miscompare (result 1), the threshold of 1 makes the macros skip data, and the summary line is printed because this is the top-level object."
+  participants={[
+    { id: "tst", label: "policy_test", sublabel: "run_phase", kind: "test" },
+    { id: "exp", label: "exp", sublabel: "bus_item", kind: "generic" },
+    { id: "cmp", label: "comparer", sublabel: "uvm_comparer (default)", kind: "generic" },
+    { id: "act", label: "act", sublabel: "bus_item (rhs)", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tst", to: "exp", label: "exp.compare(act)" },
+    { kind: "self", from: "exp", label: "no comparer passed: use uvm_comparer::get_default()" },
+    { from: "exp", to: "cmp", label: "flush(): active depth is 0, so result = 0" },
+    { from: "exp", to: "cmp", label: "compare_object(\"exp\", exp, act)" },
+    { kind: "self", from: "cmp", label: "act is not the same handle; types match (check_type)" },
+    { from: "cmp", to: "exp", label: "do_execute_op(op): op type UVM_COMPARE" },
+    { kind: "note", from: "cmp", to: "act", label: "The macros read act's fields through op.get_rhs()." },
+    { from: "exp", to: "cmp", label: "compare_field_int(\"addr\", 'h10, 'h14, 16, UVM_HEX)", tone: "error" },
+    { kind: "self", from: "cmp", label: "print_msg: result = 1; MISCMP exp.addr (UVM_INFO)", tone: "error" },
+    { kind: "note", from: "exp", to: "cmp", label: "data: get_result() 1 is not below threshold 1, so the macro skips it. id: UVM_NOCOMPARE, skipped." },
+    { from: "cmp", to: "exp", label: "do_compare(act, comparer): user hook enabled" },
+    { kind: "return", from: "exp", to: "cmp", label: "1 (bus_item keeps the uvm_object default)" },
+    { kind: "self", from: "cmp", label: "result grew: return 0, print the 1 Miscompare(s) summary" },
+    { kind: "return", from: "cmp", to: "exp", label: "0" },
+    { kind: "return", from: "exp", to: "tst", label: "compare() returns 0" }
+  ]}
+/>
+
+The same shape holds for every operation (§5.3.6.1, §5.3.8.1, §5.3.9.1, §5.3.10.1, §16.3.3.4, §16.5.4.2, §16.6.4.1):
+1. For print, copy, compare, pack and unpack: if you pass no policy, the method uses the default one (`uvm_comparer::get_default()` and its siblings). `record()` has no default: with no recorder it does nothing (§5.3.7.1).
+2. For print, copy, compare, pack and unpack: if the policy is not already working on an outer object (its active object depth is 0), the method calls the policy's `flush()` to clear old results.
+3. The policy calls `do_execute_op()` with a `uvm_field_op`. Field automation runs here, base-class fields first, because the generated `do_execute_op` calls `super.do_execute_op` before its own fields.
+4. If the op still has its **user hook enabled** (§5.7.2.7), the policy calls your `do_*` hook.
+
+**The classic mistake.** "Once I write `do_compare()`, the macros stop comparing." Wrong: both run, and `compare()` returns 0 if the macros counted a miscompare **or** your hook returned 0 (§16.3.3.4 e). A field that appears in both is compared twice.
+
+### Field macros and flags
+
+The field macros sit between `` `uvm_object_utils_begin(T) `` and `` `uvm_object_utils_end ``. There is one per kind of member: `` `uvm_field_int ``, `` `uvm_field_enum(T, ARG, FLAG) ``, `` `uvm_field_string ``, `` `uvm_field_real ``, `` `uvm_field_object ``, and array, queue and associative-array forms such as `` `uvm_field_array_int `` and `` `uvm_field_aa_int_string `` (Annex B.2.2).
 
 ```systemverilog
-// Simplified from uvm_object::print / sprint and uvm_printer::print_object (uvm-core 2020.3.1)
-function void print(uvm_printer printer = null);
-  if (printer == null) printer = uvm_printer::get_default();
-  // printer.print_object(get_name(), this) then:
-  //   1. prints the header row for this object
-  //   2. runs the field macros            (do_execute_op with UVM_PRINT)
-  //   3. calls YOUR hook                  (do_print(printer))
-  // and finally emits the formatted text
-endfunction
-```
-
-The same order holds for `compare()`, `copy()`, `pack()` and `record()`: **field macros first, then your `do_*` hook**. Adding a `do_compare()` to a class that has field macros does not turn the macros off; both run.
-
-### Field Macros vs Manual Overrides
-
-UVM provides two ways to wire fields into policy processing:
-
-**1. Declarative macros (quick but heavy):**
-
-```systemverilog
-class my_packet extends uvm_sequence_item;
-  `uvm_object_utils_begin(my_packet)
-    `uvm_field_int(addr,   UVM_ALL_ON)
-    `uvm_field_int(data,   UVM_ALL_ON)
-    `uvm_field_int(parity, UVM_ALL_ON | UVM_NOCOMPARE) // skip in compare
-    `uvm_field_int(id,     UVM_ALL_ON | UVM_NOPACK)    // skip in pack
-  `uvm_object_utils_end
-endclass
-```
-
-The macros implement field automation (`do_execute_op`). They do **not** write your `do_*` methods; those stay yours. Two flag rules matter:
-
-- In IEEE 1800.2 a flag enables an operation only if it includes it. `UVM_NOCOMPARE` **alone** enables nothing: the field disappears from print, copy and compare, and UVM warns `UVM/FIELDS/NO_FLAG`. Always write `UVM_ALL_ON | UVM_NOCOMPARE`.
-- `UVM_REFERENCE` on an object field makes copy share the handle and compare check handles, not contents.
-
-**2. Manual overrides (precise and performant):**
-
-```systemverilog
-class my_packet extends uvm_sequence_item;
-  `uvm_object_utils(my_packet)
-
-  rand bit [31:0] addr;
+// snippet: the field-macro bus_item used throughout this lesson
+class bus_item extends uvm_sequence_item;
+  rand bit [15:0] addr;
   rand bit [31:0] data;
-  rand bit        parity;
-  rand bit [7:0]  id;
+  bit      [15:0] id;  // tracking number from the sequence, not DUT behaviour
 
-  function new(string name = "my_packet");
+  `uvm_object_utils_begin(bus_item)
+    `uvm_field_int(addr, UVM_ALL_ON | UVM_HEX)
+    `uvm_field_int(data, UVM_ALL_ON | UVM_HEX)
+    `uvm_field_int(id,   UVM_ALL_ON | UVM_NOCOMPARE | UVM_DEC)
+  `uvm_object_utils_end
+
+  function new(string name = "bus_item");
     super.new(name);
   endfunction
-
-  virtual function void do_print(uvm_printer printer);
-    super.do_print(printer);
-    printer.print_field_int("addr",   addr,   32, UVM_HEX);
-    printer.print_field_int("data",   data,   32, UVM_HEX);
-    printer.print_field_int("parity", parity, 1,  UVM_BIN);
-    printer.print_field_int("id",     id,     8,  UVM_DEC);
-  endfunction
-
-  virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
-    my_packet rhs_;
-    if (!$cast(rhs_, rhs)) return 0;
-    do_compare = super.do_compare(rhs, comparer);
-    // Use the comparer so each miscompare is counted and reported
-    do_compare &= comparer.compare_field_int("addr", addr, rhs_.addr, 32);
-    do_compare &= comparer.compare_field_int("data", data, rhs_.data, 32);
-    do_compare &= comparer.compare_field_int("id",   id,   rhs_.id,   8);
-    // parity deliberately excluded from compare
-  endfunction
-
-  // ... do_pack, do_copy, do_record similarly
 endclass
 ```
 
-> **Trade-off:** many teams prefer hand-written `do_*` methods for speed and control, and keep field macros for prototypes. Whichever you choose, do not mix the two for the same field, or it is compared (and printed) twice.
+A flag combines four kinds of bits:
 
-### Try It: The Policy Explorer
+| Kind | Values | Rule |
+| --- | --- | --- |
+| Operations (positive) | `UVM_COPY`, `UVM_COMPARE`, `UVM_PRINT`, `UVM_RECORD`, `UVM_PACK`; `UVM_ALL_ON` = all of them; `UVM_DEFAULT` = `UVM_ALL_ON` | A field joins an operation **only if** its flag includes it (F.2.1.8–F.2.1.10). B.2.2 pairs pack and unpack: `UVM_PACK` enables both, `UVM_NOPACK` disables both. uvm-core 2020.3.1 tests a separate `UVM_UNPACK` bit, so write `UVM_PACK \| UVM_UNPACK` (or `UVM_ALL_ON`) when you list operations explicitly (tool-dependent) |
+| Exclusions (negative) | `UVM_NOCOPY`, `UVM_NOCOMPARE`, `UVM_NOPRINT`, `UVM_NORECORD`, `UVM_NOPACK` | A `UVM_NO*` bit wins over its positive bit, `UVM_ALL_ON` included (B.2.2) |
+| Radix | `UVM_HEX`, `UVM_DEC`, `UVM_BIN`, … | How print, record and compare messages show the value; one radix per field |
+| Recursion (object fields) | `UVM_DEEP` (the default), `UVM_SHALLOW`, `UVM_REFERENCE` | `UVM_REFERENCE`: copy shares the handle, compare checks the handle; uvm-core also leaves the field out of pack |
 
-Pick a scenario, predict what `compare()` returns, then change one flag at a time and watch which fields the comparer actually visits. Switch to `copy()` to see the aliasing bug, and to `print()` to see the 1800.2 flag rule.
+**The 1800.2 flag rule.** A flag with no positive operation bit enables **nothing**. So `` `uvm_field_int(id, UVM_NOCOMPARE) `` does not mean "everything except compare": `id` disappears from print, copy, compare and pack. The same happens to a radix-only flag such as `` `uvm_field_int(addr, UVM_HEX) `` and to a recursion-only `` `uvm_field_object(cfg, UVM_REFERENCE) ``. UVM 1.2 libraries silently added `UVM_ALL_ON`; 1800.2 does not (B.2.2, F.2.1.9). uvm-core 2020.3.1 warns once per field with ID `UVM/FIELDS/NO_FLAG`. Always write the positive part: `UVM_ALL_ON | UVM_NOCOMPARE`.
+
+| Flag written | print | copy | compare | pack | uvm-core warning |
+| --- | --- | --- | --- | --- | --- |
+| `UVM_ALL_ON` (or no flag: `UVM_DEFAULT`) | yes | yes | yes | yes | — |
+| `UVM_ALL_ON \| UVM_NOCOMPARE` | yes | yes | no | yes | — |
+| `UVM_NOCOMPARE` | no | no | no | no | `UVM/FIELDS/NO_FLAG` |
+| `UVM_HEX` | no | no | no | no | `UVM/FIELDS/NO_FLAG` |
+| `UVM_COMPARE \| UVM_PRINT` | yes | no | yes | no | — |
+
+### compare() and the comparer
+
+`compare()` returns **1 if every compared field matches and 0 otherwise**. It never fails the test by itself. Each miscompare goes through the comparer's `print_msg()` (§16.3.3.7), which adds 1 to the count you read with `get_result()` (§16.3.3.9), appends a line to `get_miscompares()` (§16.3.3.8) and, if the count is still within `show_max`, reports it with ID `MISCMP`. When the top-level comparison fails, `compare()` then reports one summary line.
+
+| Knob | Setter | Default | What it controls |
+| --- | --- | --- | --- |
+| Threshold | `set_threshold(n)` | 1 | Field macros and `` `uvm_compare_* `` macros skip the remaining fields once `get_result()` reaches `n`; 0 means compare everything (§16.3.6) |
+| Messages shown | `set_show_max(n)` | 1 | How many per-field `MISCMP` lines are printed (uvm-core: 0 prints all). It never limits counting (§16.3.5.1) |
+| Verbosity | `set_verbosity(v)` | `UVM_LOW` | Verbosity of the `MISCMP` messages; at `+UVM_VERBOSITY=UVM_NONE` they vanish (§16.3.5.2) |
+| Severity | `set_severity(s)` | `UVM_INFO` | Severity of the `MISCMP` messages (§16.3.5.3) |
+| Type check | `set_check_type(b)` | 1 | Compare the two objects' types before their fields (§16.3.4.2) |
+| Recursion | `set_recursion_policy(p)` | `UVM_DEFAULT_POLICY` (deep) | How object fields are compared (§16.3.4.1) |
+
+Two details decide most predictions:
+- **The threshold gate is in the macros, not in the comparer.** Each field macro checks `get_result() < get_threshold()` before comparing (uvm-core 2020.3.1, `uvm_comparer_defines.svh`). A `do_compare` that calls `comparer.compare_field_int()` directly always compares and always counts, so a hand-written hook with two differing fields gives `get_result()` = 2 even with the default comparer.
+- **`show_max` limits printing, never counting.** With `show_max` 1 and two counted miscompares, you see one per-field line and the summary `2 Miscompare(s) (1 shown) for object exp@… vs. act@…`, and `get_miscompares()` still holds both.
+
+This is what the default comparer prints for the sequence diagram above (illustrative: file and line elided as `...`, object ids vary by simulator):
+
+```text
+UVM_INFO ... @ 0: reporter [MISCMP] Miscompare for exp.addr: lhs = 'h10 : rhs = 'h14
+UVM_INFO ... @ 0: reporter [MISCMP] 1 Miscompare(s) for object exp@41 vs. act@42
+```
+
+**A dedicated comparer for a scoreboard.** To see every miscompare, give the scoreboard its own comparer rather than changing the default one that every other `compare()` call shares:
+
+```systemverilog
+// snippet: inside a scoreboard
+uvm_comparer cmp = new("cmp");
+cmp.set_threshold(0);    // macros compare every field (uvm-core keeps this across compare() calls)
+cmp.set_show_max(10);    // print up to 10 MISCMP lines
+if (!exp.compare(act, cmp))
+  `uvm_error("SCB", {"mismatch:\n", cmp.get_miscompares()})
+```
+
+The comment matters: IEEE 1800.2 §16.3.6 says `get_threshold()` returns 1 again after `flush()`, and `compare()` flushes the comparer first (§5.3.9.1 a). uvm-core 2020.3.1 keeps the threshold, so the code above works there. Make It Work shows the portable version, a comparer subclass that re-applies the threshold in `flush()`.
+
+### Try it: the Policy Explorer
+
+The explorer uses its own small `packet` class (fields `addr`, `data`, `parity`, `tag` and a `pkt_cfg` handle `cfg`). In **compare** mode you pick a scenario, change a flag, the threshold or `show_max`, and then predict both numbers: what `exp.compare(act, cmp)` returns and what `cmp.get_result()` counts. Write your prediction down before you look at the answer. Work through:
+1. **Two fields differ** with threshold 1, then with threshold 0.
+2. **Exclude tag**, then switch `tag` to the `UVM_NOCOMPARE`-only flag and watch the `NO_FLAG` warning appear.
+3. **Macros + do_compare()**: the hook passes, the macros fail. (The explorer writes this hook with `==` to stay short; in your code, compare through `comparer.compare_field_int` as §5.3.9 requires.)
+4. In **copy** mode, predict `p1.cfg`'s `burst_len` after `p2.cfg.burst_len` changes, for each of the four `cfg` implementations, before you pick them. This is the shared-handle bug.
+5. In **print** mode, predict which rows the table shows when `tag` uses the `UVM_NOCOMPARE`-only flag, then compare the table, tree and line printers.
 
 <UvmPolicyVisualizer />
 
 <VisualRecap
-  title="Macros first, then do_compare(), and the threshold stops the count"
-  rule="compare() returns 1 for the same handle; otherwise it runs the field macros in declaration order (skipping fields whose flag excludes compare, and stopping after threshold miscompares — default 1), then do_compare(). Either one finding a mismatch makes it return 0."
+  title="Same handle, type, macros, then do_compare()"
+  rule="compare() returns 1 for the same handle. Otherwise the comparer checks the types, then runs the field macros in macro order (base-class fields first), skipping fields whose flag excludes compare and, in the macros only, stopping once get_result() reaches the threshold (default 1). Then do_compare() runs. Any counted miscompare, or do_compare() returning 0, makes compare() return 0."
   code={`uvm_comparer cmp = new("cmp");
-cmp.set_threshold(0);      // count every miscompare
-cmp.set_show_max(10);      // print up to 10
+cmp.set_threshold(0);      // macros compare every field
+cmp.set_show_max(10);      // print up to 10 lines
 if (!exp.compare(act, cmp))
   \`uvm_error("SCB", cmp.get_miscompares())`}
-  mistake="Writing `uvm_field_int(id, UVM_NOCOMPARE) without UVM_ALL_ON (the field vanishes everywhere), or expecting MISCMP messages to fail the test — they are UVM_INFO."
-  inTestbench="Scoreboards: exclude infrastructure fields (ids, timestamps) with UVM_ALL_ON | UVM_NOCOMPARE, compare with a dedicated comparer, and raise your own `uvm_error on a 0 return."
+  mistake="Writing `uvm_field_int(id, UVM_NOCOMPARE) without UVM_ALL_ON (the field vanishes from every operation), or expecting MISCMP messages to fail the test: they are UVM_INFO."
+  inTestbench="Scoreboards exclude infrastructure fields (ids, timestamps) with UVM_ALL_ON | UVM_NOCOMPARE, compare with a dedicated comparer, and raise their own `uvm_error on a 0 return."
 >
   <ol style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.85rem", lineHeight: 1.6 }}>
     <li>Same handle? Return 1.</li>
-    <li>Field macros, in declaration order: skip flagged fields; stop at the threshold.</li>
+    <li>Types differ (check_type on)? Count one miscompare.</li>
+    <li>Field macros in macro order: skip flagged fields; stop at the threshold.</li>
     <li>Your do_compare() runs next.</li>
-    <li>Any miscompare from either step: return 0 (logged as UVM_INFO MISCMP).</li>
+    <li>Any counted miscompare, or do_compare() returning 0: return 0, logged as UVM_INFO MISCMP.</li>
   </ol>
 </VisualRecap>
 
-## Make It Work
+**What the explorer showed.** The threshold changes `get_result()` only for the macro fields; `show_max` changes only the log. A `UVM_NO*` flag on its own removes the field from everything, which you saw as a missing row in print mode and the `NO_FLAG` warning in compare mode. And a passing `do_compare()` cannot rescue a miscompare that the macros already counted.
 
-1. **Start with macros, graduate to manual:** Use `uvm_field_*` macros during early development, then replace them with manual `do_*` overrides in production code for performance and control.
-2. **Decide what "equal" means for your scoreboard:** exclude infrastructure fields (sequence ids, timestamps) with `UVM_ALL_ON | UVM_NOCOMPARE`, or compare only the right fields in `do_compare()`. Then check the return value: `compare()` reports miscompares as `UVM_INFO`, so the scoreboard must raise its own `uvm_error`.
-3. **Use a dedicated comparer to see every miscompare:** the default comparer has `threshold = 1` and `show_max = 1`, so it counts and prints only the first one. `cmp.set_threshold(0); cmp.set_show_max(10);` gives you the full list in `cmp.get_miscompares()`.
-4. **Use `do_pack` for DPI export:** When interfacing with C/C++ reference models via DPI, `pack()` / `unpack()` give you a clean serialization boundary.
-5. **Swap the default printer for debug:** call `uvm_printer::set_default(uvm_tree_printer::get_default());` at the start of your test. The UVM 1.2 global variable `uvm_default_printer` is not part of IEEE 1800.2.
-6. **Copy before mutation, and know what the copy shares:** `clone()` is `create()` plus `copy()`. Nested objects are only duplicated if the copy implementation duplicates them; a hand-written `cfg = rhs_.cfg;` shares one object between both copies.
+### print(), sprint() and convert2string()
 
-**Checklist before moving on:**
-- [ ] You can name all five policy classes and their `do_*` hooks.
-- [ ] You can explain the order: field macros first, then the `do_*` hook.
-- [ ] You know that `UVM_NOCOMPARE` must be combined with `UVM_ALL_ON`.
-- [ ] You can predict when `copy()` shares a nested object (`UVM_REFERENCE`, a hand-written handle assignment) and when it creates a new one.
+Three ways to turn an object into text, for three jobs:
 
-## Push Further: Advanced Policy Customization
+| Method | Returns or writes | Built by | Use it for |
+| --- | --- | --- | --- |
+| `print(printer)` | Writes multi-line text straight to the printer's file, **not** through the report server (the UVM reporting system that filters messages by verbosity), so verbosity never filters it (§5.3.6.1; uvm-core writes with `$fwrite` to the printer's `get_file()`) | the printer: field macros, then `do_print` | Interactive debug, a one-off dump |
+| `sprint(printer)` | Returns the same text as a string (§5.3.6.2) | as `print` | Putting a dump inside a `` `uvm_info `` message |
+| `convert2string()` | Returns a string; the `uvm_object` default returns `""` (§5.3.6.4) | **only you**: the field macros do not implement it | One-line log messages from monitors and scoreboards |
 
-### Custom Comparer with Tolerance
+The printer decides the layout. uvm-core 2020.3.1 uses a `uvm_table_printer` by default; 1800.2 leaves the default to the implementation (F.4.1.4.13). Choose another with `uvm_printer::set_default(uvm_line_printer::get_default());`, or pass a printer to one call: `exp.print(uvm_tree_printer::get_default())`. The UVM 1.2 global `uvm_default_printer` still compiles in uvm-core (it is kept for compatibility) but is not part of 1800.2; `set_default()` is the portable form.
+
+Printer knobs you will use (§16.2.5): `set_default_radix()` for fields printed with `UVM_NORADIX` (default `UVM_HEX`, §16.2.5.7), `set_max_depth()` to stop recursing into nested objects (default −1, everything, §16.2.5.10), and `set_file()` to send `print()` to a file (§16.2.5.11). In uvm-core the tree and line printers turn off the type and size columns.
+
+The same `exp` from Make It Work, three ways (illustrative; column widths and the object id vary):
+
+```text
+--------------------------------------
+Name    Type      Size  Value
+--------------------------------------
+exp     bus_item  -     @41
+  addr  integral  16    'h10
+  data  integral  32    'hcafe0001
+  id    integral  16    'd1
+--------------------------------------
+exp: (bus_item@41) { addr: 'h10  data: 'hcafe0001  id: 'd1  }
+UVM_INFO ... @ 0: uvm_test_top [DEMO] addr=0x0010 data=0xcafe0001 id=1
+```
+
+The first block is `exp.print()` (table), the second line `exp.print(uvm_line_printer::get_default())`, the third `` `uvm_info("DEMO", exp.convert2string(), UVM_LOW) ``. In a hand-written `do_print`, call `printer.print_field_int("addr", addr, $bits(addr), UVM_HEX)` (§16.2.3.9) and `printer.print_string(...)` (§16.2.3.10), never `$display`: §5.3.6 requires the policy's API so that every printer can lay the field out.
+
+**The classic mistake.** `` `uvm_info("MON", item.convert2string(), UVM_MEDIUM) `` prints an empty message. The class uses field macros and never overrides `convert2string()`. Override it, or log `item.sprint()`.
+
+### copy() and clone(): what the copy shares
+
+`copy(rhs)` fills an object you already have; `clone()` creates a new object with `create(get_name())`, copies this object into it, and returns the new object as a `uvm_object` for you to `$cast` (§5.3.5.2, §5.3.8.1). Integral fields are copied by value. The question is what happens to a field that is a **handle**, such as the explorer's `cfg`:
+
+| Implementation of `cfg` in the copy | After `p2.copy(p1)` | Changing `p2.cfg.burst_len` changes `p1`? |
+| --- | --- | --- |
+| `` `uvm_field_object(cfg, UVM_ALL_ON) `` | uvm-core creates a new `pkt_cfg` if `p2.cfg` is null, otherwise copies into `p2`'s existing one | no |
+| `` `uvm_field_object(cfg, UVM_ALL_ON \| UVM_REFERENCE) `` | `p2.cfg = p1.cfg`: one shared object | **yes** |
+| hand-written `cfg = rhs_.cfg;` | one shared object | **yes** |
+| hand-written `$cast(cfg, rhs_.cfg.clone());` (null-checked) | a new object | no |
+
+So "`copy()` is always deep" is wrong. The field macros copy deep unless you flag `UVM_REFERENCE`; a hand-written `do_copy` copies exactly what you wrote, and a handle assignment shares the object. That is right when the sub-object is meant to be shared (a read-only configuration) and a bug when the copy must be independent (a scoreboard's saved expected item). The explorer's copy mode shows all four rows.
+
+A correct hand-written `do_copy` calls `super.do_copy(rhs)` and casts `rhs` to your type first (§5.3.8.2):
 
 ```systemverilog
+// snippet: inside class packet (the explorer's class)
+virtual function void do_copy(uvm_object rhs);
+  packet rhs_;
+  if (!$cast(rhs_, rhs))
+    `uvm_fatal("PACKET", "do_copy: rhs is not a packet")
+  super.do_copy(rhs);              // base-class fields first
+  addr = rhs_.addr;
+  if (rhs_.cfg == null) cfg = null;
+  else $cast(cfg, rhs_.cfg.clone());  // independent sub-object
+endfunction
+```
+
+### pack() and unpack(): the symmetry rule
+
+`pack_bytes()` (and `pack()`, `pack_ints()`, `pack_longints()`) serialises an object into an array; `unpack_bytes()` and its siblings restore it (§5.3.10.1, §5.3.11.1). The one rule: **unpack the same fields, in the same order, with the same widths, as you packed them.** §5.3.10.2 puts it this way: the unpacking order needs to match the packing order, but the packing order need not match the declaration order. The packer stores no field names, so it cannot notice a mismatch.
+
+A hand-written pair, using the packing macros (B.2.4.6, B.2.5.6) that call `packer.pack_field_int()` and `packer.unpack_field_int()` (§16.5.4.9, §16.5.4.17):
+
+```systemverilog
+// snippet: inside a class with addr [15:0], data [31:0], id [15:0]
+virtual function void do_pack(uvm_packer packer);
+  super.do_pack(packer);
+  `uvm_pack_int(addr);   // 16 bits
+  `uvm_pack_int(data);   // 32 bits
+  `uvm_pack_int(id);     // 16 bits
+endfunction
+
+virtual function void do_unpack(uvm_packer packer);
+  super.do_unpack(packer);
+  `uvm_unpack_int(addr); // same order, same widths
+  `uvm_unpack_int(data);
+  `uvm_unpack_int(id);
+endfunction
+```
+
+**What the stream contains is not yours to rely on.** §16.5.3.2 says the stream has "unspecified length and format" and its length and contents "are implementation dependent". uvm-core keeps two counters in the packer: the **pack iterator** is its write position (the next bit it will write) and the **unpack iterator** is its read position (the next bit it will read). In uvm-core 2020.3.1, `pack_bytes()` on the Make It Work `exp` (64 bits of fields) produces this:
+
+<figure style={{ margin: "1rem 0" }}>
+  <svg viewBox="0 0 340 176" role="img" aria-label="uvm-core packed stream for exp. Row 1, bits 0 to 63: packer state, the pack iterator 132 in bits 0 to 31 and the unpack iterator 64 in bits 32 to 63. Row 2, bits 64 to 135: the object marker F in bits 64 to 67, then addr in bits 68 to 83, data in bits 84 to 115, id in bits 116 to 131, and padding in bits 132 to 135, the high half of the 17th byte." style={{ width: "100%", maxWidth: 560 }}>
+    <title>uvm-core packed stream for exp</title>
+    <text x="10" y="18" fontSize="11" fill="currentColor">bits 0–63: packer state (uvm-core only)</text>
+    <rect x="10" y="26" width="160" height="32" fill="rgba(139,92,246,0.14)" stroke="currentColor" />
+    <text x="20" y="47" fontSize="11" fill="currentColor">pack iter = 132</text>
+    <rect x="170" y="26" width="160" height="32" fill="rgba(139,92,246,0.14)" stroke="currentColor" />
+    <text x="180" y="47" fontSize="11" fill="currentColor">unpack iter = 64</text>
+    <text x="10" y="86" fontSize="11" fill="currentColor">bits 64–135: marker, fields (LSB first), pad</text>
+    <rect x="10" y="94" width="18" height="32" fill="rgba(234,179,8,0.25)" stroke="currentColor" />
+    <text x="15" y="115" fontSize="11" fill="currentColor">F</text>
+    <rect x="28" y="94" width="71" height="32" fill="rgba(6,182,212,0.14)" stroke="currentColor" />
+    <text x="50" y="115" fontSize="11" fill="currentColor">addr</text>
+    <rect x="99" y="94" width="142" height="32" fill="rgba(6,182,212,0.22)" stroke="currentColor" />
+    <text x="157" y="115" fontSize="11" fill="currentColor">data</text>
+    <rect x="241" y="94" width="71" height="32" fill="rgba(6,182,212,0.14)" stroke="currentColor" />
+    <text x="270" y="115" fontSize="11" fill="currentColor">id</text>
+    <rect x="312" y="94" width="18" height="32" fill="none" stroke="currentColor" strokeDasharray="3 3" />
+    <text x="10" y="146" fontSize="11" fill="currentColor">↑ object marker 4'hF</text>
+    <text x="330" y="146" fontSize="11" fill="currentColor" textAnchor="end">pad ↑</text>
+    <text x="10" y="168" fontSize="11" fill="currentColor">68 bits to unpack, 17 bytes in the array</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">uvm-core 2020.3.1 stream for <code>exp</code>. The layout is implementation-defined (§16.5.3.2); the table below lists every bit range.</figcaption>
+</figure>
+
+| Bits | Bytes | Content | Value for `exp` |
+| --- | --- | --- | --- |
+| 0–31 | 0–3 | pack iterator (uvm-core state) | 132, so bytes `84 00 00 00` |
+| 32–63 | 4–7 | unpack iterator (uvm-core state) | 64, so bytes `40 00 00 00` |
+| 64–67 | low half of byte 8 | `pack_object` marker: `4'hF` (non-null) | `F` |
+| 68–83 | 8–10 | `addr`, bit 0 first | `'h0010` |
+| 84–115 | 10–14 | `data`, bit 0 first | `'hcafe0001` |
+| 116–131 | 14–16 | `id`, bit 0 first | `'d1` |
+| 132–135 | high half of byte 16 | padding, masked to 0 | — |
+
+Count it through: `flush()` sets both iterators to 64; the marker moves the pack iterator to 68 and the 64 field bits to 132. `pack_bytes()` returns the number of bits that can be unpacked, 132 − 64 = **68**, and fills (132 + 7) / 8 = **17** bytes: `84 00 00 00 40 00 00 00 0f 01 10 00 e0 af 1c 00 00`. A C model that expects `addr`, `data`, `id` in its first 8 bytes reads nonsense: the fields are not even byte-aligned. §5.3.10.1 warns about exactly this: the stream may contain metadata, so the return value may differ from the stream size.
+
+So use pack and unpack for **SystemVerilog-to-SystemVerilog round trips** through a compatible packer (§16.5.3.1): saving and restoring an object, or moving it between SV components. To hand fields to a C reference model, pass them, or a packed struct, through the Direct Programming Interface, DPI ([I-SV-7](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index)), or build the bytes yourself with the streaming operators (IEEE 1800-2023 §11.4.14).
+
+**The classic mistake: a mis-ordered unpack.** Swap two lines in `do_unpack` so it reads `data` before `addr`, and trace it on the same stream:
+
+| Step | `do_unpack` line | Reads stream bits | Value read | Correct value |
+| --- | --- | --- | --- | --- |
+| 1 | `` `uvm_unpack_int(data) `` (32 bits) | 68–99 | `data` = `'h00010010` | `'hcafe0001` |
+| 2 | `` `uvm_unpack_int(addr) `` (16 bits) | 100–115 | `addr` = `'hcafe` | `'h0010` |
+| 3 | `` `uvm_unpack_int(id) `` (16 bits) | 116–131 | `id` = `'d1` | `'d1` |
+
+Step 1 takes the 16 bits of `addr` plus the low 16 bits of `data`; step 2 takes the high half of `data`. No error is reported, the bit count still matches, and only a `compare()` against the original reveals the damage. With two fields of equal width the values would simply swap; with different widths they are scrambled.
+
+**Nested objects.** Pack a sub-object with `packer.pack_object(cfg)`, which writes a 4-bit null/non-null marker before its fields (§16.5.4.2). On unpack, `unpack_object` needs an allocated object, or `null` if the stream holds a null (§16.5.4.3–§16.5.4.4), so peek first:
+
+```systemverilog
+// snippet: in do_unpack, for a pkt_cfg handle cfg
+if (packer.is_null()) cfg = null;
+else if (cfg == null) cfg = pkt_cfg::type_id::create("cfg");
+packer.unpack_object(cfg);   // also consumes the marker when the object was null
+```
+
+uvm-core reports `UVM/BASE/PACKER/UNPACK/NN2N` if you pass a null handle for a non-null object.
+
+### Field macros or hand-written hooks?
+
+Here is the same item without field macros. Everything the macros did is now explicit:
+
+```systemverilog
+// snippet: needs import uvm_pkg::*; and `include "uvm_macros.svh"
+class bus_item_hooks extends uvm_sequence_item;
+  `uvm_object_utils(bus_item_hooks)   // no _begin: no field automation
+
+  rand bit [15:0] addr;
+  rand bit [31:0] data;
+  bit      [15:0] id;
+
+  function new(string name = "bus_item_hooks");
+    super.new(name);
+  endfunction
+
+  virtual function void do_copy(uvm_object rhs);
+    bus_item_hooks rhs_;
+    if (!$cast(rhs_, rhs))
+      `uvm_fatal("BUS_ITEM", "do_copy: rhs is not a bus_item_hooks")
+    super.do_copy(rhs);
+    addr = rhs_.addr;
+    data = rhs_.data;
+    id   = rhs_.id;
+  endfunction
+
+  // Through the comparer, so every difference is counted and reported.
+  // id is deliberately not compared.
+  virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+    bus_item_hooks rhs_;
+    if (!$cast(rhs_, rhs)) return 0;
+    do_compare = super.do_compare(rhs, comparer);
+    do_compare &= comparer.compare_field_int("addr", addr, rhs_.addr, $bits(addr), UVM_HEX);
+    do_compare &= comparer.compare_field_int("data", data, rhs_.data, $bits(data), UVM_HEX);
+  endfunction
+
+  virtual function void do_print(uvm_printer printer);
+    super.do_print(printer);
+    printer.print_field_int("addr", addr, $bits(addr), UVM_HEX);
+    printer.print_field_int("data", data, $bits(data), UVM_HEX);
+    printer.print_field_int("id",   id,   $bits(id),   UVM_DEC);
+  endfunction
+
+  virtual function void do_record(uvm_recorder recorder);
+    super.do_record(recorder);
+    `uvm_record_int("addr", addr, $bits(addr), UVM_HEX)
+    `uvm_record_int("data", data, $bits(data), UVM_HEX)
+  endfunction
+
+  virtual function void do_pack(uvm_packer packer);
+    super.do_pack(packer);
+    `uvm_pack_int(addr);
+    `uvm_pack_int(data);
+    `uvm_pack_int(id);
+  endfunction
+
+  virtual function void do_unpack(uvm_packer packer);
+    super.do_unpack(packer);
+    `uvm_unpack_int(addr);
+    `uvm_unpack_int(data);
+    `uvm_unpack_int(id);
+  endfunction
+
+  virtual function string convert2string();
+    return $sformatf("addr=0x%04h data=0x%08h id=%0d", addr, data, id);
+  endfunction
+endclass
+```
+
+One behaviour differs from the macro version: with the default comparer and both `addr` and `data` different, this `do_compare` counts **2** (no threshold gate on direct calls), prints one `MISCMP` line and the summary `2 Miscompare(s) (1 shown)`. The macro `bus_item` counts 1.
+
+| Criterion | Field macros | Hand-written hooks |
+| --- | --- | --- |
+| Effort | One line per field gives print, copy, compare, pack, record | One line per field **per hook**; easy to forget a field |
+| Run time | "may not be as run-time efficient" (B.2.2 NOTE): generic code with a `case` on the operation for every field | Only the code you need |
+| Control | Flags only: in or out, radix, recursion | Anything: tolerances, computed fields, conditional fields, custom order |
+| Debugging | Macro expansion is hard to step through; errors point at the macro line | Ordinary code you can breakpoint |
+| `convert2string` | Not provided | You write it either way |
+| Mixing | Allowed: macros run first, then hooks. Never register a field in both, or it is compared and printed twice | — |
+
+A common team rule: field macros for quick prototypes and low-rate configuration objects; hand-written hooks for high-rate sequence items in production, as the B.2.2 NOTE recommends when "specific run-time semantics or efficiency are required". Whatever you choose, you write `convert2string()` yourself.
+
+**Awareness: `do_execute_op` and `uvm_field_op`.** The field macros are a generated `do_execute_op(uvm_field_op op)` (§5.3.13). You can write that one method yourself instead of six hooks: read `op.get_op_type()` (§5.7.2.4), `op.get_policy()` (§5.7.2.5) and `op.get_rhs()` (§5.7.2.6), and call `op.disable_user_hook()` (§5.7.2.8) to stop the policy calling your `do_*` hook for this operation. Because `` `uvm_object_utils_begin `` already defines `do_execute_op`, only a class registered with plain `` `uvm_object_utils `` can define its own. Push Further has an example.
+
+### Common mistakes and how to debug them
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| The test passes although the data differ; the log shows `MISCMP` lines | The scoreboard ignored `compare()`'s return value; `MISCMP` is `UVM_INFO` | Test the return value and raise `` `uvm_error `` when it is 0 |
+| `compare()` returns 1 although a field differs; the field is also missing from `print()` | Its flag has no positive bit (`UVM_NOCOMPARE` or `UVM_HEX` alone); look for `UVM/FIELDS/NO_FLAG` in the log | `UVM_ALL_ON \| UVM_NOCOMPARE` (or `UVM_ALL_ON \| UVM_HEX`) |
+| `compare()` returns 1 although a field differs; no warning | A hand-written `do_compare` never compares that field, or compares with `==` and returns 1 | Compare every field through `comparer.compare_field_int` |
+| Only one miscompare reported when you know there are several | Default threshold 1 (macros) and `show_max` 1 (printing) | A dedicated comparer: threshold 0, `show_max` 10 |
+| No `MISCMP` lines at all, yet `compare()` returns 0 | Regression run at `+UVM_VERBOSITY=UVM_NONE`; the lines are `UVM_LOW` | `cmp.set_verbosity(UVM_NONE)`, or print `cmp.get_miscompares()` in your own error |
+| Comparing an `err_item` with a `bus_item` reports only a type miscompare | The type check counts 1 and the threshold then skips every field | Compare like with like, or use a comparer whose `flush()` re-applies `set_check_type(0)` (uvm-core's `flush()` resets it; see Push Further) |
+| Changing a copy changes the original | A shared sub-object: `UVM_REFERENCE`, or `cfg = rhs_.cfg` in `do_copy` | Clone the sub-object, or drop `UVM_REFERENCE` |
+| Unpacked fields hold scrambled values | `do_unpack` order or widths differ from `do_pack` | Mirror `do_pack` line by line |
+| A field packs, but comes back 0 after unpack | Its flag lists operations explicitly with `UVM_PACK` but not `UVM_UNPACK` (uvm-core tests a separate unpack bit) | `UVM_PACK \| UVM_UNPACK`, or `UVM_ALL_ON \| UVM_NO*` |
+| `` `uvm_info `` with `convert2string()` prints an empty message | `convert2string()` not overridden | Override it |
+
+## Make It Work
+
+This complete test exercises everything above on the field-macro `bus_item`: the default comparer, a scoreboard comparer, three text views, a clone, and a pack/unpack round trip. Step 6 then compares two `bus_item_hooks`, the hand-written version from Build Your Mental Model (without its record and pack hooks), with the same default comparer.
+
+```systemverilog
+// compile
+// policy_demo.sv: compile after uvm-core 2020.3.1 (uvm_pkg); run_test() names the test.
+`include "uvm_macros.svh"
+
+package bus_pkg;
+  import uvm_pkg::*;
+
+  class bus_item extends uvm_sequence_item;
+    rand bit [15:0] addr;
+    rand bit [31:0] data;
+    bit      [15:0] id;  // tracking number from the sequence, not DUT behaviour
+
+    // addr and data join every operation; id joins all but compare.
+    `uvm_object_utils_begin(bus_item)
+      `uvm_field_int(addr, UVM_ALL_ON | UVM_HEX)
+      `uvm_field_int(data, UVM_ALL_ON | UVM_HEX)
+      `uvm_field_int(id,   UVM_ALL_ON | UVM_NOCOMPARE | UVM_DEC)
+    `uvm_object_utils_end
+
+    function new(string name = "bus_item");
+      super.new(name);
+    endfunction
+
+    // The field macros do not implement convert2string(): write it yourself.
+    virtual function string convert2string();
+      return $sformatf("addr=0x%04h data=0x%08h id=%0d", addr, data, id);
+    endfunction
+  endclass
+
+  // A scoreboard comparer: count every miscompare, print up to 10.
+  class scb_comparer extends uvm_comparer;
+    `uvm_object_utils(scb_comparer)
+
+    function new(string name = "scb_comparer");
+      super.new(name);
+      set_threshold(0);
+      set_show_max(10);
+    endfunction
+
+    // compare() flushes the comparer first. IEEE 1800.2 §16.3.6 lets flush()
+    // reset the threshold to 1 (uvm-core keeps it), so re-apply it here.
+    virtual function void flush();
+      super.flush();
+      set_threshold(0);
+    endfunction
+  endclass
+
+  // The same item with hand-written hooks and no field automation.
+  class bus_item_hooks extends uvm_sequence_item;
+    `uvm_object_utils(bus_item_hooks)
+
+    rand bit [15:0] addr;
+    rand bit [31:0] data;
+    bit      [15:0] id;
+
+    function new(string name = "bus_item_hooks");
+      super.new(name);
+    endfunction
+
+    virtual function void do_copy(uvm_object rhs);
+      bus_item_hooks rhs_;
+      if (!$cast(rhs_, rhs))
+        `uvm_fatal("BUS_ITEM", "do_copy: rhs is not a bus_item_hooks")
+      super.do_copy(rhs);
+      addr = rhs_.addr;
+      data = rhs_.data;
+      id   = rhs_.id;
+    endfunction
+
+    // Direct comparer calls: no threshold gate. id is deliberately not compared.
+    virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+      bus_item_hooks rhs_;
+      if (!$cast(rhs_, rhs)) return 0;
+      do_compare = super.do_compare(rhs, comparer);
+      do_compare &= comparer.compare_field_int("addr", addr, rhs_.addr, $bits(addr), UVM_HEX);
+      do_compare &= comparer.compare_field_int("data", data, rhs_.data, $bits(data), UVM_HEX);
+    endfunction
+
+    virtual function void do_print(uvm_printer printer);
+      super.do_print(printer);
+      printer.print_field_int("addr", addr, $bits(addr), UVM_HEX);
+      printer.print_field_int("data", data, $bits(data), UVM_HEX);
+      printer.print_field_int("id",   id,   $bits(id),   UVM_DEC);
+    endfunction
+
+    virtual function string convert2string();
+      return $sformatf("addr=0x%04h data=0x%08h id=%0d", addr, data, id);
+    endfunction
+  endclass
+
+  class policy_test extends uvm_test;
+    `uvm_component_utils(policy_test)
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      bus_item       exp, act, cpy, rx;
+      bus_item_hooks hx, hy;
+      uvm_comparer   dflt;
+      scb_comparer   cmp;
+      byte unsigned  bytes[];
+      int            n_bits;
+      bit            ok;
+      string         s;
+
+      phase.raise_objection(this);
+
+      exp = bus_item::type_id::create("exp");
+      act = bus_item::type_id::create("act");
+      exp.addr = 16'h0010;  exp.data = 32'hcafe_0001;  exp.id = 1;
+      act.addr = 16'h0014;  act.data = 32'hcafe_0002;  act.id = 2;
+
+      // 1. Default comparer: the macros stop after the first miscompare.
+      ok   = exp.compare(act);
+      dflt = uvm_comparer::get_default();
+      `uvm_info("DEMO", $sformatf("default: compare=%0d get_result=%0d",
+                ok, dflt.get_result()), UVM_LOW)
+
+      // 2. Scoreboard comparer: every miscompare counted and shown.
+      cmp = scb_comparer::type_id::create("cmp");
+      ok  = exp.compare(act, cmp);
+      `uvm_info("DEMO", $sformatf("scb_comparer: compare=%0d get_result=%0d",
+                ok, cmp.get_result()), UVM_LOW)
+
+      // 3. Three text views of one object.
+      exp.print();                                // table printer (uvm-core default)
+      exp.print(uvm_line_printer::get_default()); // one line
+      `uvm_info("DEMO", exp.convert2string(), UVM_LOW)
+
+      // 4. clone() = create() + copy(): the clone is a separate object.
+      if (!$cast(cpy, exp.clone()))
+        `uvm_fatal("DEMO", "clone() did not return a bus_item")
+      cpy.data = 32'h0;
+      `uvm_info("DEMO", $sformatf("after cpy.data = 0: exp.data=0x%08h", exp.data), UVM_LOW)
+
+      // 5. pack and unpack: an SV-to-SV round trip.
+      n_bits = exp.pack_bytes(bytes);
+      foreach (bytes[i]) s = {s, $sformatf("%02h ", bytes[i])};
+      `uvm_info("DEMO", $sformatf("pack_bytes: %0d bits in %0d bytes: %s",
+                n_bits, bytes.size(), s), UVM_LOW)
+      rx = bus_item::type_id::create("rx");
+      n_bits = rx.unpack_bytes(bytes);
+      `uvm_info("DEMO", $sformatf("unpack_bytes: %0d bits; rx: %s; compare=%0d",
+                n_bits, rx.convert2string(), rx.compare(exp)), UVM_LOW)
+
+      // 6. Hand-written hooks, default comparer: no threshold gate on direct calls.
+      hx = bus_item_hooks::type_id::create("hx");
+      hy = bus_item_hooks::type_id::create("hy");
+      hx.addr = 16'h0010;  hx.data = 32'hcafe_0001;  hx.id = 1;
+      hy.addr = 16'h0014;  hy.data = 32'hcafe_0002;  hy.id = 2;
+      ok = hx.compare(hy);
+      `uvm_info("DEMO", $sformatf("hooks, default comparer: compare=%0d get_result=%0d",
+                ok, dflt.get_result()), UVM_LOW)
+
+      phase.drop_objection(this);
+    endtask
+  endclass
+endpackage
+
+module tb_top;
+  import uvm_pkg::*;
+  import bus_pkg::*;
+
+  initial run_test("policy_test");
+endmodule
+```
+
+**Expected output** (illustrative, traced by hand against uvm-core 2020.3.1, not captured from a simulator run; file and line are elided as `...`, object ids vary, and the library banner is omitted):
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test policy_test...
+UVM_INFO ... @ 0: reporter [MISCMP] Miscompare for exp.addr: lhs = 'h10 : rhs = 'h14
+UVM_INFO ... @ 0: reporter [MISCMP] 1 Miscompare(s) for object exp@41 vs. act@42
+UVM_INFO ... @ 0: uvm_test_top [DEMO] default: compare=0 get_result=1
+UVM_INFO ... @ 0: reporter [MISCMP] Miscompare for exp.addr: lhs = 'h10 : rhs = 'h14
+UVM_INFO ... @ 0: reporter [MISCMP] Miscompare for exp.data: lhs = 'hcafe0001 : rhs = 'hcafe0002
+UVM_INFO ... @ 0: reporter [MISCMP] 2 Miscompare(s) for object exp@41 vs. act@42
+UVM_INFO ... @ 0: uvm_test_top [DEMO] scb_comparer: compare=0 get_result=2
+--------------------------------------
+Name    Type      Size  Value
+--------------------------------------
+exp     bus_item  -     @41
+  addr  integral  16    'h10
+  data  integral  32    'hcafe0001
+  id    integral  16    'd1
+--------------------------------------
+exp: (bus_item@41) { addr: 'h10  data: 'hcafe0001  id: 'd1  }
+UVM_INFO ... @ 0: uvm_test_top [DEMO] addr=0x0010 data=0xcafe0001 id=1
+UVM_INFO ... @ 0: uvm_test_top [DEMO] after cpy.data = 0: exp.data=0xcafe0001
+UVM_INFO ... @ 0: uvm_test_top [DEMO] pack_bytes: 68 bits in 17 bytes: 84 00 00 00 40 00 00 00 0f 01 10 00 e0 af 1c 00 00
+UVM_INFO ... @ 0: uvm_test_top [DEMO] unpack_bytes: 68 bits; rx: addr=0x0010 data=0xcafe0001 id=1; compare=1
+UVM_INFO ... @ 0: reporter [MISCMP] Miscompare for hx.addr: lhs = 'h10 : rhs = 'h14
+UVM_INFO ... @ 0: reporter [MISCMP] 2 Miscompare(s) (1 shown) for object hx@… vs. hy@…
+UVM_INFO ... @ 0: uvm_test_top [DEMO] hooks, default comparer: compare=0 get_result=2
+...
+--- UVM Report Summary ---
+...
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+Read it against the rules: the default comparer reported `addr` and skipped `data` (threshold 1); `scb_comparer` reported both; `id` differs but never appears (`UVM_NOCOMPARE`); the `print()` lines carry no `UVM_INFO` prefix because they bypass the report server; the round trip restores every field although the stream starts with 8 bytes of packer state; and `bus_item_hooks`, with the same default comparer, counts both `addr` and `data` (`get_result=2`) but prints one per-field line and `(1 shown)`, because its direct `compare_field_int` calls have no threshold gate.
+
+**Run it.** Compile uvm-core 2020.3.1 (`uvm_pkg`) and `policy_demo.sv` with your simulator, then run `tb_top`; `run_test("policy_test")` selects the test, so no `+UVM_TESTNAME` is needed. Check the command-line options in your simulator's UVM guide (tool-dependent).
+
+**How to give a class the behaviour you want:**
+1. Decide what "equal" means for the scoreboard. List the fields that are DUT behaviour and the ones that are bookkeeping (ids, timestamps).
+2. Register the fields: field macros with `UVM_ALL_ON` plus any `UVM_NO*` exclusion, or hand-written hooks that go through the policy APIs. Never both for one field.
+3. Write `convert2string()` for one-line logs; keep `print()` and `sprint()` for dumps.
+4. Give the scoreboard its own comparer (threshold 0, `show_max` 10, re-applied in `flush()`) and raise `` `uvm_error `` yourself when `compare()` returns 0.
+5. If you pack, mirror `do_pack` in `do_unpack` and test the round trip with `compare()`. Do not decode the stream outside SystemVerilog.
+6. Check copies of items with handles: decide per handle whether it is shared or cloned.
+
+**Checklist before moving on:**
+- [ ] I can draw the three layers of one `compare()` call: policy, field automation in `do_execute_op`, then my `do_*` hook.
+- [ ] I can predict `compare()`, `get_result()` and the `MISCMP` lines for the macro `bus_item` and for `bus_item_hooks`.
+- [ ] I always write `UVM_ALL_ON | UVM_NO*`, never a `UVM_NO*` or radix flag alone.
+- [ ] My scoreboard checks the return value of `compare()` and uses its own comparer.
+- [ ] I can say which handles a `copy()` shares, and why.
+- [ ] My `do_unpack` mirrors my `do_pack`, and I know why `pack_bytes()` returned 68 bits in 17 bytes here.
+
+## Push Further
+
+### Expert: Where the threshold lives, and why it may not survive compare()
+
+§16.3.6 describes the threshold as permission: `do_compare` or `do_execute_op` "may return as quickly as possible" once `get_result()` reaches it. In uvm-core 2020.3.1 the only code that honours it is the gate in the field macros and the `` `uvm_compare_* `` macros (`m_uvm_compare_threshold_begin` in `uvm_comparer_defines.svh`). `compare_field_int()`, `compare_object()` and your `do_compare()` never stop on their own, and `print_msg()` keeps counting.
+
+The portability trap: §16.3.6 says `get_threshold()` returns 1 if `set_threshold` has not been called "since the last call to flush", and `compare()` calls `flush()` at depth 0 (§5.3.9.1 a). A literally conforming library would therefore undo `cmp.set_threshold(0)` on every `compare()`. uvm-core's `flush()` resets the result, the miscompare string and `check_type`, but keeps the threshold, `show_max`, verbosity, severity and recursion policy. **Tool-dependent.** The robust pattern is the Make It Work `scb_comparer`, whose `flush()` calls `super.flush()` and re-applies the threshold.
+
+### Expert: Tolerance and filtering, two ways
+
+There is no tolerance knob on `uvm_comparer`. Two designs work.
+
+**1. A comparer subclass.** The field macros pass the field's name to `compare_field_int`, so an override can treat one field specially (§16.3.3.2):
+
+```systemverilog
+// snippet: needs import uvm_pkg::*; and `include "uvm_macros.svh"
 class tolerant_comparer extends uvm_comparer;
   `uvm_object_utils(tolerant_comparer)
   int unsigned tolerance = 2;
@@ -161,94 +692,392 @@ class tolerant_comparer extends uvm_comparer;
     super.new(name);
   endfunction
 
-  // Same signature as uvm_comparer::compare_field_int (IEEE 1800.2 §16.3.3.2)
-  virtual function bit compare_field_int(string name,
-                                         uvm_integral_t lhs,
-                                         uvm_integral_t rhs,
-                                         int size,
-                                         uvm_radix_enum radix = UVM_NORADIX);
-    if (name == "data") begin
-      longint diff = longint'(lhs) - longint'(rhs);   // signed difference
+  virtual function bit compare_field_int(string name, uvm_integral_t lhs, uvm_integral_t rhs,
+                                         int size, uvm_radix_enum radix = UVM_NORADIX);
+    // Only "data", and only known values: an X or Z must still miscompare.
+    if (name == "data" && !$isunknown(lhs) && !$isunknown(rhs)) begin
+      longint diff = longint'(lhs) - longint'(rhs);
       if (diff < 0) diff = -diff;
-      if (diff <= tolerance) return 1;                 // within ±tolerance: equal
+      if (diff <= tolerance) return 1;   // within tolerance: nothing counted
     end
     return super.compare_field_int(name, lhs, rhs, size, radix);
   endfunction
 endclass
-
-// Use it explicitly: if (!exp.compare(act, tol_cmp)) `uvm_error(...)
 ```
 
-The field macros pass the field name (here `"data"`) to `compare_field_int`, so the override can treat one field specially and leave every other field to the base class.
+The `$isunknown` guard matters: `uvm_integral_t` is `logic signed [63:0]`, and the `longint'` cast turns X and Z bits into 0 (IEEE 1800-2023 §6.11.2), so without it an X-valued actual could land within tolerance. The weakness of this design is that it keys on a name string: rename the field and the tolerance silently stops applying.
 
-### Custom Recorder for Coverage Correlation
-
-Override `do_record()` to attach extra metadata — like coverage-bin names or test phase — that your waveform correlation scripts can consume.
+**2. A policy extension** (§16.1.2.3). Any object can ride along with a policy through `set_extension()`, and the item's own hook asks for it with `get_extension()`. Extensions are not cleared by `flush()`.
 
 ```systemverilog
-function void do_record(uvm_recorder recorder);
-  super.do_record(recorder);
-  recorder.record_string("test_phase", "main_sequence");
-  recorder.record_field_int("latency_ns", latency, 32, UVM_DEC);
+// snippet: the scoreboard attaches an extension; the item's do_compare reads it
+class ignore_ts_ext extends uvm_object;
+  `uvm_object_utils(ignore_ts_ext)
+  function new(string name = "ignore_ts_ext");
+    super.new(name);
+  endfunction
+endclass
+
+// scoreboard, once:  void'(cmp.set_extension(ignore_ts_ext::type_id::create("ext")));
+// item's do_compare:
+if (comparer.get_extension(ignore_ts_ext::get_type()) == null)
+  do_compare &= comparer.compare_field_int("ts", ts, rhs_.ts, $bits(ts), UVM_DEC);
+```
+
+The extension keeps the rule with the item that owns the field, and the same item can compare strictly in one scoreboard and loosely in another.
+
+### Expert: Packed streams are implementation-defined
+
+The normative facts are short: a stream is only guaranteed to unpack in a **compatible** packer, meaning one whose state retrieval returns identical streams for identical fields (§16.5.3.1), and its "length and contents … are implementation dependent" (§16.5.3.2). The details below are uvm-core 2020.3.1 (`uvm_packer.svh`, `uvm_object.svh`) and are **tool-dependent**:
+- `flush()` sets both iterators to 64; `get_packed_*` writes them into bits 0–63, and `set_packed_*` reads them back from there. That is why the stream starts with `84 00 00 00 40 00 00 00`.
+- `pack_object` writes `4'hF` before every object (`4'h0` for null), the top-level one included.
+- Fields are stored least significant bit first, with no padding between them. The UVM 1.2 knobs `big_endian` and `use_metadata` are gone.
+- The `` `uvm_field_object `` macro (and the `` `uvm_pack_object `` macro, which is not in Annex B.2.4) packs through `pack_object_with_meta`: a 32-bit reference id and the type name before the fields, so unpack can create the right type. It is not compatible with a hand-written `is_null`/`unpack_object` reader.
+- The kit's `uvm_compat_pkg::uvm_compat_packer` reproduces UVM 1.2 streams; install it with `uvm_packer::set_default(compat_packer)` when old stream bytes must stay identical (uvm-core `compat/README.md`).
+
+So the same item can pack to different bytes under UVM 1.2 and 1800.2 libraries, while each library still round-trips its own streams. For a C model, pass a packed struct or the fields through DPI, or build the bytes with streaming operators (IEEE 1800-2023 §11.4.14), so you own the format.
+
+### Expert: Field-macro semantics changed in IEEE 1800.2
+
+B.2.2 and F.2.1.8–F.2.1.9 make operations opt-in: a field joins only the operations its flag names, and negative flags beat positive ones. UVM 1.2 treated a flag without positive bits as if `UVM_ALL_ON` were added. The uvm-core warning `UVM/FIELDS/NO_FLAG` (Mantis 7187) names the change; it appears once per field macro, the first time the macro runs an operation. Two uvm-core escape hatches, both **tool-dependent**:
+- Compile with `+define+UVM_LEGACY_FIELD_MACRO_SEMANTICS` to get the 1.2 behaviour back (the kit README spells it `UVM_LEGACY_FIELD_SEMANTICS`, a typo: the source tests `UVM_LEGACY_FIELD_MACRO_SEMANTICS`).
+- Silence the warning with `set_report_severity_id_action(UVM_WARNING, "UVM/FIELDS/NO_FLAG", UVM_NO_ACTION)` once you have audited the fields.
+
+The real fix is to add `UVM_ALL_ON`. When migrating a legacy code base, grep for field macros whose flag has no `ALL_ON`, `DEFAULT` or explicit operation: radix-only (`UVM_HEX`) and recursion-only (`UVM_REFERENCE`) flags are the ones people miss.
+
+### Expert: Recursion policies and type checks
+
+§16.3.4.1 and §16.6.3 define three recursion policies for object fields: `UVM_DEEP` (recurse), `UVM_SHALLOW` (copy or compare the sub-object's own object fields as references) and `UVM_REFERENCE` (the handle only). Three uvm-core behaviours, all **tool-dependent**:
+- The field macros special-case only `UVM_REFERENCE`. A field flagged `UVM_SHALLOW` is created or copied into, and its own object fields are still deep-copied and deep-compared.
+- `uvm_comparer::flush()` sets `check_type` back to 1, and `compare()` flushes at depth 0, so `cmp.set_check_type(0); a.compare(b, cmp)` still checks types. To compare a derived item with a base item field by field, override `flush()` as in `scb_comparer`, or compare through a common base `do_compare` yourself.
+- The type check counts as a miscompare. With threshold 1, comparing an `err_item` with a `bus_item` reports `Miscompare for exp.type: lhs = "err_item" : rhs = "bus_item"`, then the summary line, and no field results.
+
+Cycles are detected per policy: a comparer asked to compare a pair it has already seen in this operation warns `UVM/COPIER/LOOP` (sic), and a copy loop warns `UVM/COPY/LOOP`. And the copy macro copies **into** an existing destination sub-object; it creates one only when the destination handle is null (`uvm_copy_object` in `uvm_copier_defines.svh`), so a pre-built destination keeps its identity.
+
+### Expert: do_execute_op as one hook for every operation
+
+A class registered with plain `` `uvm_object_utils `` can implement all operations in one place (§5.3.13, §5.7.2):
+
+```systemverilog
+// snippet: in class lean_item (plain `uvm_object_utils), field addr [15:0]
+virtual function void do_execute_op(uvm_field_op op);
+  uvm_comparer cmp;
+  lean_item    rhs_;
+  super.do_execute_op(op);
+  if (op.get_op_type() == UVM_COMPARE && $cast(cmp, op.get_policy())
+      && $cast(rhs_, op.get_rhs())) begin
+    void'(cmp.compare_field_int("addr", addr, rhs_.addr, $bits(addr), UVM_HEX));
+    op.disable_user_hook();   // do_compare will not be called for this op
+  end
 endfunction
 ```
 
+This is how the field macros themselves work, and it suits code generators: one generated method can serve copy, compare, print, pack and record. The cost is a dispatch on every operation, the same cost the macros pay. Keep the `void'`: the result is already counted by the comparer, which is what `compare_object` checks.
+
+### Expert: Scale and performance
+
+The B.2.2 NOTE is the only normative statement: field macros "may not be as run-time efficient nor as flexible" as direct `do_*` code. How much slower depends on the simulator and the class; measure it in your own regression before you rewrite (any figure is tool-dependent). Habits that keep policy work cheap in large runs:
+- Build log text only when it will print: `` `uvm_info `` evaluates its message only if the verbosity passes, but a `sprint()` assigned to a variable first is always paid for. Prefer `convert2string()` for per-transaction lines.
+- Print `MISCMP` details only on failure paths, and keep `show_max` small in regressions.
+- Keep one comparer per scoreboard instead of creating one per comparison.
+- Do not pack items just to compare or copy them; `compare()` and `copy()` are cheaper and keep field names in the messages.
+
+### Expert: Interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: two fields differ, but get_result() is 1"
+  question="An item registers addr and data with UVM_ALL_ON. Both differ, yet the comparer's get_result() is 1 and only one MISCMP line appears. Explain both numbers."
+  options={[
+    { text: "show_max 1 stops the comparer counting after the first miscompare it prints.", isCorrect: false, feedback: "show_max only limits printed lines; get_miscompares() and get_result() still count every compared difference." },
+    { text: "compare() stops at the first difference in every UVM library, whatever the comparer's settings are.", isCorrect: false, feedback: "Only the macro gate stops, and only while get_result() has reached a non-zero threshold. Threshold 0 compares everything." },
+    { text: "The default threshold is 1: after addr, the field macros skip data, so one is counted and printed.", isCorrect: true, feedback: "Right. The threshold limits comparing (in the macros); show_max limits printing, but here there was only one line to print. Set the threshold to 0 to count every field." },
+    { text: "data has the same value in both objects, so the stem's log must be wrong.", isCorrect: false, feedback: "The stem says both differ. A field that is never compared never appears in the log." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the scoreboard that passes with bad data"
+  question="A scoreboard reports zero errors, but waveforms show wrong data reaching the monitor. Where do you look, in order?"
+  options={[
+    { text: "Only the verbosity setting: MISCMP errors are hidden at UVM_NONE, so check +UVM_VERBOSITY first.", isCorrect: false, feedback: "MISCMP lines are UVM_INFO, not errors. Hiding them changes the log, never the pass/fail result." },
+    { text: "Return-value check, the field's flag (NO_FLAG, UVM_NOCOMPARE), the do_compare body, shared handles.", isCorrect: true, feedback: "Right. In detail: does the scoreboard check compare()'s return value; does the field's flag have a positive bit (look for UVM/FIELDS/NO_FLAG) or UVM_NOCOMPARE; does a hand-written do_compare compare that field through the comparer; does the expected item alias the actual one through a shared handle? Each makes compare() return 1, or makes its 0 harmless, with no error in the log." },
+    { text: "The packer settings: compare() packs both objects and then compares the two packed streams bit by bit.", isCorrect: false, feedback: "compare() walks fields through the comparer; it never packs." },
+    { text: "The factory overrides: an override must have replaced the scoreboard with an empty one.", isCorrect: false, feedback: "Possible but rare, and it would not explain a passing compare on different data." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: same item, different bytes"
+  question="A team moves from a UVM 1.2 library to uvm-core 2020.3.1. Unpacking still round-trips, but a C model that decodes pack_bytes() output now reads garbage. Why, and what is the fix?"
+  options={[
+    { text: "The C model must byte-swap every word, because IEEE 1800.2 made the packed stream big-endian.", isCorrect: false, feedback: "uvm-core stores fields LSB first and removed the big_endian knob; the bigger change is the header and the per-object marker." },
+    { text: "The field macros now pack fields in alphabetical order instead of macro order.", isCorrect: false, feedback: "They pack in macro order, base-class fields first." },
+    { text: "pack_bytes() now returns bytes instead of bits, so the C side reads the wrong length.", isCorrect: false, feedback: "It returns the number of bits that can be unpacked (§5.3.10.1); for this item, 68 bits in a 17-byte array." },
+    { text: "Stream format is implementation-defined; uvm-core changed it. Pass fields to C via DPI.", isCorrect: true, feedback: "Right (§16.5.3.2). uvm-core writes 64 bits of packer state first, a 4-bit object marker, then LSB-first fields. Short term, install uvm_compat_packer; properly, pass the fields or a packed struct through DPI. Only round trips through a compatible packer are guaranteed." }
+  ]}
+/>
+
+Further questions to practise aloud:
+- Deep or shared: an item holds a handle to the agent's configuration object. Which should `do_copy` do, and why might the answer differ for a nested payload object?
+- Why must `do_compare` and `do_print` go through the policy APIs (§5.3.6, §5.3.9) rather than `==` and `$display`?
+- When would you write `do_execute_op` instead of field macros or `do_*` hooks?
+
 ## Practice & Reinforce
+
+### Retrieval quiz
 
 <Quiz questions={[
   {
-    "question": "Which policy class would you use to serialize a transaction for DPI export to a C model?",
-    "answers": [
-      {"text": "uvm_printer", "correct": false},
-      {"text": "uvm_comparer", "correct": false},
-      {"text": "uvm_packer", "correct": true},
-      {"text": "uvm_recorder", "correct": false}
+    question: "A class has field macros and also overrides do_compare(). You call exp.compare(act). What runs, and what decides the return value?",
+    objective: 1,
+    answers: [
+      { text: "do_compare() replaces the macros; only its return value counts.", correct: false, feedback: "This is the classic misconception. Field automation runs in do_execute_op whether or not you write do_compare()." },
+      { text: "The macros, then do_compare(); 0 if either finds a miscompare.", correct: true, feedback: "Right. compare_object runs do_execute_op (the field macros), then your hook if the user hook is enabled (§16.3.3.4). A miscompare counted by the macros, or a 0 from do_compare(), makes compare() return 0." },
+      { text: "Nothing: macros and do_compare() cannot coexist in one class.", correct: false, feedback: "They coexist: the macros define do_execute_op, not do_compare." },
+      { text: "do_compare() first; the macros run only if it returns 1.", correct: false, feedback: "The order is the other way round, and the macros run whatever do_compare() returns." }
     ],
-    "explanation": "`uvm_packer` serializes object fields into a flat bitstream that can cross the DPI boundary as a byte array."
+    explanation: "compare_object calls do_execute_op (field automation), then do_compare() if the user hook is enabled. It returns 0 if the miscompare count grew or do_compare() returned 0."
   },
   {
-    "question": "What happens if you use `uvm_field_*` macros but also implement `do_compare()`?",
-    "answers": [
-      {"text": "The macro-generated compare and do_compare both run and results are combined.", "correct": true},
-      {"text": "do_compare() takes priority and the macro-generated compare is ignored.", "correct": false},
-      {"text": "A compilation error occurs due to duplicate definitions.", "correct": false},
-      {"text": "The macro-generated compare runs first; do_compare is a no-op.", "correct": false}
+    question: "Your do_pack and do_unpack must round-trip an item. Which policy carries the stream, and what may you assume about it?",
+    objective: 3,
+    answers: [
+      { text: "uvm_packer; the fields concatenated MSB first, ready for C.", correct: false, feedback: "That was never guaranteed. uvm-core stores fields LSB first after a 64-bit header and a marker, so a C struct decoder reads the wrong bits." },
+      { text: "uvm_recorder; it writes each field into a byte array.", correct: false, feedback: "The recorder writes attributes into a transaction record in a recording database (I-UVM-6)." },
+      { text: "uvm_packer; only that a compatible packer can unpack it.", correct: true, feedback: "Right (§16.5.3.1–§16.5.3.2). Its length and contents are implementation dependent; in uvm-core it starts with 64 bits of packer state and a 4-bit object marker." },
+      { text: "uvm_copier; copy() can write the fields into a byte array.", correct: false, feedback: "copy() copies fields between two objects of compatible type; it never produces a stream." }
     ],
-    "explanation": "uvm_comparer::compare_object runs the field automation first, then calls do_compare(). compare() returns 0 if do_compare() returns 0 or if the macros counted a miscompare."
+    explanation: "Pack and unpack are for SV-to-SV round trips through a compatible packer. For a C model, pass fields or a packed struct through DPI."
   },
   {
-    "question": "Why might a scoreboard exclude `id` from comparison using UVM_NOCOMPARE?",
-    "answers": [
-      {"text": "The id field is always zero.", "correct": false},
-      {"text": "The id is assigned by infrastructure (e.g., sequence numbering) and is not part of the functional specification the scoreboard checks.", "correct": true},
-      {"text": "UVM_NOCOMPARE improves simulation speed.", "correct": false}
+    question: "The field-macro bus_item from Make It Work: addr and data are UVM_ALL_ON, id is UVM_ALL_ON | UVM_NOCOMPARE. exp and act differ in addr, data and id. With the default comparer, what do compare() and get_result() give?",
+    objective: 2,
+    answers: [
+      { text: "0 and 3: every differing field is counted.", correct: false, feedback: "id is excluded by UVM_NOCOMPARE, and the default threshold stops the macros after addr." },
+      { text: "0 and 2: addr and data; show_max 1 only limits printing.", correct: false, feedback: "show_max does only limit printing, but the threshold of 1 stops the macros before data is compared." },
+      { text: "1 and 1: a UVM_INFO miscompare does not fail compare().", correct: false, feedback: "The severity of the message does not change the return value: any counted miscompare makes compare() return 0." },
+      { text: "0 and 1: addr counts, then the threshold skips data.", correct: true, feedback: "Right. The macro gate checks get_result() < get_threshold() before each field, and id is excluded by its flag." }
     ],
-    "explanation": "Infrastructure-assigned fields like sequence IDs are not part of the DUT's functional behavior. Comparing them would cause false mismatches. Write it as `UVM_ALL_ON | UVM_NOCOMPARE`."
+    explanation: "Default threshold 1, show_max 1. The macros compare addr (count 1), skip data at the threshold, and skip id by its flag."
   },
   {
-    "question": "`data` and `id` both differ. You call `exp.compare(act)` with the default comparer. What does `get_result()` of that comparer report?",
-    "answers": [
-      {"text": "1: the default threshold stops the field macros after the first miscompare.", "correct": true},
-      {"text": "2: every differing field is counted.", "correct": false},
-      {"text": "0: miscompares are only counted when show_max is raised.", "correct": false}
+    question: "bus_item_hooks has no field macros. Its do_compare calls comparer.compare_field_int for addr and then for data. addr and data both differ. With the default comparer (threshold 1, show_max 1), what do get_result() and the log show?",
+    objective: 2,
+    answers: [
+      { text: "2; one addr line, then '2 Miscompare(s) (1 shown) …'.", correct: true, feedback: "Right. Direct calls have no threshold gate, so both count; show_max 1 prints only the first per-field line, and the summary says so." },
+      { text: "1; the threshold stops do_compare after the addr line.", correct: false, feedback: "The threshold gate lives in the field and uvm_compare_* macros. Direct compare_field_int calls always compare and count." },
+      { text: "2; both per-field lines, then the summary.", correct: false, feedback: "show_max 1 limits printing to the first per-field line; the summary says '(1 shown)'." },
+      { text: "0; hand-written hooks bypass the comparer's count.", correct: false, feedback: "compare_field_int calls print_msg, which increments the count. That is why §5.3.9 requires the policy API." }
     ],
-    "explanation": "The default comparer has threshold 1 and show_max 1. Set a comparer's threshold to 0 to count every miscompare; show_max only limits how many are printed."
+    explanation: "The page's two classes differ here: the macro bus_item counts 1, bus_item_hooks counts 2. Make It Work step 6 runs this case."
   },
   {
-    "question": "A class declares the field macro uvm_field_int(id, UVM_NOCOMPARE) with no UVM_ALL_ON. Under IEEE 1800.2, what happens to `id`?",
-    "answers": [
-      {"text": "It is printed and copied but not compared.", "correct": false},
-      {"text": "It takes part in no operation at all, and UVM warns UVM/FIELDS/NO_FLAG.", "correct": true},
-      {"text": "Compilation fails.", "correct": false}
+    question: "In uvm-core 2020.3.1, which comparer settings make the field macros compare every field and print up to 10 miscompare lines?",
+    objective: 4,
+    answers: [
+      { text: "set_show_max(10) only; the threshold does not matter.", correct: false, feedback: "The threshold is still 1, so the macros stop after the first miscompare; there is only one line to show." },
+      { text: "set_verbosity(UVM_HIGH) and set_show_max(10).", correct: false, feedback: "Verbosity decides whether MISCMP messages are filtered, not how many fields are compared; the threshold is still 1." },
+      { text: "set_threshold(0) and set_show_max(10).", correct: true, feedback: "Right. For portability to libraries whose flush() resets the threshold, re-apply it in a flush() override, as scb_comparer does." },
+      { text: "set_severity(UVM_ERROR), so every miscompare is reported.", correct: false, feedback: "That turns each MISCMP line into an error; it does not change how many fields are compared or shown." }
     ],
-    "explanation": "A flag enables an operation only if it includes it. UVM_NOCOMPARE alone enables nothing. UVM 1.2 treated it as UVM_ALL_ON | UVM_NOCOMPARE; 1800.2 does not."
+    explanation: "Threshold limits comparing (macros only); show_max limits printing. You need both."
+  },
+  {
+    question: "A scoreboard calls void'(exp.compare(act)). The data differ, the log shows MISCMP lines, and the run ends with UVM_ERROR :    0. Why did the test pass?",
+    objective: 2,
+    answers: [
+      { text: "compare() raised UVM_ERROR, but a report catcher demoted it.", correct: false, feedback: "This is the misconception: compare() reports miscompares as UVM_INFO (§16.3.5.3 default severity) and raises no error." },
+      { text: "compare() returned 0, and the scoreboard threw it away.", correct: true, feedback: "Right. compare() never fails the test by itself: the MISCMP lines are UVM_INFO, and void' discarded the 0." },
+      { text: "show_max 1 stopped the count, so compare() returned 1.", correct: false, feedback: "show_max limits printing only; any counted miscompare makes compare() return 0." },
+      { text: "MISCMP lines are warnings, and warnings never fail a test.", correct: false, feedback: "MISCMP lines are UVM_INFO by default, not warnings. The real cause is the discarded return value." }
+    ],
+    explanation: "Write: if (!exp.compare(act, cmp)) `uvm_error(\"SCB\", cmp.get_miscompares())."
+  },
+  {
+    question: "packet's do_copy contains cfg = rhs_.cfg;. p1.cfg.burst_len is 4. After p2.copy(p1); p2.cfg.burst_len = 8; what is p1.cfg.burst_len?",
+    objective: 3,
+    answers: [
+      { text: "4: copy() is always deep.", correct: false, feedback: "This is the misconception. A hand-written do_copy copies exactly what you wrote; a handle assignment shares the object." },
+      { text: "No value: copy() reports UVM_ERROR for a handle.", correct: false, feedback: "Assigning a handle is legal SystemVerilog; no check exists." },
+      { text: "It depends on the copier's recursion policy.", correct: false, feedback: "The copier's policy affects field macros and copy_object calls, not your own assignment statement." },
+      { text: "8: p1 and p2 now share one pkt_cfg.", correct: true, feedback: "Right. The assignment copied the handle. Clone the sub-object if the copy must be independent." }
+    ],
+    explanation: "Field macros copy deep unless UVM_REFERENCE; hand-written code copies exactly what it says."
+  },
+  {
+    question: "do_pack packs two 16-bit fields, lo then hi. do_unpack unpacks hi then lo. An item with lo = 'h1111 and hi = 'h2222 is packed and unpacked into a new item. What do you get?",
+    objective: 3,
+    answers: [
+      { text: "lo = 'h2222, hi = 'h1111, no error; compare() gives 0.", correct: true, feedback: "Right. The packer reads bits in order and stores no names; equal widths make the values swap." },
+      { text: "lo = 'h1111, hi = 'h2222: the packer matches names.", correct: false, feedback: "The stream holds no field names. §5.3.10.2: the unpacking order needs to match the packing order." },
+      { text: "A UVM error: the unpack order differs from pack.", correct: false, feedback: "The packer cannot detect it; the bit count still matches." },
+      { text: "A compile error: do_unpack must follow declaration order.", correct: false, feedback: "Neither order has to match the declaration order; they have to match each other." }
+    ],
+    explanation: "With equal widths the values swap; with different widths they are scrambled. Only a compare() after the round trip reveals it."
+  },
+  {
+    question: "`uvm_info(\"ITEM\", item.convert2string(), UVM_LOW) prints an empty message for an item that registers every field with field macros. Why?",
+    objective: 3,
+    answers: [
+      { text: "UVM_LOW is below the verbosity threshold, so the text is dropped.", correct: false, feedback: "Then no line would appear at all. Here the line appears, with an empty message." },
+      { text: "The macros never write convert2string(); the default is empty.", correct: true, feedback: "Right (§5.3.6.4): uvm_object's convert2string() returns an empty string. Override it, or log item.sprint()." },
+      { text: "convert2string() works only after print() has run once.", correct: false, feedback: "convert2string() is independent of the printer." },
+      { text: "The field macros fill convert2string() only at UVM_HIGH.", correct: false, feedback: "The macros never touch convert2string()." }
+    ],
+    explanation: "print() and sprint() use field automation; convert2string() is yours alone."
+  },
+  {
+    question: "After uvm_printer::set_default(uvm_line_printer::get_default());, what does exp.print() produce, and does +UVM_VERBOSITY filter it?",
+    objective: 4,
+    answers: [
+      { text: "A table: set_default() changes only sprint(), not print().", correct: false, feedback: "print() and sprint() both use the default printer when you pass none." },
+      { text: "One line, but only at UVM_HIGH verbosity or above.", correct: false, feedback: "print() has no verbosity: uvm-core writes it with $fwrite to the printer's file." },
+      { text: "A UVM_INFO message with ID PRINT, filtered as usual.", correct: false, feedback: "print() output carries no report prefix; it never reaches the report server." },
+      { text: "One line, written to the printer's file; never filtered.", correct: true, feedback: "Right (§5.3.6.1), for example exp: (bus_item@41) { addr: 'h10 … }. Use `uvm_info with sprint() or convert2string() if you want verbosity control." }
+    ],
+    explanation: "Printer choice sets the layout; the reporting system is not involved in print()."
+  },
+  {
+    question: "A legacy class declares `uvm_field_int(id, UVM_NOCOMPARE), with no UVM_ALL_ON. Under uvm-core 2020.3.1 (1800.2 semantics), what happens to id?",
+    objective: 5,
+    answers: [
+      { text: "It is printed, copied and packed, but not compared.", correct: false, feedback: "That was UVM 1.2 behaviour, which added UVM_ALL_ON implicitly. Write UVM_ALL_ON | UVM_NOCOMPARE." },
+      { text: "Compilation fails: the flag has no positive bit.", correct: false, feedback: "It compiles; the problem shows up only as a run-time warning and missing output." },
+      { text: "It joins no operation; uvm-core warns NO_FLAG once.", correct: true, feedback: "Right. A flag enables only the operations it names (F.2.1.9); this one names none, so id leaves print, copy, compare and pack, with one UVM/FIELDS/NO_FLAG warning." },
+      { text: "It is compared, but not printed, copied or packed.", correct: false, feedback: "UVM_NOCOMPARE removes compare, and nothing enables the others." }
+    ],
+    explanation: "Always write the positive part. The same applies to radix-only flags such as UVM_HEX."
+  },
+  {
+    question: "A sequence item is compared millions of times per regression, and its scoreboard must ignore a timestamp ts. Which implementation fits best?",
+    objective: 5,
+    answers: [
+      { text: "A hand-written do_compare via compare_field_int, without ts.", correct: true, feedback: "Right. B.2.2's NOTE: direct do_* code is the choice when run-time efficiency or specific semantics matter. Add convert2string() for the logs." },
+      { text: "Field macros with UVM_ALL_ON on every field, ts included.", correct: false, feedback: "Then ts is compared and every transaction miscompares." },
+      { text: "Field macros with `uvm_field_int(ts, UVM_NOCOMPARE).", correct: false, feedback: "Without UVM_ALL_ON, ts vanishes from print, copy and pack too, and uvm-core warns NO_FLAG." },
+      { text: "Override compare() in the item class and skip the ts field there.", correct: false, feedback: "compare() is not a virtual method in uvm_object, so code holding a base-class handle still calls the original. Customise do_compare." }
+    ],
+    explanation: "Macros are fine for prototypes and low-rate objects; hot items get hand-written hooks."
   }
 ]} />
 
+### Flashcards
+
+The deck for this lesson covers the call order, the comparer defaults, the flag rule, `convert2string`, copy depth and the pack rules. Review it after the quiz.
+
+### Kata 1: a scoreboard compare, two ways
+
+Start from the Make It Work `bus_item`, and work each step before you open the solution.
+1. Add `time ts;` (when the monitor saw the transfer) and register it so it is printed and copied but never compared.
+2. Write `tolerant_comparer` yourself, before you read Push Further: a `uvm_comparer` subclass that lets `data` differ by up to 2 but still miscompares when either value holds X or Z.
+3. Now the hand-written version. Add `time ts;` to `bus_item_hooks`, then write its `do_compare` (compare through `comparer.compare_field_int`, and exclude `id` and `ts`) and its `convert2string()` (show all four fields).
+4. Predict `compare()` and `get_result()` for the macro `bus_item` and these three pairs, first with the default comparer, then with a comparer whose threshold is 0:
+   - (a) `addr` differs, `data` equal, `ts` differs;
+   - (b) `addr` equal, `data` differs by 1, `id` differs;
+   - (c) `addr` differs, `data` differs by 5.
+5. Predict `compare()` and `get_result()` for pair (c) with your `bus_item_hooks` and the **default** comparer.
+
+<details>
+<summary>Worked solution</summary>
+
+1. `` `uvm_field_int(ts, UVM_ALL_ON | UVM_NOCOMPARE | UVM_TIME) ``. Writing `UVM_NOCOMPARE` alone would drop `ts` from print and copy too, with a `UVM/FIELDS/NO_FLAG` warning.
+2. The key lines override `compare_field_int`, which the field macros call with the field's name (§16.3.3.2):
+
+```systemverilog
+// snippet: inside class tolerant_comparer extends uvm_comparer (int unsigned tolerance = 2;)
+virtual function bit compare_field_int(string name, uvm_integral_t lhs, uvm_integral_t rhs,
+                                       int size, uvm_radix_enum radix = UVM_NORADIX);
+  if (name == "data" && !$isunknown(lhs) && !$isunknown(rhs)) begin
+    longint diff = longint'(lhs) - longint'(rhs);
+    if (diff < 0) diff = -diff;
+    if (diff <= tolerance) return 1;   // within tolerance: nothing counted
+  end
+  return super.compare_field_int(name, lhs, rhs, size, radix);
+endfunction
+```
+
+   The full class, with its registration and constructor, is in Push Further. Use it in the scoreboard and raise `` `uvm_error `` when `exp.compare(act, tol_cmp)` returns 0. Give it threshold 0 if you also want every macro field counted.
+3. The hook version:
+
+```systemverilog
+// snippet: inside class bus_item_hooks, which now also declares time ts;
+virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+  bus_item_hooks rhs_;
+  if (!$cast(rhs_, rhs)) return 0;
+  do_compare = super.do_compare(rhs, comparer);
+  do_compare &= comparer.compare_field_int("addr", addr, rhs_.addr, $bits(addr), UVM_HEX);
+  do_compare &= comparer.compare_field_int("data", data, rhs_.data, $bits(data), UVM_HEX);
+  // id and ts are bookkeeping: deliberately not compared
+endfunction
+
+virtual function string convert2string();
+  return $sformatf("addr=0x%04h data=0x%08h id=%0d ts=%0t", addr, data, id, ts);
+endfunction
+```
+
+4. Predictions for the macro `bus_item`, plain comparers (field order `addr`, `data`, `id`, `ts`; `id` and `ts` are not compared):
+
+| Pair | Default comparer: `compare()`, `get_result()` | Threshold 0: `compare()`, `get_result()` |
+| --- | --- | --- |
+| (a) | 0, 1 (`addr`) | 0, 1 (`addr`) |
+| (b) | 0, 1 (`data`) | 0, 1 (`data`) |
+| (c) | 0, 1 (`addr`, then the gate skips `data`) | 0, 2 (`addr` and `data`) |
+
+   With `tolerant_comparer` (threshold 0), pair (b) becomes 1, 0, because a difference of 1 is within tolerance; pair (c) stays 0, 2, because 5 is not. The expected log for (c) with threshold 0 and `show_max` 10 has two per-field lines: `Miscompare for exp.addr: …` and `Miscompare for exp.data: …`, then `2 Miscompare(s) for object exp@… vs. act@…`.
+5. `compare()` returns 0 and `get_result()` is **2**, even with the default comparer: your direct `compare_field_int` calls have no threshold gate. With `show_max` 1 the log shows one line, `Miscompare for exp.addr: …`, then `2 Miscompare(s) (1 shown) for object exp@… vs. act@…`. Because `compare_field_int` is virtual, `tolerant_comparer` also applies to your hook: pair (b) would compare equal through it.
+</details>
+
+### Kata 2: a round trip that breaks, then works
+
+Write `do_pack` and `do_unpack` for `bus_item_hooks` without looking back, then check them against Build Your Mental Model. Then:
+1. Swap the `addr` and `data` lines in `do_unpack` only. Pack `exp` (`addr` `'h0010`, `data` `'hcafe0001`, `id` 1), unpack into `rx`, and predict `rx`'s fields and `rx.compare(exp)`.
+2. Fix it, and add a check you can keep in a unit test.
+
+<details>
+<summary>Worked solution</summary>
+
+1. `rx.data` = `'h00010010` (the 16 bits of `addr`, then the low half of `data`), `rx.addr` = `'hcafe`, `rx.id` = 1. `unpack_bytes` still returns 68 and reports nothing. `rx.compare(exp)` returns 0. The hook counts both fields (`get_result()` = 2); with the default `show_max` 1 you see one line, `Miscompare for rx.addr: lhs = 'hcafe : rhs = 'h10`, then `2 Miscompare(s) (1 shown) for object rx@… vs. exp@…`.
+2. Restore the order so `do_unpack` mirrors `do_pack`. A reusable check:
+
+```systemverilog
+// snippet: round-trip self-check
+byte unsigned bytes[];
+void'(exp.pack_bytes(bytes));
+void'(rx.unpack_bytes(bytes));
+if (!rx.compare(exp))
+  `uvm_error("PACK", "round trip changed the item")
+```
+</details>
+
+### Debug challenge: compare() passes, but data differs
+
+A legacy item declares `` `uvm_field_int(addr, UVM_ALL_ON | UVM_HEX) `` and `` `uvm_field_int(data, UVM_HEX) ``. The scoreboard checks the return value, yet two items with different `data` compare equal. The `print()` table lists `addr` but not `data`. What is wrong, and which log line would have told you?
+
+<details>
+<summary>Answer</summary>
+
+`data`'s flag is radix-only: it has no positive operation bit, so under 1800.2 semantics `data` joins no operation. It is not compared, printed, copied or packed. uvm-core logs `UVM_WARNING … [UVM/FIELDS/NO_FLAG] Field macro for ARG uses FLAG without or'ing any explicit UVM_xxx actions. …` once per field. The words `ARG` and `FLAG` appear literally, because a macro argument is not substituted inside a string literal (IEEE 1800-2023 §22.5.1), so the text does not name the field: find it by grepping for field macros without `UVM_ALL_ON`. Fix: `` `uvm_field_int(data, UVM_ALL_ON | UVM_HEX) ``. You can reproduce the same symptom in the Policy Explorer by setting a field to the `UVM_NOCOMPARE`-only flag.
+</details>
+
 ## References & Next Topics
-- **IEEE 1800.2-2020 §5.3** — `uvm_object` (print, compare, copy, clone and their `do_*` hooks).
-- **IEEE 1800.2-2020 §16.2–§16.6** — `uvm_printer`, `uvm_comparer`, `uvm_recorder`, `uvm_packer`, `uvm_copier`.
-- **IEEE 1800.2-2020 Annex B** — field macros and flags.
-- **Previous:** [I-UVM-3B: Advanced Sequencing and Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index)
-- **Next:** [I-UVM-5: UVM Container Classes](/curriculum/T2_Intermediate/I-UVM-5_UVM_Container_Classes/index)
-- **Related:** [E-DBG-1: Advanced Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) — where recording and reporting come together in failure triage.
+
+**Primary sources** (IEEE 1800.2-2020 unless stated):
+- §5.3 `uvm_object`: §5.3.5.2 `clone`; §5.3.6.1–§5.3.6.4 `print`, `sprint`, `do_print`, `convert2string`; §5.3.7.1–§5.3.7.2 `record`, `do_record`; §5.3.8.1–§5.3.8.2 `copy`, `do_copy`; §5.3.9.1–§5.3.9.2 `compare`, `do_compare`; §5.3.10.1–§5.3.10.2 `pack`, `do_pack` (and the NOTE on stream metadata); §5.3.11.1–§5.3.11.2 `unpack`, `do_unpack`; §5.3.13 `do_execute_op`.
+- §5.7 `uvm_field_op` (§5.7.2.2–§5.7.2.8).
+- §16.1 `uvm_policy` (§16.1.2.3 extensions); §16.2 `uvm_printer` (§16.2.3.9 `print_field_int`, §16.2.5 configuration, §16.2.10–§16.2.12 table, tree and line printers); §16.3 `uvm_comparer` (§16.3.3.2 `compare_field_int`, §16.3.3.4 `compare_object`, §16.3.3.7–§16.3.3.9, §16.3.4–§16.3.6); §16.4 `uvm_recorder`; §16.5 `uvm_packer` (§16.5.3 stream state, §16.5.4 pack and unpack methods); §16.6 `uvm_copier`.
+- Annex B.2.2 field macros; B.2.3.2 `` `uvm_record_int ``; B.2.4 packing macros (B.2.4.6 `` `uvm_pack_int ``); B.2.5 unpacking macros (B.2.5.6 `` `uvm_unpack_int ``); F.2.1.8–F.2.1.10 field operation and macro flags; F.4.1.4.13 `get_default_printer`.
+- uvm-core 2020.3.1: `src/base/uvm_comparer.svh`, `uvm_packer.svh`, `uvm_object.svh`, `uvm_printer.svh`, `uvm_policy.svh`; `src/macros/uvm_comparer_defines.svh` (threshold gate), `uvm_object_defines.svh` (`UVM/FIELDS/NO_FLAG`), `uvm_copier_defines.svh`, `uvm_packer_defines.svh`; kit `README.md` and `compat/README.md` (`uvm_compat_packer`).
+- IEEE 1800-2023 §6.11.2 (2-state and 4-state types), §11.4.14 (streaming operators).
+
+**Prerequisites:** [I-UVM-1A: UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) (object methods and hooks); [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) (sequence items, where field macros first appear).
+
+**Related:**
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): where `compare()` decides pass or fail.
+- [I-UVM-6: UVM Recording Classes](/curriculum/T2_Intermediate/I-UVM-6_UVM_Recording_Classes/index): `uvm_recorder`, streams and transaction databases.
+- [I-SV-7: DPI and Foreign Language Interfaces](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index): handing fields to a C model.
+- [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): verbosity, severity and the report summary.
+- [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): failure triage with recording and reporting.
+
+<NextLesson />

@@ -2,6 +2,81 @@
   {
     "id": "iuvm2a-1",
     "question": "What is the difference between an active and a passive agent?",
-    "answer": "An active agent builds a sequencer and a driver to drive its interface, plus a monitor. A passive agent builds only the monitor and observes. The agent's is_active field (UVM_ACTIVE or UVM_PASSIVE) selects which."
+    "answer": "An active agent builds a sequencer, a driver and a monitor, so it can drive its interface and watch it. A passive agent builds only the monitor and observes traffic that something else drives. The agent's is_active field (UVM_ACTIVE or UVM_PASSIVE), read back with get_is_active(), selects which."
+  },
+  {
+    "id": "iuvm2a-2",
+    "question": "Which UVM role owns each job: stimulus, arbitration, pin driving, observation, data checking, coverage, orchestration?",
+    "answer": "Stimulus: the sequence. Arbitration: the sequencer. Pin driving: the driver. Observation: the monitor. Data checking: the scoreboard. Coverage: a subscriber. Configuration and orchestration: the test; the env integrates everything for one DUT."
+  },
+  {
+    "id": "iuvm2a-3",
+    "question": "Which parts of a UVM bench are components, and which are objects?",
+    "answer": "Components (test, env, agent, sequencer, driver, monitor, scoreboard, subscriber) are built once in build_phase with a parent and form the tree. Sequences, sequence items and configuration objects are objects: created with create(\"name\") and no parent, then passed around."
+  },
+  {
+    "id": "iuvm2a-4",
+    "question": "What is the default of is_active, and where is the setting read?",
+    "answer": "The default is UVM_ACTIVE. uvm_agent::build_phase looks up a setting named \"is_active\" for this agent and copies it into the field, so your agent must call super.build_phase(phase) before it calls get_is_active()."
+  },
+  {
+    "id": "iuvm2a-5",
+    "question": "Why must an agent's connect_phase guard drv.seq_item_port.connect(sqr.seq_item_export)?",
+    "answer": "In passive mode drv and sqr were never created, so they are null handles. Without `if (get_is_active() == UVM_ACTIVE)` around the connect, the passive agent dereferences null in connect_phase and the simulation stops."
+  },
+  {
+    "id": "iuvm2a-6",
+    "question": "Why does a passive agent not keep an idle driver or a spare sequencer?",
+    "answer": "An idle driver still runs its run_phase and drives idle values onto signals the DUT owns, causing contention. A sequencer without a driver accepts items nobody takes. Passive means not built: env.out_agt.sqr is null, and a sequence started on it stops with UVM_FATAL [SEQ] at its first start_item."
+  },
+  {
+    "id": "iuvm2a-7",
+    "question": "Why must a monitor create a new item for every transfer?",
+    "answer": "ap.write(t) passes a handle, not a copy. If the monitor reuses one object, every stored handle aliases it and shows the last transfer's data, which can hide a DUT bug or invent mismatches."
+  },
+  {
+    "id": "iuvm2a-8",
+    "question": "Why can a monitor never drive the bus?",
+    "answer": "It reads the interface only through an input-only clocking block such as mon_cb, so it has no way to change a signal. That is also what makes a passive agent, which is just a monitor, safe to attach to any bus."
+  },
+  {
+    "id": "iuvm2a-9",
+    "question": "Why does the scoreboard live in the env and not inside an agent?",
+    "answer": "An agent sees one interface, but a data check compares at least two streams (what went in and what came out). At chip level the agent is reused passive on many buses, and a scoreboard inside it could compare nothing."
+  },
+  {
+    "id": "iuvm2a-10",
+    "question": "What does uvm_subscriber #(T) give you, and what must you write?",
+    "answer": "It provides analysis_export, an imp whose instance name is \"analysis_imp\", and declares pure virtual write(T t). You implement write, keeping the argument name t, since an override keeps the argument names (IEEE 1800-2023 §8.20)."
+  },
+  {
+    "id": "iuvm2a-11",
+    "question": "What do uvm_test, uvm_env, uvm_monitor and uvm_scoreboard add to uvm_component?",
+    "answer": "Nothing but the role: each is a virtual class with a constructor. uvm_agent adds is_active and get_is_active(); uvm_driver adds seq_item_port, rsp_port, req and rsp; uvm_subscriber adds analysis_export and write(T t)."
+  },
+  {
+    "id": "iuvm2a-12",
+    "question": "When and with which types can a test set an agent's is_active?",
+    "answer": "Before the agent's build_phase runs, typically in the test's build_phase before creating the env. uvm-core reads it as uvm_active_passive_enum, a string naming a value, or an integral type such as int; a set of another type, such as byte, is silently ignored."
+  },
+  {
+    "id": "iuvm2a-13",
+    "question": "What does print_topology show, and what does it not show?",
+    "answer": "Called as uvm_root::get().print_topology(), it lists the component tree, with ports as children, in alphabetical order. It does not show connections: a forgotten connect gives the same listing. Use get_connected_to() or get_provided_to() on a port for connectivity."
+  },
+  {
+    "id": "iuvm2a-14",
+    "question": "Which input skew should a monitor's clocking block use, and why?",
+    "answer": "#1step (the default): it samples each signal just before the edge, the same values the DUT's flops capture. An explicit #0 samples in the Observed region, after that edge's updates, and mixing the two views misclassifies transfers."
+  },
+  {
+    "id": "iuvm2a-15",
+    "question": "Why should tb_top set each agent's virtual interface on its own path?",
+    "answer": "With one set on \"*\", every agent gets the same interface, so the output agent's monitor watches the input bus. The scoreboard then compares the input stream with predictions from the same stream, which can pass a broken DUT."
+  },
+  {
+    "id": "iuvm2a-16",
+    "question": "How does an agent use a configuration object to choose active or passive?",
+    "answer": "The test creates the object, sets its is_active and leaves it in uvm_config_db. The agent calls super.build_phase, gets the object, then copies is_active = cfg.is_active, so get_is_active() gives one answer to everyone."
   }
 ]

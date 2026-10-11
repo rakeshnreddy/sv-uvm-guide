@@ -1,17 +1,72 @@
 [
   {
     "id": "i-uvm-6-1",
-    "question": "What is the primary purpose of `uvm_recorder` in the UVM transaction recording architecture?",
-    "answer": "It serves as the object-oriented interface for packing transaction fields (like integers, strings, and other objects) into a format that can be written to a transaction database (`uvm_tr_database`)."
+    "question": "What is a `uvm_recorder`?",
+    "answer": "Two things at once (IEEE 1800.2 §16.4): one record (one transaction) inside a `uvm_tr_stream`, and the policy that writes the object's fields into it as attributes (`record_field_int`, `record_string`, …). Your `do_record()` or the field macros call it."
   },
   {
     "id": "i-uvm-6-2",
-    "question": "How do you typically demarcate the start and end of a transaction's lifetime for recording in a UVM component?",
-    "answer": "By calling `begin_tr(req)` when the component starts processing the transaction and `end_tr(req)` when it finishes. This automatically handles the stream linkage and timestamping if recording is enabled."
+    "question": "What do a component's `begin_tr(tr, \"drv\")` and `end_tr(tr)` each do when recording is enabled?",
+    "answer": "`begin_tr` opens a record on the component's stream \"drv\" and returns its handle, but records no fields (§13.1.7.3). `end_tr` calls `tr.record(recorder)` to write the fields, then closes and (by default) frees the record (§13.1.7.5)."
   },
   {
     "id": "i-uvm-6-3",
-    "question": "What differentiates a `uvm_tr_database` from a standard simulator log file?",
-    "answer": "A `uvm_tr_database` stores structured transaction data (start times, end times, typed fields, and relationships) usually mapped to a vendor-specific waveform format (like FSDB or VCD), allowing for graphical visualization and structured querying, unlike text-based logs."
+    "question": "What does a `uvm_tr_database` hold that a log file does not?",
+    "answer": "Records with begin and end times, typed attributes and links between records (§7.1). uvm-core's default `uvm_text_tr_database` writes them to `tr_db.log`; simulators supply their own database so the waveform viewer can draw transaction rows (tool-dependent). A log file holds messages, not records."
+  },
+  {
+    "id": "i-uvm-6-4",
+    "question": "Is transaction recording on by default? How do you turn it on?",
+    "answer": "No: it is off on every component until enabled (§13.1.7.14), and `begin_tr` returns 0. Use `set_recording_enabled(1)` (§13.1.7.13) or `set_recording_enabled_hier(1)` (D.2.3); uvm-core also reads a `recording_detail` config setting, but only when the component is created."
+  },
+  {
+    "id": "i-uvm-6-5",
+    "question": "When are a transaction's field values captured in a component-level record?",
+    "answer": "Inside `end_tr`, after the transaction was driven or observed. A field filled during the drive (such as read data) is recorded; a field changed after `end_tr` is not; and if `end_tr` is never called the record stays open with no fields."
+  },
+  {
+    "id": "i-uvm-6-6",
+    "question": "Why prefer `` `uvm_record_int `` to `` `uvm_record_field `` for integral fields in `do_record`?",
+    "answer": "`` `uvm_record_int(NAME, VALUE, SIZE, RADIX) `` (B.2.3.2) records a typed value with its width and radix. `` `uvm_record_field `` (B.2.3.6) goes through `record_generic`, which uvm-core fills with a `%p` string, so the text database loses width and radix."
+  },
+  {
+    "id": "i-uvm-6-7",
+    "question": "What is automatic item recording, and when must a driver call `disable_auto_item_recording()`?",
+    "answer": "When the sequencer's recording is on, it records each item by default around the handshake (§15.3.2.22; uvm-core does it in `start_item`/`finish_item`). A driver that records items itself calls `seq_item_port.disable_auto_item_recording()` before its first `get_next_item` (§15.2.1, §15.2.1.2.10), or every item appears twice."
+  },
+  {
+    "id": "i-uvm-6-8",
+    "question": "When does a driver's `begin_tr(req, \"drv\")` get a parent/child link to the item's sequence?",
+    "answer": "In uvm-core only, and only if the parent sequence was itself recorded, which needs the sequencer's recording to be on. Otherwise pass `parent_handle` to `begin_tr` explicitly (§13.1.7.3). Monitor transactions have no parent sequence, so they get no automatic link."
+  },
+  {
+    "id": "i-uvm-6-9",
+    "question": "What do `record_error_tr` and `record_event_tr` write?",
+    "answer": "A zero-length record of type \"Error\" or \"Event\" on the named stream, with the fields of the optional `info` object (§13.1.7.7, §13.1.7.8). With `keep_active = 1` they return a handle for linking. In uvm-core they write even when the component's recording is off."
+  },
+  {
+    "id": "i-uvm-6-10",
+    "question": "Does transaction recording replace `` `uvm_info `` and `` `uvm_error `` reports?",
+    "answer": "No. Pass or fail comes from the report counts, and nothing counts records, not even an `Error` record. Recording adds time spans, typed fields and links for the viewer; a monitor reports an error and may also mark it with `record_error_tr`."
+  },
+  {
+    "id": "i-uvm-6-11",
+    "question": "Who may call `begin_tr` for a sequence item?",
+    "answer": "Any component that produces or consumes it: driver, monitor, scoreboard, and the sequencer automatically (§13.1.7). `uvm_component::begin_tr` calls the item's own `uvm_transaction::begin_tr` (§5.4.2.4) for you, so one item can be recorded by several components on their own streams."
+  },
+  {
+    "id": "i-uvm-6-12",
+    "question": "How many streams does a component open, and what are they named?",
+    "answer": "One per stream name passed to `begin_tr` or `get_tr_stream` (default \"main\"), with the component's full name as the scope (§13.1.7.9). The sequencer opens one per root-sequence name, so uniquely named root sequences each create a stream."
+  },
+  {
+    "id": "i-uvm-6-13",
+    "question": "Name three uvm-core facts about `tr_db.log`.",
+    "answer": "It is opened in append mode, so runs in one directory accumulate. `set_file_name` changes the name only before the first record. Its line kinds (`CREATE_STREAM`, `OPEN_RECORDER`, `SET_ATTR`, `LINK`, `CLOSE_RECORDER`, `FREE_RECORDER`) are uvm-core's format, and it drops cause/effect links."
+  },
+  {
+    "id": "i-uvm-6-14",
+    "question": "What recording policy suits a regression of thousands of seeds?",
+    "answer": "Off by default through a test knob; on for reruns of failing seeds, and only for the agents near the failure (`set_recording_enabled_hier` on one agent). The cost is tool-dependent, so measure it, and record only the fields someone will look at."
   }
 ]

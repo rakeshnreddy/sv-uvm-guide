@@ -1,85 +1,227 @@
 ---
 title: "I-UVM-3A: Basic UVM Sequences and Items"
-description: "Model robust transaction items and author reusable UVM sequences that drive the sequencer ↔ driver handshake."
+description: "Write sequence items and sequences, run them from a test, and implement the driver side of the sequence–sequencer–driver handshake, including responses."
 flashcards: "I-UVM-3A_Fundamentals"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (Clauses 13.7, 14 and 15; Annex B.3)"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog (§18.7.1 inline constraints and local::)"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
-import { InteractiveCode, Quiz } from '@/components/ui';
-import { AnimatedUvmSequenceDriverHandshakeDiagram } from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
-
 ## Quick Take
-- **What it is:** `uvm_sequence_item` models the transaction data. `uvm_sequence` holds the procedural code that creates items and hands them, one at a time, to the driver through the sequencer.
-- **Why it matters:** Sequencing separates the *what* from the *how*. You can reuse the "memory read" sequence across fifty tests without rewriting the driver that wiggles the pins.
-- **The analogy:** The `sequence_item` is the letter. The `sequence` is the writer. The `driver` is the mail carrier. The `sequencer` is the post-office counter: the carrier asks for the next letter, and the counter decides which waiting writer is served. Nothing is stockpiled; a letter is only taken when the carrier asks.
 
-> **Retention hook:** Two blocking pairs, one on each side. The sequence calls `start_item` then `finish_item`. The driver calls `get_next_item` then `item_done`. `finish_item` returns only when `item_done` is called.
+- **What it is:** A **sequence item** (`uvm_sequence_item`) is an object that holds the data of one transaction, such as one bus read or write. A **sequence** (`uvm_sequence`) is an object whose `body()` task creates items and hands them out one at a time. A **sequencer** (`uvm_sequencer`) is the component that decides which sequence may send next, and a **driver** (`uvm_driver`) is the component that pulls each item from the sequencer and turns it into activity on the design under test (DUT). The four of them together carry out the **sequence–sequencer–driver handshake**.
+- **Why it matters:** Sequences separate *what* to send from *how* to send it. One driver can serve hundreds of tests, each of which only picks or writes sequences. Every stimulus you write in UVM from now on goes through this handshake, and its two classic bugs, a missing `item_done()` and a response that cannot be routed, stop whole regressions.
+- **The Analogy:** The item is a letter, the sequence is the person who writes it, the driver is the mail carrier, and the sequencer is the post-office counter. The carrier asks the counter for the next letter, and the counter picks which waiting writer is served. *Where it breaks:* a real counter stockpiles letters, but a UVM sequencer holds at most one item for its driver. The writer also stands at the counter until the carrier reports delivery (`item_done()`), so a writer can never run ahead of the carrier.
+
+**You will be able to:**
+1. Write a `uvm_sequence_item` with `rand` fields, constraints and `do_copy`, `do_compare` and `convert2string`, and predict what `clone()` and `compare()` do with each field.
+2. Write a sequence `body()` with `start_item`, a checked `randomize()` and `finish_item`, say what each call blocks on, and expand `` `uvm_do `` and `` `uvm_do_with `` into those calls.
+3. Write a driver loop with `get_next_item` and `item_done`, choose `try_next_item` or `get` and `put` when they fit, and predict the hang when `item_done` is missing.
+4. Return responses with `set_id_info` plus `item_done(rsp)` or `put_response`, and collect them with `get_response`.
+5. Start a sequence from a test on the right sequencer, with the end of test handled by objections around `start()` or by `set_starting_phase` plus `set_automatic_phase_objection`.
+
+> **Remember:** `start_item`, `finish_item` and `get_next_item` block. `item_done` never blocks: it is a function, and calling it is what lets `finish_item` return.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
-### The payload: `uvm_sequence_item` (IEEE 1800.2 clause 14.1)
-A sequence item holds randomizable fields, constraints, and the copy, compare and print behaviour that scoreboards rely on. Declare a type before you use it: the enum `typedef` comes first, then the field macros that refer to it.
 
-<InteractiveCode>
+The first five subsections are the core path; read them in order. Subsections marked *Practitioner depth* add the forms and options you need for daily work. The expert layer is in Push Further.
+
+A few terms from earlier lessons appear on every line of this page:
+- A **component** is a `uvm_component`: it lives for the whole simulation, has a place in the testbench hierarchy and runs **phases**, the fixed steps UVM calls on every component (`build_phase`, `connect_phase`, `run_phase` and so on). See [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) and [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index).
+- An **object** is a `uvm_object`: it is created, used and dropped, and has no place in the hierarchy. Items and sequences are objects.
+- `::type_id::create` builds an object or component through the **factory**, so a test can replace its type ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
+- A **TLM port** calls methods that a connected **export** implements ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
+
+### Who does what: item, sequence, sequencer, driver
+
+The driver *pulls* work. Its `seq_item_port` is a port connected to the sequencer's `seq_item_export`, and the driver calls `get_next_item()` through it whenever it is ready for the next transfer. The sequencer then chooses one of the sequences that are waiting to send, which is called **arbitration**, and passes that sequence's item to the driver. Nothing moves until the driver asks.
+
+<ArchitectureDiagram
+  title="Who does what in this lesson's testbench"
+  cellHeight={72}
+  gapX={120}
+  caption="The agent is the component uvm_test_top.env.agt. The test creates the sequence object and starts it on env.agt.sqr; the driver's seq_item_port pulls items from the sequencer's seq_item_export. The same names appear in Make It Work."
+  nodes={[
+    { id: "agt", label: "agt (bus_agent)", kind: "agent", col: 0, row: 0, colSpan: 1, rowSpan: 2, container: true },
+    { id: "sqr", label: "sqr", sublabel: "bus_sequencer", kind: "sequencer", col: 0, row: 0 },
+    { id: "drv", label: "drv", sublabel: "bus_driver", kind: "driver", col: 0, row: 1 },
+    { id: "seq", label: "seq", sublabel: "bus_rw_seq (an object)", kind: "sequence", col: 1, row: 0 },
+    { id: "test", label: "uvm_test_top", sublabel: "bus_test", kind: "test", col: 1, row: 1 }
+  ]}
+  ports={[
+    { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
+    { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" }
+  ]}
+  edges={[
+    { from: "test", to: "seq", style: "causal", label: "seq.start(env.agt.sqr)" },
+    { from: "seq", to: "sqr", style: "causal", label: "start_item / finish_item" },
+    { from: "drv.port", to: "sqr.export", style: "control", label: "get_next_item / item_done" }
+  ]}
+/>
+
+Each role has one job:
+
+| Role | Class | Is a | Job |
+| --- | --- | --- | --- |
+| Item | `bus_item extends uvm_sequence_item` | object | Holds one transfer's fields; knows how to copy, compare and print itself |
+| Sequence | `bus_rw_seq extends uvm_sequence #(bus_item)` | object | Its `body()` decides which items to send and in what order |
+| Sequencer | `uvm_sequencer #(bus_item)` | component | Arbitrates between waiting sequences and routes items and responses |
+| Driver | `bus_driver extends uvm_driver #(bus_item)` | component | Pulls items, drives them, reports completion and returns responses |
+
+The sequencer and driver are built and connected inside an **agent**, as [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index) shows. `run_test()` creates the test as the top component of that hierarchy, with the instance name `uvm_test_top`, so the agent's full name is `uvm_test_top.env.agt`. The test reaches the sequencer through the hierarchy (`env.agt.sqr`) and starts sequences on it.
+
+### The sequence item
+
+A **sequence item** is a class that extends `uvm_sequence_item` (IEEE 1800.2-2020 §14.1). It holds the fields of one transaction, declared `rand` so that `randomize()` can choose them, plus constraints that keep the choices legal ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)). It is an object, so you create a new one for every transaction.
+
+Scoreboards and drivers also need to copy, compare and print items. `uvm_object` gives every item the methods `copy()`, `clone()`, `compare()`, `print()` and `convert2string()` (§5.3.6.4, §5.3.8, §5.3.9). Your class tells them about its fields in one of two ways.
+
+**Way 1: field macros.** Each `` `uvm_field_* `` macro registers one field, and the library then copies, compares and prints it for you.
+
 ```systemverilog
-class mem_item extends uvm_sequence_item;
-  typedef enum { READ, WRITE } op_t;   // declared before the macros use it
+// snippet: the shortest correct item, with field macros
+typedef enum bit {BUS_READ, BUS_WRITE} bus_op_e;  // declared before the macros use it
 
-  rand bit [31:0] addr;
+class bus_item extends uvm_sequence_item;
+  rand bus_op_e   op;
+  rand bit [7:0]  addr;
   rand bit [31:0] data;
-  rand op_t       op;
 
-  constraint c_addr_align { addr % 4 == 0; }
+  constraint c_word_aligned { addr[1:0] == 2'b00; }
 
-  // Register fields for print, copy, compare
-  `uvm_object_utils_begin(mem_item)
+  `uvm_object_utils_begin(bus_item)
+    `uvm_field_enum(bus_op_e, op, UVM_ALL_ON)
     `uvm_field_int(addr, UVM_ALL_ON | UVM_HEX)
     `uvm_field_int(data, UVM_ALL_ON | UVM_HEX)
-    `uvm_field_enum(op_t, op, UVM_ALL_ON)
   `uvm_object_utils_end
 
-  function new(string name = "mem_item");
+  function new(string name = "bus_item");
+    super.new(name);
+  endfunction
+endclass
+```
+
+**Way 2: hand-written methods.** You override `do_copy()` and `do_compare()`, the hooks that `copy()` and `compare()` call, and `convert2string()`. This is the version used in Make It Work. It is longer, but every line is visible, it is easy to debug, and it avoids the field automation that runs on every copy and compare.
+
+```systemverilog
+// snippet: the same item with hand-written methods (in a package that imports uvm_pkg)
+class bus_item extends uvm_sequence_item;
+  rand bus_op_e   op;
+  rand bit [7:0]  addr;
+  rand bit [31:0] data;
+
+  constraint c_word_aligned { addr[1:0] == 2'b00; }
+
+  `uvm_object_utils(bus_item)
+
+  function new(string name = "bus_item");
     super.new(name);
   endfunction
 
-  // A field that is neither registered above nor handled in do_copy()/do_compare()
-  // is NOT copied by clone() and NOT checked by compare().
+  virtual function void do_copy(uvm_object rhs);
+    bus_item rhs_;
+    super.do_copy(rhs);                  // let the base classes copy their state first
+    if (!$cast(rhs_, rhs)) begin
+      `uvm_fatal("BUS_ITEM/COPY", "do_copy: rhs is not a bus_item")
+      return;
+    end
+    op   = rhs_.op;
+    addr = rhs_.addr;
+    data = rhs_.data;
+  endfunction
+
+  virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+    bus_item rhs_;
+    if (!$cast(rhs_, rhs)) return 0;     // a different type never matches
+    return super.do_compare(rhs, comparer) &&
+           op == rhs_.op && addr == rhs_.addr && data == rhs_.data;
+  endfunction
+
+  virtual function string convert2string();
+    return $sformatf("%s addr=0x%02h data=0x%08h", op.name(), addr, data);
+  endfunction
 endclass
 ```
-</InteractiveCode>
+
+How the calls fit together in uvm-core 2020.3.1:
+- `clone()` creates a new object of the same type and calls `copy()` on it.
+- `copy(rhs)` runs the field macros first, then your `do_copy(rhs)`.
+- `compare(rhs)` runs the field macros first, then your `do_compare(rhs, comparer)`; it returns 1 only if both agree.
+- `convert2string()` returns `""` unless you override it. Use it in log messages: one line per item is easier to read than `sprint()`'s table.
+
+The two ways can be mixed. A field that is in a field macro *and* in `do_copy` is simply copied twice. The details of printers, comparers and copier policies belong to [I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index).
+
+**Predict, then check: what does `clone()` copy?** Suppose `bus_item` gains two more members that the hand-written methods above do not mention: `byte payload[$]` (a queue) and `bus_cfg cfg` (a handle to a configuration object). Predict the clone's values and the `compare()` result for each row before you read the table.
+
+| Member | How the class handles it | `orig` | `clone` after `$cast(c, orig.clone())` | Does `orig.compare(c)` check it? |
+| --- | --- | --- | --- | --- |
+| `addr` | copied in `do_copy`, compared in `do_compare` | `8'h34` | `8'h34` | yes |
+| `payload[$]` | in neither method, no field macro | `'{1, 2, 3}` | empty queue | no: `compare()` still returns 1 |
+| `cfg` | `do_copy` assigns `cfg = rhs_.cfg;` | handle to object A | handle to the **same** object A | only if `do_compare` checks it |
+| `cfg` | `` `uvm_field_object(cfg, UVM_ALL_ON) `` | handle to object A | handle to a **new** object, a copy of A | yes, field by field |
+| `cfg` | `` `uvm_field_object(cfg, UVM_ALL_ON | UVM_REFERENCE) `` | handle to object A | handle to the same object A | yes, by handle |
+
+What the table shows:
+- **Queues and dynamic arrays are values in SystemVerilog.** Copying one copies its elements; nothing is ever shared. The real danger is the opposite: a field nobody registered is not copied at all, and `compare()` ignores it, so a scoreboard reports a match although the data differ.
+- **Class handles are references.** Assigning a handle copies the reference, so the original and the clone share one object (a *shallow* copy). Write `cfg = rhs_.cfg.clone()` (with a `$cast`) if each item needs its own copy.
+- **Every field must appear somewhere**: in a field macro, or in both `do_copy` and `do_compare`.
+
+**Pitfalls and how to spot them.**
+- *An unregistered field.* Symptom: the scoreboard says "match" while waveforms differ. Print both items with `convert2string()` and compare by eye; then add the field.
+- *A missing `super.do_copy(rhs)`.* The base classes' state is not copied. Always call `super` first.
+- *A missing `$cast` check.* Copying from the wrong type then reads null fields. Check the cast as above.
 
 ### The handshake: sequence ↔ sequencer ↔ driver
-A sequence runs its `body()` task. Each item goes through two blocking calls on the sequence side, and two on the driver side. The sequencer sits between them and only grants a request when the driver asks for work.
 
-Pick **Clean handshake**, predict where the sequence is while the driver is busy, then step through. Both code panels highlight the line each side is executing. Then try the **Bug** scenarios.
+The whole handshake comes down to one question: who blocks where. A sequence runs its `body()` task, and every item goes through two blocking calls on the sequence side and one blocking call on the driver side:
+- `start_item(req)` asks the sequencer for permission and **blocks until the sequencer grants it**. The grant comes when the driver asks for an item and this sequence wins arbitration.
+- Between the two calls you randomize the item. This is **late randomization**: the values are chosen at the last moment, when the sequence knows it will send next.
+- `finish_item(req)` puts the item into the sequencer's **request FIFO** (a first-in, first-out queue with room for one item) and **blocks until the driver calls `item_done()`**.
+- On the driver side, `get_next_item(req)` **blocks until a granted sequence has sent an item**, and `item_done()` reports that the item is finished. `item_done()` is a function, so it never blocks.
+
+**Predict, then step.** In the explorer, pick **Clean handshake**. The driver needs 10 ns to drive each item. Before you press play, predict where the sequence is at t = 5 ns, while the driver is halfway through the first item. Then step through: both code panels highlight the line each side is executing, and the log shows what UVM would print. The explorer uses its own `burst_seq` and `bus_driver` names.
 
 <AnimatedUvmSequenceDriverHandshakeDiagram />
 
-The same two classes, written out:
+**What the explorer showed.**
+- While the driver drives item A1, the sequence is still inside `finish_item(A1)`. It cannot even create A2 until `item_done()`.
+- The sequencer never holds a second item: its request FIFO has room for one, and the next grant only happens when the driver calls `get_next_item()` again.
+- `item_done()` returns at once. Its only job is to remove the item from the FIFO and wake the sequence.
+- Try the **Bug: no item_done()** scenario now; it is the first debugging skill this lesson teaches.
+
+The same handshake as code. Both classes are complete; Make It Work grows them into a runnable testbench (a read-back sequence, and a driver that also returns responses).
 
 ```systemverilog
-// THE SEQUENCE
-class my_simple_sequence extends uvm_sequence #(mem_item);
-  `uvm_object_utils(my_simple_sequence)
+// snippet: the sequence (inside a package that imports uvm_pkg)
+class bus_write_seq extends uvm_sequence #(bus_item);
+  `uvm_object_utils(bus_write_seq)
 
-  function new(string name = "my_simple_sequence");
+  function new(string name = "bus_write_seq");
     super.new(name);
   endfunction
 
   virtual task body();
     repeat (5) begin
-      req = mem_item::type_id::create("req");
-      start_item(req);                       // blocks until the sequencer grants this request
-      if (!req.randomize() with { op == WRITE; })
-        `uvm_error("RAND", "mem_item randomization failed")
-      finish_item(req);                      // blocks until the driver calls item_done()
+      req = bus_item::type_id::create("req");  // a new object for every transfer
+      start_item(req);                          // blocks until the sequencer grants us
+      if (!req.randomize() with { op == BUS_WRITE; })
+        `uvm_fatal("RAND", "bus_item randomization failed")
+      finish_item(req);                         // blocks until the driver's item_done()
     end
   endtask
 endclass
+```
 
-// THE DRIVER
-class my_driver extends uvm_driver #(mem_item);
-  `uvm_component_utils(my_driver)
-
-  virtual mem_if vif;                        // set in build_phase (see I-UVM-2A)
+```systemverilog
+// snippet: the driver loop (a pin-level drive_transfer() is in I-UVM-3C)
+class bus_driver extends uvm_driver #(bus_item);
+  `uvm_component_utils(bus_driver)
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -87,193 +229,1019 @@ class my_driver extends uvm_driver #(mem_item);
 
   virtual task run_phase(uvm_phase phase);
     forever begin
-      seq_item_port.get_next_item(req);      // blocks until a sequence is granted
-      drive_transfer(req);                   // pin-level work, consumes time
-      seq_item_port.item_done();             // lets finish_item() return
+      seq_item_port.get_next_item(req);  // blocks until a granted sequence sends an item
+      drive_transfer(req);               // consumes simulation time
+      seq_item_port.item_done();         // lets that sequence's finish_item() return
     end
   endtask
 
-  virtual task drive_transfer(mem_item t);
-    @(vif.drv_cb);
-    vif.drv_cb.addr  <= t.addr;
-    vif.drv_cb.wdata <= t.data;
-    vif.drv_cb.we    <= (t.op == mem_item::WRITE);
+  virtual task drive_transfer(bus_item t);
+    #10ns;                               // placeholder for the bus cycles of one transfer
   endtask
 endclass
 ```
 
-What each call does in uvm-core 2020.3.1:
+`req` is not declared in either class: `uvm_sequence #(REQ, RSP)` and `uvm_driver #(REQ, RSP)` both declare members `REQ req;` and `RSP rsp;` for you to use. Note the **checked randomization**: `randomize()` returns 0 when the constraints cannot be met, and an unchecked call would send whatever the item held before.
+
+What each call does in uvm-core 2020.3.1 (`uvm_sequence_base.svh`, `uvm_sequencer.svh`):
 
 | Call | Side | Blocks until | What it really does |
 | --- | --- | --- | --- |
-| `start_item(req)` | sequence | the sequencer grants the request | `wait_for_grant()` queues a request; arbitration runs when the driver calls `get_next_item()`; then `pre_do(1)` |
-| `req.randomize()` | sequence | does not block | late randomization: after the grant, so constraints can use the latest state |
-| `finish_item(req)` | sequence | the driver calls `item_done()` | `mid_do(req)`, `send_request()` puts the item in the request FIFO, `wait_for_item_done()`, `post_do(req)` |
-| `get_next_item(req)` | driver | an item is in the request FIFO | arbitrates if nothing is requested yet, then *peeks* the item (it stays in the FIFO) |
-| `item_done()` | driver | does not block | removes the item from the FIFO and wakes the sequence's `finish_item()` |
+| `start_item(req)` | sequence | the sequencer grants this sequence | `wait_for_grant()` queues a request; arbitration runs when the driver asks for an item; then `pre_do(1)` |
+| `req.randomize()` | sequence | does not block | late randomization, after the grant |
+| `finish_item(req)` | sequence | the driver calls `item_done()` (or `get()`) for this item | `mid_do(req)`; `send_request()` puts the item in the request FIFO; `wait_for_item_done()`; `post_do(req)` |
+| `get_next_item(req)` | driver | a granted sequence has sent an item | arbitrates if nothing is requested yet, then *peeks* the item: it stays in the FIFO |
+| `item_done()` | driver | does not block (a function) | removes the item from the FIFO and wakes that sequence's `finish_item()` |
 
-### Breaking down `` `uvm_do ``
-`` `uvm_do `` hides the same calls. In IEEE 1800.2 it has one form with optional arguments: `` `uvm_do(SEQ_OR_ITEM, SEQR, PRIORITY, CONSTRAINTS) ``. The older `` `uvm_do_with(req, {...}) `` still compiles in uvm-core 2020.3.1, but it comes from the library's deprecated macro file.
+<SequenceDiagram
+  title="One item through the handshake, with a get_next_item driver"
+  caption="Follow the numbers: the sequence is released twice, once by the grant (step 3) and once by item_done (step 8). From step 5 to step 7 the item sits in the sequencer's request FIFO."
+  participants={[
+    { id: "seq", label: "seq", sublabel: "bus_write_seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", sublabel: "bus_driver", kind: "driver" }
+  ]}
+  messages={[
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { kind: "note", from: "sqr", to: "drv", label: "drv waits: no sequence has asked yet" },
+    { from: "seq", to: "sqr", label: "start_item(req)" },
+    { kind: "return", from: "sqr", to: "seq", label: "granted: start_item returns" },
+    { kind: "self", from: "seq", label: "req.randomize() with op == BUS_WRITE" },
+    { from: "seq", to: "sqr", label: "finish_item(req): send_request puts req in the FIFO" },
+    { kind: "return", from: "sqr", to: "drv", label: "get_next_item returns req (peeked, still in the FIFO)" },
+    { kind: "note", from: "sqr", to: "drv", label: "drv runs drive_transfer(req): 10 ns" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done(): removes req from the FIFO" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" }
+  ]}
+/>
 
-For an item, `` `uvm_do(req) `` does:
-1. `` `uvm_create `` → `create_item()`: create the item and set its sequencer.
+**The classic mistake: a missing `item_done()`.** The driver drives the item and loops straight back to `get_next_item()`. The item is still in the FIFO, so `get_next_item()` does not block. It reports `UVM_ERROR … Get_next_item called twice without item_done or get in between` and returns the **same** item again. The driver re-drives it forever, the sequence never leaves `finish_item()`, and the test ends only at the **phase timeout**, the time limit UVM puts on a run (see [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)). Fix: exactly one `item_done()` for every `get_next_item()`.
+
+**Debugging the handshake: symptom → cause → fix.**
+
+| Symptom in the log | Cause | Fix |
+| --- | --- | --- |
+| `Get_next_item called twice without item_done or get in between`, the same item driven again and again | `item_done()` missing, or two `get_next_item()` calls before one `item_done()` | One `get_next_item()`, one `item_done()` per item |
+| `UVM_FATAL … [SQRBADITMDN] Item_done() called with no outstanding requests` | `item_done()` without a matching `get_next_item()`, for example called twice | Remove the extra call |
+| `UVM_WARNING … [DRVCONNECT] seq_item_port … has not been connected to a sequencer`, then nothing is driven | The agent's `connect_phase` never connected the port | `drv.seq_item_port.connect(sqr.seq_item_export);` |
+| `UVM_FATAL … [SEQNOTITM] attempting to start a sequence using start_item()` | A sequence was passed to `start_item()` | Start sequences with `start()` (below) |
+| `UVM_FATAL … [RAND] bus_item randomization failed` | The inline constraints contradict the class constraints | Fix the constraints; never send an unrandomized item |
+| Nothing at all after time 0; the test ends at once | No objection keeps `run_phase` alive | See "Starting a sequence from a test" |
+
+The first warning to look for when a driver never receives items is `DRVCONNECT`: `uvm_driver` prints it at the end of elaboration when its `seq_item_port` is unconnected.
+
+### Responses: data back from the driver
+
+Sometimes the sequence needs data back: the value a read returned, or a status. The driver sends a **response**, an item of the response type, and the sequence collects it.
+
+A sequencer can serve many sequences at once, so every item carries two ids that the sequencer uses to find the right sequence:
+- `sequence_id` identifies the sequence on this sequencer;
+- `transaction_id` identifies the item within that sequence.
+
+`send_request()` (inside `finish_item`) writes both ids into the request. A response you create is new, so its ids are unset (`-1`); `rsp.set_id_info(req)` copies them from the request (§14.1.2.4). Even `req.clone()` does not copy them, because `copy()` does not copy the ids.
+
+```systemverilog
+// snippet: driver side, inside the forever loop
+seq_item_port.get_next_item(req);
+drive_transfer(req);
+rsp = bus_item::type_id::create("rsp");
+rsp.set_id_info(req);                 // without this, the sequencer cannot route rsp
+rsp.op   = req.op;
+rsp.addr = req.addr;
+rsp.data = read_data;                 // whatever the transfer returned
+seq_item_port.item_done(rsp);         // completes req and sends rsp
+// Alternative: seq_item_port.item_done(); then seq_item_port.put_response(rsp);
+```
+
+```systemverilog
+// snippet: sequence side, inside body()
+start_item(req);
+if (!req.randomize() with { op == BUS_READ; })
+  `uvm_fatal("RAND", "bus_item randomization failed")
+finish_item(req);
+get_response(rsp);                    // blocks until a response for this sequence arrives
+// or: get_response(rsp, req.get_transaction_id());  waits for this request's response
+```
+
+`item_done(rsp)` is one zero-time function call: it completes the request, then queues the response, and only after it returns can the waiting `finish_item()` resume. So by the time `finish_item()` returns, the response is already waiting and `get_response()` returns at once.
+
+<SequenceDiagram
+  title="How a response finds its sequence"
+  caption="The sequencer routes by the ids that set_id_info copied. Each sequence keeps its responses in its own queue until get_response takes them."
+  participants={[
+    { id: "seq", label: "seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" }
+  ]}
+  messages={[
+    { kind: "note", from: "sqr", to: "drv", label: "drv: rsp.set_id_info(req) copies sequence_id and transaction_id" },
+    { from: "drv", to: "sqr", label: "item_done(rsp)" },
+    { kind: "self", from: "sqr", label: "put_response: find the sequence by sequence_id" },
+    { kind: "async", from: "sqr", to: "seq", label: "push rsp into seq's response queue (depth 8)" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" },
+    { kind: "self", from: "seq", label: "get_response(rsp): pop the oldest response" }
+  ]}
+/>
+
+**Predict, then step.** This copy of the explorer opens on **Responses**. Predict when `get_response()` for A1 returns, then step. Afterwards try the three response bugs in the same menu: **rsp without set_id_info**, **responses never collected** and **waiting for a response**.
+
+<AnimatedUvmSequenceDriverHandshakeDiagram initialPreset="responses" />
+
+**What the explorer showed, and the rules behind it** (uvm-core 2020.3.1):
+- **No `set_id_info`** → `UVM_FATAL … [SQRPUT] Driver put a response with null sequence_id`. The sequencer never guesses where a response belongs.
+- **Responses never collected** → each sequence queues at most 8 responses (`get_response_queue_depth()`, §14.2.7.6). Further responses are **dropped silently**, unless the sequence called `set_response_queue_error_report_enabled(1)` (§14.2.7.5). Worse, a later `get_response()` returns the oldest response, which may belong to an earlier item.
+- **Waiting for a response nobody sends** → the sequence hangs in `get_response()`, and the driver idles in `get_next_item()`.
+- **A response for a sequence that has already finished** → `UVM_WARNING … Dropping response for sequence N, sequence not found`.
+
+The discipline that avoids all four: decide per sequence whether its driver responds. If it does, collect a response after **every** item; if only some items get responses, collect those by `transaction_id`. Calling both `item_done(rsp)` and `put_response(rsp)` sends two responses for one request.
+
+### Starting a sequence from a test
+
+A sequence runs when something calls its `start()` task with the sequencer to run on (§14.2.3.1):
+
+```systemverilog
+// snippet: the full signature
+virtual task start(uvm_sequencer_base sequencer,
+                   uvm_sequence_base  parent_sequence = null,
+                   int                this_priority   = -1,
+                   bit                call_pre_post   = 1);
+```
+
+- `sequencer`: the sequencer the items go to, for example `env.agt.sqr`. The test can name it because the environment has been built by the time `run_phase` starts.
+- `parent_sequence`: `null` for a sequence started by a test (a **root** sequence); `this` when one sequence starts another.
+- `this_priority`: `-1` means "the default": 100 for a root sequence, the parent's priority for a child. It only matters for arbitration modes that use priority ([Sequencer Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)).
+- `call_pre_post`: 1 runs the `pre_body()` and `post_body()` hooks around `body()`.
+
+`start()` is blocking: it returns when `body()` and the hooks have finished, which for our sequences means after the last `item_done()`.
+
+**Keeping the test alive.** `run_phase` is a task phase: it ends as soon as no component holds an **objection**, a counter that says "I am still busy" ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). If nobody raises one, `run_phase` ends at time 0 and every sequence and driver loop is killed with it. There are two correct patterns.
+
+**Pattern A: the test objects around `start()`.** This is the simplest and the one Make It Work uses.
+
+```systemverilog
+// snippet: bus_test::run_phase
+virtual task run_phase(uvm_phase phase);
+  bus_rw_seq seq = bus_rw_seq::type_id::create("seq");
+  phase.raise_objection(this, "bus_rw_seq running");
+  seq.start(env.agt.sqr);             // returns after the last item_done()
+  phase.drop_objection(this, "bus_rw_seq finished");
+endtask
+```
+
+<SequenceDiagram
+  title="Pattern A: the test keeps run_phase alive"
+  caption="The objection count is 1 while start() runs. The driver never raises or drops anything: its forever loop simply ends when the phase ends."
+  participants={[
+    { id: "test", label: "bus_test", kind: "test" },
+    { id: "phase", label: "run phase", kind: "generic" },
+    { id: "seq", label: "seq", kind: "sequence" },
+    { id: "drv", label: "drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "test", to: "phase", label: "raise_objection(this): count = 1" },
+    { from: "test", to: "seq", label: "seq.start(env.agt.sqr)" },
+    { kind: "divider", label: "items flow: start_item / finish_item and get_next_item / item_done" },
+    { kind: "return", from: "seq", to: "test", label: "start() returns after the last item_done()" },
+    { from: "test", to: "phase", label: "drop_objection(this): count = 0" },
+    { kind: "note", from: "phase", to: "drv", label: "run phase ends; drv's forever loop is stopped" }
+  ]}
+/>
+
+**Pattern B: the sequence objects for itself.** Give the sequence its **starting phase**, the phase it runs in, and turn on the automatic objection (§14.2.4.2, §14.2.4.4). `start()` then raises an objection on that phase before `pre_start()` and drops it after `post_start()`.
+
+```systemverilog
+// snippet: the same test with the automatic objection
+virtual task run_phase(uvm_phase phase);
+  bus_rw_seq seq = bus_rw_seq::type_id::create("seq");
+  seq.set_starting_phase(phase);         // which phase to object on
+  seq.set_automatic_phase_objection(1);  // start() raises and drops for us
+  seq.start(env.agt.sqr);
+endtask
+```
+
+<SequenceDiagram
+  title="Pattern B: the automatic objection"
+  caption="start() raises the objection on the starting phase before pre_start() and drops it after post_start(). With no starting phase it raises nothing."
+  participants={[
+    { id: "test", label: "bus_test", kind: "test" },
+    { id: "phase", label: "run phase", kind: "generic" },
+    { id: "seq", label: "seq", kind: "sequence" }
+  ]}
+  messages={[
+    { from: "test", to: "seq", label: "set_starting_phase(phase)" },
+    { from: "test", to: "seq", label: "set_automatic_phase_objection(1)" },
+    { from: "test", to: "seq", label: "start(env.agt.sqr)" },
+    { from: "seq", to: "phase", label: "raise_objection(seq): before pre_start()" },
+    { kind: "divider", label: "pre_start, pre_body, body, post_body, post_start" },
+    { from: "seq", to: "phase", label: "drop_objection(seq): after post_start()" },
+    { kind: "return", from: "seq", to: "test", label: "start() returns" }
+  ]}
+/>
+
+A sequence can read its starting phase with `get_starting_phase()` (§14.2.4.1). It returns `null` when nobody set one, and the automatic objection then raises nothing. If you raise and drop objections by hand inside a sequence, do it in `pre_start()` and `post_start()`, which always run, and check for `null` first.
+
+**Pitfalls.**
+- *Automatic objection without a starting phase.* `set_automatic_phase_objection(1)` alone raises nothing, so `run_phase` ends at 0 ns and no item is driven. There is no error message: the log just ends with the report summary.
+- *A driver that objects.* A driver's `forever` loop never finishes. Raising once at the top of the driver's `run_phase` means the test never ends; raising and dropping around each item lets the count reach 0 between items. Objections belong to the test or to the top sequence, which know when the stimulus is finished.
+- *A `#` delay to "let the sequence finish".* The objection pattern already waits for exactly as long as the sequence runs.
+
+### Practitioner depth: hooks and nested sequences
+
+A sequence's `body()` can start other sequences, which lets you build big stimulus from small reusable pieces: a `bus_rw_seq` that runs a `bus_write_seq` and then a `bus_read_seq`, for example.
+
+```systemverilog
+// snippet: a parent sequence that runs two children on its own sequencer
+virtual task body();
+  bus_write_seq wr = bus_write_seq::type_id::create("wr");
+  bus_read_seq  rd = bus_read_seq::type_id::create("rd");
+  wr.start(m_sequencer, this);   // child of this sequence: same sequencer, our priority
+  rd.start(m_sequencer, this);
+endtask
+```
+
+`m_sequencer` is the sequencer this sequence was started on; `get_sequencer()` returns the same handle.
+
+`start()` wraps `body()` in **hooks**, empty virtual tasks and functions you may override. The order, from `uvm_sequence_base::start()` (§14.2.3):
+1. `pre_start()` always runs.
+2. `pre_body()` runs only when `call_pre_post` is 1.
+3. If a parent was passed: the parent's `pre_do(0)` and `mid_do(this)`.
+4. `body()`.
+5. If a parent was passed: the parent's `post_do(this)`.
+6. `post_body()` runs only when `call_pre_post` is 1.
+7. `post_start()` always runs.
+
+**Predict, then step.** In the explorer, `top_seq` starts two children. Change the start style of each child, predict which hooks run for `write_seq`, then step through. Tick **Show the calls inside start_item() / finish_item()** to see where each item enters the handshake.
+
+<UvmSequenceHierarchyVisualizer />
+
+**What the explorer showed.**
+- `pre_start()` and `post_start()` run for every start style.
+- `` `uvm_do(child) `` passes `call_pre_post = 0`, so the child's `pre_body()` and `post_body()` are skipped. Code that raises objections in `pre_body()` therefore silently stops working when someone switches to the macro.
+- A child started with `child.start(m_sequencer)` has no parent. The parent's `pre_do`, `mid_do` and `post_do` do not run for it, and it is not covered by the parent's `lock()`, so a locked parent deadlocks it. Tick **Debug: top_seq calls lock() first** to see the deadlock; locking itself is taught in [Sequencer Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration).
+
+### Practitioner depth: sequencer and driver types
+
+The sequencer, the driver and the sequence are all parameterized by the request type `REQ` and the response type `RSP`, and `RSP` defaults to `REQ`:
+
+```systemverilog
+// snippet
+typedef uvm_sequencer #(bus_item) bus_sequencer;             // REQ = RSP = bus_item
+class bus_driver extends uvm_driver #(bus_item); /* ... */ endclass
+class bus_rw_seq extends uvm_sequence #(bus_item); /* ... */ endclass
+
+// With a separate response class, all three must agree:
+//   uvm_sequencer #(bus_item, bus_rsp), uvm_driver #(bus_item, bus_rsp),
+//   uvm_sequence #(bus_item, bus_rsp)
+```
+
+- `uvm_sequencer #(REQ, RSP)` (§15.5) provides `seq_item_export`. Most agents need no sequencer subclass at all, only the `typedef`.
+- `uvm_driver #(REQ, RSP)` (§13.7) provides `seq_item_port`, a second port `rsp_port` (an analysis port, connected to the sequencer's `rsp_export`, for drivers that publish responses), and the members `req` and `rsp`.
+- The port and export types include `REQ` and `RSP`, so a driver and a sequencer with different item types cannot be connected: the mismatch is a compile error at the `connect()` line.
+- The agent connects them in `connect_phase` with `drv.seq_item_port.connect(sqr.seq_item_export);`. The pull port is a special TLM port ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
+
+### Practitioner depth: driver styles
+
+`get_next_item` with `item_done` is the default, and it is right for most drivers. Two other styles exist for specific needs (§15.2.1.2):
+
+| Style | Calls | When `finish_item()` returns | Use it when |
+| --- | --- | --- | --- |
+| Pull, then complete | `get_next_item(req)`, drive, `item_done()` or `item_done(rsp)` | after the drive, at `item_done()` | almost always: the sequence knows the item has been driven |
+| Poll | `try_next_item(req)`; if `req == null`, drive an idle cycle; otherwise drive and `item_done()` | after the drive | the bus needs something every cycle (idle cycles) even when no sequence has work |
+| Take | `get(req)`, drive, optionally `put(rsp)` | as soon as `get()` returns, **before** the drive | the driver queues items itself, for example a pipelined bus |
+
+`try_next_item(req)` does not wait for a sequence to appear. It waits only inside the current **time slot**, the set of events at one simulation time ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)): one `wait_for_sequences()` call by default, which lasts a few **delta cycles**, zero-time scheduling steps ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)). If no sequence has offered an item by then, it returns `null`. No simulation time passes.
+
+```systemverilog
+// snippet: a polling driver that drives idle cycles
+forever begin
+  seq_item_port.try_next_item(req);
+  if (req == null) begin
+    drive_idle_cycle();              // must consume time, or the loop never advances
+  end else begin
+    drive_transfer(req);
+    seq_item_port.item_done();
+  end
+end
+```
+
+`get(req)` calls `item_done()` for you before it returns, so the sequence is released while the driver is still working. A response then goes back with `put(rsp)`, which does the same as `put_response(rsp)`.
+
+<SequenceDiagram
+  title="A get() driver releases the sequence before it drives"
+  caption="get() arbitrates, waits for the item, then calls item_done() itself. finish_item returns at the same simulation time, before drive_transfer starts."
+  participants={[
+    { id: "seq", label: "seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "drv", to: "sqr", label: "get(req): arbitrate" },
+    { from: "seq", to: "sqr", label: "start_item(req)" },
+    { kind: "return", from: "sqr", to: "seq", label: "granted: start_item returns" },
+    { from: "seq", to: "sqr", label: "finish_item(req): send_request" },
+    { kind: "return", from: "sqr", to: "drv", label: "get returns req, after calling item_done() itself" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" },
+    { kind: "note", from: "sqr", to: "drv", label: "drv runs drive_transfer(req) while seq already moves on" },
+    { kind: "async", from: "drv", to: "sqr", label: "put(rsp) (optional)" }
+  ]}
+/>
+
+So the statement "the sequence waits inside `finish_item()` while the driver drives" is true only for the `get_next_item` and `try_next_item` styles. With `get()`, a sequence that checks results after `finish_item()` must wait for a response instead.
+
+### Practitioner depth: the `` `uvm_do `` macros
+
+The `` `uvm_do `` family hides the calls you have just learned. IEEE 1800.2 defines one form with optional arguments (Annex B.3.1.4): `` `uvm_do(SEQ_OR_ITEM, SEQR, PRIORITY, CONSTRAINTS) ``. The older `` `uvm_do_with(req, { … }) `` still compiles in uvm-core 2020.3.1, but it comes from the library's deprecated macro file and is not in IEEE 1800.2.
+
+For an item, `` `uvm_do_with(req, { op == BUS_WRITE; }) `` (or `` `uvm_do(req, , , { op == BUS_WRITE; }) ``, where empty arguments take their defaults) expands to:
+1. `` `uvm_create(req) ``: `create_item()` builds the item through the factory and sets its sequencer.
 2. `start_item(req)`: wait for the grant.
-3. `req.randomize()`: on failure it only prints the warning `RNDFLD` and **still sends the item**.
+3. `req.randomize() with { op == BUS_WRITE; }`: on failure it prints only the warning `RNDFLD` and **still sends the item**, with the values it held before the call (a failed `randomize()` changes nothing, IEEE 1800-2023 §18.6.3).
 4. `finish_item(req)`: send it and wait for `item_done()`.
 
-For a child *sequence*, `` `uvm_do(child) `` randomizes the child and then calls `child.start(sequencer, this, priority, 0)`. The last argument `0` means `pre_body()` and `post_body()` of the child are skipped. The explorer further down shows this.
+For a child sequence, `` `uvm_do(child) `` creates and randomizes the child, then calls `child.start(sequencer, this, priority, 0)`. The final `0` is `call_pre_post`, so the child's `pre_body()` and `post_body()` do not run.
+
+The rest of the family: `` `uvm_create `` only creates; `` `uvm_send `` sends what you created without randomizing; `` `uvm_rand_send `` randomizes and sends (B.3.1.1 to B.3.1.3).
+
+| | Explicit calls | `` `uvm_do `` family |
+| --- | --- | --- |
+| Lines of code | more | fewer |
+| A failed `randomize()` | your check stops the test | a warning, and the item is sent anyway |
+| Code between grant and send | anything you write | only the inline constraints |
+| Hooks of a child sequence | your choice of `call_pre_post` | `pre_body`/`post_body` skipped |
+
+This course writes the explicit calls, because they show where the sequence blocks and they fail loudly. You will still meet the macros in legacy code and interviews.
+
+### Recap: the mistakes everyone makes once
+
+| Mistake | What happens | Fix |
+| --- | --- | --- |
+| No `item_done()` | `Get_next_item called twice…`, the same item driven forever, the sequence stuck in `finish_item()` | One `item_done()` per `get_next_item()` |
+| Response without `set_id_info(req)` | `SQRPUT` fatal | `rsp.set_id_info(req)` before `item_done(rsp)` |
+| Responses never collected | silent drop after 8; later `get_response()` returns stale responses | Collect after every item, or by `transaction_id` |
+| Unchecked `randomize()` | an unrandomized item is sent | `if (!req.randomize() …)` followed by `` `uvm_fatal `` |
+| Unregistered item field | not copied, not compared: false matches | Field macro, or `do_copy` plus `do_compare` |
+| Automatic objection without a starting phase | test ends at 0 ns, no error | `set_starting_phase(phase)` first |
+| Objections in the driver | test never ends, or ends between items | Object in the test or the top sequence |
 
 <VisualRecap
-  title="Two blocking pairs"
-  rule="finish_item() returns only after the driver's item_done(). The sequencer grants the next start_item() only when the driver calls get_next_item() again."
+  title="Who blocks where"
+  rule="start_item() blocks until the grant; finish_item() blocks until the driver's item_done(); get_next_item() blocks until an item is in the FIFO; item_done() never blocks."
   code={`// sequence                 // driver
 start_item(req);            seq_item_port.get_next_item(req);
-void'(req.randomize());     drive(req);
+if (!req.randomize()) ...   drive_transfer(req);
 finish_item(req);           seq_item_port.item_done();`}
-  mistake="Thinking the sequencer buffers items, so the sequence can run ahead. It cannot: while the driver drives item 1, the sequence is still inside finish_item(item 1)."
-  inTestbench="Every agent: sequences in tests and virtual sequences call start_item/finish_item; the agent's driver loops on get_next_item/item_done. A missing item_done() is the most common UVM hang."
+  mistake="Thinking the sequencer buffers items so the sequence can run ahead. With a get_next_item driver, while item 1 is driven the sequence is still inside finish_item(item 1)."
+  inTestbench="Every active agent: tests and top sequences call start(); sequences call start_item/finish_item; the agent's driver loops on get_next_item/item_done. A missing item_done() is a classic hang."
 >
-  <svg viewBox="0 0 320 150" role="img" aria-label="Three lanes. The sequence blocks in start_item until the grant, then in finish_item until item_done. The driver blocks in get_next_item until the item arrives." style={{ width: "100%", maxWidth: 360 }}>
-    <text x="10" y="16" fontSize="11" fill="currentColor">SEQ</text>
-    <text x="140" y="16" fontSize="11" fill="currentColor">SQR</text>
-    <text x="262" y="16" fontSize="11" fill="currentColor">DRV</text>
-    <line x1="22" y1="22" x2="22" y2="146" stroke="currentColor" strokeOpacity="0.4" />
-    <line x1="150" y1="22" x2="150" y2="146" stroke="currentColor" strokeOpacity="0.4" />
-    <line x1="272" y1="22" x2="272" y2="146" stroke="currentColor" strokeOpacity="0.4" />
-    <text x="276" y="36" fontSize="9" fill="currentColor">get_next_item ⏸</text>
-    <line x1="22" y1="46" x2="146" y2="46" stroke="rgb(6,182,212)" />
-    <text x="28" y="42" fontSize="9" fill="currentColor">start_item ⏸ request</text>
-    <line x1="150" y1="64" x2="26" y2="64" stroke="rgb(6,182,212)" strokeDasharray="4 3" />
-    <text x="60" y="60" fontSize="9" fill="currentColor">grant</text>
-    <line x1="22" y1="84" x2="268" y2="84" stroke="rgb(6,182,212)" />
-    <text x="28" y="80" fontSize="9" fill="currentColor">finish_item ⏸ → item</text>
-    <rect x="266" y="88" width="12" height="28" fill="rgba(6,182,212,0.3)" />
-    <text x="196" y="106" fontSize="9" fill="currentColor">drive</text>
-    <line x1="272" y1="124" x2="26" y2="124" stroke="rgb(139,92,246)" />
-    <text x="90" y="120" fontSize="9" fill="currentColor">item_done → finish_item returns</text>
+  <svg viewBox="0 0 320 176" role="img" aria-label="Three lanes, SEQ, SQR and DRV. The driver asks with get_next_item. The sequence calls start_item and waits for the grant, randomizes, then finish_item puts the item into the sequencer. The sequencer hands the item to the driver, which drives it, then calls item_done, and only then does finish_item return." style={{ width: "100%", maxWidth: 380 }}>
+    <text x="10" y="14" fontSize="11" fill="currentColor">SEQ</text>
+    <text x="140" y="14" fontSize="11" fill="currentColor">SQR</text>
+    <text x="262" y="14" fontSize="11" fill="currentColor">DRV</text>
+    <line x1="22" y1="20" x2="22" y2="172" stroke="currentColor" strokeOpacity="0.4" />
+    <line x1="150" y1="20" x2="150" y2="172" stroke="currentColor" strokeOpacity="0.4" />
+    <line x1="272" y1="20" x2="272" y2="172" stroke="currentColor" strokeOpacity="0.4" />
+    <line x1="272" y1="32" x2="154" y2="32" stroke="rgb(139,92,246)" />
+    <text x="178" y="28" fontSize="9" fill="currentColor">1 get_next_item ⏸</text>
+    <line x1="22" y1="50" x2="146" y2="50" stroke="rgb(6,182,212)" />
+    <text x="28" y="46" fontSize="9" fill="currentColor">2 start_item ⏸</text>
+    <line x1="150" y1="66" x2="26" y2="66" stroke="rgb(6,182,212)" strokeDasharray="4 3" />
+    <text x="60" y="62" fontSize="9" fill="currentColor">3 grant</text>
+    <text x="28" y="82" fontSize="9" fill="currentColor">4 randomize()</text>
+    <line x1="22" y1="98" x2="146" y2="98" stroke="rgb(6,182,212)" />
+    <text x="28" y="94" fontSize="9" fill="currentColor">5 finish_item ⏸ → FIFO</text>
+    <line x1="150" y1="114" x2="268" y2="114" stroke="rgb(139,92,246)" strokeDasharray="4 3" />
+    <text x="160" y="110" fontSize="9" fill="currentColor">6 req to DRV</text>
+    <rect x="266" y="118" width="12" height="22" fill="rgba(6,182,212,0.3)" />
+    <text x="222" y="133" fontSize="9" fill="currentColor">7 drive</text>
+    <line x1="272" y1="152" x2="154" y2="152" stroke="rgb(139,92,246)" />
+    <text x="178" y="148" fontSize="9" fill="currentColor">8 item_done</text>
+    <line x1="150" y1="166" x2="26" y2="166" stroke="rgb(6,182,212)" strokeDasharray="4 3" />
+    <text x="40" y="162" fontSize="9" fill="currentColor">9 finish_item returns</text>
   </svg>
 </VisualRecap>
 
 ## Make It Work
-1. **Define the item:** extend `uvm_sequence_item`, declare types first, register fields, add constraints.
-2. **Define the sequence:** extend `uvm_sequence #(mem_item)`, give it a constructor, and write `body()` with `start_item`/`finish_item` (or `` `uvm_do ``).
-3. **Define the driver loop:** one `get_next_item()` and exactly one `item_done()` per item.
-4. **Start the sequence from the test, inside an objection.** `start()` is a blocking task that returns after the last `item_done()`. Without the objection, `run_phase` ends at 0 ns and nothing is driven.
+
+### A sequence that writes, reads back and checks
+
+This example puts the whole lesson in one file: an item with hand-written methods, a sequence that writes four random words and reads each one back through responses, a driver, an agent, an environment, a test that objects around `start()`, and `tb_top`.
+
+The driver has no pins. It plays the memory itself, so the example needs no interface and no DUT, and it takes 10 ns per transfer to stand in for real bus cycles. [I-UVM-3C](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index) replaces it with a pin-level driver and a real DUT.
+
+**Run it.** Compile uvm-core 2020.3.1 (or your simulator's built-in UVM library) together with this file, with `tb_top` as the top module, and run. `run_test("bus_test")` names the test, so no plusarg is needed; `+UVM_TESTNAME=bus_test` would override it (Annex G.2.1). The exact compile and run switches are tool-dependent. No simulator was available to the course authors, so the code was checked by reading it against IEEE 1800-2023 and the uvm-core 2020.3.1 source.
 
 ```systemverilog
-class mem_test extends uvm_test;
-  `uvm_component_utils(mem_test)
-  mem_env env;
+// compile
+// tb_top.sv: the package and the top module in one file
+`include "uvm_macros.svh"
 
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
+package bus_pkg;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  import uvm_pkg::*;
+
+  typedef enum bit {BUS_READ, BUS_WRITE} bus_op_e;
+
+  // One bus transfer. The driver also uses this class for responses.
+  class bus_item extends uvm_sequence_item;
+    rand bus_op_e   op;
+    rand bit [7:0]  addr;
+    rand bit [31:0] data;   // write data; in a response, the data read
+
+    constraint c_word_aligned { addr[1:0] == 2'b00; }
+
+    `uvm_object_utils(bus_item)
+
+    function new(string name = "bus_item");
+      super.new(name);
+    endfunction
+
+    virtual function void do_copy(uvm_object rhs);
+      bus_item rhs_;
+      super.do_copy(rhs);
+      if (!$cast(rhs_, rhs)) begin
+        `uvm_fatal("BUS_ITEM/COPY", "do_copy: rhs is not a bus_item")
+        return;
+      end
+      op   = rhs_.op;
+      addr = rhs_.addr;
+      data = rhs_.data;
+    endfunction
+
+    virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+      bus_item rhs_;
+      if (!$cast(rhs_, rhs)) return 0;
+      return super.do_compare(rhs, comparer) &&
+             op == rhs_.op && addr == rhs_.addr && data == rhs_.data;
+    endfunction
+
+    virtual function string convert2string();
+      return $sformatf("%s addr=0x%02h data=0x%08h", op.name(), addr, data);
+    endfunction
+  endclass
+
+  // Writes n_pairs random words, then reads each address back and checks it.
+  class bus_rw_seq extends uvm_sequence #(bus_item);
+    `uvm_object_utils(bus_rw_seq)
+
+    int unsigned n_pairs = 4;
+
+    function new(string name = "bus_rw_seq");
+      super.new(name);
+    endfunction
+
+    virtual task body();
+      bit [31:0]   expected [bit [7:0]];  // address -> last data written there
+      bit [7:0]    written [$];           // addresses in write order
+      int unsigned n_ok;
+
+      // Writes. The driver answers every item, so collect every response.
+      repeat (n_pairs) begin
+        req = bus_item::type_id::create("req");
+        start_item(req);
+        if (!req.randomize() with { op == BUS_WRITE; })
+          `uvm_fatal("RAND", "write item failed to randomize")
+        finish_item(req);
+        get_response(rsp);
+        expected[req.addr] = req.data;
+        written.push_back(req.addr);
+      end
+
+      // Reads: one per written address, checked against the expected data.
+      foreach (written[i]) begin
+        bit [7:0] rd_addr = written[i];
+        req = bus_item::type_id::create("req");
+        start_item(req);
+        // local:: resolves rd_addr here, not in bus_item (IEEE 1800-2023 §18.7.1)
+        if (!req.randomize() with { op == BUS_READ; addr == local::rd_addr; })
+          `uvm_fatal("RAND", "read item failed to randomize")
+        finish_item(req);
+        get_response(rsp);
+        if (rsp.data != expected[rd_addr])
+          `uvm_error("RD_MISMATCH", $sformatf("addr=0x%02h got 0x%08h, expected 0x%08h",
+                                                rd_addr, rsp.data, expected[rd_addr]))
+        else begin
+          n_ok++;
+          `uvm_info("RD_OK", rsp.convert2string(), UVM_LOW)
+        end
+      end
+
+      `uvm_info("SEQ_DONE", $sformatf("%0d of %0d reads matched", n_ok, written.size()),
+                UVM_LOW)
+    endtask
+  endclass
+
+  // A driver with no pins: it models the memory itself.
+  class bus_driver extends uvm_driver #(bus_item);
+    `uvm_component_utils(bus_driver)
+
+    protected bit [31:0] mem [bit [7:0]];
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      forever begin
+        seq_item_port.get_next_item(req);  // blocks until a sequence sends an item
+        #10ns;                             // stands in for the bus cycles of one transfer
+        rsp = bus_item::type_id::create("rsp");
+        rsp.set_id_info(req);              // copy sequence_id and transaction_id
+        rsp.op   = req.op;
+        rsp.addr = req.addr;
+        if (req.op == BUS_WRITE) begin
+          mem[req.addr] = req.data;
+          rsp.data      = req.data;
+        end else begin
+          rsp.data = mem.exists(req.addr) ? mem[req.addr] : '0;
+        end
+        `uvm_info("DRV", rsp.convert2string(), UVM_MEDIUM)
+        seq_item_port.item_done(rsp);      // completes req and returns rsp
+      end
+    endtask
+  endclass
+
+  typedef uvm_sequencer #(bus_item) bus_sequencer;
+
+  class bus_agent extends uvm_agent;
+    `uvm_component_utils(bus_agent)
+
+    bus_sequencer sqr;
+    bus_driver    drv;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    // Always active in this lesson; I-UVM-2A adds the is_active check.
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      sqr = bus_sequencer::type_id::create("sqr", this);
+      drv = bus_driver::type_id::create("drv", this);
+    endfunction
+
+    virtual function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  class bus_env extends uvm_env;
+    `uvm_component_utils(bus_env)
+
+    bus_agent agt;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      agt = bus_agent::type_id::create("agt", this);
+    endfunction
+  endclass
+
+  class bus_test extends uvm_test;
+    `uvm_component_utils(bus_test)
+
+    bus_env env;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env = bus_env::type_id::create("env", this);
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      bus_rw_seq seq = bus_rw_seq::type_id::create("seq");
+      phase.raise_objection(this, "bus_rw_seq running");
+      seq.start(env.agt.sqr);              // returns after the last item_done()
+      phase.drop_objection(this, "bus_rw_seq finished");
+    endtask
+  endclass
+endpackage
+
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  import uvm_pkg::*;
+  import bus_pkg::*;
+
+  initial run_test("bus_test");
+endmodule
+```
+
+**Expected output** (illustrative, not captured from a simulator; addresses and data depend on the seed, file and line fields are shown as `…`, and the time unit printed depends on how your simulator compiles `uvm_pkg`):
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test bus_test...
+UVM_INFO tb_top.sv(…) @ 10: uvm_test_top.env.agt.drv [DRV] BUS_WRITE addr=0x34 data=0x9c1e2f07
+UVM_INFO tb_top.sv(…) @ 20: uvm_test_top.env.agt.drv [DRV] BUS_WRITE addr=0xa8 data=0x05d3b6e1
+UVM_INFO tb_top.sv(…) @ 30: uvm_test_top.env.agt.drv [DRV] BUS_WRITE addr=0x10 data=0x7f00c3a2
+UVM_INFO tb_top.sv(…) @ 40: uvm_test_top.env.agt.drv [DRV] BUS_WRITE addr=0xec data=0x31415926
+UVM_INFO tb_top.sv(…) @ 50: uvm_test_top.env.agt.drv [DRV] BUS_READ addr=0x34 data=0x9c1e2f07
+UVM_INFO tb_top.sv(…) @ 50: uvm_test_top.env.agt.sqr@@seq [RD_OK] BUS_READ addr=0x34 data=0x9c1e2f07
+UVM_INFO tb_top.sv(…) @ 60: uvm_test_top.env.agt.drv [DRV] BUS_READ addr=0xa8 data=0x05d3b6e1
+UVM_INFO tb_top.sv(…) @ 60: uvm_test_top.env.agt.sqr@@seq [RD_OK] BUS_READ addr=0xa8 data=0x05d3b6e1
+UVM_INFO tb_top.sv(…) @ 70: uvm_test_top.env.agt.drv [DRV] BUS_READ addr=0x10 data=0x7f00c3a2
+UVM_INFO tb_top.sv(…) @ 70: uvm_test_top.env.agt.sqr@@seq [RD_OK] BUS_READ addr=0x10 data=0x7f00c3a2
+UVM_INFO tb_top.sv(…) @ 80: uvm_test_top.env.agt.drv [DRV] BUS_READ addr=0xec data=0x31415926
+UVM_INFO tb_top.sv(…) @ 80: uvm_test_top.env.agt.sqr@@seq [RD_OK] BUS_READ addr=0xec data=0x31415926
+UVM_INFO tb_top.sv(…) @ 80: uvm_test_top.env.agt.sqr@@seq [SEQ_DONE] 4 of 4 reads matched
+...
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :   …
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+The sequence's messages appear as `uvm_test_top.env.agt.sqr@@seq`: a sequence reports through the sequencer it runs on, followed by its own name.
+
+**How the run unfolds** (a traced example of the log above):
+
+| Time | Sequence `seq` | Driver `drv` | Response queue of `seq` |
+| --- | --- | --- | --- |
+| 0 | `start_item` W1 (granted at once), randomize, `finish_item` W1 waits | `get_next_item` returns W1; `#10ns` starts | empty |
+| 10 | `finish_item` W1 returns; `get_response` takes rsp(W1); `start_item` W2 | `item_done(rsp)`; `get_next_item` returns W2 | rsp(W1) pushed, then popped |
+| 20 to 40 | the same for W2, W3, W4 | the same | never more than 1 |
+| 50 to 80 | R1 to R4: `get_response` returns the read data; `RD_OK` | reads `mem` | never more than 1 |
+| 80 | `body()` ends; `start()` returns; the test drops its objection | blocked in `get_next_item` | empty |
+| 80 | `run_phase` ends; the driver's loop is stopped | | |
+
+### How to build it yourself
+
+1. **Write the item.** Declare the fields `rand`, add constraints, register with `` `uvm_object_utils ``, and write `do_copy`, `do_compare` and `convert2string` (or field macros).
+2. **Write the sequence.** Extend `uvm_sequence #(bus_item)`, give it a constructor with a default name, and in `body()` repeat: create, `start_item`, checked `randomize()`, `finish_item`, and `get_response` if the driver responds.
+3. **Write the driver loop.** One `get_next_item()` and exactly one `item_done()` per item. Build each response with `set_id_info(req)`.
+4. **Declare the sequencer** with a `typedef`, then build both in an agent and connect `seq_item_port` to `seq_item_export` in `connect_phase`.
+5. **Start the sequence in the test** on `env.agt.sqr`, inside an objection (pattern A) or with the automatic objection (pattern B).
+6. **Run, then read the log**: one `DRV` line per item, one `RD_OK` per read, and `UVM_ERROR :    0`.
+
+### Break it on purpose: four debugging drills
+
+Make one change at a time, predict the log, then run (or reason it through with the explorer).
+
+1. **Delete `seq_item_port.item_done(rsp);`.** Every 10 ns the driver logs `Get_next_item called twice without item_done or get in between` and drives W1 again. The sequence stays in `finish_item(W1)` until the phase timeout ends the test with a fatal (timeouts are in [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)).
+2. **Delete `rsp.set_id_info(req);`.** At 10 ns: `UVM_FATAL … [SQRPUT] Driver put a response with null sequence_id`.
+3. **Replace pattern A with `seq.set_automatic_phase_objection(1); seq.start(env.agt.sqr);`, without `set_starting_phase(phase)`.** The run ends at time 0 with no `DRV` lines and no error, only the report summary.
+4. **Delete `get_response(rsp);` from the write loop only.** Usually the test still passes, for the wrong reason: each read's `get_response()` pops the oldest response, which is a *write's* response, and its data happen to equal the data written to the same address. If two writes hit the same address, a read gets the wrong write's data and `RD_MISMATCH` fires. Guard against this by collecting every response, or with `get_response(rsp, req.get_transaction_id())`, or by checking `rsp.op == BUS_READ`.
+
+**Checklist before moving on:**
+- [ ] I can say what `start_item`, `finish_item`, `get_next_item` and `item_done` each wait for.
+- [ ] Every field of my item is copied and compared, by a field macro or by `do_copy` and `do_compare`.
+- [ ] Every `randomize()` call is checked.
+- [ ] My driver calls exactly one `item_done()` per `get_next_item()`, and every response has `set_id_info(req)`.
+- [ ] My sequence collects every response its driver sends.
+- [ ] My test keeps `run_phase` alive with an objection around `start()`, or gives the sequence a starting phase before turning on the automatic objection.
+- [ ] My driver raises no objections.
+
+## Push Further
+
+### Expert: What start() really does
+
+Read `uvm_sequence_base::start()` in uvm-core 2020.3.1 (`src/seq/uvm_sequence_base.svh`; IEEE 1800.2-2020 §14.2.3.1) and these details fall out:
+- **One run at a time.** A sequence object holds a one-key semaphore while it runs. Calling `start()` on an object that is still running is `UVM_FATAL [SEQ_NOT_DONE] Sequence … already started`. Starting the same object again *after* it finished is legal, but most teams create a new object per start so that no state carries over.
+- **Priority.** A priority below `-1` is the fatal `SEQPRI`. `-1` becomes 100 for a root sequence and the parent's priority for a child.
+- **A clean response queue.** `start()` calls `clear_response_queue()` first, so responses left from an earlier run are discarded.
+- **Delta cycles between hooks.** `start()` forks a process and puts a `#0` before the automatic objection and `pre_start()`, before `pre_body()`, `body()`, `post_body()` and `post_start()`, and after `body()`. Code that depends on the exact order of other zero-time processes can see a different order than it expects.
+- **The automatic objection** is raised after that first `#0`, before `pre_start()`, and dropped after `post_start()`.
+- **A killed sequence.** If something kills the process that runs `body()` without calling `kill()`, for example an errant `disable fork`, `start()` reports `SEQBDYZMB` and kills the sequence properly.
+
+### Expert: Driver-side corner cases
+
+All from uvm-core 2020.3.1 (`uvm_sequencer.svh`, `uvm_sequencer_param_base.svh`; §15.2.1.2):
+- **`try_next_item` and time.** It waits `wait_for_sequences()` (by default to the NBA region of the current time slot) up to `m_wait_for_sequences_count` times, which is 1 unless the sequencer's `wait_for_sequences_count` resource is set (uvm-core impl.). A sequence that consumes time between `start_item()` and `finish_item()` makes `try_next_item` report `TRY_NEXT_BLOCKED` and return `null`, even though the sequence won arbitration. Never put delays between the two calls.
+- **One FIFO slot.** The request FIFO holds one item. If two processes call `get_next_item()` on one port, the second item cannot be stored and `send_request` stops the test with `SQRSNDREQGNI` ("Concurrent calls to get_next_item() not supported").
+- **No current item with `get()`.** `get_current_item()` (§14.3.3.2) returns the item between `get_next_item`/`peek` and `item_done`/`get`. A driver that only calls `get()` never has a current item.
+- **`peek()` then `get()`.** `peek()` (§15.2.1.2.7) returns the item without completing it, and a later `get()` or `item_done()` completes it. This is how a driver can look at an item before deciding to accept it.
+
+### Expert: Response routing internals
+
+- **Where the ids come from.** `send_request` assigns a `transaction_id` when the item still has `-1`, and always writes the sequence's `sequence_id` for this sequencer. `set_id_info` copies both (§14.1.2.4). A request object that is sent twice keeps its first `transaction_id`, which is one more reason to create a new item per transfer.
+- **`SQRPUT` is not universal.** The null-id check in `uvm_sequencer_param_base::put_response` is compiled out when the vendor define `CDNS_NO_SQR_CHK_SEQ_ID` is set; the response is then dropped without a message (tool-dependent).
+- **The standard and the code disagree on overflow reporting.** The source comment says overflow errors are reported by default, but the flag `response_queue_error_report_enabled` starts at 0, so uvm-core 2020.3.1 drops silently until you call `set_response_queue_error_report_enabled(1)` (§14.2.7.5). `set_response_queue_depth(-1)` makes the queue unbounded (§14.2.7.7), at the cost of memory if nobody collects.
+- **`get_response(rsp, tid)`** waits until a response with that `transaction_id` arrives and leaves other responses in the queue. A related trap: `wait_for_item_done(tid)` for an item that has already completed waits forever, because it missed the notification.
+- **Out-of-order responses.** For drivers that answer in a different order than requests arrived, a sequence can turn on `use_response_handler(1)` and override `response_handler()` (§14.2.7.1); that is taught in [the I-UVM-3B handshake lesson](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake).
+
+### Expert: Starting phase and default sequences
+
+- **The starting phase locks on first read.** `get_starting_phase()` locks the value, and a later `set_starting_phase()` reports `UVM/SEQ/SP/SET` and is ignored (`uvm_sequence_base.svh`). The legacy public member `starting_phase` (marked `@uvm-compat` in uvm-core 2020.3.1) still compiles; writing it after the lock reports `UVM/SEQ/SP/GET` on the next read. Use the methods in new code.
+- **Default sequences.** A sequencer starts a **default sequence** in each task phase when a resource named `default_sequence` is set for the scope `<sequencer path>.<phase>_phase`, for example `uvm_test_top.env.agt.sqr.main_phase`; the value is a sequence type wrapper or a sequence object (`uvm_sequencer_base::start_phase_sequence`; the configuration database that holds such resources is taught in [I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)). From the command line, without touching the test: `+uvm_set_default_sequence=uvm_test_top.env.agt.sqr,main_phase,bus_rw_seq` (Annex G.2.9). The phase field needs the `_phase` suffix.
+- **A default sequence does not object by itself.** `start_phase_sequence` sets the starting phase, randomizes the sequence and starts it, but raises nothing. The sequence must turn on the automatic objection (for example in its constructor) or raise through `get_starting_phase()`, or the phase ends at once.
+- **Why many teams avoid default sequences:** the stimulus is invisible in the test code, and a misspelt scope fails silently. Starting sequences explicitly in the test, as this lesson does, is easier to read and debug.
+
+### Expert: Randomization corner cases
+
+- **Name capture in inline constraints.** In `req.randomize() with { addr == addr; }`, both names resolve to the item's own `addr`, so the constraint is always true. Unqualified names are looked up in the item first; `local::addr` forces the caller's variable (IEEE 1800-2023 §18.7.1).
+- **Macros do not fail loudly.** `` `uvm_do `` and `` `uvm_rand_send `` print the warning `RNDFLD` and continue when randomization fails.
+- **Switching randomization off.** `set_randomize_enabled(0)` (§14.2.2.3) stops `` `uvm_do `` (and default-sequence start-up) from randomizing a child sequence that you configured by hand. The legacy bit `do_not_randomize` does the same in old code (`@uvm-compat`).
+- **Sequences can be randomized too.** A sequence with `rand` members, such as a `rand int unsigned n_items` with a constraint, can be randomized before `start()`; the kata below uses this.
+
+### Expert: Performance and object lifetime
+
+- **A new item per transfer.** Monitors, scoreboards and response queues may keep the handle you sent. Reusing one object for every transfer makes all of them see the latest values. Allocation is cheap compared with debugging that.
+- **Field macros cost run time.** In uvm-core 2020.3.1 every `copy()`, `compare()`, `print()` and `record()` walks the field macros through `do_execute_op` before calling your `do_*` hook. Hand-written methods skip that walk. How much it matters depends on the simulator and the item size; measure before rewriting (the profiling method is in [E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index)).
+- **Transaction recording.** Sequencers record every item by default when recording is enabled; `disable_auto_item_recording()` (§15.2.1.2.10) turns that off for a busy sequencer. Whether recording costs anything depends on the tool's recorder (tool-dependent).
+- **Responses are memory.** An unbounded response queue (`set_response_queue_depth(-1)`) that nobody drains grows for the whole test.
+
+### Expert: Interview angles
+
+Answer each question before you look at the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: finish_item and get_next_item"
+  question="The driver's get_next_item() has returned item A1. Why has the sequence's finish_item(A1) not returned yet?"
+  options={[
+    { text: "Because finish_item waits for the driver's item_done(), not for the driver to take the item.", correct: true, feedback: "Right. finish_item is send_request plus wait_for_item_done. get_next_item only peeks the item, which stays in the request FIFO until item_done (§14.2.6.3, §15.2.1.2.3)." },
+    { text: "Because the sequencer is busy arbitrating for the next item.", correct: false, feedback: "Arbitration for the next item only starts when the driver asks again. Nothing is prefetched." },
+    { text: "Because finish_item waits for a response from the driver.", correct: false, feedback: "Responses are collected separately with get_response. finish_item returns at item_done() whether or not a response was sent." },
+    { text: "It has returned; the sequence is already in start_item for A2.", correct: false, feedback: "That is only true for a driver that uses get(), which calls item_done() itself. With get_next_item the sequence waits." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: a test that ends at 0 ns"
+  question="A test's run_phase does seq.set_automatic_phase_objection(1); seq.start(env.agt.sqr); and the log shows nothing driven: the test ends at time 0. Why?"
+  options={[
+    { text: "The automatic objection only works for default sequences.", correct: false, feedback: "It works for any sequence that has a starting phase." },
+    { text: "The sequence has no starting phase, so the automatic objection raises nothing.", correct: true, feedback: "Right. start() raises on get_starting_phase(), which is null here. Add seq.set_starting_phase(phase) first (§14.2.4.1, §14.2.4.4)." },
+    { text: "set_automatic_phase_objection must be called after start().", correct: false, feedback: "It must be called before start(): start() reads it before pre_start()." },
+    { text: "The driver must also raise an objection.", correct: false, feedback: "Drivers never object: their forever loops would keep the test alive forever." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: out-of-order responses"
+  question="A driver for a bus with out-of-order completion returns responses in a different order than the requests. How does each response reach the right sequence, and how does the sequence match it to its request?"
+  options={[
+    { text: "The sequencer delivers responses in request order, so nothing special is needed.", correct: false, feedback: "The sequencer never reorders. It delivers each response as it arrives." },
+    { text: "The sequencer routes by sequence_id; the sequence matches by transaction_id with get_response(rsp, tid), or with a response handler.", correct: true, feedback: "Right. set_id_info copies both ids; the sequencer uses sequence_id, and get_response(rsp, req.get_transaction_id()) or use_response_handler(1) handles the order inside the sequence (§14.1.2.4, §14.3.3.3, §14.2.7.1)." },
+    { text: "The driver must call put_response in request order, buffering if needed.", correct: false, feedback: "That works but throws away the point of an out-of-order bus. The ids make reordering unnecessary." },
+    { text: "Responses are matched by comparing data fields with compare().", correct: false, feedback: "Two transactions can carry identical data. The ids are the only reliable key." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: should a driver object?"
+  question="A colleague raises an objection at the top of the driver's run_phase so that the test cannot end while the driver works. What is wrong?"
+  options={[
+    { text: "Nothing: drivers are the right place for objections.", correct: false, feedback: "The driver's loop is forever, so it can never drop that objection." },
+    { text: "The test never ends, except by the phase timeout, because the driver's forever loop never drops the objection.", correct: true, feedback: "Right. Objections belong to the test or the top sequence, which know when the stimulus is finished. Raising per item is no better: the count can reach 0 between items." },
+    { text: "It causes a fatal because drivers cannot access the phase.", correct: false, feedback: "Every component's run_phase receives the phase handle, so it compiles and runs; the problem is the end of test." },
+    { text: "It only fails when drain time is zero.", correct: false, feedback: "Drain time delays the end after the count reaches 0. Here the count never reaches 0." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Quiz
+
+<Quiz questions={[
+  {
+    question: "A sequence calls start_item(req). What happens during that call?",
+    objective: 2,
+    answers: [
+      { text: "The item is randomized, then the sequence waits for the grant.", correct: false, feedback: "start_item never randomizes. You randomize between start_item and finish_item (late randomization), or a macro does it for you." },
+      { text: "The sequence blocks until the sequencer grants it, which happens when the driver asks for an item and this sequence wins arbitration.", correct: true, feedback: "Right. start_item calls wait_for_grant(); the grant needs a driver request, because UVM sequencing is pull-driven." },
+      { text: "The sequencer queues the item in its FIFO for the driver.", correct: false, feedback: "The item enters the request FIFO only in finish_item (send_request)." },
+      { text: "The item is sent to the driver at once.", correct: false, feedback: "Nothing is sent before finish_item, and nothing reaches the driver before it asks." }
+    ],
+    explanation: "start_item = wait_for_grant() + pre_do(1). Randomization and sending come later; the grant depends on the driver pulling."
+  },
+  {
+    question: "With the driver loop get_next_item(req); drive (10 ns); item_done(); the driver is halfway through item 1. Where is the sequence?",
+    objective: 2,
+    answers: [
+      { text: "In start_item for item 2, because the sequencer buffers the next item.", correct: false, feedback: "The sequencer does not prefetch: its FIFO holds the one item being driven, and the next grant waits for the next get_next_item." },
+      { text: "Back in body(), because finish_item returned when the driver took the item.", correct: false, feedback: "That happens only with a get() driver, which calls item_done() itself. This loop uses get_next_item." },
+      { text: "Inside finish_item for item 1, waiting for item_done().", correct: true, feedback: "Right. finish_item = send_request + wait_for_item_done. Taking the item with get_next_item is not completion." },
+      { text: "Inside get_next_item, waiting for the driver.", correct: false, feedback: "get_next_item is the driver's call; a sequence only calls start_item and finish_item." }
+    ],
+    explanation: "With get_next_item/item_done the sequence is held in finish_item until the drive ends. The answer changes with get(), which is why the driver style matters."
+  },
+  {
+    question: "A driver forgets item_done(). What does the log show?",
+    objective: 3,
+    answers: [
+      { text: "Nothing: the driver hangs silently in get_next_item().", correct: false, feedback: "get_next_item does not block here: an item is already requested, so it returns the same item at once, with an error." },
+      { text: "A fatal from item_done().", correct: false, feedback: "item_done is never called, so it cannot complain. Its fatal, SQRBADITMDN, is for the opposite bug." },
+      { text: "Get_next_item called twice without item_done or get in between, on every loop, with the same item driven again.", correct: true, feedback: "Right. The item is still in the request FIFO, so each get_next_item reports the error and peeks it again." },
+      { text: "The sequence times out and moves on to the next item.", correct: false, feedback: "There is no per-item timeout. The sequence stays in finish_item until the phase timeout ends the test." }
+    ],
+    explanation: "The visible symptom is the repeated error and the re-driven item; the silent hang is the sequence, stuck in finish_item()."
+  },
+  {
+    question: "A pipelined driver uses seq_item_port.get(req) and then drives req for 10 ns. When does the sequence's finish_item(req) return?",
+    objective: 3,
+    answers: [
+      { text: "When get() returns, before the item is driven.", correct: true, feedback: "Right. get() calls item_done() itself before returning, so the sequence is released while the driver still works." },
+      { text: "After the 10 ns drive.", correct: false, feedback: "That is the get_next_item/item_done behaviour." },
+      { text: "After the driver calls put(rsp).", correct: false, feedback: "put sends a response; it does not complete the request. The request completed inside get()." },
+      { text: "Never: get() needs a matching item_done().", correct: false, feedback: "Calling item_done() after get() is the SQRBADITMDN fatal, because get() already completed the item." }
+    ],
+    explanation: "Choose get() only when the sequence does not need to know that the drive has finished, or when it waits for a response instead."
+  },
+  {
+    question: "An item has byte payload[$] that is in no field macro and in neither do_copy nor do_compare. After $cast(c, orig.clone()), what is true?",
+    objective: 1,
+    answers: [
+      { text: "c.payload and orig.payload share one queue, so editing one edits the other.", correct: false, feedback: "Queues are values in SystemVerilog: copying one copies its elements. Nothing is shared." },
+      { text: "clone() stops with a fatal because a field is unregistered.", correct: false, feedback: "UVM has no list of all members, so it cannot notice a missing one." },
+      { text: "c.payload is a full copy, because clone() copies every member.", correct: false, feedback: "clone() copies only what the field macros and do_copy copy." },
+      { text: "c.payload is empty, and orig.compare(c) still returns 1.", correct: true, feedback: "Right. The field is skipped by copy() and by compare(), which hides the difference from a scoreboard." }
+    ],
+    explanation: "Register every field, or copy and compare it by hand. The bug is silence, not sharing."
+  },
+  {
+    question: "A hand-written do_copy contains cfg = rhs_.cfg; where cfg is a class handle. After c = orig.clone(), a test sets c.cfg.mode = 3. What happens to orig.cfg.mode?",
+    objective: 1,
+    answers: [
+      { text: "It also becomes 3, because both items point to the same cfg object.", correct: true, feedback: "Right. Assigning a handle copies the reference (a shallow copy). Clone the object if each item needs its own." },
+      { text: "It is unchanged, because clone() always makes deep copies.", correct: false, feedback: "clone() makes whatever copy your do_copy makes. Here it copies a handle." },
+      { text: "It is unchanged, because cfg was not copied at all and c.cfg is null.", correct: false, feedback: "That is what happens to a member that do_copy does not mention. This one is assigned." },
+      { text: "The assignment is a compile error because cfg belongs to orig.", correct: false, feedback: "Both handles refer to one object, and any of them can write it." }
+    ],
+    explanation: "Handles are references; values (including queues) are copied. Decide per member whether the clone should share or own its object."
+  },
+  {
+    question: "In uvm-core 2020.3.1 with a default build, a driver calls rsp = bus_item::type_id::create(\"rsp\"); seq_item_port.item_done(rsp); and never calls rsp.set_id_info(req). What happens?",
+    objective: 4,
+    answers: [
+      { text: "UVM_FATAL [SQRPUT] Driver put a response with null sequence_id.", correct: true, feedback: "Right. A new item has sequence_id -1, and the sequencer cannot route it." },
+      { text: "The response goes to the sequence that sent the latest request.", correct: false, feedback: "The sequencer never guesses; it routes only by the ids." },
+      { text: "The response is dropped silently and get_response() hangs.", correct: false, feedback: "A silent drop happens only when the queue is full, or when the vendor define CDNS_NO_SQR_CHK_SEQ_ID removes the check (tool-dependent). The default build stops with a fatal." },
+      { text: "get_response() returns null.", correct: false, feedback: "get_response never returns null: it blocks until a response arrives." }
+    ],
+    explanation: "set_id_info(req) copies sequence_id and transaction_id. Without them the default build stops the test at the first response."
+  },
+  {
+    question: "A driver answers every item with item_done(rsp). The sequence sends 10 items and never calls get_response(). How many responses are waiting in the sequence's queue afterwards?",
+    objective: 4,
+    answers: [
+      { text: "10: the queue grows without limit.", correct: false, feedback: "Only set_response_queue_depth(-1) makes it unbounded." },
+      { text: "None: the driver blocked at item 9 until someone read a response.", correct: false, feedback: "Responses are delivered by functions, which cannot block. The response is dropped instead." },
+      { text: "8: responses 9 and 10 were dropped, silently by default.", correct: true, feedback: "Right. The default depth is 8, and uvm-core 2020.3.1 drops further responses without a message unless set_response_queue_error_report_enabled(1) was called." },
+      { text: "0: responses are discarded unless get_response() is already waiting.", correct: false, feedback: "Responses are queued even when nobody waits, up to the depth." }
+    ],
+    explanation: "Collect every response the driver sends, or collect by transaction_id, or make the queue unbounded on purpose."
+  },
+  {
+    question: "A test's run_phase runs seq.set_automatic_phase_objection(1); seq.start(env.agt.sqr); and nothing else. What happens?",
+    objective: 5,
+    answers: [
+      { text: "The sequence runs to completion: UVM uses run_phase as the starting phase automatically.", correct: false, feedback: "Only default sequences get a starting phase automatically. Here it is null." },
+      { text: "No objection is raised, because the starting phase is null, so run_phase ends at 0 ns with no error.", correct: true, feedback: "Right. The automatic objection raises on get_starting_phase(); call seq.set_starting_phase(phase) first." },
+      { text: "A fatal reports that the sequence has no starting phase.", correct: false, feedback: "There is no such check: the raise is simply skipped." },
+      { text: "The test runs until the global timeout.", correct: false, feedback: "Nothing holds the phase open, so it ends at once instead." }
+    ],
+    explanation: "The automatic objection needs a starting phase. Pattern A (raise and drop around start in the test) avoids the question."
+  },
+  {
+    question: "Where should the objection that keeps run_phase alive be raised when the driver runs a forever loop?",
+    objective: 5,
+    answers: [
+      { text: "Around each item in the driver.", correct: false, feedback: "The count can reach 0 between two items, so the phase may end early." },
+      { text: "Once at the top of the driver's run_phase.", correct: false, feedback: "The forever loop never drops it, so the test never ends (except by timeout)." },
+      { text: "In the test around start(), or by the top sequence through its starting phase.", correct: true, feedback: "Right. Only the test or the top sequence knows when the stimulus is finished." },
+      { text: "Nowhere: drain time keeps the phase alive.", correct: false, feedback: "Drain time only delays the end after the count reaches 0; it does not start anything." }
+    ],
+    explanation: "Objections belong to whoever knows when the work is done: the test or the top sequence, never the driver."
+  },
+  {
+    question: "top_seq starts a child with `uvm_do(child). Does child.pre_body() run?",
+    objective: 2,
+    answers: [
+      { text: "Yes, start() always calls pre_body().", correct: false, feedback: "Only pre_start and post_start always run." },
+      { text: "Only if the child is randomized successfully.", correct: false, feedback: "A failed randomization only prints the RNDFLD warning; the hooks do not depend on it." },
+      { text: "Only if the child has no parent.", correct: false, feedback: "The macro always passes this as the parent." },
+      { text: "No, the macro calls start() with call_pre_post = 0.", correct: true, feedback: "Right. The parent's pre_do, mid_do and post_do still run, because a parent is passed." }
+    ],
+    explanation: "Code in pre_body/post_body silently stops running when a child is started with the macro; put must-run code in pre_start/post_start."
+  },
+  {
+    question: "A sequence uses `uvm_do_with(req, { addr > 8'hF0; addr < 8'h10; }). What happens on that line?",
+    objective: 2,
+    answers: [
+      { text: "The test stops with a fatal because randomization failed.", correct: false, feedback: "That is what your own checked randomize() would do. The macro is softer." },
+      { text: "The macro prints the warning RNDFLD and still sends the item with its old field values.", correct: true, feedback: "Right. The constraints contradict each other, randomize() returns 0 and leaves the fields unchanged (IEEE 1800-2023 §18.6.3), and uvm_rand_send only warns before finish_item." },
+      { text: "The macro retries randomization until it succeeds.", correct: false, feedback: "There is no retry; the expansion calls randomize() once." },
+      { text: "Compilation fails because the constraints contradict each other.", correct: false, feedback: "Contradictions are found at run time by the solver, not by the compiler." }
+    ],
+    explanation: "Expanded, the macro is create, start_item, randomize with a warning on failure, finish_item. Write the calls yourself to make a failure stop the test."
+  }
+]} />
+
+### Flashcards
+
+The deck for this lesson covers the blocking points, responses, objections, the macros and the copy pitfalls. Review it until you can answer each card without the page.
+
+### Kata: N randomized items with response checking
+
+**Task.** Starting from the Make It Work file:
+1. Write `bus_burst_check_seq`, a sequence with `rand int unsigned n_items` constrained to 1 to 16. For each item it writes a random word, immediately reads it back, and checks the read data. Use `get_response(rsp, req.get_transaction_id())` for both responses.
+2. In `bus_test`, randomize the sequence (checked), then start it with **pattern B**: a starting phase and the automatic objection, and no objection in the test.
+3. Predict the log for `n_items = 3`: how many `DRV` lines, how many check lines, and the time of the last line.
+
+**Acceptance:** one check line per item, `UVM_ERROR :    0`, and the run ends when the sequence ends.
+
+<details>
+<summary>Worked solution (try it first)</summary>
+
+```systemverilog
+// snippet: add to bus_pkg, after bus_driver
+class bus_burst_check_seq extends uvm_sequence #(bus_item);
+  `uvm_object_utils(bus_burst_check_seq)
+
+  rand int unsigned n_items;
+  constraint c_n { n_items inside {[1:16]}; }
+
+  function new(string name = "bus_burst_check_seq");
+    super.new(name);
   endfunction
 
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    env = mem_env::type_id::create("env", this);
-  endfunction
+  virtual task body();
+    repeat (n_items) begin
+      bit [7:0]  wr_addr;
+      bit [31:0] wr_data;
 
-  task run_phase(uvm_phase phase);
-    my_simple_sequence seq = my_simple_sequence::type_id::create("seq");
-    phase.raise_objection(this);
-    seq.start(env.agt.sqr);            // returns after the 5th item_done()
-    phase.drop_objection(this);
+      req = bus_item::type_id::create("req");
+      start_item(req);
+      if (!req.randomize() with { op == BUS_WRITE; })
+        `uvm_fatal("RAND", "write item failed to randomize")
+      finish_item(req);
+      get_response(rsp, req.get_transaction_id());   // the write's own response
+      wr_addr = req.addr;
+      wr_data = req.data;
+
+      req = bus_item::type_id::create("req");
+      start_item(req);
+      if (!req.randomize() with { op == BUS_READ; addr == local::wr_addr; })
+        `uvm_fatal("RAND", "read item failed to randomize")
+      finish_item(req);
+      get_response(rsp, req.get_transaction_id());   // the read's own response
+      if (rsp.data != wr_data)
+        `uvm_error("CHK", $sformatf("addr=0x%02h read 0x%08h, wrote 0x%08h",
+                                    wr_addr, rsp.data, wr_data))
+      else
+        `uvm_info("CHK", {"match: ", rsp.convert2string()}, UVM_LOW)
+    end
   endtask
 endclass
 ```
 
-## Push Further
-- **Responses.** A driver can answer with `seq_item_port.item_done(rsp)`, after `rsp.set_id_info(req)`. The sequence collects it with `get_response(rsp)`. Each sequence keeps at most 8 uncollected responses by default; the 9th is dropped. The handshake explorer has a scenario for each of these.
-- **Polling drivers.** `try_next_item(req)` returns `null` instead of blocking, for drivers that must drive idle cycles when no sequence has work.
-- **Priority.** `seq.start(sqr, null, 300)` sets a priority. It only matters when the sequencer uses a priority-aware arbitration mode; see [Sequencer Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration).
-- **Several agents at once.** Virtual sequences start sequences on several agent sequencers; see I-UVM-3B.
+```systemverilog
+// snippet: bus_test::run_phase with pattern B
+virtual task run_phase(uvm_phase phase);
+  bus_burst_check_seq seq = bus_burst_check_seq::type_id::create("seq");
+  if (!seq.randomize() with { n_items == 3; })
+    `uvm_fatal("RAND", "sequence failed to randomize")
+  seq.set_starting_phase(phase);
+  seq.set_automatic_phase_objection(1);
+  seq.start(env.agt.sqr);
+endtask
+```
 
-## Explore Nested Sequence Execution
+**Prediction for `n_items = 3`:** six `DRV` lines (W, R, W, R, W, R) at 10, 20, 30, 40, 50 and 60 ns; three `CHK … match` lines at 20, 40 and 60 ns; the run ends at 60 ns.
 
-A sequence's `body()` can start other sequences. `start()` wraps each `body()` in hooks, and which hooks run depends on how the child is started. Change the start style for each child, predict the call order for `write_seq`, then step through. Tick **Show the calls inside start_item() / finish_item()** to see where each item enters the handshake.
+**Why it works:** the driver answers every item, and the sequence collects every response by its own `transaction_id`, so no response is left in the queue and none can be taken by the wrong check. `local::wr_addr` makes the read use the sequence's variable, not the item's own `addr`.
 
-<UvmSequenceHierarchyVisualizer />
+**Mutations to try:** delete `seq.set_starting_phase(phase);` (the run ends at 0 ns); delete `rsp.set_id_info(req);` in the driver (`SQRPUT` at 10 ns); delete `item_done(rsp)` (`Get_next_item called twice…` every 10 ns).
 
-The rules the explorer applies, from `uvm_sequence_base::start()`:
-- `pre_start()` and `post_start()` always run.
-- `pre_body()` and `post_body()` run only when the fourth argument of `start()`, `call_pre_post`, is 1 (its default). `` `uvm_do `` passes 0.
-- When a parent is passed, the parent's `pre_do(0)` and `mid_do(child)` run just before the child's `body()`, and `post_do(child)` right after it.
-- A child started with `child.start(m_sequencer)` has no parent. It is not covered by the parent's `lock()`, so a locked parent deadlocks it. Tick **Debug: top_seq calls lock() first** to see it.
+</details>
 
-## Interview Pitfalls
-**The silently skipped field.**
-Interviewers show an item with `rand byte payload[$];` that is not in the field macros and has no `do_copy()`/`do_compare()`. "What happens when the scoreboard compares the original with a `clone()`?" SystemVerilog queues and dynamic arrays are copied by value, so there is no shared pointer. The real problem: `clone()` never copies the unregistered field, so the clone's `payload` is empty, and `compare()` ignores the field and reports a match. Register every field, or copy and compare it yourself. Class-handle members are the case that is copied shallowly unless you deep-copy them.
+### Debug challenge: the handshake explorer's bug scenarios
 
-**The missing `item_done()`.**
-If the driver loops without calling `item_done()`, its next `get_next_item()` reports `UVM_ERROR … Get_next_item called twice without item_done or get in between` and returns the **same** item again. The driver re-drives that item forever while the sequence stays blocked in `finish_item()`. The test only ends at the phase timeout.
+Open each **Bug** scenario in the explorers above, answer its prediction question before you step, and name the objective it exercises:
+1. **Bug: no item_done()** and **Bug: get_next_item twice** in the first explorer (objective 3).
+2. **Bug: rsp without set_id_info**, **Bug: responses never collected** and **Bug: waiting for a response** in the Responses explorer (objective 4).
 
-**The response nobody can route.**
-`rsp = mem_item::type_id::create("rsp"); seq_item_port.item_done(rsp);` without `rsp.set_id_info(req)` stops the test with `UVM_FATAL [SQRPUT] Driver put a response with null sequence_id`.
-
-## Practice & Reinforce
-
-<Quiz questions={[
-    {
-      question: `What happens during the execution of \`start_item(req)\` in a sequence?`,
-      answers: [
-        {text: `The item is randomized and immediately driven to the pins.`, correct: false},
-        {text: `The sequence blocks until the sequencer grants its request, which happens when the driver calls \`get_next_item()\`.`, correct: true},
-        {text: `The sequencer queues the item in a FIFO for the driver.`, correct: false}
-      ],
-      explanation: `\`start_item\` calls \`wait_for_grant()\`. Arbitration only runs when the driver asks for an item, so UVM sequencing is pull-driven. The item itself is not sent until \`finish_item\`.`
-    },
-    {
-      question: `The driver is halfway through driving item 1. Where is the sequence?`,
-      answers: [
-        {text: `In \`start_item\` for item 2, because the sequencer buffers the next item.`, correct: false},
-        {text: `Inside \`finish_item\` for item 1, waiting for \`item_done()\`.`, correct: true},
-        {text: `Back in \`body()\`, because \`finish_item\` returned when the driver took the item.`, correct: false}
-      ],
-      explanation: `\`finish_item\` = \`send_request\` + \`wait_for_item_done\`. Taking the item with \`get_next_item\` is not completion.`
-    },
-    {
-      question: `A driver forgets \`item_done()\`. What does the log show?`,
-      answers: [
-        {text: `Nothing: the driver hangs silently in \`get_next_item()\`.`, correct: false},
-        {text: `\`Get_next_item called twice without item_done or get in between\` on each loop, with the same item driven again.`, correct: true},
-        {text: `A fatal from \`item_done()\`.`, correct: false}
-      ],
-      explanation: `The item is still in the request FIFO, so \`get_next_item()\` reports the error and peeks it again. The silent hang is the sequence, stuck in \`finish_item()\`.`
-    },
-    {
-      question: `An item has \`byte payload[$]\` that is not registered with a field macro and has no \`do_copy\`/\`do_compare\`. After \`$cast(c, orig.clone())\`, what is true?`,
-      answers: [
-        {text: `\`c.payload\` and \`orig.payload\` share one queue, so editing one edits the other.`, correct: false},
-        {text: `\`c.payload\` is empty, and \`orig.compare(c)\` still returns 1.`, correct: true},
-        {text: `\`clone()\` fails with a fatal because a field is unregistered.`, correct: false}
-      ],
-      explanation: `Queues are value types, so nothing is shared. The field is simply skipped by \`copy()\` and \`compare()\`, which hides the difference.`
-    },
-    {
-      question: `A sequence item gets altered unexpectedly inside the scoreboard after being published by a monitor. What is the most likely cause?`,
-      answers: [
-        {text: `The sequencer mutated it.`, correct: false},
-        {text: `The monitor reused one item handle for every transaction instead of creating (or cloning) a new one per write().`, correct: true},
-        {text: `The factory overrode it.`, correct: false}
-      ],
-      explanation: `Analysis ports pass class handles. If the monitor keeps writing into the same object, every subscriber holds a handle to the object it keeps changing.`
-    },
-    {
-      question: `\`top_seq\` starts a child with the uvm_do macro, \`uvm_do(child)\`. Does \`child.pre_body()\` run?`,
-      answers: [
-        {text: `Yes, \`start()\` always calls \`pre_body()\`.`, correct: false},
-        {text: `No, the uvm_do macro calls \`start()\` with \`call_pre_post = 0\`.`, correct: true},
-        {text: `Only if the child is randomized successfully.`, correct: false}
-      ],
-      explanation: `Only \`pre_start\`/\`post_start\` always run. The parent's \`pre_do\`/\`mid_do\`/\`post_do\` still run because a parent is passed.`
-    }
-  ]} />
-
-## Capstone Checkpoint
-
-<LabLink labId="uvm-mini-capstone" />
+For each one, write down the first log line you would search for in a real regression and the one-line fix. Then check yourself against the debugging table and the recap in Build Your Mental Model.
 
 ## References & Next Topics
-- IEEE 1800.2-2020: 14.1 `uvm_sequence_item`; 14.2 `uvm_sequence_base` (14.2.3 `start` and its hooks, 14.2.6.2 `start_item`, 14.2.6.3 `finish_item`); 14.3 `uvm_sequence` (14.3.3.3 `get_response`); 15.2.1 `uvm_sqr_if_base` (15.2.1.2.1 `get_next_item`, 15.2.1.2.3 `item_done`). Clause numbers are taken from the `@uvm-ieee` annotations in the uvm-core 2020.3.1 source.
-- Next: [I-UVM-3B: Advanced Sequencing and Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index).
+
+**Primary sources**
+- IEEE 1800.2-2020 §13.7 (`uvm_driver`); §14.1 (`uvm_sequence_item`; §14.1.2.4 `set_id_info`); §14.2 (`uvm_sequence_base`): §14.2.2.3 `set_randomize_enabled`, §14.2.3.1 `start` and §14.2.3.2 to §14.2.3.9 its hooks, §14.2.4.1 `get_starting_phase`, §14.2.4.2 `set_starting_phase`, §14.2.4.4 `set_automatic_phase_objection`, §14.2.6.1 to §14.2.6.6 item execution (`create_item`, `start_item`, `finish_item`, `wait_for_grant`, `send_request`, `wait_for_item_done`), §14.2.7.1 `use_response_handler`, §14.2.7.5 to §14.2.7.8 the response queue; §14.3 (`uvm_sequence`; §14.3.3.2 `get_current_item`, §14.3.3.3 `get_response`).
+- IEEE 1800.2-2020 §15.2.1 (`uvm_sqr_if_base`): §15.2.1.2.1 `get_next_item`, §15.2.1.2.2 `try_next_item`, §15.2.1.2.3 `item_done`, §15.2.1.2.6 `get`, §15.2.1.2.7 `peek`, §15.2.1.2.8 `put`, §15.2.1.2.9 `put_response`, §15.2.1.2.10 `disable_auto_item_recording`; §15.2.2.1 `uvm_seq_item_pull_port`; §15.5 `uvm_sequencer`.
+- IEEE 1800.2-2020 §5.3.6.4 `convert2string`, §5.3.8 copying, §5.3.9 comparing; Annex B.3.1.1 to B.3.1.4 (`` `uvm_create ``, `` `uvm_send ``, `` `uvm_rand_send ``, `` `uvm_do ``); Annex G.2.1 `+UVM_TESTNAME`; Annex G.2.9 `+uvm_set_default_sequence`.
+- IEEE 1800-2023 §18.7.1 (`local::` in inline constraints); §3.14.2.2 (`timeunit` and `timeprecision`).
+- uvm-core 2020.3.1 (uvm-core impl.): `src/seq/uvm_sequence_base.svh`, `src/seq/uvm_sequencer.svh`, `src/seq/uvm_sequencer_param_base.svh`, `src/seq/uvm_sequencer_base.svh`, `src/seq/uvm_sequence.svh`, `src/comps/uvm_driver.svh`, `src/macros/uvm_sequence_defines.svh`, `src/deprecated/macros/uvm_sequence_defines.svh`, `src/base/uvm_copier.svh`, `src/base/uvm_comparer.svh`, `src/base/uvm_root.svh`.
+- IEEE 1800.2 clause numbers for individual methods are taken from the `@uvm-ieee 1800.2-2020` annotations next to each method in the uvm-core 2020.3.1 source.
+
+**Related**
+- [I-UVM-1A: UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index): objects, components and the object methods.
+- [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): objections, drain time and run-time phases.
+- [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): timeouts, report counts and the pass/fail signature.
+- [I-UVM-2A: Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index) and [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index): the agent that holds the sequencer and driver, and the pull port.
+- [I-UVM-3C: Your First Complete UVM Testbench](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index): this lesson's sequence driving a real DUT through a pin-level driver.
+- [I-UVM-3B: Sequencer–Driver Handshake in depth](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake): hang triage and response handlers.
+- [I-UVM-3B: Sequencer Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) and [Virtual Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences): priorities, `lock`/`grab`, and stimulus across several agents.
+- [I-UVM-4: UVM Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index): printers, comparers and copiers behind `print()`, `compare()` and `copy()`.
+
+<NextLesson />

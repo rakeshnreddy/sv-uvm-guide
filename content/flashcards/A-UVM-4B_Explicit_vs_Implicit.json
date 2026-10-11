@@ -1,1 +1,77 @@
-[]
+[
+  {
+    "id": "auvm4b-evi-1",
+    "question": "What are implicit, explicit and passive prediction?",
+    "answer": "Implicit (auto) prediction is `map.set_auto_predict(1)`: the register predicts its own `read()`/`write()` as it completes (IEEE 1800.2-2020 §18.2.5.2). Explicit prediction is a `uvm_reg_predictor` fed by the bus monitor: it predicts every observed transfer (§19.3). Passive is an explicit predictor on a bus the register model never drives."
+  },
+  {
+    "id": "auvm4b-evi-2",
+    "question": "Which prediction is active in a new environment if you do nothing?",
+    "answer": "Neither. `uvm_reg_map::new()` sets auto-predict to 0 and no predictor exists until you build one, so frontdoor accesses leave the mirror alone. In uvm-core 2020.3.1 even a frontdoor `mirror()` then does not update the mirror."
+  },
+  {
+    "id": "auvm4b-evi-3",
+    "question": "What does auto-predict put in the mirror, and what can it never see?",
+    "answer": "For a write, the value the test asked to write, through each field's policy; for a read, the data `bus2reg()` returned. It never sees accesses the register model did not start: firmware, DMA, other agents or raw bus sequences."
+  },
+  {
+    "id": "auvm4b-evi-4",
+    "question": "Which four connect_phase lines wire an explicit predictor?",
+    "answer": "`predictor.map = ral.default_map;` (the root map), `predictor.adapter = adapter;`, `agent.mon.ap.connect(predictor.bus_in);`, and leaving `set_auto_predict(0)` (the default). Active buses also need `ral.default_map.set_sequencer(agent.sqr, adapter);`."
+  },
+  {
+    "id": "auvm4b-evi-5",
+    "question": "What happens if the predictor's connect(), adapter or map is missing?",
+    "answer": "No `connect()`: nothing is reported and the mirror never moves. No adapter: `UVM_FATAL [REG/WRITE/NULL] write: adapter handle is null` at the first observed transfer. No map: a null-handle error inside the predictor's `write()` at the first transfer."
+  },
+  {
+    "id": "auvm4b-evi-6",
+    "question": "Why does a predictor bound to a sub-map do nothing, and how do you see it?",
+    "answer": "In uvm-core the address table used by `get_reg_by_offset()` exists only in the root map, so every lookup on a sub-map fails. The miss is logged as `REG_PREDICT_NOT_FOR_ME` only at `UVM_FULL` verbosity. Bind `predictor.map` to the root map."
+  },
+  {
+    "id": "auvm4b-evi-7",
+    "question": "What does double prediction do, and why is it hard to spot?",
+    "answer": "With auto-predict on and a connected predictor, each register-model access is predicted twice. RW, W1C and W1S predictions give the same result twice, so they hide it; a W1T field (mirror XOR data) toggles back, so its mirror ends where it started while the DUT toggled once."
+  },
+  {
+    "id": "auvm4b-evi-8",
+    "question": "Is \"explicit prediction\" calling `predict()` after each write?",
+    "answer": "No. Explicit prediction is the `uvm_reg_predictor` component on the bus monitor. `predict()` is a direct prediction (`UVM_PREDICT_DIRECT` by default) that stores a value as is, with no access policy; use it only for changes no access reports, when the TB knows the exact value."
+  },
+  {
+    "id": "auvm4b-evi-9",
+    "question": "What does `set_check_on_read(1)` add to a passive predictor?",
+    "answer": "The predictor compares every observed read with the current mirror before predicting it, and reports a `RegModel` mismatch error (§18.2.5.3). The mirror is then updated from the read data. Volatile fields are left out of the compare, so hardware-driven fields must be volatile."
+  },
+  {
+    "id": "auvm4b-evi-10",
+    "question": "Which prediction mode sees a status bit that the hardware sets by itself?",
+    "answer": "None: the change makes no bus transfer, so the mirror is stale until a read, a `predict()` or a reset. Configure such fields `volatile = 1` (compare policy `UVM_NO_CHECK`) so checks skip them, and read or `predict()` them when you need the value."
+  },
+  {
+    "id": "auvm4b-evi-11",
+    "question": "What happens if `predict()` is called while the register is being accessed?",
+    "answer": "`uvm_reg::predict` warns and returns 0 without changing the mirror. In uvm-core 2020.3.1 the field-level `uvm_reg_field::predict` warns and returns 0 but still writes the mirror, although §18.5.5.17 says it must not. Wait until `is_busy()` is 0, then predict and check the return value."
+  },
+  {
+    "id": "auvm4b-evi-12",
+    "question": "After `poke()`, must you call `predict()` to keep the mirror right?",
+    "answer": "Not in uvm-core 2020.3.1: `poke()` and `peek()` call `do_predict()` themselves after the backdoor access. The monitor never sees them, so a predictor does not. IEEE 1800.2-2020 §18.4.4.11–§18.4.4.12 says they are \"affected by the auto-prediction configuration value\", so portable code checks `get_mirrored_value()`."
+  },
+  {
+    "id": "auvm4b-evi-13",
+    "question": "Why can a check right after `write()` fail with explicit prediction but pass a cycle later?",
+    "answer": "`write()` returns when the bus item ends (after `item_done()`), but the predictor updates the mirror when the monitor publishes. If the monitor publishes later, the check compares with the old mirror. Make the driver finish after the monitor publishes, or wait for the prediction on `reg_ap`."
+  },
+  {
+    "id": "auvm4b-evi-14",
+    "question": "How does `provides_responses` affect read prediction?",
+    "answer": "With `provides_responses = 0` the map calls `bus2reg()` on the request item; with 1 it waits for a separate response (§19.2.1.2.3). If the driver returns read data only in a separate response while the adapter says 0, `read()` returns stale data, and auto-predict copies it into the mirror."
+  },
+  {
+    "id": "auvm4b-evi-15",
+    "question": "Do the built-in register test sequences know how your prediction is wired, or which registers are unsafe?",
+    "answer": "Neither. They need you to exclude unsafe registers with `NO_REG_*` resources, and the register access test writes each register through the frontdoor and then compares a backdoor read with the mirror, so without a working prediction path it fails on every register. See Built-in RAL Sequences."
+  }
+]

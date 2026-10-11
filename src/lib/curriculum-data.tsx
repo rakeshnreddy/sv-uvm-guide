@@ -717,6 +717,7 @@ export const curriculumData: Module[] = [
         ],
         "track": "core",
         "prerequisites": [
+          "I-UVM-1A_Components",
           "I-UVM-1C_UVM_Phasing"
         ],
         "milestones": [
@@ -730,7 +731,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-2A: Component Roles and the Testbench Hierarchy",
             "slug": "index",
-            "description": "Understand the blueprint of a UVM environment—tests orchestrate, environments aggregate, agents wrap interface logic, monitors observe, and scoreboards verify."
+            "description": "Assign testbench work to the standard UVM roles, then write an agent, a monitor and an env that build the right topology in active and passive mode."
           }
         ],
         "track": "core",
@@ -750,7 +751,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-2B: TLM Connections and Analysis Fabric",
             "slug": "index",
-            "description": "Wire sequencers, drivers, monitors, and scoreboards using UVM's Transaction-Level Modeling (TLM) components."
+            "description": "Connect UVM components with ports, exports, imps and FIFOs, predict where calls block and who receives each transaction, and debug connection errors from the end-of-elaboration log."
           }
         ],
         "track": "core",
@@ -787,7 +788,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-3A: Basic UVM Sequences and Items",
             "slug": "index",
-            "description": "Model robust transaction items and author reusable UVM sequences that drive the sequencer ↔ driver handshake."
+            "description": "Write sequence items and sequences, run them from a test, and implement the driver side of the sequence–sequencer–driver handshake, including responses."
           }
         ],
         "track": "core",
@@ -833,9 +834,9 @@ export const curriculumData: Module[] = [
             "description": "Master virtual sequences, arbitration, layering, and driver-sequencer synchronization patterns."
           },
           {
-            "title": "The Sequencer-Driver Handshake | Advanced UVM Sequencing",
+            "title": "The Sequencer-Driver Handshake",
             "slug": "sequencer-driver-handshake",
-            "description": "Dissect the blocking protocol between UVM sequencers and drivers, from arbitration to item_done(), and learn how to instrument and debug the flow."
+            "description": "Debug sequencer-driver hangs from their log signatures, route responses with set_id_info(), and collect pipelined, out-of-order responses with use_response_handler() or get_response() by transaction_id."
           },
           {
             "title": "Sequence Arbitration and Priority | Advanced UVM Sequencing",
@@ -888,7 +889,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-4: UVM Policy Classes",
             "slug": "index",
-            "description": "Master the five utility classes — printer, comparer, packer, recorder, copier — that give you total control over how UVM objects present, compare, serialize, record, and clone themselves."
+            "description": "Predict what print, compare, copy and pack do to a UVM object, and customize them with field-macro flags, do_* hooks and policy knobs."
           }
         ],
         "track": "core",
@@ -907,7 +908,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-5: UVM Container Classes",
             "slug": "index",
-            "description": "Learn when uvm_pool and uvm_queue add value over native SystemVerilog data structures — and when plain SV is the simpler choice."
+            "description": "Choose between native SystemVerilog containers and uvm_pool/uvm_queue, predict their behaviour, and share named events and barriers between components without their traps."
           }
         ],
         "track": "core",
@@ -921,13 +922,13 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "UVM Recording Classes",
+        "title": "I-UVM-6: UVM Recording Classes",
         "slug": "I-UVM-6_UVM_Recording_Classes",
         "topics": [
           {
-            "title": "UVM Recording Classes",
+            "title": "I-UVM-6: UVM Recording Classes",
             "slug": "index",
-            "description": "Understand how transaction recording bridges the gap between object-oriented verification models and traditional waveform viewing tools."
+            "description": "Record UVM transactions into a transaction database so they appear next to the waveforms, predict when nothing (or the wrong values) will be recorded, and choose what to record in long regressions."
           }
         ],
         "track": "core",
@@ -1079,9 +1080,9 @@ export const curriculumData: Module[] = [
             "description": "Master adapters, predictors, and sophisticated debug workflows for robust UVM register environments."
           },
           {
-            "title": "Explicit vs. Implicit Prediction | Advanced UVM RAL",
+            "title": "Explicit vs. Implicit Prediction",
             "slug": "explicit-vs-implicit",
-            "description": "Choose the right prediction strategy so your RAL mirror tracks DUT state without redundant bus traffic."
+            "description": "Choose implicit, explicit or passive prediction for each bus, wire a uvm_reg_predictor without double prediction, predict when the register mirror goes stale, and debug it from the log."
           },
           {
             "title": "Frontdoor vs. Backdoor Access | Advanced UVM RAL",

@@ -1,32 +1,77 @@
 [
   {
     "id": "container-two-classes",
-    "question": "Name the two UVM container classes and their native SV equivalents.",
-    "answer": "uvm_pool#(KEY,T) wraps an associative array (T pool[KEY]); uvm_queue#(T) wraps a native queue (T q[$]). Both extend uvm_object, so they can be created and passed by handle."
+    "question": "Name the two UVM container classes and the native SystemVerilog containers they wrap.",
+    "answer": "`uvm_pool #(KEY,T)` wraps an associative array (`T pool[KEY]`, IEEE 1800.2-2020 §11.2) and `uvm_queue #(T)` wraps a queue (`T queue[$]`, §11.3). Both extend `uvm_object`, so they can be shared by handle, passed through `uvm_config_db` and created with `::type_id::create`."
   },
   {
     "id": "container-pool-singleton",
-    "question": "How does `uvm_pool` provide global access without passing handles?",
-    "answer": "Via the static method `get_global_pool()`, which returns a singleton instance. Any component can call `uvm_pool#(string, int)::get_global_pool()` to access the same pool."
+    "question": "What does `uvm_pool #(string,int)::get_global_pool()` return, and who else can see it?",
+    "answer": "The one global pool of that specialization, created on the first call (§11.2.2.2). Every piece of code that names `uvm_pool #(string,int)`, including third-party VIP, gets the same object, so equal keys collide. Prefer an instance passed through `uvm_config_db`."
   },
   {
     "id": "container-sv-queue-advantage",
-    "question": "What built-in array methods do native SV queues have that `uvm_queue` lacks?",
-    "answer": "`sort()`, `rsort()`, `find()`, `find_index()`, `unique()`, `min()`, `max()`, `sum()`, `product()`, and `reverse()`. These are SV language built-ins not available on `uvm_queue`."
+    "question": "What does a native queue give you that `uvm_queue` does not, and is `uvm_queue` faster?",
+    "answer": "Native queues have `foreach` and the array methods (`sort`, `rsort`, `reverse`, `find*`, `unique`, `min`, `max`, `sum`, `product`). `uvm_queue` has none of them, and it is not faster: it is the same native queue plus a method call per access."
   },
   {
     "id": "container-when-uvm-queue",
-    "question": "When should you use uvm_queue instead of a native SV queue?",
-    "answer": "When you need the queue as a uvm_object you can pass by handle (for example through config_db or a shared pool). Don't pick it for policy support: neither uvm_queue nor uvm_pool implements compare. Note that uvm_pool::get() inserts a default entry for a missing key."
+    "question": "When is `uvm_queue` worth using instead of `T q[$]`?",
+    "answer": "Only when several components must share one queue object by handle, for example an instance the test creates and passes through `uvm_config_db`, or when it must be created through the factory. It adds no compare, no deep copy and no item printing."
   },
   {
     "id": "container-pool-antipattern",
-    "question": "Why is `uvm_pool` a poor choice for passing transactions between components?",
-    "answer": "Transactions should flow through TLM analysis ports, which provide ordering, fan-out, and decoupling. `uvm_pool` is unordered shared state — it masks coupling and prevents proper scoreboard architecture."
+    "question": "Why is `uvm_pool` a poor way to pass transactions between components?",
+    "answer": "A pool is keyed shared state, with no arrival order and no notification when an entry is added. Transactions belong on analysis ports and other TLM connections, which give ordering, fan-out and a new object per transaction."
   },
   {
     "id": "container-default-rule",
-    "question": "What is the recommended default container choice for most testbench needs?",
-    "answer": "Start with native SV structures (associative arrays and queues). Only switch to `uvm_pool` or `uvm_queue` when you specifically need global singleton access, factory integration, or policy-class support."
+    "question": "What is the default container choice in a testbench, and when do you switch to a UVM container?",
+    "answer": "Start with native associative arrays and queues. Use `uvm_pool`/`uvm_queue` only when one container must be shared by handle (`uvm_config_db`, or the global singleton of its specialization) or created through the factory, and `uvm_event_pool`/`uvm_barrier_pool` for named synchronization objects. Neither container compares its contents."
+  },
+  {
+    "id": "i-uvm-5-1",
+    "question": "`err_pool` (a `uvm_pool #(string,int)`) holds only \"crc\". What does `n = err_pool.get(\"timeout\")` do?",
+    "answer": "It inserts \"timeout\" with the default value 0 and returns 0, silently, so `num()` becomes 2 (§11.2.2.4). A native associative array read adds nothing. Call `exists()` first when absence matters."
+  },
+  {
+    "id": "i-uvm-5-2",
+    "question": "Why does `uvm_pool #(string,uvm_event)::get_global(\"go\").trigger()` stop with a null-object access while `uvm_event_pool::get_global(\"go\").trigger()` works?",
+    "answer": "A plain pool's `get()` stores and returns the default value of a class handle, `null`. The event and barrier pools override `get()` to create the object when the key is missing (§10.4.1.2.4, §10.4.2.2.4)."
+  },
+  {
+    "id": "i-uvm-5-3",
+    "question": "A `uvm_queue #(int)` holds `'{5, 9}`. What does `q.insert(q.size(), 7)` do?",
+    "answer": "Nothing: an index equal to `size()` is rejected with a `QUEUEINS` warning and the queue stays `'{5, 9}` (§11.3.2.6). A native queue would append. Use `push_back(7)`."
+  },
+  {
+    "id": "i-uvm-5-4",
+    "question": "Two `uvm_queue #(int)` objects hold `'{5, 9}` and `'{1}`. What does `q1.compare(q2)` return?",
+    "answer": "1. Neither container registers fields or overrides `do_compare`, so nothing about the contents is compared (uvm-core 2020.3.1). Compare the items yourself with `size()` and `get(i)`."
+  },
+  {
+    "id": "i-uvm-5-5",
+    "question": "How do you log the contents of a `uvm_queue`, and why not with `print()`?",
+    "answer": "Use `convert2string()`, which returns `$sformatf(\"%p\", queue)`, for example `'{5, 9}`. `uvm_queue` has no `do_print`, so `print()` shows only a header. A plain `uvm_pool` prints its values without the keys in uvm-core, so walk it with `first`/`next`."
+  },
+  {
+    "id": "i-uvm-5-6",
+    "question": "What is the threshold of a barrier from `uvm_barrier_pool::get_global(\"x\")`, and what follows?",
+    "answer": "0, because the pool builds it with `new(key)` and the default threshold is 0 (§10.3.2.1). Every `wait_for()` then returns at once. Call `set_threshold(n)` (§10.3.2.6), for example in `build_phase`, before the first waiter can arrive."
+  },
+  {
+    "id": "i-uvm-5-7",
+    "question": "Agent A triggers the pooled event \"cfg_done\" at 100 ns; agent B starts waiting at 200 ns. Which wait should B use?",
+    "answer": "`wait_on()`, which returns at once while the event is on (§10.1.1.2.2). `wait_trigger()` waits for the next `trigger()` (§10.1.1.2.4), so B would hang until the UVM timeout."
+  },
+  {
+    "id": "i-uvm-5-8",
+    "question": "After `q2.copy(q1)` on a `uvm_queue #(my_item)`, is `q2` independent of `q1`?",
+    "answer": "Only the list is. uvm-core's `do_copy` is `queue = p.queue`, so both queues hold the same `my_item` handles: changing `q2.get(0)` changes `q1.get(0)`. For an independent copy, `clone()` each item into a new queue."
+  },
+  {
+    "id": "i-uvm-5-9",
+    "question": "Why is `wait_until_not_empty(); x = q.pop_front();` unsafe with two consumers, and what do you use instead?",
+    "answer": "`wait_until_not_empty()` waits but does not remove the item (§11.3.2.12), so both consumers can wake for one item and the second `pop_front()` returns the default (`null` for a class). Use a mailbox or `uvm_tlm_fifo`, whose `get` waits and removes in one step."
   }
 ]
