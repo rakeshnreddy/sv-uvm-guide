@@ -259,7 +259,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F4A: Structuring Designs with Modules and Packages",
             "slug": "index",
-            "description": "Wire up designs and verification harnesses with modules and packages that keep signal intent crystal clear."
+            "description": "Structure designs and testbenches with parameterized modules and shared packages, and predict how ports, connections, imports and compile order behave."
           }
         ],
         "track": "core",
@@ -278,7 +278,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F4B: Bundling Signals with Interfaces and Modports",
             "slug": "index",
-            "description": "Learn how to use SystemVerilog interfaces and modports to simplify connections and create reusable verification components."
+            "description": "Bundle DUT signals into an interface with modports and tasks, reach it from class-based code through a virtual interface, and debug direction, null-handle and handshake bugs."
           }
         ],
         "track": "core",
@@ -322,27 +322,27 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-1: Object-Oriented Programming for Verification",
             "slug": "index",
-            "description": "Build reusable, polymorphic verification components with SystemVerilog classes, inheritance, and virtual methods."
+            "description": "Predict how handles, new, shallow copies and static members behave, write classes with encapsulation, inheritance and virtual methods, and debug the handle bugs that corrupt scoreboards and crash testbenches."
           },
           {
-            "title": "Constructors, 'this', and 'super' | Advanced SystemVerilog for Verification",
+            "title": "Constructors, this and super",
             "slug": "constructors",
-            "description": "How to create objects with new and reference parent and current class members using this and super."
+            "description": "Predict every property value after a class hierarchy is constructed, and write constructors that chain correctly with super.new, use this to resolve name clashes, set instance constants once and avoid virtual calls on half-built objects."
           },
           {
-            "title": "Polymorphism Pitfalls and Type Casting | SystemVerilog OOP",
+            "title": "Polymorphism Pitfalls and Type Casting",
             "slug": "polymorphism-pitfalls",
-            "description": "Learn how virtual method resolution works, upcasting vs. downcasting, and how to safely use $cast."
+            "description": "Predict which method body a base-class handle runs, downcast safely with $cast, and debug the overriding traps that silently break polymorphic testbench code."
           },
           {
-            "title": "Copying and Cloning Objects | SystemVerilog OOP",
+            "title": "Copying and Cloning Objects",
             "slug": "copying-and-cloning",
-            "description": "Understand shallow vs. deep copy in SystemVerilog, and how to implement robust copy() and clone() methods."
+            "description": "Predict exactly what =, new h and a deep copy() share, write a null-safe deep copy() and a polymorphic clone() that keeps an object's real class, and debug the scoreboard bugs a missing copy causes."
           },
           {
-            "title": "Parameterized Classes and Abstract Classes | Advanced SystemVerilog for Verification",
+            "title": "Parameterized Classes and Abstract Classes",
             "slug": "parameterized-classes",
-            "description": "Use generics and abstract classes to build reusable components while avoiding common pitfalls."
+            "description": "Write parameterized classes, predict which declarations share a type and its static members, and build abstract base classes that every concrete subclass must complete."
           }
         ],
         "track": "core",
@@ -363,12 +363,12 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-2A: Constrained Randomization Fundamentals",
             "slug": "index",
-            "description": "Guide SystemVerilog's random stimulus with constraints, distributions, and inline tweaks to uncover corner-case bugs fast."
+            "description": "Describe legal stimulus with rand and randc fields and constraint blocks, predict how dist weights and solve…before change the odds and when a soft default is dropped, and catch randomize() failures."
           },
           {
-            "title": "Constraint Blocks, soft, and solve...before | Advanced SystemVerilog for Verification",
+            "title": "Constraint Blocks, soft, and solve…before",
             "slug": "constraint-blocks",
-            "description": "Control dependencies and defaults using constraint blocks, soft values, and solve-before ordering."
+            "description": "Organize constraints in named and external blocks, bound random array sizes, and predict which soft constraint wins and what solve…before changes."
           }
         ],
         "track": "core",
@@ -387,27 +387,27 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-2B: Advanced Constrained Randomization",
             "slug": "index",
-            "description": "Master advanced solver techniques, multi-level constraints, implication, and solver debug triage."
+            "description": "Write conditional, array and inherited constraints, control randomization at run time, and debug randomize() calls that fail or will not reproduce."
           },
           {
-            "title": "Advanced Constraints: implication and iteration | Advanced SystemVerilog for Verification",
+            "title": "Conditional and Array Constraints",
             "slug": "advanced-constraints",
-            "description": "Express conditional and iterative rules with implication and foreach constructs."
+            "description": "Write implication, if–else, foreach, size, sum() with, unique, guard and function constraints, and predict their legal values, their odds, and when they make randomize() fail."
           },
           {
-            "title": "Controlling Randomization: pre_randomize and post_randomize | Advanced SystemVerilog for Verification",
+            "title": "Controlling Randomization: Modes, Hooks, Overrides and Inline Control",
             "slug": "controlling-randomization",
-            "description": "Hook solver callbacks with pre_randomize and post_randomize to prepare and finalize objects."
+            "description": "Switch random variables and constraint blocks on and off, use pre_randomize() and post_randomize() for the right jobs, replace constraints in derived classes, and choose one call's random variables or check an object with randomize(null)."
           },
           {
-            "title": "Procedural Randomization: randcase, randsequence, std::randomize | Advanced SystemVerilog for Verification",
+            "title": "Procedural Randomization, Seeds and Random Stability",
             "slug": "randomization-methods",
-            "description": "Learn how to randomize variables outside of classes and control execution flow using procedural randomization."
+            "description": "Choose and write std::randomize(), randcase and randsequence for procedural stimulus, predict which code edits change a seed's results, and reproduce a failing run from its seed."
           },
           {
-            "title": "Solver Debug and Failure Triage | Advanced SystemVerilog for Verification",
+            "title": "Solver Debug and Failure Triage",
             "slug": "solver-debug",
-            "description": "Learn how to approach constraint solver failures, debug conflicting constraints, and use built-in simulator tools."
+            "description": "Triage a failing or silently ineffective randomize() call: isolate the minimal conflicting set, check signedness, widths, overrides and implicit solve orders, make failures loud in SystemVerilog and UVM, and reproduce them from a seed."
           }
         ],
         "track": "core",
@@ -426,12 +426,12 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-3A: Functional Coverage Fundamentals",
             "slug": "index",
-            "description": "Model verification intent with covergroups, coverpoints, and crosses to prove you've exercised every critical scenario."
+            "description": "Turn verification-plan rows into covergroups whose bins, crosses and sampling you can predict, and say exactly which sampled values count toward the percentage."
           },
           {
-            "title": "Coverage Options and Sampling | Advanced UVM Techniques & Strategy",
+            "title": "Coverage Options and Sampling",
             "slug": "coverage-options",
-            "description": "Learn how covergroup options influence when and how data is sampled."
+            "description": "Choose when a covergroup samples and configure its options at the right level, and predict the counts and percentages each choice produces."
           }
         ],
         "track": "core",
@@ -450,22 +450,22 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-3B: Advanced Functional Coverage",
             "slug": "index",
-            "description": "Master coverage to V-Plan linkage, API querying, and coverage-driven constrained random loops."
+            "description": "Close functional coverage against a verification plan: pair every plan row with coverage and a check, read coverage while the test runs, classify every hole, and steer stimulus to closure within a budget."
           },
           {
-            "title": "Linking Coverage to the V-Plan | Advanced UVM Techniques & Strategy",
+            "title": "Linking Coverage to the Verification Plan",
             "slug": "linking-coverage",
-            "description": "Tie functional coverage points back to verification plan items."
+            "description": "Map each verification-plan row to the coverage items and checks that close it, with plan IDs and instance names that survive into the coverage report."
           },
           {
-            "title": "Coverage APIs and Runtime Querying | Advanced SystemVerilog for Verification",
+            "title": "Coverage APIs and Run-Time Control",
             "slug": "coverage-apis",
-            "description": "Learn how to query coverage data at runtime using SystemVerilog APIs."
+            "description": "Predict type and instance coverage, query it while the test runs, and start, stop and save coverage from the testbench without ending the run before its checks finish."
           },
           {
-            "title": "The Coverage Closure Loop | Advanced SystemVerilog for Verification",
+            "title": "The Coverage Closure Loop",
             "slug": "closure-workflow",
-            "description": "Learn the methodology of identifying coverage holes, adjusting generators, and closing coverage."
+            "description": "Classify every coverage hole, choose the matching fix, and close a coverage plan within a seed budget without hiding scenarios."
           }
         ],
         "track": "core",
@@ -483,12 +483,12 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-4A: SVA Fundamentals",
             "slug": "index",
-            "description": "Specify temporal intent with SystemVerilog Assertions so your verification environment automatically checks protocol rules."
+            "description": "Write and debug immediate and concurrent assertions whose outcome you can predict cycle by cycle from sampled values."
           },
           {
-            "title": "Immediate vs. Concurrent Assertions | Advanced SystemVerilog for Verification",
+            "title": "Immediate, Deferred and Concurrent Assertions",
             "slug": "immediate-vs-concurrent",
-            "description": "Compare procedural checks with temporal properties through hands-on examples."
+            "description": "Choose between simple immediate, deferred (assert #0, assert final) and concurrent assertions, predict in which scheduling region each one checks and reports, and write action blocks that report the values that were actually checked."
           }
         ],
         "track": "core",
@@ -509,17 +509,17 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-4B: Advanced Temporal Logic",
             "slug": "index",
-            "description": "Master multi-clock assertions, local variables, and binding checkers into your design."
+            "description": "Specify variable-latency, interval and data-integrity properties with repetition, sequence composition, local variables and multiple clocks."
           },
           {
-            "title": "Local Variables in Sequences | Advanced Temporal Logic",
+            "title": "Local Variables in Sequences",
             "slug": "local-variables",
-            "description": "Capture and reuse values within sequences to create robust properties."
+            "description": "Write data-integrity properties that capture a value per attempt and check it later, including overlapping and variable-latency transfers, and debug a check that pairs the wrong data."
           },
           {
-            "title": "Multi-Clocking and disable-iff | Advanced Temporal Logic",
+            "title": "Multiclock Assertions",
             "slug": "multi-clocking",
-            "description": "Coordinate assertions across clock domains and mask reset behavior with disable iff."
+            "description": "Write assertions that start on one clock and check on another, predict which tick of the second clock each operator checks, and keep a crossing check correct when either clock domain resets."
           }
         ],
         "track": "core",
@@ -537,7 +537,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-4C: SystemVerilog Checkers & Bind",
             "slug": "index",
-            "description": "Use IEEE Clause 17 checkers and the bind directive to attach assertions to your RTL without touching the source code."
+            "description": "Package assertions and coverage into reusable checkers and attach them to RTL without editing it, using bind."
           }
         ],
         "track": "core",

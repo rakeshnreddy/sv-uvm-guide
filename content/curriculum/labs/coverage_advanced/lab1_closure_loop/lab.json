@@ -1,46 +1,64 @@
 {
   "id": "coverage-advanced-1",
-  "version": "1",
-  "title": "Advanced Coverage",
-  "description": "Implement complex covergroups and analyze coverage holes.",
+  "version": "2",
+  "title": "Coverage Closure Loop: ALU",
+  "description": "Read a per-plan-row coverage report, classify each hole, and change only the stimulus so the ALU plan closes on three seeds of 500 transactions, with every check passing and no forbidden input.",
   "owningModule": "I-SV-3B",
   "routeSlug": "coverage-advanced-1",
   "status": "available",
   "labPrerequisites": [],
-  "modulePrerequisites": [],
+  "modulePrerequisites": ["I-SV-3A", "I-SV-2A"],
   "steps": [
     {
       "id": "1",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 1: Run and Analyze",
-      "instructions": "Run the simulation and note the score (about 70%). Open `alu_cov_mon.sv`: the score is the average of `cp_op` (7 bins), `cp_a` and `cp_b` (2 bins each; the `others` default bins never count) and `cross_edge_op` (7 operations x {zero, max} = 14 bins; default bins are excluded from crosses).",
+      "title": "Step 1: Run three seeds and read the report",
+      "instructions": "Compile alu_pkg.sv, alu.sv and tb_top.sv (top level tb_top) and run with +SEED=1, +SEED=2 and +SEED=3. Copy each run's five COV lines and its COV_SUMMARY line into a table with one row per plan row (ALU-1 to ALU-5). Expect a total near 61% and LAB RESULT: OPEN. Do not change anything yet.",
       "starterCode": ""
     },
     {
       "id": "2",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 2: Add Missing Operations",
-      "instructions": "The constraint in `testbench.sv` omits `DIV`. Add it to the `inside` list. `cp_op` reaches 100%, but the score only rises to about 74%: the cross still needs every operation with `a == 0` and with `a == 8'hFF`.",
+      "title": "Step 2: Classify every short item",
+      "instructions": "For each item below 100%, decide its class: forbidden, unreachable, under-stimulated or unobserved. Read the constraint block of alu_txn in alu_pkg.sv before deciding. For one cell of x_op_a, compute the chance that 500 transactions hit it with P = 1 - (1 - p)^N. Write the class and your evidence next to each plan row.",
       "starterCode": ""
     },
     {
       "id": "3",
+      "version": "2",
+      "completion": "self_attested",
+      "title": "Step 3: Fix the generator bug",
+      "instructions": "Make the smallest constraint change that lets every operation be generated. Predict the new total (about 64%), then rerun seeds 1 to 3. Some seeds may now report an ALU-5 error: note it and continue to step 4.",
+      "starterCode": ""
+    },
+    {
+      "id": "4",
+      "version": "2",
+      "completion": "self_attested",
+      "title": "Step 4: Steer the rare cells",
+      "instructions": "Add dist constraints that give BOTH edge values (8'h00 and 8'hFF) of BOTH inputs real weight, for example a dist {8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] :/ 2};. Predict the per-cell probability of x_op_a and x_op_b before you rerun seeds 1 to 3. Weighting only 8'hFF, or only a, leaves cells rare and stalls well short of 100% (about 82% with only a steered).",
+      "starterCode": ""
+    },
+    {
+      "id": "5",
+      "version": "2",
+      "completion": "self_attested",
+      "title": "Step 5: Handle the forbidden input that steering exposed",
+      "instructions": "Steering b toward 0 makes DIV with b == 0 frequent, so ILLEGAL is no longer 0 and the simulator reports illegal-bin errors. The spec forbids this input (ALU-5). Classify it and fix it in the stimulus, not in the coverage model: ignore_bins would only hide a forbidden scenario. Rerun seeds 1 to 3 until each prints LAB RESULT: CLOSED with FAIL=0 and ILLEGAL=0.",
+      "starterCode": ""
+    },
+    {
+      "id": "6",
       "version": "1",
       "completion": "self_attested",
-      "title": "Step 3: Weight Edge Cases",
-      "instructions": "Uniform inputs hit each edge value about once in 256 samples. Add a `dist` for `a` and `b` that weights BOTH `8'h00` and `8'hFF`, e.g. `a dist { 8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] :/ 2 };`. Each cross bin then has probability 1/28 per sample, and 500 samples close coverage at 100% (weighting only `8'hFF` stalls near 80%).",
+      "title": "Step 6 (optional): Make a hole unobserved on purpose",
+      "instructions": "In tb_top.sv, move cov.write(t); into the n_fail++ branch so the collector is fed only on failures. Rerun one seed: every check passes, yet every COV line drops to 0/N. The scenarios ran and only the sampling is wrong: that is an unobserved hole, fixed in the collector, never in the stimulus. Move the call back afterwards.",
       "starterCode": ""
     }
   ],
   "assets": [
-    {
-      "path": "alu_cov_mon.sv",
-      "role": "starter",
-      "language": "systemverilog",
-      "editable": true
-    },
     {
       "path": "README.md",
       "role": "guide",
@@ -48,10 +66,28 @@
       "editable": false
     },
     {
-      "path": "testbench.sv",
+      "path": "alu_pkg.sv",
       "role": "starter",
       "language": "systemverilog",
       "editable": true
+    },
+    {
+      "path": "alu.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": false
+    },
+    {
+      "path": "tb_top.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": true
+    },
+    {
+      "path": "solution/alu_closure_solution.sv",
+      "role": "solution",
+      "language": "systemverilog",
+      "editable": false
     }
   ]
 }

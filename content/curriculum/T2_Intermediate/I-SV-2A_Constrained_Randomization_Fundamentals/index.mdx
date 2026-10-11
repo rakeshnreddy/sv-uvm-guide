@@ -1,118 +1,123 @@
 ---
 title: "I-SV-2A: Constrained Randomization Fundamentals"
-description: "Guide SystemVerilog's random stimulus with constraints, distributions, and inline tweaks to uncover corner-case bugs fast."
+description: "Describe legal stimulus with rand and randc fields and constraint blocks, predict how dist weights and solve…before change the odds and when a soft default is dropped, and catch randomize() failures."
 flashcards: "I-SV-2A_Constrained_Randomization_Fundamentals"
 conceptLinking: false
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "Accellera UVM reference implementation"
+    type: "implementation"
+    identifier: "uvm-core 2020.3.1"
 ---
 
-import { InteractiveCode, Quiz, InterviewQuestionPlayground } from '@/components/ui';
-import ConstraintSolverVisualizer from '@/components/curriculum/interactives/ConstraintSolverVisualizer';
-
-
 ## Quick Take
-- **What it is:** Constrained randomization lets you describe legal stimulus space with constraints so the solver generates thousands of intelligent variations automatically.
-- **Why it matters:** Directed tests miss combinations; constrained random exploration paired with coverage exposes subtle corner cases and shrinks bug escape risk.
-- **The Analogy:** It’s a programmable dice tower—tell it “only roll sums of 7 where die1 > die2,” and it feeds you every valid combo, not noise.
 
-> **Tip:** Always pair constraints with coverage goals—random stimulus without measurement is aimless wandering.
-> *SystemVerilog Constrained Randomization is formally defined in **IEEE 1800-2023, Clause 18**.*
+- **What it is:** A **random variable** is a class property declared `rand` or `randc`. Every class has a built-in method, `randomize()`, that gives all of an object's random variables new values in one call. **Constraints** are Boolean expressions over those variables, grouped into named **constraint blocks**. The simulator's **constraint solver**, the engine that searches for values making every constraint true, returns one such combination on each call (IEEE 1800-2023 Clause 18).
+- **Why it matters:** A directed test checks only the cases someone thought of. A constrained-random class describes every legal transaction once, and each call picks a new one, so thousands of regression runs reach combinations nobody listed. Every UVM sequence item you write from milestone M2 on is randomized this way, and milestone M4 shapes stimulus with the weights taught here.
+- **The Analogy:** Lay a stencil over a grid that holds every possible combination of values; the constraints are the stencil. Each `randomize()` throws one dart, which lands in an open hole, every hole equally likely. `dist` weights and `solve…before` change where darts tend to land, and a `dist` list also closes the holes it does not name. *Where it breaks:* a real solver never lists the holes one by one; a `randc` variable remembers its earlier darts; and a `soft` constraint is tape over some holes that is peeled off only when it would leave no hole open.
+
+**You will be able to:**
+1. **Write** a transaction class with `rand` and `randc` fields and named constraint blocks that use `inside` ranges, alignment, legal-value sets and a bounded array size.
+2. **Predict** how often each value appears when constraints couple variables, under `dist` (`:=` versus `:/`) and under `solve…before`, and **explain** why ordering and nonzero weights never change which combinations are legal.
+3. **Predict** which values a `randc` variable can return next, for one object and for two objects.
+4. **Write** `soft` defaults and inline `randomize() with {…}` constraints that use `local::`, and **predict** when a soft constraint is dropped.
+5. **Debug** a failing or silently ineffective `randomize()` call: check the return value, state what the object holds after a failure, and **justify** why `void'(obj.randomize())` and `assert(obj.randomize())` are unsafe.
+
+<BeforeYouStart />
+
+This module has two pages: this one (the core) and [Constraint Blocks, soft, and solve…before](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks), which goes deeper into external constraint blocks, random array sizes, soft priorities and when to order variables. You also need dynamic arrays and `size()` from [F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index) and enums from [F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums).
 
 ## Build Your Mental Model
-### Smart Stimulus Blueprint
-<div className="glass-card glow-border my-8 px-6 py-8">
-  <Image
-    src="/visuals/randomization-blueprint.svg"
-    alt="Diagram showing constraints feeding the random solver and producing legal transactions"
-    width={720}
-    height={360}
-    sizes="(min-width: 1024px) 720px, 100vw"
-    className="w-full"
-  />
-</div>
 
-### Random Variables & Constraint Blocks
-<InteractiveCode>
+**How to read this lesson.** The core path is the first four sections: a first random class, the solver's picture of the problem, `randc`, and constraint blocks with their patterns. Then come the three tools that shape the odds (`dist`, `solve…before`, `soft`), inline constraints with `local::`, and what happens when `randomize()` fails. Make It Work assembles everything into one runnable bench. Push Further holds the expert corner cases.
+
+### Your first random class
+
+Start from a directed test. To send a packet of length 8 you write `p.len = 8;`, and you get exactly that case. To test every legal length you would write one line per case. Constrained randomization turns this around: you state the **rule** once, and `randomize()` picks a new legal value on every call.
+
 ```systemverilog
-class Packet;
-  rand bit        is_read;
-  rand bit [7:0]  length;
-  rand bit [3:0]  opcode;
-  rand byte       payload[];
+// compile
+module tb_top;
+  class packet;
+    rand bit [3:0] opcode;                    // no constraint: any of 0..15
+    rand bit [7:0] len;
+    constraint c_len { len inside {[1:16]}; } // only lengths 1..16 are legal
+  endclass
 
-  // Hard constraints define legal space
-  constraint legal_length { length inside {[8:16], [64:96]}; }
-  constraint payload_size { payload.size() == length; }
-
-  // Distribution biases interesting cases
-  constraint opcode_dist {
-    opcode dist { 4'h0 := 10, [4'h1:4'h3] :/ 70, [4'h8:4'hF] :/ 20 };
-  }
-
-  // Relational constraint
-  constraint read_defaults { if (is_read) length == 8; }
-
-  function void post_randomize();
-    $display("Packet(opcode=%0h len=%0d is_read=%0b)", opcode, length, is_read);
-  endfunction
-endclass
-
-program demo;
   initial begin
-    Packet pkt = new();
+    packet p;
+    p = new();
     repeat (3) begin
-      if (!pkt.randomize())
-        $fatal(1, "Randomization failed");
+      // randomize() returns 1 on success and 0 on failure: always check it
+      if (!p.randomize()) $fatal(1, "RAND: randomize() failed");
+      $display("opcode=%0d len=%0d", p.opcode, p.len);
     end
-    // Inline constraint for targeted scenario
-    void'(pkt.randomize() with { opcode == 4'hF; length == 16; });
+    $finish;
   end
-endprogram
+endmodule
 ```
-</InteractiveCode>
 
-### Reading `dist` weights
+**Expected output** (illustrative, not from a simulator run; the values change with the seed and the simulator):
 
-`opcode_dist` does two jobs (IEEE 1800-2023 §18.5.3). It **restricts** `opcode` to the listed values, and it **weights** them.
+```text
+opcode=11 len=3
+opcode=2 len=16
+opcode=7 len=9
+```
 
-- `:=` gives the weight to *every value* of a range. `[4'h1:4'h3] := 70` would weigh 3 × 70 = 210.
-- `:/` gives the weight to the *range as a whole*. `[4'h1:4'h3] :/ 70` weighs 70 in total, about 23.3 per value.
-- Weights are ratios. Divide by the total weight, here 10 + 70 + 20 = 100.
+Read the class line by line:
 
-So `opcode` is `0` on 10% of calls, each of `1`–`3` on about 23.3%, and each of `8`–`F` on 2.5%. Values `4`–`7` are not listed, so they **never** occur: `dist` is also a membership constraint. Nonzero weights never make `randomize()` fail, but the membership part can.
+- **`rand`** marks a random variable. With no constraint, its values are uniformly distributed over its whole range: `opcode` is each of 0..15 with probability 1/16 (§18.4.1).
+- **`constraint c_len { … }`** is a **constraint block**: a named class member, like a method, whose names must be unique within the class (§18.5). All enabled blocks hold at the same time; for hard constraints, their order in the class does not matter (soft constraints are ranked by order, §18.5.13.1).
+- **`inside`** is the **set membership** operator (§11.4.13). `len inside {[1:16]}` is true when `len` is in the inclusive range 1 to 16. The set can mix single values and ranges, for example `{0, [4:7], 12}`. Inside a constraint, every member of the set is equally likely (§18.5.3). [F2A Operators](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions#set-membership-inside-and-case-inside) teaches `inside` outside constraints. Two traps: in `[lo:hi]` a `$` stands for the lowest or highest value of the type, and a reversed range such as `[16:8]` is **empty**, so `len inside {[16:8]}` can never hold and `randomize()` fails.
+- **`randomize()`** is a built-in virtual function that returns an `int`: 1 when every random variable got a legal value, 0 otherwise (§18.6.1). The values stay in the object until the next *successful* call.
 
-### See the solution space
+Three rules from §18.3 that juniors trip over:
 
-Picture every combination of the random variables as a grid. Constraints cross out cells, then `randomize()` picks **one legal cell, uniformly** (§18.5.9). It does not pick each variable on its own. Before each reveal, commit to a number for `P(x == 0)`.
+- Constraints are **2-state** only. `x` and `z` values and the operators `===` and `!==` are illegal in a constraint.
+- A `rand` enum variable only ever receives the enum's named values. (An enum *member of a rand packed struct* is the exception; see [F2A structs](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums).)
+- If a solution exists, the solver must find it. A failure means the constraints have no solution, with the exceptions listed under [When randomize() fails](#when-randomize-fails).
 
-Try the scenarios in order:
+A constraint can also read variables that are **not** random, such as an ordinary class property holding a configuration knob, or a variable of the caller. These are **state variables**: the solver uses their current value as a constant and never changes them (§18.5.8, step c).
 
-1. **Coupled variables** with `c_sum` on. `x == 0` pairs with 8 legal `y` values, while `x == 7` pairs with only one. Predict, then switch on `c_order`: the legal cells stay the same and only the odds change.
-2. **Implication.** `(x == 0) -> (y == 0)` is the Boolean `!(x == 0) || (y == 0)`. Switch on `c_hi` and watch the right-hand side rule out `x == 0`.
-3. **dist := vs :/.** Flip the operator, then add `c_big` and see a `dist` membership conflict.
-4. **soft priority.** A lone `soft` constraint holds on 100% of calls, not "usually".
-5. **Debug a failure.** Find the smallest set of constraints that conflict. Is `c_odd` guilty?
+**The two mistakes everyone makes first:** not checking the return value (see [When randomize() fails](#when-randomize-fails)), and assuming each random variable is uniform on its own. The next section shows why the second is wrong.
 
-Then run 1,000 calls and compare the sampled bars with the exact ones. A satisfiable problem never fails; the sample only wobbles around the exact value.
+### The solver picks one legal combination
 
-<ConstraintSolverHeatmapVisualizer />
+The solver does not choose `opcode`, then `len`, then the next field. It looks at the **solution space**: every combination of values of all the random variables at once. Each constraint crosses out the combinations that break it. With no `dist`, `solve…before` or `randc`, `randomize()` then picks one of the remaining **legal combinations**, every one equally likely (§18.5.9).
 
-### Step through the solver's view
+That has a consequence you can predict. The stepper below works on two 2-bit variables, `A` and `B`, with `c_sum: A + B < 4` and `c_ne: A != B`.
 
-The stepper shows the same idea on a 4 × 4 space. In step 2, notice that a cell disappears if it breaks *any* constraint: the solver checks all constraints together, not one after another.
+**Predict before step 3:** `A` has four possible values. How likely is `A == 0`? Write down a number, then step through.
 
 <ConstraintSolverVisualizer />
 
+**What it showed.** Step 2 crosses out every pair that breaks *any* constraint: the solver checks them together, not one after another. Eight pairs survive. `A = 0` owns three of them, (0, 1), (0, 2) and (0, 3), while `A = 3` owns only (3, 0). So P(A = 0) = 3/8, not 1/4. A value that fits with more partners is picked more often. The interview question under the stepper uses `->`, the **implication** operator: `(A == 0) -> (B == 1)` means "if `A` is 0, `B` must be 1". [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) teaches it in depth. The stepper's **Contradiction** scenario shows a failure; you will use it in [When randomize() fails](#when-randomize-fails).
+
+Now the same idea on a bigger grid, two 3-bit variables `x` and `y`. Before each reveal, commit to a number for P(x == 0). Work through the scenarios in order:
+
+1. **Coupled variables**, with `c_sum: x + y < 8` on. `x == 0` pairs with 8 legal `y` values, `x == 7` with only one. Predict, then switch on `c_order` (`solve x before y`): the legal cells stay the same and only the odds change.
+2. **dist := vs :/.** Flip the operator, then add `c_big` and see a `dist` membership conflict.
+3. **soft priority.** A lone `soft` constraint holds on every call, not "usually".
+4. **Debug a failure.** Find the smallest set of constraints that conflict. Is `c_odd` guilty? The `rand_mode(0)` toggle switches `y` off as a random variable, so the solver treats its current value, 4, as a state variable (I-SV-2B teaches `rand_mode`).
+
+Then run 1,000 calls and compare the sampled bars with the exact ones. When the constraints have a solution, the sample only wobbles around the exact value; it never fails by bad luck.
+
+<ConstraintSolverHeatmapVisualizer scenarios={["coupling", "dist", "soft", "debug"]} />
+
 <VisualRecap
   title="Constraints draw the set; ordering and weights set the odds"
-  rule="randomize() returns one combination that satisfies every enabled hard constraint at once. With no dist or solve…before, every legal combination is equally likely. It fails only when no combination is legal."
+  rule="randomize() returns one combination that satisfies every enabled hard constraint at once. With no dist, solve…before or randc, every legal combination is equally likely (§18.5.9). It fails when no combination is legal; randc and array sizes add the few exceptions listed under 'When randomize() fails'."
   code={`rand bit [2:0] x, y;
 constraint c_sum   { x + y < 8; }         // 36 legal (x, y) pairs
 constraint c_order { solve x before y; }  // same 36 pairs, new odds
 // P(x == 0): 8/36 without c_order, 1/8 with it
 constraint c_dist  { x dist { 0 := 4, [1:3] :/ 4 }; }
 // alone: 0 on 50%, each of 1..3 on 16.7%, 4..7 never`}
-  mistake="Treating each rand variable as uniform on its own, soft as 'usually', and solve…before as required for dependent variables. The solver weighs whole combinations, a soft constraint holds on 100% or 0% of calls, and solve…before only reshapes the odds."
-  inTestbench="Every uvm_sequence_item randomize() call. When a coverage bin stays empty, check whether a coupling constraint, a top-level soft default or a dist list made it rare or impossible before blaming the seed."
+  mistake="Treating each rand variable as uniform on its own, soft as 'usually', and solve…before as required for dependent variables. The solver weighs whole combinations; on each call a soft constraint either holds or is dropped as a whole; and solve…before only reshapes the odds."
+  inTestbench="Every uvm_sequence_item randomize() call. When a coverage bin stays empty, check whether a coupling constraint, a soft default or a dist list made it rare or impossible before blaming the seed."
 >
   <svg viewBox="0 0 320 175" role="img" aria-label="An 8 by 8 grid of (x, y) pairs. Under x + y < 8 the x = 0 column has 8 legal cells and the x = 7 column has 1, so x = 0 is picked 8 times as often as x = 7." style={{ width: "100%", maxWidth: 360 }}>
     <rect x="30" y="30" width="120" height="120" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" />
@@ -136,15 +141,152 @@ constraint c_dist  { x dist { 0 := 4, [1:3] :/ 4 }; }
   </svg>
 </VisualRecap>
 
-### Constraint Patterns
-- **Relational:** guard dependent variables with `if...else` or `->`. Both sides constrain each other (§18.5.5).
-- **Ordering:** `solve addr before data;` changes the odds, never the legal set. `addr` is drawn uniformly over its legal values first, then `data` (§18.5.9). It is never needed for correctness.
-- **Soft defaults:** `soft length == 32;` holds on **every** call unless a hard constraint or a higher-priority soft constraint contradicts it. Then it is dropped entirely (§18.5.13). It is a priority, not a probability.
+### randc: one permutation per object
+
+A `randc` variable is **random-cyclic** (§18.4.2). For each object, `randomize()` computes a random **permutation** (an ordering) of the variable's legal values and returns them one per call. No value repeats until every value has appeared; then a new permutation starts. Use it when one object must visit every value before any value repeats within a cycle, such as cycling through all 16 values of a 4-bit tag. It is not a sliding window: the next cycle may start with the value the last one ended on, and the cycle restarts whenever the constraints change. Tags that must not collide with tags still in flight need an explicit allocator.
+
+```systemverilog
+// snippet: a and b are two objects of a class that declares this field
+randc bit [1:0] y;   // legal values 0..3
+```
+
+**Predict:** calls 1 to 3 on object `a` returned 2, 0 and 3. What can call 4 return?
+
+Here is one possible run, traced. Your simulator will pick other permutations; the rules that hold on every run are in bold below the table.
+
+| Call | `a.y` | Values left in `a`'s cycle | `b.y` | Values left in `b`'s cycle |
+|---|---|---|---|---|
+| 1 | 2 | 0, 1, 3 | 1 | 0, 2, 3 |
+| 2 | 0 | 1, 3 | 3 | 0, 2 |
+| 3 | 3 | 1 | 0 | 2 |
+| 4 | **1** (the only one left) | cycle done: new permutation | 2 | cycle done: new permutation |
+| 5 | 1 (a repeat across the boundary is allowed) | 0, 2, 3 | 0 | 1, 2, 3 |
+| 6: `a.randomize() with { y != 0; }` | 3 | constraints on `y` changed: permutation recomputed over 1, 2, 3 | not called | 1, 2, 3 |
+| 7: plain `a.randomize()` | 0 | constraints changed back: recomputed again over 0..3 | 3 | 1, 2 |
+
+The answer to the prediction is **1**: it is the only value left in `a`'s cycle. What the table shows:
+
+- **Each object has its own cycle.** `b` does not continue `a`'s permutation, and the two orders are independent. The state is shared only when the variable is declared `static`; then every instance draws from one sequence (§18.4.2).
+- **A cycle guarantees no repeat inside it, not across cycles.** Calls 4 and 5 both return 1.
+- **Changing the constraints on the variable restarts the cycle.** The permutation is recomputed when the constraints on `y` change, or when none of the remaining values satisfies them (§18.4.2). An inline `with` on `y` (row 6) is such a change, and so is the next plain call (row 7).
+
+Pitfalls and limits:
+
+- **`randc` is solved before every `rand` variable** (§18.4.2). If a constraint couples the `randc` value to `rand` variables, the value chosen first may leave the rest unsolvable, so `randomize()` can fail although a legal combination exists. Keep `randc` variables uncoupled.
+- **It may not appear in `solve…before` (§18.5.9), in a `soft` constraint (§18.5.13.1) or in a `dist` (§18.5.3).** A `real` variable cannot be `randc` (§18.4).
+- **Width:** a simulator may limit how wide a `randc` variable can be, but not below 8 bits (§18.4.2). Use `randc` for small sets.
+
+**In a real testbench.** UVM normally creates a **new sequence item** (the transaction object a sequence sends to the driver) for every transaction. Each new object starts its own permutation, so a `randc` field there behaves almost like `rand`: 16 new items with `randc bit [3:0] tag` can repeat a tag. Keep the `randc` variable in a long-lived object, or allocate tags explicitly; [Push Further](#expert-randc-state-copies-and-static-variables) has the details.
+
+### Constraint blocks, inside and common patterns
+
+Constraints describe **relations**, not assignments. `len == 8` does not set `len`; it removes every combination where `len` is not 8. A relation can involve several variables, `low < high` or `data.size() == len`, and then it constrains all of them at once. The table lists the patterns you will write most often. Each line is a constraint expression that goes inside a block, for example `constraint c_align { addr[1:0] == 2'b00; }`.
+
+| Pattern | Constraint expression | What to know |
+|---|---|---|
+| Word alignment | `addr[1:0] == 2'b00;` | The standard's own example (§18.3) |
+| Alignment to a transfer size | `(addr & ((32'd1 << size) - 32'd1)) == 0;` | Couples `addr` and `size`, so small sizes become more likely (the kata measures this) |
+| Legal value set | `opcode inside {4'h0, 4'h3, [4'h8:4'hB]};` | All members equally likely (§18.5.3) |
+| Legal set from an enum | `rand op_e op;` | Only the named values occur (§18.3) |
+| Excluded values | `!(opcode inside {[4'hC:4'hF]});` | Reads better than listing what is left |
+| Ordered pair | `low < high;` | Skews `low` downwards; see [constraint-blocks](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks) |
+| Bounded array size | `len inside {[1:16]}; data.size() == len;` | Always bound the size (next page) |
+| Weighted modes | `mode dist { NORMAL := 90, ERR_CRC := 5, ERR_LEN := 5 };` | Error injection at a chosen rate |
+| Weights set at run time | `op dist { READ := rd_w, WRITE := wr_w };` | `rd_w` and `wr_w` are non-random knobs (state variables); a total weight of 0 excludes the value (§18.5.3, §18.10) |
+| Default value | `soft len == 4;` | Dropped only when it conflicts (see soft below) |
+
+A complete class that uses several of these, and a prediction:
+
+```systemverilog
+// compile
+module tb_top;
+  class packet;
+    rand bit       is_read;
+    rand bit [7:0] len;
+    rand bit [3:0] opcode;
+    rand byte      payload[];
+
+    constraint c_len      { len inside {[8:16], [64:96]}; }  // two legal bands
+    constraint c_payload  { payload.size() == len; }         // size bounded by len
+    constraint c_opcode {
+      opcode dist { 4'h0 := 10, [4'h1:4'h3] :/ 70, [4'h8:4'hF] :/ 20 };
+    }
+    constraint c_read_len { is_read -> len == 8; }           // reads are 8 bytes
+  endclass
+
+  initial begin
+    packet p;
+    int n_read, n_op0;
+    p = new();
+    repeat (1000) begin
+      if (!p.randomize()) $fatal(1, "RAND: randomize() failed");
+      if (p.is_read) n_read++;
+      if (p.opcode == 4'h0) n_op0++;
+    end
+    $display("is_read=1 on %0d of 1000 calls", n_read);
+    $display("opcode==0 on %0d of 1000 calls", n_op0);
+    $finish;
+  end
+endmodule
+```
+
+`c_read_len` uses implication: `is_read -> len == 8` reads "if `is_read` is 1, `len` must be 8".
+
+**Predict:** how often is `is_read` equal to 1?
+
+<details>
+<summary>Reveal the answer</summary>
+
+About **2.3%**, not 50%. Count the legal `(is_read, len)` pairs: `c_len` allows 9 + 33 = 42 lengths. With `is_read = 0` all 42 are legal; with `is_read = 1` only `len = 8` is. That is 43 legal pairs, and one of them has `is_read = 1`, so P(is_read) = 1/43 (§18.5.9). The payload does not add weight: the array is resized to `len` first and its elements are randomized afterwards (§18.4), so a long payload does not make long lengths likelier. `opcode` is coupled to nothing, so its `dist` gives exactly 10% for `4'h0`.
+
+**Expected output** (illustrative; counts vary by seed):
+
+```text
+is_read=1 on 22 of 1000 calls
+opcode==0 on 103 of 1000 calls
+```
+
+If reads should be common, add `constraint c_order { solve is_read before len; }`. `is_read` is then drawn first, 50/50, and the same 43 pairs remain legal. [solve…before](#solvebefore-changes-the-odds-never-the-legal-set) explains why.
+
+</details>
+
+Constraints written with `->` or `if…else` constrain both sides at once: the solver may make `is_read` 0 to satisfy a rule about `len`. [I-SV-2B advanced constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) teaches implication, `if…else`, `foreach` and `unique`. A constraint block can also be declared in the class and written after it, as an **external constraint block** (§18.5.1); [the next page](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks#external-constraint-blocks) teaches it, and the worked example below uses one.
+
+### Reading dist weights
+
+`c_opcode` above does two jobs (§18.5.3). It **restricts** `opcode` to the listed values, and it **weights** them.
+
+- `:=` gives the weight to **every value** of a range. `[4'h1:4'h3] := 70` would weigh 3 × 70 = 210.
+- `:/` gives the weight to the **range as a whole**. `[4'h1:4'h3] :/ 70` weighs 70 in total, about 23.3 per value.
+- For a single value the two are the same. An item with no weight gets `:= 1`.
+- Weights are ratios. Divide by the total weight, here 10 + 70 + 20 = 100.
+
+So `opcode` is `0` on 10% of calls, each of `1` to `3` on about 23.3%, and each of `8` to `F` on 2.5%. Values `4` to `7` are not listed, so they **never** occur: `dist` is also a membership constraint. A value whose total weight is 0 is excluded too. Nonzero weights never make `randomize()` fail, but the membership part can, for example `opcode dist {…}` together with `opcode == 4'h5`.
+
+These numbers hold when no other constraint involves `opcode`. When other constraints make some weighted values impossible, the remaining items keep their weight ratio, as the heatmap's `c_not0` toggle shows; when other constraints fight the weights more deeply, the standard requires only that the constraints hold (§18.5.3). [Push Further](#expert-dist-corner-cases-in-ieee-1800-2023) has the corner cases.
+
+### solve…before changes the odds, never the legal set
+
+`solve a before b` tells the solver to choose `a` first, uniformly over the values of `a` that appear in some legal combination, and then choose `b` among the values consistent with that `a` (§18.5.9). It **never** changes which combinations are legal, so it can never cause a failure, and it can never fix one either.
+
+Use it when coupling starves a value you need, as with `is_read` above, or with an error flag that forces one specific length. Do not add it "for correctness": the solver handles dependencies in both directions without it. Restrictions: only `rand` variables (never `randc`), no cycles such as `solve a before b` with `solve b before a`, and an array size may be ordered as `data.size` (§18.5.9). The [constraint-blocks page](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks#solvebefore-what-it-may-and-may-not-do) works through the `is_err` example and lets you try all three orderings in a model.
+
+### soft: a default with a rank
+
+A **hard** constraint, every constraint so far, must hold or `randomize()` fails. A **soft** constraint, written `soft len == 4;`, is a default (§18.5.13). On each call the solver keeps it if a solution exists with it and all hard constraints together. If not, it **discards** the soft constraint completely for that call, as if it read `1` (true). It is a priority, never a probability: an uncontested soft constraint holds on **every** call.
+
+When soft constraints conflict with each other, the higher-priority one wins (§18.5.13.1). The three rules you need now:
+
+1. Later wins: within one block or class, a soft constraint declared later outranks an earlier one.
+2. Derived wins: a soft constraint in a derived class outranks every one in its base classes.
+3. Inline wins: a soft constraint in `randomize() with {…}` outranks the class's own.
+
+A hard constraint, including any inline constraint not marked `soft`, beats every soft constraint. That is why tests can override an item's defaults without editing the item. The [constraint-blocks page](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks#which-soft-constraint-wins) has the full priority list and a layered example.
 
 **Predict before you read on:** in this class, how often is `is_secure` equal to 1?
 
-<InteractiveCode>
 ```systemverilog
+// compile
 class Config;
   rand bit       is_secure;
   rand bit [1:0] burst_len;
@@ -156,15 +298,14 @@ class Config;
   constraint order { solve is_secure before burst_len; }
 endclass
 ```
-</InteractiveCode>
 
 <details>
 <summary>Reveal the answer</summary>
 
-**Never.** The pair `is_secure = 0, burst_len = 2'b10` satisfies everything, so nothing contradicts the soft default and the solver keeps it on every call. Keeping it forces `burst_len == 2'b10`, and the `if` then forces `is_secure = 0`. The `solve…before` cannot help: it reshapes the odds over the legal set, and the legal set contains only `is_secure = 0`. Scope the default to the case it belongs to:
+**Never.** The pair `is_secure = 0, burst_len = 2'b10` satisfies everything, so nothing contradicts the soft default and the solver keeps it on every call. Keeping it forces `burst_len == 2'b10`, and the `if` (another way to write an implication) then forces `is_secure = 0`. The `solve…before` cannot help: it reshapes the odds over the legal set, and with the soft constraint kept, the legal set contains only `is_secure = 0`. Scope the default to the case it belongs to:
 
-<InteractiveCode>
 ```systemverilog
+// compile
 class Config;
   rand bit       is_secure;
   rand bit [1:0] burst_len;
@@ -175,78 +316,566 @@ class Config;
   }
 endclass
 ```
-</InteractiveCode>
 
-Now `is_secure` is 1 on half the calls, with no ordering constraint needed.
+Now `is_secure` is 1 on half the calls, with no ordering constraint needed: the two legal pairs are `(0, 2'b10)` and `(1, 2'b01)`. A kept soft constraint shrinks the legal set exactly like a hard one; only a conflict removes it.
 
 </details>
 
-## Make It Work
-1. **Model legality:** Translate protocol rules into constraints—illegal stimulus wastes regression time.
-2. **Layer distributions:** Bias randomization toward risky scenarios (e.g., error opcodes) while still covering the space.
-3. **Validate success:** Always check `randomize()` return value and log failures with an actionable message.
-4. **Measure:** Pair random stimulus with functional coverage to confirm constraint intent is met.
+### Inline constraints and local::
 
-**Checklist before moving on:**
-- [ ] You can explain the difference between `rand` and `randc`.
-- [ ] You can write relational and distribution constraints that reflect spec rules.
-- [ ] You confirm randomize success and understand how to debug failures.
+`obj.randomize() with { … }` adds constraints for **this call only**, on top of the class's own (§18.7). They are hard unless marked `soft`. Tests and sequences use them to aim one call at a case without writing a new class: `if (!t.randomize() with { len == 16; }) $fatal(1, "…");`.
 
-## Push Further
-- Keep relations between random fields in constraints (for example `payload.size() == len`). Use `post_randomize()` only for derived, non-random fields such as a CRC.
-- Create constraint mode toggles (`constraint_mode(0)`) for reusable classes in different scenarios.
-- Explore `randomize() with` blocks in sequences to target coverage holes without new classes.
+The trap is **name resolution**. Inside the braces, an unqualified name is looked up **first in the class of the object being randomized**, and only if it is not found there, in the scope around the call (§18.7). The `local::` prefix skips the object's class and starts in the calling scope (§18.7.1). Trace three versions of the same task, called as `send_len(t, 9)` on a `bus_item` that has a `rand bit [7:0] len` and `soft len == 4`:
 
-## Practice & Reinforce
-- Flashcards – Drill keyword meaning and solver behaviors.
-- Quiz – Complete the constrained-random knowledge check below.
-- Exercise – Write a transaction with soft defaults, override them with `randomize() with` in a test, and confirm in coverage which values actually appear.
-- Visual notebook – Sketch how your constraints map to testplan features and coverage bins.
+| Inline constraint in `task send_len(bus_item t, bit [7:0] n_or_len)` | Left name binds to | Right name binds to | Result |
+|---|---|---|---|
+| `t.randomize() with { len == len; }`, argument named `len` | `t.len` | `t.len`: the class is searched first | Always true, so it constrains nothing. The soft default survives: `len = 4` |
+| `t.randomize() with { len == local::len; }`, argument named `len` | `t.len` | the argument `len` (state variable, value 9) | `t.len = 9` |
+| `t.randomize() with { len == n; }`, argument named `n` | `t.len` | the argument `n`: not in the class, so the caller's scope | `t.len = 9`, until someone adds a field `n` to the class |
 
-## Deep Dives in this Track
-- [Constraint Blocks and Soft Contexts](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks)
+Write `local::` whenever you mean the caller's variable. It costs nothing and survives later edits to the class. The restricted form `with (…)` and the `this`/`super` rules are in [Push Further](#expert-inline-name-resolution-in-depth).
 
-## References & Next Topics
-- **IEEE 1800-2023, Clause 18:** Constrained random value generation.
-- Doulos: “SystemVerilog Constraints Tutorial.”
-- Siemens Verification Academy: “Constraint Solving Tips.”
-- Next: [`/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization`](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index).
+### When randomize() fails
 
-<Quiz
-  questions={[
-    {
-      question: 'How does `randc` differ from `rand`?',
-      answers: [
-        { text: '`randc` cycles through every value in a random order before repeating.', correct: true },
-        { text: '`randc` cannot be constrained.', correct: false },
-        { text: '`rand` is only for integers.', correct: false },
-        { text: '`randc` is slower and should be avoided.', correct: false }
-      ],
-      explanation:
-        '`randc` is ideal for finite sets such as opcodes—you get permutation coverage before repeats.'
-    },
-    {
-      question: 'What happens when constraints contradict each other?',
-      answers: [
-        { text: 'The solver picks one at random.', correct: false },
-        { text: 'Randomization fails (`randomize()` returns 0).', correct: true },
-        { text: 'The simulator ignores constraints.', correct: false },
-        { text: 'The variables revert to defaults.', correct: false }
-      ],
-      explanation:
-        'Over-constrained classes return 0 from `randomize()`—always check and handle the failure path.'
-    }
+`randomize()` fails when the enabled hard constraints, class and inline together, have no solution. Then (§18.6.1, §18.6.3):
+
+- it returns **0**;
+- every random variable **keeps its previous value**; nothing is reset or zeroed;
+- `post_randomize()` is **not** called, although `pre_randomize()` already ran. These are two optional methods a class can define; `randomize()` calls them before and after solving (§18.6.2). [I-SV-2B controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization) teaches them.
+
+<SequenceDiagram
+  title="What one randomize() call does, on success and on failure"
+  caption="Both paths start the same way. Only the success path assigns new values and calls post_randomize(); on failure the object keeps its old values and the call returns 0."
+  participants={[
+    { id: "tc", label: "test code", kind: "generic" },
+    { id: "item", label: "t (bus_item)", kind: "generic" },
+    { id: "solver", label: "constraint solver", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tc", to: "item", label: "t.randomize() with {…}" },
+    { kind: "self", from: "item", label: "pre_randomize()" },
+    { from: "item", to: "solver", label: "enabled class + inline constraints" },
+    { kind: "divider", label: "Path 1: a legal combination exists" },
+    { kind: "return", from: "solver", to: "item", label: "one legal combination" },
+    { kind: "self", from: "item", label: "assign values; post_randomize()" },
+    { kind: "return", from: "item", to: "tc", label: "returns 1" },
+    { kind: "divider", label: "Path 2: no legal combination" },
+    { kind: "return", from: "solver", to: "item", label: "infeasible", tone: "error" },
+    { kind: "note", from: "item", label: "values unchanged; post_randomize() not called (§18.6.3)" },
+    { kind: "return", from: "item", to: "tc", label: "returns 0: if (!…) $fatal", tone: "error" }
   ]}
 />
 
-<div className="mt-8">
-  <InterviewQuestionPlayground
-    question="You have a class with a `rand bit [7:0] delay` and a `soft delay == 10;` constraint. If you run `obj.randomize() with { delay > 20; };`, what happens?"
-    options={[
-      { text: "The randomization fails because the inline constraint contradicts the class constraint.", isCorrect: false, feedback: "This would be true if the class constraint was a hard constraint, but it's soft." },
-      { text: "The solver succeeds and generates a delay greater than 20.", isCorrect: true, feedback: "Correct! The `with` clause acts as a hard inline constraint. Since it contradicts the soft base constraint, the soft constraint is dropped and the hard constraint is satisfied." },
-      { text: "The solver generates 10 anyway, because class constraints have higher priority than inline.", isCorrect: false, feedback: "Inline hard constraints always override soft base constraints." },
-      { text: "It fails to compile because `soft` is not a valid SystemVerilog keyword.", isCorrect: false, feedback: "`soft` was added in IEEE 1800-2012." }
-    ]}
-  />
-</div>
+Go back to the stepper above, choose the **Contradiction** scenario, and watch every cell disappear: that is path 2.
+
+So the only safe call is a **checked** call:
+
+```systemverilog
+// snippet: plain SystemVerilog; in UVM use `uvm_fatal (see Make It Work)
+if (!t.randomize() with { len == 16; })
+  $fatal(1, "RAND: randomize() failed for len=16");
+```
+
+Two common forms are unsafe:
+
+- **`void'(t.randomize());`** discards the result on purpose. After a failure the test carries on with the *previous* values, so the same transaction is sent again and nothing reports it. Calling `t.randomize();` as a bare statement is the same mistake, plus a compiler warning (§13.4.1).
+- **`assert(t.randomize());`** puts the call inside an immediate assertion. Assertions can be switched off: `$assertoff`, `$assertcontrol` with the Off control, or a simulator option. Off means no new attempts start (§20.11), so the assertion is not evaluated and `randomize()` is **never called**. Even with assertions on, a failure is reported by the assertion's default `$error` (§16.3), which a UVM testbench does not count as a `UVM_ERROR`.
+
+Why can a call fail when a legal combination exists? §18.3 promises a solution whenever one exists, but three rules impose an order on the solver: `randc` variables are solved first (§18.4.2), array sizes before the constraints on their elements (§18.5.7.1), and function arguments before the constraint that calls the function (§18.5.11). Each can leave the rest unsolvable. [I-SV-2B solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug) teaches how to find the conflicting constraints and how these orders cause intermittent failures.
+
+### Mistakes to avoid
+
+| Mistake | Why it is wrong | Instead |
+|---|---|---|
+| Expecting each variable to be uniform on its own | The solver picks one legal **combination**, uniformly (§18.5.9) | Count the combinations, or use the visuals |
+| Reading `soft` as "usually" | A kept soft constraint holds on every call (§18.5.13) | Scope it with `->`, or override it inline |
+| Adding `solve…before` to make dependent variables work | It changes only the odds (§18.5.9) | Use it only to reshape a distribution |
+| Leaving a size unbounded | `rand int n; data.size() == n;` allows enormous sizes; a signed type also adds negative values, which a tool may reject (tool-dependent, §18.4) | Use a narrow unsigned type and `inside` |
+| Ignoring the return value | Failure keeps the old values silently (§18.6.3) | `if (!obj.randomize()) $fatal(1, …);` |
+| `with { addr == addr; }` | Both names bind to the object (§18.7) | `addr == local::addr` |
+| `rand int len; len < 64;` | `int` is signed, so negative lengths are legal | `bit [7:0]`, or `len inside {[1:63]}` |
+| Expecting `randc` to cycle across new objects | Each object has its own permutation (§18.4.2) | Keep one object, or allocate tags |
+| A reversed range `[16:8]` | The range is empty (§11.4.13), so the constraint can never hold | Write `[8:16]` |
+
+## Make It Work
+
+### Worked example: a constrained-random bus item
+
+This bench puts every core idea into one class: an enum for the legal operation set, word alignment, a bounded payload, a weighted mode, a soft default, an external constraint block and a `randc` tag. The checker counts what the solver produced, and the bench ends with the milestone signature `PASS=<n> FAIL=0`.
+
+```systemverilog
+// compile
+module tb_top;
+  typedef enum bit [1:0] {READ, WRITE, ATOMIC} op_e;
+
+  class bus_item;
+    rand  op_e       op;
+    rand  bit [31:0] addr;
+    rand  bit [7:0]  len;
+    rand  byte       data[];
+    randc bit [3:0]  tag;                         // one permutation per object
+    constraint c_align { addr[1:0] == 2'b00; }    // word aligned
+    constraint c_len   { len inside {[1:16]}; }   // bounds the array size
+    constraint c_size  { data.size() == len; }
+    constraint c_mode  { op dist { READ := 6, WRITE := 3, ATOMIC := 1 }; }
+    constraint c_def   { soft len == 4; }         // a test may override it
+    extern constraint c_map;                      // body after the class
+  endclass
+
+  // External constraint block: same scope as the class, after it (§18.5.1)
+  constraint bus_item::c_map { addr inside {[32'h0000_1000 : 32'h0000_1FFF]}; }
+
+  int pass, fail;
+  int op_count[3];
+
+  function automatic void check(bus_item t);
+    if (t.addr[1:0] == 2'b00 && t.addr inside {[32'h1000 : 32'h1FFF]} &&
+        t.len inside {[1:16]} && t.data.size() == t.len) pass++;
+    else begin
+      fail++;
+      $display("FAIL addr=%h len=%0d size=%0d", t.addr, t.len, t.data.size());
+    end
+  endfunction
+
+  // The argument is also called len: local:: makes the constraint use it.
+  task automatic send_len(bus_item t, bit [7:0] len);
+    if (!t.randomize() with { len == local::len; })
+      $fatal(1, "RAND: randomize() failed for len=%0d", len);
+    check(t);
+  endtask
+
+  initial begin
+    bus_item t, a;
+    bit [7:0] old_len;
+    bit seen[16];
+    int n_len4, distinct;
+    t = new();
+    repeat (1000) begin
+      if (!t.randomize()) $fatal(1, "RAND: randomize() failed");
+      check(t);
+      op_count[t.op]++;
+      if (t.len == 4) n_len4++;
+    end
+    $display("op READ=%0d WRITE=%0d ATOMIC=%0d of 1000",
+             op_count[READ], op_count[WRITE], op_count[ATOMIC]);
+    $display("len==4 on %0d of 1000 calls", n_len4);
+    send_len(t, 9);
+    $display("send_len(9): len=%0d", t.len);
+    old_len = t.len;
+    if (!t.randomize() with { len == 0; })        // c_len forbids 0
+      $display("EXPECTED_FAIL randomize()=0, len kept %0d (was %0d)",
+               t.len, old_len);
+    a = new();                                    // randc: per-object cycle
+    repeat (16) begin
+      if (!a.randomize()) $fatal(1, "RAND: randomize() failed");
+      if (!seen[a.tag]) begin
+        seen[a.tag] = 1;
+        distinct++;
+      end
+    end
+    $display("randc tag: %0d distinct values in 16 calls", distinct);
+    $display("PASS=%0d FAIL=%0d", pass, fail);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative, traced by hand from the rules on this page, not captured from a simulator run; the `op` counts vary with the seed and the simulator, and some simulators also print their own solver-failure message for the `EXPECTED_FAIL` call):
+
+```text
+op READ=601 WRITE=298 ATOMIC=101 of 1000
+len==4 on 1000 of 1000 calls
+send_len(9): len=9
+EXPECTED_FAIL randomize()=0, len kept 9 (was 9)
+randc tag: 16 distinct values in 16 calls
+PASS=1001 FAIL=0
+```
+
+Why each line looks the way it does:
+
+- **`op` counts** come out near 600/300/100: `op` is coupled to no other constraint, so the 6:3:1 ratio applies directly (§18.5.3).
+- **`len==4` on every call:** nothing contests the soft default in a plain call (§18.5.13).
+- **`len=9`:** the inline constraint is hard, so the soft default is discarded for that call (§18.5.13.1), and `local::len` is the argument (§18.7.1).
+- **`len kept 9`:** the request for length 0 conflicts with `c_len`; the call returns 0 and the object keeps the values of the last successful call (§18.6.3).
+- **16 distinct tags:** a new object's first 16 calls are one complete permutation of the 16 values of `tag` (§18.4.2).
+- **`PASS=1001`:** 1,000 checked calls plus `send_len`. The failed call is not checked, because there is nothing new to check.
+
+**Run it.** Save the code as `tb_top.sv` and compile it with any simulator that supports IEEE 1800-2023 Clause 18; `tb_top` is the top level. The compile and run commands are the same as for the [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) bench. Support for `randc`, `dist`, `soft` and external constraint blocks in open-source simulators varies and was not verified for this example (tool-dependent).
+
+**How to adapt it to your own transaction:**
+
+1. Turn each rule of the specification into a hard constraint, one named block per rule, so a failure report names the rule.
+2. Bound every size and every variable that sets a size.
+3. Put rates in `dist` and defaults in `soft`. Never use `soft` to mean "most of the time".
+4. Keep test-specific rules inline, and write `local::` for every name that belongs to the caller.
+5. Check every call. Inside UVM, report failures with `` `uvm_fatal ``.
+6. Measure what you got: count values in a histogram now, and with covergroups from [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index).
+
+### Debugging randomization
+
+| Symptom | Likely cause | Fix | What the log shows |
+|---|---|---|---|
+| Your `RAND` fatal fires | Conflicting hard constraints: class, inline or a `dist` list | Find the smallest conflicting set ([I-SV-2B solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug)) | The fatal message, plus the simulator's own conflict report (tool-specific) |
+| The same item repeats | An unchecked call failed, so the old values were kept (§18.6.3) | Check the return value | Identical fields on consecutive items; perhaps a solver warning |
+| A value or mode never appears, and nothing fails | Coupling makes it rare, a kept soft default excludes it, or `dist` does not list it | Count the solution space; scope the soft default; add `solve…before` | An empty histogram or coverage bin |
+| An inline value is ignored | `len == len` binds both names to the item (§18.7) | `local::len` | The soft default value instead of the requested one |
+| A hang, a memory blow-up or a size error | An unbounded or signed size variable | Bound it with a narrow type and `inside` | A long stall, or a tool-specific array-size error |
+| A `randc` value repeats early | A new object per item, so a new cycle each time | Keep one object, or allocate tags | Repeats within N items |
+| `UVM_WARNING … [RNDFLD]` | A `` `uvm_do `` family macro hid a failed `randomize()` | Randomize explicitly and call `` `uvm_fatal `` | The warning, then a driver working on an unrandomized item |
+
+### In a UVM testbench
+
+From [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) on, the class you randomize is a sequence item, and a **sequence** (a class whose `body()` task produces items) randomizes it between `start_item()` and `finish_item()`. The pattern is the same check, reported through UVM:
+
+```systemverilog
+// snippet: body() of a uvm_sequence whose item type has a rand len field
+// and whose sequence class has its own property len (for example, 9)
+req = bus_item::type_id::create("req");
+start_item(req);
+if (!req.randomize() with { len == local::len; })
+  `uvm_fatal("RAND", $sformatf("randomize() failed for len=%0d", len))
+finish_item(req);
+```
+
+The base item carries the hard protocol rules and `soft` defaults; each test overrides a default inline or in a derived item class, without editing the base class. Avoid hiding the randomization inside a `` `uvm_do `` macro: [Push Further](#expert-randomization-failures-inside-uvm-macros) shows what it does with a failure.
+
+**Checklist before moving on:**
+- [ ] I can write a class with `rand` and `randc` fields, named constraint blocks, `inside` sets, word alignment and a bounded array size.
+- [ ] I can count legal combinations to predict how often a value appears, and say what `solve…before` changes and what it does not.
+- [ ] I can compute `dist` probabilities for `:=` and `:/` on ranges, and name the values a `dist` excludes.
+- [ ] I can predict the next value of a `randc` variable and explain why new objects restart the cycle.
+- [ ] I can predict when a `soft` constraint is dropped, and I write `local::` for the caller's variables.
+- [ ] Every `randomize()` call I write is checked, and I can say what the object holds after a failure.
+
+## Push Further
+
+These items are for working engineers and interview preparation. The core path above does not depend on them.
+
+### Expert: dist corner cases in IEEE 1800-2023
+
+All from §18.5.3:
+
+- **A value listed twice collects both weights.** `x dist {[100:102] := 1, 101 := 1}` gives 100, 101 and 102 the ratio 1:2:1. This includes zero weights: in `x dist {100 :/ 0, [100:102] :/ 1}` the value 100 is still legal, because another item gives it weight. A value is excluded only when its **total** weight is 0, or when no item lists it.
+- **A `:=` range counts excluded values.** In 1800-2023, the weight of a `:=` range is the range size times the weight, *including* values other constraints exclude. With `x > 101; x dist {[100:102] := 1, 103 := 1};` the range still weighs 3, so `x` is 102 or 103 in the ratio 3:1. Earlier readers often expected 1:1; check what your simulator does (tool-dependent until verified on your tool).
+- **`default :/ w`** covers every value of the expression's type that no other item lists. It must use `:/`, and a distribution may have at most one. Tool support for this newer form varies.
+- **Weights are unsigned integral expressions**, so they can read state variables. Changing such a knob between calls is one of the standard ways to modify randomization at run time (§18.10).
+- **Limits:** `dist` cannot be applied to a `randc` variable, and its expression must contain at least one `rand` variable. A range of `real` values must use `:/`.
+- **Coupled `dist` variables.** When other constraints make some weights unsatisfiable, "implementations are only required to satisfy the constraints". Distributions in that case can differ between simulators. Keep frequency claims to `dist` variables that nothing else fights.
+
+The model below enumerates the rules exactly. In the **dist weights** tab, `8` is listed on its own and inside `[4:16]`. **Predict** P(length == 8) for `:/`, then for `:=`, before you look. With `:/` the total weight is 80 + 20 = 100 and `8` collects 80 + 20/13, about 81.5%; with `:=` the range weighs 13 × 20 = 260, the total is 340, and `8` collects 80 + 20 = 100 of it, about 29.4%. The **Debug: silent hole** tab belongs to I-SV-2B's solver-debug lesson.
+
+<ConstraintSolverExplorer initialMode="dist" />
+
+### Expert: randc state, copies and static variables
+
+- **A shallow copy copies the cycle.** In 1800-2023, `p2 = new p1;` copies the object's internal randomization state: its random number generator state, its `constraint_mode` and `rand_mode` settings, and the cyclic state of its `randc` variables (§8.12). Under the same constraints, `p1` and `p2` then return the same next values. "A new object starts a new cycle" is true for `new()`, not for a shallow copy. Whether a UVM `copy()` or `clone()` carries this state depends on how the class implements them; do not rely on it.
+- **`static randc`** shares one permutation across every instance (§18.4.2), and a static random variable "is changed in every class instance" on every call (§18.6.3), including objects a scoreboard has stored. Prefer an explicit tag allocator.
+- **Solved first.** Because `randc` variables are solved before `rand` ones, coupling them can make `randomize()` fail on some seeds and not others (§18.4.2). [I-SV-2B solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug) covers these implicit solve orders.
+- **Arrays:** a `randc` array makes every element `randc` (§18.4); each element cycles on its own, so the array as a whole is not a permutation. Use `unique` (I-SV-2B) when elements must differ from each other.
+
+### Expert: inline name resolution in depth
+
+All from §18.7 and §18.7.1:
+
+- **Unrestricted block** `obj.randomize() with { … }`: names resolve first in the class of `obj`, then in the scope containing the call.
+- **`this.` and `super.`** bind to the class of `obj`, not to the calling class. It is an error if such a name is not found there.
+- **Dotted names** such as `cfg.max_len` resolve downwards from `obj`'s class first, then in the calling scope.
+- **Restricted block** `obj.randomize() with (len) { len < max_len; }`: only names that begin with an identifier in the list resolve into `obj`; every other name resolves in the calling scope. Here `len` is the object's field and `max_len` the caller's, even if the class also has a `max_len`.
+- **`local::`** always starts in the calling scope, with or without a list, including `local::this` for the caller's own object.
+
+Interview angle: "Inside a sequence, `req.randomize() with { addr == addr; }` never targets the address you set. Why, and what are two fixes?" Both names bind to `req.addr`; write `addr == local::addr`, or use the restricted form `with (addr) { addr == this_seq_addr; }` with a distinct name.
+
+### Expert: randomization failures inside UVM macros
+
+In uvm-core 2020.3.1, `` `uvm_rand_send(item, -1, {…}) `` (in `src/macros/uvm_sequence_defines.svh`) calls `start_item`, then `randomize() with`, and if that returns 0 it issues `` `uvm_warning("RNDFLD", "Randomization failed in uvm_rand_send action") `` and **still calls `finish_item`**. `` `uvm_do(item, , , {…}) `` creates a new item first and then does the same. The older `` `uvm_rand_send_with `` and `` `uvm_do_with `` are deprecated wrappers around these two, in `src/deprecated/macros/uvm_sequence_defines.svh`, which `uvm_macros.svh` still includes. So after a failure:
+
+- with `` `uvm_do ``, the driver receives a just-created item holding its initial values;
+- with `` `uvm_rand_send `` on a reused item, the driver receives that item's previous values.
+
+Either way the test continues with a warning, not an error. Prefer the explicit `start_item` / checked `randomize() with` / `finish_item` pattern from Make It Work. When you cannot change the sequences, UVM's report-severity overrides can raise the `RNDFLD` warning to an error. The warning is reported through the sequence's sequencer, so a per-component override must target the sequencer, or use the plusarg `+uvm_set_severity=*,RNDFLD,UVM_WARNING,UVM_ERROR` (uvm-core 2020.3.1, `src/base/uvm_component.svh`); [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) teaches report control.
+
+### Expert: language limits worth knowing
+
+- **2-state only.** `x` and `z` and the operators `===` and `!==` are illegal in constraints (§18.3). Randomize `bit` fields, or `logic` fields knowing they only ever get 0 and 1.
+- **Enums:** only named values for a `rand` enum variable (§18.3), but not for an enum member of a `rand` packed struct or union (§18.4). See [F2A structs](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums).
+- **`rand real`** is legal, with values uniform over the constrained range (§18.4.1); `randc real` is not (§18.4).
+- **Tolerance ranges** in `inside`: `[A +/- B]` and `[A +%- B]` (§11.4.13), for example `v inside {[3.3 +%- 5.0]}` for 3.3 ± 5%.
+- **Real-valued constraints, `default :/` and range-weight counting** are newer additions; tool support varies (tool-dependent).
+
+### Expert: solver performance at scale
+
+This is tool-dependent, and no general figures apply. Habits that keep solve time predictable on large regressions: keep random variables as narrow as the specification allows; avoid wide multiplication, division and modulo between random variables; bound every size; keep `randc` variables small and uncoupled; randomize an item once per transaction rather than in retry loops; and add `solve…before` only to change a distribution. When solve time matters, measure it with your simulator's profiling options instead of guessing.
+
+### Expert: interview angles
+
+<InterviewQuestionPlayground
+  title="Interview: soft default against an inline constraint"
+  question="A class has rand bit [7:0] delay and soft delay == 10. You call obj.randomize() with { delay > 20; }. What happens?"
+  options={[
+    { text: "Randomization fails, because the inline constraint contradicts the class constraint.", isCorrect: false, feedback: "That would be true for a hard class constraint. A soft one is discarded when it conflicts with a hard constraint (§18.5.13)." },
+    { text: "It succeeds: the soft default is dropped for this call, and delay is uniform over 21..255.", isCorrect: true, feedback: "Right. The inline constraint is hard, so the soft default is discarded and the remaining constraints decide (§18.5.13, §18.5.13.1)." },
+    { text: "delay is 10 anyway, because class constraints outrank inline ones.", isCorrect: false, feedback: "The reverse: inline constraints outrank the class's soft constraints, and hard constraints beat every soft one (§18.5.13.1)." },
+    { text: "It does not compile, because soft is not a SystemVerilog keyword.", isCorrect: false, feedback: "soft has been a keyword since IEEE 1800-2012 (§22.14.8, Table 22-6)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: randc in sequence items"
+  question="A sequence item declares randc bit [3:0] tag. The sequence creates a new item for every transaction. After 16 transactions, how many distinct tags are guaranteed?"
+  options={[
+    { text: "16: randc visits every value once before repeating.", isCorrect: false, feedback: "Only within one object's cycle. Each new item starts its own permutation (§18.4.2)." },
+    { text: "Only 1: each new item starts a new permutation, so any tag can repeat.", isCorrect: true, feedback: "Right. The cycle belongs to the object. Keep the randc variable in a long-lived object, make it static (shared by all instances), or allocate tags explicitly." },
+    { text: "8: half the cycle, because two objects share one permutation.", isCorrect: false, feedback: "Objects share a permutation only when the variable is static (§18.4.2)." },
+    { text: "It depends on the seed, but at least 15.", isCorrect: false, feedback: "No such guarantee exists across objects; even two consecutive items can carry the same tag." }
+  ]}
+/>
+
+Further staff-level prompts to practise aloud:
+- "Two 3-bit fields satisfy `x + y < 8`. A colleague expects `x == 0` on 12.5% of calls. Correct the expectation, then make `x` uniform without changing the legal set."
+- "Why does `assert(item.randomize())` pass review in some teams and fail regressions in others?"
+- "A soft default never yields to a test's constraint. Give two causes." (The test's constraint is also soft with lower priority; or the test wrote `len == len`.)
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "rand bit [2:0] x, y; constraint c { x + y < 8; } With no other constraints, how often is x == 0?",
+    answers: [
+      { text: "12.5%, because x has 8 values", correct: false, feedback: "That treats x as uniform on its own. The solver picks one legal (x, y) pair, uniformly (§18.5.9)." },
+      { text: "8/36, about 22%", correct: true, feedback: "Right. There are 36 legal pairs, and 8 of them have x == 0." },
+      { text: "1/36, about 2.8%", correct: false, feedback: "1/36 is the probability of one particular pair. x == 0 is a whole column of 8 pairs." },
+      { text: "50%, because the constraint favours small values", correct: false, feedback: "Small x values are favoured, but only in proportion to how many y values they allow: 8 of 36." }
+    ],
+    explanation: "Count the legal combinations: for x = k there are 8 - k legal y values, 36 pairs in total. Each pair is equally likely, so P(x == 0) = 8/36.",
+    objective: 2
+  },
+  {
+    question: "rand bit [2:0] x; constraint c { x dist { 0 := 2, [1:3] := 2 }; } How often is x == 0?",
+    answers: [
+      { text: "50%: the item 0 and the range [1:3] weigh 2 each", correct: false, feedback: "That is the :/ reading. With := every value of the range weighs 2, so the range weighs 6 (§18.5.3)." },
+      { text: "25%", correct: true, feedback: "Right: 0 weighs 2, the range weighs 3 × 2 = 6, and 2 / 8 = 25%." },
+      { text: "12.5%: dist only biases, so all 8 values of x stay legal", correct: false, feedback: "dist is also a membership test: 4..7 are not listed, so they never occur (§18.5.3)." },
+      { text: "2%: weights are percentages", correct: false, feedback: "Weights are ratios; divide by the total weight." }
+    ],
+    explanation: "With :=, each value in [1:3] gets weight 2, so the total is 2 + 6 = 8 and P(x == 0) = 2/8. With :/ the range would weigh 2 in total and P(x == 0) would be 50%. Values 4..7 are excluded.",
+    objective: 2
+  },
+  {
+    question: "rand bit is_err; rand bit [7:0] len; constraints: is_err -> len == 0; solve is_err before len; What changes if you delete the solve line?",
+    answers: [
+      { text: "is_err = 1 becomes illegal", correct: false, feedback: "The pair (1, 0) is legal with or without ordering; solve…before never changes the legal set (§18.5.9)." },
+      { text: "Only how often is_err is 1: about 1 in 257 instead of 1 in 2", correct: true, feedback: "Right. The 257 legal pairs are identical; only their probabilities change." },
+      { text: "The pair is_err = 1, len = 5 was legal only with the ordering", correct: false, feedback: "Ordering cannot make an illegal pair legal; is_err = 1 still forces len == 0." },
+      { text: "randomize() can now fail, because len may be chosen before is_err", correct: false, feedback: "solve…before cannot cause a failure, and removing it cannot either (§18.5.9). The solver handles the implication in both directions." }
+    ],
+    explanation: "Without ordering, each of the 257 legal pairs (256 with is_err = 0, one with is_err = 1) is equally likely. With solve is_err before len, is_err is drawn 50/50 first. The legal set is the same.",
+    objective: 2
+  },
+  {
+    question: "A class has rand bit [7:0] len, len inside {[1:16]} and soft len == 4. Over 1,000 checked plain randomize() calls, how often is len 4?",
+    answers: [
+      { text: "About 900 times: soft means usually", correct: false, feedback: "soft is a priority, not a probability. An uncontested soft constraint holds on every call (§18.5.13)." },
+      { text: "About 63 times: soft is ignored, so 1 in 16", correct: false, feedback: "A soft constraint is not ignored; it is discarded only when it conflicts." },
+      { text: "Every time", correct: true, feedback: "Right. Nothing conflicts with len == 4, so the solver keeps it on every call." },
+      { text: "Never, unless a test asks for it inline", correct: false, feedback: "The default applies by itself; inline constraints are only needed to override it." }
+    ],
+    explanation: "When a solution exists with the soft constraint and all hard constraints, the solver keeps it (§18.5.13). Here 4 is legal, so len is 4 on all 1,000 calls.",
+    objective: 4
+  },
+  {
+    question: "task send_len(bus_item t, bit [7:0] len) calls t.randomize() with { len == len; }. The item has soft len == 4. send_len(t, 9) always produces len 4. Why?",
+    answers: [
+      { text: "The soft default outranks inline constraints", correct: false, feedback: "Inline hard constraints beat every soft constraint (§18.5.13.1). The inline constraint here simply constrains nothing." },
+      { text: "Both names bind to t.len, so the constraint is always true and the soft default survives; write len == local::len", correct: true, feedback: "Right. Inside with, names resolve in the object's class first (§18.7); local:: makes the right-hand name the argument (§18.7.1)." },
+      { text: "randomize() failed and kept the old value", correct: false, feedback: "Nothing conflicts, so the call succeeds; it just has no effective inline constraint." },
+      { text: "The argument shadows the field, which is a simulator bug", correct: false, feedback: "This is the standard's resolution order, not a bug: the object's class is searched first." }
+    ],
+    explanation: "In an unrestricted inline block, unqualified names are looked up in the class of the object being randomized before the calling scope. len == len compares t.len with itself. Use local::len.",
+    objective: 4
+  },
+  {
+    question: "Objects a and b each have randc bit [1:0] y. Each is randomized 4 times with plain, checked calls. What is guaranteed?",
+    answers: [
+      { text: "b continues a's cycle, so together they return each value twice", correct: false, feedback: "The cycle belongs to each object; b has its own permutation (§18.4.2)." },
+      { text: "Each object's 4 values are 0..3 in some order, and the two orders are independent", correct: true, feedback: "Right. Each new object starts its own permutation and returns every value once in its first 4 calls." },
+      { text: "Both objects return the same order", correct: false, feedback: "Each object computes its own random permutation; the orders are independent." },
+      { text: "Nothing: randc cycles only when y is static", correct: false, feedback: "static makes all instances share one cycle. Without it, each object still cycles on its own." }
+    ],
+    explanation: "A randc variable returns a random permutation of its values per object. Four values, four calls: each object returns 0, 1, 2 and 3 once. Only a static randc variable shares one sequence across instances.",
+    objective: 3
+  },
+  {
+    question: "t.len is 9 after a successful call. The class has len inside {[1:16]}. You run void'(t.randomize() with { len == 20; }) and then print t.len. What prints?",
+    answers: [
+      { text: "20", correct: false, feedback: "20 conflicts with the hard class constraint, so the call fails and assigns nothing." },
+      { text: "0, because a failed call resets the variables", correct: false, feedback: "Nothing is reset. On failure the random variables keep their previous values (§18.6.3)." },
+      { text: "9: the call returned 0 and the values were kept", correct: true, feedback: "Right, and void' threw away the 0, so nothing reported the failure." },
+      { text: "A random legal length", correct: false, feedback: "A failed call assigns no new values at all." }
+    ],
+    explanation: "The inline len == 20 contradicts len inside {[1:16]}, so randomize() returns 0, every random variable keeps its value, and post_randomize() is not called (§18.6.3). Check the call instead of discarding the result.",
+    objective: 5
+  },
+  {
+    question: "Why is assert(req.randomize()); unsafe in a testbench?",
+    answers: [
+      { text: "If assertions are switched off, the assertion is not evaluated, so randomize() is never called; and a failure is reported as an assertion error, which UVM does not count", correct: true, feedback: "Right. $assertoff and $assertcontrol Off start no new attempts (§20.11), and a failing immediate assertion with no else runs its default $error (§16.3)." },
+      { text: "An assertion cannot call a function", correct: false, feedback: "It can; the problem is that the call disappears whenever the assertion does." },
+      { text: "It calls randomize() twice", correct: false, feedback: "It calls it once, when the assertion is evaluated, and never when assertions are off." },
+      { text: "It is too strict, because an assertion failure always ends the simulation", correct: false, feedback: "The default action is $error, which does not stop the simulation. The real risk is the opposite: a missing or uncounted failure." }
+    ],
+    explanation: "Put the call in an if statement: if (!req.randomize()) followed by $fatal, or `uvm_fatal in UVM. Then it always runs, and a failure always stops the test.",
+    objective: 5
+  },
+  {
+    question: "An item needs len from 1 to 16 bytes and a payload whose size equals len. Which constraints are right?",
+    answers: [
+      { text: "len inside {[1:16]}; data.size() == len; with rand bit [7:0] len", correct: true, feedback: "Right: the size is bounded through len, and len is a narrow unsigned type." },
+      { text: "data.size() == len; with rand int len", correct: false, feedback: "Nothing bounds len, so the solver may choose huge sizes, and int is signed." },
+      { text: "len inside {[16:1]}; data.size() == len;", correct: false, feedback: "A reversed range is empty (§11.4.13), so len can never satisfy it and randomize() always fails." },
+      { text: "len inside {1, 16}; data.size() == len;", correct: false, feedback: "Braces without square brackets list single values: only 1 and 16 would be legal." }
+    ],
+    explanation: "Bound the size variable with an inclusive range in ascending order, [1:16], and tie the array size to it. A size variable of a narrow unsigned type cannot go negative.",
+    objective: 1
+  }
+]} />
+
+### Kata: an AXI-like transaction
+
+Write a class `axi_txn` for a simplified AXI-like transfer (the real AXI rules, such as the 4KB boundary, are in [B-AXI-2](/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index)):
+
+| Field | Rule |
+|---|---|
+| `burst` | enum `FIXED`, `INCR`, `WRAP`; `INCR` 70%, `WRAP` 20%, `FIXED` 10% |
+| `size` | 0, 1 or 2; bytes per beat = 2 to the power `size` |
+| `addr` | 32 bits, aligned to the bytes per beat |
+| `len` | beats, 1 to 16, default 1 |
+| `data` | one byte per beat |
+| `id` | 4 bits, no repeat until all 16 values were used |
+
+1. Write the class, then a `tb_top` that runs 1,000 checked `randomize()` calls and prints the percentages of each `burst`, each `size`, and of `len == 1`.
+2. Add a task that sends one transfer with `n` beats using `randomize() with` and `local::`, and print the result for `n = 8`.
+3. **Before you run it, predict every percentage.** One of them is a trap.
+4. Run it. Accept your solution when every percentage is within ±5 points of your prediction (1,000 calls) and every call passed.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+```systemverilog
+// compile
+module tb_top;
+  typedef enum bit [1:0] {FIXED, INCR, WRAP} burst_e;
+
+  class axi_txn;
+    rand  burst_e    burst;
+    rand  bit [2:0]  size;     // bytes per beat = 2**size
+    rand  bit [31:0] addr;
+    rand  bit [7:0]  len;      // beats
+    rand  bit [7:0]  data[];
+    randc bit [3:0]  id;
+
+    constraint c_size  { size inside {[0:2]}; }                     // 1, 2 or 4 bytes
+    constraint c_align { (addr & ((32'd1 << size) - 32'd1)) == 0; } // size-aligned
+    constraint c_len   { len inside {[1:16]}; }
+    constraint c_data  { data.size() == len; }
+    constraint c_burst { burst dist { INCR := 7, WRAP := 2, FIXED := 1 }; }
+    constraint c_def   { soft len == 1; }
+  endclass
+
+  task automatic send_beats(axi_txn t, bit [7:0] n);
+    if (!t.randomize() with { len == local::n; })
+      $fatal(1, "RAND: randomize() failed for n=%0d", n);
+  endtask
+
+  initial begin
+    axi_txn t;
+    int n_burst[3], n_size[3], n_len1;
+    t = new();
+    repeat (1000) begin
+      if (!t.randomize()) $fatal(1, "RAND: randomize() failed");
+      n_burst[t.burst]++;
+      n_size[t.size]++;
+      if (t.len == 1) n_len1++;
+    end
+    $display("burst FIXED=%0d INCR=%0d WRAP=%0d of 1000",
+             n_burst[FIXED], n_burst[INCR], n_burst[WRAP]);
+    $display("size 0=%0d 1=%0d 2=%0d of 1000", n_size[0], n_size[1], n_size[2]);
+    $display("len==1 on %0d of 1000", n_len1);
+    send_beats(t, 8);
+    $display("send_beats(8): len=%0d size(data)=%0d", t.len, t.data.size());
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative; counts vary by seed):
+
+```text
+burst FIXED=97 INCR=706 WRAP=197 of 1000
+size 0=574 1=284 2=142 of 1000
+len==1 on 1000 of 1000
+send_beats(8): len=8 size(data)=8
+```
+
+**The trap is `size`.** Most people predict one third each. But `c_align` couples `size` and `addr`: size 0 allows 2^32 addresses, size 1 allows 2^31 and size 2 allows 2^30. The solver picks one legal `(size, addr)` combination uniformly, so P(size) is 4/7, 2/7 and 1/7, about 57%, 29% and 14% (§18.5.9). `burst` is coupled to nothing, so its `dist` gives 70/20/10 exactly (§18.5.3), and the uncontested soft default makes `len` 1 on every plain call (§18.5.13).
+
+If the specification wants the three sizes equally often, add `constraint c_order { solve size before addr; }`. The legal combinations stay the same, and `size` becomes 1/3 each. For the `id` rule, `randc` works only while the same object is reused, as here.
+
+</details>
+
+### Debug challenge: the item that never changes
+
+A colleague's loop prints the same item three times:
+
+```systemverilog
+// snippet: t is a bus_item from Make It Work, already randomized once
+repeat (3) begin
+  void'(t.randomize() with { len == 20; });
+  $display("len=%0d tag=%0d", t.len, t.tag);
+end
+```
+
+Why, and what is the fix? Answer before you open the solution.
+
+<details>
+<summary>Solution</summary>
+
+`c_len` allows only 1 to 16, so every call fails. A failed call returns 0, assigns nothing and keeps the previous values, including `tag` (§18.6.3), and `void'` throws the 0 away. Two fixes are needed: check the call, `if (!t.randomize() with { len == 20; }) $fatal(1, "…");`, which turns the silent repeat into a clear failure on the first iteration; and correct the request, because 20 is outside the item's legal range.
+
+</details>
+
+### Predict with the visuals
+
+Return to the visuals on this page and commit to a number before each reveal:
+- the stepper's base scenario: P(A = 0) (3/8);
+- the heatmap's coupling scenario: P(x == 0), then again with `c_order` (8/36, then 1/8);
+- the heatmap's `dist` scenario with `:=`, then `:/` (25%, then 50%);
+- the heatmap's `soft` scenario with no other constraint (100%).
+
+The flashcards for this module follow below, under "Reinforce the essentials".
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023)
+- §18.3 Concepts and usage; §18.4 Random variables; §18.4.1 Rand modifier; §18.4.2 Randc modifier
+- §18.5 Constraint blocks; §18.5.1 External constraint blocks; §18.5.3 Distribution; §18.5.8 (step c, state variables); §18.5.9 Variable ordering
+- §18.5.13 Soft constraints; §18.5.13.1 Soft constraint priorities
+- §18.6.1 Randomize(); §18.6.2 Pre_randomize() and post_randomize(); §18.6.3 Behavior of randomization methods
+- §18.7 Inline constraints; §18.7.1 local:: scope resolution; §18.10 Dynamic constraint modification
+- §8.12 Assignment, renaming, and copying; §11.4.13 Set membership operator; §13.4.1 Return values and void functions; §16.3 Immediate assertions; §20.11 Assertion control; §22.14.8 (Table 22-6, keywords added in 1800-2012)
+
+**UVM:** uvm-core 2020.3.1, `src/macros/uvm_sequence_defines.svh` (`` `uvm_do ``, `` `uvm_rand_send ``, the `RNDFLD` warning); `src/deprecated/macros/uvm_sequence_defines.svh` (`` `uvm_do_with ``, `` `uvm_rand_send_with ``); `src/seq/uvm_sequence_item.svh` (`uvm_get_report_object()` returns the sequencer); `src/base/uvm_component.svh` (`+uvm_set_severity`).
+
+**Prerequisites:** [I-SV-1 Object-Oriented Programming](/curriculum/T2_Intermediate/I-SV-1_OOP/index) for classes, handles and `new`; [F2B Dynamic Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index) for dynamic arrays and `size()`; [F2A Structs, Unions and Enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums) for enums.
+
+**Related**
+- [Constraint Blocks, soft, and solve…before](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks): the second page of this module.
+- [I-SV-2B Advanced Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index): implication, `foreach`, `unique`, `rand_mode`, `constraint_mode`, seeds and solver debugging.
+- [I-SV-2B Controlling Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization): `rand_mode()`, `constraint_mode()`, `pre_randomize()` and `post_randomize()`.
+- [I-SV-2B Solver Debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug): finding conflicting constraints and implicit solve orders.
+- [I-SV-3A Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index): measuring what randomization produced.
+- [I-UVM-3A Sequences Fundamentals](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): randomizing sequence items in UVM.
+- [F2A Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions): `inside` outside constraints.
+
+<NextLesson />

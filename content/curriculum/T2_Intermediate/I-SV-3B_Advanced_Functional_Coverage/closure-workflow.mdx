@@ -1,132 +1,854 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import Quiz from "@/components/ui/Quiz";
-import { InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "The Coverage Closure Loop"
+description: "Classify every coverage hole, choose the matching fix, and close a coverage plan within a seed budget without hiding scenarios."
+flashcards: "I-SV-3B_Closure_Workflow"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "Unified Coverage Interoperability Standard (UCIS)"
+    type: "standard"
+    identifier: "Accellera UCIS 1.0"
+---
 
-export const metadata = {
-  title: "The Coverage Closure Loop | Advanced SystemVerilog for Verification",
-  description: "Learn the methodology of identifying coverage holes, adjusting generators, and closing coverage.",
-};
+## Quick Take
 
-<InfoPage
-  title="The Coverage Closure Loop"
-  sv_concept_tags={["coverage closure", "stimulus tuning", "v-plan"]}
->
+- **What it is:** **Coverage closure** is the loop that takes a **regression** (many simulation runs of your tests, each with a different random seed) from "the coverage report has holes" to "every plan row has met its goal, its checks passed, and every remaining exclusion has a written, reviewed reason". A **hole** is a bin whose hit count is below `option.at_least` (1 by default), so it does not count as covered (IEEE 1800-2023 §19.7, Table 19-1). This page is the method for the last and hardest part of the loop: deciding *why* each hole is empty, choosing the one action that matches, and checking that the action fits your budget of seeds and transactions.
+- **Why it matters:** The last few percent of coverage cost more than the rest put together, and they are where bugs escape. The two cheap reactions are both wrong most of the time. Running more seeds cannot fill a bin that the stimulus can never produce, and an `ignore_bins` added "to get the number up" hides a legal scenario that was never tested. Milestone M4 is gated on doing this honestly.
+- **The Analogy:** Filling a sticker album. You buy packs (seeds), and the last few stickers take forever because they are rare. Some stickers were never printed in your packs (a constraint makes them impossible), some are not part of your edition at all (unreachable in this design), some must never appear because they are fakes (forbidden by the spec), and some you got but never stuck in (the scenario happened, but coverage did not record it). Each needs a different fix, and buying more packs only helps with the rare ones. *Where it breaks:* you cannot change how a sticker factory prints, but you can change your stimulus odds with `dist` or simply order the sticker you need with a directed test. And a full album says nothing about whether the stickers are genuine; that is what the checks are for.
 
-## Level 1: The Infinite Loop Warning
-If you write a completely unconstrained random test and let it run forever, will you hit 100% coverage? 
+**You will be able to:**
+1. **Classify** a coverage hole as forbidden, unreachable here, under-stimulated (never generated or rare) or unobserved from its evidence, and **choose** the matching action.
+2. **Decide** when a hole may be excluded or waived, and **write** the exclusion and the waiver record so that no legal scenario is hidden.
+3. **Calculate** the chance that a seed or transaction budget closes a bin or a cross, P = 1 − (1 − p)^N, and **choose** the smallest stimulus change that closes it within the budget.
+4. **Plan** a regression closure loop: **explain** how coverage is merged across seeds (tool-dependent), what the merge needs from the testbench, and how code coverage complements functional coverage at sign-off.
+5. **Debug** a closure that is stuck, or that jumped suspiciously, from the report, the logs and the coverage-model history.
 
-Only if every bin has a nonzero chance per sample. Even then, the wait is set by the rarest bin: a bin hit once in 10,000 samples needs about 10,000 samples on its own, and a 3-event corner case can be far rarer. A bin your constraints make impossible never closes, however many seeds you run. You cannot achieve closure purely by running more random seeds. You must actively participate in a **Closure Loop**.
+<BeforeYouStart />
 
-## Level 2: The Canonical Workflow
+Review if needed: the module overview's [closure loop at a glance](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/index) (the four hole classes in one table), [Coverage APIs](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis) for `get_inst_coverage()` and `merge_instances`, `dist` weights from [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index), `ignore_bins`, `illegal_bins` and `weight` from [I-SV-3A Coverage Options](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options), and code coverage from [F1B](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index).
 
-Coverage closure is a repetitive engineering process:
+## Build Your Mental Model
 
-1. **Run Regressions:** Run your test suite with many random seeds.
-2. **Merge Databases:** The CI/CD system merges all the individual test coverage databases (UCDB/UCIS) into one master database.
-3. **Identify Holes:** Open the master database in a viewer. Look for bins with 0 hits.
-4. **Analyze the Unhit Bins:** Why wasn't this bin hit?
-   - Is it impossible by the spec? Exclude it: `illegal_bins` if it must never happen (you then get an error if it ever does), `ignore_bins` if it simply does not matter. Then update the V-Plan.
-   - Is it legal, but the generator constraints make it extremely rare?
-   - Is it legal, but a constraint makes it impossible? That is a generator bug.
-   - Is the testbench missing a directed sequence to set up the precise conditions?
-5. **Adjust Stimulus:** Change constraint weights (`dist`), write a new directed sequence, or create a specific test to target the hole.
-6. **Repeat:** Re-run the regression and verify the hole is filled.
+**How to read this page.** The core path is the first three sections: classify the hole, decide whether it may be excluded, and pick the smallest stimulus change. A junior engineer who stops there can already triage a coverage report correctly. The budget arithmetic, regression merging, code coverage and the debugging table are practitioner depth. Make It Work runs one model under three stimulus policies, so you can see a generator bug, a rare cell and a steered closure in your own log. Push Further holds the expert corner cases.
 
-The same hole needs a different fix depending on the spec. Pick the spec, then try each fix: the model reruns the same seed and checks whether coverage closes and whether the fix is faithful to the spec.
+The examples use the module's running example: an 8-bit ALU as the design under test (DUT), and a **verification plan** (vplan) whose **plan rows** each name a scenario, the coverage item that shows it happened and the check that shows it worked ([Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage)). The coverage items live in a **collector**, the class that holds the covergroup and samples it once per transaction. The rows and their coverage items are ALU-1 (every operation: `cp_op`), ALU-2 (`a` at 0 and `8'hFF`: `cp_a`), ALU-3 (`b` at its edges: `cp_b`), ALU-4 (every operation with each edge of `a`: the cross `x_op_a`, 7 × 2 = 14 cells), ALU-5 (DIV with `b == 0` is forbidden by the spec) and ALU-6 (every result matches the reference model `alu_model`). A **cell** is one bin of a cross, such as `<ADD, a = 8'h00>`.
+
+### Classify every hole before you act
+
+**What it is.** To **classify** a hole is to decide, from evidence, why the bin is empty. Every hole falls into exactly one of four classes, and the class, not the size of the hole, decides the action:
+
+| Class | What it means | Evidence that identifies it | Action | Never |
+|---|---|---|---|---|
+| **Unobserved** | The scenario happened, but coverage did not record it | The transaction log, a waveform or a bench counter shows the scenario; the bin is still empty | Fix the collector: it was not fed, sampled a stale or wrong field, had a false `iff` guard, was stopped with `stop()` and not restarted, or the bin's `at_least` is higher than the hits it got | Change the stimulus |
+| **Forbidden** | The spec says it must never happen | A spec section that forbids it (ALU-5: DIV with `b == 0`) | `illegal_bins` (§19.5.6, §19.6.3), keep the constraint that prevents it, and keep an independent check | Use `ignore_bins`, write a test to hit it |
+| **Unreachable here** | The spec allows it, but this design or configuration cannot produce it | A parameter that disables the feature, a tied-off input, or a formal proof that it cannot be reached | An exclusion scoped to that configuration, plus a reviewed waiver that records the evidence | Exclude it without a reason, or in the shared model for every configuration |
+| **Under-stimulated** | Legal and reachable, but the stimulus did not produce it | No log entry; the scenario is allowed and reachable | **Never generated** (probability 0, a constraint excludes it or a setup sequence is missing): fix the constraint or write a directed test. **Rare** (probability above 0 but small): budget it, then steer with `dist`, a mode knob or a directed test | Run more seeds at a probability-0 bin |
+
+Three kinds of evidence appear in the table. A **transaction log** is the record the driver or monitor writes of every transaction it handled. A **tied-off input** is an input wired to a constant in this design. A **formal proof** comes from a formal tool, which explores every state the design can reach mathematically instead of by simulation ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)).
+
+Ask the questions in this order. The first one matters most, because if the scenario already happened, no stimulus change can help.
+
+<ArchitectureDiagram
+  title="Classifying a coverage hole: four questions in order"
+  caption="Start at the top. Each question is a yes or no; the first answer that leaves the left column names the class and its action. Only a rare hole is a budget question."
+  legend={false}
+  cellWidth={200}
+  gapX={56}
+  gapY={44}
+  nodes={[
+    { id: "hole", label: "a hole", sublabel: "bin hits below option.at_least", kind: "generic", col: 0, row: 0 },
+    { id: "q1", label: "Did it happen?", sublabel: "transaction log, waves, counters", kind: "generic", col: 0, row: 1 },
+    { id: "unobs", label: "unobserved", sublabel: "fix the collector or sampling", kind: "generic", col: 1, row: 1 },
+    { id: "q2", label: "Does the spec allow it?", sublabel: "cite the section", kind: "generic", col: 0, row: 2 },
+    { id: "forb", label: "forbidden", sublabel: "illegal_bins + constraint + check", kind: "generic", col: 1, row: 2 },
+    { id: "q3", label: "Can this design reach it?", sublabel: "configuration, tie-offs, formal", kind: "generic", col: 0, row: 3 },
+    { id: "unreach", label: "unreachable here", sublabel: "scoped exclusion + waiver", kind: "generic", col: 1, row: 3 },
+    { id: "q4", label: "Is its probability 0?", sublabel: "read the constraints", kind: "generic", col: 0, row: 4 },
+    { id: "never", label: "never generated", sublabel: "fix the constraint, or direct it", kind: "generic", col: 1, row: 4 },
+    { id: "rare", label: "rare", sublabel: "budget it, then steer", kind: "generic", col: 0, row: 5 }
+  ]}
+  edges={[
+    { from: "hole", to: "q1", style: "causal" },
+    { from: "q1", to: "unobs", style: "causal", label: "yes" },
+    { from: "q1", to: "q2", style: "causal", label: "no" },
+    { from: "q2", to: "forb", style: "causal", label: "no" },
+    { from: "q2", to: "q3", style: "causal", label: "yes" },
+    { from: "q3", to: "unreach", style: "causal", label: "no" },
+    { from: "q3", to: "q4", style: "causal", label: "yes" },
+    { from: "q4", to: "never", style: "causal", label: "yes" },
+    { from: "q4", to: "rare", style: "causal", label: "no" }
+  ]}
+/>
+
+In text: a hole first asks "did it happen?"; yes means unobserved. Otherwise "does the spec allow it?"; no means forbidden. Otherwise "can this design reach it?"; no means unreachable here. Otherwise "is its probability 0 under the constraints?"; yes means never generated, and no means rare.
+
+**Forbidden and unreachable are different.** A forbidden scenario is one the spec rules out, so if it ever happens something is broken, and you want an error. An unreachable scenario is perfectly legal; this particular design or configuration just cannot produce it, so there is nothing to check and nothing to report, only a decision to record. Mixing them up either turns legal traffic into errors (`illegal_bins` on an unreachable cell that a later configuration can reach) or lets forbidden traffic pass silently (`ignore_bins` on a forbidden cell).
+
+**How to tell "never generated" from "rare".** A probability is the chance that one random transaction lands in the bin. You compute it from the constraints: the solver picks uniformly among all legal value combinations unless `dist` says otherwise (§18.5.9), so with `op` uniform over 7 operations and `a` uniform over 256 values, the cell `<ADD, a = 8'h00>` has p = 1/7 × 1/256 = 1/1792. A constraint such as `op inside {ADD, SUB, MUL, AND, OR, XOR}` gives the two DIV cells p = 0. In a report, the signature of p = 0 is a cell that stays empty on *every* seed while its neighbours in the same row fill.
+
+**Try it before you read on.** The challenge below is a model of the same decision, on a small address × operation cross. The stimulus has a constraint that never sends BURST to the high address region, so one cell has probability 0 and the regression is stuck. **Predict first:** for Spec A (BURST to the high region is forbidden) and for Spec B (it is legal), which of the four fixes closes coverage *and* matches the spec? Then choose a spec and try each fix.
 
 <CoverageCrossExplorerVisualizer mode="closure" />
 
+**What the challenge showed.** "10× more samples" fails under both specs: the cell has probability 0. Under Spec A, `illegal_bins` is the only faithful fix: the cell leaves the denominator, the constraint keeps the stimulus legal, and a forbidden BURST would still raise a run-time error. `ignore_bins` closes the number too, but then a forbidden BURST would pass silently. Under Spec B the same `illegal_bins` is wrong, because it calls legal traffic an error; the coverage model was right and the constraint was the bug, so you delete the constraint. The model checks one thing the real project needs in addition: under Spec A, a check outside coverage (an assertion or a scoreboard input check) that still catches the forbidden BURST when coverage is not being collected.
+
+**Pitfalls.**
+- **Treating every hole as rare.** "Run more seeds" is the right answer only for the last class, and only when the budget arithmetic says it will work (misconception: closure means running more seeds).
+- **Excluding a bin to reach the number.** An excluded bin leaves the denominator; nothing was exercised. Excluding is not covering.
+- **Classifying from the coverage report alone.** The report tells you *which* bins are empty, never *why*. The why lives in the transaction log, the spec, the design configuration and the constraints.
+- **Skipping "did it happen?"** A collector bug looks exactly like a stimulus problem in the report. Steering stimulus at an unobserved hole changes nothing, and the real bug, a collector that misses traffic, stays.
+
+### Exclusions and waivers
+
+**What they are.** An **exclusion** removes a bin or a coverage item from the coverage computation, so it no longer appears in the denominator. A **waiver** is the written, reviewed decision that justifies an exclusion, or that accepts a hole that will stay open. The rule that keeps closure honest: **every exclusion has a waiver, and every waiver names its evidence.** An exclusion without a waiver is a hidden hole.
+
+Exclusions live in two places:
+
+| Form | Where | Effect on the number | If the scenario happens later | Use it for |
+|---|---|---|---|---|
+| `ignore_bins` | the coverage model | The values or cross products leave the computation (§19.5.5, §19.6.2) | Nothing: it is silently ignored | Values that are legal but out of the plan's scope, or unreachable in every configuration that uses this model |
+| `illegal_bins` | the coverage model | The values leave the computation (§19.5.6, §19.6.3) | A run-time error, even if another bin or an `ignore_bins` also contains them | Forbidden scenarios, together with the constraint and a check |
+| `option.weight = 0` on a coverpoint or cross | the coverage model | The item adds nothing to its covergroup's percentage (§19.11) | The item still counts bins; it just does not move the score | Helper items that only feed a cross or hold an illegal bin ([I-SV-3A Coverage Options](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options)); never a way to hide a plan row |
+| Exclusion file | the coverage tool, applied to the database (tool-dependent) | The tool leaves the listed bins out of its report | Tool-dependent: whether the hits are still recorded, and how the report shows them, depends on the tool | Unreachable in one configuration, without editing the model that other configurations share |
+
+A waiver record looks like this. The format belongs to your team and your tool; the fields are what reviewers look for.
+
+```text
+WAIVER  W-017                         (format is team- and tool-dependent)
+item    tb_top.cov  x_op_a  cells <MUL, a=8'h00> and <MUL, a=8'hFF>
+plan    ALU-4
+class   unreachable here
+reason  This product builds the ALU with HAS_MUL = 0 (spec section 2.3);
+        MUL is never decoded, so no MUL transaction can occur.
+proof   build configuration file rev 41; formal cover of MUL unreachable
+action  tool exclusion in configs/no_mul/exclusions, not in the shared model
+author  (engineer)      reviewer  (designer)      date  (review date)
+revisit when HAS_MUL, the spec section or the coverage model changes
+```
+
+**`illegal_bins` is not a checker.** It reports a forbidden value only when its covergroup instance exists, collects coverage and samples that value. In a regression that runs with coverage switched off for speed, or after `stop()`, what happens is tool-dependent. A forbidden scenario therefore always gets a real check as well, in the scoreboard or in an assertion, and the constraint that keeps the stimulus legal ([Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage) shows the ALU-5 row with all three).
+
+**Pitfalls.**
+- **Waivers that never expire.** A waiver is valid only for the spec, the RTL and the configuration it names. Record what would make it invalid, and re-review it when any of those change.
+- **"Unreachable" without evidence.** "We never see it" is a description of the hole, not a reason. Acceptable evidence is a spec section, a configuration setting, a tie-off in the RTL, or a formal unreachability result ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)).
+- **Editing the shared model for one configuration.** An `ignore_bins` added for one product hides the same cell in every other product that uses the model. Scope the exclusion to the configuration.
+
+### Steering the stimulus: the smallest change that closes the hole
+
+**What it is.** **Steering** means changing the stimulus on purpose so that an under-stimulated hole gets hit. Choose the cheapest change that closes the hole within the budget, in this order:
+
+1. **Fix a wrong constraint.** A never-generated legal cell is a generator bug. Delete or correct the constraint; no other change can help.
+2. **Bias with `dist`.** A rare cell becomes common when you give its values real weight. For the ALU, `a dist {8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] :/ 2}` gives each edge value a probability of 1/4, so each `x_op_a` cell rises from 1/1792 to 1/7 × 1/4 = 1/28.
+3. **Switch a mode at run time.** A mode knob or `constraint_mode()` ([I-SV-2B Controlling Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization)) keeps the broad uniform stimulus most of the time and turns on the corner weights when coverage stops growing. The [module overview's Make It Work](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/index) builds this feedback loop.
+4. **Write a directed test or sequence.** A cell that needs a precise setup (fill a FIFO, then reset, then read) is cheaper to reach by construction than by chance.
+
+The steering table for `x_op_a` under a budget of 3 seeds × 500 transactions, merged (1,500 samples), shows why the order matters. All numbers are exact probabilities for that budget, starting from the generator that leaves out DIV:
+
+| Change | p for each `x_op_a` cell | P(all 14 cells closed within 1,500) |
+|---|---|---|
+| None: `op inside {ADD, SUB, MUL, AND, OR, XOR}`, `a` uniform | 0 for the two DIV cells | 0 |
+| Run 6 seeds instead of 3 | still 0 for the DIV cells | 0 |
+| Add DIV, `a` still uniform | 1/1792 | 0.035% |
+| Add DIV, weight only `8'hFF`: `a dist {8'hFF :/ 1, [8'h00:8'hFE] :/ 1}` | 1/14 for the FF cells, 1/3570 for the 00 cells | 0.055% |
+| Add DIV, weight both edges but write `[8'h01:8'hFE] := 2` | 1/3570 (see the pitfall below) | about 3 × 10⁻⁷ |
+| Add DIV, weight both edges with `[8'h01:8'hFE] :/ 2` | 1/28 | above 99.99999% |
+
+**Pitfalls.**
+- **`:=` on a range.** `:=` gives *every value* in a range the weight, and `:/` gives the *whole range* the weight (§18.5.3). `[8'h01:8'hFE] := 2` weighs 254 × 2 = 508, so `a == 8'h00` gets 1/510, worse than uniform. Write `:/` when you mean "this whole range together".
+- **Weighting one edge.** Weighting only `8'hFF` makes `a == 8'h00` *rarer* than uniform (1/510 instead of 1/256), so half the cross gets worse.
+- **Assuming the weights hold.** "Absent any other constraints", values follow their weights; when other constraints make the weights unsatisfiable, "implementations are only required to satisfy the constraints" (§18.5.3). Rerun and measure after every steering change.
+
+### Budgeting a closure loop
+
+A **budget** is the number of seeds and transactions you can afford. Before spending it, estimate whether it can close the holes you have.
+
+**One bin.** If one transaction hits a bin with probability p, then N independent transactions hit it at least once with probability
+
+P(hit within N) = 1 − (1 − p)^N
+
+For p = 10⁻⁴ (a bin hit once in 10,000 transactions):
+
+| N | P(hit within N) | Comment |
+|---|---|---|
+| 10,000 | 63.2% | N = 1/p, the *average* wait, is far from a guarantee |
+| 20,000 | 86.5% | |
+| 29,956 | 95.0% | about 3/p (exactly ln 20 / p for small p) |
+| 46,050 | 99.0% | about 4.6/p (ln 100 / p) |
+
+A probability-0 bin has P = 0 for every N.
+
+**Many bins.** A cross closes only when *all* its cells are hit, so the rarest cells dominate. For k cells of probability p, a safe estimate is N ≈ ln(k / δ) / p for a chance 1 − δ of closing them all. For `x_op_a` (k = 14, p = 1/1792, δ = 0.05) that gives about 10,100; the exact answer is 10,053:
+
+| N | P(all 14 closed), p = 1/1792 (DIV fixed, `a` uniform) | P(all 14 closed), p = 1/28 (both edges weighted) |
+|---|---|---|
+| 100 | ≈ 0 | 68.2% |
+| 155 | ≈ 0 | 95.1% |
+| 500 (one seed) | 2 × 10⁻⁹ | 1 − 1.8 × 10⁻⁷ |
+| 1,500 (3 seeds merged) | 0.035% | ≈ 100% |
+| 5,000 (10 seeds) | 41.2% | ≈ 100% |
+| 10,053 (about 20 seeds) | 95.0% | ≈ 100% |
+
+**Per seed or merged.** Decide in the plan which closure criterion you sign off on, because the numbers differ:
+- **Merged**: hits from all seeds add up, so 3 seeds × 500 behave like one run of 1,500 transactions. This is what a regression merge reports.
+- **Per seed**: every seed must close on its own, so the chance is P(one seed closes)³. Steered at p = 1/28, three seeds of 500 all close with probability 1 − 5.3 × 10⁻⁷; uniform, essentially never.
+
+**When the budget says no, steer.** Compare the samples you need for 95% with the samples you have. When the need is larger, more seeds are the wrong tool: change the stimulus (previous section). A **plateau** (the merged number not growing over several regressions) is the practical signal; it means the remaining holes are either probability 0 or rarer than your budget.
+
+### Merging a regression and reading code coverage
+
+**What merging is.** Each simulation in a regression (tests × seeds) writes its own coverage database. **Merging** combines them into one database that the report and the review read. IEEE 1800 does not define how databases from different runs are merged: the algorithm, the file format and how it treats a changed coverage model are all tool-dependent. The standard's in-simulation analogue is type coverage with `type_option.merge_instances = 1`, which adds up the counts of bins with the same name across instances and treats a merged bin as covered when the summed count reaches the largest `at_least` of those instances (§19.11.1, §19.11.3). Make It Work uses it to merge three seeds inside one simulation.
+
+**What a merge needs from you.**
+- **Stable instance names.** A merge lines instances up by name. A name that depends on construction order (`cov`, `cov_1`) puts the same lane in different rows on different runs. Name each instance from its place in the hierarchy ([Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage) shows how).
+- **One coverage-model version.** Databases from different versions of the covergroups may not merge, or may merge with tool-specific rules. Record the model version with every run.
+- **The seed and the code version.** A seed replays a run only with the same code ([I-SV-2B Randomization Methods](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods)).
+- **A rule for failing runs.** A run whose checks failed shows that a scenario happened, not that it worked. Many flows merge coverage only from passing runs; whichever rule you pick, write it in the plan.
+
+The **Unified Coverage Interoperability Standard (UCIS)**, Accellera 1.0 (2012), defines an API and an XML interchange format for coverage data, so tools and scripts can read each other's results. A vendor's own database format is not the same thing as UCIS.
+
+<ArchitectureDiagram
+  title="A nightly regression: from per-seed databases to the coverage review"
+  caption="Each run writes a database with functional and code coverage. The tool merges them (tool-dependent), the review reads the merged result against the vplan and the waiver file, and every hole leads to an action and the next regression."
+  legend={false}
+  cellWidth={170}
+  gapX={48}
+  gapY={48}
+  nodes={[
+    { id: "s1", label: "seed 1 run", sublabel: "functional + code db", kind: "generic", col: 0, row: 0 },
+    { id: "s2", label: "seed 2 run", sublabel: "functional + code db", kind: "generic", col: 0, row: 1 },
+    { id: "sn", label: "seed N run", sublabel: "functional + code db", kind: "generic", col: 0, row: 2 },
+    { id: "merge", label: "merge", sublabel: "tool-dependent", kind: "generic", col: 1, row: 1 },
+    { id: "waive", label: "waiver file", sublabel: "exclusions + reasons", kind: "generic", col: 1, row: 0 },
+    { id: "plan", label: "vplan", sublabel: "rows, goals, checks", kind: "generic", col: 2, row: 0 },
+    { id: "review", label: "coverage review", sublabel: "functional + code holes", kind: "generic", col: 2, row: 1 },
+    { id: "act", label: "act", sublabel: "steer, fix, waive, add row", kind: "generic", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "s1", to: "merge", style: "data" },
+    { from: "s2", to: "merge", style: "data" },
+    { from: "sn", to: "merge", style: "data" },
+    { from: "merge", to: "review", style: "data", label: "merged db" },
+    { from: "waive", to: "review", style: "data" },
+    { from: "plan", to: "review", style: "data" },
+    { from: "review", to: "act", style: "causal", label: "each hole" }
+  ]}
+/>
+
+**Code coverage as a complement.** Code coverage is measured automatically from the design code. IEEE 1800-2023 requires a tool's coverage interface to support at least statement, toggle, FSM (states and transitions) and assertion coverage (§40.2.1) and defines them (§40.2.2); branch and condition coverage are defined by each tool. [F1B](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index) teaches the metrics. At sign-off, the two families answer different questions, and each finds holes the other cannot see:
+
+| | Code coverage high | Code coverage has holes |
+|---|---|---|
+| **Functional coverage at goal** | Necessary, not sufficient: both say "it ran". Only live checks say "it was right". | RTL that no planned scenario exercised: usually a missing plan row (add it), sometimes dead code (exclude it with a waiver, and tell the designer) |
+| **Functional coverage has holes** | Planned scenarios never ran, although every line did: a missing combination or sequence that code coverage cannot see | Early in the project: close the plan first, then revisit the code holes |
+
+### Debugging closure: symptom, cause, fix
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| One cell stays empty on every seed while the other cells in its row fill | Probability 0: a constraint excludes it, or a setup sequence is missing | Classify it: forbidden → `illegal_bins` with a check; legal → fix the constraint or write a directed test |
+| The transaction log shows the scenario, but its bin is empty | Unobserved: the collector is not fed on that path, samples a stale or wrong field, has a false `iff` guard, was stopped and not restarted, or `at_least` is higher than the hits | Fix the collector, then rerun the *same* seed and confirm the bin fills |
+| The merged report has two rows for one lane, such as `cov` and `cov_1` | Instance names depend on construction order | Name every instance from the hierarchy with `set_inst_name()` |
+| Each seed is far from the goal, but the merged number reaches it | The rare cells close only across seeds | Fine if the plan signs off on merged coverage; if it requires per-seed closure, steer |
+| Coverage jumped to 100% overnight with no stimulus change | A coverage-model change: new `ignore_bins`, a weight set to 0, coarser bins, or a new tool exclusion | Review the coverage-model diff and the waiver file; every new exclusion needs a waiver |
+| The merged number dropped after a commit that changed only the covergroups | New bins or items, or the tool's rules for merging databases from different model versions | Rerun the regression on the new model before comparing numbers |
+| Steering was added, but the cell's rate did not change as computed | `:=` used on a range, or other constraints override the weights (§18.5.3) | Use `:/` for whole ranges; measure the rate in a short run |
+| An illegal-bin error is in a log, but the regression passed | The pass/fail gate counts only the testbench's own reports, and the illegal-bin error comes from the simulator | Gate on simulator errors as well, or mirror the forbidden condition in a check |
+
+Simulator message text for illegal bins, exclusions and merges is tool-dependent; read your tool's documentation rather than matching strings from another tool.
+
+### In a real testbench
+
+- **Who does what.** After every nightly regression, the engineer who owns the vplan reads the merged report row by row and classifies each new hole. Designers join the coverage review for anything classified forbidden or unreachable, because only they can confirm the spec and the configuration. Waivers live in a version-controlled file next to the plan.
+- **In UVM.** The collector is a `uvm_subscriber` fed by the monitor's analysis port ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)); steering is a test knob passed through the configuration database or a virtual sequence ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index)); stopping at the goal means dropping the objection, never `$finish` from a component.
+- **When not to chase a hole.** A bin that no plan row asks for is an orphan: fix the coverage model (give it a row or remove it) instead of spending budget on it.
+- **The interview angle.** "We have been stuck at 96% for two weeks" is the classic staff-level prompt. The expected answer is this page in order: classify each hole from evidence, fix the unobserved and never-generated ones, waive only with evidence, budget the rare ones, and steer when the budget says more seeds will not do it.
+
+### Recap
+
 <VisualRecap
   title="The coverage closure loop"
-  rule="For every hole, first ask whether it can happen. Rare: bias the stimulus. Impossible by spec: illegal_bins (or ignore_bins if it only needs to leave the metric). Legal but never generated: fix the constraint. Then rerun."
-  code={`// Rare: bias the generator toward it
-addr dist {[48:63] :/ 30, [0:47] :/ 70};
+  rule="Classify every hole from evidence before you act. Unobserved: fix the collector. Forbidden: illegal_bins, keep the constraint and a check. Unreachable here: a scoped exclusion with a reviewed waiver. Under-stimulated: fix a probability-0 constraint, or budget a rare cell and steer. Then rerun and measure."
+  code={`// Rare: weight both edge values of a (each 1/4)
+a dist {8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] :/ 2};
 
-// Forbidden by the spec: out of the metric, error if it ever happens
-illegal_bins no_hi_burst = binsof(cp_addr.high) && binsof(cp_op.burst);
+// Forbidden by the spec (ALU-5): error if it is ever sampled
+illegal_bins div_by_zero = binsof(cp_op) intersect {DIV} &&
+                           binsof(cp_b.zero);
 
-// Generator bug: delete the over-tight constraint
-// !(addr inside {[48:63]} && op == BURST);`}
-  mistake="Adding ignore_bins until the number reaches 100%. It hides a legal scenario that was never tested, and a forbidden one would still pass silently."
-  inTestbench="After every merged regression: rank the holes by plan priority, classify each one (rare, impossible, generator bug), change the stimulus or the coverage model, rerun, and record the decision next to the bin in the V-Plan."
+// Never generated: the generator bug was a missing DIV
+// constraint c_ops { op inside {ADD, SUB, MUL, AND, OR, XOR}; }`}
+  mistake="Treating every hole the same way: running more seeds at a probability-0 cell, or adding ignore_bins until the number reaches 100%. The first wastes the budget; the second hides a legal scenario, and on a forbidden cell lets a violation pass silently."
+  inTestbench="After every merged regression: read the report per plan row, classify each new hole with its evidence, apply the matching action, write a waiver for every exclusion, check the budget, rerun, and record each decision next to its plan row."
 >
-  <svg viewBox="0 0 320 150" role="img" aria-label="The closure loop: run seeds, merge databases, find holes, classify each hole as rare, impossible or a generator bug, apply the matching fix, and run again." style={{ width: "100%", maxWidth: 360 }}>
+  <svg viewBox="0 0 330 178" role="img" aria-label="The closure loop: run seeds, merge and find holes, then classify each hole into one of four classes, each with its action: unobserved, fix the collector; forbidden, illegal_bins with a constraint and a check; unreachable here, a scoped exclusion with a reviewed waiver; under-stimulated, fix a probability-0 constraint or budget and steer a rare cell. Apply the action and run again." style={{ width: "100%", maxWidth: 380 }}>
     <defs>
-      <marker id="closure-open-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <marker id="cw-open-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
         <path d="M0,0 L10,5 L0,10" fill="none" stroke="currentColor" />
       </marker>
     </defs>
-    <rect x="8" y="10" width="92" height="26" rx="13" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
-    <text x="54" y="27" fontSize="10.5" textAnchor="middle" fill="currentColor">run seeds</text>
-    <rect x="114" y="10" width="92" height="26" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="160" y="27" fontSize="10.5" textAnchor="middle" fill="currentColor">merge + holes</text>
-    <rect x="220" y="10" width="92" height="26" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
-    <text x="266" y="27" fontSize="10.5" textAnchor="middle" fill="currentColor">classify hole</text>
-    <line x1="100" y1="23" x2="112" y2="23" stroke="currentColor" strokeDasharray="4 3" markerEnd="url(#closure-open-arrow)" />
-    <line x1="206" y1="23" x2="218" y2="23" stroke="currentColor" strokeDasharray="4 3" markerEnd="url(#closure-open-arrow)" />
-    <text x="16" y="62" fontSize="10" fill="currentColor">rare → bias stimulus (dist)</text>
-    <text x="16" y="80" fontSize="10" fill="currentColor">impossible by spec → illegal_bins / ignore_bins</text>
-    <text x="16" y="98" fontSize="10" fill="currentColor">generator bug → fix the constraint</text>
-    <path d="M266,36 L266,118 L54,118 L54,38" fill="none" stroke="currentColor" strokeDasharray="4 3" markerEnd="url(#closure-open-arrow)" />
-    <text x="160" y="134" fontSize="10" textAnchor="middle" fill="currentColor">apply the fix, then rerun</text>
+    <rect x="8" y="10" width="94" height="26" rx="13" fill="none" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="55" y="27" fontSize="10.5" textAnchor="middle" fill="currentColor">run seeds</text>
+    <rect x="118" y="10" width="94" height="26" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="165" y="27" fontSize="10.5" textAnchor="middle" fill="currentColor">merge + holes</text>
+    <rect x="228" y="10" width="94" height="26" rx="4" fill="none" stroke="currentColor" strokeWidth="1.6" />
+    <text x="275" y="27" fontSize="10.5" textAnchor="middle" fill="currentColor">classify hole</text>
+    <line x1="102" y1="23" x2="116" y2="23" stroke="currentColor" strokeDasharray="4 3" markerEnd="url(#cw-open-arrow)" />
+    <line x1="212" y1="23" x2="226" y2="23" stroke="currentColor" strokeDasharray="4 3" markerEnd="url(#cw-open-arrow)" />
+    <text x="16" y="60" fontSize="10" fill="currentColor">1 unobserved → fix the collector</text>
+    <text x="16" y="78" fontSize="10" fill="currentColor">2 forbidden → illegal_bins + constraint + check</text>
+    <text x="16" y="96" fontSize="10" fill="currentColor">3 unreachable here → exclusion + waiver</text>
+    <text x="16" y="114" fontSize="10" fill="currentColor">4 under-stimulated → fix p = 0, or budget + steer</text>
+    <path d="M275,36 L275,138 L55,138 L55,38" fill="none" stroke="currentColor" strokeDasharray="4 3" markerEnd="url(#cw-open-arrow)" />
+    <text x="165" y="156" fontSize="10" textAnchor="middle" fill="currentColor">apply the action, then rerun and measure</text>
   </svg>
 </VisualRecap>
 
-## Level 3: Practice Makes Perfect
+## Make It Work
 
-Reading about closure is easy; actually doing it requires an intuition for interpreting coverage data and translating it back into generator constraints. 
+### Worked example: one coverage model, three stimulus policies
 
-In the upcoming lab, you will be handed a mostly-working ALU testbench. You will run it, analyze the coverage holes in the report, and then modify the constraints using `dist` weighting and edge-case generation to hit 100% without rewriting the whole environment.
+This bench runs the ALU coverage model (`cp_op`, `cp_a` and `x_op_a`, plan rows ALU-1, ALU-2 and ALU-4) under one of three stimulus policies, chosen on the command line. Each policy runs as a small regression: three seeds of 500 transactions, each seed with its own covergroup instance, merged by type coverage the way a regression merge would combine three runs. Every transaction is checked against the reference model before it is sampled (ALU-6), and the bench counts the cells it actually generated, so you can tell a stimulus problem from a collector problem.
 
-**Count the bins before you change anything.** In `alu_cov_mon.sv`:
-
-- `cp_op` has 7 automatic bins, one per `op_t` constant. Its `ignore_bins unused = {7}` changes nothing, because 7 is not an `op_t` value.
-- `cp_a` and `cp_b` each have 2 counted bins, `zero` and `max`. `others` is a default bin: it is not counted and not crossed.
-- `cross_max_op` crosses `cp_op` with `cp_a`: 7 × 2 = 14 cross bins, one for every operation with `a == 0` and one for every operation with `a == 8'hFF`.
-
-The starter run finishes well short of 100% (about 70% on average): `DIV` is never generated, and each `a == 0` or `a == 8'hFF` value shows up only once in 256 samples. The lab's steps add `DIV` and weight `8'hFF`, but that is **not enough**: `a == 0` stays at 1 in 256, so most of the seven `op` × `zero` cross bins stay empty after 500 samples. Weight **both** edge values, for `a` and for `b`, for example:
+- no plusarg: the corrected generator with `a` uniform;
+- `+BUGGY`: the generator bug from the lab, DIV never sent;
+- `+STEER`: both edge values of `a` weighted to 1/4 each.
 
 ```systemverilog
-a dist {0 := 1, 8'hFF := 1, [1:254] :/ 2};
-b dist {0 := 1, 8'hFF := 1, [1:254] :/ 2};
+// compile
+// closure_policies.sv: one file. Top level: tb_top.
+// Run three times: no plusarg, +BUGGY, +STEER.
+package alu_pkg;
+  typedef enum bit [2:0] {ADD, SUB, MUL, DIV, AND, OR, XOR} op_t;
+
+  // Reference model for plan row ALU-6: what the spec says y must be.
+  function automatic bit [7:0] alu_model(op_t op, bit [7:0] a, bit [7:0] b);
+    case (op)
+      ADD:     return a + b;
+      SUB:     return a - b;
+      MUL:     return a * b;   // low byte of the product
+      DIV:     return a / b;   // b == 0 never gets here: ALU-5 forbids it
+      AND:     return a & b;
+      OR:      return a | b;
+      default: return a ^ b;   // XOR
+    endcase
+  endfunction
+
+  class alu_txn;
+    rand op_t      op;
+    rand bit [7:0] a;
+    rand bit [7:0] b;
+    bit            drop_div;     // not rand: reproduces the generator bug
+    bit            corner_mode;  // not rand: the steering knob
+
+    // ALU-5: the spec forbids divide by zero, so the generator never sends it.
+    constraint c_spec { op == DIV -> b != 8'h00; }
+    // The bug: with drop_div set, DIV has probability 0.
+    constraint c_bug { drop_div -> op != DIV; }
+    // Steering: each edge value of a gets 1/4. Note :/ on the range.
+    constraint c_corner {
+      if (corner_mode) a dist {8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] :/ 2};
+    }
+  endclass
+
+  class alu_cov;
+    op_t      op;
+    bit [7:0] a;
+
+    covergroup cg;
+      option.per_instance      = 1;  // report each seed's instance
+      option.get_inst_coverage = 1;  // keep per-instance numbers while merged
+      type_option.merge_instances = 1;  // type number = union of all seeds
+      cp_op: coverpoint op {
+        option.comment = "ALU-1";
+        bins ops[] = {ADD, SUB, MUL, DIV, AND, OR, XOR};
+      }
+      cp_a: coverpoint a {
+        option.comment = "ALU-2";
+        bins zero = {8'h00};
+        bins max  = {8'hFF};
+      }
+      x_op_a: cross cp_op, cp_a {
+        option.comment = "ALU-4";
+      }
+    endgroup
+
+    function new(string name);
+      cg = new();
+      cg.set_inst_name(name);  // a stable name, so the merge lines up
+    endfunction
+
+    // Called once per transaction, after the transaction was checked.
+    function void write(alu_txn t);
+      op = t.op;
+      a  = t.a;
+      cg.sample();
+    endfunction
+
+    // On a coverpoint or cross, get_inst_coverage(covered, total) gives the
+    // true numerator and denominator of that item (IEEE 1800-2023 19.8).
+    function string summary();
+      int c_op, t_op, c_a, t_a, c_x, t_x;
+      void'(cg.cp_op.get_inst_coverage(c_op, t_op));
+      void'(cg.cp_a.get_inst_coverage(c_a, t_a));
+      void'(cg.x_op_a.get_inst_coverage(c_x, t_x));
+      return $sformatf("cp_op %0d/%0d  cp_a %0d/%0d  x_op_a %0d/%0d  total %0.2f%%",
+                       c_op, t_op, c_a, t_a, c_x, t_x, cg.get_inst_coverage());
+    endfunction
+  endclass
+endpackage
+
+module alu
+  import alu_pkg::*;
+(
+  input  op_t        op,
+  input  logic [7:0] a,
+  input  logic [7:0] b,
+  output logic [7:0] y
+);
+  always_comb begin
+    case (op)
+      ADD:     y = a + b;
+      SUB:     y = a - b;
+      MUL:     y = a * b;
+      DIV:     y = a / b;
+      AND:     y = a & b;
+      OR:      y = a | b;
+      default: y = a ^ b;
+    endcase
+  end
+endmodule
+
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ns;
+  import alu_pkg::*;
+
+  localparam int SEEDS = 3;    // the regression: 3 seeds ...
+  localparam int ITEMS = 500;  // ... of 500 transactions each
+
+  op_t        op;
+  logic [7:0] a, b, y;
+  alu dut (.op(op), .a(a), .b(b), .y(y));
+
+  int n_pass, n_fail;
+  int n_gen [7][2];  // generated transactions per x_op_a cell: [op][a is FF]
+
+  initial begin
+    alu_txn t;
+    alu_cov cov [SEEDS];
+    op_t    cell_op;
+
+    for (int s = 0; s < SEEDS; s++) begin
+      cov[s] = new($sformatf("seed%0d", s + 1));
+      t = new();
+      t.srandom(s + 1);  // this seed's stream: the same number replays it
+      // $test$plusargs returns some nonzero value when found (21.6).
+      t.drop_div    = ($test$plusargs("BUGGY") != 0);
+      t.corner_mode = ($test$plusargs("STEER") != 0);
+      repeat (ITEMS) begin
+        if (!t.randomize()) $fatal(1, "alu_txn randomize() failed");
+        // The ALU is combinational and has no clock: drive, wait 1 ns, compare.
+        op <= t.op;
+        a  <= t.a;
+        b  <= t.b;
+        #1;
+        if (y !== alu_model(t.op, t.a, t.b)) begin  // ALU-6: the check
+          n_fail++;
+          $error("ALU-6 mismatch: %s a=%0h b=%0h y=%0h", t.op.name(), t.a, t.b, y);
+        end else begin
+          n_pass++;
+        end
+        if (t.a inside {8'h00, 8'hFF}) n_gen[t.op][t.a == 8'hFF]++;
+        cov[s].write(t);  // sampled after it was checked
+      end
+      $display("SEED %0d  %s", s + 1, cov[s].summary());
+    end
+
+    // Type coverage with merge_instances = 1: the union of the three seeds.
+    $display("MERGED  cp_op %0.2f%%  cp_a %0.2f%%  x_op_a %0.2f%%  total %0.2f%%",
+             cov[0].cg.cp_op.get_coverage(), cov[0].cg.cp_a.get_coverage(),
+             cov[0].cg.x_op_a.get_coverage(), cov[0].cg.get_coverage());
+
+    // Evidence for classification: cells the stimulus never produced.
+    for (int o = 0; o < 7; o++) begin
+      for (int e = 0; e < 2; e++) begin
+        if (n_gen[o][e] == 0) begin
+          cell_op = op_t'(o);
+          $display("NEVER GENERATED  <%s, a=%s>", cell_op.name(), e ? "FF" : "00");
+        end
+      end
+    end
+    $display("PASS=%0d FAIL=%0d", n_pass, n_fail);
+    $finish;  // from the top, after every transaction was checked
+  end
+endmodule
 ```
 
-Each edge value then appears in a quarter of the samples, and 500 samples close all 14 cross bins with near certainty.
+**Expected output.** These logs are illustrative: they were worked out by hand from the probabilities on this page, not captured from a simulator run. The exact counts depend on your simulator's random streams; the shape does not. Your simulator adds its own banner and `$finish` message.
 
-<div className="mt-4 mb-8 p-6 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg">
-  <h3 className="text-xl font-semibold mb-2 flex items-center gap-2">
-    <span>📈</span> Lab Challenge: Close the Loop
-  </h3>
-  <p className="mb-4 text-slate-600 dark:text-slate-400">
-    The ALU testbench finishes well short of 100% coverage. Count the bins, analyze the unhit ones, and adjust the generator constraints to hit both edge values for every operation and reach 100% closure.
-  </p>
-  <a 
-    href="/practice/lab/coverage-advanced-1" 
-    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
-  >
-    Start Coverage Lab →
-  </a>
-</div>
+No plusarg (DIV fixed, `a` uniform):
+
+```text
+SEED 1  cp_op 7/7  cp_a 2/2  x_op_a 4/14  total 76.19%
+SEED 2  cp_op 7/7  cp_a 1/2  x_op_a 3/14  total 57.14%
+SEED 3  cp_op 7/7  cp_a 2/2  x_op_a 3/14  total 73.81%
+MERGED  cp_op 100.00%  cp_a 100.00%  x_op_a 57.14%  total 85.71%
+NEVER GENERATED  <ADD, a=00>
+NEVER GENERATED  <MUL, a=FF>
+NEVER GENERATED  <DIV, a=00>
+NEVER GENERATED  <AND, a=FF>
+NEVER GENERATED  <OR, a=00>
+NEVER GENERATED  <XOR, a=00>
+PASS=1500 FAIL=0
+```
+
+With `+BUGGY` (DIV never sent):
+
+```text
+SEED 1  cp_op 6/7  cp_a 2/2  x_op_a 3/14  total 69.05%
+SEED 2  cp_op 6/7  cp_a 2/2  x_op_a 4/14  total 71.43%
+SEED 3  cp_op 6/7  cp_a 1/2  x_op_a 2/14  total 50.00%
+MERGED  cp_op 85.71%  cp_a 100.00%  x_op_a 50.00%  total 78.57%
+NEVER GENERATED  <SUB, a=00>
+NEVER GENERATED  <MUL, a=00>
+NEVER GENERATED  <DIV, a=00>
+NEVER GENERATED  <DIV, a=FF>
+NEVER GENERATED  <AND, a=FF>
+NEVER GENERATED  <OR, a=FF>
+NEVER GENERATED  <XOR, a=00>
+PASS=1500 FAIL=0
+```
+
+With `+STEER` (both edges of `a` at 1/4):
+
+```text
+SEED 1  cp_op 7/7  cp_a 2/2  x_op_a 14/14  total 100.00%
+SEED 2  cp_op 7/7  cp_a 2/2  x_op_a 14/14  total 100.00%
+SEED 3  cp_op 7/7  cp_a 2/2  x_op_a 14/14  total 100.00%
+MERGED  cp_op 100.00%  cp_a 100.00%  x_op_a 100.00%  total 100.00%
+PASS=1500 FAIL=0
+```
+
+**Read the three logs like a coverage review.**
+
+- **Every `NEVER GENERATED` cell is a hole, and every hole is a `NEVER GENERATED` cell.** The bench's own count and the coverage agree, so none of these holes is unobserved: the collector saw everything that happened. If a cell were empty in coverage but missing from this list, you would fix the collector, not the stimulus.
+- **Uniform: rare, not impossible.** Each cell has p ≈ 1/1792. One seed of 500 hits about 3.4 of the 14 cells on average and three merged seeds about 7.9; the empty cells change from seed to seed. Closing all 14 with 95% confidence needs about 10,050 transactions, about 20 seeds of 500, so this budget cannot close the cross: steer.
+- **`+BUGGY`: the probability-0 signature.** `cp_op` is stuck at 6/7 on every seed, and the two DIV cells are in the `NEVER GENERATED` list every time, while the other cells come and go. The spec allows DIV, so this is a generator bug: fix the constraint. More seeds would never close it.
+- **`+STEER`: closed within the budget.** Each cell has p = 1/28, so one seed of 500 closes all 14 cells with probability 1 − 1.8 × 10⁻⁷, and every seed closes on its own. The merged line therefore reaches 100% under either closure criterion.
+- **Merged against per seed.** In the uniform run, no seed exceeds 4/14, but the merged cross reaches 8/14: the merge adds hits across seeds, which is why "3 seeds × 500 merged" is the same budget as one run of 1,500. `type_option.merge_instances = 1` is set in the definition: type options are set with constant expressions and apply to every instance alike (§19.7.1), and an embedded covergroup's type is anonymous, so there is no type name to assign it through (§19.4). In addition, `option.get_inst_coverage = 1` keeps each seed's own number; without it, every `get_inst_coverage()` would return the merged number (Table 19-1, [Coverage APIs](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis)).
+- **`PASS=1500 FAIL=0` in every run.** Coverage was collected only from checked transactions. Change the DUT's AND line to `y = a | b;` and rerun: every `SEED` and `MERGED` number stays the same, and `FAIL` counts the AND transactions whose operands differ. Closure needs both.
+
+**Run it.** Save the code as `closure_policies.sv` and compile it with any simulator that supports IEEE 1800-2023 functional coverage (Clause 19); `tb_top` is the top level. Pass `+BUGGY` or `+STEER` as a run-time plusarg (`$test$plusargs`, §21.6). Covergroup support in open-source simulators is partial or absent, and this example was not run on one (tool-dependent).
+
+### How to run a closure session
+
+1. **Start from the merged report and the plan.** List every item below its `option.goal`, row by row. Check first that the paired checks were enabled and passing in the runs that produced the coverage; coverage from runs with checks off closes nothing.
+2. **Ask "did it happen?" for every hole.** Search the transaction log, or add a counter like `n_gen`. If the scenario happened, it is unobserved: fix the collector and rerun the same seed.
+3. **Check the spec and the configuration.** Forbidden: `illegal_bins`, the constraint and a check. Unreachable here: a scoped exclusion and a waiver with evidence. Never one without the other.
+4. **Compute p for the rest.** p = 0 means a constraint or a missing setup: fix it. p above 0 means rare: compute the samples needed for 95% of all the cells in that cross.
+5. **Compare the need with the budget.** If it fits, add seeds. If not, take the cheapest steering step that fits: fix, `dist` with `:/` on ranges, a mode knob, or a directed test.
+6. **Rerun and measure.** Confirm that each targeted cell's rate changed as computed, that no new `illegal_bins` errors or check failures appeared, and that every other plan row is unchanged.
+7. **Record every decision next to its plan row**: the class, the evidence, the action, and for every exclusion the waiver.
+
+**Checklist before moving on:**
+- [ ] For each of the four classes I can name the evidence that identifies it and the one action that fits.
+- [ ] I ask "did the scenario happen?" before I touch the stimulus.
+- [ ] I can explain why `ignore_bins` is wrong for a forbidden cell and `illegal_bins` is wrong for a legal one, and why `illegal_bins` still needs a check beside it.
+- [ ] Every exclusion I make has a waiver with evidence, a reviewer and a revisit condition.
+- [ ] I can compute P(hit within N) for one bin and estimate the samples needed to close a whole cross.
+- [ ] I know whether my plan signs off on per-seed or merged coverage, and what a merge needs (stable names, one model version, seed and code version).
+- [ ] I can say what a code-coverage hole means when functional coverage is at its goal.
+
+## Push Further
+
+These items are for working engineers and interview preparation. The core path above does not depend on them.
+
+### Expert: exclusion and waiver governance
+
+- **Exclusions are tool-dependent; the governance is not.** Exclusion files, their syntax, whether excluded bins stay in the database and how waivers are linked to plan rows all differ between tools (tool-dependent). Whatever the tool, a reviewer must be able to answer, for every excluded bin: which plan row, which class, what evidence, who approved it, and when it must be reviewed again.
+- **Evidence has strengths.** A spec section is strong for forbidden scenarios. For "unreachable here", a configuration setting or an RTL tie-off is strong, a formal unreachability proof is stronger still ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)), and "we never saw it in simulation" is not evidence at all: it is the definition of the hole.
+- **Re-review triggers.** A waiver is tied to a spec revision, an RTL version and a configuration. Any change to one of them reopens it. Tools can flag exclusions whose bins no longer exist after a model change; whether yours does is tool-dependent.
+- **Illegal bins take precedence.** An illegal value raises a run-time error even when another bin also contains it (§19.5.6), and an illegal cross product does so even when it is also listed in `ignore_bins` or inside another cross bin (§19.6.3). So moving a forbidden cell from `ignore_bins` to `illegal_bins` is safe in either order, and a cell that is both is still checked.
+- **Interchange.** UCIS 1.0 (Accellera, 2012) standardizes an API and an XML interchange format for coverage data. It lets scripts and different tools read the same results; it does not standardize how a tool merges or excludes.
+
+### Expert: what a merge can hide
+
+- **Summed hits and the largest `at_least`.** In type coverage with `merge_instances = 1`, a bin's count is the sum of its counts in all instances, and it is covered only when that sum reaches the largest `at_least` of the instances being merged (§19.11.1, §19.11.3). With `at_least = 2`, two seeds that each hit a cell once give a merged cell that is covered, although no single seed covered it. Tool merges across runs behave analogously, with tool-dependent details.
+- **The union hides weak lanes.** A union can reach 100% while one instance (one port, one channel) misses bins that another instance hit. When a row means "every port", read each instance's number, which needs `option.get_inst_coverage = 1` under merging (Table 19-1), or the per-instance report.
+- **Merging across code changes.** A seed reproduces its stimulus only with the same code and constraints (§18.14). Coverage merged from before and after a steering change contains scenarios the current generator may never produce again. Either reset the merged database at each change of stimulus or coverage model, or keep the history and accept that it no longer describes the current testbench; the tool's merge policy is tool-dependent.
+- **Merging failing runs.** A failing run proves the scenario happened, not that it worked. If your flow merges coverage from failing runs, closure must still require that the paired checks passed on those scenarios somewhere.
+
+### Expert: budgets for many bins, and when to stop
+
+- **The estimate behind the table.** For k cells of probability p, P(some cell still empty after N) is at most k(1 − p)^N, so N = ln(k / δ) / p is enough for a chance 1 − δ of closing them all. The estimate is slightly pessimistic; for 14 cells at 1/1792 it gives about 10,100 against the exact 10,053.
+- **Unequal probabilities.** The rarest cell dominates. A cross with 13 cells at 1/28 and one at 1/3570 needs about 3 × 3570 ≈ 10,700 samples for 95%, not 155: find the rarest cell before you plan seeds.
+- **Plateau stops.** A practical stop rule is "no new bins in the last K regressions or in the last M transactions". It is a heuristic, not a standard. Set M from your rarest legal cell (a few times 1/p); a smaller M stops while rare cells are still filling, a larger one wastes budget on probability-0 cells.
+- **Ranking tests.** Many tools can rank tests by the coverage only they contribute, so a regression can keep the tests that matter and drop the rest (tool-dependent). Ranking optimizes a fixed stimulus set; it cannot close a probability-0 cell either.
+- **Coverage databases from the language.** `$set_coverage_db_name(filename)` names the database saved at the end of the run and `$load_coverage_db(filename)` loads cumulative coverage for all covergroup types (§19.9). Tool support for them varies; most regression flows use the tool's own options instead.
+
+### Expert: `dist` weights on ranges and against other constraints
+
+- **`:=` and `:/` on ranges.** `:=` assigns the weight to every value of the range, `:/` to the range as a whole (§18.5.3). The range weight of `:=` counts *all* values of the range, "including values which may be excluded from the solution space based on other constraints" (§18.5.3), so a constraint that removes values does not shrink the range's share.
+- **Zero weights and missing values are constraints.** Values a `dist` does not list, and values whose total weight is zero, "shall be treated as a constraint that the expression not have such values" (§18.5.3). `a dist {8'h00 := 1, 8'hFF := 1}` alone therefore allows *only* the two edge values, and every other value of `a` disappears from the stimulus: a steering change that silently removes legal scenarios.
+- **Weights against the spec.** Weight `b == 8'h00` to 1/4 in a generator that also has the spec constraint `op == DIV -> b != 8'h00`, and the two pull against each other for DIV. The standard only promises that the constraints are satisfied (§18.5.3); the resulting rates of DIV and of `b == 0` are implementation-dependent, so measure them. If the spec constraint is missing, the same steering produces the forbidden input quickly, which is exactly what the ALU-5 check is there to catch.
+
+### Expert: when random closure is the wrong tool
+
+Random stimulus is efficient while many cells are open and expensive for the last few. Switch tools when the arithmetic says so:
+- **A directed test or sequence** for a cell that needs an ordered setup (fill, reset, read) whose probability is the product of many small factors.
+- **A `cover property`** with formal reachability ([I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index), [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)) to prove a cell reachable, and get a trace that reaches it, or to prove it unreachable and turn the hole into a well-evidenced waiver.
+- **Portable stimulus** ([E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index)) when scenarios are defined by legal sequences of actions rather than by field values.
+- **Machine-learning-assisted closure** ([E-AI-1](/curriculum/T4_Expert/E-AI-1_AI_Driven_Verification/index)) when the input space is large and the coverage model is stable; it still cannot close a probability-0 cell.
+
+### Interview angles
+
+Try each question before you open the answers.
+
+<InterviewQuestionPlayground
+  title="Interview: the last 3% before tape-out"
+  question="Your manager asks you to waive the last 3% of functional coverage so the team can tape out on Friday. The open cells are spread over four plan rows. What do you do first?"
+  options={[
+    { text: "Add ignore_bins for every open cell: the number reaches 100% and the schedule holds.", isCorrect: false, feedback: "That hides every legal open scenario, and on a forbidden cell it lets a violation pass silently. Excluding is not covering." },
+    { text: "Classify each open cell from evidence. Unobserved and never-generated cells are bugs to fix; forbidden cells get illegal_bins and a check; only unreachable cells, and rare cells explicitly accepted as a risk, get a reviewed waiver with their evidence.", isCorrect: true, feedback: "Right. A waiver is a recorded risk decision, not a way to reach a number. The class decides whether a cell may be waived at all, and the review makes the risk visible to the people who sign off." },
+    { text: "Run the regression over the weekend with ten times more seeds.", isCorrect: false, feedback: "That helps only the rare cells, and only if the budget arithmetic says it will; probability-0 and unobserved cells stay open whatever the seed count." },
+    { text: "Set option.goal = 97 on the affected items so they report as met.", isCorrect: false, feedback: "Lowering a goal is an exclusion in disguise: it needs the same classification and the same waiver, item by item." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: covered in the merge, empty in every seed"
+  question="A cross cell shows as covered in the merged regression report, but each individual seed's report shows it empty. The covergroup sets option.at_least = 2. How is that possible?"
+  options={[
+    { text: "It is a tool bug: a merged bin can never be covered if no run covered it.", isCorrect: false, feedback: "The merged count is the sum over runs. With at_least = 2, two runs that each hit the cell once sum to 2 and cover it (IEEE 1800-2023 §19.11.1, §19.11.3 for the in-simulation merge; tool merges behave analogously)." },
+    { text: "Each seed hit the cell once, below at_least; the merge adds the counts, and 1 + 1 reaches 2.", isCorrect: true, feedback: "Right. A merged bin is covered when its summed count reaches the largest at_least of the merged instances. If your plan needs at_least hits within one run, sign off on per-seed coverage." },
+    { text: "get_coverage() returns the seed's own coverage, so the merged report is wrong.", isCorrect: false, feedback: "get_coverage() returns the type (cumulative) number over all instances; get_inst_coverage() is the per-instance number (§19.8)." },
+    { text: "The merge ignores at_least and counts any hit.", isCorrect: false, feedback: "It does not ignore it: the merged cell needs the largest at_least of the instances. Here two hits in total were enough." }
+  ]}
+/>
+
+More prompts to practise aloud:
+- "Code coverage is 100% and a planned scenario never ran. How?" (Code coverage measures code that exists and ran; a missing combination of inputs or a missing sequence has no line of its own.)
+- "How do you budget a regression for a cross with one very rare cell?" (Find the rarest legal cell, estimate N ≈ ln(k / δ) / p, and steer or direct that cell when N exceeds the budget.)
+
+## Practice & Reinforce
+
+Take the quiz first; it covers all five objectives. Then do the two katas: the first classifies a real-looking report, the second finds the smallest change that closes a cross within a budget. The lab puts the whole loop together.
+
+### Retrieval quiz
 
 <Quiz questions={[
   {
-    question: "You find a bin in the coverage report that has 0 hits because the specification explicitly forbids that state combination. What is the correct action?",
+    question: "The merged report shows the x_op_b cell DIV with b == 0 empty. The spec says divide by zero is forbidden, and the generator has the constraint op == DIV -> b != 0. What is the right action?",
     answers: [
-      { text: "Write a directed test to force the state and hit the bin.", correct: false },
-      { text: "Ignore it, 99% coverage is good enough.", correct: false },
-      { text: "Add it to the `ignore_bins` or `illegal_bins` list in the covergroup.", correct: true }
+      { text: "Add ignore_bins for the cell so it leaves the denominator", correct: false, feedback: "The number closes, but if a DIV with b == 0 is ever generated it passes silently. Excluding a bin is not the same as covering it, and for a forbidden cell you want an error." },
+      { text: "Add illegal_bins for the cell, keep the constraint, and keep a check that flags a forbidden input", correct: true, feedback: "Right. illegal_bins removes the cell from the computation and raises a run-time error if it is sampled (IEEE 1800-2023 §19.6.3); the constraint keeps the stimulus legal; the check catches a violation even when coverage is not being collected." },
+      { text: "Write a directed test that sends DIV with b == 0 to fill the cell", correct: false, feedback: "That deliberately sends traffic the spec forbids. A forbidden cell is never a target." },
+      { text: "Run more seeds until the cell fills", correct: false, feedback: "The constraint gives the cell probability 0, and it must stay that way. No number of seeds should ever fill it." }
     ],
-    explanation: "If a state is impossible by design, the coverage model should exclude it so it doesn't count against the 100% goal. Prefer illegal_bins when it must never happen: you then also get a run-time error if it ever does. ignore_bins only removes it from the metric."
+    explanation: "A forbidden scenario gets three things: illegal_bins in the model, the constraint in the generator and an independent check. ignore_bins hides it, a directed test violates the spec, and more seeds cannot and should not reach it.",
+    objective: 1
   },
   {
-    question: "A cross bin has probability 0 under your constraints, and the spec says the combination is legal. What closes it?",
+    question: "The cell for DIV with a == 0 in x_op_a is empty, but the transaction log shows 41 DIV transactions with a == 0. The collector is fed by a monitor that drops transactions whose result y is 0, to keep idle cycles out of the log. Which class is the hole, and what is the fix?",
     answers: [
-      { text: "Running 10× more seeds", correct: false },
-      { text: "Adding ignore_bins for it", correct: false },
-      { text: "Fixing the constraint that excludes it", correct: true }
+      { text: "Under-stimulated: weight a == 0 higher with dist", correct: false, feedback: "The log shows 41 such transactions, so the stimulus already produced the scenario. More of it will be dropped in exactly the same way." },
+      { text: "Unobserved: the collector never sees these transactions, because 0 / b is 0 and the monitor filters them out; feed the collector from every transaction", correct: true, feedback: "Right. The scenario happened, so the fix is in the collector's feed. Rerun the same seed and confirm the cell fills." },
+      { text: "Unreachable here: waive the cell", correct: false, feedback: "The log proves it is reachable: it happened 41 times. A waiver here would hide a collector bug that may also hide other cells." },
+      { text: "A generator bug: fix the constraint on op", correct: false, feedback: "DIV was generated. Nothing is wrong with the constraint." }
     ],
-    explanation: "More seeds cannot reach a probability-0 bin, and ignore_bins would hide a legal scenario that was never tested. The generator is wrong, so fix the constraint."
+    explanation: "The first question for any hole is whether the scenario happened. If it did, the hole is unobserved and only a collector or sampling fix helps. Here every transaction with a zero result (DIV, MUL or AND with a == 0, among others) is lost.",
+    objective: 1
+  },
+  {
+    question: "Across 20 seeds, cp_op shows the DIV bin empty every time while every other operation fills within the first few hundred transactions. The constraint is op inside {ADD, SUB, MUL, AND, OR, XOR}, and the spec lists DIV as a legal operation. What is the hole?",
+    answers: [
+      { text: "Rare: run 100 seeds", correct: false, feedback: "A rare bin fills on some seeds and not others. An empty bin on every seed while its neighbours fill quickly is the signature of probability 0." },
+      { text: "Never generated: a generator bug, so add DIV to the constraint", correct: true, feedback: "Right. The constraint gives DIV probability 0, and the spec allows it, so the constraint is wrong." },
+      { text: "Forbidden: add illegal_bins for DIV", correct: false, feedback: "The spec lists DIV as legal. Calling it illegal would turn legal traffic into errors and hide the generator bug." },
+      { text: "Unreachable here: waive DIV for this product", correct: false, feedback: "Nothing in the design or configuration prevents DIV; only the testbench's constraint does." }
+    ],
+    explanation: "Read the constraints to compute the probability. A legal scenario with probability 0 is a generator bug; the action is to fix the constraint, after which the bin is merely as rare as its neighbours.",
+    objective: 1
+  },
+  {
+    question: "This product builds the ALU with the parameter HAS_MUL = 0, and the product spec says MUL is not decoded. The MUL cells of x_op_a stay empty. Another product uses the same coverage model with HAS_MUL = 1. What do you do?",
+    answers: [
+      { text: "Add ignore_bins for the MUL cells in the shared coverage model", correct: false, feedback: "That hides the MUL cells for the other product too, where they are legal and must be tested." },
+      { text: "Add illegal_bins for MUL in the shared model", correct: false, feedback: "MUL is legal in the other product. illegal_bins would report its legal traffic as errors." },
+      { text: "Exclude the MUL cells for this configuration only, and record a reviewed waiver citing HAS_MUL = 0 and the spec section, to be revisited if either changes", correct: true, feedback: "Right. Unreachable here means legal in general but impossible in this configuration. Scope the exclusion and record the evidence." },
+      { text: "Write a directed test that forces a MUL transaction", correct: false, feedback: "This design cannot perform MUL. A directed test cannot reach it and would only test the stimulus." }
+    ],
+    explanation: "An unreachable-here hole gets a scoped exclusion and a waiver with its evidence (a configuration setting, a tie-off or a formal proof). Editing the shared model affects every configuration that uses it.",
+    objective: 2
+  },
+  {
+    question: "A bin has probability p = 0.0001 per transaction. About how many transactions do you need for a 95% chance of hitting it at least once?",
+    answers: [
+      { text: "About 10,000", correct: false, feedback: "10,000 = 1/p is the average wait. 1 − (1 − 0.0001)^10000 is only about 63%." },
+      { text: "About 30,000", correct: true, feedback: "Right: 1 − (1 − p)^N = 0.95 gives N = ln 20 / p, about 29,956." },
+      { text: "About 20,000", correct: false, feedback: "Twice the mean gives about 86.5%, not 95%." },
+      { text: "No number: random stimulus cannot hit a bin that rare", correct: false, feedback: "Any probability above 0 closes eventually; the question is only whether the budget is large enough. Only a probability-0 bin never closes." }
+    ],
+    explanation: "P(hit within N) = 1 − (1 − p)^N. A 95% chance needs about 3/p (ln 20 / p), a 99% chance about 4.6/p. When that exceeds the budget, steer the stimulus instead of adding seeds.",
+    objective: 3
+  },
+  {
+    question: "x_op_a has 14 cells, each with p = 1/1792 per transaction (DIV fixed, a uniform). The budget is 3 seeds of 500 transactions, merged. Predict the chance that all 14 cells are closed at the end.",
+    answers: [
+      { text: "About 57%", correct: false, feedback: "57% is the chance for one cell: 1 − (1 − 1/1792)^1500. All 14 must close." },
+      { text: "About 84%", correct: false, feedback: "1500/1792 is a linear estimate, which is not how probabilities of hitting add up." },
+      { text: "About 0.04%", correct: true, feedback: "Right: the exact inclusion–exclusion result is 0.035%. A 95% chance needs about 10,050 transactions, so steer." },
+      { text: "100%, because 1,500 transactions is more than 14 cells", correct: false, feedback: "Each transaction lands in at most one cell, and in an edge cell only about once in 128 transactions; most transactions fill no cell at all." }
+    ],
+    explanation: "A cross closes only when all its cells close, so the chance is far lower than for one cell. Estimate the need with N ≈ ln(k / δ) / p, about 10,100 here, and compare it with the budget.",
+    objective: 3
+  },
+  {
+    question: "To steer x_op_a you write a dist {8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] := 2}. Predict the probability that a == 8'h00.",
+    answers: [
+      { text: "1/4", correct: false, feedback: "That would be true with :/ 2 on the range. With := every one of the 254 values in the range gets weight 2." },
+      { text: "1/510", correct: true, feedback: "Right: the weights are 1, 1 and 254 × 2 = 508, so a == 0 gets 1/510, rarer than uniform (1/256) (IEEE 1800-2023 §18.5.3)." },
+      { text: "1/256, because dist cannot change a uniform variable", correct: false, feedback: "dist does change the distribution; here it changes it in the wrong direction." },
+      { text: "1/3", correct: false, feedback: "There are three items in the list, but the range's weight is per value, not per item." }
+    ],
+    explanation: ":= gives each value of a range the weight and :/ gives the whole range the weight (§18.5.3). With := the edge values become rarer, and the cross gets harder to close. Measure every steering change.",
+    objective: 3
+  },
+  {
+    question: "Functional coverage is at its goal on every plan row, and branch coverage of the RTL is 78%. What does the review do with the uncovered branches?",
+    answers: [
+      { text: "Nothing: the design is verified once functional coverage is at its goal", correct: false, feedback: "Functional coverage at its goal only shows that the planned scenarios ran, not that the design is verified; and the uncovered branches are RTL that no planned scenario exercised." },
+      { text: "Exclude all of them, because functional coverage is the sign-off metric", correct: false, feedback: "An exclusion needs a waiver with evidence, branch by branch. Bulk exclusion hides exactly the gaps code coverage exists to find." },
+      { text: "Review each branch: a missing plan row (add the row, its coverage and its check) or dead code (exclude with a waiver and tell the designer)", correct: true, feedback: "Right. Code coverage finds RTL the plan forgot; functional coverage finds scenarios that never ran. Sign-off reviews both." },
+      { text: "Run more seeds until branch coverage rises", correct: false, feedback: "The current stimulus is driven by the plan; seeds of the same stimulus rarely reach code the plan does not target. Classify first." }
+    ],
+    explanation: "The two families answer different questions. Statement, toggle, FSM and assertion coverage are required in the standard's coverage API (§40.2.1); branch coverage is tool-defined. Either way, a code hole is a missing plan row or dead code.",
+    objective: 4
+  },
+  {
+    question: "Three seeds run with covergroup instances seed1, seed2 and seed3, type_option.merge_instances = 1 and option.get_inst_coverage = 1. Each seed shows x_op_a below 30%. What does cov[0].cg.x_op_a.get_coverage() return?",
+    answers: [
+      { text: "Seed 1's own x_op_a coverage, because it is called through seed 1's handle", correct: false, feedback: "get_coverage() is the type (cumulative) number over all instances, whichever handle you call it through; get_inst_coverage() is the per-instance one (IEEE 1800-2023 §19.8)." },
+      { text: "The union of the three seeds' cells, which can be much higher than any one seed", correct: true, feedback: "Right. With merge_instances = 1, type coverage is computed over the union of bins matched by name (§19.11.3): the same as merging three runs of 500 into one of 1,500." },
+      { text: "The average of the three seeds' percentages", correct: false, feedback: "That is the rule when merge_instances is 0, the default (§19.11.3)." },
+      { text: "The same as each seed's get_inst_coverage(), because the instances are merged", correct: false, feedback: "That would happen without option.get_inst_coverage = 1 (Table 19-1); here each instance keeps its own number." }
+    ],
+    explanation: "Type coverage depends on merge_instances: a weighted average of instances by default, a union of bins when it is 1. get_coverage() always returns the type number, and get_inst_coverage() the instance number.",
+    objective: 4
+  },
+  {
+    question: "Merged coverage jumped from 91% to 100% overnight. The stimulus did not change, and no new tests were added. What do you check first?",
+    answers: [
+      { text: "Nothing: closure is reached, sign off", correct: false, feedback: "A jump with no stimulus change means the measurement changed, not the testing. That has to be explained before anyone signs off." },
+      { text: "The coverage-model diff and the waiver file: new ignore_bins, an item weight set to 0, coarser bins or a new tool exclusion", correct: true, feedback: "Right. Each of those raises the number without exercising anything. Every new exclusion needs a waiver with evidence." },
+      { text: "The simulator version, because coverage numbers are random", correct: false, feedback: "Coverage computation is defined by the standard (§19.11). A sudden jump usually has a source in the repository." },
+      { text: "Whether the regression ran more seeds", correct: false, feedback: "The question says nothing was added. And more seeds rarely close 9% of a plateau overnight." }
+    ],
+    explanation: "A coverage number moves either because the stimulus reached new bins or because the model changed what counts. Review model diffs and exclusions like code.",
+    objective: 5
+  },
+  {
+    question: "A UVM regression passed with UVM_ERROR : 0, but one test's log contains the simulator's run-time error for the illegal bin div_by_zero. Why did the regression pass, and what is the fix?",
+    answers: [
+      { text: "An illegal bin hit is only a warning, so passing is correct", correct: false, feedback: "The standard says a run-time error is issued (IEEE 1800-2023 §19.5.6, §19.6.3). A forbidden input reached the design." },
+      { text: "The gate counts only UVM reports, and the illegal-bin error comes from the simulator; gate on simulator errors too, or mirror the forbidden condition in a check that reports through UVM", correct: true, feedback: "Right. The message format and exit status are tool-dependent, so the regression gate has to read them explicitly, or a check must raise the error itself." },
+      { text: "The illegal bin removed the cell from coverage, so nothing was wrong", correct: false, feedback: "Removing the cell from the denominator is half of illegal_bins; the error is the other half, and it fired." },
+      { text: "The constraint should be removed, because it hides the illegal bin", correct: false, feedback: "The constraint keeps the stimulus legal. The error says something produced a forbidden input anyway: debug the generator or the DUT." }
+    ],
+    explanation: "illegal_bins raises a simulator run-time error, not a UVM report. Make sure the pass/fail gate sees it, and keep an independent check for every forbidden scenario.",
+    objective: 5
   }
 ]} />
 
-</InfoPage>
+### Kata 1 (classify): the report from last night
+
+The ALU plan's merged report after 3 seeds × 500 transactions, with notes from the logs. For each row, name the class and the action, then open the solution.
+
+| # | What the report and the logs show |
+|---|---|
+| 1 | `cp_op` bin for DIV: 0 hits on every seed. Constraint: `op inside {ADD, SUB, MUL, AND, OR, XOR}`. The spec lists DIV as legal. |
+| 2 | The tool lists the `x_op_b` cell `<DIV, b == 0>` as missing. The model has no `illegal_bins` for it yet. The spec forbids divide by zero. |
+| 3 | `x_op_a`: apart from the two DIV cells, 7 of the other 12 cells are hit. The empty ones differ from seed to seed. `a` is uniform. |
+| 4 | Another block in the same report: a coverpoint on its parity-error flag has an empty bin `err`. This product ties the parity input to 0 (`PARITY_EN = 0`), and a formal run proves the flag constant. |
+| 5 | `x_op_a` cells `<MUL, a=00>` and `<AND, a=00>` are empty, but the transaction log shows dozens of each. The monitor feeding the collector drops transactions with `y == 0`. |
+| 6 | `x_op_b` at 13/13, but the ALU-6 check was switched off with a plusarg in all three runs to save time. |
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+| # | Class | Action |
+|---|---|---|
+| 1 | Under-stimulated, never generated (p = 0; generator bug) | Add DIV to the constraint. Then DIV cells are only as rare as their neighbours. |
+| 2 | Forbidden | `illegal_bins div_by_zero = binsof(cp_op) intersect {DIV} && binsof(cp_b.zero);`, keep `op == DIV -> b != 8'h00`, and keep the input check. Not `ignore_bins`. |
+| 3 | Under-stimulated, rare (p = 1/1536 per cell now, 1/1792 once DIV is added) | Budget: once row 1 is fixed, about 10,050 transactions for a 95% chance of closing all 14 cells, and only 1,500 are available. Steer: weight both edges of `a` with `:/` on the range, then about 155 transactions suffice. |
+| 4 | Unreachable here | A tool exclusion for this configuration and a waiver citing `PARITY_EN = 0` and the formal result, reviewed, to be revisited if the configuration changes. |
+| 5 | Unobserved | Feed the collector every transaction (0 / `b`, `8'h00 * b` and `8'h00 & b` are all 0, so the filter drops them). Rerun the same seed; the cells fill without any stimulus change. |
+| 6 | Not closed: coverage without checks proves nothing | The scenarios ran, but nothing judged their results. Rerun with the check enabled; the row closes only when coverage is at goal *and* the check passed. |
+
+</details>
+
+### Kata 2 (minimum change): close `x_op_a` within the budget
+
+The plan rows are ALU-1, ALU-2 and ALU-4 (`cp_op`, `cp_a`, `x_op_a`). The generator is the `+BUGGY` one from Make It Work with `a` uniform. The budget is 3 seeds × 500 transactions, merged, and the plan asks for at least a 99% chance of closing all three items within it. Which candidate is the smallest change that meets the target? Compute P(closure) for each before you open the solution.
+
+1. Run 6 seeds instead of 3.
+2. Add DIV to the allowed operations.
+3. Add DIV and `a dist {8'hFF :/ 1, [8'h00:8'hFE] :/ 1};`.
+4. Add DIV and `a dist {8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] := 2};`.
+5. Add DIV and `a dist {8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] :/ 2};`.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+If all 14 cells of `x_op_a` are hit, every operation and both edge values of `a` were sampled, so `cp_op` and `cp_a` are closed too: `x_op_a` decides. "All 14 closed" uses exact inclusion–exclusion over 1,500 merged samples.
+
+| # | p for the x_op_a cells | P(all 14 closed within 1,500) | Meets 99%? |
+|---|---|---|---|
+| 1 | 0 for the DIV cells | 0 | no: more seeds cannot fix p = 0 |
+| 2 | 1/1792 | 0.035% | no: rare |
+| 3 | 1/14 (FF cells), 1/3570 (00 cells) | 0.055% | no: weighting one edge makes the other rarer |
+| 4 | 1/3570 | about 3 × 10⁻⁷ | no: `:=` on the range gives it weight 508 |
+| 5 | 1/28 | above 99.99999% | **yes** |
+
+The smallest change that meets the target is candidate 5: fix the constraint (the probability-0 class first), then weight both edge values with `:/` on the range. Then verify it: rerun and confirm `x_op_a` closes on every seed, `FAIL=0` and no `illegal_bins` errors. In the lab, the same reasoning applies to `b`, with one twist the spec constraint makes visible.
+
+</details>
+
+### Lab: the coverage closure loop
+
+The M4 lab gives you the full ALU plan (ALU-1 to ALU-6) and a generator that cannot close it. You read the per-row report, classify every hole, and make the smallest change that closes the plan within the lab's seed budget, with `FAIL=0` and no forbidden input. Do Kata 2 first.
+
+<LabLink labId="coverage-advanced-1" />
+
+### Flashcards
+
+The deck for this page, *I-SV-3B: The Coverage Closure Loop*, has cards on the four hole classes, exclusions and waivers, budget arithmetic, `dist` steering, merging and code coverage. Review it today and again in a few days.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023:
+  - §18.5.3 (distributions: `:=` and `:/`, weights "absent any other constraints", values not listed or with zero weight act as constraints), §18.5.9 (uniform distribution over legal value combinations), §18.13.3 (`srandom()`), §18.14 (random stability);
+  - §19.4 (an embedded covergroup declares an anonymous type), §19.5.5 (`ignore_bins`), §19.5.6 (`illegal_bins`, run-time error, precedence), §19.6.2 (ignored cross products), §19.6.3 (illegal cross products and their precedence);
+  - §19.7 (Table 19-1: `at_least`, `goal`, `weight`, `per_instance`, `get_inst_coverage`), §19.7.1 (type options, `merge_instances`), §19.8 (Table 19-5: `get_coverage()`, `get_inst_coverage()` and their `(covered, total)` forms, `set_inst_name()`, `start()`, `stop()`), §19.9 (coverage system tasks), §19.11 (coverage computation), §19.11.1 (merged bins and the largest `at_least`), §19.11.3 (type coverage: average or union);
+  - §21.6 (`$test$plusargs`); §40.2.1 and §40.2.2 (the coverage API's required code-coverage types and their definitions).
+- Accellera Unified Coverage Interoperability Standard (UCIS) 1.0, 2 June 2012: an API and an XML interchange format for coverage data.
+
+**Prerequisites:** [Coverage APIs](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis) for type and instance coverage and the query methods; [I-SV-3A Coverage Options](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options) for `ignore_bins`, `illegal_bins`, `at_least`, `goal` and `weight`; [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) for `dist`.
+
+**Related**
+
+- [I-SV-3B overview](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/index): the evidence rule and a run-time closure loop that steers itself.
+- [Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage): plan rows, plan IDs and stable instance names.
+- [I-SV-2B Controlling Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization): `constraint_mode()` and mode knobs for steering.
+- [I-SV-2B Randomization Methods](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods): seeds, random stability and why a seed replays only the same code.
+- [F1B: The Verification Mindset](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index): code-coverage metrics and the coverage closure trap.
+- [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): `cover property`.
+- [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index): reachability proofs as waiver evidence.
+- [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): closure across a whole SoC.
+- [E-AI-1: AI-Driven Verification](/curriculum/T4_Expert/E-AI-1_AI_Driven_Verification/index): machine-learning-assisted closure.
+- [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): regression triage.
+
+<NextLesson />

@@ -1,6 +1,9 @@
-program test;
+// Generator: asks for every protocol in turn. Compile after packet.sv.
+module tb_top;
+  import pkt_pkg::*;
+
   initial begin
-    packet pkt;
+    packet             pkt;
     packet::protocol_t wanted;
 
     $display("--- Starting Randomization Test ---");
@@ -14,8 +17,11 @@ program test;
       // 1. Check the return value of randomize().
       // 2. Stop the test with $fatal(1, ...) if it returns 0.
 
-      // Triage tip: turn off one constraint block at a time, for example
-      // pkt.c_hardware_limit.constraint_mode(0);
+      // Triage tip (step 2): switch off one constraint block at a time, only for
+      // the row you are triaging, for example
+      //   if (wanted == packet::IPV6) pkt.c_hardware_limit.constraint_mode(0);
+      // Switching c_hardware_limit off for every row would leave RAW lengths
+      // unbounded, and a RAW payload could be billions of bytes long.
 
       void'(pkt.randomize() with { proto == wanted; });
 
@@ -24,5 +30,6 @@ program test;
     end
 
     $display("--- Test Completed ---");
+    $finish;
   end
-endprogram
+endmodule

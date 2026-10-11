@@ -1,86 +1,860 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import InteractiveCode from "@/components/ui/InteractiveCode";
-import Quiz from "@/components/ui/Quiz";
-import { InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Controlling Randomization: Modes, Hooks, Overrides and Inline Control"
+description: "Switch random variables and constraint blocks on and off, use pre_randomize() and post_randomize() for the right jobs, replace constraints in derived classes, and choose one call's random variables or check an object with randomize(null)."
+flashcards: "I-SV-2B_Controlling_Randomization"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+---
 
-export const metadata = {
-  title: "Controlling Randomization: pre_randomize and post_randomize | Advanced SystemVerilog for Verification",
-  description: "Hook solver callbacks with pre_randomize and post_randomize to prepare and finalize objects.",
-};
+## Quick Take
 
-<InfoPage
-  title="Controlling Randomization: pre_randomize and post_randomize"
-  sv_concept_tags={["pre_randomize", "post_randomize"]}
->
+- **What it is:** A class's constraints describe every legal transaction. This page covers the controls that change, *for a particular test or a particular call*, what `randomize()` does with that description, without editing the class: switching random variables off with `rand_mode()`, switching constraint blocks off with `constraint_mode()`, running your own code just before and after the solve with `pre_randomize()` and `post_randomize()`, replacing constraints in a derived class, and naming the variables one call may change with `randomize(v, w)` or none at all with `randomize(null)` (IEEE 1800-2023 §18.5.2, §18.6.2, §18.8–§18.11).
+- **Why it matters:** One transaction class serves hundreds of tests. An error-injection test needs unaligned addresses, a directed test needs a fixed address with random lengths, a monitor needs to check an observed transaction against the same rules. Each control fits one of those jobs. Pick the wrong one and the call fails on every seed, a setting leaks into the next test, or a field silently stops being random.
+- **The Analogy:** A mixing desk in front of a fixed band. `rand_mode(0)` freezes one channel's fader where it is; `constraint_mode(0)` bypasses one effects unit; `pre_randomize()` and `post_randomize()` are the sound check before the take and the mastering after it; a derived class swaps one effects unit for another with the same name. *Where it breaks:* a frozen fader in a real desk just stops moving. A frozen random variable becomes a **fixed value that every constraint must still accept**, so freezing it at a value a constraint forbids makes every call fail. Freezing never relaxes a rule.
 
-## Level 1: Hooking the Solver
-*IEEE 1800-2023, §18.6.2: pre_randomize() and post_randomize() · §18.6.3: behavior of randomization methods*
+**You will be able to:**
+1. **Write** `rand_mode()` and `constraint_mode()` calls (set and query forms, on a whole object, one variable, one array element or a static block) and **predict** which later `randomize()` calls they affect.
+2. **Predict** when `pre_randomize()` and `post_randomize()` run, on which objects, and whether a change made inside them affects the current call or the next one.
+3. **Write** a derived class that replaces or adds constraints by name, and **predict** the active constraint set when the object is randomized through a base-class handle.
+4. **Choose** among `constraint_mode()`, a derived-class override, `rand_mode()`, `randomize(v, w)` and inline `with` to aim one test's stimulus, and **write** `randomize(null)` as a constraint checker.
+5. **Debug** control mistakes: a mode left switched off, a frozen variable that violates a constraint, an override that skips `super`, and a hook that changes the wrong call.
 
-**The Analogy:** `pre_randomize` sets the table before guests arrive; `post_randomize` writes the bill after the meal. Neither one cooks: the solver does.
+<BeforeYouStart />
 
-## Level 2: Core Mechanics
+You need [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) (`rand`, constraint blocks, inline `with`, checking the return value of `randomize()`) and the [previous page](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) (implication). The override section relies on inheritance and virtual methods from [I-SV-1 Polymorphism Pitfalls](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls).
 
-<InteractiveCode language="systemverilog" code={`class frame;
-  rand bit [7:0] len;
-  rand bit [7:0] payload[];
-  bit      [7:0] crc;                           // derived, so not rand
+## Build Your Mental Model
 
-  constraint c_len  { len inside {[1:32]}; }
-  constraint c_size { payload.size() == len; }  // the solver sizes AND fills payload
+**How to read this page.** The core path is: what "active" means, the two mode switches (with the experiment), the two hooks, and overriding constraints in a derived class. The four levers of §18.10, inline variable control and `randomize(null)` add practitioner depth, and a recap closes the section. Make It Work puts all of it into one runnable bench; Push Further holds the corner cases.
 
-  function void pre_randomize();
-    // Runs before solving: set non-random knobs or switch constraints
-    // with constraint_mode() for this call.
+### Two words first: active and state
+
+Every `randomize()` call works on a set of **active random variables** and a set of **active constraints**. The solver (the part of `randomize()` that searches for values) may change only the active random variables, and every value it returns must satisfy every active constraint.
+
+Everything else that a constraint mentions is a **state variable**: the solver reads its current value and treats it as a constant. A class member declared without `rand` or `randc` is a state variable. So is a `rand` member that has been switched off (§18.5.8 step c, §18.8).
+
+```systemverilog
+// snippet
+class bus_item;
+  rand bit [15:0] addr;           // random variable: active by default
+  rand bit [7:0]  len;            // random variable: active by default
+  int unsigned    max_len = 16;   // state variable: read by c_len, never randomized
+
+  constraint c_align { addr[1:0] == 2'b00; }        // a named constraint block
+  constraint c_len   { len inside {[1:max_len]}; }
+endclass
+```
+
+All random variables and all constraint blocks start **active** (§18.8, §18.9). Every control on this page changes one of the two sets: which variables are active, or which constraints are active.
+
+### Switching variables off: rand_mode()
+
+`rand_mode()` is a built-in method of every random variable, and of the object as a whole (§18.8). Calling it with `0` makes the variable **inactive**: it is "treated the same as if it had not been declared `rand` or `randc`", so the solver uses its current value as a constant. Calling it with `1` makes it active again.
+
+| Call | Effect |
+|---|---|
+| `p.rand_mode(0);` | Every `rand` and `randc` variable in `p` becomes inactive (this form only exists as a `void` call) |
+| `p.addr.rand_mode(0);` | Only `addr` becomes inactive |
+| `p.data[3].rand_mode(0);` | Only element 3 of the unpacked array `data`; `p.data.rand_mode(0)` affects every element |
+| `p.hdr.rand_mode(0);` where `hdr` is a `rand` class handle | Only the handle: the object `hdr` points to is no longer randomized with `p`, but the modes of the variables inside it do not change |
+| `m = p.addr.rand_mode();` | Query: returns 1 if active, 0 if inactive. Only for a single variable, so select one element of an array |
+| `p.max_len.rand_mode(0);` where `max_len` is not `rand` | Compile error: the name must be a `rand` or `randc` variable in the class hierarchy |
+
+Two more rules from §18.8. The change applies to **subsequent** calls of `randomize()` (Table 18-3) and stays until you change it again. And if the variable is `static` (one copy shared by every object of the class), its mode is static too: switching it off in one object switches it off in all of them.
+
+```systemverilog
+// snippet
+p.addr = 16'h1000;          // choose the value first...
+p.addr.rand_mode(0);        // ...then freeze it: addr is now a state variable
+if (!p.randomize()) $fatal(1, "randomize() failed");   // len changes, addr stays 16'h1000
+p.addr.rand_mode(1);        // restore it, or the next test inherits the frozen addr
+```
+
+**The classic mistake.** Freezing a variable does not loosen any constraint that mentions it. If `p.addr` still held `16'h0001` when you froze it, `c_align` would require `16'h0001 & 3 == 0`, which is false, and every call would return 0. Assign a legal value before freezing, as above.
+
+### Switching constraint blocks off: constraint_mode()
+
+`constraint_mode()` does the same for **named constraint blocks** (§18.9). An inactive block "is not considered by the `randomize()` method".
+
+| Call | Effect |
+|---|---|
+| `p.constraint_mode(0);` | Every constraint block in `p` becomes inactive (`void` form only) |
+| `p.c_align.constraint_mode(0);` | Only `c_align`. The name can be any block in the class hierarchy, including one inherited from a base class |
+| `m = p.c_align.constraint_mode();` | Query: 1 if active, 0 if inactive |
+| `p.c_typo.constraint_mode(0);` | Compile error: no block of that name exists in the hierarchy |
+
+What you cannot switch: a single expression inside a block (the whole block goes), and an inline `with` constraint, which has no name. That is why practitioners name blocks finely: one block per rule a test might want to drop.
+
+The standard's own example of why this exists (§18.3) is error injection: a word-aligned bus item, and a test that must generate **unaligned** addresses.
+
+```systemverilog
+// snippet: after IEEE 1800-2023 §18.3, exercise_illegal
+p.c_align.constraint_mode(0);                        // drop the alignment rule...
+if (!p.randomize() with { addr[1:0] != 2'b00; })     // ...and ask for the opposite
+  $fatal(1, "randomize() failed");
+p.c_align.constraint_mode(1);                        // put it back for the next user
+```
+
+Without the first line, the inline constraint and `c_align` contradict each other and every call fails: an inline `with` constraint is **added** to the class's constraints (§18.7). It can narrow the legal set, never widen it.
+
+**Static constraint blocks.** A block declared `static constraint` has one mode shared by every object of the class: "calls to `constraint_mode()` shall affect all instances of the specified constraint in all objects" (§18.5.10).
+
+```systemverilog
+// snippet
+class word_item;
+  rand bit [31:0] addr;
+  static constraint c_word { addr[1:0] == 2'b00; }   // one mode for every word_item
+endclass
+```
+
+A traced example with two objects, `a` and `b`, both of class `word_item`:
+
+| Step | `a.c_word.constraint_mode()` | `b.c_word.constraint_mode()` |
+|---|---|---|
+| `a = new(); b = new();` | 1 | 1 |
+| `a.c_word.constraint_mode(0);` | 0 | 0 |
+| `b.c_word.constraint_mode(1);` | 1 | 1 |
+
+Use a static block for a global switch, such as "no test in this run may produce unaligned words". Use an ordinary block when each object should decide for itself.
+
+### Experiment: freeze a variable or drop a block
+
+The lab below models one small class with two 3-bit random variables, `x` and `y` (0 to 7), and four constraint blocks: `c_sum` (`x + y < 6`), `c_x` (`x > 3`), `c_y` (`y > 2`) and `c_odd` (`y` is odd). Each block button is a `constraint_mode()` switch. The extra button, **y.rand_mode(0) with y = 4**, freezes `y` at 4, which turns it into a state variable. The grid shows every `(x, y)` pair; a cell is legal when it satisfies every active constraint.
+
+**Predict before you click.** Write down "succeeds" or "fails" for each setup:
+
+1. All four blocks on, `y` random.
+2. Switch `c_y` off (`c_y.constraint_mode(0)`).
+3. Switch `c_y` back on, then freeze `y` at 4.
+4. With `y` still frozen at 4, switch `c_x` off. Then also switch `c_odd` off.
+
+<ConstraintSolverHeatmapVisualizer initialScenario="debug" scenarios={["debug"]} />
+
+**Debrief.**
+- Setup 1 fails: `x > 3` and `y > 2` force `x + y` to be at least 7, but `c_sum` needs less than 6.
+- Setup 2 succeeds with exactly one legal pair, `(4, 1)`: dropping a block **widens** the legal set.
+- Setup 3 still fails, and now for two independent reasons. With `y` frozen at 4, `c_sum` needs `x < 2` while `c_x` needs `x > 3`; and `y = 4` is even, so `c_odd` is false for every `x`. Freezing **narrowed** the problem to one row (`y = 4`). The conflict list in the lab names only one of the two, because a solver reports one minimal conflict at a time: fix it, re-run, and the next one appears.
+- Setup 4 removes the two conflicts one at a time. Dropping `c_x` clears the first, but is not enough, because `c_odd` still rejects the frozen 4. Dropping `c_odd` too clears the second and leaves `x` as 0 or 1.
+
+The rule to keep: `constraint_mode(0)` removes rules; `rand_mode(0)` removes a degree of freedom and keeps every rule. Finding the smallest set of blocks that conflict is a debugging skill of its own, taught in [Solver Debug and Failure Triage](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug).
+
+### Dynamic constraint modification: the four levers
+
+§18.10 lists four ways to change what randomization does while the simulation runs:
+
+| Lever | What changes | Taught in |
+|---|---|---|
+| Implication and `if`/`else` constraints | A rule applies only when a condition holds | [Conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) |
+| `constraint_mode()` | Whole blocks on or off | This page |
+| `rand_mode()` | Variables on or off; off means "use the current value" | This page |
+| `dist` weights | How often values are chosen (weights may be expressions) | [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) |
+
+In practice a fifth pattern combines them: a **knob**, a state variable that a constraint reads. In `bus_item`, `c_len` reads `max_len`; a test that sets `p.max_len = 4;` limits every later call to lengths 1 to 4, without touching a mode. Knobs are the usual way to pass test intent into an item; in UVM their values often come from the [configuration database](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index).
+
+### pre_randomize() and post_randomize(): hooks around the solve
+
+A **hook** is a method that some other code calls for you at a fixed point. Every class has two randomization hooks, both `function void` with no arguments, and both empty unless you override them (§18.6.2):
+
+- `randomize()` calls `pre_randomize()` **first**, before it computes any value.
+- After "the new random values are computed and assigned", it calls `post_randomize()`.
+- If the solve fails, `randomize()` returns 0, the random variables keep their previous values, and `post_randomize()` is **not** called (§18.6.3). `pre_randomize()` has already run.
+
+Use `pre_randomize()` to set preconditions: knobs, counters, the contents of a lookup table a constraint reads. Use `post_randomize()` for values the solver should not or cannot compute: checksums, CRCs, packed encodings, debug prints. This example counts the hook calls, so you can see the rule in the output.
+
+```systemverilog
+// compile
+package frame_pkg;
+  class frame;
+    rand bit [7:0] len;
+    rand bit [7:0] payload[];
+    bit      [7:0] chk;            // XOR checksum (stand-in for a CRC): computed
+    int unsigned   n_pre, n_post;  // hook call counters for this demo
+
+    constraint c_len  { len inside {[1:32]}; }
+    constraint c_size { payload.size() == len; }  // the solver sizes AND fills payload
+
+    function void pre_randomize();
+      n_pre++;                     // runs before every solve, even one that then fails
+    endfunction
+
+    function void post_randomize();
+      n_post++;                    // runs only after a successful solve
+      chk = 0;
+      foreach (payload[i]) chk ^= payload[i];
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  import frame_pkg::*;
+  frame     f;
+  bit       ok;
+  bit [7:0] old_len;
+
+  initial begin
+    f = new();
+    if (!f.randomize()) $fatal(1, "frame randomize() failed");
+    $display("call 1: pre=%0d post=%0d chk_matches=%0d",
+             f.n_pre, f.n_post, f.chk == f.payload.xor());
+    old_len = f.len;
+    ok = f.randomize() with { len == 0; };   // contradicts c_len on purpose
+    $display("call 2: ok=%0d pre=%0d post=%0d len_kept=%0d",
+             ok, f.n_pre, f.n_post, f.len == old_len);
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand from §18.6.2 and §18.6.3; most simulators also print their own warning for the failed call 2, in a tool-specific format):
+
+```text
+call 1: pre=1 post=1 chk_matches=1
+call 2: ok=0 pre=2 post=1 len_kept=1
+```
+
+<SequenceDiagram
+  title="Hook order in the frame example: call 1 succeeds, call 2 fails"
+  caption="pre_randomize() runs at the start of every call. post_randomize() runs only after values are assigned, so the failed call 2 leaves len, payload and chk exactly as call 1 left them."
+  columnWidth={200}
+  participants={[
+    { id: "tb", label: "tb_top", kind: "generic" },
+    { id: "f", label: "f", sublabel: "frame object", kind: "generic" },
+    { id: "solver", label: "constraint solver", sublabel: "inside randomize()", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tb", to: "f", label: "f.randomize()" },
+    { kind: "self", from: "f", label: "pre_randomize(): n_pre=1" },
+    { from: "f", to: "solver", label: "solve c_len, c_size" },
+    { kind: "return", from: "solver", to: "f", label: "len, payload" },
+    { kind: "self", from: "f", label: "assign len, payload" },
+    { kind: "self", from: "f", label: "post_randomize(): n_post=1, chk" },
+    { kind: "return", from: "f", to: "tb", label: "1" },
+    { kind: "divider", label: "call 2: inline len == 0 contradicts c_len" },
+    { from: "tb", to: "f", label: "randomize() with {len==0}" },
+    { kind: "self", from: "f", label: "pre_randomize(): n_pre=2" },
+    { from: "f", to: "solver", label: "solve c_len, c_size, len == 0" },
+    { kind: "return", from: "solver", to: "f", label: "no solution", tone: "error" },
+    { kind: "note", from: "f", label: "values kept; post_randomize() not called (§18.6.3)" },
+    { kind: "return", from: "f", to: "tb", label: "0", tone: "error" }
+  ]}
+/>
+
+**What a hook changes: this call or the next?** Picture the timeline above and ask where the solve sits.
+
+| Change made in... | To... | Effect |
+|---|---|---|
+| `pre_randomize()` | a state variable or knob, such as `max_len` | This call: the solve has not started yet |
+| `pre_randomize()` | an **active** `rand` variable, such as `len = 4;` | None: the solver assigns every active random variable afterwards, overwriting it |
+| `post_randomize()` | a knob, such as `max_len = 8;` | The **next** call. This call's values are already chosen and are not re-solved |
+| `post_randomize()` | a `rand` variable, such as `len = 200;` | The value is replaced after the solve and **no constraint checks it**: you can produce an illegal item |
+
+The third row is the misconception to unlearn: `post_randomize()` cannot change the constraints of the call that is running it. The fourth row is the anti-pattern this page has always warned about: deleting `payload` in `pre_randomize()` and refilling it in `post_randomize()` with fixed values such as `payload[i] = i`. That throws away the randomization, ignores every element constraint, and leaves payload coverage stuck on one pattern. Let the constraints size and fill the array; keep the hooks for what the solver cannot do.
+
+**Overriding a hook in a derived class.** If a derived class does not define `pre_randomize()`, the inherited one runs automatically. If it **does** define one, the standard says the override "shall call" `super.pre_randomize()`; otherwise "their pre- and post-randomization processing steps shall be skipped" (§18.6.2). The same holds for `post_randomize()`. Nothing calls the base version for you once you have written your own.
+
+```systemverilog
+// snippet
+class err_frame extends frame;
+  function void post_randomize();
+    super.post_randomize();      // keep the base steps: n_post++ and chk
+    chk = ~chk;                  // then corrupt the checksum on purpose
+  endfunction
+endclass
+```
+
+Two more facts complete the picture (§18.6.2, §18.6.3). The hooks are **functions**, so they cannot block: no `#` delays, no `@` waits, no task calls that wait. And they are not virtual methods, but because the virtual `randomize()` calls them, they behave as if they were: the object's own class decides which override runs, whatever the handle type.
+
+### Replacing constraints in a derived class
+
+Constraints are inherited like other class members (§18.5.2). The rules fit in three lines:
+
+1. A derived class inherits **all** of its base class's constraints.
+2. A constraint with the **same name** as an inherited one **replaces** it.
+3. A constraint with a **new name** is **added**.
+
+And one rule from polymorphism: "`randomize()` is virtual and therefore honors constraints of the object on which it was called, regardless of the data type of the object handle" (§18.5.2). Code that holds a base-class handle, such as a driver or a sequence, still gets the derived class's constraints.
+
+```systemverilog
+// snippet: the Make It Work example uses these two classes
+class unaligned_item extends bus_item;
+  constraint c_align { addr[1:0] != 2'b00; }   // same name: replaces bus_item::c_align
+  constraint c_short { len <= 4; }             // new name: added to c_len and c_err
+endclass
+```
+
+<ArchitectureDiagram
+  title="Active constraints when a bus_item handle randomizes an unaligned_item object"
+  caption="unaligned_item replaces c_align and adds c_short. Because randomize() is virtual, h.randomize() uses the object's set, on the right, even though h is declared bus_item."
+  cellWidth={230}
+  gapX={180}
+  nodes={[
+    { id: "base", label: "bus_item", sublabel: "c_align, c_len, c_err", kind: "generic", col: 0, row: 0 },
+    { id: "derived", label: "unaligned_item", sublabel: "c_align (replaces), c_short (adds)", kind: "generic", col: 0, row: 1 },
+    { id: "handle", label: "bus_item h = u", sublabel: "base-class handle", kind: "generic", col: 1, row: 0 },
+    { id: "active", label: "active set of h.randomize()", sublabel: "new c_align, c_len, c_err, c_short", kind: "generic", col: 1, row: 1, state: "active" }
+  ]}
+  edges={[
+    { from: "derived", to: "base", style: "structural", label: "extends" },
+    { from: "handle", to: "derived", style: "causal", label: "holds the object" },
+    { from: "derived", to: "active", style: "causal", label: "virtual randomize()" }
+  ]}
+/>
+
+**The classic mistake.** Rule 2 is silent. A derived class that declares `constraint c_len { len > 100; }` meaning to *add* a rule actually *drops* the base `c_len`. No error, no warning; the base rule is gone. Choose new names for added rules, and when you do mean to replace one, say so in a comment (or with the `:extends` specifier in Push Further).
+
+**Related forms.**
+- A constraint can be declared as a **prototype** in the class (`constraint c_mode;` or `extern constraint c_mode;`) and defined later outside it as `constraint bus_item::c_mode { ... }` (§18.5.1). A derived prototype with an inherited name replaces the inherited constraint too.
+- An abstract (`virtual`) class may declare a **pure constraint**, `pure constraint c_legal;`, which every non-abstract derived class must implement (§18.5.2). It is how a base class says "each protocol variant must define its own legality rule".
+- A derived class's `soft` constraints outrank its base class's, and inline `soft` constraints outrank both (§18.5.13.1), so "the later layer wins" holds for soft defaults as well. [I-SV-2A's constraint-blocks page](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks) covers soft priorities.
+
+### Choosing the random variables for one call: randomize(v, w)
+
+`randomize()` accepts a list of property names. For that call, **those names are the complete set of random variables**; every other variable in the object is a state variable (§18.11). It is the one-call equivalent of a set of `rand_mode()` calls, and it restores itself: the next plain `randomize()` uses the declared modes again.
+
+The standard's example, class `CA`:
+
+```systemverilog
+// snippet: IEEE 1800-2023 §18.11
+class CA;
+  rand byte x, y;
+  byte      v, w;                 // not rand
+  constraint c1 { x < v && y > w; }
+endclass
+```
+
+| Call on `CA a` | Random for this call | State for this call |
+|---|---|---|
+| `a.randomize()` | `x`, `y` | `v`, `w` |
+| `a.randomize(x)` | `x` | `y`, `v`, `w` |
+| `a.randomize(v, w)` | `v`, `w` | `x`, `y` |
+| `a.randomize(w, x)` | `w`, `x` | `y`, `v` |
+
+Notice the third row: `v` and `w` are not declared `rand`, yet the call randomizes them. The argument list can name **any** property. Three limits (§18.11):
+- arguments are property names only, never expressions;
+- a `local` member can be named only from code inside its own class;
+- the call cannot turn a variable into `randc` or a `randc` into `rand`.
+
+All active constraint blocks still apply, including those that mention only state variables. If a state variable already violates one, the call fails.
+
+### Checking instead of generating: randomize(null)
+
+The special argument `null` means "no random variables for this call". Every member becomes a state variable, and `randomize()` turns into a **checker**: it changes nothing and "simply returns 1 if all constraints are satisfied and 0 otherwise" (§18.11.1). For `CA`, `success = a.randomize(null);` returns 1 exactly when `x < v && y > w` holds for the current values. A class that has no random variables at all behaves the same way on a plain `randomize()`.
+
+This is how you reuse an item's rules as a check: load observed field values into an item and ask whether its constraints accept them. Push Further covers the design choices this raises.
+
+### Recap
+
+<VisualRecap
+  title="Six controls, one question each: what is random, and which rules apply?"
+  rule="rand_mode(0) freezes a variable at its current value and keeps every rule; constraint_mode(0) removes a named block. Both last until changed. pre_randomize() runs before every solve; post_randomize() only after a successful one, and anything it changes affects only later calls. A derived constraint with the same name replaces the base one, and randomize() is virtual. randomize(v, w) picks one call's random variables; randomize(null) only checks."
+  code={`p.c_align.constraint_mode(0);              // drop a rule
+if (!p.randomize() with { addr[1:0] != 2'b00; })
+  $fatal(1, "randomize() failed");
+p.c_align.constraint_mode(1);              // restore it
+
+p.addr = 16'h1000;  p.addr.rand_mode(0);   // legal value first, then freeze
+ok = p.randomize(len);                     // only len random for this call
+ok = p.randomize(null);                    // 1 if every active constraint holds`}
+  mistake="Freezing a variable at an illegal value, leaving a mode switched off for the next test, adding a constraint with an inherited name, writing a rand variable in a hook, and expecting inline with to relax a class constraint."
+  inTestbench="Tests aim stimulus with knobs, constraint_mode() and derived items swapped in by a factory override; sequences add inline with; monitors and scoreboards can reuse an item's legality blocks through randomize(null)."
+/>
+
+## Make It Work
+
+### Worked example: six ways to aim one item
+
+This bench uses one `bus_item` class and one derived class, and aims them six ways. Every check counts outcomes instead of printing random values, so the expected output is the same on every simulator and every seed.
+
+```systemverilog
+// compile
+package bus_pkg;
+  class bus_item;
+    rand bit [15:0] addr;
+    rand bit [7:0]  len;
+    bit             err;            // not rand: a state variable unless a call names it
+    int unsigned    max_len = 16;   // knob: a state variable read by c_len
+
+    constraint c_align { addr[1:0] == 2'b00; }     // word-aligned addresses
+    constraint c_len   { len inside {[1:max_len]}; }
+    constraint c_err   { err -> len == 1; }        // an error item is one beat long
+  endclass
+
+  // Same name replaces the base rule; a new name adds one (IEEE 1800-2023 §18.5.2).
+  class unaligned_item extends bus_item;
+    constraint c_align { addr[1:0] != 2'b00; }
+    constraint c_short { len <= 4; }
+  endclass
+endpackage
+
+module tb_top;
+  import bus_pkg::*;
+
+  bus_item       item;
+  bus_item       h;               // base-class handle
+  unaligned_item u;
+  int            pass_n, fail_n;
+
+  function automatic void check(string what, bit ok);
+    if (ok) pass_n++;
+    else begin
+      fail_n++;
+      $display("FAIL: %s", what);
+    end
   endfunction
 
+  initial begin
+    int n_hit;
+    bit ok;
+    item = new();
+
+    // 1. Error injection: drop the alignment block, ask for the opposite inline.
+    item.c_align.constraint_mode(0);
+    n_hit = 0;
+    repeat (8) begin
+      if (!item.randomize() with { addr[1:0] != 2'b00; }) $fatal(1, "way 1 failed");
+      if (item.addr[1:0] != 2'b00) n_hit++;
+    end
+    item.c_align.constraint_mode(1);              // modes persist: switch it back on
+    $display("constraint_mode + with : unaligned %0d/8, c_align on = %0d",
+             n_hit, item.c_align.constraint_mode());
+    check("way 1", n_hit == 8 && item.c_align.constraint_mode() == 1);
+
+    // 2. A derived item, randomized through a base-class handle.
+    u = new();
+    h = u;                                        // randomize() is virtual
+    n_hit = 0;
+    repeat (8) begin
+      if (!h.randomize()) $fatal(1, "way 2 failed");
+      if (h.addr[1:0] != 2'b00 && h.len <= 4) n_hit++;
+    end
+    $display("override, base handle : unaligned and len<=4 %0d/8", n_hit);
+    check("way 2", n_hit == 8);
+
+    // 3. Hold addr fixed: give it a legal value, then make it a state variable.
+    item.addr = 16'h1000;
+    item.addr.rand_mode(0);
+    n_hit = 0;
+    repeat (8) begin
+      if (!item.randomize()) $fatal(1, "way 3 failed");
+      if (item.addr == 16'h1000) n_hit++;
+    end
+    $display("addr.rand_mode(0)      : addr held %0d/8, mode = %0d",
+             n_hit, item.addr.rand_mode());
+    check("way 3", n_hit == 8 && item.addr.rand_mode() == 0);
+    item.addr.rand_mode(1);
+
+    // 4. Only len is random for these calls; addr is state without touching its mode.
+    item.addr = 16'h2000;
+    n_hit = 0;
+    repeat (8) begin
+      if (!item.randomize(len)) $fatal(1, "way 4 failed");
+      if (item.addr == 16'h2000 && item.len inside {[1:16]}) n_hit++;
+    end
+    $display("randomize(len)         : addr held %0d/8", n_hit);
+    check("way 4", n_hit == 8);
+
+    // 5. A non-rand member made random for one call; len = 5 is now state.
+    item.len = 8'd5;
+    ok = item.randomize(err);                     // c_err: err -> len == 1, so err = 0
+    $display("randomize(err), len=5  : ok=%0d err=%0d", ok, item.err);
+    check("way 5", ok && item.err == 0);
+
+    // 6. Checker: nothing is random; the return value says whether the rules hold.
+    item.addr = 16'h2001;
+    ok = item.randomize(null);
+    $display("randomize(null)        : addr=2001 -> %0d", ok);
+    check("way 6a", !ok && item.addr == 16'h2001);
+    item.addr = 16'h2000;
+    ok = item.randomize(null);
+    $display("randomize(null)        : addr=2000 -> %0d", ok);
+    check("way 6b", ok);
+
+    $display("PASS=%0d FAIL=%0d", pass_n, fail_n);
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand from §18.5.2, §18.8, §18.9, §18.11 and §18.11.1, not from a simulator run; the failing `randomize(null)` in check 6a may also make your simulator print its own warning):
+
+```text
+constraint_mode + with : unaligned 8/8, c_align on = 1
+override, base handle : unaligned and len<=4 8/8
+addr.rand_mode(0)      : addr held 8/8, mode = 0
+randomize(len)         : addr held 8/8
+randomize(err), len=5  : ok=1 err=0
+randomize(null)        : addr=2001 -> 0
+randomize(null)        : addr=2000 -> 1
+PASS=7 FAIL=0
+```
+
+**Why each line is deterministic.**
+- Check 1: with `c_align` off, the inline constraint is the only rule on the low address bits, so every call is unaligned.
+- Check 2: `unaligned_item::c_align` replaced the base block and `c_short` was added, and `h.randomize()` uses the object's set.
+- Check 3: `addr` is a state variable holding an aligned value, so `c_align` accepts it and the solver never changes it.
+- Check 4: `randomize(len)` makes `addr` a state variable for each call, while its declared mode stays active.
+- Check 5: only `err` is random and `len` is the constant 5, so `c_err` can hold only with `err = 0`.
+- Check 6: `0x2001` violates `c_align`; `0x2000` satisfies all three blocks (`len` is 5 and `err` is 0).
+
+### How to aim stimulus without editing the item
+
+1. **Name the job.** Different values for one test? Different values for one call? Checking, not generating?
+2. **Narrowing only** (a subset of what is already legal): use inline `with` in the sequence or test. It adds constraints for that call and leaves the class untouched.
+3. **Going outside a rule** (error injection): switch the block off with `constraint_mode(0)` and add the opposite inline, or write a derived class that replaces the block by name and swap it in (in UVM, with a factory override).
+4. **Holding a field fixed:** assign a legal value, then `rand_mode(0)`; or, for one call only, `randomize(<the other fields>)`.
+5. **Changing a limit for many calls:** set a knob that a constraint reads, such as `max_len`.
+6. **Restore what you changed** (`constraint_mode(1)`, `rand_mode(1)`) before the object goes back to shared code, or use a fresh object.
+7. **Check every call:** `if (!obj.randomize(...)) $fatal(...)` outside UVM, `` `uvm_fatal `` or `` `uvm_error `` inside it.
+
+### Debugging the controls
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Every call fails right after a `rand_mode(0)` | The frozen value violates a constraint | Assign a legal value before freezing, or freeze a different variable |
+| A later test is missing a whole category of values | A `constraint_mode(0)` or `rand_mode(0)` from an earlier test is still in effect (modes persist; a shallow copy made with `new` copies them too, §8.12) | Restore modes, or randomize a fresh object; query the mode to confirm |
+| A derived item violates a base rule that "should" still apply | The derived class declared a block with the same name | Rename the derived block, or confirm the replacement was intended |
+| A derived item's checksum or base fields are wrong | Its `pre_randomize()` or `post_randomize()` override does not call `super` | Call `super.pre_randomize()` / `super.post_randomize()` first |
+| A value set in `pre_randomize()` is never seen | It was an active random variable; the solver overwrote it | Use a knob plus a constraint, or `rand_mode(0)`, or inline `with` |
+| Items violate their own constraints | `post_randomize()` writes a `rand` variable | Compute only non-random, derived fields there |
+| Inline `with` "should" allow a value but the call fails | Inline constraints are added, never relaxing a class constraint | Switch the conflicting block off, or override it |
+| `constraint_mode` or `rand_mode` will not compile | Misspelled block name, or the variable is not `rand` | Use the declared name; `rand_mode()` works only on `rand`/`randc` variables |
+
+### In a real testbench
+
+- **Derived items swapped in by the factory.** In UVM (taught from [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) on) the item class extends `uvm_sequence_item` and is registered with the factory, and sequences create items with `type_id::create`. A test registers a type override so those calls return the derived item (an `unaligned_item` here), and every sequence starts producing unaligned addresses without being edited. [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index) teaches overrides.
+- **Mode switches in sequences.** A sequence calls `req.c_align.constraint_mode(0);` before `req.randomize() with {...}`. UVM sequences usually create a new item per transaction, so the setting does not leak; a reused item keeps it. [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) shows the item flow.
+- **Knobs from configuration.** A test puts a limit such as `max_len` in the configuration database; the sequence reads it and copies it into each item before randomizing.
+- **`post_randomize()` in sequence items** computes CRCs, parity and packed fields, and calls `super.post_randomize()` when the base item has one.
+- **When not to use these controls.** If every test needs the same change, change the class. Mode switches scattered across tests are hard to audit; prefer a named derived item or a knob that a reviewer can find.
+
+**Checklist before moving on:**
+- [ ] I can say, for `rand_mode(0)` and `constraint_mode(0)`, what becomes inactive and how long it stays that way.
+- [ ] I assign a legal value before freezing a variable with `rand_mode(0)`.
+- [ ] I know `post_randomize()` runs only after a successful solve, and that what it changes affects only later calls.
+- [ ] Every hook override I write calls `super`.
+- [ ] I give added derived constraints new names, and I can predict the active set through a base-class handle.
+- [ ] I can write `randomize(v, w)` and `randomize(null)` and say what each returns and changes.
+- [ ] I restore any mode I switch off, or randomize a fresh object.
+
+## Push Further
+
+### Expert: constraint layering for reuse
+
+**Override specifiers.** Accidentally replacing a base constraint is common enough that IEEE 1800-2023 added specifiers for it (§18.5.2; grammar in Syntax 18-2 and Annex A.1.10: `[ static ] constraint [ dynamic_override_specifiers ] name { ... }`):
+
+```systemverilog
+// snippet: IEEE 1800-2023 specifiers; check your simulator's support first
+class bus_item;
+  rand bit [15:0] addr;
+  constraint :initial c_align { addr[1:0] == 2'b00; }  // must not override anything
+endclass
+
+class unaligned_item extends bus_item;
+  constraint :extends :final c_align { addr[1:0] != 2'b00; }  // must override; no more
+endclass
+```
+
+- `:initial`: the constraint shall not be an override; using it on one is an error.
+- `:extends`: the constraint shall be an override; using it when no base constraint has that name is an error. `:initial` and `:extends` are mutually exclusive.
+- `:final`: no derived class may replace it; it can combine with either of the others, and it is illegal on a pure constraint (footnote to Syntax 8-1).
+- With a prototype and an external block, put the specifiers on both or on neither (§18.5.2).
+- Specifiers are illegal on `static` constraints (Syntax 18-9 footnote, §18.5.10). A static prototype and its external block must both be `static`, and an override of a static pure constraint must match it.
+
+Support for these 2023 specifiers varies by simulator and version (tool-dependent): try them in a small file before you adopt them.
+
+**Choosing a layering mechanism.**
+
+| Mechanism | Scope | Strength | Weakness |
+|---|---|---|---|
+| Knob read by a constraint | Every later call on that object | Visible, reviewable, cheap | Only changes what the class author anticipated |
+| `constraint_mode()` | Every later call on that object | Can remove any named rule | Easy to leave off; scattered across tests |
+| Inline `with` | One call | Local and obvious | Can only narrow, never relax |
+| Derived class (plus factory override in UVM) | Every object of that type the factory creates | Can replace and add rules; reusable across tests | Silent replacement by name; one more class to maintain |
+| `soft` defaults in the base class | Every call, until a higher layer contradicts them | Tests override without switching anything (§18.5.13.1) | Readers misread them as probabilities |
+
+A common house style: the base item holds hard **legality** blocks (protocol rules, rarely switched off) and soft **shaping** defaults; tests narrow with inline `with` and knobs; error injection lives in named derived classes. That keeps every `constraint_mode(0)` in a handful of reviewed places.
+
+### Expert: hooks and nested objects
+
+A `rand` class handle makes the object it points to part of the same solve: the solver collects the **active random objects** recursively, starting from the object whose `randomize()` was called, and solves all their variables and constraints together (§18.4, §18.5.8). The hooks follow the same set: `randomize()` invokes `pre_randomize()` "on obj and also all of its random object members that are enabled", and likewise `post_randomize()` (§18.6.2).
+
+```systemverilog
+// snippet
+class hdr_t;
+  rand bit [3:0] kind;
   function void post_randomize();
-    // Runs only after a successful solve: compute derived fields.
-    crc = 0;
-    foreach (payload[i]) crc ^= payload[i];
+    $display("hdr_t::post_randomize kind=%0d", kind);
   endfunction
 endclass
 
-program test;
-  frame f = new();
-  initial begin
-    repeat (2) begin
-      if (!f.randomize()) $fatal(1, "frame randomize() failed");
-      $display("len=%0d crc=%02h payload=%p", f.len, f.crc, f.payload);
-    end
-  end
-endprogram`} />
+class pkt;
+  rand hdr_t hdr;                 // rand handle: hdr's object is solved with pkt
+  function new();
+    hdr = new();                  // randomize() never allocates objects (§18.4)
+  endfunction
+endclass
+```
 
-**Anti-pattern to avoid:** deleting `payload` in `pre_randomize()` and refilling it in `post_randomize()` with fixed values such as `payload[i] = i`. That throws away the randomization, ignores every constraint on the elements, and leaves your payload coverage stuck on one pattern. Let the constraints size and fill the array; keep the hooks for what the solver cannot do.
+Consequences worth knowing:
+- `p.randomize()` runs `hdr_t`'s hooks as well as `pkt`'s. The standard does not spell out the order between the container's hook and its members' hooks, so do not write code that depends on it.
+- `p.hdr.rand_mode(0)` changes only the handle's mode (§18.8). For later `p.randomize()` calls, `hdr`'s object is no longer an active random object: its variables keep their values, its constraints are not applied, and its hooks are not called. `p.hdr.randomize()` still randomizes it normally, because the modes inside `hdr_t` were never touched.
+- "Randomization shall not modify the actual object handle" (§18.4): a `rand` handle is never re-pointed or allocated. Allocate members in `new()`.
+- A `static rand` variable is shared by all instances and changes in every instance on each `randomize()` (§18.6.3); its `rand_mode` is shared too (§18.8).
+- `p2 = new p1;` (a shallow copy: a new object with the same property values) copies the random number generator (RNG) state, every `rand_mode` and `constraint_mode` setting and the `randc` cycle state (§8.12). The copy starts with the same switches as the original, which is either what you want or a leak.
 
-## Level 3: Expert Tips
+### Expert: mode changes inside pre_randomize()
 
-- Use `pre_randomize` to set non-random knobs or to switch constraints with `constraint_mode()` before solving.
-- `post_randomize` runs only when `randomize()` succeeds. If the solve fails, it is not called and the random variables keep their previous values (§18.6.3).
-- If a derived class overrides either hook, it must call `super.pre_randomize()` or `super.post_randomize()`. Otherwise the base class's steps are skipped (§18.6.2).
-- Keep `post_randomize` for derived, non-random fields such as a CRC or parity, and keep it light.
+Can `pre_randomize()` switch a block off for the call that is running it? Tables 18-3 and 18-4 describe the effect of `rand_mode()` and `constraint_mode()` on "subsequent calls to the `randomize()` method", and §18.6.2 presents `pre_randomize()` as the place to "set preconditions before the object is randomized". The standard does not say explicitly whether a mode change made inside `pre_randomize()` applies to the call already in progress.
+
+For portable code, call `constraint_mode()` and `rand_mode()` **before** `randomize()`, and set only knobs in `pre_randomize()`. Knobs are plain state variables; the solve has not started when `pre_randomize()` runs, so a knob set there applies to the current call by the ordinary rules of §18.6.2.
+
+### Expert: randomize() as a checker
+
+`randomize(null)` turns an item's constraints into an executable specification (§18.11.1). Three design questions decide whether that is useful:
+
+1. **Which rules does the checker see?** Every active block, including shaping blocks a test added. Separate legality from shaping by name (`c_legal_*` versus `c_shape_*`) and switch the shaping blocks off on the checker's copy of the item.
+2. **What does it report?** One bit. When it returns 0 you know the item is illegal, not which rule failed. Narrow it down by switching legality blocks off one at a time, as in [Solver Debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug).
+3. **What about soft constraints?** The standard says soft constraints "can only be specified on random variables" (§18.5.13.1), and in a `randomize(null)` call there are none. How a simulator treats a soft constraint that the current values violate in checker mode is not spelled out (tool-dependent). Keep checker classes free of `soft`, or switch those blocks off.
+
+The same idea works without a class: `std::randomize()` with no arguments and a `with` block checks local variables against the inline constraints. The [randomization-methods page](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) covers it.
+
+### Expert: interview angles
+
+Answer each question before you open the options.
+
+<InterviewQuestionPlayground
+  title="Interview angle: unaligned addresses without editing the item"
+  question="Your bus item has a hard alignment constraint block named c_align. Without editing the item class, name two ways to make one test generate only unaligned addresses, and one approach that looks right but fails on every call."
+  options={[
+    { text: "Switch c_align off with constraint_mode(0) and add an inline constraint for unaligned addresses; or override c_align by name in a derived item and swap that item in with a factory type override. An inline constraint alone fails.", isCorrect: true, feedback: "Correct. Both working approaches remove the alignment rule before asking for the opposite. Inline with only adds constraints (IEEE 1800-2023 §18.7), so on its own it contradicts c_align on every call." },
+    { text: "Add an inline constraint for unaligned addresses; the inline constraint has higher priority than the class constraint.", isCorrect: false, feedback: "Priority applies only to soft constraints (§18.5.13.1). c_align is hard, so the inline constraint and c_align contradict each other and every call returns 0." },
+    { text: "Freeze the address with rand_mode(0) after assigning an unaligned value.", isCorrect: false, feedback: "Freezing keeps every rule. c_align rejects the frozen unaligned value, so every call fails, and the address would not vary anyway." },
+    { text: "Override c_align in a derived class with a new name such as c_unaligned.", isCorrect: false, feedback: "A new name adds a constraint (§18.5.2). Now both c_align and c_unaligned are active and contradict each other." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: where does the checksum go?"
+  question="A frame has a random payload and a checksum field computed from it. Where should you compute the checksum, and why?"
+  options={[
+    { text: "In pre_randomize().", isCorrect: false, feedback: "pre_randomize() runs before the solver has chosen the payload, so there is nothing to compute from yet." },
+    { text: "In a constraint, as chk == payload.xor().", isCorrect: false, feedback: "Legal only if chk is a rand variable, and only for a reduction the solver can express. If chk is not rand, it is a state variable, so the constraint restricts the payload to match the old chk instead. A real CRC is clearer and cheaper to compute after the solve." },
+    { text: "In post_randomize(), with chk declared without rand.", isCorrect: true, feedback: "Correct. post_randomize() runs only after a successful solve (§18.6.2, §18.6.3), so the payload is final, and a failed call leaves both payload and checksum unchanged and consistent. If a derived class overrides post_randomize(), it must call super.post_randomize()." },
+    { text: "In the constructor.", isCorrect: false, feedback: "The constructor runs once; the object is randomized many times, so the checksum would be stale after the first call." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+Answer the quiz first; it covers all five objectives. Then do the kata. Come back to the flashcards over the next few days.
+
+### Retrieval quiz
 
 <Quiz questions={[
   {
-    question: "When is `pre_randomize` executed?",
+    question: "A class has rand bit [7:0] len, a knob int unsigned max_len that starts at 255, and the constraint block c_len: len <= max_len. Its post_randomize() sets max_len = 8. You call randomize() twice. Which call is the first one limited to len <= 8?",
     answers: [
-      { text: "After new values are generated", correct: false },
-      { text: "Immediately before the solver runs", correct: true },
-      { text: "Only at time 0", correct: false }
+      { text: "The first call: post_randomize() changes the constraints, so the solver re-solves that call", correct: false, feedback: "post_randomize() runs after the values are computed and assigned (§18.6.2). Nothing re-solves the call that is running it." },
+      { text: "The first call returns 0 if the solved len is above 8", correct: false, feedback: "The first call has already succeeded when post_randomize() runs; it cannot change the return value." },
+      { text: "The second call: the knob changed after the first solve, so it affects only later calls", correct: true, feedback: "Right. max_len is a state variable; its new value is read by the next solve." },
+      { text: "Neither: post_randomize() cannot write class members", correct: false, feedback: "It can write any member. Writing a knob there is legal; writing a rand variable there bypasses the constraints." }
     ],
-    explanation: "`pre_randomize` gives you a chance to prepare the object before solving."
+    explanation: "A change made in post_randomize() affects later calls only. The current call's values were chosen before the hook ran (§18.6.2).",
+    objective: 2
+  },
+  {
+    question: "In pre_randomize() you write len = 4; where len is an active rand variable with constraint len inside [1:16]. What is len after a successful randomize()?",
+    answers: [
+      { text: "Always 4", correct: false, feedback: "pre_randomize() runs before the solve. The solver then assigns every active random variable, overwriting the 4." },
+      { text: "4 unless a constraint forbids it, like a soft default", correct: false, feedback: "Assignments are not constraints. The solver ignores the current value of an active random variable." },
+      { text: "Whatever the solver picks in 1 to 16; the assignment is overwritten", correct: true, feedback: "Right. To fix len, make it a state variable with rand_mode(0), or constrain it inline with len == 4." },
+      { text: "Compile error: pre_randomize() cannot write rand variables", correct: false, feedback: "It is legal; it just has no effect on an active random variable." }
+    ],
+    explanation: "pre_randomize() is for knobs and state. An active random variable is always assigned by the solve that follows (§18.6.2, §18.8).",
+    objective: 2
+  },
+  {
+    question: "word_item declares static constraint c_word: addr[1:0] == 0. Objects a and b both exist. You call a.c_word.constraint_mode(0). What does b.c_word.constraint_mode() return now?",
+    answers: [
+      { text: "1: modes belong to each object", correct: false, feedback: "That is true for ordinary constraint blocks, not static ones." },
+      { text: "0: a static block's mode is shared by every instance", correct: true, feedback: "Right. Calls to constraint_mode() on a static block affect it in all objects (§18.5.10)." },
+      { text: "Compile error: static constraint blocks cannot be switched", correct: false, feedback: "They can; the switch simply applies to every instance." },
+      { text: "1 for b, but objects created later start with 0", correct: false, feedback: "There is one shared mode. Existing and new objects all see 0 until someone sets it back to 1." }
+    ],
+    explanation: "A static constraint block has one mode for the whole class (§18.5.10), just as a static rand variable has one rand_mode (§18.8).",
+    objective: 1
+  },
+  {
+    question: "Class pkt has rand hdr_t hdr, and hdr points to an object. You call p.hdr.rand_mode(0), then p.randomize(), and later p.hdr.randomize(). What happens to the rand variables inside hdr?",
+    answers: [
+      { text: "p.randomize() leaves them unchanged; p.hdr.randomize() still randomizes them", correct: true, feedback: "Right. Only the handle's mode changed (§18.8), so hdr is not an active random object of p (§18.5.8), but its own variables are still active." },
+      { text: "They become non-random for every call, including p.hdr.randomize()", correct: false, feedback: "rand_mode(0) on a handle does not change the modes of the variables inside the object (§18.8)." },
+      { text: "Compile error: rand_mode() works only on integral variables", correct: false, feedback: "rand_mode() works on any rand variable, including a rand class handle." },
+      { text: "p.randomize() sets hdr to null", correct: false, feedback: "Randomization never modifies an object handle (§18.4)." }
+    ],
+    explanation: "An inactive rand handle removes the object it points to from the container's solve, including its constraints and hooks, without touching the modes inside it.",
+    objective: 1
+  },
+  {
+    question: "bus_item has rand bit [7:0] len and constraint c_len: len < 16. long_item extends bus_item and declares constraint c_len: len > 100. A bus_item handle h holds a long_item object. What does h.randomize() produce?",
+    answers: [
+      { text: "It fails: len < 16 and len > 100 conflict", correct: false, feedback: "Constraints with the same name do not accumulate. The derived c_len replaces the base one (§18.5.2)." },
+      { text: "len < 16, because h is declared as a bus_item", correct: false, feedback: "randomize() is virtual and uses the constraints of the object, whatever the handle type (§18.5.2)." },
+      { text: "Compile error: duplicate constraint name", correct: false, feedback: "Reusing the name is legal; it is how you replace an inherited constraint." },
+      { text: "len between 101 and 255", correct: true, feedback: "Right: same name replaces, and the object's constraints apply through any handle." }
+    ],
+    explanation: "Same name replaces, a new name adds, and randomize() honours the object's constraints regardless of the handle (§18.5.2).",
+    objective: 3
+  },
+  {
+    question: "Class CA has rand byte x, y; byte v, w (not rand); and the constraint c1: x < v && y > w. What does a.randomize(v, w) change?",
+    answers: [
+      { text: "x, y, v and w", correct: false, feedback: "With arguments, the list is the complete set of random variables for that call (§18.11)." },
+      { text: "Only x and y, because v and w are not rand", correct: false, feedback: "The argument list can name any property, rand or not. Here x and y become state variables." },
+      { text: "Only v and w; x and y act as state variables", correct: true, feedback: "Right. The call picks v and w so that x < v and y > w hold for the current x and y." },
+      { text: "Compile error: v and w are not declared rand", correct: false, feedback: "Naming a non-rand property is exactly what inline random-variable control allows (§18.11)." }
+    ],
+    explanation: "randomize(args) designates the complete set of random variables for one call, and may include non-rand members (§18.11).",
+    objective: 4
+  },
+  {
+    question: "Same CA object. You call ok = a.randomize(null). What happens?",
+    answers: [
+      { text: "Every member, rand or not, gets a new value", correct: false, feedback: "null means no random variables at all for this call." },
+      { text: "Nothing changes; ok is 1 only if x < v and y > w hold for the current values", correct: true, feedback: "Right. randomize(null) is a checker (§18.11.1)." },
+      { text: "Nothing changes and ok is always 1", correct: false, feedback: "It evaluates every active constraint and returns 0 if any is false." },
+      { text: "Compile error: null is not a variable name", correct: false, feedback: "null is a special argument for class randomize() calls (§18.11.1)." }
+    ],
+    explanation: "randomize(null) makes every member a state variable and returns whether all active constraints hold (§18.11.1).",
+    objective: 4
+  },
+  {
+    question: "bus_item has the hard block c_align: addr[1:0] == 0. A test needs only unaligned addresses and may not edit the class. Which approach fails on every call?",
+    answers: [
+      { text: "c_align.constraint_mode(0), then randomize() with addr[1:0] != 0", correct: false, feedback: "This works: it is the standard's own exercise_illegal pattern (§18.3)." },
+      { text: "A derived item that redeclares c_align as addr[1:0] != 0", correct: false, feedback: "This works: the same name replaces the base block (§18.5.2)." },
+      { text: "randomize() with addr[1:0] != 0, and nothing else", correct: true, feedback: "Right. Inline constraints are added to c_align (§18.7), and the two contradict each other." },
+      { text: "c_align.constraint_mode(0) alone, without an inline constraint", correct: false, feedback: "This succeeds on every call, but about 3 in 4 addresses are unaligned rather than all of them." }
+    ],
+    explanation: "Inline with can only narrow the legal set. To go outside a hard rule, remove it first: constraint_mode(0) or a same-name override.",
+    objective: 4
+  },
+  {
+    question: "Debug: a derived item err_item overrides post_randomize() to flip one payload bit and does not call super.post_randomize(). The base class computes chk in its post_randomize(). What do err_item objects show?",
+    answers: [
+      { text: "chk is never recomputed: the base steps are skipped", correct: true, feedback: "Right. Once a class defines its own post_randomize(), the base version runs only if it calls super.post_randomize() (§18.6.2)." },
+      { text: "Correct chk: SystemVerilog calls the base post_randomize() automatically first", correct: false, feedback: "The automatic super call happens only when the derived class does not define the hook at all (§18.6.2)." },
+      { text: "A compile error: an override must call super", correct: false, feedback: "Omitting super compiles; the standard says the base steps are then skipped." },
+      { text: "Both versions run, derived first", correct: false, feedback: "Only the derived version runs unless it calls super explicitly." }
+    ],
+    explanation: "Overriding a hook takes over the whole job. Call super.pre_randomize() or super.post_randomize() first to keep the base steps (§18.6.2).",
+    objective: 5
+  },
+  {
+    question: "Debug: right after new(), while addr is still 1, a test calls item.addr.rand_mode(0). The class has c_align: addr[1:0] == 0. From then on every randomize() call returns 0. Why?",
+    answers: [
+      { text: "rand_mode(0) only takes effect after one more call", correct: false, feedback: "The mode applies to every subsequent call (§18.8, Table 18-3), starting with the next one." },
+      { text: "The frozen addr is a constant 1, which c_align rejects", correct: true, feedback: "Right. An inactive variable is a state variable; its current value must still satisfy every constraint. Assign an aligned value before freezing." },
+      { text: "rand_mode(0) also switches off c_align, so the solver has no rules", correct: false, feedback: "rand_mode() never changes constraint blocks; that is constraint_mode()." },
+      { text: "An inactive variable becomes X, and X is illegal in constraints", correct: false, feedback: "The variable keeps its current value; nothing becomes X." }
+    ],
+    explanation: "Freezing removes a degree of freedom and keeps every rule. A frozen value that violates a constraint makes every call fail (§18.8, §18.6.3).",
+    objective: 5
   }
 ]} />
 
-<div className="mt-8">
-  <InterviewQuestionPlayground
-    question="You need to calculate a CRC parity bit that depends on a randomly generated payload. In which method should you compute this CRC?"
-    options={[
-      { text: "pre_randomize()", isCorrect: false, feedback: "The payload isn't randomized yet!" },
-      { text: "Inside a constraint block", isCorrect: false, feedback: "A simple XOR check could be a constraint (`crc == payload.xor()`, §18.5.7.2), but a real CRC is clearer and much cheaper to compute after the solver has chosen the payload." },
-      { text: "post_randomize()", isCorrect: true, feedback: "Correct! `post_randomize()` runs immediately after the solver succeeds, making it the perfect place to calculate parity, CRCs, or other dependent fields that don't need to be solved by the solver." },
-      { text: "In the constructor (new)", isCorrect: false, feedback: "The constructor runs exactly once, but the object might be randomized multiple times." }
-    ]}
-  />
-</div>
+### Kata: illegal addresses three ways
 
-</InfoPage>
+Use the `bus_item` class from Make It Work. You need a test that sends unaligned addresses, without editing `bus_item`.
+
+**Predict first.** For each approach below, write down: (1) does the call succeed, (2) are all addresses unaligned, (3) does the change affect other code that randomizes the same object or creates `bus_item` objects?
+
+- (a) `item.c_align.constraint_mode(0);` then `item.randomize() with { addr[1:0] != 2'b00; }`, then `constraint_mode(1)`.
+- (b) A derived class `unaligned_item` that redeclares `c_align`, randomized through a `bus_item` handle.
+- (c) `item.randomize() with { addr[1:0] != 2'b00; }` with nothing else.
+
+Then write all three in one `tb_top`, run each 8 times, count unaligned results, and print `PASS=<n> FAIL=<m>` with (c) expected to fail.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+**Predictions.**
+- (a) Succeeds; all unaligned. It affects only `item`, and only until `constraint_mode(1)` restores the block. Forgetting the restore would leak into the next user of `item`.
+- (b) Succeeds; all unaligned. It affects only objects created as `unaligned_item`. In UVM a factory type override makes every `bus_item::type_id::create` return one, which is the point, and also the risk.
+- (c) Fails on every call: the inline constraint is added to `c_align` and contradicts it (§18.7). The object keeps its previous values (§18.6.3).
+
+```systemverilog
+// compile: needs bus_pkg from Make It Work
+module tb_top;
+  import bus_pkg::*;
+  bus_item       item, h;
+  unaligned_item u;
+  int            pass_n, fail_n, n_a, n_b, n_c_fail;
+
+  initial begin
+    item = new();
+    u    = new();
+    h    = u;
+
+    item.c_align.constraint_mode(0);                       // (a)
+    repeat (8) begin
+      if (!item.randomize() with { addr[1:0] != 2'b00; }) $fatal(1, "(a) failed");
+      if (item.addr[1:0] != 2'b00) n_a++;
+    end
+    item.c_align.constraint_mode(1);
+
+    repeat (8) begin                                       // (b)
+      if (!h.randomize()) $fatal(1, "(b) failed");
+      if (h.addr[1:0] != 2'b00) n_b++;
+    end
+
+    repeat (8)                                             // (c): expected to fail
+      if (!item.randomize() with { addr[1:0] != 2'b00; }) n_c_fail++;
+
+    if (n_a == 8) pass_n++; else fail_n++;
+    if (n_b == 8) pass_n++; else fail_n++;
+    if (n_c_fail == 8) pass_n++; else fail_n++;
+    $display("(a) %0d/8 (b) %0d/8 (c) failed %0d/8", n_a, n_b, n_c_fail);
+    $display("PASS=%0d FAIL=%0d", pass_n, fail_n);
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand; the eight failing calls in (c) may also make your simulator print warnings):
+
+```text
+(a) 8/8 (b) 8/8 (c) failed 8/8
+PASS=3 FAIL=0
+```
+
+</details>
+
+The deck for this page, **I-SV-2B Controlling Randomization**, covers both mode switches, the hooks, override by name, inline variable control and the checker. Review it now and again in a few days.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023:
+  - §8.12 (a shallow copy copies the RNG state, `rand_mode`, `constraint_mode` and `randc` state);
+  - §18.3 (the `exercise_illegal` example of `constraint_mode()`), §18.4 (`rand` handles; `randomize()` never allocates objects or modifies a handle);
+  - §18.5.1 (constraint prototypes and external blocks), §18.5.2 (constraint inheritance, pure constraints, `:initial`, `:extends`, `:final`), §18.5.8 (active random objects), §18.5.10 (static constraint blocks; Syntax 18-9), §18.5.13.1 (soft priorities across layers);
+  - §18.6.2 (`pre_randomize()` and `post_randomize()`), §18.6.3 (behaviour of randomization methods), §18.7 (inline constraints);
+  - §18.8 (`rand_mode()`, Table 18-3), §18.9 (`constraint_mode()`, Table 18-4), §18.10 (dynamic constraint modification), §18.11 (inline random variable control), §18.11.1 (inline constraint checker);
+  - Syntax 18-2 and Annex A.1.10 (`constraint_declaration`, `dynamic_override_specifiers`).
+- IEEE 1800.2-2020 §8.3 (the factory, used for derived-item overrides).
+
+**Related**
+
+- [Conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints): implication and `if`/`else`, the first lever of §18.10.
+- [Procedural randomization and seeds](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods): `std::randomize()`, including its checker form, and random stability.
+- [Solver Debug and Failure Triage](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug): using `constraint_mode()` and `rand_mode()` to find a minimal conflicting set.
+- [I-SV-2A Constraint blocks, soft, and solve…before](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks): soft priorities and external constraint blocks.
+- [I-SV-1 Polymorphism Pitfalls](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls): why a base-class handle still runs the object's virtual methods.
+- [I-UVM-1B The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index): swapping in a derived item with a type override.
+- [I-UVM-3A Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): where items are created, randomized and sent.
+
+<NextLesson />

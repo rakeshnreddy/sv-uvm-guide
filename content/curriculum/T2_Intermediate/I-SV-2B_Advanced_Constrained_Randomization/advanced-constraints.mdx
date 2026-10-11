@@ -1,85 +1,953 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import InteractiveCode from "@/components/ui/InteractiveCode";
-import Quiz from "@/components/ui/Quiz";
+---
+title: "Conditional and Array Constraints"
+description: "Write implication, if–else, foreach, size, sum() with, unique, guard and function constraints, and predict their legal values, their odds, and when they make randomize() fail."
+flashcards: "I-SV-2B_Advanced_Constraints"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+---
 
-export const metadata = {
-  title: "Advanced Constraints: implication and iteration | Advanced SystemVerilog for Verification",
-  description: "Express conditional and iterative rules with implication and foreach constructs.",
-};
+## Quick Take
 
-<InfoPage
-  title="Advanced Constraints: implication and iteration"
-  sv_concept_tags={["implication", "iteration", "constraints"]}
->
+- **What it is:** The constraint forms for rules that depend on a condition and rules that apply across an array. **Conditional constraints** (`->` and `if`/`else`) make a rule hold only in some cases. **Array constraints** (`foreach`, `size()`, reduction methods such as `sum() with`, and `unique`) constrain every element, the length, the total, or the distinctness of an array. Three tools make these rules safe on real data: **guards**, **functions** called from constraints, and **global constraints** across objects reached through `rand` handles (IEEE 1800-2023 §18.5.4–§18.5.12).
+- **Why it matters:** Real protocol rules look like "a WRAP burst has 2, 4, 8 or 16 beats" (a **burst** is one bus request that moves several data transfers, called **beats**), "consecutive beats carry different data" and "no two outstanding transactions share a tag". Written carelessly, the same rules go wrong in three quiet ways: a mode almost never appears, a limit never limits, or `randomize()` fails on some calls and not others. Every **sequence item** (the transaction class a UVM sequence randomizes) you write from milestone M2 on uses these forms.
+- **The Analogy:** "If you come to the party, bring a dish." You obey the rule by bringing a dish, or by not coming. If the only dish allowed is very hard to make, most people stop coming: a narrow right-hand side makes the left-hand side rare. *Where it breaks:* people decide whether to come first and think about the dish later. The solver weighs every combination at once, except in three places where the standard makes it decide one thing first (array sizes, function arguments and `randc` variables). This page shows all three.
 
-## Level 1: Why Implication and Iteration?
+**You will be able to:**
+1. **Predict** the legal values and the odds of conditional constraints written with `->` and `if`/`else`, treating them as two-way Boolean rules rather than procedural `if` statements.
+2. **Write** `foreach` and `size()` constraints with index guards, and **predict** when solving the size first makes `randomize()` fail.
+3. **Write** `sum() with` and `unique` constraints, and **predict** when an 8-bit total wraps or a `unique` group cannot be satisfied.
+4. **Write** guards, function calls and `rand` handle constraints, and **explain** why a null handle or a random function argument can make `randomize()` fail.
 
-**The Analogy:** The implication operator is like a contract: *if* the first clause is true, *then* the second must also be true. Iteration with `foreach` lets us apply that contract to every element in an array.
+<BeforeYouStart />
 
-## Level 2: Core Mechanics
+This page assumes the I-SV-2A core: `rand`, constraint blocks, `inside`, checking the result of `randomize()`, and the idea that the solver picks one legal combination uniformly ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)). You also need dynamic arrays, queues and the array reduction methods from [F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index#array-manipulation-methods), and class handles and `null` from [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index#object-lifetime-and-null).
 
-### Implication Operator
+## Build Your Mental Model
 
-<InteractiveCode language="systemverilog" code={`class pkt;
-  rand bit       is_write;
-  rand bit [7:0] addr;
-  rand bit [7:0] data[];
+**How to read this page.** The core path is the first five sections: implication, `if`/`else`, `foreach` with sizes, reductions and `unique`. Each has a picture and a classic mistake. The next three sections (guards, functions, global constraints) are practitioner depth you need for real sequence items. The recap at the end lists every mistake in one table.
 
-  // Only restrict addr when is_write is 1
-  constraint c_addr { is_write -> addr inside {[8'h00:8'h0F]}; }
-  constraint c_size { data.size() == addr; }
-endclass
+Two terms from I-SV-2A come back on every line. The **constraint solver** is the simulator engine that finds values making every enabled constraint true. A **state variable** is any variable a constraint reads that is not being randomized in this call; the solver uses its current value as a constant (§18.5.8, step c).
 
-program test;
-  pkt p = new();
-  initial repeat (3) begin
-    assert(p.randomize());
-    $display("is_write=%0b addr=%0h size=%0d", p.is_write, p.addr, p.data.size());
+### Implication is a Boolean rule, not an if-statement
+
+**Implication** is written `expression -> constraint_set`. It says: whenever the expression is true, the constraints on the right must hold. The right-hand side can be one constraint or a **constraint set**, several constraints in braces (§18.5.5):
+
+```systemverilog
+// snippet: one constraint, or a braced set
+constraint c_wrap { kind == WRAP -> { len inside {1, 3, 7, 15}; addr[1:0] == 0; } }
+```
+
+The standard defines `a -> b` as the Boolean `(!a || b)`. That has a consequence everyone misses at first: the rule is **two-way**. If `b` cannot hold, the solver must make `a` false. Nothing is evaluated "first"; both sides are solved together with every other constraint.
+
+```systemverilog
+// compile
+module tb_top;
+  class pkt;
+    rand bit       is_write;
+    rand bit [7:0] addr;
+    // Two-way: is_write == 1 forces addr < 16, and addr >= 16 forces is_write == 0
+    constraint c_addr { is_write -> addr inside {[8'h00:8'h0F]}; }
+  endclass
+
+  initial begin
+    pkt p;
+    int n_write;
+    p = new();
+    repeat (1000) begin
+      if (!p.randomize()) $fatal(1, "RAND: randomize() failed");
+      n_write += p.is_write;
+    end
+    $display("is_write=1 on %0d of 1000 calls", n_write);
+    $finish;
   end
-endprogram`} />
+endmodule
+```
 
-### Iteration with `foreach`
+**Expected output** (illustrative, not from a simulator run; the count changes with the seed):
 
-<InteractiveCode language="systemverilog" code={`class sample;
-  rand bit [7:0] bytes[4];
+```text
+is_write=1 on 61 of 1000 calls
+```
 
-  // Apply the same range constraint to each element
-  constraint c_range { foreach (bytes[i]) bytes[i] inside {[8'h10:8'h1F]}; }
-endclass`} />
+Count the legal combinations. `is_write = 1` allows 16 values of `addr`, and `is_write = 0` allows all 256. That makes 272 legal `(is_write, addr)` pairs, and the solver picks one uniformly (§18.5.9). So `is_write` is 1 with probability 16/272, about 5.9 %, not 50 %. The narrow right-hand side made the left-hand side rare, exactly as in the party analogy. If the specification wants writes on half the calls, add `solve is_write before addr;`, which changes the odds without changing the legal pairs ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index#solvebefore-changes-the-odds-never-the-legal-set)).
 
-## Level 3: Expert Tips
+**See it on a grid.** The heatmap below has two 3-bit variables, `x` and `y`, so 64 pairs. Constraint `c_imp` is `(x == 0) -> (y == 0)`.
 
-- `A -> B` is the Boolean `!A || B` (IEEE 1800-2023 §18.5.5). The solver does not evaluate `A` first: both sides constrain each other. If `B` cannot hold, `A` is forced false, and a narrow `B` makes `A` rare. In `pkt` above, `is_write = 1` allows 16 `addr` values against 256 for `is_write = 0`, so `is_write` is 1 on only 16 of 272 calls (about 5.9%). Add `solve is_write before addr;` if you want writes on half the calls.
-- `foreach` provides per-element control and works with dynamic or associative arrays. An array's size is solved before its `foreach` constraints (§18.5.7.1), so a `foreach` rule that cannot hold for the chosen size makes `randomize()` fail instead of steering the size.
+**Predict before you switch anything on:**
+1. With only `c_imp` enabled, how likely is `x == 0`?
+2. Now enable `c_hi` (`y >= 4`). It never mentions `x`. What happens to P(`x == 0`)?
+3. Disable `c_hi` and enable `c_order` (`solve x before y`). What is P(`x == 0`) now?
+
+<ConstraintSolverHeatmapVisualizer initialScenario="implication" scenarios={["implication"]} />
+
+**What it showed.**
+1. **1/57.** `x = 0` keeps one pair, (0, 0); each of the other seven `x` values keeps all eight `y` values. That is 57 legal pairs, and only one has `x = 0`.
+2. **0.** `c_hi` removes `y = 0`, so `x = 0` has no partner left. A rule about `y` constrained `x` **backwards**, through the implication. An if-statement could never do that.
+3. **1/8.** With `solve x before y`, `x` is picked first, uniformly over its 8 legal values, and then `y`. The legal pairs are the same 57; only the odds moved.
+
+**Mistakes to avoid:**
+- **"`A -> B` evaluates `A` first and only then forces `B`."** No: the solver may make `A` false to satisfy `B`, and a narrow `B` makes `A` rare (§18.5.5).
+- **Writing `=` instead of `==`.** A constraint is an expression, and `=` is not an expression here, so the compiler rejects it; `++` and `--` are not allowed in constraints either (§18.5, Syntax 18-2).
+
+**Debugging.** The symptom of a lopsided implication is a mode that almost never appears, with no failure in the log. Count the legal combinations each side allows, as above, or count how often each mode appears over many calls ([I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) automates this with coverage). Fix it with `solve…before` or a `dist` on the mode, not by deleting the rule.
+
+**In a real testbench.** Implications carry the "only in this mode" rules of a sequence item: `kind == WRAP -> …`, `is_read -> data.size() == 0`, `err_inject -> crc != good_crc`. A test can read a configuration knob in an implication, for example `!allow_unaligned -> addr[1:0] == 0`. When the knob is a plain (non-`rand`) class property, its value is a constant during the solve, which makes the condition a **guard** (see [Guards](#guards-conditions-the-solver-never-sees)).
+
+### if–else constraints
+
+An `if`/`else` constraint has the familiar shape, with one constraint or a braced constraint set in each branch (§18.5.6):
+
+```systemverilog
+// snippet: the §18.5.6 example, with mode a rand enum {little, big, other}
+constraint c_len {
+  if (mode == little)   len < 10;
+  else if (mode == big) len > 100;
+}
+```
+
+It is **exactly equivalent to implications**: `(mode == little) -> len < 10;` and `(mode == big) -> len > 100;`. So everything from the previous section applies. The condition is solved together with the branches: if `len` cannot be below 10, the solver makes `mode != little`.
+
+The one new trap is the **dangling `else`**. An `else` always belongs to the nearest preceding `if` that has no `else`, whatever the indentation says. Trace this constraint over every combination of two random bits `a` and `b`, with `rand bit [1:0] x`:
+
+```systemverilog
+// snippet
+constraint c_dangle {
+  if (a)
+    if (b) x == 1;
+  else          // looks like it belongs to if (a); it belongs to if (b)
+    x == 2;
+}
+```
+
+| `a` | `b` | Constraint the solver applies | Legal `x` values |
+|---|---|---|---|
+| 0 | 0 | none (the outer `if` is false) | 0, 1, 2, 3 |
+| 0 | 1 | none | 0, 1, 2, 3 |
+| 1 | 1 | `x == 1` | 1 |
+| 1 | 0 | `x == 2` (the `else` of the **inner** `if`) | 2 |
+
+Read the table as a picture of the solution space: 10 legal `(a, b, x)` combinations, of which only 2 have `a = 1`. So `a` is 1 on about 1 call in 5, not 1 in 2, for the same two-way reason as implication. If the `else` was meant for `if (a)`, write braces: `if (a) { if (b) x == 1; } else x == 2;`.
+
+**When to choose which.** Use `->` for a single condition, and `if`/`else` when the cases are exclusive and you want the "otherwise" branch spelled out. Always use braces once the branches nest.
+
+### foreach and array sizes
+
+A **`foreach` constraint** applies a rule to every element of an array. Its loop variable is declared implicitly, with the type of the array index, and it exists only inside the `foreach` (§18.5.7.1). Each form you will meet:
+
+```systemverilog
+// snippet: forms of foreach inside a class
+rand bit [7:0] a[4];      // fixed size: always 4 elements
+rand bit [7:0] d[];       // dynamic array: a size constraint sets the size
+rand bit [7:0] q[$];      // queue: sized the same way
+rand bit [3:0] m[2][3];   // two unpacked dimensions
+constraint c_forms {
+  foreach (a[i]) a[i] inside {[1:9]};
+  d.size() inside {[1:8]};
+  foreach (d[i]) d[i] > 2 * i;                  // the index can appear in the rule
+  q.size() == 4;
+  foreach (q[i]) (i > 0) -> q[i] != q[i - 1];   // index guard: there is no q[-1]
+  foreach (m[i, j]) m[i][j] == i + j;           // one loop variable per dimension
+}
+```
+
+`foreach` accepts any packed or unpacked array, and a string counts as a dynamic array of bytes (§18.5.7.1). Associative arrays can be declared `rand`, but only their existing elements are randomized: their size and index values are not randomizable (§18.4).
+
+**Index guards.** An index is not checked for you: "invalid or out-of-bounds array indices are not automatically eliminated" (§18.5.7.1). A rule that compares neighbours must exclude the last element:
+
+```systemverilog
+// snippet: strictly increasing, the §18.5.7.1 pattern
+constraint c_inc { foreach (d[k]) (k < d.size() - 1) -> d[k + 1] > d[k]; }
+```
+
+Here `k < d.size() - 1` uses only the loop variable and the array's size, so it acts as a **guard**: it decides whether a constraint is created at all, instead of being solved (§18.5.7.1, §18.5.12). Without it, `d[k + 1]` on the last element is out of bounds; expect an error and a failed call (the message wording is tool-dependent).
+
+**Sizes.** Three rules from §18.4 and §18.5.7.1 decide how a `rand` dynamic array or queue gets its size:
+
+1. With a size constraint such as `d.size() == len`, `randomize()` resizes the array and then randomizes every element.
+2. **Without a size constraint, the array is not resized.** It keeps its current size, often 0 in a new object, and only the existing elements are randomized. An empty array stays empty.
+3. **The size is solved first.** When an array has both a size constraint and `foreach` or reduction constraints, the size is solved before them, and inside the `foreach` the size is treated as a state variable.
+
+Rule 3 has two consequences. The first is good news; predict it before you look.
+
+**Predict:** in the explorer's **Array size** tab, `length` is 1 to 8, `payload.size() == length`, and each payload element is a nonzero 2-bit value. Length 8 allows 3⁸ = 6,561 payloads; length 1 allows 3. How likely is `length == 8`? Stay on the Array size tab; the other tabs belong to I-SV-2A and to [solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug).
+
+<ConstraintSolverExplorer initialMode="size" />
+
+**What it showed.** P(`length == 8`) is **1/8**. The size is chosen first, uniformly over its 8 legal values; the elements are filled afterwards, so their number of combinations never weights the length. The tempting answer, about 67 % (6,561 of the 9,840 joint combinations), would be right only if sizes and elements formed one joint problem, and the standard says they do not. You never need `solve…before` to keep lengths uniform.
+
+The second consequence is a failure mode. Because the size is chosen without looking at the element rules, an element rule that cannot hold for some legal size makes those calls fail. The LRM warns: "this implicit ordering can cause the solver to fail in some situations" (§18.5.7.1). Trace this item:
+
+```systemverilog
+// snippet: a ramp that fails on some calls
+class ramp_item;
+  rand bit [3:0] len;
+  rand bit [7:0] d[];
+  constraint c_len  { len inside {[1:10]}; }
+  constraint c_size { d.size() == len; }
+  constraint c_ramp { foreach (d[i]) d[i] == i * 30; }   // 0, 30, 60, …
+endclass
+```
+
+| Step | What the solver does | `len` = 1 … 9 | `len` = 10 |
+|---|---|---|---|
+| 1. Sizes | picks `len` uniformly from 1 … 10, ignoring `c_ramp` | chosen | chosen (1 call in 10) |
+| 2. Elements | needs `d[i] == i * 30` for every `i` below `len` | highest is `d[8] == 240`: fits in 8 bits | `d[9] == 270`: no 8-bit value equals 270 |
+| Result | | returns 1 | returns 0 |
+
+So about one call in ten fails, although lengths 1 to 9 always work. (The comparison `d[i] == i * 30` is done in 32 bits, because `i` and `30` are 32-bit, so 270 does not wrap to 14; [width rules](#expert-width-and-sign-inside-constraints) are below.) The fix is to put the limit where the size is solved: `len inside {[1:9]}`.
+
+### Array reductions: sum(), product(), and(), or(), xor()
+
+The **array reduction methods** of F2B also work inside constraints: `sum()`, `product()`, `and()`, `or()` and `xor()`. In a constraint, a reduction "is treated as an expression iterated over each element of the array", so the solver handles it like any expression, in both directions (§18.5.7.2). The size is still solved first.
+
+The one rule that matters: **the result has the type of the array element**, or the type of the `with` expression if there is one (§18.5.7.2, §7.12.3). For an array of bytes, `sum()` is an 8-bit result and wraps.
+
+**Predict first.** The visualizer below adds two 8-bit values, 200 and 100. What does an 8-bit `s = a8 + b8` hold? Then select the variant `(a8 + b8 + 0) >> 1` and see why one unsized `0` changes the width of the whole expression.
+
+<SignednessVisualizer scenario="lost-carry" />
+
+**What it showed.** The true sum, 300, needs 9 bits. In an 8-bit context it wraps to 300 − 256 = **44**. The unsized literal `0` is 32 bits wide, and it widens every operand before the addition, so the carry survives. Constraints follow exactly the same width rules (§11.6.1). Now apply them to a reduction:
+
+| Constraint on `rand bit [7:0] a[3]` | Width of the total | Is `a = {200, 100, 0}` legal? |
+|---|---|---|
+| `a.sum() == 44` | 8 bits (element type) | **yes**: 300 wraps to 44 |
+| `a.sum() < 100` | 8 bits | **yes**: `44 < 100` |
+| `a.sum() with (int'(item)) < 100` | 32 bits (type of the `with` expression) | no: 300 is not below 100 |
+
+`item` is the default name of the current element inside `with`. The cast `int'(item)` is exactly how the LRM's own example writes it (§18.5.7.2). The same `with` clause counts things: `data.sum() with (int'(item == 0)) <= 2` allows at most two zero bytes. Without the cast, `item == 0` is 1 bit wide and the count wraps modulo 2.
+
+**Mistakes to avoid:**
+- **A reduction over narrow elements without `with (int'(item))`.** The limit never limits. `rand bit [7:0] data[]; data.sum() <= 1000;` is always true, because an 8-bit result cannot exceed 255.
+- **Assuming `rand` variables are unsigned.** `int` is a signed type (§6.11.3), so `rand int n; n < 10;` allows −2,147,483,648 to 9, and a `sum()` over `rand int` elements can be negative. Use unsigned types (`bit [7:0]`, `int unsigned`) or `inside` ranges.
+
+**In a real testbench.** Payload checksums and byte budgets (`data.sum() with (int'(item)) <= max_bytes`), bus utilisation across a burst, and "at most N error beats" counts are all reductions. F2B's [array methods section](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index#array-manipulation-methods) covers the same width rule outside constraints.
+
+### unique: no two members equal
+
+A **`unique` constraint** lists a group of variables, and no two members of the group may hold the same value after randomization (§18.5.4):
+
+```systemverilog
+// snippet
+rand bit [2:0] x, y;
+rand bit [3:0] tag[4];
+constraint c_xy   { unique {x, y}; }
+constraint c_tags { unique {tag}; }   // every element of tag, so 4 different tags
+```
+
+The group can mix single variables, whole unpacked arrays and slices such as `a[2:3]`; an array contributes all its leaf elements. The rules (§18.5.4):
+
+- every member has an **equivalent type** (for example, all `bit [3:0]`);
+- members are integral or `real`;
+- **no `randc` variable** may appear in the group;
+- a group with fewer than two members has no effect and never causes a failure.
+
+The picture for `unique {x, y}` is the 3-bit grid again, with the diagonal removed:
+
+<figure className="not-prose my-6">
+<svg viewBox="0 0 268 282" role="img" aria-label="An 8 by 8 grid of every (x, y) pair for two 3-bit variables. The 8 cells on the diagonal, where x equals y, are crossed out by unique of x and y; the other 56 cells stay legal." style={{ width: "100%", maxWidth: 300 }}>
+  <title>{"unique {x, y} removes the 8 pairs where x == y"}</title>
+  <path d="M44 34h208M44 34v208M44 60h208M70 34v208M44 86h208M96 34v208M44 112h208M122 34v208M44 138h208M148 34v208M44 164h208M174 34v208M44 190h208M200 34v208M44 216h208M226 34v208M44 242h208M252 34v208" fill="none" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1" />
+  <path d="M50 40l14 14M64 40l-14 14M76 66l14 14M90 66l-14 14M102 92l14 14M116 92l-14 14M128 118l14 14M142 118l-14 14M154 144l14 14M168 144l-14 14M180 170l14 14M194 170l-14 14M206 196l14 14M220 196l-14 14M232 222l14 14M246 222l-14 14" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="57" y="26" fontSize="12" textAnchor="middle" fill="currentColor">0</text>
+  <text x="83" y="26" fontSize="12" textAnchor="middle" fill="currentColor">1</text>
+  <text x="109" y="26" fontSize="12" textAnchor="middle" fill="currentColor">2</text>
+  <text x="135" y="26" fontSize="12" textAnchor="middle" fill="currentColor">3</text>
+  <text x="161" y="26" fontSize="12" textAnchor="middle" fill="currentColor">4</text>
+  <text x="187" y="26" fontSize="12" textAnchor="middle" fill="currentColor">5</text>
+  <text x="213" y="26" fontSize="12" textAnchor="middle" fill="currentColor">6</text>
+  <text x="239" y="26" fontSize="12" textAnchor="middle" fill="currentColor">7</text>
+  <text x="34" y="51" fontSize="12" textAnchor="middle" fill="currentColor">0</text>
+  <text x="34" y="77" fontSize="12" textAnchor="middle" fill="currentColor">1</text>
+  <text x="34" y="103" fontSize="12" textAnchor="middle" fill="currentColor">2</text>
+  <text x="34" y="129" fontSize="12" textAnchor="middle" fill="currentColor">3</text>
+  <text x="34" y="155" fontSize="12" textAnchor="middle" fill="currentColor">4</text>
+  <text x="34" y="181" fontSize="12" textAnchor="middle" fill="currentColor">5</text>
+  <text x="34" y="207" fontSize="12" textAnchor="middle" fill="currentColor">6</text>
+  <text x="34" y="233" fontSize="12" textAnchor="middle" fill="currentColor">7</text>
+  <text x="148" y="12" fontSize="12" textAnchor="middle" fill="currentColor">x</text>
+  <text x="16" y="142" fontSize="12" textAnchor="middle" fill="currentColor">y</text>
+  <text x="148" y="266" fontSize="12" textAnchor="middle" fill="currentColor">✕ = removed (x == y): 8 of 64</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Each cell is one (x, y) pair. unique removes the 8 crossed cells on the diagonal; the solver picks uniformly among the 56 that remain, so P(x == 0) is still 7/56 = 1/8.</figcaption>
+</figure>
+
+**The classic mistake is the pigeonhole.** `unique` needs at least as many distinct values as members. `rand bit [1:0] v[5]; unique {v};` asks for five different 2-bit values, but only four exist, so **every** call fails. Nothing relaxes the rule: `unique` is a hard constraint, not a preference. Check the count whenever the group size is random or configurable: sixteen outstanding tags fill a 4-bit space exactly, and a seventeenth cannot be generated.
+
+**`unique` versus `randc`.** A `randc` variable cycles through its values *across calls* on one object ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index#randc-one-permutation-per-object)). `unique` makes several members differ *within one call*. To give each beat of a burst a different tag, you need `unique`.
+
+**In a real testbench.** Outstanding transaction IDs, the addresses of a memory test that must not overlap, the lane assignment of a multi-channel item. When one item cannot see the IDs that other items still hold, the sequence must pass the busy IDs in as state (for example `!(id inside {busy_ids})` with a non-`rand` queue `busy_ids`), because `unique` only works inside one `randomize()` call.
+
+### Guards: conditions the solver never sees
+
+A **constraint guard** is a condition that decides whether a constraint is *created*, instead of being a relation the solver must satisfy. The standard treats a predicate as a guard when it involves only constants, state variables, and handle comparisons (a handle compared with another handle or with `null`); inside a `foreach`, the loop variables and the array's size count too (§18.5.12). Guards are evaluated before solving, so they can protect against errors that a normal constraint would hit.
+
+The standard's example is a linked list whose nodes must be sorted. A **`rand` handle** is a class handle declared `rand`: the object it points to is randomized in the same call, so a constraint can read that object's variables.
+
+```systemverilog
+// compile
+module tb_top;
+  class node;
+    rand bit [7:0] v;
+    rand node      next;   // rand handle: *next is randomized in the same call
+    // next != null compares a handle with null, so it is a guard: when it is
+    // false the constraint is never created, and next.v is never touched.
+    constraint c_sort { if (next != null) v < next.v; }
+  endclass
+
+  initial begin
+    node n1, n2, n3;
+    n1 = new();
+    n2 = new();
+    n3 = new();
+    n1.next = n2;
+    n2.next = n3;            // n3.next stays null: the end of the list
+    if (!n1.randomize()) $fatal(1, "RAND: randomize() failed");
+    $display("v: %0d < %0d < %0d", n1.v, n2.v, n3.v);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative, not from a simulator run; values change with the seed):
+
+```text
+v: 37 < 118 < 201
+```
+
+The standard evaluates each part of a guard to one of four results: **FALSE**, **TRUE**, **ERROR** (an evaluation error, such as reading through a null handle) or **RANDOM** (it involves a random variable, so it cannot be evaluated yet). The combination decides what happens (§18.5.12, Figure 18-3). Trace the list above and three variants:
+
+| Constraint on this object | `next` | Guard evaluates to | What the solver gets |
+|---|---|---|---|
+| `if (next != null) v < next.v;` on n1 | n2 | TRUE | `n1.v < n2.v` |
+| the same, on n3 | null | FALSE | no constraint, and no error |
+| `v < next.v;` (unguarded) on n3 | null | (no guard) evaluation error | an error; `randomize()` fails |
+| `if (v > 10 && next != null) v < next.v;` on n3 | null | RANDOM && FALSE = FALSE | no constraint |
+| the same, on n1 | n2 | RANDOM && TRUE = RANDOM | the conditional constraint `(v > 10) -> v < next.v` |
+| `if (next.v > 3) v == 0;` on n3 | null | ERROR | an error; `randomize()` fails: the guard itself reads through null |
+
+The last row matters: the parts of a guard are evaluated in no particular order, so a null check protects an access only when the logic lets its result win. `&&` gives FALSE when any part is FALSE, even if another part is ERROR, and `||` gives TRUE when any part is TRUE (§18.5.12, Figure 18-3). So `if (next != null && next.v > 3) v == 0;` is safe on n3: FALSE && ERROR is FALSE.
+
+**The key distinction.** A condition on a **random** variable is not a guard; it is a constraint that the solver satisfies in both directions, like any implication. `if (v > 10)` constrains `v`. `if (next != null)` and `if (cfg_mode == 2)` (with a non-`rand` `cfg_mode`) only switch constraints on and off.
+
+### Functions in constraints
+
+Some rules are easier to write as a function, for example "the number of 1 bits in `v`". A constraint may call a function, with these restrictions (§18.5.11):
+
+- no `output`, `inout` or `ref` arguments (`const ref` is allowed);
+- the function is automatic (or keeps no state) and has **no side effects**; class methods are automatic;
+- it may not call `rand_mode()` or `constraint_mode()`;
+- it is called **before** the constraints are solved, and its return value is a **state variable**;
+- it may be called "an unspecified number of times (at least once) in an unspecified order", so never print or count inside it.
+
+The fourth rule is the dangerous one. **Random variables used as function arguments are solved first**, in a separate step, using only the constraints that mention nothing else. The LRM says this "subdivides the solution space", so unlike `solve…before` it "can cause the overall constraints to fail" (§18.5.11). Here is the standard's own `count_ones` function in a class:
+
+```systemverilog
+// compile
+module tb_top;
+  class ones_item;
+    rand bit [9:0] v;
+    rand bit [3:0] length;
+    function int count_ones(bit [9:0] w);   // the §18.5.11 example
+      for (count_ones = 0; w != 0; w = w >> 1)
+        count_ones += w & 1'b1;
+    endfunction
+    constraint c_ones { length == count_ones(v); }  // v is solved first, alone
+    constraint c_len  { length inside {[8:10]}; }
+  endclass
+
+  initial begin
+    ones_item w;
+    int n_ok;
+    w = new();
+    // Failures are the point of this demo, so count them instead of $fatal.
+    repeat (1000) if (w.randomize()) n_ok++;
+    $display("randomize() succeeded on %0d of 1000 calls", n_ok);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative, not from a simulator run; the count changes with the seed, and most simulators also print a warning for every failed call, in a tool-dependent format):
+
+```text
+randomize() succeeded on 57 of 1000 calls
+```
+
+<SequenceDiagram
+  title="One randomize() call with a random function argument"
+  caption="v is solved in a first step without seeing c_len, then count_ones(v) becomes a constant. Only the 56 of 1,024 values of v with 8 to 10 one bits leave a legal length, so about 94 % of calls fail."
+  participants={[
+    { id: "tc", label: "test code", kind: "generic" },
+    { id: "w", label: "w (ones_item)", kind: "generic" },
+    { id: "solver", label: "constraint solver", kind: "generic" },
+    { id: "fn", label: "count_ones()", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tc", to: "w", label: "w.randomize()" },
+    { from: "w", to: "solver", label: "step 1: v alone (it is a function argument)" },
+    { kind: "note", from: "solver", label: "no constraint mentions only v, so any of 1,024 values" },
+    { kind: "return", from: "solver", to: "w", label: "v = 10'b0000110010" },
+    { from: "w", to: "fn", label: "count_ones(v)" },
+    { kind: "return", from: "fn", to: "w", label: "3: a state value from now on" },
+    { from: "w", to: "solver", label: "step 2: length == 3 and length inside {[8:10]}" },
+    { kind: "return", from: "solver", to: "w", label: "no solution", tone: "error" },
+    { kind: "return", from: "w", to: "tc", label: "returns 0; v and length keep their old values", tone: "error" }
+  ]}
+/>
+
+Exactly 56 of the 1,024 values of `v` have 8, 9 or 10 one bits (45 + 10 + 1), so only about 5.5 % of calls succeed. The constraint looks satisfiable, and it is, but the function call splits it into two steps and the first step cannot see the second. Write the rule as an expression instead and the solver weighs both variables together: the LRM's unrolled sum of shifted bits, or, with the bits stored as `rand bit v[10]`, `length == v.sum() with (int'(item))`. Either form never fails.
+
+**Rule of thumb.** Call a function on random arguments only when every legal argument value leaves a solution, as in the Make It Work example below. Within each step, `randc` variables are still solved first, and a circular dependency through function arguments is an error (§18.5.11).
+
+### Global constraints and rand object handles
+
+A constraint that reads random variables of **another object** is a **global constraint** (§18.5.8). `v < next.v` in the list above is one. When `n1.randomize()` runs, the solver first collects the **active random objects**: the object itself, plus every object reachable through `rand` handles that are enabled, recursively. It then solves all their active constraints and random variables as **one problem** (§18.5.8, steps a–c).
+
+<ArchitectureDiagram
+  title="Active random objects for n1.randomize()"
+  caption="n1.randomize() reaches n2 and n3 through rand handles, so all three objects and their constraints form one problem. n3's guard sees next == null and creates nothing."
+  nodes={[
+    { id: "tc", label: "test code", sublabel: "n1.randomize()", kind: "generic", col: 0, row: 0 },
+    { id: "prob", label: "one solver problem", kind: "generic", col: 0, row: 1, colSpan: 3, container: true },
+    { id: "n1", label: "n1 (node)", sublabel: "n1.v < n2.v", kind: "generic", col: 0, row: 1, state: "active" },
+    { id: "n2", label: "n2 (node)", sublabel: "n2.v < n3.v", kind: "generic", col: 1, row: 1, state: "active" },
+    { id: "n3", label: "n3 (node)", sublabel: "guard FALSE: no constraint", kind: "generic", col: 2, row: 1, state: "active" },
+    { id: "nul", label: "null", sublabel: "nothing to randomize", kind: "generic", col: 2, row: 2, state: "dim" }
+  ]}
+  edges={[
+    { from: "tc", to: "n1", style: "control", label: "randomize()" },
+    { from: "n1", to: "n2", style: "structural", label: "rand next" },
+    { from: "n2", to: "n3", style: "structural", label: "rand next" },
+    { from: "n3", to: "nul", style: "structural", label: "rand next" }
+  ]}
+/>
+
+Three facts complete the picture:
+- **Randomization never changes or creates handles.** "Randomization shall not modify the actual object handle", and `randomize()` "does not allocate any class objects" (§18.4). Build the object graph in `new()` or in the test; a `rand` handle that is still null contributes nothing.
+- **Arrays of handles:** when `randomize()` grows a dynamic array of handles, the new elements are null (§18.4). Guard element access with `if (arr[i] != null)`.
+- **`rand_mode(0)` on a handle** removes that object from the problem; its variables become state variables for the rest (§18.8, §18.5.8 step c). Calling `rand_mode()` on the handle changes only the handle's mode, not the modes inside the object (§18.8). [Controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization) teaches `rand_mode()` in full.
+
+**In a real testbench.** A sequence item with a `rand` header object, a register-model-style item whose fields are objects, or a frame that holds `rand` sub-items. The handles must be created in the constructor, and any rule that reaches through a handle that can be null needs a guard.
+
+### Recap
+
+Constraints are one Boolean formula over all active random variables, solved together, except where the standard imposes an order: array sizes before elements, function arguments before the rest, `randc` before `rand`.
+
+| Form | Rule to carry | Classic mistake | Fix |
+|---|---|---|---|
+| `a -> b` | Equals `(!a or b)`; both sides constrain each other (§18.5.5) | "`a` is evaluated first" | Count legal combinations; `solve…before` to reshape odds |
+| `if`/`else` | Equals implications; `else` binds to the nearest `if` (§18.5.6) | Trusting indentation | Braces around nested branches |
+| `foreach` | Index guards are not automatic (§18.5.7.1) | `d[i + 1]` on the last element | `(i < d.size() - 1) -> …` |
+| `size()` | Solved before elements; no size constraint means no resize (§18.4) | Element rules that fail for some sizes | Bound the size where it is solved |
+| `sum()` | Result has the element type (§18.5.7.2) | An 8-bit total that wraps | `sum() with (int'(item))` |
+| `unique` | Members differ within one call (§18.5.4) | More members than values | Check the pigeonhole count |
+| Guard | Constants, state, handle comparisons, loop indices (§18.5.12) | Reading through a null handle | `if (h != null)` first |
+| Function | Random arguments are solved first (§18.5.11) | A rule that splits into an infeasible second step | Write the rule as an expression |
+| `rand` handle | All reachable active objects form one problem (§18.5.8) | Expecting `randomize()` to allocate | Build objects in `new()` |
+
+## Make It Work
+
+### Worked example: a chained DMA descriptor
+
+The example is a made-up DMA (direct memory access) descriptor: a request to move `total` bytes as one to six **chunks**, each on its own channel. Descriptors are chained through a `next` handle. Every technique on this page appears once, with a comment saying why.
+
+```systemverilog
+// compile
+module tb_top;
+  typedef enum bit [1:0] {COPY, FILL, GATHER} mode_e;
+
+  class dma_desc;
+    rand mode_e     mode;
+    rand bit [1:0]  width;     // transfer unit = 2**width bytes: 1, 2 or 4
+    rand bit [2:0]  n_chunks;  // 1..6 chunks
+    rand bit [7:0]  chunk[];   // bytes moved by each chunk
+    rand bit [2:0]  chan[];    // DMA channel of each chunk
+    rand bit [11:0] total;     // bytes moved by the whole descriptor
+    rand bit [15:0] src;       // source address
+    rand dma_desc   next;      // next descriptor in the chain, or null
+
+    // Called from a constraint, so width is solved first and alone (§18.5.11).
+    // Safe here: every width leaves legal chunk sizes.
+    function int unsigned unit_bytes(bit [1:0] w);
+      return 32'd1 << w;
+    endfunction
+
+    constraint c_width { width inside {[0:2]}; }
+    constraint c_count { n_chunks inside {[1:6]}; }
+    constraint c_sizes { chunk.size() == n_chunks; chan.size() == n_chunks; }
+    constraint c_mode {
+      mode == FILL -> n_chunks == 1;               // two-way: n_chunks > 1 forbids FILL
+      if (mode == COPY) chunk.sum() with (int'(item)) inside {[64:256]};  // if/else
+      else if (mode == GATHER) n_chunks >= 2;
+    }
+    constraint c_chunk {
+      foreach (chunk[i]) {
+        chunk[i] inside {[1:64]};
+        chunk[i] % unit_bytes(width) == 0;            // whole transfer units only
+        (i > 0) -> chunk[i] <= chunk[i - 1];          // index guard: no chunk[-1]
+      }
+    }
+    constraint c_total { chunk.sum() with (int'(item)) == total; }  // 32-bit sum
+    constraint c_chan  { unique {chan}; }             // 6 chunks, 8 channels: fits
+    constraint c_chain { if (next != null) next.src > src; }       // null guard
+  endclass
+
+  // An independent procedural re-check of every rule. It does not reuse the
+  // constraints, so a wrong constraint cannot hide behind itself.
+  function automatic bit legal(dma_desc d);
+    int unsigned bytes = 0;
+    if (d.width > 2 || !(d.n_chunks inside {[1:6]})) return 0;
+    if (d.chunk.size() != d.n_chunks || d.chan.size() != d.n_chunks) return 0;
+    if (d.mode == FILL && d.n_chunks != 1) return 0;
+    if (d.mode == COPY && !(d.total inside {[64:256]})) return 0;
+    if (d.mode == GATHER && d.n_chunks < 2) return 0;
+    foreach (d.chunk[i]) begin
+      if (!(d.chunk[i] inside {[1:64]})) return 0;
+      if (d.chunk[i] % d.unit_bytes(d.width) != 0) return 0;
+      if (i > 0 && d.chunk[i] > d.chunk[i - 1]) return 0;
+      bytes += d.chunk[i];
+    end
+    if (bytes != d.total) return 0;
+    foreach (d.chan[i])
+      for (int j = i + 1; j < d.chan.size(); j++)
+        if (d.chan[i] == d.chan[j]) return 0;
+    if (d.next != null && d.next.src <= d.src) return 0;
+    return 1;
+  endfunction
+
+  initial begin
+    dma_desc d1, d2;
+    int n_pass, n_fail, n_width[3];
+    d1 = new();
+    d2 = new();
+    d1.next = d2;              // a two-descriptor chain; d2.next stays null
+    repeat (1000) begin
+      // One call randomizes d1 and d2 together: d1.next is a rand handle.
+      if (!d1.randomize()) $fatal(1, "RAND: randomize() failed");
+      if (legal(d1) && legal(d2)) n_pass++;
+      else n_fail++;
+      n_width[d1.width]++;
+    end
+    $display("width 1B=%0d 2B=%0d 4B=%0d of 1000", n_width[0], n_width[1], n_width[2]);
+    $display("sample: mode=%s n_chunks=%0d chunk=%p total=%0d",
+             d1.mode.name(), d1.n_chunks, d1.chunk, d1.total);
+    $display("chain: d1.src=%0d d2.src=%0d d2.next=%s",
+             d1.src, d2.src, d2.next == null ? "null" : "set");
+    $display("PASS=%0d FAIL=%0d", n_pass, n_fail);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative, not from a simulator run; only the `PASS=1000 FAIL=0` line is exact on a conforming solver, and the counts and sample values change with the seed):
+
+```text
+width 1B=338 2B=329 4B=333 of 1000
+sample: mode=GATHER n_chunks=3 chunk='{48, 32, 8} total=88
+chain: d1.src=1210 d2.src=40977 d2.next=null
+PASS=1000 FAIL=0
+```
+
+What to notice in the output:
+- **`width` is one third each.** It is a function argument, so it is solved first and alone (§18.5.11), with only `c_width` in play. Written as an expression instead of a function call, `width` would be weighed together with the chunk sizes, and the split could differ.
+- **No call fails.** The standard does not say exactly which other variables join the size step (§18.5.7.1), so the bench is written to be safe under any split. Every combination of `n_chunks`, `mode` and `width` allowed by `c_count`, `c_width` and the mode rules of `c_mode` leaves legal chunks and channels: a COPY needs a chunk sum of 64 to 256, and one chunk of 64 bytes, or six of 40, always meets it. The COPY byte rule is written on the chunk sum, not on `total`, so `total` appears only in `c_total`, next to the elements, and is solved with them. Had `c_mode` said `total inside {[64:256]}`, a solver that also solved `total` in the size step could pick `n_chunks = 1` with `total = 200` (no single chunk of at most 64 bytes adds up to 200) and stop the run with `$fatal`.
+- **`d2` was randomized too**, because `d1.next` is a `rand` handle. `d2`'s own `c_chain` guard saw `next == null` and created nothing.
+
+### Run it
+
+Save the example as `tb_top.sv`, then compile and run it with your simulator's SystemVerilog flow (it needs a constraint solver that supports `foreach`, reductions with `with`, `unique` and functions in constraints). Rerun with several seeds using your simulator's seed option; the options are tool-specific, and [randomization methods](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) explains what a seed reproduces. Accept the run when the last line is `PASS=1000 FAIL=0` on every seed.
+
+### How to write array and conditional constraints
+
+1. **Write each rule in words** from the specification, one line per rule.
+2. **Pick the form.** Always true: a plain expression. True only in a mode: `->`, or `if`/`else` for exclusive cases. Per element: `foreach`. A total or a count: a reduction with `with (int'(…))`. All different: `unique`. A rule about another object: a `rand` handle plus a null guard.
+3. **Bound every size with a size constraint**, and check that every element rule can hold for every legal size. If it cannot, move the limit into the size constraint.
+4. **Check widths and signs.** Cast reductions to `int`, and use unsigned types or `inside` for lengths and counts.
+5. **Call functions on random arguments only when every argument value leaves a solution.** Otherwise write the rule as an expression.
+6. **Guard every index and every handle** that can go out of range or be null.
+7. **Self-check:** 1,000 checked calls, an independent procedural check of every rule, and `PASS=<n> FAIL=0`. Predict the frequency of each mode before you run, then compare.
+
+### When it goes wrong
+
+| Symptom | Likely cause | How to confirm | Fix |
+|---|---|---|---|
+| A mode almost never appears; nothing fails | A narrow implication makes its condition rare (§18.5.5) | Count legal combinations per mode | `solve mode before …` or a `dist` on the mode |
+| `randomize()` fails on some calls only, with the same constraints and the same state values on every call | A size or a function argument was solved first into a dead end (§18.5.7.1, §18.5.11) | Print the size or the argument before each failure | Bound the size; write the rule as an expression |
+| Every call fails on the last list element | An unguarded read through a null handle (§18.5.12) | The error names a null or invalid access (wording is tool-dependent) | `if (next != null) …` |
+| Out-of-bounds error inside a `foreach` | `d[i + 1]` or `d[i - 1]` without an index guard (§18.5.7.1) | The failing index is the first or last | `(i < d.size() - 1) -> …` |
+| A byte budget never limits | `sum()` over 8-bit elements wraps (§18.5.7.2) | Recompute the total in 32 bits | `sum() with (int'(item))` |
+| `unique` fails on every call | More members than distinct values (§18.5.4) | Compare the group size with the number of values each member can still take (2 to the power of the width when unconstrained) | Widen the type or shrink the group |
+| A `rand` dynamic array stays empty | No size constraint, so no resize (§18.4) | Print `size()` after the call | Add `d.size() == …` |
+| A negative length or delay | `rand int` is signed (§6.11.3) | Print with `%0d` | Unsigned type or `inside {[0:…]}` |
+
+**Checklist before moving on:**
+- [ ] I can predict P(`a == 1`) for `a -> b` by counting legal combinations, and explain why a rule about `b` can constrain `a`.
+- [ ] I write braces around nested `if`/`else` constraints.
+- [ ] Every `rand` dynamic array or queue I declare has a size constraint, and every neighbour comparison in a `foreach` has an index guard.
+- [ ] I can say which element rules could fail for some legal size, and I bound the size instead.
+- [ ] Every reduction over narrow elements uses `with (int'(item))`.
+- [ ] I check the pigeonhole count for every `unique` group.
+- [ ] Every rule that reads through a handle that can be null is guarded.
+- [ ] I avoid random function arguments unless every value leaves a solution.
+- [ ] My bench ran 1,000 checked calls with an independent check and printed `PASS=1000 FAIL=0`.
+
+## Push Further
+
+### Expert: Where the LRM imposes a solve order
+
+IEEE 1800-2023 promises a solution whenever one exists (§18.3), and then names three exceptions in which the solver must settle some variables before seeing the rest:
+
+- **`randc` variables** are solved before `rand` variables, "and this can sometimes cause randomize() to fail" (§18.4.2).
+- **Array sizes** are solved before `foreach` and reduction constraints: "this implicit ordering can cause the solver to fail in some situations" (§18.5.7.1, §18.5.7.2).
+- **Function arguments** are solved before the constraints that call the function; the ordering "subdivides the solution space" and "can cause the overall constraints to fail" (§18.5.11). Within each step, `randc` variables come first again.
+
+Contrast the two orderings that can **never** cause a failure: `solve…before` "does not change the solution space and, therefore, cannot cause the solver to fail" (§18.5.9), and nonzero `dist` weights do not change the solution space either (§18.5.3). The practical signature of an implicit order is a failure rate between 0 % and 100 % while the state variables keep the same values and no inline `with` constraints change between calls: the failing calls are the ones whose first step picked a dead end. (Changing knobs, leftover values from the previous call or per-call inline constraints can also make some calls fail, so rule them out first.) Remove the order (bound the size in its own constraint, replace the function by an expression, replace `randc` by `rand` plus history state), and the failures stop. [Solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug) shows how to find which constraints are involved.
+
+### Expert: Width and sign inside constraints
+
+Constraints use the ordinary expression rules: operands of a relational or equality operator are sized to the widest operand, and one unsigned operand makes the operation unsigned (§11.6.1 Table 11-21, §11.8.1; see [F2A expression width](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions#expression-width-context-determined-and-self-determined-operands)).
+
+- **`x + y < 300` does not wrap** for 8-bit `x` and `y`: the 32-bit literal widens both before the addition.
+- **`z == x + y` wraps** when all three are 8 bits. The standard's own `SimpleSum` class (`rand bit [7:0] x, y, z; z == x + y;`, §18.6.1) therefore accepts x = 200, y = 100, z = 44.
+- **A reduction's width is fixed by its type, not by its context**: the element type, or the `with` expression's type (§18.5.7.2). A 1-bit `with` expression, such as `with (item > 0)`, makes a count wrap modulo 2.
+- **Signed types:** `int`, `shortint`, `longint` and `byte` are signed (§6.11.3). A `rand byte` element can be −128, and `rand int` lengths can be negative, unless the constraint excludes them.
+
+Interview depth: "why does `arr.sum() < 100` accept a payload that adds up to 300?" Answer with the element-type rule and the cast, not with "overflow".
+
+### Expert: Object graphs, null handles and nested objects
+
+- **Reachability is recursive** (§18.5.8): a `rand` handle inside a `rand` object is followed too, so one call on the root can randomize a whole tree.
+- **Handles are inputs, not outputs** (§18.4): the solver never changes a handle and never allocates; a resized array of handles gains null elements. Every rule that reaches through a handle that may be null needs a guard, and inside the guard the null test must be joined with `&&` to any subexpression that reads through the handle, so that FALSE outranks ERROR (§18.5.12, Figure 18-3).
+- **A null `rand` handle is not an error by itself**; only an access through it is.
+- **`rand_mode(0)` on a handle** removes the pointed-to object from the problem. Its variables then act as state, so a global constraint such as `v < next.v` still constrains `v` against the frozen `next.v` (§18.8, §18.5.8 step c).
+- **Functions are called an unspecified number of times** (§18.5.11), so a function that reads through a handle must itself tolerate null, and must not log or count.
+
+### Expert: Performance of large array constraints (tool-dependent)
+
+The standard defines which results are legal and how they are distributed, not how fast a solver finds them. What follows is general experience with constraint solvers, not a guarantee of any tool:
+
+- a pairwise rule, such as a `foreach` that compares every element with every other, or a large `unique` group, creates on the order of n² relations for n elements;
+- wide arithmetic (multiplication, division, modulo on 32-bit operands) is usually much harder for a solver than comparisons and `inside`;
+- unbounded or very large sizes multiply all of the above.
+
+Typical mitigations: bound sizes tightly; randomize a few control fields (a length, a seed, a pattern kind) and fill bulk data procedurally in `post_randomize()` from non-`rand` arrays (see [controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization)); and replace pairwise rules by structure, such as sorted generation with `(i > 0) -> d[i] > d[i - 1]`, which also gives distinctness. Note that `solve…before` changes only the distribution (§18.5.9); any speed-up it gives is tool-dependent. Measure with your simulator's own profiler before you optimise.
+
+### Interview angles
+
+Answer each question yourself before you open the options' feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: the intermittent failure"
+  question="A sequence item's randomize() fails on about one call in three. The constraints, the values of the state variables they read and the inline with constraints are the same on every call, and a colleague says the solver is flaky. What do you look for first?"
+  options={[
+    { text: "A solve...before that conflicts with the other constraints.", isCorrect: false, feedback: "solve...before does not change the solution space and cannot cause a failure (§18.5.9)." },
+    { text: "The solver gives up after a time limit on hard problems; raise the limit.", isCorrect: false, feedback: "A failure that depends on the call, with identical constraints, points to a first step that picked a dead end, not to a timeout. Find the ordered variable first." },
+    { text: "An implicit solve order: a random array size, a random function argument or a randc variable that is solved first and sometimes picks a value the remaining constraints cannot satisfy.", isCorrect: true, feedback: "Right. The LRM names exactly these three orders as able to fail (§18.4.2, §18.5.7.1, §18.5.11). Print the size or the argument before each failure, then bound it in its own constraint or rewrite the rule as an expression." },
+    { text: "A dist weight that is too small, so the values it covers are sometimes impossible to reach.", isCorrect: false, feedback: "Nonzero dist weights never change which combinations are legal, so they cannot make a call fail (§18.5.3)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: seventeen outstanding IDs"
+  question="Each item carries rand bit [3:0] id[] with unique {id} and id.size() == n_outstanding. The test raises n_outstanding to 17. What happens, and what is the fix?"
+  options={[
+    { text: "The solver relaxes unique and allows one duplicate.", isCorrect: false, feedback: "Only soft constraints are dropped when they conflict; unique is not soft (§18.5.4)." },
+    { text: "Every randomize() call fails: 17 members need 17 different values, and a 4-bit ID has only 16. Widen the ID or cap n_outstanding at 16.", isCorrect: true, feedback: "Right: the pigeonhole principle. unique is a hard constraint, so the solver has no legal solution (§18.5.4). Check the call, and assert the configuration limit where it is set." },
+    { text: "The solver truncates the id array to 16 elements, so every remaining ID can still be distinct.", isCorrect: false, feedback: "The size constraint holds or the call fails; nothing is truncated." },
+    { text: "It works, but each call is slow because the solver backtracks through many ID combinations first.", isCorrect: false, feedback: "No legal solution exists at all, so no amount of search finds one." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the budget that never limits"
+  question="An item has rand bit [7:0] data[] and the constraint data.sum() < 100. The scoreboard reports a payload whose bytes add up to 300. Is the solver wrong?"
+  options={[
+    { text: "Yes. Constraints are solved with unlimited precision, so 300 should be rejected.", isCorrect: false, feedback: "Constraints follow the ordinary width rules; the reduction's result type is the element type." },
+    { text: "The literal 100 is 32 bits wide, so the comparison is done in 32 bits and the sum cannot wrap.", isCorrect: false, feedback: "The comparison is 32-bit, but the reduction's value was already computed in its own 8-bit type before it was compared." },
+    { text: "The data array was resized after the sum was checked, so the scoreboard sees more bytes than the solver did.", isCorrect: false, feedback: "Sizes are solved before the reduction (§18.5.7.2), and the total was checked on the final elements." },
+    { text: "No. Without a with clause, sum() has the element type, so the total is computed in 8 bits and 300 wraps to 44, which is below 100. Write data.sum() with (int'(item)) < 100.", isCorrect: true, feedback: "Right (§18.5.7.2). The same trap counts modulo 2 when the with expression is 1 bit wide." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
 
 <Quiz questions={[
   {
-    question: "In `mode -> value inside {[1:10]};`, when is the range enforced?",
+    question: "rand bit [1:0] mode; rand bit [3:0] len; constraint c { (mode == 3) -> (len == 0); len > 2; } Which values can mode take after a successful randomize()?",
+    objective: 1,
     answers: [
-      { text: "Always", correct: false },
-      { text: "Only when `mode` is 1", correct: true },
-      { text: "Only when `mode` is 0", correct: false }
+      { text: "0, 1 and 2, never 3", correct: true, feedback: "Right. mode == 3 would need len == 0, which len > 2 forbids, so the solver makes the left-hand side false (§18.5.5)." },
+      { text: "0 to 3: the implication only acts after mode has been picked", correct: false, feedback: "That is the procedural reading. Both sides are solved together, so a rule about len removes mode == 3." },
+      { text: "Any value, but randomize() fails whenever mode comes out as 3", correct: false, feedback: "The solver does not pick mode and then give up; mode == 3 is simply not part of any legal combination." },
+      { text: "Always 3, because the implication sets len to 0", correct: false, feedback: "An implication assigns nothing; it is the Boolean (!(mode == 3) || len == 0)." }
     ],
-    explanation: "The range is enforced when `mode` is 1. It also works backwards: if `value` cannot be in [1:10], the solver must make `mode` 0."
+    explanation: "a -> b is (!a || b). With len > 2, the only way to satisfy it is mode != 3, so mode is 0, 1 or 2."
   },
   {
-    question: "In the `pkt` class above, with no `solve...before`, about how often is `is_write` 1?",
+    question: "rand bit a, b; rand bit [1:0] x; constraint c { if (a) if (b) x == 1; else x == 2; } The else is indented under if (a). When must x == 2 hold?",
+    objective: 1,
     answers: [
-      { text: "On 50% of calls", correct: false },
-      { text: "On about 5.9% of calls (16 of 272 legal combinations)", correct: true },
-      { text: "Never, because the implication restricts it", correct: false }
+      { text: "When a is 0", correct: false, feedback: "That is what the indentation suggests, but indentation means nothing to the compiler." },
+      { text: "When a is 1 and b is 0", correct: true, feedback: "Right. The else belongs to the nearest if without an else, the inner if (b) (§18.5.6)." },
+      { text: "Whenever b is 0", correct: false, feedback: "The inner if is only reached when a is 1; with a = 0 no constraint on x is created." },
+      { text: "Never: an else without braces is ignored in constraints", correct: false, feedback: "The else is legal; it simply binds to the inner if." }
     ],
-    explanation: "The solver picks uniformly among legal (is_write, addr) pairs (§18.5.9). is_write = 1 allows 16 addr values and is_write = 0 allows 256. The data array adds no weight, because its size is solved before its elements (§18.5.7.1)."
+    explanation: "A dangling else binds to the closest previous if that lacks an else. Write braces to attach it to if (a)."
   },
   {
-    question: "Which construct applies a constraint to every element of an array?",
+    question: "In the same class as the previous question, about how often is a == 1 after randomize()?",
+    objective: 1,
     answers: [
-      { text: "`foreach`", correct: true },
-      { text: "`for`", correct: false },
-      { text: "`while`", correct: false }
+      { text: "1/2: a is a single bit chosen first", correct: false, feedback: "Nothing is chosen first. The solver picks uniformly among legal (a, b, x) combinations." },
+      { text: "1/4: a and b are both 1 on a quarter of calls", correct: false, feedback: "a = 1 also occurs with b = 0. Count all legal combinations: 10, of which 2 have a = 1." },
+      { text: "0: the solver avoids the branch that constrains x", correct: false, feedback: "Both a = 1 combinations are legal, so a = 1 does occur, just rarely." },
+      { text: "1/5: 2 of the 10 legal combinations have a = 1", correct: true, feedback: "Right. a = 0 allows 2 x 4 = 8 combinations; a = 1 allows (b=1, x=1) and (b=0, x=2) only." }
     ],
-    explanation: "`foreach` iterates over array indices during constraint solving."
+    explanation: "if-else is two implications, and the condition is solved together with the branches (§18.5.6, §18.5.9). Constrained branches own fewer combinations, so their conditions become rarer."
+  },
+  {
+    question: "rand bit [3:0] length; payload is a rand dynamic array of nonzero 2-bit values with payload.size() == length and length inside [1:8]. Length 8 allows 6,561 payloads, length 1 only 3. How likely is length == 8?",
+    objective: 2,
+    answers: [
+      { text: "About 67%, because most legal (length, payload) combinations have length 8", correct: false, feedback: "That would hold if sizes and elements were one joint problem. The size is solved first (§18.5.7.1)." },
+      { text: "1/8", correct: true, feedback: "Right. The size is chosen first, uniformly over its 8 legal values; the elements are filled afterwards and add no weight." },
+      { text: "1/16, because length is 4 bits", correct: false, feedback: "length inside [1:8] leaves only 8 legal values." },
+      { text: "50%, because longer payloads are preferred", correct: false, feedback: "Nothing in the standard prefers long arrays." }
+    ],
+    explanation: "§18.5.7.1: size constraints are solved before iterative constraints, so element counts never weight the size."
+  },
+  {
+    question: "rand bit [3:0] len inside [1:10]; rand bit [7:0] d[] with d.size() == len; and foreach (d[i]) d[i] == i * 30. randomize() fails on about one call in ten. Why?",
+    objective: 2,
+    answers: [
+      { text: "The solver gives up at random on dynamic arrays when it runs out of search time", correct: false, feedback: "The failures are not random luck: they are exactly the calls whose size has no legal elements." },
+      { text: "i * 30 wraps to 8 bits, so it should never fail; the tool is wrong", correct: false, feedback: "i and 30 are 32-bit, so the comparison is 32-bit and 270 does not wrap." },
+      { text: "The size is solved first; when len is 10, d[9] must equal 270, which no 8-bit element can hold. Use len inside [1:9].", correct: true, feedback: "Right. The size is chosen without seeing the foreach rule (§18.5.7.1), so 1 legal length in 10 strands the solver." },
+      { text: "Adding solve len before d would fix it, because len must be chosen before the elements", correct: false, feedback: "The size is already solved first; that ordering is the cause. solve...before cannot remove an illegal length." }
+    ],
+    explanation: "Implicit size-first ordering can fail when an element rule cannot hold for some legal size. Put the limit into the size constraint."
+  },
+  {
+    question: "rand bit [7:0] a[3]; constraint c { a.sum() == 44; } Is a = {200, 100, 0} a legal solution?",
+    objective: 3,
+    answers: [
+      { text: "No: constraints are solved with unlimited precision", correct: false, feedback: "Constraints use the ordinary width rules of SystemVerilog expressions." },
+      { text: "No: sum() always returns an int", correct: false, feedback: "It returns the element type unless a with clause gives another type (§7.12.3)." },
+      { text: "Only if a is declared signed", correct: false, feedback: "Sign does not matter here; width does. 300 modulo 256 is 44 for unsigned bytes." },
+      { text: "Yes: without with, sum() has the 8-bit element type, so 300 wraps to 44", correct: true, feedback: "Right (§18.5.7.2). Write a.sum() with (int'(item)) to sum in 32 bits." }
+    ],
+    explanation: "A reduction's result has the element type. Cast with int'(item) whenever a total can exceed the element width."
+  },
+  {
+    question: "rand bit [1:0] v[5]; constraint c { unique {v}; } What happens when you call randomize()?",
+    objective: 3,
+    answers: [
+      { text: "Every call fails: five elements need five different values, but 2 bits give only four", correct: true, feedback: "Right: the pigeonhole principle. unique is a hard constraint (§18.5.4)." },
+      { text: "unique is relaxed when it cannot hold, like a soft constraint", correct: false, feedback: "Only soft constraints are discarded on conflict; unique is hard." },
+      { text: "One repeated value is allowed", correct: false, feedback: "No two members of the group may be equal." },
+      { text: "Compile error: unique does not accept arrays", correct: false, feedback: "Unpacked arrays are allowed; all their leaf elements join the group (§18.5.4)." }
+    ],
+    explanation: "Count the distinct values against the members before using unique on a configurable group."
+  },
+  {
+    question: "class node; rand bit [7:0] v; rand node next; constraint c_sort { v < next.v; } endclass. You randomize a list whose last node has next == null. What happens?",
+    objective: 4,
+    answers: [
+      { text: "The constraint is skipped for the last node because next is null", correct: false, feedback: "Only a guard skips a constraint. An unguarded next.v through a null handle is an evaluation error." },
+      { text: "randomize() allocates a new node for next, so the list simply grows by one node", correct: false, feedback: "randomize() never allocates objects or changes handles (§18.4)." },
+      { text: "An evaluation error: randomize() fails. Guard it: if (next != null) v < next.v;", correct: true, feedback: "Right. The guard compares a handle with null, is evaluated before solving, and removes the constraint on the last node (§18.5.12)." },
+      { text: "next.v reads as 0, so v is constrained below 0 and the call succeeds with v = 0", correct: false, feedback: "Nothing is read as 0; a null access is an error." }
+    ],
+    explanation: "§18.5.12 uses exactly this list: the unguarded constraint fails on the last element; the null guard prevents the error."
+  },
+  {
+    question: "rand bit [9:0] v; rand bit [3:0] length; constraint c1 { length == count_ones(v); } constraint c2 { length inside {[8:10]}; } where count_ones() is a class function. About how often does randomize() succeed?",
+    objective: 4,
+    answers: [
+      { text: "Always: the solver picks a v with 8 to 10 one bits", correct: false, feedback: "That would be true for an expression. A function argument is solved first, without seeing c2." },
+      { text: "About 5.5%: v is chosen first from all 1,024 values, and only 56 have 8 to 10 one bits", correct: true, feedback: "Right. v is solved first and becomes state; count_ones(v) is then a constant that usually leaves no legal length (§18.5.11)." },
+      { text: "Never: functions are not allowed in constraints, so the class does not even compile", correct: false, feedback: "They are allowed, with restrictions (§18.5.11)." },
+      { text: "About 1 in 3, because length has three legal values", correct: false, feedback: "length is solved after v; what matters is how many values of v leave a legal length." }
+    ],
+    explanation: "Random function arguments are solved first, which subdivides the solution space and can make randomize() fail although a joint solution exists. Rewrite the rule as an expression."
   }
 ]} />
 
-</InfoPage>
+### Kata: a burst transaction
+
+Write a class `burst_item` for a made-up bus (not AXI; the real AXI rules are in [B-AXI-2](/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index)):
+
+| Field | Meaning |
+|---|---|
+| `kind` | enum `FIXED`, `INCR`, `WRAP` |
+| `len` | 4 bits: number of beats minus 1 (1 to 16 beats) |
+| `bsize` | 2 bits, 0 to 2: bytes per beat = 2 to the power `bsize` |
+| `addr` | 16 bits |
+| `data` | one byte per beat |
+
+Rules:
+- **R1** `data` has one byte per beat.
+- **R2** A WRAP burst has 2, 4, 8 or 16 beats.
+- **R3** A WRAP burst's `addr` is aligned to the bytes per beat.
+- **R4** A FIXED burst has at most 4 beats.
+- **R5** The burst stays inside one 256-byte page: the low address byte plus the burst's total bytes is at most 256.
+- **R6** Consecutive data bytes differ.
+- **R7** No data byte is 0.
+- **R8** The data bytes add up to at most 1,000.
+
+1. **Predict first:** which rule needs an index guard? Which rule silently does nothing if written without a cast? Will WRAP appear less often than INCR, and why?
+2. Write the class, and a `tb_top` that runs 1,000 checked calls, re-checks every rule procedurally, prints the count of each `kind`, and ends with `PASS=1000 FAIL=0`.
+3. Compare the `kind` counts with your prediction.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+```systemverilog
+// compile
+module tb_top;
+  typedef enum bit [1:0] {FIXED, INCR, WRAP} kind_e;
+
+  class burst_item;
+    rand kind_e     kind;
+    rand bit [3:0]  len;     // beats - 1
+    rand bit [1:0]  bsize;   // bytes per beat = 2**bsize
+    rand bit [15:0] addr;
+    rand bit [7:0]  data[];
+
+    constraint c_bsize { bsize inside {[0:2]}; }
+    constraint c_beat { data.size() == len + 1; }                        // R1
+    constraint c_kind {
+      kind == WRAP  -> (len + 1) inside {2, 4, 8, 16};                   // R2
+      kind == WRAP  -> (addr & ((32'd1 << bsize) - 1)) == 0;              // R3
+      kind == FIXED -> len < 4;                                          // R4
+    }
+    // R5 in 32 bits: int'() and the 32-bit literals keep every operand wide.
+    constraint c_page { int'(addr[7:0]) + (int'(len) + 1) * (32'd1 << bsize) <= 256; }
+    constraint c_data {
+      foreach (data[i]) {
+        data[i] != 0;                                                    // R7
+        (i < data.size() - 1) -> data[i] != data[i + 1];                 // R6: guard
+      }
+    }
+    constraint c_sum { data.sum() with (int'(item)) <= 1000; }           // R8: cast
+  endclass
+
+  function automatic bit legal(burst_item b);
+    int unsigned bytes = 0;
+    int unsigned bpb = 32'd1 << b.bsize;   // bytes per beat
+    if (b.bsize > 2 || b.data.size() != b.len + 1) return 0;
+    if (b.kind == WRAP && !((b.len + 1) inside {2, 4, 8, 16})) return 0;
+    if (b.kind == WRAP && b.addr % bpb != 0) return 0;
+    if (b.kind == FIXED && b.len >= 4) return 0;
+    if (b.addr[7:0] + (b.len + 1) * bpb > 256) return 0;
+    foreach (b.data[i]) begin
+      if (b.data[i] == 0) return 0;
+      if (i < b.data.size() - 1 && b.data[i] == b.data[i + 1]) return 0;
+      bytes += b.data[i];
+    end
+    return bytes <= 1000;
+  endfunction
+
+  initial begin
+    burst_item b;
+    int n_pass, n_fail, n_kind[3];
+    b = new();
+    repeat (1000) begin
+      if (!b.randomize()) $fatal(1, "RAND: randomize() failed");
+      if (legal(b)) n_pass++;
+      else n_fail++;
+      n_kind[b.kind]++;
+    end
+    $display("kind FIXED=%0d INCR=%0d WRAP=%0d of 1000",
+             n_kind[FIXED], n_kind[INCR], n_kind[WRAP]);
+    $display("PASS=%0d FAIL=%0d", n_pass, n_fail);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative, not from a simulator run; counts vary by seed and, as explained below, by tool):
+
+```text
+kind FIXED=191 INCR=702 WRAP=107 of 1000
+PASS=1000 FAIL=0
+```
+
+**The predictions.**
+- **R6 needs the index guard**: `data[i + 1]` does not exist for the last beat.
+- **R8 is the silent one.** Written as `data.sum() <= 1000`, the total has the 8-bit element type and can never exceed 255, so the rule is always true and limits nothing, while the real total can reach 16 × 255 = 4,080 (§18.5.7.2). R5 is safe as written because every operand is 32 bits wide.
+- **WRAP is the rarest kind.** No `solve…before` is present, so the solver favours kinds that own more legal combinations. INCR allows 16 lengths at any address; FIXED allows 4 lengths; WRAP allows 4 lengths and only aligned addresses. If every legal `(kind, len, bsize, addr)` combination were equally likely, the split would be about 71 % INCR, 19 % FIXED and 11 % WRAP. Because `len` also sets the size of `data`, the standard solves it in the size step first (§18.5.7.1), and tools may partition that step differently, so treat the exact split as illustrative. If the specification wants the kinds equally often, add `solve kind before len, addr;`.
+
+</details>
+
+### Debug challenge: the payload that never grows
+
+A colleague's item always produces an empty payload:
+
+```systemverilog
+// snippet
+class frame_item;
+  rand bit [7:0] len;
+  rand bit [7:0] payload[];
+  constraint c_len { len inside {[2:16]}; }
+  constraint c_inc { foreach (payload[i]) payload[i + 1] > payload[i]; }  // ascending
+endclass
+```
+
+Every `randomize()` returns 1, yet `payload.size()` is always 0. Explain why. Then predict what happens after you add `payload.size() == len;`, and give the final fix.
+
+<details>
+<summary>Solution</summary>
+
+**Bug 1: no size constraint.** `len` is random but nothing ties it to the payload. A `rand` dynamic array without a size constraint "shall not be resized" (§18.4), so the empty array stays empty, the `foreach` creates no constraints, and every call succeeds with nothing in it. Add `constraint c_size { payload.size() == len; }`.
+
+**Bug 2, revealed by the first fix: no index guard.** Now the array has `len` elements, and the `foreach` reads `payload[i + 1]` for the last `i`, which is out of bounds. Out-of-bounds indices are not removed automatically (§18.5.7.1), so expect an error and a failed call (wording is tool-dependent). Guard the neighbour access:
+
+```systemverilog
+// snippet
+constraint c_size { payload.size() == len; }
+constraint c_inc  {
+  foreach (payload[i])
+    (i < payload.size() - 1) -> payload[i + 1] > payload[i];   // guard
+}
+```
+
+With 2 to 16 strictly ascending bytes, a solution always exists, so the corrected item never fails.
+
+</details>
+
+### Predict with the visuals
+
+Return to the visuals on this page and commit to an answer before each reveal:
+- the heatmap's implication scenario: P(`x == 0`) with `c_imp` only, then with `c_hi`, then with `c_order` (1/57, 0, 1/8);
+- the explorer's Array size tab: P(`length == 8`) (1/8);
+- the signedness visualizer's lost carry: 8-bit `s = a8 + b8` with 200 and 100 (44).
+
+The flashcards for this page follow below, under "Reinforce the essentials".
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023)
+- §18.3 Concepts and usage; §18.4 Random variables (array sizing, `rand` handles); §18.4.2 Randc modifier
+- §18.5 Constraint blocks (restrictions); §18.5.4 Uniqueness constraints; §18.5.5 Implication; §18.5.6 if–else constraints
+- §18.5.7.1 foreach iterative constraints; §18.5.7.2 Array reduction iterative constraints; §18.5.8 Global constraints
+- §18.5.9 Variable ordering; §18.5.11 Functions in constraints; §18.5.12 Constraint guards (Figure 18-3)
+- §18.6.1 Randomize() (`SimpleSum`); §18.8 Disabling random variables with rand_mode()
+- §6.11.3 Signed and unsigned integer types; §7.12.3 Array reduction methods; §11.6.1 Rules for expression bit lengths (Table 11-21); §11.8.1 Rules for expression types
+
+**Prerequisites:** [I-SV-2A Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index); [F2B Dynamic Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index) for dynamic arrays and reduction methods; [I-SV-1 Object-Oriented Programming](/curriculum/T2_Intermediate/I-SV-1_OOP/index) for handles and `null`.
+
+**Related**
+- [I-SV-2B Advanced Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index): the module map and the integrating example.
+- [Controlling Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization): `rand_mode()`, `constraint_mode()`, `pre_randomize()`/`post_randomize()` and constraint override in derived classes.
+- [Procedural Randomization and Seeds](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods): `std::randomize()`, `randcase`, `randsequence` and random stability.
+- [Solver Debug and Failure Triage](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug): finding the conflicting constraints, and the lab.
+- [I-SV-2A: When randomize() fails](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index#when-randomize-fails): return value and what the object holds after a failure.
+- [F2A Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions#expression-width-context-determined-and-self-determined-operands): expression width and sign rules.
+- [I-UVM-3A Sequences Fundamentals](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): randomizing sequence items in UVM.
+
+<NextLesson />

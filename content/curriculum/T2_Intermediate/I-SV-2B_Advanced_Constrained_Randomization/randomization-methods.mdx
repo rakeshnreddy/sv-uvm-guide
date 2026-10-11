@@ -1,108 +1,909 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import InteractiveCode from "@/components/ui/InteractiveCode";
-import Quiz from "@/components/ui/Quiz";
-import { InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Procedural Randomization, Seeds and Random Stability"
+description: "Choose and write std::randomize(), randcase and randsequence for procedural stimulus, predict which code edits change a seed's results, and reproduce a failing run from its seed."
+flashcards: "I-SV-2B_Randomization_Methods"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+---
 
-export const metadata = {
-  title: "Procedural Randomization: randcase, randsequence, std::randomize | Advanced SystemVerilog for Verification",
-  description: "Learn how to randomize variables outside of classes and control execution flow using procedural randomization.",
-};
+## Quick Take
 
-<InfoPage
-  title="Procedural Randomization Methods"
-  sv_concept_tags={["randcase", "randsequence", "std::randomize", "seed stability"]}
->
+- **What it is:** Three ways to make random choices without writing a class, and the rules that decide which random numbers you get. `std::randomize()` randomizes ordinary variables in the current scope, `randcase` takes one weighted random branch, and `randsequence` builds a random stream of steps from a grammar (IEEE 1800-2023 §18.12, §18.16, §18.17). Behind all of them, and behind every `obj.randomize()`, sit **random number generators (RNGs)**: one per process and one per object, seeded in a fixed order. That arrangement is called **random stability** (§18.14).
+- **Why it matters:** A constrained-random test is only useful if a failure can be replayed. A **seed** is the number that starts the random streams; give the simulator the same seed and the same code, and every random value repeats. Change the code, even by adding one harmless-looking `new()`, and some streams shift. The failing scenario may simply vanish, so a seed that now passes proves nothing. Knowing exactly which edits shift which streams is what lets you debug a random failure instead of chasing it.
+- **The Analogy:** Every process holds a roll of pre-printed raffle tickets, and the seed decides what is printed on the roll. Each time the process creates an object or a child process, or calls `$urandom`, `std::randomize()`, `randcase` or `randsequence`, it tears off the next ticket. A new object uses its ticket to print its own private roll. Tear off one extra ticket early, and everyone served after that gets a different ticket, although nothing else changed. *Where it breaks:* a real roll cannot be rewound, but `get_randstate()` and `set_randstate()` can save and restore a generator exactly; and the numbers on these rolls look random, not 1, 2, 3, so you can only predict *which* values change, never the values themselves.
 
-## Level 1: Beyond Classes
-*IEEE 1800-2023, §18.12: std::randomize() · §18.16: randcase · §18.17: randsequence · §18.14: random stability*
+**You will be able to:**
+1. **Choose** between a class `randomize()`, `std::randomize()`, `randcase` and `randsequence` for a stimulus task, and **write** each one with its result checked.
+2. **Predict** the probability of each `randcase` branch and each `randsequence` stream from the weights, including zero, default and expression weights.
+3. **Predict** which objects' and processes' random values change after a code edit (an extra `new()`, an extra `$urandom`, an extra `randomize()` call, a different process order), using the random-stability rules of §18.14.
+4. **Debug** an irreproducible failure: replay it from its seed, explain why a seed does not reproduce a run once the code changes, and protect a stream with `srandom()`, process seeding or `get_randstate()`/`set_randstate()`.
 
-While `obj.randomize()` is the most common way to generate random data, sometimes you need to randomize local variables within a function or randomly choose an execution path without defining a whole new class. SystemVerilog provides procedural randomization tools for exactly these scenarios.
+<BeforeYouStart />
 
-## Level 2: Core Mechanics
+## Build Your Mental Model
 
-### 1. `std::randomize()`
-The `std::randomize()` function allows you to randomize any variable in the current scope. It works just like `obj.randomize()`, and you can even attach inline constraints using `with`.
+**How to read this lesson.** The core path is: choose a method, `std::randomize()`, `randcase`, the basic `randsequence`, then *Random stability* and its before/after table. Those sections alone answer "which tool do I use?" and "why did my seed stop reproducing the bug?". The deeper `randsequence` forms, manual seeding and the debugging table are practitioner depth. Make It Work turns the stability rules into a self-checking bench, and Push Further holds the expert corner cases, including how UVM reseeds its components.
 
-<InteractiveCode language="systemverilog" code={`module test;
-  initial begin
-    int unsigned payload_size;
-    bit [7:0]  start_addr;
+You already know `obj.randomize()`, `rand` fields, constraint blocks and the rule that you always check the result ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)). This page adds the tools that live *outside* a class, then explains where every random number comes from.
 
-    // Randomize local variables with inline constraints
-    if (!std::randomize(payload_size, start_addr) with {
-      payload_size inside {[64:1500]};
-      start_addr < 8'h20;
-    }) begin
-      $fatal(1, "Randomization failed!");
-    end
-    
-    $display("Generated size: %0d, addr: %0h", payload_size, start_addr);
-  end
-endmodule`} />
+### Four tools for random choices
 
-### 2. `randcase`
-`randcase` is a `case` statement that makes weighted random choices between execution branches. The expression before the colon is the weight.
+A **random variable** is a variable the solver assigns; a **state variable** is one whose current value the solver treats as a constant. A **constraint** is a Boolean rule the random variables must satisfy. With those words, the four tools compare like this:
 
-<InteractiveCode language="systemverilog" code={`task drive_traffic();
-  repeat(10) begin
-    randcase
-      3: send_read();    // 3/10 or 30% probability
-      5: send_write();   // 5/10 or 50% probability
-      2: send_reset();   // 2/10 or 20% probability
-    endcase
-  end
-endtask`} />
+| You need | Use | Why |
+|---|---|---|
+| A transaction with fields, rules, inheritance and switchable constraints | a class and `obj.randomize()` (I-SV-2A) | Constraint blocks have names, so tests can override them in a derived class or turn them off with `constraint_mode()` |
+| A few local values with a rule or two, such as a loop count or a delay | `std::randomize(v1, v2) with { … }` | No class to write; the variables become random for this one call (§18.12) |
+| One of N actions, with fixed or computed odds | `randcase` | A weighted `case` statement: one draw, one branch (§18.16) |
+| A structured stream: setup, a body of mixed steps, cleanup | `randsequence` | A grammar that the generator expands at random (§18.17) |
 
-### 3. `randsequence`
-`randsequence` is a powerful construct for generating random token sequences, often used for instructional streams or assembly generation. It looks like a formal grammar definition.
+Rule of thumb: if anyone will ever want to change the rules from a test, put them in a class. The procedural tools are for local, throwaway choices.
+
+### `std::randomize()`: randomize variables in the current scope
+
+**What it is.** The **scope randomize function** gives random values to the variables you name, using the constraints in an optional `with` block (§18.12, §18.12.1). The named variables are the random variables of this one call; every other variable in the block is a state variable. It returns 1 on success and 0 when no legal combination exists, and it "behaves exactly the same as a class randomize method" apart from working on scope variables (§18.12), so check its result exactly as you would for `obj.randomize()`.
+
+**The three forms:**
+
+| Form | Random variables | Effect |
+|---|---|---|
+| `std::randomize(a, b)` | `a`, `b` | Any values of their types |
+| `std::randomize(a, b) with { a < b; }` | `a`, `b` | Values that satisfy the block; other names in the block are state |
+| `std::randomize() with { a < b; }` | none | Changes nothing; returns 1 only if every expression in the block is true now (§18.12) |
+
+The last form is a **checker**: it tests the current values against the rules instead of generating new ones.
 
 ```systemverilog
-randsequence( main )
-  main  : setup execute cleanup;
-  setup : reset | init;          // Equal probability choice
-  execute : read := 3 | write := 7; // Weighted choice
-  reset : { $display("RESET"); };
-  init  : { $display("INIT"); };
-  read  : { $display("READ"); };
-  write : { $display("WRITE"); };
-  cleanup : { $display("CLEAN"); };
-endsequence
+// compile
+module tb_top;
+  initial begin
+    int unsigned len;      // unsigned on purpose: see the first pitfall below
+    bit [7:0]    addr;
+    for (int i = 0; i < 3; i++) begin
+      // len and addr are the random variables of this call only (§18.12.1)
+      if (!std::randomize(len, addr) with {
+            len inside {[64:1500]};
+            addr < 8'h20;
+            addr[1:0] == 2'b00;      // word aligned
+          })
+        $fatal(1, "std::randomize() failed");
+      $display("len=%0d addr=0x%h", len, addr);
+    end
+    // No arguments: change nothing, only check the current values
+    addr = 8'h21;
+    if (!std::randomize() with { addr < 8'h20; })
+      $display("checker: addr=0x%h breaks addr < 0x20", addr);
+  end
+endmodule
 ```
 
-## Level 3: Reproducibility and Seed Stability
+**Expected output** (illustrative, not from a simulator run; the three generated lines change with the seed and the simulator, the checker line does not):
 
-A testbench that is "random" but cannot be reproduced is a liability. You must be able to reproduce failures.
+```text
+len=917 addr=0x0c
+len=1301 addr=0x18
+len=75 addr=0x04
+checker: addr=0x21 breaks addr < 0x20
+```
 
-### The Seed
-Every random stream in SV is deterministic if you start from the same seed with the same code, tool version and plusargs. Simulators take the seed on the command line: `+ntb_random_seed=1234` in VCS, `-sv_seed 1234` in Questa, `-svseed 1234` in Xcelium.
+**Pitfalls.**
+- **`int` is signed.** `int count; std::randomize(count) with { count < 10; }` is legal, but every value from −2,147,483,648 to 9 satisfies it, so almost every result is negative (§6.11.3). Random variables keep the signedness of their type. Declare `int unsigned`, or write `count inside {[0:9]}`.
+- **Inside a class, write `std::` explicitly.** In a class method, an unqualified `randomize(x)` names the object's own `randomize()` method, whose arguments must be properties of that object (§18.11). A local variable there is an error, and a property name is randomized as one of the object's own variables, under the object's constraints and its RNG, which is rarely what you meant.
+- **An unchecked call hides failures.** Calling it as a statement discards the result, and a tool only has to warn about that (§13.4.1). Write `if (!std::randomize(...)) $fatal(...)`, never `assert(std::randomize(...))`: switching assertions off would also remove the call (§20.11).
 
-### Debugging Flaky Bugs
-1. **Always log the seed:** Ensure your testbench prints the master random seed at the very beginning of the test.
-2. **Replay the exact seed:** To debug a random failure, re-run the exact same test with the exact same seed from the log.
-3. **Protect random stability:** each thread and each object has its own random number generator, seeded from its parent when it is *created* (hierarchical seeding, §18.14.1). Threads that already exist do not swap random numbers when they interleave differently (§18.14.2). What changes the numbers is a change in *creation order*: a new object or `fork` inserted early in the build, two threads calling `randomize()` on one shared object, or outside entropy such as a DPI `rand()` or wall-clock time. Add new objects and threads after the existing ones, and seed an object explicitly with `srandom()` when it must stay isolated (§18.13.3).
+**Debugging.** Like a failing `obj.randomize()`, a failing call leaves the variables unchanged (§18.6.3, §18.12), so the symptom is a value that "never moves" or a stale value from the previous iteration. Print the variables and the state variables the `with` block reads, then test each expression with the no-argument checker form.
+
+**In a real testbench.** In a UVM testbench, stimulus comes from sequences, objects whose `body()` task generates sequence items ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)). Inside `body()` you often need a local count or delay: `std::randomize(n_items) with { n_items inside {[1:20]}; }` is shorter than a class. Anything a test might want to override belongs in a sequence item or configuration class instead, because a `with` block has no name to switch off or replace.
+
+### `randcase`: one weighted random branch
+
+**What it is.** `randcase` is a `case` statement whose items are **weights** instead of match values (§18.16). Each execution draws one random number and takes exactly one branch. A branch's probability is its weight divided by the sum of all weights.
+
+```systemverilog
+// compile
+module tb_top;
+  int unsigned hits[3];
+  int unsigned w_err;            // a knob: 0 switches the error branch off
+  initial begin
+    w_err = 0;
+    repeat (8000) begin
+      randcase
+        3     : hits[0]++;       // read
+        1     : hits[1]++;       // write
+        w_err : hits[2]++;       // error injection
+      endcase
+    end
+    $display("read=%0d write=%0d err=%0d", hits[0], hits[1], hits[2]);
+  end
+endmodule
+```
+
+**Expected output** (illustrative; the read and write counts vary with the seed, but `err` is always 0 because a zero weight is never taken):
+
+```text
+read=6012 write=1988 err=0
+```
+
+**Predict first.** Set `w_err = 4`. What fraction of the 8000 iterations goes to each branch? And what happens if all three weights are 0? Write your answers down, then open the trace.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+| Weights (read, write, err) | Sum | P(read) | P(write) | P(err) |
+|---|---|---|---|---|
+| 3, 1, 0 | 4 | 3/4 = 0.75 | 1/4 = 0.25 | 0 (never taken) |
+| 3, 1, 4 | 8 | 3/8 = 0.375 | 1/8 = 0.125 | 4/8 = 0.5 |
+| 0, 0, 0 | 0 | no branch is taken; a warning can be issued | | |
+
+The second row is the LRM's own example (§18.16): with weights 3, 1 and 4 the probabilities are 0.375, 0.125 and 0.5. Expect roughly 3000, 1000 and 4000 hits; the exact counts depend on the seed.
+
+</details>
+
+**Variants (§18.16).** A weight may be any non-negative integral expression, evaluated each time the `randcase` executes, so a weight can follow a configuration knob or a counter. A zero weight disables its branch. When every weight is zero, no branch runs and the tool may only warn, so a test whose knobs are all zero silently does nothing.
+
+**Pitfalls.**
+- Weights are relative, not percentages: `3` and `1` mean 75 % and 25 %, not 3 % and 1 %.
+- Narrow weight expressions are computed in their own width and treated as unsigned (§18.16); the expert section shows how an 8-bit sum can wrap.
+
+**In a real testbench.** A virtual sequence (a sequence that coordinates other sequences, taught in [I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index)) can use `randcase` to pick which traffic sequence to start next, with weights taken from a configuration object, and checks the all-zero case before entering the loop.
+
+### `randsequence`: a random stream from a grammar
+
+**What it is.** A **grammar** is a set of rules that says how a stream may be built. `randsequence` uses one to *generate* a random but legal stream, the reverse of what a parser does (§18.17). The vocabulary:
+
+- a **production** is a named rule, such as `main : setup execute cleanup ;`;
+- a **production list** is a sequence of items generated in order;
+- `|` separates alternative production lists, and the generator picks one at random;
+- `:=` gives an alternative a **weight**; an alternative without one has weight 1 (§18.17.1);
+- a **terminal** is a production defined only by a **code block** `{ … }` of statements; a **nonterminal** is defined in terms of other productions.
+
+```systemverilog
+// compile
+module tb_top;
+  int n_rd, n_wr;
+  initial begin
+    repeat (4) begin
+      randsequence (main)
+        main    : setup execute cleanup ;
+        setup   : reset | init ;                // equal weights: 1 and 1
+        execute : read := 3 | write := 7 ;      // weights 3 and 7
+        reset   : { $write("RESET "); } ;
+        init    : { $write("INIT ");  } ;
+        read    : { $write("READ ");  n_rd++; } ;
+        write   : { $write("WRITE "); n_wr++; } ;
+        cleanup : { $display("CLEAN"); } ;
+      endsequence
+    end
+    $display("reads=%0d writes=%0d", n_rd, n_wr);
+  end
+endmodule
+```
+
+The diagram shows the same grammar as a tree. **Predict first:** what is the probability that one pass prints `INIT READ CLEAN`?
+
+<ArchitectureDiagram
+  title="The randsequence grammar from the example, drawn as a tree"
+  caption="Solid lines are the parts of a production list, always generated in order: main generates setup, then execute, then cleanup (1st, 2nd, 3rd). Dashed arrows are random alternatives: setup picks reset or init with probability 1/2 each; execute picks read with 3/10 and write with 7/10. Multiply along a path to get a stream's probability."
+  legend={false}
+  cellWidth={92}
+  gapX={8}
+  nodes={[
+    { id: "main", label: "main", sublabel: "setup execute cleanup", kind: "generic", col: 1, row: 0, colSpan: 3 },
+    { id: "setup", label: "setup", sublabel: "reset | init", kind: "generic", col: 0, row: 1, colSpan: 2 },
+    { id: "execute", label: "execute", sublabel: "read := 3 | write := 7", kind: "generic", col: 2, row: 1, colSpan: 2 },
+    { id: "cleanup", label: "cleanup", sublabel: "prints CLEAN", kind: "generic", col: 4, row: 1 },
+    { id: "reset", label: "reset", sublabel: "p = 1/2", kind: "generic", col: 0, row: 2 },
+    { id: "init", label: "init", sublabel: "p = 1/2", kind: "generic", col: 1, row: 2 },
+    { id: "read", label: "read", sublabel: "p = 3/10", kind: "generic", col: 2, row: 2 },
+    { id: "write", label: "write", sublabel: "p = 7/10", kind: "generic", col: 3, row: 2 }
+  ]}
+  edges={[
+    { from: "main", to: "setup", style: "structural", label: "1st" },
+    { from: "main", to: "execute", style: "structural", label: "2nd" },
+    { from: "main", to: "cleanup", style: "structural", label: "3rd", via: [[4, 0]] },
+    { from: "setup", to: "reset", style: "causal" },
+    { from: "setup", to: "init", style: "causal" },
+    { from: "execute", to: "read", style: "causal" },
+    { from: "execute", to: "write", style: "causal" }
+  ]}
+/>
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+Every pass prints one of four streams. `INIT READ CLEAN` has probability 1/2 × 3/10 = 0.15:
+
+| Stream | Probability |
+|---|---|
+| `RESET READ CLEAN` | 1/2 × 3/10 = 0.15 |
+| `RESET WRITE CLEAN` | 1/2 × 7/10 = 0.35 |
+| `INIT READ CLEAN` | 1/2 × 3/10 = 0.15 |
+| `INIT WRITE CLEAN` | 1/2 × 7/10 = 0.35 |
+
+</details>
+
+**Expected output** (illustrative, one possible run; the streams and counts vary with the seed):
+
+```text
+INIT WRITE CLEAN
+RESET WRITE CLEAN
+INIT READ CLEAN
+RESET WRITE CLEAN
+reads=1 writes=3
+```
+
+**More forms.** Real generators need more than fixed choices. Each form below is in §18.17:
+
+| Form | Example | Meaning |
+|---|---|---|
+| Dynamic weight | `load := (n_load < 2 ? 3 : 0)` | Weights are evaluated each time their production is selected, so they can change during the stream (§18.17.1) |
+| `if`/`else` | `op : if (depth < 2) push else pop ;` | Pick a production from a condition, not at random (§18.17.2) |
+| `case` | `dev : case (sel) 0 : net ; default : mem ; endcase ;` | Pick by value; first match wins, `default` optional (§18.17.3) |
+| `repeat` | `body : repeat ($urandom_range(2, 6)) op ;` | Generate a production the number of times the expression gives (§18.17.4) |
+| `rand join` | `top : rand join s1 s2 ;` | Interleave two streams at random, keeping each stream's own order (§18.17.5) |
+| `break` | `{ if (full) break; }` | Stop the whole `randsequence` (§18.17.6) |
+| `return` | `{ if (skip) return; }` | Abort only the current production; generation continues with the next one (§18.17.6) |
+| Values | `bit [7:0] value : { return $urandom; } ;` | A production can take arguments and return a value to the rule that used it (§18.17.7) |
+
+A scope is **automatic** when the variables declared in it are created fresh each time it is entered and disappear when it is left (automatic lifetime, §6.21). `randsequence` creates an automatic scope, and each code block is its own automatic scope, so a variable declared in a code block starts again every time (§18.17). Use variables declared outside the `randsequence` for counts that must survive. Besides `repeat`, a recursive production (one that names itself) makes a grammar loop (§18.17). A `repeat` production cannot be cut short except by `break`, which ends the entire `randsequence` (§18.17.4).
+
+**Pitfalls.**
+- `break` and `return` are easy to swap: `break` ends everything, `return` skips the rest of one production.
+- A `break` inside a loop statement *within* a code block exits that loop, not the `randsequence` (§18.17.6).
+- Weights belong to alternatives: a weight on a production with no `|` has no effect (§18.17.1).
+
+**In a real testbench.** Grammars suit streams whose *shape* matters: instruction streams for a processor (see [E-RISCV-1](/curriculum/T4_Expert/E-RISCV-1_RISC_V_Verification_Methodology/index)), packet sequences with headers and trailers, or reset-configure-traffic-drain scripts in a test. Each terminal's code block usually creates and randomizes a sequence item or starts a sequence, so the grammar decides the order and the item's constraints decide the fields.
+
+### `$urandom` and `$urandom_range`: plain random numbers
+
+`$urandom` returns a 32-bit unsigned random number; `$urandom_range(maxval, minval)` returns an unsigned value between the two limits, inclusive, and swaps them if `maxval` is the smaller one (§18.13.1, §18.13.2). Both draw from the calling process's RNG and are **thread stable**, which the next section explains. `$urandom` also takes an optional seed: `$urandom(254)` first reinitializes the generator with 254, then returns a value (§18.13.1). Because that generator is the calling process's RNG (§18.14.1), the call reseeds the whole process: everything the process creates or draws afterwards follows the new seed, and no longer depends on what came before it. The Verilog-era `$random` returns a *signed* number (§20.14.1) and is not in the random-stability list of §18.14, so prefer `$urandom` in new code.
+
+### Random stability: who draws from which generator
+
+Some definitions first:
+- A **process** is one independently running piece of procedural code: an `initial` or `always` block, or a branch started by `fork` ([F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index)). Clause 18 often calls it a **thread**. `initial` and `always` blocks are **static processes**; branches started by `fork` at run time are **dynamic** threads.
+- An **RNG** is a deterministic generator: from the same starting value it returns the same sequence every time (§18.13.1). Its starting value is its **seed**.
+- **Random stability** means that the RNGs are localized to processes and objects, so the values one of them returns do not depend on the others (§18.14).
+- A **time slot** is everything the simulator does at one simulation time ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)). Within a time slot, the order in which ready processes run is not specified (§4.7).
+
+The rules, all from §18.14.1 to §18.14.3:
+
+1. **Every object has its own RNG.** `obj.randomize()` draws only from `obj`'s RNG. Calls on one object never change the values of another.
+2. **Every process has its own RNG.** `$urandom`, `$urandom_range`, `std::randomize()`, `randcase`, `randsequence` and the array method `shuffle()` draw from the RNG of the process that calls them.
+3. **Creation takes a draw (hierarchical seeding).** When a process executes `new`, the new object's RNG is seeded with the **next value** of that process's RNG. When a process starts a dynamic thread with `fork`, the new thread is seeded the same way.
+4. **Static processes are seeded at the start.** Each module instance, interface instance, program instance and package has an **initialization RNG**, seeded with the **default seed**; it seeds that scope's static processes and objects created by static declaration initializers. The default seed is implementation-dependent, which is why simulators take a seed on the command line.
+5. **Process order does not matter.** The values a process gets do not depend on the order in which the simulator runs processes that already exist (§18.14.2).
+
+The picture below is the setup that Make It Work tests: one `initial` block creates three objects, and `s` reseeds itself in its constructor.
+
+<ArchitectureDiagram
+  title="Hierarchical seeding in the Make It Work example"
+  caption="The initial block's RNG hands out draws in creation order: draw 1 seeds a, draw 2 seeds s, draw 3 seeds b. s (highlighted green) then calls srandom(42) in its new(), so its stream no longer depends on draw 2: it is the one protected stream. An extra new() before a would shift a and b to draws 2 and 4; s would not move."
+  legend={false}
+  cellWidth={130}
+  gapX={24}
+  nodes={[
+    { id: "root", label: "initial process", sublabel: "p.srandom(1234)", kind: "generic", col: 1, row: 0 },
+    { id: "a", label: "a = new()", sublabel: "seed = draw 1", kind: "generic", col: 0, row: 1 },
+    { id: "s", label: "s = new(42)", sublabel: "draw 2, srandom(42)", kind: "generic", col: 1, row: 1, state: "ok" },
+    { id: "b", label: "b = new()", sublabel: "seed = draw 3", kind: "generic", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "root", to: "a", style: "causal", label: "draw 1" },
+    { from: "root", to: "s", style: "causal", label: "draw 2" },
+    { from: "root", to: "b", style: "causal", label: "draw 3" }
+  ]}
+/>
+
+**Predict first.** For each edit below, decide whether `a`'s, `s`'s and `b`'s values change, compared with the original code and the same seed. Write your answers down, then open the table.
+
+1. Rerun the same code with the same seed.
+2. Insert `x = new();` before `a = new();`.
+3. Insert `x = new();` after `b = new();`.
+4. Insert `junk = $urandom;` between `a` and `s`.
+5. Insert a checked `std::randomize(n)` call (or a `randcase`, or a `randsequence`) between `a` and `s`.
+6. Add one extra `a.randomize()` before the loop.
+7. Change the order of two existing processes in the same time slot.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+| Edit to the code | `a` | `s` | `b` | Rule |
+|---|---|---|---|---|
+| 1. Rerun the same code with the same seed | same | same | same | Everything is deterministic (§18.13.1) |
+| 2. Insert `x = new();` before `a = new();` | changes | same | changes | `x` takes draw 1, so `a` and `b` get draws 2 and 4 (rule 3); `s` reseeds itself |
+| 3. Insert `x = new();` after `b = new();` | same | same | same | Creation after the existing objects shifts nothing (§18.14.1) |
+| 4. Insert `junk = $urandom;` between `a` and `s` | same | same | changes | An extra draw from the process RNG shifts every later creation (rules 2, 3) |
+| 5. Insert `std::randomize(n)`, a `randcase` or a `randsequence` between `a` and `s` | same | same | changes | All three draw from the process RNG, exactly like `$urandom` (rule 2), so `b` gets a later draw (rule 3) |
+| 6. Add one extra `a.randomize()` before the loop | changes | same | same | Only `a`'s own RNG advances (rule 1) |
+| 7. Change the order of two existing processes in the same time slot | same | same | same | Rule 5 (§18.14.2) |
+
+</details>
+
+Rows 4 and 5 are the answer to "why can adding one random call change later values?": a process-level call (`$urandom`, `std::randomize()`, `randcase`, `randsequence`, `shuffle()`) uses up a draw that a later `new` or `fork` would have received. Row 6 is the exception: `obj.randomize()` uses the object's own RNG, so it changes only that object. Two more cases complete the picture:
+
+- **A shared object.** If two processes call `randomize()` on one object, they take turns drawing from that object's single RNG, so each process's values depend on which one runs first. This is the most common place where process order matters.
+- **A shallow copy.** `a2 = new a;` copies `a`'s RNG state along with its fields (§8.12), so `a2` repeats `a`'s next values until one of them is reseeded. [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) covers what else a copy carries.
+
+The rule to carry: **anything that creates an object or a thread, or draws from the process RNG (`$urandom`, `$urandom_range`, `std::randomize()`, `randcase`, `randsequence`, `shuffle()`), before existing work in the same process shifts everything created after it in that process.** A new `$display` shifts nothing, because it draws nothing. The LRM's own advice is to add new objects, threads and random calls *after* the existing ones (§18.14.1).
+
+### Manual seeding: `srandom()`, process seeds and saved states
+
+Sometimes a stream must stay fixed whatever else changes. Four tools do that (§18.13.1, §18.13.3–§18.13.5, §18.15):
+
+| Method | On | Effect |
+|---|---|---|
+| `srandom(seed)` | an object, or a `process` handle | Reseeds that RNG |
+| `get_randstate()` | an object, or a `process` handle | Returns the RNG's current state as a string |
+| `set_randstate(state)` | an object, or a `process` handle | Restores a state that `get_randstate()` returned |
+| `$urandom(seed)` | the calling process | Reseeds the calling process's RNG, then returns a value. Everything that process creates or draws afterwards follows the new seed; anything it did earlier is unaffected (§18.13.1) |
+
+A `process` handle comes from `process::self()`, which returns the process that calls it ([I-SV-5](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index) covers the `process` class, §9.7).
+
+**Seed an object inside its own `new()`.** The LRM recommends it: once an object exists, nothing guarantees that its creator can reseed it before another process uses it, so it is best that objects self-seed in `new` (§18.14.3, §18.15). Note what self-seeding does *not* do. The `new` call has already taken a draw from the creating process, so a newly inserted object still shifts everything created after it, seeded or not. Self-seeding protects the object's *own* stream; to protect the others, seed *them*, or insert new objects last.
+
+**Save and replay a state.** This complete example rewinds one object:
+
+```systemverilog
+// compile
+module tb_top;
+  class pkt;
+    rand bit [31:0] data;
+  endclass
+
+  initial begin
+    pkt        p;
+    string     saved;
+    bit [31:0] first, again;
+    p = new();
+    saved = p.get_randstate();          // snapshot before the call
+    if (!p.randomize()) $fatal(1, "randomize() failed");
+    first = p.data;
+    p.set_randstate(saved);             // rewind this object's RNG
+    if (!p.randomize()) $fatal(1, "randomize() failed");
+    again = p.data;
+    if (first == again) $display("replay MATCH");
+    else                $display("replay DIFF");
+  end
+endmodule
+```
+
+**Expected output** (illustrative, traced by hand from §18.13.4 and §18.13.5; it does not depend on the seed):
+
+```text
+replay MATCH
+```
+
+The state string's length and format are implementation-dependent, and passing a string from a different implementation to `set_randstate()` is undefined (§18.13.4, §18.13.5). Use it within one simulator, for example to replay one interesting transaction many times.
+
+### Seeds on the command line and in the log
+
+IEEE 1800-2023 does not define how a seed is passed to a simulator, and it has no standard call that returns the seed the simulator used. The default seed is simply "implementation-dependent" (§18.14.1). Every simulator therefore has its own option, for example (tool-dependent; check your simulator's manual):
+
+| Simulator | Option (tool-dependent) |
+|---|---|
+| Synopsys VCS | `+ntb_random_seed=1234` |
+| Siemens Questa | `-sv_seed 1234` |
+| Cadence Xcelium | `-svseed 1234` |
+
+Good practice:
+1. Let the regression script choose the seed, pass it with the simulator's option, and write it into the log header. Many simulators also report the seed they used in their own log (tool-dependent).
+2. Store the seed with every failure, together with the code version, the simulator version and every plusarg.
+3. To replay, rerun that exact combination. A seed is a starting point for *one* build of the code, not a name for a scenario.
+
+[E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) builds the regression and triage workflow on top of these rules.
+
+### Debugging: symptom, cause, fix
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| A failing seed passes after you add debug code | The new code creates an object or thread, or draws a random number, before existing work, so later streams shifted | Rerun the old seed on the *old* code to debug; add debug objects after existing ones; run many seeds on the new code |
+| The same seed gives different results on two runs | Something outside the RNGs changed: code, simulator version, plusargs, or an outside source such as wall-clock time or a C `rand()` called through the C interface, DPI ([I-SV-7](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index)) | Put every input of the run under version control; remove outside entropy |
+| One object's values changed although its code did not | It was created after an inserted `new`, `fork` or `$urandom` in the same process | Move the insertion after it, or self-seed the objects whose streams must stay fixed |
+| `std::randomize()` keeps giving huge negative numbers | The variable is a signed `int` | Use `int unsigned` or an `inside` range |
+| A `randcase` sometimes runs no branch | Every weight evaluated to zero | Check the knobs before the `randcase`, and report the all-zero case |
+| A value never changes between iterations | The call failed and was not checked, so the old value stayed | Check every `randomize()` result |
+| A `randsequence` stream ends too early, or runs on past the point where it should stop | `break` and `return` are swapped: `break` ends the whole `randsequence`, `return` only the current production; or a `break` sits inside a loop statement in a code block, so it exits only that loop (§18.17.6) | Use `break` to end the stream and `return` to skip the rest of one production; keep `break` out of loops in code blocks |
+| A `randsequence` alternative never appears, or a weight seems to do nothing | A dynamic weight evaluates to 0 every time it is selected, or the weight is written on a production that has no alternatives (no vertical bar), where a weight has no meaning (§18.17.1) | Print the weight expressions when the production is selected; put the competing alternatives in one rule, separated by vertical bars |
+
+### In a real testbench
+
+- **Stimulus objects** (sequence items, transactions) use class constraints, so tests can layer and override them. The procedural tools fill the gaps: a count, a delay, a choice of sequence.
+- **Seeds** come from the regression system and appear in every log header. Never seed from the time of day in a regression: the run could not be replayed.
+- **UVM** reseeds its components and sequence items from their names (expert section below), which makes UVM benches much less sensitive to creation order than a plain class-based bench, but not immune.
+
+### Recap
+
+- `std::randomize()` randomizes named scope variables for one call; with no arguments it is a checker. Check the result, and remember `int` is signed.
+- `randcase` takes one branch with probability weight/sum; a zero weight is never taken, and all-zero weights take no branch.
+- `randsequence` expands a grammar; multiply the probabilities along a path. Weights are evaluated when their production is selected.
+- Objects and processes each have an RNG. Creating an object or thread takes the next draw from the creating process. Adding work *early* shifts everything after it; adding it *last* shifts nothing.
+- A seed reproduces a run only for the same code, simulator and arguments.
+
+## Make It Work
+
+### Worked example: prove which edits shift a seed
+
+This bench turns the before/after table into a self-checking test. Instead of editing the code and rerunning the simulator five times, the task `run` replays one "test" from the same process seed with at most one edit switched on, and compares each object's first three values with the original version. The prediction function holds the answers from the table. The bench prints MATCH or DIFF, never the values themselves, so its output does not depend on the simulator.
+
+```systemverilog
+// compile
+// Which code edits change which objects' random values? (IEEE 1800-2023 §18.14)
+module tb_top;
+
+  class pkt;
+    rand bit [31:0] data;
+    // seed == 0: keep the seed the creating process handed out.
+    // seed != 0: self-seed, so this object's stream ignores creation order.
+    function new(int unsigned seed = 0);
+      if (seed != 0) this.srandom(seed);
+    endfunction
+  endclass
+
+  typedef enum {BASELINE, REPLAY, EARLY_NEW, LATE_NEW, EXTRA_URANDOM,
+                EXTRA_RANDOMIZE} edit_e;
+  typedef bit [31:0] trace_t [3][3];   // [object: 0=a, 1=s, 2=b][draw 0..2]
+
+  // One version of the "test": the same process seed, plus at most one edit.
+  task automatic run(input edit_e edit, output trace_t t);
+    process      p;
+    pkt          a, s, b, x;
+    int unsigned junk;
+    p = process::self();
+    p.srandom(1234);                     // plays the role of the command-line seed
+    if (edit == EARLY_NEW) x = new();    // extra object BEFORE a
+    a = new();                           // seed = next value of this process's RNG
+    if (edit == EXTRA_URANDOM) junk = $urandom;  // one extra draw
+    s = new(42);                         // takes a draw too, then self-seeds
+    b = new();
+    if (edit == LATE_NEW) x = new();     // extra object AFTER the others
+    if (edit == EXTRA_RANDOMIZE) begin   // one extra call, on a only
+      if (!a.randomize()) $fatal(1, "a.randomize() failed");
+    end
+    for (int i = 0; i < 3; i++) begin
+      if (!a.randomize()) $fatal(1, "a.randomize() failed");
+      if (!s.randomize()) $fatal(1, "s.randomize() failed");
+      if (!b.randomize()) $fatal(1, "b.randomize() failed");
+      t[0][i] = a.data;
+      t[1][i] = s.data;
+      t[2][i] = b.data;
+    end
+  endtask
+
+  // 1 when object obj produced the same three values in both traces
+  function automatic bit same(trace_t x, trace_t y, int obj);
+    for (int i = 0; i < 3; i++)
+      if (x[obj][i] != y[obj][i]) return 0;
+    return 1;
+  endfunction
+
+  function automatic string tag(bit m);
+    if (m) return "MATCH";
+    return "DIFF";
+  endfunction
+
+  // The prediction from the random-stability rules, as {a, s, b}: 1 = MATCH
+  function automatic bit [2:0] predicted(edit_e e);
+    case (e)
+      EARLY_NEW:       return 3'b010;
+      EXTRA_URANDOM:   return 3'b110;
+      EXTRA_RANDOMIZE: return 3'b011;
+      default:         return 3'b111;    // REPLAY and LATE_NEW
+    endcase
+  endfunction
+
+  initial begin
+    trace_t   base, cur;
+    edit_e    edits[5];
+    bit [2:0] got;
+    int       pass, fail;
+    edits = '{REPLAY, EARLY_NEW, LATE_NEW, EXTRA_URANDOM, EXTRA_RANDOMIZE};
+    run(BASELINE, base);
+    foreach (edits[k]) begin
+      run(edits[k], cur);
+      got = {same(cur, base, 0), same(cur, base, 1), same(cur, base, 2)};
+      $display("%s: a=%s s=%s b=%s", edits[k].name(), tag(got[2]), tag(got[1]),
+               tag(got[0]));
+      if (got == predicted(edits[k])) pass++;
+      else begin
+        fail++;
+        $error("%s: pattern differs from the prediction", edits[k].name());
+      end
+    end
+    $display("PASS=%0d FAIL=%0d", pass, fail);
+  end
+
+endmodule
+```
+
+**Expected output** (illustrative: traced by hand from §18.14.1–§18.14.3 and §18.15, not captured from a simulator run):
+
+```text
+REPLAY: a=MATCH s=MATCH b=MATCH
+EARLY_NEW: a=DIFF s=MATCH b=DIFF
+LATE_NEW: a=MATCH s=MATCH b=MATCH
+EXTRA_URANDOM: a=MATCH s=MATCH b=DIFF
+EXTRA_RANDOMIZE: a=DIFF s=MATCH b=MATCH
+PASS=5 FAIL=0
+```
+
+Why this output is reliable on any simulator:
+- Every MATCH follows from the standard: same seed, same order of draws, same values.
+- A DIFF compares three 32-bit values from a differently seeded generator. A chance coincidence of all three has a probability of about 2⁻⁹⁶, so in practice DIFF is certain.
+- `s` reseeds itself in `new()`, so it matches in every row, even in EARLY_NEW and EXTRA_URANDOM, where its own `new()` received a different draw.
+
+**Run it.** Save the code as `tb_top.sv`, compile it with SystemVerilog enabled on any simulator that supports classes and the `process` class (for example on EDA Playground), and simulate `tb_top`. Run it with two different seeds: the output must not change. No open-source simulator has been checked with this example yet.
+
+### How to keep a failing seed reproducible
+
+1. **Record everything** with each failure: seed, code version, simulator and version, command line and plusargs.
+2. **Replay before you edit.** Rerun the failing seed on the unchanged code and confirm the failure first.
+3. **Debug with code that draws nothing,** such as `$display` calls and waveform dumps, or add new objects and threads *after* the existing ones.
+4. **If you must restructure,** expect the seed to stop reproducing the failure. Find the scenario again (from the log, coverage or a directed test) instead of trusting the old seed.
+5. **Fix, then rerun the old seed on the new code and many new seeds.** A passing old seed alone proves nothing, because its streams may have shifted away from the bug.
+6. **Protect streams that must stay fixed** by seeding them in their constructors or from a known process seed.
+
+**Checklist before moving on:**
+
+- [ ] Every `std::randomize()` and `randomize()` result is checked with `if (!…)`, never `assert`.
+- [ ] Random scope variables have the signedness and range you mean (`int unsigned` or `inside`).
+- [ ] Every `randcase` has at least one weight that can be nonzero, or the all-zero case is reported.
+- [ ] You can name which objects' values change for each edit in the before/after table, and why.
+- [ ] New debug objects and threads are created after the existing ones, and the seed appears in the log header.
+
+## Push Further
+
+### Expert: UVM seeding in uvm-core 2020.3.1
+
+UVM benches add their own reseeding on top of §18.14. The facts below are from the uvm-core 2020.3.1 reference implementation (uvm-core impl.; the IEEE 1800.2 clauses for the exact hashing are unverified):
+
+- `uvm_object::reseed()` calls `srandom(uvm_create_random_seed(get_type_name(), get_full_name()))` when UVM seeding is on, which is the default (`uvm_object.svh`, `use_uvm_seeding = 1`).
+- `uvm_component::new` calls `reseed()` once the component's name is set (`uvm_component.svh`).
+- Each component's task-phase process, such as the one running `run_phase`, is reseeded with `uvm_create_random_seed(phase.get_type_name(), comp.get_full_name())` (`uvm_task_phase.svh`).
+- Sequences and sequence items call `reseed()` in `set_item_context`, which `start`, `create_item` and `start_item` call (`uvm_sequence_item.svh`, `uvm_sequence_base.svh`).
+- `uvm_create_random_seed` hashes the type name and the full name with `uvm_global_random_seed`, and adds a counter per name pair (`uvm_misc.svh`). `uvm_global_random_seed` is initialized with `$urandom` in the package, so it still follows the simulator seed.
+
+Consequences: adding a component does not shift other components' run-phase streams; renaming a component or a sequence changes its own seed and the seeds of its items, because an item's full name includes the sequence path; a second item with the same type and full name advances the counter. A plain `new` of a non-UVM object, or of a `uvm_object` that is never started as an item, still uses the §18.14 rules: it shifts only objects created after it in the same process.
+
+### Expert: seeds across simulators, versions and saved states
+
+- The default seed is implementation-dependent (§18.14.1), and the LRM specifies no generator algorithm, only that the generator is deterministic (§18.13.1). The same seed therefore gives different values on different simulators: a seed is not portable.
+- The `get_randstate()` string has an implementation-dependent format, and `set_randstate()` with a string from another implementation is undefined (§18.13.4, §18.13.5).
+- A new simulator version may change how the solver picks among legal solutions (tool-dependent). Keep the simulator version with the seed, and expect a version upgrade to invalidate stored seeds.
+- Static processes and static initializers are seeded from each scope's initialization RNG (§18.14.1). Exactly how a simulator derives distinct seeds for many instances of one module from the command-line seed is tool-dependent.
+
+### Expert: weight arithmetic in `randcase` and `randsequence`
+
+- **`randcase` widths (§18.16).** Each weight expression has its self-determined width, the sum is computed at the largest weight width, and each summand is treated as unsigned. With `bit [7:0] a, b;`, the weight `a + b` is computed in 8 bits, so `a = 200, b = 100` gives a weight of 44, not 300. A signed `byte` holding −1 does not act as zero: as an unsigned 8-bit summand it weighs 255. Cast weights to a wider type (`int'(a) + int'(b)`, or `32'(a) + 32'(b)`) when they come from narrow variables; each summand is still treated as unsigned.
+- **Evaluation order (§18.16).** Each weight expression is evaluated at most once per execution, in an unspecified order, so weight expressions with side effects (a function that increments a counter) are a portability bug. A sum of weights wider than 32 bits may need several `$urandom_range()` draws.
+- **`randsequence` weights (§18.17.1).** They are evaluated each time their production is selected, which makes self-adjusting grammars possible (the kata below uses it). A `repeat` production cannot be cut short; only `break` stops it, and `break` ends the whole `randsequence` (§18.17.4).
+
+### Expert: grammars versus class constraints at scale
+
+A `randsequence` and a constrained class answer different questions, and large instruction or packet generators usually combine them.
+- **A grammar decides one choice at a time.** Each alternative is picked when its production is selected, from weights evaluated at that moment (§18.17.1); nothing looks ahead. A rule that spans several steps (no `LOAD` straight after a `STORE` to the same address) must be built from state variables read by weights and `if` productions (§18.17.2). A constraint over an array of items is solved for all items together (§18.5).
+- **A grammar is a statement, not a class member.** A test cannot switch one production off by name the way it can call `constraint_mode()` on a named constraint block (§18.9) or override a constraint in a derived class (§18.5.2). To make a grammar configurable, drive its weights and conditions from configuration variables, or put the `randsequence` in a virtual method that a derived class can override.
+- **A common split** (design practice, not a rule): the grammar fixes the *shape* of the stream (setup, body, drain; how many of each kind), and each terminal creates and randomizes an item whose class constraints fix the *fields*. Coverage then shows whether the weights reach the corners you need.
+
+### Expert: shared objects and self-seeding
+
+- Two processes calling `randomize()` on one shared object take turns drawing from that object's single RNG. Their values then depend on the order the scheduler runs them, which can differ between simulators (§4.7). Give each process its own object, or protect the shared one so that only one process randomizes it.
+- After `new` returns, "there is no guarantee that the creating thread can change the object's random state before another thread accesses the object" (§18.14.3). That is why the LRM recommends seeding inside `new()`.
+- Seeding one subtree's root process with `process::self().srandom(s)` fixes every object and thread it creates, whatever happens elsewhere, as long as the subtree itself is unchanged (§18.14.1 "manual seeding", §18.14.2 "hierarchical seeding").
+
+### Interview angles
+
+Try each question before you open the answers.
+
+<InterviewQuestionPlayground
+  question="In a class-based SystemVerilog testbench without UVM, a test fails with seed 1234. You add a debug monitor whose new() creates one helper object near the start of the test, rerun with seed 1234, and now the test passes. What is the most likely explanation?"
+  options={[
+    { text: "std::randomize() uses a true random source, so it ignores the seed.", isCorrect: false, feedback: "std::randomize() draws from the calling process's RNG, which is seeded deterministically (§18.14.2). Nothing in the language is truly random." },
+    { text: "The helper object took the next value from its creating process's RNG, so every object and thread created after it in that process received a different seed. The bug is probably still there.", isCorrect: true, feedback: "Correct. Creation takes a draw (hierarchical seeding, §18.14.1). Debug on the old code with the old seed, then rerun many seeds. To keep streams fixed, create new objects after the existing ones, or have each object whose stream must stay fixed seed itself in new(); seeding the helper itself does not help." },
+    { text: "Process execution order changed, so processes swapped each other's random numbers.", isCorrect: false, feedback: "Existing processes keep their own RNGs whatever order they run in (§18.14.2). The creation of a new object, not the run order, shifted the seeds." },
+    { text: "randcase statements do not respect the random seed.", isCorrect: false, feedback: "randcase draws from the process RNG, like $urandom and std::randomize() (§18.14.2), so it follows the seed." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  question="Now the same situation in a UVM testbench: you add a new coverage subscriber component to the environment. Does seed 1234 still reproduce the run_phase stimulus of the existing agents?"
+  options={[
+    { text: "No: every component created after the new one gets a different seed.", isCorrect: false, feedback: "That is the plain SystemVerilog rule. In uvm-core 2020.3.1 every component is reseeded in new() from its type and full name, and each component's run-phase process is reseeded the same way." },
+    { text: "Usually yes: uvm-core reseeds components, their task-phase processes and sequence items from their names, so a new component does not shift them. Plain new() calls in the same process can still shift later plain objects.", isCorrect: true, feedback: "Correct (uvm-core impl.: uvm_component.svh, uvm_task_phase.svh, uvm_sequence_item.svh, uvm_misc.svh). Name-keyed seeds make UVM benches robust to added components, but renaming a sequence or a component changes its own seeds." },
+    { text: "Yes, because UVM ignores the simulator seed.", isCorrect: false, feedback: "uvm_global_random_seed is initialized with $urandom, so every UVM seed still follows the simulator seed." },
+    { text: "Only if the test passes the plusarg +UVM_SEED=1234.", isCorrect: false, feedback: "uvm-core 2020.3.1 defines no such plusarg. The seed is passed with the simulator's own option." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+Take the quiz first; it covers all four objectives. Then do the two katas: the first is a prediction drill on random stability, the second writes a grammar. The flashcards for this page cover the same rules for spaced review.
+
+### Retrieval quiz
 
 <Quiz questions={[
   {
-    question: "You want to randomize a local `int count` inside a task, ensuring it is less than 10. You do not have a class. Which is correct?",
+    question: "Inside a task you need a local count from 0 to 9, and you have no class. You write: int count; then std::randomize(count) with { count < 10; } inside an if that checks the result. What do you get?",
     answers: [
-      { text: "count.randomize() with { count < 10; };", correct: false },
-      { text: "std::randomize(count) with { count < 10; };", correct: true },
-      { text: "randomize(count) -> count < 10;", correct: false }
+      { text: "A value from 0 to 9, because random variables are unsigned", correct: false, feedback: "Random variables keep the signedness of their type. int is signed (§6.11.3), so every value from -2147483648 to 9 is legal." },
+      { text: "Almost always a negative number: declare count as int unsigned, or constrain it with inside [0:9]", correct: true, feedback: "Right. Only 10 of about 2.1 billion legal values are non-negative, and the solver picks among all legal values." },
+      { text: "A compile error, because std::randomize() only accepts class properties", correct: false, feedback: "That rule is for an object's randomize(args) (§18.11). std::randomize() exists precisely for scope variables (§18.12)." },
+      { text: "A value from 0 to 9, because a with block sets the range from 0", correct: false, feedback: "A with block adds constraints; it never adds a lower bound you did not write." }
     ],
-    explanation: "`std::randomize()` provides procedural randomization for variables in the current scope with inline constraints."
+    explanation: "std::randomize() picks any value that satisfies the constraints. With a signed int and only an upper bound, the legal set is mostly negative. This is the misconception that random variables are unsigned.",
+    objective: 1
+  },
+  {
+    question: "Inside a class method you write randomize(n) to give a local variable n a random value, and the compiler rejects it. Why?",
+    answers: [
+      { text: "In a class, the unqualified name randomize means the object's own randomize() method, whose arguments must be properties of the object", correct: true, feedback: "Right. Write std::randomize(n) to get the scope randomize function (§18.11, §18.12)." },
+      { text: "Local variables can never be randomized", correct: false, feedback: "std::randomize() randomizes any variables in the current scope, including locals (§18.12)." },
+      { text: "randomize() needs a with block when it has arguments", correct: false, feedback: "The with block is optional in every form." },
+      { text: "Only module code may call randomize()", correct: false, feedback: "Classes, modules, programs and interfaces can all call std::randomize()." }
+    ],
+    explanation: "Name lookup inside a class finds the class's built-in randomize() first. Its arguments are limited to property names of the object (§18.11). Qualify the call with std:: inside classes.",
+    objective: 1
+  },
+  {
+    question: "Bus transactions must be word aligned in most tests, but the error-injection test must be able to switch that rule off. Where should the alignment rule live?",
+    answers: [
+      { text: "In a std::randomize() with block inside the sequence that generates the addresses", correct: false, feedback: "A with block has no name, so a test cannot switch it off or replace it; it would have to edit the sequence (§18.12)." },
+      { text: "In a randcase that picks an aligned or an unaligned address", correct: false, feedback: "randcase picks one weighted branch. It can mix aligned and unaligned addresses, but a test still cannot switch one rule off by name." },
+      { text: "In a named constraint block of the transaction class, which the test can turn off with constraint_mode(0) or override in a derived class", correct: true, feedback: "Right. Named constraints can be switched off (§18.9) or overridden by inheritance (§18.5.2). Rules a test may change belong in a class." },
+      { text: "In a randsequence production with an if condition", correct: false, feedback: "A randsequence orders the steps of a stream; it does not hold field rules, and a test cannot switch a production off by name." }
+    ],
+    explanation: "The rule of thumb from the tool table: if anyone will ever want to change a rule from a test, put it in a class as a named constraint. std::randomize(), randcase and randsequence are for local, throwaway choices.",
+    objective: 1
+  },
+  {
+    question: "A randcase has three branches with weights 3, 1 and 4. What is the probability that the second branch runs?",
+    answers: [
+      { text: "1/3, because each branch is equally likely", correct: false, feedback: "The weights are not ignored: a branch's probability is its weight divided by the sum." },
+      { text: "1/4, because its weight is 1 out of the 4 of the first branch", correct: false, feedback: "The denominator is the sum of all weights, 3 + 1 + 4 = 8." },
+      { text: "1/8", correct: true, feedback: "Right: 1 / (3 + 1 + 4) = 0.125, the LRM's own example (§18.16)." },
+      { text: "1 percent, because weights are percentages", correct: false, feedback: "Weights are relative numbers, not percentages." }
+    ],
+    explanation: "§18.16: weight divided by the sum of all weights. 3, 1 and 4 give 0.375, 0.125 and 0.5.",
+    objective: 2
+  },
+  {
+    question: "A randsequence has main : setup execute cleanup ; setup : reset | init ; execute : read := 3 | write := 7 ; and every other production is a terminal. What is the probability that one pass generates reset, then write, then cleanup?",
+    answers: [
+      { text: "0.7, because only the weighted choice is random", correct: false, feedback: "setup : reset | init is also a random choice, with default weights 1 and 1 (§18.17.1)." },
+      { text: "0.25, because the four streams are equally likely", correct: false, feedback: "The weights 3 and 7 make write streams more likely than read streams." },
+      { text: "0.7 x 0.5 x 1/3 = about 0.12, because cleanup is a third choice", correct: false, feedback: "main : setup execute cleanup is a sequence, not a choice: cleanup always follows execute." },
+      { text: "0.35", correct: true, feedback: "Right: setup picks reset with 1/2, execute picks write with 7/10, and cleanup always follows. 1/2 x 7/10 = 0.35." }
+    ],
+    explanation: "Multiply the choice probabilities along the path: 1/2 for reset (equal default weights) and 7/10 for write. cleanup is part of main's production list, not a choice.",
+    objective: 2
+  },
+  {
+    question: "A randcase takes its three weights from configuration knobs, and one test sets all three knobs to 0. What happens when the randcase executes?",
+    answers: [
+      { text: "The last branch runs, as a default", correct: false, feedback: "randcase has no default branch." },
+      { text: "No branch runs, and the simulator may only issue a warning", correct: true, feedback: "Right (§18.16). The test silently skips the action, so check the knobs before the randcase." },
+      { text: "The weights fall back to 1, so each branch has probability 1/3", correct: false, feedback: "Only randsequence alternatives without a weight default to 1 (§18.17.1). A randcase weight of 0 means never." },
+      { text: "The standard requires a fatal error", correct: false, feedback: "The LRM says a warning can be issued; it requires no error." }
+    ],
+    explanation: "A zero weight is never taken. When all weights are zero, no branch is taken and a warning can be issued (§18.16).",
+    objective: 2
+  },
+  {
+    question: "One initial block creates object A, then object B, then randomizes both in a loop. You add one extra call A.randomize() before the loop and keep the seed. Whose values change?",
+    answers: [
+      { text: "A's and B's, because every random call shifts every later value", correct: false, feedback: "That is true for process-level calls such as $urandom, not for an object's randomize()." },
+      { text: "Every object created after A", correct: false, feedback: "Objects are seeded when they are created; A's later calls do not touch the process RNG." },
+      { text: "Nobody's, because the seed is the same", correct: false, feedback: "A's stream is now one value ahead, so A's recorded values are different." },
+      { text: "Only A's", correct: true, feedback: "Right. randomize() on A draws only from A's own RNG (§18.14.3)." }
+    ],
+    explanation: "Object stability: each object has its own RNG, used only by its randomize() (§18.14.3, §18.15).",
+    objective: 3
+  },
+  {
+    question: "Same code as before. Instead, you insert junk = $urandom; between A = new() and B = new(). Whose values change?",
+    answers: [
+      { text: "Nobody's, because $urandom has its own generator", correct: false, feedback: "$urandom draws from the calling process's RNG, the same one that seeds new objects (§18.14.1, §18.14.2)." },
+      { text: "Only junk's", correct: false, feedback: "The draw consumed a value that B's creation would otherwise have received." },
+      { text: "B's, but not A's", correct: true, feedback: "Right. A was seeded before the extra draw; B now gets the next value after it." },
+      { text: "Everything in the simulation", correct: false, feedback: "Other processes and objects created earlier keep their streams (§18.14)." }
+    ],
+    explanation: "Hierarchical seeding: B's seed is the next value of the process RNG when B is created. An extra draw before that point shifts B, and anything created later in that process.",
+    objective: 3
+  },
+  {
+    question: "Two existing processes each call $urandom at the same simulation time. An unrelated edit makes the simulator run them in the opposite order. What happens to their values?",
+    answers: [
+      { text: "They swap, because the processes race for the next random number", correct: false, feedback: "Each process has its own RNG, so there is nothing shared to race for." },
+      { text: "Both change", correct: false, feedback: "Neither process's RNG state depends on the other." },
+      { text: "Nothing: each process gets the same values as before", correct: true, feedback: "Right. Values from $urandom are independent of the order of thread execution (§18.14.2)." },
+      { text: "It depends on the seed", correct: false, feedback: "Thread stability holds for every seed." }
+    ],
+    explanation: "Thread stability (§18.14.2): $urandom, $urandom_range, std::randomize(), shuffle(), randcase and randsequence return values independent of the order in which existing processes run.",
+    objective: 3
+  },
+  {
+    question: "A test fails with seed 77. You add item = new(); near the start of the test to print extra data, rerun seed 77, and it passes. A colleague says the bug is fixed. What do you answer?",
+    answers: [
+      { text: "Agreed: the same seed produces the same stimulus, so a pass means the bug is gone", correct: false, feedback: "That holds only for the same code. The new object took a draw, so every object and thread created after it got a new seed (§18.14.1)." },
+      { text: "Agreed, as long as the simulator version is the same", correct: false, feedback: "The code changed, and that alone shifts the streams." },
+      { text: "Not proven: the stimulus probably changed. Reproduce the failure on the old code with seed 77, fix it, then run many seeds on the new code", correct: true, feedback: "Right. A seed reproduces a run only for the same code, simulator and arguments." },
+      { text: "Seeds only work once, so rerunning seed 77 was meaningless anyway", correct: false, feedback: "A seed replays exactly when nothing else changes (§18.13.1)." }
+    ],
+    explanation: "This is the misconception that a seed reproduces a run even after the code changes. Creating an object early shifts every later seed in that process.",
+    objective: 4
+  },
+  {
+    question: "You must add a helper object early in a long test without changing the stimulus of the objects created after it. Which change works?",
+    answers: [
+      { text: "Call helper.srandom(7) right after creating the helper", correct: false, feedback: "Too late: the helper's new() has already taken the draw that shifts every later object. Seeding the helper protects only the helper's own stream." },
+      { text: "Create the helper after the existing objects, or have each object whose stream must stay fixed seed itself in its new()", correct: true, feedback: "Right. The LRM advises adding new objects after existing ones (§18.14.1) and self-seeding in new() (§18.14.3, §18.15)." },
+      { text: "Use $random instead of $urandom inside the helper", correct: false, feedback: "The helper's creation is what shifts the others, whatever it calls later. $random is also not covered by random stability." },
+      { text: "Create the helper inside a fork so it runs in another process", correct: false, feedback: "Starting a thread also takes a draw from the parent process (§18.14.1), so it shifts later creations too." }
+    ],
+    explanation: "Every new and every fork take a draw from the creating process. Only placing them after existing work, or seeding the objects you want to protect, keeps those streams fixed.",
+    objective: 4
+  },
+  {
+    question: "You want to replay one object's next randomize() call several times inside one simulation. Which tool does that?",
+    answers: [
+      { text: "Save the state with obj.get_randstate() before the call and restore it with obj.set_randstate() before each replay", correct: true, feedback: "Right (§18.13.4, §18.13.5). The state string is implementation-dependent, so use it within one simulator." },
+      { text: "Call obj.srandom() with the original command-line seed", correct: false, feedback: "The object was seeded from a draw of its creating process, not from the command-line seed itself, so this gives a different stream." },
+      { text: "Rerun the simulator with the same seed for every replay", correct: false, feedback: "That works, but it replays the whole simulation, not one call inside one run." },
+      { text: "Copy the state string into a file and load it in another simulator", correct: false, feedback: "Using a state string from a different implementation is undefined (§18.13.5)." }
+    ],
+    explanation: "get_randstate() and set_randstate() save and restore an object's or a process's RNG state exactly, within one implementation.",
+    objective: 4
   }
 ]} />
 
-<div className="mt-8">
-  <InterviewQuestionPlayground
-    question="A test fails with seed 1234. You add a debug monitor whose `new()` creates one helper object, then re-run with seed 1234, and now the test passes. What is the most likely cause?"
-    options={[
-      { text: "std::randomize() uses a true random number generator, so it ignores the seed.", isCorrect: false, feedback: "std::randomize() draws from the calling thread's RNG, which is seeded deterministically from the root seed (§18.14)." },
-      { text: "The new object took the next value from its creating thread's RNG, so every object created after it received a different seed.", isCorrect: true, feedback: "Correct! Objects and threads are seeded from their parent when they are created (hierarchical seeding, §18.14.1). Inserting one creation shifts every seed handed out after it, so the same root seed now produces a different stimulus stream. Create new objects after the existing ones, or seed them with srandom()." },
-      { text: "Thread execution order changed, so threads swapped each other's random numbers.", isCorrect: false, feedback: "Each thread has its own RNG, so a different interleaving of threads that already exist does not swap their sequences (§18.14.2). Changing the order in which threads or objects are created does." },
-      { text: "randcase statements do not respect the random seed.", isCorrect: false, feedback: "randcase draws from the thread's RNG like every other random call (§18.14.2)." }
-    ]}
-  />
-</div>
+### Kata 1 (predict): the seed drill
 
-</InfoPage>
+Process T0 (an `initial` block) runs this code, and nothing else in the simulation creates objects or draws random numbers. `C`'s branch is a dynamic thread, T1.
+
+```systemverilog
+// snippet
+A = new();
+fork
+  begin                                 // T1, seeded when the fork runs
+    C = new();
+    repeat (3) if (!C.randomize()) $fatal(1, "C failed");
+  end
+join_none
+B = new();
+repeat (3) begin
+  if (!A.randomize()) $fatal(1, "A failed");
+  if (!B.randomize()) $fatal(1, "B failed");
+end
+```
+
+For each edit, made on its own with the same seed, write down which of A, B and C produce different values. Then open the solution.
+
+1. Insert `X = new();` before `A = new();`.
+2. Insert `X = new();` after `B = new();`.
+3. Insert `junk = $urandom;` between `join_none` and `B = new();`.
+4. Add one extra `A.randomize()` before the loop.
+5. Insert `#0;` before the `repeat (3)` loop, so that T1 may now run before T0's calls.
+6. Make T1 also call `A.randomize()` in its loop. Then combine it with edit 5: what changes now?
+7. Add `B.srandom(42);` right after `B = new();`. Then combine it with edit 1: which objects change now?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+T0's RNG hands out draw 1 to A, draw 2 to the new thread T1, and draw 3 to B. C is created inside T1, so its seed comes from T1's RNG. One more fact decides edits 5 and 6: a thread started by `fork` … `join_none` does not start running until its parent blocks or ends (§9.3.2). In the original code T0 never blocks, so T0 finishes its whole loop before T1 runs.
+
+<ArchitectureDiagram
+  title="Who seeds whom in Kata 1"
+  caption="T0's RNG seeds A, T1 and B with draws 1, 2 and 3, in that order. C is seeded by T1's RNG, so anything that changes T1's seed also changes C. A, B and C each then have their own RNG for randomize()."
+  legend={false}
+  cellWidth={130}
+  gapX={24}
+  nodes={[
+    { id: "t0", label: "T0 (initial)", sublabel: "process RNG", kind: "generic", col: 1, row: 0 },
+    { id: "ka", label: "A = new()", sublabel: "seed = T0 draw 1", kind: "generic", col: 0, row: 1 },
+    { id: "t1", label: "T1 (fork)", sublabel: "seed = T0 draw 2", kind: "generic", col: 1, row: 1 },
+    { id: "kb", label: "B = new()", sublabel: "seed = T0 draw 3", kind: "generic", col: 2, row: 1 },
+    { id: "kc", label: "C = new()", sublabel: "seed = T1 draw 1", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "t0", to: "ka", style: "causal", label: "draw 1" },
+    { from: "t0", to: "t1", style: "causal", label: "draw 2" },
+    { from: "t0", to: "kb", style: "causal", label: "draw 3" },
+    { from: "t1", to: "kc", style: "causal", label: "T1 draw 1" }
+  ]}
+/>
+
+| Edit | Changes | Why |
+|---|---|---|
+| 1. `X` before `A` | A, B and C | X takes draw 1, so A, T1 and B get draws 2, 3 and 4; C follows T1's new seed (§18.14.1) |
+| 2. `X` after `B` | nothing | Nothing existing is created after X |
+| 3. extra `$urandom` before `B` | B only | T1 was already seeded; B now gets draw 4 |
+| 4. extra `A.randomize()` | A only | Only A's RNG advances (§18.14.3) |
+| 5. `#0` lets T1 run first | nothing | Each process and object keeps its own RNG; run order does not matter (§18.14.2). `#0` draws nothing |
+| 6. T1 also randomizes A | nothing that existed changes | T0 runs its whole loop before T1 starts (a `join_none` child starts only when its parent blocks or ends, §9.3.2), so T0 still gets A's first three values and T1 gets the 4th to 6th |
+| 6 + 5. T1 randomizes A, and T0 has the `#0` | A's values in T0 change | The `#0` blocks T0, so T1 runs first and takes A's first three values; T0 now gets the 4th to 6th. A is order-sensitive: T0 and T1 take turns on A's single RNG (§18.14.3), so whichever process reaches A first gets its first values |
+| 7. `B.srandom(42)` | B changes (new seed). Edit 1 on top of edit 7 then changes A and C, but not B | B's stream now starts from 42, whatever draw its `new()` received |
+
+</details>
+
+### Kata 2 (write): an instruction-stream grammar
+
+Write a `randsequence` that prints a stream of 4 to 8 instructions. Each instruction is `ALU` (weight 6), `LOAD` (weight 3) or `BRANCH` (weight 1). After two loads, `LOAD` must become impossible for the rest of the stream, and a `BRANCH` ends the stream at once. At the end, print how many instructions and loads were generated. Generate three streams.
+
+Before you write it, answer two questions: how can the `LOAD` weight change in the middle of a stream, and should `BRANCH` use `break` or `return`?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+The weight of `load` is an expression, and weights are evaluated each time their production is selected (§18.17.1), so it drops to 0 after the second load. `BRANCH` uses `break`, which ends the whole `randsequence`, including the remaining `repeat` iterations (§18.17.4, §18.17.6); `return` would only end the `branch` production and the stream would continue. The `randsequence` sits in its own task, so no loop statement encloses the code block that contains `break`.
+
+```systemverilog
+// compile
+module tb_top;
+  int n_load, n_instr;
+
+  task automatic gen_stream();
+    n_load  = 0;
+    n_instr = 0;
+    randsequence (stream)
+      stream : repeat ($urandom_range(4, 8)) instr ;
+      instr  : alu    := 6
+             | load   := (n_load < 2 ? 3 : 0)   // re-evaluated at each selection
+             | branch := 1 ;
+      alu    : { $write("ALU ");    n_instr++; } ;
+      load   : { $write("LOAD ");   n_instr++; n_load++; } ;
+      branch : { $write("BRANCH "); n_instr++; break; } ;  // ends the stream
+    endsequence
+    $display("| %0d instructions, %0d loads", n_instr, n_load);
+  endtask
+
+  initial begin
+    repeat (3) gen_stream();
+  end
+endmodule
+```
+
+**Expected output** (illustrative, one possible run; the streams change with the seed, but no line has more than two loads or more than eight instructions, and `BRANCH` is always last when it appears):
+
+```text
+ALU LOAD ALU BRANCH | 4 instructions, 1 loads
+ALU ALU LOAD ALU LOAD ALU ALU | 7 instructions, 2 loads
+LOAD ALU ALU ALU ALU | 5 instructions, 1 loads
+```
+
+</details>
+
+### Flashcards
+
+The deck for this page, *I-SV-2B: Randomization Methods*, has cards on the three procedural tools, the random-stability rules and seed handling. Review it today and again in a few days.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023:
+  - §4.7 (nondeterministic process order), §6.11.3 (signed and unsigned integer types), §6.21 (scope and lifetime: automatic variables), §8.12 (a shallow copy copies the RNG state), §9.3.2 (a `fork` child starts only when its parent blocks or ends), §9.7 (the `process` class), §13.4.1 (calling a function as a statement), §20.11 (assertion control), §20.14.1 (`$random`);
+  - §18.5 (constraint blocks), §18.5.2 (constraint inheritance), §18.9 (`constraint_mode()`), §18.11 (inline random-variable control), §18.12 and §18.12.1 (`std::randomize()` and `with`);
+  - §18.13.1–§18.13.5 (`$urandom` and its seed argument, `$urandom_range`, `srandom`, `get_randstate`, `set_randstate`);
+  - §18.14 (random stability), §18.14.1 (properties: initialization RNG, thread and object stability, manual seeding), §18.14.2 (thread stability), §18.14.3 (object stability), §18.15 (manual seeding);
+  - §18.16 (`randcase`), §18.17 (`randsequence`), §18.17.1 (weights), §18.17.2 (`if`/`else`), §18.17.3 (`case`), §18.17.4 (`repeat`), §18.17.5 (`rand join`), §18.17.6 (`break` and `return`), §18.17.7 (value passing).
+- uvm-core 2020.3.1 (implementation): `src/base/uvm_object.svh` (`reseed`, `use_uvm_seeding`), `src/base/uvm_component.svh`, `src/base/uvm_task_phase.svh`, `src/base/uvm_misc.svh` (`uvm_create_random_seed`, `uvm_global_random_seed`), `src/seq/uvm_sequence_item.svh` and `src/seq/uvm_sequence_base.svh` (`set_item_context`).
+
+**Prerequisites:** [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) for `randomize()`, constraints and checking the result; [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) for processes and `fork`.
+
+**Related**
+
+- [I-SV-2B overview](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index): the module map and the integrating example.
+- [Conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints): implication, `foreach`, `unique` and `sum() with`.
+- [Controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization): `rand_mode()`, `constraint_mode()`, hooks and overrides.
+- [Solver debug and failure triage](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug): when `randomize()` fails, and the lab.
+- [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index): the `process` class.
+- [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): randomizing sequence items.
+- [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): seed-based regression and failure triage.
+- [E-RISCV-1: RISC-V Verification Methodology](/curriculum/T4_Expert/E-RISCV-1_RISC_V_Verification_Methodology/index): instruction-stream generation at scale.
+
+<NextLesson />

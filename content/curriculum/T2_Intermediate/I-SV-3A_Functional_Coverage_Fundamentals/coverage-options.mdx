@@ -1,126 +1,455 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { Quiz, InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Coverage Options and Sampling"
+description: "Choose when a covergroup samples and configure its options at the right level, and predict the counts and percentages each choice produces."
+flashcards: "I-SV-3A_Functional_Coverage_Fundamentals"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+---
 
-export const metadata = {
-  title: "Coverage Options and Sampling | Advanced UVM Techniques & Strategy",
-  description: "Learn how covergroup options influence when and how data is sampled.",
-};
+## Quick Take
 
-<InfoPage
-  title="Coverage Options and Sampling"
-  uvm_concept_tags={["coverage options", "sampling"]}
->
+- **What it is:** The second page of I-SV-3A. The [module page](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) taught covergroups, bins and crosses. This page covers the two decisions every covergroup still needs. **When does it sample?** That is fixed by its coverage event, or by the code that calls `sample()`. **How are its bins built, counted and reported?** That is set by its **options**: `option.*` members that belong to one instance, and `type_option.*` members that belong to the covergroup type (IEEE 1800-2023 §19.3, §19.7, §19.7.1).
+- **Why it matters:** Sampling and option mistakes produce numbers that look healthy. A covergroup that samples idle cycles, samples twice, or reads a value one clock stale can report 100% on traffic that never happened; an option set at the wrong level silently changes every coverpoint's threshold. None of these errors makes the simulator complain.
+- **The Analogy:** a covergroup is a camera and its bins are the photo album. The coverage event is the shutter button, and the options are the album's rules: how many photos of a scene count (`at_least`), how much each page weighs (`weight`), what the caption says (`comment`). *Where it breaks:* a clocked covergroup clicks on every clock edge, including idle cycles, unless an `iff` guard covers the lens, and the album counts every click. Press the button twice for one scene and the album shows two scenes.
 
-  ## Level 1: The Big Idea
-  *IEEE 1800-2023, §19.3 (sampling) and §19.7: Specifying coverage options*
+**You will be able to:**
+1. **Choose** a sampling method (clocking event, built-in `sample()`, `sample()` with arguments, block event, `iff` guard), and **predict** when and how often a covergroup samples, including when it reads through a clocking block.
+2. **Configure** `at_least`, `auto_bin_max`, `weight`, `goal`, `per_instance` and `comment` at the right level, **predict** which covergroup-level options reach coverpoints and crosses, and **explain** `option` versus `type_option`.
+3. **Debug** coverage numbers that mislead because of sampling or options: idle-cycle samples, double samples, stale clocking-block reads, and options set at the wrong level.
 
-  Coverage points only help if they sample at the right moment. SystemVerilog covergroups provide **options** to control when sampling happens and how results are reported.
+<BeforeYouStart />
 
-  **The Analogy:** A covergroup is like a camera. Sampling options decide when the shutter clicks and how the photos are cataloged. Click twice for one scene and the album lies.
+These objectives are objectives 3, 4 and 5 of the [module page](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index), which you should read first.
 
-  ## Level 2: Practical Usage
+## Build Your Mental Model
 
-  ### Automatic vs. Manual Sampling
+**How to read this page.** First, what triggers a sample and how to sample a bus without a race. Then guards, the options table and the difference between `option` and `type_option`. Make It Work runs one covergroup with every common option and traces its numbers. Push Further holds the corner cases.
 
-  -   **Clocking event:** `covergroup cg @(posedge clk);` samples every time the event fires, exactly as if the process that triggered the event had called `sample()` (§19.3). It reads the values at that instant. When the design and testbench drive the sampled signals with `<=` or through a clocking block, those are the values from just before the edge. A testbench that writes the signal with a blocking `=` on the same edge races with the covergroup (see F3C).
-  -   **Manual sampling:** `covergroup cg with function sample(...)` has no event. A monitor calls `cg.sample(tr)` once per observed transaction. See the [analysis components](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index#monitors-scoreboards-and-the-analysis-fabric) section for how monitors publish transactions through analysis ports.
-  -   **Never both:** a clocked covergroup plus a manual `cg.sample()` on the same edge counts that edge twice. Coverage then closes on half the real traffic.
-  -   **Robust sampling:** sample through a clocking block. A coverpoint on `vif.mon_cb.addr` with the default `#1step` input skew reads the value from the Preponed region, before anything changes in that time slot (§19.5). `type_option.strobe = 1` instead moves clocked samples to the end of the time slot and takes at most one per slot.
+### When does a covergroup sample?
 
-  The same 8-cycle bus trace is sampled four ways below. Before you reveal each count, predict how often bin `high` increments.
+Options do not decide when a covergroup samples. Its **coverage event** does, or the code that calls `sample()` (§19.3). Only one type option, `strobe`, moves clocked samples within a time step. A covergroup never samples just because the variables it covers changed.
 
-  <CovergroupBuilder initialTab="sampling" />
+| Coverage event | When it samples | Typical use |
+| --- | --- | --- |
+| Clocking event: `covergroup cg @(posedge clk);` | Every time the event fires, as if the process that triggered the event had called `sample()`. Several events in one time step give several samples | A covergroup inside an interface, on a signal-level view |
+| None: `covergroup cg;` | Only when code calls the built-in `cov.sample()` (no arguments) | Covering variables the calling code has just updated |
+| `covergroup cg with function sample(bus_item t);` | Only when code calls `cov.sample(t)` and passes the data in (§19.8.1) | Coverage collectors fed by a monitor: the usual testbench style |
+| Block event: `covergroup cg @@(begin drive_item);` | Just before the named task, function or block starts (`begin`) or just after it ends (`end`) | Rare; covering calls to a task |
 
-  ### Useful Options
+**Sampling with arguments** (§19.8.1) is the most common style in class-based testbenches, because the monitor hands each observed transaction straight to the covergroup. Three rules apply: a sample argument may appear only in coverpoint expressions and `iff` guards (not, for example, in an option), it may not be an `output`, and it may not reuse the name of one of the covergroup's own `new()` arguments.
 
-  | Setting | Applies to | Why you use it |
-  | --- | --- | --- |
-  | `option.per_instance` | Covergroup | Save this instance's coverage in the database, separately from the type. Set it whenever you need per-agent or per-channel numbers. |
-  | `option.goal` | Covergroup, coverpoint, cross | Target percentage (default 100) for dashboards and regressions. |
-  | `option.comment` | Covergroup, coverpoint, cross | Tag requirements or Jira IDs next to the data. |
-  | `option.weight` | Covergroup, coverpoint, cross | How much this item counts in the weighted average above it. |
-  | `option.at_least` | Covergroup (default for items), coverpoint, cross | Hits a bin needs before it counts as covered (default 1). |
-  | `option.auto_bin_max` | Covergroup (default for coverpoints), coverpoint | Maximum number of automatic bins (default 64). It is an instance option: `type_option.auto_bin_max` does not exist. |
-  | `type_option.merge_instances` | Covergroup type | Compute type coverage as the union of all instances' bins instead of the weighted average of instances. |
-  | `type_option.strobe` | Covergroup type | Take clocked samples at the end of the time slot, at most one per slot. |
+**Never mix styles on one covergroup.** A clocked covergroup that a monitor also samples with `cov.sample()` on the same edge counts every transfer twice. Hit counts double, so a bin with `at_least = 2` closes on half the real traffic, and transition bins see repeated values that never happened: with every value sampled twice, a bin such as `(0 => 1 => 2)` can never match.
 
-  <InteractiveCode>
-  ```systemverilog
+The sampling tab below runs the same 8-cycle bus trace through four sampling styles. The covergroup uses `option.at_least = 2`, so a bin needs two hits to count. Before you reveal each count, predict how often bin `high` (addresses 12 to 15) increments.
+
+<CovergroupBuilder initialTab="sampling" />
+
+What you just saw:
+
+- **`@(posedge clk) iff (valid)`** sampled every edge, but only the three edges with `valid` = 1 counted, and only one of them carried a `high` address: 1 hit, so `high` is not covered, and the coverpoint honestly reads 50%.
+- **`@(posedge clk)` with no `iff`** counted 6 hits in `high`, most of them idle cycles where `addr` held a leftover value. The coverpoint reads 100% from a single real transfer to the high range.
+- **`@(posedge clk)` plus `sample()`** counted every valid edge twice: 2 hits from one transfer, again a false 100%.
+- **`with function sample()` from a monitor** counted exactly the transfers: 1 hit. One transfer, one sample.
+
+The two false closures happen only because `at_least` is 2. With the default `at_least = 1`, the percentages would agree, and only the hit counts and transition bins would betray the extra samples.
+
+### Sampling through a clocking block
+
+A **clocking block** ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)) samples each of its inputs at its clocking event and keeps the value in a **clockvar** such as `mon_cb.addr`. With the default `#1step` input skew, the clockvar holds the value from the **Preponed** region, the start of the time slot before anything has changed ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)). That is exactly the stable, pre-edge value coverage should see (§19.5, §14.13).
+
+The trap is *when you read the clockvar*. The clocking block updates its clockvars at the clock edge and then triggers its own **clocking block event**, `@(mon_cb)`, in the Observed region (§14.10). A process that waits on `@(mon_cb)` is guaranteed to read the updated values. A process that waits on `@(posedge clk)` and then reads `mon_cb.addr` races with that update: §14.13 says it "may display the old or the newly updated sampled value". So a covergroup clocked on `@(posedge clk)` whose coverpoints read clockvars can count values one clock stale, with no message.
+
+The visualizer below, from F4C, compares three ways of reading a clocked signal. Predict which reading style returns the same value on every simulator, then reveal the table.
+
+<ClockingBlockSkewVisualizer />
+
+What you just saw: `@(cb)` followed by `cb.dout` always reads the clocking block's sample of that edge. `@(posedge clk)` followed by `cb.dout` is marked as a race (old or new), and reading the raw signal after `@(posedge clk)` is safe only while nothing writes it with a blocking assignment at the edge. Coverage inherits the same rules.
+
+There are two race-free ways to sample a bus through a clocking block, and both read the clockvars:
+
+```systemverilog
+// snippet
+// Form 1: the covergroup lives in the interface and samples on the clocking block event
+interface bus_if (input logic clk);
+  logic [3:0] addr;
+  logic       valid;
+
+  clocking mon_cb @(posedge clk);
+    input addr, valid;            // default #1step: pre-edge values
+  endclocking
+
+  covergroup cg_bus @(mon_cb);    // fires in Observed, after mon_cb has updated
+    cp_addr: coverpoint mon_cb.addr iff (mon_cb.valid === 1'b1) {
+      bins low  = {[0:3]};
+      bins high = {[12:15]};
+    }
+  endgroup
+
+  cg_bus cov = new();
+endinterface
+
+// Form 2: a monitor waits on the clocking block event, then calls sample()
+//   forever begin
+//     @(vif.mon_cb);
+//     if (vif.mon_cb.valid === 1'b1) cov.sample(vif.mon_cb.addr);
+//   end
+```
+
+Two more pitfalls belong here. A covergroup clocked on `@(mon_cb)` that reads the **raw** signals (`addr` instead of `mon_cb.addr`) sees post-edge values, because the clocking block event fires in Observed, after this edge's nonblocking updates. And `type_option.strobe = 1` moves clocked samples to the Postponed region at the end of the time slot, at most one per slot: raw signals then hold their post-edge values too, while clockvars still hold the clocking block's pre-edge sample.
+
+### Guards: iff on coverpoints, bins and crosses
+
+An **`iff` guard** is a condition evaluated at each sample (§19.5, §19.6). When it is false, the guarded item ignores that sample.
+- On a coverpoint, `coverpoint addr iff (valid)` ignores the whole coverpoint for that sample. This is how a clocked covergroup skips idle cycles.
+- On a bin, `bins burst_hi = {[12:15]} iff (burst);` makes only that bin conditional.
+- On a cross, `cross cp_addr, cp_op iff (!reset)` ignores the cross for that sample, and each cross bin may have its own `iff`.
+
+A guard only filters samples that happen; it never causes one. A guard that is always false is a common reason for a coverpoint stuck at 0%.
+
+### Options: what you can set, and where
+
+Options are written inside the covergroup definition, at the level they apply to (§19.7, Table 19-1, Table 19-2):
+
+```systemverilog
+// snippet
+covergroup cg_pkt with function sample(pkt_t pkt);
+  option.per_instance = 1;          // covergroup level
+  cp_len: coverpoint pkt.length {
+    option.at_least = 3;            // coverpoint level
+    bins len_small = {[0:63]};
+  }
+endgroup
+```
+
+| Option | Default | Allowed at | A covergroup-level value is the default for coverpoints and crosses? | Can be assigned after `new`? | Why you use it |
+| --- | --- | --- | --- | --- | --- |
+| `option.per_instance` | 0 | covergroup | no | no: definition only | Save and report this instance's coverage separately from the type |
+| `option.get_inst_coverage` | 0 | covergroup | no | no: definition only | Keep per-instance numbers when `type_option.merge_instances = 1` (see I-SV-3B) |
+| `option.goal` | 100 | all levels | **no** | yes | Target percentage for dashboards and regressions |
+| `option.weight` | 1 | all levels | **no** | yes | How much this item counts in the weighted average above it |
+| `option.comment` | `""` | all levels | **no** | yes | Plan IDs or notes saved with the data |
+| `option.at_least` | 1 | all levels | **yes** | yes | Hits a bin needs before it counts as covered |
+| `option.auto_bin_max` | 64 | covergroup, coverpoint | **yes** | no: definition only | Maximum number of automatic bins |
+| `option.detect_overlap` | 0 | covergroup, coverpoint | **yes** | no: definition only | Warn when two bins of a coverpoint overlap |
+| `option.cross_num_print_missing` | 0 | covergroup, cross | **yes** | yes | How many missing cross bins the report lists |
+| `option.cross_retain_auto_bins` | 1 | covergroup, cross | **yes** | no: definition only | Keep automatic cross bins next to user-defined ones |
+| `option.name` | generated | covergroup | no | yes | The instance's name in reports |
+| `type_option.weight`, `goal`, `comment` | 1, 100, `""` | all levels | no | yes, through `::` | Weight, target and comment for the type (cumulative) number |
+| `type_option.strobe` | 0 | covergroup | no | no: definition only | Take clocked samples at the end of the time slot, at most one per slot |
+| `type_option.merge_instances` | 0 | covergroup | no | yes, through `::` | Compute the type number as the union of all instances' bins (see I-SV-3B) |
+| `type_option.distribute_first` | 0 | covergroup | no | yes, through `::` | Distribute values to bins before a bin's `with` filter is applied |
+| `type_option.real_interval` | 1.0 | covergroup, coverpoint | **yes** (the only type option that is) | no: definition only | Interval width for real-valued bins |
+
+Read the fourth column carefully. **Except for `weight`, `goal`, `comment` and `per_instance`, an option set at covergroup level is the default for every coverpoint and cross**, which can override it (§19.7). So `option.at_least = 2` at covergroup level raises the threshold of every coverpoint and every cross; `option.goal = 90` at covergroup level changes only the covergroup's own goal. Type options set at covergroup level are never defaults for lower levels, except `real_interval` (§19.7.1).
+
+Three more rules from §19.7: option assignments in the definition are evaluated when the instance is built with `new`, so a covergroup argument can set an option (`option.at_least = arg;`); setting the same option twice in one definition is an error; and `auto_bin_max`, `detect_overlap` and `cross_retain_auto_bins` cannot be assigned procedurally. The options that can be assigned after `new` use the instance's hierarchy, as in `cov.option.comment = "agent 0";` or `cov.cp_len.option.weight = 3;`.
+
+### option versus type_option
+
+`option` is a built-in member of every covergroup, coverpoint and cross **instance**: each instance has its own copy, and different instances can hold different values. `type_option` is a built-in **static** member, like a static class property: there is one copy per covergroup type, and it is set with constant expressions in the definition or assigned through the type with `::`, as in `cg_bus::type_option.merge_instances = 1;` or `cg_bus::cp_addr::type_option.weight = 3;` (§19.7.1, §19.10).
+
+<ArchitectureDiagram
+  title="One option copy per instance, one type_option copy per type"
+  caption="Two instances of covergroup type cg_bus each own their option values, which feed their own instance number. The single type_option copy belongs to the type and feeds the type (cumulative) number, which combines both instances."
+  nodes={[
+    { id: "type", label: "covergroup type cg_bus", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 1, container: true },
+    { id: "a", label: "cov_a", sublabel: "own option.*", kind: "generic", col: 0, row: 0 },
+    { id: "topt", label: "cg_bus::type_option", sublabel: "one copy per type", kind: "generic", col: 1, row: 0 },
+    { id: "b", label: "cov_b", sublabel: "own option.*", kind: "generic", col: 2, row: 0 },
+    { id: "ra", label: "instance number", sublabel: "cov_a.get_inst_coverage()", kind: "generic", col: 0, row: 1 },
+    { id: "rt", label: "type number", sublabel: "cg_bus::get_coverage()", kind: "generic", col: 1, row: 1 },
+    { id: "rb", label: "instance number", sublabel: "cov_b.get_inst_coverage()", kind: "generic", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "a", to: "ra", style: "data", label: "option.weight, at_least" },
+    { from: "b", to: "rb", style: "data", label: "option.weight, at_least" },
+    { from: "topt", to: "rt", style: "data", label: "merge_instances, weight" },
+    { from: "a", to: "rt", style: "structural", label: "contributes" },
+    { from: "b", to: "rt", style: "structural", label: "contributes" }
+  ]}
+/>
+
+Two consequences follow. First, `option.per_instance` defaults to 0: unless you set it to 1, a tool is not required to save each instance's numbers, and only the type number is guaranteed in the database (Table 19-1). Second, two instances can never hold different `type_option` values, which is why the standard makes type options constant expressions. How the type number is computed from the instances, with and without `merge_instances`, and how to query both numbers while the test runs, is [I-SV-3B Coverage APIs](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis)' topic. In one line: by default the type number is the weighted average of the instances (§19.11.3).
+
+### Mistakes to avoid
+
+1. **A clocked covergroup with no `iff`** on a bus that idles: idle edges sample leftover values.
+2. **Two sampling styles on one covergroup**: every transfer counts twice.
+3. **Reading clockvars after `@(posedge clk)`**: a race that can read the previous edge's sample. Trigger on `@(cb)`.
+4. **Reading raw signals after `@(cb)` or with `strobe`**: you see post-edge values.
+5. **Setting `at_least` at covergroup level for one coverpoint's sake**: it reaches every coverpoint and cross.
+6. **Assuming `per_instance` is on**: it defaults to 0.
+
+## Make It Work
+
+### Worked example: one packet covergroup, every option at its level
+
+The covergroup below has no clocking event; the bench calls `sample()` once per packet, and an `iff` guard skips packets whose `valid` bit is 0. Read the comments to see which level each option lives at.
+
+```systemverilog
+// compile
+module tb_top;
   typedef struct packed {
     bit       valid;
     bit [1:0] kind;
     bit [7:0] length;
   } pkt_t;
 
+  // No coverage event: code calls sample() once per packet (§19.8.1)
   covergroup cg_pkt with function sample(pkt_t pkt);
-    option.per_instance = 1;
-    option.goal         = 90;
-    option.weight       = 2;
+    option.per_instance = 1;    // save this instance's numbers (default 0)
+    option.goal         = 90;   // this covergroup's goal only; items keep 100
+    option.weight       = 2;    // this instance's weight in the overall total only
     option.comment      = "VP-3.1";
-    option.auto_bin_max = 16;   // instance option; the default for every coverpoint
-
-    cp_kind: coverpoint pkt.kind iff (pkt.valid);
+    option.auto_bin_max = 16;   // default for every coverpoint; definition only
+    cp_kind: coverpoint pkt.kind iff (pkt.valid);   // min(2^2, 16) = 4 automatic bins
     cp_len:  coverpoint pkt.length iff (pkt.valid) {
-      option.at_least = 3;
-      bins small    = {[0:63]};
-      bins large[4] = {[64:255]};   // 4 bins of 48 values
+      option.at_least = 3;              // this coverpoint only
+      bins len_small    = {[0:63]};
+      bins len_large[4] = {[64:255]};   // 4 bins of 48 values
     }
   endgroup
 
   cg_pkt cov = new();
+  pkt_t  stream[6] = '{'{1, 0, 10}, '{1, 1, 70}, '{1, 2, 200},
+                       '{0, 3, 5},  '{1, 0, 30}, '{1, 0, 40}};
 
-  // In the monitor: exactly one sample per observed packet.
-  // No clocking event on the covergroup, so nothing is counted twice.
-  task automatic observe(pkt_t pkt);
-    cov.sample(pkt);
-  endtask
-  ```
-  </InteractiveCode>
+  initial begin
+    foreach (stream[i]) cov.sample(stream[i]);
+    $display("cp_kind: %6.2f%%", cov.cp_kind.get_inst_coverage());
+    $display("cp_len : %6.2f%%", cov.cp_len.get_inst_coverage());
+    $display("cg_pkt : %6.2f%% (goal 90)", cov.get_inst_coverage());
+  end
+endmodule
+```
 
-  ## Level 3: Expert Insights
+**Predict first.** Which bins does each packet hit, which bins reach their `at_least`, and what are the three percentages? Packet 4 has `valid` = 0.
 
-  **Gating and Conditional Sampling:** Use `iff` guards (as in the example above) or call `cov.sample()` only when transactions are valid. Otherwise idle cycles dilute your metrics, or worse, fill bins with leftover bus values.
+| # | valid, kind, length | `cp_kind` | `cp_len` | `len_small` hits (needs 3) |
+| --- | --- | --- | --- | --- |
+| 1 | 1, 0, 10 | `auto[0]` | `len_small` | 1 |
+| 2 | 1, 1, 70 | `auto[1]` | `len_large[0]` (64–111) | 1 |
+| 3 | 1, 2, 200 | `auto[2]` | `len_large[2]` (160–207) | 1 |
+| 4 | 0, 3, 5 | guard false: ignored | guard false: ignored | 1 |
+| 5 | 1, 0, 30 | `auto[0]` | `len_small` | 2 |
+| 6 | 1, 0, 40 | `auto[0]` | `len_small` | 3: covered |
 
-  **Per-Instance vs. Merge:** Set `option.per_instance = 1` when you need each instance's numbers saved and reported. Type coverage, which `get_coverage()` returns, is by default the weighted average of the instances (§19.11.3). To compute it as the union of every instance's bins, assign the type option through the type with `::`, for example `cg_pkt::type_option.merge_instances = 1;`. This changes how the type number is computed during simulation. Only `strobe` and `real_interval` must be set in the covergroup definition; the other type options can be assigned procedurally at any time (§19.7.1).
+**Expected output** (illustrative: computed by hand from IEEE 1800-2023 §19.7 and §19.11, not captured from a simulator run):
 
-  **Runtime Introspection:** Query `cov.get_inst_coverage()` for this instance and `cov.get_coverage()` or `cg_pkt::get_coverage()` for the type. Covergroups have no `find()` method: the built-in methods are `sample`, `get_coverage`, `get_inst_coverage`, `set_inst_name`, `start` and `stop` (§19.8). Use `set_inst_name()` so reports align with DUT hierarchy.
+```text
+cp_kind:  75.00%
+cp_len :  20.00%
+cg_pkt :  47.50% (goal 90)
+```
 
-  **Coverage Closure Loop:** Feed uncovered bins back into constraint randomization (see [Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)) or targeted sequences until `option.goal` is satisfied.
+Why these numbers:
+- `cp_kind` has 4 automatic bins and 3 were hit (`at_least` 1, the default). Kind 3 did appear, in packet 4, but the guard was false, so `auto[3]` is still a hole: 3 of 4 = 75%.
+- `cp_len` has 5 bins and needs 3 hits per bin. Only `len_small` reached 3; `len_large[0]` and `len_large[2]` have one hit each and do not count yet: 1 of 5 = 20%.
+- The covergroup is the average of its two items, each with weight 1, because the covergroup-level `weight = 2` does not propagate: (75 + 20) ÷ 2 = 47.5%. The goal of 90 is also the covergroup's own; each coverpoint's goal stays 100.
 
-  ## Quiz
+Try one change in your head: move `option.at_least = 3` from `cp_len` to the covergroup level. Then `cp_kind` also needs 3 hits per bin, only `auto[0]` reaches it, and `cp_kind` drops to 25%.
 
-  <Quiz questions={[
-    {
-      question: "Which option allows each instance of a covergroup to maintain its own coverage results?",
-      answers: [
-        { text: "`option.per_instance`", correct: true },
-        { text: "`option.goal`", correct: false },
-        { text: "`option.weight`", correct: false },
-        { text: "`option.comment`", correct: false }
-      ],
-      explanation: "`option.per_instance = 1` makes the tool save and report coverage for each covergroup instance separately."
-    },
-    {
-      question: "A covergroup is declared with @(posedge clk), and the monitor also calls cov.sample() at every posedge where valid is high. One valid transfer lands in bin high. How many times does high increment on that edge?",
-      answers: [
-        { text: "Once: the simulator merges samples taken on the same edge", correct: false },
-        { text: "Twice: the clocking event samples, and so does the manual call", correct: true },
-        { text: "Zero: a manual sample() disables the clocking event", correct: false }
-      ],
-      explanation: "A clocking event samples as if the triggering process called sample() (§19.3), and every manual sample() is one more sample. Pick one sampling style per covergroup."
-    }
-  ]} />
+### Run it
 
-  <div className="mt-8">
-    <InterviewQuestionPlayground
-      question="What is the difference between `option.weight` and `type_option.weight`?"
-      options={[
-        { text: "`option` applies only to cross-coverage, while `type_option` applies to coverpoints.", isCorrect: false, feedback: "Both can apply universally to the structure they are declared in." },
-        { text: "`option` configures the specific instance of the covergroup, while `type_option` configures the global type's aggregated reporting.", isCorrect: true, feedback: "Correct! `option.*` configures the individual object instance (e.g., this specific agent's coverage), while `type_option.*` configures the global type definition (the total coverage aggregated across all instances of that class)." },
-        { text: "There is no difference; they are aliases for the same underlying property.", isCorrect: false, feedback: "They control distinct scopes: instance vs. type." },
-        { text: "`option.weight` sets the sampling probability, while `type_option.weight` sets the reporting priority.", isCorrect: false, feedback: "Neither affect the probability; they both affect how coverage percentages are calculated in the final report." }
-      ]}
-    />
-  </div>
+Compile the file with any simulator that supports IEEE 1800-2023 functional coverage and run `tb_top`. Covergroup support in open-source simulators is limited and has not been verified for this example.
 
-</InfoPage>
+### How to choose sampling and options
+
+1. **Pick one sampling style per covergroup.** In class-based testbenches, use `with function sample(…)` and call it from the monitor or collector once per observed transaction.
+2. **If the covergroup is clocked, guard it** with `iff` on the "transfer happened" condition, and trigger on the clocking block event `@(cb)` when it reads clockvars.
+3. **Set options at the lowest level that needs them.** Put `at_least` on the coverpoint that the plan row is about, not on the covergroup.
+4. **Set `per_instance = 1`** whenever you need numbers per agent, per port or per channel.
+5. **Write plan IDs into `option.comment`** on the coverpoint or cross that measures them.
+6. **Predict the percentages for a short directed stream** before trusting a regression number.
+
+### Debugging sampling and options
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Counts far above the number of transfers; early 100% | Clocked covergroup without `iff` samples idle edges | Add `iff (valid)` or sample from the monitor |
+| Every count exactly doubled; multi-step transition bins never hit | A clocking event and a manual `sample()` on the same edge | Keep one style |
+| Coverage looks one transfer behind, or differs between simulators | Clockvars read after `@(posedge clk)`: a race with the clocking block's update | Trigger on `@(cb)` |
+| Values look like the *next* transfer's | Raw signals read after `@(cb)`, or with `strobe = 1` | Read the clockvars (`cb.x`) |
+| One coverpoint needs more hits than planned | `at_least` set at covergroup level propagated to it | Move `at_least` to the coverpoint |
+| Changing `goal` or `weight` on the covergroup did not change any coverpoint | Those four options never propagate | Set them on each coverpoint or cross |
+| No per-agent numbers in the report | `per_instance` left at its default 0 | Set `option.per_instance = 1` in the definition |
+| Compile error assigning `cov.option.per_instance` or `cov.option.auto_bin_max` after `new` | Definition-only options | Set them in the covergroup definition |
+
+**Checklist before moving on:**
+- [ ] You can say when each of the four coverage-event forms samples, and why a covergroup never samples just because its variables changed.
+- [ ] You can sample a bus through a clocking block without a race, and say which values the raw signals hold at that point.
+- [ ] You can name the four options that never act as defaults for coverpoints and crosses.
+- [ ] You can say which options must be set in the definition.
+- [ ] You can explain `option` versus `type_option`, and what `per_instance` defaults to.
+
+## Push Further
+
+### Expert: sampling corner cases
+
+From §19.3, §19.5, §19.8.1 and §14.13:
+- **Several events in one time step** give several samples of a clocked covergroup (a glitching clock, or an event triggered twice). `type_option.strobe = 1` filters them to one sample per time slot, but it has no effect on `sample()` calls or block events.
+- **Block events:** `@@(end task_name)` is not triggered if the task is disabled, so a covergroup on the end of a task misses aborted calls.
+- **Virtual interfaces:** coverpoint expressions and guards are evaluated in a procedural context, so a covergroup inside a class can read `vif.mon_cb.addr` directly (§19.5). It still samples only on its event or `sample()` call.
+- **`#0` input skew:** a coverpoint on a clockvar with an explicit `#0` input skew reads Observed-region values, not Preponed ones (§19.5, §14.13).
+- **A clocking event may use covergroup arguments,** for example `covergroup cg (ref logic clk) @(posedge clk);`.
+- **Assertion coverage:** because a `sample()` with arguments can be called from anywhere, a concurrent assertion's match item can call it and pass an assertion local variable, as in §19.8.1's `@(posedge clk) (a, x = b) ##1 (c, cg1.sample(a, x))`. Assertions and local variables are taught in [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) and I-SV-4B.
+
+Interview angle: "Your clocked covergroup and your monitor disagree by exactly one transfer on some simulators and not others. Why?" (A clockvar read after `@(posedge clk)` races with the clocking block's update.)
+
+### Expert: weights, zero denominators and counting only the cross
+
+From §19.7, §19.7.1 and §19.11:
+- **A covergroup's number is the weighted average** of its coverpoints and crosses, using each item's `option.weight`. `option.weight = 0` on coverpoints that exist only to feed a cross makes the cross the only number that counts (the explorer's "Count only the cross" toggle on the [module page](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) does exactly this).
+- **The type number weighs differently.** With the default `merge_instances = 0`, type coverage is the instances' average weighted by `option.weight`. With `type_option.merge_instances = 1`, items are weighted by `type_option.weight`, so set `type_option.weight = 0` too if the cross alone should count there (§19.11.3; details in I-SV-3B).
+- **Zero denominators:** an item or covergroup whose denominator is zero (every bin empty, every weight zero, or no items) contributes nothing; it reports 0.0 if its own weight is nonzero and 100.0 if its weight is zero (§19.11, §19.11.1, §19.11.2).
+- **Option arguments:** because options are evaluated at `new`, `covergroup cg (int w) …; option.weight = w;` gives each instance its own weight, but `type_option.weight = w` is a syntax error: type options take constant expressions only (§19.7.1).
+- **Merged `at_least`:** when instances are merged, a bin counts as covered only if its total hits reach the largest `at_least` of all instances (§19.11.1).
+
+### Expert: interview angles
+
+<InterviewQuestionPlayground
+  title="Interview: option versus type_option"
+  question="What is the difference between option.weight and type_option.weight?"
+  options={[
+    { text: "option applies only to crosses, type_option only to coverpoints.", isCorrect: false, feedback: "Both exist at covergroup, coverpoint and cross level (Tables 19-2 and 19-4)." },
+    { text: "option.weight belongs to one instance and weighs an item in that instance's number; type_option.weight belongs to the covergroup type and weighs the item in the type (cumulative) number when merge_instances is 1.", isCorrect: true, feedback: "Right. option is a per-instance member; type_option is a static member of the type, set with constant expressions (§19.7, §19.7.1, §19.11.3)." },
+    { text: "They are aliases for the same value.", isCorrect: false, feedback: "Different instances may hold different option values; there is only one type_option copy per type." },
+    { text: "option.weight changes how often values are sampled; type_option.weight changes the report order.", isCorrect: false, feedback: "Neither affects sampling or stimulus; both only change how percentages are averaged." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: two agents, one covergroup type"
+  question="Two agents each build an instance of cg_bus. Nothing sets per_instance. A reviewer asks for agent 0's number from the coverage database. What do you say?"
+  options={[
+    { text: "It is there: every instance is always saved separately.", isCorrect: false, feedback: "per_instance defaults to 0, and then a tool is not required to save instance-specific numbers (Table 19-1)." },
+    { text: "Only the type number is guaranteed. Set option.per_instance = 1 in the covergroup definition and rerun.", isCorrect: true, feedback: "Right. per_instance can be set only in the definition, and it makes each instance's numbers part of the database and report." },
+    { text: "The second instance overwrote the first, so only agent 1's number exists.", isCorrect: false, feedback: "Instances do not overwrite each other; both contribute to the type number." },
+    { text: "Two instances of one covergroup type are a compile error.", isCorrect: false, feedback: "A covergroup is a type; any number of instances is legal (§19.3)." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "A covergroup is declared with @(posedge clk), and the monitor also calls cov.sample() at every posedge where valid is high. One valid transfer lands in bin high. How many times does high increment on that edge?",
+    answers: [
+      { text: "Once: the simulator merges samples taken on the same edge", correct: false, feedback: "There is no merging. Only type_option.strobe filters clocked samples, and it does not affect sample() calls." },
+      { text: "Twice: the clocking event samples, and so does the manual call", correct: true, feedback: "Right. A clocking event samples as if the triggering process called sample() (§19.3), and the manual call is one more sample." },
+      { text: "Zero: a manual sample() disables the clocking event", correct: false, feedback: "Calling sample() never disables the coverage event." },
+      { text: "Once: sample() is ignored on a covergroup that has a clocking event", correct: false, feedback: "sample() can be called on any covergroup; each call is a sample (§19.8)." }
+    ],
+    explanation: "Each trigger is one sample: the clocking event and the manual call both sample on that edge. Pick one sampling style per covergroup.",
+    objective: 1
+  },
+  {
+    question: "A monitor in a class reads a bus through vif.mon_cb (default #1step input skew) and calls cov.sample(vif.mon_cb.addr). Which way of waiting before the read is guaranteed to see this edge's sample on every simulator?",
+    answers: [
+      { text: "@(posedge vif.clk)", correct: false, feedback: "That wakes in the Active region and races with the clocking block's update: old or new sample (§14.13)." },
+      { text: "@(vif.mon_cb)", correct: true, feedback: "Right. The clocking block updates its clockvars, then triggers @(mon_cb) in Observed (§14.10, §14.13)." },
+      { text: "@(posedge vif.clk) followed by reading the raw signal vif.addr", correct: false, feedback: "Raw signals read in Active hold whatever has been written so far at this edge; that is not the clocking block's pre-edge sample." },
+      { text: "@(vif.mon_cb) followed by reading the raw signal vif.addr", correct: false, feedback: "The clocking block event fires in Observed, after this edge's nonblocking updates, so the raw signal holds the post-edge value." }
+    ],
+    explanation: "Wait on the clocking block event and read the clockvars. Any other combination either races or reads post-edge values.",
+    objective: 1
+  },
+  {
+    question: "A covergroup @(posedge clk) has no iff guard and option.at_least = 2. After one real transfer to each bin's range, it reports 100%. What is the most likely cause?",
+    answers: [
+      { text: "Clocked covergroups ignore at_least", correct: false, feedback: "at_least applies to every bin, whatever triggers the samples." },
+      { text: "Idle clock edges sample leftover values, so bins get a second hit that was not a transfer", correct: true, feedback: "Right. Without a guard, every edge is a sample, including cycles where the bus holds a stale value." },
+      { text: "type_option.strobe defaults to 1, which doubles samples", correct: false, feedback: "strobe defaults to 0, and when set it reduces samples to at most one per time slot." },
+      { text: "Every bin counts twice because value bins behave like transitions", correct: false, feedback: "Value bins count one hit per matching sample." }
+    ],
+    explanation: "A clocked covergroup samples every edge. Add iff on the transfer condition, or sample from the monitor, so one transfer is one sample.",
+    objective: 3
+  },
+  {
+    question: "Two agents each create an instance of cg_bus, and nothing sets option.per_instance. What must the coverage database contain?",
+    answers: [
+      { text: "Separate numbers for each instance", correct: false, feedback: "That needs option.per_instance = 1; its default is 0 (Table 19-1)." },
+      { text: "Only the type (cumulative) numbers are guaranteed", correct: true, feedback: "Right. With per_instance = 0, tools are not required to save instance-specific information." },
+      { text: "Nothing: two instances of one type are a compile error", correct: false, feedback: "A covergroup is a type; any number of instances is legal (§19.3)." },
+      { text: "Only the second instance's numbers, because it overwrote the first", correct: false, feedback: "Both instances contribute to the type number; neither overwrites the other." }
+    ],
+    explanation: "per_instance defaults to 0. Each instance still contributes to the type number, but only per_instance = 1 makes its own numbers part of the database and report.",
+    objective: 2
+  },
+  {
+    question: "A covergroup sets option.goal = 90 and option.at_least = 2 at covergroup level. Its coverpoint cp_len sets neither option. What are cp_len's goal and at_least?",
+    answers: [
+      { text: "goal 90 and at_least 2: everything propagates", correct: false, feedback: "goal is one of the four options that never act as defaults for coverpoints and crosses." },
+      { text: "goal 100 and at_least 2", correct: true, feedback: "Right. at_least propagates as a default; goal, weight, comment and per_instance do not (§19.7)." },
+      { text: "goal 90 and at_least 1", correct: false, feedback: "That is the reverse of the rule." },
+      { text: "goal 100 and at_least 1: nothing propagates", correct: false, feedback: "Most options do propagate as defaults; only four do not." }
+    ],
+    explanation: "Except for weight, goal, comment and per_instance, options set at covergroup level are defaults for coverpoints and crosses. cp_len keeps the default goal of 100 and inherits at_least = 2.",
+    objective: 2
+  },
+  {
+    question: "Which statement is legal after cg_pkt cov = new(); has run?",
+    answers: [
+      { text: "cg_pkt::type_option.merge_instances = 1;", correct: true, feedback: "Right. merge_instances is a type option that may be assigned procedurally through the type (§19.7.1)." },
+      { text: "cov.type_option.auto_bin_max = 16;", correct: false, feedback: "auto_bin_max is an instance option only; there is no type_option.auto_bin_max." },
+      { text: "cg_pkt::option.goal = 90;", correct: false, feedback: "Instance options belong to instances, not to the type: write cov.option.goal = 90;." },
+      { text: "cov.option.per_instance = 1;", correct: false, feedback: "per_instance can be set only in the covergroup definition (§19.7)." }
+    ],
+    explanation: "Type options are reached through the type with ::, and all except strobe and real_interval may be assigned procedurally. per_instance, get_inst_coverage, auto_bin_max, detect_overlap and cross_retain_auto_bins are definition-only.",
+    objective: 2
+  }
+]} />
+
+### Debug challenge: the regression that closed too early
+
+A team's bus covergroup reached 100% in an hour. A colleague rewrote it to sample from the monitor, and the same tests now stall at 50%. The original was:
+
+```systemverilog
+// snippet
+covergroup cg_addr @(posedge clk);
+  option.at_least = 2;
+  cp_addr: coverpoint addr {
+    bins low  = {[0:3]};
+    bins high = {[12:15]};
+  }
+endgroup
+```
+
+Open the sampling tab above, pick the style that reproduces the 100%, and decide which number to trust before you open the answer.
+
+<details>
+<summary>Answer</summary>
+
+The original matches the tab's *`@(posedge clk)`, no iff* style. It samples every clock edge, including idle cycles where `addr` still holds the last transfer's value, so one real transfer to the high range collects six hits and the bin passes `at_least = 2`. The monitor-based number (50%) is the honest one: only one real transfer reached `high`. Fix the original by adding `iff (valid)` to the coverpoint, or keep the monitor version; then add stimulus for a second high-range transfer. Never add a manual `sample()` to the clocked version: that doubles every count instead.
+
+</details>
+
+### Predict with the visuals
+
+- In the sampling tab, predict the `high` count for all four styles before revealing any (1, 6, 2 and 1).
+- In the clocking-block visualizer, switch the DUT to *blocking = at the edge* and predict which of the three reading styles now races.
+
+The flashcards for this module follow below.
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023)
+- §19.3 Defining the coverage model (coverage events, `strobe`, block events); §19.5 Defining coverage points (`iff`, clocking-block signals); §19.6 Defining cross coverage (cross `iff`)
+- §19.7 Specifying coverage options (Tables 19-1, 19-2); §19.7.1 Covergroup type options (Tables 19-3, 19-4); §19.10 Organization of option and type_option members
+- §19.8 Predefined coverage methods (Table 19-5); §19.8.1 Overriding the built-in sample method
+- §19.11 Coverage computation; §19.11.1 Coverpoint; §19.11.3 Type coverage
+- §14.10 Clocking block events; §14.13 Input sampling
+
+**Prerequisites:** [I-SV-3A module page](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) for covergroups, bins and crosses; [F4C Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) for clockvars and skews.
+
+**Related**
+- [F3B Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) and [F3C Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): the Preponed, Observed and Postponed regions behind sampling races.
+- [I-SV-3B Coverage APIs](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis): `get_coverage()`, `get_inst_coverage()`, `merge_instances` and the other run-time controls.
+- [I-SV-3B Closure Workflow](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow): feeding holes back into stimulus.
+- [I-UVM-2B TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index): how a UVM monitor's transactions reach a coverage subscriber.
+
+<NextLesson />

@@ -1,126 +1,144 @@
 ---
 title: "I-SV-3A: Functional Coverage Fundamentals"
-description: "Model verification intent with covergroups, coverpoints, and crosses to prove you've exercised every critical scenario."
+description: "Turn verification-plan rows into covergroups whose bins, crosses and sampling you can predict, and say exactly which sampled values count toward the percentage."
 flashcards: "I-SV-3A_Functional_Coverage_Fundamentals"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "Accellera UVM reference implementation"
+    type: "implementation"
+    identifier: "uvm-core 2020.3.1"
 ---
 
-import { InteractiveCode, Quiz, InterviewQuestionPlayground } from '@/components/ui';
-
 ## Quick Take
-- **What it is:** Functional coverage captures the design scenarios you *intend* to test, recording hits whenever stimulus exercises them.
-- **Why it matters:** Code coverage only says which lines executed; functional coverage maps directly to the verification plan, answering “Are we done yet?”
-- **The rule to remember:** A covergroup counts only what its bins say. A value outside every bin is simply not counted, unless you declare a `default` bin. `default`, `ignore_bins` and `illegal_bins` never count toward the percentage.
-- **The Analogy:** Imagine a mission checklist—every time a specific combination happens (burst write, secure mode, minimal latency), you tick a box. Unticked boxes reveal coverage holes.
 
-> **Reminder:** Coverage is actionable only when tied to a plan. Define meaningful bins, not just random value ranges.
-> *SystemVerilog Functional Coverage is formally defined in **IEEE 1800-2023, Clause 19**.*
+- **What it is:** **Functional coverage** counts the *observed* values of expressions your verification plan cares about. You declare a **covergroup**, a user-defined type that you instantiate with `new`. Inside it, each **coverpoint** names one expression to watch, and its **bins** are named sets of values (or value sequences), each with a hit counter. A **cross** counts combinations of the bins of two or more coverpoints. Every time the covergroup **samples**, it evaluates its coverpoints and increments every bin that lists the current value (IEEE 1800-2023 Clause 19).
+- **Why it matters:** A **verification plan** (vplan) lists the features and scenarios that must be exercised. Coverage turns each row of it into a number, so "are we done?" gets a measured answer. Code coverage is the complement: it measures which parts of the RTL ran (statements, branches, toggles and so on; see [F1B](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index)). Neither one says the design under test (DUT) behaved correctly; that is the job of checkers and scoreboards. 100% functional coverage means the listed scenarios were *observed*, not that they were *checked* ([I-SV-3B](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/index) builds on this).
+- **The rule to remember:** a covergroup counts only what its bins say. A value outside every bin is not counted anywhere, unless you declare a `default` bin. `default`, `ignore_bins` and `illegal_bins` never count toward the percentage.
+- **The Analogy:** a mission checklist. Each box is a bin; every time the mission control log (the sample) shows a scenario on the list, you tick its box, and unticked boxes are coverage holes. *Where it breaks:* a box can demand several ticks before it counts (`option.at_least`); a scenario that is not on the list is invisible, not a hole; and a full checklist says nothing about whether anyone checked that each scenario produced the right result.
+
+**You will be able to:**
+1. **Write** coverpoints with explicit, array, fixed-count, default, automatic, wildcard and transition bins, and **predict** the bin count and the coverage a given sample stream produces.
+2. **Write** crosses that select and exclude combinations with `binsof`/`intersect`, `ignore_bins` and `illegal_bins`, and **predict** how many cross bins count.
+3. **Choose** a sampling method (clocking event, `sample()`, `sample()` with arguments, `iff`), and **predict** when and how often a covergroup samples.
+4. **Configure** `at_least`, `auto_bin_max`, `weight`, `goal`, `per_instance` and `comment`, and **explain** `option` versus `type_option`.
+5. **Debug** coverage numbers that mislead: values that land in no bin, bins emptied by exclusions or value resolution, and idle-cycle or double samples.
+
+<BeforeYouStart />
+
+This module has two pages: this one (covergroups, bins, crosses and a complete worked example) and [Coverage Options and Sampling](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options), which goes deeper into objectives 3 and 4. You also need clocking blocks from [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) for the worked example.
 
 ## Build Your Mental Model
-### Coverage Blueprint
-<div className="glass-card glow-border my-8 px-6 py-8">
-  <Image
-    src="/visuals/coverage-blueprint.svg"
-    alt="Diagram showing stimulus feeding coverpoints, crosses, and coverage reports"
-    width={720}
-    height={360}
-    sizes="(min-width: 1024px) 720px, 100vw"
-    className="w-full"
-  />
-</div>
 
-### Bins decide what counts
+**How to read this lesson.** The core path is the first three sections: where coverage sits in a testbench, how to declare and sample a covergroup, and how bins decide what counts. Then come the special bin kinds, value resolution, and crosses. Make It Work builds one complete covergroup from four plan rows. Push Further holds the expert corner cases.
 
-A coverpoint samples one expression. Its **bins** decide which sampled values count, and where. Each line below is one declaration (IEEE 1800-2023 §19.5):
+### Where coverage sits in a testbench
 
-| Declaration | What it creates | Counts toward the %? |
+A testbench (TB) has three jobs: drive stimulus into the DUT, check the DUT's responses, and measure what was exercised. Coverage is the third job. It must measure what really happened on the DUT's pins, so a covergroup is fed by a **monitor**: a passive piece of the TB that watches the interface and turns pin activity into one **transaction** (a record such as "read from address 9") per transfer. In the worked example on this page the monitor reads the pins through a **clocking block**, which takes a stable copy of every signal just before each clock edge ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)).
+
+<ArchitectureDiagram
+  title="Where the worked example's covergroup gets its data"
+  caption="Stimulus drives the bus through drv_cb; the monitor reads the same bus through mon_cb and calls cg.sample(t) once per transfer. The plan rows travel into the covergroup as option.comment text. A real DUT would sit on bif; this small example has none, because coverage only needs the observed traffic."
+  nodes={[
+    { id: "stim", label: "initial block", sublabel: "drive(a, o) calls", kind: "generic", col: 0, row: 0 },
+    { id: "plan", label: "plan rows", sublabel: "VP-1 … VP-4", kind: "generic", col: 1, row: 0 },
+    { id: "cov", label: "cov.cg", sublabel: "bus_cov", kind: "generic", col: 2, row: 0 },
+    { id: "rep", label: "report()", sublabel: "percentages", kind: "generic", col: 3, row: 0 },
+    { id: "drv", label: "drive()", sublabel: "via drv_cb", kind: "driver", col: 0, row: 1 },
+    { id: "bif", label: "bif", sublabel: "bus_if", kind: "interface", col: 1, row: 1 },
+    { id: "mon", label: "monitor()", sublabel: "via mon_cb", kind: "monitor", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "stim", to: "drv", style: "control", label: "drive(a, o)" },
+    { from: "drv", to: "bif", style: "data", label: "drv_cb" },
+    { from: "bif", to: "mon", style: "data", label: "mon_cb (#1step)" },
+    { from: "mon", to: "cov", style: "data", label: "cg.sample(t)" },
+    { from: "plan", to: "cov", style: "structural", label: "option.comment" },
+    { from: "cov", to: "rep", style: "data", label: "get_inst_coverage()" }
+  ]}
+/>
+
+Two habits follow from the picture. First, coverage samples what the monitor *observed*, never what the stimulus *intended*: a transfer the DUT dropped must not count. Second, each covergroup row traces back to a plan row, which is why the worked example writes the plan IDs into `option.comment`. Turning a whole plan into traceable coverage is [I-SV-3B](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage)'s topic; this module teaches the building blocks.
+
+### Core constructs in action
+
+**A covergroup is a type** (§19.3). You write the definition once and create instances with `new`, like a class. It may be declared in a package, module, program, interface, checker or class. Its coverpoints are evaluated only when it **samples**, and what triggers a sample is fixed by its **coverage event**:
+
+| How it is declared | Example | When it samples |
 | --- | --- | --- |
-| `bins low = {[0:3]};` | One bin for every listed value | Yes |
-| `bins mid[] = {[4:7]};` | One bin per value: `mid[4]` … `mid[7]` | Yes |
-| `bins q[3] = {[0:9]};` | 3 bins. Each gets floor(10 / 3) = 3 values and the last keeps the rest: `{0,1,2}`, `{3,4,5}`, `{6,7,8,9}` | Yes |
-| no `bins` at all | Automatic bins: one per enum constant, otherwise min(2^M, `option.auto_bin_max`) ranges (default 64) | Yes |
-| `wildcard bins up = {4'b11??};` | `?` matches 0 or 1: values 12 to 15 | Yes |
-| `bins rise = (0 => 1 => 2);` | A sequence of consecutive samples. `[* n]` repeats, `[-> n]` allows gaps | Yes |
-| `bins others = default;` | Every value no other bin lists | **No**, and it is never crossed |
-| `ignore_bins skip = {[4:7]};` | Removes these values from every bin | No |
-| `illegal_bins bad = {13};` | Removes these values; a hit is a **run-time error** | No |
+| Clocking event | `covergroup cg @(posedge clk);` | Every time the event fires, as if the process that triggered the event had called `sample()` |
+| No event | `covergroup cg;` | Only when code calls the built-in `cov.sample()` |
+| Overridden `sample` with arguments | `covergroup cg with function sample(bus_item t);` | Only when code calls `cov.sample(t)`, which passes the data in (§19.8.1) |
+| Block event | `covergroup cg @@(begin drive_item);` | Just before the named task, function or block starts (or just after it ends, with `end`) |
 
-Two rules explain most surprises:
+The [Coverage Options and Sampling](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options) page compares these forms in depth. Here is the smallest complete covergroup: no event, so the code decides when to sample.
 
-1. **Exclusions apply after the bins are built** (§19.5.5, §19.5.6). An `ignore_bins` or `illegal_bins` value is removed from every other bin. A bin left with no values drops out of the percentage (§19.11).
-2. **An illegal hit beats everything.** The value counts in no bin and the simulator reports a run-time error. Whether the run then stops depends on your simulator's error-limit setting, not on the covergroup.
-
-Predict where 13 lands before you sample it. Then switch presets and predict again: 9 in *explicit ranges* (there is no default bin), 9 in *[N] fixed arrays*, 12 in *wildcard*, and 0 after 15 in *transitions*.
-
-<CovergroupBuilder />
-
-### Core Constructs in Action
-<InteractiveCode>
 ```systemverilog
-interface bus_if (input logic clk);
-  logic [3:0] addr;
-  logic [7:0] data;
-  logic       rw;
-  logic       valid;
+// compile
+module tb_top;
+  bit [3:0] addr;
+  bit [3:0] stream[4] = '{2, 9, 13, 2};
 
-  // Samples on every rising edge. Design and testbench drive these
-  // signals with <= (or through a clocking block), so the covergroup
-  // reads the values from just before the edge.
-  covergroup cg_bus @(posedge clk);
-    // Address coverage: count real transfers only
-    cp_addr: coverpoint addr iff (valid) {
-      bins low   = {[0:3]};
-      bins high  = {[12:15]};
-      bins mid[] = {[4:11]};
-    }
-
-    // Data sampled only on valid writes
-    cp_data: coverpoint data iff (valid && rw) {
-      bins zero   = {8'h00};
-      bins full   = {8'hFF};
-      bins others = default;   // catches the rest; never counted
-    }
-
-    // Read vs write
-    cp_rw: coverpoint rw iff (valid);
-
-    // Cross coverage for interaction
-    addr_x_rw: cross cp_addr, cp_rw {
-      ignore_bins write_low = binsof(cp_addr.low) && binsof(cp_rw) intersect {1};
+  // No coverage event: the covergroup samples only when code calls sample()
+  covergroup cg_addr;
+    cp_addr: coverpoint addr {
+      bins low  = {[0:3]};     // one bin that holds all four values
+      bins high = {[12:15]};
     }
   endgroup
 
-  cg_bus bus_cov = new();
-endinterface
+  cg_addr cov = new();         // the definition is a type; this is one instance
+
+  initial begin
+    int covered, total;
+    foreach (stream[i]) begin
+      addr = stream[i];
+      cov.sample();            // one sample per value
+    end
+    // get_inst_coverage() reports this instance; I-SV-3B covers the query methods
+    void'(cov.cp_addr.get_inst_coverage(covered, total));
+    $display("cp_addr: %6.2f%% (%0d of %0d bins)",
+             cov.cp_addr.get_inst_coverage(), covered, total);
+  end
+endmodule
 ```
-</InteractiveCode>
 
-### Crosses: where combinations hide
+Before you read on, predict the percentage. Then check it against the trace.
 
-A cross is the Cartesian product of the **counted** bins of its coverpoints (§19.6). `cp_addr` with 3 bins crossed with `cp_op` with 3 bins gives 9 cross bins. Default, ignored and illegal coverpoint bins are not crossed. To exclude combinations, select cross bins with `binsof` (§19.6.1):
+| Sample | `addr` | Bin incremented | `low` hits | `high` hits |
+| --- | --- | --- | --- | --- |
+| 1 | 2 | `low` | 1 | 0 |
+| 2 | 9 | none: 9 is in no bin | 1 | 0 |
+| 3 | 13 | `high` | 1 | 1 |
+| 4 | 2 | `low` | 2 | 1 |
 
-- `binsof(cp_addr.high)` names a bin. It selects every cross bin whose `cp_addr` part is `high`.
-- `binsof(cp_op) intersect {BURST}` selects by **value**: every `cp_op` bin that contains `BURST`. `intersect` takes values, never bin names.
-- Combine selections with `&&`, `||` and `!`.
+**Expected output** (illustrative: computed by hand from IEEE 1800-2023 §19.5 and §19.11, not captured from a simulator run):
 
-Cross coverage = covered cross bins / (automatic cross bins + your own cross bins). Ignored and illegal products leave the denominator (§19.11.2).
+```text
+cp_addr: 100.00% (2 of 2 bins)
+```
 
-Predict how many random samples it takes to fill every cell, then replay a seeded run. Next, try the *biased* stimulus, then *constrained (hole)*, and finally mark one cell with ✕ `illegal_bins` and watch the errors.
+The value 9 changed nothing. It is not a hole, because no bin asked for it. That is the first mistake everyone makes: assuming that every sampled value counts somewhere.
 
-<CoverageCrossExplorerVisualizer />
+**Formal arguments.** A covergroup can take arguments, passed to `new` (§19.3). An `input` argument is copied when `new` runs, so it can set bin bounds or options per instance; a `ref` argument tracks a variable as it changes and is read-only inside the covergroup. `output` and `inout` arguments are illegal.
 
-What you just saw:
-
-- **Closure is a coupon-collector problem.** With k equally likely bins you need about k × (1 + 1/2 + … + 1/k) random samples: about 25 for 9 bins. The last holes take longest, because almost every sample lands in a bin that is already covered.
-- **Uniform values are not uniform bins.** In *corners + default*, two bins hold one value each, so the wait jumps into the hundreds even with plain `randomize()`.
-- **A hole with probability 0 never closes.** No number of seeds helps. Either the constraint is wrong, or the spec says the combination cannot happen and it belongs in `ignore_bins` or `illegal_bins`.
-
-### Beyond Basics
-- **Illegal bins:** flag scenarios that must never occur. A hit raises a run-time error, so a spec violation is caught as soon as it happens.
-- **Ignore bins:** `ignore_bins` drop combinations that cannot happen, or do not matter, from the metric. They report nothing if the value does show up.
-- **Crosses:** verify feature interactions (e.g., command × power mode).
-
-<InteractiveCode>
 ```systemverilog
+// snippet
+covergroup cg_range (ref bit [7:0] v, input int lo, input int hi);
+  cp_v: coverpoint v {
+    bins in_range[4] = {[lo:hi]};   // bounds fixed per instance when new() runs
+  }
+endgroup
+
+cg_range cov_a = new(data_a, 0, 63);   // data_a, data_b: bit [7:0] variables
+cg_range cov_b = new(data_b, 64, 255);
+```
+
+**Covergroups inside classes** (§19.4). Most testbenches put the covergroup in a class, a coverage *collector*, so each environment can build as many as it needs. A covergroup declared inside a class is an **embedded covergroup**: the declaration creates an anonymous covergroup type and a variable of that type with the covergroup's name. The class constructor must build it.
+
+```systemverilog
+// snippet
 class Packet;
   rand bit [1:0] kind;
   rand bit       has_crc;
@@ -128,25 +146,172 @@ endclass
 
 class PacketCoverage;
   covergroup cg with function sample(Packet p);
-    kind_cp: coverpoint p.kind;
-    crc_cp : coverpoint p.has_crc;
-
+    kind_cp: coverpoint p.kind;        // no bins: 4 automatic bins
+    crc_cp:  coverpoint p.has_crc;     // no bins: 2 automatic bins
     kind_crc: cross kind_cp, crc_cp {
+      // kind 2 must always carry a CRC (spec rule): a hit is a run-time error
       illegal_bins bad_combo = binsof(kind_cp) intersect {2} &&
-                               binsof(crc_cp) intersect {0};
+                               binsof(crc_cp)  intersect {0};
     }
   endgroup
 
   function new();
-    cg = new();
+    cg = new();   // only here: an embedded covergroup is built in the class's new()
   endfunction
 endclass
 ```
-</InteractiveCode>
+
+Two rules from §19.4 matter in practice. If `new()` never builds the covergroup, "the coverage group is not created and no data will be sampled": with a clocking event it simply never appears in the report, and a call to `cg.sample(p)` uses a null handle, which simulators typically stop with a null-object error (tool-dependent). And the covergroup variable "shall not be assigned outside the new() method". Prediction for later: how many cross bins does `kind_crc` count? (4 × 2 = 8 products, minus the one illegal product, so 7.)
+
+### Bins decide what counts
+
+A coverpoint samples one expression. Its **bins** decide which sampled values count, and where. Each line below is one declaration (§19.5, §19.5.1):
+
+| Declaration | What it creates | Counts toward the %? |
+| --- | --- | --- |
+| `bins low = {[0:3]};` | **One** bin for all the listed values: 0, 1, 2 and 3 all count in `low` | Yes |
+| `bins mid[] = {[4:7]};` | One bin **per value**: `mid[4]` … `mid[7]` | Yes |
+| `bins q[3] = {[0:9]};` | 3 bins. Each gets floor(10 / 3) = 3 values and the last keeps the rest: `{0,1,2}`, `{3,4,5}`, `{6,7,8,9}` | Yes |
+| `bins top = {[12:$]};` | `$` is the largest value the coverpoint can hold: 12 to 15 for 4 bits | Yes |
+| no `bins` (only `ignore_bins` or `illegal_bins`, or nothing) | **Automatic bins**: one per enum constant, otherwise min(2^M, `option.auto_bin_max`) ranges, where M is the bit width (default `auto_bin_max` 64) | Yes |
+| `wildcard bins up = {4'b11??};` | `?` matches 0 or 1: values 12 to 15 in one bin | Yes |
+| `bins rise = (0 => 1 => 2);` | A **transition** bin: three consecutive samples 0, then 1, then 2 | Yes |
+| `bins others = default;` | Every value no other bin lists | **No**, and it is never crossed |
+| `ignore_bins skip = {[4:7]};` | Removes these values from every bin | No |
+| `illegal_bins bad = {13};` | Removes these values; a hit is a **run-time error** | No |
+
+Three rules explain most surprises:
+
+1. **Exclusions apply after the bins are built** (§19.5.5, §19.5.6). For value bins (state bins), an `ignore_bins` or `illegal_bins` value is removed from every other bin after the values have been distributed. A bin left with no values drops out of the percentage (§19.11.1). Transition bins follow a different rule (see [Expert: transition semantics in depth](#expert-transition-semantics-in-depth)).
+2. **An illegal hit beats everything.** The value counts in no bin and the simulator reports a run-time error, even if another bin also lists the value. Whether the run then stops depends on your simulator's error-limit setting, not on the covergroup.
+3. **One explicit bin turns automatic bins off** (§19.5.3). Automatic bins exist only while a coverpoint declares no bins other than `ignore_bins` and `illegal_bins`. Add a single `bins hot = {0};` to a 2-bit coverpoint and it has one bin, not five.
+
+**How the percentage is computed** (§19.11.1). For one coverpoint, coverage = covered bins ÷ bins that still hold at least one value. A bin is **covered** when its hit count reaches `option.at_least` (default 1). A covergroup's number is the average of its coverpoints and crosses, weighted by each item's `option.weight` (default 1).
+
+The bins editor below runs these rules on a 4-bit coverpoint. Predict where 13 lands in the first preset before you sample it. Then switch presets and predict again: 9 in *explicit ranges*, 9 in *[N] fixed arrays*, 13 in *automatic bins* (here `auto_bin_max = 3`), 12 in *wildcard*, and 0 after 15 in *transitions*.
+
+<CovergroupBuilder />
+
+What you just saw:
+
+- **13 in *default · ignore · illegal*** raised an error and counted nowhere, although `high` lists 13: illegal beats every bin.
+- **9 in *explicit ranges*** landed in no bin and changed no number. In *[N] fixed arrays*, 9 is in `q[2]`, the last bin, which took the remainder `{6,7,8,9}`.
+- **13 in *automatic bins*** went to `auto[10:15]`: 16 values in 3 bins gives 5 values per bin, and the last bin takes the remaining 6.
+- **12 in *wildcard*** counted in two bins at once, `upper` and `even[12]`. Overlapping bins each count the same sample.
+- **0 in *transitions*** completed `wrap` only because the previous sample was 15. A transition bin looks at consecutive *samples*, not consecutive clock cycles.
+
+### Automatic, wildcard and transition bins
+
+**Automatic bins** (§19.5.3) are a quick first look at a small field. For an enum coverpoint there is one bin per named constant. For any other integral coverpoint there are N = min(2^M, `auto_bin_max`) bins; when N is smaller than 2^M the values are spread evenly and the last bin takes the remainder. For a 3-bit field with N = 3 the bins are `<0,1>`, `<2,3>`, `<4,5,6,7>`. Samples containing x or z bits are skipped. Exclusions still apply afterwards, and an automatic bin they empty leaves the denominator. In this LRM example (§19.11.1), predict the number of counted bins first:
+
+```systemverilog
+// snippet
+bit [2:0] b;
+covergroup ct;
+  coverpoint b {
+    option.auto_bin_max = 4;            // auto[0:1] auto[2:3] auto[4:5] auto[6:7]
+    ignore_bins ig = {[0:1], [5:6]};
+  }
+endgroup
+```
+
+After the exclusions the bins hold `{}`, `{2,3}`, `{4}` and `{7}`. The empty bin drops out, so the coverpoint counts **3** bins, not min(4, 8) = 4. Automatic bins are rarely what a plan asks for: on a 32-bit field you get 64 ranges of 2^26 values each, and a hit anywhere in a range covers it.
+
+**Wildcard bins** (§19.5.4) match bit patterns. In a `wildcard` bin, `?`, `x` and `z` all mean "0 or 1", so `wildcard bins up = {4'b11??};` holds 12 to 15 in one bin, and `wildcard bins up_v[] = {4'b11??};` makes four bins, one per matching value. They suit opcode classes defined by a few bits. A wildcard bin ignores sampled values that contain x or z.
+
+**Transition bins** (§19.5.2) count sequences of consecutive samples, the way a state-machine coverpoint needs:
+
+- `(1 => 2)`: a sample of 1 followed by a sample of 2. `(1, 5 => 6, 7)` is a set: it stands for the four transitions 1=>6, 1=>7, 5=>6 and 5=>7.
+- `(3 [* 3])`: three consecutive samples of 3, the same as `3 => 3 => 3`.
+- `(3 [-> 2] => 5)`: **goto** repetition. Two samples of 3, not necessarily next to each other, and then 5 must come **immediately** after the second 3.
+- `(3 [= 2] => 5)`: **nonconsecutive** repetition. Two samples of 3, and then 5 may come **later**, as long as no third 3 appears first.
+- `bins other_seq = default sequence;` catches transitions that no other transition bin matches.
+
+Predict which bins count on each stream before you read the table.
+
+```systemverilog
+// snippet
+coverpoint state {
+  bins g = (3 [-> 2] => 5);
+  bins n = (3 [= 2] => 5);
+}
+```
+
+| Stream (sample order) | `g` (goto) | `n` (nonconsecutive) | Why |
+| --- | --- | --- | --- |
+| A: 3 1 3 5 | +1 at sample 4 | +1 at sample 4 | 5 follows the second 3 immediately, which satisfies both |
+| B: 3 1 3 1 5 | no hit | +1 at sample 5 | After the second 3 comes a 1: goto needs 5 *next*, nonconsecutive only needs no further 3 before the 5 |
+
+A transition is between *samples*, so the sampling rate changes its meaning. For a state-machine coverpoint sampled on every clock, `(IDLE => IDLE)` is hit on every idle cycle; sampled once per state change, it can never be hit. Decide which one your plan means. Transition bins also count at most once per sample (§19.5.2), and a length-0 transition such as `(0)` is illegal.
+
+### Value resolution: what a bin really holds
+
+Bin values are compared with the coverpoint's own type, and values that do not fit are dropped (§19.5.7). The steps:
+
+1. The **effective type** is the coverpoint's declared type if it has one (`bit [7:0] d: coverpoint y[31:24];`), otherwise the self-determined type of the expression.
+2. Each bin value is cast to that type. Enum values act as their base type.
+3. The simulator issues a **warning** when a bin value is negative but the type is unsigned, when the cast changes the value, or when the value has x or z bits (outside wildcard bins).
+4. A warned single value is dropped from the bin. A range is dropped if every value in it warns (or a bound has x or z bits); otherwise it shrinks to the values the type can hold.
+
+Predict what each bin holds, using the LRM's own example, then check:
+
+| Coverpoint type | Bin as written | Treated as | Warnings for |
+| --- | --- | --- | --- |
+| `bit [2:0] p1` (0 to 7) | `{1, [2:5], [6:10]}` | `{1, [2:5], [6:7]}` | `[6:10]` |
+| `bit [2:0] p1` | `{-1, [1:10], 15}` | `{[1:7]}` | `-1`, `[1:10]`, `15` |
+| `bit signed [2:0] p2` (−4 to 3) | `{1, [2:5], [6:10]}` | `{1, [2:3]}` | `[2:5]`, `[6:10]` |
+| `bit signed [2:0] p2` | `{-1, [1:10], 15}` | `{-1, [1:3]}` | `[1:10]`, `15` |
+
+The danger is a bin that resolves to nothing. It becomes empty, leaves the denominator (§19.11.1), and the percentage can read 100% while a planned scenario was never measured. The only evidence is a warning, usually at compile or elaboration time (the step where the simulator builds the design before running it). Read those warnings; the debug challenge in Practice & Reinforce is exactly this bug.
+
+### Crosses: where combinations hide
+
+A **cross** counts combinations (§19.6). Its automatic bins are the Cartesian product (every combination) of the **counted** bins of its coverpoints: default, ignored and illegal coverpoint bins are never crossed. A coverpoint with 3 bins crossed with one that has 3 bins gives 9 cross bins. Crossing a plain variable creates an implicit coverpoint for it, and a cross may have its own `iff` guard. Only coverpoints of the same covergroup can be crossed.
+
+To name groups of cross bins, select them with `binsof` (§19.6.1):
+
+- `binsof(cp_addr.high)` names a bin. It selects every cross bin whose `cp_addr` part is `high`.
+- `binsof(cp_op) intersect {BURST}` selects by **value**: every `cp_op` bin that contains `BURST`. `intersect` takes values, never bin names.
+- Combine selections with `&&`, `||` and `!`.
+
+A selection can define three kinds of cross bin. `ignore_bins` and `illegal_bins` remove products from the count, and an illegal product reports a run-time error even if it is also ignored (§19.6.2, §19.6.3). A plain `bins` selection groups several products into one **user-defined cross bin**. User-defined and automatic cross bins coexist: by default an automatic bin is kept only for products that no user-defined bin covers (`option.cross_retain_auto_bins`, default 1). Predict how many bins `x2` counts in this LRM example (§19.6.1):
+
+```systemverilog
+// snippet
+int i, j;
+covergroup ct;
+  coverpoint i { bins i[] = {[0:1]}; }
+  coverpoint j { bins j[] = {[0:1]}; }
+  x1: cross i, j;                                       // 4 automatic bins
+  x2: cross i, j { bins i_zero = binsof(i) intersect {0}; }
+endgroup
+```
+
+| Product | `x1` | `x2` |
+| --- | --- | --- |
+| `<i[0], j[0]>` | own bin | inside `i_zero` |
+| `<i[0], j[1]>` | own bin | inside `i_zero` |
+| `<i[1], j[0]>` | own bin | own automatic bin (retained) |
+| `<i[1], j[1]>` | own bin | own automatic bin (retained) |
+| **Counted bins** | **4** | **3** (`i_zero` plus two retained) |
+
+With `option.cross_retain_auto_bins = 0` in the cross, any user-defined bin removes all the automatic ones, and `x2` would count 1 bin. Cross coverage is covered cross bins ÷ (automatic cross bins + user-defined cross bins), where ignored and illegal products leave the denominator (§19.11.2).
+
+The explorer below crosses `cp_addr` (3 named ranges by default) with `cp_op` (an enum with 3 constants, so 3 automatic bins). Predict how many random samples it takes to fill every cell, then replay a seeded run. Next, try the *biased* stimulus, then *constrained (hole)*, and finally mark one cell with ✕ `illegal_bins` and watch the errors.
+
+<CoverageCrossExplorerVisualizer />
+
+What you just saw:
+
+- **Closure is a coupon-collector problem.** With k equally likely bins you need about k × (1 + 1/2 + … + 1/k) random samples: about 25 for 9 bins. The last holes take longest, because almost every sample lands in a bin that is already covered.
+- **Uniform values are not uniform bins.** In *corners + default*, two bins hold one value each, so the wait jumps into the hundreds even with plain `randomize()`.
+- **A hole with probability 0 never closes.** No number of seeds helps. Either the constraint is wrong, or the spec says the combination cannot happen and it belongs in `ignore_bins` or `illegal_bins`. Deciding which, and steering stimulus toward real holes, is [I-SV-3B's closure workflow](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow).
+
+### Recap
 
 <VisualRecap
   title="Bins decide what counts"
-  rule="A sampled value increments the bins that list it. Ignore and illegal values are removed from every bin first; default catches the rest. Only bins and automatic bins count toward the percentage, and a cross multiplies only those."
+  rule="A sampled value increments every bin that lists it. An ignored or illegal value counts in no bin (exclusions apply after the bins are built); default catches the rest. Only bins and automatic bins count toward the percentage, and a cross multiplies only those."
   code={`cp_addr: coverpoint addr iff (valid) {
   bins low       = {[0:3]};
   bins high      = {[12:15]};
@@ -155,7 +320,7 @@ endclass
   bins others    = default;   // not counted, not crossed
 }`}
   mistake="Assuming every sampled value counts somewhere. Without a default bin, a value outside every bin leaves coverage unchanged, and an over-narrow bin list can report 100% while real traffic was never classified."
-  inTestbench="Covergroups live in a monitor or subscriber that calls sample() once per observed transaction. Bins come straight from the verification plan, with illegal_bins for spec violations and ignore_bins for documented exclusions."
+  inTestbench="Covergroups live in a coverage collector fed by a monitor, which calls sample() once per observed transaction. Bins come straight from the verification plan, with illegal_bins for values the spec forbids and ignore_bins for documented exclusions."
 >
   <svg viewBox="0 0 320 128" role="img" aria-label="A value lands in illegal first, then ignore, then the counted bins that list it, then default, otherwise nowhere." style={{ width: "100%", maxWidth: 360 }}>
     <text x="8" y="16" fontSize="11" fill="currentColor">sampled value v</text>
@@ -170,94 +335,645 @@ endclass
   </svg>
 </VisualRecap>
 
+### Mistakes to avoid
+
+1. **Assuming every sampled value counts somewhere.** A value outside every bin is invisible, not a hole. Add `bins others = default;` temporarily to see such values; it still never counts.
+2. **Believing ignore and illegal bins count toward the percentage.** They are removed from the denominator, and so is any bin they leave empty.
+3. **Thinking a covergroup samples whenever its variables change.** It samples only on its coverage event or a `sample()` call. A clocked covergroup samples once per event, however often the variables changed in between.
+4. **Adding one explicit bin and losing the automatic bins.** Once a coverpoint declares any `bins`, it has only those.
+5. **Ignoring value-resolution warnings.** A bin that resolves to no values disappears from the percentage.
+6. **Using `ignore_bins` for a value the spec forbids.** `ignore_bins` hides the value silently; only `illegal_bins` reports it. Use `ignore_bins` for "cannot happen or does not matter", and `illegal_bins` for "must never happen".
+
 ## Make It Work
-1. **Forecast scenarios:** Derive coverpoints and crosses directly from the verification plan features.
-2. **Sample once per real transaction:** Put the covergroup where the data is observable (a monitor or subscriber). Either call `sample()` once per transaction, or use a clocking event with an `iff` guard. Never both on the same edge, or each transfer counts twice.
-3. **Review reports:** After regressions, inspect bin hit counts; prioritize holes that map to high-risk features.
-4. **Close the loop:** For each hole decide: rare (bias the stimulus), impossible by spec (`ignore_bins`, or `illegal_bins` if it must never happen), or a generator bug (fix the constraint). Rerun and repeat.
 
-**Checklist before moving on:**
-- [ ] You can say where any value lands: a bin, the default bin, ignored, illegal, or nowhere.
-- [ ] You know when to add `ignore_bins` or `illegal_bins`, and that only `illegal_bins` reports anything.
-- [ ] You can write a cross exclusion with `binsof(cp.bin)` or `binsof(cp) intersect {values}`.
-- [ ] You can estimate how many samples a cross needs, and recognize a hole that no seed can close.
+### Worked example: four plan rows on a small bus
 
-## Push Further
-- Integrate coverage goals into automation (e.g., stop regression when goals met).
-- Weight what matters: `option.weight` sets how much a coverpoint or cross counts in the covergroup's weighted average; `option.goal` is only the target percentage. `option.weight = 0` on coverpoints that exist only to feed a cross makes the cross the number that counts.
-- Tie coverage data to dashboards that show closure status by feature.
+A small bus carries a 4-bit address, a read or write operation and a `valid` flag. The plan has four rows:
 
-## Practice & Reinforce
-- Flashcards – Solidify terminology for coverpoints, bins, crosses.
-- Quiz – Complete the coverage fundamentals check below.
-- Bins drill – In the bins editor above, model a 4-bit opcode: one bin per legal opcode, `ignore_bins` for reserved codes, `illegal_bins` for the one forbidden code. Predict three values before you sample them.
-- Closure drill – In the cross explorer, choose *corners + default* with *biased* stimulus. Predict, run, then change one setting so the forecast drops below 500 samples, and explain why it worked.
-- Lab – [The Coverage Closure Loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) in I-SV-3B closes a real ALU covergroup.
+| ID | Requirement |
+| --- | --- |
+| VP-1 | Every address region is used: low (0–3), two middle regions (4–7, 8–11) and high (12–15) |
+| VP-2 | Address 15 is reserved and must never be used |
+| VP-3 | Both reads and writes occur |
+| VP-4 | Every region is both read and written, except that low is read-only |
 
-## Deep Dives in this Track
-- [Coverage Options and Sampling](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options)
+The bench drives eight transfers, one of them to the reserved address, and the monitor samples each one once, through the clocking block.
 
-## References & Next Topics
-- **IEEE 1800-2023, Clause 19:** Functional coverage. §19.5 defines bins, §19.6 crosses and `binsof`, §19.11 how the percentages are computed.
-- Next: [`/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage`](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/index).
+```systemverilog
+// compile
+`timescale 1ns/1ps
 
-<Quiz
-  questions={[
-    {
-      question: 'When would you use `illegal_bins`?',
-      answers: [
-        { text: 'To gain code coverage credit for a scenario', correct: false },
-        { text: 'To flag that a scenario must never occur; hitting it raises an error', correct: true },
-        { text: 'To exclude scenarios from coverage metrics', correct: false },
-        { text: 'To define default bins automatically', correct: false }
-      ],
-      explanation:
-        'Hitting an illegal bin raises a run-time error, and the sample counts in no bin. Whether the simulation then stops depends on the tool\'s error-limit setting. Excluding a scenario without any error is what ignore_bins does.'
-    },
-    {
-      question: 'cp_addr has bins low = {[0:3]} and high = {[12:15]} and no default bin. The value 9 is sampled. What happens?',
-      answers: [
-        { text: 'An automatic bin is created for 9', correct: false },
-        { text: 'Nothing is counted; coverage does not change', correct: true },
-        { text: 'It is counted in the closest bin', correct: false },
-        { text: 'The simulator reports an error', correct: false }
-      ],
-      explanation:
-        'Automatic bins are created only when a coverpoint declares no bins of its own. A value outside every declared bin is simply not counted. Add bins others = default if you want to see such values (they still do not count toward the percentage).'
-    },
-    {
-      question: 'Which cross select picks exactly the cell <high, BURST>?',
-      answers: [
-        { text: 'binsof(cp_addr) intersect {high} && binsof(cp_op) intersect {BURST}', correct: false },
-        { text: 'binsof(cp_addr.high) && binsof(cp_op) intersect {BURST}', correct: true },
-        { text: 'binsof(cp_addr.high) || binsof(cp_op) intersect {BURST}', correct: false },
-        { text: 'cross(cp_addr.high, cp_op.BURST)', correct: false }
-      ],
-      explanation:
-        'binsof(cp.bin) names a bin; intersect takes values, never bin names. && keeps only cross bins that satisfy both selections, while || would select the whole high row plus the whole BURST column.'
-    },
-    {
-      question: 'Why add cross coverage?',
-      answers: [
-        { text: 'To speed up sampling', correct: false },
-        { text: 'To verify interactions between features defined by multiple coverpoints', correct: true },
-        { text: 'To reduce the number of bins required', correct: false },
-        { text: 'To convert code coverage to functional coverage', correct: false }
-      ],
-      explanation:
-        'Cross coverage ensures that combinations like (command type × power mode) have been observed, not just each feature independently.'
+typedef enum bit {READ, WRITE} op_e;
+
+interface bus_if (input logic clk);
+  logic [3:0] addr;
+  op_e        op;
+  logic       valid;
+
+  clocking drv_cb @(posedge clk);
+    output addr, op, valid;
+  endclocking
+
+  // Default #1step input skew: the monitor reads the values from before the edge
+  clocking mon_cb @(posedge clk);
+    input addr, op, valid;
+  endclocking
+endinterface
+
+class bus_item;
+  bit [3:0] addr;
+  op_e      op;
+endclass
+
+class bus_cov;
+  covergroup cg with function sample(bus_item t);
+    option.per_instance = 1;   // keep this instance's numbers in the database
+    cp_addr: coverpoint t.addr {
+      option.comment = "VP-1 address regions, VP-2 reserved address";
+      bins low    = {[0:3]};
+      bins mid[2] = {[4:11]};            // mid[0] = 4..7, mid[1] = 8..11
+      bins high   = {[12:15]};
+      illegal_bins rsvd_addr = {15};     // VP-2; also removes 15 from high
     }
+    cp_op: coverpoint t.op {
+      option.comment = "VP-3 reads and writes";   // enum: one automatic bin each
+    }
+    addr_x_op: cross cp_addr, cp_op {
+      option.comment = "VP-4 every region read and written; low is read-only";
+      ignore_bins no_wr_low = binsof(cp_addr.low) && binsof(cp_op) intersect {WRITE};
+    }
+  endgroup
+
+  function new();
+    cg = new();   // an embedded covergroup exists only if new() builds it
+  endfunction
+endclass
+
+module tb_top;
+  logic clk = 1'b0;
+  always #5 clk = ~clk;
+
+  bus_if  bif (clk);
+  bus_cov cov = new();
+
+  task automatic drive(bit [3:0] a, op_e o);
+    @(bif.drv_cb);
+    bif.drv_cb.addr  <= a;
+    bif.drv_cb.op    <= o;
+    bif.drv_cb.valid <= 1'b1;
+    @(bif.drv_cb);
+    bif.drv_cb.valid <= 1'b0;   // one transfer, then an idle cycle
+  endtask
+
+  // Coverage sees what the monitor observed, once per transfer
+  task automatic monitor();
+    forever begin
+      @(bif.mon_cb);
+      if (bif.mon_cb.valid === 1'b1) begin
+        bus_item t = new();
+        t.addr = bif.mon_cb.addr;
+        t.op   = bif.mon_cb.op;
+        cov.cg.sample(t);
+      end
+    end
+  endtask
+
+  function automatic void report();
+    int covered, total;
+    void'(cov.cg.addr_x_op.get_inst_coverage(covered, total));
+    $display("cp_addr   : %6.2f%%", cov.cg.cp_addr.get_inst_coverage());
+    $display("cp_op     : %6.2f%%", cov.cg.cp_op.get_inst_coverage());
+    $display("addr_x_op : %6.2f%% (%0d of %0d cross bins)",
+             cov.cg.addr_x_op.get_inst_coverage(), covered, total);
+    $display("cg        : %6.2f%%", cov.cg.get_inst_coverage());
+  endfunction
+
+  initial begin
+    fork
+      monitor();
+    join_none
+    drive(4'd2,  READ);
+    drive(4'd5,  WRITE);
+    drive(4'd9,  READ);
+    drive(4'd12, WRITE);
+    drive(4'd0,  WRITE);   // <low, WRITE> is ignored by the cross
+    drive(4'd6,  READ);
+    drive(4'd13, READ);
+    drive(4'd15, WRITE);   // reserved: a run-time error, no cp_addr bin counts it
+    @(bif.drv_cb);         // let the monitor sample the last transfer
+    report();
+    $finish;
+  end
+endmodule
+```
+
+**Predict first.** `cp_addr` has 4 counted bins (`low`, `mid[0]`, `mid[1]`, `high`), and `cp_op` has 2 automatic enum bins. How many cross bins count, and which ones will the eight transfers fill? Fill a 4 × 2 grid on paper before you read the trace.
+
+| # | addr, op | `cp_addr` bin | `cp_op` bin | Cross cell | Cross bins covered |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 2, READ | `low` | `READ` | `<low, READ>` new | 1 of 7 |
+| 2 | 5, WRITE | `mid[0]` | `WRITE` | `<mid[0], WRITE>` new | 2 of 7 |
+| 3 | 9, READ | `mid[1]` | `READ` | `<mid[1], READ>` new | 3 of 7 |
+| 4 | 12, WRITE | `high` | `WRITE` | `<high, WRITE>` new | 4 of 7 |
+| 5 | 0, WRITE | `low` | `WRITE` | `<low, WRITE>` ignored | 4 of 7 |
+| 6 | 6, READ | `mid[0]` | `READ` | `<mid[0], READ>` new | 5 of 7 |
+| 7 | 13, READ | `high` | `READ` | `<high, READ>` new | 6 of 7 |
+| 8 | 15, WRITE | none: run-time error | `WRITE` | none | 6 of 7 |
+
+The cross has 4 × 2 = 8 products minus the ignored `<low, WRITE>`, so 7 counted bins. The one hole is `<mid[1], WRITE>`: no write went to addresses 8 to 11. The illegal transfer still counts in `cp_op`, because each coverpoint classifies its own value.
+
+The waveform shows how the first two transfers reach the covergroup. The clock's rising edges are at 5, 15, 25 … ns (edge k at 5 + 10k ns). `drive()` writes through `drv_cb` at an edge, so the new values appear just after it; `mon_cb` reads each signal just before the next edge.
+
+<TimingDiagram
+  title="The monitor samples each transfer once, through mon_cb"
+  caption="values[k] is what mon_cb reads at edge k (#1step input skew): the value drv_cb drove just after the previous edge. Transfers are sampled at edges 1 and 3; at edges 0, 2 and 4 valid is not 1, so the monitor does not call sample()."
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "valid", kind: "bit", values: [undefined, 1, 0, 1, 0] },
+    { name: "addr", kind: "bus", values: [undefined, "2", "2", "5", "5"] },
+    { name: "op", kind: "bus", values: ["READ", "READ", "READ", "WRITE", "WRITE"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "vacuous", label: "edge 0, 5 ns: mon_cb reads valid = X, so no sample" },
+    { edge: 1, tone: "sample", label: "edge 1, 15 ns: mon_cb reads valid = 1, addr 2, READ, so cg.sample(t)" },
+    { edge: 2, tone: "vacuous", label: "edge 2, 25 ns: valid = 0 (idle cycle), so no sample" },
+    { edge: 3, tone: "sample", label: "edge 3, 35 ns: valid = 1, addr 5, WRITE, so cg.sample(t)" },
+    { edge: 4, tone: "vacuous", label: "edge 4, 45 ns: valid = 0, so no sample" }
   ]}
 />
 
-<div className="mt-8">
-  <InterviewQuestionPlayground
-    question="You notice a specific coverage bin for a rare error condition remains at 0% hit rate in your regression. What is the CORRECT first step to take?"
-    options={[
-      { text: "Write a directed test to hit the error condition.", isCorrect: false, feedback: "While this might work, it masks a potential bug if the random stimulus *should* have hit it." },
-      { text: "Use `ignore_bins` to exclude it, since it's a rare error and you only care about normal operation.", isCorrect: false, feedback: "Error conditions are often the most critical parts to verify!" },
-      { text: "Check whether the stimulus constraints actually allow the error condition to be generated.", isCorrect: true, feedback: "Correct! The number one reason a valid bin is empty is that the constraints preventing it are too tight, or no test sequences exist that target that operational mode." },
-      { text: "Increase `option.auto_bin_max` to force the simulator to discover the bin.", isCorrect: false, feedback: "Auto bins just automatically divvy up variables into groups; they don't magically make the stimulus hit new areas." }
-    ]}
-  />
-</div>
+At edge 2, `addr` still holds 2 from the first transfer. A covergroup clocked on every edge without a guard would count that leftover value a second time; sampling only when `valid` is 1 is what keeps one transfer equal to one sample.
+
+**Expected output** (illustrative: computed by hand from IEEE 1800-2023 §19.11, not captured from a simulator run; the wording and format of the illegal-bin error are simulator-specific):
+
+```text
+<run-time error at 155 ns: illegal bin cp_addr.rsvd_addr hit, value 15>
+cp_addr   : 100.00%
+cp_op     : 100.00%
+addr_x_op :  85.71% (6 of 7 cross bins)
+cg        :  95.24%
+```
+
+The covergroup number is the average of its three items with weight 1: (100 + 100 + 85.71) ÷ 3 = 95.24.
+
+### Run it
+
+Compile the file with any simulator that supports IEEE 1800-2023 functional coverage and run `tb_top`. Covergroup support in open-source simulators is limited and has not been verified for this example. Most simulators also write a coverage database that a separate report tool reads; the `$display` lines above do not need it.
+
+### How to turn a plan into a covergroup
+
+1. **One coverpoint per plan dimension.** Write the plan ID into `option.comment` of the coverpoint or cross that measures it.
+2. **Name ranges before you reach for `[]`.** `bins mid[2] = {[4:11]};` says what the plan means; `bins v[] = {[0:15]};` creates 16 bins nobody asked for.
+3. **Choose exclusions deliberately.** Use `illegal_bins` for "must never happen" and `ignore_bins` for "cannot happen or does not matter", each with a comment citing the spec.
+4. **Sample once per observed transaction.** Put the covergroup in a collector fed by a monitor. Either call `sample()` once per transaction, or use a clocking event with an `iff` guard; never both on the same edge, or each transfer counts twice.
+5. **Predict the bin counts, then check them** against the report. A count you cannot explain is a bug in the model.
+6. **Read compile and elaboration warnings.** A value-resolution warning means a bin changed.
+
+### Debugging coverage
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Null-object error at `cg.sample(t)`, or the covergroup is missing from the report | The embedded covergroup was never built in the class's `new()` | Add `cg = new();` to the constructor |
+| 0%, no bin ever hit | `sample()` never called, wrong event, or an `iff` guard that is always false | Check the call site, the event and the guard |
+| 100% too early; counts far above the number of transfers | A clocked covergroup without `iff` samples idle cycles | Add `iff (valid)`, or sample from the monitor |
+| Every count exactly doubled; multi-step transition bins never hit | A clocking event plus a manual `sample()` on the same edge | Keep one sampling style |
+| A value you drove appears nowhere | Outside every bin, ignored, or never observed by the monitor | Add `bins others = default;` temporarily; check the exclusions and the monitor |
+| A planned bin vanished and the percentage still reads 100% | Value resolution emptied it (a compile or elaboration warning) | Read the warning; fix the bin, the field width or the plan |
+| Run-time error naming an illegal bin | A forbidden value was observed, or the `illegal_bins` list is wrong | Check the spec first, then the list |
+| Thousands of bins, slow runs | `[]` over wide ranges, or large crosses (64 × 64 automatic bins is already 4,096) | Named ranges, a smaller `auto_bin_max`, fewer crossed bins |
+
+### In a UVM testbench
+
+From [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index) on, the same collector becomes a coverage **subscriber**: a component of class `uvm_subscriber #(bus_item)` that receives every transaction the monitor publishes and calls `cg.sample(t)` from its `write(t)` method (IEEE 1800.2-2020 §13.9; uvm-core 2020.3.1 `src/comps/uvm_subscriber.svh`). The covergroup, its bins and its sampling rules do not change. [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) shows how the monitor's analysis port (its output for published transactions) connects to it.
+
+```systemverilog
+// snippet (UVM preview; bus_item would extend uvm_sequence_item there)
+class bus_cov_sub extends uvm_subscriber #(bus_item);
+  `uvm_component_utils(bus_cov_sub)
+  covergroup cg with function sample(bus_item t);
+    // ... the same coverpoints and cross as bus_cov ...
+  endgroup
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    cg = new();
+  endfunction
+  function void write(bus_item t);
+    cg.sample(t);
+  endfunction
+endclass
+```
+
+**Checklist before moving on:**
+- [ ] You can say where any value lands: a bin, the default bin, ignored, illegal, or nowhere.
+- [ ] You can predict how many bins a coverpoint has, including when automatic bins appear and when exclusions empty one.
+- [ ] You can tell which values a bin holds after value resolution.
+- [ ] You know when to add `ignore_bins` or `illegal_bins`, and that only `illegal_bins` reports anything.
+- [ ] You can write a cross exclusion with `binsof(cp.bin)` or `binsof(cp) intersect {values}`, and count a cross that declares its own `bins`.
+- [ ] You can explain why the worked example samples from the monitor, once per transfer.
+
+## Push Further
+
+### Expert: value-resolution corner cases
+
+§19.5.7 has more edges than the four-row table shows.
+- An explicit coverpoint type changes everything downstream: `bit [7:0] d: coverpoint y[31:24];` resolves bins against 8 unsigned bits, whatever the type of `y`.
+- Enum constants in bins and in the coverpoint expression are treated as values of the enum's base type, so bins are compared by integer value, not by enum type.
+- A range keeps the values the type can express if at least one value in it would not warn; it disappears only if every value warns or a bound contains x or z bits.
+- The same rules apply to set expressions (`bins b[] = arr;`, §19.5.1.2): each element that warns is dropped.
+
+Interview angle: "A bin `{[200:300]}` on a `bit [7:0]` coverpoint: what does it hold?" (200 to 255, with a warning.)
+
+### Expert: 4-state values in bins
+
+The standard is not consistent here, so treat this as tool-dependent. §19.5.4 says that an x or z in a non-wildcard bin value matches only a sampled x or z in the same bit positions, compared with `===`. §19.5.7 rule 3 says a bin value with x or z bits must raise a warning, and a warned single value "shall not participate". Simulators differ. Keep x and z out of non-wildcard bins; if you must count unknown values, sample a 2-state flag such as `$isunknown(addr)` in its own coverpoint. In `wildcard` bins, x, z and `?` are all wildcards (§19.5.4), and both wildcard bins and automatic bins skip samples that contain x or z. Wildcards also work in transitions: `wildcard bins t0_3 = (2'b0x => 2'b1x);` counts 00=>10, 00=>11, 01=>10 and 01=>11, "as if by (0,1 => 2,3)".
+
+### Expert: transition semantics in depth
+
+From §19.5.2, §19.5.5 and §19.5.6:
+- `default sequence` increments only when no other transition bin increments and none is still pending. For the LRM's bins `sa = (4 => 5 => 6), ([7:9],10 => 11,12)`, `sc = (12 => 3 [-> 1])` and `allother = default sequence`, the stream `4 5 7 11 8 12 2 2 3` increments `allother` twice: at 7 (the pending `4 => 5 => 6` fails) and at 8. It does not increment on `12 2 2`, because `sc` stays pending.
+- `default sequence` cannot be an array, and unbounded or varying-length sequences such as `3 [= 2]` cannot use `[]`.
+- Overlapping matches each count, but a transition bin increments at most once per sample.
+- Exclusions work differently on transitions. An ignored or illegal *sequence* removes every covered sequence that cannot match without matching it (`2=>3` removes `1=>2=>3=>4`). An ignored or illegal *value* has no effect on transitions that contain it. Ignored and illegal transition bins cannot be unbounded.
+- In a cross, `binsof` treats a transition bin by its last value (§19.6.1).
+- How a sample whose `iff` guard is false affects a pending transition is not spelled out in the LRM text: tool-dependent.
+
+### Expert: cross bins and bin expressions in depth
+
+- **Select expressions** (§19.6.1, §19.6.1.2–§19.6.1.4) also accept `with (…) matches n` and cross-set expressions that enumerate product tuples. They are powerful and hard to review; prefer plain `binsof` selections unless a rule is genuinely arithmetic.
+- **Precedence:** an illegal product beats an ignore and every user bin (§19.6.3); an ignored product is excluded even if a user bin includes it (§19.6.2).
+- **Guards:** a cross can have an `iff` guard, and each cross bin a per-bin `iff`.
+- **Bins built from expressions** (§19.5.1.1): `bins mod3[] = {[0:255]} with (item % 3 == 0);` keeps the 86 multiples of 3. By default the `with` filter runs before values are distributed to fixed-count bins; `type_option.distribute_first = 1` reverses that order (Table 19-3).
+- **Fixed-count edge cases** (§19.5.1): `bins fixed[5] = {1, 4, 7};` makes `<1>`, `<4>`, `<7>` and two empty bins, which drop out of the count; duplicates are kept, so `bins fixed[4] = {[1:10], 1, 4, 7};` gives the last bin `<10,1,4,7>`.
+- **Counting** (§19.11.2): with user bins, the denominator is the automatic bins that remain plus the user-defined bins that are not `ignore_bins` or `illegal_bins`.
+
+### Expert: covergroup inheritance and real-valued coverpoints
+
+IEEE 1800-2023 contains two features that older simulators may not support; check yours (tool-dependent).
+- **`covergroup extends`** (§19.4.1), allowed only inside a derived class, replaces the base class's covergroup instance with a derived one. It inherits the base's arguments and coverage event; a coverpoint with the same name overrides the base coverpoint, and new names add coverpoints. A base cross that uses an overridden coverpoint keeps contributing unless the derived covergroup declares a cross with the same name. For `get_coverage()` the base and derived covergroups are separate types, so no aggregation happens across them. A derived covergroup "shall not define a new coverage model for class properties that are local to the base class".
+- **Real coverpoints** (§19.5, §19.5.1) need explicit bins: no automatic, wildcard or transition bins. An open array `[]` over a real range splits it into intervals of `type_option.real_interval` (default 1.0), and tolerance ranges are written `[x +/- y]` and `[x +%- y]`.
+
+### Expert: illegal_bins versus assertions
+
+An illegal bin fires only on a *sampled* value (§19.5.6). Cycles that are guarded by `iff`, or that the covergroup never samples, are never checked. Whether illegal bins still report while a covergroup is stopped with `stop()` is not stated in Table 19-5, and what happens when a tool option disables functional coverage is tool-dependent. So use SystemVerilog Assertions ([I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)) or a scoreboard check for protocol rules, which check every cycle. Keep `illegal_bins` as the coverage model's own statement of what must never be observed; it is a second line of defence, not the first.
+
+### Expert: coverage-model size and simulation cost
+
+There are no general figures; cost is tool-dependent, but the bin arithmetic is not:
+- `bins v[] = {[0:$]};` on a 16-bit field creates 65,536 bins.
+- Automatic bins on a 32-bit field stop at `auto_bin_max` (64 ranges of 2^26 values), which is cheap but nearly meaningless.
+- A cross of three 16-bin coverpoints has 4,096 bins, most of which no plan row asked for.
+- Sampling once per transaction instead of once per clock cuts the work and the noise.
+- `per_instance = 1` stores every instance separately and grows the database.
+- `option.detect_overlap = 1` warns about overlapping bins (a cheap lint), and `option.cross_num_print_missing` makes the report list missing cross bins.
+
+### Expert: interview angles
+
+<InterviewQuestionPlayground
+  title="Interview: a 100% coverpoint"
+  question="A coverpoint has only bins low = {[0:3]} and high = {[12:15]}. It reports 100%, while the DUT saw address 9 thousands of times. Is anything wrong?"
+  options={[
+    { text: "No. 100% means every address was exercised.", isCorrect: false, feedback: "100% means every declared bin was hit. Address 9 is in no bin, so the coverpoint never classified it." },
+    { text: "The model may be: 9 is in no bin, so the number says nothing about the middle range. Check the plan; if the middle range matters, add bins for it.", isCorrect: true, feedback: "Right. A value outside every bin is invisible (§19.5). The bug is in the coverage model, not in the stimulus." },
+    { text: "The simulator should have created an automatic bin for 9.", isCorrect: false, feedback: "Automatic bins exist only when a coverpoint declares no bins other than ignore and illegal bins (§19.5.3)." },
+    { text: "9 must have been an illegal value, so it was excluded.", isCorrect: false, feedback: "An illegal value would have raised a run-time error. Nothing declares 9 illegal here." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: illegal_bins or an assertion"
+  question="The spec forbids a write to address 15. Where do you check it?"
+  options={[
+    { text: "Only with illegal_bins: coverage already sees every transfer.", isCorrect: false, feedback: "Only every sampled transfer. Guarded or unsampled cycles are never checked, and a stopped covergroup may not report." },
+    { text: "With an assertion or a scoreboard check, and optionally also with illegal_bins in the coverage model.", isCorrect: true, feedback: "Right. Checks belong in checkers; illegal_bins documents the rule in the coverage model and catches it again when sampled." },
+    { text: "With ignore_bins, so the bad transfer does not spoil the percentage.", isCorrect: false, feedback: "ignore_bins hides it silently: the violation would never be reported." },
+    { text: "It cannot be checked in SystemVerilog; only formal tools can.", isCorrect: false, feedback: "A concurrent assertion or a scoreboard check catches it in simulation (I-SV-4A)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the stuck bin"
+  question="A bin for a rare error condition stays at 0 hits across the regression. What is the right first step?"
+  options={[
+    { text: "Write a directed test for the error condition.", isCorrect: false, feedback: "Maybe later. First make sure the hole is real: a bug in the bins or in the sampling would make the directed test pass without fixing anything." },
+    { text: "Exclude it with ignore_bins: it is a rare error.", isCorrect: false, feedback: "Error conditions are often the most important scenarios. Excluding needs a spec-based reason." },
+    { text: "Check that the hole is real: is the bin reachable, and is the value actually sampled? Then check whether the constraints can produce it.", isCorrect: true, feedback: "Right. Holes can be unreachable, unobserved (wrong sampling or bins) or under-stimulated. I-SV-3B's closure workflow classifies them." },
+    { text: "Increase option.auto_bin_max so the simulator finds the bin.", isCorrect: false, feedback: "auto_bin_max only changes how automatic bins are built; it does not change what the stimulus produces." }
+  ]}
+/>
+
+Further staff-level prompts to practise aloud:
+- "Why are default bins excluded from crosses?" (A default bin is a catch-all for unplanned values; crossing it would multiply the unplanned space into the plan's numbers.)
+- "How many bins does `coverpoint kind { bins c2d = (CTRL => DATA); }` have, and why might a reviewer be surprised?" (One. The explicit transition bin turns the automatic value bins off.)
+- "Two agents share one covergroup type and you need per-agent and block-level numbers. What do you set?" (`option.per_instance = 1`; the type number comes from `get_coverage()`; see [Coverage Options and Sampling](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options) and [I-SV-3B coverage APIs](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis).)
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "bit [3:0] v; coverpoint v { bins a = {[0:3]}; bins b[] = {[4:7]}; bins c[3] = {[8:15]}; } How many bins count toward coverage?",
+    answers: [
+      { text: "3: one per declaration", correct: false, feedback: "b[] makes one bin per value and c[3] makes three bins, so two of the declarations create several bins." },
+      { text: "8: 1 + 4 + 3", correct: true, feedback: "Right. a is one bin for four values, b[] is four bins, and c[3] splits 8 values as 2, 2 and 4." },
+      { text: "11: a makes one bin per value", correct: false, feedback: "Without square brackets, bins makes a single bin for all the listed values (§19.5.1)." },
+      { text: "16: one bin per possible value", correct: false, feedback: "That would be automatic bins, which exist only when no bins are declared." }
+    ],
+    explanation: "A name without brackets is one bin, [] is one bin per value, and [N] is N bins with the remainder in the last one: 1 + 4 + 3 = 8.",
+    objective: 1
+  },
+  {
+    question: "cp_addr has bins low = {[0:3]} and high = {[12:15]} and no default bin. The value 9 is sampled. What happens?",
+    answers: [
+      { text: "An automatic bin is created for 9", correct: false, feedback: "Automatic bins exist only when a coverpoint declares no bins other than ignore and illegal bins (§19.5.3)." },
+      { text: "Nothing is counted; coverage does not change", correct: true, feedback: "Right. A value outside every bin is not counted anywhere (§19.5)." },
+      { text: "It is counted in the closest bin", correct: false, feedback: "Bins match exact values; there is no nearest-bin rule." },
+      { text: "The simulator reports an error", correct: false, feedback: "Only illegal_bins report errors, and 9 is not declared illegal." }
+    ],
+    explanation: "A value outside every declared bin is simply not counted. Add bins others = default if you want to see such values; they still do not count toward the percentage.",
+    objective: 1
+  },
+  {
+    question: "bins low = {[0:3]}; bins high = {[12:15]}; illegal_bins bad = {13}; The samples are 2, 14, 9, 13, and the run continues after any error. What is the coverpoint's coverage?",
+    answers: [
+      { text: "67%: 9 is a hole", correct: false, feedback: "9 is in no bin, so it is not a hole; it is invisible." },
+      { text: "75%: 9 is a hole and bad counts as a covered bin", correct: false, feedback: "Neither: 9 is in no bin, and illegal bins never count toward coverage." },
+      { text: "100%, plus one run-time error for 13", correct: true, feedback: "Right. low is hit by 2, high by 14 (13 was removed from it), and 13 raises the error." },
+      { text: "50%: removing 13 empties high", correct: false, feedback: "Removing 13 leaves high = {12, 14, 15}, and 14 hits it." }
+    ],
+    explanation: "Exclusions apply after the bins are built: high keeps 12, 14 and 15. Two counted bins, both hit, so 100%. The illegal hit is reported as an error and counts nowhere.",
+    objective: 1
+  },
+  {
+    question: "cp_a has 4 bins. cp_b has 3 bins plus bins others = default. A cross of the two has ignore_bins selecting 2 products and illegal_bins selecting 1 other product. How many cross bins are in the denominator?",
+    answers: [
+      { text: "13: the default bin is crossed too", correct: false, feedback: "Default bins are never crossed (§19.6), so cp_b contributes 3 bins, not 4." },
+      { text: "12: ignored and illegal products still count", correct: false, feedback: "Ignored and illegal products leave the denominator (§19.11.2)." },
+      { text: "10: only the ignored products leave", correct: false, feedback: "Illegal products leave the denominator too; they also raise an error when hit." },
+      { text: "9", correct: true, feedback: "Right: 4 × 3 = 12 products, minus 2 ignored and 1 illegal." }
+    ],
+    explanation: "Only counted coverpoint bins are crossed (4 × 3 = 12), and ignore and illegal selections remove their products: 12 - 3 = 9.",
+    objective: 2
+  },
+  {
+    question: "Which cross select picks exactly the cell <high, BURST>?",
+    answers: [
+      { text: "binsof(cp_addr) intersect {high} && binsof(cp_op) intersect {BURST}", correct: false, feedback: "intersect takes values, never bin names; high is a bin name." },
+      { text: "binsof(cp_addr.high) && binsof(cp_op) intersect {BURST}", correct: true, feedback: "Right: a bin by name, AND a cp_op bin that contains the value BURST." },
+      { text: "binsof(cp_addr.high) || binsof(cp_op) intersect {BURST}", correct: false, feedback: "|| selects the whole high row plus the whole BURST column." },
+      { text: "cross(cp_addr.high, cp_op.BURST)", correct: false, feedback: "There is no such select syntax; selections use binsof (§19.6.1)." }
+    ],
+    explanation: "binsof(cp.bin) names a bin; intersect takes values. && keeps only cross bins that satisfy both selections, while || would select a row plus a column.",
+    objective: 2
+  },
+  {
+    question: "Cross x2 crosses i and j, each with two bins (i[0], i[1] and j[0], j[1]), and declares bins i_zero = binsof(i) intersect {0}. No other options are set. How many bins does x2 count?",
+    answers: [
+      { text: "5: the four automatic bins plus i_zero", correct: false, feedback: "Automatic bins are kept only for products that no user-defined bin covers." },
+      { text: "1: any user bin removes the automatic bins", correct: false, feedback: "That happens only with option.cross_retain_auto_bins = 0; the default is 1." },
+      { text: "3: i_zero plus the two automatic bins for i[1]", correct: true, feedback: "Right. i_zero covers both i[0] products, and the two i[1] products keep their automatic bins (§19.6.1)." },
+      { text: "4: user bins replace automatic bins one for one", correct: false, feedback: "One user bin can cover several products; here i_zero covers two." }
+    ],
+    explanation: "With the default cross_retain_auto_bins = 1, an automatic cross bin is kept only for products outside every user-defined bin: i_zero plus <i[1], j[0]> and <i[1], j[1]>.",
+    objective: 2
+  },
+  {
+    question: "bit [1:0] mode; its coverpoint had no bins. You add bins hot = {0}; to it. How many bins does the coverpoint have now?",
+    answers: [
+      { text: "5: four automatic bins plus hot", correct: false, feedback: "Declaring any bin turns automatic bins off (§19.5.3)." },
+      { text: "4: hot replaces auto[0]", correct: false, feedback: "Automatic bins are not edited one by one; they disappear entirely." },
+      { text: "1: one explicit bin turns automatic bins off", correct: true, feedback: "Right. Automatic bins exist only while the coverpoint declares no bins other than ignore and illegal bins." },
+      { text: "3: hot removes 0 from the automatic bins", correct: false, feedback: "That is how ignore_bins would behave, and only if automatic bins still existed." }
+    ],
+    explanation: "Automatic bins are created only when a coverpoint declares no bins except ignore_bins or illegal_bins. After adding hot, the coverpoint has exactly one bin.",
+    objective: 1
+  },
+  {
+    question: "covergroup cg @(posedge clk); coverpoint addr; endgroup. Between two rising edges, addr changes three times. How many samples does cg take in that clock period?",
+    answers: [
+      { text: "Three: one per change of addr", correct: false, feedback: "A covergroup samples on its coverage event, not when its variables change." },
+      { text: "Four: each change plus the edge", correct: false, feedback: "Changes of addr do not trigger samples at all." },
+      { text: "One, at the rising edge", correct: true, feedback: "Right. The clocking event fires once, and the covergroup samples as if that process called sample() (§19.3)." },
+      { text: "Zero until code calls sample()", correct: false, feedback: "A covergroup with a clocking event samples automatically when the event fires." }
+    ],
+    explanation: "The coverage event decides when sampling happens. Here it is posedge clk, so the covergroup samples once per rising edge, whatever addr did in between.",
+    objective: 3
+  },
+  {
+    question: "A covergroup sets option.auto_bin_max = 4 at covergroup level. cp_mode covers a bit [3:0] field and declares no bins. How many bins does cp_mode have?",
+    answers: [
+      { text: "16: covergroup-level options never reach coverpoints", correct: false, feedback: "Most do. Only weight, goal, comment and per_instance stay at covergroup level (§19.7)." },
+      { text: "4: auto_bin_max set on the covergroup is the default for its coverpoints", correct: true, feedback: "Right. min(2^4, 4) = 4 automatic bins of 4 values each." },
+      { text: "64: auto_bin_max must be set on the coverpoint itself", correct: false, feedback: "It may be set at either level; at covergroup level it acts as a default (Table 19-2)." },
+      { text: "A compile error: auto_bin_max is only a type option", correct: false, feedback: "auto_bin_max is an instance option; type_option.auto_bin_max does not exist." }
+    ],
+    explanation: "Except for weight, goal, comment and per_instance, options set at covergroup level act as defaults for coverpoints and crosses, so cp_mode gets min(16, 4) = 4 automatic bins.",
+    objective: 4
+  },
+  {
+    question: "Coverage reached 100%, yet the DUT received the forbidden opcode 4'hF in 30 tests and nothing was reported. The model contains ignore_bins rsvd = {4'hF}. Which change makes the next run report it?",
+    answers: [
+      { text: "Change it to illegal_bins", correct: true, feedback: "Right. An illegal value raises a run-time error whenever it is sampled (§19.5.6)." },
+      { text: "Add bins others = default", correct: false, feedback: "A default bin counts unplanned values silently, and it never sees ignored values." },
+      { text: "Raise option.at_least", correct: false, feedback: "at_least changes when a bin counts as covered; it never reports a forbidden value." },
+      { text: "Set option.per_instance = 1", correct: false, feedback: "per_instance only keeps per-instance numbers; it does not report values." }
+    ],
+    explanation: "ignore_bins removes a value silently; illegal_bins removes it and reports a run-time error when it is sampled. For protocol rules, also add an assertion, because coverage only checks sampled values.",
+    objective: 5
+  }
+]} />
+
+### Kata: plan to covergroup
+
+This is the milestone M4 skill: turn a plan excerpt into a covergroup whose numbers you can predict. Write class `pkt_cov` for the six plan rows below, then predict every percentage the bench prints.
+
+| ID | Requirement |
+| --- | --- |
+| VP-10 | CTRL, DATA and MGMT packets are each seen at least twice |
+| VP-11 | RSVD packets must never be sent |
+| VP-12 | Length classes: empty (0), short (1–15), long (16–30), max (31) |
+| VP-13 | A DATA packet directly follows a CTRL packet |
+| VP-14 | Every kind is seen with every length class |
+| VP-15 | Length 0 is legal only for CTRL |
+
+The starter gives you the types and the bench; the learner writes the body of `pkt_cov`:
+
+```systemverilog
+// snippet (starter)
+typedef enum bit [1:0] {CTRL, DATA, MGMT, RSVD} kind_e;
+
+class pkt;
+  kind_e    kind;
+  bit [4:0] len;
+  function new(kind_e k, bit [4:0] l);
+    kind = k;
+    len  = l;
+  endfunction
+endclass
+
+// class pkt_cov: write it. One covergroup cg with function sample(pkt p).
+
+// Stream of 12 packets in the bench:
+// kinds: CTRL DATA DATA MGMT CTRL MGMT DATA CTRL MGMT CTRL DATA MGMT
+// lens :    0   12   20   31    5    2   31   16    3   31    8   31
+```
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// compile
+typedef enum bit [1:0] {CTRL, DATA, MGMT, RSVD} kind_e;
+
+class pkt;
+  kind_e    kind;
+  bit [4:0] len;
+  function new(kind_e k, bit [4:0] l);
+    kind = k;
+    len  = l;
+  endfunction
+endclass
+
+class pkt_cov;
+  covergroup cg with function sample(pkt p);
+    option.per_instance = 1;
+    cp_kind: coverpoint p.kind {
+      option.comment    = "VP-10, VP-11";
+      option.at_least   = 2;   // VP-10 only; at covergroup level it would propagate
+      bins kinds[]      = {CTRL, DATA, MGMT};
+      illegal_bins rsvd = {RSVD};
+    }
+    cp_len: coverpoint p.len {
+      option.comment = "VP-12";
+      bins len_empty = {0};
+      bins len_short = {[1:15]};
+      bins len_long  = {[16:30]};
+      bins len_max   = {31};
+    }
+    cp_seq: coverpoint p.kind {   // separate: inside cp_kind it would be crossed
+      option.comment = "VP-13";
+      bins ctrl_then_data = (CTRL => DATA);
+    }
+    kind_x_len: cross cp_kind, cp_len {
+      option.comment = "VP-14, VP-15";
+      illegal_bins empty_not_ctrl = binsof(cp_len.len_empty) &&
+                                    !binsof(cp_kind) intersect {CTRL};
+    }
+  endgroup
+
+  function new();
+    cg = new();
+  endfunction
+endclass
+
+module tb_top;
+  pkt_cov   cov = new();
+  kind_e    kinds[12] = '{CTRL, DATA, DATA, MGMT, CTRL, MGMT,
+                          DATA, CTRL, MGMT, CTRL, DATA, MGMT};
+  bit [4:0] lens[12]  = '{0, 12, 20, 31, 5, 2, 31, 16, 3, 31, 8, 31};
+
+  // Names are padded by hand: a field width must be a non-negative constant
+  function automatic void show(string name, real pct, int c, int t);
+    $display("%s: %6.2f%% (%0d of %0d)", name, pct, c, t);
+  endfunction
+
+  initial begin
+    int c, t;
+    foreach (kinds[i]) begin
+      pkt p;
+      p = new(kinds[i], lens[i]);
+      cov.cg.sample(p);
+    end
+    void'(cov.cg.cp_kind.get_inst_coverage(c, t));
+    show("cp_kind   ", cov.cg.cp_kind.get_inst_coverage(), c, t);
+    void'(cov.cg.cp_len.get_inst_coverage(c, t));
+    show("cp_len    ", cov.cg.cp_len.get_inst_coverage(), c, t);
+    void'(cov.cg.cp_seq.get_inst_coverage(c, t));
+    show("cp_seq    ", cov.cg.cp_seq.get_inst_coverage(), c, t);
+    void'(cov.cg.kind_x_len.get_inst_coverage(c, t));
+    show("kind_x_len", cov.cg.kind_x_len.get_inst_coverage(), c, t);
+    $display("cg        : %6.2f%%", cov.cg.get_inst_coverage());
+  end
+endmodule
+```
+
+**Expected output** (illustrative: computed by hand from §19.11, not captured from a simulator run; no illegal bin fires):
+
+```text
+cp_kind   : 100.00% (3 of 3)
+cp_len    : 100.00% (4 of 4)
+cp_seq    : 100.00% (1 of 1)
+kind_x_len:  90.00% (9 of 10)
+cg        :  97.50%
+```
+
+Why these numbers:
+- Each kind appears four times, so every `kinds[]` bin reaches `at_least = 2`.
+- The cross has 3 × 4 = 12 products. `empty_not_ctrl` removes `<DATA, len_empty>` and `<MGMT, len_empty>`, leaving 10. The stream fills all but `<MGMT, len_long>`.
+- The covergroup is the average of four items: (100 + 100 + 100 + 90) ÷ 4 = 97.5.
+
+Three traps:
+1. **`option.at_least = 2` at covergroup level** propagates to every coverpoint and cross (§19.7). Then `len_empty` (one hit) is not covered, so `cp_len` reads 75.00% (3 of 4), `kind_x_len` only 30.00% (3 of 10), and `cg` 76.25%.
+2. **Putting the transition bin inside `cp_kind`** makes it a fourth `cp_kind` bin, so the cross grows to 16 products instead of 12.
+3. **Writing `empty_not_ctrl` as `ignore_bins`** closes VP-15 silently: a DATA packet with length 0 would never be reported.
+
+</details>
+
+### Debug challenge: the jumbo bin that vanished
+
+VP-7 asks for jumbo frames, lengths 16 to 31. The regression reports `cp_len` at 100%, but nobody has ever seen a jumbo frame in the waveforms.
+
+```systemverilog
+// snippet
+logic [3:0] len;     // the length field is 4 bits wide
+covergroup cg_len @(posedge clk);
+  cp_len: coverpoint len iff (valid) {
+    bins short_pkt = {[1:7]};
+    bins long_pkt  = {[8:15]};
+    bins jumbo     = {[16:31]};   // VP-7: jumbo frames
+  }
+endgroup
+```
+
+Predict what `cp_len` reports after traffic that covers lengths 1 to 15, and why. Then open the answer.
+
+<details>
+<summary>Answer</summary>
+
+100% (2 of 2). The field is 4 bits wide, so every value in `[16:31]` changes when it is cast to the coverpoint's type and raises a warning. A range whose every value warns does not participate (§19.5.7), so `jumbo` holds no values, and an empty bin leaves the denominator (§19.11.1). The only evidence is a compile or elaboration warning. The fix is not in the covergroup: with this field width, VP-7 is unreachable. Check the spec (is the field really 4 bits?), update the plan or the design, and never waive value-resolution warnings.
+
+</details>
+
+### Predict with the visuals
+
+Return to the visuals on this page and commit to an answer before each reveal:
+- **Bins drill.** In the bins editor, model a 4-bit opcode: one bin per legal opcode, `ignore_bins` for the reserved codes, `illegal_bins` for the one forbidden code. Predict three values before you sample them.
+- **Closure drill.** In the cross explorer, choose *corners + default* with *biased* stimulus. Predict, run, then change one setting so the forecast drops below 500 samples, and explain why it worked.
+
+The flashcards for this module follow below. After [I-SV-3B](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) you will close a real covergroup in the coverage closure lab.
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023)
+- §19.3 Defining the coverage model: covergroup; §19.4 Using covergroups in classes; §19.4.1 Embedded covergroup inheritance
+- §19.5 Defining coverage points; §19.5.1 Specifying bins for values (§19.5.1.1 `with` expressions, §19.5.1.2 set expressions); §19.5.2 Transitions; §19.5.3 Automatic bins; §19.5.4 Wildcard bins; §19.5.5 Excluding values or transitions; §19.5.6 Illegal values or transitions; §19.5.7 Value resolution
+- §19.6 Defining cross coverage; §19.6.1 Defining cross coverage bins; §19.6.2 Excluding cross products; §19.6.3 Illegal cross products
+- §19.7 Coverage options (Tables 19-1, 19-2); §19.7.1 Type options (Tables 19-3, 19-4); §19.8 Predefined coverage methods (Table 19-5); §19.8.1 Overriding the built-in sample method
+- §19.11 Coverage computation; §19.11.1 Coverpoint; §19.11.2 Cross
+- §14.13 Input sampling (clocking blocks); §14.16 Synchronous drives
+
+**UVM:** IEEE 1800.2-2020 §13.9 `uvm_subscriber`; uvm-core 2020.3.1 `src/comps/uvm_subscriber.svh`.
+
+**Prerequisites:** [I-SV-1 Object-Oriented Programming](/curriculum/T2_Intermediate/I-SV-1_OOP/index) for classes, handles and `new`; [I-SV-2A Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) for the stimulus that coverage measures.
+
+**Related**
+- [Coverage Options and Sampling](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options): the second page of this module.
+- [F4C Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): why the monitor samples through `mon_cb`.
+- [F3B Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index): the Preponed region that `#1step` sampling reads.
+- [F1B The Verification Mindset](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index): code coverage versus functional coverage.
+- [I-SV-3B Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage), [Coverage APIs](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis) and [Closure Workflow](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow): traceability, run-time queries and closing holes.
+- [I-SV-4A SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): assertions for the rules coverage cannot check, and `cover property`.
+- [I-UVM-2A Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): the coverage subscriber in a UVM environment.
+
+<NextLesson />

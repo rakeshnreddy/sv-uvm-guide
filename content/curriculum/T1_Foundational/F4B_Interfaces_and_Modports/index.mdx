@@ -1,67 +1,143 @@
 ---
 title: "F4B: Bundling Signals with Interfaces and Modports"
-description: "Learn how to use SystemVerilog interfaces and modports to simplify connections and create reusable verification components."
+description: "Bundle DUT signals into an interface with modports and tasks, reach it from class-based code through a virtual interface, and debug direction, null-handle and handshake bugs."
 flashcards: "F4B_Interfaces_and_Modports"
 sources:
   - title: "IEEE Standard for SystemVerilog"
     type: "standard"
     identifier: "IEEE 1800-2023"
+  - title: "Arm AMBA AXI and ACE Protocol Specification"
+    type: "standard"
+    identifier: "IHI0022E"
+    version: "E"
 ---
 
-import { InteractiveCode, Quiz } from '@/components/ui';
-
 ## Quick Take
-- **What it is:** An **interface** is a bundle of signals that connects modules together. A **modport** (module port) defines the direction of those signals from one module's point of view (e.g., master vs. slave).
-- **Why it matters:** Interfaces replace error-prone, wire-by-wire connections with a single handle. Modports state what each connected module may do: a module on the `monitor` view cannot drive the bus.
-- **The Analogy:** An interface is like a USB cable: it bundles power, ground, and data lines. The modport is the connector type (Type-A vs. Type-B) that ensures you plug it in correctly.
+
+- **What it is:** An **interface** is a named bundle of signals that you declare once and connect to every module that needs it with a single port connection. It can also carry the rules for using those signals: **modports**, which are named views that say which signals one user may drive and which it may only read, plus clocking blocks and tasks. A **virtual interface** is a variable in class code that holds a handle to one interface instance, so that code created at run time can reach the signals.
+- **Why it matters:** A bus wired signal by signal into the design under test (DUT), a driver and a monitor gives you a dozen chances to swap two wires, and every new signal means editing every module. With an interface the connection is one line. A modport turns "the monitor drove the bus" into a compile error. And the virtual interface is how every class-based testbench (TB), including every UVM driver and monitor you will write, reaches the DUT's pins.
+- **The Analogy:** An interface is a ribbon cable that carries every wire of the bus and plugs into each board. A modport is a stencil laid over one board's connector: it marks which wires that board may drive and which it may only listen to. *Where it breaks:* a stencil is not a second cable. It copies nothing, it checks only what goes through that connector (a hierarchical reference such as `tb_top.bus_if.ready` reaches the wire without passing any stencil, IEEE 1800-2023 §25.10), and two boards with the same stencil may both drive the same wire.
+
+**You will be able to:**
+1. **Write** an interface with ports, internal signals and `master`, `slave` and `monitor` modports, and connect one instance of it to a DUT, a monitor and a bench.
+2. **Explain** what a modport restricts and what it does not (it is a view, not storage), and **debug** a modport-direction compile error.
+3. **Explain** a virtual interface as a handle to one interface instance, **bind** it from the top module, and **debug** the null-virtual-interface fatal error at run time.
+4. **Write** a valid/ready handshake task inside an interface that cannot deadlock, and **predict** the clock edge at which each transfer happens.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### The Connection Bundle
+**How to read this section.** The core path is the first five subsections: why bundle, declaring and connecting, modports as views, clocking blocks in modports, and virtual interfaces. Tasks and the handshake, parameterized interfaces and the pitfalls are practitioner depth that you will use in every real bench. Make It Work puts everything into one bench you can run, and Push Further holds the corner cases.
 
-Pick each view and read the arrows from that module's side: ◀ means the signal flows *into* the module (`input`), ▶ means the module drives it (`output`). Then, in the `master` view, predict what the tool does with `bus.ready <= 1;`.
+Two words from earlier lessons appear throughout. **Elaboration** is the step after compiling in which the simulator builds the hierarchy of module and interface instances, before time 0. A **process** is a running `initial` or `always` procedure, or a task it calls ([F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index)).
 
-<ModportExplorer />
+### Why bundle: the twelve-wire problem
 
-### Interactive Example: Interface with Modports
+In [F4A](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index) every signal travels through its own port: declared in the DUT's header, declared again in the bench, and connected by name in the top module. For a bus with an address, write data, read data, a read/write flag, a VALID/READY pair, an error flag and a few control fields, that is twelve declarations in each module and twelve connections in each instance. Add one signal and you edit every one of those places; swap two names in one connection list and the bench may still compile.
+
+An interface replaces the twelve with one. You declare the signals once, inside the interface. Each module that needs the bus takes **one port** whose type is the interface, and the top module connects that port to **one instance** of the interface. Every module then refers to the same signals as `bus.addr`, `bus.valid` and so on.
+
+### Declaring, instantiating and connecting an interface
+
+Here is the bus this lesson uses, before any rules are added. `valid` and `ready` form a **handshake**: the sender (the **master**) raises `valid` to say that `addr`, `data` and `rw` hold a request, the receiver (the **slave**) raises `ready` to say it can accept one, and a transfer happens at a rising clock edge where both are 1. (This lesson keeps the master/slave names that the Arm AXI specification IHI0022E uses; later Arm issues say manager/subordinate.)
+
+```systemverilog
+// snippet: the bundle on its own, before any modports
+interface simple_bus_if (input logic clk);  // clk: a port, connected from outside
+  logic [31:0] addr;                        // internal: created by every instance
+  logic [31:0] data;
+  logic        rw;                          // 1 = read, 0 = write
+  logic        valid;                       // the master has a request on addr/data/rw
+  logic        ready;                       // the slave can accept a request
+endinterface
+```
+
+Read it in three parts:
+
+1. **Ports versus internal signals (§25.4).** Only what is in the interface's port list can be connected from outside when you instantiate it. The clock comes from the top module, so `clk` is a port. The bus signals are created by the interface itself, one set per instance, so they are declared inside.
+2. **What else an interface may hold.** Parameters, modports, clocking blocks, tasks and functions, `initial` and `always` processes and continuous assignments can all live in an interface (§25.2, §25.3). It may not declare or instantiate a module (§25.3).
+3. **Instantiation.** You instantiate an interface exactly like a module (§25.3): `simple_bus_if bus_if (.clk);` creates one instance named `bus_if` and connects its `clk` port with the `.name` form from F4A. An interface is never instantiated implicitly; you must write the instance.
+
+A module uses the bus by declaring a port whose type is the interface. There are three header forms:
+
+| Header | Meaning | Use it for |
+|---|---|---|
+| `module slave_dut (simple_bus_if.slave bus, …);` | This interface type, seen through the `slave` modport | The normal case: the header documents the role |
+| `module any_user (simple_bus_if bus);` | This interface type, no modport: every variable is reachable as `ref` and every net as `inout` (§25.5) | Rarely; prefer a modport |
+| `module generic_user (interface bus, …);` | A **generic interface port**: any interface type, chosen when the module is instantiated (§25.3.3) | Reusable modules; it is legal only in ANSI-style headers, and must be connected by name |
+
+The top module creates one instance and passes it to every user:
+
+```systemverilog
+// snippet: one instance, three users (bus_monitor is defined in Make It Work)
+module tb_top;
+  logic clk   = 1'b0;
+  logic rst_n = 1'b0;
+  always #5 clk = ~clk;
+
+  simple_bus_if bus_if (.clk);                  // the one instance of the bundle
+  master_driver mst    (.bus(bus_if), .rst_n);   // its header picks .master
+  slave_dut     dut    (.bus(bus_if), .rst_n);   // its header picks .slave
+  bus_monitor   mon    (.bus(bus_if));           // its header picks .monitor
+endmodule
+```
+
+<ArchitectureDiagram
+  title="One interface instance shared by three modules"
+  caption={"tb_top creates one simple_bus_if instance, bus_if, and connects the same instance to all three modules. Each line is a port connection; its label is the modport that module's header selects. There is one set of addr, data, rw, valid and ready signals, inside bus_if. clk and rst_n come from tb_top variables (not drawn)."}
+  nodes={[
+    { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "mst", label: "mst: master_driver", sublabel: "drives the request", kind: "driver", col: 0, row: 0 },
+    { id: "dut", label: "dut: slave_dut", sublabel: "drives ready", kind: "dut", col: 1, row: 0 },
+    { id: "mon", label: "mon: bus_monitor", sublabel: "drives nothing", kind: "monitor", col: 2, row: 0 },
+    { id: "bus", label: "bus_if: simple_bus_if", sublabel: "addr data rw valid ready", kind: "interface", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "mst", to: "bus", style: "structural", label: ".master" },
+    { from: "dut", to: "bus", style: "structural", label: ".slave" },
+    { from: "mon", to: "bus", style: "structural", label: ".monitor" }
+  ]}
+/>
+
+What to take from the picture: there are three connections but **one** bundle. When `dut` writes `bus.ready`, it writes `bus_if.ready`, and `mst` and `mon` read that same variable through their own ports. Nothing is duplicated per user.
+
+You may also name the modport at the instance instead of in the header: `slave_dut dut (.bus(bus_if.slave), .rst_n);` with a header of `simple_bus_if bus`. If you name it in both places, the two names must be identical (§25.5).
+
+### Modports: one bundle, several views
+
+A **modport** is a named list of directions for members of the interface. The directions are written "as if inside the module" that uses the modport (§25.5): `output valid` in the `master` modport means the master module drives `valid`. Step through the code below; it adds three modports to `simple_bus_if` and shows two modules that use them.
+
 <InteractiveCode
   language="systemverilog"
   fileName="interface_modports.sv"
   code={`
+// snippet: simple_bus_if with three modports, and two modules that use it
 interface simple_bus_if (input logic clk);
-  // LRM Clause 25: Interfaces
   logic [31:0] addr;
   logic [31:0] data;
-  logic        rw;    // 1=read, 0=write
+  logic        rw;     // 1 = read, 0 = write
   logic        valid;
   logic        ready;
 
-  // Master View (Driver)
-  modport master (
-    input  clk, ready,
-    output addr, data, rw, valid
-  );
+  // master view: a bus master or the bench's driver
+  modport master  (input clk, ready, output addr, data, rw, valid);
 
-  // Slave View (DUT)
-  modport slave (
-    input  clk, addr, data, rw, valid,
-    output ready
-  );
+  // slave view: the DUT
+  modport slave   (input clk, addr, data, rw, valid, output ready);
 
-  // Monitor View (Passive)
-  modport monitor (
-    input clk, addr, data, rw, valid, ready
-  );
+  // monitor view: observes everything, drives nothing
+  modport monitor (input clk, addr, data, rw, valid, ready);
 endinterface
 
 module master_driver (simple_bus_if.master bus, input logic rst_n);
   // VALID never waits for READY: offer a request, hold it until READY.
-  always_ff @(posedge bus.clk or negedge rst_n) begin
+  always_ff @(posedge bus.clk) begin
     if (!rst_n) begin
       bus.valid <= 1'b0;
       bus.addr  <= 32'h0;
     end else if (!bus.valid || bus.ready) begin
-      bus.valid <= 1'b1;            // next request (previous one handshaked)
+      bus.valid <= 1'b1;             // next request (the previous one handshaked)
       bus.addr  <= bus.addr + 32'h4;
     end
     // bus.ready <= 1'b0;  // compile error: ready is an input in modport master
@@ -69,194 +145,913 @@ module master_driver (simple_bus_if.master bus, input logic rst_n);
 endmodule
 
 module slave_dut (simple_bus_if.slave bus, input logic rst_n);
-  // READY may depend on VALID or not; this slave accepts every other cycle.
-  always_ff @(posedge bus.clk or negedge rst_n)
+  // READY may come before VALID; this slave toggles it every cycle after reset.
+  always_ff @(posedge bus.clk)
     if (!rst_n) bus.ready <= 1'b0;
     else        bus.ready <= ~bus.ready;
 endmodule
   `}
   explanationSteps={[
-    { target: "1-7", title: "Signal Bundle", explanation: "The interface declares the signals once. No need to repeat `logic [31:0] addr` in every module." },
-    { target: "9-13", title: "Master Modport", explanation: "The driver's view: it drives `addr`, `data`, `rw` and `valid`, and reads `ready`." },
-    { target: "15-19", title: "Slave Modport", explanation: "The DUT's view: it reads the request signals and drives `ready`." },
-    { target: "21-24", title: "Monitor Modport", explanation: "A passive view where everything is an input, so a monitor cannot disturb the bus." },
-    { target: "27-38", title: "VALID does not wait for READY", explanation: "The master raises `valid` on its own and holds it until it sees `ready` at a clock edge. If the master waited for `ready` and the slave waited for `valid`, neither would ever move: a deadlock." },
-    { target: "37", title: "Enforced Direction", explanation: "Uncommenting this line is a compile-time error: `ready` is an input in the master modport, and assigning to a variable declared as an input port is illegal (§25.5, §23.3.3.2)." },
-    { target: "41-46", title: "Slave", explanation: "The slave drives only `ready`, the one output in its view." }
+    { target: "2-7", title: "Signal bundle", explanation: "The interface declares the signals once. No module repeats `logic [31:0] addr`; each one reaches it as `bus.addr`." },
+    { target: "9-10", title: "Master modport", explanation: "The driver's view: it drives `addr`, `data`, `rw` and `valid`, and reads `clk` and `ready`." },
+    { target: "12-13", title: "Slave modport", explanation: "The DUT's view: it reads the request signals and drives `ready`." },
+    { target: "15-16", title: "Monitor modport", explanation: "Every member is an input, so code connected through this view cannot drive the bus through its port." },
+    { target: "19-31", title: "VALID does not wait for READY", explanation: "The master raises `valid` on its own and holds it until it sees `ready` at a clock edge. If the master waited for `ready` while the slave waited for `valid`, neither would ever move: a deadlock." },
+    { target: "29", title: "Enforced direction", explanation: "Uncommenting this line is a compile-time error: `ready` is an input in the master modport, and assigning to a variable declared as an input port is illegal (§25.5, §23.3.3.2)." },
+    { target: "33-38", title: "Slave", explanation: "The slave drives only `ready`, the one output in its view." }
   ]}
 />
 
-## Key Concepts
+**Modport Explorer.** Pick each view below and read the arrows from that module's side: ◀ means the signal flows *into* the module (`input`), ▶ means the module drives it (`output`). Then, before you reveal anything, **predict** what the tool does with `bus.ready <= 1'b1;` inside the module that uses the `master` view: does it compile, fail before simulation starts, or fail when the line runs?
 
-### Interfaces (LRM Clause 25)
-An `interface` is a named bundle of nets and variables. It can also contain:
-- **Tasks and Functions:** To encapsulate bus protocols (e.g., `read()`, `write()`).
-- **Assertions:** To verify protocol compliance directly on the bus.
-- **Parameters:** To make the interface reusable (e.g., `ADDR_WIDTH`).
-- **Clocking blocks:** To give testbench code race-free timing (F4C).
+<ModportExplorer />
 
-### Modports (LRM Clause 25.5)
-`modport` lists provide directional views of the interface signals, declared "as if inside the module" that uses them (§25.5).
-- **Safety:** A module can only do what its view allows: through the `monitor` view nothing can be driven, and names not listed in a modport are not reachable through that port.
-- **Limits:** A modport does not stop two modules that both use the `master` view from driving the same signal, and a hierarchical reference such as `tb_top.bus_if.ready` bypasses modports entirely.
-- **Clocking modports:** A modport can list a clocking block, for example `modport drv (clocking cb);` (§25.5.5). A module using it can reach the signals only through `cb`, with the clocking block's sample and drive timing.
-- **Clarity:** The modport documents the intent of each connection.
+What you just saw:
 
-## The Bridge to Classes: Virtual Interfaces
-_How dynamic objects talk to static hardware._
+- **Four views, one set of signals.** Every view lists the same five variables of the one `simple_bus_if`. No view owns a copy; a modport creates no signals and stores nothing. It only states the direction each user has.
+- **Direction violations are static.** A write to an `input` through a modport is rejected when the design is compiled or elaborated, before time 0 (§23.3.3.2). It never waits until the line runs.
+- **Not listed means not reachable.** A net, variable, task or clocking block that a modport does not list cannot be reached through a port of that modport (§25.5). Through `drv`, only `cb` is visible; the next subsection explains it.
+- **The limits.** A modport restricts only what a module does *through that port*:
+  - A hierarchical reference such as `tb_top.bus_if.ready` reaches any member of the interface, whatever modports exist (§25.10).
+  - Types and parameters cannot be listed in a modport, so they stay reachable through every port (§25.10).
+  - Two modules that both use the `master` view may both write `valid`. Whether that is an error depends on how they write it, not on the modport: a variable written by `always_ff` or `always_comb` must have no other writer (§9.2.2.2, §9.2.2.4), but two plain `always` writers are legal and race ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)).
 
-In modern verification (UVM), your testbench drivers are **classes** (objects created at run time). Your DUT and interfaces are **modules and interface instances**, built at elaboration before time 0. A class cannot contain an interface instance.
+With no modport at all, nothing is restricted: through a plain `simple_bus_if bus` port, every variable is reachable as a `ref` and every net as an `inout` (§25.5).
 
-Enter the **virtual interface**: a variable that holds a handle to a real interface instance (§25.9).
+### Clocking blocks in modports
 
-- **Static world:** `tb_top` instantiates `simple_bus_if bus_if`, and the DUT connects to it through a port.
-- **Dynamic world:** the driver object holds `virtual simple_bus_if.drv vif`, a handle that starts as `null`.
-- **The bridge:** someone must copy `bus_if` into `vif` before the driver uses it. Forget that step and the first `vif.cb...` access is a **fatal run-time error** (§25.9).
+A testbench that drives DUT inputs at the clock edge with blocking assignments races the DUT: [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) showed why. A **clocking block** is the fix, and [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) teaches it in full. For now you need one sentence: a clocking block named `cb` samples its `input` signals just before each clock edge and applies drives to its `output` signals just after the edge (in the Re-NBA region of that time slot, [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)), and code reaches them as `cb.ready` and `cb.valid`. The standard calls each of these clocking-block signals a **clockvar**.
 
-First, give the interface a clocking block and a synchronous modport for the driver (F4C explains the timing):
+A clocking block declared in an interface can be listed in a modport (§25.5.5):
 
 ```systemverilog
-// Added inside simple_bus_if
-clocking cb @(posedge clk);
+// snippet: added inside simple_bus_if
+clocking cb @(posedge clk);     // timing rules: F4C
   default input #1step output #0;
   output addr, data, rw, valid;
   input  ready;
 endclocking
 
-modport drv (clocking cb);   // the driver sees only cb (§25.5.5)
+modport drv (clocking cb);      // the driver sees only cb (§25.5.5)
 ```
 
-Then the driver class drives through the handle, and `tb_top` binds the handle to the real instance:
+Code connected through `drv` can drive `cb.valid <= 1'b1;` and read `cb.ready`, with the clocking block's timing, and can reach nothing else. The directions are those of the clocking block, again seen from the user (§25.5.5). This is the view a testbench driver should use: it makes "drive the DUT only through the clocking block" a rule that the compiler checks.
+
+### Virtual interfaces: a handle from the class world
+
+So far every user of the bus has been a **module**: built during elaboration, fixed for the whole run, connected by ports. Testbench drivers and monitors are usually **classes** instead. A **class** describes an **object** that your code creates at run time with `new()`; a variable of a class type holds a **handle** to such an object, and a handle that refers to nothing has the value `null`. (Classes are taught in [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index). Here you need only those three facts; the class code on this page is a **preview**.)
+
+A class has no ports, and it cannot contain an interface instance: instances exist only in the elaborated hierarchy. A **virtual interface** bridges the two worlds. It is "a variable that represents an interface instance" (§25.9): a handle, not a copy.
+
+- **Static world:** `tb_top` instantiates `simple_bus_if bus_if`, and the DUT connects to it through a port.
+- **Dynamic world:** the driver object holds `virtual simple_bus_if.drv vif`, a handle that starts as `null`.
+- **The bridge:** before the driver uses `vif`, some code must assign the instance to it, for example `drv.vif = bus_if;`. Nothing is copied: from then on, `vif.cb.valid` and `bus_if.cb.valid` name the same clockvar, and the DUT sees every drive.
 
 ```systemverilog
-class bus_driver;
-  virtual simple_bus_if.drv vif;     // 1. a handle: null until assigned
+// snippet: class syntax is a preview of I-SV-1
+class tb_driver;
+  virtual simple_bus_if.drv vif;          // a handle: null until assigned (§25.9)
 
-  task drive(logic [31:0] a);
-    @(vif.cb);                       // 2. wait for the clocking event
-    vif.cb.addr  <= a;               // 3. drive through the clocking block
-    vif.cb.valid <= 1'b1;            //    (VALID does not wait for READY)
-    do @(vif.cb); while (!vif.cb.ready);  // hold VALID until READY is sampled high
-    vif.cb.valid <= 1'b0;
+  task start_request(input logic [31:0] a);
+    @(vif.cb);                            // wait for the clocking event
+    vif.cb.addr  <= a;                    // drive only through the clocking block
+    vif.cb.valid <= 1'b1;                 // the full handshake comes later
   endtask
 endclass
 
 module tb_top;
-  logic clk = 0, rst_n = 0;
-  always #5 clk = ~clk;
+  // ... clk, rst_n, simple_bus_if bus_if (.clk) and the DUT as before ...
+  tb_driver drv;                          // a handle to a tb_driver object: null
 
-  simple_bus_if bus_if (.clk(clk));                    // the real interface instance
-  slave_dut     dut    (.bus(bus_if.slave), .rst_n(rst_n));
-
-  bus_driver drv;
   initial begin
-    drv = new();
-    drv.vif = bus_if;   // 4. bind the handle: an instance may be assigned to a modport-typed virtual interface
-    #12 rst_n = 1;
-    drv.drive(32'h1000);
+    drv = new();                          // the object exists from now on
+    drv.vif = bus_if;                     // bind: the handle now refers to bus_if
+    drv.start_request(32'h0000_1000);
   end
 endmodule
 ```
 
-In UVM you do step 4 through the configuration database instead of a direct assignment, because the test, not `tb_top`, creates the driver. The type parameter must be identical in `set` and `get`:
+There are two ways to fill the handle, and both are legal (§25.9): **assign it** after `new()`, as here, or **pass it to `new()`** as an argument, as Make It Work does. Either way, the rule is the same: bind the handle before the first use. (In Make It Work, `tb_driver` grows up: its handle becomes a `.api` handle and it calls interface tasks instead of driving `cb` itself.)
+
+**What the handle's type allows.** The modport you name in the handle's type is part of the type (§25.9), so it limits what the class can reach exactly as a modport limits a module. It also decides which assignments are legal:
+
+| Statement | Legal? | Why (§25.9) |
+|---|---|---|
+| `drv.vif = bus_if;` (an instance into a `.drv` handle) | Yes | An instance, or a handle with no modport, may be assigned to a handle with a modport |
+| `virtual simple_bus_if v; v = bus_if;` | Yes | Same interface, no modport on either side |
+| `drv.vif = v;` (no modport into `.drv`) | Yes | Same rule as the first row |
+| `v = drv.vif;` (`.drv` into no modport) | No | It would widen access; the modport is part of the type |
+| a `.monitor` handle `= drv.vif;` | No | Different modports are different types |
+| `drv.vif = null;` and `if (drv.vif == null) …` | Yes | Assignment from `null`, and `==`/`!=`, are allowed |
+
+**The null handle.** A virtual interface "has the value null before it is initialized", and "attempting to use a null virtual interface shall result in a fatal run-time error" (§25.9). The code compiles; the simulation stops at the first line that uses the handle, often a wait such as `@(vif.cb)`.
+
+Now try it. The visual below generates a small bench from three choices: the handle's type, whether `top` assigns the handle, and the statement the driver executes. Its names differ slightly from the code above (a class called `driver`, a module called `top`), and it binds with `drv.vif = bus_if;`. Load each scenario in turn and **predict** before you reveal: does it compile and run, fail before simulation starts, or stop with a fatal error at run time?
+
+1. **Clocking drive**: the working case.
+2. **Assignment missing**: compile error, or fatal at run time?
+3. **Direct drive via drv**: the driver writes `vif.valid` through a `.drv` handle.
+4. **Monitor handle drives**: a `.monitor` handle used to drive.
+5. **Read cb.valid**: reading a clocking-block output.
+
+<InterfaceSignalFlow />
+
+What the five cases show:
+
+- **Only the missing assignment survives compilation.** It is the one bug the compiler cannot see, because whether a handle is assigned depends on what runs. It costs a whole simulation start-up to find, so check the handle where it is set: `if (vif == null) $fatal(1, "vif not set");`.
+- **The other three are static.** The handle's type is known at compile time, so "not visible through `drv`", "input of `monitor`" and "output clockvar read" are all reported before time 0.
+- **The path is always the same:** instance, handle, modport, signal. When something fails, ask which of the four links is broken.
+
+**In UVM**, the test, not `tb_top`, creates the driver, so `tb_top` cannot assign the handle directly. It stores the handle in the **configuration database** with `uvm_config_db` before `run_test()`, and the driver retrieves it in its build phase. That mechanism, and the rule that the type in the store and the retrieve must match exactly (modport and parameters included), are taught in [I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index).
+
+### Tasks in interfaces: a handshake that cannot deadlock
+
+An interface may contain tasks and functions, and a modport can make them callable with `import` (§25.7). Code that connects through such a modport calls the task by name and never touches the signals itself. This is the standard way to package a bus protocol once, next to the signals it drives.
+
+**The rule that prevents deadlock.** A **deadlock** is a state in which two processes each wait for the other, so neither ever moves. Valid/ready handshakes avoid it with one rule, stated for AXI in IHI0022E §A3.2.1: the source "is not permitted to wait until READY is asserted before asserting VALID", and once VALID is asserted "it must remain asserted until the handshake occurs". The destination, in contrast, *may* wait for VALID before raising READY. So the master raises `valid` first and holds it, together with its address and data, until a rising edge where `ready` is also 1.
+
+Here are the two tasks this lesson adds to `simple_bus_if`, and the modport that exposes them:
 
 ```systemverilog
-// tb_top
-initial uvm_config_db#(virtual simple_bus_if)::set(null, "uvm_test_top.*", "vif", bus_if);
+// snippet: added inside simple_bus_if (the full interface is in Make It Work)
+modport api (import idle, write);   // callers may call these two tasks, nothing else
 
-// driver's build_phase (the driver declares: virtual simple_bus_if vif;)
-if (!uvm_config_db#(virtual simple_bus_if)::get(this, "", "vif", vif))
-  `uvm_fatal("NOVIF", "virtual interface was not set for this driver")
+task automatic idle();              // hold the bus idle; call it during reset
+  cb.valid <= 1'b0;
+endtask
+
+// VALID rises without looking at READY and stays high until READY is
+// sampled high, so this handshake cannot deadlock.
+task automatic write(input logic [31:0] a, input logic [31:0] d);
+  @(cb);                            // start on a clock edge (F4C)
+  cb.addr  <= a;
+  cb.data  <= d;
+  cb.rw    <= 1'b0;                 // 0 = write
+  cb.valid <= 1'b1;
+  do @(cb); while (cb.ready !== 1'b1);  // an unknown READY is not a handshake
+  cb.valid <= 1'b0;
+endtask
 ```
 
-The `uvm_fatal` check turns a missing `set` into a clear message at build time, instead of a null-handle fatal later in `run_phase`.
+Four details carry the design:
+
+1. **`modport api (import idle, write);`** lists the tasks by name. A modport may name tasks declared later in the interface, and identifiers alone are enough here; a full prototype is needed only in the cases Push Further lists (§25.7).
+2. **`idle()` during reset.** `logic` variables start as `x` (§6.8). Without `idle()`, `valid` would stay unknown until the first `write`, and a DUT that tests `valid` in reset would see `x`. The AXI rule is the same: a master drives VALID low during reset (IHI0022E §A3.1).
+3. **Synchronize first.** `write` waits for `@(cb)` before driving. A drive issued between clock edges is held until the next clocking event (§14.16), so starting on an edge makes every cycle count predictable.
+4. **The x-safe READY test.** `while (!cb.ready)` looks equivalent, but if `ready` is `x`, then `!x` is `x`, and a loop or `if` treats `x` as false (§12.4). The loop would exit, and `valid` would drop with no handshake at all. `!== 1'b1` keeps waiting until `ready` is a real 1.
+
+**The deadlock to recognise.** This version breaks the rule, and the bench simply stops moving:
+
+```systemverilog
+// snippet: do not copy: each side waits for the other
+// master, inside write(): waits for READY before offering
+do @(cb); while (cb.ready !== 1'b1);
+cb.valid <= 1'b1;
+
+// slave: accepts only after VALID
+always_ff @(posedge bus.clk) bus.ready <= bus.valid;
+```
+
+`ready` stays 0 because `valid` is 0, and `valid` stays 0 because `ready` is 0. Nothing errors; the simulation runs until something stops it. That is why the Make It Work bench has a watchdog.
+
+**Who calls whom.** The class never touches a signal. It calls `vif.write()`, the task runs inside `bus_if`, and the clocking block applies its drives:
+
+<SequenceDiagram
+  title="One write() call, from the class to the pins"
+  caption="tb_drv calls write() through its .api handle; the task inside bus_if waits on cb, drives through cb, and returns only after a clock edge where cb.ready was sampled 1. The times are those of the Make It Work bench."
+  participants={[
+    { id: "top", label: "tb_top initial", kind: "generic" },
+    { id: "drv", label: "tb_drv", kind: "driver" },
+    { id: "bus", label: "bus_if (write task, cb)", kind: "interface" },
+    { id: "dut", label: "dut: slave_dut", kind: "dut" }
+  ]}
+  messages={[
+    { from: "top", to: "drv", label: "run() at 30 ns" },
+    { from: "drv", to: "bus", label: "vif.write(32'h1000, 32'hA5A50001)" },
+    { kind: "divider", label: "@(cb): 35 ns edge" },
+    { kind: "self", from: "bus", label: "cb.addr, cb.data, cb.rw <= ...; cb.valid <= 1 (Re-NBA)" },
+    { kind: "divider", label: "@(cb): 45 ns edge, cb.ready sampled 0: keep waiting" },
+    { kind: "async", from: "dut", to: "bus", label: "ready <= ~ready (NBA): ready = 1" },
+    { kind: "divider", label: "@(cb): 55 ns edge, cb.ready sampled 1: transfer" },
+    { kind: "self", from: "bus", label: "cb.valid <= 0" },
+    { kind: "return", from: "bus", to: "drv", label: "write returns" }
+  ]}
+/>
+
+**Predict before you look at the waveform.** In the Make It Work bench, `run()` starts at 30 ns and calls `write()` twice; the slave toggles `ready` on every edge after reset. Rising edges are at 5, 15, 25 … ns, numbered 0, 1, 2 …. At which edge does the first transfer happen? At the 45 ns edge `ready` is low: may `valid` drop there?
+
+<TimingDiagram
+  title="The handshake in the Make It Work bench"
+  caption={"Edge k is the rising edge at 5 + 10k ns. Each column is the value sampled at that edge, which is what the monitor and the clocking block read there; a drive through cb lands just after an edge, so it appears in the next column. Hatching means unknown (x): before 5 ns nothing has driven valid, ready or addr. rst_n rises at 20 ns, a falling edge, although the diagram draws every change just after the previous rising edge. Bus values are hexadecimal."}
+  edges={9}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [0, 0, 1, 1, 1, 1, 1, 1, 1] },
+    { name: "valid", kind: "bit", values: [undefined, 0, 0, 0, 1, 1, 0, 1, 0] },
+    { name: "ready", kind: "bit", values: [undefined, 0, 0, 1, 0, 1, 0, 1, 0] },
+    { name: "addr", kind: "bus", values: [undefined, undefined, undefined, undefined, "1000", "1000", "1000", "1004", "1004"] }
+  ]}
+  markers={[
+    { edge: 3, tone: "info", label: "35 ns: READY is 1 before any VALID, which is allowed. write() starts here and drives VALID just after this edge" },
+    { edge: 4, tone: "pending", label: "45 ns: VALID 1, READY 0: no transfer, so VALID and addr must stay" },
+    { edge: 5, tone: "pass", label: "55 ns: VALID and READY both 1: transfer 1, addr 1000" },
+    { edge: 7, tone: "pass", label: "75 ns: VALID and READY both 1: transfer 2, addr 1004" }
+  ]}
+/>
+
+What the waveform shows:
+
+- **The first transfer is at edge 5 (55 ns)**, the first edge where both columns are 1. At edge 4 `valid` is 1 but `ready` is 0, so `valid` and `addr` hold; dropping `valid` there would withdraw a request the slave never accepted.
+- **READY before VALID is fine.** At edge 3 the slave is ready and the master is not. Nothing happens, and nothing is wrong: the destination may raise READY whenever it likes.
+- **The cost of this simple task.** `write()` drops `valid` for a cycle after each transfer (edge 6) before the next request. Push Further shows how a driver keeps `valid` high for back-to-back transfers.
+
+### Parameterized interfaces
+
+Interfaces take parameters exactly as modules do (§25.8), so one definition serves several bus widths:
+
+```systemverilog
+// snippet: a parameterized interface (§25.8) and the virtual interface type (§25.9)
+interface data_if #(parameter int DW = 32) (input logic clk);
+  logic [DW-1:0] data;
+  logic          valid;
+endinterface
+
+module tb_top;
+  logic clk = 1'b0;
+  data_if            d32 (.clk);         // DW = 32, the default
+  data_if #(.DW(64)) d64 (.clk);         // DW = 64
+
+  virtual data_if            v32;        // means data_if with DW = 32
+  virtual data_if #(.DW(64)) v64;
+
+  initial begin
+    v32 = d32;                           // legal: the parameter values match
+    v64 = d64;                           // legal
+    // v32 = d64;                        // illegal: DW differs, so the types differ
+  end
+endmodule
+```
+
+The rule to remember: the actual parameter values, **defaults included**, are part of an interface's type, and a virtual interface and an instance are assignment-compatible only when they match (§25.9).
+
+| Instance | Handle | Assignment | Legal? |
+|---|---|---|---|
+| `data_if d32 (.clk)` | `virtual data_if v32` | `v32 = d32;` | Yes: both have DW = 32 |
+| `data_if #(.DW(64)) d64 (.clk)` | `virtual data_if v32` | `v32 = d64;` | No: 64 is not 32 |
+| `data_if #(.DW(64)) d64 (.clk)` | `virtual data_if #(.DW(64)) v64` | `v64 = d64;` | Yes |
+
+The standard's own example declares a handle whose default width no instance uses and calls it a "legal declaration, but no legal assignments" (§25.9). How reusable verification components cope with this is an expert topic (Push Further) and is owned by [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index).
+
+### Pitfalls and misconceptions
+
+| Misconception | Why it is wrong | What is true |
+|---|---|---|
+| "A modport copies the signals, or creates storage for each user." | A modport only declares directions for members the interface already has (§25.5). It "shall not implicitly declare new ports". | One set of signals per interface instance; each modport is a view of it. |
+| "A virtual interface is a copy of the interface." | It is "a variable that represents an interface instance" (§25.9). Assigning it copies a reference. | Reading `vif.ready` gives the live value; driving `vif.cb.valid` drives the DUT's signal. |
+| "A null virtual interface is caught at elaboration." | Whether the handle is assigned depends on code that runs, so the compiler cannot know (§25.9). | It compiles; the first use is a fatal error at run time. |
+| "A modport stops every illegal access." | It checks only accesses through that port; hierarchical references bypass it, and types and parameters stay visible (§25.10). | Use modports for intent and checking, and keep hierarchical references out of reusable code. |
+| "VALID should wait for READY, to be safe." | If the slave also waits for VALID, neither moves (IHI0022E §A3.2.1). | The source asserts VALID first and holds it until the handshake. |
+| "`while (!cb.ready)` and `while (cb.ready !== 1'b1)` are the same." | `!x` is `x`, which counts as false (§12.4). | Only `!== 1'b1` waits through an unknown READY. |
+
+### Recap
+
+- An **interface** declares a bus once. Ports in its header connect from outside (§25.4); everything inside exists once per instance.
+- A **modport** is a direction view, not storage. A write to an input through a modport is a compile-time error; a hierarchical reference bypasses every modport (§25.5, §25.10).
+- A modport can list a **clocking block** (`modport drv (clocking cb);`) so that testbench code can drive the DUT only through it (§25.5.5).
+- A **virtual interface** is a handle to one instance. It is null until assigned, and using it null is a fatal run-time error. Its modport and parameters are part of its type (§25.9).
+- **Interface tasks** exposed through `modport … (import …)` package the protocol next to the signals (§25.7). A valid/ready source raises VALID without waiting for READY and holds it until both are 1.
 
 ## Make It Work
-1.  **Define the Signals:** List all wires in the interface.
-2.  **Define Modports:** Create a modport for each type of component that connects to the interface (Master, Slave, Monitor), plus a clocking modport for class-based drivers.
-3.  **Instantiate:** Create an instance of the interface in your top-level testbench.
-4.  **Connect:** Pass the interface instance to the module ports. Use the modport name in the module definition: `module m (my_if.master ifc);`.
-5.  **Bind the virtual interface:** Assign `vif` (or `uvm_config_db` set/get) before any class touches it. A null `vif` is a fatal run-time error.
-6.  **Never wait for READY before raising VALID.** One side must move first, and in ready/valid protocols that is always the sender.
+
+### Worked example: one interface, a DUT, a monitor and a class driver
+
+This bench assembles every piece of the lesson: the full `simple_bus_if`, a slave DUT connected through `.slave`, a monitor connected through `.monitor`, and a class driver in a package that reaches the bus through a `.api` handle. It ends with the `PASS=<n> FAIL=0` signature that every non-UVM bench in this curriculum prints.
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+
+// simple_bus_if, complete: signals, clocking block, five modports, two tasks.
+interface simple_bus_if (input logic clk);
+  logic [31:0] addr;
+  logic [31:0] data;
+  logic        rw;                         // 1 = read, 0 = write
+  logic        valid;
+  logic        ready;
+
+  clocking cb @(posedge clk);              // timing rules: F4C
+    default input #1step output #0;
+    output addr, data, rw, valid;
+    input  ready;
+  endclocking
+
+  modport master  (input clk, ready, output addr, data, rw, valid);
+  modport slave   (input clk, addr, data, rw, valid, output ready);
+  modport monitor (input clk, addr, data, rw, valid, ready);
+  modport drv     (clocking cb);
+  modport api     (import idle, write);    // callers may call these, nothing else
+
+  task automatic idle();                   // hold the bus idle during reset
+    cb.valid <= 1'b0;
+  endtask
+
+  // VALID rises without looking at READY and stays high until READY is
+  // sampled high, so this handshake cannot deadlock.
+  task automatic write(input logic [31:0] a, input logic [31:0] d);
+    @(cb);                                 // start on a clock edge
+    cb.addr  <= a;
+    cb.data  <= d;
+    cb.rw    <= 1'b0;
+    cb.valid <= 1'b1;
+    do @(cb); while (cb.ready !== 1'b1);   // an unknown READY is not a handshake
+    cb.valid <= 1'b0;
+  endtask
+endinterface
+
+module slave_dut (simple_bus_if.slave bus, input logic rst_n);
+  // READY may come before VALID; this slave toggles it every cycle after reset.
+  always_ff @(posedge bus.clk)
+    if (!rst_n) bus.ready <= 1'b0;
+    else        bus.ready <= ~bus.ready;
+endmodule
+
+module bus_monitor (simple_bus_if.monitor bus);
+  logic [31:0] seen[$];                    // addresses of completed writes
+  // Reading at the edge is deterministic here: every writer of these signals
+  // uses <= or the clocking block (F3C). F4C gives monitors their own block.
+  always @(posedge bus.clk)
+    if (bus.valid === 1'b1 && bus.ready === 1'b1) begin
+      seen.push_back(bus.addr);
+      $display("t=%0d: write addr=%h data=%h", $time, bus.addr, bus.data);
+    end
+endmodule
+
+package tb_pkg;
+  // Class syntax is a preview of I-SV-1. A class object is created at run
+  // time and can hold a handle to an interface instance, never the instance.
+  class tb_driver;
+    virtual simple_bus_if.api vif;         // a handle: null until assigned (§25.9)
+    logic [31:0] addrs[$] = '{32'h0000_1000, 32'h0000_1004};
+
+    function new(virtual simple_bus_if.api vif);
+      this.vif = vif;                      // bound through new(), the other legal form
+    endfunction
+
+    task idle();
+      vif.idle();
+    endtask
+
+    task run();
+      foreach (addrs[i]) vif.write(addrs[i], 32'hA5A5_0001 + i);
+    endtask
+  endclass
+endpackage
+
+module tb_top;
+  import tb_pkg::*;
+
+  logic clk   = 1'b0;
+  logic rst_n = 1'b0;
+  int unsigned n_pass, n_fail;
+  always #5 clk = ~clk;                    // rising edges at 5, 15, 25 ... ns
+
+  simple_bus_if bus_if (.clk);             // .name connection to the interface port
+  slave_dut     dut    (.bus(bus_if), .rst_n);
+  bus_monitor   mon    (.bus(bus_if));
+
+  tb_driver tb_drv;
+
+  initial begin
+    tb_drv = new(bus_if);                  // instance into a .api handle (§25.9)
+    tb_drv.idle();                         // valid is 0 from the first edge on
+    repeat (2) @(negedge clk);
+    rst_n = 1'b1;                          // on a falling edge: cannot race the flops
+    @(negedge clk);
+    tb_drv.run();
+    repeat (2) @(negedge clk);
+    // Self-check: the monitor saw exactly the addresses the driver wrote.
+    for (int i = 0; i < tb_drv.addrs.size(); i++)
+      if (i < mon.seen.size() && mon.seen[i] == tb_drv.addrs[i]) n_pass++;
+      else n_fail++;
+    if (mon.seen.size() != tb_drv.addrs.size()) n_fail++;
+    $display("PASS=%0d FAIL=%0d", n_pass, n_fail);
+    $finish;
+  end
+
+  initial begin : watchdog                 // a hang ends the run with a message
+    #1us;
+    $fatal(1, "WDOG: no end of test after 1 us");
+  end
+endmodule
+```
+
+**Expected output** (illustrative: traced by hand from §14.13, §14.16 and §25.9, not captured from a simulator; your simulator adds its own banner and a line for `$finish` at 90 ns):
+
+```text
+t=55: write addr=00001000 data=a5a50001
+t=75: write addr=00001004 data=a5a50002
+PASS=2 FAIL=0
+```
+
+<ArchitectureDiagram
+  title="The worked example: who connects to bus_if, and how"
+  caption={"Solid lines are port connections, labelled with the modport each module's header selects. The dotted line is not a port: tb_drv is a class object that holds a handle of type virtual simple_bus_if.api, so it can only call idle() and write(). The monitor's header gives it an all-input view."}
+  nodes={[
+    { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "gen", label: "clk, rst_n", sublabel: "tb_top variables", kind: "generic", col: 0, row: 0 },
+    { id: "drv", label: "tb_drv: tb_driver", sublabel: "class object (tb_pkg)", kind: "driver", col: 1, row: 0 },
+    { id: "dut", label: "dut: slave_dut", kind: "dut", col: 0, row: 1 },
+    { id: "bus", label: "bus_if: simple_bus_if", sublabel: "signals, cb, idle(), write()", kind: "interface", col: 1, row: 1 },
+    { id: "mon", label: "mon: bus_monitor", kind: "monitor", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "gen", to: "bus", style: "structural", label: ".clk" },
+    { from: "gen", to: "dut", style: "structural", label: ".rst_n" },
+    { from: "drv", to: "bus", style: "control", label: "vif (.api handle)" },
+    { from: "dut", to: "bus", style: "structural", label: ".slave" },
+    { from: "mon", to: "bus", style: "structural", label: ".monitor" }
+  ]}
+/>
+
+**The trace**, edge by edge (the waveform is the one under "Tasks in interfaces"):
+
+1. **0 ns.** `new(bus_if)` binds the handle. `tb_drv.idle()` drives `cb.valid <= 1'b0` between clock edges, so the drive is held until the next clocking event and lands at 5 ns (§14.16).
+2. **5 and 15 ns.** `rst_n` is 0, so the slave keeps `ready` at 0. `tb_top` releases reset at the 20 ns falling edge, where no flop is sampling.
+3. **25 and 35 ns.** The slave starts toggling: `ready` becomes 1 after 25 ns and 0 after 35 ns. `run()` starts at 30 ns, and `write()` waits for the 35 ns edge, then drives `addr`, `data`, `rw` and `valid`, which change just after it.
+4. **45 ns.** `cb.ready` was sampled 0, so `write()` keeps waiting and `valid` stays 1.
+5. **55 ns.** `valid` and `ready` are both 1: the monitor prints the first line, and `write()` drops `valid` and returns.
+6. **65 and 75 ns.** The second `write()` drives at 65 ns; at 75 ns both are 1 again and the monitor prints the second line.
+7. **80 and 90 ns.** `tb_top` waits two falling edges, compares the monitor's two addresses with the driver's list, prints `PASS=2 FAIL=0` and calls `$finish` at 90 ns.
+
+### Run it
+
+1. Save the code as `tb_top.sv`.
+2. Compile it with any IEEE 1800 simulator that supports interfaces, clocking blocks and classes. `tb_top` is the top level, because nothing instantiates it.
+3. Run it. The last line before the simulator's `$finish` message must be `PASS=2 FAIL=0`.
+
+The commands differ per simulator; these are typical invocations, so check your simulator's documentation (tool-dependent):
+
+```bash
+# Synopsys VCS
+vcs -sverilog tb_top.sv
+./simv
+
+# Siemens Questa
+vlib work
+vlog tb_top.sv
+vsim -c tb_top -do "run -all; quit"
+
+# Cadence Xcelium
+xrun tb_top.sv
+```
+
+Without a local simulator, an online playground such as EDA Playground runs the file in a browser. Support for classes, clocking blocks and interface tasks varies among open-source simulators, and none was verified for this page (tool-dependent).
+
+### Debug it: predict, then break
+
+Make one change at a time, **predict** what happens, run, then undo the change. The exact wording of every message is tool-dependent; what matters is *when* it appears.
+
+| # | Change | Predict | What you see | Fix |
+|---|---|---|---|---|
+| 1 | In `tb_top`, write `tb_drv = new(null);` | Compiles? Fails when? | It compiles, then stops at 0 ns with a fatal null-handle error in `idle()`, the first use of `vif` (§25.9) | Bind before the first use. Add `if (vif == null) $fatal(1, "vif not set");` in `new()`, so the message names the cause |
+| 2 | Change the slave's header to `simple_bus_if.master bus` | Compiles? | A compile or elaboration error on `bus.ready <= …`: `ready` is an input in `master` (§23.3.3.2, §25.5) | Connect each user through the view of its role |
+| 3 | In `tb_driver.run()`, add `vif.cb.valid <= 1'b1;` | Compiles? | A compile error: `cb` is not listed in `api`, so it is not reachable through the handle (§25.5) | Call the tasks, or use a `.drv` handle if the class must drive the clocking block |
+| 4 | In `tb_top`, add `virtual simple_bus_if v;` and `v = tb_drv.vif;` | Compiles? | A compile error: a modport-selected handle cannot be assigned to one with no modport (§25.9) | Declare `v` as `virtual simple_bus_if.api` |
+| 5 | Delete the slave's reset branch, so that `ready` is never assigned a known value | Hang or wrong result? | `ready` stays `x` (`~x` is `x`). `write()` waits forever, and the watchdog ends the run at 1 us with `WDOG: no end of test after 1 us` | Reset every DUT output. Then try `while (!cb.ready)` instead: the loop exits on `x`, `valid` drops with no handshake, and the bench prints `PASS=0 FAIL=3` |
+
+Case 5 shows why the x-safe test matters: with `!== 1'b1` an unknown READY becomes a hang that the watchdog reports, instead of a run that silently skips its transfers.
+
+**Checklist before moving on:**
+- [ ] Every module connects through the narrowest modport for its role, and a monitor uses the all-input view.
+- [ ] I can say why `clk` is an interface port and `addr` is not.
+- [ ] Testbench code drives the DUT only through a clocking block or an interface task, never at the edge with a blocking assignment.
+- [ ] VALID never waits for READY, is held until the handshake, and is driven low during reset.
+- [ ] READY is tested with `!== 1'b1`, and the bench has a watchdog.
+- [ ] Every virtual interface is bound before its first use, and its type (modport and parameters) matches the instance.
+- [ ] I can predict, for each change in the debug table, whether it fails at compile time or at run time.
 
 ## Push Further
-- Learn how to parameterize an interface so you can instantiate an 8-bit or 32-bit bus without duplicating code. Remember that a virtual interface's type includes the parameter values.
-- Investigate what happens when you use an interface array to connect multiple identical slaves (like memory banks) to an interconnect.
+
+These items go beyond the core path: corner cases from the standard, behaviour that varies by tool (labelled as such), and the trade-offs a senior engineer weighs.
+
+### Expert: virtual interface type rules
+
+All of these are in IEEE 1800-2023 §25.9:
+
+- **Parameters are part of the type, defaults included.** `virtual PBus v8;` with `WIDTH = 8` by default is a "legal declaration, but no legal assignments" when every `PBus` instance overrides `WIDTH`.
+- **The modport is part of the type.** An instance or a no-modport handle may be assigned to a modport handle; the reverse, and assignments between different modports, are illegal.
+- **Only three operations** are allowed on a virtual interface variable: assignment (`=`) from a handle or instance of the same type or from `null`, and `==`/`!=` with the same.
+- **Where it may not appear.** A virtual interface cannot be a port, an interface item or a member of a union. It can be a class property, a task or function argument, or an array element (`VI v[2] = '{b1, b2};` in §25.9.1).
+- **Interfaces that cannot be virtual.** An interface containing hierarchical references to objects outside itself, or ports that reference other interfaces, cannot be used in a virtual interface declaration. An instance whose parameters are changed by a `defparam` from outside the interface cannot be assigned to one.
+- **Name the type once.** `typedef virtual simple_bus_if.drv bus_vif_t;` (the §25.9.1 example uses `typedef virtual SyncBus VI;`) keeps the exact type in one place, which matters when a configuration database must store and retrieve it with identical type parameters ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
+
+### Expert: driving nets through a virtual interface
+
+- **Procedural only.** Members reached through a virtual interface "can only be used in procedural statements; they cannot be used in continuous assignments or sensitivity lists" (§25.9). Event controls inside class tasks, such as `@(posedge vif.clk)`, are procedural and legal: the §25.9 example class waits on `@(posedge bus.grant)`.
+- **A net needs a procedural path.** You cannot assign a net procedurally, through a handle or otherwise. "In order for a net to be driven via a virtual interface, the interface itself needs to provide a procedural means to do so" (§25.9): a clocking block, or a variable inside the interface plus a continuous assignment to the net.
+- **Tri-state buses.** A clocking block output whose target is a net creates a driver with `(strong1, strong0)` strength, initialized to `'z`, so it has no effect until the first drive (§14.16). Driving `'z` through the clockvar releases the bus, which makes a clocking block the natural way to model a shared tri-state line from class code. The variable-plus-assign alternative looks like `assign sda = sda_oe ? sda_out : 1'bz;`, with the class driving `sda_oe` and `sda_out`.
+
+### Expert: modport corner cases
+
+- **Directions are from the user's side** (§25.5), for signals and for clocking blocks listed in a modport (§25.5.5).
+- **Both places must agree.** If the modport is named in the module header and at the instance, the names must be identical (§25.5).
+- **Same interface only.** Every name in a modport must be declared by that interface, not by an enclosing one, and a modport "shall not implicitly declare new ports" (§25.5).
+- **Modport expressions** (§25.5.4) export a slice or an expression under a new port name: `modport A (output .P(r[3:0]), input .Q(x), R);`. Two modports can each own a different half of one vector this way.
+- **Clocking blocks through a handle** (§25.9.2). The standard says that referencing a clocking block with dot notation through a virtual interface "only works for interfaces with no modports"; when the interface has modports, list the clocking block in a modport and type the handle with that modport, as `virtual simple_bus_if.drv` does. Many simulators also accept `vif.cb` through a no-modport handle (tool-dependent), so do not rely on either behaviour in portable code: use the modport.
+- **When violations are reported.** A direction violation through a module port is reported at compile or elaboration time. Whether a tool reports it at compile time or at elaboration, and how it words it, varies (tool-dependent).
+- **Multiple writers.** A modport never limits the number of users of a view. Two `always_ff` writers of one interface variable are illegal whatever the modports (§9.2.2.4 by way of §9.2.2.2); two plain `always` writers are legal and race.
+
+### Expert: generic interface ports and interface arrays
+
+- **Generic ports** (`module m (interface a, …)`) can be declared only in ANSI-style headers, and "an implicit port cannot be used to reference a generic interface": `.*` does not connect them, so write `.a(sb_intf)` (§25.3.3).
+- **Interface arrays.** `SBus s[1:4] ();` instantiates four interfaces, and one class can serve each through its own handle: `t[1] = new(s[1]);` and so on (§25.9 example). The same transactor class then drives four devices without a single hierarchical reference.
+- **Hierarchical actuals.** If a port connection's actual is a hierarchical reference to an interface, it must name an interface instance and must not resolve through an arrayed instance or a generate block (§25.3).
+
+### Expert: tasks and functions through modports
+
+- **`import` and `export`** (§25.7). `import` lets the module that uses the modport call a subroutine; `export` says that module *provides* it. A full prototype, rather than a bare name, is required when the subroutine is imported from another module, and when default argument values or argument binding by name are used.
+- **Missing exports fail early.** "If a module is connected to a modport containing an exported subroutine and the module does not define that subroutine, then an elaboration error shall occur" (§25.7).
+- **Several exporters.** Normally only one module may export a given task name. Several instances can export the same task when the interface declares it `extern forkjoin`; a call then runs every exported copy in parallel, like a `fork`…`join` (§25.7.4).
+- **Concurrent callers share the clockvars.** If two processes call `write()` on one interface in the same cycle, both drive the same `cb.valid` and `cb.addr`, and when several drives mature in the same Re-NBA region only the last value is driven, for a variable or a net (§14.16.2). An interface task is not an arbiter: serialize callers with a semaphore ([I-SV-5](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index)), or, in UVM, with the sequencer ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)).
+
+### Expert: handshake liveness and throughput
+
+- **The normative rule** is IHI0022E §A3.2.1 for every AXI channel: the source does not wait for READY before asserting VALID, and holds VALID until the handshake. §A3.3.1 lists which handshakes may depend on others between channels. [B-AXI-1](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index) owns the full treatment.
+- **Back-to-back transfers.** The lesson's `write()` drops VALID for a cycle after every transfer, so it reaches at most one transfer every two cycles. A streaming driver keeps `cb.valid` at 1 and presents the next address at the handshake edge, giving one transfer per cycle whenever READY stays high. Test both shapes: slaves often break only under back-to-back traffic.
+- **Unknown values.** Test handshake signals with `=== 1'b1` or `!== 1'b1`. An `if` or loop condition treats `x` and `z` as false (§12.4), which turns an undriven READY into a silent skip.
+- **Hangs.** A handshake that never completes is a hang, not an error. Every bench needs a watchdog: an `initial` timeout, as in Make It Work, or a `fork`…`join_any` around the wait ([F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index)).
+- **Synchronize before driving.** A drive issued between clock edges matures at the next clocking event (§14.16), so a task that drives first and waits second shifts by up to a cycle depending on when it was called. Start every bus task with `@(cb)` ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)).
+
+### Expert: parameterized interfaces in reusable verification IP
+
+A methodology trade-off, not a rule of the standard. Because parameter values are part of a virtual interface's type (§25.9), a driver class written for `virtual data_if #(.DW(32))` cannot hold a 64-bit instance. Teams pick one of three approaches:
+
+| Approach | How | Cost |
+|---|---|---|
+| Parameterized classes | `class drv #(int DW = 32);` with `virtual data_if #(.DW(DW)) vif;` | Every class above the driver (agent, environment) carries the parameter too |
+| One widest interface | Declare the interface at the maximum width and pass the active width as run-time configuration | Unused bits must be tied off and ignored; the interface no longer documents the real width |
+| An abstract class wrapper | The interface defines a class that extends an abstract base class; the driver holds a base-class handle and never names the interface type | More code, and it relies on class features from Tier 2 |
+
+Parameterized classes are taught in [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/parameterized-classes), and the full VIP treatment is in [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index).
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: why a class needs a virtual interface"
+  question="Why can't a UVM driver class simply contain an instance of the bus interface?"
+  options={[
+    { text: "Because interfaces can only be instantiated in the top module.", isCorrect: false, feedback: "Interfaces can be instantiated in any module or interface hierarchy (§25.3). The limit is on classes, not on where in the module tree an instance sits." },
+    { text: "Instances are created during elaboration and form the fixed hierarchy; a class object is created at run time and has no ports, so it can only hold a handle to an instance that already exists.", isCorrect: true, feedback: "Correct. The virtual interface is that handle (§25.9): null until assigned, then a reference to the one instance the DUT also uses." },
+    { text: "Because the interface would be copied every time the class is copied.", isCorrect: false, feedback: "This mixes up the reason with a misconception. Even a virtual interface is never a copy of the signals; it is a reference." },
+    { text: "It can, but it is slower than a virtual interface.", isCorrect: false, feedback: "It cannot: a class cannot contain an interface instance. Performance has nothing to do with it." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the handle that is null in one agent only"
+  question="tb_top stores a virtual interface in the UVM configuration database. One agent's driver gets it; another agent's driver reports that its vif is null. Both drivers look identical. What do you check first?"
+  options={[
+    { text: "The simulator's random seed.", isCorrect: false, feedback: "Configuration lookups do not depend on randomization." },
+    { text: "Whether the second driver's handle type matches the stored type exactly: same interface, same modport, same parameter values. A get with a different type finds nothing, and the handle stays null.", isCorrect: true, feedback: "Correct. The modport and the parameters are part of a virtual interface's type (§25.9), and the configuration database matches on type. Then check the instance path and field name (I-UVM-2C)." },
+    { text: "Whether the interface instance was copied before the second agent was built.", isCorrect: false, feedback: "Nothing is copied: every handle refers to the one instance." },
+    { text: "Whether the second driver uses a clocking block.", isCorrect: false, feedback: "Clocking-block use does not affect whether the handle is found." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: can a monitor modport stop a monitor from driving?"
+  question="Your monitor module connects through an all-input monitor modport. Is it now impossible for the monitor's code to change a bus signal?"
+  options={[
+    { text: "Yes: the modport makes every bus signal read-only for the whole simulation.", isCorrect: false, feedback: "A modport restricts only accesses through that port. It does not make the signals read-only for anyone else." },
+    { text: "No. A write through the port is a compile error, but a hierarchical reference such as tb_top.bus_if.valid, or a second handle with a wider type, bypasses the modport.", isCorrect: true, feedback: "Correct (§25.10). Modports document and check intent; code review and lint must catch hierarchical references in reusable code." },
+    { text: "No: modports are advisory and simulators ignore them.", isCorrect: false, feedback: "Simulators enforce them: a write to an input through a modport port is a compile-time error (§23.3.3.2)." },
+    { text: "Yes, as long as the monitor also uses a clocking block.", isCorrect: false, feedback: "A clocking block does not prevent hierarchical references either." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: driving a tri-state bus from a class"
+  question="The DUT has a bidirectional wire sda. How does a class-based driver drive and release it through a virtual interface?"
+  options={[
+    { text: "Write vif.sda = 1'bz; directly from the class.", isCorrect: false, feedback: "sda is a net, and a net cannot be assigned procedurally, through a handle or otherwise (§25.9)." },
+    { text: "Use assign vif.sda = ... inside the class.", isCorrect: false, feedback: "Virtual interface members cannot be used in continuous assignments (§25.9), and a class cannot contain a continuous assignment anyway." },
+    { text: "Give the interface a procedural path: a clocking block output on sda (its driver starts at 'z), or a variable plus assign sda = oe ? out : 1'bz; driven by the class.", isCorrect: true, feedback: "Correct (§25.9, §14.16). The clocking block creates a (strong1, strong0) driver initialized to 'z; the variable-plus-assign form gives explicit control of the enable." },
+    { text: "Declare sda as logic instead of wire so that the class can write it.", isCorrect: false, feedback: "A variable can have only one kind of driver and cannot be resolved with the DUT's driver; a bidirectional line must be a net." }
+  ]}
+/>
 
 ## Practice & Reinforce
-- **Modport Explorer (above):** Try every statement in every view, including the clocking modport `drv`, and predict each verdict before revealing it.
-- **Practice route:** [Interface Signal Flow](/practice/visualizations/interface-signal-flow) steps through interfaces, modports, virtual interface binding and a clocking block.
-- **Quiz:** Test your knowledge of interfaces and modports below.
 
-## Interview Questions
-
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is a Virtual Interface?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>A <strong>virtual interface</strong> is a variable that holds a handle to an actual interface instance. Classes (like UVM drivers) cannot contain interface instances, so they use virtual interfaces to reach the DUT's signals. The handle is null until assigned: in UVM, `tb_top` stores the instance with `uvm_config_db#(virtual my_if)::set` and the driver retrieves it with a matching `get` in `build_phase`. Using it while it is still null is a fatal run-time error.</p>
-      </div>
-    </details>
-
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Can an interface have parameters?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>Yes. Interfaces can be parameterized just like modules. This is essential for creating reusable verification IP (VIP) that can handle different bus widths or configurations. The parameter values become part of the virtual interface type, so `virtual my_if #(.W(8))` and `virtual my_if #(.W(16))` are different types.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
-
-## References & Next Topics
-- **IEEE 1800-2023 Standard:**
-    - Clause 25: Interfaces (§25.5 Modports, §25.5.5 Clocking blocks and modports, §25.9 Virtual interfaces)
-    - §23.3.3.2: Port connection rules for variables
-- **Next:** [F4C: Synchronizing with Clocking and Program Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)
+### Retrieval quiz
 
 <Quiz
   questions={[
     {
-      question: 'What is the primary purpose of a modport?',
+      question: "interface simple_bus_if (input logic clk); declares clk in its port list and addr inside. Why the difference?",
+      objective: 1,
       answers: [
-        { text: 'To define the clock frequency', correct: false },
-        { text: 'To define signal directions for a specific connection', correct: true },
-        { text: 'To group signals together', correct: false },
-        { text: 'To create a new hierarchy', correct: false }
+        { text: "Only members in the port list can be connected from outside when the interface is instantiated; clk comes from tb_top, while addr is created by each instance", correct: true, feedback: "Right (§25.4). simple_bus_if bus_if (.clk); connects the port; addr exists once inside bus_if." },
+        { text: "Signals declared inside an interface are private and cannot be reached by modules connected to it", correct: false, feedback: "Modules reach internal signals through their interface port as bus.addr. Only external connection at instantiation needs a port." },
+        { text: "A clock must be a port because clocking blocks cannot use internal signals", correct: false, feedback: "A clocking block can use any signal visible in the interface. clk is a port because it comes from outside." },
+        { text: "Ports become nets and internal signals become variables, and a clock must be a net", correct: false, feedback: "The port/internal choice is about external connection (§25.4), not about the net or variable kind." }
       ],
-      explanation:
-        'Modports (module ports) restrict access to interface signals, declaring them as inputs, outputs, or inouts from the point of view of the connected module.'
+      explanation: "§25.4: only the members in an interface's port list can be connected by name or position when it is instantiated. Shared external signals such as a clock go there; the bus itself is internal and exists once per instance."
     },
     {
-      question: 'Can an interface contain assertions?',
+      question: "Predict: interface data_if #(parameter int DW = 32) ...; tb_top has data_if #(.DW(64)) d64 (.clk); and virtual data_if v; Then it executes v = d64; What happens?",
+      objective: 1,
       answers: [
-        { text: 'No, assertions must be in modules', correct: false },
-        { text: 'Yes, this is a great place for protocol checks', correct: true },
-        { text: 'Only if it has no modports', correct: false },
-        { text: 'Only concurrent assertions', correct: false }
+        { text: "It is legal, and v adapts to 64 bits", correct: false, feedback: "A virtual interface type includes its parameter values; nothing adapts (§25.9)." },
+        { text: "It is legal, and the upper 32 bits are truncated", correct: false, feedback: "Handles are not values that get truncated. The assignment is a type mismatch." },
+        { text: "A compile error: v means data_if with DW = 32, and parameter values, defaults included, are part of the type", correct: true, feedback: "Right (§25.9). Declare virtual data_if #(.DW(64)) v; to match the instance." },
+        { text: "A fatal error at run time when the assignment executes", correct: false, feedback: "Types are known at compile time, so the mismatch is reported before time 0." }
       ],
-      explanation:
-        'Interfaces are ideal for protocol assertions (SVA) because they see all the relevant signals in one place.'
+      explanation: "§25.9: the type of an interface includes its actual parameters, default or overridden, and an instance and a virtual interface are assignment-compatible only when they match. virtual data_if is data_if with DW = 32."
     },
     {
-      question: 'A driver class calls vif.cb.valid <= 1 but nobody ever assigned vif. What happens?',
+      question: "master_driver connects through simple_bus_if.master and bus_monitor through simple_bus_if.monitor, both to the one instance bus_if. How many valid variables exist?",
+      objective: 2,
       answers: [
-        { text: 'A compile error, because vif has no default value', correct: false },
-        { text: 'The drive is silently ignored', correct: false },
-        { text: 'A fatal run-time error: the virtual interface is still null', correct: true },
-        { text: 'valid goes to X', correct: false }
+        { text: "One per modport that is used: two", correct: false, feedback: "This is the misconception that a modport creates storage. It only declares directions (§25.5)." },
+        { text: "One per connected module", correct: false, feedback: "Connecting a module to an interface creates no signals; the module refers to the instance's members." },
+        { text: "Two per module: an input copy and an output copy", correct: false, feedback: "There are no copies. A direction is a rule about access, not a separate signal." },
+        { text: "One: bus_if.valid, which both modules reach through their own view", correct: true, feedback: "Right. A modport is a view of the interface, not storage." }
       ],
-      explanation:
-        'A virtual interface is null until it is assigned. The code compiles, and the first access through the null handle is a fatal run-time error (IEEE 1800-2023 §25.9).'
+      explanation: "An interface instance holds one set of signals. A modport lists directions for members that already exist and shall not implicitly declare new ports (§25.5), so every view refers to the same bus_if.valid."
+    },
+    {
+      question: "Debug: module m (simple_bus_if.master bus); always_ff @(posedge bus.clk) bus.ready <= 1'b1; endmodule. What happens?",
+      objective: 2,
+      answers: [
+        { text: "It runs, and ready goes to x because two modules drive it", correct: false, feedback: "The design never runs: the direction violation is found first." },
+        { text: "A compile or elaboration error before time 0: ready is an input in the master modport", correct: true, feedback: "Right. Directions are as if declared inside the module, and assigning a variable declared as an input port is illegal (§25.5, §23.3.3.2)." },
+        { text: "It runs, and the last writer of ready wins", correct: false, feedback: "That describes two legal writers. Here the write itself is illegal through this port." },
+        { text: "A fatal error at run time when the line first executes", correct: false, feedback: "Direction rules are static: they are checked when the design is compiled and elaborated, not when a line runs." }
+      ],
+      explanation: "The master modport makes ready an input of m. Writing an input port variable is illegal (§23.3.3.2), so the tool rejects the design before simulation starts."
+    },
+    {
+      question: "Which statement about modports is true?",
+      objective: 2,
+      answers: [
+        { text: "A hierarchical reference such as tb_top.bus_if.ready reaches the signal whatever modports exist", correct: true, feedback: "Right (§25.10). A modport restricts only accesses through a port or handle of that modport." },
+        { text: "A modport guarantees that only one module drives each output signal", correct: false, feedback: "Two modules on the master view may both write valid; only always_ff or always_comb writers make a second writer illegal (§9.2.2.2, §9.2.2.4)." },
+        { text: "The monitor modport gives the monitor its own read-only copy of the bus", correct: false, feedback: "There is no copy. The monitor reads the same signals through an all-input view." },
+        { text: "A modport also hides the interface's types and parameters from modules that do not list them", correct: false, feedback: "Types and parameters cannot be listed in a modport and remain accessible (§25.10)." }
+      ],
+      explanation: "§25.10: access by hierarchical name is always available, regardless of modports, and objects that cannot be listed in a modport (types, parameters) remain accessible. Modports also say nothing about how many modules use one view."
+    },
+    {
+      question: "A driver class executes vif.cb.valid <= 1'b1; but nobody ever assigned vif. What happens?",
+      objective: 3,
+      answers: [
+        { text: "A compile error, because vif has no default value", correct: false, feedback: "A virtual interface has the default value null, and the compiler cannot know whether code will assign it." },
+        { text: "An elaboration error, because no instance is bound to the handle", correct: false, feedback: "Binding happens when code runs, after elaboration. This is the misconception that a null handle is caught early." },
+        { text: "A fatal error at run time at the first use of the null virtual interface", correct: true, feedback: "Right (§25.9). Often the first use is the wait @(vif.cb), before this drive." },
+        { text: "The drive is silently ignored and valid stays x", correct: false, feedback: "Using a null virtual interface is a fatal error, never a silent no-op." }
+      ],
+      explanation: "§25.9: a virtual interface is null until initialized, and attempting to use a null virtual interface is a fatal run-time error. The code compiles; the run stops at the first use."
+    },
+    {
+      question: "A class holds virtual simple_bus_if vif (no modport), and tb_top executed vif = bus_if; at 0 ns. At 100 ns the DUT changes bus_if.ready, and the class then reads vif.ready. What does it get?",
+      objective: 3,
+      answers: [
+        { text: "The value ready had at 0 ns, when the handle was assigned", correct: false, feedback: "That would be a snapshot. The handle refers to the instance; it does not copy its values." },
+        { text: "x, because the class has its own copy of the signals that nobody drives", correct: false, feedback: "This is the misconception that a virtual interface is a copy of the interface." },
+        { text: "Nothing until the handle is assigned again", correct: false, feedback: "One assignment is enough: the handle keeps referring to bus_if." },
+        { text: "The current value of bus_if.ready, the same variable the DUT drives", correct: true, feedback: "Right. A virtual interface represents the instance (§25.9); every read sees the live signal." }
+      ],
+      explanation: "A virtual interface is a variable that represents an interface instance (§25.9). Assigning it copies a reference, so later reads and writes act on the one bus_if. (A clocking-block read such as vif.cb.ready through a .drv handle would instead give the value sampled at the last clock edge.)"
+    },
+    {
+      question: "virtual simple_bus_if.drv v1; virtual simple_bus_if v2; v1 = bus_if; Then the code executes v2 = v1; Is that legal?",
+      objective: 3,
+      answers: [
+        { text: "Yes; the modport is simply dropped", correct: false, feedback: "The modport is part of the type and cannot be dropped implicitly." },
+        { text: "No: a modport-selected handle cannot be assigned to one with no modport. v1 = v2 would be legal", correct: true, feedback: "Right (§25.9). Going from no modport to a modport narrows access and is allowed; widening is not." },
+        { text: "Yes in both directions, because both handles name simple_bus_if", correct: false, feedback: "Same interface is not enough: the modport is part of the type (§25.9)." },
+        { text: "No in both directions, because the types differ", correct: false, feedback: "The narrowing direction, v1 = v2, is explicitly legal (§25.9)." }
+      ],
+      explanation: "§25.9: a virtual interface may select a modport, which is then part of its type. An instance or a no-modport handle may be assigned to a modport handle; the standard's PBus example marks the reverse illegal."
+    },
+    {
+      question: "Predict: the master's VALID is sampled 1 from edge 4 on. READY is sampled 0, 0, 1 at edges 4, 5, 6. At which edge does the transfer happen, and when may VALID drop?",
+      objective: 4,
+      answers: [
+        { text: "Edge 4, because VALID was high there", correct: false, feedback: "A transfer needs VALID and READY both 1 at the same edge; READY is 0 at edge 4." },
+        { text: "Edge 6; VALID must stay high through edges 4 and 5 and may drop only after the edge-6 handshake", correct: true, feedback: "Right. Once asserted, VALID remains asserted until the handshake (IHI0022E §A3.2.1)." },
+        { text: "Edge 6, but VALID may drop at edge 5 and rise again to save power", correct: false, feedback: "Dropping VALID before the handshake withdraws the request, which the rule forbids." },
+        { text: "No transfer: the master should have waited for READY before raising VALID", correct: false, feedback: "That is the deadlock-prone pattern. The source must not wait for READY before asserting VALID." }
+      ],
+      explanation: "A transfer happens at the first rising edge where VALID and READY are both sampled 1, here edge 6. Until then the source holds VALID and its data stable (IHI0022E §A3.2.1)."
+    },
+    {
+      question: "Debug: a simulation stops making progress, with no error. The master's write task waits for READY before raising VALID, and the slave raises READY one cycle after it sees VALID. What is happening?",
+      objective: 4,
+      answers: [
+        { text: "A one-cycle stall, after which the transfer proceeds", correct: false, feedback: "Neither side ever moves, so there is no later cycle in which it proceeds." },
+        { text: "Both signals go to x, so the monitor sees nothing", correct: false, feedback: "Both signals stay at a known 0; the problem is ordering, not unknown values." },
+        { text: "A deadlock: each side waits for the other, so VALID and READY stay 0 forever and only a watchdog ends the run", correct: true, feedback: "Right. Fix the master: raise VALID without waiting for READY and hold it until the handshake." },
+        { text: "A compile error, because a task may not wait on a signal it does not drive", correct: false, feedback: "Waiting on another module's signal is legal; the bug is in the protocol, not the syntax." }
+      ],
+      explanation: "The slave is allowed to wait for VALID; the master is not allowed to wait for READY (IHI0022E §A3.2.1). Here both wait, so nothing ever changes: a deadlock, visible only as a hang."
+    },
+    {
+      question: "write() ends with do @(cb); while (!cb.ready); and a broken slave never drives READY, so cb.ready is x. What does write() do?",
+      objective: 4,
+      answers: [
+        { text: "Waits forever, which a watchdog reports", correct: false, feedback: "That is what the x-safe form while (cb.ready !== 1'b1) does. This form behaves differently." },
+        { text: "Leaves the loop after one cycle, because !x is x and a loop treats x as false, then drops VALID with no handshake", correct: true, feedback: "Right (§12.4). The bench then silently skips the transfer. Use cb.ready !== 1'b1." },
+        { text: "Stops with a fatal error, because a loop condition may not be x", correct: false, feedback: "An x condition is legal; it is treated as false (§12.4)." },
+        { text: "Treats x as 1 and counts a transfer", correct: false, feedback: "x is never treated as true in a condition; !x is x, which is false." }
+      ],
+      explanation: "§12.4: a condition that is x or z counts as false. !x is x, so the do-while exits at once and VALID drops without a handshake. Writing cb.ready !== 1'b1 keeps waiting until READY is a real 1."
     }
   ]}
 />
+
+### Interface Signal Flow cases
+
+Go back to the visual under "Virtual interfaces" and work through the presets without revealing. Write down each prediction, then compare it with the table. The same visual is also on its own practice page: [Interface Signal Flow](/practice/visualizations/interface-signal-flow).
+
+<details>
+<summary>Answers (predict first)</summary>
+
+| Preset | Outcome | Why |
+|---|---|---|
+| Clocking drive | Runs; `valid` changes just after the edge the driver waited on, so the DUT first samples it at the next edge | A legal synchronous drive through `.drv` (§14.16) |
+| Assignment missing | Compiles, then a fatal error at run time | Null virtual interface (§25.9) |
+| Direct drive via drv | Compile error | `valid` is not listed in `drv`; only `cb` is (§25.5) |
+| Monitor handle drives | Compile error | `valid` is an input of `monitor` (§23.3.3.2) |
+| Read cb.valid | Compile error | `valid` is an output of `cb`, and reading a clocking-block output is illegal (§14.3) |
+
+</details>
+
+### Kata: twelve wires to one interface
+
+**Objective:** replace twelve hand-wired ports with one interface and modports, without changing what the bench prints.
+
+**Starter.** A toy memory slave with twelve ports, and a top that wires each one by name:
+
+```systemverilog
+// snippet: the starter DUT header and its instance in tb_top
+module mem_slave (
+  input  logic        clk, rst_n,
+  input  logic [31:0] addr, wdata,
+  output logic [31:0] rdata,
+  input  logic        rw, valid,
+  output logic        ready, err,
+  input  logic [1:0]  size,
+  input  logic [2:0]  prot,
+  input  logic        last
+);
+  always_ff @(posedge clk)
+    if (!rst_n) begin
+      ready <= 1'b0; err <= 1'b0; rdata <= '0;
+    end else begin
+      ready <= ~ready;
+      err   <= valid && (size == 2'b11);  // this toy slave rejects 8-byte requests
+      rdata <= addr;                      // toy read data: echo the address
+    end
+endmodule
+
+// in tb_top:
+mem_slave dut (.clk(clk), .rst_n(rst_n), .addr(addr), .wdata(wdata),
+               .rdata(rdata), .rw(rw), .valid(valid), .ready(ready),
+               .err(err), .size(size), .prot(prot), .last(last));
+```
+
+**Requirements:**
+1. Write `mem_if` with `clk` and `rst_n` as ports and the other ten signals inside.
+2. Add `master`, `slave` and `monitor` modports. The monitor view must drive nothing.
+3. Change the DUT header to take one `mem_if.slave bus` port and prefix its signals with `bus.`.
+4. Move the bench's request-driving code into a task inside the interface, exposed through a modport `import`, that raises `valid` without waiting for `ready`.
+5. **Acceptance:** the log is identical before and after the refactor. Then add `bus.addr <= '0;` inside the DUT and confirm that it is now a compile error.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+```systemverilog
+// snippet: the refactored interface, DUT header and instance
+interface mem_if (input logic clk, input logic rst_n);
+  logic [31:0] addr, wdata, rdata;
+  logic        rw, valid, ready, err, last;
+  logic [1:0]  size;
+  logic [2:0]  prot;
+
+  modport master  (input clk, rst_n, rdata, ready, err,
+                   output addr, wdata, rw, valid, size, prot, last,
+                   import request);
+  modport slave   (input clk, rst_n, addr, wdata, rw, valid, size, prot, last,
+                   output rdata, ready, err);
+  modport monitor (input clk, rst_n, addr, wdata, rdata, rw, valid, ready,
+                   err, size, prot, last);
+
+  // Drives on the falling edge, away from the DUT's sampling edge (F3C);
+  // F4C replaces this with a clocking block.
+  task automatic request(input logic [31:0] a, input logic [31:0] d,
+                         input logic is_read);
+    @(negedge clk);
+    addr <= a; wdata <= d; rw <= is_read; size <= 2'b10;
+    prot <= 3'b000; last <= 1'b1; valid <= 1'b1;   // VALID does not wait
+    do @(posedge clk); while (ready !== 1'b1);     // hold until the handshake
+    @(negedge clk);
+    valid <= 1'b0;
+  endtask
+endinterface
+
+module mem_slave (mem_if.slave bus);
+  always_ff @(posedge bus.clk)
+    if (!bus.rst_n) begin
+      bus.ready <= 1'b0; bus.err <= 1'b0; bus.rdata <= '0;
+    end else begin
+      bus.ready <= ~bus.ready;
+      bus.err   <= bus.valid && (bus.size == 2'b11);
+      bus.rdata <= bus.addr;
+    end
+endmodule
+
+// in tb_top: one instance, one connection per user
+mem_if    bus (.clk, .rst_n);
+mem_slave dut (.bus(bus));
+// the bench calls bus.request(32'h10, 32'hCAFE_0000, 1'b0); and so on
+```
+
+What to check:
+- **Twelve connections became one**, and a thirteenth signal would now be added in `mem_if` alone.
+- **The DUT can no longer drive a request signal.** `bus.addr <= '0;` inside `mem_slave` is rejected before time 0, because `addr` is an input of `slave` (§23.3.3.2).
+- **The task samples at the rising edge and drives at the falling edge**, so the refactored bench has no new race. Its `do … while (ready !== 1'b1)` loop is x-safe.
+- **The log must not change.** If it does, compare the order of the edges in the old driver code with the task; a common slip is to drive at the rising edge, which moves every request by half a cycle.
+
+</details>
+
+### Debug challenge: the silent hang
+
+A colleague's bench prints nothing and ends only when the watchdog fires with `WDOG: no end of test after 1 us`. Here is the code they changed:
+
+```systemverilog
+// snippet: the changed task in simple_bus_if, and the new slave
+task automatic write(input logic [31:0] a, input logic [31:0] d);
+  @(cb);
+  do @(cb); while (cb.ready !== 1'b1);   // "wait until the slave is ready"
+  cb.addr  <= a;
+  cb.data  <= d;
+  cb.rw    <= 1'b0;
+  cb.valid <= 1'b1;
+  do @(cb); while (cb.ready !== 1'b1);
+  cb.valid <= 1'b0;
+endtask
+
+module slave_dut (simple_bus_if.slave bus, input logic rst_n);
+  always_ff @(posedge bus.clk)
+    if (!rst_n) bus.ready <= 1'b0;
+    else        bus.ready <= bus.valid;   // accept one cycle after VALID
+endmodule
+```
+
+1. **Find** why nothing moves, and name the rule that was broken.
+2. **Fix** it with the smallest change.
+3. **Prove** the fix: the bench must print `PASS=2 FAIL=0`, and the watchdog from Make It Work must no longer fire.
+
+<details>
+<summary>Worked solution (try it first)</summary>
+
+- **Why it hangs.** The new first loop makes the master wait for READY before it raises VALID. The new slave raises READY only after it sees VALID. Each waits for the other, so `valid` and `ready` stay 0 forever: a deadlock. Nothing is illegal, so no tool reports an error; only the watchdog ends the run, with `WDOG: no end of test after 1 us`.
+- **The broken rule.** The source must not wait for READY before asserting VALID (IHI0022E §A3.2.1). The slave is allowed to wait for VALID.
+- **The fix.** Delete the first `do @(cb); while (cb.ready !== 1'b1);` loop. VALID then rises on the first edge, the slave answers with READY one cycle later, and the second loop completes the handshake.
+- **Check the new timing.** With this slave, `ready` follows `valid` by one cycle, so each transfer completes at the second edge after VALID rises. Trace it: the transfers now print at 55 and 85 ns, and `PASS=2 FAIL=0` appears at 100 ns instead of 90 ns.
+
+</details>
+
+### Flashcards
+
+The flashcards for this lesson follow below, under "Reinforce the essentials". They cover every objective and the three classic misconceptions: a modport creates storage, a virtual interface is a copy, and a null handle is caught at elaboration.
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023)
+- §25.2 Interfaces: overview; §25.3 Interface syntax (§25.3.2 named bundle, §25.3.3 generic bundle); §25.4 Ports in interfaces
+- §25.5 Modports; §25.5.4 Modport expressions; §25.5.5 Clocking blocks and modports
+- §25.7 Tasks and functions in interfaces (§25.7.4 multiple task exports); §25.8 Parameterized interfaces
+- §25.9 Virtual interfaces; §25.9.1 Virtual interfaces and clocking blocks; §25.9.2 Virtual interface modports and clocking blocks; §25.10 Access to interface objects
+- §6.8 Variable declarations; §9.2.2.2 always_comb; §9.2.2.4 always_ff; §12.4 Conditional if-else statement
+- §14.3 Clocking block declaration; §14.16 Synchronous drives; §14.16.2 Driving clocking output signals
+- §23.3.3.2 Port connection rules for variables
+
+**Primary sources** (Arm IHI0022E, AMBA AXI and ACE Protocol Specification)
+- §A3.1 Clock and reset; §A3.2.1 Handshake process; §A3.3.1 Dependencies between channel handshake signals
+
+**Prerequisites:** [F4A Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index) for ports, connections, packages and hierarchical names, and [F3C Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) for why testbench drives must stay out of the DUT's sampling region.
+
+**Related**
+- [F4C Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): the timing behind `cb`, monitor clocking blocks, and the race-free bench of milestone M1.
+- [F2E First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index): the bench anatomy and the `PASS=<n> FAIL=0` signature used here.
+- [I-SV-1 Object-Oriented Programming](/curriculum/T2_Intermediate/I-SV-1_OOP/index): classes, objects and handles, previewed on this page.
+- [I-UVM-2C Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): passing virtual interfaces through `uvm_config_db`.
+- [I-SV-4A SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): assertions, including protocol checks placed inside interfaces.
+- [B-AXI-1 AXI Channel Architecture](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index): the normative VALID/READY rules on all five AXI channels.
+- [A-UVM-7 VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): parameterized interfaces and virtual interfaces in reusable verification IP.
+
+<NextLesson />

@@ -1,22 +1,77 @@
 [
   {
     "id": "f4a-1",
-    "question": "What is the primary purpose of a SystemVerilog package?",
-    "answer": "A package is a centralized namespace used to share types (typedefs, enums, structs), constants (parameters), and logic (functions, tasks) across multiple modules and testbenches, preventing duplicate definitions and ensuring type consistency."
+    "question": "What may a SystemVerilog package contain, and what may it not?",
+    "answer": "Parameters (which act as `localparam`), types, nets, variables, tasks, functions, classes, sequences, properties, checkers and covergroups (IEEE 1800-2023 §26.2). It may not contain `initial`/`always` processes or refer to the compilation-unit scope. A package variable is one global shared by every importer, and package subroutines are static unless declared `automatic`."
   },
   {
     "id": "f4a-2",
-    "question": "Why is it dangerous to define a struct directly inside a module's port list instead of using a package?",
-    "answer": "If the struct is defined inline or locally in the module, it creates an anonymous type. Other modules or testbenches cannot declare a variable of that exact type to connect to the port, leading to strict type incompatibility errors during compilation."
+    "question": "Why is it a problem to declare a struct or enum typedef inside a module instead of in a package?",
+    "answer": "A type declared inside a module is a separate, named type in every instance (§6.22), so other modules cannot declare a matching variable; enums, unpacked structs and classes then fail to assign or connect. A packed struct is only equivalent to any packed type with the same total width, state and signedness (§6.22.2), so it may connect silently with fields in the wrong order. Declare shared types once, in a package."
   },
   {
     "id": "f4a-3",
-    "question": "What is the difference between a wildcard import (import pkg::*) and an explicit import (import pkg::type_name)?",
-    "answer": "An explicit import brings only the specified item into the local scope. A wildcard import makes all items in the package available, but only if they don't clash with locally defined names. Wildcard imports in global scope (outside a module) are heavily discouraged due to namespace pollution."
+    "question": "What is the difference between import pkg::* and import pkg::name?",
+    "answer": "An explicit import (`import pkg::name;`) makes exactly that name locally visible, and it wins over any wildcard candidate. A wildcard import only makes the package's names candidates; one is imported when a reference first needs it (§26.3). Two wildcard packages offering the same name are an error only when that name is referenced."
   },
   {
     "id": "f4a-4",
-    "question": "What is the compilation unit scope ($unit)?",
-    "answer": "It is an implicit global scope for declarations that are not inside any module, package, or interface. Using $unit is heavily discouraged because its contents depend on the unpredictable file compilation order."
+    "question": "What is the compilation-unit scope ($unit), and why should shared declarations not live there?",
+    "answer": "It is a scope local to one compilation unit, holding declarations made outside every module, package and other design element; `$unit` names it (§3.12.1). Its items cannot be reached from another compilation unit, and which files form one unit is tool-specific, so code relying on it changes with file order and compile mode. Put shared declarations in packages."
+  },
+  {
+    "id": "f4a-5",
+    "question": "In an ANSI port list, which ports are nets and which are variables?",
+    "answer": "`input logic a` is a net (`input wire logic a`), `output logic y` is a variable, `output [3:0] y` is a net, an `inout` is always a net and a `ref` is always a variable (§23.2.2.3). `logic` is the data type, not the kind. Under `` `default_nettype none `` write `input wire logic` or `input var logic`, because an input with no kind is a net of the default net type."
+  },
+  {
+    "id": "f4a-6",
+    "question": "Who may write an input port, and who may write the signal connected to an output logic port?",
+    "answer": "Nobody inside the module writes an input procedurally: a net cannot be assigned procedurally (§6.5), and assignments to an input variable are illegal (§23.3.3.2). For an output port, the parent's signal decides: a parent variable connected to it takes no other driver, while a parent net may take more drivers, which resolve (§23.3.3.2)."
+  },
+  {
+    "id": "f4a-7",
+    "question": "What do the .name and .* port connections require, and how do they differ?",
+    "answer": "Both connect a port to the same-named signal in the parent, which must have an equivalent type; neither creates an implicit net (§23.3.2.3, §23.3.2.4). `.name` is an error if the signal is missing, even when the port has a default; `.*` then uses the port's default. A width mismatch is an error with both, while an explicit `.din(din)` converts like an assignment."
+  },
+  {
+    "id": "f4a-8",
+    "question": "Which parameters can an instance override: port-list parameters, body parameters, localparams, package parameters, type parameters?",
+    "answer": "Parameters in the `#(...)` port list, including type parameters (`parameter type T`), by name or by order but never mixed (§23.10.2). With a parameter port list, body `parameter`s are local (§23.10); `localparam`s are never overridden, and in a package `parameter` means `localparam` (§6.20.4). Avoid `defparam`, which cannot change type parameters (§6.20.3)."
+  },
+  {
+    "id": "f4a-9",
+    "question": "A module has import p::*; then initial $display(x); and later int x = 5;. Why is that an error, and how is it avoided?",
+    "answer": "The reference to `x` found no local name before it, so it imported `p::x` into the module; a later declaration of the same name in that scope is then illegal (§26.3, Example 1). Declare local names before their first use, or use `p::x` explicitly. A local declaration that comes first simply wins over the wildcard candidate."
+  },
+  {
+    "id": "f4a-10",
+    "question": "After import q::state_e;, why does a reference to the literal IDLE fail?",
+    "answer": "An explicit import imports only the named identifier: the enum type, not its literals (§26.3, the teeth_t example). Also import `q::IDLE`, or write `q::IDLE`. A wildcard import of `q` has no such gap."
+  },
+  {
+    "id": "f4a-11",
+    "question": "tb_pkg imports cnt_pkg. Does a module that imports tb_pkg see cnt_pkg's names? How can a package pass them on?",
+    "answer": "No: declarations imported into a package are not visible to that package's importers (§26.6). `export cnt_pkg::*;` in `tb_pkg` re-exports the names it actually imported from `cnt_pkg`, and `export *::*;` re-exports every declaration actually imported from any package. Wildcard candidates that `tb_pkg` never referenced are not imported, so neither form exports them (§26.6, examples p3 and p8)."
+  },
+  {
+    "id": "f4a-12",
+    "question": "What is the difference between `include and import, and what happens if one typedef file is included into two packages?",
+    "answer": "`` `include `` pastes the file's text (§22.4); `import` makes a package's declarations visible without copying them (§26.3). Including one typedef file into two packages creates two declarations and therefore two types, so enum and class assignments between them fail (§6.22.1, §6.19.3). One package must own each shared type; the others import it."
+  },
+  {
+    "id": "f4a-13",
+    "question": "Why does a bench fail to compile when its package file is listed after the files that import it?",
+    "answer": "The compilation of a package must precede the compilation of every scope that imports it (§26.3). List packages first, in dependency order, then the design, then the bench. Some tools reorder files for you, but do not rely on it."
+  },
+  {
+    "id": "f4a-14",
+    "question": "What is the std package, and how do you reach its items if your code hides one?",
+    "answer": "It is the built-in package holding `semaphore`, `mailbox`, `process`, `randomize` and the weak-reference class (§26.7, Annex G). It is implicitly wildcard-imported into every compilation unit, so a user declaration of the same name hides it. `std::process` (or any `std::` name) always reaches the built-in one."
+  },
+  {
+    "id": "f4a-15",
+    "question": "What do tb_top.dut.q and $root.tb_top.dut.q name, and why do reusable components avoid such paths?",
+    "answer": "Both name the variable `q` in instance `dut` of top-level instance `tb_top` (§23.6); `$root` forces the search to start at the root, while a plain path prefers a local match (§23.3.1). A component that reads a fixed path only works in a bench with those exact names. Pass signals through ports, interfaces or `bind` instead."
   }
 ]

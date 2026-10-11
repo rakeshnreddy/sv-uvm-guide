@@ -1,152 +1,993 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { Quiz, InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Parameterized Classes and Abstract Classes"
+description: "Write parameterized classes, predict which declarations share a type and its static members, and build abstract base classes that every concrete subclass must complete."
+flashcards: "I-SV-1_Parameterized_Classes"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "Accellera UVM reference implementation (uvm-core)"
+    type: "vendor"
+    identifier: "uvm-core"
+    version: "2020.3.1"
+---
 
-export const metadata = {
-  title:
-    "Parameterized Classes and Abstract Classes | Advanced SystemVerilog for Verification",
-  description:
-    "Use generics and abstract classes to build reusable components while avoiding common pitfalls.",
-};
+## Quick Take
 
-<InfoPage
-  title="Parameterized Classes and Abstract Classes"
-  sv_concept_tags={["parameterized classes", "abstract classes"]}
->
+- **What it is:** A **parameterized class** is a class written with a parameter list, `class fifo #(type T = int, int D = 4);`, so one definition can hold any item type or size. On its own it is a **generic class**: a recipe, not a type. Applying parameters, as in `fifo #(byte, 8)`, produces a **specialization**, and only a specialization is a type. An **abstract class**, declared `virtual class`, can never be constructed; its `pure virtual` methods are promises that every constructible subclass must keep (IEEE 1800-2023 §8.21, §8.25).
+- **Why it matters:** Testbench infrastructure is generic. One FIFO, scoreboard or mailbox should work for every transaction type without being copied per type or casting every handle. UVM is built from both ideas: `uvm_driver #(REQ, RSP)`, `uvm_config_db #(T)` and the factory's per-class registries are parameterized classes, and `uvm_object` and `uvm_sequence` are abstract. Many "my value never arrives" bugs are two different specializations that look alike.
+- **The Analogy:** An adjustable cookie cutter. The adjustable frame is the generic class; you cannot cut with it until you lock a setting. Each setting you lock is its own cutter, with its own tally counter on the side (its own static members). An abstract class is a cutter frame with a blank where the shape goes: you must fit a shape (a subclass) before it cuts anything. *Where it breaks:* settings that look different can be the same cutter (`fifo`, `fifo#()` and `fifo#(int, 4)` are one type), and settings that look alike are not (`fifo#(int)` and `fifo#(integer)` are two types).
 
-  ## Parameterized (Generic) Classes
-  *IEEE 1800-2023, §8.25 Parameterized classes*
+**You will be able to:**
+1. **Write** a parameterized class with type and value parameters, and declare specializations with positional, named and default (`#()`) parameter lists and with a `typedef`.
+2. **Predict** whether two declarations name the same specialization, and what each specialization's static members hold.
+3. **Write** correct class-scope references to a parameterized class (`C#()::x`, a `typedef`, or `C::x` inside the class), and **explain** how a registry class keeps one singleton object per specialization, the pattern UVM's `type_id` uses.
+4. **Write** an abstract base class with `pure virtual` methods and a concrete subclass, and **debug** the errors from constructing an abstract class or leaving a pure virtual method unimplemented.
 
-  Parameterized classes let one definition handle many data types or sizes. A
-  parameter can represent a type or a value, making components highly reusable.
+<BeforeYouStart />
 
-  <InteractiveCode>
-  ```systemverilog
-  // Generic FIFO, parameterized by type T and depth D
+## Build Your Mental Model
+
+### Why generic classes
+
+Start from a problem you will have in your first testbench. You need a bounded FIFO for 8-bit bytes, another for `int` values and a third for `packet` handles. Without parameters you have two bad choices:
+
+- **Copy the class per type.** Three classes that differ in one word. A bug fixed in one stays in the other two.
+- **Store a common base-class handle.** One class, but every item comes out as a base handle that you must `$cast` back ([Polymorphism Pitfalls and Type Casting](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) showed how), and the FIFO cannot hold plain values such as `int` at all, because an `int` is not an object.
+
+A parameterized class removes both problems. You write the FIFO once, with the item type as a **type parameter** (a parameter whose value is a data type, not a number) and the depth as a **value parameter** (an ordinary constant). The compiler then builds a separate, fully typed class for each combination you use (§8.25). You already know parameters from modules ([F4A: Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index)); classes use the same syntax and the same override rules (§8.25, §23.10).
+
+### A generic class and its specializations
+
+Here is the FIFO. It lives in a **package**, a named collection of declarations that a module brings in with `import` (F4A), because that is where shared classes belong (Push Further explains why).
+
+```systemverilog
+// compile
+// A bounded FIFO for any item type T and any depth D.
+package fifo_pkg;
   class fifo #(type T = int, int D = 4);
-    T mem[D];
-    int wptr = 0;
+    local T items[$];                 // a queue that never grows past D entries
 
-    function void push(T value);
-      mem[wptr++] = value;
+    // Refuses (returns 0) instead of overwriting when the FIFO is full.
+    function bit push(T value);
+      if (items.size() == D) return 0;
+      items.push_back(value);
+      return 1;
+    endfunction
+
+    function T pop();
+      if (items.size() == 0) $error("pop from an empty fifo");
+      return items.pop_front();
+    endfunction
+
+    function int size();
+      return items.size();
     endfunction
   endclass
+endpackage
 
-  module demo;
-    fifo #(byte, 8) byte_fifo;   // a specialization: T = byte, D = 8
-    fifo            int_fifo;    // the default specialization: fifo #(int, 4)
+module tb_top;
+  import fifo_pkg::*;
+  fifo #(bit [7:0], 2) bf;            // a specialization: T = bit [7:0], D = 2
+  fifo                 nf;            // the default specialization: fifo #(int, 4)
+  bit                  ok1, ok2, ok3;
+  bit [7:0]            b1, b2;
+  int                  n;
 
-    initial begin
-      byte_fifo = new();
-      int_fifo  = new();
-      byte_fifo.push(8'hA5);
-    end
-  endmodule
-  ```
-  </InteractiveCode>
+  initial begin
+    bf  = new();
+    nf  = new();
+    ok1 = bf.push(8'hA5);
+    ok2 = bf.push(8'h3C);
+    ok3 = bf.push(8'h77);             // the FIFO is full: refused
+    $display("pushes accepted: %0b %0b %0b", ok1, ok2, ok3);
+    b1 = bf.pop();
+    b2 = bf.pop();
+    $display("out=%h then %h, size now %0d", b1, b2, bf.size());
+    void'(nf.push(-5));
+    n = nf.pop();
+    $display("int fifo popped %0d", n);
+  end
+endmodule
+```
 
-  ### The default specialization
+Expected output (illustrative, traced by hand):
 
-  A generic class is not a type by itself; only a specialization is (§8.25). When every parameter has a default, the unadorned name means the **default specialization**, so `fifo int_fifo;` and `fifo #() int_fifo;` declare the same type. The standard's own example is `typedef vector my_vector; // use default size of 1`.
+```text
+pushes accepted: 1 1 0
+out=a5 then 3c, size now 0
+int fifo popped -5
+```
 
-  The one place you must write `#()` is in front of the scope operator outside the class: use `fifo#()::some_static`, because `fifo::some_static` is illegal there (§8.25.1). A class whose parameters have no defaults has no default specialization, so every use must supply them.
+Read the class as a recipe with two blanks. `bf` fills them with `bit [7:0]` and `2`; `nf` fills neither, so both take their **defaults**, the values written after `=` in the parameter list. Each filled-in recipe is a different class, and the compiler checks every use against its `T`. Pushing a class handle, such as a `packet` handle, into `bf`, or assigning `bf.pop()` to a `packet` handle or to a `string` variable without a cast, does not compile, because none of these assignments is legal between those types (an integral value needs an explicit cast to become a `string`, §6.16). A base-handle FIFO cannot give you that check.
 
-  ### Each specialization is its own class, with its own statics
+The check is not stricter than an ordinary assignment, though. When `T` is integral, the usual implicit conversions still apply: `bf.push(300)` compiles and stores `8'h2c` (300 truncated to 8 bits), and even `bf.push("hello")` compiles, because a string literal used in an assignment is treated as an unsigned integer constant, and when it is wider than the target it is right-justified, so only its rightmost byte, `"o"` (`8'h6f`), is stored (§5.9). Many tools warn about the truncation; the language does not forbid it. The item type here is `bit [7:0]`, not `byte`, on purpose: `byte` is signed, so `8'hA5` would print as -91 with `%0d`.
 
-  `fifo#(byte, 8)` and `fifo#(int, 4)` are different types. They cannot be assigned to each other, and each has its own copy of every `static` property (§8.25).
+**Picture it.** The diagram shows one generic class and the specializations this page uses. The generic class has no objects and no static storage; each specialization below it is a separate type.
 
-  ```systemverilog
-  class counter #(type T = int);
-    static int created = 0;
+<ArchitectureDiagram
+  title="One generic class, several specializations"
+  caption="Only the bottom row are types. fifo, fifo#(), fifo#(int) and fifo#(int, 4) all name the left-hand one, because omitted parameters take their defaults."
+  cellWidth={200}
+  nodes={[
+    { id: "gen", label: "fifo #(type T = int, int D = 4)", sublabel: "generic class: a recipe, not a type", kind: "generic", col: 0, row: 0, colSpan: 3, badge: "generic" },
+    { id: "s1", label: "fifo#(int, 4)", sublabel: "= fifo = fifo#() = fifo#(int)", kind: "generic", col: 0, row: 1, badge: "type" },
+    { id: "s2", label: "fifo#(bit [7:0], 2)", sublabel: "the type of bf", kind: "generic", col: 1, row: 1, badge: "type" },
+    { id: "s3", label: "fifo#(string, 4)", sublabel: "= fifo#(string)", kind: "generic", col: 2, row: 1, badge: "type" }
+  ]}
+  edges={[
+    { from: "gen", to: "s1", style: "structural", label: "defaults" },
+    { from: "gen", to: "s2", style: "structural", label: "T, D given" },
+    { from: "gen", to: "s3", style: "structural", label: "T given" }
+  ]}
+/>
+
+**Where you meet it in a real testbench.** The standard library's own `mailbox #(T)` is a parameterized class (§15.4.9). In UVM, a driver is declared `class my_drv extends uvm_driver #(my_item);`, so the driver's `req` handle already has your item's type, with no casts. You will write generic scoreboards, coverage collectors and reference-model queues the same way. Use a parameter when the *type* of what a class holds changes; use inheritance and `virtual` methods when the *behaviour* changes.
+
+### Declaring specializations
+
+A specialization is written like a module instance's parameter list, with the same rules (§8.25, §23.10). Every form below is legal for `fifo #(type T = int, int D = 4)`:
+
+```systemverilog
+// snippet: declarations inside a module that imports fifo_pkg
+fifo #(bit [7:0], 8)          f1;   // positional: T, then D
+fifo #(.T(bit [7:0]), .D(8))  f2;   // named: order-independent, self-documenting
+fifo #(.D(16))                f3;   // named, partial: T keeps its default (int)
+fifo #(string)                f4;   // positional, partial: D keeps its default (4)
+fifo #()                      f5;   // explicit default specialization
+fifo                          f6;   // the same type as f5
+
+typedef fifo #(bit [7:0], 8) byte_fifo_t;   // name a specialization once
+byte_fifo_t                   f7;   // the same type as f1 and f2
+```
+
+- **Positional** lists fill parameters in declaration order; you can stop early, and the rest take defaults.
+- **Named** lists, `#(.T(...), .D(...))`, are clearer once a class has more than one parameter.
+- **`typedef`** gives a specialization one name. §8.25 itself recommends it: "a typedef should be used" rather than repeating the parameter list. Put the `typedef` in the package next to the class, so every file uses the same type.
+
+**Only the `#( )` list can be changed.** A `parameter` declared *inside* the class body is a **local parameter**: the keyword `parameter` there means the same as `localparam`, and no specialization can override it (IEEE 1800-2023 §6.20.4 and Annex A, A.10 note 7; the §8.25.1 example marks `parameter int q = 5; // local parameter`). If you want callers to set a value, put it in the `#( )` list.
+
+### The default specialization, and classes that have none
+
+When every parameter has a default, the unadorned name means the **default specialization**: `fifo nf;` and `fifo #() nf;` declare the same type, `fifo #(int, 4)` (§8.25). The same holds in a `typedef`: `typedef fifo int_fifo_t;` names `fifo #(int, 4)`.
+
+A parameter may also be declared **without** a default. Then the class has no default specialization, and every use must supply at least the parameters that have no defaults (§8.25):
+
+```systemverilog
+// snippet
+class C #(int p = 1);  endclass
+class D #(int p);      endclass       // p has no default
+
+C c_obj;        // legal: the same as C #() c_obj
+D d_obj;        // illegal: D has no default specialization
+D #(3) d3;      // legal
+```
+
+Leave a type parameter without a default when no sensible default exists and you want every user to choose. The registry in Make It Work does exactly that.
+
+### Which declarations are the same type?
+
+Two specializations are the same type when every parameter matches (§8.25): type parameters must be **matching types** (§6.22.1), and value parameters must have matching types and equal values. Matching is stricter than "fits": `int` (2-state, signed, 32 bits) does not match `integer` (4-state) or `bit [31:0]` (unsigned).
+
+**Predict first:** cover the right-hand columns and decide for each row whether the two declarations name one type.
+
+| Declarations | Same type? | Why |
+|---|---|---|
+| `fifo`, `fifo#()`, `fifo#(int)`, `fifo#(int, 4)` | yes | Omitted parameters take their defaults (§8.25) |
+| `fifo#(int, 4)` and `fifo#(int, 2+2)` | yes | Value parameters compare by value: `2+2` is 4 (§8.25 rule b) |
+| `fifo#(int)` and `fifo#(integer)` | **no** | `int` is 2-state, `integer` is 4-state (§6.22.1) |
+| `fifo#(int)` and `fifo#(bit [31:0])` | **no** | `int` is signed, `bit [31:0]` is unsigned (§6.22.1 rule e) |
+| `fifo#(int)` and `fifo#(bit signed [31:0])` | yes | Same width, both 2-state, both signed, range `[31:0]` (§6.22.1 rule e) |
+| `fifo#(byte_t)` and `fifo#(byte)`, with `typedef byte byte_t;` | yes | A `typedef` that renames a type matches it (§6.22.1 rule b) |
+| `fifo#(byte, 8)` and `fifo#(byte, 4)` | **no** | Different value of `D` |
+
+**What it means.** Handles of different specializations cannot be assigned to each other, and the compiler reports an illegal assignment. Worse, a lookup keyed by type silently finds nothing (the debugging table in Make It Work shows one). The cure is the same every time: one `typedef` per specialization, in a package, used everywhere.
+
+### Static members live per specialization
+
+A **static** property exists once per class rather than once per object ([I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) taught statics). Since each specialization is its own class, each has **its own copy** of every static property (§8.25). To share one value across all specializations, put it in a base class that is *not* parameterized; §8.25 gives exactly this advice.
+
+```systemverilog
+// compile
+package cnt_pkg;
+  class counter_base;                 // not parameterized: one total for everyone
+    static int total = 0;
+  endclass
+
+  class counter #(type T = int) extends counter_base;
+    static int created = 0;           // one copy per specialization (§8.25)
+    T value;
+
     function new();
       created++;
+      total++;
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  import cnt_pkg::*;
+  counter #(int)  a, b;
+  counter #(byte) c;
+  counter         d;                  // the default specialization: counter #(int)
+
+  initial begin
+    a = new();
+    b = new();
+    c = new();
+    $display("int=%0d byte=%0d default=%0d total=%0d",
+             counter#(int)::created, counter#(byte)::created,
+             counter#()::created, counter_base::total);
+    d = a;                            // legal: the same specialization
+    // c = a;                         // illegal: counter#(byte) and counter#(int) differ
+  end
+endmodule
+```
+
+**Predict first:** two `counter#(int)` objects and one `counter#(byte)` object were built. What do the four numbers print?
+
+Expected output (illustrative, traced by hand from §8.25):
+
+```text
+int=2 byte=1 default=2 total=3
+```
+
+<ArchitectureDiagram
+  title="Each specialization has its own statics; a plain base class shares one"
+  caption="created lives in each specialization, so counter#(int) and counter#(byte) count separately. total lives in counter_base, which is not parameterized, so every specialization adds to the same variable."
+  cellWidth={210}
+  nodes={[
+    { id: "gen", label: "counter #(type T = int)", sublabel: "generic class: no storage of its own", kind: "generic", col: 0, row: 0, colSpan: 2, badge: "generic" },
+    { id: "ci", label: "counter#(int)", sublabel: "= counter#() · created = 2", kind: "generic", col: 0, row: 1, badge: "type" },
+    { id: "cb", label: "counter#(byte)", sublabel: "created = 1", kind: "generic", col: 1, row: 1, badge: "type" },
+    { id: "base", label: "counter_base", sublabel: "static total = 3 (shared)", kind: "generic", col: 0, row: 2, colSpan: 2, badge: "plain class" }
+  ]}
+  edges={[
+    { from: "gen", to: "ci", style: "structural", label: "T = int" },
+    { from: "gen", to: "cb", style: "structural", label: "T = byte" },
+    { from: "ci", to: "base", style: "structural", label: "extends" },
+    { from: "cb", to: "base", style: "structural", label: "extends" }
+  ]}
+/>
+
+**What it showed.** `counter#()::created` reads 2, not 0 and not 3: `counter#()` *is* `counter#(int)`, so it names the same storage. The `byte` specialization counted on its own. Only `total`, declared in a non-parameterized base, saw all three constructions. This is why a "global" counter or a singleton placed in a parameterized class is really one per specialization.
+
+### Reaching members with `::`
+
+The **class scope resolution operator** `::` reaches a class's static members, parameters and nested types without an object (§8.23; the [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) introduced it). With a parameterized class, `::` needs to know *which* specialization you mean, and the rule depends on where you write it (§8.25.1):
+
+| Written where | `C::x` | `C#()::x` | `C#(3)::x` | `T::x` after `typedef C T;` |
+|---|---|---|---|---|
+| Outside the class (a module, another class) | **illegal** | legal: the default specialization | legal: that specialization | legal: the default specialization |
+| Inside `C`'s body or its out-of-block methods | legal: **the current specialization** | legal: the default specialization | legal: that specialization | legal: the default specialization |
+
+So outside the class, always say which specialization you mean, with `#(...)`, `#()` or a `typedef`. Inside the class, `C::x` is just an unambiguous way to name the class's own member. Two related rules:
+
+- **A bare `C` that is not followed by `::` always means the default specialization**, even inside `C` itself (§8.25). Inside `class C #(type T = int)`, the declaration `C next;` is a handle to `C#(int)`, not to the specialization the code is running in. uvm-core declares `typedef uvm_component_registry #(T, Tname) this_type;` for the current specialization (Push Further has more).
+- **A type parameter cannot be reached through a handle.** With the FIFO above, `fifo #(bit [7:0], 2)::T` is legal and names `bit [7:0]`, but `bf.T` is not; and a value parameter read through a handle, `bf.D`, is legal but is not a constant expression, so it cannot size an array (§8.5).
+
+### Abstract classes and pure virtual methods
+
+Some base classes describe a family but are incomplete on purpose. A `base_check` should define how every checker reports a failure, but it cannot know *what* to check. IEEE 1800-2023 calls such a class **abstract** and marks it with the keyword `virtual` before `class` (§8.21):
+
+- **`virtual class base_check;`** makes the class abstract. You cannot construct it directly, but you can declare handles of its type and point them at an object of any subclass that can be constructed.
+- **`pure virtual function bit check(int value);`** is a **pure virtual method**: a prototype with no body and no `endfunction`. It is a promise that every subclass you can construct will supply a body.
+- A subclass is **complete**, so it can be constructed, once it has a body for every pure virtual method it inherits (§8.21). An abstract subclass may leave some for its own subclasses.
+- The abstract class's **constructor still runs**, but "only indirectly through the chaining of constructor calls" from a non-abstract subclass (§8.21): the subclass's `super.new(...)` call ([Constructors, `this` and `super`](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors)).
+
+Writing `pure virtual` does not by itself make a class abstract; `virtual class` does. Declare the class `virtual` whenever it has a pure virtual method. Interface classes (§8.26) also hold pure virtual methods; the [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) compares the two.
+
+```systemverilog
+// compile
+package check_pkg;
+  // Abstract: it describes every checker but cannot check anything itself.
+  virtual class base_check;
+    protected string name;
+    int unsigned     n_fail;
+
+    function new(string name);        // runs only through a subclass's super.new
+      this.name = name;
+    endfunction
+
+    pure virtual function bit check(int value);   // no body: subclasses supply it
+
+    // Shared code, written once. check() dispatches to the object's class.
+    function void run(int value);
+      if (!check(value)) begin
+        n_fail++;
+        $display("%s: FAIL value=%0d", name, value);
+      end
     endfunction
   endclass
 
-  module demo;
-    counter #(int)  a, b;
-    counter #(byte) c;
-    initial begin
-      a = new;  b = new;  c = new;
-      $display("%0d %0d", counter#(int)::created, counter#(byte)::created);  // 2 1
-    end
-  endmodule
-  ```
+  class range_check extends base_check;
+    local int lo, hi;
 
-  UVM's factory relies on this: each `uvm_component_registry #(T, "name")` specialization keeps its own static registration for one class.
+    function new(int lo, int hi);
+      super.new("range_check");       // the abstract constructor runs here
+      this.lo = lo;
+      this.hi = hi;
+    endfunction
 
-  ## Abstract Classes
-  *IEEE 1800-2023, §8.21 Abstract classes and pure virtual methods*
+    virtual function bit check(int value);   // same signature as the prototype
+      return value >= lo && value <= hi;
+    endfunction
+  endclass
+endpackage
 
-  A class is **abstract** when it is declared with the `virtual` keyword: `virtual class driver;`. You cannot construct an abstract class directly, but a handle of its type can refer to any complete subclass object.
+module tb_top;
+  import check_pkg::*;
+  base_check  chk;                    // a handle of the abstract type is fine
+  range_check rc;
 
-  A **pure virtual** method is a prototype with no body, written `pure virtual task run();`. §8.21 defines pure virtual methods as prototypes inside an abstract class (interface classes contain them too, §8.26). Writing one does not turn an ordinary class into an abstract one: the `virtual class` declaration does that, so declare the class `virtual` whenever it has a pure virtual method. A non-abstract subclass must override every pure virtual method it inherits.
+  initial begin
+    // chk = new("x");                // compile error: base_check is abstract
+    rc  = new(0, 15);
+    chk = rc;                         // upcast to the abstract base
+    chk.run(7);
+    chk.run(42);
+    $display("failures=%0d", chk.n_fail);
+  end
+endmodule
+```
 
-  <InteractiveCode>
-  ```systemverilog
-  virtual class driver;            // abstract: virtual class
-    pure virtual task run();       // prototype only; subclasses must implement it
+Expected output (illustrative, traced by hand from §8.21):
+
+```text
+range_check: FAIL value=42
+failures=1
+```
+
+<ArchitectureDiagram
+  title="An abstract base and its complete subclass"
+  caption="base_check cannot be constructed; range_check supplies check() and can. A base_check handle (chk) may hold a range_check object, and chk.run() calls range_check's check()."
+  cellWidth={200}
+  nodes={[
+    { id: "abs", label: "virtual class base_check", sublabel: "pure virtual check() · run()", kind: "generic", col: 0, row: 0, badge: "abstract" },
+    { id: "bad", label: "chk = new(\"x\")", sublabel: "compile error: abstract", kind: "generic", col: 1, row: 0, state: "error" },
+    { id: "rc", label: "class range_check", sublabel: "check() has a body", kind: "generic", col: 0, row: 1, badge: "complete" },
+    { id: "ok", label: "rc = new(0, 15)", sublabel: "legal: complete class", kind: "generic", col: 1, row: 1, state: "ok" }
+  ]}
+  edges={[
+    { from: "rc", to: "abs", style: "structural", label: "extends" },
+    { from: "bad", to: "abs", style: "control", label: "tries to build" },
+    { from: "ok", to: "rc", style: "control", label: "builds" }
+  ]}
+/>
+
+**The pattern to notice.** `run()` is ordinary, shared code in the base class, and it calls `check()`, which is virtual. So `chk.run(42)` runs `base_check::run`, which calls `range_check::check` because that is the object's class ([Polymorphism Pitfalls](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) explains the dispatch). The base fixes *how* every checker reports; each subclass decides only *what* to check.
+
+**Pure virtual versus an empty body.** `virtual function bit check(int value); endfunction` (an empty body) is *not* pure. It is a complete, callable method that returns its return variable's initial value (§8.21 NOTE, whose example returns `'x` for an `integer`). The class stays constructible, and a subclass that forgets to override it compiles and silently returns 0 here. Use `pure virtual` when every subclass must decide.
+
+**Where you meet it in a real testbench.** In uvm-core 2020.3.1, `uvm_object`, `uvm_component` and `uvm_sequence` are all declared `virtual class`. You never construct them; you extend them. Your own environments use abstract bases for the same reason: a `base_check` or a protocol-neutral `base_driver` that fixes the shared flow and leaves the protocol-specific step `pure virtual`.
+
+### Abstract and parameterized together: a registry
+
+The two ideas combine into one of the most useful patterns in verification code, and the one UVM's factory is built on:
+
+- An **abstract proxy** class (a *proxy* is a small stand-in object that knows how to build the real one) declares what every entry can do, for example `pure virtual function base_obj create_object();`.
+- A **parameterized registry** class extends it. Each specialization, `registry #(txn, "txn")` or `registry #(err_txn, "err_txn")`, knows how to build exactly one class `T`.
+- Because statics are per specialization, a `static` handle inside each specialization gives **one registry object per class**: a **singleton**, an object of which exactly one exists, created the first time someone asks for it.
+- Code that holds only proxy handles can then build objects of classes it has never heard of, by calling the virtual `create_object()`.
+
+Make It Work builds this registry in about 50 lines. UVM's `my_driver::type_id` is a `typedef` of exactly such a specialization; the factory itself is taught in [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index).
+
+### Common pitfalls and misconceptions
+
+- **"`fifo`, `fifo#()` and `fifo#(int)` are three types."** They are one: omitted parameters take their defaults (§8.25).
+- **"`fifo#(int)` and `fifo#(integer)` are the same type."** They are not: 2-state and 4-state types do not match (§6.22.1). Neither do `int` and `bit [31:0]`.
+- **"A static member is shared by every specialization."** Each specialization has its own (§8.25). Share through a non-parameterized base class.
+- **"`C::x` works anywhere."** Outside the class, the bare name before `::` is illegal; write `C#()::x`, `C#(...)::x` or use a `typedef` (§8.25.1).
+- **"A `parameter` in the class body can be overridden."** It is a local parameter (A.10 note 7). Only the `#( )` list is overridable.
+- **"Every class must give every parameter a default."** Defaults are optional; a class without them simply has no default specialization (§8.25).
+- **"`pure virtual` makes the class abstract."** `virtual class` does. Declare both.
+- **"An empty virtual method is the same as a pure one."** It is a real, callable method, and a subclass that forgets to override it compiles (§8.21 NOTE).
+- **"A generic class declared in a module is one class."** Each instance of that module creates a separate generic class (§8.25). Put classes in packages.
+
+<VisualRecap
+  title="A generic class is a recipe; each specialization is its own class"
+  rule="Only a specialization is a type. Omitted parameters take their defaults, so fifo = fifo#() = fifo#(int, 4). Each specialization has its own statics. Outside the class, reach members with C#(...)::x, C#()::x or a typedef. A virtual class cannot be constructed; its pure virtual methods must be implemented by every complete subclass."
+  code={`typedef fifo #(bit [7:0], 8) byte_fifo_t;  // name it once
+byte_fifo_t f = new();
+$display(counter#()::created);   // not counter::created
+virtual class base_check;
+  pure virtual function bit check(int v);
+endclass`}
+  mistake="Mixing specializations that look alike (int vs integer, int vs bit [31:0]), expecting one static across all specializations, writing C::x outside the class, or calling new on a virtual class."
+  inTestbench="Generic FIFOs, scoreboards and mailboxes are parameterized by item type; uvm_driver #(REQ, RSP) and uvm_config_db #(T) are parameterized; uvm_object, uvm_component and uvm_sequence are abstract."
+/>
+
+## Make It Work
+
+### A type registry: abstract proxy plus parameterized singletons
+
+This complete example combines everything on the page. A `registry #(T, TNAME)` specialization builds objects of class `T`. Each specialization keeps one singleton and one `created` counter, and code that holds only abstract `object_wrapper` handles builds objects without naming their classes. It mirrors uvm-core's `uvm_object_wrapper` and `uvm_component_registry`, simplified as noted after the code.
+
+```systemverilog
+// compile
+package reg_pkg;
+  // What the registry builds: every buildable class extends this.
+  virtual class base_obj;
+    pure virtual function string get_type_name();
   endclass
 
-  class my_driver extends driver;
-    virtual task run();
-      $display("running");
-    endtask
+  // The abstract proxy: what every registry entry can do.
+  virtual class object_wrapper;
+    pure virtual function base_obj create_object();
+    pure virtual function string   get_type_name();
   endclass
 
-  module demo;
-    driver d;                      // handle to the abstract class
-    initial begin
-      // d = new();                // illegal: driver is abstract
-      d = my_driver::new();        // typed constructor call (§8.8)
-      d.run();                     // runs my_driver::run
+  // T has no default, so there is no default specialization (§8.25):
+  // every use must name the class it builds.
+  class registry #(type T, string TNAME = "<unknown>") extends object_wrapper;
+    // A bare "registry" (not before ::) would mean the default specialization,
+    // which does not exist here, so name the current one with a typedef.
+    typedef registry #(T, TNAME) this_type;
+
+    static int created;                     // one counter per specialization
+
+    // One singleton per specialization: m_inst is static, so it persists
+    // between calls, and each specialization has its own (§8.25).
+    static function this_type get();
+      static this_type m_inst;
+      if (m_inst == null) m_inst = new();
+      return m_inst;
+    endfunction
+
+    virtual function base_obj create_object();
+      T obj = new();                        // T is known here: no cast needed
+      created++;
+      return obj;                           // upcast to base_obj
+    endfunction
+
+    virtual function string get_type_name();
+      return TNAME;
+    endfunction
+  endclass
+
+  class txn extends base_obj;
+    typedef registry #(txn, "txn") type_id;           // the UVM idiom, by hand
+    virtual function string get_type_name();
+      return "txn";
+    endfunction
+  endclass
+
+  class err_txn extends txn;
+    typedef registry #(err_txn, "err_txn") type_id;   // hides txn::type_id
+    virtual function string get_type_name();
+      return "err_txn";
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  import reg_pkg::*;
+  object_wrapper w[$];                      // abstract handles only
+  base_obj       o;
+
+  initial begin
+    w.push_back(txn::type_id::get());
+    w.push_back(err_txn::type_id::get());
+    w.push_back(txn::type_id::get());       // the same txn singleton again
+    foreach (w[i]) begin
+      o = w[i].create_object();             // virtual: the specialization decides
+      $display("%s built a %s", w[i].get_type_name(), o.get_type_name());
     end
-  endmodule
-  ```
-  </InteractiveCode>
+    $display("txn=%0d err_txn=%0d same_proxy=%0b",
+             txn::type_id::created, err_txn::type_id::created, w[0] == w[2]);
+  end
+endmodule
+```
 
-  ## Common Pitfalls
+Expected output (illustrative, traced by hand from §8.21 and §8.25):
 
-  - Omitting default values makes every use spell out the parameters, and leaves no default specialization.
-  - Parameter mismatches create a different type: a `fifo#(byte)` handle cannot hold a `fifo#(int)` object.
-  - Expecting one static counter across all specializations: each specialization counts separately.
-  - Forgetting to implement a `pure virtual` method in a non-abstract subclass prevents compilation.
-  - Attempting to construct an abstract class with `new` results in an error.
+```text
+txn built a txn
+err_txn built a err_txn
+txn built a txn
+txn=2 err_txn=1 same_proxy=1
+```
 
-  ## Quiz
+**Run it.** Save the code as `tb_top.sv`, compile it with any IEEE 1800-2023 simulator that supports classes (the package comes first in the file, so it compiles before `tb_top`), and simulate the top module `tb_top`. No UVM library is needed. The output above is traced by hand; no simulator has been run on it yet.
 
-  <Quiz questions={[
-    {
-      "question": "What keyword marks a class as abstract in SystemVerilog?",
-      "answers": [
-        {"text": "abstract", "correct": false},
-        {"text": "virtual", "correct": true},
-        {"text": "pure", "correct": false},
-        {"text": "generic", "correct": false}
-      ],
-      "explanation": "Prepending 'virtual' to a class declaration makes it abstract (§8.21). 'pure' marks a method prototype; it does not make the class abstract."
-    },
-    {
-      "question": "class counter #(type T = int); static int created; ... After constructing two counter#(int) objects and one counter#(byte) object, what is counter#(byte)::created?",
-      "answers": [
-        {"text": "1", "correct": true},
-        {"text": "3", "correct": false},
-        {"text": "2", "correct": false},
-        {"text": "0, because statics are not allowed in parameterized classes", "correct": false}
-      ],
-      "explanation": "Each specialization is a separate class with its own static properties (§8.25)."
-    }
-  ]} />
+**Trace it.** The queue holds three handles but only two registry objects exist:
 
-  <div className="mt-8">
-    <InterviewQuestionPlayground
-      question="A junior engineer writes `storage s;` where `storage` is a parameterized class `class storage #(type T = int);`. Does this compile, and if so, what is the type of `s`?"
-      options={[
-        { text: "It fails to compile because type parameters must always be explicitly provided.", isCorrect: false, feedback: "Parameters that have defaults may be omitted. Only a class with a parameter that has no default lacks a default specialization (§8.25)." },
-        { text: "It compiles, but `s` defaults to an untyped generic handle until assigned.", isCorrect: false, feedback: "A generic class is not a type; the unadorned name denotes the default specialization, which is a concrete type (§8.25)." },
-        { text: "It fails to compile. To use default parameters, you must write `storage #() s;`.", isCorrect: false, feedback: "`storage #() s;` is also legal and means the same thing. The explicit `#()` is required only before `::` outside the class, as in `storage#()::count` (§8.25.1)." },
-        { text: "It compiles and `s` is of type `storage #(int)`.", isCorrect: true, feedback: "Correct. Except as the prefix of `::`, the unadorned name of a parameterized class denotes its default specialization, so `storage s;` declares a `storage #(int)` handle (§8.25)." }
-      ]}
-    />
-  </div>
+| Step | Call | What happens | `txn` registry | `err_txn` registry |
+|---|---|---|---|---|
+| 1 | `txn::type_id::get()` | `m_inst` is null, so `registry#(txn,"txn")` builds its singleton | exists, created = 0 | none |
+| 2 | `err_txn::type_id::get()` | a different specialization with its own `m_inst`: builds a second singleton | created = 0 | exists, created = 0 |
+| 3 | `txn::type_id::get()` | `m_inst` is set: returns the step-1 object | created = 0 | created = 0 |
+| 4 | `w[0].create_object()` | virtual call runs `registry#(txn,"txn")::create_object` | created = 1 | created = 0 |
+| 5 | `w[1].create_object()` | runs the `err_txn` specialization's body | created = 1 | created = 1 |
+| 6 | `w[2].create_object()` | `w[2]` is the step-1 object again | created = 2 | created = 1 |
 
-</InfoPage>
+<ArchitectureDiagram
+  title="The registry's classes and what each specialization holds"
+  caption="object_wrapper is abstract. Each registry specialization extends it and holds its own m_inst and created. txn::type_id and err_txn::type_id are typedefs naming those specializations. txn extends base_obj, which is abstract too."
+  cellWidth={210}
+  nodes={[
+    { id: "ow", label: "virtual class object_wrapper", sublabel: "pure virtual create_object()", kind: "generic", col: 0, row: 0, colSpan: 2, badge: "abstract" },
+    { id: "rt", label: "registry#(txn, \"txn\")", sublabel: "m_inst · created = 2", kind: "generic", col: 0, row: 1, badge: "type" },
+    { id: "re", label: "registry#(err_txn, \"err_txn\")", sublabel: "m_inst · created = 1", kind: "generic", col: 1, row: 1, badge: "type" },
+    { id: "t", label: "class txn", sublabel: "typedef ... type_id", kind: "generic", col: 0, row: 2 },
+    { id: "e", label: "class err_txn", sublabel: "typedef ... type_id", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "rt", to: "ow", style: "structural", label: "extends" },
+    { from: "re", to: "ow", style: "structural", label: "extends" },
+    { from: "t", to: "rt", style: "causal", label: "type_id" },
+    { from: "e", to: "re", style: "causal", label: "type_id" },
+    { from: "e", to: "t", style: "structural", label: "extends" }
+  ]}
+/>
+
+<SequenceDiagram
+  title="Building a txn through an abstract proxy handle"
+  caption="No txn object exists before create_object(). The static get() needs no object, and the virtual create_object() runs the body of the specialization the handle holds."
+  participants={[
+    { id: "tb", label: "tb_top", kind: "generic" },
+    { id: "reg", label: "registry#(txn,\"txn\")", sublabel: "via object_wrapper w[0]", kind: "generic" },
+    { id: "obj", label: "new txn object", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tb", to: "reg", label: "txn::type_id::get()" },
+    { kind: "self", from: "reg", label: "m_inst == null: m_inst = new()" },
+    { kind: "return", from: "reg", to: "tb", label: "m_inst (stored in w[0])" },
+    { from: "tb", to: "reg", label: "w[0].create_object()" },
+    { from: "reg", to: "obj", label: "T obj = new()" },
+    { kind: "self", from: "reg", label: "created++" },
+    { kind: "return", from: "reg", to: "tb", label: "obj as base_obj" }
+  ]}
+/>
+
+**How this differs from uvm-core 2020.3.1.** The shape is the same: `virtual class uvm_object_wrapper` is the abstract proxy, and `uvm_component_registry #(type T = uvm_component, string Tname = "<unknown>")` extends it and keeps `static this_type m_inst;` inside its static `get()` (`base/uvm_registry.svh`). The real classes do more: `create_object` is an ordinary virtual function that returns `null` unless overridden (not pure), and each registry also registers itself with the factory so that a test can substitute another class. [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index) covers that part.
+
+### How to write parameterized and abstract classes
+
+1. **Put generic classes in a package**, never in a module, so each specialization is one type across the whole testbench (§8.25).
+2. **Choose parameters deliberately.** A type parameter for "what it holds"; a typed value parameter (`int D = 4`, not a bare `D = 4`) for sizes. Give a default only when a sensible default specialization exists.
+3. **`typedef` every specialization you use more than once**, next to the class, and use the `typedef` everywhere.
+4. **Reach statics and parameters with `C#(...)::x`, `C#()::x` or the `typedef`** from outside the class; inside it, `C::x` or a `this_type` `typedef`.
+5. **Put shared statics in a non-parameterized base class** when every specialization must see one value.
+6. **Make the extension points `pure virtual` in a `virtual class`**, keep the shared flow in ordinary base-class methods, and chain constructors with `super.new(...)`.
+7. **Override pure virtual methods with the identical signature**: matching argument types, identical argument names, qualifiers and directions, and a default argument exactly where the prototype has one (the default values may differ; §8.20).
+
+### Debugging parameterized and abstract classes
+
+| Symptom (what the log shows) | Cause | Fix |
+|---|---|---|
+| Illegal assignment or incompatible types between two `fifo` handles | Different specializations, for example `int` vs `integer`, or different depths (§8.25, §6.22.1) | One `typedef` per specialization, in a package, used on both sides |
+| A static counter or table reads 0 or is empty | You read a different specialization's static (§8.25) | Read the specialization you wrote; share through a non-parameterized base |
+| A value stored through `store#(int)::set` is not found by `store#(bit [31:0])::get` | Two specializations, two separate static tables; `int` does not match `bit [31:0]` (§6.22.1) | Use one `typedef` for both sides |
+| `C::x` is rejected outside the class | The unadorned name before `::` is legal only inside the class (§8.25.1) | `C#()::x`, `C#(...)::x` or a `typedef` |
+| `D d;` is rejected | `D` has a parameter without a default, so no default specialization exists (§8.25) | Supply the parameters, or add defaults |
+| A parameter override is rejected, or has no effect | It was declared with `parameter` in the class body, which is a local parameter (A.10 note 7) | Move it into the `#( )` list |
+| Assignment or `$cast` fails between "the same" class used in two places | The generic class is declared in a module (one generic class per module instance), or the class file was included into two packages (§8.25, §6.22.1, §26.2) | Declare each class once, in one package |
+| Error constructing an abstract or "virtual" class | `new` on a `virtual class` (§8.21) | Construct a complete subclass and assign it to the base handle |
+| Error that a class does not implement a pure virtual method, or cannot be constructed | A pure virtual method has no body in the subclass, or the override's signature differs (§8.21, §8.20) | Implement it with the identical signature |
+| No error, but a subclass's `check()` returns 0 | The base declared an empty-bodied virtual method instead of a pure one, and the subclass never overrode it (§8.21 NOTE) | Make the base method `pure virtual`; the compiler then enforces the override |
+
+**Checklist before moving on:**
+
+- [ ] I can write a parameterized class with a type parameter and a typed value parameter, and declare positional, named, partial, default and `typedef` specializations of it.
+- [ ] Given two declarations, I can say whether they are one type, including `int` vs `integer` and `int` vs `bit [31:0]`.
+- [ ] I can predict each specialization's static values, and I know how to share one static across all of them.
+- [ ] I write `C#()::x` or a `typedef` outside the class, and I know what `C::x` and a bare `C` mean inside it.
+- [ ] I can write a `virtual class` with `pure virtual` methods, a complete subclass that chains `super.new`, and fix the errors from constructing the base or leaving a method unimplemented.
+- [ ] I can trace the registry: why `get()` returns one object per specialization, and why `create_object()` needs no cast.
+
+## Push Further
+
+### Expert: exactly when two specializations are one type
+
+§8.25 defines a specialization as a generic class plus "a unique set of parameters", and two sets are the same only when every parameter matches:
+
+- **Type parameters** must be matching types (§6.22.1). Built-in types match themselves; a simple `typedef` renames without creating a new type; an anonymous `struct` or `enum` written out twice creates two types, so `fifo#(struct packed {int a;})` in two places gives two specializations. `typedef` the struct once.
+- **Value parameters** must have matching *value types* and equal values (§8.25 rule b). `int D = 4` gives every value the type `int`, so `fifo#(int, 4)` and `fifo#(int, 2+2)` match. An **untyped** value parameter, `class C #(p = 1)`, takes the type of the value finally assigned to it (§6.20.2), so `C#(4)` (a 32-bit value) and `C#(4'd4)` (a 4-bit value) can be two different specializations although the values are equal. Type your value parameters.
+- **One specialization can be legal while another is not.** §8.20 Example 2 declares `class E #(type Y = logic) extends C` whose override takes a `Y` argument where the base method takes `int`. `E #(int) v2;` is legal, but `E #() v1;` is illegal, because `logic` does not match `int`. Generic code is checked against each specialization that is actually declared, so an error can appear for the first time when a colleague declares a new specialization of a class that compiled for months.
+
+### Expert: where a class is declared decides how many types exist
+
+- **Package:** "all matching specializations of a package generic class are the same type" (§8.25), because a package is visible throughout the system.
+- **Module, program or interface:** "each instance of the scope containing the generic class declaration creates a unique generic class" (§8.25). A generic class declared inside a module that is instantiated twice gives two generic classes, and `fifo#(int)` from one instance cannot be assigned to `fifo#(int)` from the other.
+- **The same source compiled twice:** a class declaration creates its type within the scope where it is declared, and a type matches only itself and its `typedef` renames "within the scope of the data type identifier" (§6.22.1 rule d). A package is its own scope (§26.2, §26.3). So if one class file is `` `include ``d into two packages, or declared in the compilation-unit scope (`$unit`) of two separately compiled files, you get two unrelated types with the same name, and assignments and `$cast` between them fail. Declare each class once, in one package, and import it.
+
+### Expert: names inside a parameterized class
+
+- **Bare name versus `::`.** "Other than as the prefix of the scope resolution operator, use of the unadorned name of a parameterized class shall denote the default specialization" (§8.25), even inside the class. As a `::` prefix inside the class, the bare name "does not denote the default specialization but is used to unambiguously refer to members of the parameterized class", and in an out-of-block method "no specialization is implied" (§8.25.1): either way it reaches the current specialization's members. That is why uvm-core's registries declare `typedef uvm_component_registry #(T, Tname) this_type;` and return `this_type` from `get()`.
+- **`type(this)`.** IEEE 1800-2023 defines `type(this)` as "the type of the enclosing class" (§6.23, §8.11), and its own example is a registry singleton: `static function type(this) get();` with `static type(this) m_inst;` inside. It gives the current specialization without a `typedef`. Check your simulator's support before relying on it (tool-dependent).
+- **Through a handle.** §8.5's example uses `class vector #(parameter width = 7, type T = int);` and a handle `vector #(3) v = new;`. A data type cannot be reached through a handle: `(v.T)'(3.45)` is illegal, while `vector #(3)::T'(3.45)` is legal. A value parameter read through a handle, `v.width`, is legal but "is not a constant expression" (§8.5), so it cannot size an array. The same holds for this page's `bf.T` and `bf.D`.
+
+### Expert: out-of-block methods of parameterized classes
+
+An `extern` method (a prototype in the class, the body after it; the [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) shows the basic form) needs two extra rules when the class is parameterized:
+
+- **A return type declared inside the class needs the class scope:** `function C::T C::f();` (§8.24).
+- **`C::` inside an out-of-block body names the current specialization**, exactly as inside the class (§8.25.1). The standard's example:
+
+```systemverilog
+// snippet: IEEE 1800-2023 §8.25.1
+class C #(int p = 1, type T = int);
+  extern static function T f();
+endclass
+
+function C::T C::f();
+  return p + C::p;                    // both mean this specialization's p
+endfunction
+
+initial $display("%0d %0d", C#()::f(), C#(5)::f());   // prints "2 10"
+```
+
+### Expert: inheriting from parameterized classes and from type parameters
+
+§8.25 lists four ways to extend `class C #(type T = bit)`:
+
+- `class D1 #(type P = real) extends C;` uses `C`'s default specialization (`T` is `bit`).
+- `class D2 #(type P = real) extends C #(integer);` fixes `T` to `integer`.
+- `class D3 #(type P = real) extends C #(P);` passes its own parameter through to its base. uvm-core does this with `class uvm_sequencer #(type REQ = uvm_sequence_item, RSP = REQ) extends uvm_sequencer_param_base #(REQ, RSP);` (`seq/uvm_sequencer.svh`). (`uvm_driver #(REQ, RSP)` is different: it extends the non-parameterized `uvm_component` and uses `REQ` and `RSP` only for its members, such as its ports.)
+- `class D4 #(type P = C#(real)) extends P;` extends whatever class the parameter names. The name "shall resolve to a class type after elaboration" (the step, after compilation, where the tool resolves every parameter and builds the hierarchy). This **mixin** style adds the same feature to several unrelated bases.
+
+Two related rules (IEEE 1800-2023 §6.20.3; check your simulator, tool-dependent):
+
+- **Restricted type parameters.** `#(type class T)` (also `enum`, `struct`, `union`, `interface class`) makes a non-class argument an error, so `D4 #(int)` would be rejected with a clear message. The standard's own `weak_reference` is declared `class weak_reference #(type class T)` (Annex G).
+- **`::` after a type parameter.** With a type-parameter prefix, `::` may select a type only in a `typedef`, a `type` operator or a type-parameter assignment: `C::T x;` is illegal inside `class P #(type C)`, but `localparam type C_t = C::T;` is legal.
+
+### Expert: abstract-class corner cases
+
+- **Any class may be extended into an abstract class** that declares new pure virtual methods or re-declares inherited ones as pure (§8.21). A complete class can thus have an incomplete subclass.
+- **`pure constraint`.** An abstract class may also declare `pure constraint name;`, an obligation for every non-abstract subclass to supply a constraint of that name. Declaring one in a non-abstract class is an error (§18.5.2). [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index) covers constraint inheritance.
+- **`:final` cannot be used on a pure virtual method or a pure constraint** (Annex A, A.10 note 8). A promise that must be kept cannot also forbid keeping it.
+- **A pure virtual method in a class not declared `virtual`.** §8.21's normative text attaches pure virtual methods to abstract classes, but §8.20's Example 3 declares `pure virtual function void f3();` inside a plain `class base;`. Simulators may differ on whether such a class is accepted or treated as abstract (tool-dependent). Always write `virtual class`.
+- **Partial implementation of an interface class.** A `virtual class` may implement an interface class and leave some of its methods `pure virtual` for the first complete subclass (§8.26.7); the [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) owns interface classes.
+
+### Expert: how UVM combines both
+
+Every item here is in uvm-core 2020.3.1; the UVM lessons teach how to use them.
+
+- **Parameterized components and sequences.** `class uvm_driver #(type REQ = uvm_sequence_item, type RSP = REQ)` (`comps/uvm_driver.svh`) and `virtual class uvm_sequence #(type REQ = uvm_sequence_item, type RSP = REQ)` (`seq/uvm_sequence.svh`), which is both abstract and parameterized. IEEE 1800.2-2020 §13.7 and §14.3 specify them.
+- **The registry.** `virtual class uvm_object_wrapper` (`base/uvm_factory.svh`) is the abstract proxy, with `pure virtual function string get_type_name();`. `uvm_component_registry #(T, Tname)` keeps its singleton in `static this_type m_inst;` inside `get()`, and a helper class registers each specialization once through a static initializer, `local static bit m__initialized = __deferred_init();` (`base/uvm_registry.svh`; IEEE 1800.2-2020 §8.2). For a parameterized component, `` `uvm_component_param_utils(T) `` expands to `typedef uvm_component_registry #(T) type_id;`, with no name string (`macros/uvm_object_defines.svh`): such classes are registered by type only, a consequence [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index) explains.
+- **Typed configuration lookup.** `class uvm_config_db #(type T = int)` stores and finds entries by type as well as by name: `get` looks the name up with `uvm_resource#(T)::get_type()` (`base/uvm_config_db_implementation.svh`, `base/uvm_resource_pool.svh`; IEEE 1800.2-2020 §C.4.2). So `uvm_config_db#(int)::set(this, "*", "depth", 8)` followed by `uvm_config_db#(bit [31:0])::get(this, "", "depth", d)` returns 0: two specializations, and `int` does not match `bit [31:0]`. [I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) teaches configuration.
+- **A deliberate non-pure hook.** `uvm_sequence_base::body()` is an ordinary `virtual task` that warns "Body definition undefined" when not overridden (`seq/uvm_sequence_base.svh`), not a pure virtual method. Making it pure would force every subclass, including intermediate base sequences, to define it; the library chose a run-time warning over a compile-time error.
+
+### Expert: type parameters or base-class handles?
+
+Two designs give one container for many item types:
+
+- **Parameterize by type** (`fifo #(T)`): full compile-time type checking, no casts, and it holds plain values too. Each specialization is a separate class, with its own statics and its own code to elaborate; mixing specializations is impossible by design. Use it for infrastructure whose item type is fixed per instance: FIFOs, scoreboards, coverage collectors, drivers.
+- **Store a base-class handle** (`base_txn q[$]`): one type, so one queue can hold a mix of subclasses at run time, and one static is truly shared. The price is a checked `$cast` wherever subclass members are needed. Use it when one container must hold several classes at once.
+
+UVM uses both: `uvm_driver #(REQ)` is typed, and `uvm_object` handles flow through the generic machinery underneath. The standard says nothing about the cost of many specializations; elaboration time and memory with hundreds of them are tool-dependent, so measure on your simulator if it matters ([E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index)). Parameterized *interfaces* and their virtual-interface types are a related VIP topic, covered in [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index).
+
+### Interview angles
+
+Try each question before you open the options.
+
+<InterviewQuestionPlayground
+  title="Interview angle: the unadorned name"
+  question="A junior engineer writes storage s; where storage is declared class storage #(type T = int);. Does this compile, and if so, what is the type of s?"
+  options={[
+    { text: "It fails to compile because type parameters must always be explicitly provided.", isCorrect: false, feedback: "Parameters that have defaults may be omitted. Only a class with a parameter that has no default lacks a default specialization (§8.25)." },
+    { text: "It compiles, but s is an untyped generic handle until it is assigned.", isCorrect: false, feedback: "A generic class is not a type; the unadorned name denotes the default specialization, which is a concrete type (§8.25)." },
+    { text: "It fails to compile. To use default parameters, you must write storage #() s;.", isCorrect: false, feedback: "storage #() s; is also legal and means the same thing. #() is required only when you reach the default specialization through ::, as in storage#()::count, and a typedef works there too (§8.25.1)." },
+    { text: "It compiles, and s is of type storage #(int).", isCorrect: true, feedback: "Correct. Except as the prefix of ::, the unadorned name of a parameterized class denotes its default specialization, so storage s; declares a storage #(int) handle (§8.25)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: a linked list inside a generic class"
+  question="Inside class node #(type T = int), a colleague declares node next; to link nodes. The list is used as node #(string). Why does next = new(); followed by next.value = some_string fail?"
+  options={[
+    { text: "next is a handle to the default specialization node #(int), so its value is an int, not a string.", isCorrect: true, feedback: "Right. A bare class name that is not a :: prefix denotes the default specialization even inside the class (§8.25). Declare typedef node #(T) this_type; and this_type next;, or use type(this) where your simulator supports it." },
+    { text: "Classes cannot hold handles of their own type.", isCorrect: false, feedback: "They can: a linked list node holding a handle to the next node is the classic example (§8.13 uses one)." },
+    { text: "new() inside a parameterized class always builds the default specialization; use $cast to convert it.", isCorrect: false, feedback: "new builds an object of the handle's declared type. The problem is the declared type of next, and no cast can turn a node #(int) into a node #(string)." },
+    { text: "It compiles and works: inside the class, node means the current specialization.", isCorrect: false, feedback: "Only node:: (as a scope prefix) names the current specialization inside the class (§8.25.1). The bare name in a declaration is the default specialization." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: one singleton or many?"
+  question="A team keeps a configuration singleton in a static handle inside class cfg_holder #(type T = int). Different agents use cfg_holder #(axi_cfg) and cfg_holder #(apb_cfg). How many singletons exist, and how would you get exactly one?"
+  options={[
+    { text: "One: a static member is shared by the whole class.", isCorrect: false, feedback: "Each specialization is its own class with its own statics (§8.25), so each specialization used has its own handle." },
+    { text: "One per specialization used. To share one object, keep the static handle in a non-parameterized base class or a separate plain class.", isCorrect: true, feedback: "Right. That is §8.25's own advice: shared statics go in a nonparameterized base class. A per-type singleton, as in UVM's registries, is exactly what the parameterized form gives you." },
+    { text: "None until $cast is called on the static handle.", isCorrect: false, feedback: "Statics exist without any object or cast; whether they hold an object depends on your get() code." },
+    { text: "It depends on simulator optimization.", isCorrect: false, feedback: "The standard fixes this: each specialization has a separate set of static members (§8.25)." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+Answer the quiz first; it covers all four objectives. Then do the two katas: the first builds a generic scoreboard, the second extends the registry. Review the flashcards over the next few days.
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "A package declares class fifo #(type T = int); parameter int D = 4; ... endclass. A colleague writes fifo #(.T(bit [7:0]), .D(16)) f; in a module that imports the package. What happens?",
+    answers: [
+      { text: "It compiles, and f's FIFO has depth 16", correct: false, feedback: "A parameter declared in the class body is a local parameter (Annex A, A.10 note 7). Only the parameters in the #( ) list can be overridden." },
+      { text: "It is a compile error: D is not in the class's parameter list, because a parameter in the class body is a local parameter", correct: true, feedback: "Right. Move D into the list, class fifo #(type T = int, int D = 4), to make it overridable." },
+      { text: "It is a compile error: classes accept only positional parameter overrides", correct: false, feedback: "Classes use the module override rules (§8.25, §23.10). The standard's own example is vector #(.size(2))." },
+      { text: "It compiles; D silently stays 4 and T becomes bit [7:0]", correct: false, feedback: "An override of a name that is not a class parameter is not ignored; the compiler rejects it." }
+    ],
+    explanation: "Named overrides are legal for classes, but only for the parameters in the #( ) list. In a class body, parameter is a synonym for localparam (A.10 note 7).",
+    objective: 1
+  },
+  {
+    question: "Given class fifo #(type T = int, int D = 4), which declaration names the same specialization as fifo #(string, 4)?",
+    answers: [
+      { text: "fifo #(.D(4), .T(string)) f;", correct: true, feedback: "Right. Named parameters may be listed in any order, so this sets T to string and D to 4 (§8.25, §23.10)." },
+      { text: "fifo #(4, string) f;", correct: false, feedback: "A positional list fills parameters in declaration order: the first value goes to T, and 4 is not a data type, so this does not compile." },
+      { text: "fifo #(.D(4)) f;", correct: false, feedback: "An omitted parameter takes its default, so T is int here: this is fifo #(int, 4)." },
+      { text: "fifo #(.T(string), .D(8)) f;", correct: false, feedback: "Every parameter is part of the specialization. D = 8 gives a different type from D = 4." }
+    ],
+    explanation: "Positional lists follow declaration order and may stop early; named lists may come in any order and may name only some parameters; every omitted parameter takes its default (§8.25, §23.10).",
+    objective: 1
+  },
+  {
+    question: "A generic scoreboard declares class sb #(type T = packet); local T exp_q[$]; and add_expected(T t) does exp_q.push_back(t). The generator reuses one packet object and changes its fields before each call. What does the scoreboard hold after three calls?",
+    answers: [
+      { text: "Three independent packets, because push_back copies the object", correct: false, feedback: "push_back stores the handle it is given. Assigning or storing a handle never copies the object (§8.12)." },
+      { text: "Three handles to the same object, so all three show the last values written", correct: true, feedback: "Right. Making the class generic does not change handle semantics. Store a copy: T c; if (!$cast(c, t.clone())) ...; exp_q.push_back(c);" },
+      { text: "Three copies, because T is a type parameter and is passed by value", correct: false, feedback: "When T is a class, a T argument is a class handle; the handle is copied, the object is not." },
+      { text: "A compile error, because a queue cannot hold a type parameter", correct: false, feedback: "A queue element type may be any type, including a type parameter." }
+    ],
+    explanation: "A parameterized container stores whatever T is. For a class type, that is a handle, so a reused producer object aliases every stored entry. Clone before storing (Copying and Cloning).",
+    objective: 1
+  },
+  {
+    question: "Given class fifo #(type T = int, int D = 4), which pair of declarations names the same type?",
+    answers: [
+      { text: "fifo#(int) and fifo#(integer)", correct: false, feedback: "int is 2-state and integer is 4-state, so they are not matching types (§6.22.1)." },
+      { text: "fifo#(int) and fifo#(bit [31:0])", correct: false, feedback: "int is signed and bit [31:0] is unsigned, so they do not match (§6.22.1 rule e)." },
+      { text: "fifo#(int, 4) and fifo", correct: true, feedback: "Right. The unadorned name is the default specialization, and its defaults are int and 4 (§8.25)." },
+      { text: "fifo#(byte, 8) and fifo#(byte, 4), because depth does not change the type", correct: false, feedback: "Every parameter is part of the specialization. Different values of D give different types (§8.25)." }
+    ],
+    explanation: "Two specializations are one type only when every type parameter matches (§6.22.1) and every value parameter has a matching type and the same value (§8.25).",
+    objective: 2
+  },
+  {
+    question: "class counter #(type T = int); static int created; whose new() does created++. After two counter#(int) objects and one counter#(byte) object are constructed, what does counter#()::created read?",
+    answers: [
+      { text: "3, because a static member is shared by the whole class", correct: false, feedback: "Each specialization has its own set of static members (§8.25)." },
+      { text: "0, because counter#() is a separate specialization that was never constructed", correct: false, feedback: "counter#() is the default specialization, which is counter#(int)." },
+      { text: "2", correct: true, feedback: "Right. counter#() and counter#(int) are the same specialization, which was constructed twice." },
+      { text: "A compile error, because #() cannot be used with ::", correct: false, feedback: "C#()::x is exactly the form §8.25.1 requires outside the class." }
+    ],
+    explanation: "counter#() = counter#(int), so it reads that specialization's created, which is 2. counter#(byte)::created is 1. A counter in a non-parameterized base class would read 3.",
+    objective: 2
+  },
+  {
+    question: "Debug: class store #(type T = int); static T table[string]; has static set and get functions. One file calls store#(int)::set(\"depth\", 8); another calls store#(bit [31:0])::get(\"depth\", d), which reports not found. Why?",
+    answers: [
+      { text: "The key strings differ in case", correct: false, feedback: "Both use depth. The key is not the problem." },
+      { text: "They are two specializations with two separate static tables, because int does not match bit [31:0]", correct: true, feedback: "Right. int is signed and bit [31:0] is unsigned (§6.22.1), so each name reaches a different class with its own static table (§8.25). Use one typedef on both sides." },
+      { text: "An associative array of bit [31:0] cannot hold the value 8", correct: false, feedback: "8 fits in any 32-bit type. The value never reached that table." },
+      { text: "Static members are not allowed in parameterized classes, so the table is rebuilt on each call", correct: false, feedback: "Statics are allowed; there is one set per specialization (§8.25)." }
+    ],
+    explanation: "A typed store is keyed by type as well as by name. UVM's uvm_config_db #(T) behaves the same way (Push Further).",
+    objective: 2
+  },
+  {
+    question: "A module that imports the package contains $display(\"%0d\", counter::created); for class counter #(type T = int). It does not compile. Which fix is correct?",
+    answers: [
+      { text: "Declare created as static", correct: false, feedback: "It already is. The problem is the prefix of ::, not the member." },
+      { text: "Write counter#()::created, or declare typedef counter #(int) counter_t; and write counter_t::created", correct: true, feedback: "Right. Outside the class, the unadorned name may not prefix ::, so name the specialization explicitly (§8.25.1)." },
+      { text: "Write counter.created", correct: false, feedback: "The dot operator needs a handle, not a class name." },
+      { text: "Write this.created", correct: false, feedback: "this exists only inside a non-static class method, not in a module." }
+    ],
+    explanation: "Outside a parameterized class, C::x is illegal; use C#()::x, C#(args)::x or a typedef. Inside the class, C::x names the current specialization (§8.25.1).",
+    objective: 3
+  },
+  {
+    question: "In the registry on this page, txn::type_id::get() is called twice and err_txn::type_id::get() once. How many registry objects exist?",
+    answers: [
+      { text: "Three: get() constructs a new registry on every call", correct: false, feedback: "get() constructs only when its static m_inst is null; later calls return the same object." },
+      { text: "One, shared by every specialization of registry", correct: false, feedback: "m_inst is static, and each specialization has its own statics (§8.25)." },
+      { text: "Two: one singleton per specialization", correct: true, feedback: "Right. registry#(txn,txn) and registry#(err_txn,err_txn) each keep their own m_inst, built on the first call." },
+      { text: "None: static functions run without any object", correct: false, feedback: "get() needs no object to be called, but it builds one and stores it in m_inst." }
+    ],
+    explanation: "A static handle in a parameterized class gives one singleton per specialization: the pattern behind UVM's type_id.",
+    objective: 3
+  },
+  {
+    question: "virtual class base_check; pure virtual function bit check(int value); endclass. A module declares base_check b; and its initial block does b = new();. What happens?",
+    answers: [
+      { text: "A compile error: an abstract class cannot be constructed", correct: true, feedback: "Right. An object of an abstract class shall not be constructed directly (§8.21). Construct a complete subclass and assign it to b." },
+      { text: "It compiles, and b.check(1) is a null-object error at run time", correct: false, feedback: "The construction itself is illegal; the code never runs." },
+      { text: "It compiles, and b.check(1) returns 0 because check has no body", correct: false, feedback: "That is the empty-body case, which is a different declaration. A pure virtual method has no body to run, and the class cannot be built." },
+      { text: "It compiles with a warning", correct: false, feedback: "Constructing an abstract class is an error, not a warning (§8.21)." }
+    ],
+    explanation: "A virtual class can be used for handles but never constructed directly. Its constructor runs only through a subclass's super.new chain (§8.21).",
+    objective: 4
+  },
+  {
+    question: "Debug: base_check declares pure virtual function bit check(int value);. To pass a limit, a colleague writes virtual function bit check(int value, int limit); in range_check, and the package no longer compiles. Why?",
+    answers: [
+      { text: "range_check::check overrides a virtual method, and a virtual override must match the prototype's argument types, names, qualifiers and directions; the extra argument breaks that", correct: true, feedback: "Right (§8.20). Keep check(int value) exactly as declared and pass the limit through the constructor, as range_check does with lo and hi. Until check(int value) has a matching body, range_check is not complete and cannot be constructed (§8.21)." },
+      { text: "Nothing is wrong with the class: the two-argument check overloads the one-argument check, so only the call sites need changing", correct: false, feedback: "SystemVerilog has no method overloading. A method with the same name in a subclass overrides the inherited one, and a virtual override must match it (§8.20)." },
+      { text: "Pure virtual methods cannot have arguments", correct: false, feedback: "They can have any signature; §8.21's own example is pure virtual function integer send(bit[31:0] data)." },
+      { text: "The subclass must not repeat the keyword virtual", correct: false, feedback: "Repeating virtual in an override is optional and legal (§8.20)." }
+    ],
+    explanation: "Implement every inherited pure virtual method with the identical signature. Extra configuration belongs in the constructor or a property, not in the overriding method's argument list.",
+    objective: 4
+  },
+  {
+    question: "In base_check, report() is non-virtual and calls the pure virtual check(). range_check implements check() and also declares its own non-virtual report(). Through a base_check handle that holds a range_check object, chk.report() runs which bodies?",
+    answers: [
+      { text: "range_check::report, then range_check::check", correct: false, feedback: "report() is not virtual, so the handle's class decides which report() runs (§8.14)." },
+      { text: "base_check::report, which calls range_check::check", correct: true, feedback: "Right. The non-virtual call binds to the handle's class, and the virtual check() inside it dispatches to the object's class (§8.14, §8.20)." },
+      { text: "base_check::report, which calls base_check::check", correct: false, feedback: "base_check::check has no body; a virtual call always runs the object's override." },
+      { text: "A compile error, because a subclass cannot redeclare a non-virtual method", correct: false, feedback: "It can; the redeclaration hides the base method from range_check handles only." }
+    ],
+    explanation: "Keep the shared flow in base-class methods and make only the extension points virtual. A non-virtual method redeclared in a subclass is invisible through a base handle.",
+    objective: 4
+  }
+]} />
+
+### Kata 1: a generic scoreboard that survives a reused producer
+
+**Goal (objectives 1 and 2).** Write `class scoreboard #(type T = packet)` that stores *copies* of expected items and counts checks per specialization. Use the `packet` and `crc_packet` classes below, which have the virtual `clone()` from [Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning). `clone()` returns a `packet` handle whatever the object's class, so storing it in a `T` queue needs a checked `$cast`: that cast is the point of the kata.
+
+1. Write `add_expected(T t)` so that later changes to `t` cannot change what is stored.
+2. Write `check(T act)`, which pops the oldest expected item, compares it with `act` through the virtual `equals()`, and increments a `static int n_checked`.
+3. **Predict** the output of `tb_top` below. Then predict it again for a version whose `add_expected` simply does `exp_q.push_back(t);`.
+
+```systemverilog
+// snippet: starter; compiles once your scoreboard is added
+package sb_pkg;
+  class packet;
+    int id;
+    function new(int id = 0);
+      this.id = id;
+    endfunction
+    virtual function packet clone();
+      packet c = new(id);
+      return c;
+    endfunction
+    virtual function bit equals(packet other);
+      return other != null && other.id == id;
+    endfunction
+  endclass
+
+  class crc_packet extends packet;
+    bit [7:0] crc;
+    function new(int id = 0, bit [7:0] crc = 0);
+      super.new(id);
+      this.crc = crc;
+    endfunction
+    virtual function packet clone();          // still returns packet (§8.20)
+      crc_packet c = new(id, crc);
+      return c;
+    endfunction
+    virtual function bit equals(packet other);
+      crc_packet o;
+      if (!$cast(o, other)) return 0;
+      return super.equals(other) && o.crc == crc;
+    endfunction
+  endclass
+
+  // YOUR scoreboard #(type T = packet) GOES HERE
+endpackage
+
+module tb_top;
+  import sb_pkg::*;
+  scoreboard #(packet)     psb;
+  scoreboard #(crc_packet) csb;
+  packet                   p;
+  crc_packet               c;
+  bit                      ok1, ok2, ok3;
+
+  initial begin
+    psb = new();
+    csb = new();
+    p = new(1);  psb.add_expected(p);
+    p.id = 2;    psb.add_expected(p);         // the producer reuses its object
+    c = new(7, 8'h5a);  csb.add_expected(c);
+    p = new(1);  ok1 = psb.check(p);
+    p = new(2);  ok2 = psb.check(p);
+    c = new(7, 8'h5a);  ok3 = csb.check(c);
+    $display("match=%0b%0b%0b packet_checks=%0d crc_checks=%0d", ok1, ok2, ok3,
+             scoreboard#(packet)::n_checked, scoreboard#(crc_packet)::n_checked);
+  end
+endmodule
+```
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// snippet: goes inside sb_pkg, after crc_packet
+class scoreboard #(type T = packet);
+  static int n_checked;                     // one counter per specialization (§8.25)
+  local T exp_q[$];
+
+  function void add_expected(T t);
+    T c;
+    // clone() returns a packet handle; $cast checks it really holds a T.
+    // Called as a function, so a failure returns 0 instead of raising a
+    // run-time error.
+    if (!$cast(c, t.clone()))
+      $fatal(1, "clone() returned an object that is not a T");
+    exp_q.push_back(c);                     // a copy: the producer may reuse t
+  endfunction
+
+  function bit check(T act);
+    T exp;
+    n_checked++;
+    if (exp_q.size() == 0) return 0;        // nothing expected: a mismatch
+    exp = exp_q.pop_front();
+    return exp.equals(act);                 // virtual: compares crc for crc_packet
+  endfunction
+endclass
+```
+
+Expected output (illustrative, traced by hand):
+
+```text
+match=111 packet_checks=2 crc_checks=1
+```
+
+- **Why 1, 1, 1.** Each stored item is a clone made at the moment of `add_expected`, so the first expected packet keeps `id = 1` although the producer then changed its object to 2.
+- **Why 2 and 1.** `n_checked` is static, so each specialization counts separately: `scoreboard#(packet)` checked twice and `scoreboard#(crc_packet)` once.
+- **With `exp_q.push_back(t);` instead,** both `packet` entries are handles to the producer's one object, whose `id` is 2 by the time anything is checked. The output becomes `match=011 packet_checks=2 crc_checks=1`: the first check fails although the generator sent the right values.
+- **Why `clone()` and not `c = new t;`.** `new t` is a shallow copy (§8.12): it copies `t`'s properties, but if `packet` later gains a nested object, such as a header handle, the copy still points at the producer's header. `clone()` is where each class decides how deep to copy ([Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning)).
+- **Why `$cast` as a function.** The task form, `$cast(c, t.clone());` written as a statement, would raise a run-time error on failure rather than return 0 (§6.24.2); here the function form lets the code report a clear message.
+- **What the type parameter cannot fix.** `scoreboard #(int)` does not compile: `t.clone()` needs a class. IEEE 1800-2023 lets you say so up front with `#(type class T = packet)` (§6.20.3; check your simulator, tool-dependent).
+
+</details>
+
+### Kata 2: extend the registry by hand
+
+**Goal (objectives 1, 3 and 4).** Start from the Make It Work example.
+
+1. Add a class `rd_txn extends txn` with its own `type_id` `typedef` and `get_type_name()`. Push `rd_txn::type_id::get()` twice onto `w`, then predict every line the program prints.
+2. Write `registry r;` in `tb_top` and explain the compiler's complaint.
+3. Add a `typedef` named `txn_reg_t` to the package for the same specialization as `txn::type_id`, but write it with **named** parameters, in the order `TNAME` first, then `T`. Print `txn_reg_t::created`. Is it the same number as `txn::type_id::created`?
+4. Remove `get_type_name()` from `err_txn`. Does the program still compile? What does `err_txn` now print? Then remove the override from `txn` as well, and explain what changes.
+5. Move the generic `registry` class, together with `txn` and `err_txn`, out of the package and into a module `reg_mod` that a new top module instantiates twice (keep `base_obj` and `object_wrapper` in `reg_pkg`, and import it in `reg_mod`). First predict what happens if you move only `registry` and leave `txn` and `err_txn` in the package. Then explain why the full move is still a bad idea.
+
+<details>
+<summary>Worked solution</summary>
+
+1. With two `rd_txn` pushes after the original three, the loop prints five lines: the three from Make It Work, then `rd_txn built a rd_txn` twice. Both `rd_txn` entries are one singleton (`w[3] == w[4]`), and the final line is `txn=2 err_txn=1 same_proxy=1`; `rd_txn::type_id::created` would read 2.
+2. `registry r;` names the default specialization, but `T` has no default, so there is none: the compiler reports that `registry` needs a parameter value for `T` (§8.25).
+3. `typedef registry #(.TNAME("txn"), .T(txn)) txn_reg_t;`. Named parameters may come in any order (§8.25, §23.10), so this is `registry #(txn, "txn")`, the same specialization as `txn::type_id`. Then `txn_reg_t::created` and `txn::type_id::created` are one static variable and both read 2.
+4. It still compiles, because `err_txn` inherits `txn::get_type_name()`, which has a body. So `err_txn built a txn` is printed: the registry's own name is still `"err_txn"`, but the object reports its parent's string. If `txn` also loses its override, neither `txn` nor `err_txn` implements `base_obj`'s pure virtual `get_type_name()`. Both are declared as ordinary (non-abstract) classes, and §8.21 requires every pure virtual method to be implemented before a non-abstract class extends it, so the package fails to compile. Declaring them `virtual class` instead would only move the error: `T obj = new();` in their registry specializations would then try to construct an abstract class (§8.21).
+5. **Moving only `registry`:** `reg_pkg` stops compiling first. `txn` and `err_txn` declare `typedef registry #(...) type_id;`, and a package cannot refer to a class declared in a module; items in a package may reference only what the package declares or imports from another package (§26.2). **Moving all three:** it compiles, but each instance of `reg_mod` creates a separate generic class `registry` and a separate `txn` (§8.25). The two instances' `registry #(txn, "txn")` are two different types, each with its own singleton and its own `created` counter, and a handle from one cannot be assigned to the other. Only the shared `object_wrapper` base still lets both be held in one `object_wrapper` handle. Keep generic classes, and the classes that use them, in packages.
+
+</details>
+
+### Flashcards
+
+The deck for this page covers specializations, the same-type rules, per-specialization statics, the `::` rules, abstract classes, the registry pattern, and the copy and `$cast` rules the generic scoreboard kata relies on. Review it over the next few days.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023:
+  - §5.9 (string literals used in expressions are unsigned integer constants), §6.16 (string data type; an integral value needs a cast to become a `string`), §6.24.2 (`$cast` as a function and as a task);
+  - §6.20.2 (value parameters and their types), §6.20.3 (type parameters; restricted type parameters), §6.20.4 (a class-body `parameter` is a local parameter), §6.22.1 (matching types), §6.23 (`type(this)`);
+  - §8.5 (parameters through a handle), §8.11 (`this`), §8.12 (handle assignment), §8.14 (overridden members), §8.20 (virtual methods; Example 2 and Example 3), §8.21 (abstract classes and pure virtual methods, including the NOTE on empty bodies);
+  - §8.23 (class scope resolution operator), §8.24 (out-of-block declarations), §8.25 (parameterized classes), §8.25.1 (class scope resolution for parameterized classes), §8.26.7 (partial implementation of interface classes);
+  - §15.4.9 (parameterized mailboxes), §18.5.2 (`pure constraint`), §23.10 (parameter override rules), §26.2 and §26.3 (package declarations and references; a package cannot reference a class declared in a module);
+  - Annex A, A.10 notes 7 (a class-body `parameter` is a `localparam`) and 8 (no `:final` on pure methods); Annex G (`weak_reference #(type class T)`).
+- IEEE 1800.2-2020 §8.2 (factory registry wrappers), §8.3.2 (`uvm_object_wrapper`), §13.7 (`uvm_driver`), §14.3 (`uvm_sequence`) and §C.4.2 (`uvm_config_db`).
+- uvm-core 2020.3.1: `seq/uvm_sequencer.svh` (`uvm_sequencer #(REQ, RSP) extends uvm_sequencer_param_base #(REQ, RSP)`), `base/uvm_registry.svh` (`uvm_component_registry`, `get()`, `m_inst`), `base/uvm_factory.svh` (`uvm_object_wrapper`), `macros/uvm_object_defines.svh` (`` `uvm_component_param_utils ``), `comps/uvm_driver.svh`, `seq/uvm_sequence.svh`, `seq/uvm_sequence_base.svh` (`body()`), `base/uvm_config_db_implementation.svh` and `base/uvm_resource_pool.svh` (typed lookup).
+
+**Prerequisites:** [Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning), the previous lesson, and the [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) (static members, `::`, `extern`).
+
+**Related**
+
+- [Polymorphism Pitfalls and Type Casting](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls): virtual dispatch and `$cast`, which abstract classes rely on.
+- [Constructors, `this` and `super`](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors): constructor chaining, the only way an abstract class's constructor runs.
+- [F4A: Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index): packages and module parameters.
+- [I-SV-2B: Advanced Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index): constraint inheritance and `pure constraint`.
+- [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index): `type_id`, registration and overrides.
+- [I-UVM-2C: Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): `uvm_config_db #(T)` and typed lookup.
+
+<NextLesson />

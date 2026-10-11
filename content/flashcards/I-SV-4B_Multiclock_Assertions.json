@@ -1,1 +1,77 @@
-[]
+[
+  {
+    "id": "isv4b-mc-1",
+    "question": "How do you make an assertion start on one clock and check on another?",
+    "answer": "Write a new clocking event inside the property, for example `src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse`. The first clocking event is the leading clock, where attempts start; each later one governs everything to its right until another clocking event replaces it, except that a clock written inside parentheses or inside a named sequence or property does not flow out of them (IEEE 1800-2023 §16.13, §16.13.3)."
+  },
+  {
+    "id": "isv4b-mc-2",
+    "question": "In `@(posedge c0) a ##1 @(posedge c1) b`, which `c1` tick checks `b`?",
+    "answer": "The nearest `c1` tick strictly after the `c0` tick where `a` matched. A `c1` tick in the same time slot is skipped (§16.13.1)."
+  },
+  {
+    "id": "isv4b-mc-3",
+    "question": "Does `##0` wait when it joins two different clocks?",
+    "answer": "Only when the new clock does not tick in the same time slot: `##0` moves to the nearest tick at or after, so it stays put on a coincident tick and otherwise behaves like `##1` (§16.13.1). In a singly clocked sequence `##0` never waits (§16.7)."
+  },
+  {
+    "id": "isv4b-mc-4",
+    "question": "Multiclock `|=>` versus multiclock `|->`: where does the consequent start?",
+    "answer": "`|=>` starts at the nearest strictly later tick of the consequent clock. `|->` starts immediately if the consequent clock ticks at the end of the antecedent, and otherwise behaves exactly like `|=>` (§16.13.2)."
+  },
+  {
+    "id": "isv4b-mc-5",
+    "question": "Which operators may join two differently clocked sequences?",
+    "answer": "Only `##1` and `##0`. `##2`, ranges, `intersect`, `within` and `throughout` between them are illegal; `and` and `or` are allowed only as property operators (§16.13.1, §16.13.2)."
+  },
+  {
+    "id": "isv4b-mc-6",
+    "question": "Why is `@(posedge c0) a ##1 @(posedge c1) b[*0:1]` illegal when `c0` and `c1` differ?",
+    "answer": "`b[*0:1]` can match empty, so the clock at which the sequence ends would be ambiguous. Every maximal singly clocked subsequence must admit only nonempty matches (§16.13.1)."
+  },
+  {
+    "id": "isv4b-mc-7",
+    "question": "In `@(c) w ##1 (x ##1 @(d) y) |=> z`, which clock governs `z`?",
+    "answer": "`c`. A clock written inside parentheses, or inside a named sequence or property declaration, does not flow out of it, so `c` flows across `|=>` to `z`; only `y` is clocked by `d` (§16.13.3)."
+  },
+  {
+    "id": "isv4b-mc-8",
+    "question": "Does the leading clock flow into the `disable iff` condition?",
+    "answer": "No. `$rose`, `$fell`, `$stable`, `$changed` and `$past` there must name their clock, e.g. `$past(!dst_rst_n, 1, , @(posedge dst_clk))`; only `$sampled` needs none. Local variables and `.matched` are not allowed in it (§16.12, §16.13.3, §16.9.3)."
+  },
+  {
+    "id": "isv4b-mc-9",
+    "question": "A crossing assertion spans two reset domains. How many `disable iff` clauses can it have, and what goes in it?",
+    "answer": "One, after the leading clock; it covers the whole attempt on both clocks and uses current values. Name both resets: `disable iff (!src_rst_n || !dst_rst_n)` (§16.12)."
+  },
+  {
+    "id": "isv4b-mc-10",
+    "question": "A module has `default disable iff (!src_rst_n);` and a multiclock assertion with `disable iff (!dst_rst_n)`. Which condition applies?",
+    "answer": "Only `!dst_rst_n`: an explicit clause replaces the default; the two are never combined. `disable iff (1'b0)` is the only way to cancel the default for one assertion (§16.15)."
+  },
+  {
+    "id": "isv4b-mc-11",
+    "question": "`.triggered` versus `.matched` on a named sequence?",
+    "answer": "`.triggered` is true in the time slot of the end point and needs the same clock as where it is used. `.matched` crosses clocks: it holds the end point until the first destination tick after the match. `.matched` is not allowed in a disable condition or a sampled-value function (§16.13.5, §16.13.6, §16.12)."
+  },
+  {
+    "id": "isv4b-mc-12",
+    "question": "Why is `assert property (@(clk1) a and @(clk2) b)` illegal even after `assign clk2 = clk1;`?",
+    "answer": "The assertion's maximal property must have a unique semantic leading clock, and `@(clk1)` and `@(clk2)` are different expressions even though their values are equal. Give it one leading clock, e.g. `@(posedge c0) go |=> (@(clk1) a) and (@(clk2) b)` (§16.16, §16.16.1)."
+  },
+  {
+    "id": "isv4b-mc-13",
+    "question": "Two attempts of a multiclock property with a local variable overlap. Do they share the variable?",
+    "answer": "No: every attempt has its own copy. If an instance of a named property has two semantic leading clocks, each leading clock even gets its own copy, initialized at that clock's first tick at or after the attempt starts (§16.10, §16.13.7)."
+  },
+  {
+    "id": "isv4b-mc-14",
+    "question": "In `@(posedge sysclk) inst ##1 e1.matched [->1] ##1 branch_back`, why `[->1]` and not `[=1]`?",
+    "answer": "`[->1]` ends exactly on the `sysclk` tick where the end point of `e1` is seen, so `branch_back` is required on the next tick. `[=1]` would allow any number of quiet ticks in between (§16.9.2, §16.13.5)."
+  },
+  {
+    "id": "isv4b-mc-15",
+    "question": "What happens when you assert a bare multiclock sequence such as `@(posedge src_clk) src_pulse ##1 @(posedge dst_clk) dst_pulse`?",
+    "answer": "It fails at every `src_clk` tick where `src_pulse` is 0: a sequence used as a property must match from every attempt, and a bare sequence has no vacuous case. Put the trigger in an antecedent with `|=>`; keep the bare sequence for a `cover property` (§16.12.2)."
+  }
+]

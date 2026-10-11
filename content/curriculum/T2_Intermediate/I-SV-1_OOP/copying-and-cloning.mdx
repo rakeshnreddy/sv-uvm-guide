@@ -1,123 +1,282 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Copying and Cloning Objects"
+description: "Predict exactly what =, new h and a deep copy() share, write a null-safe deep copy() and a polymorphic clone() that keeps an object's real class, and debug the scoreboard bugs a missing copy causes."
+flashcards: "I-SV-1_Copying_and_Cloning"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "Accellera UVM reference implementation (uvm-core)"
+    type: "implementation"
+    version: "2020.3.1"
+---
 
-export const metadata = {
-  title: "Copying and Cloning Objects | SystemVerilog OOP",
-  description: "Understand shallow vs. deep copy in SystemVerilog, and how to implement robust copy() and clone() methods.",
-};
+## Quick Take
 
-<InfoPage
-  title="Copying and Cloning Objects"
-  sv_concept_tags={["shallow copy", "deep copy", "clone"]}
->
+- **What it is:** SystemVerilog has three operations that all look like "copy", and they copy different amounts. `p2 = p1` copies only the **handle**, the reference to an object. `p2 = new p1` builds a second object and copies its properties, but any object it refers to is still shared: a **shallow copy** (IEEE 1800-2023 §8.12). A **deep copy** duplicates the nested objects too. The language has no built-in deep copy, so you write it yourself as a `copy()` method, plus a `clone()` method that creates the new object and copies into it.
+- **Why it matters:** Testbench components pass handles, not objects. A scoreboard that stores a handle to an object the producer later reuses, or a copy that still shares a nested header, sees its stored expected data change without any error message. These bugs make tests fail for no visible reason, or, worse, pass when they should fail.
+- **The Analogy:** Photocopying a folder gives you new pages you can scribble on freely. But a sticky note in the folder saying "the header is in drawer 3" is photocopied too, and both notes still point at the same drawer: change what is in the drawer and both folders see it. A deep copy also copies drawer 3's contents into a new drawer 4 and updates the copied note to point there. *Where it breaks:* a folder never changes its kind when you copy it, but an object reached through a base-class handle can be a subclass object, and a `clone()` written in the base class quietly builds the wrong kind of object unless it is `virtual`.
 
-  ## The Assignment Operator vs. Copying
-  *IEEE 1800-2023, §8.12 Assignment, renaming, and copying*
+**You will be able to:**
+1. Predict what is shared after `=`, `new h` and a deep `copy()`, for value properties, queues of values, nested objects and queues of handles (§7.6, §8.12).
+2. Write a deep `copy()` that copies the contents of nested objects, never their handles, and handles `null` on both sides.
+3. Write a polymorphic `clone()` from a virtual `copy()` and `clone()` with a checked `$cast`, and explain how UVM splits the same job into `create()`, `copy()` and `do_copy()`.
+4. Debug a scoreboard whose stored items change or mismatch because of a handle copy, a shallow copy, a missing copy before storing, or a `==` on handles.
 
-  In SystemVerilog, assigning one object handle to another (`p2 = p1`) **does not** copy the object. It copies the handle. Both variables now refer to the same object.
+<BeforeYouStart />
 
-  <InteractiveCode>
-  ```systemverilog
-  class Packet;
-    int data = 10;
+## Build Your Mental Model
+
+This page uses three ideas from earlier lessons. A **class** describes an object's properties and methods; `new` builds an **object** and returns a **handle**, which a class variable holds ([I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index)). A **virtual** method called through a base-class handle runs the version in the object's own class, and `$cast` safely converts a base-class handle into a subclass handle ([Polymorphism Pitfalls and Type Casting](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls)).
+
+### Three things that look like "copy"
+
+Every example on this page uses the same two classes, so you can compare them directly: a `packet` with an `int id`, a queue of values `int data[$]` and a **nested object**, `header hdr`, which is a handle to a second object of class `header`. A `header` holds one `int len`.
+
+| You write | New `packet` objects | New `header` objects | What the two `packet` handles share afterwards |
+|---|---|---|---|
+| `p2 = p1;` | none | none | everything: `p1` and `p2` name the same object |
+| `p2 = new p1;` | one | none | the `header`: both `hdr` handles refer to one object |
+| `p2 = new; p2.copy(p1);` (your deep copy) | one | one (built by `p2 = new`) | nothing |
+| `p2 = p1.clone();` (your clone) | one, of `p1`'s real class | one | nothing |
+
+The rest of this section takes each row in turn. The core path is the first five subsections; the UVM subsection and the pitfalls table are practitioner depth.
+
+### Picture it first: step through the heap
+
+The **heap** is the memory where objects live. The visual below draws each handle as an arrow and each object as a box, and generates its code from the same model that draws the boxes. Its `packet` class is the one on this page, plus a `static int count` that this page does not use.
+
+Pick a scenario and step through it. **Predict before every highlighted line:** how many boxes exist, and where each arrow points. Watch in particular for the moment two arrows from different `packet` boxes meet at one `header` box, and for the queue that does **not** end up shared.
+
+<ObjectHandleVisualizer scenario="shallow-copy" scenarios={["aliasing", "shallow-copy", "deep-copy"]} />
+
+**What the three scenarios showed:**
+- **`aliasing`:** `p2 = p1` copied an arrow. There was still one `packet` box, so a write through `p2` was visible through `p1`.
+- **`shallow-copy`:** `new p1` copied the box but not the inner arrow's target. `p2` got its own `id` and its own `data` queue, but its `hdr` arrow pointed at `p1`'s `header`, so `p2.hdr.len = 9` changed `p1.hdr.len` too.
+- **`deep-copy`:** only `copy()` left two `header` boxes, so a write through `p3` could not reach `p1`.
+
+### Assignment copies the handle
+
+Assigning one class variable to another copies the handle, never the object (§8.12). Afterwards both variables refer to one object, so this is not a copy at all; it is a second name. The [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) covers this in depth; here is the one-line reminder, as code.
+
+```systemverilog
+// compile
+module tb_top;
+  class packet;
+    int id;
   endclass
 
-  module demo;
-    Packet p1, p2;
-    initial begin
-      p1 = new();
-      p2 = p1;            // p2 refers to the SAME object
-      p2.data = 20;
-      $display(p1.data);  // prints 20
-    end
-  endmodule
-  ```
-  </InteractiveCode>
+  initial begin
+    packet p1, p2;
+    p1 = new;
+    p2 = p1;                        // copies the handle: one object, two names
+    p2.id = 7;
+    $display("p1.id=%0d", p1.id);   // the write through p2 is visible through p1
+  end
+endmodule
+```
 
-  ## Three ways to "copy", side by side
+**Expected output** (traced by hand from §8.12, not from a simulator run):
 
-  Step through each scenario and predict before every key line. Watch for the moment two arrows point at one header box, and for the queue that does **not** end up shared.
+```text
+p1.id=7
+```
 
-  <ObjectHandleVisualizer scenario="shallow-copy" scenarios={["aliasing", "shallow-copy", "deep-copy"]} />
+### Shallow copy: `p2 = new p1`
 
-  ## Shallow Copy: `p2 = new p1;`
+`new` followed by an expression that refers to an object makes a **shallow copy** (§8.12). The standard defines exactly what happens:
 
-  `new` followed by a handle makes a shallow copy (§8.12). Precisely:
+1. **A new object of the source object's class is allocated.** If `p1` is a `packet` handle that holds a subclass object, the copy is a subclass object too.
+2. **No constructor runs, and no declaration initializer runs.** `header hdr = new;` in the class does **not** build a new `header` for the copy, and a counter incremented in `new()` does not count shallow copies.
+3. **Every property is copied as a value.** An `int`, a `string`, a queue of `int` and a dynamic array of `int` are values: assigning an array copies each element (§7.6), so the copy gets its own queue. The internal state used by randomization is copied too (see [Push Further](#expert-what-else-a-shallow-copy-copies)).
+4. **A class-handle property is copied as a handle.** The object it refers to is not duplicated, so both objects now share it. This applies to every object a class refers to: a nested transaction, a mailbox, a semaphore.
+5. **A queue or array of handles gets its own container, holding the same handles.** The container is a value, so it is copied; its elements are handles, so the objects behind them are shared. (The next subsection shows this.)
 
-  1. A new object of the **source object's class** is allocated. Through a base-class handle that holds a subclass object, the copy is a subclass object too.
-  2. The constructor does **not** run, and neither do declaration initializers such as `header hdr = new;`. A counter incremented in `new()` therefore does not count shallow copies.
-  3. Every property is copied, including the random-number state and `rand_mode`/`constraint_mode` settings. Integers, strings, queues and dynamic arrays get their own copies, because assigning an array copies its elements (§7.6).
-  4. Class-handle properties are copied **as handles**. The nested objects are shared, not duplicated.
+Two syntax rules: `new p1` may appear only on the right of an assignment or in a declaration, and the expression after `new` must refer to an object (Syntax 8-2). A typed constructor call (`packet::new`, §8.8) cannot be used for a shallow copy (§8.12).
 
-  A typed constructor call (`Packet::new`) cannot be combined with a shallow copy (§8.12).
-
-  <InteractiveCode>
-  ```systemverilog
-  class Header;
-    int id = 1;
+```systemverilog
+// compile
+module tb_top;
+  class header;
+    int len = 4;
   endclass
 
-  class Packet;
-    int data = 10;
-    int q[$] = {1, 2};
-    Header hdr = new;
+  class packet;
+    int    id;
+    int    data[$] = {1, 2};    // a queue of values
+    header hdr = new;           // a nested object: the property holds a handle
   endclass
 
-  module demo;
-    Packet p1, p2;
-    initial begin
-      p1 = new();
-      p2 = new p1;          // shallow copy
+  initial begin
+    packet p1, p2;
+    p1 = new;
+    p1.id = 5;
+    p2 = new p1;                // shallow copy: no constructor, no initializers
+    p2.id = 6;                  // p2's own int
+    p2.data.push_back(3);       // p2's own queue: its elements were copied
+    p2.hdr.len = 9;             // p1.hdr and p2.hdr are ONE header object
+    $display("p1: id=%0d data=%p hdr.len=%0d", p1.id, p1.data, p1.hdr.len);
+    $display("p2: id=%0d data=%p hdr.len=%0d", p2.id, p2.data, p2.hdr.len);
+  end
+endmodule
+```
 
-      p2.data = 20;         // safe: p2 has its own data
-      p2.q.push_back(3);    // safe: the queue's elements were copied
-      p2.hdr.id = 5;        // danger: p1.hdr and p2.hdr are the SAME Header
-      $display("%0d %p %0d", p1.data, p1.q, p1.hdr.id);  // 10 '{1, 2} 5
-    end
-  endmodule
-  ```
-  </InteractiveCode>
+**Expected output** (traced by hand; `%p` spacing differs slightly between simulators):
 
-  The same rule covers mailboxes, semaphores and any other object a class holds a handle to: after a shallow copy, both objects share them.
+```text
+p1: id=5 data='{1, 2} hdr.len=9
+p2: id=6 data='{1, 2, 3} hdr.len=9
+```
 
-  ## Deep Copy and the `copy()` Method
+The trace names objects in creation order: `packet@1` is the first `packet` built, as in the visual.
 
-  To duplicate an object together with the objects it refers to, write a `copy()` method. The language does not provide one. Copy the **contents** of each nested object, never just its handle, and guard against null handles on either side.
+| After this line | `p1` refers to | `p2` refers to | `header` objects | Shared |
+|---|---|---|---|---|
+| `p1 = new; p1.id = 5;` | `packet@1` (id 5, data `'{1, 2}`, hdr → `header@1`) | null | `header@1` (len 4) | nothing |
+| `p2 = new p1;` | `packet@1` | `packet@2` (id 5, own copy of data, hdr → `header@1`) | `header@1` | `header@1` |
+| `p2.id = 6;` and `push_back(3)` | `packet@1` unchanged | `packet@2` (id 6, data `'{1, 2, 3}`) | `header@1` | `header@1` |
+| `p2.hdr.len = 9;` | sees len 9 | sees len 9 | `header@1` (len 9) | `header@1` |
 
-  <InteractiveCode>
-  ```systemverilog
-  class Header;
-    int id = 1;
+**When a shallow copy is enough.** If a class holds only values (integers, strings, queues and arrays of values), `new h` is a complete copy. The moment it holds a handle to an object you might change, it is not.
 
-    function void copy(Header rhs);
-      id = rhs.id;
+### A queue of handles is still shared
+
+Rule 5 catches experienced engineers. A `burst` that holds its beats as a queue of `header` handles is copied as a new queue of the same handles:
+
+```systemverilog
+// snippet: header is the class above
+class burst;
+  header beats[$];              // a queue of HANDLES
+endclass
+
+// in a procedural block:
+b2 = new b1;                    // b2.beats is a new queue...
+b2.beats[0].len = 9;            // ...holding the same header handles
+$display("%0d", b1.beats[0].len);   // 9: b1's first beat changed too
+```
+
+<ArchitectureDiagram
+  title="A shallow copy of a queue of handles: two queues, the same header objects"
+  caption="b2 = new b1 gave burst@2 its own beats queue, but each element is a copy of a handle, so both queues refer to header@1 and header@2. A write to b2.beats[0].len changes the header that b1.beats[0] also refers to."
+  className="mx-auto max-w-lg"
+  legend={false}
+  nodes={[
+    { id: "b1", label: "burst@1", sublabel: "beats[0], beats[1]", kind: "generic", col: 0, row: 0 },
+    { id: "b2", label: "burst@2 (b2 = new b1)", sublabel: "beats[0], beats[1]", kind: "generic", col: 0, row: 2 },
+    { id: "h1", label: "header@1", sublabel: "len = 9", kind: "generic", col: 2, row: 0, state: "error" },
+    { id: "h2", label: "header@2", sublabel: "len = 4", kind: "generic", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "b1", to: "h1", style: "data", label: "beats[0]" },
+    { from: "b1", to: "h2", style: "data", label: "beats[1]" },
+    { from: "b2", to: "h1", style: "data", label: "beats[0]" },
+    { from: "b2", to: "h2", style: "data", label: "beats[1]" }
+  ]}
+/>
+
+A deep copy of such a queue copies each element's contents into a new object, as the next subsection shows.
+
+### Deep copy: write your own `copy()`
+
+A **deep copy** duplicates an object together with every object it refers to, so the copy shares nothing with the original. SystemVerilog has no built-in deep copy; §8.12 says that custom code is typically needed, and shows the convention used everywhere: a method `copy()` that copies its argument **into the object it is called on**.
+
+The rules for a correct `copy()`:
+- **Copy contents, never handles.** For a nested object, call its own `copy()`: `hdr.copy(rhs.hdr)`. Writing `hdr = rhs.hdr;` turns that field back into a shallow copy.
+- **Handle `null` on both sides.** If the source's handle is `null`, make the copy's handle `null`. If the copy has no nested object yet, build one before copying into it. Reject a `null` source outright, because there is nothing to copy.
+- **Copy every level.** Each nested class has its own `copy()`, and each `copy()` calls the next one down.
+
+This example matches the visual's `deep-copy` scenario line for line.
+
+```systemverilog
+// compile
+module tb_top;
+  class header;
+    int len = 4;
+
+    function void copy(header rhs);
+      len = rhs.len;
     endfunction
   endclass
 
-  class Packet;
-    int data = 10;
-    Header hdr = new;
+  class packet;
+    int    id;
+    int    data[$] = {1, 2};
+    header hdr = new;
 
-    function void copy(Packet rhs);
-      data = rhs.data;
-      if (rhs.hdr == null) hdr = null;      // nothing to copy
+    // Deep copy: fill THIS object from rhs; share nothing with it.
+    function void copy(packet rhs);
+      if (rhs == null) $fatal(1, "packet::copy: null rhs");
+      id   = rhs.id;
+      data = rhs.data;                    // a queue of values: elements copied (§7.6)
+      if (rhs.hdr == null) hdr = null;    // nothing to copy: mirror the null
       else begin
-        if (hdr == null) hdr = new;         // make sure we have our own Header
-        hdr.copy(rhs.hdr);                  // deep: copy contents, not the handle
+        if (hdr == null) hdr = new;       // make sure this object owns a header
+        hdr.copy(rhs.hdr);                // copy the contents, not the handle
       end
     endfunction
   endclass
-  ```
-  </InteractiveCode>
 
-  Writing `hdr = rhs.hdr;` inside `copy()` would quietly turn it back into a shallow copy for that field.
+  initial begin
+    packet p1, p3;
+    p1 = new;
+    p1.hdr.len = 9;
+    p3 = new;                             // runs hdr = new: header@2 belongs to p3
+    p3.copy(p1);                          // copies len 9 INTO header@2
+    p3.hdr.len = 2;                       // changes only header@2
+    $display("p1.hdr.len=%0d p3.hdr.len=%0d same=%0d", p1.hdr.len, p3.hdr.len,
+             p1.hdr == p3.hdr);
+  end
+endmodule
+```
 
-  ## The `clone()` Method: copy that keeps the object's real type
+**Expected output** (traced by hand):
 
-  `copy()` fills an object that already exists; `clone()` creates the object and then copies into it. To clone correctly through a base-class handle, **both** methods must be virtual, each subclass must override both, and the subclass `copy()` must call `super.copy()` and use `$cast` to reach its own fields.
+```text
+p1.hdr.len=9 p3.hdr.len=2 same=0
+```
 
-  <InteractiveCode>
-  ```systemverilog
+`$fatal` (§20.10) stops the run with a message. That is this page's choice for a broken call; UVM's `copy()` reports an error and returns instead (see [How UVM splits the same job](#how-uvm-splits-the-same-job)).
+
+**A queue of handles, copied deeply.** Rebuild the queue and give each element its own object:
+
+```systemverilog
+// snippet: a deep copy() for the burst class above
+function void copy(burst rhs);
+  header h;
+  if (rhs == null) $fatal(1, "burst::copy: null rhs");
+  beats.delete();                       // drop this object's old beats
+  foreach (rhs.beats[i]) begin
+    h = null;
+    if (rhs.beats[i] != null) begin
+      h = new;                          // a header owned by this burst
+      h.copy(rhs.beats[i]);             // contents, not the handle
+    end
+    beats.push_back(h);                 // a null beat stays null
+  end
+endfunction
+```
+
+### Comparing copies: `==` asks "the same object?"
+
+Once you can make copies, you need to check them. `==` and `!=` on two class handles compare the **handles** (§11.4.5): they ask whether both refer to the same object, never whether the objects hold equal values. So a scoreboard that writes `if (exp == act)` reports a mismatch for two distinct objects with identical contents, and reports a match whenever it compares a handle with itself, for example two stored handles to one reused object.
+
+To compare by value, write a `compare()` method next to `copy()`. It returns 1 when every property matches, comparing nested objects by their contents, and is null-safe. You will write one in [Make It Work](#make-it-work). Debugging hint: when printing two items that "should" match, print the handles' equality too (`exp == act`); a 1 means you are comparing an object with itself.
+
+### `clone()`: a copy that keeps the object's real class
+
+`copy()` fills an object that already exists, so the caller must build the right kind of object first. When code holds only a base-class handle, as a generator holding a "template" `packet` does, it does not know the object's real class. **`clone()`** solves this: it builds a new object of the right class and copies into it, and the caller just writes `q = p.clone();`.
+
+For `clone()` to build the right class through a base-class handle, three things must hold:
+- **`clone()` is virtual, and every subclass overrides it** to construct an object of its own class. A call through a `packet` handle then runs the version in the object's class (§8.20).
+- **`copy()` is virtual too,** so that copying through a base-class handle copies the whole object, subclass fields included.
+- **The subclass `copy()` keeps the base-class argument type and uses `$cast`.** An override must have the same argument types as the method it overrides (§8.20), so `crc_packet::copy` still takes a `packet rhs`. It checks with `$cast` that `rhs` really holds a `crc_packet`, calls `super.copy(rhs)` for the base part, and then copies its own fields.
+
+```systemverilog
+// compile
+module tb_top;
   class header;
     int len = 4;
     function void copy(header rhs);
@@ -126,11 +285,12 @@ export const metadata = {
   endclass
 
   class packet;
-    int data;
+    int    id;
     header hdr = new;
 
     virtual function void copy(packet rhs);
-      data = rhs.data;
+      if (rhs == null) $fatal(1, "packet::copy: null rhs");
+      id = rhs.id;
       if (rhs.hdr == null) hdr = null;
       else begin
         if (hdr == null) hdr = new;
@@ -139,7 +299,572 @@ export const metadata = {
     endfunction
 
     virtual function packet clone();
-      packet c = new;      // class methods are automatic, so this runs on every call
+      packet c = new;     // class methods are automatic (§8.6): a new object per call
+      c.copy(this);
+      return c;
+    endfunction
+  endclass
+
+  class crc_packet extends packet;
+    bit [7:0] crc;
+
+    virtual function void copy(packet rhs);   // same argument type as packet::copy
+      crc_packet r;
+      if (!$cast(r, rhs))                      // check first, before changing anything
+        $fatal(1, "crc_packet::copy: rhs is null or not a crc_packet");
+      super.copy(rhs);                         // the base part: id and hdr
+      crc = r.crc;                             // then this class's part
+    endfunction
+
+    virtual function packet clone();          // may also return crc_packet (§8.20)
+      crc_packet c = new;                      // build an object of THIS class
+      c.copy(this);                            // virtual: runs crc_packet::copy
+      return c;
+    endfunction
+  endclass
+
+  initial begin
+    packet     p, q;
+    crc_packet orig, back;
+    orig = new;
+    orig.id = 3;
+    orig.crc = 8'h5a;
+    orig.hdr.len = 7;
+    p = orig;                       // a base-class handle to a subclass object
+    q = p.clone();                  // virtual: runs crc_packet::clone
+    if (!$cast(back, q)) $fatal(1, "clone lost the subclass");
+    $display("back: id=%0d crc=%h hdr.len=%0d same_hdr=%0d",
+             back.id, back.crc, back.hdr.len, back.hdr == orig.hdr);
+  end
+endmodule
+```
+
+**Expected output** (traced by hand):
+
+```text
+back: id=3 crc=5a hdr.len=7 same_hdr=0
+```
+
+Before reading the diagram, predict: which `copy()` bodies run, in what order, and how many `header` objects exist at the end?
+
+<SequenceDiagram
+  title="p.clone() through a packet handle that holds a crc_packet"
+  caption="The virtual call picks crc_packet::clone, which builds a crc_packet and copies into it. crc_packet::copy checks the cast first, then lets packet::copy copy id and the header's contents, then copies crc. Two header objects exist at the end."
+  participants={[
+    { id: "top", label: "tb_top", sublabel: "initial block" },
+    { id: "orig", label: "crc_packet@1", sublabel: "orig, also held by p" },
+    { id: "c", label: "crc_packet@2", sublabel: "c, returned as q" },
+    { id: "h2", label: "header@2", sublabel: "c.hdr" }
+  ]}
+  messages={[
+    { from: "top", to: "orig", label: "p.clone(): virtual, so crc_packet::clone runs" },
+    { from: "orig", to: "c", label: "c = new: constructor and hdr = new run" },
+    { kind: "note", from: "c", to: "h2", label: "hdr = new built header@2 (len 4)" },
+    { from: "orig", to: "c", label: "c.copy(this): virtual, so crc_packet::copy" },
+    { kind: "self", from: "c", label: "$cast(r, rhs) succeeds" },
+    { kind: "self", from: "c", label: "super.copy(rhs): id = 3" },
+    { from: "c", to: "h2", label: "hdr.copy(rhs.hdr): len = 7" },
+    { kind: "return", from: "h2", to: "c", label: "contents copied, handle unchanged" },
+    { kind: "self", from: "c", label: "crc = r.crc (5a)" },
+    { kind: "return", from: "c", to: "orig", label: "copy returns" },
+    { kind: "return", from: "orig", to: "top", label: "returns c into q (a packet handle)" },
+    { kind: "self", from: "top", label: "$cast(back, q) succeeds" },
+    { kind: "note", from: "top", to: "c", label: "If packet::clone were not virtual, step 1 would run packet::clone, build a plain packet, and the final $cast would return 0" }
+  ]}
+/>
+
+**What goes wrong without each piece:**
+- **`clone()` not virtual:** `p.clone()` runs `packet::clone`, which builds a plain `packet`. The `crc` field is lost and `$cast(back, q)` returns 0. No error is reported unless you check that `$cast`.
+- **A subclass that does not override `clone()`:** it inherits `packet::clone`, so it is cloned as a plain `packet` even though `clone()` is virtual.
+- **A forgotten `super.copy(rhs)`:** the base part (`id`, `hdr`) keeps the new object's default values.
+- **An unchecked `$cast`:** if `rhs` is not a `crc_packet`, `r` stays `null` and `r.crc` is a null-handle access. Call `$cast` as a function inside `if (...)`. Called as a task, a failing `$cast` is a run-time error instead of a 0 (§6.24.2).
+
+The [polymorphism lesson](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) lets you try the virtual and non-virtual cases in its dispatch visual.
+
+### How UVM splits the same job
+
+You meet the same pattern again in UVM, which comes later in this course: every UVM transaction class (a **sequence item**) derives from the library's base class `uvm_object`. UVM keeps the idea but splits `clone()` and `copy()` differently, so that you override only one small method. In uvm-core 2020.3.1 (`uvm_object.svh`, `uvm_copier.svh`):
+- **`clone()`** is virtual but written once, in `uvm_object`: it calls `create(get_name())` and then `copy(this)`. You do not override it.
+- **`create()`** builds an object of your class. The `` `uvm_object_utils `` macro, which every UVM object class uses, generates it for you, so `clone()` builds the right class without a per-class override.
+- **`copy()`** is **not** virtual. It reports `` `uvm_error("OBJ/COPY", …) `` and returns if `rhs` is `null`, then passes the work to a copier policy object, whose `copy_object()` copies any fields registered with **field macros** (the `` `uvm_field_* `` macros, which automate copying, comparing and printing) and then calls your **`do_copy()`**.
+- **`do_copy()`** is the virtual hook you override. Call `super.do_copy(rhs)` first, then `$cast` and copy your fields (IEEE 1800.2-2020 §5.3.8.2).
+
+<SequenceDiagram
+  title="uvm-core 2020.3.1: what item.clone() calls"
+  caption="clone() is written once in uvm_object. The class-specific steps are create(), generated by the utils macro, and do_copy(), which you override."
+  participants={[
+    { id: "user", label: "caller" },
+    { id: "item", label: "item", sublabel: "my_item@1" },
+    { id: "tmp", label: "tmp", sublabel: "my_item@2" },
+    { id: "cp", label: "copier", sublabel: "uvm_copier" }
+  ]}
+  messages={[
+    { from: "user", to: "item", label: "clone()" },
+    { kind: "self", from: "item", label: "tmp = create(get_name())" },
+    { from: "item", to: "tmp", label: "tmp.copy(this): null check, then default copier" },
+    { from: "tmp", to: "cp", label: "copy_object(tmp, item)" },
+    { from: "cp", to: "tmp", label: "do_execute_op(op): field-macro fields" },
+    { from: "cp", to: "tmp", label: "do_copy(rhs): your override" },
+    { kind: "return", from: "cp", to: "tmp", label: "copy_object returns" },
+    { kind: "return", from: "tmp", to: "item", label: "copy returns" },
+    { kind: "return", from: "item", to: "user", label: "returns tmp as a uvm_object handle" }
+  ]}
+/>
+
+A preview of the override, which [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) teaches in full together with `do_compare()` and `convert2string()`:
+
+```systemverilog
+// snippet: a UVM item's copy hook (needs import uvm_pkg::*; and uvm_macros.svh)
+class my_item extends uvm_sequence_item;
+  `uvm_object_utils(my_item)
+  bit [7:0] crc;
+
+  function new(string name = "my_item");
+    super.new(name);
+  endfunction
+
+  virtual function void do_copy(uvm_object rhs);
+    my_item r;
+    super.do_copy(rhs);                       // the parent's fields first
+    if (!$cast(r, rhs)) `uvm_fatal("CAST", "do_copy: rhs is not a my_item")
+    crc = r.crc;
+  endfunction
+endclass
+```
+
+`compare()` and `do_compare()` follow the same split, and `convert2string()` is a plain virtual method you override (IEEE 1800.2-2020 §5.3.9, §5.3.6.4).
+
+### Common pitfalls, and how they show up
+
+These are the copy bugs that reach real testbenches. A **monitor** is the component that watches the pins of the design under test (DUT) and publishes each observed transaction; a **scoreboard** stores expected transactions and compares each observed one against them.
+
+| Symptom in the log | Cause | Fix |
+|---|---|---|
+| Every stored item shows the last values written; a "mismatch" for all but the last one | A producer reuses one object and the consumer stores its handle (`exp_q.push_back(t)`) | Producers build a new object per transaction; a consumer that keeps an item stores `t.clone()` |
+| Stored items have correct `id`s but every nested field (a header, a payload object) shows the latest value | A shallow copy (`new t`) or `hdr = rhs.hdr` inside `copy()` | Deep-copy nested objects with their own `copy()` |
+| A cloned subclass item loses its extra fields, or `$cast` back to the subclass fails | `clone()` not virtual, or a subclass did not override it | Make `clone()` virtual; override it in every subclass that adds fields |
+| A copied item has default base fields (id 0, a fresh header) | A subclass `copy()` without `super.copy(rhs)` | Call `super.copy(rhs)` in every override |
+| A null-object error inside `copy()` | Unchecked `$cast`, or no null check on `rhs` or a nested handle | `if (!$cast(...))`, and handle null on both sides |
+| A scoreboard flags equal items as mismatches, or never flags a corrupted one | `exp == act` compares handles (§11.4.5) | Compare by value with `compare()` |
+| A transaction sent through a mailbox changes after it is sent | The mailbox holds the handle, and the sender keeps editing the object | Send a new object or a clone each time ([I-SV-5 Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes)) |
+
+The [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) has an interactive debugging challenge with the first row: a scoreboard whose expected items change.
+
+### Recap
+
+- `=` copies a handle; `new h` copies one object and shares everything it refers to; only your `copy()` and `clone()` copy as deep as you write them.
+- A queue of values is copied by `new h`; a queue of handles is copied as handles.
+- `copy()` copies contents into objects the copy owns, and handles `null` on both sides.
+- `clone()` and `copy()` are virtual; each subclass overrides both, keeps the base argument type, checks `$cast` and calls `super.copy`.
+- Anything that keeps an item it did not create stores a copy; anything that publishes an item never changes it afterwards.
+
+## Make It Work
+
+### Worked example: a generator that clones before it stores
+
+This is the copy-before-store pattern every testbench needs. A **generator** is the testbench component that creates stimulus transactions. This one keeps a single **template** object, changes it for each transaction, and stores a clone of it in `sent`, the list a scoreboard would use as its expected items. The template is a `crc_packet` held through a `packet` handle, so only a virtual `clone()` keeps its class.
+
+```systemverilog
+// compile
+module tb_top;
+
+  class header;
+    int len = 4;
+
+    function void copy(header rhs);
+      len = rhs.len;
+    endfunction
+  endclass
+
+  class packet;
+    int    id;
+    header hdr = new;
+
+    virtual function void copy(packet rhs);
+      if (rhs == null) $fatal(1, "packet::copy: null rhs");
+      id = rhs.id;
+      if (rhs.hdr == null) hdr = null;
+      else begin
+        if (hdr == null) hdr = new;
+        hdr.copy(rhs.hdr);                    // contents, not the handle
+      end
+    endfunction
+
+    virtual function packet clone();
+      packet c = new;
+      c.copy(this);
+      return c;
+    endfunction
+
+    // Compare by value: == on two handles only asks "the same object?"
+    virtual function bit compare(packet rhs);
+      if (rhs == null) return 0;
+      if (id != rhs.id) return 0;
+      if ((hdr == null) != (rhs.hdr == null)) return 0;
+      if (hdr != null && hdr.len != rhs.hdr.len) return 0;
+      return 1;
+    endfunction
+
+    virtual function string convert2string();
+      if (hdr == null) return $sformatf("id=%0d hdr=null", id);
+      return $sformatf("id=%0d len=%0d", id, hdr.len);
+    endfunction
+  endclass
+
+  class crc_packet extends packet;
+    bit [7:0] crc;
+
+    virtual function void copy(packet rhs);
+      crc_packet r;
+      if (!$cast(r, rhs))
+        $fatal(1, "crc_packet::copy: rhs is null or not a crc_packet");
+      super.copy(rhs);
+      crc = r.crc;
+    endfunction
+
+    virtual function packet clone();
+      crc_packet c = new;
+      c.copy(this);
+      return c;
+    endfunction
+
+    virtual function bit compare(packet rhs);
+      crc_packet r;
+      if (!$cast(r, rhs)) return 0;           // a plain packet never equals a crc_packet
+      return super.compare(rhs) && crc == r.crc;
+    endfunction
+
+    virtual function string convert2string();
+      return $sformatf("%s crc=%h", super.convert2string(), crc);
+    endfunction
+  endclass
+
+  class generator;
+    packet tmpl;        // ONE template object, changed for every transaction
+    packet sent[$];     // what a scoreboard would keep as expected items
+
+    function new(packet tmpl);
+      this.tmpl = tmpl;
+    endfunction
+
+    function void send(int id);
+      packet c;
+      tmpl.id = id;
+      tmpl.hdr.len++;           // the template changes every time
+      c = tmpl.clone();         // copy before store
+      sent.push_back(c);
+    endfunction
+  endclass
+
+  initial begin
+    crc_packet proto, exp;
+    generator  gen;
+    int        matches, mismatches;
+
+    proto = new;
+    proto.crc = 8'h5a;
+    gen = new(proto);           // the generator sees the template as a packet
+
+    gen.send(1);
+    gen.send(2);
+    gen.send(3);
+
+    foreach (gen.sent[i]) $display("sent[%0d] %s", i, gen.sent[i].convert2string());
+
+    // Rebuild what each send() should have stored, and compare by value.
+    foreach (gen.sent[i]) begin
+      exp = new;
+      exp.id      = i + 1;
+      exp.hdr.len = 5 + i;      // len starts at 4 and send() increments it first
+      exp.crc     = 8'h5a;
+      if (exp.compare(gen.sent[i])) matches++;   // exp's class decides which compare runs
+      else begin
+        mismatches++;
+        $display("MISMATCH [%0d] exp %s, got %s", i, exp.convert2string(),
+                 gen.sent[i].convert2string());
+      end
+    end
+    $display("SCB_SUMMARY matches=%0d mismatches=%0d pending=0", matches, mismatches);
+  end
+endmodule
+```
+
+**Expected output** (traced by hand against §8.12 and §8.20; no simulator was run for this page):
+
+```text
+sent[0] id=1 len=5 crc=5a
+sent[1] id=2 len=6 crc=5a
+sent[2] id=3 len=7 crc=5a
+SCB_SUMMARY matches=3 mismatches=0 pending=0
+```
+
+**Why it works.** Each `send()` runs `tmpl.clone()` through a `packet` handle. The virtual call reaches `crc_packet::clone`, which builds a new `crc_packet` with its own `header` and copies the template's current `id`, `len` and `crc` into it. Later changes to the template cannot reach the stored clones. The check calls `exp.compare(...)` on the **expected** item, whose class is `crc_packet`, so a stored item that lost its subclass fails the `$cast` and is reported.
+
+**Run it.** Save the code as `tb_top.sv`, compile it as SystemVerilog with any simulator that supports classes, and run the top module `tb_top`. No UVM library is needed.
+
+### Break it on purpose
+
+Make each change, predict the new log, then compare with the answer.
+
+**Break 1: store a shallow copy.** In `send()`, replace `c = tmpl.clone();` with `c = new tmpl;`.
+
+<details>
+<summary>Predicted log and explanation</summary>
+
+```text
+sent[0] id=1 len=7 crc=5a
+sent[1] id=2 len=7 crc=5a
+sent[2] id=3 len=7 crc=5a
+MISMATCH [0] exp id=1 len=5 crc=5a, got id=1 len=7 crc=5a
+MISMATCH [1] exp id=2 len=6 crc=5a, got id=2 len=7 crc=5a
+SCB_SUMMARY matches=1 mismatches=2 pending=0
+```
+
+Each copy is still a `crc_packet`, because a shallow copy allocates an object of the source object's class (§8.12), so `id` and `crc` are right. But all three copies share the template's one `header`, so at check time every `len` shows the template's final value, 7. Only the last item, whose expected `len` is 7, matches. Draw the heap: three `packet` boxes, one `header` box.
+
+</details>
+
+**Break 2: make `clone()` non-virtual.** Restore `tmpl.clone()`, then delete the word `virtual` from `packet::clone` only.
+
+<details>
+<summary>Predicted log and explanation</summary>
+
+```text
+sent[0] id=1 len=5
+sent[1] id=2 len=6
+sent[2] id=3 len=7
+MISMATCH [0] exp id=1 len=5 crc=5a, got id=1 len=5
+MISMATCH [1] exp id=2 len=6 crc=5a, got id=2 len=6
+MISMATCH [2] exp id=3 len=7 crc=5a, got id=3 len=7
+SCB_SUMMARY matches=0 mismatches=3 pending=0
+```
+
+`tmpl` is a `packet` handle and `packet::clone` is no longer virtual, so `tmpl.clone()` runs `packet::clone`, which builds a plain `packet`. Its `copy()` is still virtual, but the new object is a `packet`, so `packet::copy` runs: `id` and `len` are copied deeply and `crc` is lost. `convert2string()` prints no `crc`, and `crc_packet::compare` fails its `$cast`. If the check had been written `gen.sent[i].compare(exp)`, it would have run `packet::compare` and passed all three: compare from the side whose class has the most fields.
+
+</details>
+
+### How to add copy support to a class
+
+1. **List the properties** and sort them: values (integers, strings, queues and arrays of values) and handles (nested objects, queues of handles, shared resources such as mailboxes).
+2. **Decide ownership for each handle.** A part of the item (a header, a payload object) is deep-copied; a shared resource or a back-pointer to a parent is copied as a handle on purpose, with a comment saying why.
+3. **Write `copy(rhs)`:** reject a `null` `rhs`; assign the values; for each owned nested object, mirror `null`, build an object if this one has none, and call its `copy()`; for a queue of handles, rebuild it element by element.
+4. **Write `clone()`:** construct an object of this class, call `copy(this)` on it, return it. Make both methods virtual.
+5. **In each subclass,** override both. In `copy()`, keep the base argument type, check `$cast` first, call `super.copy(rhs)`, then copy the new fields. In `clone()`, construct the subclass.
+6. **Add `compare()` and `convert2string()`** with the same structure, so that checks compare by value and logs show contents.
+7. **Prove it is deep:** clone an object, change every nested field of the clone, and check that the original is unchanged.
+
+**Checklist before moving on:**
+- [ ] For any short sequence of `=`, `new h` and `copy()`, you can draw the handles and objects and say which objects are shared.
+- [ ] You can explain why a queue of `int` is not shared after `new h` but a queue of handles' objects is.
+- [ ] Your `copy()` copies nested contents, never handles, and handles `null` on both sides.
+- [ ] Your `clone()` and `copy()` are virtual, every subclass overrides both, and each subclass `copy()` checks `$cast` and calls `super.copy`.
+- [ ] Anything that keeps an item it did not create stores a clone, and checks use `compare()`, not `==`.
+
+## Push Further
+
+### Expert: what else a shallow copy copies
+
+§8.12 lists more than the properties you declared:
+- **Randomization state is copied.** The object's random number generator (RNG) state, each variable's `rand_mode`, each constraint's `constraint_mode` and the cyclic state of `randc` variables all go to the copy. Because each object has its own RNG (§18.14.3), a copy and its source start from the same RNG state, so with the same constraints their next `randomize()` calls should pick the same values. A clone built with `new` and `copy()` gets a fresh RNG seeded from the creating thread instead (§18.14.3), and `copy()` does not move the RNG state. [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) teaches randomization.
+- **An embedded covergroup is not shared but dropped.** A covergroup declared inside a class (§19.4, taught in [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)) gets a `null` handle in the copy, so the copy's properties are not covered, and calling `sample()` on the copy's covergroup is a null-handle access (§8.12 step 2 and its NOTE).
+- **Instance constants are copied.** A shallow copy runs no constructor and copies every property, so it duplicates an instance constant such as a unique id (§8.19). A clone built with `new` gets a fresh one from its constructor, and its `copy()` cannot assign it, because an instance constant can be assigned only once, in the constructor (§8.19).
+- **The class follows the object.** `base3 = new base2`, where `base2` is a base-class handle to a subclass object, creates a subclass object (§8.12). That is why Break 1 above still stored `crc_packet` objects.
+
+### Expert: override rules that shape `copy()` and `clone()`
+
+- **Argument types must match.** A virtual override must have matching argument types, identical argument names, qualifiers and directions (§8.20). `crc_packet::copy(crc_packet rhs)` is therefore not an override of `packet::copy(packet rhs)`; it is an error. That rule is why the subclass takes `packet rhs` and uses `$cast`.
+- **The return type may be narrower.** A virtual function override may return a derived class of the base return type (§8.20). `virtual function crc_packet clone();` in `crc_packet` is legal and saves callers who hold a `crc_packet` handle a `$cast`. Calls through a `packet` handle still see a `packet` return type.
+- **`local` members of the other object are visible.** Inside a class, `rhs.secret` is legal even when `secret` is `local`, because local access is per class, not per object (§8.18). `copy()` and `compare()` need no getters.
+- **Let the compiler check the overrides (IEEE 1800-2023).** `virtual function :extends void copy(packet rhs);` declares that the method must override a virtual base method, so a misspelled name or a changed argument list becomes a compile error instead of a silent new method. `:final` stops further overrides (§8.20). Support for these 2023 specifiers is tool-dependent: check your simulator before using them.
+
+### Expert: deep copies of linked and shared structures
+
+- **Back-pointers.** If an item holds a handle to its parent (for example `burst parent` in each beat) and `copy()` deep-copies that handle too, the copy recurses: the parent copies the beat, which copies the parent, and so on. Copy back-pointers as handles, or set them to the new parent after copying the children.
+- **Shared sub-objects.** If two properties refer to one object (a beat in both `beats[$]` and `last_beat`), a naive deep copy makes two objects where there was one, and the copy no longer has the original's shape. Copy the shared object once, then point both properties at the copy.
+- **How UVM handles it.** uvm-core 2020.3.1's `uvm_copier::copy_object` records which pairs of objects it has started and finished copying, and refuses to copy an object whose recursion policy is `UVM_REFERENCE`, reporting `UVM_COPY_POLICY` (`uvm_copier.svh`). A field macro flagged `UVM_REFERENCE` copies only that handle, without following it (`uvm_object_defines.svh`).
+
+### Expert: ownership, cost and where copies belong
+
+- **One rule for every channel:** the creator of an object publishes it and never changes it afterwards; any consumer that keeps an object it did not create stores a copy. Mailboxes ([I-SV-5](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes)) and UVM analysis ports ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)) pass handles, so this rule is the only thing that keeps items intact.
+- **Copy at one end, not both.** If monitors build a new object per transaction, the scoreboard does not need to clone what it receives, unless another subscriber may change it. Teams usually pick one convention for a whole testbench and review against it.
+- **Cost.** A deep copy of a large payload (thousands of bytes, or many nested objects) costs time and memory on every transaction. How much depends on the simulator: measure with your tool's profiler before optimizing (tool-dependent). Sharing read-only data, such as a configuration object, is legitimate when the owner guarantees it never changes.
+
+### Expert: why UVM separates `copy()` from `do_copy()`
+
+In uvm-core 2020.3.1 `copy()` is non-virtual and owns the policy: the null check (`OBJ/COPY`), choosing a copier (`get_default_copier()` when none is passed), flushing it for a new top-level copy, and calling `copy_object`, which runs field automation (`do_execute_op`) and then your `do_copy()` (`uvm_object.svh`, `uvm_copier.svh`; IEEE 1800.2-2020 §5.3.8.1). Making `copy()` non-virtual means no user class can skip those steps; making `do_copy()` the only virtual hook means each class writes only its own fields. The same split appears in `compare()`/`do_compare()`, `print()`/`do_print()` and the other `uvm_object` operations, which [I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) covers as policy classes.
+
+### Interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: what does new h copy?"
+  question="A class has an int, a queue of int and a handle to a header object. Exactly what does p2 = new p1 copy, and what does it skip?"
+  options={[
+    { text: "It copies the int and the queue's elements, copies the header handle so both packets share one header, and runs no constructor and no declaration initializer.", isCorrect: true, feedback: "Right (§8.12). The new object has p1's class; values and arrays of values are copied; class handles are copied as handles." },
+    { text: "It copies everything recursively, including a new header, because the class declares header hdr = new.", isCorrect: false, feedback: "A shallow copy runs no declaration initializer, so no new header is built. That needs a deep copy." },
+    { text: "It copies the handle only; p1 and p2 name one packet.", isCorrect: false, feedback: "That is p2 = p1. new p1 allocates a second packet object." },
+    { text: "It runs packet's constructor and then copies the properties.", isCorrect: false, feedback: "The allocation of a shallow copy calls no constructor (§8.12), so a counter kept in new() does not count copies." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: cloning through a base-class handle"
+  question="Your generator holds a base_txn handle to a template that may be any subclass. How do you store a correct copy of it?"
+  options={[
+    { text: "Call a virtual clone() that every subclass overrides to construct its own class and call a virtual copy(); check $cast in each subclass copy().", isCorrect: true, feedback: "Right. The virtual call reaches the object's own clone(), so the copy has the object's real class and all its fields." },
+    { text: "Write c = new; c.copy(tmpl); with c declared as base_txn.", isCorrect: false, feedback: "new through a base_txn variable builds a base_txn, so the subclass fields have nowhere to go." },
+    { text: "Use $cast(c, tmpl) to copy it.", isCorrect: false, feedback: "$cast assigns a handle; it never creates an object. c and tmpl would name the same object." },
+    { text: "Use c = new tmpl; it always copies deeply when the object is a subclass.", isCorrect: false, feedback: "new tmpl keeps the subclass (§8.12) but is shallow: nested objects stay shared with the template." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: a mailbox inside a shallow copy"
+  question="obj1 holds a handle to a mailbox, and obj2 = new obj1. What happens when obj2 puts a transaction into its mailbox?"
+  options={[
+    { text: "A run-time error, because a mailbox cannot be shallow copied.", isCorrect: false, feedback: "A mailbox is an object reached through a handle, and handles copy like any other property." },
+    { text: "It goes into a separate mailbox that belongs to obj2; obj1's mailbox is unaffected.", isCorrect: false, feedback: "A shallow copy copies the mailbox handle, not the mailbox. There is only one mailbox." },
+    { text: "It goes into the one shared mailbox, so whoever gets from obj1's mailbox receives it.", isCorrect: true, feedback: "Right. A shallow copy copies object handles as handles (§8.12), so mailboxes, semaphores and nested objects become shared. Sometimes that is exactly what you want; say so in a comment." },
+    { text: "The compiler warns about an unsafe copy.", isCorrect: false, feedback: "A shallow copy is legal and silent. Only your review or a test catches the sharing." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: UVM copy and do_copy"
+  question="In UVM, why does a class override do_copy() rather than copy() or clone()?"
+  options={[
+    { text: "copy() is non-virtual and handles the null check and the copier policy; clone() is written once and calls create() then copy(); do_copy() is the virtual hook for the class's own fields.", isCorrect: true, feedback: "Right, as in uvm-core 2020.3.1 uvm_object.svh. The utils macro supplies create(), so clone() already builds your class." },
+    { text: "copy() is deprecated in IEEE 1800.2-2020.", isCorrect: false, feedback: "copy() is a standard method (§5.3.8.1); it simply is not the one you override." },
+    { text: "do_copy() is faster because it skips field macros.", isCorrect: false, feedback: "copy_object() runs field automation and then do_copy(); overriding do_copy() does not skip the macros." },
+    { text: "clone() must be overridden too, or it returns a uvm_object with no fields.", isCorrect: false, feedback: "clone() calls the virtual create(), which the utils macro generates for your class, so it builds the right type without an override." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "packet has int data[$] = {1, 2} and header hdr = new (header has int len = 4). After p1 = new; p2 = new p1; p2.data.push_back(3); p2.hdr.len = 9; what do p1.data and p1.hdr.len hold?",
+      answers: [
+        { text: "'{1, 2} and 9", correct: true, feedback: "Right. The queue is a value, so p2 got its own copy (§7.6); the header handle was copied, so both packets share one header (§8.12)." },
+        { text: "'{1, 2, 3} and 9", correct: false, feedback: "Only class handles are shared by a shallow copy. A queue of int is copied element by element, so p1's queue is untouched." },
+        { text: "'{1, 2} and 4", correct: false, feedback: "That would need a second header. A shallow copy runs no declaration initializer, so hdr = new does not run again; the handle is copied instead." },
+        { text: "Compile error: packet has no copy constructor", correct: false, feedback: "new p1 is the built-in shallow copy (§8.12). SystemVerilog has no user-written copy constructors." }
+      ],
+      explanation: "A shallow copy copies every property as a value, and a class handle's value is the handle. So data is duplicated and hdr is shared: p1.data stays '{1, 2} and p1.hdr.len reads 9.",
+      objective: 1
+    },
+    {
+      question: "class burst; header beats[$]; endclass. b1 holds two beats with len 4. After b2 = new b1; b2.beats[0].len = 9; what does b1.beats[0].len read?",
+      answers: [
+        { text: "9", correct: true, feedback: "Right. b2 got its own queue, but its elements are copies of b1's handles, so beats[0] in both queues is the same header." },
+        { text: "4, because the queue was copied, so its objects were copied too", correct: false, feedback: "Copying a queue copies its elements (§7.6). Here the elements are handles, so the objects behind them are shared." },
+        { text: "Null-access error, because a shallow copy leaves b2.beats empty", correct: false, feedback: "Every property is copied, queues included. The copy skips constructors and initializers, not properties." },
+        { text: "Compile error: a queue of handles cannot be shallow copied", correct: false, feedback: "Any class can be shallow copied. Whether the result is what you wanted is another matter." }
+      ],
+      explanation: "A queue of handles is copied as a new queue of the same handles. To duplicate the headers, copy() must rebuild the queue and copy each header's contents into a new object.",
+      objective: 1
+    },
+    {
+      question: "packet declares header hdr = new. Which code creates a second header object, so that p2 shares nothing with p1?",
+      answers: [
+        { text: "p2 = new; p2.copy(p1); with a copy() that calls hdr.copy(rhs.hdr)", correct: true, feedback: "Right. p2 = new runs the initializer and builds p2's own header; copy() then copies p1's header contents into it." },
+        { text: "p2 = new p1; because the declaration says hdr = new", correct: false, feedback: "A shallow copy runs no declaration initializer (§8.12). The header handle is copied, not the header." },
+        { text: "p2 = p1;", correct: false, feedback: "Handle assignment creates no object at all: p1 and p2 name one packet." },
+        { text: "p2 = new; p2.hdr = p1.hdr;", correct: false, feedback: "This throws away p2's own header and points p2.hdr at p1's, so the two packets share one header again." }
+      ],
+      explanation: "Only a user-written deep copy duplicates nested objects. Here the new header comes from p2 = new running the initializer, and copy() fills it with p1's values.",
+      objective: 2
+    },
+    {
+      question: "A colleague's packet::copy() contains hdr = rhs.hdr; and the code compiles. What symptom should you expect?",
+      answers: [
+        { text: "Changing the copy's header also changes the original's header", correct: true, feedback: "Right. That line copies the handle, so the 'deep' copy shares its header with the original." },
+        { text: "None: a method named copy() always copies deeply", correct: false, feedback: "copy() is a user-written convention, not a language feature. It is exactly as deep as its code." },
+        { text: "A null-handle error the first time copy() runs", correct: false, feedback: "Assigning a handle never dereferences it, so nothing fails; the bug is silent." },
+        { text: "The copy's own header is copied into the original", correct: false, feedback: "copy() writes only into this object. The problem is sharing, not the direction of the copy." }
+      ],
+      explanation: "Inside copy(), call the nested object's copy() (hdr.copy(rhs.hdr)) after making sure this object has its own header; never assign the handle.",
+      objective: 2
+    },
+    {
+      question: "packet::clone() is NOT virtual; crc_packet overrides it. p is a packet handle holding a crc_packet, and q = p.clone(). What does $cast(back, q) return, where back is a crc_packet variable?",
+      answers: [
+        { text: "0: packet::clone ran and built a plain packet", correct: true, feedback: "Right. Without virtual, the handle's declared class (packet) chooses the method, so the clone is a plain packet and the crc field is gone." },
+        { text: "1: clone follows the object, so crc_packet::clone ran", correct: false, feedback: "Only a virtual method follows the object's class (§8.20). A non-virtual call is chosen from the handle's class." },
+        { text: "Compile error: an override of a non-virtual method is illegal", correct: false, feedback: "A subclass may declare a method with the same name; it just does not override calls made through a base-class handle." },
+        { text: "A run-time error inside clone()", correct: false, feedback: "Nothing fails at run time. That is why the bug is dangerous: only the $cast reveals it." }
+      ],
+      explanation: "clone() must be virtual, and every subclass must override it, so that a call through a base-class handle builds an object of the real class.",
+      objective: 3
+    },
+    {
+      question: "In uvm-core 2020.3.1, you add a field to a sequence item without field macros. Which method do you override so that clone() and copy() copy the new field?",
+      answers: [
+        { text: "do_copy()", correct: true, feedback: "Right. copy() calls the copier, which calls your do_copy() after field automation. Call super.do_copy(rhs) first, then $cast." },
+        { text: "copy()", correct: false, feedback: "copy() is not virtual in uvm_object. An override is not reached through a uvm_object handle, and it would skip the null check and the copier." },
+        { text: "clone()", correct: false, feedback: "clone() is written once in uvm_object: create(get_name()) then copy(this). You do not override it." },
+        { text: "create()", correct: false, feedback: "create() builds an object of your class, and the utils macro already generates it. It copies nothing." }
+      ],
+      explanation: "UVM splits the job: clone() = create() + copy(); copy() is the non-virtual driver; do_copy() is the virtual hook for your fields.",
+      objective: 3
+    },
+    {
+      question: "A monitor writes t.id and t.hdr.len into ONE object t for every transaction, and the scoreboard does exp_q.push_back(X). Expected items still show the latest header values. What is the minimal correct X?",
+      answers: [
+        { text: "t.clone(), with a deep copy() behind it", correct: true, feedback: "Right. Each stored item then owns its own header, so later writes to t cannot reach it." },
+        { text: "c, after c = t;", correct: false, feedback: "That copies the handle only: every stored entry still names the one object t." },
+        { text: "c, after c = new t;", correct: false, feedback: "This fixes id, but a shallow copy shares t's header, so every stored len still shows the latest value." },
+        { text: "t, after making exp_q a bounded queue", correct: false, feedback: "The bound limits how many handles the queue holds; the handles still all name one object." }
+      ],
+      explanation: "Copy before store, and copy deeply enough: a shallow copy is not enough when the item holds nested objects that the producer keeps changing. Building a new object per transaction in the monitor also fixes it.",
+      objective: 4
+    },
+    {
+      question: "A scoreboard checks if (exp == act) and reports a mismatch for items whose printed fields are identical. Why?",
+      answers: [
+        { text: "== on class handles asks whether they refer to the same object; exp and act are two objects", correct: true, feedback: "Right (§11.4.5). Compare by value with a compare() method." },
+        { text: "== compares every property, but the header handles differ", correct: false, feedback: "== never looks inside the objects; it compares the two handles." },
+        { text: "== compares properties but treats X bits as a mismatch", correct: false, feedback: "No property is compared at all; the result depends only on the handles." },
+        { text: "Comparing two class handles is a compile error, so the line never ran", correct: false, feedback: "Comparing assignment-compatible handles with == is legal (§11.4.5)." }
+      ],
+      explanation: "Handle equality and value equality are different questions. The same bug runs the other way: two stored handles to one reused object always compare equal.",
+      objective: 4
+    }
+  ]}
+/>
+
+### Kata: four bugs in one clone
+
+**Objective:** find and fix four copy and clone bugs, predicting the log after each fix.
+
+**Starter.** It compiles and runs, and it has four bugs, marked A to D only in the solution.
+
+```systemverilog
+// compile
+module tb_top;
+  class header;
+    int len = 4;
+    function void copy(header rhs);
+      len = rhs.len;
+    endfunction
+  endclass
+
+  class packet;
+    int    id;
+    header hdr = new;
+
+    virtual function void copy(packet rhs);
+      id  = rhs.id;
+      hdr = rhs.hdr;
+    endfunction
+
+    function packet clone();
+      packet c = new;
       c.copy(this);
       return c;
     endfunction
@@ -150,46 +875,127 @@ export const metadata = {
 
     virtual function void copy(packet rhs);
       crc_packet r;
-      super.copy(rhs);                         // copy the base part first
-      if (!$cast(r, rhs))                      // rhs must really be a crc_packet
-        $fatal(1, "crc_packet::copy: rhs is not a crc_packet");
-      crc = r.crc;                             // then the subclass part
+      void'($cast(r, rhs));
+      crc = r.crc;
     endfunction
 
-    virtual function packet clone();           // overrides keep the return type
-      crc_packet c = new;                      // build the subclass object
+    virtual function packet clone();
+      crc_packet c = new;
       c.copy(this);
       return c;
     endfunction
   endclass
 
-  module demo;
-    packet p, q;
+  initial begin
     crc_packet orig, back;
-    initial begin
-      orig = new;
-      orig.crc = 8'h5a;
-      p = orig;                     // base handle, subclass object
-      q = p.clone();                // virtual: runs crc_packet::clone
-      if (!$cast(back, q)) $fatal(1, "clone lost the subclass");
-      $display("%h", back.crc);     // 5a
-    end
-  endmodule
-  ```
-  </InteractiveCode>
+    packet     p, q;
+    orig = new;
+    orig.id = 3;
+    orig.crc = 8'h5a;
+    orig.hdr.len = 7;
+    p = orig;
+    q = p.clone();
+    $display("cast_ok=%0d id=%0d", $cast(back, q), q.id);
+    q.hdr.len = 1;
+    $display("orig.hdr.len=%0d", orig.hdr.len);
+  end
+endmodule
+```
 
-  If `clone()` were not virtual, `p.clone()` would run `packet::clone()` and return a plain `packet`: the `crc` field would be lost and the `$cast` would fail. UVM's `clone()` and `do_copy()` follow the same shape, with `uvm_object` as the base class.
+**Tasks:**
+1. Predict the starter's two log lines, and explain each value with a heap drawing.
+2. Fix the bug that makes `cast_ok` 0, and predict the new log. Explain why `id` changes.
+3. Fix the bug that the new `id` reveals, and predict again. Explain why `orig.hdr.len` changes back.
+4. Fix the last visible bug. Then find the fourth bug, which this test never triggers, by declaring `crc_packet x; packet y;` at the top of the initial block, adding `x = new; y = new; x.copy(y);` at its end, and predicting what happens.
 
-  ## Interview Pitfall: Shallow Copy Leak
+**Done when:** the log reads `cast_ok=1 id=3` and `orig.hdr.len=7`, and `x.copy(y)` stops with a clear message that names the problem.
 
-  <InterviewQuestionPlayground
-    question="Given `obj2 = new obj1`, where `obj1` contains a mailbox handle, what happens if `obj2` puts a transaction into the mailbox?"
-    options={[
-      { text: "It causes a runtime error because mailboxes cannot be shallow copied.", isCorrect: false, feedback: "A mailbox is just an object handle. It copies fine." },
-      { text: "It is put into `obj2`'s distinct mailbox; `obj1`'s mailbox is unaffected.", isCorrect: false, feedback: "Shallow copy only copies the handle. Both point to the same mailbox." },
-      { text: "It is put into the shared mailbox; both `obj1` and `obj2` see the transaction.", isCorrect: true, feedback: "Correct! A shallow copy copies object handles as handles (§8.12). Mailboxes, semaphores and sub-objects become shared, which is a common source of unintended side effects." },
-      { text: "The compiler flags a warning for unsafe copy.", isCorrect: false, feedback: "SystemVerilog legally allows shallow copies of handles without warnings." }
-    ]}
-  />
+<details>
+<summary>Worked solution (try the kata first)</summary>
 
-</InfoPage>
+**Task 1.** The starter prints:
+
+```text
+cast_ok=0 id=3
+orig.hdr.len=1
+```
+
+**Bug B:** `packet::clone` is not virtual, so `p.clone()` runs `packet::clone` and builds a plain `packet`; the `$cast` fails. Its `copy()` call is virtual but the new object is a `packet`, so `packet::copy` runs. It copies `id` (3) and, through **bug A** (`hdr = rhs.hdr`), the header handle, so `q.hdr.len = 1` writes `orig`'s header.
+
+**Task 2.** Make `packet::clone` virtual. Now `crc_packet::clone` runs and the log is:
+
+```text
+cast_ok=1 id=0
+orig.hdr.len=7
+```
+
+`crc_packet::copy` never calls `super.copy(rhs)` (**bug D**), so `id` keeps its default 0, and `packet::copy`, the home of bug A, never runs: the clone keeps the header its own `hdr = new` built.
+
+**Task 3.** Add `super.copy(rhs);`. Now `packet::copy` runs, `id` is 3, and bug A shares the header again:
+
+```text
+cast_ok=1 id=3
+orig.hdr.len=1
+```
+
+**Task 4.** Replace `hdr = rhs.hdr;` with a null-safe deep copy. The log becomes `cast_ok=1 id=3` and `orig.hdr.len=7`. **Bug C** is `void'($cast(r, rhs));`: it throws away the result. When `rhs` holds a plain `packet`, as in `x.copy(y)`, the cast fails, `r` stays `null`, and `r.crc` is a null-handle access, reported however your simulator reports one (tool-dependent wording). Check the result and stop with a message first.
+
+```systemverilog
+// snippet: the fixed methods
+// in packet:
+virtual function void copy(packet rhs);
+  if (rhs == null) $fatal(1, "packet::copy: null rhs");
+  id = rhs.id;
+  if (rhs.hdr == null) hdr = null;
+  else begin
+    if (hdr == null) hdr = new;
+    hdr.copy(rhs.hdr);                  // bug A fixed: contents, not the handle
+  end
+endfunction
+
+virtual function packet clone();        // bug B fixed: virtual
+  packet c = new;
+  c.copy(this);
+  return c;
+endfunction
+
+// in crc_packet:
+virtual function void copy(packet rhs);
+  crc_packet r;
+  if (!$cast(r, rhs))                   // bug C fixed: the result is checked
+    $fatal(1, "crc_packet::copy: rhs is null or not a crc_packet");
+  super.copy(rhs);                      // bug D fixed: copy the base part
+  crc = r.crc;
+endfunction
+```
+
+With these fixes, `x.copy(y)` stops at the `$fatal` with its message instead of a null-handle access.
+
+</details>
+
+The flashcards for this lesson follow below, under "Reinforce the essentials".
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023)
+- §8.12 Assignment, renaming, and copying (shallow copy steps; embedded covergroups; randomization state); Syntax 8-2 and its footnote (`new` expression)
+- §8.6 Object methods (methods are automatic); §8.8 Typed constructor calls; §8.16 Casting; §8.18 Data hiding and encapsulation; §8.19 Constant class properties; §8.20 Virtual methods (override rules, return types, `:initial`/`:extends`/`:final`)
+- §6.24.2 `$cast` dynamic casting; §7.6 Array assignments; §11.4.5 Equality operators; §18.14.3 Object stability; §19.4 Using covergroups in classes; §20.10 Severity system tasks
+
+**UVM sources**
+- IEEE 1800.2-2020 §5.3.5.1 `create`, §5.3.5.2 `clone`, §5.3.8.1 `copy`, §5.3.8.2 `do_copy`, §5.3.9 Comparing, §5.3.6.4 `convert2string`, §16.6 `uvm_copier`
+- uvm-core 2020.3.1 `src/base/uvm_object.svh` (bodies of `clone()` and `copy()`) and `src/base/uvm_copier.svh` (`copy_object`)
+
+**Further reading**
+- Chris Spear, *SystemVerilog for Verification*, 2nd ed. (Springer, 2008), ch. 5 "Basic OOP" and ch. 8 "Advanced OOP and Testbench Guidelines".
+
+**Prerequisites:** [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) for handles, objects and `new`; [Constructors](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors) for what `new` runs; [Polymorphism Pitfalls and Type Casting](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) for virtual dispatch and `$cast`; [F2B Dynamic Data Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index) for queues.
+
+**Related**
+- [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index): the interactive debugging challenge with a scoreboard whose expected items change.
+- [I-SV-5 Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes): the shared-handle bug in a mailbox, and a new object per message.
+- [I-UVM-1A UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index): `uvm_object`'s `copy`, `clone`, `compare` and `convert2string` in practice.
+- [I-UVM-2B TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index): analysis ports pass handles to every subscriber.
+- [A-UVM-6 Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): where copy-before-store and compare-by-value meet.
+
+<NextLesson />

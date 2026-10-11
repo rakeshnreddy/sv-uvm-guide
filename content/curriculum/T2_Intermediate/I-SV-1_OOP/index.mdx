@@ -1,169 +1,567 @@
 ---
 title: "I-SV-1: Object-Oriented Programming for Verification"
-description: "Build reusable, polymorphic verification components with SystemVerilog classes, inheritance, and virtual methods."
+description: "Predict how handles, new, shallow copies and static members behave, write classes with encapsulation, inheritance and virtual methods, and debug the handle bugs that corrupt scoreboards and crash testbenches."
 flashcards: "I-SV-1_OOP"
+sources:
+  - title: "IEEE Standard for SystemVerilog: Unified Hardware Design, Specification, and Verification Language"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "Accellera UVM reference implementation (uvm-core)"
+    type: "vendor"
+    identifier: "uvm-core"
+    version: "2020.3.1"
 ---
 
-import { InteractiveCode, Quiz, InterviewQuestionPlayground } from '@/components/ui';
-
 ## Quick Take
-- **What it is:** A **class** is a type that bundles data and methods. `new` creates an **object** of that class. A class variable never holds the object itself: it holds a **handle** that refers to the object, or `null`.
-- **Why it matters:** UVM is built from classes. Most OOP bugs in a testbench are handle bugs: two names for one object, a copy that still shares a nested object, a scoreboard that stores an item the monitor later overwrites, or a call through a handle that was never constructed.
-- **The picture to keep:** **a handle is an arrow, not the box.** Assignment copies the arrow. `new` builds a box. When no arrow reaches a box any more, SystemVerilog reclaims it for you.
-- **The Analogy:** A handle is a house address written on a card. Copying the card gives you two cards and still one house. Repainting the house through either card changes the one house.
 
-> **Note:** Mastering OOP is the gatekeeper skill between procedural benches and professional-grade UVM environments.
-> *SystemVerilog OOP is formally defined in **IEEE 1800-2023, Clause 8: Classes**.*
+- **What it is:** A **class** is a data type that bundles data, called **properties**, with the subroutines that work on it, called **methods**; together they are the class's **members**. Calling `new` builds an **object** of the class at run time. A class variable never holds the object itself. It holds a **handle** that refers to the object, or the special value `null` when it refers to nothing (IEEE 1800-2023 Clause 8, §8.4).
+- **Why it matters:** Transactions (one bus operation held as data), drivers (which turn transactions into pin activity), monitors (which turn pin activity back into transactions) and scoreboards (which check them) are all classes from here on, and UVM, the class library you start in [I-SV-9](/curriculum/T2_Intermediate/I-SV-9_Why_UVM/index), is built entirely from them. Most class bugs in a testbench are handle bugs: two names for one object, a copy that still shares a nested object, a scoreboard that stores an item the monitor later overwrites, or a call through a handle that was never constructed. None of them is a compile error.
+- **The Analogy:** A handle is a house address written on a card, and the object is the house. Copying the card gives you two cards and still one house, so repainting the house through either card changes the one house. *Where it breaks:* a card can be blank (`null`), and visiting a blank address is illegal rather than "an empty house" (§8.4). You cannot do arithmetic on the card to reach the house next door, as you can with a C pointer (§8.4, Table 8-1). And a house that no card leads to any more is demolished for you; there is no `delete` (§8.29).
 
-### Before you start
-- Tier 1 only previewed a class. This module is where classes, objects and handles are taught properly, so you do not need prior OOP experience.
-- You do need procedural code (`initial`, tasks and functions) and queues. If those feel rusty, revisit [`F2A_Core_Data_Types`](/curriculum/T1_Foundational/F2A_Core_Data_Types/index) and [`F2B_Dynamic_Structures`](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index).
-- Keep the Tier 1 rhythm *Instantiate → Drive → Check*. From here on, each step becomes a class.
+**You will be able to:**
+1. **Predict** the objects, handles and printed values after any sequence of `new`, handle assignment, shallow copy (`new h`) and `null`, including a static counter.
+2. **Write** a class with properties, methods, a constructor that uses `this`, a static member, an `extern` method and `local` or `protected` members, and explain what each qualifier changes.
+3. **Predict** which method body runs when you call through a base-class handle, from the handle's class, the object's class and whether the method is `virtual`.
+4. **Debug** a scoreboard whose stored expected items change because the producer reuses one object, and choose between a new object per transaction and a copy before storing.
+5. **Diagnose** where a null handle came from (a missing `new`, an object built inside a subroutine, an unset virtual interface or an unchecked `$cast`) and guard against it.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
+
+### Why classes: from tasks to objects
+
+In Tier 1 you wrote a testbench (TB) from modules, tasks and functions. A task can drive a transaction, but the transaction itself was loose variables, and every helper needed them passed in. A class keeps a transaction's data and the code that works on it together, and lets you create as many transactions as the test needs while it runs. [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) already showed you a class-based driver as a preview; this module explains every line of it.
+
+The module has five pages. This one builds the core model; each sub-lesson then takes one topic to full depth:
+
+| Page | What it covers |
+|---|---|
+| This page | Classes, objects and handles; members and `this`; `::` and `extern`; static members; lifetime and `null`; `local` and `protected`; inheritance and virtual methods at core level; interface classes; classes vs structs and modules; the virtual-interface handle |
+| [Constructors, this and super](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors) | The order in which `new` builds a derived object, chaining with `super.new`, `this`, and constant properties set once |
+| [Polymorphism Pitfalls and Type Casting](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) | Virtual and non-virtual calls in depth, up- and downcasts with `$cast`, shadowed properties, and the default-argument trap |
+| [Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) | Shallow and deep copies, a polymorphic `clone()`, and how UVM splits the same job |
+| [Parameterized Classes and Abstract Classes](/curriculum/T2_Intermediate/I-SV-1_OOP/parameterized-classes) | Generic classes, per-specialization statics, and abstract classes with `pure virtual` methods |
 
 ### A handle is an arrow, not the box
 
 Three rules explain almost every handle bug you will meet:
 
-1. Declaring `packet p1;` creates a variable that holds a handle. Its initial value is `null`; no object exists yet (§8.4, §8.12).
-2. `p1 = new;` allocates an object, initializes its properties, then runs the constructor (§8.7). Only then does `p1` refer to something.
-3. `p2 = p1;` copies the handle. There is still one object, now reachable through two names (§8.12).
+1. **Declaring a class variable creates no object.** `packet p1;` creates a variable that can hold a handle. Its initial value is `null` (§8.4, §8.12).
+2. **`new` builds the object.** `p1 = new;` allocates a `packet`, sets each property to its declared initial value (or its type's default), runs the body of the class's `new` function, its **constructor** (an implicit one is provided if you write none), and returns a handle that `p1` stores (§8.7). A class that extends another runs its parent's constructor first; the [Constructors](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors) page traces that order step by step.
+3. **Assignment copies the handle.** `p2 = p1;` copies the arrow. There is still one object, now reachable through two names (§8.12).
 
-Step through the code below and watch the arrows. Before each key line the visual asks you to predict, and it hides the result until you commit. Then switch to **null & garbage** and **static count**.
+The visualizer below runs exactly these three rules on a class `packet` with an `id`, a queue `data` and a handle `hdr` to a `header` object. Variables are the chips on the left; objects are the boxes; arrows are handles.
 
-<ObjectHandleVisualizer scenario="aliasing" scenarios={["aliasing", "null-and-garbage", "static-count"]} />
+**Predict first:** after `p2 = p1;` how many `packet` objects exist? After `p2.id = 7;` what does `p1.id` read? Commit to an answer at each prompt before the visual reveals it.
 
-### Classes and objects: blueprint, object, handle
-<InteractiveCode>
+<ObjectHandleVisualizer scenario="aliasing" scenarios={["aliasing"]} />
+
+**What it showed.** `new` ran once, so one `packet` box exists; `p2 = p1` added a second arrow to it. The write through `p2` is therefore visible through `p1`, which reads 7. Nothing was copied except the handle. This is misconception number one in testbench code: "assigning a handle copies the object". It never does.
+
+### Your first class: properties, methods, `new` and `this`
+
 ```systemverilog
-// Blueprint for a reusable transaction
-class BasePacket;
-  rand bit [31:0] addr;
-  rand bit [31:0] data;
+// compile
+// A transaction class, two handles, and one object.
+class packet;
+  bit [31:0] addr;                      // properties: one copy per object
+  bit [31:0] data;
 
-  function void print();
-    $display("Packet addr=0x%h data=0x%h", addr, data);
+  function new(bit [31:0] addr = 0);
+    this.addr = addr;                   // this.addr: property; addr: argument (§8.11)
+  endfunction
+
+  function void print();                // a method: runs on the object it is called on
+    $display("packet addr=0x%h data=0x%h", addr, data);
   endfunction
 endclass
 
-module demo;
-  BasePacket pkt1, pkt2;   // two handles, both null
+module tb_top;
+  packet pkt1, pkt2;                    // two handles, both null
 
   initial begin
-    pkt1 = new();          // one object
-    pkt2 = pkt1;           // still one object, two names
-    void'(pkt1.randomize());
-    pkt2.print();          // prints the values pkt1 just randomized
+    pkt1 = new('h10);                   // one object, addr = 'h10
+    pkt2 = pkt1;                        // still one object, two names
+    pkt2.data = 'hCAFE;                 // write through pkt2 ...
+    pkt1.print();                       // ... and read it back through pkt1
   end
 endmodule
 ```
-</InteractiveCode>
 
-Declare the handle first and call `new` as a statement. Writing `BasePacket p = new();` inside an `initial` block of an ordinary module or program is illegal: a static variable with an initializer needs an explicit `static` or `automatic` keyword (§6.21). With `static`, the `new` runs only once at time zero, which surprises people inside loops.
+Expected output (illustrative, traced by hand from §8.4, §8.7 and §8.12; `%h` keeps leading zeros):
+
+```text
+packet addr=0x00000010 data=0x0000cafe
+```
+
+Read it member by member:
+
+- **Properties** such as `addr` and `data` exist once per object. You reach them through a handle with a dot: `pkt1.addr` (§8.5).
+- **Methods** are called the same way: `pkt1.print()`. Inside `print()`, a bare `addr` means the property of the object the method was called on (§8.6). Class methods always have automatic lifetime, like the `automatic` tasks you wrote in [F2D](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions): each call gets its own local variables (§8.6).
+- **`this`** is a handle to that same object. You need it only when a name is ambiguous, as in the constructor above, where the argument `addr` hides the property `addr` (§8.11). `this` exists only inside non-static methods; the [Constructors](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors) page covers it with `super`.
+- **Where a class lives.** Declare classes in a package (normal in real benches) or at the top of a file, outside any module, as here. A class is a type, so declaring it builds nothing; only `new` does.
+
+**One trap from Tier 1.** Declare the handle first and call `new` as a statement. `packet p = new;` inside an `initial` block is illegal, because a variable declared in a procedural block with an initializer needs an explicit `static` or `automatic` keyword (§6.21). With `static`, the `new` runs only once, before simulation starts, even if the declaration sits inside a loop, which surprises people.
+
+### Class anatomy: `::`, nested types and `extern` methods
+
+A class is a scope, like a module or a package, so it can hold its own types, and you reach them from outside with the **class scope resolution operator** `::` (§8.23).
+
+```systemverilog
+// compile
+// A nested enum, a constant, and a method whose body sits outside the class.
+class bus_txn;
+  typedef enum bit {READ, WRITE} kind_e;     // a type that belongs to the class (§8.23)
+  const int unsigned max_len = 16;           // a constant: assigned only here (§8.19)
+  kind_e     kind;
+  bit [31:0] addr;
+
+  extern function string convert2string();   // prototype only (§8.24)
+endclass
+
+// The body follows the class, in the same scope, and names its class with ::.
+function string bus_txn::convert2string();
+  return $sformatf("%s addr=%08h", kind.name(), addr);
+endfunction
+
+module tb_top;
+  bus_txn t;
+  initial begin
+    t = new;
+    t.kind = bus_txn::WRITE;                 // a nested enum value, reached with ::
+    t.addr = 32'h40;
+    $display("%s max_len=%0d", t.convert2string(), t.max_len);
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand):
+
+```text
+WRITE addr=00000040 max_len=16
+```
+
+- **`::` from outside the class** reaches its static members (next section), its parameters, and the types, enum values and even nested classes declared inside it, as `bus_txn::WRITE` does (§8.23). You will meet the same operator in UVM as `my_driver::type_id::create(...)` ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
+- **`extern`** splits a method in two (§8.24). Inside the class you write the prototype with the `extern` keyword and every qualifier (`local`, `protected`, `virtual`). After the class, in the same scope, you write the body, named `Class::method`, without those qualifiers. Large classes stay readable as a list of prototypes.
+- **`extern` rules the compiler enforces** (§8.24): the body must match the prototype exactly, apart from the `Class::` prefix; a default argument value may be left out of the body, but if you write one it must be identical; a return type declared inside the class is written `bus_txn::kind_e`; and there is exactly one body per `extern` method.
+- **`const` properties** cannot be assigned anywhere else (§8.19). A constant with no initializer, set once per object inside `new`, is covered on the [Constructors](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors) page.
 
 ### Static members: one box for the whole class
 
-A `static` property exists once per class, not once per object, and it exists before any object is created (§8.9). Every handle, and the class scope `packet::count`, names the same storage. A `static` method behaves like an ordinary subroutine scoped inside the class: it has no `this`, can only touch static members, and cannot be virtual (§8.10).
+An ordinary property exists once per object. A **`static`** property exists once per class: every object, and the class scope `packet::count`, names the same storage, and it exists before any object is created (§8.9). A **static method** is an ordinary subroutine scoped inside the class: you can call it with no object, it has no `this`, it can touch only static members, and it cannot be virtual (§8.10).
 
-<InteractiveCode>
 ```systemverilog
+// compile
+// A static counter, and the shallow copy that bypasses it.
 class packet;
-  static int count = 0;   // shared by every packet (§8.9)
+  static int count = 0;                 // one counter for the whole class (§8.9)
   int id;
 
   function new();
-    count++;              // runs once per new, never for a shallow copy
+    count++;                            // runs once per new ...
     id = count;
   endfunction
 
-  static function int created();  // no object needed (§8.10)
+  static function int created();        // callable with no object (§8.10)
     return count;
   endfunction
 endclass
 
-module demo;
-  packet a, b, c;
+module tb_top;
+  packet p1, p2, p3;
   initial begin
-    a = new;
-    b = new;
-    c = new a;            // shallow copy: the constructor does not run (§8.12)
-    $display("%0d %0d %0d", packet::count, packet::created(), c.id);  // 2 2 1
+    p1 = new;
+    p2 = new;
+    p3 = new p1;                        // ... but not for a shallow copy (§8.12)
+    $display("%0d %0d %0d", packet::count, packet::created(), p3.id);
+    p1 = null;
+    $display("%0d", p1.count);          // a static member needs no object (§8.4, §8.9)
   end
 endmodule
 ```
-</InteractiveCode>
 
-You already rely on this in UVM: `my_driver::type_id::create("drv", this)` calls a static function of a registry class, without any object in hand.
+Expected output (illustrative, traced by hand from §8.9 and §8.12):
 
-### Object lifetime and null handles
-
-- **Lifetime is automatic.** An object lives as long as some handle in an active scope can reach it, directly or through other objects. When none can, it becomes unreachable and is eligible for reclamation (§8.29). There is no `delete` or `free` for class objects.
-- **Null is the default.** Every class variable starts as `null`. Test with `if (h == null)` (§8.4).
-- **Calling through null is illegal.** Touching a non-static member or calling a virtual method through a null handle is illegal; the result is indeterminate and simulators stop with a null-object access error (§8.4). Static members stay reachable through a null handle.
-- **Where null handles come from in a testbench:** a missing `new` or `type_id::create`, a `uvm_config_db::get` that found nothing, or a `$cast` called as a function whose return value was ignored.
-
-```systemverilog
-if (cfg == null)
-  $fatal(1, "cfg was never constructed or never set in config_db");
+```text
+2 2 1
+2
 ```
 
-The 2023 standard also adds `weak_reference#(T)` (§8.30), a reference that does not keep its object alive. Check that your simulator supports it before you use it.
+**Predict first:** three `packet` objects exist after `p3 = new p1;` so what is `packet::count`? And with `p1` now `null`, what does `p1.count` do? The visualizer runs the same script (its `packet` also carries `data` and `hdr`, which do not matter here).
 
-### Encapsulation: guard the internals
-<InteractiveCode>
+<ObjectHandleVisualizer scenario="static-count" scenarios={["static-count"]} />
+
+**What it showed.** `new p1` is a **shallow copy**: it allocates a new object and copies every property value from `p1`, but it runs neither the constructor nor the property initializers (§8.12). So `count++` ran twice, not three times, and `p3.id` is a copy of `p1`'s 1. The static `count` sat outside every box. Reading it through a null handle is legal, because the standard forbids only non-static members and virtual methods through `null` (§8.4). What a shallow copy does to nested objects is the [Copying and Cloning](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) page's topic.
+
+**Pitfalls.**
+- A static method that reads an instance property, or `this`, is a compile error (§8.10): which object's `id` would it read?
+- `static task t1();` is a static **method** whose variables are automatic. `task static t2();` asks for static variable lifetime, and that is illegal in a class (§8.6, §8.10).
+- A counter kept in `new` does not count shallow copies. If you need every object counted, count in a `copy()` method too.
+
+**In real benches** statics hold class-wide state: an id counter, a shared configuration handle, a verbosity setting, or a registry. UVM's **factory**, the mechanism that creates objects by type name so that a test can substitute one class for another, is reached through static methods for exactly this reason ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)). Avoid statics for per-test state when several environments may run in one simulation: they share one copy.
+
+### Object lifetime and `null`
+
+- **Lifetime is automatic.** An object lives as long as some handle in an active scope can reach it, directly or through other objects. When none can, it becomes unreachable and its memory is eligible for reclamation, called **garbage collection** (§8.29). There is no `delete` or `free` for class objects.
+- **Null is the default.** Every class variable starts as `null`. Test it with `if (h == null)` (§8.4).
+- **Calling through null is illegal.** Reading or writing a non-static member, or calling a virtual method (a method that dispatches on the object's class, explained under inheritance below), through a null handle is illegal, and the result is indeterminate (§8.4). Simulators normally stop with a null-object access error that names the line where the access happened; the exact message is tool-dependent.
+- **`==` compares handles, not contents.** `a == b` on two handles is true only when both refer to the same object, or both are `null` (§8.4, §11.4.5). Two objects holding equal values compare unequal, and a scoreboard written as `if (exp == act)` is wrong: compare the values, with a `compare()` method as [Copying and Cloning](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) shows.
+
+**Predict first:** after `p1 = p2;` what happens to the `packet` that `p1` used to refer to? And what does `p1.print();` do once `p1` is `null`?
+
+<ObjectHandleVisualizer scenario="null-and-garbage" scenarios={["null-and-garbage"]} />
+
+**What it showed.** Re-pointing `p1` left the first `packet` with no handle, so it turned grey: unreachable, along with the `header` only it referred to. Nothing had to be freed. Then `p1.print()` stopped the run: `print()` is a virtual method and reads `id`, and both are illegal through `null`. The visual stops the way simulators do; the standard itself says only "illegal, indeterminate" (§8.4).
+
+**Where null handles come from in a testbench.** When a log shows a null-object error, look for one of these four causes:
+
+1. **A missing `new`.** The handle was declared and used, but never constructed. In UVM the same bug is a missing `type_id::create` ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
+2. **An object built inside a subroutine.** A handle argument is copied in like any other value (§13.5.1), so `h = new` inside the callee changes only its local copy, and the caller's handle stays `null`:
+
+   ```systemverilog
+   // snippet: the factory function that never hands its object back
+   function automatic void make_packet(packet p);   // p is a copy of the caller's handle
+     p = new;                                        // the caller never sees this object
+   endfunction
+   // caller: packet h; make_packet(h); h.print();  -> null access
+   // fix: return the handle (function automatic packet make_packet();),
+   //      or declare the argument output or ref (§13.5.2)
+   ```
+
+   The callee can still change an object the caller already built, because both handles refer to it. Only re-pointing the handle is lost.
+3. **An unset virtual interface.** A class reaches pins through a handle that `tb_top` must set first (see [the virtual-interface section](#classes-in-a-real-testbench-the-virtual-interface-handle) below).
+4. **An unchecked `$cast`.** `$cast` converts a handle to a more specific class type at run time, a step you need once you have class hierarchies (inheritance is below; §8.16). Called as a function, it returns 0 on failure and leaves the destination unchanged, often `null`; code that ignores the 0 crashes later, far from the cause. Called as a task, it raises a run-time error at the cast itself and returns nothing (§6.24.2). [Polymorphism Pitfalls](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) covers casting in full.
+
+**The guard.** Check a handle where it enters your code, and fail loudly with the reason:
+
 ```systemverilog
-class CrcPacket;
-  rand bit [7:0] payload;
-  local bit [3:0] crc;
+// snippet: fail at the boundary, not three calls later
+if (cfg == null)
+  $fatal(1, "agent: cfg was never constructed or never passed in");
+```
 
-  function void calculate_crc();
-    crc = ^payload; // toy CRC
+### Encapsulation: `local` and `protected`
+
+By default every member is **public**: any code with a handle can read or write it (§8.18). Two qualifiers hide members:
+
+- **`local`**: visible only to the class's own methods. Subclasses do not see it.
+- **`protected`**: like `local`, but also visible to **subclasses**, the classes that extend this one (next section).
+
+```systemverilog
+// compile
+// What each qualifier lets a subclass and the outside world do.
+class crc_packet;
+  bit [7:0]           payload;          // public
+  protected bit [3:0] crc;              // this class and its subclasses
+  local int unsigned  n_calcs;          // this class only
+
+  function void calc_crc();
+    crc = payload[3:0] ^ payload[7:4];  // a toy CRC
+    n_calcs++;
   endfunction
 
   function bit [3:0] get_crc();
     return crc;
   endfunction
+
+  // Same class, another object: other.crc is visible here (§8.18).
+  function bit same_crc(crc_packet other);
+    return crc == other.crc;
+  endfunction
 endclass
+
+class bad_crc_packet extends crc_packet;
+  function void corrupt();
+    crc = ~crc;                         // legal: protected is visible to subclasses
+    // n_calcs = 0;                     // compile error: local is hidden from subclasses
+  endfunction
+endclass
+
+module tb_top;
+  crc_packet     g;
+  bad_crc_packet b;
+  initial begin
+    g = new;
+    b = new;
+    g.payload = 8'h3C;
+    b.payload = 8'h3C;
+    g.calc_crc();
+    b.calc_crc();
+    b.corrupt();
+    // b.crc = 0;                       // compile error: protected is hidden outside
+    $display("good=%h bad=%h same=%0d", g.get_crc(), b.get_crc(), g.same_crc(b));
+  end
+endmodule
 ```
-</InteractiveCode>
-Encapsulation hides implementation details (`crc`) while exposing intent (`calculate_crc`, `get_crc`). `local` members are visible only inside the class; `protected` members are also visible to subclasses (§8.18). This prevents careless external writes and keeps APIs clean.
 
-### Inheritance and polymorphism: specialize without rewriting
-<InteractiveCode>
+Expected output (illustrative, traced by hand: `3 ^ C` is `F`, and `~F` is `0`):
+
+```text
+good=f bad=0 same=0
+```
+
+Who can touch a member, by qualifier (§8.18). "Subclass method" means a subclass method using the member it inherited:
+
+| Code that touches the member | public | `protected` | `local` |
+|---|---|---|---|
+| A method of the same class, on its own object | yes | yes | yes |
+| A method of the same class, on another object (`other.crc` in `same_crc`) | yes | yes | yes |
+| A method of a subclass | yes | yes | **no**: compile error |
+| Code outside the class tree (`tb_top`) | yes | **no**: compile error | **no**: compile error |
+
+- **Why bother:** hidden members cannot be corrupted by careless code elsewhere, and you can change how a class works inside without breaking its users. A testbench class exposes intent methods such as `calc_crc()` and keeps its bookkeeping hidden.
+- **Pitfall:** a member you make `local` is invisible to every subclass, including the error-injecting subclass a colleague writes next year. Make bookkeeping `local` and the extension points `protected`.
+- **The same-class rule** is what lets a `copy()` or `compare()` method read `rhs.n_calcs` from another object of its own class without getters (§8.18).
+
+### Inheritance and virtual methods: specialize without rewriting
+
+A class can **extend** one other class (§8.13). The new class, the **subclass** or derived class, inherits every member of the **base class** and can add members or **override** methods by declaring a method of the same name. A subclass object is also a legal base-class object, so a base-class handle may refer to it; this is an **upcast**, and it is always legal (§8.14, §8.16).
+
 ```systemverilog
-class BasePacket;
-  virtual function void pack();
-    $display("[BasePacket] generic packing");
+// compile
+// One driver that accepts any base_txn, and three transaction classes.
+class base_txn;
+  bit [31:0] addr = 32'h10;
+  virtual function void describe();     // virtual: the object's class picks the body
+    $display("I am a base_txn");
   endfunction
 endclass
 
-class EthernetPacket extends BasePacket;
-  rand bit [47:0] dst_mac;
-
-  function void pack();   // still virtual: inherited from BasePacket (§8.20)
-    $display("[EthernetPacket] packing MAC=%h", dst_mac);
+class crc_txn extends base_txn;
+  bit [7:0] crc = 8'h5a;
+  function void describe();             // still virtual: inherited from base_txn (§8.20)
+    $display("I am a crc_txn");
   endfunction
 endclass
 
-class UsbPacket extends BasePacket;
-  function void pack();
-    $display("[UsbPacket] packing USB framing");
+class bad_crc_txn extends crc_txn;
+  function void describe();
+    $display("I am a bad_crc_txn");
   endfunction
 endclass
 
-class GenericDriver;
-  task run(BasePacket pkt);
-    pkt.pack(); // resolves to the object's implementation
+class txn_driver;
+  task run(base_txn t);                 // accepts base_txn and every subclass
+    t.describe();
   endtask
 endclass
-```
-</InteractiveCode>
-A single `GenericDriver` talks to any `BasePacket` descendant, exactly as UVM drivers use `uvm_sequence_item` handles.
 
-Which `pack()` runs depends on two things you can see in the code: the handle's declared class and whether the method is `virtual`. Try a `base_txn` handle holding a `bad_crc_txn` object, predict, then make `describe()` non-virtual and predict again.
+module tb_top;
+  txn_driver  drv;
+  bad_crc_txn bad;
+  base_txn    h;
+  initial begin
+    drv = new;
+    bad = new;
+    h   = bad;                          // upcast: always legal (§8.16)
+    h.describe();
+    drv.run(bad);
+    // h.crc = 0;                       // compile error: base_txn has no crc (§8.14)
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand from §8.20):
+
+```text
+I am a bad_crc_txn
+I am a bad_crc_txn
+```
+
+**Which body runs?** Three things decide it (§8.14, §8.20):
+
+1. **The handle's class** decides what you may call. Through a `base_txn` handle you see only `base_txn`'s members, so `h.crc` does not compile, even though the object has a `crc`.
+2. **Whether the method is `virtual` as seen from that class.** If it is not, the compiler binds the call to the handle's class's body, whatever object the handle holds.
+3. **For a virtual method, the object's class.** The call runs the latest override in the object's class, decided at run time. That is **polymorphism**: one call, many behaviours. Once a method is virtual, every override of it is virtual too, with or without the keyword (§8.20).
+
+**Predict first** with the explorer below: set the handle to `base_txn` and the object to `bad_crc_txn`, call `h.describe()`, and predict. Then switch `describe()` to **never virtual** and predict again.
 
 <PolymorphismDispatchVisualizer section="dispatch" />
+
+**What it showed.** With `describe()` virtual in `base_txn`, the object decided: `bad_crc_txn::describe()` ran through a `base_txn` handle. With it never virtual, the handle decided: `base_txn::describe()` ran, and the subclass bodies were silently ignored. No error, no warning: the wrong stimulus just goes out. That is misconception number three, "a call through a base handle runs the derived version". It does only for virtual methods.
+
+- **`super`** calls the base class's version from inside an override, for example `super.describe();` to print the base line first (§8.15). The [Constructors](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors) page uses it to chain constructors.
+- **Properties never dispatch.** A subclass that redeclares a property gets a second, separate property, and a base-class handle still sees the base one (§8.14). [Polymorphism Pitfalls](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) shows the trap, the downcast back with `$cast`, and the IEEE 1800-2023 specifiers `:initial`, `:extends` and `:final` that let the compiler check your overrides (§8.20).
+- **In real benches** a driver written against a base item type accepts every item derived from it, and in UVM the factory substitutes a derived class for a base one without editing the driver ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)). Make every method a subclass might reasonably change `virtual`; forgetting the keyword is the bug.
+
+### Interface classes: one class, several roles
+
+A class extends at most one base class, but it can **implement** any number of **interface classes** (§8.26). An interface class is a contract: it holds only **pure virtual** methods (prototypes with no body, which every implementing class must supply), types and parameters, and every class that implements it must provide each method as a virtual method.
+
+```systemverilog
+// compile
+// One base class, two roles.
+interface class has_crc;
+  pure virtual function bit check_crc();
+endclass
+
+interface class printable;
+  pure virtual function string to_string();
+endclass
+
+class base_txn;
+  int addr;
+endclass
+
+class crc_txn extends base_txn implements has_crc, printable;
+  bit [7:0] crc;
+  virtual function bit check_crc();
+    return crc == 8'h5a;
+  endfunction
+  virtual function string to_string();
+    return $sformatf("addr=%0h crc=%0h", addr, crc);
+  endfunction
+endclass
+
+module tb_top;
+  crc_txn   c;
+  printable p;
+  initial begin
+    c = new;
+    c.addr = 'h40;
+    c.crc  = 8'h5a;
+    p = c;                              // legal: crc_txn implements printable (§8.26.5)
+    $display("%s ok=%0d", p.to_string(), c.check_crc());
+    // p = new;                         // illegal: never construct an interface class
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand):
+
+```text
+addr=40 crc=5a ok=1
+```
+
+<ArchitectureDiagram
+  title="crc_txn: one base class, two interface classes"
+  caption="crc_txn extends exactly one class, base_txn, and implements two interface classes. A printable handle can refer to a crc_txn object, or to any object from an unrelated hierarchy whose class implements printable."
+  legend={false}
+  nodes={[
+    { id: "base", label: "base_txn", sublabel: "class: addr", col: 0, row: 0 },
+    { id: "crc", label: "has_crc", sublabel: "interface class: check_crc()", col: 1, row: 0 },
+    { id: "prn", label: "printable", sublabel: "interface class: to_string()", col: 2, row: 0 },
+    { id: "txn", label: "crc_txn", sublabel: "class: crc + both methods", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "txn", to: "base", style: "structural", label: "extends (one)" },
+    { from: "txn", to: "crc", style: "structural", label: "implements" },
+    { from: "txn", to: "prn", style: "structural", label: "implements" }
+  ]}
+/>
+
+- **Purpose:** a role shared across classes that have different base classes. A logging helper can print any `printable`, whether it is a bus item, a register item or a configuration object.
+- **Pitfalls:** an interface class cannot be constructed (§8.26.5). An implementing method must say `virtual` unless it is inherited (§8.26). Converting a `printable` handle back to `crc_txn` needs `$cast`, checked at run time (§8.26.5). Two interface classes that declare the same method name must be satisfied by one method (§8.26.6).
+- **Interface class or abstract base class?** An **abstract class** (declared `virtual class`, so it can never be constructed itself; [Parameterized and Abstract Classes](/curriculum/T2_Intermediate/I-SV-1_OOP/parameterized-classes)) can share code and data with its subclasses, but a class extends only one base class. An interface class shares no code, but a class can implement many of them. Push Further compares them.
+
+### Forward declarations with `typedef class`
+
+A class name must be declared before you declare a variable of that type. Two classes that refer to each other therefore need a **forward declaration** (§8.27):
+
+```systemverilog
+// snippet: a monitor and a scoreboard that point at each other
+typedef class scoreboard;               // "scoreboard is a class, defined later"
+
+class monitor;
+  scoreboard sb;                        // legal thanks to the forward declaration
+endclass
+
+class scoreboard;
+  monitor mon;
+endclass
+```
+
+The keyword `class` in `typedef class scoreboard;` is documentation: `typedef scoreboard;` means the same (§8.27). You also need a forward declaration when the order of your `` `include `` files puts a class's user before its definition. The real class must then be defined in the same scope, for example the same package (§8.27).
+
+### Classes, structs and modules
+
+You now know three ways to group things. They are not interchangeable, and the table is the usual interview answer (§8.28; the grammar of class members, Syntax 8-1):
+
+| | `struct` (F2A) | `module` (F4A) | `class` |
+|---|---|---|---|
+| When it exists | when its variable exists: at simulation start, or on each call of an automatic task | built during **elaboration**, the step before time 0 in which the simulator builds the design hierarchy; exists for the whole run | only when `new` runs; reclaimed when unreachable |
+| How many | as many as you declared | as many as you instantiated, fixed before time 0 | as many as the test creates, at run time |
+| What `a = b` copies | the values | (you cannot assign modules) | the handle |
+| Inheritance and polymorphism | no | no | yes (§8.13, §8.20) |
+| Ports, `always`, `initial`, `assign`, instances | no | yes | no: a class is not part of the hardware hierarchy |
+| Typical use | a packed bus word, a record | the DUT, interfaces, `tb_top` | transactions, drivers, monitors, scoreboards |
+
+The last two rows are why a testbench needs both worlds. Only modules and interfaces own signals, and only classes can be created on demand, extended and swapped. The bridge between them is the next section.
+
+### Classes in a real testbench: the virtual-interface handle
+
+A class cannot contain ports or an interface instance, so it cannot touch a signal directly. Instead it holds a **virtual interface**: a variable that holds a handle to an interface instance that `tb_top` built (§25.9; first met in [F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index)). This is the class form of F4C's driver:
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+// A class reaches the pins only through a virtual interface handle.
+interface pipe_if (input logic clk);
+  logic       in_vld;
+  logic [7:0] in_data;
+
+  clocking cb @(posedge clk);           // drive through a clocking block (F4C)
+    output in_vld, in_data;
+  endclocking
+endinterface
+
+class pipe_drv;
+  virtual pipe_if vif;                  // handle to an interface instance; null until set
+
+  task send(input logic [7:0] data);
+    if (vif == null) $fatal(1, "pipe_drv: vif was never set");
+    vif.cb.in_vld  <= 1'b1;
+    vif.cb.in_data <= data;
+    @(vif.cb);
+    vif.cb.in_vld  <= 1'b0;
+  endtask
+endclass
+
+module tb_top;
+  logic    clk = 0;
+  pipe_if  bus (clk);                   // the interface instance: built at elaboration
+  pipe_drv drv;                         // the driver object: built by new, at run time
+
+  always #5 clk = ~clk;
+
+  initial begin
+    drv     = new;
+    drv.vif = bus;                      // bind the handle before its first use
+    @(bus.cb);
+    drv.send(8'hA5);
+    @(bus.cb);
+    $display("[%0t] sent A5", $time);
+    $finish;
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand: rising edges at 5, 15 and 25 ns; your simulator then prints its own `$finish` message):
+
+```text
+[25] sent A5
+```
+
+<ArchitectureDiagram
+  title="tb_top: the pipe_drv object reaches the bus instance through vif"
+  caption="bus is a static interface instance inside tb_top. drv is a dynamic object whose vif property holds a handle to bus, set by drv.vif = bus. Until that line runs, vif is null."
+  legend={false}
+  nodes={[
+    { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "bus", label: "bus", sublabel: "pipe_if instance (clk, in_vld, in_data, cb)", kind: "interface", col: 0, row: 1 },
+    { id: "drv", label: "drv", sublabel: "pipe_drv object", kind: "driver", col: 1, row: 0 }
+  ]}
+  edges={[
+    { from: "drv", to: "bus", style: "control", label: "virtual pipe_if vif" }
+  ]}
+/>
+
+- **Two different nulls.** A null virtual interface "shall result in a fatal run-time error" when used (§25.9). A null class handle is only "illegal, indeterminate" (§8.4). Both are bugs; the guard in `send()` turns either into a message that names the cause.
+- **Who sets it.** In a plain SystemVerilog bench, `tb_top` assigns it, as here, or passes it to a constructor. In UVM, `tb_top` stores it in the configuration database (`uvm_config_db`) and each driver and monitor fetches it ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
+- **Break it:** delete `drv.vif = bus;` and rerun. The guard fires with `pipe_drv: vif was never set`. Without the guard, the first `vif.cb` access is a fatal null-virtual-interface error, whose wording is tool-dependent.
+
+### Recap
 
 <VisualRecap
   title="A handle is an arrow, not the box"
@@ -202,151 +600,432 @@ p1 = null;             // drop an arrow; no delete exists`}
   </svg>
 </VisualRecap>
 
-### Forward declarations with `typedef class`
-
-Two classes that refer to each other need a forward declaration, because a class name must be known before a variable of that type is declared (§8.27). You will also need one when `include` order puts a user before the definition.
-
-```systemverilog
-typedef class scoreboard;   // "scoreboard is a class, defined later"
-
-class monitor;
-  scoreboard sb;            // legal thanks to the forward declaration
-endclass
-
-class scoreboard;
-  monitor mon;
-endclass
-```
-
-The keyword `class` in `typedef class scoreboard;` is optional documentation: `typedef scoreboard;` means the same (§8.27).
-
-### Interface classes: one class, several roles
-
-A class can extend only one base class, but it can **implement** any number of interface classes (§8.26). An interface class contains only pure virtual methods, types and parameters, and every implementation must be a virtual method.
-
-```systemverilog
-interface class has_crc;
-  pure virtual function bit check_crc();
-endclass
-
-interface class printable;
-  pure virtual function string to_string();
-endclass
-
-class base_txn;
-  int addr;
-endclass
-
-class crc_txn extends base_txn implements has_crc, printable;
-  bit [7:0] crc;
-  virtual function bit check_crc();      return (crc == 8'h5a); endfunction
-  virtual function string to_string();   return $sformatf("addr=%0h crc=%0h", addr, crc); endfunction
-endclass
-```
-
-A `printable` handle can refer to any object whose class implements `printable`, regardless of its base class. Converting it back to `crc_txn` needs `$cast`, checked at run time (§8.16).
+- A class is a type; `new` builds objects; variables hold handles that start as `null`.
+- Assignment copies the handle. `new h` copies one object shallowly and skips the constructor.
+- Static members exist once per class and are reachable even through `null`.
+- `local` hides a member from subclasses; `protected` hides it only from code outside the class tree.
+- Through a base-class handle, a virtual method runs the object's override; a non-virtual one runs the handle's class's body.
+- A class reaches signals only through a virtual interface that `tb_top` sets.
 
 ## Make It Work
-1. **Define your transactions:** Start with a base class containing shared fields, methods, and automation (`rand`, `constraint`, `copy`/`compare`).
-2. **Specialize via inheritance:** Create derived packet classes for protocol-specific fields. Override virtual methods (for example `pack` or `convert2string`).
-3. **Drive polymorphically:** Use base-class handles (`BasePacket pkt_h`) across sequencers, drivers, and scoreboards to minimize coupling.
-4. **Instrument with encapsulation:** Expose intent methods (`start_transfer`) while protecting internals with `local`/`protected` members.
-5. **Decide who owns each object:** Whoever stores an item it did not create stores a copy, and whoever publishes an item never modifies it afterwards.
+
+### A scoreboard that survives a reused producer object
+
+This bench has the shape of every scoreboard you will build. A **monitor** (here, a loop in `tb_top`) watches the design under test (DUT) and produces one expected transaction per sample. A **scoreboard** stores the expected items and checks each output of the DUT against the next one. The monitor reuses one `txn` object for every sample, as real monitors sometimes do, so the scoreboard must store copies it owns.
+
+```systemverilog
+// compile
+// A reused producer object, and a scoreboard that stores copies it owns.
+class txn;
+  static int unsigned created;            // one counter for the whole class (§8.9)
+  bit [7:0] data;
+
+  function new(bit [7:0] data = 0);
+    created++;
+    this.data = data;                     // this.data: the property; data: the argument
+  endfunction
+
+  extern function string convert2string();   // body after the class (§8.24)
+endclass
+
+function string txn::convert2string();
+  return $sformatf("txn data=%02h", data);
+endfunction
+
+class scoreboard;
+  local txn          exp_q[$];            // expected items this scoreboard owns
+  local int unsigned matches, mismatches; // only report() publishes them
+
+  // The producer may reuse its object after this call returns, so store a copy.
+  function void add_expected(txn t);
+    txn c;
+    c = new t;                            // shallow copy: enough, txn holds only values
+    exp_q.push_back(c);
+  endfunction
+
+  function void check(bit [7:0] actual);
+    txn e;
+    if (exp_q.size() == 0) begin
+      mismatches++;
+      $error("SCB: unexpected output %02h", actual);
+      return;
+    end
+    e = exp_q.pop_front();
+    if (e.data === actual) matches++;
+    else begin
+      mismatches++;
+      $error("SCB: expected %s, got %02h", e.convert2string(), actual);
+    end
+  endfunction
+
+  function void report();
+    $display("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+             matches, mismatches, exp_q.size());
+  endfunction
+endclass
+
+module tb_top;
+  scoreboard sb;
+  txn        t;                           // ONE producer object, reused for every sample
+  bit [7:0]  samples[3] = '{8'h03, 8'h05, 8'h09};
+
+  initial begin
+    sb = new;
+    t  = new;
+    foreach (samples[i]) begin            // the "monitor": overwrite t, then publish it
+      t.data = samples[i];
+      sb.add_expected(t);
+    end
+    foreach (samples[i]) sb.check(samples[i]);   // stand-in DUT: echoes its input
+    sb.report();
+    $display("txn::created=%0d", txn::created);
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand from §8.9 and §8.12, not captured from a simulator):
+
+```text
+SCB_SUMMARY matches=3 mismatches=0 pending=0
+txn::created=1
+```
+
+`created` is 1 because only `t = new` ran a constructor; the three `new t` copies did not (§8.12).
+
+**How to build and run it:**
+
+1. Write `txn` with a static counter, a constructor that uses `this`, and an `extern` method whose body follows the class.
+2. Write `scoreboard` with `local` storage, so nothing outside it can push into or count its queue.
+3. In `add_expected`, store `new t`, a copy the scoreboard owns, never `t` itself.
+4. Compile and run with any IEEE 1800-2023 simulator (for example, compile the one file and run `tb_top`; the exact commands are tool-dependent). Read the `SCB_SUMMARY` line and the `created` count.
+5. **Break it 1: store the handle.** Replace `c = new t;` with `c = t;`. Predict the summary, then rerun.
+6. **Break it 2: forget a `new`.** Restore the copy, then delete `sb = new;`. Predict which line the error names, then rerun.
+
+**Break it 1, explained.** All three queue entries are now the same object, which holds the last sample, `09`, by the time `check` runs. Expected output (illustrative; the prefix of each `$error` line and the location it prints are tool-dependent):
+
+```text
+Error: SCB: expected txn data=09, got 03
+Error: SCB: expected txn data=09, got 05
+SCB_SUMMARY matches=1 mismatches=2 pending=0
+txn::created=1
+```
+
+**Break it 2, explained.** `sb` is `null`, so `sb.add_expected(t)` is an illegal call (§8.4). Where the run stops is tool-dependent. `add_expected` is not virtual, and most simulators start it anyway with `this` set to `null`, then stop at its first property access, `exp_q.push_back(c)`. So the null-object error names a line inside `scoreboard`, not the line in `tb_top` that forgot `new`. Read the call stack in the error message, or guard with `if (sb == null) $fatal(...)` where the handle is first used.
 
 ### Debug it: the scoreboard whose expected items change
 
-This is the most common handle bug in real testbenches. Read the symptom, select the line that causes it, then try fixes; the model reruns the monitor and the scoreboard reads the stored items back.
+The model below is the same bug in a monitor that stores the samples 3, 5 and 9 into `exp_q`. Read the symptom, choose the line that causes it, then try the fixes; the model reruns the monitor and reads the stored items back.
 
 <ObjectHandleVisualizer mode="bug" />
 
+**What it showed.** Every entry of `exp_q` was an arrow to the one `t` box, exactly as in Break it 1. Two fixes pass: construct a new `txn` for every sample (`t = new` inside the loop), or store a copy (`c = new t`). Assigning `c = t` first does not help, because it only copies the arrow, and setting `t = null` after storing breaks the next sample's write.
+
+**Which fix to choose.** Make both rules part of your bench, because you rarely control both sides:
+- **The producer** constructs a new object for every transaction it publishes and never modifies it afterwards. UVM monitors follow this rule.
+- **The consumer** that keeps an item it did not create stores a copy. A shallow copy (`new t`) is enough when the item holds only values; an item with nested objects needs a deep copy or `clone()` ([Copying and Cloning](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning)).
+
+**Debugging handle bugs** (symptom → cause → fix):
+
+| Symptom in the log | Likely cause | Fix |
+|---|---|---|
+| Every stored item reads the last value; mismatches on all but the last | A stored handle to a reused object | New object per transaction, or copy before storing |
+| Null-object access error at a line inside a method | A call through a handle that was never constructed, or that a subroutine constructed into a copied argument | Construct before use; return the handle or use an `output` argument; guard at the boundary |
+| Fatal null virtual-interface error | `vif` never set before the first access (§25.9) | Set it in `tb_top` (or the configuration database) before the first use |
+| The base behaviour runs although the object is a subclass | The method is not `virtual` in the handle's class | Declare it `virtual` in the base class |
+| A counter kept in `new` is lower than the number of objects | Shallow copies skip the constructor (§8.12) | Count in `copy()` too, or count what you actually need |
+| `exp == act` fails for items with equal values | `==` on handles compares handles (§11.4.5) | Compare values with a `compare()` method |
+
 **Checklist before moving on:**
+
 - [ ] You can draw the handles and objects for any short sequence of `new`, `=`, `new h` and `null`.
 - [ ] You can explain why a static property changes for every object at once, and why `new h` does not increment a counter kept in `new()`.
+- [ ] You can write a class with `local` and `protected` members and an `extern` method, and say which code may touch each member.
 - [ ] You can predict which method body runs from the handle's class, the object's class and the `virtual` keyword.
-- [ ] You can name three ways a handle ends up `null` in a testbench, and guard against each.
-- [ ] You can demonstrate encapsulation with `local`/`protected` members.
+- [ ] You can explain Break it 1 with the arrow picture, and choose between a new object per transaction and a copy before storing.
+- [ ] You can name four ways a handle ends up `null`, tell from a log which one happened, and guard against each.
 
 ## Push Further
-- Implement factory overrides (UVM `type_id::create`) to swap derived packets at runtime.
-- Explore abstract classes and pure virtual methods for defining protocol templates ([Parameterized and Abstract Classes](/curriculum/T2_Intermediate/I-SV-1_OOP/parameterized-classes)).
-- IEEE 1800-2023 adds the method specifiers `:initial`, `:extends` and `:final` (§8.20), which let the compiler catch an accidental override or a missing one. Check simulator support before using them.
-- Profile simulation performance when using deep inheritance hierarchies, and know when composition is cleaner.
 
-## Practice & Reinforce
-- **Flashcards:** drill the vocabulary for classes, handles, inheritance, and polymorphism.
-- **Retrieval quiz:** answer the questions below without the visuals.
-- **Guided kata (run it in your simulator):** write a `txn` class with an `int data`, a `byte payload[$]` and a `header hdr`. Implement a deep `copy()` and a virtual `clone()`. Prove the copy is deep by changing the clone's header and printing the original.
-- **Independent kata:** convert a procedural driver into a class-based driver whose `run` task accepts any `BasePacket` descendant, then add a second packet type without editing the driver.
+### Expert: null handles, what the standard guarantees and what simulators do
 
-## Deep Dives in this Track
-- [Constructors, `this`, and `super`](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors)
-- [Parameterized and Abstract Classes](/curriculum/T2_Intermediate/I-SV-1_OOP/parameterized-classes)
-- **[Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning)** - *Interview Pitfalls*
-- **[Polymorphism Pitfalls & Type Casting](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls)** - *Interview Pitfalls*
+- **The rule.** Accessing non-static members or virtual methods through a null handle is illegal; "the result of an illegal access via a null object handle is indeterminate, and implementations may issue an error" (§8.4). The standard does not require a run-time error.
+- **What stays legal.** Static members through a null handle. §8.9's own example reads `p.fileID` through a `Packet p` that was never constructed.
+- **What simulators do (tool-dependent).** Most implementations pass `this` to a method as a hidden argument, so a non-virtual method called through `null` starts running and fails only when it first touches a property. The error then points inside the method, possibly several calls below the real bug. A virtual call through `null` usually fails at the call, because finding the body needs the object.
+- **Contrast with a virtual interface.** "Attempting to use a null virtual interface shall result in a fatal run-time error" (§25.9): here the standard does require the stop.
+- **Practice.** Do not rely on the crash. Check handles where they enter a component, with a message that names the missing step.
 
-## References & Next Topics
-- **IEEE 1800-2023, Clause 8:** Classes. Handles and null §8.4, constructors §8.7, static members §8.9–8.10, copying §8.12, casting §8.16, virtual methods §8.20, interface classes §8.26, `typedef class` §8.27, memory management §8.29.
-- Chris Spear, *SystemVerilog for Verification*, Chapters 7–9.
-- Siemens Verification Academy: “Object Oriented Programming in UVM.”
-- Next: [`/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals`](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index).
+### Expert: reachability, garbage collection and weak references
 
-<Quiz
-  questions={[
-    {
-      question: 'packet a, b; a = new; b = a; b.id = 3; What does a.id read?',
-      answers: [
-        { text: '3', correct: true },
-        { text: '0, because b received its own copy', correct: false },
-        { text: 'It is a compile error to assign one handle to another', correct: false },
-        { text: 'X, because two handles wrote the same object', correct: false }
-      ],
-      explanation:
-        'b = a copies the handle, not the object. One packet exists, reachable through both names, so a write through b is visible through a (§8.12).'
-    },
-    {
-      question: 'packet declares header hdr = new; and you run p1 = new; p2 = new p1; How many header objects exist?',
-      answers: [
-        { text: 'One: p1.hdr and p2.hdr refer to the same header', correct: true },
-        { text: 'Two: the initializer runs again for p2', correct: false },
-        { text: 'Zero: p2.hdr is null after a shallow copy', correct: false },
-        { text: 'Two: a shallow copy copies one level of nested objects', correct: false }
-      ],
-      explanation:
-        'A shallow copy runs neither the constructor nor the property initializers, and it copies handle properties as handles (§8.12). Duplicating the header needs a user-written deep copy.'
-    },
-    {
-      question: 'What problem does encapsulation solve in verification classes?',
-      answers: [
-        { text: 'It speeds up simulation', correct: false },
-        { text: 'It hides internal state so only intent-driven APIs mutate data', correct: true },
-        { text: 'It avoids the need for constructors', correct: false },
-        { text: 'It allows multiple inheritance', correct: false }
-      ],
-      explanation:
-        'Encapsulation prevents accidental external writes and keeps transaction APIs stable as implementations evolve.'
-    },
-    {
-      question: 'When would you extend a base transaction class?',
-      answers: [
-        { text: 'When you need a brand-new protocol unrelated to existing fields', correct: false },
-        { text: 'When you want to reuse shared fields/methods but add or override specialized behavior', correct: true },
-        { text: 'To copy-paste code faster', correct: false },
-        { text: 'Only when using UVM factories', correct: false }
-      ],
-      explanation:
-        'Inheritance shines when most behavior is shared and you only need targeted specialization.'
-    }
+- **Three states** (§8.29). An object is *strongly reachable* while a handle in any active scope refers to it, or while a nonblocking assignment to one of its non-static members is still pending. It is *weakly reachable* when only weak references reach it, and *unreachable* otherwise. Memory becomes eligible for reclamation once the object is unreachable; when it is actually freed is up to the implementation.
+- **Hidden roots.** A forked thread that still holds a handle in its automatic variables keeps the object alive (the §8.29 example forks two tasks that share `obj`). So does any queue, associative array or mailbox of handles.
+- **`weak_reference #(T)`** is new in IEEE 1800-2023 (§8.30): `new(referent)` wraps an object without keeping it alive, `get()` returns the object or `null` once it has been collected, `clear()` drops the referent, and the static `get_id()` gives an object an identification value (§8.30, Annex G.7). Typical use: a cache or a cross-language lookup table that must not pin every object it has seen. Do not rely on when a weak reference clears, and check your simulator's support before you use it (tool-dependent).
+
+### Expert: static initialization, singletons and the UVM registry
+
+- **When statics are set.** Initializers of static variables, including static class properties, run before any `initial` or `always` procedure starts (§6.8). The standard states no order among them, so a static initializer must not depend on another class's static.
+- **Singleton pattern.** A `protected` constructor (a constructor may be `local` or `protected`, never `static` or `virtual`, §8.7) plus a static `get()` method that builds the one instance on first use. uvm-core does exactly this: `uvm_root` declares `extern protected function new ();` and `extern static function uvm_root get();` (uvm-core 2020.3.1, `src/base/uvm_root.svh`).
+- **`type_id::create` without an object.** In uvm-core 2020.3.1 `src/base/uvm_registry.svh`, `create` is a `static function`, and the registry's `get()` builds its one instance lazily in a function-local `static this_type m_inst`. That is the whole trick behind calling `my_driver::type_id::create(...)` before any driver exists ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
+- **Why a static method cannot be virtual** (§8.10): virtual dispatch chooses a body from the object's class, and a static method has no object.
+
+### Expert: inheritance, composition, interface classes or parameters?
+
+- **Is-a or has-a.** §8.13 opens with the choice: a `LinkedPacket` can *contain* a `Packet` handle (composition) or *extend* `Packet` (inheritance). Extend when the new class really is a kind of the old one and must work wherever the old one does, such as an error-injecting item. Compose when it merely uses one, such as a transaction that has a header object. Composition keeps hierarchies shallow and lets you swap parts at run time; deep inheritance chains make every base-class change ripple.
+- **Interface classes** (§8.26) give a role to classes in unrelated hierarchies, and a class may implement several. They carry no code or data, so shared behaviour goes in a base class or a helper object. A `virtual` class may implement an interface class partly and leave the rest `pure virtual` for its subclasses (§8.26.7), and one method can satisfy the same name from two interface classes (§8.26.6).
+- **Parameterized classes** (§8.25) make one container or checker work for many item types without a common base class. [Parameterized and Abstract Classes](/curriculum/T2_Intermediate/I-SV-1_OOP/parameterized-classes) covers the specialization rules.
+- **Rule of thumb in verification code:** a single inheritance chain for transactions (base item → protocol item → error-injecting item), composition for components (an agent *has* a driver and a monitor), interface classes for cross-cutting roles, and parameters for type-generic infrastructure.
+
+### Expert: object churn and memory at scale
+
+- **New object per transaction or reuse?** Constructing one object per transaction is safe and is what UVM monitors do. At millions of transactions, construction and garbage collection cost run time; reuse plus copy-before-store is the alternative, but every consumer must then copy. Measure with your simulator's profiler before choosing (tool-dependent; no general figure exists).
+- **Memory that grows with simulation time** is almost always a container of handles that is never drained: a scoreboard queue whose items never match, an associative array keyed by transaction id that is never deleted from, or an unbounded mailbox whose reader stopped. Every entry keeps its object strongly reachable (§8.29), so garbage collection cannot help. Report the size of every such container at the end of the test, as `SCB_SUMMARY ... pending=` does.
+
+### Interview angles
+
+Answer each one yourself before you open the options' feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: a call through a null handle"
+  question="A colleague says: calling a method through a null handle always stops the simulation at that line. Is that right?"
+  options={[
+    { text: "No. The standard calls it illegal with an indeterminate result. Most simulators let a non-virtual method start with a null this and stop at its first property access, so the error can point inside the method.", isCorrect: true, feedback: "Right (§8.4; tool behaviour). Static members are still legal through null, and only a null virtual interface is required to be fatal (§25.9)." },
+    { text: "Yes. The standard requires a fatal error at the call.", isCorrect: false, feedback: "The standard says implementations may issue an error; it does not require one (§8.4). The fatal requirement exists only for a null virtual interface (§25.9)." },
+    { text: "No. Calling through null is fine; it just reads default values.", isCorrect: false, feedback: "There is no object, so there are no values to read. The access is illegal (§8.4)." },
+    { text: "Yes, and so does reading a static property through null.", isCorrect: false, feedback: "Static properties belong to the class, so reading one through a null handle is legal (§8.4, §8.9)." }
   ]}
 />
 
-<div className="mt-8">
-  <InterviewQuestionPlayground
-    question="A junior engineer forgot to declare the `pack()` method as `virtual` in the BasePacket class. What happens when a GenericDriver calls `pkt.pack()` on a BasePacket handle pointing to an EthernetPacket object?"
-    options={[
-      { text: "It fails to compile because drivers must use exact child handle types.", isCorrect: false, feedback: "Drivers almost always use base handle types for polymorphism." },
-      { text: "The GenericDriver calls the BasePacket's `pack()` method, ignoring the child's implementation.", isCorrect: true, feedback: "Correct! Without `virtual`, the call binds to the declaration the compiler sees from the handle's class, not the object's class (§8.14, §8.20). This is a classic source of \"missing stimulus\" bugs." },
-      { text: "The simulator throws a null-pointer exception.", isCorrect: false, feedback: "The handle is not null, so a method runs: just the wrong one." },
-      { text: "The EthernetPacket's `pack()` method is called correctly because inheritance automatically propagates method overrides.", isCorrect: false, feedback: "Only virtual methods dispatch on the object's class through a base-class handle." }
-    ]}
-  />
-</div>
+<InterviewQuestionPlayground
+  title="Interview: the missing virtual"
+  question="A base class declares pack() without virtual. A driver takes a base-class handle and calls pkt.pack() on an object of an Ethernet subclass that overrides pack(). What happens?"
+  options={[
+    { text: "It fails to compile, because drivers must use the exact subclass type.", isCorrect: false, feedback: "Drivers almost always use base-class handles; a subclass object is a legal base-class object (§8.14)." },
+    { text: "The base-class pack() runs, and the subclass's override is silently ignored.", isCorrect: true, feedback: "Right. Without virtual, the call binds to the body the handle's class sees (§8.14, §8.20). This is a classic source of missing stimulus." },
+    { text: "A null-object error, because the handle is of the wrong type.", isCorrect: false, feedback: "The handle refers to a real object, so a method runs: just the wrong one." },
+    { text: "The subclass's pack() runs, because overrides always propagate.", isCorrect: false, feedback: "Only virtual methods dispatch on the object's class through a base-class handle (§8.20)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: class or module"
+  question="Why is a UVM driver a class and not a module, and how does it reach the DUT's pins?"
+  options={[
+    { text: "A class can be created at run time, extended and substituted, but it cannot have ports or instances, so it reaches the pins through a virtual interface handle set by tb_top.", isCorrect: true, feedback: "Right (§8.28, Syntax 8-1, §25.9). Modules are built at elaboration and cannot be extended; classes give reuse and polymorphism, and the virtual interface bridges the two worlds." },
+    { text: "Classes simulate faster than modules.", isCorrect: false, feedback: "Speed is not the reason, and no general figure supports it. The reasons are run-time creation, inheritance and polymorphism." },
+    { text: "A class can declare ports, so it connects directly to the DUT.", isCorrect: false, feedback: "A class has no ports, always blocks or instances (Syntax 8-1). It needs a virtual interface." },
+    { text: "Modules cannot contain tasks, so drivers must be classes.", isCorrect: false, feedback: "Modules can contain tasks; Tier 1 drivers were module tasks. The difference is creation, inheritance and polymorphism." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "packet a, b; a = new; b = a; b.id = 3; What does a.id read?",
+    objective: 1,
+    answers: [
+      { text: "3", correct: true, feedback: "Right. b = a copied the handle, so one packet is reachable through both names (§8.12)." },
+      { text: "0, because b received its own copy of the object", correct: false, feedback: "That is the classic misconception. Handle assignment never copies an object; new ran once, so one packet exists." },
+      { text: "A compile error: one handle cannot be assigned to another", correct: false, feedback: "Assigning a handle of the same class is one of the few operations handles allow (§8.4)." },
+      { text: "X, because two handles wrote the same object", correct: false, feedback: "Handles are not drivers. One object holds one id, and the last write wins." }
+    ],
+    explanation: "Assignment copies the arrow, not the box. Draw it: two chips, one arrow each, one packet box."
+  },
+  {
+    question: "packet declares header hdr = new; Then p1 = new; p2 = new p1; How many header objects exist?",
+    objective: 1,
+    answers: [
+      { text: "Two: the initializer header hdr = new runs again for p2", correct: false, feedback: "A shallow copy runs neither the constructor nor any property initializer (§8.12)." },
+      { text: "One: p1.hdr and p2.hdr refer to the same header", correct: true, feedback: "Right. new p1 copies the hdr handle, not the header object (§8.12)." },
+      { text: "Zero for p2: its hdr is null after a shallow copy", correct: false, feedback: "Every property is copied, including handles, so p2.hdr holds p1's handle." },
+      { text: "Two: a shallow copy copies one level of nested objects", correct: false, feedback: "A shallow copy copies no nested objects at all; that takes your own deep copy." }
+    ],
+    explanation: "new h is a shallow copy: a new outer object whose handle properties still point at the original's nested objects. Duplicating the header needs a user-written copy() (Copying and Cloning)."
+  },
+  {
+    question: "class packet has static int count; and its new() does count++. You run a = new; b = new; c = new a; What is packet::count?",
+    objective: 1,
+    answers: [
+      { text: "3, because three objects exist", correct: false, feedback: "Three objects exist, but new a is a shallow copy and does not call the constructor (§8.12)." },
+      { text: "1, because each object has its own count", correct: false, feedback: "count is static: one variable for the whole class, shared by every object (§8.9)." },
+      { text: "2", correct: true, feedback: "Right. The constructor ran for a and b only (§8.9, §8.12)." },
+      { text: "A compile error: new a needs a copy constructor", correct: false, feedback: "That is a C++ habit. SystemVerilog's new h is built in and needs no user code (§8.12)." }
+    ],
+    explanation: "Static members exist once per class, and a shallow copy skips the constructor. A counter kept in new counts constructions, not objects."
+  },
+  {
+    question: "A class declares int id; and static function int next(); return id + 1; endfunction. What happens?",
+    objective: 2,
+    answers: [
+      { text: "It returns the id of the most recently constructed object, plus 1", correct: false, feedback: "A static method has no object, so there is no id to read." },
+      { text: "A run-time null-object error when next() is called with no object", correct: false, feedback: "The compiler catches it first: the error is at compile time." },
+      { text: "A compile error: a static method cannot access a non-static member", correct: true, feedback: "Right. Access to non-static members, or to this, inside a static method is illegal and a compiler error (§8.10)." },
+      { text: "It compiles, and id reads 0 because static methods see default values", correct: false, feedback: "There is no default object for a static method to read from; the access is rejected." }
+    ],
+    explanation: "A static method behaves like an ordinary subroutine scoped in the class: it may use only static properties and static methods (§8.10). Make id static, or make next() an ordinary method."
+  },
+  {
+    question: "crc_packet declares local int unsigned n_calcs; and protected bit [3:0] crc; Its subclass bad_crc_packet has a method that writes both. What does the compiler say?",
+    objective: 2,
+    answers: [
+      { text: "Both writes compile: subclasses inherit every member", correct: false, feedback: "Subclasses inherit local members, but cannot see them by name (§8.18)." },
+      { text: "Both writes fail: subclasses see only public members", correct: false, feedback: "protected exists precisely so that subclasses can see a member that outside code cannot (§8.18)." },
+      { text: "The write to crc compiles; the write to n_calcs is a compile error", correct: true, feedback: "Right. protected is visible to subclasses; local is visible only to the class's own methods (§8.18)." },
+      { text: "Both compile, but the write to n_calcs is ignored at run time", correct: false, feedback: "Visibility is checked at compile time; nothing is silently ignored." }
+    ],
+    explanation: "local hides a member from everything but its own class, including subclasses. protected hides it only from code outside the class tree. Inside the class itself, both are visible even on another object of the same class (§8.18)."
+  },
+  {
+    question: "base_txn h holds a crc_txn object. describe() is declared in base_txn without virtual, and crc_txn declares its own describe(). Which body does h.describe() run?",
+    objective: 3,
+    answers: [
+      { text: "crc_txn::describe(), because the object is a crc_txn", correct: false, feedback: "That is true only for virtual methods. Seen from base_txn, describe() is not virtual (§8.14, §8.20)." },
+      { text: "base_txn::describe()", correct: true, feedback: "Right. A non-virtual call binds to the body that the handle's class sees (§8.14)." },
+      { text: "A compile error: overriding a method requires virtual", correct: false, feedback: "A subclass may redeclare a non-virtual method; it just does not dispatch through a base handle (§8.14)." },
+      { text: "A run-time error: the handle's class and the object's class differ", correct: false, feedback: "Holding a subclass object in a base handle is always legal (§8.16)." }
+    ],
+    explanation: "Three things decide: the handle's class (what you can call), whether the method is virtual as seen from it, and for virtual methods the object's class. Here the second answer is no, so the handle decides."
+  },
+  {
+    question: "A monitor constructs t once and, for each sample, sets t.data and calls sb.add(t), which does exp_q.push_back(t). The scoreboard reports two mismatches out of three. What is the smallest correct fix inside add()?",
+    objective: 4,
+    answers: [
+      { text: "txn c; c = t; exp_q.push_back(c);", correct: false, feedback: "c = t copies the handle, so every entry still refers to the one reused object." },
+      { text: "exp_q.push_back(t); t = null;", correct: false, feedback: "That nulls only add()'s argument, a copy of the monitor's handle (§13.5.1). The monitor's t still refers to the object, so its next write still changes every stored entry." },
+      { text: "txn c; c = new t; exp_q.push_back(c);", correct: true, feedback: "Right. The scoreboard stores a copy it owns, so later writes to t cannot reach it (§8.12)." },
+      { text: "Bound exp_q to three entries", correct: false, feedback: "The size of the queue is not the problem; what it stores is." }
+    ],
+    explanation: "Every entry was an arrow to the same box. Store a copy (a shallow copy is enough while txn holds only values), or have the monitor construct a new object per sample. The first two distractors only move arrows."
+  },
+  {
+    question: "function automatic void make_txn(txn t); t = new; t.data = 5; endfunction. The caller runs txn h; make_txn(h); $display(h.data); What happens?",
+    objective: 5,
+    answers: [
+      { text: "It prints 5: handles are passed by reference", correct: false, feedback: "Arguments are passed by value by default: the handle is copied in (§13.5.1), so re-pointing it inside the function is invisible to the caller." },
+      { text: "It prints 0: h refers to an object with default values", correct: false, feedback: "h was never assigned, so it is still null; there is no object." },
+      { text: "A compile error: h is used before it is constructed", correct: false, feedback: "The compiler does not track whether a handle is null; the failure happens at run time." },
+      { text: "h is still null, so h.data is an illegal access, and simulators normally stop with a null-object error", correct: true, feedback: "Right (§8.4, §13.5.1). Return the handle from the function, or declare the argument output or ref (§13.5.2)." }
+    ],
+    explanation: "A handle argument is a copy of the caller's handle. The callee can change an object both handles refer to, but h = new inside it changes only the copy. That makes it the second source of null handles on this page."
+  },
+  {
+    question: "A checker writes $cast(c, b); as a statement and then if (c == null) to handle the failure. b holds a base_txn object, and c is a crc_txn handle. What happens?",
+    objective: 5,
+    answers: [
+      { text: "$cast returns 0, c stays null, and the if branch handles it cleanly", correct: false, feedback: "That is the function form. Called as a task, $cast returns nothing, and the failure is a run-time error at the cast (§6.24.2)." },
+      { text: "A run-time error at the $cast statement; c is left unchanged", correct: true, feedback: "Right. The task form raises a run-time error on an invalid cast (§6.24.2). Write if (!$cast(c, b)) ... to handle failure yourself." },
+      { text: "A compile error: a base_txn cannot be cast to crc_txn", correct: false, feedback: "Casting a base-class handle to a subclass type is legal; whether it succeeds depends on the object at run time (§8.16)." },
+      { text: "c receives a crc_txn copy of the base_txn object", correct: false, feedback: "$cast never builds objects; it only assigns a handle when the object is already of a compatible class." }
+    ],
+    explanation: "Use $cast as a function and check its result. The task form cannot return 0, and code written as if it did never runs its failure branch. Polymorphism Pitfalls covers $cast in full."
+  }
+]} />
+
+### Kata: one driver, any transaction
+
+**Goal:** turn a driver into one that accepts any transaction derived from a base class, then add a new transaction type without touching the driver.
+
+Start from the inheritance example in [Build Your Mental Model](#inheritance-and-virtual-methods-specialize-without-rewriting):
+
+1. Give `base_txn` a second virtual method, `function int unsigned length();`, that returns 1.
+2. Change `txn_driver::run` so it prints `driving <describe output> for <length> beats`. Make `describe()` return a `string` instead of printing.
+3. Add a new class `burst_txn extends base_txn` with a property `int unsigned beats = 4` that overrides both methods. Do not edit `txn_driver`.
+4. In `tb_top`, put one `crc_txn` and one `burst_txn` in a queue of `base_txn` handles and run the driver on each.
+5. **Predict** the two output lines before you run. Then remove `virtual` from `length()` in `base_txn` and predict again.
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// compile
+class base_txn;
+  virtual function string describe();
+    return "base_txn";
+  endfunction
+  virtual function int unsigned length();
+    return 1;
+  endfunction
+endclass
+
+class crc_txn extends base_txn;
+  function string describe();             // virtual, inherited (§8.20)
+    return "crc_txn";
+  endfunction
+endclass
+
+class burst_txn extends base_txn;         // new class: the driver is not edited
+  int unsigned beats = 4;
+  function string describe();
+    return "burst_txn";
+  endfunction
+  function int unsigned length();
+    return beats;
+  endfunction
+endclass
+
+class txn_driver;
+  task run(base_txn t);
+    $display("driving %s for %0d beats", t.describe(), t.length());
+  endtask
+endclass
+
+module tb_top;
+  txn_driver drv;
+  base_txn   q[$];
+  crc_txn    c;
+  burst_txn  b;
+  initial begin
+    drv = new;
+    c = new;
+    b = new;
+    q.push_back(c);                       // upcasts: always legal (§8.16)
+    q.push_back(b);
+    foreach (q[i]) drv.run(q[i]);
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand from §8.20):
+
+```text
+driving crc_txn for 1 beats
+driving burst_txn for 4 beats
+```
+
+`crc_txn` does not override `length()`, so it inherits `base_txn`'s 1.
+
+**With `length()` not virtual in `base_txn`**, the call `t.length()` binds to `base_txn::length()` through the `base_txn` handle (§8.14), so the second line becomes `driving burst_txn for 1 beats`. `describe()` is still virtual and still dispatches. The bench compiles and runs either way: only the missing keyword changed the stimulus.
+
+</details>
+
+### More practice
+
+- **Debug challenge:** the [Debug it](#debug-it-the-scoreboard-whose-expected-items-change) model in Make It Work.
+- **Copy semantics kata:** the [Copying and Cloning](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) page builds a transaction with `copy`, `clone`, `compare` and `convert2string`, and a generator that clones before storing.
+- **Flashcards:** the deck below covers this page: handles, statics, `null`, visibility, dispatch, interface classes and the class-versus-module choice.
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023 unless stated):
+
+- Clause 8, Classes: §8.2–§8.6 classes, objects, properties and methods; §8.7 constructors; §8.9 static properties; §8.10 static methods; §8.11 `this`; §8.12 assignment, renaming and copying; §8.13 inheritance; §8.14 overridden members; §8.15 `super`; §8.16 casting; §8.18 data hiding and encapsulation; §8.19 constant properties; §8.20 virtual methods; §8.23 class scope resolution operator; §8.24 out-of-block declarations; §8.25 parameterized classes; §8.26 interface classes (§8.26.5 casting, §8.26.6 name conflicts, §8.26.7 partial implementation); §8.27 `typedef class`; §8.28 classes and structures; §8.29 memory management; §8.30 weak references; Syntax 8-1 (class items).
+- §6.8 variable declarations (static initialization before procedures start); §6.21 scope and lifetime; §6.24.2 `$cast`; §11.4.5 equality operators on class handles; §13.5.1–§13.5.2 argument passing; §25.9 virtual interfaces; Annex G.7 `weak_reference`.
+- uvm-core 2020.3.1: `src/base/uvm_root.svh` (protected constructor, static `get`) and `src/base/uvm_registry.svh` (static `create`, lazy instance).
+- Chris Spear, *SystemVerilog for Verification*, 2nd ed. (Springer, 2008): chapter 5, "Basic OOP", and chapter 8, "Advanced OOP and Testbench Guidelines".
+- Verification Academy, *SystemVerilog OOP for UVM Verification* (Dave Rich), video course.
+
+**Prerequisites:** [F2B: Dynamic Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index) for queues and array copies, [F2D: Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions) for automatic lifetime and argument passing, and [F4B: Interfaces and Modports](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index) for virtual interfaces.
+
+**In this module:** [Constructors, this and super](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors), [Polymorphism Pitfalls and Type Casting](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls), [Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) and [Parameterized Classes and Abstract Classes](/curriculum/T2_Intermediate/I-SV-1_OOP/parameterized-classes).
+
+**Related:**
+
+- [F4C: Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): the class-based driver preview this module explains.
+- [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index): `rand` properties and constraints in the classes you now write.
+- [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index): mailboxes pass handles, so copy-before-store applies there too.
+- [I-SV-9: Why UVM](/curriculum/T2_Intermediate/I-SV-9_Why_UVM/index): a layered, class-based bench before UVM.
+- [I-UVM-1A: UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) and [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index): `uvm_object`, `type_id::create` and overrides.
+- [I-UVM-2C: Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): passing the virtual interface through `uvm_config_db`.
+
+<NextLesson />

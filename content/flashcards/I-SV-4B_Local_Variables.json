@@ -1,1 +1,67 @@
-[]
+[
+  {
+    "id": "isv4b-lv-1",
+    "question": "What is an SVA local variable?",
+    "answer": "A variable declared inside a named `sequence` or `property` (or as a `local` formal argument). Every evaluation attempt creates its own copy, assigns it when part of the sequence matches, and can compare it later in the same attempt (IEEE 1800-2023 §16.10)."
+  },
+  {
+    "id": "isv4b-lv-2",
+    "question": "Two requests overlap in time. Do their attempts share one local variable?",
+    "answer": "No. A new copy is created at the start of each attempt and removed when the attempt ends, so the second request cannot overwrite the first one's captured value (§16.10). A module-level variable, by contrast, is one variable shared by every attempt."
+  },
+  {
+    "id": "isv4b-lv-3",
+    "question": "Where can you declare a local variable, and where can you not?",
+    "answer": "After the header of a named `sequence` or `property`, with an explicit data type, for example `logic [7:0] v;` (§16.10). An inline `assert property (...)` has no place for declarations, so put the check in a named property first."
+  },
+  {
+    "id": "isv4b-lv-4",
+    "question": "In `(in_vld, v = in_data) |-> ##2 (out_data == v)`, when is `v` assigned and with which value of `in_data`?",
+    "answer": "At the end of each match of `in_vld`, that is, on every edge where `in_vld` is sampled high, using the sampled (Preponed) value of `in_data` at that edge (§16.10, §16.5.1). Edges where `in_vld` is low assign nothing and succeed vacuously."
+  },
+  {
+    "id": "isv4b-lv-5",
+    "question": "Why can't `$past(in_data, N)` replace a local variable when the latency varies?",
+    "answer": "`$past` needs a constant number of ticks, and with variable latency there is no single N. A local variable stores the value at capture time and holds it for however long the attempt waits (§16.9.3, §16.10)."
+  },
+  {
+    "id": "isv4b-lv-6",
+    "question": "Why write `out_hs[->1] ##0 (out_data == v)` rather than `out_hs[->1] ##1 (out_data == v)`?",
+    "answer": "`##0` checks `out_data` on the same tick the goto repetition ends, the handshake tick. `##1` checks one tick later, when the DUT may already show the next word. `##0` never waits a cycle in a singly clocked sequence (§16.7)."
+  },
+  {
+    "id": "isv4b-lv-7",
+    "question": "Several transfers are in flight in an in-order pipeline. Why does `(in_hs, v = in_data) |=> out_hs[->1] ##0 (out_data == v)` fail on a correct DUT, and what is the fix?",
+    "answer": "Each attempt waits for the next output handshake, which can belong to an older transfer still in flight, so it compares the wrong data. Fix: capture a ticket from a counter of accepted transfers and wait for `(out_hs && out_cnt == tkt)[->1]`."
+  },
+  {
+    "id": "isv4b-lv-8",
+    "question": "Where may a local variable never appear?",
+    "answer": "In a `disable iff` condition (§16.12), an abort condition (§16.12.14), the argument of a sampled-value function such as `$past` or `$stable` (§16.9.3), a clocking event, a hierarchical reference, or the action block of the assertion that uses the property (§16.10)."
+  },
+  {
+    "id": "isv4b-lv-9",
+    "question": "How do you print the value an attempt captured?",
+    "answer": "Attach a subroutine call to a subsequence: `(out_hs[->1], show(v, out_data))`. It runs at every end point of that subsequence, in the Reactive region, with the attempt's own local values and the sampled values of signals (§16.11)."
+  },
+  {
+    "id": "isv4b-lv-10",
+    "question": "Why is `(b, v = d)[->2]` illegal, and how do you capture at the second `b` instead?",
+    "answer": "Goto `[->]` and nonconsecutive `[=]` repetition apply only to a Boolean expression, never to a sequence with match items (§16.9.2). Write `b[->1] ##1 (b[->1], v = d)`, or `(b[->1], v = d)[*2]` to assign at each `b`."
+  },
+  {
+    "id": "isv4b-lv-11",
+    "question": "Why is `a ##1 (b[*0:1], x = e)` illegal?",
+    "answer": "A local-variable assignment or subroutine call may be attached only to a subsequence that cannot match empty, and `b[*0:1]` can match the empty word (§16.10, §16.11). `(a ##1 b[*0:1], x = e)` is legal because that subsequence always spans at least one tick."
+  },
+  {
+    "id": "isv4b-lv-12",
+    "question": "`assert property` on a named property whose body is `(in_vld, v = in_data) ##2 (out_data == v)`, with no implication. What happens on edges where `in_vld` is low?",
+    "answer": "Those attempts fail. A bare sequence must match from every attempt's start, so an idle edge is a failure, not a vacuous success (§16.12.2). Use `(in_vld, v = in_data) |-> ##2 (out_data == v)`."
+  },
+  {
+    "id": "isv4b-lv-13",
+    "question": "What goes wrong if you write `out_hs[=1] ##0 (out_data == v)` instead of `out_hs[->1] ##0 (out_data == v)`?",
+    "answer": "`[=1]` can end on the handshake tick or on any later tick before the next handshake (Annex F.3.4.2.3), so the check passes if the right value appears on any of those ticks. A wrong value on the handshake tick can slip through; use `[->1]`."
+  }
+]

@@ -1,110 +1,840 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import InteractiveCode from "@/components/ui/InteractiveCode";
-import Quiz from "@/components/ui/Quiz";
-import { InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Coverage APIs and Run-Time Control"
+description: "Predict type and instance coverage, query it while the test runs, and start, stop and save coverage from the testbench without ending the run before its checks finish."
+flashcards: "I-SV-3B_Coverage_APIs"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+---
 
-export const metadata = {
-  title: "Coverage APIs and Runtime Querying | Advanced SystemVerilog for Verification",
-  description: "Learn how to query coverage data at runtime using SystemVerilog APIs.",
-};
+## Quick Take
 
-<InfoPage
-  title="Coverage APIs and Runtime Querying"
-  sv_concept_tags={["coverage apis", "get_coverage", "get_inst_coverage"]}
->
+- **What it is:** Every covergroup comes with a small set of built-in methods and three coverage system routines (IEEE 1800-2023 §19.8, §19.9). With them the testbench can read coverage *while it runs*: one instance's number with `get_inst_coverage()`, the number for every instance of the type with `get_coverage()`, the number for the whole design with `$get_coverage()`, and the bin counts behind each item. It can also name instances (`set_inst_name()`), pause and resume collection (`stop()`, `start()`) and choose the database file the run saves.
+- **Why it matters:** These numbers drive decisions: when to stop sending stimulus, when to switch to a stimulus mode that targets the holes, which lane is lagging. Read the wrong number and the decision is wrong. The classic slips are reading the type number as if it were this instance's, trusting a bin ratio that is not the percentage, freezing coverage with a `stop()` that never gets its `start()`, and calling `$finish` the moment coverage reaches 100 % so the checks never finish.
+- **The Analogy:** A chain of shops all use the same stock-count form (the covergroup type). Each shop fills in its own copy (an instance), and each line on the form (a coverpoint or cross) lists the shelves (bins) to tick. A shop manager reads her own copy (`get_inst_coverage()`). Head office reads one figure for the whole chain (`get_coverage()`): by default the *average* of the shops' scores, or, if it chooses, one merged form where a shelf ticked by any shop counts (`merge_instances`). A shop that is closed for a stock-take pauses its counting (`stop()`) and resumes when it reopens (`start()`). *Where it breaks:* the form records only that a shelf was visited, never whether the stock on it was right. That judgement belongs to the checks, so a full form never proves the shop is in order.
 
-## Level 1: Why Query Coverage at Runtime?
-*IEEE 1800-2023, Clause 19.8: Predefined coverage methods*
+**You will be able to:**
+1. Predict what `get_inst_coverage()`, `get_coverage()` and `$get_coverage()` return for a set of covergroup instances, both under the default weighted average and with `type_option.merge_instances = 1`.
+2. Choose `per_instance`, `option.get_inst_coverage`, `merge_instances`, goals and weights so that the number you read is the number you need, and calculate how a weight change moves it.
+3. Write run-time queries and controls (item-level `get_inst_coverage(covered, total)`, `set_inst_name()`, `start()`/`stop()` and the §19.9 system tasks) and use them to end the stimulus at a goal without cutting off the checks.
+4. Debug coverage numbers that look wrong: coverage that freezes, 100.0 at time 0, a healthy type number that hides a weak instance, and a `(covered, total)` pair that disagrees with the percentage.
 
-Normally, coverage is analyzed *after* the simulation finishes by loading the database (UCDB/UCIS) into a viewer. But what if you want your testbench to be smart enough to stop running as soon as 100% is reached, saving server compute time? What if you want to switch to a different random seed dynamically if coverage gets stuck? 
+<BeforeYouStart />
 
-To do this, the testbench needs to read its own coverage score while it is running.
+**Review first:** [Linking Coverage to the Verification Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage), the previous lesson, for plan IDs in `option.comment` and the collector class used below; and [I-SV-3A Coverage Options](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options) for the option table (`at_least`, `goal`, `weight`, `per_instance`).
 
-## Level 2: Core Mechanics
+## Build Your Mental Model
 
-### 1. `get_inst_coverage()`
-This method returns the coverage percentage (0.0 to 100.0) for a specific *instance* of a covergroup. Set `option.per_instance = 1` whenever you rely on per-instance numbers: it is what makes the tool save each instance's data in the database and report it separately (§19.7, Table 19-1). One trap: once `type_option.merge_instances = 1` is set, `get_inst_coverage()` returns the merged type number unless the instance also sets `option.get_inst_coverage = 1`.
+**How to read this lesson.** The core path is the first two sections: what an instance number and a type number are, and how the two ways of computing the type number differ. Practitioner depth follows: every method and where you may call it, the bin counts, goals and weights, pausing collection, ending stimulus at a goal, and the system tasks. Make It Work runs one small bench that prints every number on this page, and Push Further holds the corner cases.
 
-<InteractiveCode language="systemverilog" code={`class monitor;
-  bit [1:0] state;
+One running example serves the whole lesson. It is a trimmed version of the ALU collector used throughout this module: a class `alu_cov` whose embedded covergroup `cg` has three **coverage items** (an item is a coverpoint or a cross):
 
-  covergroup cg;
-    option.per_instance = 1;   // keep this instance's data separately
-    cp_state: coverpoint state;
-  endgroup
+| Item | Plan row | Bins | Count |
+|---|---|---|---|
+| `cp_op` | ALU-1, every operation | one bin per operation: `ADD`, `SUB`, `MUL`, `DIV`, `AND`, `OR`, `XOR` | 7 |
+| `cp_a` | ALU-2, operand `a` at its edges | `zero` (`8'h00`) and `max` (`8'hFF`); every other value lands in no bin | 2 |
+| `x_op_a` | ALU-4, every operation with each edge of `a` | the cross of the two: 7 × 2 | 14 |
 
-  function new();
-    cg = new();
-  endfunction
+A **collector** is the class that owns the covergroup and calls its `sample()` once per transaction. A bin is **covered** once it has been hit at least `option.at_least` times (default 1). The module's full collector also covers operand `b` (ALU-3); it is left out here to keep the arithmetic short.
 
-  function void check_done();
-    // Get the score for this specific instance
-    real score = cg.get_inst_coverage();
+### Type coverage and instance coverage
 
-    $display("Current instance coverage: %0.2f%%", score);
-    if (score == 100.0) begin
-      $display("Goal reached! Stopping simulation.");
-      $finish; // Early exit saves compute!
-    end
-  endfunction
-endclass`} />
+A covergroup declaration defines a **covergroup type**. Each `new()` creates an **instance** of that type, with its own bin counts. A covergroup declared inside a class is an **embedded covergroup**: the declaration creates an *anonymous* type plus one instance variable, so every object of the class owns one instance of the same type (§19.4).
 
-### 2. `get_coverage()`
-There are two ways to ask for more than one instance.
-1. `cg.get_coverage()` (or the static form through the type, `type::get_coverage()`) returns the **type** coverage: every instance of that covergroup type together. By default (`type_option.merge_instances = 0`) it is the **weighted average** of the instances, not a union: two instances at 100% and 50% give 75%. With `type_option.merge_instances = 1` it is the coverage of the union of all instances' bins (§19.11.3).
-2. `$get_coverage()`: a system function that returns the overall coverage of all covergroup types in the simulation (§19.9).
+Three numbers come out of that structure, each a percentage from 0.0 to 100.0 returned as a `real` (a floating-point number):
 
-### 3. `set_inst_name()`
-By default, every instance of a covergroup in the database gets a tool-generated name. If you have 10 channels, you cannot tell their rows apart. With `option.per_instance = 1` set, give each instance a name during creation:
+- **Instance coverage**, from `get_inst_coverage()`, is the weighted average of the item percentages *of this one instance* (§19.11). Each item's percentage is its covered bins divided by its bins (§19.11.1, §19.11.2), and each item's `option.weight` (default 1) weights it.
+- **Type coverage** (the LRM also calls it cumulative coverage), from `get_coverage()`, considers *every instance of the type* (§19.8, §19.11). Calling `lane0.cg.get_coverage()` does not give lane0's number; it gives the type's number, and `lane1.cg.get_coverage()` returns exactly the same value.
+- **Overall coverage**, from the system function `$get_coverage()`, is the overall coverage of every covergroup type in the design (§19.9).
+
+Suppose a bench has two ALU **lanes** (two copies of the ALU, each with its own collector), the collectors `lane0` and `lane1` have each seen a few transactions, and every weight is 1. The diagram shows the bins each instance has covered, and the number each call returns at each level.
+
+<ArchitectureDiagram
+  title="Three levels of coverage numbers for two instances of one covergroup type"
+  caption="Each instance keeps its own bin counts. get_inst_coverage() reads one instance; get_coverage() reads the type, here the average of the two instances; $get_coverage() reads every type in the design, and this design has only one."
+  cellWidth={160}
+  legend={false}
+  nodes={[
+    { id: "design", label: "design · $get_coverage() = 59.52", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 4, container: true },
+    { id: "type", label: "type of alu_cov::cg · get_coverage() = 59.52", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "i0", label: "tb_top.lane0 · 66.67", kind: "generic", col: 0, row: 0, rowSpan: 3, container: true },
+    { id: "i1", label: "tb_top.lane1 · 52.38", kind: "generic", col: 1, row: 0, rowSpan: 3, container: true },
+    { id: "i0op", label: "cp_op", sublabel: "5 of 7 bins", kind: "generic", col: 0, row: 0 },
+    { id: "i0a", label: "cp_a", sublabel: "2 of 2 bins", kind: "generic", col: 0, row: 1 },
+    { id: "i0x", label: "x_op_a", sublabel: "4 of 14 bins", kind: "generic", col: 0, row: 2 },
+    { id: "i1op", label: "cp_op", sublabel: "3 of 7 bins", kind: "generic", col: 1, row: 0 },
+    { id: "i1a", label: "cp_a", sublabel: "2 of 2 bins", kind: "generic", col: 1, row: 1 },
+    { id: "i1x", label: "x_op_a", sublabel: "2 of 14 bins", kind: "generic", col: 1, row: 2 },
+    { id: "others", label: "other covergroup types", sublabel: "none in this bench", kind: "generic", col: 0, row: 3, colSpan: 2 }
+  ]}
+/>
+
+**Predict before you read on.** Using only the bin counts in the diagram and weight 1 everywhere, work out lane0's instance number, then the type number.
+
+<details>
+<summary>Check your prediction</summary>
+
+| Instance | `cp_op` | `cp_a` | `x_op_a` | `get_inst_coverage()` |
+|---|---|---|---|---|
+| lane0 | 5/7 = 71.43 % | 2/2 = 100 % | 4/14 = 28.57 % | (71.43 + 100 + 28.57) / 3 = **66.67** |
+| lane1 | 3/7 = 42.86 % | 2/2 = 100 % | 2/14 = 14.29 % | (42.86 + 100 + 14.29) / 3 = **52.38** |
+| type | | | | (66.67 + 52.38) / 2 = **59.52**, from either instance |
+
+The type number is the **weighted average of the instance numbers**, each weighted by its covergroup-level `option.weight` (§19.11.3). It is not the worst instance and not the best one.
+
+</details>
+
+**The mistake everyone makes:** reading `cg.get_coverage()` inside a collector as "this collector's coverage". It is the type's number. For this instance's number, call `get_inst_coverage()`; it can only be called through an instance, with `.` (§19.8).
+
+### Average or union: `merge_instances` and `option.get_inst_coverage`
+
+The type number can be computed two ways, chosen by the type option `type_option.merge_instances` (§19.7.1, Table 19-3; §19.11.3):
+
+| `merge_instances` | Type number (`get_coverage()`) | Our two lanes |
+|---|---|---|
+| 0 (default) | **weighted average** of the instance numbers | (66.67 + 52.38) / 2 = 59.52 |
+| 1 | coverage of the **union** of every instance's bins, as if all instances were merged into one; bins are matched by name and their counts add | `cp_op` 7/7, `cp_a` 2/2, `x_op_a` 6/14, so (100 + 100 + 42.86) / 3 = 80.95 |
+
+The union is higher here because lane1 hit the operations lane0 missed. A union answers "has the design as a whole seen this?"; an average answers "how far is a typical instance?". Neither answers "is *every* lane done?"; for that you read each instance.
+
+Merging has a trap. With `merge_instances = 1`, `get_inst_coverage()` returns **the merged type number**, the same value from every instance, unless the covergroup definition also sets `option.get_inst_coverage = 1` (Table 19-1). Three options are easy to confuse:
+
+| Option | Where it may be set | What it does |
+|---|---|---|
+| `option.per_instance` (default 0) | only in the covergroup definition (§19.7) | Saves this instance's data in the coverage database and shows it in the report. When 0, tools need not save instance data (Table 19-1). The LRM ties `get_inst_coverage()` to the next option, not to this one; still, set it whenever you read instance numbers, so the saved report has the same rows your test read. |
+| `option.get_inst_coverage` (default 0) | only in the covergroup definition (§19.7) | Matters only when `merge_instances` is set: keeps per-instance tracking so `get_inst_coverage()` returns this instance's own number (Table 19-1). |
+| `type_option.merge_instances` (default 0) | in the definition, or procedurally through a named type: `cg_t::type_option.merge_instances = 1;` (§19.7.1) | Chooses average or union for the whole type. Type options are one value per type; instances cannot differ (§19.7.1). |
+
+The **coverage database** is the file the simulator writes at the end of the run, holding the bin counts that reports and merge tools read; its format is tool-specific.
+
+Two consequences for the ALU collector. First, because its covergroup is embedded, its type has no name, so `cg_t::type_option...` is impossible: put `type_option.merge_instances = 1;` inside the covergroup definition. Second, because `per_instance` and `get_inst_coverage` are definition-only, a procedural `lane0.cg.option.get_inst_coverage = 1;` after `new()` is wrong; set both in the definition.
 
 ```systemverilog
-function new(string name);
-  cg = new();
-  cg.set_inst_name(name); // Now they appear as "tx_chan_cg", "rx_chan_cg", etc.
-endfunction
+// snippet: the alu_cov covergroup header when the type number must be a union
+// and each port must still read its own number
+covergroup cg with function sample(alu_txn t);
+  option.per_instance        = 1;  // each lane's rows in the saved report
+  option.get_inst_coverage   = 1;  // keep per-instance numbers while merging
+  type_option.merge_instances = 1; // type number = union of all lanes' bins
+  // ... the coverpoints and cross as before
+endgroup
 ```
 
-## Level 3: Real-world Usage
+With those three lines, lane0 and lane1 still return 66.67 and 52.38 from `get_inst_coverage()`, while `get_coverage()` returns 80.95.
 
-You can query individual items down to the coverpoint or cross level, using the coverpoint's label.
-- `cg.cp_state.get_inst_coverage()`: the score of the `cp_state` coverpoint in this instance.
-- `cg.cp_state.get_coverage()`: the same coverpoint across every instance of the type.
+### The methods, and where you may call them
 
-Both methods also accept two `int` arguments passed by reference, which receive the number of covered bins and the number of bins: `cg.cp_state.get_inst_coverage(covered, total);` (§19.8).
+Table 19-5 of IEEE 1800-2023 lists every built-in coverage method. All can be called procedurally at any time (§19.8):
 
-**Warning on Performance:**
-Calculating coverage scores takes CPU cycles. Do not call `.get_inst_coverage()` every single clock cycle or every transaction. A common best practice is to query it on a slower heartbeat thread (e.g., every 1 millisecond of simulation time) or only during phase wrap-up.
+| Method | covergroup | coverpoint | cross | What it does |
+|---|---|---|---|---|
+| `void sample()` | yes | no | no | Samples the covergroup now. With `with function sample(...)` it takes your arguments (§19.8.1). |
+| `real get_coverage()`, `real get_coverage(ref int, ref int)` | yes | yes | yes | Type coverage. A **static** method: call it on a type with `::` or on an instance with `.` |
+| `real get_inst_coverage()`, `real get_inst_coverage(ref int, ref int)` | yes | yes | yes | Coverage of the instance it is called on; `.` only |
+| `void set_inst_name(string)` | yes | no | no | Names this instance in the database and the report |
+| `void start()` | yes | yes | yes | Starts (resumes) collecting coverage |
+| `void stop()` | yes | yes | yes | Stops collecting coverage |
 
-<Quiz questions={[
-  {
-    question: "Which method tells you the coverage score for the entire simulation globally?",
-    answers: [
-      { text: "my_cg.get_coverage()", correct: false },
-      { text: "$get_coverage()", correct: true },
-      { text: "my_cg.get_inst_coverage()", correct: false }
-    ],
-    explanation: "$get_coverage() is a system function that returns the overall coverage of all covergroup types. my_cg.get_coverage() covers only that covergroup's type."
-  },
-  {
-    question: "Two instances of the same covergroup type report 100% and 50% from get_inst_coverage(). type_option.merge_instances is left at its default. What does get_coverage() return?",
-    answers: [
-      { text: "100%: any bin hit by any instance counts", correct: false },
-      { text: "75%: the weighted average of the instances", correct: true },
-      { text: "50%: the worst instance", correct: false }
-    ],
-    explanation: "With merge_instances = 0 (the default) type coverage is the weighted average of the instances, using each instance's option.weight (§19.11.3). Only merge_instances = 1 computes the union of their bins."
-  }
-]} />
+There is no method that clears counts, lists holes or returns illegal-bin hits. To call a method on an item, go through the instance and the item's label: `lane0.cg.x_op_a.get_inst_coverage()`.
 
-<div className="mt-8">
-  <InterviewQuestionPlayground
-    question="You instantiate a monitor 4 times (for 4 SPI ports), and the monitor contains `covergroup cg_spi`. You want the testbench to end early ONLY when all 4 ports have individually hit 100% of their states. Which API call inside the monitor should you check?"
-    options={[
-      { text: "cg_spi.get_coverage()", isCorrect: false, feedback: "This returns the type coverage of all 4 instances together: by default their weighted average, or the union of their bins with merge_instances = 1. Either way, one port can still be missing states while this number looks healthy." },
-      { text: "$get_coverage()", isCorrect: false, feedback: "This is global for the whole testbench, far too broad." },
-      { text: "cg_spi.get_inst_coverage()", isCorrect: true, feedback: "Correct. Check each instance's own score, and declare option.per_instance = 1 so each port's data is tracked and saved separately. Only when all 4 instances report 100 should the test exit." }
-    ]}
-  />
-</div>
+A **static** method belongs to the type, so it can be called with the type's name and `::`. That works only when the type has a name, which an embedded covergroup's type does not (§19.4). For a covergroup declared in a module, interface or package:
 
-</InfoPage>
+```systemverilog
+// snippet: a named covergroup type, declared in a module that imports alu_pkg
+covergroup op_cg with function sample(op_t op);
+  cp_op: coverpoint op { bins ops[] = {ADD, SUB, MUL, DIV, AND, OR, XOR}; }
+endgroup
+op_cg u0 = new();
+op_cg u1 = new();
+
+initial begin
+  // ... calls to u0.sample(...) and u1.sample(...)
+  $display("type  %0.2f", op_cg::get_coverage());         // the type, via ::
+  $display("item  %0.2f", op_cg::cp_op::get_coverage());  // one item of the type
+  $display("u0    %0.2f", u0.get_inst_coverage());         // an instance, via .
+end
+```
+
+`set_inst_name()` gives the instance a readable, stable name, such as its place in the testbench hierarchy. Without it the tool generates a unique name (Table 19-1, `option.name`). Nothing requires a generated name to be the same in every test, so rows from different tests may not line up when their databases are merged (tool-dependent). Assigning `option.name` procedurally does the same job; `set_inst_name()` is the method form.
+
+### Reading `(covered, total)` correctly
+
+Both query methods accept two `int` arguments passed by reference (`ref`): the method writes the number of covered bins into the first and the number of bins into the second (§19.8). Those two numbers are the true numerator and denominator of the percentage **only** when `get_inst_coverage()` is called on a coverpoint or a cross. Everywhere else they are sums of bins (§19.8):
+
+| Call | `(covered, total)` | Percentage returned | Ratio matches? |
+|---|---|---|---|
+| `lane0.cg.x_op_a.get_inst_coverage(c, t)` | 4, 14 | 28.57 | yes: 4/14 |
+| `lane0.cg.get_inst_coverage(c, t)` | 11, 23: summed over `cp_op`, `cp_a` and `x_op_a` | 66.67 | no: 11/23 = 47.8 % |
+| `lane0.cg.cp_op.get_coverage(c, t)` | 8, 14: `cp_op`'s bins summed over both instances | 57.14 | here, by luck |
+| `lane0.cg.get_coverage(c, t)` | 18, 46: every item in every instance | 59.52 | no: 18/46 = 39.1 % |
+
+The covergroup percentage is an average of item percentages, so a 2-bin item counts as much as a 14-bin one, while the summed pair counts bins. The `cp_op` row matches only because both instances have the same 7 bins and the same weight. When instances have different bins, for example bins built from covergroup arguments, the summed pair stops matching too: in the §19.8 example, a coverpoint with 2 bins in one instance and 4 in the other reports a type total of 6.
+
+**Rule:** print `(covered, total)` per coverpoint and cross with `get_inst_coverage()`, and print percentages for covergroups and types. Never divide a covergroup-level pair yourself.
+
+### Goals and weights: what moves the number
+
+[I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options) introduced `option.goal` and `option.weight`. Here is what each does to the number you query:
+
+- **`option.goal`** (default 100) is the *target* for an instance or an item (Table 19-1). It does not change the number. Your code and the tool's report compare against it.
+- **`option.weight`** on a coverpoint or cross (default 1) weights that item inside its instance's average. On the covergroup it weights the instance in the type average (§19.11.3). Weights are non-negative integers (Table 19-1).
+
+Traced on lane0 (bins as above), changing only the cross's weight:
+
+| Item | Item % | Default | `x_op_a.option.weight = 2` | `x_op_a.option.weight = 0` |
+|---|---|---|---|---|
+| `cp_op` | 71.43 | × 1 | × 1 | × 1 |
+| `cp_a` | 100.00 | × 1 | × 1 | × 1 |
+| `x_op_a` | 28.57 | × 1 | × 2 | × 0 (dropped) |
+| **`get_inst_coverage()`** | | (71.43 + 100 + 28.57) / 3 = **66.67** | (71.43 + 100 + 57.14) / 4 = **57.14** | (71.43 + 100) / 2 = **85.71** |
+| with `option.goal = 80` | | below goal | below goal | "reached" |
+
+The last column is the trap. Setting the cross's weight to 0 lifts lane0 from 66.67 to 85.71 and past an 80 % goal, yet not one more scenario ran: the 10 empty cross bins are still empty, only hidden. **Excluding an item is not covering it.** Weight 0 is right for an item that only feeds a cross and was never a plan goal of its own; used to reach a number, it hides holes. When an item truly cannot be reached, record that as a justified exclusion, as [The Coverage Closure Loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) shows.
+
+One more rule from §19.11.1: an item whose bins have no values left (for example, every value ignored with `ignore_bins`) has a denominator of 0. It drops out of its instance's average, yet its own `get_inst_coverage()` returns 0.0 (or 100.0 if its weight is 0). A dashboard can therefore show a 0 % item that is not pulling the group down. Push Further lists the other zero cases.
+
+### Pausing collection: `start()` and `stop()`
+
+`stop()` stops collecting coverage; `start()` starts collecting again (Table 19-5). Each can be called on a covergroup instance or on one of its coverpoints or crosses. Three facts follow from the method definitions:
+
+- **Collected counts stay.** `stop()` stops *new* collection; nothing in §19.8 clears what has been counted, and there is no method that does.
+- **Calls to `sample()` still happen.** The collector keeps calling `cg.sample(t)`; while the instance is stopped, nothing is collected.
+- **It is per instance or per item.** Unlike `get_coverage()`, §19.8 does not make `start()` and `stop()` static, so `lane0.cg.stop()` acts on lane0's instance, not on lane1's.
+
+Typical uses are a reset window, an initialization sequence and an error-injection window: periods where the traffic is real but should not count toward the plan. `lane0` in the running example enters reset after three transactions:
+
+| Step | Call | lane0's `cp_op` bins covered |
+|---|---|---|
+| 1–3 | `write` with `ADD`, `SUB`, `MUL` | 3 |
+| 4 | `lane0.cg.stop()` | 3 |
+| 5–6 | `write` with `DIV`, `AND` | 3 (not collected) |
+| 7 | `lane0.cg.start()` | 3 |
+| 8–10 | `write` with `DIV`, `ADD`, `XOR` | 5 |
+
+Without the `stop()`/`start()` pair, `AND` would also count, and lane0 would read 76.19 instead of 66.67 (you will check this in Make It Work).
+
+There are three ways to keep samples out of the coverage, and each fits a different owner:
+
+| Tool | Who decides | Use it when |
+|---|---|---|
+| `iff (expr)` on a coverpoint or cross | the covergroup, at each sample | the condition is visible to the covergroup when it samples, such as a `valid` bit in the transaction (see [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options)) |
+| not calling `sample()` | the collector | the collector itself knows the transaction must not count |
+| `stop()` / `start()` | another part of the bench, such as reset handling or an error-injection sequence | the window is decided outside the collector and spans many transactions |
+
+**The classic mistake is a `stop()` with no matching `start()`.** Coverage then freezes at its last value while traffic keeps flowing and checks keep passing; nothing in the log says so. Debug challenge D1 below is exactly this bug.
+
+### Ending the stimulus at a goal, and why the checks must finish
+
+The most common reason to query coverage while the test runs is to stop sending stimulus once the goal is reached, or to switch to a mode that targets the holes ([closure-workflow](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) teaches steering). The order of calls matters. The diagram shows one bench that does three things: it pauses lane0's collection during a reset, it polls coverage every 50 items, and when the goal is reached it ends the *stimulus* and waits for the checker before it ends the *simulation*.
+
+<SequenceDiagram
+  title="Reset window, polling and end of stimulus in tb_top"
+  caption="tb_top owns reset handling and the end of the test. The collector only samples. The goal ends new stimulus; $finish waits until the checker has compared every outstanding transaction."
+  participants={[
+    { id: "tb", label: "tb_top", sublabel: "stimulus, reset, end of test", kind: "generic" },
+    { id: "cov", label: "lane0", sublabel: "alu_cov collector", kind: "subscriber" },
+    { id: "chk", label: "chk", sublabel: "reference-model check", kind: "scoreboard" }
+  ]}
+  messages={[
+    { from: "tb", to: "cov", label: "write(t)" },
+    { kind: "self", from: "cov", label: "cg.sample(t): bins counted" },
+    { from: "tb", to: "chk", label: "write(t)" },
+    { kind: "divider", label: "rst_n falls: lane 0 in reset" },
+    { from: "tb", to: "cov", label: "cg.stop()" },
+    { from: "tb", to: "cov", label: "write(t)" },
+    { kind: "self", from: "cov", label: "cg.sample(t): nothing collected" },
+    { kind: "divider", label: "rst_n rises" },
+    { from: "tb", to: "cov", label: "cg.start()" },
+    { kind: "divider", label: "every POLL = 50 items" },
+    { from: "tb", to: "cov", label: "cg.get_inst_coverage()" },
+    { kind: "return", from: "cov", to: "tb", label: "100.0, which is >= cg.option.goal" },
+    { kind: "note", from: "tb", to: "chk", label: "goal reached: stop new stimulus, not the simulation" },
+    { from: "tb", to: "chk", label: "wait_for_drain()" },
+    { kind: "return", from: "chk", to: "tb", label: "every transaction compared" },
+    { kind: "self", from: "tb", label: "print PASS=<n> FAIL=<m>, then $finish" }
+  ]}
+/>
+
+The same loop in code:
+
+```systemverilog
+// snippet: parts of tb_top. lane0 (alu_cov), chk (a checker with write(),
+// wait_for_drain(), pass and fail) and next_item(), which returns a new
+// randomized alu_txn, are declared elsewhere in tb_top.
+localparam int BUDGET = 2000;  // most items this test may send
+localparam int POLL   = 50;    // query every 50 items, not after every item
+
+initial begin : stimulus
+  bit done;
+  for (int n = 1; n <= BUDGET && !done; n++) begin
+    automatic alu_txn t = next_item();
+    lane0.write(t);  // coverage: was the scenario exercised?
+    chk.write(t);    // check: was the result right?
+    if (n % POLL == 0)
+      done = (lane0.cg.get_inst_coverage() >= lane0.cg.option.goal);
+  end
+  chk.wait_for_drain();  // the goal ends the stimulus, not the checks
+  $display("PASS=%0d FAIL=%0d", chk.pass, chk.fail);
+  $finish;               // only after the last comparison
+end
+```
+
+Four rules are packed into it:
+
+1. **Coverage measures; checks verify.** Coverage counts sampled values and never compares them with an expected result (§19.5, §19.11), so a wrong result is counted like a right one. 100 % coverage with an unfinished or failing checker proves nothing.
+2. **Never `$finish` from the collector.** `$finish` makes the simulator exit at once (§20.2): transactions still in flight are never compared and no summary prints. In UVM it also skips the extract, check and report phases, because `run_test()` prints the report summary only after the phases finish (IEEE 1800.2-2020 §9.8.1; uvm-core 2020.3.1 `uvm_root.svh`). In UVM, the test drops its objection instead (an **objection** is UVM's count of activities still in progress; the run phase ends when the last one is dropped), and the remaining phases run normally ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+3. **Compare with `>=` against the goal**, not `== 100.0`: the goal may be below 100, and a `real` compared for equality is fragile.
+4. **Poll every N items, not every item.** Each query asks the simulator to compute a percentage; its cost is tool-dependent. For a plan with several items, check each planned item rather than one covergroup number: with a goal below 100, a group can pass while one item lags.
+
+Stuck coverage is not a reason to reseed. The **seed** is the starting value of a random-number generator; a new seed (`srandom()`) changes *which* values come out, not their probabilities, so a hole the constraints make rare stays rare ([I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods)). When the polled number stops rising, switch to a stimulus mode that targets the holes; that is the next lesson's subject.
+
+### The coverage system tasks
+
+§19.9 defines two system tasks and one system function (a **system task** or **system function** is a built-in routine whose name starts with `$`; a function returns a value):
+
+| Routine | What the LRM says | In practice |
+|---|---|---|
+| `$set_coverage_db_name(filename)` | sets the file name of the coverage database saved at the end of the run | name the database after the test and seed, so that the databases of a **regression** (a batch of tests and seeds run together, whose coverage is merged into one report) never overwrite each other. Tool support varies; many flows set the name with a simulator switch instead (tool-dependent) |
+| `$load_coverage_db(filename)` | loads the cumulative coverage of every covergroup type from that file | lets one run start from the coverage of earlier runs. Support and database format are tool-dependent |
+| `$get_coverage()` | returns, as a `real` from 0 to 100, the overall coverage of all covergroup types | one number for the design; read the instance or the item for decisions |
+
+`$get_coverage()` has one rule that surprises everyone: it returns **100.0 when the design has no covergroup instances**, or when every covergroup has weight 0 (§19.11). Traced on the running example:
+
+| When | `$get_coverage()` | Why |
+|---|---|---|
+| time 0, before `lane0` and `lane1` are constructed | 100.00 | no instance exists yet (§19.11) |
+| right after both `new()` calls | 0.00 | instances exist, nothing is covered |
+| after both streams | 59.52 | the only type's number |
+
+A loop that runs `while ($get_coverage() < 100.0)` before any collector exists never starts. Debug challenge D2 is this bug.
+
+### Pitfalls and debugging
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Coverage stops rising after a mid-test reset; traffic and checks continue | `stop()` with no matching `start()` | Call `start()` on every reset release, in the same task that calls `stop()`; log both calls |
+| `$get_coverage()` reads 100.0 at the start and the closure loop never runs | no covergroup instance exists yet (§19.11) | Construct every collector before the first query; refuse a "closed" result with zero items sent |
+| The type number looks healthy but one lane is missing states | `merge_instances = 1` (a union), a zero instance weight, or reading the average | Read each instance: set `option.get_inst_coverage = 1` in the definition when merging, and `per_instance = 1` for the report |
+| Every instance returns the same `get_inst_coverage()` | `merge_instances = 1` without `option.get_inst_coverage = 1` (Table 19-1) | Add `option.get_inst_coverage = 1;` to the definition |
+| A dashboard's covered/total disagrees with the percentage | the pair came from a covergroup or from `get_coverage()`, where it is a sum (§19.8) | Read pairs per item with `get_inst_coverage(c, t)`; report percentages for groups |
+| Report rows named `cg`, `cg_1`, `cg_2`, different in every test | no `set_inst_name()` | Name each instance from its hierarchy path in the collector's constructor |
+| Compile error on `cg.option.per_instance = 1;` after `new()` | `per_instance` and `get_inst_coverage` are definition-only (§19.7) | Move the assignment into the covergroup definition |
+| `cg_t::get_coverage()` will not compile for an embedded covergroup | the embedded covergroup's type is anonymous (§19.4) | Call it through an instance: `lane0.cg.get_coverage()` |
+| The run slows down after coverage polling was added | querying after every item | Poll every N items or at phase boundaries; the cost is tool-dependent |
+| The number jumps after a weight change, with no new stimulus | weights changed the average, not the coverage | Treat weight changes as plan changes: review them, never use them to reach a goal |
+
+### Recap
+
+- `get_inst_coverage()` is this instance. `get_coverage()` is the type: the same value from every instance, an average by default and a union with `merge_instances = 1`. `$get_coverage()` is the whole design, and 100.0 when no instance exists.
+- With `merge_instances = 1`, per-instance numbers need `option.get_inst_coverage = 1` in the definition. `per_instance` only controls what is saved and reported.
+- `(covered, total)` is a true ratio only from `get_inst_coverage()` on a coverpoint or cross.
+- `goal` is a target; `weight` moves the number; weight 0 hides an item, it never covers it.
+- `stop()` keeps the counts and pauses collection until `start()`.
+- Reach the goal, stop the stimulus, let the checks finish, then `$finish` from the top.
+
+## Make It Work
+
+### Two lanes, one covergroup type, every number checkable by hand
+
+This bench feeds the two collectors fixed streams, so every number it prints can be traced with a pencil. It prints item pairs, instance numbers, the type number and the overall number, and it pauses lane0 during a reset window. There is no design under test (DUT) and no check: it tests the coverage instrument only, which is exactly why it must not print PASS.
+
+```systemverilog
+// compile
+// File: tb_top.sv. One covergroup type, two instances, fixed streams.
+package alu_pkg;
+  typedef enum bit [2:0] {ADD, SUB, MUL, DIV, AND, OR, XOR} op_t;
+
+  class alu_txn;
+    op_t      op;
+    bit [7:0] a;
+    function new(op_t op, bit [7:0] a);
+      this.op = op;
+      this.a  = a;
+    endfunction
+  endclass
+
+  class alu_cov;
+    // An embedded covergroup declares an anonymous type plus one instance
+    // variable (IEEE 1800-2023 19.4): every alu_cov object owns one instance.
+    covergroup cg with function sample(alu_txn t);
+      option.per_instance = 1;  // save and report each port's own numbers
+      cp_op: coverpoint t.op {
+        option.comment = "ALU-1";
+        bins ops[] = {ADD, SUB, MUL, DIV, AND, OR, XOR};  // 7 bins
+      }
+      cp_a: coverpoint t.a {
+        option.comment = "ALU-2";
+        bins zero = {8'h00};
+        bins max  = {8'hFF};  // any other value lands in no bin
+      }
+      x_op_a: cross cp_op, cp_a {
+        option.comment = "ALU-4";  // 7 x 2 = 14 cross bins
+      }
+    endgroup
+
+    function new(string inst_name);
+      cg = new();                   // the only place it may be constructed
+      cg.set_inst_name(inst_name);  // stable, hierarchy-based report name
+    endfunction
+
+    function void write(alu_txn t);
+      cg.sample(t);
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  import alu_pkg::*;
+
+  alu_cov lane0, lane1;
+
+  function automatic void send(alu_cov c, op_t op, bit [7:0] a);
+    alu_txn t = new(op, a);
+    c.write(t);
+  endfunction
+
+  // Item pairs are true numerators and denominators. The covergroup pair is
+  // a sum of bins over all items (19.8), so it is printed beside the number.
+  function automatic void report(string name, alu_cov c);
+    int  covered, total;
+    real pct;
+    void'(c.cg.cp_op.get_inst_coverage(covered, total));
+    $display("%s ALU-1 cp_op   %0d/%0d", name, covered, total);
+    void'(c.cg.cp_a.get_inst_coverage(covered, total));
+    $display("%s ALU-2 cp_a    %0d/%0d", name, covered, total);
+    void'(c.cg.x_op_a.get_inst_coverage(covered, total));
+    $display("%s ALU-4 x_op_a  %0d/%0d", name, covered, total);
+    pct = c.cg.get_inst_coverage(covered, total);
+    $display("%s get_inst_coverage() = %0.2f  pair = %0d/%0d",
+             name, pct, covered, total);
+  endfunction
+
+  initial begin
+    int  covered, total;
+    real pct;
+
+    $display("before new: $get_coverage() = %0.2f", $get_coverage());
+    lane0 = new("tb_top.lane0");
+    lane1 = new("tb_top.lane1");
+    $display("after new:  $get_coverage() = %0.2f", $get_coverage());
+
+    send(lane0, ADD, 8'h00);
+    send(lane0, SUB, 8'hFF);
+    send(lane0, MUL, 8'h00);
+    lane0.cg.stop();          // lane 0 enters reset: pause collection
+    send(lane0, DIV, 8'h00);  // not collected
+    send(lane0, AND, 8'hFF);  // not collected
+    lane0.cg.start();         // reset released: collect again
+    send(lane0, DIV, 8'hFF);
+    send(lane0, ADD, 8'h00);  // a repeat: no new bin
+    send(lane0, XOR, 8'h42);  // 8'h42 is in no cp_a bin, so no cross bin
+
+    send(lane1, ADD, 8'hFF);
+    send(lane1, ADD, 8'hFF);
+    send(lane1, OR,  8'h10);
+    send(lane1, AND, 8'h00);
+
+    report("lane0", lane0);
+    report("lane1", lane1);
+
+    pct = lane0.cg.get_coverage(covered, total);
+    $display("type  get_coverage() = %0.2f  pair = %0d/%0d", pct, covered, total);
+    $display("type  via lane1      = %0.2f", lane1.cg.get_coverage());
+    pct = lane0.cg.cp_op.get_coverage(covered, total);
+    $display("type  cp_op          = %0.2f  pair = %0d/%0d", pct, covered, total);
+    $display("design $get_coverage() = %0.2f", $get_coverage());
+    $finish;
+  end
+endmodule
+```
+
+**Run it.** Save the code as `tb_top.sv`, compile it with any simulator that supports IEEE 1800-2023 functional coverage (covergroups, `with function sample` and the §19.8 methods), and run `tb_top`. It needs no plusargs. Covergroup support in open-source simulators varies, and no simulator was run for this page: the log below was derived by hand from §19.8 and §19.11.
+
+**Expected output** (illustrative, derived by hand from the LRM rules, not from a simulator run):
+
+```text
+before new: $get_coverage() = 100.00
+after new:  $get_coverage() = 0.00
+lane0 ALU-1 cp_op   5/7
+lane0 ALU-2 cp_a    2/2
+lane0 ALU-4 x_op_a  4/14
+lane0 get_inst_coverage() = 66.67  pair = 11/23
+lane1 ALU-1 cp_op   3/7
+lane1 ALU-2 cp_a    2/2
+lane1 ALU-4 x_op_a  2/14
+lane1 get_inst_coverage() = 52.38  pair = 7/23
+type  get_coverage() = 59.52  pair = 18/46
+type  via lane1      = 59.52
+type  cp_op          = 57.14  pair = 8/14
+design $get_coverage() = 59.52
+```
+
+The tool's own `$finish` message follows. Read the log the way you would debug a real one:
+
+1. **Line 1** is the §19.11 rule: no instance exists yet, so `$get_coverage()` is 100.00. **Line 2** drops to 0.00 as soon as two empty instances exist.
+2. **lane0's `cp_op` is 5/7**, not 6/7: `AND` arrived only inside the `stop()` window. Its `x_op_a` has 4 bins, not 5: `(XOR, 8'h42)` hit no `cp_a` bin, so no cross bin either.
+3. **`pair = 11/23` beside 66.67** is the covergroup-level sum (§19.8). Do not divide it.
+4. **Both type lines read 59.52**: `get_coverage()` is the type's number, whichever instance you call it through.
+
+**Change it and predict first.** Each change below edits one or two lines; write down your prediction before you rerun.
+
+1. Delete the `stop()` and `start()` lines. `lane0` gains `AND` (6/7) and the cross bins `<DIV, zero>` and `<AND, max>` (6/14): its number becomes (85.71 + 100 + 42.86) / 3 = **76.19**, with pair 14/23.
+2. Restore them and add `type_option.merge_instances = 1;` to the covergroup. The type line becomes the union, (100 + 100 + 42.86) / 3 = **80.95**, and so do both `get_inst_coverage()` lines (Table 19-1).
+3. Also add `option.get_inst_coverage = 1;`. The instance lines return to 66.67 and 52.38; the type line stays 80.95.
+
+### How to use the coverage API in your own bench
+
+1. **Name every instance** in the collector's constructor with `set_inst_name()`, from its place in the hierarchy, so report rows are stable across tests.
+2. **Decide which number answers your question** before writing the query: this instance (`get_inst_coverage()`), the type (`get_coverage()`), or one plan item (`cg.<item>.get_inst_coverage(c, t)`).
+3. **Set definition-only options in the definition:** `option.per_instance = 1` when the report needs per-instance rows, and `option.get_inst_coverage = 1` whenever the type uses `merge_instances = 1`.
+4. **Wrap reset, initialization and error-injection windows** in `stop()` and `start()` in the code that owns the window, and make sure every path that calls `stop()` reaches `start()`.
+5. **Poll every N items** in the code that owns the stimulus (in UVM, the test or the top sequence), compare with `>=` against `option.goal`, and check every planned item.
+6. **End the stimulus, not the simulation**, when the goal is reached: let the checker drain, print the PASS/FAIL line, then `$finish` from `tb_top` (in UVM, drop the objection).
+7. **Print item pairs and percentages in a fixed format** (as `report()` does above), so a regression script can parse them.
+8. **Name the database** after the test and seed with `$set_coverage_db_name()` or the tool's switch, so every run's coverage can be merged later.
+
+**Checklist before moving on:**
+- [ ] I can say which of `get_inst_coverage()`, `get_coverage()` and `$get_coverage()` my decision needs, and why the other two are wrong for it.
+- [ ] Every covergroup that merges instances also sets `option.get_inst_coverage = 1` if anything reads instance numbers.
+- [ ] No code divides a covergroup-level `(covered, total)` pair.
+- [ ] Every `stop()` has a `start()` on every path.
+- [ ] No collector or monitor calls `$finish`; the goal ends the stimulus and the checks still run to completion.
+- [ ] Every collector exists before the first coverage query, and a "closed" result with zero items sent is treated as a failure.
+- [ ] Weight changes are reviewed as plan changes, never used to reach a goal.
+
+## Push Further
+
+### Expert: Merging instances: bin names, different bin sets and the largest `at_least`
+
+With `merge_instances = 1`, the union is computed **by bin name**, and the counts of bins with the same name add (§19.11.3). That works cleanly when every instance has the same bins. When bins come from covergroup arguments, instances can have different bin sets. The LRM's own example: `covergroup gt (int l, h); coverpoint a {bins b[] = {[l:h]};} endgroup`, with `gv1 = new(0,1)` (bins `b[0]`, `b[1]`) and `gv2 = new(1,2)` (bins `b[1]`, `b[2]`). The type has three bins, and `b[1]` is shared:
+
+| Sampled | `gv1` | `gv2` | Type (merged) |
+|---|---|---|---|
+| `a == 0` by `gv1`; `a == 1` by both | `b[0]`, `b[1]` covered | `b[1]` covered | `b[0]`, `b[1]` covered of 3; `b[1]` count = 2 |
+| `get_coverage()` | | | 66.6667 |
+| `get_inst_coverage()`, `option.get_inst_coverage = 0` | 66.6667 | 66.6667 | |
+| `get_inst_coverage()`, `option.get_inst_coverage = 1` | 100.0 | 50.0 | |
+
+Three further corner cases:
+- **Automatic bins are named by their range.** Two instances with different `auto_bin_max` have differently named bins, so nothing overlaps: the §19.11.3 example with 64 and 32 automatic bins has 96 cumulative bins. Varying bin layouts per instance makes a union meaningless.
+- **Merged bins use the largest `at_least`.** A merged bin counts as covered only when its summed count reaches the largest `at_least` of all accumulated instances (§19.11.1). An instance with `at_least = 1` can show a bin covered while the merged type, held to another instance's `at_least = 4`, does not: the type number can be lower than an instance's.
+- **Type options are one value per type.** They are set with constant expressions, so different instances cannot assign different values (§19.7.1). `merge_instances` is a decision for the whole type, made where the type is defined.
+
+### Expert: Which weight applies where
+
+Four weights affect coverage numbers, and they are easy to mix up:
+
+| Option | Set on | Weights | Source |
+|---|---|---|---|
+| `option.weight` | covergroup | this instance, in the type average (default mode) and in the overall instance coverage of the simulation | Table 19-1, §19.11.3 |
+| `option.weight` | coverpoint or cross | this item, inside its instance's number; in the default mode, also in that item's type number | Table 19-1, §19.11.3 |
+| `type_option.weight` | covergroup | the type, in the overall cumulative coverage of the saved database | Table 19-3 |
+| `type_option.weight` | coverpoint or cross | the item, in the type's cumulative number | Table 19-3, §19.7.1 |
+
+The §19.7.1 example shows the split: with `merge_instances = 1`, each instance is computed with the items' `option.weight` values, while the type is computed from the merged items with their `type_option.weight` values. And in the default averaging mode, "the covergroup type coverage depends on the instances only, not its coverpoints or crosses" (§19.11.3): item weights act inside each instance, before the average. If two reports disagree about the same run, check which weight each one used.
+
+### Expert: Zero denominators and empty designs
+
+§19.11, §19.11.1 and §19.11.2 define what happens when a percentage has nothing to divide by:
+
+- **An item** with nothing left to count has a denominator of 0: a coverpoint none of whose bins has a value or transition left (for example, all removed by `ignore_bins`), or a cross whose every cross product sits in `ignore_bins` or `illegal_bins`. It does not contribute to its covergroup; its own `get_coverage()` and `get_inst_coverage()` return 0.0, or 100.0 if its weight is 0; the `(covered, total)` form writes 0 and 0.
+- **A covergroup** has a zero denominator when every item is excluded that way, when every item weight is 0, or when it has no items. It then does not contribute to the overall number and returns 0.0, or 100.0 if the covergroup's own weight is 0.
+- **The design:** `$get_coverage()` returns 100.0 when there is no covergroup instance, or when every covergroup has weight 0.
+
+The practical rules: a closure check must also require at least one sample (or one item sent), and a dashboard that shows 0 % for an excluded item should mark it as excluded, not failing.
+
+### Expert: Sampling coverage from assertions
+
+An overridden `sample()` can be called from a sequence match item inside a property, with the assertion's local variables as arguments (§19.8.1, §16.10, §16.11). The arguments carry values computed from the assertion's sampled values (concurrent assertions sample in the Preponed region), which makes this the way to cover quantities that only the assertion knows, such as a measured latency:
+
+```systemverilog
+// snippet: inside a module with clk, req and ack
+covergroup lat_cg with function sample(int unsigned lat);
+  cp_lat: coverpoint lat { bins fast = {[1:2]}; bins slow = {[3:8]}; }
+endgroup
+lat_cg lat_cov = new();
+
+property p_req_ack;
+  int unsigned n;  // local variable: one copy per attempt
+  @(posedge clk) (req, n = 1) ##1 (!ack, n++)[*0:7] ##1 (ack, lat_cov.sample(n));
+endproperty
+c_req_ack: cover property (p_req_ack);  // n = cycles from req to ack
+```
+
+Two limits: §16.11 forbids attaching a match item to a sequence that can match empty, which is why `n++` sits inside the parentheses before the repetition; and the formal arguments of an overridden `sample()` may be used only in coverpoint expressions and `iff` guards (§19.8.1). `cover property` itself counts property matches; the covergroup adds bins over the values. [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) teaches `cover property`.
+
+### Expert: The cost of querying and collecting
+
+Everything in this section is **tool-dependent**: the LRM defines what the numbers are, not what they cost.
+
+- **Queries.** A covergroup-level query walks every item. Poll every N items, at the end of a phase, or when a stimulus mode changes, never after every sample.
+- **Crosses multiply.** A cross has as many automatic bins as the product of its coverpoints' bin counts (§19.6, §19.11.2). Three 16-bin coverpoints crossed give 4,096 bins per instance; with `per_instance = 1` on a 32-port design, the database stores that 32 times.
+- **Reports.** `option.cross_num_print_missing` (Table 19-1, default 0) sets how many uncovered cross products are saved and printed; raise it only for the crosses you are actively closing.
+- **Switching collection off.** `stop()` stops collection; whether it also saves simulation time depends on the tool. Long performance regressions often switch coverage off with a simulator option instead.
+
+### Expert: The database routines in a regression
+
+The LRM gives the bench only two hooks into a regression's coverage flow (§19.9): `$set_coverage_db_name()` chooses where this run's database is saved, and `$load_coverage_db()` loads cumulative coverage from an earlier database. How databases are merged, what format they use and how instance rows line up are all **tool-dependent**; stable names from `set_inst_name()` are what make rows line up at all. UCIS 1.0 (Accellera, 2012) standardizes an API and an XML interchange format for exchanging coverage data between tools; which parts a given tool supports is tool-dependent. Two traps: a merge across a constraint change mixes stimulus that may no longer occur, and whether illegal-bin hits sampled while an instance is stopped are still reported is not stated by the LRM, so check your tool before relying on `illegal_bins` inside a `stop()` window (§19.5.6 says only that a run-time error is issued when an illegal value occurs).
+
+### Expert: Interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: four ports, all must close"
+  question="Four SPI ports each have a collector with one instance of the same covergroup. The covergroup definition sets type_option.merge_instances = 1 for the type report. The test must end its stimulus only when every port has individually reached 100 %. What should it check, and where?"
+  options={[
+    { text: "Any one collector checks cg.get_coverage() >= 100 and calls $finish.", isCorrect: false, feedback: "With merging, get_coverage() is the union: it can reach 100 while a port is missing states that another port hit. And $finish from a collector cuts off the checks (IEEE 1800-2023 §20.2)." },
+    { text: "The test polls all four instances' get_inst_coverage(), with option.get_inst_coverage = 1 set in the covergroup definition, and ends the stimulus (drops its objection) when all four are at the goal.", isCorrect: true, feedback: "Correct. Under merging, get_inst_coverage() returns the merged number unless option.get_inst_coverage = 1 is set in the definition (Table 19-1). Only a component that sees all four instances, such as the test or the env, can decide for all four." },
+    { text: "Each collector checks its own get_inst_coverage() with option.per_instance = 1 and calls $finish when it reaches 100.", isCorrect: false, feedback: "per_instance controls what is saved and reported, not what get_inst_coverage() returns under merging; and the first port to finish would end the whole run, checks included." },
+    { text: "The test checks $get_coverage() == 100.0.", isCorrect: false, feedback: "That is every covergroup type in the design, here a union for this type; it also returns 100.0 before any instance exists (§19.11). And == on a real is fragile." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the dashboard and the tool disagree"
+  question="A dashboard computes covered / total from cg.get_coverage(covered, total) and shows 39 %. The tool report for the same run shows the covergroup type at 60 %. Which is right?"
+  options={[
+    { text: "The dashboard: it uses the real bin counts.", isCorrect: false, feedback: "On a covergroup, that pair sums bins over every item in every instance (§19.8). The percentage is an average of item percentages, so the ratio of sums is a different quantity." },
+    { text: "The tool: the covergroup pair is a sum of bins, not the numerator and denominator of the percentage.", isCorrect: true, feedback: "Correct. The pair is a true ratio only from get_inst_coverage() on a coverpoint or cross (§19.8). Fix the dashboard to read the returned percentage, and item pairs for detail." },
+    { text: "Neither: the two differ because per_instance is off.", isCorrect: false, feedback: "per_instance controls what is saved per instance; it does not change how the type percentage or the pair is computed." },
+    { text: "Both are right; the tool rounds differently.", isCorrect: false, feedback: "A 21-point gap is not rounding. The two numbers measure different things." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: stop() or iff?"
+  question="During error-injection windows, a sequence corrupts packets on purpose, and the plan says those packets must not count toward functional coverage. The collector cannot tell an injected packet from a normal one. What do you use?"
+  options={[
+    { text: "An iff guard on every coverpoint.", isCorrect: false, feedback: "iff needs a condition the covergroup can see when it samples. Here the collector cannot tell the packets apart, so there is nothing to put in the guard." },
+    { text: "The error-injection sequence (or the test) calls the collector's cg.stop() before the window and cg.start() after it, on every path out of the window.", isCorrect: true, feedback: "Correct. stop() and start() let the code that owns the window control collection (Table 19-5). The risk is a missing start(), so put both calls in one task and log them." },
+    { text: "Set the covergroup's option.weight to 0 during the window.", isCorrect: false, feedback: "Weight changes how the number is averaged; samples are still collected into the bins. It hides the instance from the average, which is a different and worse effect." },
+    { text: "Delete the window's transactions from the database afterwards.", isCorrect: false, feedback: "There is no API to remove counts (Table 19-5 has no such method), and editing databases by hand breaks traceability." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "One covergroup type has two instances. get_inst_coverage() returns 100.0 for lane0 and 50.0 for lane1. type_option.merge_instances is 0; lane0 has option.weight = 1 and lane1 has option.weight = 3. What does lane0.cg.get_coverage() return?",
+      answers: [
+        { text: "100.0", correct: false, feedback: "That is lane0's instance number. get_coverage() is the type's number, the same from every instance (§19.8)." },
+        { text: "75.0", correct: false, feedback: "That is the unweighted average. Type coverage weights each instance by its option.weight (§19.11.3)." },
+        { text: "62.5", correct: true, feedback: "Right: (100 × 1 + 50 × 3) / (1 + 3) = 62.5." },
+        { text: "50.0", correct: false, feedback: "There is no worst-instance rule. The default type number is a weighted average." }
+      ],
+      explanation: "With merge_instances = 0 the type number is the weighted average of the instance numbers, using each instance's covergroup-level option.weight (§19.11.3): (100 × 1 + 50 × 3) / 4 = 62.5. It is the same value from lane0 and lane1, because get_coverage() is static.",
+      objective: 1
+    },
+    {
+      question: "covergroup gt (int l, h); coverpoint a { bins b[] = {[l:h]}; } with type_option.merge_instances = 1 in its definition. gv1 = new(0,1) samples a = 0 and a = 1; gv2 = new(1,2) samples a = 1. option.get_inst_coverage is left at 0. What does gv2.get_inst_coverage() return?",
+      answers: [
+        { text: "50.0", correct: false, feedback: "That is gv2's own number (b[1] of b[1], b[2]). It is returned only when option.get_inst_coverage = 1 is set in the definition (Table 19-1)." },
+        { text: "100.0", correct: false, feedback: "That is gv1's own number, and only with option.get_inst_coverage = 1." },
+        { text: "75.0", correct: false, feedback: "That would be the average of 100 and 50, the rule when merge_instances is 0." },
+        { text: "66.67", correct: true, feedback: "Right. Without option.get_inst_coverage, get_inst_coverage() equals get_coverage(): the union b[0], b[1], b[2] with two covered." }
+      ],
+      explanation: "This is the LRM's own example (§19.11.3). The merged type has three bins, matched by name, and two are covered: 66.6667. Table 19-1: when option.get_inst_coverage is false, get_inst_coverage() returns the value of get_coverage(). With the option set to 1, gv1 returns 100.0 and gv2 returns 50.0.",
+      objective: 1
+    },
+    {
+      question: "Your report merges the instances of a covergroup type (merge_instances = 1), and the test must also read each lane's own number at run time. Which covergroup definition does both?",
+      answers: [
+        { text: "option.per_instance = 1 in the definition; nothing else is needed.", correct: false, feedback: "per_instance controls what is saved and reported. Under merging, get_inst_coverage() still returns the merged number (Table 19-1)." },
+        { text: "type_option.merge_instances = 1 in the definition, then lane0.cg.option.get_inst_coverage = 1 after new().", correct: false, feedback: "get_inst_coverage is definition-only, like per_instance (§19.7); it cannot be assigned procedurally." },
+        { text: "type_option.merge_instances = 1, option.get_inst_coverage = 1 and option.per_instance = 1, all in the definition.", correct: true, feedback: "Right: a merged type number, per-instance run-time numbers, and per-instance rows in the report." },
+        { text: "Leave merge_instances at 0 and divide the covergroup's (covered, total) pair for each lane.", correct: false, feedback: "That drops the merged report the plan asked for, and a covergroup-level pair is a sum of bins, not the percentage's ratio (§19.8)." }
+      ],
+      explanation: "option.get_inst_coverage enables per-instance tracking when merge_instances is set, and both it and per_instance can only be set in the definition (§19.7, Table 19-1). per_instance alone does not change what get_inst_coverage() returns.",
+      objective: 2
+    },
+    {
+      question: "lane0's cross x_op_a has 4 of 14 bins covered, and lane0 reads 66.67 against option.goal = 80. A teammate sets lane0.cg.x_op_a.option.weight = 0, and lane0 now reads 85.71. What has changed?",
+      answers: [
+        { text: "The cross now counts as covered, so the goal is met.", correct: false, feedback: "Excluding an item is not covering it. The cross's 10 empty bins are still empty; they are just out of the average." },
+        { text: "The stimulus will now generate more cross combinations.", correct: false, feedback: "Coverage options never change randomization. option.weight only weights the item in the average." },
+        { text: "Nothing more was exercised: the cross was removed from the number, which hides its holes.", correct: true, feedback: "Right. Weight 0 is for items that were never plan goals. An unreachable item needs a recorded, justified exclusion; a reachable one needs steering." },
+        { text: "Nothing: an item weight cannot change after new().", correct: false, feedback: "Instance options other than per_instance, get_inst_coverage, auto_bin_max, detect_overlap and cross_retain_auto_bins can be assigned procedurally (§19.7), so the change took effect." }
+      ],
+      explanation: "With weights 1, 1 and 0, lane0's number is (71.43 + 100) / 2 = 85.71 (§19.11). The headline rose with no new stimulus. Treat weight changes as plan changes that need review, never as a way to reach a goal.",
+      objective: 2
+    },
+    {
+      question: "Reset handling calls lane0.cg.stop() after 40 of lane0's bins have been hit. What happens to those 40 hits, and to the transactions sampled before start() is called?",
+      answers: [
+        { text: "The hits are cleared, like a reset of the covergroup.", correct: false, feedback: "stop() stops collecting; nothing in §19.8 clears counts, and there is no method that does." },
+        { text: "The hits stay; transactions sampled while stopped are not collected.", correct: true, feedback: "Right. Collection resumes at start(); the counts from before stop() are kept." },
+        { text: "The hits stay, and samples are still collected because the collector calls sample() explicitly.", correct: false, feedback: "stop() applies however the covergroup is sampled. sample() is still called, but nothing is collected." },
+        { text: "Every instance of the type stops collecting, because stop() acts on the type.", correct: false, feedback: "Only get_coverage() is static. stop() is called on an instance, or one of its items, and acts on it (§19.8, Table 19-5)." }
+      ],
+      explanation: "Table 19-5: stop() stops collecting coverage information and start() starts it. Use them for reset, initialization and error-injection windows, and make sure every stop() reaches its start(), or coverage freezes.",
+      objective: 3
+    },
+    {
+      question: "The test polls coverage every 50 items and sees lane0.cg.get_inst_coverage() reach option.goal. Three transactions are still waiting to be compared by the scoreboard. What should happen next?",
+      answers: [
+        { text: "Call $finish at once: coverage is at the goal, so the design is verified.", correct: false, feedback: "Coverage counts what was exercised, never whether the result was right (§19.11). And $finish exits immediately (§20.2): the three transactions are never compared." },
+        { text: "Stop generating new items, wait until the scoreboard has compared every outstanding transaction, print PASS/FAIL, then $finish from tb_top (in UVM, drop the objection).", correct: true, feedback: "Right. The goal ends the stimulus; the checks still decide whether the test passed." },
+        { text: "Keep running until $get_coverage() == 100.0 exactly.", correct: false, feedback: "The goal may be below 100, == on a real is fragile, and $get_coverage() covers every type in the design." },
+        { text: "Reseed the random generator and keep going to look for more bins.", correct: false, feedback: "The goal is reached. And a new seed changes which values come out, not their probabilities; closure is not a matter of running more seeds." }
+      ],
+      explanation: "Coverage measures; checks verify. End the stimulus at the goal, let every in-flight transaction be checked, then report and finish from the top level. In UVM, run_test() prints the report summary only after the phases finish, so a $finish from a component skips the check and report phases (IEEE 1800.2-2020 §9.8.1).",
+      objective: 3
+    },
+    {
+      question: "lane0.cg.get_inst_coverage(covered, total) returns 66.67 with covered = 11 and total = 23. A dashboard divides them and shows 47.8 %. Which statement is right?",
+      answers: [
+        { text: "47.8 % is right; the method's return value is rounded.", correct: false, feedback: "A 19-point gap is not rounding. The two numbers are computed differently." },
+        { text: "66.67 is right: on a covergroup the pair is bins summed over all items, while the percentage averages the item percentages.", correct: true, feedback: "Right (§19.8). Read pairs per coverpoint or cross with get_inst_coverage(c, t); only there are they the true ratio." },
+        { text: "The pair is from the type because per_instance is 0.", correct: false, feedback: "get_inst_coverage() is the instance either way; per_instance only affects what is saved and reported." },
+        { text: "Ignored bins are counted in total but not in the percentage.", correct: false, feedback: "Ignored values never form counted bins. The difference comes from summing bins across items of different sizes." }
+      ],
+      explanation: "The items are 5/7, 2/2 and 4/14. The percentage is (71.43 + 100 + 28.57) / 3 = 66.67. The pair is 5 + 2 + 4 = 11 over 7 + 2 + 14 = 23. §19.8: only get_inst_coverage() on a coverpoint or cross returns the true numerator and denominator.",
+      objective: 4
+    },
+    {
+      question: "A closure loop starts with while ($get_coverage() < 100.0). It exits at time 0 without sending a single item, and the log shows coverage = 100.00. The collectors are created when the first transaction arrives. Why?",
+      answers: [
+        { text: "No covergroup instance exists yet, and $get_coverage() returns 100.0 for a design with no instances.", correct: true, feedback: "Right (§19.11). Construct the collectors first, and never accept a closed result with zero items sent." },
+        { text: "The default option.goal is 0, so any number meets it.", correct: false, feedback: "The default goal is 100 (Table 19-1), and $get_coverage() does not use it." },
+        { text: "$get_coverage() returned the coverage loaded from last night's database.", correct: false, feedback: "Only an explicit $load_coverage_db() call loads earlier coverage (§19.9), and nothing here calls it." },
+        { text: "Covergroups with no samples count as 100 % because no illegal bin was hit.", correct: false, feedback: "An instance with no samples reads 0.0 when it has bins; illegal bins never count toward coverage." }
+      ],
+      explanation: "§19.11: $get_coverage() returns 100.0 when called on a design that has no covergroup instances, or in which every covergroup has weight 0. As soon as the collectors exist, it reads 0.0. The fix is to construct every collector before the first query and to require at least one sample.",
+      objective: 4
+    }
+  ]}
+/>
+
+### Debug challenge D1: coverage that freezes
+
+A test runs 4,000 items with two resets: power-on, and one in the middle of the test. Every check passes. The polled coverage climbs to 63.10 by item 1,800, the second reset happens at item 1,900, and from then on every poll prints 63.10. The reset handler is:
+
+```systemverilog
+// snippet: called on every reset in tb_top
+bit first_reset_done;
+
+task automatic handle_reset();
+  lane0.cg.stop();             // pause collection while rst_n is low
+  @(posedge rst_n);
+  if (!first_reset_done) begin // written when only power-on reset existed
+    lane0.cg.start();
+    first_reset_done = 1;
+  end
+endtask
+```
+
+Find the bug before you open the solution.
+
+<details>
+<summary>Reveal the worked solution</summary>
+
+**Cause.** `start()` runs only after the first reset. After the mid-test reset, `stop()` runs again but `start()` never does, so lane0 collects nothing for the rest of the test (Table 19-5). The counts from before stay, which is why the number freezes at 63.10 instead of dropping. Checks still pass because checking does not depend on coverage collection.
+
+**Fix.** Pair the calls unconditionally, in one place:
+
+```systemverilog
+// snippet: the fixed handler
+task automatic handle_reset();
+  lane0.cg.stop();
+  $display("[%0t] COV lane0 stopped for reset", $time);
+  @(posedge rst_n);
+  lane0.cg.start();
+  $display("[%0t] COV lane0 started", $time);
+endtask
+```
+
+**What to take away.** A frozen number with healthy traffic points at collection, not stimulus: look for `stop()` calls first, then for a collector that no longer calls `sample()`. The two log lines make the window visible in every regression log.
+
+</details>
+
+### Debug challenge D2: 100 % at time 0
+
+A new test reports `items=0 coverage=100.00` and ends in a few microseconds. Its stimulus block is:
+
+```systemverilog
+// snippet: tb_top; make_txn() returns a new randomized alu_txn
+alu_cov lane0;  // built when the first transaction arrives
+
+initial begin : stimulus
+  int n;
+  while ($get_coverage() < 100.0 && n < 1000) begin
+    automatic alu_txn t = make_txn();
+    if (lane0 == null) lane0 = new("tb_top.lane0");
+    lane0.write(t);
+    n++;
+  end
+  $display("items=%0d coverage=%0.2f", n, $get_coverage());
+end
+```
+
+Explain the log before you open the solution.
+
+<details>
+<summary>Reveal the worked solution</summary>
+
+**Cause.** At the first test of the `while` condition no `alu_cov` exists, so the design has no covergroup instance and `$get_coverage()` returns 100.0 (§19.11). The loop body never runs, so the collector is never created and the number never changes.
+
+**Fix.** Create the collector before the loop, ask the question you mean, and refuse an empty result:
+
+```systemverilog
+// snippet: the fixed stimulus block
+alu_cov lane0;
+
+initial begin : stimulus
+  int n;
+  lane0 = new("tb_top.lane0");  // every collector exists before any query
+  while (lane0.cg.get_inst_coverage() < lane0.cg.option.goal && n < 1000) begin
+    automatic alu_txn t = make_txn();
+    lane0.write(t);
+    n++;
+  end
+  if (n == 0) $error("closure loop sent no items");
+  $display("items=%0d coverage=%0.2f", n, lane0.cg.get_inst_coverage());
+end
+```
+
+**What to take away.** A coverage number is only meaningful once the instances it describes exist and have been sampled. Construct collectors early (in UVM, in `build_phase`), query the instance or item your decision depends on, and treat "closed with zero items" as a failure.
+
+</details>
+
+### Flashcards
+
+The flashcards for this lesson follow below, under "Reinforce the essentials". They cover the three levels of numbers, merging, the bin-count caveat, `start()`/`stop()`, the system tasks and the four misconceptions this module targets.
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023 unless stated):
+
+- §19.4 using covergroups in classes (the anonymous type of an embedded covergroup; constructed only in the class's `new()`).
+- §19.5 and §19.5.6 bins and illegal bins; §19.6 cross coverage.
+- §19.7 coverage options: Table 19-1 instance options (`name`, `weight`, `goal`, `comment`, `at_least`, `cross_num_print_missing`, `per_instance`, `get_inst_coverage`), Table 19-2 options per level, definition-only options; §19.7.1 type options (Table 19-3: `weight`, `goal`, `comment`, `strobe`, `merge_instances`), Table 19-4.
+- §19.8 predefined coverage methods (Table 19-5) and the `(covered, total)` rules; §19.8.1 overriding `sample()`.
+- §19.9 coverage system tasks and system function: `$set_coverage_db_name`, `$load_coverage_db`, `$get_coverage`.
+- §19.10 the `option` and `type_option` structures.
+- §19.11 coverage computation and zero denominators; §19.11.1 coverpoint coverage and the largest `at_least` rule; §19.11.2 cross coverage; §19.11.3 type coverage (weighted average or union; the `gt` example).
+- §16.10 local variables and §16.11 subroutine calls on a sequence match.
+- §20.2 `$finish`.
+- IEEE 1800.2-2020 §9.8.1 (extract, check and report phases); uvm-core 2020.3.1 `uvm_root.svh` (`run_test()` prints the report summary after the phases finish, then calls `$finish`).
+- Accellera Unified Coverage Interoperability Standard (UCIS) 1.0, 2012.
+
+**Prerequisites:** [I-SV-3A Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) and its [coverage options](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options) lesson; [Linking Coverage to the Verification Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage), the previous lesson.
+
+**Related:**
+
+- [I-SV-3B Advanced Functional Coverage](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/index): the module overview and its complete closure example.
+- [The Coverage Closure Loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow): classifying holes, steering stimulus and budgeting seeds, using the queries from this lesson.
+- [I-SV-2B Randomization Methods](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods): seeds and random stability, and why reseeding does not change probabilities.
+- [I-SV-4A SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): `cover property`, next to covergroups sampled from assertions.
+- [I-UVM-1C UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): objections, and why a UVM test ends by dropping one rather than calling `$finish`.
+- [I-UVM-2A Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): the coverage collector as a `uvm_subscriber`.
+
+<NextLesson />

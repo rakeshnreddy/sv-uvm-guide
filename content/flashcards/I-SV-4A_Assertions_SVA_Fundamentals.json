@@ -2,6 +2,86 @@
   {
     "id": "isv4a-1",
     "question": "Which values does a concurrent assertion use at its clock edge?",
-    "answer": "Sampled values: the values the signals had in the Preponed region of that time slot, before any update in it. So an assertion clocked on posedge clk sees the flop outputs from before the edge (IEEE 1800-2023 16.5.1)."
+    "answer": "Sampled values: the values the signals had in the Preponed region of that time slot, before anything in it changed (IEEE 1800-2023 §16.5.1). So a flop output written on edge k is still the old value at edge k and is first seen at edge k+1."
+  },
+  {
+    "id": "isv4a-2",
+    "question": "What does `assert property (@(posedge clk) req ##2 ack)` report at an edge where req is 0?",
+    "answer": "A failure at that edge. A sequence used as a property must match from every attempt's start and is never vacuous (§16.12.2, §16.14.8). Write `req |-> ##2 ack` so that only edges with a request are checked."
+  },
+  {
+    "id": "isv4a-3",
+    "question": "How do `a |-> b` and `a |=> b` differ?",
+    "answer": "`|->` checks the consequent starting on the edge where the antecedent matched; `|=>` starts one edge later. `a |=> b` is defined as `a ##1 1'b1 |-> b` (§16.12.7), so the choice is a timing decision, not a style choice."
+  },
+  {
+    "id": "isv4a-4",
+    "question": "What is a vacuous success, and what does it prove?",
+    "answer": "An implication whose antecedent did not match, so nothing was checked; it proves nothing about the design (§16.14.8). It still counts as a success, and the pass action runs on it by default (§20.11)."
+  },
+  {
+    "id": "isv4a-5",
+    "question": "Does `disable iff` use sampled values, and when does it act?",
+    "answer": "No. The disable condition uses current values and is tested at any moment from the attempt's start (Observed region, inclusive) to its end (§16.12). A reset pulse between two edges disables every attempt in flight, and a disabled attempt runs no action block (§16.14.1)."
+  },
+  {
+    "id": "isv4a-6",
+    "question": "Why does `q == $past(d)` fail once, right after reset, on a correct flop, and how do you fix it?",
+    "answer": "On the first edge after reset, `$past(d)` returns d as sampled during reset, when q was forced to its reset value (§16.9.3). Guard the check: `$past(rst_n) |-> q == $past(d)`."
+  },
+  {
+    "id": "isv4a-7",
+    "question": "How is an X treated in an assertion's antecedent and in its consequent?",
+    "answer": "X, Z and 0 are all false (§16.6). An X antecedent gives a vacuous success; an X consequent fails. Check for unknowns explicitly with `valid |-> !$isunknown(data)`."
+  },
+  {
+    "id": "isv4a-8",
+    "question": "When do `assert #0` and `assert final` report?",
+    "answer": "Both evaluate when the code reaches them and queue their report. An `assert #0` report matures in the Observed region and runs in Reactive; an `assert final` report matures and runs in Postponed. A report still pending when the process runs again is flushed (§16.4.1, §16.4.2)."
+  },
+  {
+    "id": "isv4a-9",
+    "question": "What does `assume property` do in simulation and in formal verification?",
+    "answer": "A formal tool uses it to constrain the inputs it explores. A simulator does not change your stimulus: it checks the assumption and reports a failure like an assertion (§16.14.2)."
+  },
+  {
+    "id": "isv4a-10",
+    "question": "Why should you cover a scenario as a sequence rather than covering an implication?",
+    "answer": "An implication succeeds vacuously at every edge where its trigger is absent, and `cover property` counts those successes and runs its pass statement on them (§16.14.3). A sequence such as `cover property (req ##1 ack)` succeeds only when the scenario actually happens."
+  },
+  {
+    "id": "isv4a-11",
+    "question": "What is the difference between `$assertoff` and `$assertkill`?",
+    "answer": "`$assertoff` stops new attempts; attempts already running finish and can still fail. `$assertkill` also aborts the running attempts and flushes pending deferred reports. `$asserton` lets new attempts start again (§20.11)."
+  },
+  {
+    "id": "isv4a-12",
+    "question": "Why should a concurrent assertion's failure message print `$sampled(x)` rather than `x`?",
+    "answer": "The action block runs in the Reactive region with current values, which may already have changed in this time slot (§16.14.1). `$sampled(x)` prints the value the assertion actually judged, and `$past(x)` the value at the previous tick (§16.9.3)."
+  },
+  {
+    "id": "isv4a-13",
+    "question": "Where does a concurrent assertion without `@(...)` get its clock?",
+    "answer": "From the first source that applies: a clock written in the named property or sequence it instantiates, else the clock inferred from the enclosing always or initial procedure, else the scope's default clocking (§16.14.6, §16.16). If none applies, the assertion is an error (§16.16 f)."
+  },
+  {
+    "id": "isv4a-14",
+    "question": "Where can concurrent assertions be written, and why can a class not hold one on its own fields?",
+    "answer": "In modules, interfaces, programs and checkers, and in their always or initial procedures (§16.14.5, §16.14.6). Their expressions cannot refer to non-static class members (§16.6), so class-based testbenches put protocol assertions in the interface."
+  },
+  {
+    "id": "isv4a-15",
+    "question": "What is an SVA sequence, and how is it different from a UVM sequence?",
+    "answer": "An SVA sequence is a named pattern of conditions over clock ticks, such as `req ##1 ack`, which properties and covers reuse (§16.7, §16.8). A UVM sequence (`uvm_sequence`) is a class that generates stimulus; the two share only a name."
+  },
+  {
+    "id": "isv4a-16",
+    "question": "What does `property p_req_ack(logic r, logic a); @(posedge clk) r |=> a; endproperty` give you, and how is it used?",
+    "answer": "A named, reusable property with formal arguments r and a (§16.12). An assertion instantiates it with actual arguments, as in `a_req_ack: assert property (p_req_ack(req, ack));`. The clock written in the declaration becomes the assertion's clock (§16.16), and the same declaration can be used by assert, assume and cover statements. The declaration alone checks nothing."
+  },
+  {
+    "id": "isv4a-17",
+    "question": "What do `$onehot`, `$onehot0`, `$countones` and `$countbits` return?",
+    "answer": "`$onehot(e)`: true if exactly one bit of e is 1. `$onehot0(e)`: true if at most one bit is 1. `$countones(e)`: the number of bits that are 1. `$countbits(e, list)`: the number of bits that have any of the listed values, so `$countbits(e, 'x, 'z)` counts unknown bits (§20.9)."
   }
 ]

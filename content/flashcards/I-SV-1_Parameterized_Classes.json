@@ -1,1 +1,77 @@
-[]
+[
+  {
+    "id": "isv1-pc-1",
+    "question": "What is the difference between a generic class and a specialization?",
+    "answer": "A parameterized class on its own, such as `fifo #(type T = int, int D = 4)`, is a generic class: a recipe, not a type. Applying parameters, as in `fifo #(byte, 8)`, gives a specialization, and only a specialization is a type (IEEE 1800-2023 §8.25)."
+  },
+  {
+    "id": "isv1-pc-2",
+    "question": "Given `class fifo #(type T = int, int D = 4)`, write the same specialization four ways: positional, named, typedef and default.",
+    "answer": "`fifo #(int, 4)`, `fifo #(.D(4), .T(int))` (named lists may come in any order), `typedef fifo #(int, 4) int_fifo_t;` then `int_fifo_t`, and the default specialization `fifo` or `fifo #()`. Class parameter lists follow the module override rules (§8.25, §23.10)."
+  },
+  {
+    "id": "isv1-pc-4",
+    "question": "`class D #(int p);` has no default for `p`. Is `D d;` legal?",
+    "answer": "No. A class with a parameter that has no default has no default specialization, so every use must supply at least the parameters without defaults, as in `D #(3) d;` (§8.25)."
+  },
+  {
+    "id": "isv1-pc-5",
+    "question": "Are `fifo#(int)` and `fifo#(integer)` the same type? And `fifo#(int)` and `fifo#(bit [31:0])`?",
+    "answer": "Neither pair is. `int` is 2-state and `integer` is 4-state, and `int` is signed while `bit [31:0]` is unsigned, so the type parameters are not matching types (§6.22.1). `fifo#(int)` and `fifo#(bit signed [31:0])` are the same type."
+  },
+  {
+    "id": "isv1-pc-6",
+    "question": "Two `counter#(int)` objects and one `counter#(byte)` object are built, and `new()` does `created++` on `static int created`. What do `counter#(int)::created`, `counter#(byte)::created` and `counter#()::created` read?",
+    "answer": "2, 1 and 2. Each specialization has its own static members, and `counter#()` is the same specialization as `counter#(int)` (§8.25). To share one count across every specialization, declare it in a non-parameterized base class."
+  },
+  {
+    "id": "isv1-pc-8",
+    "question": "Outside a parameterized class `C`, why is `C::x` rejected, and what do you write instead?",
+    "answer": "Outside the class the unadorned name may not prefix `::`, because it would not say which specialization you mean. Write `C#()::x` (default specialization), `C#(3)::x`, or a typedef such as `typedef C c_t;` then `c_t::x` (§8.25.1)."
+  },
+  {
+    "id": "isv1-pc-9",
+    "question": "Inside `class C #(type T = int)`, what does `C::x` mean, and what does the declaration `C next;` mean?",
+    "answer": "`C::x` names the current specialization's member `x` (§8.25.1). But `C next;` is a handle to the default specialization `C#(int)`, because a bare name that is not a `::` prefix always means the default specialization (§8.25). Use `typedef C #(T) this_type;` for the current one."
+  },
+  {
+    "id": "isv1-pc-10",
+    "question": "Can a specialization override a `parameter` declared inside the class body?",
+    "answer": "No. In a class body, `parameter` is a synonym for `localparam`, so only the parameters in the `#( )` list can be overridden (§6.20.4; Annex A, A.10 note 7)."
+  },
+  {
+    "id": "isv1-pc-11",
+    "question": "What makes a class abstract, and what happens if you call `new` on it?",
+    "answer": "The keyword `virtual` before `class`. An object of an abstract class shall not be constructed directly, so `new` on it is a compile error; its constructor runs only through `super.new` from a non-abstract subclass (§8.21)."
+  },
+  {
+    "id": "isv1-pc-12",
+    "question": "What is a pure virtual method, and when can a subclass be constructed?",
+    "answer": "A prototype marked `pure virtual` with no body, such as `pure virtual function bit check(int value);`. A subclass is complete, and can be constructed, once every inherited pure virtual method has an override with a matching signature (§8.20, §8.21)."
+  },
+  {
+    "id": "isv1-pc-13",
+    "question": "How does `virtual function bit check(int v); endfunction` (an empty body) differ from `pure virtual function bit check(int v);`?",
+    "answer": "The empty-bodied method is a real, callable method that returns its return variable's initial value, so the class stays constructible and a subclass that forgets to override it still compiles (§8.21 NOTE). The pure virtual method forces every complete subclass to supply a body."
+  },
+  {
+    "id": "isv1-pc-14",
+    "question": "How does a parameterized registry give exactly one registry object per class, the trick behind UVM's `type_id`?",
+    "answer": "A static `get()` keeps the instance in a static handle, `static this_type m_inst;`, and builds it on the first call. Statics are per specialization, so `registry#(txn)` and `registry#(err_txn)` each have their own singleton (§8.25; uvm-core 2020.3.1 `uvm_registry.svh`)."
+  },
+  {
+    "id": "isv1-pc-15",
+    "question": "Why can `fifo#(int)` declared in one instance of a module fail to assign to `fifo#(int)` from another instance?",
+    "answer": "A generic class declared in a module, program or interface is a new generic class for each instance of that scope, so the two specializations are different types (§8.25). Declare generic classes once, in a package."
+  },
+  {
+    "id": "isv1-pc-16",
+    "question": "A generic scoreboard stores `T c = new t;` for each expected item. Is that a safe copy when the item holds a handle to a nested header object?",
+    "answer": "Only partly. `new t` is a shallow copy: it copies the properties, but the copied header handle still points at the producer's header object (§8.12). Store a deep copy made by a `clone()` that also copies the header."
+  },
+  {
+    "id": "isv1-pc-17",
+    "question": "In the generic scoreboard, `clone()` returns a `packet`, so storing it in a `T` queue needs `$cast(c, t.clone())`. What does a failed cast do when called as a function, and as a task?",
+    "answer": "As a function it returns 0 and leaves `c` unchanged, so your code can report a clear error. As a task (a statement on its own) a failed cast is a run-time error (§6.24.2). Use the function form and check the result."
+  }
+]

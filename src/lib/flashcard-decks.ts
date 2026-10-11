@@ -6,7 +6,6 @@ import F2B_Dynamic_Structures from '../../content/flashcards/F2B_Dynamic_Structu
 import F2E_First_Self_Checking_Testbench from '../../content/flashcards/F2E_First_Self_Checking_Testbench.json';
 import F2A_Structs_Unions_Enums from '../../content/flashcards/F2A_Structs_Unions_Enums.json';
 import F2A_Operators_and_Expressions from '../../content/flashcards/F2A_Operators_and_Expressions.json';
-import F3A_Procedural_Blocks_and_Flow_Control from '../../content/flashcards/F3A_Procedural_Blocks_and_Flow_Control.json';
 import F3B_Scheduling_Regions from '../../content/flashcards/F3B_Scheduling_Regions.json';
 import F3C_Delta_Cycles from '../../content/flashcards/F3C_Delta_Cycles.json';
 import F2C_Procedural_Constructs from '../../content/flashcards/F2C_Procedural_Constructs.json';
@@ -67,13 +66,9 @@ import I_SV_5_Semaphores from '../../content/flashcards/I-SV-5_Semaphores.json';
 import I_SV_9_Why_UVM from '../../content/flashcards/I-SV-9_Why_UVM.json';
 import I_SV_6_Compiler_Directives_and_Generates from '../../content/flashcards/I-SV-6_Compiler_Directives_and_Generates.json';
 import I_SV_7_DPI_and_Foreign_Language_Interfaces from '../../content/flashcards/I-SV-7_DPI_and_Foreign_Language_Interfaces.json';
-import F4_RTL_and_Testbench_Constructs from '../../content/flashcards/F4_RTL_and_Testbench_Constructs.json';
 import F4C_Clocking_Blocks from '../../content/flashcards/F4C_Clocking_Blocks.json';
 import F2_HDL_Primer from '../../content/flashcards/F2_HDL_Primer.json';
 import I_SV_1_OOP from '../../content/flashcards/I-SV-1_OOP.json';
-import I_SV_2_Constrained_Randomization from '../../content/flashcards/I-SV-2_Constrained_Randomization.json';
-import I_SV_3_Functional_Coverage from '../../content/flashcards/I-SV-3_Functional_Coverage.json';
-import I_SV_4_Assertions_SVA from '../../content/flashcards/I-SV-4_Assertions_SVA.json';
 import I_UVM_1_UVM_Intro from '../../content/flashcards/I-UVM-1_UVM_Intro.json';
 import I_UVM_4_Factory_and_Overrides from '../../content/flashcards/I-UVM-4_Factory_and_Overrides.json';
 import I_UVM_5_Phasing_and_Synchronization from '../../content/flashcards/I-UVM-5_Phasing_and_Synchronization.json';
@@ -135,7 +130,6 @@ export const flashcardDecks: Record<string, any[]> = {
   F2E_First_Self_Checking_Testbench,
   F2A_Structs_Unions_Enums,
   F2A_Operators_and_Expressions,
-  F3A_Procedural_Blocks_and_Flow_Control,
   F3B_Scheduling_Regions,
   F3C_Delta_Cycles,
   'F2C_Procedural_Constructs': F2C_Procedural_Constructs,
@@ -196,13 +190,9 @@ export const flashcardDecks: Record<string, any[]> = {
   'I-SV-9_Why_UVM': I_SV_9_Why_UVM,
   'I-SV-6_Compiler_Directives_and_Generates': I_SV_6_Compiler_Directives_and_Generates,
   'I-SV-7_DPI_and_Foreign_Language_Interfaces': I_SV_7_DPI_and_Foreign_Language_Interfaces,
-  F4_RTL_and_Testbench_Constructs,
   F4C_Clocking_Blocks,
   F2_HDL_Primer,
   'I-SV-1_OOP': I_SV_1_OOP,
-  'I-SV-2_Constrained_Randomization': I_SV_2_Constrained_Randomization,
-  'I-SV-3_Functional_Coverage': I_SV_3_Functional_Coverage,
-  'I-SV-4_Assertions_SVA': I_SV_4_Assertions_SVA,
   'I-UVM-1_UVM_Intro': I_UVM_1_UVM_Intro,
   'I-UVM-4_Factory_and_Overrides': I_UVM_4_Factory_and_Overrides,
   'I-UVM-5_Phasing_and_Synchronization': I_UVM_5_Phasing_and_Synchronization,

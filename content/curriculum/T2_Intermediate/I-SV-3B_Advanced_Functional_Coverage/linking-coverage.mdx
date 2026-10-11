@@ -1,103 +1,747 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { Quiz, InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Linking Coverage to the Verification Plan"
+description: "Map each verification-plan row to the coverage items and checks that close it, with plan IDs and instance names that survive into the coverage report."
+flashcards: "I-SV-3B_Linking_Coverage"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+---
 
-export const metadata = {
-  title: "Linking Coverage to the V-Plan | Advanced UVM Techniques & Strategy",
-  description: "Tie functional coverage points back to verification plan items.",
-};
+## Quick Take
 
-<InfoPage
-  title="Linking Coverage to the V-Plan"
-  uvm_concept_tags={["coverage", "v-plan"]}
->
+- **What it is:** A **verification plan** (vplan after this first use) is the list of things the design must be shown to do. Each line of it, a **plan row**, has an ID such as `ALU-4`. Linking coverage to the plan means three things: every row names the **coverage items** (coverpoints and crosses) that show its scenario happened and the **check** that shows the design behaved correctly; every coverage item carries its row's ID in `option.comment`, so the ID appears in the coverage report; and every covergroup instance has a stable name, so each lane's numbers can be read and merged (IEEE 1800-2023 §19.7, Table 19-1).
+- **Why it matters:** A coverage report full of percentages answers "how much ran?" but not "which requirement is still open?". With IDs on the items, a reviewer reads the report row by row. With a check named on every row, nobody mistakes "it ran" for "it worked": coverage counts the values it sampled and never looks at whether the result was right (§19.5, §19.11).
+- **The Analogy:** A road-trip checklist where every landmark has a line number, and you write that number next to each photo you take. At the end, you can tell which lines have a photo. *Where it breaks:* a photo proves you were at the landmark, not that it was the right landmark or that it was open. In verification, that second question is answered only by the checks. Also, one photo can serve two lines, and one line may need several photos, so the map from rows to items is many-to-many.
 
-  ## Level 1: Why Link Coverage?
-  *IEEE 1800-2023, Clause 19.7: Specifying coverage options*
+**You will be able to:**
+1. **Write** a plan table in which every scenario row names its coverage items, its check and its goal, and **find** orphan rows (no item or no check) and orphan items (counted, but no row).
+2. **Write** plan IDs into a coverage model at the right level: `option.comment` on each coverpoint and cross, `type_option.comment` for type-level reports, and never on a bin.
+3. **Configure** `option.per_instance` and stable, hierarchy-derived instance names so that each lane's rows can be read separately and line up across tests.
+4. **Decide** from a coverage report and the check results whether a plan row is closed, and **explain** why 100 % coverage on its own proves nothing about correctness.
 
-  A verification plan (V-Plan) lists the features the design must support. Linking **covergroups** to plan items proves that each requirement has been exercised in simulation.
+You need [I-SV-3A Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) (covergroups, coverpoints, bins, crosses, `illegal_bins`, `sample()`) and its [coverage options page](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options) (`option`, `type_option`, `weight`, `per_instance`). The plan-row fields come from [F1B: From spec to plan](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index#from-spec-to-plan). This is the first of three pages after the [module overview](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/index); the next two cover run-time queries and the closure loop.
 
-  **The Analogy:** Imagine a checklist for a road trip. Each time you visit a landmark, you tick it off. Coverage-to-V-Plan linkage is that checklist for verification.
+<BeforeYouStart />
 
-  ## Level 2: Practical Method
+## Build Your Mental Model
 
-  ### Tagging Covergroups
+### Words you need first
 
-  Use options to embed plan information:
+- **Plan row:** one line of the vplan. In F1B it has five fields: feature, scenario, check, coverage item and method. This page adds two more: an **ID** (such as `ALU-4`) and a **goal** (the coverage percentage, or the check result, that closes the row).
+- **Coverage item:** a coverpoint or a cross. Items are the things that get a coverage percentage of their own (§19.11). Bins are inside items and have no percentage of their own.
+- **Check:** code that decides pass or fail: a compare against a **reference model** (a second, independent description of what the design should do), an assertion, or a scoreboard.
+- **Type and instance:** the covergroup definition is a **type**; each object you create from it with `new()` is an **instance**. A bench with two ALU lanes (two copies of the ALU, each with its own collector) has one type and two instances.
+- **Coverage database and report:** at the end of a run the simulator saves coverage into a file (the database) and can print a report from it. The file format is tool-specific. Combining the databases of many runs into one is called **merging**, and it is also tool-specific.
+- **Traceability:** being able to follow a link in both directions: from a plan row to the items and checks that close it, and from any item in the report back to its row.
 
-  <InteractiveCode>
-  ```systemverilog
-  covergroup cg_mode @(posedge clk);
-    option.comment = "VPLAN-5.2"; // link to plan item
-    cp_mode: coverpoint mode;
+### What a plan row holds
+
+Here is the plan for the 8-bit ALU used throughout this module. It has seven operations (`ADD`, `SUB`, `MUL`, `DIV`, `AND`, `OR`, `XOR`) and two operands, `a` and `b`.
+
+| ID | Feature | Scenario | Coverage item | Check | Goal |
+|---|---|---|---|---|---|
+| ALU-1 | Every operation works | Each of the 7 operations is applied | `cp_op` | result compare | 100 % and 0 mismatches |
+| ALU-2 | Operand `a` edge values | `a` is `8'h00` and `8'hFF` | `cp_a` | result compare | 100 % and 0 mismatches |
+| ALU-3 | Operand `b` edge values | `b` is `8'h00` and `8'hFF` | `cp_b` | result compare | 100 % and 0 mismatches |
+| ALU-4 | Every operation at each `a` edge | 7 operations × 2 edges | `x_op_a` | result compare | 100 % and 0 mismatches |
+| ALU-5 | Divide by zero is forbidden by the spec | Never sent | `x_op_b` illegal bin `div_by_zero` | input check, plus the stimulus rule | Never seen |
+| ALU-6 | Every result matches the reference model | Check-only row: exercised by ALU-1 to ALU-4 | none of its own | result compare: `y` against `alu_model()` | 0 mismatches |
+
+Three rules turn this table into something you can trust:
+
+1. **Every scenario row names at least one coverage item and at least one check.** ALU-1 to ALU-4 all point at the result compare: the coverage proves the scenario ran, the compare proves the result was right.
+2. **A check-only row names the scenario rows whose coverage exercises it.** ALU-6 has no coverage item of its own; it is exercised exactly as far as ALU-1 to ALU-4 are covered.
+3. **Every coverage item that counts traces to a row.** An item with no row is an **orphan item**: it moves the score without being evidence for anything. Either give it a row, or give it `option.weight = 0` if it only exists to feed a cross or to guard a forbidden case (ALU-5's `x_op_b`). A scenario row with no item or no check is an **orphan row**: it can never close honestly. (A check-only row such as ALU-6 is not an orphan, because rule 2 ties it to the scenario rows that exercise it.)
+
+Forbidden behaviour (ALU-5) is a row too. It gets an `illegal_bins` in the model, a constraint that stops the stimulus from producing it, and a check. You will see why the check is needed further down.
+
+### The picture: rows on one side, evidence on two
+
+<ArchitectureDiagram
+  title="ALU plan rows linked to coverage items and checks"
+  caption="Plan rows are in the middle. Plain lines go left to the coverage item whose option.comment carries the row ID; dashed lines go right, along a shared bus, to the check that proves the row correct. Both checks are inline if statements in tb_top.apply(), not separate classes. ALU-6 has no plain line: it is a check-only row. x_op_b has weight 0 because it only guards the forbidden case ALU-5."
+  cellWidth={120}
+  cellHeight={46}
+  gapX={44}
+  gapY={22}
+  legend={false}
+  nodes={[
+    { id: "cg", label: "alu_cov.cg", kind: "generic", col: 0, row: 0, rowSpan: 5, container: true },
+    { id: "cp_op", label: "cp_op", sublabel: "comment ALU-1", kind: "generic", col: 0, row: 0 },
+    { id: "cp_a", label: "cp_a", sublabel: "comment ALU-2", kind: "generic", col: 0, row: 1 },
+    { id: "cp_b", label: "cp_b", sublabel: "comment ALU-3", kind: "generic", col: 0, row: 2 },
+    { id: "x_op_a", label: "x_op_a", sublabel: "comment ALU-4", kind: "generic", col: 0, row: 3 },
+    { id: "x_op_b", label: "x_op_b", sublabel: "ALU-5, weight 0", kind: "generic", col: 0, row: 4 },
+    { id: "r1", label: "ALU-1", sublabel: "every op", kind: "generic", col: 1, row: 0 },
+    { id: "r2", label: "ALU-2", sublabel: "a edges", kind: "generic", col: 1, row: 1 },
+    { id: "r3", label: "ALU-3", sublabel: "b edges", kind: "generic", col: 1, row: 2 },
+    { id: "r4", label: "ALU-4", sublabel: "op x a edge", kind: "generic", col: 1, row: 3 },
+    { id: "r5", label: "ALU-5", sublabel: "no DIV by 0", kind: "generic", col: 1, row: 4 },
+    { id: "r6", label: "ALU-6", sublabel: "result correct", kind: "generic", col: 1, row: 5 },
+    { id: "chk_y", label: "result compare", sublabel: "y vs alu_model()", kind: "generic", col: 2, row: 1, rowSpan: 2 },
+    { id: "chk_in", label: "input check", sublabel: "DIV with b == 0", kind: "generic", col: 2, row: 4 }
+  ]}
+  edges={[
+    { from: "r1", to: "cp_op", style: "structural" },
+    { from: "r2", to: "cp_a", style: "structural" },
+    { from: "r3", to: "cp_b", style: "structural" },
+    { from: "r4", to: "x_op_a", style: "structural" },
+    { from: "r5", to: "x_op_b", style: "structural" },
+    { from: "r1", to: "chk_y", style: "causal", via: [[1.5, 0], [1.5, 1.5]] },
+    { from: "r2", to: "chk_y", style: "causal", via: [[1.5, 1], [1.5, 1.5]] },
+    { from: "r3", to: "chk_y", style: "causal", via: [[1.5, 2], [1.5, 1.5]] },
+    { from: "r4", to: "chk_y", style: "causal", via: [[1.5, 3], [1.5, 1.5]] },
+    { from: "r6", to: "chk_y", style: "causal", via: [[1.5, 5], [1.5, 1.5]] },
+    { from: "r5", to: "chk_in", style: "causal" }
+  ]}
+/>
+
+In text: ALU-1, ALU-2, ALU-3 and ALU-4 each link to one coverage item (`cp_op`, `cp_a`, `cp_b`, `x_op_a`) and to the result compare. ALU-5 links to `x_op_b` (weight 0, holding the illegal bin) and to the input check. ALU-6 links only to the result compare. Every name matches the code in Make It Work.
+
+**Predict before you read on.** Suppose you delete the result compare. Which rows can still reach their coverage goal? Which rows can still close?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+ALU-1 to ALU-4 can all still reach 100 %: coverage does not depend on the compare. But none of ALU-1 to ALU-4 or ALU-6 can close, because each names the compare as its check. Only ALU-5 keeps its check (the input check).
+
+</details>
+
+### Putting plan IDs into the model
+
+`option.comment` is an option string that the standard saves "in the coverage database and included in the coverage report" (Table 19-1). You may set it at three levels: covergroup, coverpoint and cross (Table 19-2). Bins have no options at all.
+
+The rule that catches everyone: **a comment set at covergroup level is not copied down to the coverpoints and crosses.** The standard says that `weight`, `goal`, `comment` and `per_instance` set at covergroup level "do not act as default values to the lower syntactic levels" (§19.7). So this puts the ID on the covergroup instance only, and every item row in the report has an empty comment:
+
+```systemverilog
+// snippet: the classic mistake
+covergroup cg with function sample(op_t op, bit [7:0] a);
+  option.comment = "ALU-1 ALU-2 ALU-4";   // labels the instance, not the items
+  cp_op:  coverpoint op;
+  cp_a:   coverpoint a { bins zero = {8'h00}; bins max = {8'hFF}; }
+  x_op_a: cross cp_op, cp_a;
+endgroup
+```
+
+Put each ID inside the item that closes its row:
+
+```systemverilog
+// snippet: one ID per item
+covergroup cg with function sample(op_t op, bit [7:0] a);
+  cp_op: coverpoint op {
+    option.comment = "ALU-1";
+  }
+  cp_a: coverpoint a {
+    option.comment = "ALU-2";
+    bins zero = {8'h00};
+    bins max  = {8'hFF};
+  }
+  x_op_a: cross cp_op, cp_a {
+    option.comment = "ALU-4";
+  }
+endgroup
+```
+
+Where each option is allowed, for the options this page uses (Table 19-2 for `option`, Table 19-4 for `type_option`):
+
+| Option | Covergroup | Coverpoint | Cross | Bin |
+|---|---|---|---|---|
+| `option.comment` | yes (not inherited) | yes | yes | no |
+| `type_option.comment` | yes (not inherited) | yes | yes | no |
+| `option.name` | yes | no | no | no |
+| `option.per_instance` | yes, in the definition only | no | no | no |
+| `option.weight` | yes (not inherited) | yes | yes | no |
+
+**`option.comment` or `type_option.comment`?**
+- `option.comment` belongs to an instance. It is reported with that instance's data, which the tool is required to save only when `option.per_instance = 1` (Table 19-1).
+- `type_option.comment` belongs to the type, so it appears with the cumulative (type) numbers. Type options are written with constant expressions, so every instance has the same value (§19.7.1).
+- If your team reads per-instance reports, `option.comment` on each item is enough. If it reads only the cumulative report, put the ID in `type_option.comment` on each item as well.
+
+**When a row is finer than an item.** Because bins have no options, a row that covers just one value of a coverpoint cannot carry its ID on that bin. You have two choices: split it into its own coverpoint (`cp_a_max: coverpoint a { option.comment = "ALU-2b"; bins max = {8'hFF}; }`), or name the bin after the row (`bins alu_2b_max = {8'hFF};`) and let the item's comment list the parent row. Some plan tools can link individual bins; that is a tool feature, not part of the standard.
+
+### Naming instances so rows line up
+
+A bench with two ALU lanes has two instances of the same covergroup. Two settings decide whether you can tell them apart in the report.
+
+- **`option.per_instance = 1`** tells the tool to save and report this instance's coverage, separately from the type total. When it is 0 (the default), "implementations are not required to save instance-specific information" (Table 19-1). It can be set only inside the covergroup definition (§19.7).
+- **An explicit instance name.** If you do not name an instance, "a unique name for each instance is automatically generated by the tool" (Table 19-1). Nothing in the standard keeps those generated names the same between two tests, two tool versions or two orders of construction. Set the name yourself with `cg.set_inst_name("...")` (Table 19-5) or by assigning `cg.option.name`, and derive the string from the place in the bench hierarchy, for example `"tb_top.dut1"`.
+
+Why the hierarchy? A **regression** is a large batch of tests and seeds run together. When a regression merges the databases of many tests, rows that should be combined are matched by name (how exactly is tool-specific). A name built from the hierarchy is the same in every test that builds the same bench, so lane 1's rows from test A land on lane 1's rows from test B.
+
+A common slip in the reverse direction: reading `cg.get_coverage()` to see one lane. `get_coverage()` returns **type** coverage, across every instance; the lane's own number is `cg.get_inst_coverage()` (§19.8). The [next page](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis) shows how the two are computed.
+
+### A reusable collector
+
+A **collector** is a small class that owns the covergroup, receives one call per observed transaction and samples once per call. The ALU collector puts the pieces together.
+
+```systemverilog
+// snippet: the full version is in Make It Work
+class alu_cov;
+  string name;
+
+  covergroup cg with function sample(op_t op, bit [7:0] a, bit [7:0] b);
+    option.per_instance = 1;                  // save this lane's numbers
+    type_option.comment = "ALU vplan rev 3";  // labels the type only
+    cp_op: coverpoint op { option.comment = "ALU-1"; /* bins */ }
+    // ... cp_a (ALU-2), cp_b (ALU-3), x_op_a (ALU-4), x_op_b (ALU-5)
   endgroup
-  ```
-  </InteractiveCode>
 
-  A reusable collector wraps the covergroup in a class. It samples once per observed transaction, keeps each instance's data separately, and names each instance after the plan item and the channel it watches:
-
-  ```systemverilog
-typedef enum bit [1:0] {IDLE, NORMAL, TURBO} mode_t;
-
-class mode_coverage;
-  localparam string PLAN_ID = "VPLAN-5.2";
-
-  covergroup cg_mode with function sample(mode_t mode);
-    option.per_instance = 1;   // save this instance's data in the database
-    option.comment      = PLAN_ID;
-    cp_mode: coverpoint mode;
-  endgroup
-
-  function new(string inst_name);
-    cg_mode = new();
-    cg_mode.set_inst_name({PLAN_ID, "::", inst_name});
+  function new(string name);
+    this.name = name;
+    cg = new();                // an embedded covergroup is built in new()
+    cg.set_inst_name(name);    // stable, hierarchy-derived
   endfunction
 
-  // Called once per observed transaction, for example by a monitor.
-  function void write(mode_t mode);
-    cg_mode.sample(mode);
+  function void write(op_t op, bit [7:0] a, bit [7:0] b);
+    cg.sample(op, a, b);       // exactly one sample per transaction
   endfunction
 endclass
-  ```
+```
 
-  Create one collector per channel, `mode_coverage chan0_cov = new("chan0");`, and every instance carries the plan ID in both its comment and its instance name. The covergroup has no clocking event, so the only samples are the `write()` calls: nothing is counted twice, and nothing depends on a virtual interface that may not exist yet when the constructor runs.
+Three choices in it are deliberate:
+- **No clocking event.** The covergroup samples only when `write()` calls `cg.sample()`, so nothing is counted on idle cycles and nothing is counted twice.
+- **Built in `new()`.** A covergroup declared inside a class is an **embedded covergroup**. It must be created by assigning `cg = new()` in the class constructor, or it is never created and samples nothing (§19.4).
+- **No virtual interface.** The collector receives values; it never reads signals. In UVM the same class becomes a `uvm_subscriber`, whose `write()` is called by a monitor's analysis port ([I-UVM-2A Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index), [I-UVM-2B TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
 
-  In UVM (from I-UVM-2B on) the same class becomes a `uvm_subscriber`, and its `write()` receives transactions from a monitor's analysis port. See [analysis components](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index#monitors-scoreboards-and-the-analysis-fabric) for how transactions reach these covergroups.
+### Coverage measures, checks verify
 
-  Reports can then filter coverage by `option.comment`, giving traceability back to the V-Plan. When holes appear, adjust stimulus using [Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index).
+This is the idea the whole page rests on. A bin's count goes up when a sampled value falls in it (§19.5). The percentage is computed from covered bins and weights only (§19.11; Table 19-1, `at_least`). Nothing in that computation compares a result with an expected value. A wrong result is counted exactly like a right one.
 
-  ## Level 3: Expert Insights
+So a plan row closes only when both halves are true:
 
-  **Tool integration:** UCIS/UCDB databases preserve `option.comment` and instance names. Feed them into your coverage-report scripts or dashboards so coverage badges line up with the plan hierarchy automatically.
+| Coverage of the row's items | The row's check | What you can claim |
+|---|---|---|
+| At goal | Ran, 0 failures | **Closed**: the scenario happened and the design did the right thing |
+| At goal | Missing, disabled or failing | **Not closed**: false confidence, the most dangerous cell |
+| Below goal | Ran, 0 failures | **Not closed**: the check passed, but on too few scenarios |
+| Below goal | Missing | **Not closed**: a blind spot |
 
-  **Granularity:** Tag the bin level when requirements are nuanced—e.g., `illegal_bins` for forbidden modes vs. `bins` for required ones. Traceability works best when the V-Plan mirrors this structure.
+The [module overview](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/index) draws this as a 2 × 2 picture.
 
-  **Process guardrails:** Schedule periodic coverage reviews with the plan owners. Any time a requirement changes, update both the plan YAML and the covergroup options together so the linkage never drifts.
+**`illegal_bins` is not a checker.** ALU-5's `div_by_zero` bin issues a run-time error when a sampled value matches it (§19.5.6, §19.6.3). But it fires only when its covergroup instance exists and samples that value, and the error is a simulator message, not a UVM report or a test-bench failure count. A regression that only counts its own failures can pass with illegal-bin errors in the log. That is why ALU-5 also has an input check in the bench that counts the forbidden case itself. What happens to illegal bins after `stop()` or under a tool's coverage-off switch is tool-dependent.
 
-  ## Quiz
+### Pitfalls and how to debug them
 
-  <Quiz questions={[
-    {
-      question: "Why link coverage data to the V-Plan?",
-      answers: [
-        { text: "To speed up simulations", correct: false },
-        { text: "To prove each requirement has been exercised", correct: true },
-        { text: "To reduce code size", correct: false },
-        { text: "To enable automatic reset", correct: false }
-      ],
-      explanation: "Linking coverage to the plan demonstrates that every planned feature was verified."
-    }
-  ]} />
+| Symptom in the report or log | Cause | Fix |
+|---|---|---|
+| The covergroup shows an ID, every item row has an empty comment | The ID was set only at covergroup level; it is not inherited (§19.7) | Put `option.comment` inside each coverpoint and cross |
+| Only one set of numbers for the ALU, though there are two lanes | `option.per_instance` is 0, so instance data need not be saved | Set `option.per_instance = 1` in the definition |
+| Instance rows called something like `cg`, `cg_1`, and merged rows do not line up between tests | Tool-generated names | `set_inst_name()` with a hierarchy-derived string |
+| IDs appear in per-instance reports but not in the cumulative report | IDs only in `option.comment` | Also set `type_option.comment` on each item |
+| The compiler rejects an option inside a `bins` line (message wording varies by tool) | Bins have no options (Table 19-2) | Move the ID to the item, or encode the row in the bin name |
+| The total is lower than every row suggests | An orphan item with weight 1 is part of the average | Give the item a row, or `option.weight = 0` if it only feeds a cross or guards a forbidden case |
+| A row is at 100 %, yet a bug in that scenario escaped | The row has no check, or its check is disabled | Name a check on every scenario row; print the check counts next to the coverage |
+| Simulator log has an illegal-bin error, the bench prints PASS | `illegal_bins` is not counted by the bench | Mirror the forbidden condition in a check that counts as a failure |
 
-  <div className="mt-8">
-    <InterviewQuestionPlayground
-      question="A verification engineer has 10 instances of `cg_mode`, representing 10 different channels. They want to ensure they see in the final report which specific channel missed a coverage bin. Which setup step is critical to make this report readable?"
-      options={[
-        { text: "They must set type_option.merge_instances = 1.", isCorrect: false, feedback: "Merging instances changes how the type number is computed (the union of all instances' bins). It does nothing to keep each channel's data visible." },
-        { text: "Set option.per_instance = 1 and call cg_mode.set_inst_name() with a unique string for each instance.", isCorrect: true, feedback: "Correct! option.per_instance = 1 is what makes the tool save and report each instance's coverage; without it, only the type total is guaranteed. set_inst_name() then gives each of the 10 instances a readable, unique name." },
-        { text: "They need to use cross-coverage instead of option.per_instance.", isCorrect: false, feedback: "Cross coverage links features, not instances." },
-        { text: "They must set option.goal = 100 for every instance.", isCorrect: false, feedback: "Goal setting doesn't help identify which instance is failing." }
-      ]}
-    />
-  </div>
+### Recap
 
-</InfoPage>
+<VisualRecap
+  title="One row, two kinds of evidence"
+  rule="Every scenario row names its coverage items and its check. The ID goes in option.comment inside each coverpoint and cross (a covergroup-level comment is not inherited). Each instance gets per_instance = 1 and a stable, hierarchy-derived name. A row closes only when its items reach their goal and its check ran with zero failures."
+  code={`cp_op: coverpoint op {
+  option.comment = "ALU-1";      // on the item
+}
+x_op_a: cross cp_op, cp_a {
+  option.comment = "ALU-4";
+}
+// in new():
+cg = new();
+cg.set_inst_name("tb_top.dut1");`}
+  mistake="Setting the plan ID once on the covergroup, leaving instances with tool-generated names, and reporting a row as closed because its coverage is at 100 % while no check is mapped to it."
+  inTestbench="The collector is a uvm_subscriber fed by a monitor's analysis port. The vplan (spreadsheet or tool format) lists each row's coverage items and checks; the regression report is read row by row against it."
+>
+  <svg viewBox="0 0 260 120" role="img" aria-label="A plan row ALU-4 links to the coverage item x_op_a, which shows it ran, and to the result compare, which shows it was correct. The row closes only when both are satisfied." className="w-full max-w-xs text-foreground">
+    <rect x="90" y="45" width="80" height="30" rx="6" fill="none" stroke="currentColor" />
+    <text x="130" y="64" textAnchor="middle" fontSize="12" fill="currentColor">ALU-4</text>
+    <rect x="4" y="8" width="76" height="30" rx="6" fill="none" stroke="currentColor" />
+    <text x="42" y="27" textAnchor="middle" fontSize="11" fill="currentColor">x_op_a</text>
+    <rect x="180" y="8" width="76" height="30" rx="6" fill="none" stroke="currentColor" strokeDasharray="4 3" />
+    <text x="218" y="27" textAnchor="middle" fontSize="11" fill="currentColor">compare</text>
+    <line x1="90" y1="55" x2="80" y2="35" stroke="currentColor" />
+    <line x1="170" y1="55" x2="180" y2="35" stroke="currentColor" strokeDasharray="4 3" />
+    <text x="42" y="56" textAnchor="middle" fontSize="10" fill="currentColor">it ran</text>
+    <text x="218" y="56" textAnchor="middle" fontSize="10" fill="currentColor">it was right</text>
+    <text x="130" y="105" textAnchor="middle" fontSize="10" fill="currentColor">closed only when both hold</text>
+  </svg>
+</VisualRecap>
+
+## Make It Work
+
+### Worked example: a two-lane ALU with a traced plan report
+
+The bench has two copies of a combinational ALU (`dut0`, `dut1`), one collector per lane, a result compare against a reference model (ALU-6), and an input check for the forbidden case (ALU-5). Lane 0 gets 14 transactions that cover every scenario row. Lane 1 gets only the first 7, so it never sees `a == 8'hFF`. At the end, each collector prints one line per plan-linked item, reading the ID back from the model through `cg.<item>.option.comment` (`option` is a built-in member of every covergroup, coverpoint and cross, §19.10).
+
+```systemverilog
+// compile: alu_pkg.sv
+package alu_pkg;
+  typedef enum bit [2:0] {ADD, SUB, MUL, DIV, AND, OR, XOR} op_t;
+
+  // Reference model for ALU-6. Divide by zero never reaches it (ALU-5).
+  function automatic bit [7:0] alu_model(op_t op, bit [7:0] a, bit [7:0] b);
+    case (op)
+      ADD:     return a + b;
+      SUB:     return a - b;
+      MUL:     return a * b;
+      DIV:     return a / b;
+      AND:     return a & b;
+      OR:      return a | b;
+      default: return a ^ b;   // XOR
+    endcase
+  endfunction
+
+  // Coverage for one ALU lane. Every item carries the plan row it closes.
+  class alu_cov;
+    string name;
+
+    covergroup cg with function sample(op_t op, bit [7:0] a, bit [7:0] b);
+      option.per_instance = 1;                  // save this lane's numbers
+      type_option.comment = "ALU vplan rev 3";  // labels the type only
+
+      cp_op: coverpoint op {
+        option.comment = "ALU-1";
+        bins ops[] = {ADD, SUB, MUL, DIV, AND, OR, XOR};
+      }
+      cp_a: coverpoint a {
+        option.comment = "ALU-2";
+        bins zero = {8'h00};
+        bins max  = {8'hFF};
+      }
+      cp_b: coverpoint b {
+        option.comment = "ALU-3";
+        bins zero = {8'h00};
+        bins max  = {8'hFF};
+      }
+      x_op_a: cross cp_op, cp_a {
+        option.comment = "ALU-4";
+      }
+      // Guards ALU-5 only. Its 13 legal bins belong to no plan row,
+      // so weight 0 keeps them out of the score.
+      x_op_b: cross cp_op, cp_b {
+        option.comment = "ALU-5";
+        option.weight  = 0;
+        illegal_bins div_by_zero = binsof(cp_op) intersect {DIV} &&
+                                   binsof(cp_b.zero);
+      }
+    endgroup
+
+    function new(string name);
+      this.name = name;
+      cg = new();
+      cg.set_inst_name(name);
+    endfunction
+
+    // One call per observed transaction; a UVM subscriber's write() does this job.
+    function void write(op_t op, bit [7:0] a, bit [7:0] b);
+      cg.sample(op, a, b);
+    endfunction
+
+    function void show_item(string id, string item, int c, int t);
+      $display("COV %s %s %s %0d/%0d", name, id, item, c, t);
+    endfunction
+
+    // On a coverpoint or cross, get_inst_coverage(c, t) returns the true
+    // numerator and denominator of that item's percentage (IEEE 1800-2023 19.8).
+    function void report();
+      int c, t;
+      void'(cg.cp_op.get_inst_coverage(c, t));
+      show_item(cg.cp_op.option.comment, "cp_op", c, t);
+      void'(cg.cp_a.get_inst_coverage(c, t));
+      show_item(cg.cp_a.option.comment, "cp_a", c, t);
+      void'(cg.cp_b.get_inst_coverage(c, t));
+      show_item(cg.cp_b.option.comment, "cp_b", c, t);
+      void'(cg.x_op_a.get_inst_coverage(c, t));
+      show_item(cg.x_op_a.option.comment, "x_op_a", c, t);
+      $display("COV %s total %.2f", name, cg.get_inst_coverage());
+    endfunction
+  endclass
+endpackage
+```
+
+```systemverilog
+// compile: alu.sv (the DUT, written independently of alu_model)
+module alu
+  import alu_pkg::*;
+(
+  input  op_t        op,
+  input  logic [7:0] a,
+  input  logic [7:0] b,
+  output logic [7:0] y
+);
+  always_comb begin
+    case (op)
+      ADD:     y = a + b;
+      SUB:     y = a - b;
+      MUL:     y = a * b;
+      DIV:     y = (b != 8'h00) ? a / b : 8'h00;
+      AND:     y = a & b;
+      OR:      y = a | b;
+      XOR:     y = a ^ b;
+      default: y = 8'h00;
+    endcase
+  end
+endmodule
+```
+
+```systemverilog
+// compile: tb_top.sv
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+  import alu_pkg::*;
+
+  op_t        op [2];
+  logic [7:0] a [2], b [2], y [2];
+
+  alu dut0 (.op(op[0]), .a(a[0]), .b(b[0]), .y(y[0]));
+  alu dut1 (.op(op[1]), .a(a[1]), .b(b[1]), .y(y[1]));
+
+  alu_cov cov [2];
+  int pass_count, fail_count, illegal_inputs;
+
+  // ALU-5 stimulus rule: DIV always gets b = 8'hFF; other ops alternate 00/FF.
+  function automatic bit [7:0] b_for(op_t o, int i);
+    return (o == DIV || i % 2 == 1) ? 8'hFF : 8'h00;
+  endfunction
+
+  // Apply one transaction to lane p, check it, then sample coverage.
+  // The ALU is combinational with no clock, so there is no clock edge to race;
+  // a clocked DUT would be driven through a clocking block (F4C).
+  task automatic apply(int p, op_t o, bit [7:0] av, bit [7:0] bv);
+    op[p] = o;
+    a[p]  = av;
+    b[p]  = bv;
+    #1;
+    if (o == DIV && bv == 8'h00) begin          // ALU-5 input check
+      illegal_inputs++;
+      $error("ALU-5 lane %0d: DIV by zero sent", p);
+    end
+    if (y[p] === alu_model(o, av, bv)) pass_count++;   // ALU-6 result compare
+    else begin
+      fail_count++;
+      $error("ALU-6 lane %0d: %s a=%h b=%h y=%h", p, o.name(), av, bv, y[p]);
+    end
+    cov[p].write(o, av, bv);
+  endtask
+
+  initial begin
+    cov[0] = new("tb_top.dut0");   // names follow the bench hierarchy
+    cov[1] = new("tb_top.dut1");
+    for (int i = 0; i < 14; i++)    // lane 0: a = 00 for 7 items, then FF
+      apply(0, op_t'(i % 7), (i < 7) ? 8'h00 : 8'hFF, b_for(op_t'(i % 7), i));
+    for (int i = 0; i < 7; i++)     // lane 1: a = 00 only
+      apply(1, op_t'(i % 7), 8'h00, b_for(op_t'(i % 7), i));
+    cov[0].report();
+    cov[1].report();
+    $display("CHK ALU-5 illegal_inputs=%0d", illegal_inputs);
+    $display("CHK ALU-6 compares=%0d mismatches=%0d",
+             pass_count + fail_count, fail_count);
+    $display("PASS=%0d FAIL=%0d", pass_count, fail_count + illegal_inputs);
+    $finish;
+  end
+endmodule
+```
+
+**Predict first.** Before you read the output, write down lane 1's four item lines and its total. Hints: lane 1 sees all seven operations, only `a == 8'h00`, and both values of `b`; `x_op_b` has weight 0.
+
+Expected output (illustrative, traced by hand from §19.8 and §19.11, not from a simulator run):
+
+```text
+COV tb_top.dut0 ALU-1 cp_op 7/7
+COV tb_top.dut0 ALU-2 cp_a 2/2
+COV tb_top.dut0 ALU-3 cp_b 2/2
+COV tb_top.dut0 ALU-4 x_op_a 14/14
+COV tb_top.dut0 total 100.00
+COV tb_top.dut1 ALU-1 cp_op 7/7
+COV tb_top.dut1 ALU-2 cp_a 1/2
+COV tb_top.dut1 ALU-3 cp_b 2/2
+COV tb_top.dut1 ALU-4 x_op_a 7/14
+COV tb_top.dut1 total 75.00
+CHK ALU-5 illegal_inputs=0
+CHK ALU-6 compares=21 mismatches=0
+PASS=21 FAIL=0
+```
+
+**How the numbers come out.**
+- Lane 0, items 0 to 6, use `a = 8'h00` with each operation once; items 7 to 13 repeat the operations with `a = 8'hFF`. So `cp_a` sees both bins and `x_op_a` sees all 7 × 2 = 14 crosses.
+- Lane 1 stops after item 6, so `cp_a` has 1 of 2 bins and `x_op_a` 7 of 14.
+- `b` alternates: `8'h00` on even items and `8'hFF` on odd ones, except that `DIV` always gets `8'hFF` (the ALU-5 stimulus rule in `b_for()`). Items 0 and 1 already give both values, so `cp_b` is 2/2 on both lanes, and `div_by_zero` is never hit.
+- Lane 1's total is the weighted average of the items with nonzero weight (§19.11): (100 + 50 + 100 + 50) / 4 = 75.00. `x_op_b` has weight 0, so it is left out of both the numerator and the denominator.
+- Each of the 21 transactions is compared once, and the DUT matches the model, so `PASS=21 FAIL=0`.
+
+**Reading it against the plan.** On lane 0, rows ALU-1 to ALU-4 are at goal and the compare ran with 0 mismatches, so they are closed; ALU-5 was never seen; ALU-6 has 0 mismatches over fully covered scenarios. On lane 1, ALU-2 and ALU-4 are open: no `a == 8'hFF` was ever applied there. More seeds of this bench would not help, because lane 1's stimulus can never produce that value; the [closure loop page](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) shows how to classify and fix such holes.
+
+**Run it.** Compile the three files in one compilation, package first (`alu_pkg.sv`, `alu.sv`, `tb_top.sv`), with any simulator that supports IEEE 1800-2023 functional coverage, and run `tb_top`. Covergroup support in open-source simulators is limited; check your tool's documentation. Your tool's own coverage report should show the same IDs next to the same items.
+
+### How to link a block's coverage to its plan
+
+1. **Start from the plan, not the covergroup.** Write the table: ID, feature, scenario, coverage item, check, goal. Mark forbidden rows and check-only rows.
+2. **Check the table for orphans.** Every scenario row needs an item and a check; every check-only row names the rows that exercise it.
+3. **Write one item per row, or one row per item.** Put `option.comment = "<ID>"` inside each coverpoint and cross. Add `type_option.comment` if anyone reads cumulative reports.
+4. **Give leftover items a job.** An item that only feeds a cross or guards a forbidden row gets `option.weight = 0` and a comment saying why.
+5. **Map forbidden rows three ways:** `illegal_bins` in the model, a constraint in the stimulus, and a check that counts the case as a failure.
+6. **Name every instance.** `option.per_instance = 1` in the definition, and `set_inst_name()` with a hierarchy-derived string in the constructor.
+7. **Print the evidence together.** Report each item's `covered/total` with its ID, then the check counts, so one log shows both halves of every row.
+8. **Close rows, not percentages.** A row is closed only when its items are at goal and its check ran with zero failures.
+
+**Checklist before moving on:**
+- [ ] Every scenario row in my plan names at least one coverage item and one check.
+- [ ] Every coverpoint and cross has its own `option.comment`; none relies on a covergroup-level comment.
+- [ ] No bin carries an option; finer rows have their own item or a bin named after the row.
+- [ ] Every item with nonzero weight traces to a plan row.
+- [ ] `option.per_instance = 1` is set in the definition, and every instance has a hierarchy-derived name.
+- [ ] Forbidden rows have an illegal bin, a constraint and a counting check.
+- [ ] I can say, for each row of the example output, whether it is closed and why.
+
+## Push Further
+
+### Expert: plans in tools, and what the standard guarantees
+
+- **What IEEE 1800-2023 guarantees:** `option.comment` and `type_option.comment` are "saved in the coverage database and included in the coverage report" (Table 19-1, Table 19-3). That is all. Filtering a report by comment, linking a plan spreadsheet to coverage paths, annotating a plan with live percentages, and linking individual bins are features of each vendor's plan tool (tool-dependent).
+- **Executable plans** (tool-dependent): many flows keep the vplan in a structured format that names, for each row, coverage paths (such as `tb_top.dut1.x_op_a`), assertions and tests. The tool then computes each row's status from the merged database. Hierarchy-derived instance names are what make those paths stable.
+- **UCIS** (Unified Coverage Interoperability Standard, Accellera, version 1.0, June 2012) is an API plus an XML interchange format for reading and writing coverage data across tools. It is not a database file format; "UCDB" is the name of one vendor's database. Scripts built on UCIS can read comments and instance names, but how a tool maps covergroups into UCIS objects is tool-dependent.
+- **Interview angle:** "How do you prove the plan is closed?" A strong answer says: per row, coverage at goal *and* the mapped check ran with zero failures, on a merged database whose instance names line up, with every exclusion reviewed.
+
+### Expert: per-instance IDs and option timing
+
+- **Per-instance comments.** Instance options can be set from covergroup arguments (§19.7 shows `option.comment = instComment;` with `instComment` passed to `new`) or assigned procedurally after the instance exists, such as `cov.cg.cp_op.option.comment = "ALU-1 lane 1";` (§19.7: "Other instance-specific options can be assigned procedurally after a covergroup has been instantiated").
+- **What cannot vary per instance.** `per_instance` and `get_inst_coverage` "can only be set in the covergroup definition" (§19.7). Type options use constant expressions, so "different instances of a covergroup cannot assign different values to type options" (§19.7.1). A type-level ID is therefore one string for every lane.
+- **Embedded covergroups have an anonymous type** (§19.4). For the ALU collector there is no type name to write `cg_t::type_option.comment = ...` with; set type options in the definition. The `::` form applies to covergroups declared outside a class.
+- **Option evaluation time.** Option assignments in the definition are evaluated when the covergroup is instantiated (§19.7), so an option that reads a class member sees its value at the moment `cg = new()` runs in the constructor.
+
+### Expert: reusing a coverage model across derived classes
+
+- **Embedded covergroup inheritance** (§19.4.1): `covergroup extends cg; ... endgroup` in a derived class adds or overrides coverpoints, crosses and options of the base class's covergroup. The derived covergroup replaces the base one for every reference to the name.
+- **Traceability consequences.**
+  - A derived coverpoint with the same name as a base coverpoint replaces it in the coverage computation, so its plan ID must be declared again in the derived item.
+  - Base options that are not overridden still apply.
+  - "For the purposes of `get_coverage()`, a derived covergroup and its base covergroup are separate types" (§19.4.1), so a plan row fed by both needs both types summed in the plan tool.
+- **Covergroup arguments** let each instance build different bins (the §19.8 example builds 2 and 4 bins from arguments). Rows that depend on such arguments should say which configuration they need, or one lane's bins can silently differ from another's.
+
+### Expert: traceability under change
+
+These are methodology practices, not language rules:
+- **Version the link.** Put the plan revision in `type_option.comment` (as the example does with "ALU vplan rev 3") so a report says which plan it was measured against.
+- **Audit both directions on every spec change.** Orphan rows (a new requirement with no item or check) and orphan items (a removed requirement whose item still counts) both distort the number. A small script that compares the plan's ID list with the IDs printed by `report()` catches both.
+- **Re-baseline instead of mixing.** Merging databases measured against different coverage models or stimulus versions can mix bins that no longer mean the same thing. How a tool merges changed models is tool-dependent; many teams start a fresh baseline when the model changes.
+
+### Expert: interview angles
+
+Answer each question before you open the options.
+
+<InterviewQuestionPlayground
+  title="Interview angle: ten channels, one report"
+  question="A covergroup type is instantiated 10 times, once per channel. The final report must show which channel missed which bin. Which setup step makes that report readable?"
+  options={[
+    { text: "Set type_option.merge_instances = 1.", isCorrect: false, feedback: "That changes how the type number is computed (a union of all instances' bins). It does nothing to keep each channel's data visible." },
+    { text: "Set option.per_instance = 1 in the definition and call set_inst_name() with a unique, hierarchy-derived name for each instance.", isCorrect: true, feedback: "Correct. per_instance = 1 makes the tool save and report each instance's coverage; without it only the type data are required (IEEE 1800-2023 Table 19-1). set_inst_name() gives each instance a readable name that is the same in every test, so merged rows line up." },
+    { text: "Read cg.get_coverage() on each channel's covergroup.", isCorrect: false, feedback: "get_coverage() returns type coverage over all 10 instances, so every channel prints the same number (§19.8). The per-channel number is get_inst_coverage()." },
+    { text: "Set option.goal = 100 on every instance.", isCorrect: false, feedback: "100 is already the default goal, and a goal does not identify which instance is failing." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: the plan is 100 % covered"
+  question="Your lead says the ALU plan is closed because the merged coverage report shows 100 % on every row. What do you ask before agreeing?"
+  options={[
+    { text: "Nothing: 100 % on every row means every requirement was verified.", isCorrect: false, feedback: "Coverage counts sampled values, not correct results (§19.5, §19.11). A wrong result is counted like a right one." },
+    { text: "Did each row's mapped check run with zero failures, are there rows with no check, and were any items excluded or set to weight 0 without a reviewed reason?", isCorrect: true, feedback: "Correct. A row closes only with coverage at goal and a passing check. Exclusions and zero weights raise the number without evidence, so each one needs a recorded, reviewed reason." },
+    { text: "How many seeds were run?", isCorrect: false, feedback: "The seed count says how hard the regression tried, not whether the results were right." },
+    { text: "Whether the covergroups use a clocking event.", isCorrect: false, feedback: "Sampling style matters for what is counted, but it says nothing about whether the design behaved correctly." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+Answer the quiz first; it covers all four objectives. Then do the kata. Come back to the flashcards over the next few days.
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "Plan row ALU-4 is closed by the cross x_op_a: cross cp_op, cp_a. Where must option.comment = \"ALU-4\" go so that the ID appears next to x_op_a in the report?",
+    objective: 2,
+    answers: [
+      { text: "At covergroup level, next to option.per_instance", correct: false, feedback: "A covergroup-level comment labels the instance only. comment is one of the options that do not act as defaults for coverpoints and crosses (IEEE 1800-2023 §19.7)." },
+      { text: "Inside the cross body: x_op_a: cross cp_op, cp_a { option.comment = \"ALU-4\"; }", correct: true, feedback: "Right. Crosses accept comment (Table 19-2), and the comment is saved in the database and included in the report (Table 19-1)." },
+      { text: "On one of the cross's bins", correct: false, feedback: "Bins have no options. If a row is finer than an item, give it its own item or name the bin after the row." },
+      { text: "In cg.set_inst_name(\"ALU-4\")", correct: false, feedback: "set_inst_name() names the whole covergroup instance. Every item of that instance would share it, and the lane would lose its hierarchy name." }
+    ],
+    explanation: "Plan IDs go on the item that closes the row. comment is allowed on covergroups, coverpoints and crosses, is never inherited from the covergroup, and does not exist on bins."
+  },
+  {
+    question: "Row ALU-4 shows x_op_a at 14/14. A later lab run finds that DIV returns a wrong quotient when a is 8'h00, a case x_op_a covers. The result compare was disabled for that regression. Is ALU-4 closed?",
+    objective: 4,
+    answers: [
+      { text: "Yes: the scenario was covered, so it was verified", correct: false, feedback: "This is the classic misconception. Coverage counts sampled values; it never compares a result with an expected value (§19.5, §19.11)." },
+      { text: "No, but coverage would have dropped when the wrong result was sampled", correct: false, feedback: "Coverage has no expected values, so it cannot drop for a wrong result. x_op_a samples the inputs, and the inputs were correct." },
+      { text: "No: the row needs its mapped check to have run with zero failures, and the check was disabled", correct: true, feedback: "Right. Coverage at goal shows the scenario happened; only the check shows the result was right." },
+      { text: "Yes, because an illegal_bins on cp_op would have flagged the bad quotient", correct: false, feedback: "An illegal bin matches sampled input values. It knows nothing about the output, and it is not a checker in any case." }
+    ],
+    explanation: "A row closes only when its items are at goal and its check ran with zero failures. With the compare disabled, ALU-4 is false confidence: 100 % coverage and no evidence of correctness."
+  },
+  {
+    question: "Ten instances of one covergroup type watch ten channels. The report must show which channel missed which bin. What do you set?",
+    objective: 3,
+    answers: [
+      { text: "type_option.merge_instances = 1", correct: false, feedback: "Merging computes the type number as a union of all instances' bins. It does not keep channels apart." },
+      { text: "option.per_instance = 1 in the definition, plus set_inst_name() with a unique hierarchy-derived name per instance", correct: true, feedback: "Right. per_instance = 1 requires each instance's data to be saved and reported (Table 19-1); the names make the rows readable and stable across tests." },
+      { text: "Nothing: print cg.get_coverage() for each channel", correct: false, feedback: "get_coverage() returns type coverage over all ten instances (§19.8), so all ten channels would print the same number." },
+      { text: "A cross of the channel number with every coverpoint", correct: false, feedback: "That changes the model and multiplies its size. Per-instance reporting is the tool for per-channel numbers." }
+    ],
+    explanation: "Per-instance data are saved only when option.per_instance is 1, which can be set only in the definition (§19.7). Explicit names replace the tool-generated ones."
+  },
+  {
+    question: "After merging 40 tests, the report lists lane rows named cg, cg_1, cg_2 and cg_3, and lane 1's numbers from one test land on lane 3's row from another. What is the most likely cause and fix?",
+    objective: 3,
+    answers: [
+      { text: "at_least is too low; raise it to 2", correct: false, feedback: "at_least changes when a bin counts as covered. It has nothing to do with which row a lane's data land on." },
+      { text: "The instances have tool-generated names; set a stable, hierarchy-derived name with set_inst_name() or option.name", correct: true, feedback: "Right. Unnamed instances get names the tool chooses (Table 19-1), and nothing keeps those the same between tests. Merges match rows by name (tool-specific), so the names must be stable." },
+      { text: "Put the plan ID in a covergroup-level option.comment", correct: false, feedback: "A comment is a label, not an identity, and a covergroup-level comment does not reach the items anyway (§19.7)." },
+      { text: "Run more seeds so the rows average out", correct: false, feedback: "Wrong data on a row do not average out; they make the row meaningless." }
+    ],
+    explanation: "Stable, hierarchy-derived instance names are what make per-instance rows line up across a regression."
+  },
+  {
+    question: "Predict: in the Make It Work bench, lane 1 sees all seven operations, only a == 8'h00, and both b edges. x_op_b has option.weight = 0. What does the line COV tb_top.dut1 total print?",
+    objective: 1,
+    answers: [
+      { text: "75.00", correct: true, feedback: "Right. (100 for cp_op + 50 for cp_a + 100 for cp_b + 50 for x_op_a) / 4. Weight 0 removes x_op_b from both numerator and denominator (§19.11)." },
+      { text: "70.77", correct: false, feedback: "That is what you get if x_op_b counted with weight 1 (7 of its 13 legal bins hit, about 53.85 %). Weight 0 leaves it out, which is why it has that weight: its legal bins belong to no plan row." },
+      { text: "87.50", correct: false, feedback: "That is the average of lane 0 (100) and lane 1 (75): the type number from get_coverage(), not lane 1's own get_inst_coverage()." },
+      { text: "50.00", correct: false, feedback: "The total is a weighted average of all items with nonzero weight, not the lowest item." }
+    ],
+    explanation: "Instance coverage is the weighted average of the items (§19.11). Items with weight 0, such as an item that only guards a forbidden case, do not count."
+  },
+  {
+    question: "A plan review finds: row ALU-7 (SUB wraps below zero) with a coverage item and no check, and a coverpoint cp_flags with weight 1 and no plan row. What should happen?",
+    objective: 1,
+    answers: [
+      { text: "Nothing: ALU-7 has coverage, and cp_flags only adds coverage", correct: false, feedback: "ALU-7 can reach 100 % without anyone checking the wrapped result, and cp_flags moves the total without being evidence for any requirement." },
+      { text: "Add a check for ALU-7, and either give cp_flags a plan row or set its weight to 0 with a reason", correct: true, feedback: "Right. ALU-7 is an orphan row (no check) and cp_flags is an orphan item (counted, no row). Both distort what the report claims." },
+      { text: "Delete ALU-7 from the plan, because rows without checks cannot close", correct: false, feedback: "The requirement still exists. Deleting the row hides it instead of closing it." },
+      { text: "Move the ALU-7 ID to the covergroup-level comment so it covers cp_flags too", correct: false, feedback: "Covergroup-level comments do not reach items (§19.7), and a label does not make cp_flags evidence for ALU-7." }
+    ],
+    explanation: "Every scenario row needs an item and a check; every counted item needs a row. Orphans in either direction make the number say something nobody planned."
+  },
+  {
+    question: "The spec forbids DIV with b == 0 (row ALU-5). How should this row be mapped?",
+    objective: 1,
+    answers: [
+      { text: "An ignore_bins for that cross product, so the row shows 100 %", correct: false, feedback: "Excluding a bin is not covering it, and ignore_bins would let a forbidden case pass silently." },
+      { text: "A normal bin with a goal of 100 %, so the regression proves it happens", correct: false, feedback: "The row is forbidden: hitting it is a failure, not progress." },
+      { text: "An illegal_bins in the model, a constraint that stops the stimulus producing it, and a check that counts it as a failure", correct: true, feedback: "Right. illegal_bins raises a simulator error if the case is sampled (§19.5.6, §19.6.3), the constraint keeps it out of the stimulus, and the check makes the bench itself fail." },
+      { text: "No mapping: forbidden behaviour is not part of the plan", correct: false, feedback: "Forbidden behaviour is a requirement too, and the plan must say how it is guarded and checked." }
+    ],
+    explanation: "Forbidden rows get three guards. The check matters because an illegal-bin error is a simulator message, not a failure the bench counts."
+  },
+  {
+    question: "Your team reads only the cumulative (type) coverage report, and option.per_instance is 0. Where should each item's plan ID go so it appears in that report?",
+    objective: 2,
+    answers: [
+      { text: "In type_option.comment on each coverpoint and cross", correct: true, feedback: "Right. Type options belong to the type and are reported with the cumulative numbers (Table 19-3). They use constant expressions, so every instance shares the value." },
+      { text: "In option.comment on each item; it is always saved", correct: false, feedback: "option.comment belongs to an instance. With per_instance = 0, implementations are not required to save instance-specific information (Table 19-1)." },
+      { text: "In the name of every bin", correct: false, feedback: "Bin names can help for rows finer than an item, but they are not the place for every item's ID." },
+      { text: "In set_inst_name()", correct: false, feedback: "That names an instance, and the team does not read per-instance data." }
+    ],
+    explanation: "option.comment travels with instance data; type_option.comment travels with the type. Pick the one that matches the report your team reads, or set both."
+  }
+]} />
+
+### Kata: trace a FIFO plan
+
+A 4-entry FIFO has `push`, `pop` and an occupancy `count` (0 to 4). The collector's covergroup is sampled once per cycle with `sample(bit push, bit pop, int unsigned count)`. Here is the plan, without its last three columns.
+
+| ID | Feature | Scenario |
+|---|---|---|
+| FIFO-1 | Every occupancy level is reached | `count` takes each value 0 to 4 |
+| FIFO-2 | Push while full is dropped and flags overflow | `push` when `count == 4` |
+| FIFO-3 | Pop while empty is forbidden by the spec | `pop` when `count == 0` |
+| FIFO-4 | Push and pop together keep the level | `push` and `pop` in one cycle at levels 1 to 3 |
+| FIFO-5 | Data leave in the order they entered | Check-only row |
+| FIFO-6 | Pop alone at every non-empty level | `pop` without `push` at levels 1 to 4 |
+
+**Your task.** For each row, write the coverage item with its `option.comment`, name the check, and state the goal. Mark any item that needs `option.weight = 0`, and say which rows FIFO-5 depends on.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+```systemverilog
+// snippet: one item per row; IDs on the items
+covergroup fifo_cg with function sample(bit push, bit pop, int unsigned count);
+  option.per_instance = 1;
+  cp_level: coverpoint count {
+    option.comment = "FIFO-1";
+    bins level[] = {[0:4]};
+  }
+  cp_push_full: coverpoint (push && count == 4) {
+    option.comment = "FIFO-2";
+    bins seen = {1};
+  }
+  // Forbidden: guards FIFO-3 only, so it must not count toward the score.
+  cp_pop_empty: coverpoint (pop && count == 0) {
+    option.comment = "FIFO-3";
+    option.weight  = 0;
+    illegal_bins seen = {1};
+  }
+  cp_both: coverpoint count iff (push && pop) {
+    option.comment = "FIFO-4";
+    bins level[] = {[1:3]};
+  }
+  cp_pop_only: coverpoint count iff (pop && !push) {
+    option.comment = "FIFO-6";
+    bins level[] = {[1:4]};
+  }
+endgroup
+```
+
+| ID | Coverage item | Check | Goal |
+|---|---|---|---|
+| FIFO-1 | `cp_level` (5 bins) | Occupancy model: `count` matches a counter in the bench | 100 %, 0 mismatches |
+| FIFO-2 | `cp_push_full` | Overflow flag is 1, `count` stays 4, stored data unchanged | 100 %, 0 failures |
+| FIFO-3 | `cp_pop_empty` illegal bin, weight 0 | Stimulus constraint, plus a check that counts any pop at level 0 as a failure | Never seen |
+| FIFO-4 | `cp_both` (3 bins) | `count` unchanged after the cycle; scoreboard order check | 100 %, 0 failures |
+| FIFO-5 | none (check-only) | Scoreboard: each popped word equals the oldest pushed word | 0 mismatches; exercised by FIFO-1, FIFO-2, FIFO-4 and FIFO-6 |
+| FIFO-6 | `cp_pop_only` (4 bins) | `count` drops by 1; scoreboard order check | 100 %, 0 failures |
+
+**Why these choices.**
+- Each ID is inside its own coverpoint, because a covergroup-level comment would not reach the items (§19.7).
+- `cp_pop_empty` has weight 0: its only bin is illegal, so it has nothing to count, and it exists only to guard FIFO-3. The bench check is still needed, because the illegal bin produces a simulator error, not a failure the bench counts.
+- A coverpoint on an expression such as `(push && count == 4)` turns one scenario into one item, so the row and the item match one-to-one.
+- FIFO-5 is exercised exactly as far as the rows that move data are covered. If FIFO-4 were at 1 of 3 bins, the order check would have been tried on fewer simultaneous push-and-pop levels than the plan asks for, even with 0 mismatches.
+
+</details>
+
+### Flashcards
+
+The deck for this page, **I-SV-3B Linking Coverage**, covers where IDs go, instance naming, orphan rows and items, forbidden rows, and why coverage alone does not close a row. Review it now and again in a few days.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023:
+  - §19.4 (embedded covergroups: an anonymous type, created in the class constructor), §19.4.1 (embedded covergroup inheritance);
+  - §19.5 and §19.5.6 (bins count sampled values; illegal bins issue a run-time error), §19.6.3 (illegal cross products, which take precedence over ignored ones);
+  - §19.7 with Table 19-1 (instance options: `name`, `weight`, `comment`, `per_instance`; what is saved and reported) and Table 19-2 (the level at which each option is allowed; `weight`, `goal`, `comment` and `per_instance` are not inherited);
+  - §19.7.1 with Table 19-3 and Table 19-4 (type options, including `type_option.comment`; constant expressions; the same value for every instance);
+  - §19.8 with Table 19-5 (`set_inst_name()`, `get_coverage()`, `get_inst_coverage()`, and the `(covered, total)` arguments);
+  - §19.10 (the `option` and `type_option` members of covergroups, coverpoints and crosses);
+  - §19.11 (coverage computation: weighted average of items; zero weights excluded).
+- IEEE 1800.2-2020 §13.9 (`uvm_subscriber`; checked in uvm-core 2020.3.1, `uvm_subscriber.svh`).
+- Accellera Unified Coverage Interoperability Standard (UCIS) 1.0, June 2012.
+
+**Related**
+
+- [I-SV-3A Coverage options](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/coverage-options): `option` and `type_option`, goals and weights.
+- [F1B The Verification Mindset](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index): plan rows, and code coverage beside functional coverage.
+- [Coverage APIs and run-time control](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis): type and instance coverage, and querying coverage while the test runs.
+- [The coverage closure loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow): classifying holes such as lane 1's missing `a == 8'hFF`.
+- [I-UVM-2A Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): the coverage collector as a `uvm_subscriber`.
+- [I-UVM-2B TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index): how a monitor's analysis port calls `write()`.
+- [E-SOC-1 SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): plans and closure at chip level.
+
+<NextLesson />

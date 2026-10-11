@@ -1,22 +1,72 @@
 [
   {
     "id": "f4b-1",
-    "question": "What is the primary benefit of using a SystemVerilog interface instead of individual port connections?",
-    "answer": "An interface bundles multiple related signals (like a bus) into a single handle. This drastically reduces the amount of code needed to wire modules together, minimizing the chance of connection errors (like connecting data_in to data_out by mistake)."
+    "question": "What does a SystemVerilog interface give you that individual port connections do not?",
+    "answer": "One named bundle of signals (plus modports, clocking blocks, tasks and processes) declared once and connected with a single port connection, so a new signal is added in one place and no module can be miswired signal by signal (IEEE 1800-2023 §25.3)."
   },
   {
     "id": "f4b-2",
     "question": "What is a modport?",
-    "answer": "A modport (module port) defines a directional view of the signals within an interface. For example, a 'master' modport might define 'addr' as an output and 'ready' as an input, while a 'slave' modport defines the reverse."
+    "answer": "A named list of directions for interface members, declared \"as if inside the module\" that connects through it (§25.5). In `simple_bus_if`, `master` makes `addr`, `data`, `rw` and `valid` outputs and `ready` an input; `slave` is the reverse; `monitor` makes everything an input."
   },
   {
     "id": "f4b-3",
-    "question": "Why is a virtual interface necessary in UVM testbenches?",
-    "answer": "UVM components (like drivers and monitors) are dynamically constructed classes, which cannot contain static hardware modules or physical interfaces. A virtual interface is a variable (pointer) that lives in the dynamic class world but points to a physical interface instance in the static hardware world."
+    "question": "What is a virtual interface, and what happens if a class uses one that was never assigned?",
+    "answer": "A variable that holds a handle to one interface instance (§25.9); it lets class code, which cannot contain an instance, reach the signals. It is null until assigned, and using a null virtual interface is a fatal run-time error, not a compile error."
   },
   {
     "id": "f4b-4",
-    "question": "Can an interface contain logic or just wires?",
-    "answer": "An interface can contain logic! It is common to include functions, tasks (like a read() or write() task), and concurrent assertions (SVA) directly inside the interface to enforce protocol rules locally."
+    "question": "Besides signals, what can an interface contain?",
+    "answer": "Ports, parameters, modports, clocking blocks, tasks and functions, `initial` and `always` processes, continuous assignments and assertions (§25.2-§25.8). It cannot declare or instantiate a module (§25.3). Assertions in interfaces are taught in I-SV-4A."
+  },
+  {
+    "id": "f4b-5",
+    "question": "Two modules connect to `bus_if`, one through `.master` and one through `.monitor`. How many `valid` variables exist?",
+    "answer": "One. A modport is a view of the interface's members, not storage: it creates no signals and copies nothing. Both modules read and write the same `bus_if.valid`."
+  },
+  {
+    "id": "f4b-6",
+    "question": "Name three things a modport does NOT stop.",
+    "answer": "(1) Two modules on the same `master` view both writing one signal: a second writer is illegal only when a writer is `always_ff` or `always_comb` (§9.2.2.2, §9.2.2.4); two plain `always` writers are legal and race. (2) A hierarchical reference such as `tb_top.bus_if.ready`, which bypasses modports (§25.10). (3) Access to types and parameters, which cannot be listed and stay visible (§25.10)."
+  },
+  {
+    "id": "f4b-7",
+    "question": "What does `modport drv (clocking cb);` give the code that uses it?",
+    "answer": "Access to the clocking block `cb` and nothing else: it drives `cb.valid <= 1'b1` and reads `cb.ready` with the clocking block's sample and drive timing (§25.5.5). A raw `valid` is not reachable through `drv`. F4C teaches the timing."
+  },
+  {
+    "id": "f4b-8",
+    "question": "Why is `clk` declared in the port list of `interface simple_bus_if (input logic clk);` while `addr` is declared inside?",
+    "answer": "Only members in an interface's port list can be connected from outside when it is instantiated (§25.4). The clock comes from `tb_top`, so it is a port; the bus signals are created by the interface itself, so they are internal: `simple_bus_if bus_if (.clk);`."
+  },
+  {
+    "id": "f4b-9",
+    "question": "How do you let a module or class call an interface task only through one view?",
+    "answer": "Declare the task inside the interface and list it with `import` in a modport: `modport api (import idle, write);` (§25.7). Code connected through `.api` can call `bus.write(a, d)` and nothing else. A full prototype is needed only for imports from another module, default arguments or binding by name."
+  },
+  {
+    "id": "f4b-10",
+    "question": "Which virtual interface assignments are legal: instance to `.drv` handle, `.drv` handle to plain handle, `#(.DW(64))` instance to `virtual data_if` (default DW = 32)?",
+    "answer": "Only the first. An instance or no-modport handle may go to a modport handle; the reverse is illegal because the modport is part of the type. Parameter values, defaults included, are part of the type too, so DW = 64 and DW = 32 do not match (§25.9)."
+  },
+  {
+    "id": "f4b-11",
+    "question": "Why does a class not see a copy of the signals when it holds a virtual interface?",
+    "answer": "The handle refers to the one interface instance. Reading `vif.ready` returns the live value at that moment, and writing `vif.cb.valid` drives the same signal the DUT sees. Assigning the handle (`drv.vif = bus_if;`) copies a reference, never the signals."
+  },
+  {
+    "id": "f4b-12",
+    "question": "What is the valid/ready rule that prevents deadlock?",
+    "answer": "The source raises VALID without waiting for READY and holds VALID (and its data) until a rising edge where both are 1; the destination may wait for VALID. If both sides waited for the other, nothing would ever move (IHI0022E §A3.2.1)."
+  },
+  {
+    "id": "f4b-13",
+    "question": "Why write `do @(cb); while (cb.ready !== 1'b1);` instead of `while (!cb.ready)`?",
+    "answer": "If READY is x, `!x` is x, which a loop or `if` treats as false (§12.4), so the second form exits and drops VALID with no handshake. `!== 1'b1` keeps waiting until READY is a real 1."
+  },
+  {
+    "id": "f4b-14",
+    "question": "How can a class drive a net (for example a tri-state `wire`) through a virtual interface?",
+    "answer": "Not directly: virtual interface members are usable only in procedural code (§25.9). The interface must give a procedural path: a clocking block output, which creates a driver initialized to 'z (§14.16), or a variable inside the interface plus a continuous assignment to the net."
   }
 ]

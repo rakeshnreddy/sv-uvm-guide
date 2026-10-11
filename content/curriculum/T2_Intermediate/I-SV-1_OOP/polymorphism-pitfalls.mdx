@@ -1,123 +1,895 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Polymorphism Pitfalls and Type Casting"
+description: "Predict which method body a base-class handle runs, downcast safely with $cast, and debug the overriding traps that silently break polymorphic testbench code."
+flashcards: "I-SV-1_Polymorphism_Pitfalls"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+---
 
-export const metadata = {
-  title: "Polymorphism Pitfalls and Type Casting | SystemVerilog OOP",
-  description: "Learn how virtual method resolution works, upcasting vs. downcasting, and how to safely use $cast.",
-};
+## Quick Take
 
-<InfoPage
-  title="Polymorphism Pitfalls and Type Casting"
-  sv_concept_tags={["polymorphism", "$cast", "virtual methods", "downcasting"]}
->
+- **What it is:** A variable declared as a base class can hold a handle to an object of any class derived from it. When you call a method through that handle, two classes are involved: the class the **handle** was declared with, and the class of the **object** it refers to. A `virtual` method runs the object's version; a non-virtual method runs the version the handle's class sees. `$cast` turns a base-class handle back into a derived-class handle, with a check at run time (IEEE 1800-2023 §8.14, §8.16, §8.20).
+- **Why it matters:** Testbenches pass base-class handles everywhere. One driver accepts every kind of transaction, a queue stores them all, and in UVM almost every method signature takes a `uvm_object`, `uvm_sequence_item` or `uvm_component`. A missing `virtual`, a property declared twice, or a `$cast` whose result nobody checks runs the wrong code or reads the wrong field, **with no error message**. The test may still pass.
+- **The Analogy:** A universal remote labelled with the base model. Only the buttons printed on the label exist for you; that is what compiles. A *virtual* button asks the TV that is actually connected what to do. A plain button always performs the label's action, whatever TV is connected. `$cast` is checking the TV's model plate before you use the extra buttons only that model has. *Where it breaks:* a remote has no data. Class **properties** (variables) never ask the connected object anything: reading `h.addr` always uses the handle's class, even for a property the subclass declared again.
 
-  ## Method Resolution: Virtual vs Non-Virtual
-  *IEEE 1800-2023, §8.14 Overridden members and §8.20 Virtual methods*
+**You will be able to:**
+1. **Predict** which body `h.m()` runs from the handle's class, the object's class and where `virtual` first appears, and predict what a property declared again in a subclass reads through a base-class handle.
+2. **Write** an upcast and a checked downcast with `$cast` called as a function, and **predict** what the function form, the task form and a plain assignment do when the cast is invalid.
+3. **Debug** polymorphic code whose override never runs, whose field reads the base value, or whose ignored `$cast` leaves a stale or null handle.
+4. **Explain** why default argument values that differ between a virtual method and its override are a portability bug, citing what IEEE 1800-2023 specifies and what it leaves open.
 
-  When you call a method through a base class handle, SystemVerilog must decide which version of the method to execute.
-  - If the method is **non-virtual**, the compiler binds the call to the declaration it sees from the **handle's declared class** (§8.14).
-  - If the method is **virtual**, the call binds at run time to the **class of the object** the handle refers to: the latest override in that object's class (§8.20).
-  - Once a method is virtual, every override of it in a subclass is virtual too, with or without the keyword (§8.20).
+<BeforeYouStart />
 
-  <InteractiveCode>
-  ```systemverilog
-  class Base;
-    function void print(); $display("Base print"); endfunction
-    virtual function void v_print(); $display("Base v_print"); endfunction
+## Build Your Mental Model
+
+### Why base-class handles are everywhere
+
+Start from a problem you already have. A generator makes several kinds of transaction: plain ones, ones with a CRC field, and ones whose CRC is deliberately wrong. The driver should not need three `drive()` tasks, and the scoreboard should not need three queues.
+
+Inheritance solves this (the [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) introduced it). A **base class** (also called the **superclass**) holds what every transaction shares. Each **derived class** (**subclass**) `extends` it and adds or changes behaviour. A variable whose type is the base class can hold a handle to an object of the base class *or of any subclass* (§8.14). So one `base_txn` queue holds all three kinds, and one `drive(base_txn t)` task accepts all three.
+
+This page uses one small hierarchy throughout. The names match the two explorers further down, so code, tables and explorers all describe the same classes:
+
+- `base_txn`: every transaction.
+- `crc_txn extends base_txn`: adds a `crc` field.
+- `bad_crc_txn extends crc_txn`: adds `corrupt()`, which flips the CRC.
+
+Two terms you will see in every rule below:
+
+- The **handle's class** is the type the variable was *declared* with. The compiler knows it.
+- The **object's class** is the class that `new` actually built. Only the running simulation knows it.
+
+**Polymorphism** is the standard's name for using a superclass variable to hold subclass objects and to reach their methods through it (§8.22). The rest of this page is about when that works and when it silently does not.
+
+### Two classes behind every call
+
+When you write `h.m()`, SystemVerilog makes two decisions:
+
+1. **What compiles is decided by the handle's class.** The compiler looks `m` up in the class `h` was declared with, including what that class inherits. If `m` is not found there, the call does not compile, whatever object `h` holds at run time (§8.14).
+2. **Which body runs depends on whether the declaration it found is `virtual`.**
+   - **Non-virtual:** the call is bound at compile time to the body the handle's class sees. This is **static binding** (§8.14).
+   - **Virtual:** the call is bound at run time to the latest **override** (a subclass declaration of a method with the same name and the same arguments) in the *object's* class. This is **dynamic binding**, also called **dynamic dispatch** (§8.20).
+
+Once a method is virtual, every override of it is virtual too, with or without the keyword (§8.20). The smallest example that shows both rules:
+
+```systemverilog
+// compile
+package dispatch_pkg;                   // a package: shared declarations tb_top imports
+  class base_txn;
+    function string kind();               // non-virtual
+      return "base_txn::kind";
+    endfunction
+    virtual function string describe();   // virtual
+      return "base_txn::describe";
+    endfunction
   endclass
 
-  class Child extends Base;
-    function void print(); $display("Child print"); endfunction
-    virtual function void v_print(); $display("Child v_print"); endfunction
+  class crc_txn extends base_txn;
+    function string kind();               // hides base_txn::kind
+      return "crc_txn::kind";
+    endfunction
+    virtual function string describe();   // overrides base_txn::describe
+      return "crc_txn::describe";
+    endfunction
   endclass
+endpackage
 
-  module demo;
-    Base b;
-    Child c;
-    initial begin
-      c = new();
-      b = c;       // upcast: b refers to a Child object
+module tb_top;
+  import dispatch_pkg::*;
+  base_txn h;
+  crc_txn  c;
 
-      b.print();   // "Base print": resolved by the handle's class
-      b.v_print(); // "Child v_print": resolved by the object's class
-    end
-  endmodule
-  ```
-  </InteractiveCode>
-
-  Members that a subclass adds are invisible through a base-class handle. If `Child` declared a new method `crc()`, then `b.crc()` would not compile even though the object is a `Child` (§8.14). You must first get a `Child` handle, which is what `$cast` is for.
-
-  Explore every combination below: the handle's class, the object's class, where `virtual` is written, and three calls (`describe()`, a `print()` that chains through `super.print()`, and `corrupt()`, which only the subclass has). Open *advanced* to see what happens when `virtual` first appears in the middle of the hierarchy.
-
-  <PolymorphismDispatchVisualizer section="dispatch" />
-
-  ## Upcasting vs. Downcasting
-  *IEEE 1800-2023, §8.16 Casting and §6.24.2 $cast dynamic casting*
-
-  ### Upcasting (always legal)
-  Assigning a subclass handle to a superclass variable is always legal and needs no cast (§8.16).
-
-  ```systemverilog
-  Child c;
-  Base  b;
   initial begin
     c = new();
-    b = c;              // implicit upcast
-    b = Child::new();   // also legal: a typed constructor call (§8.8)
+    h = c;                                // one crc_txn object, two handles
+    $display("%s | %s", h.kind(), h.describe());
+    $display("%s | %s", c.kind(), c.describe());
   end
-  ```
+endmodule
+```
 
-  ### Downcasting (checked at run time)
-  Assigning a superclass handle directly to a subclass variable is illegal, **whatever object it holds**: the compiler only knows the handle's declared class (§8.16). Use `$cast`, which checks the object at run time and succeeds only when the object is the destination class or a subclass of it.
+Expected output (illustrative, traced by hand from §8.14 and §8.20):
 
-  `$cast` has two forms, and they fail differently (§6.24.2):
-  - **As a function** (`if ($cast(dst, src))`), a failed cast returns 0, leaves `dst` unchanged, and reports nothing. Always test the result.
-  - **As a task** (`$cast(dst, src);`), a failed cast is a run-time error, and `dst` is unchanged.
+```text
+base_txn::kind | crc_txn::describe
+crc_txn::kind | crc_txn::describe
+```
 
-  <InteractiveCode>
-  ```systemverilog
-  module demo;
-    Base  b1, b2;
-    Child c;
-    initial begin
-      b1 = Child::new();  // b1 holds a Child
-      b2 = new();         // b2 holds a Base
+Trace it call by call. There is one object, and it is a `crc_txn`:
 
-      // c = b1;          // compile error: no implicit downcast
+| Call | Handle's class | Declaration found | Virtual? | Body that runs |
+|---|---|---|---|---|
+| `h.kind()` | `base_txn` | `base_txn::kind` | no | `base_txn::kind` (the handle decides) |
+| `h.describe()` | `base_txn` | `base_txn::describe` | yes | `crc_txn::describe` (the object decides) |
+| `c.kind()` | `crc_txn` | `crc_txn::kind` | no | `crc_txn::kind` |
+| `c.describe()` | `crc_txn` | `crc_txn::describe` | yes | `crc_txn::describe` |
 
-      if ($cast(c, b1))
-        $display("Cast successful: c now refers to the Child object.");
+The first row is the bug everyone writes once: `crc_txn` "overrides" `kind()`, but code that holds a `base_txn` handle never sees it.
+
+### Experiment: which method runs?
+
+The explorer below uses the three-class hierarchy. You choose the handle's class, the object's class, where `describe()` is first declared `virtual`, and the call. It asks for your prediction before it shows the answer, and the generated code beside it highlights the body that runs.
+
+**Predict before you click.** Write down your answer for each setup first:
+
+1. Handle `base_txn`, object `bad_crc_txn`, "virtual in base_txn", call `h.describe()`.
+2. The same, but "never virtual".
+3. Handle `base_txn`, object `bad_crc_txn`, call `h.corrupt()`.
+4. Handle `crc_txn`, object `bad_crc_txn`, "virtual in base_txn", call `h.print()`. Here `print()` in each subclass first calls `super.print()`.
+
+<PolymorphismDispatchVisualizer section="dispatch" />
+
+**Debrief.** The handle's class decides *what compiles* and which non-virtual body runs. `virtual` hands the choice of body to the object's class.
+
+- Setup 1 runs `bad_crc_txn::describe`, because the declaration that `base_txn` sees is virtual.
+- Setup 2 runs `base_txn::describe`: same object, but the call is now bound statically.
+- Setup 3 does not compile. `corrupt()` exists only in `bad_crc_txn`, and a `base_txn` handle cannot see it (§8.14).
+- Setup 4 prints three lines, base first. `super.print()` is an ordinary call to the version the parent class has, declared there or inherited, and it never dispatches (§8.15). [Constructors, `this`, and `super`](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors) covers `super` in detail.
+
+### Where `virtual` first appears matters
+
+A virtual method may override a non-virtual one (§8.20). So `virtual` can appear for the first time in the middle of a hierarchy. Suppose `base_txn::describe` is non-virtual and `crc_txn` declares `virtual function string describe();`. The object is a `bad_crc_txn` in every row:
+
+| Handle's class | Declaration that handle sees | Body that runs |
+|---|---|---|
+| `base_txn` | `base_txn::describe`, non-virtual | `base_txn::describe` |
+| `crc_txn` | `crc_txn::describe`, virtual | `bad_crc_txn::describe` |
+| `bad_crc_txn` | the override in `bad_crc_txn`, virtual by inheritance | `bad_crc_txn::describe` |
+
+Open **Show advanced** in the explorer above, choose "first virtual in crc_txn", and check each row with the handle set to each class. The fix is simple: declare a method `virtual` at the **root** of the hierarchy, the first class that declares it, so that no handle type sees a non-virtual version. Push Further returns to the wording of the standard on this case.
+
+### Base-class code that calls a virtual method
+
+Calls inside a class work the same way. In a method of `base_txn`, a bare `describe()` means `this.describe()`, and `this` is a `base_txn` handle to the current object (§8.11). If `describe()` is virtual, base-class code runs the subclass override. This is the **hook** pattern: a non-virtual base method fixes the steps, and virtual methods let each subclass fill them in.
+
+```systemverilog
+// snippet: added to base_txn in the Make It Work example
+function string report();                // non-virtual on purpose
+  return $sformatf("%s addr=%h", describe(), addr);
+endfunction
+```
+
+<SequenceDiagram
+  title="h.report() through a base_txn handle that holds a bad_crc_txn object"
+  caption="report() is non-virtual, so base_txn::report runs. Inside it, describe() is a virtual call through this, so the object's class answers: bad_crc_txn::describe runs."
+  columnWidth={150}
+  participants={[
+    { id: "tb", label: "tb_top", sublabel: "base_txn h" },
+    { id: "report", label: "base_txn::report", sublabel: "non-virtual" },
+    { id: "describe", label: "bad_crc_txn::describe", sublabel: "latest override" }
+  ]}
+  messages={[
+    { from: "tb", to: "report", label: "h.report()" },
+    { kind: "note", from: "report", label: "this is a base_txn handle; describe() is virtual there" },
+    { from: "report", to: "describe", label: "this.describe()" },
+    { kind: "return", from: "describe", to: "report", label: "\"bad_crc_txn\"" },
+    { kind: "return", from: "report", to: "tb", label: "\"bad_crc_txn addr=10\"" }
+  ]}
+/>
+
+UVM is built this way. In uvm-core 2020.3.1, `uvm_object::copy()` is non-virtual and calls the virtual `do_copy()`, which your transaction overrides; [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) covers those methods. One warning carries over from constructors: a virtual call made *inside a base-class constructor* also runs the subclass override, before the subclass's own properties are initialized (§8.7, §8.17, §8.20). The [constructors lesson](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors) explains why to avoid it.
+
+### Properties never dispatch
+
+Methods can be virtual. **Properties** (class variables) cannot. If a subclass declares a property with the same name as one it inherits, the object now holds **two** variables. §8.14 calls the second one an overridden member. In practice it *hides* the base one: code that reaches the object through a base-class handle, and every method written in the base class, still uses the base variable (§8.14).
+
+```systemverilog
+// compile
+package shadow_pkg;
+  class base_txn;
+    int addr = 1;
+    function int get_addr();
+      return addr;                        // written in base_txn: base_txn::addr
+    endfunction
+  endclass
+
+  class crc_txn extends base_txn;
+    int addr = 2;                         // a second addr that hides base_txn::addr
+  endclass
+endpackage
+
+module tb_top;
+  import shadow_pkg::*;
+  base_txn b;
+  crc_txn  c;
+
+  initial begin
+    c = new();
+    b = c;                                // one object, two handle types
+    $display("%0d %0d %0d", b.addr, c.addr, c.get_addr());
+  end
+endmodule
+```
+
+Expected output (illustrative; §8.14 gives the same result for its own `Packet` example):
+
+```text
+1 2 1
+```
+
+<figure className="my-6">
+  <svg viewBox="0 0 340 214" role="img" aria-label="Handles b, declared base_txn, and c, declared crc_txn, both point to the same crc_txn object. The object holds two variables named addr: base_txn::addr equal to 1 and crc_txn::addr equal to 2. b.addr and c.get_addr() read base_txn::addr; c.addr reads crc_txn::addr." style={{ width: "100%", maxWidth: 420 }}>
+    <defs>
+      <marker id="pp-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(8,145,178)" />
+      </marker>
+    </defs>
+    <rect x="6" y="20" width="96" height="24" rx="12" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="16" y="36" fontSize="11" fontFamily="monospace" fill="currentColor">base_txn b</text>
+    <rect x="6" y="96" width="96" height="24" rx="12" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="16" y="112" fontSize="11" fontFamily="monospace" fill="currentColor">crc_txn c</text>
+    <path d="M 102 32 C 126 32, 130 34, 150 34" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" markerEnd="url(#pp-arrow)" />
+    <path d="M 102 108 C 126 108, 130 40, 150 40" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" markerEnd="url(#pp-arrow)" />
+    <rect x="150" y="18" width="184" height="112" rx="4" fill="rgba(99,102,241,0.1)" stroke="rgb(99,102,241)" />
+    <text x="158" y="34" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">one crc_txn object</text>
+    <rect x="160" y="46" width="164" height="30" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="168" y="65" fontSize="11" fontFamily="monospace" fill="currentColor">base_txn::addr = 1</text>
+    <rect x="160" y="88" width="164" height="30" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 2" />
+    <text x="168" y="107" fontSize="11" fontFamily="monospace" fill="currentColor">crc_txn::addr = 2</text>
+    <text x="6" y="156" fontSize="10.5" fontFamily="monospace" fill="currentColor">b.addr       reads base_txn::addr  (1)</text>
+    <text x="6" y="174" fontSize="10.5" fontFamily="monospace" fill="currentColor">c.addr       reads crc_txn::addr   (2)</text>
+    <text x="6" y="192" fontSize="10.5" fontFamily="monospace" fill="currentColor">c.get_addr() reads base_txn::addr  (1)</text>
+    <text x="6" y="208" fontSize="10" fill="currentColor" fillOpacity="0.7">Arrows are handles. Both reach the one object; the name picks the slot.</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Properties never dispatch: which <code>addr</code> a name reaches depends only on the class the name is resolved in (§8.14).</figcaption>
+</figure>
+
+Only `c.addr` reaches the new variable. Even `c.get_addr()` returns 1, because `get_addr()` was written in `base_txn`. The classic version in a testbench: a subclass declares `rand bit [7:0] addr;` again to "change" it. Now there are two random `addr` variables. The base class's constraints and every piece of code that holds a base-class handle, such as the driver, use one; the subclass's new constraints use the other. Nothing reports an error; the driver simply sends values the new constraints never touched.
+
+**Fix:** never declare an inherited property again. To change its value, assign it in the subclass constructor. To change its rules, override a method or add a constraint ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) covers constraint inheritance).
+
+### Overriding rules: what must match
+
+An override of a virtual method must keep the **prototype**, the method's first line, compatible with the original (§8.20):
+
+- **Arguments:** matching types, *identical* names, identical qualifiers and identical directions. Renaming `addr` to `a` in the override is an error.
+- **Return type:** the same type, or a class derived from the original return type. For example, a `base_txn` method returning `base_txn` may be overridden by a `crc_txn` method returning `crc_txn`. This is called a **covariant** return type (§8.20 Example 2).
+- **Default argument values:** if the original gives an argument a default, the override must give it one too, and the reverse. The default *expressions* may differ, which is a trap; see Push Further.
+- **Static methods cannot be virtual** (§8.10). A static method belongs to the class, not to an object, so there is no object's class to dispatch on.
+- **A constructor cannot be virtual** (§8.7). So a deep copy of "whatever object this handle refers to" needs an ordinary virtual method, `clone()`, which the next lesson builds.
+- **`super.m()` reaches one level up only.** There is no `super.super` (§8.15).
+
+IEEE 1800-2023 also defines the specifiers `:initial`, `:extends` and `:final`, which let the compiler check overriding for you. Push Further covers them.
+
+### Members only the subclass has
+
+A base-class handle sees only the base class's members. If the object is a `bad_crc_txn`, `h.corrupt()` still does not compile through a `base_txn` handle, and neither does `h.crc`. You first need a handle of a class that declares them. Getting one is what casting is for.
+
+### Upcasting and downcasting
+
+Moving a handle up or down the hierarchy has its own words:
+
+- An **upcast** assigns a subclass handle to a superclass variable: `h = c;`. It is **always legal** and needs no cast (§8.16). Every `crc_txn` *is a* `base_txn`.
+- A **downcast** goes the other way: from a superclass variable to a subclass variable. Written as a plain assignment, `c = h;`, it is **illegal, whatever object `h` holds** (§8.16). The compiler knows only that `h` is declared `base_txn`, and a `base_txn` might not be a `crc_txn`.
+
+A downcast needs `$cast(dst, src)`. It checks the object at run time. It succeeds when the object is of the destination's class or of a class derived from it, and it then assigns the handle (§8.16). A source written as the literal `null` also succeeds (§8.16).
+
+```systemverilog
+// snippet: uses txn_pkg from the Make It Work example
+base_txn src;
+crc_txn  dst;
+
+initial begin
+  src = crc_txn::new();          // typed constructor call: build a crc_txn (§8.8)
+  // dst = src;                  // compile error: no implicit downcast (§8.16)
+  if (!$cast(dst, src))          // function form: test the result
+    $fatal(1, "expected a crc_txn, got %s", src.describe());
+end
+```
+
+The message uses the virtual `describe()` to name the object's real class. `$typename(src)` would not help: it reports the declared type of the expression, `base_txn`, fixed before the simulation starts (§20.6.1).
+
+### `$cast` as a function or as a task
+
+`$cast` can be called in two forms, and they fail differently (§6.24.2):
+
+| Form | Written as | Valid cast | Invalid cast |
+|---|---|---|---|
+| Function | `if ($cast(dst, src)) …` | assigns, returns 1 | does **not** assign, returns 0, and reports nothing. `dst` keeps its old value |
+| Task | `$cast(dst, src);` | assigns | a **run-time error**; `dst` keeps its old value |
+| Plain assignment | `dst = src;` | not allowed for a downcast | compile error (§8.16) |
+
+Called as a function, `$cast` never issues a compile-time or run-time error (§6.24.2). That is its strength, because you choose the reaction, and its danger, because ignoring the result hides the failure. Called as a task, a failed cast is a run-time error. Whether that stops the run depends on how your simulator handles run-time errors (tool-dependent).
+
+**Predict before you click.** In the cast explorer, the source variable `src` is declared `base_txn` and holds a `crc_txn` object. The destination `dst` is declared `bad_crc_txn`. Predict each case:
+
+1. Assign with `if ($cast(dst, src))`.
+2. Assign with `$cast(dst, src);`.
+3. Assign with `dst = src;`.
+4. Change the object to `bad_crc_txn` and repeat case 1.
+
+<PolymorphismDispatchVisualizer section="cast" />
+
+**Debrief.** Cases 1 to 3 try the same invalid downcast: a `crc_txn` object is not a `bad_crc_txn`. The function form returns 0 and the test continues; the task form is a run-time error; the plain assignment never compiles, because the compiler checks only declared types. In case 4 the object is a `bad_crc_txn`, so the run-time check passes and `dst` refers to it. Neither form ever changes `dst` on failure. The explorer's `dst` starts as `null`, so it stays `null`.
+
+### The stale handle: an ignored failed cast
+
+"Leaves `dst` unchanged" turns into a real bug inside a loop. Suppose a queue holds a `crc_txn` (object A), then a plain `base_txn` (object B), and the loop ignores the result:
+
+```systemverilog
+// snippet
+foreach (q[i]) begin
+  void'($cast(c, q[i]));         // result thrown away
+  sb.check(c);
+end
+```
+
+| `i` | `q[i]` holds | `$cast` returns | `c` after the cast | `sb.check` receives |
+|---|---|---|---|---|
+| 0 | A, a `crc_txn` | 1 | A | A |
+| 1 | B, a `base_txn` | 0 | still A | **A again** |
+
+At `i = 1` the scoreboard checks the previous item a second time. If the cast fails on the *first* iteration instead, `c` is still `null`, and the next access through `c` is a null-object access, which is illegal (§8.4).
+
+**Fix:** always test the result, and set `dst = null` before a cast inside a loop, so a failure can never leave the previous object behind.
+
+### Polymorphism: one queue, many classes
+
+Put the pieces together and you get what §8.22 calls polymorphism: a `base_txn q[$]` holds objects of all three classes, and `q[i].describe()` runs each object's own version, although the compiler never knew which class would be loaded into each entry. Where code needs members that only a subclass has, it downcasts with a checked `$cast`. The Make It Work example below builds exactly this.
+
+### Common pitfalls and misconceptions
+
+- **"A non-virtual method called through a base handle runs the derived version."** False. It runs the body the handle's class sees (§8.14). Only `virtual` hands the choice to the object.
+- **"Adding `virtual` in a subclass makes every call dispatch."** Not through a handle whose class sees the earlier, non-virtual declaration. Declare `virtual` at the root.
+- **"Declaring a property again in a subclass overrides it."** It adds a second variable that hides the first. Base-class handles and base-class methods still use the original (§8.14).
+- **"`c = b;` compiles when `b` holds a `crc_txn`."** It never compiles. Legality depends on declared types (§8.16).
+- **"`$cast` as a task returns 0 on failure."** The task form has no return value; a failed cast is a run-time error. Only the function form returns 0 (§6.24.2).
+- **"A failed `$cast` sets `dst` to `null`."** It leaves `dst` unchanged, which may be the previous object (§6.24.2).
+- **"Through a base handle, the default argument always comes from the base declaration."** That is the C++ rule; IEEE 1800-2023 does not state it (Push Further).
+
+<VisualRecap
+  title="The handle decides what compiles; virtual lets the object decide what runs"
+  rule="A call through h compiles only if h's declared class has the member. A non-virtual method runs the body h's class sees; a virtual method runs the latest override in the object's class. Properties never dispatch. Downcasts need $cast: test its result."
+  code={`h = c;                          // upcast: always legal
+$display("%s", h.kind());       // non-virtual: base_txn::kind
+$display("%s", h.describe());   // virtual: the object's describe
+// c = h;                       // compile error: no implicit downcast
+c = null;
+if (!$cast(c, h)) $fatal(1, "not a crc_txn: %s", h.describe());`}
+  mistake="Overriding a method that is not virtual in the base class, declaring a property again in a subclass, or ignoring the result of $cast. None of them produces an error message."
+  inTestbench="Drivers, queues and scoreboards hold base-class handles. Make every extension point virtual at the root, and downcast only where subclass members are needed, with a checked $cast."
+/>
+
+## Make It Work
+
+### A queue of three transaction classes with a checked downcast
+
+This complete example stores all three classes in one `base_txn` queue. It checks that the virtual `describe()` reports each object's class, uses the non-virtual hook `report()`, and downcasts with a checked `$cast` to read `crc` where it exists.
+
+```systemverilog
+// compile
+package txn_pkg;
+  class base_txn;
+    bit [7:0] addr = 8'h10;
+
+    virtual function string describe();
+      return "base_txn";
+    endfunction
+
+    // Non-virtual on purpose: a call through a base_txn handle always runs this.
+    function string kind();
+      return "base";
+    endfunction
+
+    // Non-virtual hook: base-class code that calls a virtual method.
+    function string report();
+      return $sformatf("%s addr=%h", describe(), addr);
+    endfunction
+  endclass
+
+  class crc_txn extends base_txn;
+    bit [7:0] crc = 8'h5a;
+
+    virtual function string describe();
+      return "crc_txn";
+    endfunction
+
+    function string kind();               // hides base_txn::kind
+      return "crc";
+    endfunction
+  endclass
+
+  class bad_crc_txn extends crc_txn;
+    virtual function string describe();
+      return "bad_crc_txn";
+    endfunction
+
+    function void corrupt();              // only bad_crc_txn declares it
+      crc = ~crc;
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  import txn_pkg::*;
+
+  base_txn    q[$];                       // one queue, three classes (§8.22)
+  base_txn    h;
+  crc_txn     c;
+  bad_crc_txn bad;
+  string      exp_class[3] = '{"base_txn", "crc_txn", "bad_crc_txn"};
+  int         pass, fail;
+
+  initial begin
+    h = new();
+    q.push_back(h);
+    h = crc_txn::new();                   // typed constructor call (§8.8)
+    q.push_back(h);
+    bad = new();
+    bad.corrupt();                        // needs a bad_crc_txn handle (§8.14)
+    q.push_back(bad);                     // upcast: always legal (§8.16)
+
+    foreach (q[i]) begin
+      // describe() is virtual, so each object's class answers (§8.20).
+      if (q[i].describe() == exp_class[i]) pass++;
+      else begin
+        fail++;
+        $error("q[%0d]: expected %s, got %s", i, exp_class[i], q[i].describe());
+      end
+
+      c = null;                           // a failed cast must not leave an old object
+      if ($cast(c, q[i]))                 // function form: 0 on failure (§6.24.2)
+        $display("q[%0d] %s kind=%s crc=%h", i, q[i].report(), q[i].kind(), c.crc);
       else
-        $fatal(1, "Cast failed!");
-
-      if (!$cast(c, b2))
-        $display("Cast failed: b2 does not hold a Child. c is unchanged.");
+        $display("q[%0d] %s kind=%s no crc", i, q[i].report(), q[i].kind());
     end
-  endmodule
-  ```
-  </InteractiveCode>
+    $display("PASS=%0d FAIL=%0d", pass, fail);
+  end
+endmodule
+```
 
-  Predict each outcome below, then change the form: the same failed cast returns 0 as a function, stops the test as a task, and does not even compile as a plain assignment.
+Expected output (illustrative, traced by hand, not captured from a simulator run):
 
-  <PolymorphismDispatchVisualizer section="cast" />
+```text
+q[0] base_txn addr=10 kind=base no crc
+q[1] crc_txn addr=10 kind=base crc=5a
+q[2] bad_crc_txn addr=10 kind=base crc=a5
+PASS=3 FAIL=0
+```
 
-  ## Interview Pitfall: Default Arguments on Virtual Methods
+Trace each queue entry. Every entry is reached through `q[i]`, a `base_txn` handle:
 
-  A popular trick question gives a base virtual method and its override **different default argument values**, then asks which default a call through a base handle uses. Here is what IEEE 1800-2023 actually says:
+| `q[i]` | Object's class | `describe()` (virtual) | `kind()` (non-virtual) | `$cast(c, q[i])` | `c.crc` |
+|---|---|---|---|---|---|
+| 0 | `base_txn` | `base_txn` | `base` | 0: not a `crc_txn` | not read |
+| 1 | `crc_txn` | `crc_txn` | `base` | 1 | `5a` |
+| 2 | `bad_crc_txn` | `bad_crc_txn` | `base` | 1: a `bad_crc_txn` is a `crc_txn` | `a5`, flipped by `corrupt()` |
 
-  - An override must match the **presence** of each default, but the default **expressions** may differ (§8.20).
-  - A default expression is evaluated in the scope of the subroutine declaration each time a call uses it (§13.5.3).
+Notice two things. `kind=base` on every line: `crc_txn::kind` exists, but a `base_txn` handle never reaches it. And `report()` is written once in `base_txn`, yet it prints each object's class, because it calls the virtual `describe()`.
 
-  The standard does not say which override's declaration supplies the default when you call through a base-class handle. "The handle's type wins" is the C++ rule; it is not stated for SystemVerilog, so do not rely on it. Treat differing defaults as a portability bug: keep the default identical in every override, or pass the argument explicitly.
+**Run it.** Compile both units, package first, with `tb_top` as the top module, in any IEEE 1800-2023 simulator; no UVM library is needed.
 
-  <InterviewQuestionPlayground
-    question="Given a base virtual method `task send(int delay = 10);` overridden in a child as `task send(int delay = 50);`. If you call `b.send()` where `b` is a base handle pointing to a child object, what can you rely on?"
-    options={[
-      { text: "delay = 10, because default arguments always come from the handle's class.", isCorrect: false, feedback: "That is the C++ rule. IEEE 1800-2023 does not state it for SystemVerilog, so a portable testbench cannot rely on it." },
-      { text: "delay = 50, because the child's override supplies its own default.", isCorrect: false, feedback: "Plausible, but the standard does not guarantee this either. Simulators are not required to agree." },
-      { text: "Compile error, because virtual overrides must use identical default values.", isCorrect: false, feedback: "§8.20 requires only that the presence of a default match. Different default expressions are legal." },
-      { text: "It compiles and the child's body runs, but which default value it receives is not pinned down by the standard; keep the defaults identical or pass the argument.", isCorrect: true, feedback: "Correct. The child's send() runs because the method is virtual (§8.20). Which declaration's default expression is used through a base handle is not specified, so differing defaults are a portability trap." }
-    ]}
-  />
+### How to write polymorphic code that fails loudly
 
-</InfoPage>
+1. Declare every method that subclasses may change `virtual` in the **root** class, the first class that declares it.
+2. Override with an identical prototype: the same argument types, names, directions and default presence. Give defaults the same value too.
+3. Pass and store objects through base-class handles: queues, task arguments, mailboxes.
+4. Downcast only where you need members that only a subclass has. Use the function form, test the result, and on failure report the object's real class through a virtual method: `if (!$cast(c, h)) $fatal(1, "not a crc_txn: %s", h.describe());`.
+5. Inside loops, set the destination to `null` before each `$cast`.
+6. Never declare an inherited property again; set it in the constructor instead.
+
+### Debugging polymorphic code
+
+| Symptom | Likely cause | Fix | What the log shows |
+|---|---|---|---|
+| The subclass's override never runs | The method is not virtual in the handle's class (§8.14, §8.20) | Make it `virtual` in the root class | Nothing; only base-class output |
+| A field reads the base value | The property was declared again in the subclass (§8.14) | Delete the second declaration; assign in the constructor | Nothing |
+| The scoreboard checks the same item twice | A failed function-form `$cast` was ignored and `dst` kept the previous object (§6.24.2) | Test the result; set `dst = null` first | Plausible but wrong comparisons |
+| A null-object access right after a cast | A failed cast left `dst` at `null` | Test the result | Usually a null-object access error; §8.4 says the result is indeterminate and implementations may issue an error |
+| A run-time error at a `$cast(...);` statement | The task form met an object of the wrong class (§6.24.2) | Fix the producer, or use the function form with a message | The simulator's cast error (wording is tool-specific) |
+| Compile error at `c = b;` or `b.corrupt()` | No implicit downcast; the handle's class lacks the member (§8.16, §8.14) | Downcast with `$cast` first | Compile error |
+| Compile error on an override | Its prototype differs from the virtual one (§8.20) | Match argument types, names, directions and default presence | Compile error |
+| Every log line names the base class | The message prints `$typename(h)`, the declared type (§20.6.1) | Print a virtual method's result, such as `describe()` | The base class name on every line |
+
+**Checklist before moving on:**
+- [ ] I can predict, for any handle class, object class and `virtual` placement, which body `h.m()` runs, and why `h.corrupt()` does not compile through a `base_txn` handle.
+- [ ] I can explain why `b.addr` reads 1 and `c.addr` reads 2 for the same object.
+- [ ] I can write a checked downcast with `$cast` as a function, and say what the task form and a plain assignment do with the same invalid cast.
+- [ ] I can spot an ignored `$cast` result in a loop and explain the stale handle it leaves.
+- [ ] I can explain why differing default arguments on a virtual method and its override are a portability bug.
+
+## Push Further
+
+### Expert: default arguments on virtual overrides
+
+A favourite trick question gives a virtual method and its override **different default values**, then asks which default a call through a base-class handle uses. Here is what IEEE 1800-2023 says, and what it does not:
+
+| Question | What the standard says |
+|---|---|
+| Must the override have a default where the original has one? | Yes. "The presence of a default shall match", but matching default *expressions* are not required (§8.20) |
+| When is the default evaluated? | In the scope containing the subroutine declaration, each time a call uses the default; the compiler inserts the value (§13.5.3) |
+| Through a base handle, whose declaration supplies the default? | **Not stated.** "The handle's class wins" is the C++ rule; §13.5.3 does not say which override's declaration is meant for a virtual call |
+| Interface-class methods | A default must be a constant expression with the same value in every class that implements the method (§8.26.8) |
+| `extern` methods | The out-of-block body may omit the prototype's default; if it gives one, it must be syntactically identical to the prototype's (§8.24) |
+
+Which value a simulator inserts for differing defaults is **tool-dependent**: no rule pins it down. Treat differing defaults as a portability bug. Keep each default identical in every override, or pass the argument explicitly.
+
+### Expert: override specifiers `:initial`, `:extends`, `:final` and `class :final`
+
+IEEE 1800-2023 defines specifiers that turn overriding mistakes into compile errors (§8.20, §8.13). They are new enough that you should **check your simulator's support** before relying on them.
+
+```systemverilog
+// snippet: IEEE 1800-2023 specifiers; check your simulator
+class base_txn;
+  virtual function :initial string describe();       // must not override a virtual method
+    return "base_txn";
+  endfunction
+endclass
+
+class crc_txn extends base_txn;
+  virtual function :extends :final string describe(); // must override; no later overrides
+    return "crc_txn";
+  endfunction
+endclass
+
+class :final bad_crc_txn extends crc_txn;           // no class may extend bad_crc_txn
+endclass
+```
+
+- **`:initial`** says the method shall not be a virtual override. It is an error when the method would override a virtual method, including a `pure virtual` one. Overriding a *non-virtual* method with `:initial` is allowed. `:initial` does not make a method virtual (§8.20).
+- **`:extends`** says the method shall override a virtual method; it is an error if there is none. Unlike `:initial`, it implies `virtual` (§8.20).
+- **`:final`** forbids any later override, whether or not either declaration is virtual. It does not make a method virtual, and it is illegal on a `pure virtual` method (§8.20).
+- `:initial` and `:extends` are mutually exclusive; `:final` combines with either. The grammar orders them `:extends :final` (Annex A.2.6, `dynamic_override_specifiers`), although one of §8.20's own examples writes `:final :extends`. Use the grammar's order.
+- An out-of-block (`extern`) method body does not repeat the specifiers (§8.20 Example 3, §8.24).
+- **`class :final`** forbids extending the class at all (§8.13).
+
+Together they catch the two silent bugs from this page at compile time: `:extends` on an override whose base method is not virtual, and `:initial` on a method that accidentally overrides one.
+
+### Expert: exactly when `$cast` succeeds
+
+For class handles, §8.16 lists three cases, and only three, in which `$cast` succeeds:
+
+1. The source and the destination are **assignment compatible**: the destination is the same class as the source or a superclass of it. This is an upcast; a cast is allowed but not needed.
+2. The source is **cast compatible** and the run-time check passes: either the source's type is a superclass of the destination type, or the source's type is an **interface class** (§8.26) and the object is assignment compatible with the destination. §8.26.5 adds that you may cast "sideways" between two interface classes when the object implements both.
+3. The source is the **literal** `null`.
+
+In every other case `$cast` "shall fail", in particular when the types are not cast compatible, "even if the source expression evaluates to null" (§8.16). So `$cast` between two unrelated classes always fails, at run time. The task form gets no type checking from the compiler, and the function form never issues any error (§6.24.2), so under the standard neither form is a compile error. Some tools may still warn about a cast that can never succeed (tool-dependent).
+
+One case the text does not spell out: a superclass handle *variable* that holds `null`. It is not the literal `null` of case 3, and it holds no object to check. Simulators may treat it differently (tool-dependent), so guard with `if (src != null)` before a cast whose outcome matters.
+
+### Expert: `virtual` added in the middle of a hierarchy
+
+§8.20 allows a virtual method to override a non-virtual one, and the mid-hierarchy table above follows §8.14: through a handle of the base class, an overridden member is the base class's own unless it is declared virtual there. §8.20 also opens with a terse sentence: a virtual method "shall override a method in all of its base classes". Read on its own, it could suggest dispatch even through the base handle. The explorer models the §8.14 reading. Verify the behaviour on your simulator before you rely on the mid-hierarchy case (tool-dependent). Better, never write it: declare `virtual` at the root, or add `:initial` to the root declaration where your simulator supports it.
+
+### Expert: how UVM relies on dispatch and casts
+
+uvm-core 2020.3.1 uses every mechanism on this page. The details belong to the UVM lessons; here is where each one appears:
+
+- `virtual class uvm_object` declares `extern virtual function uvm_object clone ();` (`base/uvm_object.svh`). `clone()` returns a `uvm_object` handle, so you downcast the result: `if (!$cast(t, item.clone())) …`.
+- `copy()` is non-virtual and calls the virtual `do_copy (uvm_object rhs)`, the hook pattern above. Your `do_copy()` override receives a `uvm_object` and must `$cast` it to your class before reading your fields. [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) teaches these methods.
+- The factory's `type_id::create()` reaches `uvm_registry_common::create`, which does `if (!$cast(create, obj))` and reports a fatal `FCTTYP` message when an override returned an object of an incompatible class (`base/uvm_registry.svh`). [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index) explains overrides.
+- Phases are virtual methods: `uvm_component` declares `extern virtual task run_phase(uvm_phase phase);` (`base/uvm_component.svh`), and your component's override runs because the phasing code calls it through a base handle.
+- `randomize()` is virtual, so it honours the constraints of the object's class whatever the handle's type (§18.5.2).
+
+### Expert: choosing an extension mechanism
+
+Inheritance with virtual methods is one of several ways to let code vary. Each has a cost:
+
+- **Inheritance + `virtual`** (§8.20): simple and fast to write. But every variation is a new class, deep hierarchies are hard to read, and a missing `virtual` fails silently.
+- **Interface classes** (§8.26): one class can implement several roles without sharing an implementation. Calls through an interface-class handle always dispatch, because interface-class methods are `pure virtual`. See the [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index).
+- **Callbacks** (IEEE 1800.2-2020 §10.7): add behaviour to an existing component without subclassing it; [A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index).
+- **Factory overrides** (IEEE 1800.2-2020 §8.3): swap a subclass in without editing the code that creates the object; [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index).
+
+A useful rule: prefer **composition**, a class that *holds* a handle to a helper object, over hierarchies more than two or three levels deep. Every extra level is another place where a `virtual` can go missing. The standard says nothing about dispatch cost; if speed matters, measure it on your simulator ([E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index)).
+
+### Interview angles
+
+Try each question before you open the options.
+
+<InterviewQuestionPlayground
+  title="Interview angle: differing default arguments"
+  question="A base class declares virtual task send(int delay = 10); and a subclass overrides it as task send(int delay = 50);. Through a base-class handle that holds a subclass object, you call send(). What can you rely on?"
+  options={[
+    { text: "delay = 10, because default arguments always come from the handle's class.", isCorrect: false, feedback: "That is the C++ rule. IEEE 1800-2023 does not state it for SystemVerilog, so a portable testbench cannot rely on it." },
+    { text: "delay = 50, because the subclass's override supplies its own default.", isCorrect: false, feedback: "Plausible, but the standard does not guarantee this either. Simulators are not required to agree." },
+    { text: "Compile error, because virtual overrides must use identical default values.", isCorrect: false, feedback: "§8.20 requires only that the presence of a default match. Different default expressions are legal." },
+    { text: "The subclass's body runs, but which default value it receives is not pinned down by the standard; keep the defaults identical or pass the argument.", isCorrect: true, feedback: "Correct. The subclass's send() runs because the method is virtual (§8.20). Which declaration's default is inserted through a base handle is not specified (§13.5.3), so differing defaults are a portability trap." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: why clone() and not a virtual constructor?"
+  question="A scoreboard holds a base_txn handle h. The object may be any subclass, and it holds a nested header object. The scoreboard must store a fully independent copy. Why can't a constructor do this, and what do you write instead?"
+  options={[
+    { text: "Declare new() virtual in base_txn, so new through the handle builds the object's class.", isCorrect: false, feedback: "A constructor shall not be declared virtual (§8.7), so this does not compile." },
+    { text: "Write a virtual clone() that each class overrides to build an object of its own class and copy every field, including a new header, then $cast the returned base_txn handle where you need the subclass.", isCorrect: true, feedback: "Right. A constructor is never dispatched (§8.7), so the object's class must be reached through a virtual method, and each clone() also copies the nested header. UVM's clone() follows this pattern and returns uvm_object, which you $cast." },
+    { text: "Write h2 = new h; because the shallow copy duplicates the object's own class.", isCorrect: false, feedback: "It does duplicate the object's class (§8.12), but it copies the nested header only as a handle, so both copies share one header. The copy is not independent. The next lesson shows this in detail." },
+    { text: "Assign the handle: the scoreboard then has its own copy.", isCorrect: false, feedback: "Assignment copies the handle, not the object. Both names refer to one object, so later changes by the producer show up in the scoreboard." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: casting a null handle"
+  question="src is declared base_txn and currently holds null. What does if ($cast(dst, src)) do, where dst is a crc_txn?"
+  options={[
+    { text: "It always succeeds, because $cast of null succeeds.", isCorrect: false, feedback: "§8.16 guarantees success only for the literal constant null. A variable that holds null is not spelled out." },
+    { text: "It is a compile error, because src might be null.", isCorrect: false, feedback: "The compiler never knows a variable's value. base_txn to crc_txn is a legal cast to attempt." },
+    { text: "The standard does not spell this case out, so do not rely on either result: check src != null before the cast.", isCorrect: true, feedback: "Right. Literal null succeeds (§8.16 case 3), but a null-valued superclass variable is not one of the three listed cases, and it holds no object to check. Simulators may differ; guard it." },
+    { text: "It is a run-time error, as with the task form.", isCorrect: false, feedback: "The function form never issues an error (§6.24.2). Whatever happens, it reports through its return value." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+Answer the quiz first; it covers all four objectives. Then do the kata, which puts the four silent bugs from this page into one small program. The flashcards for this page come last; come back to them over the next few days.
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "In base_txn, describe() is declared without virtual, and crc_txn and bad_crc_txn each declare their own describe(). Module-scope variables: base_txn h; bad_crc_txn b. In an initial block: b = new(); h = b; What does h.describe() run?",
+    answers: [
+      { text: "bad_crc_txn::describe, because the object is a bad_crc_txn", correct: false, feedback: "That would need dynamic dispatch, and describe() is not virtual in base_txn. A non-virtual call is bound to what the handle's class sees (§8.14)." },
+      { text: "base_txn::describe", correct: true, feedback: "Right. Non-virtual calls are bound at compile time to the handle's class (§8.14)." },
+      { text: "crc_txn::describe, the nearest override", correct: false, feedback: "Nothing selects the middle class. Without virtual, the handle's class decides." },
+      { text: "Compile error, because describe() is declared three times", correct: false, feedback: "Subclasses may declare a method with the same name; the base version is then hidden from subclass handles, not illegal." }
+    ],
+    explanation: "Without virtual in the handle's class the call is bound statically, so base_txn::describe runs whatever the object is. Only a virtual declaration hands the choice to the object's class (§8.14, §8.20).",
+    objective: 1
+  },
+  {
+    question: "describe() is non-virtual in base_txn and first declared virtual in crc_txn. A bad_crc_txn object is reached through two handles: hb declared base_txn and hc declared crc_txn. Which bodies run for hb.describe() and hc.describe()?",
+    answers: [
+      { text: "bad_crc_txn::describe for both: once virtual, always virtual", correct: false, feedback: "Once virtual, the method stays virtual in later subclasses. That does not reach back to base_txn's own non-virtual declaration, which is what hb sees." },
+      { text: "base_txn::describe for hb, and bad_crc_txn::describe for hc", correct: true, feedback: "Right. hb sees the non-virtual base declaration (§8.14); hc sees a virtual one, so the object's class decides (§8.20)." },
+      { text: "base_txn::describe for both", correct: false, feedback: "hc's class sees a virtual declaration, so its call dispatches to the latest override." },
+      { text: "crc_txn::describe for both", correct: false, feedback: "crc_txn::describe runs only for a crc_txn object, or through a crc_txn handle if the method were non-virtual." }
+    ],
+    explanation: "What matters is whether the declaration seen from the handle's class is virtual (§8.14, §8.20; Push Further discusses the wording of the standard on this case). Declaring virtual at the root makes both calls dispatch.",
+    objective: 1
+  },
+  {
+    question: "base_txn declares int addr = 1; and crc_txn declares int addr = 2; again. Module-scope variables: base_txn b; crc_txn c. In an initial block: c = new(); b = c; What does b.addr read?",
+    answers: [
+      { text: "2, because the object is a crc_txn", correct: false, feedback: "Properties never dispatch. Through a base_txn handle the name addr means base_txn::addr (§8.14)." },
+      { text: "1", correct: true, feedback: "Right. The object holds two addr variables, and b's class resolves the name to base_txn::addr (§8.14)." },
+      { text: "Compile error: a subclass cannot declare an inherited name again", correct: false, feedback: "It is legal, which is exactly why the bug is silent." },
+      { text: "X, because the two declarations conflict", correct: false, feedback: "There is no conflict: both variables exist and both are initialized." }
+    ],
+    explanation: "Declaring a property again adds a second variable that hides the first. Base-class handles and base-class methods keep using the original, so b.addr reads 1 and c.addr reads 2.",
+    objective: 1
+  },
+  {
+    question: "Module-scope variables: base_txn b; crc_txn c. In an initial block: b = new(); $cast(c, b); called as a task. What happens?",
+    answers: [
+      { text: "$cast returns 0 and the test continues", correct: false, feedback: "Only the function form returns a value. Called as a task there is nothing to return (§6.24.2)." },
+      { text: "A compile error", correct: false, feedback: "The compiler does no type checking for the task form, and a downcast from base_txn to crc_txn is a legal attempt." },
+      { text: "A run-time error, and c keeps its previous value", correct: true, feedback: "Right. A base_txn object is not a crc_txn. The task form reports a run-time error and leaves the destination unchanged (§6.24.2)." },
+      { text: "c becomes null and no message appears", correct: false, feedback: "A failed cast never assigns, and the task form does report an error." }
+    ],
+    explanation: "The function form returns 0 silently; the task form raises a run-time error. Neither changes the destination on failure (§6.24.2).",
+    objective: 2
+  },
+  {
+    question: "Module-scope variables: base_txn b; crc_txn c. In an initial block: b = crc_txn::new(); c = b; Does the last assignment work?",
+    answers: [
+      { text: "Yes, because b holds a crc_txn object", correct: false, feedback: "The compiler never looks at the object. Legality depends on the declared types only (§8.16)." },
+      { text: "It compiles, then fails at run time", correct: false, feedback: "It never compiles. Run-time checking needs $cast." },
+      { text: "It is a compile error; use $cast", correct: true, feedback: "Right. Assigning a superclass variable directly to a subclass variable is illegal (§8.16)." },
+      { text: "It compiles with a warning and casts implicitly", correct: false, feedback: "SystemVerilog has no implicit downcast for class handles." }
+    ],
+    explanation: "Upcasts are always legal; a downcast written as an assignment is always illegal, whatever the object. $cast performs the run-time check (§8.16).",
+    objective: 2
+  },
+  {
+    question: "Debug: q[0] holds a crc_txn object and q[1] holds a base_txn object. The loop is: foreach (q[i]) begin void'($cast(c, q[i])); sb.check(c); end. What does sb.check receive when i = 1?",
+    answers: [
+      { text: "A null handle, so the run stops with a null-object access", correct: false, feedback: "A failed cast does not set c to null. It leaves c unchanged (§6.24.2)." },
+      { text: "The q[0] object again", correct: true, feedback: "Right. The cast fails and returns 0, the result is thrown away, and c still refers to the crc_txn from i = 0." },
+      { text: "Nothing: the loop stops with a cast error", correct: false, feedback: "The function form never reports an error. Here it is called as a function, with its result cast to void." },
+      { text: "The q[1] object, converted to a crc_txn", correct: false, feedback: "$cast never converts an object. A base_txn object cannot become a crc_txn." }
+    ],
+    explanation: "The stale handle: an ignored failed cast leaves the previous object in c, so the scoreboard checks it twice. Test the result and set c = null before each cast.",
+    objective: 3
+  },
+  {
+    question: "Debug: a monitor logs $typename(t) for every transaction t it handles, where t is declared base_txn. Some objects are crc_txn, yet every line names base_txn. Why?",
+    answers: [
+      { text: "The crc_txn objects were silently converted to base_txn when they were stored", correct: false, feedback: "An upcast copies the handle; the object keeps its class. A virtual call would still reach crc_txn's code." },
+      { text: "$typename reports the declared type of its argument, fixed before the run; print a virtual method such as describe() instead", correct: true, feedback: "Right. $typename returns the type of the expression, which is the handle's declared class (§20.6.1). Only a virtual call asks the object." },
+      { text: "describe() must be made virtual for $typename to work", correct: false, feedback: "$typename never calls a method. It reports the expression's type." },
+      { text: "The simulator has a bug", correct: false, feedback: "This is the specified behaviour of $typename (§20.6.1)." }
+    ],
+    explanation: "Use a virtual method (describe(), or get_type_name() in UVM) to log an object's real class. $typename describes the expression, not the object.",
+    objective: 3
+  },
+  {
+    question: "A base class declares virtual function int scale(int f = 2); and a subclass overrides it with function int scale(int f = 4);. Which statement is correct under IEEE 1800-2023?",
+    answers: [
+      { text: "It does not compile: an override must repeat the same default value", correct: false, feedback: "§8.20 requires the presence of a default to match, not its expression." },
+      { text: "Through a base handle, f is always 2, because defaults come from the handle's class", correct: false, feedback: "That is the C++ rule. The SystemVerilog standard does not state it." },
+      { text: "It is legal, but which default a call through a base handle receives is not specified, so it is a portability bug", correct: true, feedback: "Right. Legal by §8.20, unspecified by §13.5.3 for virtual calls. Keep the defaults identical or pass the argument." },
+      { text: "It is legal, and the subclass's default 4 is always used because the method is virtual", correct: false, feedback: "Virtual decides which body runs, not which default is inserted. Nothing in the standard pins this down." }
+    ],
+    explanation: "Defaults must be present in both or neither (§8.20); their values may differ, and the standard does not say whose value a virtual call through a base handle uses (§13.5.3).",
+    objective: 4
+  }
+]} />
+
+### Kata: four silent bugs
+
+This program compiles and runs without any error, and it is wrong in four places. The author intended:
+
+- `describe()` to report each object's own class;
+- a `crc_txn` to use `addr = 8'h20`, a `base_txn` to keep `8'h10`;
+- only real `crc_txn` objects to print a CRC;
+- `tag()` to behave the same whatever handle calls it.
+
+```systemverilog
+// compile
+package kata_pkg;
+  class base_txn;
+    bit [7:0] addr = 8'h10;
+
+    function string describe();
+      return "base_txn";
+    endfunction
+
+    virtual function string tag(string sep = ":");
+      return {"base", sep};
+    endfunction
+  endclass
+
+  class crc_txn extends base_txn;
+    bit [7:0] addr = 8'h20;
+    bit [7:0] crc  = 8'h5a;
+
+    function string describe();
+      return "crc_txn";
+    endfunction
+
+    virtual function string tag(string sep = "/");
+      return {"crc", sep};
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  import kata_pkg::*;
+  base_txn q[$];
+  base_txn h;
+  crc_txn  c;
+
+  initial begin
+    h = crc_txn::new();
+    q.push_back(h);
+    h = new();
+    q.push_back(h);
+    foreach (q[i]) begin
+      void'($cast(c, q[i]));
+      $display("q[%0d] %s addr=%h crc=%h", i, q[i].describe(), q[i].addr, c.crc);
+    end
+  end
+endmodule
+```
+
+1. **Predict** the two lines this program prints, before you read the solution.
+2. **Find** the four bugs. Three of them change the printed output; one does not.
+3. **Fix** them so the program prints the intended output, and write that output down.
+4. For the bug that does not show in the output, explain why you cannot predict its effect from the standard.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+**1. What it prints** (traced by hand):
+
+```text
+q[0] base_txn addr=10 crc=5a
+q[1] base_txn addr=10 crc=5a
+```
+
+- `describe()` is not virtual in `base_txn`, so `q[i].describe()` always runs `base_txn::describe` (§8.14).
+- `q[i].addr` reads `base_txn::addr` (`8'h10`): `crc_txn` declared a second `addr` (§8.14).
+- At `i = 1` the cast fails and returns 0, the result is ignored, and `c` still refers to the `crc_txn` from `i = 0`, so its CRC prints again (§6.24.2).
+
+**2. The four bugs:**
+
+1. `describe()` is not `virtual` in `base_txn`.
+2. `crc_txn` declares `addr` again instead of setting the inherited one.
+3. The result of `$cast` is thrown away, and `c` is not reset before the cast.
+4. `tag()` has default `":"` in `base_txn` and `"/"` in `crc_txn`. It is legal (§8.20), but `tag()` is never called here, so the output cannot show it.
+
+**3. The fix:**
+
+```systemverilog
+// compile
+package kata_pkg;
+  class base_txn;
+    bit [7:0] addr = 8'h10;
+
+    virtual function string describe();          // fix 1: virtual at the root
+      return "base_txn";
+    endfunction
+
+    virtual function string tag(string sep = ":");
+      return {"base", sep};
+    endfunction
+  endclass
+
+  class crc_txn extends base_txn;
+    bit [7:0] crc = 8'h5a;
+
+    function new();
+      addr = 8'h20;                              // fix 2: set the inherited addr
+    endfunction
+
+    virtual function string describe();
+      return "crc_txn";
+    endfunction
+
+    virtual function string tag(string sep = ":");   // fix 4: same default as the base
+      return {"crc", sep};
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  import kata_pkg::*;
+  base_txn q[$];
+  base_txn h;
+  crc_txn  c;
+
+  initial begin
+    h = crc_txn::new();
+    q.push_back(h);
+    h = new();
+    q.push_back(h);
+    foreach (q[i]) begin
+      c = null;                                  // fix 3: no stale handle...
+      if ($cast(c, q[i]))                        // ...and test the result
+        $display("q[%0d] %s addr=%h crc=%h", i, q[i].describe(), q[i].addr, c.crc);
+      else
+        $display("q[%0d] %s addr=%h no crc", i, q[i].describe(), q[i].addr);
+    end
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand):
+
+```text
+q[0] crc_txn addr=20 crc=5a
+q[1] base_txn addr=10 no crc
+```
+
+The `crc_txn` constructor runs after `base_txn`'s initializer has set `addr` to `8'h10`, because constructors chain from the base class down (§8.17), so `addr` ends at `8'h20`.
+
+**4. Why bug 4 has no predictable output.** With the original defaults, a call such as `h.tag()` through a `base_txn` handle that holds a `crc_txn` runs `crc_txn::tag`, but IEEE 1800-2023 does not say whether `sep` is `":"` or `"/"` (§8.20, §13.5.3). Any answer you saw on one simulator is that tool's choice, not a rule. That is why the fix makes the defaults identical instead of predicting a value.
+
+</details>
+
+### Flashcards
+
+The deck for this page covers dispatch, property hiding, the `$cast` forms, override rules and the default-argument trap. Use it to review over the next few days.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023:
+  - §6.24.2 (`$cast`: function and task forms);
+  - §8.4 (null object handles), §8.7 (constructors cannot be virtual), §8.8 (typed constructor calls), §8.10 (static methods cannot be virtual), §8.11 (`this`);
+  - §8.13 (inheritance; `class :final`), §8.14 (overridden members, including properties), §8.15 (`super`), §8.16 (casting; the three success cases), §8.17 (chaining constructors);
+  - §8.20 (virtual methods: override rules, covariant return types, `:initial`, `:extends`, `:final`), §8.22 (polymorphism: dynamic method lookup);
+  - §8.24 (out-of-block declarations and default arguments), §8.26 (interface classes; §8.26.5 casting, §8.26.8 default arguments);
+  - §13.5.3 (default argument values), §18.5.2 (`randomize()` is virtual), §20.6.1 (`$typename`);
+  - Annex A.1.2 (`class :final` syntax) and A.2.6 (`dynamic_override_specifiers`).
+- IEEE 1800.2-2020 §8.3 (the factory) and §10.7 (callbacks); uvm-core 2020.3.1 `base/uvm_object.svh` (`clone`, `copy`, `do_copy`), `base/uvm_registry.svh` (`uvm_registry_common::create`, `FCTTYP`) and `base/uvm_component.svh` (`run_phase`).
+
+**Prerequisites:** the [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) (classes, handles, inheritance) and [Constructors, `this`, and `super`](/curriculum/T2_Intermediate/I-SV-1_OOP/constructors), the previous lesson.
+
+**Related**
+
+- [Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning): a polymorphic `clone()` uses virtual dispatch and `$cast`.
+- [Parameterized Classes and Abstract Classes](/curriculum/T2_Intermediate/I-SV-1_OOP/parameterized-classes): `pure virtual` methods and abstract base classes.
+- [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index): `randomize()` is virtual, and constraints are inherited by name.
+- [I-UVM-1A: Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index): `uvm_object`, `clone()` and `do_copy()`.
+- [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index): type overrides and the factory's cast.
+- [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index): extending behaviour without subclassing.
+
+<NextLesson />

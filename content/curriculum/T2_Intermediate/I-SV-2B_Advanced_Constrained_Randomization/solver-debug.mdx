@@ -1,116 +1,846 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import InteractiveCode from "@/components/ui/InteractiveCode";
-import { InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Solver Debug and Failure Triage"
+description: "Triage a failing or silently ineffective randomize() call: isolate the minimal conflicting set, check signedness, widths, overrides and implicit solve orders, make failures loud in SystemVerilog and UVM, and reproduce them from a seed."
+flashcards: "I-SV-2B_Solver_Debug"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "Accellera UVM reference implementation"
+    type: "implementation"
+    identifier: "uvm-core 2020.3.1"
+---
 
-export const metadata = {
-  title: "Solver Debug and Failure Triage | Advanced SystemVerilog for Verification",
-  description: "Learn how to approach constraint solver failures, debug conflicting constraints, and use built-in simulator tools.",
-};
+## Quick Take
 
-<InfoPage
-  title="Solver Debug and Failure Triage"
-  sv_concept_tags={["solver failures", "debug", "randomization"]}
->
+- **What it is:** A systematic way to find out why a `randomize()` call failed, or why it "worked" but never produced the values you needed. You confirm the failure, shrink the active constraints to the smallest set that still conflicts, check the usual non-obvious causes (signed and narrow arithmetic, inherited constraints, the solve orders the standard imposes), and then let the specification decide which rule is wrong (IEEE 1800-2023 §18.3, §18.6.3).
+- **Why it matters:** A failed `randomize()` returns 0 and leaves the object holding its old values. Nothing stops the test unless your code checks the result, so a broken constraint can quietly send the same transaction thousands of times while the regression stays green. The opposite bug is just as quiet: a contradiction that makes one mode impossible never fails at all, it simply never generates that mode.
+- **The Analogy:** Four colleagues try to book a meeting, and their calendars together leave no free slot. Removing any one person's calendar frees a slot, but that does not make that person the problem: everyone in the clash is a suspect, and the team's priorities decide who moves. *Where it breaks:* a calendar clash is the same every week, while a constraint set can fail on only some calls when the standard makes the solver pick some values first. And with constraints, the "priorities" are the written specification, not a negotiation.
 
-## The Problem: When `.randomize()` Fails
-*IEEE 1800-2023, Clause 18.6: Randomization methods*
+**You will be able to:**
+1. **Predict** what a failed `randomize()` returns and leaves in the object, and **decide** whether a value that never appears is a solver failure or a silent coverage hole.
+2. **Debug** a failing `randomize()` by isolating a minimal conflicting set with `constraint_mode()`, `rand_mode()` and `randomize(null)`, and use the specification to decide which member is wrong.
+3. **Diagnose** failures that are not plain contradictions: signed or narrow arithmetic, inherited or overridden constraints, and the implicit solve orders that make a call fail on only some calls.
+4. **Write** randomization calls whose failures cannot pass silently, in plain SystemVerilog and in UVM sequences, and **explain** when a recorded seed still reproduces a failure after the code changed.
 
-When you call `obj.randomize()`, you are asking the constraint solver (often an SAT or BDD solver under the hood) to find a set of values for your random variables that satisfies ALL active constraints.
+<BeforeYouStart />
 
-If no combination satisfies every active constraint, `randomize()` returns `0`, the random variables keep their previous values, and `post_randomize()` is not called (IEEE 1800-2023 §18.6.3). **This is a critical failure.** If you do not check the return value, your testbench will continue running using stale, non-randomized data! The opposite is also true: when a solution exists, `randomize()` never fails by bad luck.
+## Build Your Mental Model
 
-<InteractiveCode language="systemverilog" code={`class Packet;
-  rand bit [3:0] size;
-  rand bit [7:0] payload[];
+**How to read this page.** The core path is the first four sections: the words you need, what a failure does, failure versus coverage hole, and finding the minimal conflicting set. The next four sections are practitioner depth: the traps that hide inside a constraint, inherited constraints, failures that happen on only some calls, and failures nobody sees. Make It Work runs the whole triage on one class. Push Further holds the expert layer.
 
-  constraint c_size { size > 10; }
-  constraint c_len  { payload.size() < 5; }
+### Words you need on this page
 
-  // A subtle conflict: we want the payload size to equal 'size'
-  constraint c_match { payload.size() == size; }
-endclass
+You met most of these in [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) and the earlier pages of this module. One sentence each:
 
-program test;
-  initial begin
-    Packet p = new();
-    
-    // ALWAYS CHECK THE RETURN VALUE!
-    if (!p.randomize()) begin
-      $fatal(1, "Randomization failed! Testbench cannot proceed.");
-    end
-  end
-endprogram`} />
+- A **random variable** is a class property declared `rand` or `randc`; `randomize()` gives it a new value.
+- A **state variable** is any other variable a constraint reads. The solver treats its current value as a constant (§18.5.8).
+- A **constraint block** is a named group of rules in a class, `constraint c_len { … }`. An **inline constraint** is the unnamed block after `randomize() with`.
+- A constraint is **active** when the solver must honour it: its block is switched on with `constraint_mode()` (§18.9), or it is part of the current call's inline `with`.
+- The **constraint solver** is the part of the simulator that picks values. IEEE 1800-2023 defines which results are legal, not the algorithm, so solvers differ between tools.
+- A **legal combination** (a solution) is one set of values for all active random variables that makes every active constraint true. If there is none, the constraints are **infeasible**, or **over-constrained**.
+- A **minimal conflicting set** is a group of active constraints that cannot all hold, where removing *any one* member leaves a set that can.
+- A **coverage hole** is a value or scenario your stimulus never produces. **Functional coverage** is the measurement that finds holes; [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index), the next module, teaches it.
+- A **seed** is the starting value of the simulator's random number generators (RNGs). The same seed with the same code repeats the same run.
 
-## Triage Strategies
+### What a failed randomize() does
 
-### 1. Read the Solver Output
-Modern simulators (VCS, Xcelium, Questa) will print a detailed "constraint contradiction" report when randomization fails. It will list the exact variable values and constraints that couldn't be satisfied together. Read this first!
+The standard's starting rule is strong: "If a solution exists, the constraint solver shall find it" (§18.3). A failure therefore means, in the normal case, that no legal combination exists for the active constraints of that call. When that happens (§18.6.2, §18.6.3):
 
-*Example Contradiction Report:*
-```text
-=======================================================
-Solver failed when trying to satisfy the following constraints:
-  c_size: size > 10;
-  c_len: payload.size() < 5;
-  c_match: payload.size() == size;
-=======================================================
-```
-Here, you can easily read that $c\\_size$ forces $size > 10$, but $c\\_len$ restricts $payload$ to $< 5$, and $c\\_match$ requires them to be equal.
+- `randomize()` returns **0**;
+- every random variable **keeps its previous value**; nothing is reset, zeroed or set to X;
+- `pre_randomize()` has **already run**, because `randomize()` calls it before solving;
+- `post_randomize()` is **not called**.
 
-### 2. Disable Constraints Incrementally
-If the solver output is too complex, use `constraint_mode(0)` to turn off constraints one at a time (or half at a time) until randomization succeeds. The last constraint you turned off is part of *a* conflict, but a conflict usually needs several constraints together, a *minimal conflicting set*. Turning one member off breaks that conflict without naming its partners, and a second conflict may still remain. Use the report to see the whole set.
+Here is that rule traced on the frame class from Make It Work, right after `new()`. The test asks for a `LONG` frame, which the class cannot produce:
+
+| | `kind` | `len` | `payload.size()` | `pre_calls` | `post_calls` | return value |
+|---|---|---|---|---|---|---|
+| after `f = new();` | `SHORT` (enum default, value 0) | 0 | 0 | 0 | 0 | |
+| after `f.randomize() with { kind == LONG; }` fails | `SHORT` | 0 | 0 | **1** | **0** | **0** |
+
+Nothing in that row looks wrong. A `SHORT` frame with length 0 is exactly what a careless test would go on to drive. [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index#when-randomize-fails) draws the success and failure paths as a sequence diagram; this page starts where that one ends.
+
+**The mistake everyone makes first** is not checking the return value. Only a checked call is safe:
 
 ```systemverilog
-// Turn off the suspicious constraint
-p.c_size.constraint_mode(0); 
-if (!p.randomize()) $display("Still failing...");
+// snippet: plain SystemVerilog; a UVM version follows under "Failures you never see"
+if (!f.randomize() with { kind == LONG; })
+  $fatal(1, "RAND: frame randomize() failed for kind=LONG");
 ```
 
-### 3. Disable Random Variables
-You can also use `rand_mode(0)` to turn off randomization for specific variables. This treats them as state variables (constants during the solve phase) based on their current value.
-```systemverilog
-p.size.rand_mode(0); // size will retain whatever value it currently holds
-p.randomize(); 
-```
+Three common forms hide the failure: `void'(f.randomize());` throws the result away on purpose; a bare `f.randomize();` statement does the same and only earns a compiler warning (§13.4.1); and `assert (f.randomize());` disappears completely when assertions are switched off (see [Failures you never see](#failures-you-never-see)).
 
-### 4. Beware of Signed Types
-A rand variable takes the signedness of its declared type (§6.11.3). `int`, `shortint`, `longint`, `byte` and `integer` are **signed**; `bit` and `logic` vectors are unsigned. So `rand int len;` can be negative, the usual source of "negative length" bugs. If any operand of an expression is unsigned, the whole expression is evaluated unsigned, and negative values wrap to huge ones. Prefer `bit [N:0]` or `int unsigned` for sizes and lengths, and bound them.
+### A failure or a coverage hole?
 
-### 5. Check Active Overrides
-Are `pre_randomize` or parent class variables altering state? Check if a base class has constraints you forgot about.
+A contradiction does not always make `randomize()` fail. If the contradiction only rules out *some* values, the solver simply never picks them. The call succeeds every time, and the missing values form a coverage hole with no error message anywhere.
 
-## Practice: Debugging a Real Conflict
-The lab's packet has three rules: IPV6 needs `length == 40`, the payload size must equal `length`, and the hardware FIFO accepts only 16, 32, 64, 128 or 256 bytes. **Predict first:** does `randomize()` ever fail with these rules? Check your answer in the model, then force IPV6 and read the conflict.
+The explorer below models a packet with three protocols. Its rules: IPV4 needs a length from 20 to 60, IPV6 needs length 40, and a hardware limit allows only lengths 16, 32, 64, 128 or 256. Stay on the **Debug: silent hole** tab.
+
+**Predict before you look.** Write down your answers:
+
+1. Without any inline constraint, does `p.randomize()` ever fail? How often is `proto` IPV6?
+2. What is P(`proto` == IPV4)? Count the legal (`proto`, `length`) pairs.
+3. Now switch on `randomize() with { proto == IPV6; }`. What happens, and which constraints does the explorer list?
 
 <ConstraintSolverExplorer initialMode="hole" />
 
-It never fails. The solver simply never picks IPV6, so a whole protocol mode disappears without an error message: a *coverage hole*, not a failure. Only a coverage report on `proto` would show it. Forcing `randomize() with { proto == IPV6; }` turns the hole into a real failure whose minimal conflicting set is the IPV6 length rule, the FIFO list and the inline constraint.
+**Debrief.**
 
-<div className="mt-4 mb-8 p-6 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg">
-  <h3 className="text-xl font-semibold mb-2 flex items-center gap-2">
-    <span>🔬</span> Lab Challenge: The Protocol That Never Appears
-  </h3>
-  <p className="mb-4 text-slate-600 dark:text-slate-400">
-    Add a check on the return value, force IPV6 with an inline constraint to expose the conflict, use constraint_mode(0) to confirm the conflicting set, then fix the rules so IPV6 packets can be generated. The lab's README still describes intermittent failures; with these constraints you will see none until you force IPV6.
-  </p>
-  <a 
-    href="/practice/lab/randomization-advanced-1" 
-    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
-  >
-    Start Debugging Lab →
-  </a>
-</div>
+1. It never fails, and `proto` is **never** IPV6. IPV6 needs length 40, and 40 is not in the hardware list, so no legal pair contains IPV6. The solver picks among the pairs that remain.
+2. 1/6. IPV4 owns one legal pair (length 32: the only listed length from 20 to 60); RAW owns five (any listed length). Every legal pair is equally likely (§18.5.9).
+3. Every call fails. The inline constraint makes IPV6 mandatory, so the explorer lists a minimal conflicting set of three members: the inline `proto == IPV6`, the IPV6 length rule and the hardware list.
 
-## Interview Pitfall: The Silent Failure
+The explorer's feedback says the solver "never picks a value and then gives up". That is true *here*, where every constraint is solved together. It is not true everywhere: [When a solution exists but randomize() still fails](#when-a-solution-exists-but-randomize-still-fails) shows three cases where the standard makes the solver pick some values first.
 
-<InterviewQuestionPlayground
-  question="You run a UVM test overnight and notice that while the test passed, every single generated transaction had the exact same payload (all zeros). What is the most likely cause?"
-  options={[
-    { text: "The random seed was kept constant.", isCorrect: false, feedback: "Even with a constant seed, successive calls to randomize() on the same object will produce different values." },
-    { text: "The generator forgot to check the return value of randomize(), and the randomization was failing.", isCorrect: true, feedback: "Correct! This is the classic 'silent failure'. If randomize() fails, the object variables are left untouched (usually 0s or whatever they were initialized to). If the sequence doesn't check the return value and raise a fatal error, it just drives the same default values forever." },
-    { text: "The constraints were too loose, so the solver defaulted to 0.", isCorrect: false, feedback: "Solvers don't default to 0; they pick uniformly distributed values in the legal space." },
-    { text: "UVM doesn't support SystemVerilog randomization natively.", isCorrect: false, feedback: "UVM heavily relies on SV randomization." }
+Two lessons carry over to every testbench. First, forcing a value with an inline constraint is the fastest way to turn a hole into a failure you can debug. Second, the model has three members because its length rule mentions `length` directly. The lab packet at the end of this page routes the length through a payload, `payload.size() == length`, so its minimal set has **four** members.
+
+### Finding the minimal conflicting set
+
+When a call fails on every attempt, find the smallest set of active constraints that still conflicts. Every member of that set is a suspect. The solver cannot tell you which one is wrong; only the specification can.
+
+Why insist on the *minimal* set? Because the obvious bisection misleads. If you switch blocks off one at a time until the call succeeds, the last block you switched off is **a** member of a conflict, not necessarily **the** wrong rule. Its partners are still in the class, and a second, independent conflict may still remain.
+
+| Tool | What it does | Use it to | Watch out for |
+|---|---|---|---|
+| The simulator's failure report | Many simulators print the constraints, and often the variable values, involved in a failure | Get a first candidate set in seconds | The format, detail and options are tool-dependent; the standard requires no report |
+| `obj.c_name.constraint_mode(0)` | The solver ignores that block on later calls (§18.9) | Remove one block at a time and see whether the call now succeeds | It works only on **named blocks**: an inline `with` constraint stays active until you edit the call |
+| `obj.var.rand_mode(0)` | `var` becomes a state variable, so its **current value** is a constant (§18.8) | Pin a variable to a value the spec says is legal and see whether the rest can be solved | A frozen value can create a *new* conflict; freeze only at a value you have checked |
+| `obj.randomize(null)` | Randomizes nothing and returns 1 only if every active constraint holds for the current values (§18.11.1) | Load values the spec calls legal and ask which block rejects them | Switch blocks on one at a time to name the guilty one |
+
+Two more facts shorten the search:
+
+- **Soft constraints never belong to a minimal conflicting set.** The solver discards a soft constraint that conflicts, and a call whose only conflicts involve soft constraints can never fail (§18.5.13, §18.5.13.1). Look only at hard constraints.
+- **`randomize(v, w)` narrows the problem.** With arguments, only the named properties are random for that call and every other property is a state variable (§18.11). That lets you randomize one part of the object while the rest stays at values you trust.
+
+The worked example in Make It Work applies the second and fourth tools to a frame class whose spec says LONG frames carry at least 9 bytes. Its results are the picture of this method:
+
+| Experiment (with the inline `kind == LONG` still active) | Call succeeds? | What it tells you |
+|---|---|---|
+| all blocks on | no | the failure is real and repeatable |
+| `c_len` off | no | `c_len` is not needed for this conflict |
+| `c_payload` off | yes | `c_payload` is a member |
+| `c_long` off | yes | `c_long` is a member |
+| `c_buffer` off | yes | `c_buffer` is a member |
+| `randomize(null)` on a spec-legal 12-byte LONG frame, one block at a time | only `c_buffer` returns 0 | `c_buffer` rejects a frame the spec allows: **that** rule is wrong |
+
+The minimal conflicting set is the inline `kind == LONG`, `c_long`, `c_payload` and `c_buffer`. Three of the four are correct; only the comparison with the spec singles out `c_buffer`.
+
+**Try the method on a grid.** The lab below has two 3-bit random variables, `x` and `y`, and four blocks. You may have seen this scenario in I-SV-2A; this time, run the full triage.
+
+1. **Predict:** with all four blocks on, does `randomize()` succeed?
+2. Switch blocks off one at a time. Which single block, when off, does **not** let the call succeed? Is `c_odd` guilty?
+3. Now switch on `y.rand_mode(0) with y = 4` and switch all blocks back on. **Predict** again: which blocks now conflict?
+
+<ConstraintSolverHeatmapVisualizer initialScenario="debug" scenarios={["debug"]} />
+
+**Debrief.**
+
+1. It fails. `c_x` (`x > 3`) and `c_y` (`y > 2`) force `x + y` to be at least 7, and `c_sum` demands less than 6.
+2. Switching off `c_sum`, `c_x` or `c_y` each makes the call succeed; switching off `c_odd` does not. The minimal conflicting set is `c_sum`, `c_x` and `c_y`. `c_odd` (`y % 2 == 1`) is innocent: odd values of `y` exist that fit everything else.
+3. Now there are **two** separate conflicts. `y` is a state variable holding 4, so `c_odd` is simply false: a one-member conflict that did not exist before. And `c_sum` with `c_x` still conflicts (`x + 4 < 6` needs `x < 2`). Freezing a variable is a sharp tool: it turns an innocent block into a failing one if the frozen value is wrong. The visual names one minimal set at a time; when you fix one, look again.
+
+### Signedness, width and 4-state traps
+
+Some failures, and many "impossible" values that do appear, come from the expression rules of IEEE 1800-2023 Clause 11, which apply inside constraints unchanged.
+
+**Signedness.** A random variable takes the signedness of its declared type: `byte`, `shortint`, `int`, `integer` and `longint` are **signed**; `bit` and `logic` vectors are **unsigned** (§6.11.3). The myth "random variables are unsigned" causes the classic bug:
+
+```systemverilog
+// snippet
+rand int delay;
+constraint c_delay { delay < 10; }   // legal set: -2147483648 .. 9
+```
+
+Almost every legal value is negative: only 10 of about 2.1 billion are 0 to 9, and each legal value is equally likely (§18.5.9). Write `delay inside {[0:9]}`, or declare `rand int unsigned delay;` and bound it.
+
+The opposite surprise comes from mixing. If any operand of an expression is unsigned, the expression is evaluated as unsigned (§11.8.1). So with `bit [31:0] max_delay = 10;` the constraint `delay < max_delay` compares unsigned values: a negative `delay` looks like a huge number and is excluded. The class works by accident, and it breaks the day someone changes `max_delay` to `int`.
+
+**Predict before you click.** In the visual below, `i` is an `int` holding −1 and `w` is a `logic [31:0]` holding 1. Is `i < w` true or false? Then try the two fixes.
+
+<SignednessVisualizer scenario="int-vs-logic" />
+
+**Debrief.** `i < w` is **false**: `w` is unsigned, so the comparison is unsigned and −1 becomes 4,294,967,295. Inside a constraint the solver obeys exactly the same rule; it does not "know what you meant". The casts `$signed(w)` and `int'(w)` make the comparison signed again.
+
+**Width.** Operands are sized by the expression rules of §11.6.1 before the solver sees them. In the standard's own example `class SimpleSum; rand bit [7:0] x, y, z; constraint c { z == x + y; }` (§18.6.1), every operand is 8 bits, so the sum wraps:
+
+| Constraint | Widths in the expression | Is `x = 200, y = 100` legal? |
+|---|---|---|
+| `z == x + y` (all 8-bit) | 8 bits: 300 wraps to 44 | yes, with `z = 44` |
+| `x + y < 300` | the literal 300 is 32 bits, so the sum is computed in 32 bits | no: 300 is not less than 300 |
+| `x + y < 8'd44` | 8 bits: 300 wraps to 44 | no: 44 is not less than 44, but `x = 200, y = 99` passes |
+
+The same applies to array reductions: `arr.sum()` has the element type unless you write `arr.sum() with (int'(item))` (§18.5.7.2). [Conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) covers reductions in depth.
+
+**4-state values.** Constraints support only 2-state values: an `x` or `z` value, or a 4-state operator such as `===`, "shall result in an error" (§18.3). A `logic` configuration knob that nobody assigned still holds X, and a constraint that reads it fails with an error rather than a normal failure. Initialize knobs, or declare them as 2-state `bit`.
+
+### Inherited and overridden constraints
+
+A class inherits every constraint of its base class, and `randomize()` is virtual, so it uses the constraints of the **object**, whatever the type of the handle you call it through (§18.5.2). Two naming rules decide what is active:
+
+- a derived-class constraint with the **same name** as a base-class constraint **replaces** it;
+- a derived-class constraint with a **new name** is **added** to the inherited ones.
+
+The standard warns about the consequence: "addition of constraints in derived classes can render seemingly simple constraints unsatisfiable" (§18.6.1). The classic version:
+
+```systemverilog
+// snippet
+class pkt_item;
+  rand bit [7:0] len;
+  constraint c_len { len inside {[1:16]}; }
+endclass
+
+class jumbo_item extends pkt_item;
+  constraint c_jumbo { len > 64; }             // new name: ADDED to c_len, never solvable
+endclass
+
+class jumbo_fixed extends pkt_item;
+  constraint c_len { len inside {[65:255]}; }  // same name: REPLACES pkt_item::c_len
+endclass
+```
+
+<ArchitectureDiagram
+  title="Which constraints are active for each derived class"
+  caption="jumbo_item adds c_jumbo to the inherited c_len, so randomize() fails on every call. jumbo_fixed reuses the name c_len, so its rule replaces the base rule. Both results hold even when you call randomize() through a pkt_item handle, because randomize() is virtual."
+  nodes={[
+    { id: "base", label: "pkt_item", sublabel: "c_len: len in [1:16]", kind: "generic", col: 1, row: 0 },
+    { id: "jumbo", label: "jumbo_item", sublabel: "adds c_jumbo: len > 64", kind: "generic", col: 0, row: 1 },
+    { id: "fixed", label: "jumbo_fixed", sublabel: "replaces c_len: [65:255]", kind: "generic", col: 2, row: 1 },
+    { id: "setA", label: "active: c_len + c_jumbo", sublabel: "no len fits: returns 0", kind: "generic", col: 0, row: 2, state: "error" },
+    { id: "setB", label: "active: c_len (jumbo_fixed)", sublabel: "len 65..255: returns 1", kind: "generic", col: 2, row: 2, state: "ok" }
+  ]}
+  edges={[
+    { from: "jumbo", to: "base", style: "structural", label: "extends" },
+    { from: "fixed", to: "base", style: "structural", label: "extends" },
+    { from: "jumbo", to: "setA", style: "causal", label: "randomize()" },
+    { from: "fixed", to: "setB", style: "causal", label: "randomize()" }
   ]}
 />
 
-</InfoPage>
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| A derived item fails on every call; the base item works | A new-named derived constraint contradicts an inherited one (§18.5.2) | Give the derived rule the base block's name to replace it, or switch the base block off with `constraint_mode(0)` in the test |
+| A derived item never produces the values its new rule allows | The derived rule was meant to replace a base rule but has a different name, so both apply | Same as above; list the active blocks before you trust a rule |
+| A base-class handle produces "impossible" values | The object is a derived class (a UVM factory override, for example) whose constraints replace the base ones | Print the object's class, not the handle's; constraints follow the object |
+| A soft default from the base class is ignored | A derived-class or inline soft constraint outranks it (§18.5.13.1) | Expected behaviour: later layers win; make the base rule hard if it must always hold |
+
+[Controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization) teaches overriding as a design tool; here it is a suspect to check.
+
+### When a solution exists but randomize() still fails
+
+The rule "if a solution exists, the solver shall find it" (§18.3) holds when all the constraints are solved together. Three rules of the standard split the solve into stages instead. A value chosen in an early stage becomes a constant for the later stages, and if that value leaves no solution, the call fails **although a legal combination exists**. The symptom is distinctive: the same call fails on a steady fraction of attempts, on every seed, with nothing changing between calls.
+
+1. **Function calls in constraints.** Random variables used as function arguments are solved first, and the function's return value becomes a state variable. The standard says this "subdivides the solution space" and "can cause the overall constraints to fail" (§18.5.11).
+2. **Array sizes before `foreach`.** If an array has both size constraints and `foreach` constraints, the sizes are solved first and the size acts as a state variable inside `foreach`. "This implicit ordering can cause the solver to fail in some situations" (§18.5.7.1).
+3. **`randc` variables first.** Constraints that mix `rand` and `randc` variables are solved with the `randc` variables first, "and this can sometimes cause randomize() to fail" (§18.4.2).
+
+Contrast two features that look similar but are safe: `solve a before b` "does not change the solution space and, therefore, cannot cause the solver to fail" (§18.5.9), and nonzero `dist` weights "cannot cause the solver to fail" either (§18.5.3).
+
+Here is the function case traced. The class has a legal solution on every call (`y = 2` or `y = 4`), yet one call in three fails:
+
+```systemverilog
+// snippet: used again in the debug challenge under Practice & Reinforce
+class staged_item;
+  rand int x, y;
+  constraint c_x { x > limit(y); x < 6; }
+  constraint c_y { y inside {2, 4, 8}; }
+  function int limit(int v);   // class methods are automatic; no side effects
+    return v;
+  endfunction
+endclass
+```
+
+| Stage | Solved | Constraints used | Possible outcomes |
+|---|---|---|---|
+| 1 | `y` alone | `c_y`: `y inside {2, 4, 8}` | `y` = 2, 4 or 8, each with probability 1/3 |
+| 2 | `x`, with `y` and `limit(y)` as constants | `c_x`: `x > limit(y)` and `x < 6` | `y = 2`: `x` in 3..5. `y = 4`: `x = 5`. `y = 8`: **no `x` fits, so `randomize()` returns 0** |
+
+The size case has the same shape:
+
+```systemverilog
+// snippet
+rand bit [3:0] len;
+rand bit [7:0] d[];
+constraint c_d { len inside {[1:10]}; d.size() == len; foreach (d[i]) d[i] == i * 30; }
+```
+
+Stage 1 picks the size (`len` from 1 to 10) without looking at `foreach`. In stage 2, a size of 10 needs `d[9] == 270`, which an 8-bit element cannot hold, so about one call in ten fails, although sizes 1 to 9 always work. Some solvers may avoid such dead ends, but the standard allows the failure, so portable code must not rely on it (tool-dependent).
+
+**Fixes, in order of preference.** Write the rule so it can be solved jointly (`x > y` instead of `x > limit(y)`). Otherwise, put the restriction on the early variable in a constraint that mentions only that variable, so stage 1 already respects it (`y inside {2, 4}`, or `len inside {[1:9]}`). Keep `randc` variables out of constraints shared with `rand` variables.
+
+### Failures you never see
+
+A failure that nobody reports is worse than one that stops the test. Three patterns hide failures:
+
+- **An unchecked call.** `void'(obj.randomize())` or a bare statement call. Fix: test the return value and stop the test.
+- **`assert (obj.randomize())`.** The call sits inside an immediate assertion. When assertions are switched off, with `$assertoff`, `$assertcontrol` or a simulator option, no new attempts start (§20.11), so the assertion's expression is not evaluated and `randomize()` is never called. The object silently keeps its old values. Fix: never put a call with side effects inside an assertion.
+- **The `` `uvm_do `` family of UVM macros.** A **sequence** is the UVM class that generates **sequence items** (transactions); it hands each item to a **sequencer**, which passes it to a **driver** that drives the pins ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) teaches the flow). In uvm-core 2020.3.1, `` `uvm_do_with(req, {…}) `` creates a new item, calls `start_item()`, randomizes it, and on failure only issues a **warning** with the ID `RNDFLD`. Then it calls `finish_item()` anyway, so the driver receives the newly created item with its initial field values.
+
+<SequenceDiagram
+  title="What `uvm_do_with does when randomization fails (uvm-core 2020.3.1)"
+  caption="The macro expands to `uvm_create and `uvm_rand_send. A failed randomize() produces only an RNDFLD warning, reported through the sequencer, and finish_item() still sends the item to the driver."
+  columnWidth={150}
+  participants={[
+    { id: "seq", label: "seq", kind: "sequence", sublabel: "runs `uvm_do_with(req, {…})" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { kind: "self", from: "seq", label: "`uvm_create: req = new item via create_item()" },
+    { from: "seq", to: "sqr", label: "start_item(req)" },
+    { kind: "self", from: "seq", label: "req.randomize() with {…} returns 0", tone: "error" },
+    { kind: "note", from: "seq", to: "sqr", label: "`uvm_warning(\"RNDFLD\") is reported by the sequencer's report handler" },
+    { from: "seq", to: "sqr", label: "finish_item(req)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req, still holding its initial values", tone: "error" },
+    { kind: "self", from: "drv", label: "drives req on the pins" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" }
+  ]}
+/>
+
+The fix in a sequence is to write the steps yourself and make the failure fatal:
+
+```systemverilog
+// snippet: inside a uvm_sequence body() task
+req = bus_item::type_id::create("req");
+start_item(req);
+if (!req.randomize() with { len > 64; })
+  `uvm_fatal("RAND", "bus_item randomize() failed: len > 64")
+finish_item(req);
+```
+
+[Expert: Silent failures in UVM flows](#expert-silent-failures-in-uvm-flows) shows how to promote `RNDFLD` to an error for code you cannot edit.
+
+### Reproducing a failure from its seed
+
+Random stimulus is repeatable. Every module, thread and object has its own random number generator, and each one is seeded from its parent when it is created (§18.14.1). So the **same seed, the same code, the same simulator version and the same command-line options** give the same run. That is what lets you debug a failure from a regression log: rerun the test with the seed the log printed.
+
+Change the code, and the promise is gone. Creating one extra object or thread early in a thread takes the next value from that thread's generator, so every object and thread created after it gets a different seed (§18.14.1). A failing seed that "passes" after an edit may only be generating different stimulus.
+
+| You rerun seed 1234 after… | Same stimulus as the failing run? | Why |
+|---|---|---|
+| nothing changed (same code, simulator version and options) | yes | every generator is seeded the same way (§18.14.1) |
+| adding one `new` early in a thread | no, for every object and thread created after it in that thread | the new object took its creator's next random value (§18.14.1) |
+| adding one `new` at the end of a thread, after the existing objects | yes, for the objects created before it | earlier creations are unchanged (§18.14.1) |
+| one extra `obj.randomize()` on an existing object | only `obj`'s later values change | each object has its own generator (§18.14.3) |
+| switching to another simulator | no | the default seed and generator are implementation-dependent (§18.14.1, §18.13.4) |
+
+The misconception to avoid: **a seed reproduces a run, not a bug, and only for unchanged code.** [Procedural randomization, seeds and random stability](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) teaches exactly which edits shift which values.
+
+Seed options are not part of IEEE 1800-2023; each simulator has its own, for example `+ntb_random_seed=<n>` (Synopsys VCS), `-sv_seed <n>` (Siemens Questa) and `-svseed <n>` (Cadence Xcelium). Check your simulator's manual.
+
+### Common pitfalls and misconceptions
+
+- **"A failed `randomize()` leaves X, zeros or the solver's last attempt."** It leaves the previous values unchanged (§18.6.3). For a fresh object those are the declared defaults.
+- **"`post_randomize()` can repair or relax the failed call."** It is not called when the call fails (§18.6.3), and even after a success it runs after the values are chosen, so it can only change state that the *next* call reads.
+- **"The block I switched off last is the bug."** It is one member of a conflict. The spec decides which member is wrong.
+- **"If IPV6 never appears, `randomize()` must be failing on IPV6 calls."** The solver weighs whole legal combinations; it does not pick `proto` first and then give up (§18.5.5, §18.5.9). An impossible branch is a coverage hole, not a failure.
+- **"`rand` variables are unsigned."** They have the signedness of their type; `rand int` is signed (§6.11.3).
+- **"Through a base-class handle only the base constraints apply."** `randomize()` is virtual; the object's constraints apply (§18.5.2).
+- **"If a solution exists, `randomize()` never fails."** True only when everything is solved together; function arguments, array sizes and `randc` add stages that can fail (§18.4.2, §18.5.7.1, §18.5.11).
+- **"The failing seed passes now, so the bug is fixed."** The edit may have changed the stimulus that seed produces.
+
+<VisualRecap
+  title="A failure is a set of suspects; the spec picks the culprit"
+  rule="A failed randomize() returns 0, keeps the old values and skips post_randomize(). Shrink the active hard constraints to a minimal conflicting set with constraint_mode(), rand_mode() and randomize(null), then compare each member with the specification. If it fails on only some calls, look for a function argument, an array size under foreach, or a randc variable."
+  code={`if (!f.randomize() with { kind == LONG; })
+  $fatal(1, "RAND: randomize() failed");   // never void', never assert()
+f.c_buffer.constraint_mode(0);             // bisect: is c_buffer a member?
+f.constraint_mode(0); f.c_buffer.constraint_mode(1);
+ok = f.randomize(null);                    // does c_buffer reject a legal frame?`}
+  mistake="Ignoring the return value, blaming the last block switched off, and treating a value that never appears as bad luck instead of a coverage hole."
+  inTestbench="Every randomize() call in a sequence or test is checked and fatal on failure. Triage happens on a small reproducer: force the missing case inline, bisect the named blocks, check the spec-legal values with randomize(null), and record the seed."
+/>
+
+## Make It Work
+
+### Worked example: a frame that refuses to be LONG
+
+This complete program runs the whole triage on one class. The spec excerpt says a frame carries 1 to 16 bytes, a LONG frame carries at least 9, and the receive buffer holds 16 bytes. One block was written from an old version of the spec. The test asks for a LONG frame and does four things:
+
+1. makes the failure loud and prints what it left behind;
+2. switches each named block off in turn (the inline `kind == LONG` stays on);
+3. loads a frame the spec calls legal and asks each block, alone, whether it accepts it;
+4. replaces the wrong block in a derived class and runs 1,000 checked calls through a base-class handle.
+
+```systemverilog
+// compile
+package frame_pkg;
+  // Spec excerpt (a made-up receive path, not a real protocol):
+  //   S1. A frame carries 1 to 16 payload bytes; len holds that count.
+  //   S2. A LONG frame carries at least 9 bytes.
+  //   S3. The receive buffer holds up to 16 bytes.
+  typedef enum bit {SHORT, LONG} kind_e;
+
+  class frame;
+    rand kind_e    kind;
+    rand bit [4:0] len;                    // 5 bits, so 16 fits
+    rand bit [7:0] payload[];
+    int unsigned   pre_calls, post_calls;  // not rand: counters for the demo
+
+    constraint c_len     { len inside {[1:16]}; }         // S1
+    constraint c_payload { payload.size() == len; }       // S1
+    constraint c_long    { (kind == LONG) -> len >= 9; }  // S2
+    constraint c_buffer  { payload.size() <= 8; }         // BUG: S3 says 16
+
+    function void pre_randomize();
+      pre_calls++;
+    endfunction
+
+    function void post_randomize();
+      post_calls++;
+    endfunction
+  endclass
+
+  // The fix. In a real project you edit c_buffer in frame; the derived class
+  // lets one file show both. Same name, so it replaces frame::c_buffer (§18.5.2).
+  class frame_fixed extends frame;
+    constraint c_buffer { payload.size() <= 16; }        // S3
+  endclass
+endpackage
+
+module tb_top;
+  import frame_pkg::*;
+
+  string       names[4] = '{"c_len", "c_payload", "c_long", "c_buffer"};
+  frame        f;
+  frame        h;              // base-class handle for the fixed object
+  frame_fixed  ff;
+  bit          ok;
+  int unsigned n_pass, n_fail, n_free_long;
+
+  // constraint_mode() needs a block name, so map an index to each block.
+  function automatic void set_block(frame fr, int unsigned i, bit on);
+    case (i)
+      0: fr.c_len.constraint_mode(on);
+      1: fr.c_payload.constraint_mode(on);
+      2: fr.c_long.constraint_mode(on);
+      3: fr.c_buffer.constraint_mode(on);
+    endcase
+  endfunction
+
+  // The spec's rules, checked procedurally and independently of the constraints.
+  function automatic bit spec_ok(frame fr);
+    return (fr.len inside {[1:16]}) && (fr.payload.size() == fr.len) &&
+           (fr.kind != LONG || fr.len >= 9) && (fr.payload.size() <= 16);
+  endfunction
+
+  initial begin
+    // Step 1: make the failure loud and look at what it leaves behind.
+    f = new();
+    ok = f.randomize() with { kind == LONG; };
+    $display("STEP1 ok=%0d kind=%s len=%0d size=%0d pre_calls=%0d post_calls=%0d",
+             ok, f.kind.name(), f.len, f.payload.size(), f.pre_calls, f.post_calls);
+
+    // Step 2: switch off one named block at a time; the inline with stays on.
+    for (int i = 0; i < 4; i++) begin
+      set_block(f, i, 0);
+      ok = f.randomize() with { kind == LONG; };
+      $display("STEP2 %s off: ok=%0d", names[i], ok);
+      set_block(f, i, 1);
+    end
+
+    // Step 3: which single block rejects a frame the spec calls legal?
+    f.kind    = LONG;
+    f.len     = 12;
+    f.payload = new[12];
+    for (int i = 0; i < 4; i++) begin
+      f.constraint_mode(0);                // every block off ...
+      set_block(f, i, 1);                  // ... except block i
+      ok = f.randomize(null);              // checker: changes nothing (§18.11.1)
+      $display("STEP3 %s alone accepts the spec-legal frame: %0d", names[i], ok);
+    end
+    f.constraint_mode(1);
+
+    // Step 4: the fixed class, randomized through a base-class handle.
+    ff = new();
+    h  = ff;                               // randomize() is virtual (§18.5.2)
+    for (int i = 0; i < 1000; i++) begin
+      if (i % 2 == 0) begin
+        if (!h.randomize() with { kind == LONG; })
+          $fatal(1, "RAND: forced LONG failed on call %0d", i);
+      end else begin
+        if (!h.randomize())
+          $fatal(1, "RAND: free call failed on call %0d", i);
+        if (h.kind == LONG) n_free_long++;
+      end
+      if (spec_ok(h)) n_pass++;
+      else            n_fail++;
+    end
+    $display("STEP4 unforced LONG frames seen: %s", (n_free_long > 0) ? "yes" : "no");
+    $display("PASS=%0d FAIL=%0d", n_pass, n_fail);
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand from §18.3, §18.6.2, §18.6.3, §18.9 and §18.11.1; not from a simulator run). Your simulator will also print its own diagnostics for the two failing calls (STEP1 and `c_len off`); their wording is tool-dependent.
+
+```text
+STEP1 ok=0 kind=SHORT len=0 size=0 pre_calls=1 post_calls=0
+STEP2 c_len off: ok=0
+STEP2 c_payload off: ok=1
+STEP2 c_long off: ok=1
+STEP2 c_buffer off: ok=1
+STEP3 c_len alone accepts the spec-legal frame: 1
+STEP3 c_payload alone accepts the spec-legal frame: 1
+STEP3 c_long alone accepts the spec-legal frame: 1
+STEP3 c_buffer alone accepts the spec-legal frame: 0
+STEP4 unforced LONG frames seen: yes
+PASS=1000 FAIL=0
+```
+
+Read it line by line:
+
+- **STEP1.** The call failed, the fields still hold the defaults, `pre_randomize()` ran once and `post_randomize()` never ran (§18.6.2, §18.6.3).
+- **STEP2.** Without `c_len` the call still fails, so `c_len` is not part of this conflict. Removing `c_payload`, `c_long` or `c_buffer` each lets it succeed, so all three are members, together with the inline `kind == LONG`, which `constraint_mode()` cannot switch off.
+- **STEP3.** A 12-byte LONG frame obeys S1 to S3. Only `c_buffer` rejects it, so `c_buffer` contradicts the spec. The other three members are correct and stay.
+- **STEP4.** With `c_buffer` replaced, every call succeeds and every frame passes the independent spec check. The count of unforced LONG frames depends on the seed and on how your solver weighs array sizes, but LONG is now legal for 8 of the 16 lengths, so seeing none in 500 free calls is practically impossible. LONG is no longer a coverage hole.
+
+### Run it
+
+Compile both units together and run `tb_top` with any simulator that supports constrained randomization (IEEE 1800-2023 Clause 18). Add your simulator's seed option to replay a run (see [Reproducing a failure from its seed](#reproducing-a-failure-from-its-seed)). Support for `randomize() with`, `constraint_mode()`, `randomize(null)` and dynamic-array size constraints varies between simulators, especially open-source ones (tool-dependent); if a construct is rejected, use a simulator with full Clause 18 support.
+
+### How to triage a failing randomize()
+
+1. **Make it loud.** Check every `randomize()` result and stop with `$fatal` (or `` `uvm_fatal `` in UVM). Record the seed.
+2. **Reproduce small.** Rerun the failing seed on the unchanged code. Then build a reproducer: one object, the failing call, the same state variables.
+3. **Classify.** Fails on every call: a contradiction. Fails on a steady fraction of calls: suspect an implicit solve order. Never fails, but a value never appears: a coverage hole; force the missing value inline to turn it into a failure.
+4. **Read the tool's report**, if your simulator prints one, as a first candidate set.
+5. **Bisect named blocks** with `constraint_mode(0)` until you have a set where removing any one member succeeds. Remember the inline constraints, which you remove by editing the call.
+6. **Check against the spec.** Load values the spec calls legal and use `randomize(null)` with one block on at a time, or freeze one variable with `rand_mode(0)`.
+7. **Check the hidden causes:** signed types and mixed signedness, widths that wrap, X in a state variable, a derived class that added or replaced a block, function calls, array sizes and `randc`.
+8. **Fix the rule the spec contradicts**, never the symptom. Remove every triage `constraint_mode()` and `rand_mode()` call, then run many seeds and confirm that the missing values now appear.
+
+### Debugging table
+
+| Symptom | Likely cause | Fix | What the log shows |
+|---|---|---|---|
+| The same item is sent again and again, or all fields are zero | `randomize()` fails and the result is ignored | Check the result; `$fatal` or `` `uvm_fatal `` on 0 | Possibly a solver diagnostic, otherwise nothing |
+| A UVM test passes although its `` `uvm_do_with `` constraints conflict | `RNDFLD` is only a warning in uvm-core 2020.3.1 | Explicit `start_item`/`randomize`/`finish_item` with `` `uvm_fatal ``, or promote `RNDFLD` | `UVM_WARNING … [RNDFLD] Randomization failed in uvm_rand_send action` |
+| Randomization stops happening when assertions are disabled | `assert (obj.randomize())` is not evaluated when assertions are off (§20.11) | Move the call out of the assertion | Nothing |
+| One protocol or mode never appears; no failure | A contradiction makes that branch infeasible: a coverage hole | Force the value inline, then triage the failure | Nothing until coverage is measured |
+| Fails on about 1 in N calls on every seed | Function argument, array size or `randc` solved first (§18.5.11, §18.5.7.1, §18.4.2) | Solve jointly, or constrain the early variable on its own | A solver diagnostic on some calls only |
+| A length or delay is negative | `rand int` is signed (§6.11.3) | `inside {[lo:hi]}` or `int unsigned` with a bound | Values such as `-1834220012` |
+| A sum constraint accepts values that add up to more than the bound | The expression is evaluated in a narrow width and wraps (§11.6.1, §18.5.7.2) | Widen with a cast or a 32-bit literal; `sum() with (int'(item))` | Plausible but wrong values |
+| An error naming x or z in a constraint | A 4-state state variable holds X or Z (§18.3) | Initialize it, or make it `bit` | A tool-specific error message |
+| A derived item always fails; the base item works | A new-named derived constraint was added, not replaced (§18.5.2) | Reuse the base block's name, or switch the base block off | A solver diagnostic naming both blocks |
+
+**Checklist before moving on:**
+- [ ] I can say what a failed `randomize()` returns, what the object holds afterwards, and which of `pre_randomize()` and `post_randomize()` ran.
+- [ ] I can tell a failure from a coverage hole, and turn a hole into a failure with an inline constraint.
+- [ ] I can bisect named blocks to a minimal conflicting set and explain why the last block switched off is not automatically the bug.
+- [ ] I can use `randomize(null)` and `rand_mode(0)` to test values the spec calls legal.
+- [ ] I can spot signed types, wrapping widths and X values inside constraints.
+- [ ] I can explain why a derived class can make a working item fail, and why a base handle does not protect against it.
+- [ ] I can recognise a failure that happens on a fixed fraction of calls and name the three implicit solve orders.
+- [ ] I can write a checked randomization in a UVM sequence and explain why `` `uvm_do_with `` and `assert (obj.randomize())` are unsafe.
+
+## Push Further
+
+### Expert: Tool solver reports, switches and timeouts
+
+Everything in this item is **tool-dependent**; IEEE 1800-2023 defines which results are legal, not how a solver finds them.
+
+- **Reports.** Most commercial simulators print a diagnostic when `randomize()` fails, often listing the constraints, and sometimes the variable values, involved. The format and level of detail differ, and so do the options that make reports more verbose. Find them in your simulator's user guide under constraint or randomization debug, and do not copy an option name from one tool to another.
+- **Timeouts and resource limits.** "If a solution exists, the constraint solver shall find it" (§18.3) is a requirement on results. In practice, very large problems (long arrays with `foreach` and `unique`, wide multiplications, deep object graphs) can take a long time or hit a tool limit, and the tool may report giving up. That is a tool limitation, not an infeasible constraint set: check by shrinking the problem.
+- **Making big problems cheap.** Randomize in stages: first the sizes and control fields with `randomize(len, kind)` (§18.11), then the payload. Precompute fields that need loops in `pre_randomize()` and switch them off with `rand_mode(0)`, because the solver would overwrite active random variables (§18.6.2, §18.8). Narrow the widths. These change what is solved, so they are portable.
+- **What does not reliably help.** `solve…before` is defined only by its effect on the distribution (§18.5.9). Any speed-up it gives is a property of one tool. The same is true of how `dist` behaves when its variable is coupled to other variables.
+
+### Expert: Silent failures in UVM flows
+
+The uvm-core 2020.3.1 macros for sequences (IEEE 1800.2-2020 Annex B.3.1) are where most silent failures hide.
+
+- `` `uvm_do(SEQ_OR_ITEM, …) `` expands to `` `uvm_create `` (which builds the item with `create_item()`) plus `` `uvm_rand_send ``. In uvm-core 2020.3.1, `` `uvm_rand_send `` calls `start_item()`, then `randomize() with` your constraints, then `finish_item()`. A failed randomization only executes `` `uvm_warning("RNDFLD", "Randomization failed in uvm_rand_send action") `` (`macros/uvm_sequence_defines.svh`). For an item from `` `uvm_do ``, the driver receives a just-created item; with `` `uvm_rand_send `` on a reused item, it receives the previous values.
+- **Who reports it.** A sequence item reports through its sequencer's report handler: `uvm_get_report_object()` returns `m_sequencer`, or `uvm_root` when there is none (`seq/uvm_sequence_item.svh`). So an override must target the **sequencer**, not the test.
+- **Promote it to an error** when you cannot edit the sequences:
+
+```systemverilog
+// snippet: in the test's end_of_elaboration_phase, after the env is built
+env.agt.sqr.set_report_severity_id_override(UVM_WARNING, "RNDFLD", UVM_ERROR);
+```
+
+`set_report_severity_id_override` is IEEE 1800.2-2020 §6.3.7. From the command line, uvm-core 2020.3.1 accepts `+uvm_set_severity=<comp>,<id>,<current severity>,<new severity>`, for example `+uvm_set_severity=*,RNDFLD,UVM_WARNING,UVM_ERROR`; every component applies matching settings to itself when it is constructed (`base/uvm_component.svh`). uvm-core has no hierarchical (`_hier`) variant of the severity override.
+
+- **Prefer the explicit form** for any item whose constraints matter: create, `start_item()`, checked `randomize()` with `` `uvm_fatal ``, `finish_item()`. It costs three lines and removes the question. [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) covers report IDs and severity overrides, and [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) the sequence flow.
+
+### Expert: Reproducing a failure from its seed after the code changed
+
+The plain-SystemVerilog rules are in §18.14: each object and thread is seeded from the next value of its creating thread's generator (§18.14.1), and object stability means that calls to one object's `randomize()` do not depend on other objects or on other random calls (§18.14.3). Two consequences for triage:
+
+- **Self-seeding protects a stream.** An object that calls `srandom()` with a fixed or name-derived value in its own `new()` keeps its stream when other objects are added. The standard recommends seeding inside `new()`, because otherwise another thread may use the object before the creator reseeds it (§18.14.3). Seeding the *newly added* helper does not help: its `new` has already consumed the creator's next value.
+- **UVM reseeds by name (uvm-core 2020.3.1 behaviour).** With UVM seeding on (the default), `uvm_component::new` calls `reseed()`; `uvm_task_phase` reseeds the process it starts for each component in a task phase (`run_phase` and the run-time phases) from the phase type and the component's full name; and `set_item_context()`, which `start()`, `create_item()` and `start_item()` call, reseeds sequences and items. The seed is a hash of the type name, the full name and a global seed taken from the simulator seed, plus a per-name counter (`base/uvm_misc.svh`). So adding a component does not shift the run-phase streams of existing components, while renaming a component or a sequence changes the seeds of everything below it, and a plain `new` of a non-UVM object still shifts later plain objects in the same thread. The IEEE 1800.2-2020 clause that specifies this is unverified here, so treat it as implementation behaviour.
+
+A disciplined workflow follows: replay the failing seed on the **old** code first and keep that log; minimize to a reproducer that does not depend on the seed (force the failing values inline, or load them and use `randomize(null)`); fix; then prove the fix with the reproducer plus a fresh batch of seeds, never with the old seed alone. Seeds do not transfer between simulators: the default seed and the generator state are implementation-dependent (§18.13.4, §18.14.1). [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) builds the regression workflow on top of this.
+
+### Expert: State shared between objects
+
+Some failures depend on what *another* object did earlier, which makes them look random:
+
+- A **static** random variable is shared by all instances; every `randomize()` of any instance changes it (§18.6.3). Its `rand_mode` state is shared too (§18.8), and for `randc` so is the cyclic state (§18.4.2).
+- A **static constraint block** is switched on or off for **all** instances by one `constraint_mode()` call (§18.5.10). A test that disables it "temporarily" for one object disables it everywhere until someone switches it back.
+- `rand_mode(0)` on a `rand` class handle changes only the handle's mode, not the modes inside the object (§18.8). A nested object that "should be frozen" may still be randomized, or the reverse.
+- A configuration object read by several items' constraints is ordinary shared state: if one test writes an illegal knob value, every item that reads it fails.
+
+When a failure appears only after a particular earlier test step, print the static and shared state just before the failing call and compare it with a passing run.
+
+### Interview angles
+
+Try each question before you open the options.
+
+<InterviewQuestionPlayground
+  title="Interview angle: the all-zero payloads"
+  question="You run a UVM test overnight. The test passed, but every transaction the driver sent had the same payload: all zeros. What is the most likely cause?"
+  options={[
+    { text: "The random seed was kept constant.", isCorrect: false, feedback: "A constant seed repeats a run; it does not make every item identical. In uvm-core 2020.3.1 each new sequence item is reseeded from its type name, its full name and a per-name count, and repeated calls on one object advance that object's own generator, so items still differ." },
+    { text: "randomize() was failing on every item, and nothing turned the failure into an error.", isCorrect: true, feedback: "Right. A failed call returns 0 and leaves the fields as they were (IEEE 1800-2023 §18.6.3); a freshly created item still holds its initial values, here zeros. The uvm_do macros only issue an RNDFLD warning and send the item anyway; a void'-cast call does not even warn." },
+    { text: "The constraints were too loose, so the solver fell back to 0.", isCorrect: false, feedback: "The solver never falls back to a default. Looser constraints give it more legal combinations to choose from, not fewer." },
+    { text: "UVM sequence items cannot be randomized with SystemVerilog constraints.", isCorrect: false, feedback: "uvm_sequence_item is an ordinary class: randomize() and constraints work exactly as in plain SystemVerilog." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: one call in three"
+  question="A class fails randomize() on roughly one call in three, on every seed. Nothing is soft, there is no dist, and a failing call has the same state as a passing one. What do you look for first, and why?"
+  options={[
+    { text: "A solver bug: report it to the vendor.", isCorrect: false, feedback: "When all constraints are solved together, the solver must find a solution if one exists (§18.3). A steady fraction of failures points to a rule that splits the solve into stages, which the standard allows to fail." },
+    { text: "An implicit solve order: a function call with a random argument, an array size under foreach, or a randc variable. The first stage picks a value that leaves the next stage no solution.", isCorrect: true, feedback: "Right. Function arguments are solved first (§18.5.11), sizes before foreach (§18.5.7.1), randc before rand (§18.4.2). Each can fail although a legal combination exists. Rewrite so the rule is solved jointly, or constrain the early variable on its own." },
+    { text: "A solve...before constraint: it makes the solver pick one variable first and fail when the rest does not fit.", isCorrect: false, feedback: "solve...before changes only the odds. It does not change the solution space and cannot cause a failure (§18.5.9)." },
+    { text: "Bad luck with the seed: run more seeds until it passes.", isCorrect: false, feedback: "The fraction is stable across seeds, so it is structural. More seeds only hide it." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: is it fixed?"
+  question="A regression fails on seed 1234. You change a constraint, rerun seed 1234, and it passes. Your lead asks whether the bug is fixed. What do you answer?"
+  options={[
+    { text: "Yes: the same seed gives the same stimulus, so the failure would have come back.", isCorrect: false, feedback: "Only for unchanged code. The edit can change how many random values are drawn and in what order, so seed 1234 may now produce different stimulus that simply avoids the bug." },
+    { text: "Not proven. Show that the failing condition is now impossible, for example with a reproducer that forces the old values or a randomize(null) check of the spec-legal values, and run a fresh batch of seeds.", isCorrect: true, feedback: "Right. A seed reproduces a run for unchanged code (§18.14.1). After a change, prove the fix with a seed-independent reproducer and broad regression, and keep the old log as evidence of the original failure." },
+    { text: "No: a seed is valid for one run only, so the rerun means nothing.", isCorrect: false, feedback: "The same seed, code and tool version repeat a run exactly; that is what makes seeds useful. The problem here is the changed code." },
+    { text: "Yes, provided the simulator version did not change.", isCorrect: false, feedback: "The tool version is one condition for reproducibility, but the code changed too, which is enough to change the stimulus." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+Answer the quiz first; it covers all four objectives. Then do the debug challenge, which turns the one-in-three failure into code you can fix, and finish with the lab. The flashcards for this page are for review over the next few days.
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "A frame class has rand kind_e kind (SHORT = 0 is the default), rand bit [4:0] len and a dynamic payload, plus pre_randomize() and post_randomize() counters. Right after f = new(), the call f.randomize() with { kind == LONG; } fails. What does f hold now?",
+    answers: [
+      { text: "kind = SHORT, len = 0, an empty payload; pre_randomize() ran once and post_randomize() did not run", correct: true, feedback: "Right. On failure the random variables keep their previous values and post_randomize() is skipped (§18.6.3); pre_randomize() is called before solving (§18.6.2)." },
+      { text: "X in kind and len, because the solver could not assign them", correct: false, feedback: "Nothing is set to X: the fields keep their previous values. These fields are 2-state anyway, so they cannot hold X." },
+      { text: "The last legal values the solver tried before giving up", correct: false, feedback: "There is no partial assignment. The object is left exactly as it was before the call (§18.6.3)." },
+      { text: "kind = LONG, because post_randomize() ran and relaxed the constraint for this call", correct: false, feedback: "post_randomize() is not called after a failure, and it never changes the constraints of the call that is running; it runs after values are chosen." }
+    ],
+    explanation: "A failed randomize() returns 0, leaves every random variable unchanged, and skips post_randomize(); pre_randomize() has already run. For a fresh object the unchanged values are the declared defaults.",
+    objective: 1
+  },
+  {
+    question: "A packet class has (proto == IPV6) -> length == 40 and a hardware rule length inside {16, 32, 64, 128, 256}. Over 10,000 calls to p.randomize(), every call succeeds and proto is never IPV6. What is going on?",
+    answers: [
+      { text: "The seed is unlucky: run more seeds", correct: false, feedback: "Probability has nothing to do with it. No legal combination contains IPV6, so no number of seeds will produce it." },
+      { text: "The solver picks proto first; whenever it picks IPV6 the implication forces length 40, the hardware rule rejects it, and that call fails silently", correct: false, feedback: "That reads the implication as a procedural if. The solver weighs whole legal combinations, so it never picks IPV6 and then gives up; every call succeeds (§18.5.5, §18.5.9)." },
+      { text: "IPV6 has no legal combination, so the solver never picks it: a coverage hole, not a failure", correct: true, feedback: "Right. 40 is not in the hardware list, so IPV6 is infeasible. randomize() fails only when no combination at all is legal (§18.3). Force proto == IPV6 inline to turn the hole into a failure you can triage." },
+      { text: "IPV6 needs a dist weight to appear", correct: false, feedback: "A weight cannot make an illegal value legal; dist changes only the odds among legal values (§18.5.3)." }
+    ],
+    explanation: "A contradiction that rules out only some values does not make randomize() fail: the solver chooses among the legal combinations that remain. Only coverage, or a forced inline constraint, reveals the missing mode.",
+    objective: 1
+  },
+  {
+    question: "A call fails on every attempt. Switching off block c_a alone makes it succeed, and switching off block c_b alone also makes it succeed. What do you conclude?",
+    answers: [
+      { text: "c_a is the bug, because it was the first block that fixed the failure", correct: false, feedback: "Order of discovery proves nothing. Both blocks take part in the conflict." },
+      { text: "Whichever block you switched off last is the only wrong one", correct: false, feedback: "The last block switched off is one member of a conflict, not necessarily the wrong rule. Its partners are still active." },
+      { text: "Both are members of a minimal conflicting set; compare each with the specification to decide which rule is wrong", correct: true, feedback: "Right. Removing any member of a minimal conflicting set makes the rest satisfiable, so the solver cannot tell you which rule is wrong. The spec can, for example through a randomize(null) check of values the spec calls legal." },
+      { text: "The solver is unreliable, because two different fixes cannot both work", correct: false, feedback: "Two working fixes is exactly what a conflict between two rules looks like; the solver is behaving as the standard requires." }
+    ],
+    explanation: "Bisection finds the members of a conflict. Deciding which member is wrong is a specification question, not a solver question.",
+    objective: 2
+  },
+  {
+    question: "To triage a failure you call constraint_mode(0) on every named constraint block of an object, and p.randomize() with { len > 40; len < 10; } still fails. Why?",
+    answers: [
+      { text: "constraint_mode(0) only takes effect after the object is created again", correct: false, feedback: "Mode changes apply to the next randomize() call on the same object (§18.9)." },
+      { text: "The inline with block is not a named constraint block, so constraint_mode() cannot switch it off, and it contradicts itself", correct: true, feedback: "Right. constraint_mode() works on named blocks (§18.9). The inline constraints stay active, and len cannot be both above 40 and below 10. Edit the call to remove them." },
+      { text: "Soft constraints are still active and cause the failure", correct: false, feedback: "Soft constraints never cause a failure: a conflicting soft constraint is discarded (§18.5.13)." },
+      { text: "rand_mode(0) must also be called on len", correct: false, feedback: "That would make len a state variable and the call would still fail against its current value. The problem is the inline constraint itself." }
+    ],
+    explanation: "Inline constraints belong to the call, not to the class. They are always members of the conflict until you change the call.",
+    objective: 2
+  },
+  {
+    question: "A class declares rand int delay; with constraint c { delay < 10; }. Can delay be negative?",
+    answers: [
+      { text: "No: random variables are unsigned", correct: false, feedback: "A random variable has the signedness of its type, and int is signed (§6.11.3)." },
+      { text: "Yes, and almost always: nearly every legal value is negative, so write delay inside {[0:9]} or use int unsigned with a bound", correct: true, feedback: "Right. The legal set runs from -2147483648 to 9, and every legal value is equally likely (§18.5.9)." },
+      { text: "Only if delay is declared rand int signed", correct: false, feedback: "int is already signed; the signed keyword changes nothing here." },
+      { text: "No: the solver prefers non-negative values when a constraint gives an upper bound", correct: false, feedback: "The solver has no such preference; it picks uniformly among all legal values." }
+    ],
+    explanation: "Signedness follows the declared type. byte, shortint, int, integer and longint are signed; bit and logic vectors are unsigned (§6.11.3).",
+    objective: 3
+  },
+  {
+    question: "A class has rand int x, y; constraint c_x { x > limit(y); x < 6; } and constraint c_y { y inside {2, 4, 8}; }, where limit(v) returns v. About how often does randomize() fail?",
+    answers: [
+      { text: "Never: y = 2 or y = 4 always leaves a legal x, and the solver finds a solution whenever one exists", correct: false, feedback: "That holds when everything is solved together. A random variable used as a function argument is solved first, so y = 8 can be chosen before x is considered (§18.5.11)." },
+      { text: "About one call in three: y is solved first on its own, and y = 8 leaves no x with 8 < x < 6", correct: true, feedback: "Right. Function arguments establish an implicit order, and the standard says this subdivision can make the overall constraints fail (§18.5.11). Write x > y, or restrict y on its own." },
+      { text: "Every call: x > limit(y) and x < 6 contradict each other", correct: false, feedback: "They contradict only for y = 8. For y = 2 or 4 there are legal values of x." },
+      { text: "It depends only on the seed; any failure rate is possible", correct: false, feedback: "The rate follows from the standard: y is chosen uniformly from three values in the first stage, so about a third of calls fail on every seed." }
+    ],
+    explanation: "Functions, array sizes under foreach and randc variables split the solve into stages (§18.5.11, §18.5.7.1, §18.4.2). Unlike solve...before, these orders can make randomize() fail although a legal combination exists.",
+    objective: 3
+  },
+  {
+    question: "pkt_item has constraint c_len { len inside {[1:16]}; }. jumbo_item extends pkt_item and adds constraint c_jumbo { len > 64; }. A test does pkt_item p; jumbo_item j = new(); p = j; then calls p.randomize(). What happens?",
+    answers: [
+      { text: "len is 1 to 16, because the handle is a pkt_item", correct: false, feedback: "randomize() is virtual, so the object's constraints apply, whatever the handle type (§18.5.2)." },
+      { text: "len is above 64, because the derived constraint replaces all base constraints", correct: false, feedback: "Only a constraint with the same name replaces an inherited one. c_jumbo has a new name, so it is added (§18.5.2)." },
+      { text: "Every call fails: c_jumbo is added to c_len, and no len satisfies both", correct: true, feedback: "Right. A new name adds a constraint. Name it c_len to replace the base rule, or switch c_len off in the test." },
+      { text: "Compile error: a derived class cannot constrain an inherited variable", correct: false, feedback: "Derived classes may add constraints on inherited variables; that is how constraint layering works." }
+    ],
+    explanation: "Same name replaces, new name adds, and randomize() always uses the object's class (§18.5.2). The standard itself warns that constraints added in derived classes can make simple constraints unsatisfiable (§18.6.1).",
+    objective: 3
+  },
+  {
+    question: "In a UVM sequence (uvm-core 2020.3.1), uvm_do_with(req, { len > 64; len < 16; }) runs. The test ends with no UVM_ERROR. What happened to that item?",
+    answers: [
+      { text: "UVM retried randomization until it succeeded", correct: false, feedback: "There is no retry. The macro calls randomize() once." },
+      { text: "The sequencer dropped the item, so nothing was driven", correct: false, feedback: "The macro calls finish_item() after the failed randomization, so the item is sent." },
+      { text: "Randomization failed, the macro issued only an RNDFLD warning, and the driver received the newly created item with its initial field values", correct: true, feedback: "Right. uvm_rand_send reports the failure with uvm_warning(\"RNDFLD\", ...) and still calls finish_item(). Check randomize() yourself with uvm_fatal, or promote RNDFLD to an error on the sequencer." },
+      { text: "The previous item from this sequence was sent again", correct: false, feedback: "uvm_do_with creates a new item first (uvm_create), so the driver receives a fresh item holding its initial values, not the previous item." }
+    ],
+    explanation: "In uvm-core 2020.3.1 the uvm_do family expands to uvm_create plus uvm_rand_send, which turns a randomization failure into a warning only. A regression that counts only errors stays green.",
+    objective: 4
+  },
+  {
+    question: "A testbench writes assert (pkt.randomize()); for every packet. A regression script runs the same test with $assertoff at time 0 to save time. What changes?",
+    answers: [
+      { text: "Nothing important: randomize() still runs; only the failure message is suppressed", correct: false, feedback: "With assertions off, no new assertion attempts start (§20.11), so the expression inside the assert, the randomize() call itself, is not evaluated." },
+      { text: "randomize() is no longer called, so every packet keeps its previous values and nothing reports it", correct: true, feedback: "Right. Never put a call with side effects inside an assertion. Write if (!pkt.randomize()) $fatal(1, ...)." },
+      { text: "Every randomize() call now fails", correct: false, feedback: "The calls do not fail; they do not happen at all." },
+      { text: "$assertoff only affects concurrent assertions, so nothing changes", correct: false, feedback: "$assertoff is defined as $assertcontrol(4, 15, 7, ...), and assertion type 15 includes simple immediate assertions (type 2), so it switches off the assert around randomize() too (§20.11)." }
+    ],
+    explanation: "Assertion control decides whether assertions are evaluated. A randomize() call inside an assert disappears with the assertion. Check the return value with an if statement instead.",
+    objective: 4
+  },
+  {
+    question: "With UVM seeding on (uvm-core 2020.3.1), you add a new monitor component to an environment and rerun seed 77. Do the run_phase random streams of the existing components change?",
+    answers: [
+      { text: "Yes: the new component took the next value from the build thread, so every component created after it is seeded differently", correct: false, feedback: "That is the plain SystemVerilog rule (§18.14.1), but uvm-core reseeds each component in new() and each component's run-phase process from names, so the existing run-phase streams do not shift." },
+      { text: "No: uvm-core reseeds each component's run-phase process from the phase type and the component's full name, so existing components keep their streams", correct: true, feedback: "Right. Renaming a component or sequence would change its seeds; adding one does not shift the others. A plain new() of a non-UVM object still shifts later plain objects in the same thread." },
+      { text: "Only if the new monitor calls randomize()", correct: false, feedback: "Calling randomize() advances only the monitor's own object generator; the question is about how the other streams are seeded." },
+      { text: "UVM ignores the simulator seed, so seed 77 means nothing", correct: false, feedback: "uvm-core derives its global seed from the simulator's random generator, so the simulator seed still controls the run." }
+    ],
+    explanation: "In uvm-core 2020.3.1, components, run-phase processes, sequences and items are reseeded from a hash of type and full name plus a global seed. That makes UVM runs more robust to added components, but renames and plain objects still shift seeds.",
+    objective: 4
+  }
+]} />
+
+### Debug challenge: the one-in-three failure
+
+A teammate wrote `staged_item` (from [When a solution exists but randomize() still fails](#when-a-solution-exists-but-randomize-still-fails)) and reports that it "fails randomly". Before you open the solution:
+
+1. **Predict** how many of 300 calls fail, and why the number does not depend much on the seed.
+2. Write a `tb_top` that makes 300 checked calls, counts the failures without stopping, and prints `FAILS=<n>`.
+3. Fix the class two ways: once without the function, once keeping the function. After each fix, your bench should print `FAILS=0`.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+**1. Prediction.** `y` is a function argument, so it is solved first using only `c_y`, uniformly over {2, 4, 8} (§18.5.11, §18.5.9). Every `y = 8` leaves no `x` with `8 < x < 6`. Expect about 100 failures in 300 calls; the exact count depends on the seed (the standard deviation is about 8), but the one-third rate does not.
+
+**2. Bench.**
+
+```systemverilog
+// compile
+package staged_pkg;
+  class staged_item;
+    rand int x, y;
+    constraint c_x { x > limit(y); x < 6; }
+    constraint c_y { y inside {2, 4, 8}; }
+    function int limit(int v);
+      return v;
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  import staged_pkg::*;
+  staged_item  s;
+  int unsigned fails;
+
+  initial begin
+    s = new();
+    for (int i = 0; i < 300; i++)
+      if (!s.randomize()) fails++;   // count instead of stopping, for the experiment
+    $display("FAILS=%0d", fails);
+  end
+endmodule
+```
+
+Expected output (illustrative; the count varies with the seed):
+
+```text
+FAILS=97
+```
+
+**3. Two fixes.**
+
+- **Without the function:** `constraint c_x { x > y; x < 6; }`. Now `x` and `y` are solved together, the only legal pairs have `y` = 2 or 4, and every call succeeds (§18.3).
+- **Keeping the function:** restrict `y` in a constraint that mentions only `y`, so the first stage already respects it: `constraint c_y { y inside {2, 4}; }`. If 8 is a legal `y` in the spec, the function form cannot express the rule; drop the function.
+
+In both cases, restore the checked call (`if (!s.randomize()) $fatal(...)`) once the experiment is over.
+
+</details>
+
+### Lab: silent failure triage
+
+The lab's packet generator asks for IPV4, IPV6 and RAW packets in turn, and the IPV6 requests come back as empty IPV4 packets. Run it on your own simulator; the steps are self-checked.
+
+1. **Make the failure loud.** Check `randomize()` and stop with `$fatal(1, …)` on 0.
+2. **Triage with `constraint_mode(0)`.** Switch off one block at a time. Each of the three blocks is a member of the conflict, and so is the inline `proto == wanted` that forces IPV6: four members, one more than in the explorer above.
+3. **Fix the model, not the symptom.** Compare each block with the spec excerpt in `packet.sv`, fix the one that disagrees, and remove the triage line.
+
+The lab's Push Further step removes the inline constraint and shows the same bug as a silent coverage hole.
+
+<LabLink labId="randomization-advanced-1" />
+
+### Flashcards
+
+The deck for this page covers failure semantics, holes, minimal conflicting sets, the triage tools, the traps inside constraints, implicit solve orders, silent failures and seeds. Review it over the next few days.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023:
+  - §6.11.3 (signed and unsigned integer types), §11.6.1 (expression bit lengths), §11.8.1 (signedness of expressions), §13.4.1 (calling a nonvoid function as a statement);
+  - §18.3 (a solver shall find an existing solution; 2-state values only), §18.4.2 (`randc` solved first);
+  - §18.5.2 (constraint inheritance: replace by name, `randomize()` is virtual), §18.5.3 (`dist` cannot cause failure), §18.5.5 (implication), §18.5.7.1 (sizes before `foreach`), §18.5.7.2 (reduction width), §18.5.9 (uniform distribution; `solve…before` cannot cause failure), §18.5.10 (static constraint blocks), §18.5.11 (functions in constraints), §18.5.13 and §18.5.13.1 (soft constraints never cause failure);
+  - §18.6.1 (`randomize()`; the `SimpleSum` example), §18.6.2 (`pre_randomize()` and `post_randomize()`), §18.6.3 (failure behaviour; static random variables);
+  - §18.8 (`rand_mode()`), §18.9 (`constraint_mode()`), §18.11 and §18.11.1 (inline random-variable control; `randomize(null)`);
+  - §18.13.4 (`get_randstate()`), §18.14.1 and §18.14.3 (random stability; self-seeding in `new()`), §20.11 (assertion control).
+- IEEE 1800.2-2020 Annex B.3.1 (sequence action macros) and §6.3.7 (`set_report_severity_id_override`).
+- uvm-core 2020.3.1 implementation: `macros/uvm_sequence_defines.svh` (`` `uvm_do ``, `` `uvm_rand_send ``, `RNDFLD`), `seq/uvm_sequence_item.svh` (`uvm_get_report_object()`, reseeding in `set_item_context()`), `base/uvm_component.svh` (reseeding in `new()`, `+uvm_set_severity`), `base/uvm_task_phase.svh` (run-phase process reseeding), `base/uvm_misc.svh` (`uvm_create_random_seed`), `base/uvm_cmdline_report.svh`.
+
+**Prerequisites:** [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) and the earlier pages of this module, especially [Controlling Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization) for `rand_mode()`, `constraint_mode()` and overriding.
+
+**Related**
+
+- [I-SV-2B module overview](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index): the module map and objectives.
+- [Conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints): implication, `foreach`, reductions and functions in depth.
+- [Procedural randomization, seeds and random stability](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods): which code edits shift which random values.
+- [I-SV-2A constraint blocks](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks): soft priorities and `solve…before`.
+- [I-SV-3B closure workflow](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow): finding and closing coverage holes.
+- [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): item randomization in sequences.
+- [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): report IDs and severity overrides.
+- [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): seed-based regression debug.
+
+<NextLesson />

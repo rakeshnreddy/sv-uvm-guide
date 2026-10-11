@@ -1,100 +1,607 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import InteractiveCode from "@/components/ui/InteractiveCode";
-import Quiz from "@/components/ui/Quiz";
-import { InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Constraint Blocks, soft, and solve…before"
+description: "Organize constraints in named and external blocks, bound random array sizes, and predict which soft constraint wins and what solve…before changes."
+flashcards: "I-SV-2A_Constrained_Randomization_Fundamentals"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+---
 
-export const metadata = {
-  title: "Constraint Blocks, soft, and solve...before | Advanced SystemVerilog for Verification",
-  description: "Control dependencies and defaults using constraint blocks, soft values, and solve-before ordering.",
-};
+## Quick Take
 
-<InfoPage
-  title="Constraint Blocks, soft, and solve...before"
-  sv_concept_tags={["constraint blocks", "soft", "solve...before"]}
->
+- **What it is:** The second page of I-SV-2A. The [module page](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) taught random variables, constraint blocks, `dist`, `soft`, `solve…before` and inline constraints. This page goes one level deeper into what you meet as soon as item classes grow: constraint blocks as named class members, **external constraint blocks** (declared in the class, written after it), the **size of random arrays**, the full **ranking of soft constraints**, and what `solve…before` may and may not do (IEEE 1800-2023 §18.4, §18.5).
+- **Why it matters:** A reusable item class carries the protocol's hard rules plus `soft` defaults, and every test layers its own wishes on top. If you cannot predict which default wins, tests silently produce the wrong traffic. An unbounded array size can stall a regression, and a misplaced `solve…before` hides a distribution problem instead of fixing it.
+- **The Analogy:** A constraint block is a set of road signs. Hard constraints close roads. A `soft` sign is a default route, followed unless a stronger sign makes it impossible. `solve…before` never opens or closes a road; it only changes which open roads traffic tends to take. *Where it breaks:* the solver sees the whole map at once instead of driving road by road, and a soft sign is never "mostly" followed: on each call it is either obeyed completely or ignored completely.
 
-## Level 1: Defaults and Dependencies
-*IEEE 1800-2023, §18.5.13: soft constraints · §18.5.9: variable ordering*
+**You will be able to:**
+1. **Write** external constraint blocks with implicit and explicit prototypes, and **predict** what happens when a body is missing, duplicated or misplaced.
+2. **Write** random arrays whose size is always bounded, and **predict** the size distribution, including when the array is not resized at all.
+3. **Predict** which soft constraint wins across declaration order, class layers and inline constraints, and when a soft constraint is dropped.
+4. **Decide** when `solve…before` is worth adding, **predict** the distribution it produces, and spot an illegal use.
 
-**The Analogy:** A constraint block is a set of road signs. Hard constraints close roads. A `soft` sign is a default route that is always followed unless a stronger sign closes it. `solve...before` never opens or closes a road; it only changes which open roads traffic tends to take.
+<BeforeYouStart />
 
-## Level 2: Core Mechanics
+## Build Your Mental Model
 
-### Basic Constraint Block
+**How to read this page.** Each section starts with the rule a junior needs, shows it in a model or a traced example, and then lists the pitfalls. Make It Work puts all four ideas into one bench. Push Further holds the expert corner cases.
 
-<InteractiveCode language="systemverilog" code={`class addr_range;
+### Constraint blocks are named class members
+
+A **constraint block** is a class member, like a property or a method: it has a name, it is inherited by derived classes, and its name must be unique within the class (§18.5). The name matters in three places:
+
+- A failure report from the simulator usually names the blocks involved, so one block per rule makes failures readable.
+- `obj.c_name.constraint_mode(0)` switches one block off by name; [I-SV-2B controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization) teaches it.
+- A derived class that declares a constraint with the **same name** replaces the inherited one, and a new name adds a constraint (§18.5.2). I-SV-2B teaches overriding in depth.
+
+All enabled hard constraints hold at the same time, whatever their order in the class (soft constraints are ranked by order, §18.5.13.1, covered below). A single relation between two variables already shapes the odds:
+
+```systemverilog
+// snippet: a field pair from a range descriptor
+class addr_range;
   rand bit [7:0] low, high;
-  constraint c_order { low < high; }
-endclass`} />
+  constraint c_lt { low < high; }   // high is strictly above low
+endclass
+```
 
-### Soft Constraints
+**Predict:** over many calls, is `low == 0` or `low == 200` more likely, or are they equal?
 
-<InteractiveCode language="systemverilog" code={`class cfg;
-  rand bit [7:0] timeout;
-  constraint c_default { soft timeout == 8'd16; }
+<details>
+<summary>Reveal the answer</summary>
+
+`low == 0` is about 4.6 times as likely. Count the legal pairs, because the solver picks one legal `(low, high)` pair uniformly (§18.5.9):
+
+| `low` | Legal `high` values | Legal pairs |
+|---|---|---|
+| 0 | 1 to 255 | 255 |
+| 100 | 101 to 255 | 155 |
+| 200 | 201 to 255 | 55 |
+| 254 | 255 | 1 |
+| 255 | none | 0 |
+
+There are 255 + 254 + … + 1 = 32,640 legal pairs in total. So P(`low == 0`) = 255/32,640, about 0.78%, and P(`low == 200`) = 55/32,640, about 0.17%. `low` is skewed downwards and `high` upwards. If the specification wants `low` uniform, add `solve low before high;` (see the last section): `low` is then uniform over 0 to 254, the values that have a legal partner.
+
+</details>
+
+### External constraint blocks
+
+A class can declare a constraint by name and leave its body for later, just as a class can declare an `extern` method. The declaration is a **constraint prototype**, and the body written outside the class is an **external constraint block** (§18.5.1). There are two forms of prototype:
+
+```systemverilog
+// snippet: inside module tb_top (the same rules apply in a package)
+class base_item;
+  rand bit [31:0] addr;
+  extern constraint c_addr;   // explicit prototype: a body is required
+  constraint c_user;          // implicit prototype: a body is optional
 endclass
 
-program test;
-  cfg c = new();
-  initial begin
-    c.randomize();
-    $display("timeout=%0d", c.timeout); // uses soft default
-    c.randomize() with { timeout == 8'd4; }; // override default
-    $display("timeout=%0d", c.timeout);
-  end
-endprogram`} />
+// The body: same scope as the class, after the class
+constraint base_item::c_addr { addr[1:0] == 2'b00; }
+// No body for c_user: it is an empty constraint, and a warning may be issued
+```
+
+<ArchitectureDiagram
+  title="Where an external constraint block may live"
+  caption="Both prototypes sit inside the class. The body for c_addr must be in the same scope as the class (here module tb_top) and after it. c_user has no body, so it is treated as the constant 1 and constrains nothing."
+  nodes={[
+    { id: "scope", label: "module tb_top (the class's scope)", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "cls", label: "class base_item", kind: "generic", col: 0, row: 0, rowSpan: 2, container: true },
+    { id: "proto", label: "extern constraint c_addr;", kind: "generic", col: 0, row: 0 },
+    { id: "impl", label: "constraint c_user;", kind: "generic", col: 0, row: 1 },
+    { id: "body", label: "constraint base_item::c_addr { … }", kind: "generic", col: 1, row: 0 },
+    { id: "none", label: "no body: empty constraint", kind: "generic", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "body", to: "proto", style: "causal", label: "completes (written after the class)" },
+    { from: "none", to: "impl", style: "structural", label: "treated as 1" }
+  ]}
+/>
+
+The rules, all from §18.5.1:
+
+| Situation | Explicit prototype `extern constraint c;` | Implicit prototype `constraint c;` |
+|---|---|---|
+| One body, same scope, after the class | Legal | Legal |
+| No body anywhere | **Error** | Empty constraint (as if it held the constant 1); a warning may be issued |
+| Two bodies for the same prototype | Error | Error |
+| A block `constraint c { … }` with the same name inside the class as well | Error | Error |
+| Body before the class, or in another scope | Error | Error |
+
+**Why use them?** They keep a long item class readable: the class lists every rule by name, like a header, and the bodies follow. A team can also leave a hook such as `constraint c_user;` that does nothing until someone writes its body in the same scope. Prefer the explicit form when a missing body would be a bug: the compiler then reports it, while the implicit form silently becomes an empty constraint.
+
+Two details matter for soft constraints and static blocks. The soft-constraint priority of an external block follows the position of its **prototype** in the class, not where the body is written (§18.5.13.1). And if the block is `static`, the keyword goes on both the prototype and the body, or on neither (§18.5.10).
 
 ### Bound every array size
 
-<InteractiveCode language="systemverilog" code={`class packet;
-  rand bit [7:0] len;                   // its type bounds it: 0..255
+A **random array** is a dynamic array or queue declared `rand`. Constraining its `size()` makes `randomize()` resize it first and then randomize every element (§18.4). This is the standard way to give a transaction a payload whose length the solver chooses:
+
+```systemverilog
+// snippet: a packet with a bounded payload
+class packet;
+  rand bit [7:0] len;                    // its type already bounds it: 0..255
   rand bit [7:0] data[];
   constraint c_len  { len inside {[1:64]}; }
   constraint c_size { data.size() == len; }
-endclass`} />
+endclass
+```
 
-Two things to notice. First, the size is bounded. A `rand int size` with only `data.size() == size` lets the solver choose any size up to 2,147,483,647, which can exhaust memory or stall the run. Second, there is no `solve...before`. An array's size constraints are always solved before its element constraints (§18.5.7.1), so `len` is uniform over 1..64 no matter how many payloads each length allows.
+Three rules to remember:
 
-### Ordering with `solve...before`
+- **Always bound the size.** With `rand int n;` and only `data.size() == n;`, nothing stops the solver from choosing an enormous size, up to the largest `int`, 2,147,483,647. Allocating such an array can exhaust memory or stall the run; how a simulator reacts is tool-dependent. Use a narrow unsigned type and an `inside` range.
+- **Sizes are chosen before elements.** The array is resized according to its size constraint, and *then* the elements are randomized (§18.4). So `len` above is uniform over 1 to 64, even though length 64 allows far more payload contents than length 1. When the elements also carry constraints, a `foreach` rule, the sizes are still solved first (§18.5.7.1).
+- **No size constraint, no resize.** If the size is not constrained (or only by a soft constraint that was discarded), the array keeps its current size and only its elements are randomized (§18.4). A `rand` dynamic array of a freshly created object is empty, so it stays empty.
 
-Use `solve...before` when a rare mode would otherwise almost never be picked:
+A queue declared `rand` is resized at the back: elements are added or removed on the right (§18.4). An associative array's size and indices are never randomized (§18.4).
 
-<InteractiveCode language="systemverilog" code={`class txn;
+**Use the model.** The explorer below enumerates a small packet exactly: `length` is 4 bits with `c_len: length inside {[1:8]}`, `c_size: payload.size() == length`, and a rule `foreach (payload[i]) payload[i] != 0` that applies to every 2-bit element, so each element has 3 legal values. (The `foreach` constraint is taught in [I-SV-2B advanced constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints); here it only makes the payload count grow with the length.) Stay on the **Array size** tab.
+
+**Predict:** length 8 allows 3⁸ = 6,561 different payloads; length 1 allows 3. How likely is `length == 8`?
+
+<ConstraintSolverExplorer initialMode="size" />
+
+**What it showed.** `length == 8` has probability 1/8, the same as every other legal length. If the solver weighed whole `(length, payload)` combinations, length 8 would win about two thirds of the time, but the size is chosen first and the payload afterwards. The practical consequence: you never need `solve…before` to make sizes uniform; you need it only if you want a non-uniform size, and then `dist` on the size variable is clearer. The explorer's other tabs return in the next two sections; its **Debug: silent hole** tab belongs to [I-SV-2B solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug).
+
+### Which soft constraint wins
+
+Recall the rule from the module page: a **soft** constraint is kept whenever a solution exists with it and every hard constraint; otherwise it is discarded for that call, as if it read `1` (§18.5.13). When two soft constraints conflict with each other, the one with **higher priority** is kept. The solver decides this again on every call, so a soft constraint is never "switched off" for good.
+
+The full priority list, from §18.5.13.1. Hard constraints sit above all of it.
+
+| Where the soft constraint is | Its priority |
+|---|---|
+| Inside `randomize() with { … }` | Higher than every constraint of the class being randomized |
+| In a derived class | Higher than every constraint in its base classes |
+| Later in the same block, class or struct | Higher than an earlier one in that construct |
+| In an external block | Ranked by where its **prototype** is declared in the class |
+| In a contained object (a `rand` class handle) | Lower than every constraint of the containing object; later handles outrank earlier ones |
+| Inside a `foreach` | Later iterations outrank earlier ones |
+
+The design rule behind the list: the last constraint the user specifies prevails, so later layers of the environment outrank earlier ones. For two conflicting soft constraints c1 (higher) and c2 (lower), the solver tries both, then c1 alone, then c2 alone, then neither. Two consequences follow: a call whose only constraints are soft can never fail, and if no soft constraints contradict each other, the result is the same as if they were all hard (§18.5.13.1).
+
+Trace three calls on a layered pair of classes. `long_item` is the class Make It Work builds:
+
+```systemverilog
+// snippet: the base class has c_len { len inside {[1:16]}; } and c_def { soft len == 4; }
+class long_item extends base_item;
+  constraint c_long { soft len inside {[8:16]}; }   // a test layer's default
+endclass
+```
+
+| Call | Soft constraints, highest first | Kept | Result |
+|---|---|---|---|
+| `b.randomize()` on a `base_item` | `c_def` | `c_def` (nothing conflicts) | `len` is 4 on every call |
+| `l.randomize()` on a `long_item` | `c_long`, `c_def` | `c_long`; `c_def` conflicts with it and is lower | `len` uniform over 8 to 16 |
+| `l.randomize() with { soft len == 3; }` | inline, `c_long`, `c_def` | inline only; both class defaults conflict with it | `len` is 3 |
+| `l.randomize() with { len == 2; }` | `c_long`, `c_def` (the inline one is hard) | none; both conflict with the hard constraint | `len` is 2 |
+
+**Check it in the model.** Open the explorer's **soft priority** tab. It has a hard `c_len: length inside {[4:16]}`, a soft `c_soft: length == 16` and a later soft `c_small: length inside {[4:7]}`, which starts switched off. **Predict** P(`length == 16`) three times: as it starts, with the later soft rule on, and with the inline `with` on instead. Then reveal each.
+
+<ConstraintSolverExplorer initialMode="soft" />
+
+**What it showed.** Alone, the soft default holds on 100% of calls. With `c_small` on, the later declaration wins, `c_soft` is discarded, and `length` is uniform over 4 to 7: P(16) = 0. With the inline `length < 10`, a hard constraint, `c_soft` is discarded and `length` is uniform over 4 to 9: again 0. In no case is the answer "usually 16".
+
+**Pitfall: a kept soft constraint shrinks the legal set.** The module page's [Config example](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index#soft-a-default-with-a-rank) shows a soft default that silently makes a mode impossible: if some legal solution keeps the default, the solver keeps it, and every value the default excludes disappears. Guard a default with the condition it belongs to, `!is_secure -> soft burst_len == 2'b10;`, instead of hoping it gives way.
+
+### solve…before: what it may and may not do
+
+`solve a before b` makes the solver choose `a` first, uniformly over the values of `a` that appear in some legal combination, and then choose `b` among the values that fit (§18.5.9). The set of legal combinations does not change, so it **cannot cause a failure** and cannot cure one either.
+
+When it is worth adding:
+
+```systemverilog
+// snippet: an error flag that forces one specific length
+class txn;
   rand bit       is_err;
   rand bit [7:0] len;
-  constraint c_err   { is_err -> len == 0; }
+  constraint c_err   { is_err -> len == 0; }       // an error frame has no payload
   constraint c_order { solve is_err before len; }
-endclass`} />
+endclass
+```
 
-Without `c_order` there are 257 legal `(is_err, len)` pairs and only one has `is_err = 1`, so errors appear on 1 call in 257. With it, `is_err` is drawn first, 50/50 over its legal values, then `len`. The legal pairs are exactly the same; only the odds change (§18.5.9).
+Without `c_order` there are 257 legal `(is_err, len)` pairs: 256 with `is_err = 0` and one, `(1, 0)`, with `is_err = 1`. Errors appear on 1 call in 257. With `c_order`, `is_err` is drawn first, 50/50, and then `len`. The pairs are exactly the same; only their odds change (§18.5.9).
 
-## Level 3: Expert Tips
+**Check it in the model.** The explorer's **solve…before** tab has `length` from 4 to 16 and `kind` either `SMALL` or `JUMBO`, with the rule "`JUMBO` implies `length == 16`". **Predict** P(`kind == JUMBO`) with no ordering, with `kind` first and with `length` first.
 
-- `soft` gives a default that holds on every call until a hard constraint, an inline `with` constraint or a later soft constraint contradicts it (§18.5.13.1). Then it is dropped completely; it never becomes "less likely".
-- `solve...before` is never needed for correctness. The solver handles dependencies in both directions on its own. Add it only to reshape the odds, as in the `is_err` example, and never on `randc` variables.
+<ConstraintSolverExplorer initialMode="order" />
+
+**What it showed.** No ordering: 14 legal pairs and only `(JUMBO, 16)` has `kind == JUMBO`, so 1/14, about 7.1%. `kind` first: 50%. `length` first: `length` is uniform over 13 values, only 16 allows `JUMBO`, and then `kind` is 50/50, so 1/26, about 3.8%. The direction matters, and none of the three changes which pairs are legal.
+
+The restrictions, all from §18.5.9:
+
+- Only `rand` variables. A `randc` variable may not appear; it is always solved before everything else anyway (§18.4.2).
+- The variables must be integral or real.
+- An array size may be ordered, written `data.size` (parentheses optional).
+- No cycles: `solve a before b;` together with `solve b before a;` is illegal.
+- Variables you do not order are solved together with the last ordered set.
+
+**Decide with three questions.** Does a value I need come out rarely because it has few legal partners? Then ordering helps. Is the problem that a value never occurs? Then ordering cannot help, because something makes it illegal or a kept soft constraint excludes it. Do I just want different rates? Then a `dist` on the variable usually says it more clearly.
+
+### Mistakes to avoid
+
+| Mistake | Why it is wrong | Instead |
+|---|---|---|
+| `constraint c_map;` with the body forgotten | The implicit form silently becomes an empty constraint (§18.5.1) | Use `extern constraint c_map;` so a missing body is an error |
+| Writing the external body inside the class too | A block with the prototype's name in the class is an error (§18.5.1) | One body, after the class, same scope |
+| `rand int n; data.size() == n;` | Nothing bounds the size | A narrow unsigned type plus `inside` |
+| Expecting an unconstrained `rand` array to get a random size | It is not resized (§18.4) | Constrain `size()` |
+| Expecting the first-declared soft default to win | Later, derived and inline soft constraints outrank it (§18.5.13.1) | Read the priority table |
+| `solve…before` to make a rule "work" | It changes only the odds (§18.5.9) | Find the conflicting hard constraint instead |
+| `solve tag before len;` with `tag` declared `randc` | Illegal (§18.5.9) | Leave `randc` variables out of orderings |
+
+## Make It Work
+
+### Worked example: layered defaults and an ordered error flag
+
+This bench builds the classes traced above. `base_item` has the hard rules, a soft default and an external block; `long_item` is a test layer with its own default; two small classes measure what `solve…before` changes. A checker verifies every item and the bench ends with the milestone signature `PASS=<n> FAIL=0`.
+
+```systemverilog
+// compile
+module tb_top;
+  class base_item;
+    rand bit [31:0] addr;
+    rand bit [7:0]  len;
+    rand bit [7:0]  data[];
+    constraint c_len  { len inside {[1:16]}; }  // hard: the protocol limit
+    constraint c_size { data.size() == len; }   // the size is bounded through len
+    constraint c_def  { soft len == 4; }        // default length for plain calls
+    extern constraint c_addr;                   // body written after the class
+  endclass
+
+  // External constraint block: same scope as the class, after it (§18.5.1)
+  constraint base_item::c_addr { addr[1:0] == 2'b00; }
+
+  // A test layer: a derived soft default outranks the base one (§18.5.13.1)
+  class long_item extends base_item;
+    constraint c_long { soft len inside {[8:16]}; }
+  endclass
+
+  class err_item;
+    rand bit       is_err;
+    rand bit [7:0] len;
+    constraint c_err { is_err -> len == 0; }    // an error frame has no payload
+  endclass
+
+  // Same 257 legal pairs, different odds (§18.5.9)
+  class err_item_ordered extends err_item;
+    constraint c_order { solve is_err before len; }
+  endclass
+
+  int pass, fail;
+
+  function automatic void check(base_item t);
+    if (t.len inside {[1:16]} && t.data.size() == t.len && t.addr[1:0] == 2'b00)
+      pass++;
+    else begin
+      fail++;
+      $display("FAIL addr=%h len=%0d size=%0d", t.addr, t.len, t.data.size());
+    end
+  endfunction
+
+  initial begin
+    base_item        b;
+    long_item        l;
+    err_item         e;
+    err_item_ordered eo;
+    int n_def, n_long, n_err, n_err_o;
+    b  = new();
+    l  = new();
+    e  = new();
+    eo = new();
+    repeat (200) begin
+      if (!b.randomize()) $fatal(1, "RAND: base_item randomize() failed");
+      check(b);
+      if (b.len == 4) n_def++;
+      if (!l.randomize()) $fatal(1, "RAND: long_item randomize() failed");
+      check(l);
+      if (l.len inside {[8:16]}) n_long++;
+    end
+    $display("base_item: len==4 on %0d of 200", n_def);
+    $display("long_item: len in 8..16 on %0d of 200", n_long);
+    if (!l.randomize() with { len == 2; }) $fatal(1, "RAND: len == 2 failed");
+    check(l);
+    $display("long_item, hard len == 2: len=%0d size=%0d", l.len, l.data.size());
+    if (!l.randomize() with { soft len == 3; }) $fatal(1, "RAND: soft len failed");
+    check(l);
+    $display("long_item, soft len == 3: len=%0d", l.len);
+    repeat (1000) begin
+      if (!e.randomize())  $fatal(1, "RAND: err_item randomize() failed");
+      if (!eo.randomize()) $fatal(1, "RAND: err_item_ordered randomize() failed");
+      if (e.is_err)  n_err++;
+      if (eo.is_err) n_err_o++;
+    end
+    $display("err_item: is_err=1 on %0d of 1000", n_err);
+    $display("err_item_ordered: is_err=1 on %0d of 1000", n_err_o);
+    $display("PASS=%0d FAIL=%0d", pass, fail);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative, traced by hand from the rules on this page, not captured from a simulator run; the two `is_err` counts vary with the seed and the simulator):
+
+```text
+base_item: len==4 on 200 of 200
+long_item: len in 8..16 on 200 of 200
+long_item, hard len == 2: len=2 size=2
+long_item, soft len == 3: len=3
+err_item: is_err=1 on 4 of 1000
+err_item_ordered: is_err=1 on 497 of 1000
+PASS=402 FAIL=0
+```
+
+Why each line looks the way it does:
+
+- **`len==4` on every base call:** nothing contests `c_def` (§18.5.13).
+- **`8..16` on every `long_item` call:** `c_long` and `c_def` conflict, and the derived class's constraint has the higher priority (§18.5.13.1).
+- **`len=2 size=2`:** the inline constraint is hard, so both soft defaults are discarded; the payload follows the size (§18.4).
+- **`len=3`:** an inline soft constraint outranks every constraint of the class, so both class defaults are discarded (§18.5.13.1).
+- **About 4 versus about 500:** 1 legal pair in 257 has `is_err = 1`; ordering draws `is_err` first, 50/50, over the same pairs (§18.5.9).
+- **`PASS=402`:** 200 + 200 checked plain calls plus the two inline calls. The `err_item` classes are measured, not checked.
+
+**Run it.** Save the code as `tb_top.sv` and compile it with any simulator that supports IEEE 1800-2023 Clause 18; `tb_top` is the top level, and the commands are the same as for the [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) bench. Support for external constraint blocks and `soft` in open-source simulators was not verified for this example (tool-dependent).
+
+**How to organise constraints in your own item class:**
+
+1. Give every protocol rule its own named hard block, so failure reports and `constraint_mode()` can name it.
+2. For a long class, declare the rules as `extern constraint` prototypes and write the bodies after the class.
+3. Tie every random array to a bounded size variable.
+4. Put defaults in `soft` constraints in the base class, and let derived classes and inline constraints override them; guard a default with `->` when it applies only to one mode.
+5. Add `solve…before` only after counting legal combinations shows a value you need is starved.
+6. Check every `randomize()` call, and measure the distribution you got.
+
+**Checklist before moving on:**
+- [ ] I can write both prototype forms and say which one makes a missing body an error.
+- [ ] I can say where an external constraint block may be written and what makes it illegal.
+- [ ] Every random array I write has a bounded size, and I know an unconstrained `rand` array is not resized.
+- [ ] I can predict the winner among base, derived and inline soft constraints.
+- [ ] I can predict the distribution with and without `solve…before`, and I never order a `randc` variable.
+
+## Push Further
+
+These items are for working engineers and interview preparation. The core path above does not depend on them.
+
+### Expert: disable soft and the soft dist trap
+
+`disable soft x;` discards every **lower-priority** soft constraint that references `x` directly, whether or not it conflicts (§18.5.13.2). It also accepts an array size, `disable soft data.size;`. Three consequences from the standard's own examples:
+
+- With `soft x == 3;`, then `disable soft x;`, then `soft x inside {1, 2};`, the first default is discarded and `x` is 1 or 2. Without the third block, `x` would be unconstrained.
+- It only affects soft constraints in which the variable appears directly. `disable soft p;` discards `soft !p || q;` but not `p -> soft q;`, because there the soft part mentions only `q`.
+- **The soft `dist` trap.** With `soft x == 5;` in one block and `soft x dist {5, 8};` in a later block, `x` is **always 5**. The later `dist` can be satisfied by 5, so nothing conflicts and both are kept. Write `disable soft x;` before the soft `dist` when you want its weights to apply.
+
+### Expert: soft priorities across contained objects and loops
+
+From §18.5.13.1:
+
+- Constraints of an object reached through a `rand` class handle (a **contained object**) rank below every constraint of the container, so the container can override its parts' defaults.
+- Among contained objects, those whose handles are declared later rank higher. If two handles point to the same object, its constraints take the priority of the handle declared last.
+- Soft constraints generated by a `foreach` rank by iteration order: later iterations win. For an associative array whose index type has no ordering, the priority is implementation-dependent.
+
+The standard's worked example (classes `B1`, `D1`, `B2`, `D2`) ranks fourteen soft constraints from the inline ones down to the first contained object's base class. Reading it once is good preparation for debugging a deep sequence-item hierarchy, where a default set in a configuration object seems to be ignored.
+
+### Expert: external blocks with static and override specifiers
+
+- A `static` constraint block applies `constraint_mode()` to all instances at once (§18.5.10). With a prototype and an external body, `static` must appear on both or on neither; one without the other is an error.
+- IEEE 1800-2023 adds the constraint specifiers `:initial` (must not override), `:extends` (must override) and `:final` (may not be overridden further) (§18.5.2). With a prototype and an external body, the same specifiers must appear on both. Tool support for these newer specifiers varies (tool-dependent).
+- An abstract (`virtual`) class can declare `pure constraint c;`, an obligation that every non-abstract derived class provides a constraint named `c`, in its body or as a prototype plus an external block (§18.5.2). [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index) covers constraint inheritance in depth.
+
+### Expert: how solve…before is actually applied
+
+- Ordering is a **partial** order. Variables that are not ordered are solved with the last ordered set, deferred as late as possible to keep their distribution good (§18.5.9).
+- The solver may solve in a different order when the outcome is the same. The standard's example: with `x == 0; x < y; solve y before x;`, `x` has only one possible value, so it can be fixed first (§18.5.9).
+- Its effect on solver run time is **tool-dependent**. The standard defines only the distribution, so do not add it as a performance fix, and do not remove it as one without measuring.
+- `randc` variables, array sizes under `foreach` constraints, and function arguments in constraints are solved in an implicit order that, unlike `solve…before`, can make `randomize()` fail (§18.4.2, §18.5.7.1, §18.5.11). [I-SV-2B solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug) shows how to recognise those failures.
+
+### Expert: interview angles
+
+<InterviewQuestionPlayground
+  title="Interview: why solve A before B?"
+  question="Why would you add solve A before B to a class whose constraints already work?"
+  options={[
+    { text: "To make the simulation faster, because the solver has less to search.", isCorrect: false, feedback: "The standard defines only the effect on the distribution; any effect on run time is tool-dependent (§18.5.9)." },
+    { text: "To change the distribution: A is drawn uniformly over its legal values first, then B among the values consistent with A.", isCorrect: true, feedback: "Right. Without it the solver picks uniformly among whole legal (A, B) combinations, which can starve a value of A that has few partners. The legal combinations stay exactly the same." },
+    { text: "Because B's value depends on A, so without it the dependency is ignored.", isCorrect: false, feedback: "The solver handles dependencies in both directions without any ordering (§18.5.9)." },
+    { text: "So that A is randomized before pre_randomize() is called.", isCorrect: false, feedback: "pre_randomize() runs before any random variable is solved, with or without ordering (§18.6.2)." }
+  ]}
+/>
+
+Further prompts to practise aloud:
+- "A base item has `soft len == 4`, a derived item adds `soft len inside {[8:16]}`, and a test calls `randomize() with { soft len < 6; }`. What is `len`, and why?" (4 on every call. The inline soft constraint has the top priority and conflicts with `c_long`, so `c_long` is discarded. But `len == 4` does not conflict with `len < 6`, so the base default is kept: a soft constraint is dropped only when it conflicts.)
+- "Your team's item has `constraint c_user;` and nobody remembers what it does. What does it constrain, and how would you make a forgotten body impossible?"
+
+## Practice & Reinforce
+
+### Retrieval quiz
 
 <Quiz questions={[
   {
-    question: "What happens when an inline constraint sets `timeout` to 4 in the example?",
+    question: "class C has rand int x and the line constraint c_map; and no body for C::c_map exists anywhere. What happens?",
     answers: [
-      { text: "Randomization fails", correct: false },
-      { text: "The `soft` constraint is ignored", correct: true },
-      { text: "Timeout stays at 16", correct: false }
+      { text: "A compile error, because the constraint has no body", correct: false, feedback: "That is the rule for the explicit form, extern constraint c_map;. The implicit form is allowed to have no body (§18.5.1)." },
+      { text: "It compiles; c_map is an empty constraint that has no effect, and a warning may be issued", correct: true, feedback: "Right. A missing body for an implicit prototype is treated as the constant 1 (§18.5.1)." },
+      { text: "randomize() always fails, because an empty constraint is false", correct: false, feedback: "An empty constraint is equivalent to the constant 1, which is always true." },
+      { text: "x is always 0, because the solver has no rule for it", correct: false, feedback: "x is unconstrained by c_map, so it is uniform over its range like any rand variable." }
     ],
-    explanation: "A `soft` constraint acts as a default and is overridden by the inline constraint."
+    explanation: "An implicit prototype with no external block is an empty constraint (a warning may be issued). An explicit extern prototype with no body is an error, which is why the explicit form is safer when a body must exist.",
+    objective: 1
+  },
+  {
+    question: "Where may the external body constraint bus_item::c_map { addr < 100; } be written?",
+    answers: [
+      { text: "Inside class bus_item, next to the prototype", correct: false, feedback: "A constraint block with the prototype's name inside the class is an error (§18.5.1)." },
+      { text: "In the same scope as the class, after the class declaration", correct: true, feedback: "Right: same scope (the module or package that declares the class), and after the class (§18.5.1)." },
+      { text: "Anywhere, even before the class, as long as it is in the same file", correct: false, feedback: "It must appear after the class declaration, in the same scope." },
+      { text: "In any other package that imports bus_item", correct: false, feedback: "The body must be in the class's own scope, not in a scope that imports it." }
+    ],
+    explanation: "§18.5.1: an external constraint block shall appear in the same scope as the class declaration and after it. At most one body per prototype, and no block of the same name inside the class.",
+    objective: 1
+  },
+  {
+    question: "class packet has rand byte data[]; and no constraint on data.size(). After p = new(); the array is empty. What does it hold after a successful p.randomize()?",
+    answers: [
+      { text: "A random number of elements, up to the largest int", correct: false, feedback: "Only a constrained size is randomized. Without a size constraint the array is not resized (§18.4)." },
+      { text: "Exactly one random element", correct: false, feedback: "No element is added; the array keeps its size." },
+      { text: "Still nothing: an array whose size is not constrained keeps its size, and only its existing elements are randomized", correct: true, feedback: "Right (§18.4). An empty array stays empty." },
+      { text: "randomize() fails, because the size is unknown", correct: false, feedback: "Nothing conflicts, so the call succeeds; it simply does not resize the array." }
+    ],
+    explanation: "§18.4: if the size of a dynamic array or queue is not constrained, or only by a discarded soft constraint, the array is not resized and all existing elements are randomized. Constrain size() to get a payload.",
+    objective: 2
+  },
+  {
+    question: "rand bit [7:0] len; rand byte data[]; constraints len inside {[1:64]}; data.size() == len; How likely is len == 64?",
+    answers: [
+      { text: "Almost always, because length 64 allows by far the most payload contents", correct: false, feedback: "That would be true only if sizes and elements were solved as one joint space. The size is chosen first, then the elements (§18.4)." },
+      { text: "1/64", correct: true, feedback: "Right. len is uniform over its 64 legal values; the payload is filled afterwards and does not weigh the choice." },
+      { text: "1/256, because len has 256 values", correct: false, feedback: "Only 1 to 64 are legal, so those 64 values share the probability." },
+      { text: "50%, because 64 is the upper bound", correct: false, feedback: "A range bound is not favoured; every legal value of len is equally likely." }
+    ],
+    explanation: "The array is resized according to its size constraint and then its elements are randomized (§18.4; with foreach rules too, §18.5.7.1). So the payload count never weights len, and no solve…before is needed for uniform sizes.",
+    objective: 2
+  },
+  {
+    question: "base_item has soft len == 4; and len inside {[1:16]};. Derived class long_item adds soft len inside {[8:16]};. What does a plain randomize() of a long_item give?",
+    answers: [
+      { text: "len is always 4, because the base default was declared first", correct: false, feedback: "Declaration order favours the later constraint, and a derived class outranks its base (§18.5.13.1)." },
+      { text: "randomize() fails, because the two soft constraints conflict", correct: false, feedback: "Conflicting soft constraints never cause a failure; the lower-priority one is discarded (§18.5.13)." },
+      { text: "len is 4 on some calls and 8..16 on others", correct: false, feedback: "soft is a priority, not a probability. On every call the same constraint wins." },
+      { text: "len is uniform over 8..16 on every call", correct: true, feedback: "Right. The derived class's soft constraint has the higher priority, so the base default is discarded every time." }
+    ],
+    explanation: "§18.5.13.1: constraints in a derived class have higher priority than all constraints in its superclasses. The two defaults conflict, so the base one is discarded and len is uniform over 8..16.",
+    objective: 3
+  },
+  {
+    question: "On the same long_item you call l.randomize() with { soft len == 3; }. What is len?",
+    answers: [
+      { text: "Uniform over 8..16, because the derived class outranks a soft inline constraint", correct: false, feedback: "The reverse: inline constraints outrank every constraint of the class being randomized (§18.5.13.1)." },
+      { text: "4, because the base default is the only one that is always kept", correct: false, feedback: "The base default has the lowest priority of the three soft constraints." },
+      { text: "3", correct: true, feedback: "Right. The inline soft constraint has the highest priority; both class defaults conflict with it and are discarded." },
+      { text: "randomize() fails, because three soft constraints conflict", correct: false, feedback: "A call whose conflicts are all between soft constraints can never fail (§18.5.13.1)." }
+    ],
+    explanation: "Priority, highest first: the inline soft constraint, then c_long, then c_def. 3 satisfies the hard rule [1:16], so the inline default is kept and both class defaults are discarded.",
+    objective: 3
+  },
+  {
+    question: "rand bit [7:0] low, high; constraint c_lt { low < high; } Which is more likely, low == 0 or low == 200?",
+    answers: [
+      { text: "They are equally likely, because low is uniform over its range", correct: false, feedback: "That treats low as uniform on its own. The solver picks one legal (low, high) pair, uniformly (§18.5.9)." },
+      { text: "low == 0: it has 255 legal partners, low == 200 only 55", correct: true, feedback: "Right. A value with more legal partners is picked more often; add solve low before high to make low uniform." },
+      { text: "low == 200, because the constraint pushes low upwards", correct: false, feedback: "The constraint pushes low downwards: small values of low leave more room for high." },
+      { text: "It depends on the simulator", correct: false, feedback: "The standard requires every legal combination to be equally likely (§18.5.9), so the ratio is fixed." }
+    ],
+    explanation: "With no ordering every legal pair is equally likely. low == 0 owns 255 pairs and low == 200 owns 55, out of 32,640. solve low before high would make low uniform over 0..254 without changing the legal pairs.",
+    objective: 4
+  },
+  {
+    question: "tag is declared randc bit [3:0] and len is rand. Which of these constraint lines is illegal?",
+    answers: [
+      { text: "solve data.size before len;", correct: false, feedback: "Legal: an array size may be ordered (§18.5.9)." },
+      { text: "solve tag before len;", correct: true, feedback: "Right. randc variables are not allowed in solve…before; they are always solved first anyway (§18.5.9)." },
+      { text: "solve is_err, mode before len;", correct: false, feedback: "Legal, if is_err and mode are rand: a list of variables may be ordered together." },
+      { text: "solve len before addr; in a class with no solve addr before len", correct: false, feedback: "Legal: there is no cycle." }
+    ],
+    explanation: "§18.5.9 restricts orderings to rand variables (never randc), integral or real types, array.size allowed, and no circular dependencies.",
+    objective: 4
   }
 ]} />
 
-<div className="mt-8">
-  <InterviewQuestionPlayground
-    question="Why do we sometimes need `solve A before B` in constraints?"
-    options={[
-      { text: "It causes A to be randomized before B, which makes the simulation run faster.", isCorrect: false, feedback: "It can actually make simulation slower, as the solver order is restricted." },
-      { text: "It changes the probability distribution: A is drawn uniformly over its legal values first, then B among the values consistent with A.", isCorrect: true, feedback: "Correct! Without `solve...before`, the solver picks uniformly from the whole joint solution space, which can starve rare values of A. `solve A before B` draws A first. The set of legal (A, B) pairs is unchanged; only the probabilities move." },
-      { text: "It is required if B's value mathematically depends on A.", isCorrect: false, feedback: "The solver handles bidirectional dependencies automatically; `solve...before` is strictly about changing the probability distribution." },
-      { text: "It guarantees that A is randomized before pre_randomize() is called.", isCorrect: false, feedback: "`pre_randomize` runs before ANY variables are randomized." }
-    ]}
-  />
-</div>
+### Kata: an error frame with a default length
 
-</InfoPage>
+Write a class `frame` with these rules:
+
+| Field | Rule |
+|---|---|
+| `len` | `rand bit [7:0]`, 1 to 64 |
+| `data` | `rand byte data[]`, one byte per `len` |
+| `is_err` | `rand bit`; an error frame carries exactly 1 byte |
+| default | a good frame has 16 bytes unless a test says otherwise |
+| `c_order` | declared in the class as `extern constraint c_order;`, written after the class as `solve is_err before len;` |
+
+1. Write the class as the table says, with the default as `soft len == 16;`, and a `tb_top` that runs 1,000 checked plain `randomize()` calls and prints how often `is_err` is 1 and how often `len` is 16.
+2. **Before you run it, predict both numbers.** The table hides a trap.
+3. Explain what you see, then fix it by changing only the default. Predict again, and decide whether `c_order` is still needed.
+4. Add a task that sends one good frame of `n` bytes with `randomize() with` and `local::`, and print it for `n = 32`.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+**The trap.** With an unguarded `soft len == 16;`, the pair `is_err = 0, len = 16` satisfies every constraint, so the solver keeps the soft default on every call (§18.5.13). Keeping it forces `len == 16`, and then the error rule forces `is_err = 0`. So `is_err` is **never** 1 and `len` is 16 on all 1,000 calls, and `c_order` cannot help: it reshapes the odds over the legal set, which now holds a single pair.
+
+**The fix.** Guard the default with the mode it belongs to: `!is_err -> soft len == 16;`. Now both `(0, 16)` and `(1, 1)` keep the default, so the legal set is those two pairs, and `is_err` is 1 on about half the calls **with or without** `c_order`. The ordering is no longer needed; keep it only if you later remove the default.
+
+```systemverilog
+// compile
+module tb_top;
+  class frame;
+    rand bit       is_err;
+    rand bit [7:0] len;
+    rand byte      data[];
+    constraint c_len  { len inside {[1:64]}; }
+    constraint c_size { data.size() == len; }
+    constraint c_err  { is_err -> len == 1; }         // an error frame carries 1 byte
+    constraint c_def  { !is_err -> soft len == 16; }  // default only for good frames
+    extern constraint c_order;
+  endclass
+
+  constraint frame::c_order { solve is_err before len; }
+
+  task automatic send_good(frame f, bit [7:0] n);
+    if (!f.randomize() with { is_err == 0; len == local::n; })
+      $fatal(1, "RAND: randomize() failed for n=%0d", n);
+  endtask
+
+  initial begin
+    frame f;
+    int n_err, n_16;
+    f = new();
+    repeat (1000) begin
+      if (!f.randomize()) $fatal(1, "RAND: randomize() failed");
+      if (f.is_err) n_err++;
+      if (f.len == 16) n_16++;
+    end
+    $display("is_err=1 on %0d, len==16 on %0d of 1000", n_err, n_16);
+    send_good(f, 32);
+    $display("send_good(32): len=%0d size=%0d", f.len, f.data.size());
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative; counts vary by seed):
+
+```text
+is_err=1 on 503, len==16 on 497 of 1000
+send_good(32): len=32 size=32
+```
+
+Every good frame has 16 bytes, so the two counts add up to 1,000. In `send_good`, the inline `len == local::n` is hard, so the guarded default is discarded for that call (§18.5.13.1), and `local::n` names the task's argument (§18.7.1).
+
+</details>
+
+### Predict with the visuals
+
+Return to the explorer on this page and commit to a number before each reveal:
+- **Array size:** P(`length == 8`) (1/8);
+- **soft priority:** P(`length == 16`) alone, with the later soft rule, and with the inline `with` (100%, 0, 0);
+- **solve…before:** P(`kind == JUMBO`) with no ordering, `kind` first and `length` first (1/14, 1/2, 1/26);
+- **dist weights:** covered in the module page's [Push Further](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index#expert-dist-corner-cases-in-ieee-1800-2023).
+
+The flashcards for this module follow below, under "Reinforce the essentials".
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023)
+- §18.4 Random variables (array sizes and resizing); §18.4.2 Randc modifier
+- §18.5 Constraint blocks; §18.5.1 External constraint blocks; §18.5.2 Constraint inheritance (pure constraints, `:initial`, `:extends`, `:final`)
+- §18.5.7.1 foreach iterative constraints (sizes solved first); §18.5.9 Variable ordering; §18.5.10 Static constraint blocks; §18.5.11 Functions in constraints
+- §18.5.13 Soft constraints; §18.5.13.1 Soft constraint priorities; §18.5.13.2 Disabling soft constraints
+- §18.6.2 Pre_randomize() and post_randomize(); §18.7.1 local:: scope resolution
+
+**Prerequisites:** [I-SV-2A Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index), the first page of this module.
+
+**Related**
+- [I-SV-2B Advanced Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index): implication, `if…else`, `foreach`, `unique`, constraint inheritance and seeds.
+- [I-SV-2B Advanced Constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints): `foreach` rules on array elements.
+- [I-SV-2B Controlling Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization): `constraint_mode()` and `rand_mode()`.
+- [I-SV-2B Solver Debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug): failures caused by implicit solve orders.
+- [I-UVM-3A Sequences Fundamentals](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): layering defaults on sequence items in UVM.
+
+<NextLesson />

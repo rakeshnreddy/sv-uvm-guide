@@ -1,83 +1,762 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz, InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Multiclock Assertions"
+description: "Write assertions that start on one clock and check on another, predict which tick of the second clock each operator checks, and keep a crossing check correct when either clock domain resets."
+flashcards: "I-SV-4B_Multiclock_Assertions"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+---
 
-export const metadata = {
-  title: "Multi-Clocking and disable-iff | Advanced Temporal Logic",
-  description: "Coordinate assertions across clock domains and mask reset behavior with disable iff.",
-};
+## Quick Take
 
-<InfoPage
-  title="Multi-Clocking and disable-iff"
-  sv_concept_tags={["multi-clocking", "disable-iff"]}
->
+- **What it is:** A **multiclock assertion** is a concurrent assertion whose property samples signals on more than one clock. You change clocks in the middle of a sequence or property by writing a new clocking event, such as `@(posedge dst_clk)`, and the operator in front of it (`##1`, `##0`, `|=>` or `|->`) decides which tick of the new clock the check moves to (IEEE 1800-2023 §16.13).
+- **Why it matters:** Real chips have several clocks, and every signal that passes from one clock to another is a place where events get lost, duplicated or delayed. A single-clock assertion samples only at its own clock's edges, so it either cannot say "within four ticks of the *other* clock" or it misses short pulses altogether. A multiclock assertion states the end-to-end rule of the crossing directly: "every pulse sent on `src_clk` arrives on `dst_clk` within four `dst_clk` ticks".
+- **The Analogy:** Two classrooms ring their bells on different schedules. You can pass a note only when your bell rings, and the other class can read it only when *its* bell rings. `##1` and `|=>` mean "at the other room's next bell after mine"; `##0` and `|->` mean "at the other room's bell right now, if it happens to ring at the same moment as mine, otherwise at its next one". *Where it breaks:* real bells drift and a note can arrive half-read; in simulation the clocks are exact, "the same moment" means the same simulation time slot, and nothing models the electrical uncertainty of a real crossing (metastability). The assertion checks the logic of the crossing, not its physics.
 
-  ## Multi-Clocking and disable-iff
-  *IEEE 1800-2023, Clause 16.13: Multiclock support, and Clause 16.12: Declaring properties (disable iff)*
+**You will be able to:**
+1. Predict which tick of the second clock `##1`, `##0`, `|=>` and `|->` move to, including ticks of the two clocks that coincide (§16.13.1, §16.13.2).
+2. Trace clock flow through a multiclock property to name the clock of every operand, and reject the multiclock forms the standard forbids (§16.13.1, §16.13.3, §16.16).
+3. Write a multiclock assertion for a clock-domain crossing with a bounded window and one disable condition that covers both reset domains, and explain how a `default disable iff` applies to it (§16.12, §16.15).
+4. Debug a failing multiclock assertion: tell a real lost event from a wrong operator, a bare sequence or a reset in the other domain, and fix it.
 
-  Designs often cross clock domains. SVA lets you relate events on different clocks within one property.
+<BeforeYouStart />
 
-  <InteractiveCode>
-  ```systemverilog
-  // Every write on wr_clk must be followed by a read on rd_clk
-  property p_wr_followed_by_rd;
-    @(posedge wr_clk) disable iff (!rst_n)
-      wr_en |=> @(posedge rd_clk) rd_en;
-  endproperty
+## Build Your Mental Model
 
-  a_wr_then_rd: assert property (p_wr_followed_by_rd)
-    else $error("Read did not follow write across clocks");
-  ```
-  </InteractiveCode>
+**Core path:** the first seven sections, through "One disable condition for two reset domains", then Make It Work. The later sections and Push Further add practitioner and expert depth.
 
-  For each `wr_clk` edge where `wr_en` is sampled high, `|=>` advances to the nearest strictly later `posedge rd_clk` and checks `rd_en` there (§16.13.2). Edges where `wr_en` is low are vacuous. Asserting the multiclock *sequence* `@(posedge wr_clk) wr_en ##1 @(posedge rd_clk) rd_en` directly would be a bug: a sequence used as a property has no antecedent, so it fails on every `wr_clk` edge where `wr_en` is 0 (§16.12.2).
+This page builds on [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): a **concurrent assertion** starts a new **attempt** (one independent evaluation) at every tick of its clock, reads **sampled values** (the values signals had at the start of the time slot, before the edge changed anything), and reports pass, fail, vacuous success or disabled. A **tick** is one occurrence of a clocking event; for `@(posedge dst_clk)` it is one rising edge of `dst_clk`. A **time slot** is everything the simulator does at one simulation time ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)).
 
-  ### Understanding `disable iff`
+### Why one clock is not enough
 
-  `disable iff (expr)` gives a property a reset condition (§16.12):
-  - If the condition is true at any time between the start of an attempt and its end, the attempt is **disabled**: it reports neither a pass nor a failure, and no action block runs. Attempts already in flight are aborted, not just new ones.
-  - The condition uses **current** values, not sampled values, so an asynchronous reset takes effect as soon as it changes. Use `$sampled(rst)` if you want the sampled value (§16.9.3).
-  - Do not put `$past`, `$rose` or other sampled-value functions in the condition without an explicit clocking event, and do not nest `disable iff` (§16.12). A guard such as "skip the first cycle after reset" belongs in the antecedent: `!$past(rst) |-> ...`.
+A **clock domain** is the set of flops driven by one clock, with the logic between them. When a flop in one domain launches a signal and a flop in another domain captures it, the signal makes a **clock-domain crossing (CDC)**. The receiving side needs a **synchronizer**: a small circuit, typically two flops in a row on the receiving clock, that gives the signal time to settle before the receiving logic uses it.
 
-  <InteractiveCode>
-  ```systemverilog
-  property p_ack_within3;
-    @(posedge clk) disable iff (!rst_n)
-      req |-> ##[1:3] ack;
-  endproperty
-  ```
-  </InteractiveCode>
+Throughout this page the clocks are the ones the Make It Work bench generates: `src_clk` rises at 10, 20, 30 ns and so on (period 10 ns), and `dst_clk` rises at 15, 30, 45 ns and so on (period 15 ns). Their rising edges coincide at 30, 60, 90 ns and every 30 ns after that.
 
-  ### Tips
+Try to check the crossing with one clock and both choices fail:
+- **Check on `dst_clk` only.** Suppose `src_pulse` is high from just after the 60 ns `src_clk` edge to just after the 70 ns edge. The `src_clk` tick at 70 ns samples it as 1, but the `dst_clk` ticks at 60 and 75 ns both sample 0. A `dst_clk` assertion never starts an attempt for that pulse.
+- **Check on `src_clk` only.** You can no longer count the window in destination ticks, which is what the synchronizer's latency is measured in, and you sample the destination's output at instants that have nothing to do with its own flops.
 
-  - Use an `@` clocking event inside a sequence or property to hop to another clock. The clock flows left to right until a new clocking event replaces it (§16.13.3).
-  - In a multiclock concatenation, `##1` moves to the nearest tick of the new clock *strictly after* the current tick. `##0` moves to the nearest tick *at or after* it: time stays put only when both clocks tick in the same time step; otherwise `##0` behaves like `##1` (§16.13.1).
-  - Always guard cross-domain assertions with `disable iff` for asynchronous resets.
+A multiclock assertion starts each attempt on the source clock and checks the result on the destination clock.
 
-  ## Check Your Understanding
+### Switching clocks inside a property
 
-  <Quiz questions={[
-    {
-      question: "What does `disable iff (!rst_n)` do in an assertion?",
-      answers: [
-        { text: "Discards every attempt that is in flight, or starts, while rst_n is low; those attempts report neither pass nor fail", correct: true },
-        { text: "Delays the assertion by one cycle", correct: false },
-        { text: "Changes the clock", correct: false },
-        { text: "Makes the assertion immediate", correct: false }
-      ],
-      explanation: "An attempt during which the disable condition is true has a disabled evaluation: no success, no failure, no action block (§16.12, §16.14.1). The condition uses current values, so it acts asynchronously."
-    }
-  ]} />
+You switch clocks by writing a new clocking event inside the property. The first clocking event of the assertion is its **leading clock**: attempts start at its ticks. Each later `@(...)` governs everything to its right until another one replaces it (parentheses add one exception, covered in "Clock flow" below).
 
-  <div className="mt-8">
-    <InterviewQuestionPlayground
-      question="A multi-clock assertion uses `##1` to transition from checking a trigger on `clkA` to checking a response on `clkB`. An engineer complains that the assertion sometimes misses the `clkB` edge that happens at the same moment as the `clkA` edge. Why?"
-      options={[
-        { text: "Multi-clock assertions are not supported in SystemVerilog.", isCorrect: false, feedback: "They absolutely are (§16.13)." },
-        { text: "In a clock-crossing concatenation, `##1` waits for the nearest `clkB` tick strictly after the `clkA` tick, so a `clkB` tick in the same time step is skipped. `##0` accepts that coincident tick.", isCorrect: true, feedback: "Correct! §16.13.1: `##1` moves to the nearest strictly subsequent tick of the new clock; `##0` moves to the nearest possibly overlapping tick, and behaves like `##1` when the ticks do not coincide. A `clkB` edge that is merely close to, but later than, the `clkA` edge is still the target of `##1`." },
-        { text: "The assertion needs `disable iff`.", isCorrect: false, feedback: "`disable iff` handles resets, not clock alignment." },
-        { text: "`clkA` and `clkB` must be defined as integer multiples of each other.", isCorrect: false, feedback: "SVA multiclock handles fully asynchronous clocks." }
-      ]}
-    />
-  </div>
+```systemverilog
+// snippet
+// Every src_clk tick with src_pulse = 1 starts an attempt. |=> moves to the first
+// dst_clk tick strictly after it; dst_pulse must then be 1 within 4 dst_clk ticks.
+a_pulse_crosses: assert property (
+  @(posedge src_clk) src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse
+);
+```
 
-</InfoPage>
+The common places where a property changes clocks are (§16.13.1, §16.13.2):
+
+| Where | Example (`c0`, `c1`, `c2` are different clocks) | Result |
+|---|---|---|
+| Sequence concatenation with `##1` or `##0` | `@(posedge c0) a ##1 @(posedge c1) b` | a **multiclocked sequence** |
+| Implication `\|=>` or `\|->` | `@(posedge c0) a \|=> @(posedge c1) b` | a multiclocked property |
+| `if` / `else` | `@(posedge c0) if (mode) @(posedge c1) b else @(posedge c2) d` | a multiclocked property |
+| Property `and` / `or` | `@(posedge c0) go \|=> (@(posedge c1) b) and (@(posedge c2) d)` | a multiclocked property (not a sequence) |
+
+The first form is still a sequence, but a restricted one. It is legal as the antecedent of an implication, as the body of a `cover property`, or joined to another sequence with `##1` or `##0`; it may not be an operand of any other sequence operator, and it may not appear in a clocking block (see "What the standard forbids" below). The other three are properties.
+
+### Which tick does the check move to?
+
+Every multiclock operator answers one question: when the property leaves a tick of the old clock, which tick of the new clock does it go to? There are only two answers (§16.13.1, §16.13.2):
+- **strictly after:** `##1` and `|=>` go to the nearest tick of the new clock *strictly later* than the old tick;
+- **at or after:** `##0`, `|->` and a multiclocked `if`/`else` go to the nearest tick of the new clock that is *at the same time or later*. If the new clock ticks in the same time slot, the check happens there; otherwise they behave exactly like `##1` and `|=>`.
+
+**Predict first.** Signal `a` is sampled as 1 at the `src_clk` ticks at 50 ns (attempt A) and 60 ns (attempt B). For each attempt, at which `dst_clk` tick do `@(posedge src_clk) a |=> @(posedge dst_clk) b` and `@(posedge src_clk) a |-> @(posedge dst_clk) b` check `b`? Decide, then read the picture.
+
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <svg viewBox="0 0 360 256" role="img" aria-label="Two clock lanes from 40 to 80 nanoseconds. src_clk ticks at 40, 50, 60, 70 and 80; dst_clk ticks at 45, 60 and 75. Signal a is sampled 1 at the src_clk ticks at 50 (attempt A) and 60 (attempt B). Arrow 1, solid: from A at 50 to the dst_clk tick at 60, used by |=>, |->, ##1 and ##0 alike. Arrow 2, dashed: from B at 60 straight down to the dst_clk tick at 60 in the same time slot, used by |-> and ##0. Arrow 3, dotted: from B at 60 to the dst_clk tick at 75, used by |=> and ##1." style={{ width: "100%", maxWidth: 560 }}>
+  <line x1="204.0" y1="16" x2="204.0" y2="184" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="2 3"/>
+  <text x="204.0" y="12" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.8">{"60 ns: same time slot"}</text>
+  <text x="4" y="62" fontSize="11" fontFamily="ui-monospace, monospace" fill="currentColor">{"src_clk"}</text>
+  <line x1="64.0" y1="58" x2="344.0" y2="58" stroke="currentColor" strokeOpacity="0.5"/>
+  <line x1="92.0" y1="46" x2="92.0" y2="64" stroke="currentColor" strokeWidth="2"/>
+  <path d="M88.0,50 L92.0,44 L96.0,50" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="92.0" y="78" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.8">{"40"}</text>
+  <line x1="148.0" y1="46" x2="148.0" y2="64" stroke="currentColor" strokeWidth="2"/>
+  <path d="M144.0,50 L148.0,44 L152.0,50" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="148.0" y="78" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.8">{"50"}</text>
+  <line x1="204.0" y1="46" x2="204.0" y2="64" stroke="currentColor" strokeWidth="2"/>
+  <path d="M200.0,50 L204.0,44 L208.0,50" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="204.0" y="78" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.8">{"60"}</text>
+  <line x1="260.0" y1="46" x2="260.0" y2="64" stroke="currentColor" strokeWidth="2"/>
+  <path d="M256.0,50 L260.0,44 L264.0,50" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="260.0" y="78" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.8">{"70"}</text>
+  <line x1="316.0" y1="46" x2="316.0" y2="64" stroke="currentColor" strokeWidth="2"/>
+  <path d="M312.0,50 L316.0,44 L320.0,50" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="316.0" y="78" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.8">{"80"}</text>
+  <text x="4" y="172" fontSize="11" fontFamily="ui-monospace, monospace" fill="currentColor">{"dst_clk"}</text>
+  <line x1="64.0" y1="168" x2="344.0" y2="168" stroke="currentColor" strokeOpacity="0.5"/>
+  <line x1="120.0" y1="156" x2="120.0" y2="174" stroke="currentColor" strokeWidth="2"/>
+  <path d="M116.0,160 L120.0,154 L124.0,160" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="120.0" y="188" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.8">{"45"}</text>
+  <line x1="204.0" y1="156" x2="204.0" y2="174" stroke="currentColor" strokeWidth="2"/>
+  <path d="M200.0,160 L204.0,154 L208.0,160" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="204.0" y="188" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.8">{"60"}</text>
+  <line x1="288.0" y1="156" x2="288.0" y2="174" stroke="currentColor" strokeWidth="2"/>
+  <path d="M284.0,160 L288.0,154 L292.0,160" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="288.0" y="188" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.8">{"75"}</text>
+  <circle cx="148.0" cy="32" r="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="148.0" y="36" textAnchor="middle" fontSize="10" fontWeight="600" fill="currentColor">{"A"}</text>
+  <circle cx="204.0" cy="32" r="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="204.0" y="36" textAnchor="middle" fontSize="10" fontWeight="600" fill="currentColor">{"B"}</text>
+  <text x="316.0" y="28" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.8">{"A, B: a sampled 1"}</text>
+  <line x1="148.0" y1="84" x2="201.0" y2="150" stroke="currentColor" strokeWidth="1.5"/>
+  <path d="M194.7,147.0 L201.0,150 L199.4,143.2 Z" fill="currentColor"/>
+  <text x="150.0" y="120" textAnchor="end" fontSize="10" fill="currentColor">{"1"}</text>
+  <line x1="207.0" y1="84" x2="207.0" y2="150" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 3"/>
+  <path d="M204.0,143.7 L207.0,150 L210.0,143.7 Z" fill="currentColor"/>
+  <text x="216.0" y="120" textAnchor="start" fontSize="10" fill="currentColor">{"2"}</text>
+  <line x1="210.0" y1="84" x2="286.0" y2="150" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2 3"/>
+  <path d="M279.2,148.2 L286.0,150 L283.2,143.6 Z" fill="currentColor"/>
+  <text x="270.0" y="110" textAnchor="start" fontSize="10" fill="currentColor">{"3"}</text>
+  <line x1="6" y1="208" x2="30" y2="208" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="36" y="212" fontSize="10" fill="currentColor"><tspan fontWeight="600">{"1"}</tspan>{"  A at 50: |=>, |->, ##1 and ##0 all go to 60"}</text>
+  <line x1="6" y1="226" x2="30" y2="226" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 3"/>
+  <text x="36" y="230" fontSize="10" fill="currentColor"><tspan fontWeight="600">{"2"}</tspan>{"  B at 60: |-> and ##0 stay at 60 (coincident tick)"}</text>
+  <line x1="6" y1="244" x2="30" y2="244" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2 3"/>
+  <text x="36" y="248" fontSize="10" fill="currentColor"><tspan fontWeight="600">{"3"}</tspan>{"  B at 60: |=> and ##1 go to 75 (strictly later)"}</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Up-arrows are rising edges (ticks). Attempt A starts at 50 ns, where no `dst_clk` tick exists, so all four operators move to the next `dst_clk` tick, 60 ns. Attempt B starts at 60 ns, where both clocks tick in the same time slot: `|->` and `##0` check right there, while `|=>` and `##1` skip it and check at 75 ns.</figcaption>
+</figure>
+
+**Debrief.**
+
+| Attempt | `a` sampled 1 at | `\|=>` and `##1` check at | `\|->` and `##0` check at | Why |
+|---|---|---|---|---|
+| A | 50 ns | 60 ns | 60 ns | No `dst_clk` tick at 50 ns, so "at or after" also means 60 ns |
+| B | 60 ns | 75 ns | 60 ns | `dst_clk` also ticks at 60 ns; only "at or after" may use it |
+
+If you predicted 60 ns for both operators in attempt B, you treated `|=>` as "the next tick of any clock". If you predicted 75 ns for `|->` in attempt A, you treated it as "one full `dst_clk` cycle later". Neither rule exists: only the two answers above do.
+
+One special case: when the two clocking events are **identical** (the same expression), nothing moves, and the property is an ordinary single-clock one. `@(posedge clk) a ##0 @(posedge clk) b` is the same as `@(posedge clk) a && b` (§16.13.1).
+
+### Mistake 1: reading `##0` and `|->` as "at the same moment"
+
+In a singly clocked sequence, `##0` never waits: `a ##0 b` needs `b` on the same tick where `a` matched (§16.7; the [module page](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/index) covers this fusion). Across clocks, `##0` *does* wait unless the new clock ticks in the same time slot. The same holds for `|->`.
+
+The trap is that clocks with different periods coincide only at some edges (in the Make It Work bench, every 30 ns). A check written with `|->` therefore starts counting one destination tick earlier for the attempts that start on a coincident edge than for all the others. With an exact-latency check, `src_pulse |-> @(posedge dst_clk) ##2 dst_pulse`, that shift is a false failure: a pulse sampled on a coincident edge such as 90 ns is checked one tick before the synchronizer delivers it, while every other pulse passes (the kata below traces it). With the bench's window `##[0:3]`, a `|->` version still passes, but on coincident edges it silently uses up the one tick of margin: if the synchronizer latency grew by one tick, it would fail only for those pulses. Either way the result is an intermittent failure that comes and goes when someone changes a clock period.
+
+Choose from what the hardware does. A receiving flop that rises in the same time slot as the launching flop reads the *old* value, because the launching flop updates in the NBA region after every flop has read its inputs ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)). So the first receiving tick that can see a value launched at a source tick is **strictly later**: use `|=>` or `##1`. Use `|->` or `##0` only when you mean "on this very tick if the other clock ticks now".
+
+### Mistake 2: asserting a bare multiclock sequence
+
+A sequence used directly as a property has no antecedent, so it must match from **every** attempt (§16.12.2). This assertion fails at every `src_clk` tick where `src_pulse` is 0, even when the design is perfect:
+
+```systemverilog
+// snippet
+// WRONG: attempts start at every src_clk tick; any tick with src_pulse = 0 fails.
+a_bad: assert property (
+  @(posedge src_clk) src_pulse ##1 @(posedge dst_clk) ##[0:3] dst_pulse
+);
+
+// RIGHT: the trigger goes in an antecedent. Ticks without a pulse succeed vacuously.
+a_good: assert property (
+  @(posedge src_clk) src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse
+);
+```
+
+The bare sequence is still useful in a `cover property`, where it counts the attempts in which a pulse really crossed. Make It Work does exactly that.
+
+### Clock flow: which clock governs each operand
+
+**Clock flow** is the rule that decides which clock governs each part of a multiclock property (§16.13.3). It saves you from writing the same clock again and again, but you must be able to trace it:
+- A clocking event flows **left to right** across linear operators: concatenation, repetition, implication, `not`, `nexttime`, `always`, `eventually`.
+- It **distributes** into both operands of branching operators: `and`, `or`, `intersect`, `if`/`else`, `until`.
+- It flows **into** a parenthesized subexpression and into an instance of a named sequence or property, but a clock written *inside* the parentheses, or inside the declaration of a named sequence or property, does **not flow out** of it.
+- Two clocking events written next to each other keep only the second: `@(d) @(c) x` is `@(c) x`.
+- It does **not** flow into the disable condition of `disable iff` (next sections).
+
+Trace these examples from §16.13.3, where `c` and `d` are clocks and `v` to `z` are sequences without clocks:
+
+| Expression | Clocked by `c` | Clocked by `d` | The rule that decides |
+|---|---|---|---|
+| `@(c) x \|=> @(c) y ##1 @(d) z` | `x`, `y` | `z` | the second `@(c)` is redundant: `c` already flows across `\|=>` |
+| `@(c) w ##1 (x ##1 @(d) y) \|=> z` | `w`, `x`, `z` | `y` | `d` does not flow out of its parentheses, so `z` is back on `c` |
+| `@(c) v \|=> (w ##1 @(d) x) and (y ##1 z)` | `v`, `w`, `y`, `z` | `x` | `c` distributes into both operands of `and` |
+| `@(d) @(c) x` | `x` | nothing | the later clocking event overrides the earlier |
+
+Clock flow also makes two rewrites exact: `@(c) x ##1 y |=> @(d) z` means the same as `@(c) x |=> y |=> @(d) z`, and `@(c) x ##0 y |=> @(d) z` means the same as `@(c) x |-> y |=> @(d) z` (§16.13.3).
+
+### One disable condition for two reset domains
+
+An assertion has at most one `disable iff`, written right after its leading clock, and it cannot be nested (§16.12). Its **disable condition** applies to the whole attempt, including the part that runs on the second clock. The rules from [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index#disable-iff-and-reset) still hold: the condition uses current values, not sampled ones, and if it becomes true at any moment between the start and the end of an attempt, the attempt is **disabled** (no pass, no fail, no action block).
+
+Two consequences are specific to multiclock assertions:
+1. **List both resets.** Each domain usually has its own reset, here `src_rst_n` and `dst_rst_n`. A condition that names only one of them lets the other domain reset in the middle of an attempt, and the attempt then fails for a reason that has nothing to do with the design.
+2. **Give sampled-value functions an explicit clock.** Because no clock flows into the disable condition, `$rose`, `$fell`, `$stable`, `$changed` and `$past` must name their clock there; only `$sampled` needs none (§16.9.3, §16.13.3). The condition may not use local variables or the `.matched` method, and it may use `.triggered` only on an explicitly clocked sequence (§16.12, §16.13.6).
+
+```systemverilog
+// snippet
+// One condition, both domains: either reset disables the attempt in flight.
+a_pulse_crosses: assert property (
+  @(posedge src_clk) disable iff (!src_rst_n || !dst_rst_n)
+    src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse
+);
+
+// A sampled-value function in the condition needs its own clock (no clock flows in):
+//   disable iff ($past(!dst_rst_n))                              // illegal
+//   disable iff ($past(!dst_rst_n, 1, , @(posedge dst_clk)))     // legal
+```
+
+**Traced example.** `src_pulse` is sampled 1 at the 50 ns `src_clk` tick. The source domain stays out of reset, but `dst_rst_n` is low from 62 ns to 100 ns, which holds the destination flops, and so `dst_pulse`, at 0. The window is the `dst_clk` ticks at 60, 75, 90 and 105 ns.
+
+| Time | What happens | With `disable iff (!src_rst_n)` | With `disable iff (!src_rst_n \|\| !dst_rst_n)` |
+|---|---|---|---|
+| 50 ns | `src_pulse` sampled 1: the attempt starts | waits for `dst_clk` | waits for `dst_clk` |
+| 60 ns | window tick 1: `dst_pulse` sampled 0 | still open | still open |
+| 62 ns | `dst_rst_n` falls (between ticks) | no effect: not in the condition | **disabled** at once: no message |
+| 75, 90 ns | window ticks 2 and 3: `dst_pulse` held at 0 | still open | (already ended) |
+| 105 ns | window tick 4: `dst_pulse` sampled 0 | **fails**: a false alarm | (already ended) |
+
+The left column reports a lost pulse that the test itself caused by resetting one side. The right column stays silent, which is what a reset is for.
+
+### What the standard forbids
+
+These rules make a multiclock property's start, end and clock changes well defined (§16.13.1, §16.16):
+- **Only `##1` and `##0` may join differently clocked sequences.** `##2`, a range such as `##[1:3]`, `intersect`, `within` and `throughout` between them are illegal: a delay of two ticks has no meaning when the ticks belong to two clocks. `and` and `or` between differently clocked operands are allowed only as *property* operators (the fourth row of the table above), never inside a sequence.
+- **No empty match at a clock boundary.** Each **maximal singly clocked subsequence** (the largest piece of a multiclocked sequence that is governed by one clock) must not be able to match while consuming no ticks. Otherwise the clock at which the sequence ends would be ambiguous.
+- **One semantic leading clock per assertion.** The clock at which the whole assertion starts must be unique (§16.16, rule e). Two subproperties that start on different clocks, joined by `and` at the top, have two.
+- **Not inside a clocking block,** and not in an assertion that takes its leading clock from the surrounding `always` procedure (§16.16, rules b and c, and the examples there).
+
+```systemverilog
+// snippet
+// c1 and c2 are different clocks
+@(posedge c1) a ##1 @(posedge c2) b ##2 d     // legal: ##2 joins two c2-clocked items
+@(posedge c1) a ##2 @(posedge c2) b           // illegal: ##2 between two clocks
+@(posedge c1) a ##1 @(posedge c2) b[*0:1]     // illegal: b[*0:1] can match empty
+(@(posedge c1) a) intersect (@(posedge c2) b) // illegal: intersect across clocks
+// illegal: two semantic leading clocks
+assert property (@(posedge c1) a and @(posedge c2) b);
+// legal: the antecedent gives one leading clock, posedge c0
+assert property (@(posedge c0) go |=> (@(posedge c1) a) and (@(posedge c2) b));
+```
+
+To wait a fixed number of ticks of the new clock, move to it first and then count on it: `@(posedge c1) a ##1 @(posedge c2) 1 ##1 b` checks `b` at the second `c2` tick strictly after `a`.
+
+### `default disable iff` and multiclock assertions
+
+A `default disable iff` declaration gives every concurrent assertion in its scope a disable condition, and multiclock assertions are no exception (§16.15):
+- It may appear once in a module, interface or program declaration, or in a generate block; a second one in the same scope is an error. Its position in the scope does not matter.
+- It also applies inside nested module, interface and program **declarations** and nested generate blocks, unless they declare their own default. It does **not** extend into **instances** of other modules.
+- An assertion with its own `disable iff` uses that condition and ignores the default: the two are **not** combined. `disable iff (1'b0)` is the only way to cancel the default for one assertion.
+
+So a module that holds a crossing check usually needs one of two policies, chosen deliberately:
+
+```systemverilog
+// snippet
+// Policy 1: the default covers both domains. Simple, but every single-domain
+// assertion in this scope is now also disabled while the *other* domain resets.
+default disable iff (!src_rst_n || !dst_rst_n);
+
+// Policy 2: the default covers the common case; each crossing check states its own.
+default disable iff (!src_rst_n);
+a_pulse_crosses: assert property (
+  @(posedge src_clk) disable iff (!src_rst_n || !dst_rst_n)  // replaces the default
+    src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse
+);
+```
+
+A common bug is policy 2 without the explicit clause: the crossing check inherits `!src_rst_n` alone and can fail whenever the destination resets while an attempt is in flight, as in the traced example above.
+
+### Sequence end points across clocks: `.matched`
+
+Sometimes you only need to know *that* a sequence on another clock has finished. A named sequence offers two methods for this (§16.13.5, §16.13.6):
+- `.triggered` is true in the time slot where the sequence reaches its end point. It works only when the sequence's ending clock is the same as the clock where you use it.
+- `.matched` is the crossing version: it stores the end point of a sequence on the source clock until the first tick of the destination clock after the match, so a destination-clocked sequence can see it. It may be used only inside sequence expressions.
+
+```systemverilog
+// snippet
+sequence s_burst_done;                       // source side, clocked by src_clk
+  @(posedge src_clk) burst_start ##[1:8] burst_end;
+endsequence
+
+// Destination side: once armed, the next end of a source burst must be
+// followed by irq on the next dst_clk tick.
+a_irq_after_burst: assert property (
+  @(posedge dst_clk) $rose(armed) |-> s_burst_done.matched [->1] ##1 irq
+);
+```
+
+`[->1]` makes the check end exactly on the `dst_clk` tick where the end point becomes visible, so `irq` is required on the very next tick. This is awareness for now: most crossing checks are written with `|=>` as in the rest of this page.
+
+### Debugging multiclock assertions
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Compile or elaboration error that names a clock, a "leading clock" or an "empty match" (wording is tool-dependent) | `##2`, a range or `intersect` between clocks; an empty-matching piece at a clock change; two leading clocks; a multiclock property in a clocking block or with a clock inferred from an `always` procedure | Restructure with the rules in "What the standard forbids": move to the new clock with `##1`, then count on it |
+| Error on `$past` or `$rose` inside `disable iff` | No clock flows into the disable condition | Give the function an explicit clocking event, or use `$sampled` |
+| Fails only for attempts that start on edges where both clocks tick together | `\|->` or `##0` where the hardware needs a strictly later tick | Use `\|=>` or `##1` |
+| Fails at every source tick where the trigger is 0 | A bare sequence asserted as a property | Put the trigger in an antecedent with `\|=>` |
+| Fails only while the other domain is in reset | The disable condition names one reset | `disable iff (!src_rst_n \|\| !dst_rst_n)`, or check which `default disable iff` applies |
+| Never fails, yet pulses are lost | An unbounded wait (`##[0:$]`, `[->1]`) stays open forever, or the window is wide enough to be satisfied by the *next* pulse | Bound the window to the synchronizer latency plus margin, and check the spacing rule on the source side |
+| Passes, but the matching `cover property` count is 0 | Every attempt succeeded vacuously: the trigger never fired | Fix the stimulus; always pair a crossing assertion with a cover |
+
+Two habits make the log readable. First, a multiclock failure is reported at the **destination** tick where the window closed, not at the source tick where the attempt started, so look back by the window length to find the cause. Second, print with `$sampled(dst_pulse)` in the action block to see the value the failing tick used. In an action block, a value-change function such as `$past` is clocked by the assertion's **leading** clock, here `src_clk`, not by the clock on which the failure happened (§16.9.3).
+
+### Multiclock assertions in real testbenches
+
+- **Where they live.** Next to the crossing: in an interface that carries both clocks and both resets, or in a checker bound to the synchronizer or FIFO module so the RTL stays untouched ([I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index)).
+- **The usual set per crossing.** Single-clock checks inside each domain (the source protocol, the minimum spacing between events), one multiclock end-to-end check with a bounded window, and a `cover property` that proves the crossing was exercised.
+- **Typical crossings:** pulse and toggle synchronizers, request/acknowledge handshakes, the write and read pointers of an asynchronous FIFO, and reset release in each domain.
+- **When not to use one.** A multiclock assertion cannot see metastability, glitches or the reconvergence of separately synchronized bits; structural CDC analysis tools look for those (tool-dependent). When several data items are in flight and must be paired, capture each one in a local variable ([Local Variables](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/local-variables)) or compare them in a scoreboard ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
+- **Interview angle.** "How do you check that a synchronizer never drops a pulse?" A strong answer names the multiclock `|=>` window, the reason for `|=>` rather than `|->`, both resets in the disable condition, the spacing rule on the source side, and a cover.
+
+<VisualRecap
+  title="Start on one clock, check on the other"
+  rule="The leading clock starts attempts. |=> and ##1 move to the nearest tick of the new clock strictly after; |-> and ##0 to the nearest tick at or after, which is the same tick only if both clocks tick in the same time slot. One disable iff covers the whole attempt on both clocks."
+  code={`a_pulse_crosses: assert property (
+  @(posedge src_clk) disable iff (!src_rst_n || !dst_rst_n)
+    src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse
+);`}
+  mistake="Using |-> or ##0 for a value launched on the source edge: the check lands one tick early whenever the edges coincide. And naming only one domain's reset in disable iff."
+  inTestbench="Bound next to synchronizers, handshakes and asynchronous FIFOs, beside single-clock checks in each domain and a cover property that proves each crossing happened."
+/>
+
+## Make It Work
+
+### A pulse that must cross from `src_clk` to `dst_clk`
+
+The design under test (DUT) is a **toggle pulse synchronizer**. Each `src_clk` tick where `src_pulse` is 1 is one event. The source side flips a flop, `src_tgl`, once per event; the destination side passes `src_tgl` through two flops on `dst_clk` and turns every change of the synchronized value into a one-tick `dst_pulse`. The source must leave the toggle alone long enough for the destination to see it: in this design, at least three idle `src_clk` ticks after each pulse.
+
+<ArchitectureDiagram
+  title="Toggle pulse synchronizer and the multiclock check"
+  caption="src_pulse flips src_tgl in the src_clk domain. The crossing is the wire from src_tgl into dst_sync, a 3-bit shift register on dst_clk: bits [0] and [1] synchronize, bit [2] remembers the previous value, and dst_pulse is dst_sync[2] ^ dst_sync[1]. The assertion a_pulse_crosses samples src_pulse on src_clk and dst_pulse on dst_clk."
+  cellWidth={140}
+  gapX={48}
+  nodes={[
+    { id: "srcdom", label: "src_clk domain", kind: "generic", col: 0, row: 0, colSpan: 2, container: true },
+    { id: "dstdom", label: "dst_clk domain", kind: "generic", col: 0, row: 1, colSpan: 2, container: true },
+    { id: "tgl", label: "src_tgl", sublabel: "flips once per event", kind: "generic", col: 0, row: 0 },
+    { id: "pulse", label: "src_pulse", sublabel: "driven through src_cb", kind: "generic", col: 1, row: 0 },
+    { id: "sync", label: "dst_sync[2:0]", sublabel: "2-flop sync + history", kind: "generic", col: 0, row: 1 },
+    { id: "dpulse", label: "dst_pulse", sublabel: "dst_sync[2] ^ dst_sync[1]", kind: "generic", col: 1, row: 1 },
+    { id: "chk", label: "a_pulse_crosses", sublabel: "starts on src_clk, checks on dst_clk", kind: "generic", col: 2, row: 0, rowSpan: 2 }
+  ]}
+  edges={[
+    { from: "pulse", to: "tgl", style: "data" },
+    { from: "tgl", to: "sync", style: "data", label: "the crossing" },
+    { from: "sync", to: "dpulse", style: "data" },
+    { from: "pulse", to: "chk", style: "causal", label: "@(posedge src_clk)" },
+    { from: "dpulse", to: "chk", style: "causal", label: "@(posedge dst_clk)" }
+  ]}
+/>
+
+The bench sends one correct pulse, then two pulses on back-to-back `src_clk` ticks, which breaks the spacing rule. The toggle flips twice before `dst_clk` can see it, so both events vanish. Three checks watch the run: the multiclock crossing assertion, a single-clock assumption for the spacing rule on the DUT's input, and a cover that counts the pulses that really crossed.
+
+```systemverilog
+// compile
+// Toggle pulse synchronizer (DUT) and a bench with one multiclock assertion.
+module pulse_sync (
+  input  logic src_clk,
+  input  logic src_rst_n,
+  input  logic src_pulse,   // one event per src_clk tick where it is 1
+  input  logic dst_clk,
+  input  logic dst_rst_n,
+  output logic dst_pulse    // one dst_clk tick wide per event
+);
+  timeunit 1ns; timeprecision 1ns;
+
+  logic       src_tgl;      // changes once per event and holds between events
+  logic [2:0] dst_sync;     // [0],[1]: two-flop synchronizer; [2]: previous value
+
+  always_ff @(posedge src_clk or negedge src_rst_n)
+    if (!src_rst_n) src_tgl <= 1'b0;
+    else            src_tgl <= src_tgl ^ src_pulse;
+
+  always_ff @(posedge dst_clk or negedge dst_rst_n)
+    if (!dst_rst_n) dst_sync <= 3'b000;
+    else            dst_sync <= {dst_sync[1:0], src_tgl};
+
+  // A change of the synchronized toggle is one event in the dst_clk domain.
+  assign dst_pulse = dst_sync[2] ^ dst_sync[1];
+endmodule
+
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  logic src_clk, dst_clk;
+  logic src_rst_n, dst_rst_n;
+  logic src_pulse = 1'b0;
+  logic dst_pulse;
+  int   delivered, lost, spacing_errors;
+
+  pulse_sync dut (.*);
+
+  // src_clk: period 10 ns, rising at 10, 20, 30 ... ns
+  initial begin
+    src_clk = 1'b0;
+    #10;
+    forever begin
+      src_clk = 1'b1; #5;
+      src_clk = 1'b0; #5;
+    end
+  end
+
+  // dst_clk: period 15 ns, rising at 15, 30, 45 ... ns (with src_clk at 30, 60, 90 ...)
+  initial begin
+    dst_clk = 1'b0;
+    #15;
+    forever begin
+      dst_clk = 1'b1; #7;
+      dst_clk = 1'b0; #8;
+    end
+  end
+
+  // Drive the DUT input through a clocking block: a drive lands in the Re-NBA
+  // region of the edge, after every flop and assertion has sampled that edge.
+  clocking src_cb @(posedge src_clk);
+    output src_pulse;
+  endclocking
+
+  // The crossing: every event reaches dst_clk within 4 dst_clk ticks.
+  // |=> because the dst flops cannot see a toggle launched on the same edge.
+  a_pulse_crosses: assert property (
+    @(posedge src_clk) disable iff (!src_rst_n || !dst_rst_n)
+      src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse
+  ) else begin
+    lost++;
+    $error("PULSE_LOST at %0d ns: no dst_pulse within 4 dst_clk ticks", $time);
+  end
+
+  // The DUT's input rule, checked in its own domain: 3 idle ticks after a pulse.
+  m_pulse_spacing: assume property (
+    @(posedge src_clk) disable iff (!src_rst_n)
+      src_pulse |=> (!src_pulse)[*3]
+  ) else begin
+    spacing_errors++;
+    $error("SPACING at %0d ns: src_pulse again within 3 src_clk ticks", $time);
+  end
+
+  // Evidence that pulses really crossed: at most one count per attempt.
+  c_delivered: cover property (
+    @(posedge src_clk) disable iff (!src_rst_n || !dst_rst_n)
+      src_pulse ##1 @(posedge dst_clk) ##[0:3] dst_pulse
+  ) delivered++;
+
+  initial begin
+    src_rst_n = 1'b0;
+    dst_rst_n = 1'b0;
+    #22;                        // no rising edge of either clock at 22 ns
+    src_rst_n = 1'b1;
+    dst_rst_n = 1'b1;
+
+    // Event 1: src_pulse sampled 1 at the 50 ns edge only.
+    repeat (2) @(src_cb);       // 30, 40 ns
+    src_cb.src_pulse <= 1'b1;
+    @(src_cb);                  // 50 ns
+    src_cb.src_pulse <= 1'b0;
+
+    // Events 2 and 3: sampled 1 at 90 and 100 ns, too close together.
+    repeat (3) @(src_cb);       // 60, 70, 80 ns
+    src_cb.src_pulse <= 1'b1;
+    repeat (2) @(src_cb);       // 90, 100 ns
+    src_cb.src_pulse <= 1'b0;
+
+    repeat (10) @(src_cb);      // 110 ... 200 ns: let every window close
+    $display("SUMMARY delivered=%0d lost=%0d spacing_errors=%0d",
+             delivered, lost, spacing_errors);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative, derived by tracing the code by hand; no simulator run). Each simulator puts its own prefix (severity, file, line, scope) in front of an `$error` message; the message text and the order of events are what matter.
+
+```text
+SPACING at 100 ns: src_pulse again within 3 src_clk ticks
+PULSE_LOST at 150 ns: no dst_pulse within 4 dst_clk ticks
+PULSE_LOST at 150 ns: no dst_pulse within 4 dst_clk ticks
+SUMMARY delivered=1 lost=2 spacing_errors=1
+```
+
+**Trace of the run.** `dst_sync` is shown after the edge; "sampled" values are the ones the assertions read at that tick.
+
+| Time | Clock(s) | What happens | `src_tgl` after | `dst_sync` after | `dst_pulse` sampled |
+|---|---|---|---|---|---|
+| 50 | src | `src_pulse` sampled 1: attempt starts; window = `dst_clk` ticks 60, 75, 90, 105 | 1 | 000 | |
+| 60 | src, dst | `dst_sync[0]` reads `src_tgl` = 1, which changed at 50 ns | 1 | 001 | 0 |
+| 75 | dst | | 1 | 011 | 0 |
+| 90 | src, dst | event 1 crosses: pass, `delivered` = 1. Event 2 sampled: attempt starts, window 105 to 150. `src_tgl` flips, but the coincident `dst_clk` tick reads the old value 1 | 0 | 111 | **1** |
+| 100 | src | event 3 sampled: attempt starts, window 105 to 150; `src_tgl` flips back. `m_pulse_spacing` fails: no idle tick after the pulse at 90 ns | 1 | 111 | |
+| 105 to 150 | dst | `dst_sync` never sees the short 0, so `dst_pulse` stays 0 | 1 | 111 | 0 |
+| 150 | dst | both windows close: two `PULSE_LOST` failures | 1 | 111 | 0 |
+
+Notice where each message appears: the root cause (`SPACING`) at 100 ns, on the source clock, and the symptom (`PULSE_LOST`) at 150 ns, on the destination clock, where the windows close.
+
+### How to write a multiclock check
+
+1. **Name the crossing and its two clocks.** Write the rule in words with units from both domains: "each `src_pulse` event gives one `dst_pulse` within 4 `dst_clk` ticks".
+2. **Start on the source clock.** Make it the leading clock and put the source event in the antecedent, so idle ticks succeed vacuously.
+3. **Move with `|=>` or `##1`** when the destination captures something launched on the source edge. Use `|->` or `##0` only for a deliberate "same time slot" check.
+4. **Bound the window in destination ticks.** Take the synchronizer latency from the RTL (here the third `dst_clk` tick) and add margin (here one tick): `##[0:3]` counted from the first tick after the event.
+5. **Write one `disable iff` with both resets,** and check which `default disable iff` is in scope.
+6. **Add the source-side rules** as single-clock checks (`assume` for a rule on the DUT's inputs) and a `cover property` for the crossing.
+7. **Read failures backwards** from the destination tick by the window length, and print `$sampled(...)` values in the action block.
+
+**Fix the bench and rerun.** Keep three idle ticks between the pulses by replacing the "Events 2 and 3" block with:
+
+```systemverilog
+// snippet
+    // Events 2 and 3: sampled 1 at 90 and 130 ns, three idle ticks apart.
+    repeat (3) @(src_cb);       // 60, 70, 80 ns
+    src_cb.src_pulse <= 1'b1;
+    @(src_cb);                  // 90 ns
+    src_cb.src_pulse <= 1'b0;
+    repeat (3) @(src_cb);       // 100, 110, 120 ns
+    src_cb.src_pulse <= 1'b1;
+    @(src_cb);                  // 130 ns
+    src_cb.src_pulse <= 1'b0;
+```
+
+The run then ends at 230 ns with `SUMMARY delivered=3 lost=0 spacing_errors=0`: event 2 crosses at the 135 ns `dst_clk` tick and event 3 at 165 ns.
+
+**Checklist before moving on:**
+- [ ] I can say, for any source tick, which destination tick `|=>`, `|->`, `##1` and `##0` check, including on edges where both clocks tick.
+- [ ] My crossing assertion starts on the source clock, keeps the trigger in an antecedent, and moves with `|=>` for launched values.
+- [ ] Its window is bounded in destination ticks and derived from the synchronizer latency.
+- [ ] Its `disable iff` names both resets, and I know which `default disable iff` is in scope.
+- [ ] The source-side rules are separate single-clock checks, and a `cover property` proves the crossing happened.
+- [ ] I can trace a failure from the destination tick where it was reported back to the source tick that started it.
+
+## Push Further
+
+### Expert: Semantic leading clocks and why some multiclock assertions are illegal
+
+The standard defines, for every multiclock property, a set of **semantic leading clocks**: the clocks at which its evaluation can start (§16.16.1). A clock that is not written but taken from the surrounding context is called *inherited*. A few of the rules: `m |=> p` and `m |-> p` take the leading clock of the antecedent `m`; `q1 and q2` and `q1 or q2` take the union of both sides; `always`, `nexttime`, `s_eventually`, `until` and `if`/`else` take the inherited clock.
+
+The maximal property of an assertion must have a **unique** semantic leading clock (§16.16, rule e). That is why `assert property (@(posedge c1) a and @(posedge c2) b)` is illegal (its set is {`posedge c1`, `posedge c2`}) while `@(posedge c0) go |=> (@(posedge c1) a) and (@(posedge c2) b)` is legal: the antecedent supplies one leading clock. Uniqueness compares clocking event **expressions**, not values: after `assign clk2 = clk1;`, `@(clk1) a and @(clk2) b` is still illegal, because `clk1` and `clk2` are not identical expressions even though they carry the same waveform (§16.16.1 example).
+
+Two placement rules follow from clock resolution: multiclocked sequences and properties are not allowed inside a clocking block, and an assertion inside an `always` procedure that takes its leading clock from the procedure's event control may not be multiclocked (§16.16, rule b and the `a3` example).
+
+### Expert: Local variables when a property has two leading clocks
+
+A local variable belongs to one attempt (see [Local Variables](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/local-variables)). Multiclock properties add one twist (§16.13.7). For a named sequence or property with a single semantic leading clock, a local variable's declaration assignment runs at the earliest tick of that clock **at or after** the start of the attempt, which may be later than the tick that started the enclosing assertion.
+
+If an instance of a named property has **two or more** semantic leading clocks, for example `(@(posedge clk1) ...) and (@(posedge clk2) ...)`, the standard creates a separate copy of the local variable for each leading clock. Each copy is initialized at that clock's first tick at or after the start of the attempt, and each copy is used only by the subproperty on that clock. The two copies can therefore hold different values. If both halves must compare against the same captured value, capture it in the antecedent on the leading clock, before the property splits, so both branches receive the same value by the local-variable flow rules (§16.10).
+
+### Expert: `.matched` and `.triggered` at the edges of their rules
+
+- `.matched` stores the source end point until the Observed region that follows the first destination tick after the match (§16.13.6). The destination sees each end point at exactly one tick, however long the gap; if the destination clock is gated, the end point waits for its next tick.
+- Several matches of the source sequence before one destination tick are treated like the two operands of an `or`: the destination evaluation forks, one branch per distinct set of local-variable values that flows out (§16.13.5).
+- An empty match never sets `.triggered` or `.matched` (§16.13.6).
+- `.matched` is illegal in sampled-value functions and in a disable condition. `.triggered` is allowed in a disable condition, but only on a sequence that names its own clock: the standard's own example `disable iff (e4.triggered)` with an unclocked `e4` is illegal (§16.12, §16.13.6).
+
+### Expert: Coincident, identical and derived clocks
+
+"Coincident" in §16.13.1 means the two ticks happen at the same simulation time; "identical" means the two clocking events are the same expression. Only identical clocks turn a multiclock property back into a single-clock one; two different clocks that happen to tick together still go through the `##1`/`##0` rules at every edge.
+
+A **derived clock**, such as a divide-by-two clock produced by a flop on `clk`, rises in the same time slot as some `clk` edges but in a later scheduling region. Treat those ticks as coincident, and confirm on your simulator with a `cover property` of the `##0` path before you rely on it (tool-dependent). Either way, both clocks' assertions read the values sampled at the start of that time slot (§16.5.1), so a value that the `clk` domain updates on that edge is still the old value for the derived domain.
+
+### Expert: What a multiclock assertion cannot see
+
+Simulation of a crossing is exact: the receiving flop either sees the new value or the old one, never something in between, and the synchronizer latency is fixed by the clock phases. Real silicon adds **metastability**, where a flop that samples a changing input settles late and to an unpredictable value, so the latency can grow by one receiving cycle (design practice, not an IEEE 1800 rule). Bound your windows with that margin, as `##[0:3]` does here. Finding unsynchronized crossings, reconvergence and glitch-prone logic is the job of structural CDC tools, and some simulators can inject random synchronizer delays (both tool-dependent).
+
+Partial resets are a related trap. In the Make It Work design, if only event 1 is sent and then only `dst_rst_n` pulses after it has been delivered (for example low from 95 to 100 ns), `dst_sync` returns to 000 while `src_tgl` stays 1. After the release, the shift register sees 0 then 1 and produces a **phantom** `dst_pulse` at the 135 ns tick with no source event behind it. A disable condition with both resets hides the assertion failures during the reset, but the design still needs a reset-domain-crossing rule, such as resetting both domains together. Formal tools model the clocks from constraints you give them, such as their relative frequencies, so a multiclock proof is only as good as those constraints (tool-dependent; see [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)).
+
+### Interview angles
+
+<InterviewQuestionPlayground
+  question="A multiclock assertion uses `##1` to move from a trigger on `clkA` to a response on `clkB`. An engineer complains that it sometimes ignores the `clkB` edge that happens at the same moment as the `clkA` edge. Why?"
+  options={[
+    { text: "Multiclock assertions are not supported in SystemVerilog.", isCorrect: false, feedback: "They are: IEEE 1800-2023 §16.13 defines them." },
+    { text: "In a clock-crossing concatenation, `##1` waits for the nearest `clkB` tick strictly after the `clkA` tick, so a `clkB` tick in the same time slot is skipped. `##0` accepts that coincident tick.", isCorrect: true, feedback: "Correct. §16.13.1: `##1` moves to the nearest strictly later tick of the new clock; `##0` moves to the nearest tick at or after, and behaves like `##1` when the ticks do not coincide. A `clkB` edge that is merely close to, but later than, the `clkA` edge is still the target of `##1`." },
+    { text: "The assertion needs `disable iff`.", isCorrect: false, feedback: "`disable iff` handles resets, not clock alignment." },
+    { text: "`clkA` and `clkB` must be integer multiples of each other.", isCorrect: false, feedback: "Multiclock properties work with fully unrelated clocks; the rules depend only on when the ticks happen." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  question="You need `b` exactly two ticks of `c2` after `a` on `c1`. A colleague writes `@(posedge c1) a ##2 @(posedge c2) b` and the compiler rejects it. What do you write instead?"
+  options={[
+    { text: "`@(posedge c1) a ##1 @(posedge c2) 1 ##1 b`: move to the first `c2` tick strictly after `a`, then count one more `c2` tick.", isCorrect: true, feedback: "Correct. Only `##1` and `##0` may join differently clocked sequences (§16.13.1). Once the property is on `c2`, `##1` counts `c2` ticks as usual, so `b` is checked at the second `c2` tick strictly after `a`." },
+    { text: "`@(posedge c1) a ##0 @(posedge c2) b`, because `##0` across clocks always waits two ticks.", isCorrect: false, feedback: "`##0` moves to the nearest `c2` tick at or after `a`: zero or one tick, never two." },
+    { text: "`(@(posedge c1) a) intersect (@(posedge c2) ##2 b)`.", isCorrect: false, feedback: "`intersect` between differently clocked operands is illegal too (§16.13.1)." },
+    { text: "Nothing: a fixed delay across two clocks cannot be expressed in SVA.", isCorrect: false, feedback: "It can: move to the new clock with `##1`, then count ticks of that clock." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+In every question, `src_clk` rises at 10, 20, 30 ns and so on, and `dst_clk` at 15, 30, 45 ns and so on, as in the Make It Work bench.
+
+<Quiz questions={[
+  {
+    question: "Property p is `@(posedge src_clk) a |=> @(posedge dst_clk) b`; property q is the same with `|->`. `a` is sampled 1 only at the 90 ns `src_clk` tick. At which `dst_clk` tick does each property check `b`?",
+    objective: 1,
+    answers: [
+      { text: "p at 105 ns, q at 90 ns", correct: true, feedback: "Right. `dst_clk` also ticks at 90 ns. `|=>` needs a strictly later tick (105 ns); `|->` may use the tick in the same time slot (§16.13.2)." },
+      { text: "Both at 105 ns", correct: false, feedback: "`|->` behaves like `|=>` only when no destination tick coincides with the end of the antecedent. Here one does, at 90 ns." },
+      { text: "Both at 90 ns", correct: false, feedback: "`|=>` never uses a tick in the same time slot: it moves to the nearest strictly future tick of the consequent clock." },
+      { text: "p at 100 ns, q at 90 ns", correct: false, feedback: "100 ns is the next `src_clk` tick, but after `|=>` the consequent is clocked by `dst_clk`, so only `dst_clk` ticks count." }
+    ],
+    explanation: "Multiclock |=> goes to the nearest strictly later tick of the new clock; multiclock |-> starts immediately if the new clock ticks at the end of the antecedent and otherwise acts like |=> (§16.13.2). At 90 ns both clocks tick, so the two operators differ."
+  },
+  {
+    question: "`@(posedge src_clk) a ##0 @(posedge dst_clk) b`: `a` is sampled 1 at the 40 ns `src_clk` tick. When is `b` checked?",
+    objective: 1,
+    answers: [
+      { text: "At 45 ns", correct: true, feedback: "Right. There is no `dst_clk` tick at 40 ns, so `##0` behaves like `##1` and moves to the next `dst_clk` tick (§16.13.1)." },
+      { text: "At 40 ns, because `##0` never waits", correct: false, feedback: "That is true only in a singly clocked sequence. Across clocks, `##0` waits unless the new clock ticks in the same time slot." },
+      { text: "At 60 ns, the next edge where both clocks tick together", correct: false, feedback: "`##0` does not wait for a coincident edge. It takes the nearest `dst_clk` tick at or after 40 ns." },
+      { text: "Never: `##0` cannot join two clocks", correct: false, feedback: "`##1` and `##0` are exactly the two operators that may join differently clocked sequences (§16.13.1)." }
+    ],
+    explanation: "Across clocks, ##0 moves to the nearest possibly overlapping tick of the new clock: the same time slot if that clock ticks there, otherwise its next tick. In a single-clock sequence ##0 never waits; mixing up the two rules is the classic ##0 mistake."
+  },
+  {
+    question: "`c1` and `c2` are different clocks. Which of these is legal?",
+    objective: 2,
+    answers: [
+      { text: "`@(posedge c1) a ##1 @(posedge c2) b ##2 d`", correct: true, feedback: "Right. The clocks are joined by `##1`, and `##2` joins `b` and `d`, which are both clocked by `c2`." },
+      { text: "`@(posedge c1) a ##2 @(posedge c2) b`", correct: false, feedback: "Only `##1` and `##0` may join differently clocked sequences (§16.13.1)." },
+      { text: "`@(posedge c1) a ##1 @(posedge c2) b[*0:1]`", correct: false, feedback: "`b[*0:1]` can match empty, which would leave the ending clock ambiguous, so the standard forbids it (§16.13.1)." },
+      { text: "`(@(posedge c1) a) intersect (@(posedge c2) b)`", correct: false, feedback: "`intersect` between differently clocked operands is illegal (§16.13.1)." }
+    ],
+    explanation: "The restriction is on what joins two clocks: only ##1 and ##0, with no empty match in any maximal singly clocked piece. Inside one clock's piece every sequence operator is still available."
+  },
+  {
+    question: "In `@(posedge c) w ##1 (x ##1 @(posedge d) y) |=> z`, which clock governs `z`?",
+    objective: 2,
+    answers: [
+      { text: "`posedge c`", correct: true, feedback: "Right. `posedge d` does not flow out of the parentheses that enclose it, so `posedge c` continues across `|=>` to `z` (§16.13.3)." },
+      { text: "`posedge d`, the last clock written before `|=>`", correct: false, feedback: "Clock flow is not 'the last clock in the text'. A clock written inside parentheses stays inside them." },
+      { text: "Both clocks, because `z` follows a multiclocked sequence", correct: false, feedback: "Every operand has exactly one governing clock; clock flow decides which one." },
+      { text: "None: the code is illegal because `z` has no clock", correct: false, feedback: "`z` inherits `posedge c` by clock flow; this is one of the standard's own examples." }
+    ],
+    explanation: "A clocking event flows left to right and into parentheses, but a clock inside parentheses does not flow out (§16.13.3). So w, x and z are clocked by c, and only y by d."
+  },
+  {
+    question: "`a_x: assert property (@(posedge src_clk) disable iff (!src_rst_n) src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse);` An attempt starts at 50 ns. `dst_rst_n` is low from 62 to 100 ns and holds `dst_pulse` at 0; `src_rst_n` stays high. What happens to that attempt?",
+    objective: 3,
+    answers: [
+      { text: "It fails at 105 ns. Fix: `disable iff (!src_rst_n || !dst_rst_n)`.", correct: true, feedback: "Right. The window is the `dst_clk` ticks 60, 75, 90 and 105 ns. The disable condition never looks at `dst_rst_n`, so the attempt runs to the end of the window and fails." },
+      { text: "It is disabled, because the `dst_clk` part of the property uses the `dst_clk` domain's reset", correct: false, feedback: "There is no per-domain reset. An assertion has one disable condition, and it contains only what you write in it (§16.12)." },
+      { text: "It is disabled at the first `dst_clk` tick that samples `dst_rst_n` low", correct: false, feedback: "Nothing samples `dst_rst_n` here. And a disable condition uses current values, not values sampled at ticks." },
+      { text: "It succeeds vacuously, because `dst_pulse` cannot rise during reset", correct: false, feedback: "Vacuity depends on the antecedent, which matched at 50 ns. The consequent must still hold." }
+    ],
+    explanation: "One disable iff covers the whole multiclock attempt, and it is exactly the expression you write. Name both domains' resets, or a reset on one side produces false failures (§16.12)."
+  },
+  {
+    question: "A module declares `default disable iff (!src_rst_n);`. Inside it, `a_x: assert property (@(posedge src_clk) disable iff (!dst_rst_n) src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse);`. Which condition disables `a_x`?",
+    objective: 3,
+    answers: [
+      { text: "Only `!dst_rst_n`", correct: true, feedback: "Right. An explicit `disable iff` replaces the default for that assertion (§16.15, rule a). Here the source reset no longer disables it." },
+      { text: "`!src_rst_n || !dst_rst_n`: the explicit clause is combined with the default", correct: false, feedback: "The two are never combined. If you want both, write both in the explicit clause." },
+      { text: "Only `!src_rst_n`: the default overrides the clause", correct: false, feedback: "It is the other way round: the explicit clause wins and the default is ignored for this assertion." },
+      { text: "Neither: defaults do not apply to multiclock assertions, and the clause is then ignored too", correct: false, feedback: "A default disable iff applies to every concurrent assertion in its scope, multiclock ones included, unless the assertion has its own clause." }
+    ],
+    explanation: "Resolution order (§16.15): an explicit disable iff wins; otherwise the default in scope applies; otherwise the condition is 1'b0. disable iff (1'b0) is the only way to cancel the default for one assertion."
+  },
+  {
+    question: "This line does not compile: `@(posedge src_clk) disable iff ($past(!dst_rst_n)) src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse`. Why, and what is the fix?",
+    objective: 4,
+    answers: [
+      { text: "No clock flows into a disable condition, so `$past` needs one: `$past(!dst_rst_n, 1, , @(posedge dst_clk))`", correct: true, feedback: "Right. A sampled-value function other than `$sampled` in a disable condition must name its clock (§16.9.3, §16.13.3)." },
+      { text: "It is legal; `$past` takes `src_clk`, the leading clock", correct: false, feedback: "The leading clock does not flow into the disable condition. The standard requires an explicit clock there." },
+      { text: "It is legal; `$past` takes `dst_clk`, because `dst_rst_n` belongs to that domain", correct: false, feedback: "SystemVerilog has no notion of which domain a signal belongs to. Clocks come only from what is written or inferred by the rules." },
+      { text: "Sampled-value functions are never allowed in `disable iff`", correct: false, feedback: "They are allowed with an explicit clock, and `$sampled` needs none." }
+    ],
+    explanation: "Clock flow stops at the disable condition (§16.13.3), and §16.9.3 requires an explicit clocking event for $past, $rose, $fell, $stable and $changed there. Local variables and .matched are not allowed in it at all (§16.12)."
+  },
+  {
+    question: "`a_bad: assert property (@(posedge src_clk) src_pulse ##1 @(posedge dst_clk) ##[0:3] dst_pulse);` reports failures at many times, although every pulse arrives. Why?",
+    objective: 4,
+    answers: [
+      { text: "A sequence used as a property must match from every attempt, and attempts start at every `src_clk` tick, including those where `src_pulse` is 0", correct: true, feedback: "Right (§16.12.2). Move the trigger into an antecedent: `src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse`." },
+      { text: "`##1` cannot cross clocks; it should be `##0`", correct: false, feedback: "`##1` is legal across clocks. With `##0` the assertion would still fail at every idle tick." },
+      { text: "A bare sequence that does not match passes vacuously, so the failures must be real DUT bugs", correct: false, feedback: "Vacuous success needs an implication whose antecedent does not match. A bare sequence that cannot match simply fails." },
+      { text: "Multiclocked sequences are allowed only in `cover`, never in `assert`", correct: false, feedback: "They are allowed in both. In a cover, this sequence is exactly the right way to count delivered pulses." }
+    ],
+    explanation: "Without an antecedent there is no vacuous case: each src_clk tick starts an attempt that needs src_pulse at that tick. Use |=> in the assertion and keep the bare sequence for a cover property."
+  },
+  {
+    question: "A crossing check `src_pulse |-> @(posedge dst_clk) ##2 dst_pulse` on the toggle synchronizer fails only for pulses sampled at 30, 60, 90 ns and other multiples of 30 ns. The design is correct. What is the cause?",
+    objective: 4,
+    answers: [
+      { text: "On those edges `dst_clk` ticks together with `src_clk`, so `|->` starts the count one `dst_clk` tick earlier than the synchronizer can deliver", correct: true, feedback: "Right. The `dst_sync` flop that ticks with the source edge reads the old toggle. `|=>` starts at the first strictly later `dst_clk` tick, which is where the latency is counted from." },
+      { text: "The synchronizer drops pulses that arrive on coincident edges", correct: false, feedback: "Trace it: the toggle is held, so the next `dst_clk` tick captures it. Only the check's starting tick moves." },
+      { text: "`##2` is illegal after a clock change", correct: false, feedback: "`##2` after `@(posedge dst_clk)` counts `dst_clk` ticks and is legal. Only joining two clocks with `##2` is illegal." },
+      { text: "A disable condition is missing", correct: false, feedback: "No reset is involved. The failures follow the clock phase, not a reset." }
+    ],
+    explanation: "Failures that line up with coincident edges point to |-> or ##0 where the hardware needs a strictly later tick (§16.13.2). The kata below traces this case in full."
+  }
+]} />
+
+### Kata: exact latency, the wrong implication and a one-sided reset
+
+Use the Make It Work design and clocks, with the fixed stimulus (events sampled at 50, 90 and 130 ns). Answer each part before you open the solution.
+
+1. **Write.** Replace the window `##[0:3]` with the exact latency of this synchronizer: the one `dst_clk` tick where `dst_pulse` is sampled 1. Which operator and which delay?
+2. **Predict.** A colleague writes `src_pulse |-> @(posedge dst_clk) ##2 dst_pulse`. For each of the three events, say at which tick the check happens and whether it passes.
+3. **Debug.** The test now resets only the destination: `dst_rst_n` is low from 62 to 100 ns, and only event 1 is sent. With your exact assertion from part 1 and `disable iff (!src_rst_n)`, what is reported, and how do you fix the assertion?
+
+<details>
+<summary>Worked solution</summary>
+
+**Part 1.** Count from the first `dst_clk` tick strictly after the event, d1. `dst_sync[0]` captures the new toggle at d1, `dst_sync[1]` at d2, so `dst_pulse` is high between d2 and d3 and is sampled 1 at d3, two ticks after d1. The flop that ticks in the same time slot as the event reads the old toggle, so d1 must be strictly later: use `|=>`.
+
+```systemverilog
+// snippet
+a_pulse_latency: assert property (
+  @(posedge src_clk) disable iff (!src_rst_n || !dst_rst_n)
+    src_pulse |=> @(posedge dst_clk) ##2 dst_pulse
+);
+```
+
+| Event at | d1 (strictly after) | Checked at d1 + 2 ticks | `dst_pulse` sampled | Result |
+|---|---|---|---|---|
+| 50 ns | 60 ns | 90 ns | 1 | pass |
+| 90 ns | 105 ns | 135 ns | 1 | pass |
+| 130 ns | 135 ns | 165 ns | 1 | pass |
+
+**Part 2.** With `|->`, the first `dst_clk` tick is the one *at or after* the event.
+
+| Event at | First tick for `\|->` | Checked at | `dst_pulse` sampled | Result |
+|---|---|---|---|---|
+| 50 ns | 60 ns (no tick at 50) | 90 ns | 1 | pass |
+| 90 ns | 90 ns (coincident) | 120 ns | 0 | **fails**: one tick too early |
+| 130 ns | 135 ns (no tick at 130) | 165 ns | 1 | pass |
+
+The design is correct; the check is not. It fails only for events on coincident edges, which is why such bugs look intermittent.
+
+**Part 3.** The window is the single tick d1 + 2 = 90 ns. The destination reset clears `dst_sync` at 62 ns, so `dst_pulse` is sampled 0 at 90 ns and the assertion fails there, although the test caused the loss. Fix: `disable iff (!src_rst_n || !dst_rst_n)`. The falling `dst_rst_n` at 62 ns then disables the attempt in flight, and nothing is reported.
+
+Look one step further. After the release at 100 ns, `src_tgl` is still 1 while `dst_sync` restarts from 000, so the destination produces a `dst_pulse` (sampled 1 at the 135 ns tick) for an event that the reset should have discarded. The assertion cannot see it, because no source attempt is open, but a `cover property` or a scoreboard counting `dst_pulse` would. That is a reset-domain-crossing bug in the design: reset both domains together, or make the destination resynchronize its history to `src_tgl` after reset.
+
+</details>
+
+### More practice
+
+Work through the flashcards for this lesson below, then revisit the repetition and interval traces on the [module page](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/index): every single-clock rule there still applies inside each clock's piece of a multiclock property.
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023):
+
+- §16.13 multiclock support: §16.13.1 multiclocked sequences (`##1` and `##0` across clocks, identical clocks, no empty match, only `##1`/`##0` between clocks); §16.13.2 multiclocked properties (`|=>`, `|->`, `if`/`else`, property `and`/`or`); §16.13.3 clock flow; §16.13.5 and §16.13.6 sequence end points and the `.triggered` and `.matched` methods; §16.13.7 local variable initialization with one or several semantic leading clocks.
+- §16.12 declaring properties: `disable iff` (one per assertion, current values, no local variables or `.matched`, explicit clocks for sampled-value functions, no nesting); §16.12.2 sequence properties (weak in `assert`, strong in `cover`).
+- §16.15 `default disable iff` resolution; §16.16 clock resolution (rules a to f) and §16.16.1 semantic leading clocks.
+- §16.9.3 sampled-value functions and how their clock is inferred; §16.5.1 sampling; §16.7 single-clock `##0`.
+- §16.14.1 to §16.14.3 `assert`, `assume` and `cover` statements; §14.3 default clocking-block skews; §14.16 synchronous drives.
+
+**Prerequisites:** [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) for attempts, sampling, implication, vacuity and `disable iff`; [Local Variables](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/local-variables), the previous lesson; [F4C: Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) for the bench's `src_cb`.
+
+**Related:**
+
+- [I-SV-4B: Advanced Temporal Logic](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/index): repetition, `##0` fusion, `first_match` and property strength on one clock.
+- [F3C: Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): why a flop that ticks with the launching edge reads the old value.
+- [I-SV-4C: SystemVerilog Checkers & Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index): packaging crossing checks and binding them to a synchronizer without editing the RTL.
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): pairing data items across domains when several are in flight.
+- [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index): multiclock properties under formal tools.
+
+<NextLesson />

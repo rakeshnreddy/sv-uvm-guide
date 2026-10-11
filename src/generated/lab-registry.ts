@@ -168,37 +168,99 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "assertions-1",
-    "version": "1",
-    "title": "Assertions Fundamentals",
-    "description": "Write basic concurrent and immediate assertions.",
+    "version": "2",
+    "title": "Catch a Valid/Ready Bug with Assertions",
+    "description": "Write the valid/ready protocol checks for a one-word register slice (valid hold, payload stable, a bounded-ready assumption and two covers), watch a run without backpressure pass vacuously, then let the checks pinpoint a seeded payload bug and confirm the fix.",
     "owningModule": "I-SV-4A",
     "routeSlug": "assertions-1",
     "status": "coming_soon",
     "labPrerequisites": [],
-    "modulePrerequisites": [],
-    "steps": [],
-    "assets": [
+    "modulePrerequisites": [
+      "F3B",
+      "F4C"
+    ],
+    "steps": [
       {
-        "path": "lab1_data_integrity/dut.sv",
-        "role": "reference",
-        "language": "systemverilog",
-        "editable": false
+        "id": "1",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 1: Run the starter and read the scoreboard error",
+        "instructions": "Read the README sections 'The bench' and 'The rules'. Run the starter (make run SIM=<your simulator>). The given checks a_in_ready_known and a_accept_to_out pass, but the scoreboard reports '[85 ns] [TB] scoreboard: expected a2, got a3' and the bench ends with '[135 ns] [TB] FAIL'. Write down what the scoreboard tells you (a word is wrong) and what it cannot tell you (when and why it went wrong).",
+        "starterCode": ""
       },
       {
-        "path": "lab1_data_integrity/README.md",
+        "id": "2",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 2: Predict, then write R1 and R2",
+        "instructions": "Answer the prediction questions in Step 2 of the README first: Q0 (why R0 is a deferred immediate assertion, R2 a concurrent one and the scoreboard check a simple immediate one) and Q1 and Q2 (|-> or |=>). Then, in tb/hs_slice_sva.sv, complete TODO 1 (a_out_valid_hold) and TODO 2 (a_out_data_stable) with @(posedge clk), disable iff (!rst_n), $stable and the message format given in the file. Do not run yet.",
+        "starterCode": ""
+      },
+      {
+        "id": "3",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 3: Add the assumption and the covers, then run without stalls",
+        "instructions": "Complete TODO 3 (m_sink_ready_bounded, an assume property with ##[1:MAX_STALL]) and TODO 4 (covers c_transfer and c_stall_then_ready, each incrementing its counter). Run make nostall SIM=<your simulator>. Expect '[115 ns] [TB] PASS' and a summary with 0 check failures, c_stall_then_ready hit 0 times and c_transfer hit 6 times. Explain why this passing run proves nothing about R1 and R2.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 4: Run with stalls and read the failure",
+        "instructions": "Run make run SIM=<your simulator>. Expect exactly one assertion failure, '[75 ns] [SVA] a_out_data_stable: out_data changed from a2 to a3 ...', then the scoreboard error at 85 ns, '[135 ns] [TB] FAIL' and a summary with 1 check failure, c_stall_then_ready hit 1 time and c_transfer hit 6 times. If your output differs, compare it with make solution and use the hints in the README. Answer the Step 4 questions: why 75 ns and not 65 ns, and which design signal must have changed out_data.",
+        "starterCode": ""
+      },
+      {
+        "id": "5",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: Fix the design and confirm a clean run",
+        "instructions": "Use the failure to find the bug in rtl/hs_slice.sv and fix it with a one-line change. Rerun make run SIM=<your simulator>: expect '[135 ns] [TB] PASS: 6 words received in order, no assertion failures' and a summary with 0 check failures, c_stall_then_ready hit 1 time and c_transfer hit 6 times. Compare your files with solution/hs_slice.sv and solution/hs_slice_sva.sv (make solution-fixed runs them).",
+        "starterCode": ""
+      }
+    ],
+    "assets": [
+      {
+        "path": "README.md",
         "role": "guide",
         "language": "markdown",
         "editable": false
       },
       {
-        "path": "lab1_data_integrity/solution_assertions.sv",
+        "path": "tb/hs_slice_sva.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "rtl/hs_slice.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "tb/tb_top.sv",
+        "role": "reference",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "Makefile",
+        "role": "reference",
+        "language": "makefile",
+        "editable": false
+      },
+      {
+        "path": "solution/hs_slice_sva.sv",
         "role": "solution",
         "language": "systemverilog",
         "editable": false
       },
       {
-        "path": "lab1_data_integrity/testbench.sv",
-        "role": "reference",
+        "path": "solution/hs_slice.sv",
+        "role": "solution",
         "language": "systemverilog",
         "editable": false
       }
@@ -631,47 +693,68 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "coverage-advanced-1",
-    "version": "1",
-    "title": "Advanced Coverage",
-    "description": "Implement complex covergroups and analyze coverage holes.",
+    "version": "2",
+    "title": "Coverage Closure Loop: ALU",
+    "description": "Read a per-plan-row coverage report, classify each hole, and change only the stimulus so the ALU plan closes on three seeds of 500 transactions, with every check passing and no forbidden input.",
     "owningModule": "I-SV-3B",
     "routeSlug": "coverage-advanced-1",
     "status": "available",
     "labPrerequisites": [],
-    "modulePrerequisites": [],
+    "modulePrerequisites": [
+      "I-SV-3A",
+      "I-SV-2A"
+    ],
     "steps": [
       {
         "id": "1",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 1: Run and Analyze",
-        "instructions": "Run the simulation and note the score (about 70%). Open `alu_cov_mon.sv`: the score is the average of `cp_op` (7 bins), `cp_a` and `cp_b` (2 bins each; the `others` default bins never count) and `cross_edge_op` (7 operations x {zero, max} = 14 bins; default bins are excluded from crosses).",
+        "title": "Step 1: Run three seeds and read the report",
+        "instructions": "Compile alu_pkg.sv, alu.sv and tb_top.sv (top level tb_top) and run with +SEED=1, +SEED=2 and +SEED=3. Copy each run's five COV lines and its COV_SUMMARY line into a table with one row per plan row (ALU-1 to ALU-5). Expect a total near 61% and LAB RESULT: OPEN. Do not change anything yet.",
         "starterCode": ""
       },
       {
         "id": "2",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 2: Add Missing Operations",
-        "instructions": "The constraint in `testbench.sv` omits `DIV`. Add it to the `inside` list. `cp_op` reaches 100%, but the score only rises to about 74%: the cross still needs every operation with `a == 0` and with `a == 8'hFF`.",
+        "title": "Step 2: Classify every short item",
+        "instructions": "For each item below 100%, decide its class: forbidden, unreachable, under-stimulated or unobserved. Read the constraint block of alu_txn in alu_pkg.sv before deciding. For one cell of x_op_a, compute the chance that 500 transactions hit it with P = 1 - (1 - p)^N. Write the class and your evidence next to each plan row.",
         "starterCode": ""
       },
       {
         "id": "3",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 3: Fix the generator bug",
+        "instructions": "Make the smallest constraint change that lets every operation be generated. Predict the new total (about 64%), then rerun seeds 1 to 3. Some seeds may now report an ALU-5 error: note it and continue to step 4.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 4: Steer the rare cells",
+        "instructions": "Add dist constraints that give BOTH edge values (8'h00 and 8'hFF) of BOTH inputs real weight, for example a dist {8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] :/ 2};. Predict the per-cell probability of x_op_a and x_op_b before you rerun seeds 1 to 3. Weighting only 8'hFF, or only a, leaves cells rare and stalls well short of 100% (about 82% with only a steered).",
+        "starterCode": ""
+      },
+      {
+        "id": "5",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 5: Handle the forbidden input that steering exposed",
+        "instructions": "Steering b toward 0 makes DIV with b == 0 frequent, so ILLEGAL is no longer 0 and the simulator reports illegal-bin errors. The spec forbids this input (ALU-5). Classify it and fix it in the stimulus, not in the coverage model: ignore_bins would only hide a forbidden scenario. Rerun seeds 1 to 3 until each prints LAB RESULT: CLOSED with FAIL=0 and ILLEGAL=0.",
+        "starterCode": ""
+      },
+      {
+        "id": "6",
         "version": "1",
         "completion": "self_attested",
-        "title": "Step 3: Weight Edge Cases",
-        "instructions": "Uniform inputs hit each edge value about once in 256 samples. Add a `dist` for `a` and `b` that weights BOTH `8'h00` and `8'hFF`, e.g. `a dist { 8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] :/ 2 };`. Each cross bin then has probability 1/28 per sample, and 500 samples close coverage at 100% (weighting only `8'hFF` stalls near 80%).",
+        "title": "Step 6 (optional): Make a hole unobserved on purpose",
+        "instructions": "In tb_top.sv, move cov.write(t); into the n_fail++ branch so the collector is fed only on failures. Rerun one seed: every check passes, yet every COV line drops to 0/N. The scenarios ran and only the sampling is wrong: that is an unobserved hole, fixed in the collector, never in the stimulus. Move the call back afterwards.",
         "starterCode": ""
       }
     ],
     "assets": [
-      {
-        "path": "alu_cov_mon.sv",
-        "role": "starter",
-        "language": "systemverilog",
-        "editable": true
-      },
       {
         "path": "README.md",
         "role": "guide",
@@ -679,10 +762,28 @@ export const GENERATED_LAB_MANIFESTS = [
         "editable": false
       },
       {
-        "path": "testbench.sv",
+        "path": "alu_pkg.sv",
         "role": "starter",
         "language": "systemverilog",
         "editable": true
+      },
+      {
+        "path": "alu.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "tb_top.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "solution/alu_closure_solution.sv",
+        "role": "solution",
+        "language": "systemverilog",
+        "editable": false
       }
     ],
     "assetLocation": "content/curriculum/labs/coverage_advanced/lab1_closure_loop"
@@ -1112,20 +1213,22 @@ export const GENERATED_LAB_MANIFESTS = [
   {
     "id": "randomization-advanced-1",
     "version": "1",
-    "title": "Advanced Randomization",
-    "description": "Solve complex constraint problems and debug solver failures.",
+    "title": "Silent Failure Triage",
+    "description": "Make a silent randomize() failure loud, find the smallest conflicting set of constraints with constraint_mode(), and fix the rule that contradicts the spec.",
     "owningModule": "I-SV-2B",
     "routeSlug": "randomization-advanced-1",
     "status": "available",
     "labPrerequisites": [],
-    "modulePrerequisites": [],
+    "modulePrerequisites": [
+      "I-SV-2A"
+    ],
     "steps": [
       {
         "id": "1",
         "version": "1",
         "completion": "self_attested",
         "title": "Step 1: Make the Failure Loud",
-        "instructions": "Run the starter and find the IPV6 rows: they print `Got proto: IPV4 | Length: 0` because `randomize()` failed and the fields kept their default values. In `test.sv`, check the return value of `randomize()` and call `$fatal(1, ...)` when it is 0.",
+        "instructions": "Before you run anything, predict which of the six rows fail and what the failed rows print. Then run the starter on your simulator (see Run it in the README) and find the IPV6 rows: they print `Got proto: IPV4 | Length: 0` because `randomize()` failed and the fields kept the default values of a new object. In `test.sv`, check the return value of `randomize()` and call `$fatal(1, ...)` when it is 0. Rerun: the test now stops on the first IPV6 row.",
         "starterCode": ""
       },
       {
@@ -1133,7 +1236,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 2: Triage with constraint_mode",
-        "instructions": "Before `randomize()`, turn off one constraint block at a time, for example `pkt.c_hardware_limit.constraint_mode(0);`. Disabling any one of `c_proto_len`, `c_payload_size` or `c_hardware_limit` lets IPV6 succeed, so all three take part in the contradiction. The spec, not the solver, decides which one is wrong.",
+        "instructions": "Before `randomize()`, switch off one constraint block at a time, only for the IPV6 rows, for example `if (wanted == packet::IPV6) pkt.c_hardware_limit.constraint_mode(0);`. (Switching `c_hardware_limit` off for every row would leave RAW lengths unbounded.) Switching off any one of `c_proto_len`, `c_payload_size` or `c_hardware_limit` lets IPV6 succeed, so all three take part in the contradiction, together with the inline `proto == wanted`, which `constraint_mode()` cannot switch off. The spec, not the solver, decides which rule is wrong.",
         "starterCode": ""
       },
       {
@@ -1141,7 +1244,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 3: Fix the Model",
-        "instructions": "Compare each constraint in `packet.sv` with the spec excerpt at the top of the file. IPV6 needs exactly 40 bytes, but `c_hardware_limit` only allows powers of two. Rewrite `c_hardware_limit` to match the spec (multiples of 8 bytes, 8 to 256), remove the `constraint_mode(0)` line, and confirm that all six packets randomize.",
+        "instructions": "Compare each constraint in `packet.sv` with the spec excerpt at the top of the file. IPV6 needs exactly 40 bytes, but `c_hardware_limit` only allows powers of two. Rewrite `c_hardware_limit` to match the spec (multiples of 8 bytes, 8 to 256), remove the `constraint_mode(0)` line, and confirm that all six packets randomize, with IPV6 at length 40.",
         "starterCode": ""
       }
     ],

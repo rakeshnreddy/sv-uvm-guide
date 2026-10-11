@@ -3,5 +3,100 @@
     "id": "isv2a-1",
     "question": "What does randomize() return, and what happens to the rand variables when it fails?",
     "answer": "It returns 1 when every random variable gets a legal value and 0 when the constraints cannot be satisfied. On failure the random variables keep their previous values and post_randomize() is not called (IEEE 1800-2023 18.6.3)."
+  },
+  {
+    "id": "isv2a-2",
+    "question": "What does a soft constraint do?",
+    "answer": "On each call it is kept if a solution exists with it and all hard constraints; otherwise it is discarded completely for that call (18.5.13). It is a priority, not a probability: an uncontested soft constraint holds on every call."
+  },
+  {
+    "id": "isv2a-3",
+    "question": "How do you add constraints for one randomize() call, and how do you refer to the caller's variables inside them?",
+    "answer": "Use `obj.randomize() with { ... }`. Unqualified names resolve in the object's class first, then in the calling scope (18.7); write `local::name` to force the caller's variable (18.7.1)."
+  },
+  {
+    "id": "isv2a-4",
+    "question": "What does randc guarantee, and for whom?",
+    "answer": "A `randc` variable returns a random permutation of its legal values, one per call, with no repeat until all have appeared (18.4.2). The cycle belongs to each object, unless the variable is `static`, so a new object starts a new cycle."
+  },
+  {
+    "id": "isv2a-5",
+    "question": "With rand bit [2:0] x, what is P(x == 0) for x dist {0 := 2, [1:3] := 2} and for x dist {0 := 2, [1:3] :/ 2}?",
+    "answer": "25% with `:=`, because every value of the range weighs 2 (total 8). 50% with `:/`, because the whole range weighs 2 (total 4) (18.5.3)."
+  },
+  {
+    "id": "isv2a-6",
+    "question": "Can x be 5 under x dist {0 := 1, [1:3] := 1}?",
+    "answer": "No. `dist` is also a membership test: values not listed, and values whose total weight is 0, are excluded (18.5.3)."
+  },
+  {
+    "id": "isv2a-7",
+    "question": "With no dist, solve...before or randc, how does randomize() choose values?",
+    "answer": "It picks one legal combination of all random variables, every combination equally likely (18.5.9). With `x + y < 8` on 3-bit x and y, P(x == 0) is 8/36, not 1/8."
+  },
+  {
+    "id": "isv2a-8",
+    "question": "What does solve a before b change, and what can it never do?",
+    "answer": "It changes only probabilities: `a` is drawn first, uniformly over its legal values. It never changes the legal combinations, so it cannot cause or fix a failure, and `randc` variables may not appear in it (18.5.9)."
+  },
+  {
+    "id": "isv2a-9",
+    "question": "Why is assert(item.randomize()) unsafe?",
+    "answer": "When assertions are switched off, no new attempt starts, so `randomize()` is never called (20.11). When they are on, a failure is only the assertion's default `$error` (16.3), which UVM does not count. Use `if (!item.randomize()) $fatal(...)` or `uvm_fatal."
+  },
+  {
+    "id": "isv2a-10",
+    "question": "What does addr == addr constrain inside obj.randomize() with { ... }?",
+    "answer": "Nothing: both names bind to the object's `addr`, so the constraint is always true (18.7). Write `addr == local::addr` to use the caller's variable."
+  },
+  {
+    "id": "isv2a-11",
+    "question": "What happens when a constraint prototype has no external body?",
+    "answer": "For the implicit form `constraint c;` it is an empty constraint, and a warning may be issued. For the explicit form `extern constraint c;` it is an error (18.5.1)."
+  },
+  {
+    "id": "isv2a-12",
+    "question": "Where must an external constraint block such as constraint C::c { ... } be written?",
+    "answer": "In the same scope as the class declaration, after the class. At most one body per prototype, and no block of the same name inside the class (18.5.1)."
+  },
+  {
+    "id": "isv2a-13",
+    "question": "Why bound the variable that sets a random array's size, and what happens if size() is not constrained at all?",
+    "answer": "An unbounded size such as `rand int n` lets the solver pick enormous arrays that can exhaust memory or stall the run. If the size is not constrained, the array is not resized and only its existing elements are randomized (18.4)."
+  },
+  {
+    "id": "isv2a-14",
+    "question": "With len inside {[1:64]} and data.size() == len, does a long payload make len == 64 more likely?",
+    "answer": "No. The array is resized first and its elements are randomized afterwards (18.4; 18.5.7.1 with foreach rules), so len is uniform over 1 to 64."
+  },
+  {
+    "id": "isv2a-15",
+    "question": "Why can a randc tag repeat within 16 UVM sequence items?",
+    "answer": "Each transaction is usually a new item object, and each object starts its own permutation (18.4.2). Keep the randc variable in a long-lived object or allocate tags explicitly."
+  },
+  {
+    "id": "isv2a-16",
+    "question": "Which soft constraint wins when soft constraints conflict?",
+    "answer": "The higher-priority one (18.5.13.1): an inline soft constraint beats the class's, a derived class beats its base, and a later declaration beats an earlier one. Hard constraints beat every soft constraint."
+  },
+  {
+    "id": "isv2a-17",
+    "question": "Why can an unguarded soft default make a mode impossible?",
+    "answer": "If any legal solution keeps the default, the solver keeps it, and a kept soft constraint shrinks the legal set like a hard one (18.5.13). Guard it with the mode it belongs to, for example `!is_err -> soft len == 16;`."
+  },
+  {
+    "id": "isv2a-18",
+    "question": "What is a state variable in a constraint?",
+    "answer": "A variable the constraint reads that is not being randomized, such as a non-rand property or a caller's variable through `local::`. The solver uses its current value as a constant (18.5.8)."
+  },
+  {
+    "id": "isv2a-19",
+    "question": "What is wrong with len inside {[16:8]}?",
+    "answer": "A range whose low bound is above its high bound is empty (11.4.13), so the constraint can never hold and `randomize()` fails. Write `[8:16]`."
+  },
+  {
+    "id": "isv2a-20",
+    "question": "Can a randc bit [3:0] tag guarantee no collision with the last 15 tags in flight?",
+    "answer": "No. `randc` guarantees no repeat only within one cycle (18.4.2). The next cycle may start with the value the last one ended on, and the cycle restarts whenever the constraints on the variable change. It is not a sliding window, so tags that must not collide with in-flight ones need an explicit allocator."
   }
 ]

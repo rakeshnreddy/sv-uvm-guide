@@ -1,120 +1,711 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz, InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Immediate, Deferred and Concurrent Assertions"
+description: "Choose between simple immediate, deferred (assert #0, assert final) and concurrent assertions, predict in which scheduling region each one checks and reports, and write action blocks that report the values that were actually checked."
+flashcards: "I-SV-4A_Immediate_vs_Concurrent"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+---
 
+## Quick Take
 
-export const metadata = {
-  title: "Immediate vs. Concurrent Assertions | Advanced SystemVerilog for Verification",
-  description: "Compare procedural checks with temporal properties through hands-on examples.",
-};
+- **What it is:** An **assertion** is a statement that checks a condition your design under test (DUT) or testbench (TB) must meet and reports when it does not. SystemVerilog has two families (IEEE 1800-2023 §16.2). An **immediate assertion** is a procedural statement: it checks its condition on the values variables hold at the moment the statement runs (§16.3). It comes in two modes. A **simple immediate assertion** reports at once; a **deferred immediate assertion** (`assert #0` or `assert final`) checks at once but holds its report until later in the same time slot (§16.4). A **concurrent assertion** checks a **property**, a rule about how signals behave over clock ticks, at each tick of a clock, using values sampled just before the tick (§16.5).
+- **Why it matters:** The kinds differ in three things: when they check, which values they read, and when they report. Pick the wrong one and you get false failures from values that are still settling, error messages that print values the check never used, or a check that cannot say "within three cycles" at all. Every real bench mixes all of them, so you need to know which one each check calls for.
+- **The Analogy:** Three ways to inspect a shelf that a clerk is restocking. The simple immediate inspector glances at the shelf and writes a ticket on the spot, even if the clerk is halfway through. The deferred inspector writes the ticket in pencil and files it only if the shelf still looks wrong when the clerk steps back; every new glance erases the pencil note. The concurrent inspector is a camera that photographs the shelf just before each scheduled bell and judges only the photos. *Where it breaks:* the deferred inspector waits only until the end of the current time slot, never across clock cycles, and "the clerk steps back" is a precise scheduling region (Observed or Postponed), not a judgment call. The camera also misses anything that happens and is undone between two bells.
 
-<InfoPage
-  title="Immediate vs. Concurrent Assertions"
-  sv_concept_tags={["immediate assertions", "concurrent assertions"]}
->
+**You will be able to:**
+1. Choose between a simple immediate, an observed deferred (`assert #0`), a final deferred (`assert final`) and a concurrent assertion for a given check, and justify the choice.
+2. Predict, for a procedure that runs more than once in one time slot, how many reports each kind prints and in which scheduling region each report is printed.
+3. Write legal action blocks for each kind with severity tasks (`$fatal`, `$error`, `$warning`, `$info`), and place deferred assertions in procedures or at module level.
+4. Debug a false, missing or misleading assertion report by tracing it to its cause: a glitch, an unknown (X) value, a Reactive-region change, or an action block that reads current values.
 
-  ## Elevator Pitch
-  *IEEE 1800-2023, Clauses 16.3 and 16.5: Immediate and concurrent assertions*
+<BeforeYouStart />
 
-  Immediate assertions execute like regular procedural statements and check a condition, on current values, at the moment they run.
+## Build Your Mental Model
 
-  Assertions catch bugs by checking that design behavior meets expectations. **Immediate** assertions fire instantly within procedural code. **Concurrent** assertions start an attempt at every tick of their clock, use values sampled just before the edge (§16.5.1), and can span many cycles.
+**How to read this lesson.** The core path is the first six sections: the three questions, the region refresher, simple immediate assertions, the glitch, deferred assertions and concurrent assertions. Then come the ladder picture that puts them side by side, action blocks, choosing a kind and debugging. The [module overview](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) teaches the temporal side of concurrent assertions (sequences, `|->` and `|=>`, vacuity, `disable iff`, `assume` and `cover`); this lesson does not repeat it.
 
-  ## Practical Explanation
+A few words you will meet on every line. A **procedure** is a block of procedural code such as an `initial`, `always`, `always_comb` or `always_ff` block ([F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index)). A **process** is one running thread of a procedure; each procedure is one process. A **time slot** is everything the simulator does at one simulation time, and it is split into ordered **regions** such as Preponed, Active, Observed, Reactive and Postponed ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)). An **action block** is the code an assertion runs when it passes (the **pass statement**) or fails (the **fail statement**, written after `else`).
 
-  ```systemverilog
-  // Immediate assertion: procedural, checks current values when it executes
-  always_ff @(posedge clk) begin
-    if (!rst_n)
-      assert (req == 0) else $error("req high during reset");
+### Three questions decide the kind
+
+Every assertion answers three questions differently: **when does it check, which values does it read, and when does it report?**
+
+| Kind | Syntax | Checks when | Reads which values | Reports (runs its action block) |
+|---|---|---|---|---|
+| Simple immediate | `assert (expr)` | Each time procedural code reaches it | Current values, at that moment | At once, in the same region (§16.3) |
+| Observed deferred | `assert #0 (expr)` | Each time procedural code reaches it | Current values, at that moment | Later in the same time slot: the report matures in Observed and runs in Reactive, unless the process runs again first (§16.4.1) |
+| Final deferred | `assert final (expr)` | Each time procedural code reaches it | Current values, at that moment | At the end of the time slot: matures and runs in Postponed, unless the process runs again first (§16.4.1) |
+| Concurrent | `assert property (@(posedge clk) expr)` | At each tick of its clock | **Sampled** values: the values from just before the tick (Preponed, §16.5.1) | Checked in Observed; action block runs in Reactive (§16.5, §16.14.1) |
+
+Deferred assertions are still immediate assertions: they are procedural statements that read current values. Only the *report* is deferred (§16.4). That one difference is what the rest of this lesson unpacks.
+
+### Refresh the time slot first
+
+All four kinds are defined by regions, so make sure the ladder is fresh. On the map below, select **Preponed**, **Active**, **Observed**, **Reactive** and **Postponed**. For each one, say out loud which assertion activity you expect to find there before you read its card. Then compare with the table above.
+
+<TimeSlotRegionMap />
+
+Three facts from the map carry this whole lesson. Preponed holds the "before" photo of every value, and only concurrent assertions and clocking-block inputs read it. Observed comes after the Active region set (design code and module-based testbench code) has run out of events for this pass. Postponed is read-only and runs once, at the very end of the time slot (§4.4.2.9).
+
+### Simple immediate assertions
+
+A **simple immediate assertion** is a test of an expression, performed when the statement is executed in procedural code (§16.3). The expression is read exactly like the condition of an `if`: if it evaluates to `0`, `x` or `z` it is false and the assertion **fails**; otherwise it **passes**. The pass and fail statements run immediately after the check. If you leave out the `else` clause, the tool calls `$error` for you on a failure (§16.3).
+
+There are three forms, all usable wherever a procedural statement is legal: in `initial` and `always` procedures, tasks, functions and class methods (§16.3).
+
+```systemverilog
+// snippet
+// [label:] assert (expression) [pass_statement] [else fail_statement]
+a_aligned:  assert (addr[1:0] == 2'b00) else $error("addr %h not aligned", addr);
+// assume: a requirement on the environment; a simulator can check it like an assert
+a_legal_op: assume (opcode inside {ADD, SUB}) else $error("illegal opcode");
+// cover: counts how often the expression was evaluated and how often it was true
+c_full:     cover (fifo_full) $info("FIFO reached full");
+```
+
+The **label** (`a_aligned:`) creates a named block around the statement, so the hierarchical name in the message (`%m`) names the assertion, and assertion-control tasks can target it (§16.3, §20.11). Label every assertion you write.
+
+Here is a simple immediate assertion where it belongs: in procedural testbench code, checking a value at one moment. The action block of a simple immediate assertion can be any statement, including a `begin`-`end` block.
+
+```systemverilog
+// snippet
+class simple_sb;
+  int unsigned expected_q[$];
+
+  function void check(int unsigned actual);
+    int unsigned exp_val;
+    // Guard the pop: an empty queue means the DUT produced an unexpected output
+    a_not_empty: assert (expected_q.size() > 0)
+      else begin
+        $error("unexpected output %0d: nothing was expected", actual);
+        return;
+      end
+    exp_val = expected_q.pop_front();
+    a_match: assert (actual == exp_val)
+      else $error("mismatch: expected %0d, got %0d", exp_val, actual);
+  endfunction
+endclass
+```
+
+**Mistakes everyone makes with simple immediate assertions:**
+
+- **Forgetting that X is false.** In a clocked procedure, `assert (!(addr[1:0]))` fails on every edge while `addr` is still `x` during reset, because `!(2'bxx)` is `x`, and `x` counts as false (§16.3). Gate the check with the reset (`if (rst_n) assert (...)`), or check `!$isunknown(addr)` first ($isunknown is true when any bit is `x` or `z`, §20.9).
+- **Racing with the testbench.** It reads current values, so in an `always @(posedge clk)` it can see a value a testbench wrote with a blocking assignment on the same edge, or not, depending on process order. That is the read-write race from [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index). Concurrent assertions avoid it by reading sampled values.
+- **Hiding work inside the expression.** Never write `assert (item.randomize())`. When assertions are switched off, for example with `$assertoff` or a simulator option, the check is not executed and the randomization silently stops happening. Call `randomize()` in an `if` and report the failure there.
+- **Trusting it inside logic that settles.** If the procedure runs several times in one time slot while its inputs settle, a simple immediate assertion reports every transient failure. That is the next section.
+
+### Watch a simple assertion misfire: the glitch
+
+A procedure that waits on its inputs, such as `always @(a or b)` or `always_comb`, runs again every time one of them changes. Inside one time slot the inputs can change one after another, a **delta cycle** apart: one more trip of the scheduler back to the Active region at the same simulation time ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)). In between, the procedure sees a mix of new and old values that the design never intends to hold. A short-lived wrong value like this is a **glitch**.
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+module tb_top;
+  logic a = 1'b0;
+  logic b = 1'b0;   // rule: b always equals a
+
+  always @(a or b) begin : chk
+    a1: assert (a == b)       else $error("a1 simple: a=%0b b=%0b", a, b);
+    a2: assert #0 (a == b)    else $error("a2 observed deferred: a=%0b b=%0b", a, b);
+    a3: assert final (a == b) else $error("a3 final deferred: a=%0b b=%0b", a, b);
   end
 
-  // Concurrent assertion: temporal, needs a clocking event
-  property p_req_ack_within3;
-    @(posedge clk) disable iff (!rst_n)
-      req |-> ##[1:3] ack;
-  endproperty
-  a_req_ack_within3: assert property (p_req_ack_within3)
-    else $error("ack did not arrive 1-3 cycles after req");
-  ```
-
-  Immediate assertions live in [procedural blocks](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index). Concurrent assertions sit outside procedural code (or inside it, as procedural concurrent assertions) and observe signal sequences, enabling checks like "req must be followed by ack within 3 cycles." A concurrent property needs a clocking event: write `@(posedge clk)` in the property, or declare a `default clocking` block in the scope. Without either, the property above would not compile. See [multi-clocking](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/multi-clocking) for multi-clock properties.
-
-  ## Advanced Notes
-
-  * Concurrent assertions express time with `##` delays and repetition operators.
-  * Use `disable iff` to discard attempts during reset: a disabled attempt is neither a pass nor a fail.
-  * Remember: **Immediate = instant, current values; Concurrent = every clock tick, sampled values**.
-
-  <Quiz questions={[
-    {
-      question: "Where do immediate assertions execute?",
-      answers: [
-        { text: "Inside procedural code", correct: true },
-        { text: "In modules only", correct: false },
-        { text: "As stand-alone properties", correct: false },
-        { text: "In covergroups", correct: false }
-      ],
-      explanation: "Immediate assertions are statements inside procedural code and are evaluated when the code executes."
-    }
-  ]} />
-
-  <InteractiveCode>
-  ```systemverilog
-  always_ff @(posedge clk) begin
-    // Fail if address is misaligned on this cycle
-    assert (!(addr[1:0])) else
-      $error("Address %h is not word aligned", addr);
+  initial begin
+    #10 a = 1'b1;
+    #0  b = 1'b1;   // b follows a one Inactive pass later, same time slot (§4.4.2.3)
+    #10 $finish;
   end
-  ```
-  </InteractiveCode>
+endmodule
+```
 
-  Concurrent assertions monitor temporal behavior across clock cycles using sequences and properties.
+**Predict first.** At 10 ns, how many error lines do `a1`, `a2` and `a3` each print? Write down three numbers before you read the trace.
 
-  <InteractiveCode>
-  ```systemverilog
-  sequence s_req_then_ack;
-    req ##1 ack;
-  endsequence
+Here is the time slot at 10 ns, step by step. `a1`, `a2` and `a3` all check the same condition; they differ only in when they report.
 
-  property p_req_ack;
-    @(posedge clk) req |-> s_req_then_ack;
-  endproperty
+| Step | Region | What happens | `a` | `b` | `a1` simple | `a2` `#0` | `a3` `final` |
+|---|---|---|---|---|---|---|---|
+| 1 | Active | `initial` runs `a = 1'b1`, which wakes `chk`; `initial` reaches `#0` and suspends | 1 | 0 | | | |
+| 2 | Active | `chk` resumes from its event control and runs all three checks | 1 | 0 | **fails, prints now** | fail report queued | fail report queued |
+| 3 | Inactive, then Active | `initial` resumes and runs `b = 1'b1`, which wakes `chk` again | 1 | 1 | | | |
+| 4 | Active | `chk` resumes from its event control: a **flush point**, so both pending reports are thrown away. The checks run again | 1 | 1 | passes | pass queued | pass queued |
+| 5 | Observed, Reactive | `a2`'s pending pass matures; it has no pass statement, so nothing prints | 1 | 1 | | done | |
+| 6 | Postponed | `a3`'s pending pass matures; nothing prints | 1 | 1 | | | done |
 
-  assert_req_ack: assert property (p_req_ack)
-    else $error("Ack did not follow req");
-  ```
-  </InteractiveCode>
+**Debrief.** The answer is 1, 0, 0. Only `a1` prints, at 10 ns, with `a=1 b=0`: a failure on values that existed for one delta cycle. `a2` and `a3` also failed in step 2, but they only *queued* their reports, and the queue was cleared when `chk` ran again in step 4. Most learners guess that the queue is cleared when the procedure suspends; it is cleared when the procedure **resumes** (§16.4.2). That is the whole idea of a deferred assertion.
 
-  ### Advanced Tips
+### Deferred assertions: `assert #0` and `assert final`
 
-  - Use immediate assertions for quick sanity checks inside procedural code.
-  - Named sequences and properties can be declared in packages and reused (§16.12). The `assert property` statements themselves belong in modules, interfaces, programs, generate blocks, checkers or procedures (§16.14), often in a bind file.
+A **deferred assertion** evaluates its expression the moment the statement is reached, exactly like a simple one. The difference is in reporting (§16.4, §16.4.1):
 
-  ## Check Your Understanding
+1. **Queue, do not report.** Instead of running the action block, the tool places the action-block call (or `$error`, if there is no `else` and the check failed) on a **deferred assertion report queue** that belongs to the current process. The queued call is a **pending report**. Arguments passed by value are evaluated now, so the report keeps the values the check saw.
+2. **Flush on re-run.** When the process reaches a **flush point**, its queue is cleared and the pending reports never run. The three flush points are (§16.4.2):
+   - the process resumes after waiting on an event control (`@`) or a `wait` statement;
+   - an `always_comb` or `always_latch` resumes because one of its inputs changed;
+   - the outermost scope of the process is disabled with `disable`.
+3. **Mature and report.** A pending report that survives **matures**: it is confirmed and can no longer be flushed.
+   - **Observed deferred** (`#0`): matures in the **Observed** region; its call runs in the **Reactive** region.
+   - **In the Postponed region** a pending report of an `assert final` (a **final deferred** assertion) matures, and its call runs there too.
 
-  <Quiz questions={[
-    {
-      question: "At a rising clock edge, the design's flop writes q from 0 to 1. Which value of q does a concurrent assertion clocked on that edge use?",
-      answers: [
-        { text: "1, because the assertion is evaluated after the NBA region", correct: false },
-        { text: "0, the value sampled just before the edge (Preponed)", correct: true },
-        { text: "Either value, depending on the simulator", correct: false },
-        { text: "X, because q changes in the same time step", correct: false }
-      ],
-      explanation: "Concurrent assertions are evaluated in the Observed region but on sampled values, which are the Preponed values (§16.5, §16.5.1). The new value of q is first seen at the next edge."
-    }
-  ]} />
+The syntax adds `#0` or `final` after the keyword, and works for `assert`, `assume` and `cover` (§16.4):
 
-  <div className="mt-8">
-    <InterviewQuestionPlayground
-      question="A verification engineer writes a checker to verify sequential logic inside an `always_comb` block using a simple immediate assertion: `assert (a == b)`. However, it fires multiple times with false failures during a single delta cycle before signals settle. What is the modern solution to this problem?"
-      options={[
-        { text: "Wrap the assertion in an `always_ff @(posedge clk)` block.", isCorrect: false, feedback: "That turns it into a synchronous check, but the goal was to check combinational logic." },
-        { text: "Change it to a deferred assertion using `assert #0` or `assert final`.", isCorrect: true, feedback: "Correct! A deferred assertion queues its report instead of reporting at once. If the always_comb block runs again in the same time step, the pending report is flushed. An observed deferred assertion (`assert #0`) reports only once its pending report matures in the Observed region. `assert final` waits even longer: its pending report matures only after every other region of the time step has run, in Postponed (§16.4). Glitches caused by the order of procedural execution are filtered out." },
-        { text: "Use a concurrent assertion (`assert property`).", isCorrect: false, feedback: "Concurrent assertions check at clock ticks, so they do not watch a combinational relation continuously." },
-        { text: "Add a `#1` artificial delay before the `assert`.", isCorrect: false, feedback: "Adding timing delays inside `always_comb` breaks synthesis and simulation semantics." }
-      ]}
-    />
-  </div>
+```systemverilog
+// snippet
+a_obs: assert #0 (a == b) else $error("a_obs: a=%0b b=%0b", a, b);
+a_fin: assert final (a == b) else $error("a_fin: a=%0b b=%0b", a, b);
+m_in:  assume #0 (!(rd_en && wr_en));   // no else: $error on failure
+c_hit: cover final (hit && !miss);      // counts only settled values
+```
 
-</InfoPage>
+**Action-block rules for deferred assertions** (§16.4):
+
+- The pass statement and the fail statement must each be **a single subroutine call**: a task, a task method, a void function, a void function method or a system task such as `$error`. A `begin`-`end` block is not a subroutine call, so it is illegal here.
+- Postponed forbids writing any variable or net (§4.4.2.9). An `assert final` action runs in that region, so its subroutine must be legal there (§16.4): it may print, but it must not update a counter or a flag. Use `#0` when the action has to change state.
+- Arguments passed by value are evaluated when the check runs. Arguments passed by `ref` or `const ref` read their current values when the report finally runs (Reactive for `#0`, Postponed for `final`).
+
+```systemverilog
+// snippet
+a_ok1: assert #0 (x) else $error("x low");             // legal: one system-task call
+a_ok2: assert #0 (x) else log_fail("a_ok2", x);        // legal: one void-function call
+// a_bad1: assert #0 (x) else begin $error("x"); n++; end   // illegal: begin-end
+// a_bad2: assert #0 (x) else n++;                          // illegal: not a call
+```
+
+**Static deferred assertions.** A deferred assertion may also sit directly in a module, interface or checker, outside any procedure. It is then treated as if it were inside its own `always_comb` (§16.4.3), so it is checked at time zero and whenever an input changes, and glitches are flushed for you. This is the cleanest way to state a combinational rule:
+
+```systemverilog
+// snippet
+module arb_checks(input logic [3:0] grant);
+  // At most one grant at a time. $onehot0 counts only bits that are 1 (§20.9),
+  // so an all-X grant passes: add a separate X check if X must be caught.
+  a_grant_1hot0: assert #0 ($onehot0(grant))
+    else $error("more than one grant: %b", grant);
+  a_grant_known: assert #0 (!$isunknown(grant))
+    else $error("grant has X or Z bits: %b", grant);
+endmodule
+```
+
+Two more rules complete the picture. `disable a_obs;` cancels that assertion's pending reports, and disabling the outermost block of the procedure flushes its whole queue (§16.4.4). And a deferred assertion inside a function belongs to whichever process called the function, so two `always_comb` blocks that call the same function keep separate queues (§16.4.5).
+
+**Where deferral stops helping.** Deferral filters glitches caused by the *order* in which procedures run within one pass of the Active region. It does not filter changes made after the report has matured. If code in the Reactive region (a program block, or a clocking-block drive in Re-NBA) changes an input after Observed, an `assert #0` report has already matured and prints. A report of `assert final` is not due until the last region of the time slot, so the re-run flushes it (§16.4.1). Push Further shows the standard's example.
+
+### Concurrent assertions: checked at the clock, on sampled values
+
+A **concurrent assertion** describes behaviour over clock ticks. A **clock tick** is a time slot in which the assertion's clocking event, such as `@(posedge clk)`, occurs (§16.5). Written outside procedural code, in a module, interface or program (§16.14.5) or in a checker (Clause 17), it starts a new **evaluation attempt** at every tick of its leading clock (§16.14.5). That is called a **static concurrent assertion**.
+
+```systemverilog
+// snippet
+a_conc: assert property (@(posedge clk) a == b)
+  else $error("a_conc: sampled a=%0b b=%0b", $sampled(a), $sampled(b));
+```
+
+Four rules define how it sees the design:
+
+- **Sampled values.** Each expression uses its **sampled value**: the value in the Preponed region of that time slot, before anything in the slot changed (§16.5.1). A flop output written on this edge is still its old value; the new value is first seen at the next tick. At time 0 the sampled value is the **default sampled value**: a static variable's declaration initializer if it has one, otherwise the type's default, which is `x` for `logic` (§16.5.1).
+- **Two exceptions.** The clocking event and a `disable iff` condition use current values, not sampled ones (§16.5). The module overview explains what that means for reset.
+- **Regions.** The assertion is evaluated in the Observed region (§16.5), and its pass and fail statements run in the Reactive region (§16.14.1). A disabled attempt runs neither.
+- **One clean clock.** The clocking event should change once per time slot; a glitching clock gives undefined behaviour (§16.5).
+
+**Where the clock comes from.** In this lesson every concurrent assertion writes its clock. A clock can also come from the property or sequence it instantiates, from the enclosing procedure, or from a `default clocking` block (§16.16, §14.12); the [module overview](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) teaches those rules.
+
+**Procedural concurrent assertions.** You can also write `assert property` inside an `always` or `initial` procedure. It is then a **procedural concurrent assertion**: reaching the statement does not check anything; it places a pending instance on the process's **procedural assertion queue**. Pending instances mature in Observed and start an attempt at once if this time slot is a tick of their clock, otherwise at the next tick; the same three flush points clear the queue (§16.14.6, §16.14.6.2). If the procedure has exactly one clean event control such as `@(posedge clk)`, the clock is inferred from it (§16.14.6). Push Further compares this queue with the deferred one; the module overview works through its traps.
+
+**Where concurrent assertions live.** Concurrent assertion expressions cannot reference non-static class members (§16.6), so concurrent assertions live in modules, interfaces, programs and checkers, typically in the interface that an agent's virtual interface points to. Simulators reject `assert property` inside class methods (tool behaviour); a class uses immediate assertions or UVM reporting instead.
+
+### Where each kind runs: one picture
+
+**Predict first.** For each of the four kinds, name the region where it *checks* and the region where its failure message *prints*. Then look at the ladder.
+
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <svg viewBox="0 0 370 266" role="img" aria-label="Scheduling regions of one time slot, top to bottom: Preponed, Active, Inactive, NBA, Observed, Reactive, Postponed, with one column per assertion kind. Simple immediate assert: checks and reports in Active. Observed deferred assert #0: checks and queues its report in Active, the report matures in Observed and prints in Reactive. Final deferred assert final: checks and queues in Active, the report matures and prints in Postponed. Concurrent assert property: samples values in Preponed, checks in Observed, runs its action block in Reactive." style={{ width: "100%", maxWidth: 560 }}>
+    <text x="114.5" y="14" textAnchor="middle" fontSize="10" fontWeight="600" fill="currentColor">simple</text>
+    <text x="114.5" y="27" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, monospace" fill="currentColor">assert (e)</text>
+    <text x="187.5" y="14" textAnchor="middle" fontSize="10" fontWeight="600" fill="currentColor">observed</text>
+    <text x="187.5" y="27" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, monospace" fill="currentColor">assert #0</text>
+    <text x="260.5" y="14" textAnchor="middle" fontSize="10" fontWeight="600" fill="currentColor">final</text>
+    <text x="260.5" y="27" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, monospace" fill="currentColor">assert final</text>
+    <text x="333.5" y="14" textAnchor="middle" fontSize="10" fontWeight="600" fill="currentColor">concurrent</text>
+    <text x="333.5" y="27" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, monospace" fill="currentColor">assert property</text>
+    <text x="4" y="40" fontSize="8" fill="currentColor" fillOpacity="0.7">region</text>
+    <line x1="0" y1="46" x2="370" y2="46" stroke="currentColor" strokeOpacity="0.4" />
+    <line x1="0" y1="80" x2="370" y2="80" stroke="currentColor" strokeOpacity="0.15" />
+    <line x1="0" y1="110" x2="370" y2="110" stroke="currentColor" strokeOpacity="0.15" />
+    <line x1="0" y1="140" x2="370" y2="140" stroke="currentColor" strokeOpacity="0.15" />
+    <line x1="0" y1="170" x2="370" y2="170" stroke="currentColor" strokeOpacity="0.15" />
+    <line x1="0" y1="200" x2="370" y2="200" stroke="currentColor" strokeOpacity="0.15" />
+    <line x1="0" y1="230" x2="370" y2="230" stroke="currentColor" strokeOpacity="0.15" />
+    <line x1="0" y1="260" x2="370" y2="260" stroke="currentColor" strokeOpacity="0.4" />
+    <text x="4" y="69" fontSize="10" fill="currentColor">Preponed</text>
+    <text x="4" y="99" fontSize="10" fill="currentColor">Active</text>
+    <text x="4" y="129" fontSize="10" fill="currentColor">Inactive</text>
+    <text x="4" y="159" fontSize="10" fill="currentColor">NBA</text>
+    <text x="4" y="189" fontSize="10" fill="currentColor">Observed</text>
+    <text x="4" y="219" fontSize="10" fill="currentColor">Reactive</text>
+    <text x="4" y="249" fontSize="10" fill="currentColor">Postponed</text>
+    <rect x="301" y="53" width="65" height="24" rx="5" className="fill-violet-500/15 stroke-violet-500" />
+    <text x="333.5" y="69" textAnchor="middle" fontSize="9" fill="currentColor">sample</text>
+    <rect x="82" y="83" width="65" height="24" rx="5" className="fill-rose-500/15 stroke-rose-500" />
+    <text x="114.5" y="99" textAnchor="middle" fontSize="9" fill="currentColor">check+report</text>
+    <rect x="155" y="83" width="65" height="24" rx="5" className="fill-amber-500/15 stroke-amber-500" strokeDasharray="3 2" />
+    <text x="187.5" y="99" textAnchor="middle" fontSize="9" fill="currentColor">check, queue</text>
+    <rect x="228" y="83" width="65" height="24" rx="5" className="fill-amber-500/15 stroke-amber-500" strokeDasharray="3 2" />
+    <text x="260.5" y="99" textAnchor="middle" fontSize="9" fill="currentColor">check, queue</text>
+    <rect x="155" y="173" width="65" height="24" rx="5" className="fill-amber-500/15 stroke-amber-500" />
+    <text x="187.5" y="189" textAnchor="middle" fontSize="9" fill="currentColor">matures</text>
+    <rect x="301" y="173" width="65" height="24" rx="5" className="fill-cyan-500/15 stroke-cyan-500" />
+    <text x="333.5" y="189" textAnchor="middle" fontSize="9" fill="currentColor">check</text>
+    <rect x="155" y="203" width="65" height="24" rx="5" className="fill-rose-500/15 stroke-rose-500" />
+    <text x="187.5" y="219" textAnchor="middle" fontSize="9" fill="currentColor">report</text>
+    <rect x="301" y="203" width="65" height="24" rx="5" className="fill-rose-500/15 stroke-rose-500" />
+    <text x="333.5" y="219" textAnchor="middle" fontSize="9" fill="currentColor">report</text>
+    <rect x="228" y="233" width="65" height="24" rx="5" className="fill-rose-500/15 stroke-rose-500" />
+    <text x="260.5" y="243" textAnchor="middle" fontSize="8" fill="currentColor">matures</text>
+    <text x="260.5" y="253" textAnchor="middle" fontSize="8" fill="currentColor">+ report</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">One time slot, regions top to bottom; the scheduler loops back to Active whenever new events appear. <strong>check</strong>: the expression is evaluated. <strong>queue</strong> (dashed): a pending report goes on the process's queue, and it is flushed if the process runs again before the report matures. <strong>matures</strong>: the report is confirmed and can no longer be flushed. <strong>report</strong>: the action block runs. <strong>sample</strong>: values are captured before anything changes. The immediate kinds are drawn in Active, where design and module code runs; in a program block they check in Reactive instead. The concurrent column assumes a clock tick in this slot.</figcaption>
+</figure>
+
+**Debrief.** Read the columns left to right and the trade-off appears. Each kind moves its decision later in the time slot, so it sees more settled values. The simple assertion decides in Active, as soon as its procedure runs, and so it sees glitches. `#0` decides in Observed, after the Active region set has settled for that pass, and `final` decides last of all, at the end of the time slot. The concurrent assertion is different in kind: it checks in Observed but on the Preponed photo, so it never sees anything that happened in this slot, glitch or not.
+
+### Action blocks and severity tasks
+
+The action block decides what a pass or a failure *does*. Its full form is `[pass_statement] [else fail_statement]` (§16.3):
+
+- **Pass statement:** runs when the check passes. Usually omitted. For a concurrent assertion it also runs on a vacuous success by default (§20.11; see the module overview for vacuity).
+- **Fail statement:** runs when the check fails. If you omit `else`, the tool calls `$error` (§16.3, §16.14.1).
+- **What it may contain:** any procedural statement for simple immediate and concurrent assertions (a concurrent action block must not contain another concurrent assertion, §16.14.1); exactly one subroutine call each for deferred assertions (§16.4).
+
+The **severity tasks** report a failure at a chosen severity (§20.10). All four take an optional `$display`-style message, and every message the tool prints includes the file name and line number, the hierarchical scope and the simulation time:
+
+| Task | Meaning | Typical use in an action block |
+|---|---|---|
+| `$fatal(finish_number, "msg", ...)` | Run-time fatal error; calls `$finish` and ends the simulation. `finish_number` (0, 1 or 2) sets how much diagnostic information `$finish` prints | A broken invariant after which nothing else is trustworthy, such as a corrupted memory model |
+| `$error("msg", ...)` | Run-time error; the simulation continues | Every protocol or data rule; it is also the default |
+| `$warning("msg", ...)` | Run-time warning | A suspicious but legal condition, such as a long stall |
+| `$info("msg", ...)` | Message of no specific severity | Pass statements and coverage notes |
+
+**Print the values the check used.** Each kind sees different values in its action block:
+
+- **Simple immediate:** the action runs at once, so `a` and `b` in the message are the values just checked.
+- **Deferred:** arguments passed by value are captured when the check runs, so `$error("a=%0b", a)` prints the checked value even though it runs later. An argument passed by `ref` is read only when the call finally runs, so it can show a value the check never saw.
+- **Concurrent:** the action block runs in Reactive with **current** values, which can differ from the sampled values the check used. Print `$sampled(a)` instead of `a` (§16.9.3).
+
+The standard's own example shows the concurrent trap (§16.9.3); the [module overview](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) traces it as a table. Both assertions below fail at the same edge; only one tells you why.
+
+```systemverilog
+// snippet
+a1_bad: assert property (@(posedge clk) a == b)
+  else $error("a1_bad: a=%0b b=%0b", a, b);                       // current values
+a2_ok:  assert property (@(posedge clk) a == b)
+  else $error("a2_ok: a=%0b b=%0b", $sampled(a), $sampled(b));    // checked values
+```
+
+<TimingDiagram
+  title="Sampled values versus current values in a concurrent action block"
+  caption="a and b are flop outputs. At edge 2 the assertion samples a = 0 and b = 1, so a == b fails. On that same edge the design writes b back to 0 in the NBA region, before the action blocks run in Reactive. So a1_bad prints a=0 b=0, which looks like a pass, while a2_ok prints a=0 b=1, the values the check used. Edges 0, 1 and 3 sample equal values and pass."
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "a", kind: "bit", values: [0, 0, 0, 0] },
+    { name: "b", kind: "bit", values: [0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 0, tone: "pass", label: "edge 0: sampled a=0, b=0: pass" },
+    { edge: 1, tone: "pass", label: "edge 1: sampled a=0, b=0: pass" },
+    { edge: 2, tone: "fail", label: "edge 2: sampled a=0, b=1: fail. In Reactive b is already 0: a1_bad prints a=0 b=0, a2_ok prints a=0 b=1", short: "FAIL" },
+    { edge: 3, tone: "pass", label: "edge 3: sampled a=0, b=0: pass" }
+  ]}
+/>
+
+**In a real testbench.** Interface assertions in a reusable agent usually report with `$error`, which keeps the interface independent of UVM. Routing those failures into the UVM report counts is covered in [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index). Inside UVM classes, report with the `` `uvm_error `` family rather than severity tasks ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)).
+
+### Choosing the kind
+
+| You want to check | Use | Why |
+|---|---|---|
+| A value at one moment in testbench procedural code: a scoreboard compare, a function argument range | Simple immediate (or `` `uvm_error `` in UVM classes) | Runs exactly where the code runs; allowed in class methods; the values are already final when the code reaches it |
+| A combinational rule on design signals: one-hot grants, mutually exclusive enables, a decoder output | Static `assert #0` in the module or interface, or `assert #0` inside the `always_comb` | Checks every change but ignores ordering glitches within the Active region |
+| The same rule, when Reactive-region code (a program block or clocking-block drives) can also change its inputs in the same time slot | `assert final` | Only the values at the very end of the time slot count; the action may only print |
+| A rule tied to clock edges or spanning cycles: a handshake, a latency bound, data stable while stalled | Concurrent `assert property` | Sampled values are race-free, and only concurrent assertions have temporal operators such as `##` |
+| A combinational rule that only matters at the active clock edge | Concurrent, for example `@(posedge clk) $onehot(grant)` | Ignores everything between edges, including real short pulses: be sure that is what you want |
+
+**When not to use an assertion.** Do not put work with side effects in an assertion expression, and do not use assertions for checks that must count toward the test's pass/fail verdict in a UVM bench unless that routing is in place.
+
+### Debugging assertion reports
+
+| Symptom in the log | Likely cause | Fix |
+|---|---|---|
+| A simple immediate assertion fails once, at a time when the waveform shows the signals agree | A glitch: the procedure ran on half-updated values in the same time slot | Make it `assert #0`, or `assert final` |
+| An `assert #0` prints a failure at a time when the settled values are legal, only in tests where a program block or a clocking-block drive changes the inputs | The input changed after Observed, so the failure had already matured | `assert final` |
+| A concurrent failure message prints values that satisfy the check (`a=0 b=0` for `a == b`) | The action block printed current values in Reactive | Print `$sampled(a)` and `$sampled(b)` |
+| An immediate assertion fails on every clock during reset | An `x` in the expression counts as false | Gate it with reset, or check `!$isunknown(...)` first |
+| Compile error on a deferred assertion's action block | A `begin`-`end` block or a statement that is not a subroutine call | Put the work in a void function and call that one function |
+| Error about writing a variable in Postponed, or a counter that never moves | An `assert final` action writes a variable | Only print from `final`; count with `#0` |
+| A concurrent assertion never catches a bad pulse the waveform shows | The pulse started and ended between two clock ticks, so no sample ever saw it | Use a deferred immediate assertion for a combinational rule |
+| Error: no clock for `assert property` inside an `always_comb` | No clock can be inferred from `always_comb` and there is no default clocking | Write the clock in the assertion, or use a deferred immediate assertion |
+
+### Recap
+
+- Immediate assertions are procedural: they check current values whenever the code reaches them. Simple ones report at once; deferred ones queue their report and drop it if the process runs again.
+- `assert #0` reports in Reactive after maturing in Observed; the Postponed region is where `assert final` matures and reports, so it survives Reactive-region changes. Deferred action blocks are one subroutine call; `final` actions must not write variables.
+- Concurrent assertions check at clock ticks, in Observed, on sampled (Preponed) values, and run their action blocks in Reactive with current values, so print `$sampled(...)`.
+- Choose by the question: one moment in TB code (simple), a combinational rule (deferred), a clocked or temporal rule (concurrent).
+
+## Make It Work
+
+### All four kinds on one bench
+
+This bench checks one rule, "b always equals a", with all four kinds at once. It contains a glitch at 10 ns and a real bug from 20 ns to 30 ns. The concurrent assertion is clocked by a free-running clock whose rising edges fall at 5, 15, 25 and 35 ns.
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+module tb_top;
+  logic clk = 1'b0;
+  logic a   = 1'b0;
+  logic b   = 1'b0;   // rule: b always equals a
+
+  always #5 clk = ~clk;   // rising edges at 5, 15, 25, 35 ns
+
+  // The three immediate kinds run every time a or b changes.
+  always @(a or b) begin : chk
+    a_simple: assert (a == b)
+      else $error("a_simple: a=%0b b=%0b", a, b);
+    // Deferred: by-value arguments are captured now, printed later
+    a_obs:    assert #0 (a == b)
+      else $error("a_obs: a=%0b b=%0b", a, b);
+    a_fin:    assert final (a == b)
+      else $error("a_fin: a=%0b b=%0b", a, b);
+  end
+
+  // Concurrent: one attempt per rising edge, on Preponed samples.
+  // The action block runs in Reactive, so print what was sampled.
+  a_conc: assert property (@(posedge clk) a == b)
+    else $error("a_conc: sampled a=%0b b=%0b", $sampled(a), $sampled(b));
+
+  initial begin
+    #10 a = 1'b1;   // 10 ns: a glitch, b follows in the same time slot
+    #0  b = 1'b1;
+    #10 a = 1'b0;   // 20 ns: a real bug, b lags behind by 10 ns
+    #10 b = 1'b0;   // 30 ns: b catches up
+    #10 $finish;    // 40 ns
+  end
+endmodule
+```
+
+**Expected output** (illustrative, traced by hand from §16.3, §16.4.1, §16.5.1 and §16.14.1, not from a simulator run). Each tool prints its own layout, and every line also carries the file and line number (§20.10):
+
+```text
+ERROR  10 ns  tb_top.chk.a_simple  a_simple: a=1 b=0
+ERROR  20 ns  tb_top.chk.a_simple  a_simple: a=0 b=1
+ERROR  20 ns  tb_top.chk.a_obs     a_obs: a=0 b=1
+ERROR  20 ns  tb_top.chk.a_fin     a_fin: a=0 b=1
+ERROR  25 ns  tb_top.a_conc        a_conc: sampled a=0 b=1
+```
+
+Read it against the rules:
+
+- **10 ns:** only `a_simple` reports. The deferred failures were flushed when `chk` ran again with `b = 1`, and 10 ns is not a clock edge.
+- **20 ns:** nothing changes `a` or `b` again in this time slot, so no flush happens. `a_simple` prints in Active, `a_obs` in Reactive and `a_fin` in Postponed: same time stamp, three regions, in that order.
+- **25 ns:** the concurrent assertion sees the bug at the first rising edge after it started, on the Preponed samples `a = 0`, `b = 1`. The edges at 5, 15 and 35 ns sample equal values and pass silently.
+
+The waveform below shows what the concurrent assertion sees. The kit draws each change just after the previous edge; in the bench, `a` and `b` change at 10, 20 and 30 ns, between edges. The glitch at 10 ns lasts zero time, so it never reaches a sample.
+
+<TimingDiagram
+  title="What a_conc samples at each rising edge"
+  caption="Edges 0 to 3 are the rising edges at 5, 15, 25 and 35 ns. a_conc samples equal values at edges 0, 1 and 3 and passes; at edge 2 (25 ns) it samples a = 0 and b = 1 and fails. The real bug lasted from 20 to 30 ns, so exactly one edge saw it."
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "a", kind: "bit", values: [0, 1, 0, 0] },
+    { name: "b", kind: "bit", values: [0, 1, 1, 0] }
+  ]}
+  markers={[
+    { edge: 0, tone: "pass", label: "5 ns: sampled a=0, b=0: pass" },
+    { edge: 1, tone: "pass", label: "15 ns: sampled a=1, b=1: pass; the 10 ns glitch is not visible" },
+    { edge: 2, tone: "fail", label: "25 ns: sampled a=0, b=1: a_conc fails", short: "FAIL" },
+    { edge: 3, tone: "pass", label: "35 ns: sampled a=0, b=0: pass" }
+  ]}
+/>
+
+**Run it.** Save the code as `tb_top.sv`, then compile and run it with an IEEE 1800-2023 simulator, with `tb_top` as the top module. Support for deferred assertions differs between tools (tool-dependent), so compare your log with the trace above line by line.
+
+### How to choose and write an assertion
+
+1. **State the rule in one sentence**, and note whether it is about one moment ("b equals a"), about a clock edge ("at each edge, grant is one-hot") or about several cycles ("ack within 3 cycles").
+2. **Pick the kind** with the decision table: procedural TB check, combinational rule, or clocked or temporal rule.
+3. **Place it.** Simple immediate: in the procedure or method that has the value. Deferred: at module or interface level as a static deferred assertion, or inside the `always_comb`. Concurrent: in the interface or module, outside procedures, with an explicit clock.
+4. **Label it** (`a_<rule>:`) so the message names it and `$assertoff` can target it.
+5. **Write the action block** with a severity task. For deferred assertions keep it to one call, and only print from `final`. For concurrent assertions print `$sampled(...)` values.
+6. **Guard reset and X**: gate with reset, or add a `!$isunknown(...)` check.
+7. **Break it on purpose** and confirm it reports. Then confirm it stays silent on a glitch.
+
+**Break it on purpose.** Make three one-line changes, one at a time, and predict the log before each run:
+
+- Delete `#0 ` from the second line of the `initial` block, so `b = 1'b1;` runs right after `a = 1'b1;`. On typical simulators `chk` then runs once, after both changes, and `a_simple` no longer prints at 10 ns: the glitch came from the `#0`. (The standard lets a simulator switch to `chk` between the two statements, §4.7, so this is not guaranteed; the `#0` version is.)
+- Change `a_obs` to `assert (a == b)`. It now prints at 10 ns as well, exactly like `a_simple`.
+- In `a_conc`, print `a, b` instead of `$sampled(a), $sampled(b)`. At 25 ns it still prints `a=0 b=1` here, because nothing changes `a` or `b` at 25 ns. Current and sampled values differ only when something writes the signals on the clock edge, as in the `a1_bad` waveform above.
+
+**Checklist before moving on:**
+- [ ] You can say, for each of the four kinds, when it checks, which values it reads and in which region it reports.
+- [ ] You can trace the glitch at 10 ns and explain why only `a_simple` prints.
+- [ ] You can explain why `a_obs`, `a_fin` and `a_simple` all print at 20 ns, in three different regions.
+- [ ] You can write a legal deferred action block and explain why a `final` action must not write a variable.
+- [ ] You print `$sampled(...)` in concurrent action blocks, and you know why.
+
+## Push Further
+
+### Expert: Observed or final when Reactive code changes the inputs
+
+Deferral protects against glitches that come from the order of procedural execution, but not against loops between regions (§16.4.1). The standard's example (§16.4.2) has a DUT with a static `assert #0 (!(a & c))` and a static `assert final (!(a & c))`, where `a` is driven by a program block. A program block runs in the Reactive region set. In the time slot where `a` and `c` are both 1:
+
+- Both assertions fail in Active and queue their reports.
+- The `#0` report matures in Observed, so its failure is printed in Reactive.
+- Still in Reactive, the program sets `a = 0`. That starts another pass through Active, where the implied `always_comb` runs again: a flush point. For `#0` the flush comes too late; the new evaluation passes, so the log shows **both a fail and a pass** at one time stamp.
+- The `final` report has not matured yet, so it is flushed. Only the settled pass is reported in Postponed.
+
+Clocking-block output drives land in Re-NBA (§14.16), also after Observed. So a combinational check on DUT inputs that a UVM driver writes through a clocking block should use `assert final`, as long as its action only prints.
+
+### Expert: Deferred arguments and functions are evaluated on every failure
+
+A deferred assertion queues the *call*, but it evaluates by-value arguments, including function calls, every time it queues one (§16.4). In the standard's example, `$error("...", error_type(opcode))` calls `error_type()` on every failing evaluation, even when the report is later flushed, so any side effect or nested assertion in that function fires on glitches anyway (§16.4.2). Three related corner cases:
+
+- **Short-circuit hides results.** In `a = b || f(c);`, a deferred assertion inside `f` is never reached when `b` settles to 1, so after the flush nothing at all is reported for that time slot (§16.4.2). Use `|`, which evaluates both operands, if every evaluation must be checked.
+- **One function, many queues.** A deferred assertion inside a function belongs to the process that called it. Two `always_comb` blocks calling the same function flush independently, so one can report a failure while the other passes (§16.4.5).
+- **`ref` arguments read late.** A `ref` or `const ref` argument reads its current value in Reactive (`#0`) or Postponed (`final`), not the value that failed. Passing an automatic or dynamic variable to a `ref` formal is an error (§16.4).
+
+### Expert: Two queues per process
+
+A process can own two queues at once, and they follow the same flush rules but different maturity rules:
+
+| | Deferred report queue (§16.4.1) | Procedural assertion queue (§16.14.6) |
+|---|---|---|
+| What is queued | A pending *report*: the action-block call, with its by-value arguments | A pending *instance* of a concurrent assertion, with its `const'` and automatic values |
+| When it was checked | Already, when the statement was reached | Not yet: no check happens when the statement is reached |
+| Flush points | Resume from `@` or `wait`; `always_comb`/`always_latch` re-trigger; `disable` of the outermost scope (§16.4.2) | The same three (§16.14.6.2) |
+| Maturity | Observed (`#0`) or Postponed (`final`); the call then runs | Observed; an evaluation attempt starts at once if this time slot is a tick of its clock, otherwise at its next tick |
+| After maturity | The report runs; nothing can cancel it | The attempt runs to completion; `disable` no longer affects it (§16.14.6.4) |
+
+Both resist glitches from the order of procedural execution and neither resists Reactive-to-Active loops (§16.4.1, §16.14.6.3). `$assertoff` leaves both queues alone, so already-queued entries may still mature; `$assertkill` flushes both (§20.11). The traps that belong to procedural concurrent assertions alone, clock inference in an `always_ff` with asynchronous reset, `if` conditions read on current values and static loop variables, are worked through in the module overview's Push Further.
+
+### Expert: Silencing one kind with `$assertcontrol`
+
+`$assertoff`, `$asserton` and `$assertkill` act on all four kinds in this lesson: `$assertoff(levels, scope)` is defined as `$assertcontrol(4, 15, 7, levels, scope)` (§20.11; the module overview covers them for concurrent assertions). The second argument is an **assertion_type** mask (Table 20-6): 1 concurrent, 2 simple immediate, 4 observed deferred, 8 final deferred, 16 `expect`, and 32, 64 and 128 for `unique`, `unique0` and `priority` violation reports. So you can switch off only the deferred checks of one block during a known-noisy reset sequence:
+
+```systemverilog
+// snippet
+initial begin
+  $assertcontrol(4, 12, 7, 0, tb_top.dut);  // Off: observed + final deferred, all levels
+  wait (tb_top.rst_n === 1'b1);
+  $assertcontrol(3, 12, 7, 0, tb_top.dut);  // On again
+end
+```
+
+Off and Kill differ for deferred assertions (§20.11). **Off** (control_type 4) stops new checks, but reports already queued are not flushed and may still mature and print. **Kill** (control_type 5), for the assertions it selects, also flushes pending deferred reports and pending procedural assertion instances that have not matured, and aborts concurrent attempts in flight.
+
+### Expert: Interview angles
+
+Attempt each question before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: false failures in an always_comb"
+  question="A checker for combinational logic sits inside an always_comb block as a simple immediate assertion, assert (a == b). It reports false failures when the block runs more than once within one time slot before its inputs settle. What is the standard fix?"
+  options={[
+    { text: "Wrap the assertion in an always_ff @(posedge clk) block.", isCorrect: false, feedback: "That turns it into a check at clock edges only, on current values that can race with the testbench. The goal was a combinational rule checked whenever the inputs change." },
+    { text: "Change it to a deferred assertion: assert #0 (a == b), or assert final (a == b).", isCorrect: true, feedback: "Right. A deferred assertion queues its report on the process's queue. When the always_comb runs again in the same time slot, that is a flush point and the pending failure is discarded (§16.4.2). assert #0 reports only if the report survives to the Observed region; assert final waits until the last region of the time slot and also survives Reactive-region changes (§16.4.1)." },
+    { text: "Use assert property (a == b) inside the always_comb.", isCorrect: false, feedback: "No clock can be inferred from an always_comb, so it needs a default clocking or an explicit clock (§16.14.6), and then it checks only at clock ticks on sampled values. That is a different rule." },
+    { text: "Add #1 before the assert so the inputs have time to settle.", isCorrect: false, feedback: "Illegal: statements in an always_comb shall not include blocking timing or event controls (§9.2.2.2.2). Even in a plain always block, a delay changes when the check runs and can miss real failures." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: a fail and a pass at the same time"
+  question="Your static assert #0 on a decoder prints a failure (and then its pass statement prints a pass) with the same time stamp, but only in tests where the UVM driver changes the decoder inputs through a clocking block. The settled values are legal. What is going on, and what do you change?"
+  options={[
+    { text: "The decoder has a real glitch; file a design bug.", isCorrect: false, feedback: "The final values pass. The failure comes from when the check reported, not from the design." },
+    { text: "Clocking-block drives land in Re-NBA, after the Observed region, so the #0 failure had already matured before the new input values made the check pass. Use assert final, with an action that only prints.", isCorrect: true, feedback: "Right. Observed deferred assertions filter glitches from procedural ordering but not from Reactive-to-Active loops (§16.4.1, §14.16). The Postponed region, where a final deferred report matures, comes after the loop, so the earlier failure is flushed." },
+    { text: "Add a disable iff to the deferred assertion.", isCorrect: false, feedback: "disable iff belongs to concurrent properties; a deferred immediate assertion has no disable iff clause." },
+    { text: "Replace $error with $warning in the action block.", isCorrect: false, feedback: "That hides the symptom and keeps the false report." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: a counter that runs ahead of the log"
+  question={'A static assert #0 on a decoder has the fail action $error("bad decode %0d", count_bad(sel)), where count_bad() increments a module-level counter and returns it. At the end of the test the counter is much larger than the number of failure messages in the log. Why?'}
+  options={[
+    { text: "The simulator dropped some $error messages.", isCorrect: false, feedback: "Every report that matures runs its call; nothing is dropped." },
+    { text: "By-value arguments are evaluated every time the assertion fails and queues a report, even when that report is later flushed by a re-run. count_bad() therefore runs on every glitch.", isCorrect: true, feedback: "Right. The standard's error_type example shows exactly this (§16.4.1, §16.4.2). Keep side effects out of deferred action arguments: count in the called subroutine itself, which runs only when the report matures." },
+    { text: "assert #0 evaluates its expression twice per time slot.", isCorrect: false, feedback: "It evaluates whenever its process reaches it, which can be any number of times; the counter tracks failing evaluations, not reports." },
+    { text: "count_bad() runs in Postponed, where its writes are ignored.", isCorrect: false, feedback: "This is an observed deferred assertion; its call runs in Reactive, and its arguments were evaluated in Active." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+Each question maps to one objective. The flashcards at the end of this section drill the same rules.
+
+<Quiz questions={[
+  {
+    question: "Match each check to a kind: (1) a scoreboard compare inside a class method; (2) read and write enables of a combinational decoder must never both be 1; (3) ack must follow req within 3 clock cycles.",
+    answers: [
+      { text: "(1) concurrent, (2) assert #0, (3) concurrent", correct: false, feedback: "A concurrent assertion cannot reference non-static class members (§16.6), and simulators reject assert property in class methods. Use a simple immediate assertion (or `uvm_error) in the scoreboard." },
+      { text: "(1) simple immediate, (2) simple immediate, (3) concurrent", correct: false, feedback: "A simple immediate assertion in the decoder's always_comb reports every transient overlap while the enables settle. Defer it." },
+      { text: "(1) simple immediate, (2) concurrent, (3) assert final", correct: false, feedback: "A deferred assertion waits only until the end of the current time slot, never across clock cycles; only a concurrent assertion can express 'within 3 cycles'." },
+      { text: "(1) simple immediate, (2) assert #0 (or assert final), (3) concurrent", correct: true, feedback: "Right: one moment in TB code, a combinational rule checked on every change, and a rule over clock cycles." }
+    ],
+    explanation: "Choose by the question the check asks. A class method checks values at one moment: simple immediate. A combinational rule must ignore ordering glitches: a deferred immediate assertion, static or inside the always_comb. A rule over clock cycles needs temporal operators, which only concurrent assertions have.",
+    objective: 1
+  },
+  {
+    question: "In this lesson's glitch bench, a = 1 and then, after #0, b = 1 at 10 ns. always @(a or b) holds a1: assert, a2: assert #0 and a3: assert final, all checking a == b. How many failure messages do a1, a2 and a3 print at 10 ns?",
+    answers: [
+      { text: "1, 1, 1: deferral only delays a report, it never removes one", correct: false, feedback: "Deferral also flushes: when the process resumes from its event control, its pending reports are cleared (§16.4.2)." },
+      { text: "1, 1, 0: #0 reports in Observed, before the process can run again", correct: false, feedback: "chk runs again after the #0 (Inactive) pass, still before the Observed region, so a2's report is flushed in time." },
+      { text: "1, 0, 0", correct: true, feedback: "Right. a1 reports at once on a=1, b=0. a2 and a3 queue their failures, and the queue is flushed when chk resumes with b=1; the new results pass (§16.4.1, §16.4.2)." },
+      { text: "0, 0, 0: the simple assertion also waits for the values to settle", correct: false, feedback: "A simple immediate assertion runs its action block immediately after evaluating (§16.3)." }
+    ],
+    explanation: "Simple immediate assertions report every evaluation. Deferred assertions put a pending report on the process's queue, and a flush point (here, chk resuming from @(a or b)) clears it. Only reports that survive to Observed (#0) or Postponed (final) are printed.",
+    objective: 2
+  },
+  {
+    question: "In this lesson's four-kinds bench, a falls to 0 at 20 ns and b follows at 30 ns. The clock's rising edges are at 5, 15, 25 and 35 ns. When does a_conc report a failure, and which values does it print?",
+    answers: [
+      { text: "At 20 ns, with a=0 b=1: the assertion sees a change as soon as it happens", correct: false, feedback: "A concurrent assertion checks only at ticks of its clock, and 20 ns is not a rising edge (§16.5)." },
+      { text: "At 25 ns, with sampled a=0 b=1", correct: true, feedback: "Right. 25 ns is the first rising edge after the bug starts; the Preponed samples there are a=0 and b=1 (§16.5.1), and the action block prints them with $sampled." },
+      { text: "At 35 ns: a value that changed before edge k is first seen at edge k+1", correct: false, feedback: "The one-edge lag applies to values written on the edge itself. a changed at 20 ns, before the 25 ns edge, so the 25 ns sample already holds it." },
+      { text: "Never: concurrent assertions only see values written by flops", correct: false, feedback: "Sampling applies to every variable, whoever writes it (§16.5.1)." }
+    ],
+    explanation: "A concurrent assertion checks at clock ticks on the values sampled in Preponed. A change between edges is seen at the next edge; a change written on an edge is seen one edge later. The 10 ns glitch never reaches any sample.",
+    objective: 2
+  },
+  {
+    question: "Which action block is legal for a1: assert #0 (x) ?",
+    answers: [
+      { text: "else begin $error(\"x low\"); n++; end", correct: false, feedback: "A deferred fail statement must be a single subroutine call; begin is a statement, not a call (§16.4)." },
+      { text: "else n++;", correct: false, feedback: "An increment is not a subroutine call (§16.4)." },
+      { text: "else $error(\"x low\");", correct: true, feedback: "Right: one system-task call. A task, a void function or their methods would also do." },
+      { text: "else #1 $error(\"x low\");", correct: false, feedback: "A delayed statement is not a single subroutine call (§16.4)." }
+    ],
+    explanation: "Deferred assertions queue one call per pass or fail statement, so each must be exactly one subroutine call: a task, task method, void function, void function method or system task (§16.4). Move extra work into a void function and call it.",
+    objective: 3
+  },
+  {
+    question: "a_fin: assert final (ok) else note_fail(); where note_fail() is a void function that increments a module-level fail counter. What is wrong?",
+    answers: [
+      { text: "Nothing: any void function is allowed in a deferred action block", correct: false, feedback: "For final deferred assertions the subroutine must also be legal in the Postponed region (§16.4)." },
+      { text: "The call runs in Postponed, where writing any variable is illegal; count with assert #0, or only print from final", correct: true, feedback: "Right. Writing any net or variable is illegal in the Postponed region (§4.4.2.9), and that is where a final deferred call is scheduled (§16.4.1)." },
+      { text: "Deferred assertions cannot call user functions, only system tasks", correct: false, feedback: "Tasks, void functions and their methods are allowed (§16.4)." },
+      { text: "It needs begin-end around the call", correct: false, feedback: "begin-end is never allowed in a deferred action block (§16.4)." }
+    ],
+    explanation: "Reporting in the Postponed region, the read-only end of the time slot, is what gives assert final the most settled values. The price is that its action may only observe: print, but do not write.",
+    objective: 3
+  },
+  {
+    question: "Where, and when, is a1: assert #0 (a == b); checked when it is written directly in a module body, outside any procedure?",
+    answers: [
+      { text: "Only once, at time 0", correct: false, feedback: "It behaves like an always_comb, which runs at time 0 and again whenever a or b changes (§16.4.3, §9.2.2.2.2)." },
+      { text: "At every clock tick", correct: false, feedback: "It has no clock; it is an immediate assertion." },
+      { text: "Nowhere: deferred assertions are illegal outside procedural code", correct: false, feedback: "A static deferred assertion is legal at module level (§16.4.3)." },
+      { text: "As if it were inside its own always_comb: at time 0 and whenever a or b changes", correct: true, feedback: "Right (§16.4.3). It is a static deferred assertion, a common way to state combinational rules." }
+    ],
+    explanation: "A deferred assertion written as a module item is a static deferred assertion, treated as if contained in an always_comb (§16.4.3). An always_comb runs once at time 0 and whenever its inputs change, and its re-runs are flush points.",
+    objective: 3
+  },
+  {
+    question: "Inside always @(posedge clk) a checker has a_nx: assert #0 (next_st != ERR) else show_state(st_q); show_state is declared function automatic void show_state(ref state_t s), and st_q is a flop that is updated with <= on the same edge. On a failure the message shows the value st_q takes after the edge, not the value it had when the check ran. Why?",
+    answers: [
+      { text: "A ref argument is read when the call runs in Reactive, after the NBA region has updated st_q. Pass the value as an input argument to keep the value from the check", correct: true, feedback: "Right. By-value arguments are captured at evaluation; ref and const ref arguments use their current values when the call runs in Reactive (§16.4)." },
+      { text: "Deferred assertions evaluate their expression in Reactive, after the NBA updates", correct: false, feedback: "The expression is evaluated when the statement is reached, here in Active (§16.4); only the report is deferred." },
+      { text: "The NBA update of st_q is a flush point, so the report was re-queued with the new value", correct: false, feedback: "Flush points are the process resuming from @ or wait, an always_comb or always_latch re-trigger, or a disable (§16.4.2). This always @(posedge clk) does not wait on st_q, so nothing is flushed." },
+      { text: "ref arguments are illegal in deferred action blocks, so the tool passed a default value", correct: false, feedback: "ref and const ref are allowed, as long as the actual is not an automatic or dynamic variable (§16.4)." }
+    ],
+    explanation: "A deferred report keeps by-value arguments from the moment of the check, but a ref argument is a live link read when the call finally runs, here in Reactive, after the NBA region. Pass the values you want in the message by value.",
+    objective: 4
+  },
+  {
+    question: "always_ff @(posedge clk) assert (!(addr[1:0])) else $error(\"misaligned\"); fails on every edge while reset is active, when addr is x. What is the best fix?",
+    answers: [
+      { text: "Make it assert #0 so addr can settle", correct: false, feedback: "Deferral removes glitches within a time slot. addr is x for many cycles, so the deferred check fails the same way." },
+      { text: "Gate the check with the reset, or check !$isunknown(addr) first", correct: true, feedback: "Right. An immediate assertion treats x, z and 0 as false (§16.3), so an unknown address fails until the reset is gated out." },
+      { text: "Immediate assertions are not allowed in always_ff; move it out", correct: false, feedback: "An immediate assertion is legal anywhere a procedural statement is (§16.3)." },
+      { text: "Nothing: the assertion reads Preponed values, which are x until reset ends", correct: false, feedback: "Immediate assertions read current values, not Preponed samples. The failure is from x being false." }
+    ],
+    explanation: "An immediate assertion's expression is interpreted like an if condition: x, z and 0 are false (§16.3). Decide what X should mean (illegal, or ignored during reset) and write that explicitly.",
+    objective: 4
+  }
+]} />
+
+### Kata: tame a glitchy one-hot checker
+
+An arbiter hands the grant from requester 0 to requester 1 in two steps within one time slot. Your checker must report real double grants but stay silent on the hand-over.
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+module tb_top;
+  logic [3:0] grant = 4'b0001;   // requester 0 holds the grant
+
+  always_comb begin : chk
+    a_1hot: assert ($onehot(grant))
+      else $error("a_1hot: grant=%b", grant);
+  end
+
+  initial begin
+    #10 grant[0] = 1'b0;     // hand-over step 1: release requester 0
+    #0  grant[1] = 1'b1;     // hand-over step 2: grant requester 1, same time slot
+    #10 grant    = 4'b0011;  // a real bug: two grants
+    #10 grant    = 4'b0100;
+    #10 $finish;
+  end
+endmodule
+```
+
+1. **Predict:** how many `a_1hot` errors does this print, and at which times?
+2. **Fix:** change one token so only the real bug reports. How many errors now, and in which region is the message printed?
+3. **Extend:** suppose step 2 of the hand-over is made by a program block (Reactive region) instead of the `initial`. Does your fix still stay silent at 10 ns? If not, what do you change, and what may its action block no longer do?
+
+<details>
+<summary>Reveal the worked solution</summary>
+
+1. **Two errors.** At time 0 the `always_comb` runs once and passes (`0001`). At 10 ns, step 1 makes `grant = 4'b0000`; `chk` runs at once (an `always_comb` is sensitive to the expressions in its immediate assertions, §9.2.2.2.2) and `a_1hot` fails with `grant=0000`. Step 2 makes `0010` and the re-run passes. At 20 ns, `0011` fails. At 30 ns, `0100` passes.
+2. **Write `assert #0`.** At 10 ns the failure is queued, then flushed when the `always_comb` re-runs on step 2 (§16.4.2). At 20 ns nothing re-runs `chk`, so the failure matures in Observed and is printed in Reactive. One error, `a_1hot: grant=0011` at 20 ns. The `$error` arguments are passed by value, so they keep the failing value (§16.4).
+
+   ```systemverilog
+   // snippet
+   a_1hot: assert #0 ($onehot(grant))
+     else $error("a_1hot: grant=%b", grant);
+   ```
+
+3. **No.** Step 2 now happens in Reactive, after the 10 ns failure has matured in Observed, so `assert #0` prints the false failure (and the re-run then passes, §16.4.1). Use `assert final`: the re-run reaches its flush point before the end of the time slot, so only the settled value is reported. Its action must be callable in Postponed, so it may print but must not write any variable (§16.4, §4.4.2.9).
+
+</details>
+
+### Reinforce the essentials
+
+The flashcards for this lesson cover the three questions, flush points, `#0` versus `final`, the deferred action-block rules, sampled values and severity tasks. Use them until you can answer each card before you flip it.
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023):
+
+- §16.2 assertion kinds; §16.3 immediate assertions (truth of x and z, action blocks, the default `$error`, labels).
+- §16.4 deferred assertions (single-call action blocks, argument evaluation, the Postponed-region rule for `final`); §16.4.1 deferred assertion reporting; §16.4.2 flush points; §16.4.3 static deferred assertions; §16.4.4 disabling deferred assertions; §16.4.5 deferred assertions and multiple processes.
+- §16.5 concurrent assertions (Observed region, disable conditions and clocking events not sampled); §16.5.1 sampling and default sampled values; §16.6 Boolean expressions (no non-static class members); §16.9.3 `$sampled` and the `a1_bad`/`a2_ok` example; §16.14.1 action blocks run in Reactive; §16.14.5 static concurrent assertions; §16.14.6 procedural concurrent assertions (clock inference), §16.14.6.1 arguments, conditionals and loop variables, §16.14.6.2 flush points, §16.14.6.3 glitches, §16.14.6.4 disabling; §16.16 clock resolution.
+- §4.4.2.3 Inactive region; §4.4.2.9 Postponed region (no writes); §9.2.2.2.2 `always_comb` (time-0 run, sensitivity to immediate assertions, no timing controls); §14.16 clocking-block drives; §20.9 `$onehot`, `$onehot0`, `$isunknown`; §20.10 severity tasks; §20.11 assertion control (Off, Kill, Tables 20-6 and 20-7, the `$assertoff` equivalence).
+
+**Prerequisites:** [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index), the previous lesson; [F3B: Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) for the region names; [F4C: Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) for program blocks and clocking-block drives; [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) for procedures and event controls.
+
+**Related:**
+
+- [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): sequences, `|->` and `|=>`, vacuity, `disable iff`, `assume` and `cover`, clock resolution and `$assertoff` for concurrent assertions.
+- [F3C: Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): why a procedure runs several times in one time slot.
+- [I-SV-4B: Advanced Temporal Logic](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/index): repetition, sequence composition, local variables and multiple clocks.
+- [I-SV-4C: Checkers](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index): packaging assertions, including static deferred ones, in checkers and binding them to the DUT.
+- [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): interface assertions in reusable agents and routing their failures into UVM reports.
+- [I-UVM-1D: Reporting and Run Control](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): UVM report macros and pass/fail counting.
+
+<NextLesson />

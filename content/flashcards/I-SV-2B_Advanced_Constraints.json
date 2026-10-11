@@ -1,1 +1,67 @@
-[]
+[
+  {
+    "id": "isv2b-ac-1",
+    "question": "In a constraint, what is `a -> b` equivalent to, and can `b` affect `a`?",
+    "answer": "It is the Boolean `(!a || b)` (IEEE 1800-2023 §18.5.5). Both sides are solved together, so if `b` cannot hold the solver makes `a` false, and a narrow `b` makes `a` rare."
+  },
+  {
+    "id": "isv2b-ac-2",
+    "question": "`rand bit is_write; rand bit [7:0] addr; constraint c { is_write -> addr < 16; }`: how often is `is_write == 1`?",
+    "answer": "16/272, about 5.9 %: the solver picks uniformly among the 272 legal `(is_write, addr)` pairs (§18.5.9). `solve is_write before addr;` makes it 50 % without changing the legal pairs."
+  },
+  {
+    "id": "isv2b-ac-3",
+    "question": "How does an `if`/`else` constraint relate to implication, and where does a dangling `else` go?",
+    "answer": "It is equivalent to implications, and its condition is solved together with the branches (§18.5.6). An `else` binds to the nearest previous `if` without an `else`, whatever the indentation; use braces when branches nest."
+  },
+  {
+    "id": "isv2b-ac-4",
+    "question": "Why does `foreach (d[i]) d[i + 1] > d[i];` fail, and what is the fix?",
+    "answer": "Out-of-bounds indices are not removed automatically, so the last element reads `d[d.size()]` (§18.5.7.1). Guard it: `(i < d.size() - 1) -> d[i + 1] > d[i];`, a predicate on the loop variable and size that only decides whether the constraint is created."
+  },
+  {
+    "id": "isv2b-ac-5",
+    "question": "An array has a `size()` constraint and `foreach` constraints. What is solved first, and what can go wrong?",
+    "answer": "The size, which then acts as a state variable inside the `foreach` (§18.5.7.1). The size is chosen without seeing the element rules, so a rule that cannot hold for some legal size makes those calls fail; bound the size in its own constraint."
+  },
+  {
+    "id": "isv2b-ac-6",
+    "question": "What happens to a `rand` dynamic array that has no size constraint?",
+    "answer": "It is not resized: it keeps its current size, often 0 in a new object, and only its existing elements are randomized (§18.4). Add `d.size() == ...` to get a random length."
+  },
+  {
+    "id": "isv2b-ac-7",
+    "question": "Why can `rand bit [7:0] a[]; constraint c { a.sum() < 100; }` accept bytes that add up to 300?",
+    "answer": "Without `with`, `sum()` has the element type, so the total is 8 bits and 300 wraps to 44 (§18.5.7.2). Write `a.sum() with (int'(item)) < 100`."
+  },
+  {
+    "id": "isv2b-ac-8",
+    "question": "How do you count matching elements inside a constraint, for example at most two zero bytes?",
+    "answer": "`data.sum() with (int'(item == 0)) <= 2`. The cast matters: `item == 0` is 1 bit wide, so without it the count wraps modulo 2 (§18.5.7.2, §7.12.3)."
+  },
+  {
+    "id": "isv2b-ac-9",
+    "question": "What does `unique {a, b, arr}` require, and when does it always fail?",
+    "answer": "No two members are equal; members have equivalent integral or real types; no `randc` member (§18.5.4). It fails on every call when there are more members than distinct values, for example five 2-bit elements."
+  },
+  {
+    "id": "isv2b-ac-10",
+    "question": "What is a constraint guard, and is `if (v > 10)` on a `rand v` one?",
+    "answer": "A predicate over constants, state variables, handle comparisons (and, in a `foreach`, loop indices and the array size) that decides whether a constraint is created, such as `if (next != null)` (§18.5.12). `if (v > 10)` is not a guard: a condition on a random variable is a two-way constraint."
+  },
+  {
+    "id": "isv2b-ac-11",
+    "question": "Why can `length == count_ones(v)` with `length inside {[8:10]}` fail on most calls?",
+    "answer": "Random function arguments are solved first, without the other constraints, and the return value becomes state (§18.5.11). `v` is picked from all 1,024 values, and only 56 leave a legal `length`; write the rule as an expression to solve both together."
+  },
+  {
+    "id": "isv2b-ac-12",
+    "question": "What does `randomize()` do with `rand` object handles?",
+    "answer": "It randomizes every active object reachable through enabled `rand` handles as one problem, which is what makes global constraints work (§18.5.8). It never changes a handle and never allocates an object (§18.4), so build the objects in `new()` and guard handles that can be null."
+  },
+  {
+    "id": "isv2b-ac-13",
+    "question": "Are `rand` variables unsigned? What does `rand int n; constraint c { n < 10; }` allow?",
+    "answer": "No: `rand` changes nothing about the type, and `int` is signed (§6.11.3). The constraint allows -2,147,483,648 to 9; use an unsigned type or `n inside {[0:9]}`."
+  }
+]

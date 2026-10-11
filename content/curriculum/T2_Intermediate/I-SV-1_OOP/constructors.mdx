@@ -1,73 +1,213 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { Quiz, InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Constructors, this and super"
+description: "Predict every property value after a class hierarchy is constructed, and write constructors that chain correctly with super.new, use this to resolve name clashes, set instance constants once and avoid virtual calls on half-built objects."
+flashcards: "I-SV-1_Constructors"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "Accellera UVM reference implementation (uvm-core)"
+    type: "vendor"
+    identifier: "uvm-core"
+    version: "2020.3.1"
+---
 
-export const metadata = {
-  title: "Constructors, 'this', and 'super' | Advanced SystemVerilog for Verification",
-  description:
-    "How to create objects with new and reference parent and current class members using this and super.",
-};
+## Quick Take
 
-<InfoPage
-  title="Constructors, 'this', and 'super'"
-  sv_concept_tags={["constructors", "this", "super"]}
->
+- **What it is:** `new` is the **class constructor**: a function with no return type that runs when you write `h = new(...)`. It builds the object and gives it its starting values (IEEE 1800-2023 §8.7). Inside a method, `this` names the object the method is running on (§8.11), and `super` reaches the parent class's version of a member, including the parent's constructor, `super.new` (§8.15).
+- **Why it matters:** every transaction, configuration object and testbench component starts life in a constructor. Three bugs live here. A subclass that forgets `super.new(...)` can compile and silently hand its parent the default arguments. A constructor that writes `addr = addr;` instead of `this.addr = addr;` leaves the field at its default. And a **virtual** method (one whose call runs the version written for the object's actual class, introduced in the [module overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index)) called from a parent's constructor runs the child's version before the child's fields have values.
+- **The Analogy:** a building goes up one floor at a time. The foundation, the root base class, is built first. Each floor gets its fixtures (the initial values written in its variable declarations, such as `int count = 5;`) and then its finishing work (the rest of its constructor code) before the next floor goes on top. *Where it breaks:* in SystemVerilog, a virtual call made while the foundation is being finished already runs the top floor's version of the method, although the top floor has no fixtures yet (§8.17 NOTE 2). A real builder cannot use a floor that does not exist.
 
-  ## Constructors
-  *IEEE 1800-2023, §8.7 Constructors and §8.17 Chaining constructors*
+**You will be able to:**
+1. **Predict** every property value after a derived object is constructed, from the order: base-class constructor, then this class's property initializers, then the rest of this class's constructor body (§8.7, §8.17).
+2. **Write** constructors that chain with `super.new(...)` or an `extends Base(args)` clause, and **explain** when the compiler's inserted `super.new()` fails to compile or silently passes default arguments (§8.15, §8.17).
+3. **Write** a constructor that uses `this` to resolve a clash between an argument and a property, and that sets an instance constant exactly once (§8.11, §8.19).
+4. **Debug** a constructor whose virtual call reads subclass state that has not been initialized yet (§8.7, §8.17).
 
-  SystemVerilog uses the `new` function as a constructor to create and initialize
-  class objects. Constructors can accept arguments, letting you configure an
-  object at creation time. If a class declares no `new`, an implicit one is
-  provided (§8.7).
+<BeforeYouStart />
 
-  <InteractiveCode>
-  ```systemverilog
+## Build Your Mental Model
+
+### Why objects need constructors
+
+First, the vocabulary from the [module overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index). A **class** is a type that bundles data and code. An **object** is one instance of a class, created at run time. A **handle** is the value a class variable holds: a reference to one object, or `null` (§8.4). A class's variables are its **properties**, and its tasks and functions are its **methods**. A property declared with a value, such as `int count = 5;`, has an **initializer**.
+
+Declaring `Packet p;` creates only a handle, set to `null`. The object appears when you call `new`, and `new` runs the class's **constructor**. The constructor's job is to make the new object valid before anyone uses it: copy in the arguments the caller chose, give each object its own id, and construct any objects it contains.
+
+Without a constructor, every property would start at its declared initial value or its type's default (0, `'x`, an empty string or `null`, §6.8 Table 6-7). That is rarely enough for a testbench object, which usually needs a name, an id or a configuration chosen by its creator.
+
+### What `new` does
+
+A constructor is a function named `new` with no return type (§8.7). The type of the variable on the left of `p = new(...)` decides which class is built. Its arguments follow the ordinary rules for subroutine arguments, so they can have default values (§13.5.3) and can be passed by name (§13.5.4).
+
+```systemverilog
+// compile
+module tb_top;
   class Packet;
-    int addr;
-    int data;
+    bit [15:0] addr;
+    bit [7:0]  data;
 
-    // Constructor with arguments
-    function new(int addr = 0, int data = 0);
-      this.addr = addr;
+    // Arguments with defaults: new, new(16'h10) and new(16'h10, 8'hFF) are all legal
+    function new(bit [15:0] addr = 0, bit [7:0] data = 0);
+      this.addr = addr;   // this.addr is the property, addr is the argument
       this.data = data;
     endfunction
   endclass
 
-  module demo;
-    Packet p;                    // a handle, null for now
+  Packet p;               // a handle, null until new runs
 
-    initial begin
-      p = new(16'h10, 8'hFF);    // calls Packet::new
-      $display("addr=%0h data=%0h", p.addr, p.data);
-    end
-  endmodule
-  ```
-  </InteractiveCode>
+  initial begin
+    p = new(16'h10, 8'hFF);   // calls Packet::new
+    $display("addr=%0h data=%0h", p.addr, p.data);
+    p = new(.data(8'h3C));    // binding by name; addr takes its default
+    $display("addr=%0h data=%0h", p.addr, p.data);
+  end
+endmodule
+```
 
-  ### What `new` does, in order (§8.7)
+Expected output (illustrative, traced by hand):
 
-  1. The base-class constructor runs first: your explicit `super.new(...)`, or one the compiler inserts.
-  2. Each property of this class is set to its declared initial value (for example `int count = 5;` or `header hdr = new;`).
-  3. The rest of the constructor body runs.
+```text
+addr=10 data=ff
+addr=0 data=3c
+```
 
-  A shallow copy (`p2 = new p1;`) is the exception: it allocates the object without running any of these steps and copies the source's properties instead (§8.12). See [Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning).
+The rules you will rely on, all from §8.7 unless noted:
 
-  ## Using `this`
+- **Implicit constructor.** If a class declares no `new`, the compiler provides one. It initializes the properties and does nothing else. In a class that extends another (next section), it first calls the parent's constructor with no arguments, unless an `extends Base(args)` clause supplies them (§8.7, §8.17).
+- **A constructor is a function, so it cannot wait.** It may not contain `#`, `@`, `wait` or any other timing control (§13.4). Anything that must wait for time belongs in a task that runs after construction.
+- **Qualifiers.** A constructor may be `local` or `protected`, which limits who can call it (§8.18). It shall not be `static` or `virtual`.
+- **Shallow copies skip it.** `p2 = new p1;` allocates a copy without running any constructor or property initializer (§8.12). [Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) covers what that copy contains.
 
-  The `this` keyword refers to the current object: the object whose method is running (§8.11). It disambiguates between
-  member variables and constructor arguments or local variables with the same
-  name, as in `this.addr = addr;` above.
+### Construction order, step by step
 
-  Inside a non-static method, `this` is never null: the method only runs because it was called on an object. A `static` method has no `this` at all (§8.10).
+When a class **extends** another, the new class (the **subclass**, or derived class) inherits every property and method of the class it extends (the **base class**, or parent) (§8.13). So constructing a subclass object must also build its base-class part. The standard fixes the order (§8.7, §8.17):
 
-  ## Calling the Parent with `super`
+1. **The base-class constructor runs first**, completely: your explicit `super.new(...)`, or a call the compiler inserts. Its own base runs before it, so the chain starts at the root base class.
+2. **Then each property declared in this class is initialized**, to its declared initial value (`int count = 5;`) or, if it has none, to its type's default value (Table 6-7).
+3. **Then the rest of this class's constructor body runs.**
 
-  When a class extends another, its constructor can invoke the parent
-  constructor using `super.new()`. The same keyword allows a method to call the
-  overridden version in the parent (§8.15).
+Before step 2 reaches a property, its value is **undefined** (§8.7). That matters in one place you might not expect: the arguments of `super.new(...)` are evaluated before this class's initializers have run.
 
-  <InteractiveCode>
-  ```systemverilog
+**Predict first.** These two classes are the standard's own example (§8.7). After `D d = new;`, what are `d.d2` and `d.c3`? Write down your answers, then open the trace.
+
+```systemverilog
+// snippet: IEEE 1800-2023 §8.7 example
+class C;
+  int c1 = 1;
+  int c2 = 1;
+  int c3 = 1;
+  function new(int a);
+    c2 = 2;
+    c3 = a;
+  endfunction
+endclass
+
+class D extends C;
+  int d1 = 4;
+  int d2 = c2;
+  int d3 = 6;
+  function new;
+    super.new(d3);   // d3 is read here, before D's initializers run
+  endfunction
+endclass
+```
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the trace of D d = new;</summary>
+
+A dash means the value is undefined: the property has not been initialized yet.
+
+| Step | What runs | c1 | c2 | c3 | d1 | d2 | d3 |
+|---|---|---|---|---|---|---|---|
+| 0 | `D::new` starts; its first action evaluates `super.new(d3)`, so `a` gets the undefined `d3` | – | – | – | – | – | – |
+| 1 | `C`'s property initializers | 1 | 1 | 1 | – | – | – |
+| 2 | `C::new` body: `c2 = 2; c3 = a;` | 1 | 2 | – | – | – | – |
+| 3 | `super.new` returns; `D`'s initializers: `d1 = 4`, `d2 = c2`, `d3 = 6` | 1 | 2 | – | 4 | 2 | 6 |
+| 4 | Rest of `D::new` body (empty) | 1 | 2 | – | 4 | 2 | 6 |
+
+**Debrief.**
+- `d2` is **2**, not 1. `D`'s initializers run after `C`'s constructor body has finished, so `d2 = c2` sees the value the body assigned.
+- `c3` is **undefined**. `super.new(d3)` was evaluated at step 0, before `d3 = 6` ran at step 3. The standard says exactly this in its list of results (§8.7).
+- On most simulators `c3` will print as 0, the default of an `int`. That is a property of the tool, not a guarantee: the standard calls the value undefined, so never write code that depends on it.
+
+</details>
+
+The same rule, drawn for a three-level chain. These are the classes of the [Make It Work](#make-it-work) example below: `crc_item` extends `bus_item`, which extends `base_item`.
+
+**Predict first.** After `c = new("pkt0");`, which constructor prints its line first, and what is `addr` when `bus_item::new` prints?
+
+<SequenceDiagram
+  title="Constructing a crc_item: who runs when"
+  caption="Each constructor's first action calls its parent's constructor, so the calls go down to the root first. Each class's initializers and body then run on the way back up, root first."
+  participants={[
+    { id: "tb", label: "tb_top", kind: "generic" },
+    { id: "crc", label: "crc_item::new", kind: "generic" },
+    { id: "bus", label: "bus_item::new", kind: "generic" },
+    { id: "base", label: "base_item::new", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tb", to: "crc", label: "c = new(\"pkt0\")" },
+    { from: "crc", to: "bus", label: "super.new(name), first statement" },
+    { from: "bus", to: "base", label: "super.new(name), first statement" },
+    { kind: "note", from: "base", label: "root class: id and name start at defaults" },
+    { kind: "note", from: "base", label: "body: count++, id = count, this.name = name, prints" },
+    { kind: "return", from: "base", to: "bus", label: "base_item part complete" },
+    { kind: "note", from: "bus", label: "initializer sets addr = 32'h100" },
+    { kind: "note", from: "bus", label: "rest of body: prints addr" },
+    { kind: "return", from: "bus", to: "crc", label: "bus_item part complete" },
+    { kind: "note", from: "crc", label: "initializer sets crc = 8'h5a" },
+    { kind: "note", from: "crc", label: "rest of body: prints crc" },
+    { kind: "return", from: "crc", to: "tb", label: "handle to the new crc_item" }
+  ]}
+/>
+
+**Read the diagram this way:** the numbered arrows are the calls and returns; the boxes on a lifeline are the work that constructor does at that point. All three calls go down before any subclass property has a value. Work happens only on the way back up, one whole class at a time, root first. So `base_item::new` prints first, and when `bus_item::new` prints, `addr` is already `100`: its initializer ran right after `super.new(name)` returned. The two pitfalls on this page follow directly: an argument passed down by `super.new(...)` cannot depend on the caller's own initializers, and a method called while `base_item`'s body runs cannot rely on `bus_item` or `crc_item` fields.
+
+### `this`: the object the method runs on
+
+`this` is a predefined handle to the object that was used to call the current method (§8.11). Its everyday use is to separate a property from an argument or local variable of the same name. An unqualified name always resolves to the innermost scope, which is the argument, so the property must be written `this.addr` (§8.11).
+
+The classic mistake is to leave `this.` out:
+
+```systemverilog
+// snippet: the bug and the fix
+class Packet;
+  int addr;
+  function new(int addr = 0);
+    addr = addr;          // BUG: assigns the argument to itself
+    // this.addr = addr;  // FIX: assigns the argument to the property
+  endfunction
+endclass
+```
+
+Traced for `p = new(5);`:
+
+| Line in `new` | argument `addr` | property `this.addr` | `p.addr` after `new` |
+|---|---|---|---|
+| `addr = addr;` | 5 → 5 | 0 (the `int` default, untouched) | 0 |
+| `this.addr = addr;` | 5 | 0 → 5 | 5 |
+
+It compiles, it runs, and the property silently keeps its default. Some tools may warn about a self-assignment; do not rely on it.
+
+Three more facts about `this`:
+
+- **Where it is legal.** Only in non-static methods, constraints, inline constraints and covergroups embedded in classes, or as `type(this)` (§8.11). A **static method** belongs to the class rather than to one object, so it has no `this` at all (§8.10).
+- **It is optional when nothing clashes.** Inside a method, `count` and `this.count` mean the same property unless an argument or local variable hides it (§8.11 NOTE).
+- **`this` and null handles.** In legal code, `this` always refers to a real object. Calling a non-static method through a `null` handle is illegal, and the result is indeterminate (§8.4). *Tool-dependent:* most simulators still start a non-virtual method with `this` set to `null` and stop only at its first property access, so the error message can point inside the method rather than at the call.
+
+`this` needs no separate diagram: the trace above is its picture, and the `this.name = name` step in `base_item`'s body in the sequence diagram is the same pattern (there `name` is the argument `"pkt0"`).
+
+### `super` and constructor chaining
+
+`super` refers to the members of the base class, one level up (§8.15). When a subclass declares a method with the same name as a base-class method, its version **overrides** the base one: calls on a subclass object run the subclass's version. You need `super` in two situations:
+
+- **To call the base-class version of an overridden method**: `super.print()` runs the base class's `print()` even when this class has its own.
+- **To chain constructors**: `super.new(...)` passes arguments to the base-class constructor.
+
+```systemverilog
+// compile
+module tb_top;
   class Base;
     int id;
     function new(int id);
@@ -81,69 +221,530 @@ export const metadata = {
   class Child extends Base;
     string name;
     function new(int id, string name);
-      super.new(id); // must be the first statement (§8.17)
+      super.new(id);      // must be the first executable statement (§8.17)
       this.name = name;
     endfunction
     function void print();
-      super.print(); // call Base::print
+      super.print();      // runs Base::print first
       $display("  Child name=%s", name);
     endfunction
   endclass
 
-  module demo;
-    Child c;
-    initial begin
-      c = new(1, "pkt");
-      c.print();
-    end
-  endmodule
-  ```
-  </InteractiveCode>
+  Child c;
 
-  If every subclass passes the same constant arguments, you can put them in the `extends` clause instead, for example `class EtherPacket extends Packet(5);`, and the compiler inserts the `super.new` call (§8.17).
+  initial begin
+    c = new(1, "pkt");
+    c.print();
+  end
+endmodule
+```
 
-  ## Common Pitfalls
+Expected output (illustrative, traced by hand):
 
-  - **Omitting `super.new(...)` does not skip the base constructor.** The compiler inserts an argument-less `super.new()` as the first statement (§8.15). If the base constructor has an argument without a default, that inserted call does not compile. If every base argument has a default, it compiles and you silently get those defaults. Pass the arguments you mean.
-  - **`super.new(...)` must be the first statement** in the constructor (§8.17).
-  - **Calling through a null handle**, not using `this`, is the real null pitfall: `p.print()` or `p.addr = 1` when `p` was never constructed is illegal and stops the simulation (§8.4).
-  - **A virtual call inside a base constructor runs the subclass override** (§8.17, §8.20), but at that moment the subclass's own properties have not been initialized yet; their values are undefined (§8.7). Keep constructors free of virtual calls that read subclass state.
+```text
+Base id=1
+  Child name=pkt
+```
 
-  ## Quiz
+**The rules of chaining:**
 
-  <Quiz questions={[
-    {
-      "question": "Which keyword refers to the current instance of a class?",
-      "answers": [
-        {"text": "self", "correct": false},
-        {"text": "this", "correct": true},
-        {"text": "super", "correct": false},
-        {"text": "current", "correct": false}
-      ],
-      "explanation": "`this` lets you access members of the current object."
-    },
-    {
-      "question": "Base has function new(int id); with no default. Child extends Base and its new() never calls super.new. What happens?",
-      "answers": [
-        {"text": "Base's constructor is skipped and id stays 0", "correct": false},
-        {"text": "It does not compile: the inserted super.new() has no argument for id", "correct": true},
-        {"text": "It compiles, and id is X", "correct": false},
-        {"text": "The simulator calls super.new with id = 0", "correct": false}
-      ],
-      "explanation": "The compiler always inserts super.new() when you omit it (§8.15). Without arguments that call cannot satisfy Base's required id, so compilation fails."
-    }
-  ]} />
+- **`super.new(...)` must be the first executable statement** of the constructor (§8.17). Local variable declarations may come before it, because they are not executable statements (Syntax 8-1, `class_constructor_declaration`).
+- **If you leave it out, the compiler inserts `super.new()` with no arguments** (§8.15). The base constructor is never skipped. The inserted call either fails to compile or silently passes defaults:
 
-  <div className="mt-8">
-    <InterviewQuestionPlayground
-      question="What happens if a child class constructor does not explicitly call `super.new()`?"
-      options={[
-        { text: "The base class members keep default initialization.", isCorrect: false, feedback: "The base constructor is not skipped: the compiler inserts a call to it, so its body runs too." },
-        { text: "The code fails to compile.", isCorrect: false, feedback: "Only when the base constructor needs an argument that has no default. Otherwise it compiles." },
-        { text: "The simulator implicitly calls `super.new()` without arguments as the first statement.", isCorrect: true, feedback: "Correct! The compiler inserts `super.new()` if you don't (§8.15). However, if the base class constructor requires arguments and has no default values, compilation fails." },
-        { text: "The base class constructor is skipped entirely.", isCorrect: false, feedback: "Constructors always chain from the root base class down (§8.17)." }
-      ]}
-    />
-  </div>
+  | The base constructor is | You wrote no `super.new` | Result |
+  |---|---|---|
+  | `function new(int id);` (no default) | compiler inserts `super.new();` | **Compile error**: no value for `id` |
+  | `function new(int id = 0);` | compiler inserts `super.new();` | Compiles; `id` is **silently 0** |
+  | `function new();` | compiler inserts `super.new();` | Compiles, and is correct |
 
-</InfoPage>
+- **The implicit constructor follows the same rule.** A subclass that declares no `new` gets one that calls `super.new()` with no arguments (§8.7). So if the base constructor has a required argument, a subclass with no constructor does not compile.
+- **`super` reaches one level only.** `super.super.new` or `super.super.count` is not allowed (§8.15).
+- **Constant arguments can go in the `extends` clause.** If a subclass always passes the same arguments, write `class EtherPacket extends Packet(5);`. The compiler then inserts the call, and the subclass constructor **shall not** contain its own `super.new()` (§8.17). Use the clause for fixed values and `super.new(...)` for values computed from the subclass's own arguments.
+
+The sequence diagram in the previous section is the picture of chaining: each `super.new(name)` arrow is one link of the chain.
+
+### Constant properties: set once
+
+A property declared `const` is read-only. Because objects are created at run time, a class has two kinds of constant (§8.19):
+
+- A **global constant** has an initial value in its declaration and can never be assigned anywhere else. It is usually also `static`, because every object shares the same value.
+- An **instance constant** has no initial value. It is assigned **once, in the constructor of the class that declares it**, so each object can hold its own value. An instance constant cannot be `static`, because then the constructor could not assign it.
+
+```systemverilog
+// snippet: the two kinds of constant (adapted from §8.19)
+class frame_item;
+  static const int unsigned MAX_LEN = 1500;  // global constant: shared, fixed
+  const int unsigned len;                    // instance constant: set in new
+  byte payload[];
+
+  function new(int unsigned len = 64);
+    this.len = (len > MAX_LEN) ? MAX_LEN : len;  // the one assignment to len
+    payload = new[this.len];
+  endfunction
+
+  function void grow();
+    // len = len * 2;   // compile error: len is const outside new (§8.19)
+  endfunction
+endclass
+```
+
+Where an assignment to each kind of constant is legal:
+
+| Where the assignment is written | Global constant (`MAX_LEN`) | Instance constant (`len`) |
+|---|---|---|
+| In its declaration | yes, required | no: an initializer would make it a global constant |
+| In the constructor of the declaring class | no | yes, once |
+| In any other method of the class | no | no: compile error |
+| In a subclass constructor or method | no | no: compile error |
+
+In testbenches an instance constant is the natural home for a transaction id, a stream number or a channel index that must never change after the object exists.
+
+### Debugging constructors: symptom, cause, fix
+
+Exact message wording varies by simulator, so match the symptom, not the text.
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Compile error at a subclass constructor, or at a class with no constructor: too few arguments for `new` | The inserted or implicit `super.new()` has no value for a required base argument (§8.7, §8.15) | Call `super.new(args)` as the first statement, or write the arguments in the `extends` clause |
+| Compile error: `super.new` is not the first statement | A statement such as `$display` or an assignment comes before it (§8.17) | Move `super.new(...)` up; declarations may stay above it |
+| Base-class fields hold their default values (`name = "base_item"`) although you passed real ones | The subclass omits `super.new(...)`, and every base argument has a default, so the inserted call passed the defaults | Pass the arguments explicitly; review every constructor that has no `super.new` |
+| A property keeps its default although the caller passed a value | `addr = addr;` assigned the argument to itself | Write `this.addr = addr;` |
+| A virtual method called from a base constructor prints 0 or garbage for a subclass field | The override ran before the subclass's initializers (§8.7, §8.17 NOTE 2) | Do not call virtual methods from constructors; call them after `new` returns |
+| Null-object error raised inside a constructor | The constructor uses a handle property, such as `hdr.len = 4;`, before any object was created for it | Construct it first: `header hdr = new;` as an initializer, or `hdr = new;` before the first use |
+| Compile error: assignment to a constant | An instance constant is assigned outside its class's constructor, or a global constant is assigned at all (§8.19) | Assign instance constants once in `new`; make a value that must change an ordinary property |
+
+### Constructors in a real testbench
+
+- **Give each object an identity at birth.** A `static` counter incremented in `new` plus a `const` id (as in Make It Work) gives every transaction a unique, unchangeable number for log messages and scoreboard matching.
+- **Pass in what the object needs, nothing more.** In a plain SystemVerilog bench, a driver or monitor class often receives its configuration object, or its virtual interface handle ([F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index)), as a constructor argument, so it is usable the moment `new` returns.
+- **Keep constructors short and predictable.** A constructor cannot wait for time, and it should not call virtual methods. Put behaviour in methods that run after construction. Leave randomization to the code that creates the object, after `new` returns ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)).
+- **Preview: UVM constructors have fixed shapes.** In UVM (from [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index)), objects are built by the **factory**, UVM's object-creation service, which calls your constructor with a fixed argument list. Every UVM object therefore declares `function new(string name = "my_item");` and every component declares `function new(string name, uvm_component parent);`, each calling `super.new` with the same arguments. Child components are created later, in the **build phase**, the first step of a UVM test's start-up ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)), not in `new`. Push Further shows the uvm-core source behind these rules.
+
+### Recap
+
+- `new` builds the object: base-class constructor first, then this class's initializers, then the rest of this class's body. Values are undefined until their initializer runs.
+- `this.x` is the property and plain `x` is the nearest declaration, usually the argument. `addr = addr;` is a silent bug.
+- `super.new(...)` is the first executable statement. Leave it out and the compiler inserts `super.new()`: a compile error if the base needs arguments, silent defaults if it does not.
+- Instance constants are assigned once, in their class's constructor. Global constants are fixed in their declaration.
+- A virtual call from a constructor runs the most-derived override (the version for the object's actual class) on a half-built object.
+
+## Make It Work
+
+### A three-level chain with ids and constants
+
+This example builds a small transaction hierarchy and checks itself. `base_item` gives every object a unique, constant id. `bus_item` adds an address, and `crc_item` adds a checksum. Each constructor prints a line, so the log shows the construction order.
+
+```systemverilog
+// compile
+module tb_top;
+  class base_item;
+    static int unsigned count;   // objects built so far: one copy per class (§8.9)
+    const int unsigned id;       // instance constant: assigned once, in new (§8.19)
+    string name;
+
+    function new(string name = "base_item");
+      count++;
+      id = count;                // the only legal assignment to id
+      this.name = name;          // property = argument
+      $display("base_item::new  name=%s id=%0d", this.name, id);
+    endfunction
+  endclass
+
+  class bus_item extends base_item;
+    bit [31:0] addr = 32'h100;   // initialized after base_item::new returns (§8.7)
+
+    function new(string name = "bus_item");
+      super.new(name);           // first executable statement (§8.17)
+      $display("bus_item::new   addr=%0h", addr);
+    endfunction
+  endclass
+
+  class crc_item extends bus_item;
+    bit [7:0] crc = 8'h5a;
+
+    function new(string name = "crc_item");
+      super.new(name);
+      $display("crc_item::new   crc=%0h", crc);
+    endfunction
+  endclass
+
+  crc_item c;
+  bus_item b;
+  int pass, fail;
+
+  initial begin
+    c = new("pkt0");
+    b = new();                   // name takes its default, "bus_item"
+    $display("c: id=%0d name=%s  b: id=%0d name=%s  count=%0d",
+             c.id, c.name, b.id, b.name, base_item::count);
+
+    if (c.id == 1 && c.name == "pkt0" && c.addr == 32'h100 && c.crc == 8'h5a)
+      pass++;
+    else
+      fail++;
+    if (b.id == 2 && b.name == "bus_item") pass++; else fail++;
+    $display("PASS=%0d FAIL=%0d", pass, fail);
+  end
+endmodule
+```
+
+Expected output (illustrative, traced by hand against §8.7 and §8.17):
+
+```text
+base_item::new  name=pkt0 id=1
+bus_item::new   addr=100
+crc_item::new   crc=5a
+base_item::new  name=bus_item id=2
+bus_item::new   addr=100
+c: id=1 name=pkt0  b: id=2 name=bus_item  count=2
+PASS=2 FAIL=0
+```
+
+Why the log has this shape:
+
+- Every object's first line comes from `base_item::new`, the root, although `tb_top` called `crc_item::new` or `bus_item::new`.
+- `bus_item::new` prints `addr=100` because `addr`'s initializer ran as soon as `base_item::new` returned, before the rest of `bus_item::new` (§8.7).
+- `b` has id 2: `count` is static, so one counter serves every object of the hierarchy (§8.9).
+- `b = new();` used the default `"bus_item"`, and `bus_item::new` passed it on with `super.new(name)`.
+
+**Run it.** Save the code as `tb_top.sv`, compile it with SystemVerilog enabled on any simulator that supports classes (for example on EDA Playground), and simulate the top module `tb_top`. No open-source simulator has been checked with this example yet. Kata 1 in Practice & Reinforce breaks this code in two instructive ways.
+
+### How to write a constructor chain
+
+1. **Start at the root.** Give the root class the arguments every object needs, each with a sensible default if the class will be built by code you do not control.
+2. **Assign properties from arguments with `this.`** whenever an argument has the same name as a property.
+3. **Assign each instance constant exactly once**, in the constructor of the class that declares it.
+4. **In each subclass, make `super.new(...)` the first executable statement** and pass on the arguments the base needs. Use an `extends Base(args)` clause only for fixed values.
+5. **Never call a virtual method from a constructor.** If the object needs setup that subclasses customize, call that method after `new` returns.
+6. **Predict the log before you run it**, using base constructor, then initializers, then body. A wrong prediction means a wrong model, not just a wrong program.
+
+**Checklist before moving on:**
+
+- [ ] You can order the base constructor, this class's initializers and this class's body, and say which values are still undefined at each step.
+- [ ] Every subclass constructor calls `super.new(...)` first, or you can say why the inserted call is correct.
+- [ ] Every argument that shares a property's name is assigned with `this.`.
+- [ ] Every instance constant is assigned once, in its own class's constructor.
+- [ ] No constructor in your code calls a virtual method.
+
+## Push Further
+
+### Expert: initialization-order corner cases
+
+- **Arguments are evaluated before your initializers.** In `super.new(d3)`, `d3` has not been initialized, so the base receives an undefined value (§8.7, the C/D example). The same is true of any expression in the `super.new` argument list that reads this class's properties. Use the constructor's own arguments or constants instead.
+- **"Undefined" is the standard's word, and simulators differ.** Most print the type's default (0 for `int`). Treat any such value as a bug, because the standard gives it no meaning (§8.7). *Tool-dependent:* a simulator may also warn or keep a stale value.
+- **Virtual calls from a constructor dispatch to the most-derived override** (§8.17 NOTE 2, §8.20). This differs from C++, where a virtual call made during a base-class constructor runs the base-class version (ISO C++ [class.cdtor]). Java behaves like SystemVerilog. Engineers moving from C++ expect the safe behaviour and get the unsafe one.
+- **A static counter in `new` does not count copies.** `p2 = new p1;` runs no constructor (§8.12), so `count` stays the same, and the copy keeps the original's instance constant `id`. If ids must be unique per object, copy by constructing a new object and copying fields into it ([Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning)).
+
+### Expert: constructor qualifiers and the singleton pattern
+
+- A constructor may be `local` or `protected`, and shall not be `static` or `virtual` (§8.7).
+- A `local` constructor makes the class **inextensible**: a subclass's `super.new()` would be illegal, so no subclass can be constructed (§8.17 NOTE 1).
+- A `protected` constructor allows subclasses but blocks `new` from outside the class. Combined with a static method that builds the object on first use, it gives a **singleton**, a class with exactly one object:
+
+```systemverilog
+// snippet
+class tb_registry;
+  local static tb_registry m_inst;      // the only object, built on demand
+
+  protected function new();             // outside code cannot call new
+  endfunction
+
+  static function tb_registry get();
+    if (m_inst == null) m_inst = new(); // legal: inside the class
+    return m_inst;
+  endfunction
+endclass
+
+// tb_registry r = new;                 // compile error: new is protected
+// tb_registry r = tb_registry::get();  // the only way in
+```
+
+- **The real-world example is UVM's root.** In uvm-core 2020.3.1, the Accellera reference implementation of UVM (`uvm_root.svh`), `uvm_root` declares `extern protected function new ();` and `extern static function uvm_root get();`.
+- **A constructor cannot wait for time** because it is a function (§8.7, §13.4). If construction must wait for something, such as a reset, split it into `new` plus a task the caller runs afterwards.
+
+### Expert: three ways to pass base-constructor arguments
+
+| Form | Example | Rule |
+|---|---|---|
+| Explicit call | `function new(int n); super.new(n * 2); endfunction` | First executable statement; any expression from the constructor's arguments (§8.17) |
+| `extends` clause | `class EtherPacket extends Packet(5);` | For fixed values; the subclass constructor shall not call `super.new()` (§8.17) |
+| `default` (IEEE 1800-2023) | `function new(int size, default); super.new(default);` | `default` expands to the base constructor's whole argument list (§8.17) |
+
+The `default` keyword is new in IEEE 1800-2023 (§8.17):
+
+- It is allowed only in a subclass, at most once in the argument list.
+- No other argument may share a name with a base argument.
+- An argument written directly after `default` gets direction `input` and type `logic` unless declared otherwise.
+- If the constructor has `default` in its list and does not call `super.new`, the compiler inserts `super.new(default)`.
+- `class A extends Base(default);` with no constructor gives `A` an implicit constructor with all of `Base`'s arguments. If you do write a constructor for such a class, its argument list must contain `default`.
+- It is an error to use `default` when a base argument's default value refers to a `local` member.
+
+*Tool-dependent:* support for `default` constructor arguments varies between simulators, so check yours before relying on it.
+
+### Expert: typed constructor calls
+
+A **typed constructor call** names the class to build in front of `new`, independently of the variable it is assigned to (§8.8):
+
+```systemverilog
+// snippet: C, D and E as in the §8.8 examples (D extends C; E #(type T) extends C)
+C c = D::new;                       // builds a D; c is a C handle to it
+c = E #(.T(byte))::new(.x_init(5)); // a parameterized class, with a named argument
+```
+
+- The named type must be assignment compatible with the target, and the object is constructed exactly as an ordinary `new` would build it (§8.8).
+- A typed constructor call cannot be used for a shallow copy (§8.12).
+- It lets code that only declares a base-class variable build a chosen subclass in one expression, with no temporary subclass variable (the §8.8 NOTE shows the equivalent long form).
+
+### Expert: why UVM constructors have fixed signatures
+
+The UVM factory calls your constructor from generated code, so your constructor must accept those exact calls. In uvm-core 2020.3.1:
+
+- **Objects.** `` `uvm_object_utils(T) `` expands `m_uvm_object_create_func`, which defines `create(string name="")`. It calls `new()` when the name is empty and `new(name)` otherwise (`uvm_object_defines.svh`). So an object's constructor needs one `string` argument with a default: `function new(string name = "my_item"); super.new(name); endfunction`. `uvm_object` itself declares `new (string name="")` (`uvm_object.svh`).
+- **Components.** The component registry's `create_component` executes `obj = new(name, parent);` (`uvm_registry.svh`), and `uvm_component` declares `new (string name, uvm_component parent)` with no defaults (`uvm_component.svh`). So a component subclass needs `function new(string name, uvm_component parent); super.new(name, parent); endfunction`. A component with **no** constructor gets an implicit one that calls `super.new()` with no arguments (§8.7), which does not compile.
+- **Extra arguments must have defaults.** The generated code passes only those arguments, so any extra constructor argument without a default breaks the call. Pass extra settings through configuration instead ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
+
+### Interview angles
+
+<InterviewQuestionPlayground
+  title="Interview angle: what runs first?"
+  question="class B extends A. You write b = new(). In what order do A's initializers, A's constructor body, B's initializers and B's constructor body run?"
+  options={[
+    { text: "B's initializers, A's initializers, A's body, B's body", isCorrect: false, feedback: "B's initializers cannot run first: B::new's first action is the call to A's constructor, and B's properties are initialized only after that call returns (§8.7)." },
+    { text: "A's initializers, A's body, B's initializers, B's body", isCorrect: true, feedback: "Right. The base constructor runs completely first, then this class's initializers, then the rest of this class's body (§8.7, §8.17). Follow up: a value passed to super.new from B's own properties is still undefined." },
+    { text: "A's initializers, B's initializers, A's body, B's body", isCorrect: false, feedback: "Initializers are not all run up front. Each class's initializers run after its base constructor has finished, and just before its own body." },
+    { text: "The order is tool-dependent", isCorrect: false, feedback: "The order is fixed by the standard (§8.7, §8.17). Only the values of not-yet-initialized properties are undefined." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: can a constructor be virtual?"
+  question="Can a SystemVerilog constructor be declared virtual or static? And how would you stop other code from calling new on a class?"
+  options={[
+    { text: "It can be virtual, so that new builds the derived class automatically", isCorrect: false, feedback: "The standard forbids it: a constructor shall not be static or virtual (§8.7). The type being built is chosen by the variable or by a typed constructor call such as D::new (§8.8)." },
+    { text: "It can be static, so that it can be called without an object", isCorrect: false, feedback: "Forbidden too (§8.7). A constructor already runs without an existing object; a static factory method is a different thing." },
+    { text: "Neither; make new protected (or local) and offer a static get() method that builds the one object on demand", isCorrect: true, feedback: "Right. A constructor may be local or protected, never static or virtual (§8.7). A protected new plus a static get() is the singleton pattern; uvm_root uses exactly that in uvm-core 2020.3.1." },
+    { text: "Neither, and there is no way to restrict who calls new", isCorrect: false, feedback: "There is: a local or protected constructor (§8.7). A local one also makes the class impossible to extend (§8.17 NOTE 1)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: a virtual call in a constructor"
+  question="A base class constructor calls the virtual method init(). A subclass overrides init() to read its own property limit, declared int limit = 5. What happens when you construct the subclass, and how does C++ differ?"
+  options={[
+    { text: "The base version of init() runs, as in C++", isCorrect: false, feedback: "That is the C++ rule. In SystemVerilog a virtual call from a constructor dispatches as usual, to the most-derived override (§8.17 NOTE 2, §8.20)." },
+    { text: "The subclass override runs and reads limit = 5", isCorrect: false, feedback: "The override does run, but limit's initializer has not run yet: the subclass's initializers run only after the base constructor returns (§8.7)." },
+    { text: "The subclass override runs and reads limit before it is initialized, an undefined value that most tools show as 0; C++ would run the base version instead", isCorrect: true, feedback: "Right. Dispatch goes to the most-derived class (§8.20), but initialization follows §8.7, so the field is undefined (§8.17 NOTE 2). Fix: call init() after new returns." },
+    { text: "It is a compile error to call a virtual method from a constructor", isCorrect: false, feedback: "It is legal, which is exactly why it is dangerous. The standard only warns about it (§8.17 NOTE 2)." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+Start with the quiz, which covers all four objectives. Then do the two katas: the first breaks the Make It Work example in two ways, and the second asks you to trace a new hierarchy by hand. The flashcards at the end of this section cover the whole page.
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "Use the C and D classes from the trace (C: c1 = 1, c2 = 1, c3 = 1, and new(int a) sets c2 = 2 and c3 = a; D extends C: d1 = 4, d2 = c2, d3 = 6, and new calls super.new(d3)). After D d = new;, what is d.d2?",
+    answers: [
+      { text: "1", correct: false, feedback: "That would be true if D's initializers ran before C's constructor body. C's constructor runs completely, including c2 = 2, before D's initializers (§8.7)." },
+      { text: "2", correct: true, feedback: "Right. When d2 = c2 runs, C's constructor has already returned with c2 = 2 (§8.7)." },
+      { text: "4", correct: false, feedback: "4 is d1's initial value. d2 is initialized from c2." },
+      { text: "Undefined", correct: false, feedback: "c2 has been initialized and assigned by the time d2's initializer runs, so d2 is well defined." }
+    ],
+    explanation: "Order: the base constructor (C's initializers, then C's body), then D's initializers, then the rest of D's body. So d2 copies c2 after the body set it to 2.",
+    objective: 1
+  },
+  {
+    question: "Same classes. After D d = new;, what is d.c3 according to IEEE 1800-2023?",
+    answers: [
+      { text: "1, because c3's initializer runs last", correct: false, feedback: "C's initializers run before C's body, and the body assigns c3 = a." },
+      { text: "6, because d3 = 6", correct: false, feedback: "d3 becomes 6 only at D's initializers, after super.new(d3) has already passed its value." },
+      { text: "Undefined, because super.new(d3) read d3 before d3 was initialized", correct: true, feedback: "Right. The argument is evaluated as D::new's first action, when d3 is still undefined (§8.7). Many simulators print 0, but that is tool behaviour, not a rule." },
+      { text: "0, because every int starts at 0", correct: false, feedback: "0 is the int default applied when an initializer runs. Before that, the standard says the value is undefined (§8.7); a 0 in your log is tool behaviour you must not rely on." }
+    ],
+    explanation: "Arguments to super.new are evaluated before this class's initializers. So passing d3 hands C an undefined value; this is the standard's own example in §8.7.",
+    objective: 1
+  },
+  {
+    question: "Base declares function new(int id); with no default. Child extends Base, and Child's new() never calls super.new. What happens?",
+    answers: [
+      { text: "Base's constructor is skipped and id stays 0", correct: false, feedback: "The base constructor is never skipped. The compiler inserts a call to it when you leave it out (§8.15)." },
+      { text: "It does not compile: the inserted super.new() has no value for id", correct: true, feedback: "Right. The compiler inserts super.new() with no arguments (§8.15), and Base's id has no default, so the call is incomplete." },
+      { text: "It compiles, and id is X", correct: false, feedback: "id is an int, a 2-state type, so it could never be X. More importantly, the code does not compile." },
+      { text: "The simulator passes 0 for id at run time", correct: false, feedback: "No value is invented. A required argument with no default is a compile-time error." }
+    ],
+    explanation: "Omitting super.new does not skip the base constructor: the compiler inserts super.new() (§8.15). With a required base argument that call cannot compile; fix it with super.new(id) or an extends Base(args) clause.",
+    objective: 2
+  },
+  {
+    question: "base_cfg has function new(string name = \"base_cfg\"); that sets this.name = name. eth_cfg extends base_cfg, and its function new(string name = \"eth_cfg\"); prints a message but has no super.new call. After e = new(\"eth0\");, what is e.name?",
+    answers: [
+      { text: "eth0", correct: false, feedback: "eth_cfg::new received \"eth0\", but it never passed it to the base. The base constructor ran with no arguments." },
+      { text: "eth_cfg", correct: false, feedback: "eth_cfg's own default is never passed on either. Only an explicit super.new(name) would do that." },
+      { text: "base_cfg", correct: true, feedback: "Right. The compiler inserted super.new() (§8.15), and every base argument has a default, so it compiled and silently used \"base_cfg\"." },
+      { text: "An empty string", correct: false, feedback: "The base constructor did run, with its default argument, so name was set to \"base_cfg\"." }
+    ],
+    explanation: "When every base argument has a default, a missing super.new compiles and silently passes those defaults. Pass the arguments you mean: super.new(name).",
+    objective: 2
+  },
+  {
+    question: "class eth_pkt extends pkt(5); and eth_pkt's constructor begins with super.new(7);. What happens?",
+    answers: [
+      { text: "pkt::new receives 7, because the explicit call overrides the clause", correct: false, feedback: "There is no override rule. The two forms cannot be combined." },
+      { text: "pkt::new receives 5, and super.new(7) is ignored", correct: false, feedback: "Nothing is ignored silently: the combination is illegal." },
+      { text: "pkt::new runs twice, first with 5 and then with 7", correct: false, feedback: "A base constructor runs exactly once per object." },
+      { text: "It is a compile error: with arguments in the extends clause, the constructor shall not contain a super.new() call", correct: true, feedback: "Right (§8.17). With extends pkt(5), the compiler inserts the call itself. Use the clause for fixed values and super.new for computed ones." }
+    ],
+    explanation: "If the arguments are given in the extends specifier, the subclass constructor shall not contain super.new() (§8.17).",
+    objective: 2
+  },
+  {
+    question: "A class declares const int size; with no initializer. Its new() assigns size = 4, and its method resize() assigns size = 8. What happens?",
+    answers: [
+      { text: "A compile error at the assignment in resize()", correct: true, feedback: "Right. An instance constant may be assigned only once, in the constructor of its class (§8.19). Any other assignment is illegal." },
+      { text: "It compiles, and size becomes 8 after resize()", correct: false, feedback: "const is enforced, not documentation. Only the constructor may assign an instance constant." },
+      { text: "It compiles, but a run-time error occurs when resize() runs", correct: false, feedback: "The violation is visible in the source, so it is reported at compile time." },
+      { text: "It compiles, and size silently stays 4", correct: false, feedback: "The compiler does not quietly drop the assignment. It rejects it." }
+    ],
+    explanation: "An instance constant has no initializer and gets exactly one assignment, in its class's constructor (§8.19). If a value must change after construction, it is not a constant.",
+    objective: 3
+  },
+  {
+    question: "class Packet; int addr; function new(int addr = 0); addr = addr; endfunction endclass. After p = new(5);, what is p.addr?",
+    answers: [
+      { text: "5", correct: false, feedback: "Inside new, plain addr is the argument (the innermost scope, §8.11), so the line assigns the argument to itself." },
+      { text: "0, because addr = addr assigned the argument to itself; write this.addr = addr", correct: true, feedback: "Right. The property is never touched and keeps the int default. this.addr names the property (§8.11)." },
+      { text: "A compile error, because the argument has the same name as a property", correct: false, feedback: "The clash is legal; it is the reason this exists (§8.11)." },
+      { text: "X, because the property was never assigned", correct: false, feedback: "addr is an int, a 2-state type, so its default is 0, not X (§6.8 Table 6-7)." }
+    ],
+    explanation: "An unqualified name resolves to the innermost scope, here the argument. Use this.addr = addr; to reach the property.",
+    objective: 3
+  },
+  {
+    question: "base_txn's constructor ends with a call to its virtual method describe(). crc_txn extends base_txn, declares bit [7:0] crc = 8'h5a, and overrides describe() to print crc. What does c = new; (c is a crc_txn handle) print?",
+    answers: [
+      { text: "crc_txn::describe runs before crc is initialized, so the value is undefined (most simulators print 0)", correct: true, feedback: "Right. Dispatch goes to the most-derived override (§8.20), but crc_txn's initializers run only after base_txn::new returns (§8.7, §8.17 NOTE 2)." },
+      { text: "base_txn::describe runs, because the object is still a base_txn during its constructor", correct: false, feedback: "That is the C++ rule. In SystemVerilog the object is a crc_txn from the start, and virtual calls dispatch to its override." },
+      { text: "crc_txn::describe runs and prints 5a", correct: false, feedback: "The override runs, but 5a is assigned by crc's initializer, which runs only after base_txn::new returns." },
+      { text: "A compile error: a constructor may not call a virtual method", correct: false, feedback: "It is legal; the standard only warns about it (§8.17 NOTE 2)." }
+    ],
+    explanation: "A virtual call made from a base constructor runs the most-derived override on a half-built object. Call describe() after new returns instead.",
+    objective: 4
+  }
+]} />
+
+### Kata 1 (debug): two ways to break the chain
+
+Start from the Make It Work example. Make each change on its own, predict the output, then check the solution.
+
+1. **Break it 1.** Delete the line `super.new(name);` in `bus_item`. Does it still compile? Predict every line of the log, including the `PASS`/`FAIL` line.
+2. **Break it 2.** Restore that line. In `base_item`, add a virtual method `describe()` that prints `"base_item::describe"`, and call `describe();` as the last statement of `base_item::new`. In `crc_item`, override it to print `crc`. Predict what each object prints, then fix the design without losing the call.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+**Break it 1.** It compiles. The compiler inserts `super.new();` into `bus_item::new` (§8.15), and `base_item`'s argument has a default, so the base runs with `"base_item"`. `crc_item` still passes `"pkt0"` to `bus_item::new`, but `bus_item` no longer passes it on. Expected output (illustrative):
+
+```text
+base_item::new  name=base_item id=1
+bus_item::new   addr=100
+crc_item::new   crc=5a
+base_item::new  name=base_item id=2
+bus_item::new   addr=100
+c: id=1 name=base_item  b: id=2 name=base_item  count=2
+PASS=0 FAIL=2
+```
+
+Both checks fail on the name: nothing crashed, and only a self-check catches it. Fix: restore `super.new(name);`.
+
+**Break it 2.** The additions:
+
+```systemverilog
+// snippet: the additions for Break it 2
+// in base_item
+virtual function void describe();
+  $display("base_item::describe");
+endfunction
+// last statement of base_item::new:  describe();
+
+// in crc_item
+virtual function void describe();
+  $display("crc_item::describe crc=%0h", crc);
+endfunction
+```
+
+- For `c = new("pkt0")`, `base_item::new` calls `describe()`, which dispatches to `crc_item::describe` (§8.20). It runs before `bus_item` and `crc_item` have initialized anything, so `crc` is undefined (§8.7, §8.17 NOTE 2). Most simulators print `crc_item::describe crc=0`, but the standard does not promise any value. The line appears right after the first `base_item::new` line, before `bus_item::new`.
+- For `b = new()`, `bus_item` does not override `describe()`, so `base_item::describe` runs and prints its fixed text.
+- The fix: remove the call from the constructor, and call `c.describe();` from `tb_top` after `new` returns. It then prints `crc_item::describe crc=5a`. If every object must describe itself when it is created, give the hierarchy a non-virtual `create` helper that calls `new` and then `describe()`.
+
+</details>
+
+### Kata 2 (trace): predict a new hierarchy
+
+```systemverilog
+// snippet
+class a_cls;
+  int x = 1;
+  int y;
+  function new(int v);
+    x = x + v;
+    y = 2 * x;
+  endfunction
+endclass
+
+class b_cls extends a_cls;
+  int z = x + y;
+  int w = 3;
+  function new();
+    super.new(4);
+    w = w + z;
+  endfunction
+endclass
+```
+
+1. After `b_cls b = new;`, fill in `x`, `y`, `z` and `w` for each step: `a_cls` initializers, `a_cls` body, `b_cls` initializers, `b_cls` body.
+2. Stretch: someone changes `super.new(4)` to `super.new(w)`. What changes, and why?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+| Step | x | y | z | w |
+|---|---|---|---|---|
+| `a_cls` initializers (`y` has none, so it gets the `int` default) | 1 | 0 | – | – |
+| `a_cls` body: `x = 1 + 4`, `y = 2 * 5` | 5 | 10 | – | – |
+| `b_cls` initializers: `z = x + y`, `w = 3` | 5 | 10 | 15 | 3 |
+| `b_cls` body: `w = 3 + 15` | 5 | 10 | 15 | 18 |
+
+Final values: `x = 5`, `y = 10`, `z = 15`, `w = 18`.
+
+**Stretch.** `w` is read as the first action of `b_cls::new`, before `w = 3` has run, so `v` is undefined (§8.7). Every value computed from it (`x`, `y`, `z`, and `w` after the body) is then undefined too. On a simulator that shows undefined `int` values as 0 you would see `x = 1`, `y = 2`, `z = 3`, `w = 6`, which looks plausible and is exactly why this bug survives review.
+
+</details>
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023:
+  - §6.8 and Table 6-7 (default values of variables);
+  - §8.4 (objects, handles and `null`), §8.7 (constructors: order, undefined values, qualifiers, the C/D example), §8.8 (typed constructor calls), §8.9 (static properties), §8.10 (static methods), §8.11 (`this`), §8.12 (shallow copies do not run constructors), §8.13 (inheritance), §8.15 (`super` and the inserted `super.new`), §8.17 (chaining constructors, `extends Base(args)`, `default`, NOTES 1 and 2), §8.18 (`local` and `protected`), §8.19 (constant class properties), §8.20 (virtual methods);
+  - §13.4 (functions cannot contain timing controls), §13.5.3 (default argument values), §13.5.4 (argument binding by name);
+  - Syntax 8-1 (`class_constructor_declaration`).
+- uvm-core 2020.3.1: `uvm_object_defines.svh` (`m_uvm_object_create_func`), `uvm_registry.svh` (`create_component`, `create_object`), `uvm_object.svh` and `uvm_component.svh` (constructor signatures), `uvm_root.svh` (protected constructor and static `get()`).
+- Chris Spear, *SystemVerilog for Verification*, 2nd ed. (Springer, 2008), chapter 5, "Basic OOP".
+
+**Prerequisites:** the [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) (classes, objects and handles); [F2D: Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions) (default argument values, functions versus tasks).
+
+**Related**
+
+- [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index): handles, static members, object lifetime, and `local` and `protected`.
+- [Polymorphism Pitfalls and Type Casting](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls): virtual versus non-virtual dispatch, which explains the virtual-call pitfall in full.
+- [Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning): shallow copies, which skip the constructor, and deep copies.
+- [Parameterized Classes and Abstract Classes](/curriculum/T2_Intermediate/I-SV-1_OOP/parameterized-classes): constructors in generic and abstract classes.
+- [I-UVM-1A: UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index): the `uvm_object` and `uvm_component` constructors in use.
+- [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index): why the factory needs fixed constructor signatures.
+- [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): why child components are built in the build phase, not in `new`.
+
+<NextLesson />

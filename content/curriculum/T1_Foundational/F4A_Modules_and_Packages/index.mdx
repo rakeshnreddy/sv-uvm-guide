@@ -1,6 +1,6 @@
 ---
 title: "F4A: Structuring Designs with Modules and Packages"
-description: "Wire up designs and verification harnesses with modules and packages that keep signal intent crystal clear."
+description: "Structure designs and testbenches with parameterized modules and shared packages, and predict how ports, connections, imports and compile order behave."
 flashcards: "F4A_Modules_and_Packages"
 sources:
   - title: "IEEE Standard for SystemVerilog"
@@ -8,215 +8,895 @@ sources:
     identifier: "IEEE 1800-2023"
 ---
 
-import { InteractiveCode, Quiz } from '@/components/ui';
-
 ## Quick Take
-- **What it is:** The fundamental building blocks of SystemVerilog—**modules** for hierarchy and **packages** for shared definitions.
-- **Why it matters:** Modules encapsulate behavior and structure, while packages prevent "copy-paste" errors by centralizing types and constants.
-- **The Analogy:** Think of a **module** as a circuit board with specific inputs and outputs. A **package** is the technical manual or standard library that defines the connectors and protocols used across all those boards.
+
+- **What it is:** The fundamental building blocks of SystemVerilog—**modules** for hierarchy and **packages** for shared definitions. A module's **ports** say who may drive what across its boundary, its **parameters** let one module definition take a different shape in each place it is used, and a package holds the types, constants and functions that the design and the testbench must agree on (IEEE 1800-2023 Clauses 23 and 26).
+- **Why it matters:** The first compile errors of every new testbench (TB) come from here: a port that cannot be written, a connection whose types do not match, a name imported from two packages, a package compiled too late, or two copies of "the same" enum that refuse to be assigned to each other. One package definition is also what makes the design under test (DUT) and the bench agree on one transaction type, which every later milestone builds on.
+- **The Analogy:** A module is a circuit board with labelled connectors; a package is the parts catalogue every board designer orders from. *Where it breaks:* ordering from a catalogue copies a part onto your board, but importing a package copies nothing: the name simply becomes visible, and every importer refers to the one declaration in the package (§26.3). Two catalogues that list the same part number only clash when you actually order that part, not when you open both catalogues (§26.3). And a catalogue holds no running hardware: a package cannot contain `always` or `initial` processes (§26.2).
+
+**You will be able to:**
+1. Write a parameterized module with ANSI ports, and instantiate it with named, `.name` and `.*` connections and parameter overrides.
+2. Explain why an `input logic` port is a net and an `output logic` port is a variable, and predict which drives of each are legal, including the multiple-driver consequence.
+3. Write a package of types, constants and functions. Choose an explicit import, a wildcard import or `pkg::item`, and predict which declaration a name binds to, or why it is an error.
+4. Debug compile-order errors and the "same `` `include `` in two packages makes two incompatible types" trap.
+5. Trace a hierarchical name such as `tb_top.dut.q` or `$root.tb_top.dut.q` to the object it names, and justify why reusable code connects through ports instead.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
-### The Hierarchy and the Library
-<div className="my-8 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur shadow-2xl">
-  <Image
-    src="/visuals/rtl-testbench-blueprint.svg"
-    alt="Diagram showing module and package relationships"
-    width={720}
-    height={360}
-    sizes="(min-width: 1024px) 720px, 100vw"
-    className="w-full"
-  />
-</div>
 
-### Interactive Example: Shared Definitions
-<InteractiveCode
-  language="systemverilog"
-  fileName="modules_and_packages.sv"
-  code={`
-package bus_pkg;
-  // LRM Clause 26: Packages
-  typedef enum logic [1:0] {IDLE, READ, WRITE} bus_cmd_e;
-  
-  typedef struct packed {
-    bus_cmd_e cmd;
-    logic [31:0] addr;
-    logic [31:0] data;
-  } bus_txn_s;
-  
-  function automatic logic [31:0] get_default_addr();
-    return 32'h1000_0000;
-  endfunction
-endpackage
+The core path runs in five steps: the picture of one small bench, then ports, parameters, connections and hierarchy, then packages and how names are found in them, and finally `` `include `` and compile order. Debugging and real-testbench practice come next. The expert layer is in Push Further.
 
-module dut (
-  input logic clk,
-  input bus_pkg::bus_txn_s txn, // Direct package reference
-  output logic ready
-);
-  // LRM Clause 23: Modules
-  import bus_pkg::*; // Wildcard import for convenience
-  
-  always_ff @(posedge clk) begin
-    if (txn.cmd == WRITE) begin
-      // ... handle write ...
-    end
-  end
-endmodule
+A few words first. A **module definition** is the code between `module` and `endmodule`. An **instance** is one copy of that definition placed inside another module, with its own name and its own signals; the same definition can be instantiated many times. **Compiling** reads the source files and checks the syntax and the names; **elaboration** then builds the instance tree from the top module down, applies parameter values and makes the port connections, before simulation time 0 (§3.12). Most errors on this page appear at one of those two steps, never at run time.
 
-module tb_top;
-  import bus_pkg::*;
-  
-  logic clk = 0;
-  bus_txn_s txn; // Type available via import
-  logic ready;
-  
-  always #5 clk = ~clk;
-  
-  dut u_dut (
-    .clk(clk),
-    .txn(txn),
-    .ready(ready)
-  );
-  
-  initial begin
-    txn.addr = get_default_addr(); // Function from package
-    txn.cmd = READ;
-    // ...
-  end
-endmodule
-  `}
-  explanationSteps={[
-    { target: "1-14", title: "Packages Centralize Knowledge", explanation: "Instead of redefining `bus_cmd_e` in every file, we define it once in `bus_pkg`. This ensures the DUT and Testbench agree on the protocol." },
-    { target: "16-29", title: "Modules Encapsulate Behavior", explanation: "The `dut` module defines a hardware boundary. It uses types from `bus_pkg` to define its ports, ensuring type safety." },
-    { target: "31-51", title: "Top-Level Integration", explanation: "`tb_top` imports the package to drive the DUT. Note how `bus_txn_s` is used for the connection signal `txn`." }
+### The picture: one bench, two packages, one DUT
+
+Here is the design this lesson builds in Make It Work: an 8-bit counter, its bench and two packages. Read it before the code. The outer box is the top module `tb_top`; the boxes inside it are things that live in `tb_top`, including the instance `dut` of the module `counter`. The two packages sit outside every module, because a package is a scope of its own at the outermost level of the source text (§26.2).
+
+<ArchitectureDiagram
+  title="The counter bench: modules, instances, ports and package imports"
+  caption="Solid arrows are signals through ports: op, din, clk and rst_n enter dut through input ports, which are nets; q leaves through an output port, which is a variable. Plain lines are imports: tb_pkg imports cnt_pkg; the header of module counter imports cnt_pkg; tb_top imports both packages. Paths to the counter's output: tb_top.dut.q, or $root.tb_top.dut.q. Compile order: cnt_pkg, tb_pkg, counter, tb_top."
+  gapX={120}
+  nodes={[
+    { id: "tbp", label: "tb_pkg", sublabel: "cmd_t, predict()", kind: "generic", col: 0, row: 0 },
+    { id: "cnt", label: "cnt_pkg", sublabel: "op_e", kind: "generic", col: 1, row: 0 },
+    { id: "top", label: "tb_top", sublabel: "imports cnt_pkg and tb_pkg", kind: "generic", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
+    { id: "apply", label: "apply()", sublabel: "drive, then check q", kind: "driver", col: 0, row: 1 },
+    { id: "dut", label: "dut", sublabel: "counter #(.WIDTH(8))", kind: "dut", col: 1, row: 1 },
+    { id: "init", label: "initial", sublabel: "reset, rst_n, 5 x apply()", kind: "test", col: 0, row: 2 },
+    { id: "clk", label: "always #5", sublabel: "clk", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "cnt", to: "tbp", style: "structural", label: "import" },
+    { from: "cnt", to: "dut", style: "structural", label: "header import" },
+    { from: "tbp", to: "apply", style: "structural", label: "import into tb_top" },
+    { from: "cnt", to: "apply", style: "structural", label: "import into tb_top" },
+    { from: "apply", to: "dut", style: "data", label: "op, din", via: [[0.5, 0.8]] },
+    { from: "dut", to: "apply", style: "data", label: "q", via: [[0.5, 1.2]] },
+    { from: "init", to: "apply", style: "causal", label: "calls" },
+    { from: "init", to: "dut", style: "data", label: "rst_n" },
+    { from: "clk", to: "dut", style: "data", label: "clk" }
   ]}
 />
 
-## Key Concepts
+The import lines end on the box that uses the names: `apply()` uses `cmd_t` and `predict()` from `tb_pkg` and `op_e` from `cnt_pkg`, so two import lines end on it, and the header of `counter` uses `op_e`. The import itself is written once, at the top of `tb_top` or in the header of `counter`. The DUT never sees `tb_pkg`.
 
-### Modules (LRM Clause 23)
-The `module` is the basic unit of hierarchy in SystemVerilog. It can contain:
-- **Ports:** Inputs, outputs, and inouts.
-- **Parameters:** Constants to customize the module instance.
-- **Processes:** `initial`, `always`, `always_ff`, `always_comb`.
-- **Instances:** Sub-modules.
+**Predict before you read on.** Three questions, answered in the sections below:
+1. `tb_pkg` imports `cnt_pkg`. Does importing `tb_pkg` into `tb_top` also make `op_e` visible there?
+2. Inside `counter`, may an `always_ff` block assign to `din`?
+3. If you split the file into four files, which one must the compiler read first?
 
-### Packages (LRM Clause 26)
-A `package` is a namespace for shared declarations. It allows you to:
-- **Share Types:** `typedef`, `enum`, `struct`.
-- **Share Constants:** `parameter`, `localparam`.
-- **Share Logic:** `function`, `task`.
+### Modules and ports: who may drive what
 
-**Best Practice:** Always put user-defined types in a package. Never define a `struct` or `enum` inside a port list or module if it needs to be shared.
+A **module** is a named design element with a header and a body (§23.2). The header lists its **ports**, the signals that cross its boundary, each with a **direction** (`input`, `output`, `inout` or `ref`). This course writes headers in **ANSI style**, where each port's direction, kind and type are declared in the port list itself (§23.2.2.2). The older **non-ANSI style** lists only port names in the header and declares them in the body (§23.2.2.1); you will meet it in legacy RTL, and a module must use one style or the other, never both.
+
+```systemverilog
+// snippet: an ANSI header with a parameter port list
+module counter #(parameter int WIDTH = 4) (
+  input  logic             clk,
+  input  logic [WIDTH-1:0] din,
+  output logic [WIDTH-1:0] q
+);
+```
+
+Every port also has a **port kind**: it is either a **net** (a wire-like object that continuously takes the resolved value of all its drivers) or a **variable** (an object that holds the last value written to it). You met both in [F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/index). The keyword `logic` is a *data type*, not a kind, so `input logic` does not say "variable". When you omit the kind, §23.2.2.3 decides it:
+
+| ANSI declaration | Port kind | What it means (§23.2.2.3) |
+|---|---|---|
+| `input logic a` | net | same as `input wire logic a`: inputs default to a net of the default net type |
+| `input var logic a` | variable | `var` asks for a variable explicitly |
+| `output logic y` | variable | an output with an explicit data type defaults to a variable |
+| `output y`, `output [3:0] y` | net | an output with no data type, or only a range or `signed`, is `output wire logic ...` |
+| `inout wire [7:0] d` | net | an `inout` can never be a variable (§23.3.3.2) |
+| `ref logic [7:0] m` | variable | a `ref` port is always a variable, shared with the connected variable |
+
+The **default net type** in the first row is the net kind used when none is written: `wire`, unless a `` `default_nettype `` directive changes it (§22.8).
+
+The kind decides who may write the port, because nets and variables obey different rules (§6.5):
+
+- **A net cannot be assigned procedurally.** It is written only by continuous assignments, primitive outputs and ports, and its value is the resolution of all of them.
+- **A variable is written either by procedural statements (any number of them; the last write wins) or by exactly one continuous assignment or one port**, never a mix.
+- **An input port that is a variable cannot be assigned inside the module at all** (§23.3.3.2), and the outside connection is an implied continuous assignment.
+- **For an output port, the parent's signal decides.** A parent *variable* connected to an instance's output port takes no other driver: no procedural write and no `assign` in the parent. A parent *net* connected to an output port may take more drivers, and they resolve. This holds whether the port itself is a variable or a net (§6.5, §23.3.3.2, §23.3.3.3).
+
+**The two mistakes everyone makes:**
+
+1. *"`input logic d` is a variable, so I can write `d <= 1'b0;` inside the module."* It is a net, so a procedural write is a compile error (§6.5). `logic` names the value set (0, 1, x, z), not the kind.
+2. *"Something else in the parent can also drive the signal connected to my `output logic q`, and the simulator will resolve the drivers."* Only nets resolve, and the signal that collects the drivers is the parent's, not the port. If the parent connects `q` to a variable (`logic [7:0] q8;`), a parent `assign` to `q8` is a compile error, not an `x`. Only if the parent declares the signal as a net (`wire [7:0] q8;`) are extra drivers permitted, and then they resolve (§23.3.3.2). Inside the module, a variable written by an `always_ff` may not be written by any other process either (§9.2.2.4).
+
+**Check it in the model.** You used the simulator below in F2A. Switch to **Variable vs net**. First choose **wire y (net)** and the pattern **two always**: that is the situation of mistake 1, a net written by procedural code. Predict whether it compiles before you reveal. Then choose **logic y (variable)** and **two assign**: that is mistake 2. The parent's variable connected to `q` already has one continuous driver, the port connection itself, and an `assign` in the parent would be a second. Predict again.
+
+<NetResolutionSimulator />
+
+What the model showed, mapped to ports:
+- **`wire y` with procedural writers does not compile.** Replace `y` with an `input logic` port: inside the module the port is a net, so `always_ff ... d <= ...` is rejected for the same reason (§6.5).
+- **`logic y` with two `assign` statements does not compile.** A variable takes one continuous driver. Connecting a variable to an instance's output port implies a continuous assignment (§23.3.3.2), so one more `assign` in the parent is the second driver the rule forbids (§6.5). The pattern **assign + always** fails for the same reason: a parent may not write that variable procedurally either.
+- **Two `assign` statements on `wire y` compile and resolve.** That is the one case where several drivers are legal: the signal that collects the drivers is a *net*, as on a tri-state bus. For ports, that means the parent's signal is a net; the output port itself may be a variable or a net (§23.3.3.2, §23.3.3.3).
+
+**Unconnected and default inputs.** An input that is a net and left unconnected floats at `'z`; an input that is a variable keeps its type's default initial value (§23.3.3.2, §23.3.3.3). In ANSI style an input may declare a default, `input logic en = 1'b1`, which is a constant evaluated in the declaring module and used only when the instance omits the port (§23.2.2.4).
+
+**Inheritance in the port list.** A later ANSI port that gives no direction, kind or type inherits all three from the previous port; one that gives only a type inherits the direction, and its kind is worked out again by the table above (§23.2.2.3, examples mh14 to mh21). So `input logic [7:0] a, b` declares two 8-bit input nets.
+
+**Debugging ports.** *Symptom:* the compiler rejects an assignment inside the module and names the port. *Cause:* the port is a net (an `input` with no kind) or an input variable. *Fix:* compute into an internal signal instead; inputs are read-only by design. *Symptom:* "multiple drivers" or "illegal assignment" on a signal in the parent. *Cause:* the parent's signal is a variable, it is connected to an output port, and the parent also assigns it. *Fix:* give the parent's assignment its own signal, or declare the parent's signal as a net (`wire`) if several drivers are really intended.
+
+### Parameters: one module, many shapes
+
+A **parameter** is a constant that is fixed at elaboration and can be given a different value for each instance (§6.20.2, §23.10). It is how one `counter` definition becomes a 4-bit counter in one place and an 8-bit counter in another.
+
+| Form | Example | Who can change it |
+|---|---|---|
+| value parameter in the parameter port list | `#(parameter int WIDTH = 4)` | each instance, by name or by order (§23.10.2) |
+| local parameter | `localparam int MAX = (1 << WIDTH) - 1;` | nobody directly; it follows the parameters it is computed from (§6.20.4) |
+| type parameter | `#(parameter type T = logic [7:0])` | each instance, with a type: `#(.T(cmd_t))` (§6.20.3) |
+| `parameter` in the body, when a parameter port list exists | `parameter int DEPTH = 8;` | nobody: it is treated as a local parameter (§23.10) |
+| `parameter` in a package | `parameter int W = 8;` | nobody: in a package `parameter` means `localparam` (§6.20.4) |
+
+**Overrides.** Override by name, `counter #(.WIDTH(8)) dut (...)`, or by position, `counter #(8) dut (...)`. One instance uses one style only: the two "shall not be mixed" (§23.10.2). Prefer names: positional overrides silently change meaning when someone reorders the parameter list. Give value parameters a type (`parameter int WIDTH`): an untyped parameter takes the type and range of whatever value overrides it (§23.10).
+
+**Traced example: one definition, two instances.**
+
+| Instance | `WIDTH` | `din` and `q` | `MAX` (largest count) | After `MAX`, `q + 1'b1` gives |
+|---|---|---|---|---|
+| `counter c4 (...)` | 4 (default) | `logic [3:0]` | 15 | 0 |
+| `counter #(.WIDTH(8)) dut (...)` | 8 (override) | `logic [7:0]` | 255 | 0 |
+
+**Pitfalls.** `defparam` can also change a parameter through a hierarchical name (a dotted path such as `tb_top.dut.WIDTH`, explained below), and it beats an instance override when the two conflict (§23.10), but the standard warns it "might be removed from future versions" (§6.20); do not use it in new code. A type parameter cannot be changed by `defparam` at all (§6.20.3).
+
+### Instances and connections: ordered, named, `.name` and `.*`
+
+An **instantiation** creates one instance and connects its ports: `module_name #(overrides) instance_name (connections);` (§23.3.2). Four connection styles exist:
+
+| Style | Example | Rule |
+|---|---|---|
+| ordered list | `counter #(8) dut (clk, rst_n, op, din, q);` | matches by position, so it breaks silently when ports are reordered (§23.3.2.1) |
+| named | `.din(din_bus)` | port name and expression; the expression is sized and converted like an assignment (§23.3.2.2, §23.3.3.8) |
+| implicit named | `.din` | means `.din(din)`, but the names must exist and the types must be **equivalent**; no implicit net is created (§23.3.2.3) |
+| wildcard | `.*` | an implicit `.name` for every port that has a same-named signal of equivalent type; mix named connections to override (§23.3.2.4) |
+
+**Equivalent** types have the same structure: for vectors, the same total number of bits, both 2-state or both 4-state, and the same signedness (§6.22.2). So with `.din`, a 4-bit `din` in the parent and an 8-bit port is a compile error, where `.din(din)` would compile and zero-extend.
+
+**`.name` versus `.*` when a name is missing.** `.name` is an error if no signal of that name exists, even when the port has a default. `.*` uses the port's default value instead, and an error follows only if there is no default (§23.3.2.3, §23.3.2.4). To leave a port unconnected on purpose, write `.name()`.
+
+**Traced example: what `counter #(.WIDTH(8)) dut (.*);` connects in `tb_top`.**
+
+| Port of `counter` | Signal in `tb_top` | Connected? |
+|---|---|---|
+| `input logic clk` | `logic clk` | yes, same name, equivalent type |
+| `input logic rst_n` | `logic rst_n` | yes |
+| `input op_e op` | `op_e op` (the same `cnt_pkg::op_e`) | yes: a typedef from a package matches itself in every importer (§6.22.1) |
+| `input logic [7:0] din` | `logic [7:0] din` | yes |
+| `output logic [7:0] q` | `logic [7:0] q` | yes; `tb_top` must not assign `q` itself (§23.3.3.2) |
+
+**Pitfall.** `.*` connects *any* same-named signal. If the parent happens to have a `valid` that means something else, `.*` wires it in without a message. Use `.*` where the bench declares signals for exactly this DUT, and named connections at integration levels.
+
+### Hierarchy: instance names, hierarchical paths and `$root`
+
+Elaboration builds a tree. A **top-level module** is one that no other module instantiates; it becomes an instance with its own name (§23.3.1). Every instance, task, function, named block and generate block inside it opens a new branch, and any object can be named by its **hierarchical path**, the instance names joined by dots (§23.6). In the picture above:
+
+| Path | Names |
+|---|---|
+| `tb_top.dut` | the instance of `counter` |
+| `tb_top.dut.q` | the counter's output variable |
+| `tb_top.dut.WIDTH` | its parameter, 8 in this instance |
+| `$root.tb_top.dut.q` | the same object, starting from the root of the tree |
+
+**`$root`** is the root of the instance tree. A path such as `A.B.C` is first looked up from the current scope, and a local match wins; `$root.A.B.C` forces the search to start at the top (§23.3.1).
+
+**Scope rules.** Modules, interfaces, programs, checkers, packages, classes, tasks, functions, `begin`-`end` and `fork`-`join` blocks and generate blocks each open a **scope**, a region in which a name can be declared once (§23.9). A name used without a path is looked up in the current scope, then in the enclosing ones; for a variable the search stops at the module boundary (§23.9). Objects inside an `automatic` task or function have no hierarchical name (§23.6).
+
+**Why reusable code avoids hierarchical references.** A checker that reads `tb_top.dut.q` only works in a bench whose top is called `tb_top` and whose instance is called `dut`. Move it into a chip-level bench and it fails to elaborate. Ports (and, from [F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index), interfaces) carry the same signal without baking the path into the code; `bind` ([I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index)) attaches a checker to a design without editing it. Hierarchical paths stay useful in a bench's top module and in debug code, where the path is known.
+
+### Packages: one definition shared by design and bench
+
+A **package** is a named scope, declared outside every module, that holds declarations for other scopes to use (§26.2). It is the single place where a type such as `op_e` is defined, so the DUT's ports and the bench's variables have *the same* type.
+
+```systemverilog
+// snippet: a package of types, constants and functions
+package cnt_pkg;
+  parameter int W = 8;                     // in a package this is a localparam (§6.20.4)
+  typedef enum logic [1:0] {OP_HOLD, OP_INC, OP_LOAD} op_e;
+
+  function automatic logic [W-1:0] next_q(input logic [W-1:0] q, input op_e op);
+    return (op == OP_INC) ? q + 1'b1 : q;
+  endfunction
+endpackage
+```
+
+**What a package may hold** (§26.2): parameters, types, nets, variables, tasks, functions, classes (from [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index), every UVM component lives in one), plus sequences, properties, checkers and covergroups.
+
+**What it may not:**
+- **No processes:** no `initial`, `always` or continuous `assign`. A package describes; it does not run (§26.2).
+- **No references to the compilation-unit scope** (`$unit`, below), and no hierarchical references to anything outside the package and what it imports (§26.2).
+
+**Two practitioner traps:**
+- **A package variable is one shared global.** `int count;` in a package is a single object that every importer reads and writes, and it is initialized before any `initial` or `always` procedure starts (§26.2). That is occasionally useful and often a hidden coupling between tests.
+- **Package subroutines are static by default** (§6.21): a static function's arguments and locals are shared by every caller, so two processes calling it at once can overwrite each other. Declare package tasks and functions `automatic`, or the whole package `package automatic cnt_pkg;`.
+
+**Compile before use.** "The compilation of a package shall precede the compilation of scopes in which the package is imported" (§26.3). On a compile command line, list packages first, in dependency order: `cnt_pkg` before `tb_pkg`, because `tb_pkg` imports it.
+
+### Using a package: `pkg::item`, explicit import, wildcard import
+
+There are three ways to reach a package item, plus one placement:
+
+| Form | Example | Effect |
+|---|---|---|
+| scope resolution | `cnt_pkg::op_e op;` | names the item directly, in any scope, with no import (§26.3, Table 26-1) |
+| explicit import | `import cnt_pkg::op_e;` | makes exactly that name visible in this scope (§26.3) |
+| wildcard import | `import cnt_pkg::*;` | makes every name of the package a *candidate*, imported only if a reference needs it (§26.3) |
+| header import | `module counter import cnt_pkg::*; #(...) (...);` | an import in the module header, visible in the parameter and port declarations too (§26.4) |
+
+Importing copies nothing: "Importing does not copy the declaration of that identifier into the importing scope" (§26.3). Every importer refers to the one `op_e` in `cnt_pkg`.
+
+**How a name is found.** When the compiler meets a plain name such as `x`, it searches in a fixed order (§26.3):
+
+<ArchitectureDiagram
+  title="How a plain name is resolved in a scope that imports packages"
+  caption="Read top to bottom. A step that finds the name binds the reference there and the search stops; in an outer scope (step 3) or the compilation-unit scope (step 4) the match binds just as in steps 1 and 2. Step 2 is where wildcard imports act: a candidate becomes a real import only now, and two wildcard packages offering the same name is an error only at this step."
+  gapX={120}
+  nodes={[
+    { id: "ref", label: "reference to x", sublabel: "at some line in scope S", kind: "generic", col: 0, row: 0 },
+    { id: "s1", label: "1. locally visible", sublabel: "declared or explicitly imported earlier", kind: "generic", col: 0, row: 1 },
+    { id: "s2", label: "2. wildcard candidates", sublabel: "imported earlier; 2+ packages = error", kind: "generic", col: 0, row: 2 },
+    { id: "s3", label: "3. next outer scope", sublabel: "repeat steps 1 and 2 there", kind: "generic", col: 0, row: 3 },
+    { id: "s4", label: "4. compilation unit", sublabel: "its scope is searched last", kind: "generic", col: 0, row: 4 },
+    { id: "bind", label: "bind x here", sublabel: "wildcard match now imported", kind: "generic", col: 1, row: 2 },
+    { id: "err", label: "not found", sublabel: "error; calls search upward", kind: "generic", col: 1, row: 4 }
+  ]}
+  edges={[
+    { from: "ref", to: "s1", style: "causal" },
+    { from: "s1", to: "s2", style: "causal", label: "no match" },
+    { from: "s2", to: "s3", style: "causal", label: "no match" },
+    { from: "s3", to: "s4", style: "causal", label: "no match" },
+    { from: "s4", to: "err", style: "causal", label: "no match" },
+    { from: "s1", to: "bind", style: "data", label: "match" },
+    { from: "s2", to: "bind", style: "data", label: "match" }
+  ]}
+/>
+
+One detail the picture compresses: for a task or function *call*, step 1 looks at declarations up to the end of the scope rather than up to the line, and when nothing matches the search continues upward through the instance hierarchy (§23.8.1) instead of failing.
+
+**Traced example.** Two packages define the same names; `p::x` is 1 and `q::x` is 2:
+
+```systemverilog
+// snippet: the packages used in the traced table and the drill
+package p; int x = 1; typedef int        data_t; endpackage
+package q; int x = 2; typedef logic [7:0] data_t; endpackage
+```
+
+| Code in module `m` (in this order) | What happens | Rule |
+|---|---|---|
+| `import p::*; import q::*;` | legal: both packages offer `x` and `data_t`, but nothing is imported yet | candidates only (§26.3) |
+| `data_t d;` | **error**: the reference matches candidates from two wildcard imports | §26.3 |
+| replace with `import q::data_t;` before `data_t d;` | legal: the explicit import is locally visible and wins over every wildcard candidate | step 1 (§26.3, Table 26-1) |
+| `initial $display(x);` in a module with only `import p::*;` | prints 1; `p::x` is now imported into `m` | step 2 |
+| `int x = 5;` *after* that `$display(x)` | **error**: `x` already means `p::x` in this scope | "any later locally visible declaration of the same name in that scope shall be illegal" (§26.3) |
+| `int x = 5;` *before* any reference | legal, and a later `$display(x)` prints 5: the local declaration wins | step 1 |
+
+**The misconception to drop.** "Importing two packages that define the same name is always an error." It is an error only when a reference resolves to that name through two wildcard imports. Explicit imports and local declarations win over wildcard candidates. The one import that is always an error is an *explicit* import of a name that is also declared in the same scope (before or after the import), or already explicitly imported from another package (§26.3).
+
+**Enum literals are separate names.** `import pkg::state_e;` imports the type name only, not its literals: to write `IDLE`, also import `pkg::IDLE` or write `pkg::IDLE` (§26.3, the `teeth_t` example). A wildcard import has no such gap, which is one reason benches use it for type packages.
+
+**Imports are not transitive.** `tb_pkg` imports `cnt_pkg`, but a module that imports `tb_pkg` does not see `op_e` through it (§26.6). That answers prediction 1: `tb_top` imports both packages. A package can re-export with `export cnt_pkg::*;`, covered in Push Further.
+
+**Where to put imports.** Inside the module, interface or package that needs them, or in the module header. Not at the top of a file outside every module: there the import lands in the compilation-unit scope and leaks into every later module of that compilation unit (§3.12.1). An `import` written directly inside a class is illegal (§26.3); a class sees the imports of the package or module around it.
+
+**The `std` package.** Every compilation unit implicitly wildcard-imports the built-in package `std`, which holds `semaphore`, `mailbox`, `process`, `randomize` and the weak-reference class (§26.7, Annex G). A user declaration with the same name hides it, and `std::` always reaches the built-in one, for example `std::process`.
+
+### `include` versus `import`, compilation units and compile order
+
+These two look alike and are not:
+
+- **`` `include "file.svh" ``** is a compiler directive. It pastes the entire text of the file at that point, as if you had typed it there (§22.4). The pasted declarations belong to whatever scope the directive sits in.
+- **`import pkg::...;`** is a language declaration. It makes names visible; it pastes and copies nothing (§26.3).
+
+Testbenches use both together. Each class lives in its own `.svh` file, and the files are `` `include ``d *inside exactly one* package, which everyone then imports. The UVM library itself is built this way: `uvm_pkg` is a package whose body is mainly a list of `` `include `` lines (uvm-core 2020.3.1, `src/uvm_pkg.sv`).
+
+**The two-types trap.** Include the same typedef into two packages and you get two declarations, and therefore two types: a typedef matches only within the scope where it is declared (§6.22.1).
+
+<ArchitectureDiagram
+  title="One file included into two packages gives two different enum types"
+  caption="The include directive copies the text of mode_defs.svh into each package, so pkg_a::mode_e and pkg_b::mode_e are two declarations and two types. An enum variable of one cannot take a literal of the other without a cast."
+  gapX={110}
+  nodes={[
+    { id: "file", label: "mode_defs.svh", sublabel: "typedef enum logic {SLOW, FAST} mode_e;", kind: "generic", col: 0, row: 0, colSpan: 2 },
+    { id: "pa", label: "pkg_a", kind: "generic", col: 0, row: 1, container: true },
+    { id: "ea", label: "pkg_a::mode_e", sublabel: "type 1", kind: "generic", col: 0, row: 1 },
+    { id: "pb", label: "pkg_b", kind: "generic", col: 1, row: 1, container: true },
+    { id: "eb", label: "pkg_b::mode_e", sublabel: "type 2", kind: "generic", col: 1, row: 1 },
+    { id: "use", label: "pkg_a::mode_e m = pkg_b::FAST;", sublabel: "compile error: different enum types", kind: "generic", col: 0, row: 2, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "file", to: "ea", style: "structural", label: "include = text copy" },
+    { from: "file", to: "eb", style: "structural", label: "include = text copy" },
+    { from: "ea", to: "use", style: "data", label: "type of m" },
+    { from: "eb", to: "use", style: "data", label: "type of FAST" }
+  ]}
+/>
+
+What fails depends on the type: enum variables reject a literal of another enum type (§6.19.3); class handles of two "identical" classes are type incompatible with each other (§6.22.5), so a `uvm_config_db` lookup or a `$cast` between them fails; packed structs, by contrast, are *equivalent* to any packed type of the same total width, state and signedness (§6.22.2), so they assign silently. **The fix** is one owner: put `mode_e` in one package (`mode_pkg`), and let `pkg_a` and `pkg_b` import it.
+
+**Compilation units.** A **compilation unit** is a set of source files compiled together; its **compilation-unit scope** holds every declaration outside all modules, packages and other design elements, and `$unit` names that scope (§3.12.1). Which files form one unit is tool-specific, but every tool must offer both modes:
+
+| Same four files, compiled as | A typedef written outside every module in `a.sv` | `` `default_nettype `` or `` `define `` set in `a.sv` | A package used before its file is compiled |
+|---|---|---|---|
+| one unit (all files on one command line) | visible in every later file of the unit | applies to all later files on the command line | error |
+| one unit per file | visible only in `a.sv` | applies only in `a.sv` | error |
+
+The table explains why "it compiles on my machine" fails elsewhere: code that relies on the compilation-unit scope, or on a directive leaking from an earlier file, changes meaning when the file order or the compilation mode changes (§3.12.1). Packages do not have this problem: they are visible in every compilation unit (§3.12.1), provided they are compiled first.
+
+**`` `default_nettype none `` as a practice.** Without it, a misspelt signal name in a port connection silently creates a new one-bit **implicit net** (§6.10). With `` `default_nettype none `` every net must be declared, and a typo becomes an error (§22.8). The directive belongs to [I-SV-6](/curriculum/T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/index), but it has one port consequence you should know now: an `input logic` port is "a net of default net type" (§23.2.2.3), and under `none` there is no default net type, so tools differ on what they do with it (tool-dependent). Write `input wire logic` or `input var logic` in files compiled under `none`, and restore the default at the end of the file with `` `default_nettype wire ``.
+
+### In a real testbench
+
+Every bench from milestone M1 onward has the same three parts: **a package, an interface and a top module**. This lesson builds the first and the third; [F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index) adds the interface.
+
+- **Type packages** hold what the DUT and bench share (opcodes, transaction structs, constants). The DUT imports them in its header.
+- **Bench packages** hold bench-only types, reference models and, from [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index) on, the classes, each in its own `.svh` file `` `include ``d into the package.
+- **The top module** imports the packages, declares the signals, instantiates the DUT with `.*` or named connections, and starts the test.
+- In UVM benches each agent has its own package (`apb_pkg`, `axi_pkg`), and an environment package imports them. [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) shows that layout.
+
+**When not to use these tools.** Do not use the compilation-unit scope for shared declarations, do not `` `include `` a type file into more than one package, and do not reach into the design with hierarchical paths from reusable components.
+
+### Recap
+
+- An `input` with no kind is a **net**: read it, never assign it procedurally. An `output logic` is a **variable**. A parent variable connected to an output port takes no other driver; a parent net may take more, and they resolve.
+- Parameters shape each instance: override by name, never mix name and position; body parameters become local when a parameter port list exists.
+- `.name` and `.*` need same-named signals of **equivalent** types; `.*` silently connects every name that matches.
+- Hierarchical paths (`tb_top.dut.q`, `$root...`) are fine in a top module and debug code, not in reusable components.
+- A package is one shared definition. `pkg::item` needs no import; explicit imports beat wildcard candidates; a wildcard clash is an error only when the name is used; imports are not transitive.
+- `` `include `` copies text, `import` shares a declaration. Include a type file into one package only, and compile packages first.
 
 ## Make It Work
-1.  **Identify Shared Types:** Look for `struct`s, `enum`s, or `const`s that are used in multiple modules or the testbench.
-2.  **Create a Package:** Move these definitions into a `package my_pkg; ... endpackage` block.
-3.  **Import:** Use `import my_pkg::*;` in your modules or interfaces to access the definitions.
-4.  **Compile Order:** Ensure the package file is compiled *before* any file that imports it.
+
+### Worked example: a counter bench with a shared package
+
+This is the bench from the picture, in one file you can run as it is. It continues the [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) bench pattern (reset, drive, predict, compare with `!==`, one verdict line) and adds what this lesson teaches: two packages, a header import, a parameter override and a `.*` instantiation. The `// compile` tag marks a complete compile unit.
+
+```systemverilog
+// compile
+// counter_tb.sv: two packages, a parameterized DUT and its self-checking bench.
+// Order in the file: cnt_pkg, tb_pkg, counter, tb_top. A package must be
+// compiled before any scope that imports it (IEEE 1800-2023 26.3).
+
+package cnt_pkg;                         // shared by the design and the bench
+  timeunit 1ns; timeprecision 1ps;       // every design element declares a unit
+  // logic base type: a 4-state enum is a legal type for an input port, a net
+  typedef enum logic [1:0] {OP_HOLD, OP_INC, OP_LOAD} op_e;
+endpackage
+
+package tb_pkg;                          // bench only: the DUT never imports it
+  timeunit 1ns; timeprecision 1ps;
+  import cnt_pkg::*;
+
+  typedef struct packed {
+    op_e        op;
+    logic [7:0] din;
+  } cmd_t;
+
+  // Reference model: the value q must hold one clock after cmd c is applied.
+  function automatic logic [7:0] predict(input logic [7:0] q, input cmd_t c);
+    case (c.op)
+      OP_INC:  return q + 8'd1;          // 8-bit result: 255 + 1 wraps to 0
+      OP_LOAD: return c.din;
+      default: return q;                 // OP_HOLD
+    endcase
+  endfunction
+endpackage
+
+module counter
+  import cnt_pkg::*;                     // header import: op_e usable in ports
+  #(parameter int WIDTH = 4)
+  (
+    input  logic             clk,        // input, no kind given: a net
+    input  logic             rst_n,
+    input  op_e              op,         // also a net, of type op_e
+    input  logic [WIDTH-1:0] din,
+    output logic [WIDTH-1:0] q           // output with a data type: a variable
+  );
+  timeunit 1ns; timeprecision 1ps;
+
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n)             q <= '0;
+    else if (op == OP_INC)  q <= q + 1'b1;
+    else if (op == OP_LOAD) q <= din;
+endmodule
+
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+  import cnt_pkg::*;                     // tb_pkg does not re-export cnt_pkg
+  import tb_pkg::*;
+
+  logic       clk = 1'b0;
+  logic       rst_n;
+  op_e        op;
+  logic [7:0] din;
+  logic [7:0] q;                         // written only by dut.q (23.3.3.2)
+  logic [7:0] model_q;                   // the bench's own expected count
+  int         n_pass = 0;
+  int         n_fail = 0;
+
+  always #5 clk = ~clk;                  // rising edges at 5, 15, 25 ns ...
+
+  // Named override; .* connects clk, rst_n, op, din and q, because each has a
+  // same-named signal of an equivalent type in this scope (23.3.2.4).
+  counter #(.WIDTH(8)) dut (.*);
+
+  // Drive at a falling edge, half a cycle before the DUT samples (the F2E
+  // opposite-edge style), then check q at the next falling edge.
+  task automatic apply(input op_e o, input logic [7:0] d);
+    cmd_t c;
+    c       = '{op: o, din: d};
+    model_q = predict(model_q, c);
+    op      = o;
+    din     = d;
+    @(negedge clk);                      // the rising edge in between updated q
+    if (q !== model_q) begin
+      n_fail++;
+      $error("%s din=%0d: q=%0d, expected %0d", o.name(), d, q, model_q);
+    end else begin
+      n_pass++;
+    end
+  endtask
+
+  initial begin
+    rst_n   = 1'b0;
+    op      = OP_HOLD;
+    din     = '0;
+    model_q = '0;                        // the counter's reset value
+    repeat (2) @(negedge clk);           // falling edges at 10 and 20 ns
+    rst_n = 1'b1;
+    apply(OP_LOAD, 8'd254);
+    apply(OP_INC,  8'd0);
+    apply(OP_INC,  8'd0);                // 255 + 1 wraps to 0 in 8 bits
+    apply(OP_HOLD, 8'd7);                // din is ignored on HOLD
+    apply(OP_INC,  8'd0);
+    $display("PASS=%0d FAIL=%0d", n_pass, n_fail);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative: traced by hand against IEEE 1800-2023, not captured from a simulator; your tool adds its own banner and `$finish` message):
+
+```text
+PASS=5 FAIL=0
+```
+
+The trace behind it. Each `apply()` drives at a falling edge, the rising edge 5 ns later updates `q`, and the next falling edge checks it.
+
+| Time (ns) | Event | `q` after the event | `model_q` | Check |
+|---|---|---|---|---|
+| 0–20 | `rst_n` low; reset clears `q` (asynchronously, or at the rising edge at 5 ns) | 0 | 0 | |
+| 20 | `rst_n` high; `apply(OP_LOAD, 254)` drives | 0 | 254 | |
+| 25 | rising edge: load | 254 | 254 | |
+| 30 | check; `apply(OP_INC, 0)` drives | 254 | 255 | PASS 1 |
+| 35, 40 | increment; check | 255 | 255 then 0 | PASS 2 |
+| 45, 50 | increment wraps; check; `OP_HOLD` drives | 0 | 0 | PASS 3 |
+| 55, 60 | hold; check; `OP_INC` drives | 0 | 1 at 60 | PASS 4 |
+| 65, 70 | increment; check; `$display`, `$finish` | 1 | 1 | PASS 5 |
+
+What to notice:
+- `tb_top` imports **both** packages. Delete `import cnt_pkg::*;` and `op_e`, `OP_HOLD` and the other literals become undeclared, because imports are not transitive (§26.6).
+- The DUT's `op` port and the bench's `op` variable have the *same* type, `cnt_pkg::op_e`, so `.*` connects them (§6.22.1). Give the bench its own copy of the enum declaration and `.*` refuses the connection: two declarations are two types.
+- `tb_top` never assigns `q`. Its `q` is a variable connected to an output port, so any assignment in `tb_top` would be a compile error (§23.3.3.2). Had `tb_top` declared `wire [7:0] q`, extra drivers would be legal and would resolve, which is exactly what a self-checking bench does not want.
+- The model keeps its own state (`model_q`); it never copies the DUT's `q`, so a wrong DUT cannot make its own expectation.
+
+**Run it.** Save the file as `counter_tb.sv` and compile it with any IEEE 1800 simulator; `tb_top` is the top level, because nothing instantiates it. With separate files, list them packages first: `cnt_pkg.sv tb_pkg.sv counter.sv tb_top.sv`. The commands are the ones from [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index), for example `xrun counter_tb.sv` or `vlog counter_tb.sv` then `vsim -c tb_top -do "run -all; quit"` (tool-dependent; check your simulator's documentation). No open-source simulator was verified for this page.
+
+**Break it on purpose** (each step undone before the next):
+1. In `counter`, change `q + 1'b1` to `q + 2'd2`. Predict the verdict, then run. *Expected:* four `$error` lines and `PASS=1 FAIL=4`: only the load passes, because every increment is now wrong.
+2. In `tb_top`, change `logic [7:0] din;` to `logic [3:0] din;`. *Expected:* an error on the `.*` connection of `din`, reported at compile or elaboration time depending on the tool: the types are not equivalent.
+3. In `counter`, add `initial din = '0;`. *Expected:* a compile error, because `din` is an input net and a net cannot be assigned procedurally.
+4. Split the file into the four files above and compile `tb_top.sv` first. *Expected:* an "unknown package" class of error, because `cnt_pkg` is not compiled yet. Some tools reorder files for you (tool-dependent); do not rely on it.
+
+### How to structure a new bench
+
+1. **Find what both sides share** (opcodes, transaction fields, widths) and put it in one *type package*. Give enums a 4-state base (`logic [1:0]`) if they cross input ports.
+2. **Import the type package in the DUT's header** (`module dut import my_pkg::*; #(...) (...)`), so the ports can use its types.
+3. **Put bench-only types and models in a *bench package*** that imports the type package. Make every package function `automatic`.
+4. **In the top module, import every package you use by name.** Nothing arrives transitively.
+5. **Declare one signal per DUT port, with the port's name and type**, then instantiate with `.*` (or named connections where names differ). Override parameters by name.
+6. **List the files packages first, in dependency order**, then the design, then the bench.
+7. **Run, then prove the bench can fail** with a deliberate DUT mutation, as in F2E.
+
+### Debugging compile and elaboration errors
+
+Error wording varies by tool, so this table names the error *class*.
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| A type or enum literal from a package is undeclared | the package is not imported in *this* scope (imports are not transitive), or an explicit import named the type but not its literals | import it here, or write `pkg::name` |
+| "Unknown package" or the same name undeclared only when files are compiled in some orders | the package is compiled after a file that imports it | list packages first, in dependency order (§26.3) |
+| A name "imported from two packages" or "ambiguous" | the reference matches wildcard candidates from two packages | add an explicit import of the one you mean, or use `pkg::name` (§26.3) |
+| "Already declared" on a local declaration | an earlier reference in the same scope already imported that name from a wildcard package | move the declaration above the first use, or rename it (§26.3) |
+| Illegal assignment to an input, or "procedural assignment to a net" | the port is an `input` (a net), or an input variable | compute into an internal signal; inputs are read-only |
+| Multiple drivers on a variable | the parent's variable connected to an output port is also assigned, or two continuous drivers write one variable | one writer per variable; declare the signal as a net only for real multi-driver buses (§6.5, §23.3.3.2) |
+| A `.*` or `.name` connection is rejected | same-named signal with a different width, signedness or 4-state/2-state kind, or a missing name | declare the signal with the port's exact type, or connect that port by name |
+| An enum or class assignment fails between two types with the same name | the same `.svh` file is `` `include ``d into two packages: two types | one package owns the type; others import it (§6.22.1) |
+| A hierarchical reference such as `tb_top.dut.q` cannot be resolved after a block is reused or an instance is renamed | the path is baked into the code, and the new bench has different top or instance names | pass the signal through a port or interface, or `bind` the block where the path is known (§23.6) |
+
+**Checklist before moving on:**
+- [ ] Every type shared by the DUT and the bench is declared once, in a package.
+- [ ] You can say the kind (net or variable) of every port you wrote.
+- [ ] Parameters are overridden by name, and no instance mixes name and position.
+- [ ] No declaration or import sits outside a module or package (nothing relies on `$unit`).
+- [ ] Packages come first in the compile order, in dependency order.
+- [ ] The bench prints a verdict line and fails on a deliberate DUT mutation.
 
 ## Push Further
-- Explore **compilation unit scope** (`$unit`) and why it is highly discouraged compared to explicit packages.
-- Try creating a package that contains purely virtual classes (an interface package) for UVM use.
+
+### Expert: name-resolution corner cases
+
+- **Calls search further.** For a task or function call, the locally visible names up to the *end* of the scope are searched, so a function declared below the call is found; if the search fails in every lexical scope, it continues by upward hierarchical resolution (§26.3, §23.8.1). For every other reference, only names before the point count, and failure is an error.
+- **Order matters in outer scopes too.** Only wildcard imports that lexically *precede* the reference are considered, in each scope searched. In the standard's Example 4, `f()` in a nested block binds to `p::f`, because `import p2::*` comes after the block (§26.3).
+- **Imports stay inside the importing scope.** An imported name is not visible by a hierarchical reference into that scope, nor through an interface port that refers to it (§26.3). If an interface imports a package, the modules connected to it must import the package themselves.
+- **`.*` is not a reference.** A `.*` connection "does not create a sufficient reference for a wildcard import" (§23.3.2.4): a port named like a package item is not connected to it. A `.name` connection to a name that is only a wildcard candidate *is* a reference, and imports it.
+- **Table 26-1 in one line:** a local declaration (made before any binding reference) beats every wildcard candidate; an explicit import of a name declared locally, or explicitly imported from another package, is an error; an explicit import after a reference that already bound the name through a wildcard import is an error (§26.3, §26.5 (Table 26-1)).
+
+### Expert: type identity across scopes and packages
+
+- **Per-instance types.** "Each instance with a user-defined type declared inside the instance creates a unique type" (§6.22). A struct typedef declared *inside* a module therefore differs in every instance; for matching across instances, classes, enums and unpacked structs must come from a package or an outer scope, and for strict matching even packed structs must (§6.22).
+- **Package typedefs match everywhere.** "A typedef for an enum, struct, union, or class type declared in a package always matches itself, regardless of the scope into which the type is imported" (§6.22.1 h).
+- **Anonymous types** match only objects declared in the same declaration: `struct packed {...} a, b;` gives `a` and `b` one type, and a second identical declaration gives another (§6.22.1, §6.22.2).
+- **Equivalent is weaker than matching.** Packed structs, packed unions, packed arrays and integral types of the same total width, state and signedness are *equivalent* (§6.22.2 c), so a two-types trap with packed structs compiles and silently connects fields in whatever order each copy declares them. Enums are strongly typed (§6.19.3), and class handles of different class types are incompatible (§6.22.5), so those fail loudly.
+- **UVM consequence.** If `my_cfg.svh` is included into two agent packages, `uvm_config_db#(pkg_a::my_cfg)::set` and `uvm_config_db#(pkg_b::my_cfg)::get` use two different specializations, and the `get` returns 0 although the code "looks identical". The fix is the one-owner rule. ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) teaches the configuration database.)
+
+### Expert: compilation units, `$unit` and include guards
+
+- **The compilation-unit scope is local to its unit.** Its items "cannot be accessed by name from outside the compilation unit", and which files form a unit is tool-specific; tools must support both all-files-one-unit and one-unit-per-file (§3.12.1).
+- **Directives do not cross units.** "Compiler directives from one separately compiled unit shall not affect other compilation units" (§3.12.1). A `` `define `` or `` `default_nettype `` that worked in single-unit mode can vanish in per-file mode.
+- **Include guards change the symptom of the two-types trap.** With an `` `ifndef MODE_DEFS_SVH `` guard and both packages in one compilation unit, the second `` `include `` is skipped, so `pkg_b` has *no* `mode_e` and fails with an undeclared type. In per-file mode each package gets its own copy and you get two types. The cure in both modes is the same: one package owns the type. (`uvm_pkg.sv` uses exactly this guard, `` `ifndef UVM_PKG_SV ``, around the whole package; uvm-core 2020.3.1.)
+- **Packages are walled off from `$unit`.** A package "shall not refer to items defined in the compilation-unit scope" (§26.2), and its compile-before-use rule (§26.3) means two packages that import each other cannot both be compiled first; a logical consequence of the rule, not a sentence in the standard. Break such a cycle by moving the shared items into a third package.
+
+### Expert: `export`, umbrella packages and the `std` package
+
+- **Imports into a package are private by default.** "Declarations imported into a package are not visible by way of subsequent imports of that package" (§26.6).
+- **`export pkg::*;`** re-exports every name *actually imported* from `pkg` into the exporting package. A name that was only a candidate (never referenced) is not exported (§26.6, example `p3`).
+- **`export pkg::name;`** counts as a reference: it imports the name, so a later local declaration of that name in the package is an error (§26.6, example `p6`).
+- **`export *::*;`** exports every declaration *actually imported* into the package, from any package (§26.6, example `p8`). Wildcard candidates the package never references are not imported, so they are not exported either (example `p3`). An *umbrella package* that only says `import apb_pkg::*; import axi_pkg::*; export *::*;` therefore exports nothing it does not reference itself. To build one that lets a test write one import instead of five, import the names explicitly in the umbrella (each explicit import is an actual import), or simply import the agent packages directly where they are used. Tools have differed on this corner (tool-dependent), so test an umbrella package on every simulator you use.
+- **Multiple paths do not conflict.** Importing the same declaration through two export paths is legal, because both are the original declaration (§26.6).
+- **`std` is always there.** It is wildcard-imported into every compilation-unit scope, user declarations hide its names, and `std::` reaches them unambiguously (§26.7, Annex G). A bench class named `process` hides `std::process` in its scope; write `std::process::self()` to get the built-in one.
+
+### Expert: parameter and port corner cases
+
+- **Local parameters in the header.** A parameter port list may contain `localparam` entries; every declaration after a `localparam` keyword, up to the next `parameter` keyword, is local (§6.20.4).
+- **Untyped and ranged parameters.** An untyped value parameter takes the type and range of its final override; a ranged untyped parameter is unsigned and the override is converted to its range (§23.10). Typed parameters avoid both surprises.
+- **Restricted type parameters.** `parameter type enum T = ...` (also `struct`, `union`, `class`, `interface class`) makes it an error to override `T` with a type of another kind (§6.20.3).
+- **`input var` for single-driver inputs.** `input var logic a` makes the input a variable, so nothing inside the module can drive it, not even a continuous assignment (§23.2.2.3, §23.3.3.2).
+- **Port coercion.** A net input that is driven inside the module "may be coerced to inout. If not coerced to inout, a warning shall be issued" (§23.3.3.1). Coercion never makes a *procedural* write to a net legal (§6.5).
+- **2-state input types (tool-dependent).** The default rule makes `input int n` "a net of default net type" of type `int`, but §6.7.1 allows only 4-state data types on built-in nets. Tools differ in how they handle this. Write `input var int n` to say what you mean portably.
+- **`default_nettype none` and inputs (tool-dependent).** As above, `input logic a` under `none` has no default net type to use; write `input wire logic a` or `input var logic a` (§22.8, §23.2.2.3).
+
+### Expert: package architecture at scale
+
+The standard says nothing about how many packages a project should have; these are methodology trade-offs (practice, not normative):
+
+- **Layering.** Shared types and constants, then one package per agent (classes `` `include ``d, one class per file), then an environment package, then a test package. Each layer imports only the layers below it, which also prevents import cycles.
+- **Recompile fan-out.** Everything that imports a package depends on it. A widely imported "everything" package forces most of the bench to recompile when one constant changes; separately compiled, layered packages keep incremental builds small (tool-dependent).
+- **Globals.** Package variables are shared global state across all tests and all instances; prefer configuration objects passed down the hierarchy (I-UVM-2C) for anything a test may change.
+- **Naming.** Prefix package items (`apb_item`, `APB_ADDR_W`) so that wildcard imports of several agent packages rarely collide, and use explicit imports or `pkg::` in shared code where they still might.
+
+### Expert: interview angles
+
+Answer each one before you reveal the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: two packages, one name"
+  question="Two packages both define data_t. A module wildcard-imports both and never mentions data_t. Does it compile? What changes if it later declares data_t d;?"
+  options={[
+    { text: "It fails at the second import, because the names collide", isCorrect: false, feedback: "A wildcard import only makes names candidates. Nothing is imported until a reference needs it (IEEE 1800-2023 26.3)." },
+    { text: "It compiles; data_t d; is then an error, because the reference matches candidates from two wildcard imports", isCorrect: true, feedback: "Right. The error is tied to the reference (26.3). An explicit import, import q::data_t;, or the qualified name q::data_t resolves it." },
+    { text: "It compiles, and data_t d; takes the type from the package imported last", isCorrect: false, feedback: "There is no first-wins or last-wins rule between wildcard imports. Two wildcard providers of a referenced name are an error (26.3)." },
+    { text: "It compiles, and the tool picks one type and prints a warning", isCorrect: false, feedback: "The standard makes it illegal; tools report an error, not a choice." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the config object that will not come back"
+  question="uvm_config_db get() returns 0 for a cfg object, although set() looks identical. Both agent packages include cfg.svh. Why?"
+  options={[
+    { text: "The set() ran after the get(), so it is a phase-ordering problem", isCorrect: false, feedback: "Possible in general, but the clue is the include: the two packages declare two different classes with the same name." },
+    { text: "The configuration database compares objects by value, and the two cfg objects differ", isCorrect: false, feedback: "The database looks up by type, scope and name; it does not compare values. The two type parameters differ here." },
+    { text: "include guards were missing, so the class was compiled twice and the second copy overwrote the first", isCorrect: false, feedback: "Nothing overwrites anything: each package gets its own declaration. With guards and one compilation unit the symptom would change to an undeclared type, not fix the design." },
+    { text: "Including cfg.svh into two packages creates two class types; set and get use two different configuration database specializations", isCorrect: true, feedback: "Right. A class declared twice is two types, and class handles of different types are incompatible (6.22.1, 6.22.5). One package must own the class; the others import it." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: what does .* connect?"
+  question="What does .* connect, and when is it dangerous?"
+  options={[
+    { text: "Every port that has a same-named signal of an equivalent type in the parent; dangerous because any same-named signal connects without a message, and a type mismatch is an error rather than a conversion", isCorrect: true, feedback: "Right (23.3.2.4). Missing names fall back to the port default, or fail without one. It suits a bench written for one DUT; integration levels use named connections." },
+    { text: "Every port, to the signal at the same position in the parent", isCorrect: false, feedback: "That is an ordered list connection (23.3.2.1). .* matches by name." },
+    { text: "Every port, creating implicit nets for names that do not exist in the parent", isCorrect: false, feedback: ".* and .name never create implicit nets (23.3.2.3, 23.3.2.4)." },
+    { text: "Only the ports not connected by name, and it converts widths like a named connection", isCorrect: false, feedback: "The first half is true when mixed with named connections, but .* never converts: the types must be equivalent." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: input logic versus input var logic"
+  question="What is the difference between input logic a and input var logic a?"
+  options={[
+    { text: "None: logic always declares a variable", isCorrect: false, feedback: "logic is a data type, not a kind. An input with no kind is a net of the default net type (23.2.2.3)." },
+    { text: "input var logic a can be written in an always_ff inside the module", isCorrect: false, feedback: "Assignments to variables declared as input ports are illegal (23.3.3.2)." },
+    { text: "input logic a is a net that can take several drivers through coercion; input var logic a is a variable that nothing inside the module may assign", isCorrect: true, feedback: "Right. The net form resolves drivers (an inside driver coerces it to inout or draws a warning, 23.3.3.1); the variable form makes every inside assignment illegal (23.3.3.2). Neither can be written procedurally inside the module." },
+    { text: "input logic a is 2-state and input var logic a is 4-state", isCorrect: false, feedback: "Both are 4-state: the data type is logic in both. Only the kind differs." }
+  ]}
+/>
 
 ## Practice & Reinforce
-- **Quiz:** Check your understanding of modules and packages.
-- **Refactor:** Take a legacy design with scattered `typedef`s and consolidate them into a package.
 
-## Compiler Directives & Scope
-_Commands for the compiler, not the simulator._
+### Retrieval quiz
 
-### Macros (`\`define`)
-Text substitution before compilation. Use sparingly for constants or simple snippets.
-
-```systemverilog
-`define WIDTH 32
-`define MAX(a,b) ((a) > (b) ? (a) : (b))
-
-logic [`WIDTH-1:0] data;
-```
-
-### Conditional Compilation (`\`ifdef`)
-Include or exclude code based on flags. Essential for handling different configurations (e.g., FPGA vs. ASIC, Debug vs. Release).
-
-```systemverilog
-`ifdef DEBUG
-  initial $display("Debug mode enabled");
-`else
-  initial $display("Production mode");
-`endif
-```
-
-### Scope Resolution Operator (`::`)
-Access static members, types, or parameters from a package or class without importing the whole thing.
-
-```systemverilog
-// Explicitly use a type from a package
-my_pkg::my_struct_t data;
-
-// Access a static method in a class
-int count = MyClass::get_count();
-```
-
-## Interview Questions
-
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the difference between `import` and `` `include ``?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p><strong>`` `include ``</strong> is a preprocessor directive that literally copies the text of a file into the current file. It is used for macros (` `define `) and sometimes for splitting large modules.</p>
-        <p><strong>`import`</strong> is a language construct that makes items from a compiled `package` available in the current scope. Packages are compiled once and can be imported many times, which is more efficient and cleaner than including headers.</p>
-      </div>
-    </details>
-
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Why should you avoid wildcard imports (`import pkg::*;`) in header files?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>Wildcard imports pollute the namespace. If two packages define the same type name (e.g., `data_t`) and you wildcard import both, you get a collision. It is safer to import only what you need (`import pkg::data_t;`) or use wildcard imports only inside specific scopes (like a module or task) rather than globally.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
-
-## References & Next Topics
-- **IEEE 1800-2023 Standard:**
-    - Clause 23: Modules and Hierarchy
-    - Clause 26: Packages
-- **Next:** [F4B: Bundling Signals with Interfaces and Modports](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index)
+Answer from memory first. Each question names the objective it checks.
 
 <Quiz
   questions={[
     {
-      question: 'Why should you use a package for struct definitions?',
+      question: "Packages p and q both declare data_t. Module m contains import p::*; import q::*; and never mentions data_t. What happens?",
       answers: [
-        { text: 'It makes the simulation run faster', correct: false },
-        { text: 'It ensures the DUT and Testbench use the exact same type definition', correct: true },
-        { text: 'It is required by the syntax', correct: false },
-        { text: 'It allows you to use the struct in a clocking block', correct: false }
+        { text: "It compiles: nothing is imported until a reference needs it", correct: true, feedback: "Right. A wildcard import only makes names candidates. The clash is reported only if a reference resolves to data_t (26.3)." },
+        { text: "Compile error at the second import statement", correct: false, feedback: "This is the common misconception. Two wildcard imports that define the same name are legal until that name is used (26.3)." },
+        { text: "It compiles, but the later import silently replaces p::data_t", correct: false, feedback: "Imports replace nothing, and no declaration is copied into m (26.3)." },
+        { text: "Elaboration error, because m has two candidate types", correct: false, feedback: "Unused candidates are never an error, at compile time or at elaboration." }
       ],
-      explanation:
-        'Defining types in a package prevents "type incompatibility" errors and ensures that the producer and consumer of data agree on its format.'
+      explanation: "Wildcard imports create potentially visible candidates. An error needs a reference that matches candidates from two wildcard imports. Explicit imports and local declarations always win over candidates.",
+      objective: 3
     },
     {
-      question: 'How do you make package contents available in a module?',
+      question: "p::x is 1 and q::x is 2. Module m contains import p::*; import q::x; initial $display(\"%0d\", x); What does it print?",
       answers: [
-        { text: 'Using the `include` keyword', correct: false },
-        { text: 'Using the `import` keyword', correct: true },
-        { text: 'Instantiating the package', correct: false },
-        { text: 'Packages are automatically available', correct: false }
+        { text: "1, because the first import wins", correct: false, feedback: "Import order between packages is not the rule. The explicit import makes q::x locally visible, and locally visible names are searched before wildcard candidates (26.3)." },
+        { text: "Compile error: x is ambiguous", correct: false, feedback: "Only two wildcard providers make a reference ambiguous. Here one import is explicit, and it wins." },
+        { text: "2", correct: true, feedback: "Right. The explicit import q::x is a locally visible name, found in step 1 of the search, before any wildcard candidate (26.3, Table 26-1)." },
+        { text: "Compile error: an explicit import may not name something a wildcard import also offers", correct: false, feedback: "An explicit import is illegal only over a local declaration or another explicit import of the same name. A wildcard candidate does not block it." }
       ],
-      explanation:
-        'The `import` keyword brings package identifiers into the current scope. `import pkg::*` imports everything, while `import pkg::item` imports a specific item.'
+      explanation: "Search order: locally visible names (declarations and explicit imports before the reference), then wildcard candidates, then outer scopes. q::x is found first.",
+      objective: 3
+    },
+    {
+      question: "p::x is 1. Module m contains import p::*; then initial $display(\"%0d\", x); and further down int x = 5;. What happens?",
+      answers: [
+        { text: "Prints 5, because a local declaration always beats an import", correct: false, feedback: "A local declaration beats an import only if it comes before the reference. Here the reference came first and imported p::x." },
+        { text: "Prints 1 and ignores the later int x", correct: false, feedback: "The later declaration is not ignored; it is illegal." },
+        { text: "Compile error at the $display, because x is used before it is declared", correct: false, feedback: "The reference is legal: it binds to p::x through the wildcard import." },
+        { text: "Compile error at int x = 5;, because the $display already imported p::x into m", correct: true, feedback: "Right. Once a wildcard candidate is made locally visible by a reference, a later declaration of the same name in that scope is illegal (26.3, Example 1)." }
+      ],
+      explanation: "The reference to x finds no local name before it, so it imports p::x into m. From then on x is taken in m, and declaring another x is an error.",
+      objective: 3
+    },
+    {
+      question: "module m (input logic clk, input logic d); always_ff @(posedge clk) d <= 1'b0; endmodule. What happens?",
+      answers: [
+        { text: "Legal: logic can always be assigned procedurally", correct: false, feedback: "logic is the data type. The port kind decides, and an input with no kind is a net (23.2.2.3)." },
+        { text: "Legal, and d becomes x when the parent drives it too", correct: false, feedback: "Only continuous drivers of a net resolve. A procedural write to a net is rejected before simulation starts (6.5)." },
+        { text: "Compile error: d is a net, and a net cannot be assigned procedurally", correct: true, feedback: "Right. input logic d means input wire logic d, and nets take only continuous drivers (23.2.2.3, 6.5)." },
+        { text: "Legal with a warning, because the input is coerced to inout", correct: false, feedback: "Coercion applies to continuous drivers on a net port (23.3.3.1). It never makes a procedural write to a net legal." }
+      ],
+      explanation: "Inputs are read-only inside a module. With no kind they are nets, which cannot be written procedurally; declared input var they are variables, which may not be assigned at all.",
+      objective: 2
+    },
+    {
+      question: "counter has output logic [7:0] q, written by its always_ff. The parent declares logic [7:0] q8;, connects q8 to that port, and also contains assign q8 = 8'd0;. What happens?",
+      answers: [
+        { text: "Compile error: a variable connected to an output port of an instance may have no other driver", correct: true, feedback: "Right. q8 is a variable, and the port connection is already its one continuous driver; another continuous or procedural write is illegal (23.3.3.2, 6.5)." },
+        { text: "It compiles, and q8 resolves to x whenever the two drivers disagree", correct: false, feedback: "That is net behaviour. It would be right if the parent had declared wire [7:0] q8; (23.3.3.2). Here q8 is a variable, and variables do not resolve drivers." },
+        { text: "It compiles, and the assign wins because it is in the parent", correct: false, feedback: "There is no parent-wins rule. The combination is illegal." },
+        { text: "It compiles, and the last write wins on each clock edge", correct: false, feedback: "Last-write-wins applies only to procedural writes. A port connection and an assign are both continuous drivers." }
+      ],
+      explanation: "The parent's signal decides. q8 is a variable, so it takes either procedural writes or one continuous driver, and the port connection is that driver. To merge several drivers you need the parent's signal to be a net (wire [7:0] q8), as on a tri-state bus; changing the port to output wire does not help while q8 stays a variable.",
+      objective: 2
+    },
+    {
+      question: "tb_top declares logic [3:0] din; and instantiates counter #(.WIDTH(8)) dut (.*); whose port is input logic [WIDTH-1:0] din. What happens?",
+      answers: [
+        { text: "din connects and is zero-extended, like .din(din)", correct: false, feedback: "Only an explicit named connection converts like an assignment (23.3.3.8). .* requires equivalent types." },
+        { text: "din is left unconnected, and the port floats at z", correct: false, feedback: ".* does not skip a same-named signal of the wrong type; it reports the mismatch." },
+        { text: "It connects with a width-mismatch warning", correct: false, feedback: "That is typical for an explicit named connection. For .* and .name the types must be equivalent, so it is an error." },
+        { text: "Elaboration error: the implicit connection needs equivalent types, and 4 bits is not 8 bits", correct: true, feedback: "Right. .* is an implicit .name for every port, and .name requires equivalent data types (23.3.2.3, 23.3.2.4, 6.22.2)." }
+      ],
+      explanation: "Implicit connections trade flexibility for safety: same name and equivalent type, or an error. Connect such a port by name if you really want conversion.",
+      objective: 1
+    },
+    {
+      question: "module counter #(parameter int WIDTH = 4) (...); parameter int DEPTH = 8; ... Can an instance override DEPTH with #(.WIDTH(8), .DEPTH(16))?",
+      answers: [
+        { text: "Yes, any parameter can be overridden by name", correct: false, feedback: "Not when the module has a parameter port list: then body parameters are local parameters (23.10)." },
+        { text: "No: with a parameter port list, parameters declared in the body are local parameters", correct: true, feedback: "Right (23.10, 6.20.4). Move DEPTH into the #(...) list if instances must be able to change it." },
+        { text: "Only with defparam", correct: false, feedback: "A local parameter cannot be changed by defparam either (6.20.4), and defparam should not be used in new code." },
+        { text: "Yes, but only by position: #(8, 16)", correct: false, feedback: "Position or name makes no difference; DEPTH is not overridable at all here." }
+      ],
+      explanation: "A module with a parameter port list exposes only the parameters in that list. Its body parameters behave like localparam, computed from the overridable ones if needed.",
+      objective: 1
+    },
+    {
+      question: "pkg_a and pkg_b both contain `include \"mode_defs.svh\", which declares typedef enum logic {SLOW, FAST} mode_e;. A module writes pkg_a::mode_e m = pkg_b::FAST;. What happens?",
+      answers: [
+        { text: "It works: the same source text gives one shared type", correct: false, feedback: "This is the trap. include copies text, so each package declares its own mode_e, and a typedef matches only in its own scope (22.4, 6.22.1)." },
+        { text: "It works, with a warning that the enums are equivalent", correct: false, feedback: "Enums are strongly typed. A literal of another enum type needs an explicit cast (6.19.3)." },
+        { text: "Compile error: pkg_a::mode_e and pkg_b::mode_e are two different enum types", correct: true, feedback: "Right. Two declarations, two types. Put mode_e in one package and import it into pkg_a and pkg_b." },
+        { text: "It compiles but fails at run time when m is compared with FAST", correct: false, feedback: "Enum type checking happens at compile time (6.19.3)." }
+      ],
+      explanation: "include is textual insertion. Including one typedef into two packages creates two types; enums and classes then fail to assign. One package must own each shared type.",
+      objective: 4
+    },
+    {
+      question: "A compile command lists tb_top.sv before cnt_pkg.sv, and the tool reports cnt_pkg as unknown in tb_top. What is the correct fix?",
+      answers: [
+        { text: "Add `include \"cnt_pkg.sv\" inside tb_top", correct: false, feedback: "Pasted inside the module, the package declaration is illegal: packages appear only at the outermost level of the source text (26.2). Pasted above tb_top instead, cnt_pkg is declared twice as soon as cnt_pkg.sv is also compiled." },
+        { text: "Compile cnt_pkg.sv before every file that imports it", correct: true, feedback: "Right. A package must be compiled before the scopes that import it (26.3). List packages first, in dependency order." },
+        { text: "Move cnt_pkg into the same file as tb_top", correct: false, feedback: "The file is not the issue; the order is. Packages in separate files are normal, as long as they come first." },
+        { text: "Add export *::*; to cnt_pkg", correct: false, feedback: "export controls which imported names a package passes on (26.6). It does nothing for compile order." }
+      ],
+      explanation: "Compile-before-use is a rule of the language (26.3). A filelist that names packages first, in dependency order, fixes it for every tool.",
+      objective: 4
+    },
+    {
+      question: "A reusable checker module must observe the counter's q. Which way keeps it reusable in other benches?",
+      answers: [
+        { text: "Read $root.tb_top.dut.q, which is unambiguous", correct: false, feedback: "$root removes ambiguity, not the dependency: the checker still only works where the top is tb_top and the instance is dut." },
+        { text: "Read tb_top.dut.q, the hierarchical path", correct: false, feedback: "It works in this bench only. Rename the instance or reuse the checker under another top and it fails to elaborate." },
+        { text: "Have the DUT copy q into a package variable that the checker reads", correct: false, feedback: "A package variable is one global object shared by every instance and every test; it couples the checker to one DUT instance and adds a hidden writer the DUT should not need." },
+        { text: "Give the checker an input port and connect q to it where the checker is instantiated (or bound)", correct: true, feedback: "Right. The connection is made where the path is known, so the checker's code holds no path. bind (I-SV-4C) does the same without editing the design." }
+      ],
+      explanation: "Hierarchical names (23.6) and $root (23.3.1) are fine in a top module and in debug code. Reusable components receive signals through ports or interfaces.",
+      objective: 5
+    },
+    {
+      question: "In the worked example, counter declares parameter int WIDTH = 4, and tb_top instantiates counter #(.WIDTH(8)) dut (.*);. A debug line in tb_top reads $display(\"%0d\", tb_top.dut.WIDTH);. What does it print?",
+      answers: [
+        { text: "4, because a path through dut reads the default in the module definition", correct: false, feedback: "A hierarchical path names an object in one instance, not in the definition (23.6). Each instance has its own parameter values, and dut was given 8." },
+        { text: "8: the path names the parameter WIDTH of the instance dut, which this instance overrides", correct: true, feedback: "Right. tb_top is the top-level instance, dut is its instance of counter, and WIDTH in that instance is 8 after the named override (23.6, 23.10)." },
+        { text: "Nothing: it is a compile error, because inside tb_top the path must start with $root", correct: false, feedback: "A plain path is looked up from the current scope first and works here. $root only forces the search to start at the top of the tree, which matters when a local name would match first (23.3.1)." },
+        { text: "x, because parameters have no value until simulation starts", correct: false, feedback: "Parameters are fixed at elaboration, before time 0 (3.12, 23.10), so they always have a value during simulation." }
+      ],
+      explanation: "Trace the path one name at a time: tb_top (the top-level instance), then dut (its counter instance), then WIDTH in that instance. $root.tb_top.dut.WIDTH names the same object, starting from the root of the tree.",
+      objective: 5
     }
   ]}
 />
+
+### Drill: predict the compile error
+
+Use the packages `p` (with `x = 1` and `data_t` as `int`) and `q` (with `x = 2` and `data_t` as `logic [7:0]`) from the traced example. For each module body, predict: compiles (and what it prints), or which line is an error. Then check on any simulator, and compare with the solution.
+
+| Module | Body |
+|---|---|
+| m1 | `import p::*; import q::*; initial $display("ok");` |
+| m2 | as m1, plus `initial $display("%0d", x);` |
+| m3 | `import p::*; import q::x; initial $display("%0d", x);` |
+| m4 | `import p::*; int x = 5; initial $display("%0d", x);` |
+| m5 | `import p::*; initial $display("%0d", x); int x = 5;` |
+| m6 | `import p::x; import q::x;` |
+| m7 | `pkg_a` and `pkg_b` each `` `include "mode_defs.svh" ``; the module has `pkg_a::mode_e m = pkg_b::FAST;` |
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the solution</summary>
+
+| Module | Result | Why |
+|---|---|---|
+| m1 | compiles, prints `ok` | wildcard candidates are never an error on their own (§26.3) |
+| m2 | error at the `$display` | `x` matches candidates from two wildcard imports (§26.3) |
+| m3 | prints 2 | the explicit import is locally visible and found first (§26.3) |
+| m4 | prints 5 | the local `x` is declared before any reference, so it wins |
+| m5 | error at `int x = 5;` | the earlier reference imported `p::x` into the module (§26.3 Example 1) |
+| m6 | error at the second import | an explicit import of a name already explicitly imported from another package is illegal, used or not (§26.3) |
+| m7 | error at the assignment | two declarations of `mode_e` are two enum types (§6.22.1, §6.19.3) |
+
+Each `` `include `` must sit on its own line: only white space or a comment may share it (§22.4).
+
+</details>
+
+### Kata (guided): refactor the F2E bench into a package
+
+**Starting point:** the complete bench from [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index). Its `tb_top` declares `localparam int W = 8`, the struct `exp_t` and the function `model_add()` locally, and connects `adder_reg` by name.
+
+**Steps:**
+1. Create `package adder_tb_pkg;` above `tb_top`, with `timeunit 1ns; timeprecision 1ps;`. Move `W`, `exp_t` and `model_add()` into it.
+2. In `tb_top`, delete those three declarations and add `import adder_tb_pkg::*;`.
+3. Replace the long named connection list with `.*`, keeping the parameter overrides `#(.W(W), .BUG(0))`.
+4. Compile and run. The verdict must still be `PASS=14 FAIL=0`, and `.BUG(1)` must still fail.
+5. Reflect: in the package you wrote `parameter int W = 8` or `localparam int W = 8`. Which can a test override, and why? What would happen if `tb_top` kept its own `localparam int W = 8` *and* imported the package?
+
+**Acceptance:** the same verdicts as before the refactor, no declaration outside a module or package, and the package compiled before `tb_top`.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+```systemverilog
+// snippet: the new package, placed before tb_top
+package adder_tb_pkg;
+  timeunit 1ns; timeprecision 1ps;
+
+  parameter int W = 8;                   // a localparam: no test can override it
+
+  typedef struct {
+    logic [W-1:0] a, b;                  // the inputs, so a failure can name them
+    logic [W:0]   sum;                   // the expected result
+  } exp_t;
+
+  function automatic logic [W:0] model_add(input logic [W-1:0] op_a,
+                                           input logic [W-1:0] op_b);
+    return {1'b0, op_a} + {1'b0, op_b};  // widen first, so the carry is kept
+  endfunction
+endpackage
+```
+
+```systemverilog
+// snippet: the changed lines in tb_top
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+  import adder_tb_pkg::*;               // W, exp_t and model_add() come from here
+
+  // ... signals clk, rst_n, in_valid, a, b, out_valid, sum as before ...
+
+  adder_reg #(.W(W), .BUG(0)) dut (.*); // every port has a same-named signal
+```
+
+Why it works: every DUT port (`clk`, `rst_n`, `in_valid`, `a`, `b`, `out_valid`, `sum`) has a signal of the same name and an equivalent type in `tb_top`, so `.*` connects all seven (§23.3.2.4). `W` reaches the signal declarations and the override through the wildcard import.
+
+Reflection:
+- In a package, `parameter` and `localparam` mean the same thing: a constant no one can override (§6.20.4). A width that tests must vary belongs in the DUT's parameter port list and the bench's top, not in a package.
+- If `tb_top` declares its own `W` *before* any use of `W`, the local declaration wins and the package's `W` is never imported. If some use of `W` comes first, that use imports `adder_tb_pkg::W`, and the later local declaration is a compile error (§26.3). Either way, keep one owner.
+
+</details>
+
+### Kata (independent): a type-parameterized register
+
+Write `module pipe_reg #(parameter type T = logic [7:0]) (input logic clk, input T d, output T q);` that registers `d` on the rising edge. Instantiate it twice in a bench: once with the default type, connecting the clock with the implicit `.clk` and the data ports by name, and once as `pipe_reg #(.T(cmd_t)) u_cmd (...)` with `cmd_t` from the worked example's `tb_pkg`. Then explain why `cmd_t` must come from a package rather than from a typedef inside the bench module.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+```systemverilog
+// snippet: the type-parameterized register and its two instances
+module pipe_reg #(parameter type T = logic [7:0]) (
+  input  logic clk,
+  input  T     d,                  // an input: a net of type T, so T must be 4-state
+  output T     q                   // an output with a data type: a variable
+);
+  always_ff @(posedge clk) q <= d;
+endmodule
+
+// inside a bench module that imports tb_pkg::* and cnt_pkg::*:
+//   logic [7:0] d8, q8;
+//   cmd_t       dc, qc;
+//   pipe_reg                u_byte (.clk, .d(d8), .q(q8));
+//   pipe_reg #(.T(cmd_t))   u_cmd  (.clk, .d(dc), .q(qc));
+```
+
+`cmd_t` is a packed struct of 4-state members, so it is a legal type for the input net `d` (§6.7.1). Declared in `tb_pkg`, it is one type everywhere (§6.22.1 h), so `dc`, `qc` and the ports of `u_cmd` match. A typedef declared inside a module is a separate type in that module's scope (§6.22); a struct declared once in the bench and passed as `T` would still work for this one instance, but any second module that declares "the same" struct gets a different type, and the trap of this lesson returns. Note also the connections: `.clk` is an implicit `.name` connection, legal because the bench has a `clk` of an equivalent type (§23.3.2.3), while `d` and `q` are connected by name because the bench's signals are called `d8`, `q8`, `dc` and `qc`. With `.*`, every port would need a same-named signal of an equivalent type.
+
+</details>
+
+### Flashcards
+
+The flashcards for this module cover port kinds, connections, parameters, name resolution, `export`, `std`, the include trap, compile order, `$unit` and hierarchical names. Use them after the quiz, then come back to the drill a day later.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023, *IEEE Standard for SystemVerilog*:
+  - §3.12 Compilation and elaboration; §3.12.1 Compilation units.
+  - §6.5 Nets and variables; §6.7.1 Net declarations with built-in net types; §6.10 Implicit declarations; §6.19.3 Type checking (enumerations); §6.20 Constants (§6.20.2 Value parameters, §6.20.3 Type parameters, §6.20.4 Local parameters); §6.21 Scope and lifetime; §6.22 Type compatibility (§6.22.1 Matching types, §6.22.2 Equivalent types, §6.22.5 Type incompatible).
+  - §22.4 `` `include ``; §22.8 `` `default_nettype ``.
+  - §23.2 Module definitions (§23.2.2.1 Non-ANSI style port declarations, §23.2.2.2 ANSI style list of port declarations, §23.2.2.3 Rules for determining port kind, data type, and direction, §23.2.2.4 Default port values); §23.3.1 Top-level modules and `$root`; §23.3.2 Module instantiation syntax (§23.3.2.1 to §23.3.2.4, ordered, named, `.name` and `.*` connections); §23.3.3.1 Port coercion; §23.3.3.2 Port connection rules for variables; §23.3.3.3 Port connection rules for nets with built-in net types; §23.3.3.8 Connecting signed values via ports; §23.6 Hierarchical names; §23.8 Upwards name referencing (§23.8.1); §23.9 Scope rules; §23.10 Overriding module parameters; §23.10.2 Module instance parameter value assignment.
+  - §26.2 Package declarations; §26.3 Referencing data in packages; §26.4 Using packages in module headers; §26.5 Search order rules (Table 26-1); §26.6 Exporting imported names from packages; §26.7 The std built-in package; Annex G Std package.
+- uvm-core 2020.3.1, the Accellera reference implementation of IEEE 1800.2-2020: `src/uvm_pkg.sv` (`uvm_pkg` is built by `` `include ``-ing its class files inside the package, under an `` `ifndef UVM_PKG_SV `` guard).
+
+**Prerequisites:** [F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index) for nets, variables, `logic` and enums, and [F2D: System Tasks and File I/O](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index) with its [tasks and functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions) lesson for `automatic` subroutines.
+
+**Related**
+
+- [F2A: Structs, Unions and Enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums): the packed struct `cmd_t` and `typedef` used in the worked example.
+- [F2E: Your First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index): the bench pattern this lesson's example extends and the kata refactors.
+- [F3C: Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): why the bench drives on the falling edge until clocking blocks arrive.
+- [F4B: Bundling Signals with Interfaces and Modports](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index): the interface, the third part of every M1 bench.
+- [F4C: Synchronizing with Clocking and Program Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): race-free drives that replace the opposite-edge style.
+- [I-SV-1: Object-Oriented Programming for Verification](/curriculum/T2_Intermediate/I-SV-1_OOP/index): classes in packages and the class scope operator `::`.
+- [I-SV-4C: SystemVerilog Checkers & Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index): attaching checkers without hierarchical references.
+- [I-SV-6: Compiler Directives & Generate Constructs](/curriculum/T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/index): `` `define ``, `` `ifdef ``, `` `default_nettype `` and generate blocks in depth.
+- [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): one package per agent in a reusable verification component.
+
+<NextLesson />

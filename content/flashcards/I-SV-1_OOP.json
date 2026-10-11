@@ -1,42 +1,77 @@
 [
   {
     "id": "oop-1",
-    "question": "What SystemVerilog keyword creates an object from a class?",
-    "answer": "Use the constructor with `new()` to create an object from a class handle."
+    "question": "What does `p = new;` do, and what does `p` hold afterwards?",
+    "answer": "`new` (the class constructor) allocates an object, initializes it and returns a handle to it, which `p` stores (IEEE 1800-2023 §8.4, §8.7). Before that line `p` held `null`: declaring a class variable creates no object."
   },
   {
     "id": "oop-2",
-    "question": "How does encapsulation protect verification components?",
-    "answer": "Mark internal fields `local` or `protected` and expose intent methods so external code cannot directly corrupt internal state."
+    "question": "What is the difference between `local` and `protected` members, and can a method read `local` members of another object of its own class?",
+    "answer": "`local` members are visible only to the class's own methods; `protected` members are also visible to subclasses. Neither is visible to code outside the class tree. Yes: inside the class, `other.x` is legal even when `x` is `local` (§8.18)."
   },
   {
     "id": "oop-3",
     "question": "Why declare a method `virtual` in a base class?",
-    "answer": "Virtual methods enable polymorphism so base-class handles call the derived-class implementation at runtime."
+    "answer": "So that a call through a base-class handle runs the latest override in the object's class, chosen at run time (§8.20). Without `virtual`, the call runs the body the handle's class sees (§8.14)."
   },
   {
     "id": "oop-4",
-    "question": "What benefit does inheritance provide when building transaction classes?",
-    "answer": "You reuse shared fields and behavior from the base class and only implement protocol-specific additions in the derived class."
+    "question": "What does a subclass get when it `extends` a base class, and how many base classes may it have?",
+    "answer": "It inherits every member of the base class, may add members and may override methods; a subclass object is also a legal base-class object (§8.13, §8.14). SystemVerilog has single inheritance: one base class, plus any number of interface classes through `implements` (§8.26)."
   },
   {
     "id": "isv1-anchor-1",
     "question": "A handle is an arrow, not the box. After `p2 = p1; p2.len = 9;`, what is `p1.len`?",
-    "answer": "9. `p2 = p1` copies the arrow, so both handles point at the same object (IEEE 1800-2023 §8.12)."
+    "answer": "9. `p2 = p1` copies the arrow, so both handles point at the same object (§8.12)."
   },
   {
     "id": "isv1-anchor-2",
     "question": "After `p2 = new p1;`, does `p2.hdr.len = 9` change `p1.hdr.len`?",
-    "answer": "Yes. `new p1` is a shallow copy: p2 is a new box, but nested object handles are copied as arrows, so p1.hdr and p2.hdr point at the same header (§8.12). A deep copy needs your own copy() that news the nested objects."
+    "answer": "Yes. `new p1` is a shallow copy: `p2` is a new object, but handle properties are copied as handles, so `p1.hdr` and `p2.hdr` are one header (§8.12). A deep copy needs your own `copy()` that copies each nested object's contents into an object the copy owns."
   },
   {
     "id": "isv1-anchor-3",
     "question": "Why does storing a monitor's transaction handle in a scoreboard queue corrupt expected data?",
-    "answer": "If the monitor reuses one object and only overwrites its fields, every queue entry is an arrow to the same box. Create a new object per transaction (or clone before storing)."
+    "answer": "If the monitor reuses one object and only overwrites its fields, every queue entry is an arrow to the same object, which ends up holding the last sample. Construct a new object per transaction, or store a copy (`c = new t;`) before pushing it."
   },
   {
     "id": "isv1-anchor-4",
     "question": "A base-class handle points at a derived object. Which method body runs?",
-    "answer": "For a virtual method, the derived (object's) version; for a non-virtual method, the base (handle's) version (§8.20)."
+    "answer": "For a method that is virtual as seen from the handle's class, the latest override in the object's class; for a non-virtual method, the body the handle's class sees (§8.14, §8.20)."
+  },
+  {
+    "id": "i-sv-1-oop-9",
+    "question": "What is special about a `static` property and a `static` method, and why does a counter kept in `new` miss shallow copies?",
+    "answer": "A static property exists once per class and can be used without any object (§8.9). A static method has no `this`, may touch only static members, and cannot be virtual (§8.10). `new h` allocates without calling the constructor, so `count++` in `new` never runs for copies (§8.12)."
+  },
+  {
+    "id": "i-sv-1-oop-10",
+    "question": "What is illegal through a null class handle, what is still legal, and how does a null virtual interface differ?",
+    "answer": "Accessing non-static members or calling virtual methods through `null` is illegal with an indeterminate result; simulators normally stop with a null-object error (§8.4). Static members stay legal through `null` (§8.9). Using a null virtual interface shall be a fatal run-time error (§25.9)."
+  },
+  {
+    "id": "i-sv-1-oop-11",
+    "question": "How do you free a class object, and what keeps it alive?",
+    "answer": "You never free it: there is no `delete`. An object stays alive while a handle in an active scope can reach it, including handles inside other objects, queues, mailboxes and forked threads; once unreachable it is reclaimed automatically (§8.29)."
+  },
+  {
+    "id": "i-sv-1-oop-12",
+    "question": "Two different objects hold identical values. What does `a == b` return on their handles?",
+    "answer": "0. `==` on class handles asks whether they refer to the same object (§8.4, §11.4.5); it never compares property values. Compare items by value with a `compare()` method."
+  },
+  {
+    "id": "i-sv-1-oop-13",
+    "question": "What is the difference between calling `$cast` as a function and as a task when the cast fails?",
+    "answer": "As a function, `$cast` returns 0, makes no assignment and raises no error. As a task, it returns nothing and raises a run-time error, leaving the destination unchanged (§6.24.2). So write `if (!$cast(d, s)) ...` and never test a task-form `$cast` for 0."
+  },
+  {
+    "id": "i-sv-1-oop-14",
+    "question": "What may an interface class contain, and how is it used?",
+    "answer": "Only pure virtual methods, type declarations and parameters (§8.26). A class `implements` any number of them and must provide each method as a virtual method; a handle of the interface class type can then refer to any implementing object. An interface class is never constructed (§8.26.5)."
+  },
+  {
+    "id": "i-sv-1-oop-15",
+    "question": "Why is a testbench driver a class rather than a module or struct, and how does it reach the DUT's pins?",
+    "answer": "Objects are created at run time and support inheritance and polymorphism; structs and modules do not (§8.28), and modules are fixed at elaboration. A class has no ports or instances, so it holds a virtual interface handle (`virtual pipe_if vif;`) that `tb_top` sets before first use (§25.9)."
   }
 ]

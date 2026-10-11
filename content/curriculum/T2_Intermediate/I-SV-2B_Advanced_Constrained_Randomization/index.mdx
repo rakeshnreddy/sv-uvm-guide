@@ -1,29 +1,704 @@
 ---
 title: "I-SV-2B: Advanced Constrained Randomization"
-description: "Master advanced solver techniques, multi-level constraints, implication, and solver debug triage."
+description: "Write conditional, array and inherited constraints, control randomization at run time, and debug randomize() calls that fail or will not reproduce."
 flashcards: "I-SV-2B_Advanced_Constrained_Randomization"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "Accellera UVM reference implementation"
+    type: "implementation"
+    identifier: "uvm-core 2020.3.1"
 ---
 
-import { InteractiveCode, Quiz, InterviewQuestionPlayground } from '@/components/ui';
-import { ConstraintSolverExplorer } from '@/components/visuals/ConstraintSolverExplorer';
-
 ## Quick Take
-- **What it is:** The next level of SystemVerilog constrained randomization, moving beyond basic `<` and `>` into conditional constraints (`->`, `if`/`else`), iterative constraints (`foreach`), and probability shaping (`dist`, `solve...before`, `soft`).
-- **Why it matters:** Real-world protocols aren't just "address must be `<` 100". They involve dependent rules ("if it's a burst write, then the size must match the length"). You need advanced tools to model this.
-- **The rule to carry:** constraints decide *which* combinations are legal. `dist` and `solve...before` decide *how often* each legal one appears. `soft` is a default with a rank, never a probability.
+
+- **What it is:** The rest of IEEE 1800-2023 Clause 18 after [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index). This module teaches four things. First, **conditional and array constraints**: rules that apply only in some cases (`->`, `if`/`else`) or to every element of an array (`foreach`, `size()`, `sum() with`, `unique`). Second, **run-time control**: switching variables and rules on and off, hooks that run around each call, and constraints replaced in a derived class. Third, **procedural randomization** outside classes (`std::randomize()`, `randcase`, `randsequence`). Fourth, **seeds**: why a run repeats, and why it stops repeating.
+- **Why it matters:** Real protocol rules are conditional ("a wrapping burst has 2, 4, 8 or 16 beats") and per element ("no two outstanding tags are equal"). Every test needs to aim the same transaction class at a different corner without editing it. And a `randomize()` call that fails, or a failing seed that will not reproduce, can cost a team days. These skills turn the sequence items of milestone M2 into the shaped stimulus of milestone M4.
+- **The Analogy:** A referee holds a rule book and judges each play against every rule at once, never reading the rules top to bottom. A rule that says "if it is a wrapping burst, it has a power-of-two length" can be satisfied by *not* being a wrapping burst. *Where it breaks:* IEEE 1800-2023 makes the referee read three chapters first: `randc` variables, array sizes, and the arguments of functions called in constraints. Those are decided before the rest, and that early decision can leave no legal answer even when one exists.
+
+**You will be able to:**
+1. **Predict** the legal values and the frequency of conditional constraints written with `->` and `if`/`else`, reading them as two-way Boolean rules rather than if-statements.
+2. **Write** array constraints with `foreach`, `size()`, `sum() with`, `unique` and guards, and **predict** when array sizing or a function call makes `randomize()` fail.
+3. **Configure** randomization at run time with `rand_mode()`, `constraint_mode()`, `pre_randomize()` and `post_randomize()`, a same-name constraint override in a derived class, and `randomize(null)`.
+4. **Choose** between `std::randomize()`, `randcase` and `randsequence` for procedural stimulus, and write each one.
+5. **Debug** a failing or irreproducible `randomize()`: isolate the conflicting constraints, check signedness and overridden constraints, and **explain** which code changes alter what a seed produces.
+
+<BeforeYouStart />
+
+You also use inheritance and virtual methods from [I-SV-1 Polymorphism](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls), dynamic arrays and `size()` from [F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index), and enums from [F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums).
 
 ## Build Your Mental Model
 
-Work through the five techniques and predict before each reveal. Notice three things. The payload array never makes long packets more likely, because sizes are solved before elements. The value `8` collects weight from *both* `dist` items. And `solve...before` changes `P(JUMBO)` without changing which pairs are legal. The last tab is the lab's bug in miniature: constraints that never fail, yet silently never produce IPV6.
+**How to read this page.** This is the module's hub. The core path is the first three sections: the governing rule, what one `randomize()` call does, and the map of the four sub-lessons. Practitioner depth follows: how the pieces sit in a real testbench, and a symptom table for when an item goes wrong. Make It Work assembles one item that uses every technique of the module. Push Further holds the expert layer. Each sub-lesson then teaches its own topic in full.
 
-<ConstraintSolverExplorer />
+**Words from I-SV-2A, in one line each.** A **random variable** is a class property declared `rand` or `randc`. A **constraint** is a Boolean expression over random variables, grouped in a named **constraint block**. The **solver** is the part of the simulator that finds values making every active constraint true. A **state variable** is any variable the solver may read but not change: the solver treats its current value as a constant. **Active** means switched on: every random variable and every constraint block starts active. This page also calls IEEE 1800-2023 the **LRM** (Language Reference Manual).
 
-## Deep Dives in this Track
-- [Advanced Constraints: implication and iteration](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints)
-- [Controlling Randomization: pre_randomize and post_randomize](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization)
-- [Procedural Randomization: randcase and std::randomize](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods)
-- **[Solver Debug and Failure Triage](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug)** (*Interview Pitfalls*)
+### The governing rule: one Boolean problem, solved together
+
+Here is the smallest conditional constraint. Read `->` as "implies" (IEEE 1800-2023 §18.5.5).
+
+```systemverilog
+// snippet
+class pair_item;
+  rand bit       en;
+  rand bit [1:0] v;
+  constraint c_low { en -> v < 2; }  // implication: equivalent to !en || (v < 2)
+endclass
+```
+
+**Predict before you read on.** On how many calls out of 300 is `en` equal to 1?
+
+If you read the constraint like code ("pick `en`; if it is 1, then restrict `v`"), you would expect `en` to be 1 on about half the calls. The solver does not work that way. It looks at all eight `(en, v)` pairs, keeps those that make every constraint true, and picks one of the legal pairs, each with the same probability (§18.5.9). Trace it:
+
+| `en` | `v` | `en -> v < 2` | Legal? |
+|---|---|---|---|
+| 0 | 0, 1, 2, 3 | true (the left side is false) | 4 legal pairs |
+| 1 | 0, 1 | true | 2 legal pairs |
+| 1 | 2, 3 | false | excluded |
+
+Six pairs are legal and two of them have `en == 1`, so `en` is 1 on about 1 call in 3: about 100 of 300 calls, not 150.
+
+Now call `randomize() with { v == 3; }`. Only `(0, 3)` is legal, so `en` is *forced to 0*. The rule pushed backward, from `v` to `en`. That is the governing rule of this whole module: **all active constraints form one Boolean problem, solved together, so every rule can constrain every variable it mentions.** An implication can be satisfied by making its left side false, and a narrow right side makes the left side rare. [Conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) teaches `->`, `if`/`else` and `foreach` on this model, with an interactive heatmap to experiment on.
+
+**Two mistakes everyone makes first:**
+- **Reading a constraint as a statement.** `en -> v < 2` is not "if `en`, then do something to `v`"; it is a fact that must hold. Nothing in a constraint block runs in order.
+- **Expecting the implication to be checked after `en` is chosen.** The solver never "picks `en` and then fails". It only picks legal combinations, so the implication changes how often `en` is 1, not whether the call succeeds. The exceptions, where the standard does impose an order, are in [Expert: intermittent failures from LRM solve orders](#expert-intermittent-failures-from-lrm-solve-orders).
+
+### What one randomize() call does
+
+Every technique in this module acts at one step of a single `randomize()` call. Follow the call from the test code into the object, which hands its problem to the solver.
+
+<SequenceDiagram
+  title="One call to item.randomize()"
+  caption="The boxes over item are the hooks: they run on the object and on each enabled rand member object. The wide box is the solver's work. post_randomize() runs only when the solver found a solution; on failure the call returns 0 and every random variable keeps its old value."
+  participants={[
+    { id: "tb", label: "test code", kind: "generic" },
+    { id: "obj", label: "item", kind: "generic" },
+    { id: "slv", label: "solver", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tb", to: "obj", label: "item.randomize()" },
+    { kind: "note", from: "obj", label: "pre_randomize() on item, then on each enabled rand member" },
+    { from: "obj", to: "slv", label: "active variables and constraints (plus any inline with)" },
+    { kind: "note", from: "obj", to: "slv", label: "solver: solve everything together; randc, array sizes and function arguments are decided first" },
+    { kind: "divider", label: "a solution exists" },
+    { kind: "return", from: "slv", to: "obj", label: "new values assigned" },
+    { kind: "note", from: "obj", label: "post_randomize() on item and on each enabled rand member" },
+    { kind: "return", from: "obj", to: "tb", label: "returns 1" },
+    { kind: "divider", label: "no solution exists" },
+    { kind: "return", from: "slv", to: "obj", label: "no solution", tone: "error" },
+    { kind: "note", from: "obj", to: "slv", label: "values unchanged; post_randomize() not called", tone: "error" },
+    { kind: "return", from: "obj", to: "tb", label: "returns 0", tone: "error" }
+  ]}
+/>
+
+The same steps in words, with the clause for each:
+
+1. **Hooks before.** `randomize()` first calls `pre_randomize()` on the object, then on every `rand` member object that is enabled (§18.6.2). A **hook** is a method the language calls for you; you override it to add your own steps.
+2. **Collect the problem.** The solver gathers the active random variables and active constraints of the object and of every `rand` object member, which is how a constraint can reach into another object (a **global constraint**, §18.5.8). A variable switched off with `rand_mode(0)` becomes a state variable (§18.8). A block switched off with `constraint_mode(0)` is ignored (§18.9). Constraints from `randomize() with { … }` are added for this call only (§18.7).
+3. **Solve.** All of it is one problem, solved together, with three exceptions that the standard orders: `randc` variables (§18.4.2), array sizes before the rules on elements (§18.5.7.1), and the arguments of functions called in constraints (§18.5.11). Each legal combination is equally likely unless `dist` or `solve…before` reshapes the odds (§18.5.3, §18.5.9).
+4. **Success.** The solver assigns the new values, `post_randomize()` runs on the object and its enabled members, and the call returns 1 (§18.6.2).
+5. **Failure.** The call returns 0. The random variables keep their previous values, and `post_randomize()` is not called; `pre_randomize()` has already run (§18.6.2, §18.6.3).
+
+Steps 2 and 3 describe what the standard requires, not how a simulator implements it. Simulators use different solver engines (tool-dependent); the results they must produce are the same.
+
+Three consequences follow, and each one is a classic mistake:
+- **`post_randomize()` cannot fix this call.** It runs after the values are chosen. If it changes a knob that a constraint reads, only the *next* call sees the change.
+- **An ignored return value hides a failure.** On failure, a newly created object still holds its default values, which look like data. Always write `if (!item.randomize()) $fatal(1, "…");`, as in I-SV-2A.
+- **A rule you cannot see may be active.** A derived class can replace a base-class constraint of the same name (§18.5.2), and inline constraints add to the class rules. When a result surprises you, list every active constraint first.
+
+### The module map
+
+The four sub-lessons follow the steps above. Each owns its topic in full; this page only frames them.
+
+| Sub-lesson | What you learn | Where it acts in the call | Objectives |
+|---|---|---|---|
+| [Conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) | `->`, `if`/`else`, `foreach`, `size()`, `sum() with`, `unique`, guards, functions in constraints, global constraints | the problem the solver receives (steps 2–3) | 1, 2 |
+| [Controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization) | `rand_mode()`, `constraint_mode()`, static constraint blocks, `pre_randomize()`/`post_randomize()`, same-name override, `randomize(v)` and `randomize(null)` | what is active, and the hooks (steps 1, 2, 4) | 3 |
+| [Procedural randomization and seeds](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) | `std::randomize()`, `randcase`, `randsequence`, random stability, manual seeding | randomization outside classes, and where each call's randomness comes from | 4, 5 |
+| [Solver debug and failure triage](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug) | failure versus coverage hole, the smallest conflicting set, signedness, overridden constraints, silent failures, the lab | what to do when step 5 happens, or never happens | 5 |
+
+### Run-time control in one table
+
+You will meet five ways to change what a call produces without editing the class. The [controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization) sub-lesson teaches each in depth.
+
+| You want to… | Use | Effect | Clause |
+|---|---|---|---|
+| freeze one variable at its current value | `item.len.rand_mode(0);` | `len` becomes a state variable for later calls | §18.8 |
+| switch off one rule | `item.c_len.constraint_mode(0);` | the solver ignores block `c_len` on later calls | §18.9 |
+| add a rule for one call | `item.randomize() with { len > 4; }` | an extra constraint for this call only | §18.7 |
+| replace a rule for a whole class of items | a derived class with a constraint of the **same name** | the derived block replaces the base block | §18.5.2 |
+| check values without changing them | `item.randomize(null)` | returns 1 only if every active constraint holds now | §18.11.1 |
+
+The fifth row is the **checker** form: no variable is random for that call, so `randomize()` only evaluates the constraints. Make It Work uses it to re-check every item.
+
+### Practitioner: where these pieces live in a real testbench
+
+In a UVM testbench, the class you randomize is a **sequence item**, a transaction that a **sequence** (a class that generates items) hands to a driver ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)). The constraints of this module end up in four layers:
+
+- **The item class holds the legal space.** Protocol rules (sizes, alignment, legal combinations) are named constraint blocks that are always active. Name every block: a test can switch off or replace only a named block.
+- **The test aims the item.** It sets **knobs** (state variables that guarded constraints read), switches named blocks off, or swaps in a derived item class. In UVM the swap is a **factory override**, a registration that makes every `create` call build the derived class instead ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
+- **The sequence narrows one call** with `randomize() with { … }` or `` `uvm_do_with ``. In uvm-core 2020.3.1 the `` `uvm_do `` macros report a failed `randomize()` only as a `UVM_WARNING` with id `RNDFLD` and still send the item, so a conflict there does not fail the test unless you promote that warning ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index#expert-randomization-failures-inside-uvm-macros) explains the macro).
+- **The regression owns the seed.** A failing run is replayed with the same seed on the same code and the same simulator; [procedural randomization and seeds](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) explains which edits break that, and [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) builds the regression workflow on it.
+
+### When a randomized item goes wrong
+
+Debugging starts from the symptom. Use this table to find the cause and the sub-lesson that fixes it.
+
+| Symptom in the log | Likely cause | Where the fix is taught |
+|---|---|---|
+| `randomize()` returns 0 on every call | two or more active constraints contradict each other | [Solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug): find the smallest conflicting set |
+| `randomize()` returns 0 on some calls only, with nothing changed between calls | an order the standard imposes (array sizes, function arguments or `randc`) picked a dead end | [Expert: intermittent failures from LRM solve orders](#expert-intermittent-failures-from-lrm-solve-orders) |
+| a value never appears in 10,000 calls, and nothing fails | an over-constraint removed it from the legal space: a coverage hole, not a failure | [Solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug); measure with [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) |
+| a delay or length is negative | `rand int` is signed (§6.11.3), so `delay < 10` allows negative values | [Solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug) |
+| a `rand` dynamic array is never resized | no constraint on its `size()`, so `randomize()` keeps the old size (§18.4) | [Conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) |
+| a base-class rule seems to be ignored | a derived class declared a constraint with the same name (§18.5.2) | [Controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization) |
+| the same seed gives different stimulus after a small code change | an object, thread or random call was added before existing ones, which shifts their seeds (§18.14.1) | [Procedural randomization and seeds](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) |
+
+### Recap
+
+<VisualRecap
+  title="All active constraints are one Boolean problem"
+  rule="The solver keeps every combination that makes all active constraints true and picks one, each equally likely unless dist or solve…before reshapes the odds; only randc, array sizes and function arguments are decided first."
+  code={`rand bit       en;
+rand bit [1:0] v;
+constraint c_low { en -> v < 2; }
+// 6 legal pairs: en == 1 on 1 call in 3`}
+  mistake="Reading en -> v < 2 as an if-statement: expecting en to be 1 half the time, or expecting a failure when v comes out large."
+  inTestbench="Protocol rules in a sequence item; a test aims the item with knobs, constraint_mode(), a derived class or an inline with."
+>
+  <svg viewBox="0 0 345 150" role="img" aria-label="Grid of the eight (en, v) pairs. With en equal to 0, v equal to 0, 1, 2 and 3 are all legal. With en equal to 1, only v equal to 0 and 1 are legal; v equal to 2 and 3 are crossed out. Six legal pairs, each with probability one sixth." style={{ width: "100%", maxWidth: 400 }}>
+    <text x="104" y="20" fontSize="11" fill="currentColor" textAnchor="middle">v = 0</text>
+    <text x="172" y="20" fontSize="11" fill="currentColor" textAnchor="middle">v = 1</text>
+    <text x="240" y="20" fontSize="11" fill="currentColor" textAnchor="middle">v = 2</text>
+    <text x="308" y="20" fontSize="11" fill="currentColor" textAnchor="middle">v = 3</text>
+    <text x="8" y="51" fontSize="11" fill="currentColor">en = 0</text>
+    <text x="8" y="96" fontSize="11" fill="currentColor">en = 1</text>
+    <rect x="74" y="30" width="60" height="32" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="104" y="51" fontSize="11" fill="currentColor" textAnchor="middle">✓ 1/6</text>
+    <rect x="142" y="30" width="60" height="32" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="172" y="51" fontSize="11" fill="currentColor" textAnchor="middle">✓ 1/6</text>
+    <rect x="210" y="30" width="60" height="32" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="240" y="51" fontSize="11" fill="currentColor" textAnchor="middle">✓ 1/6</text>
+    <rect x="278" y="30" width="60" height="32" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="308" y="51" fontSize="11" fill="currentColor" textAnchor="middle">✓ 1/6</text>
+    <rect x="74" y="75" width="60" height="32" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="104" y="96" fontSize="11" fill="currentColor" textAnchor="middle">✓ 1/6</text>
+    <rect x="142" y="75" width="60" height="32" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="172" y="96" fontSize="11" fill="currentColor" textAnchor="middle">✓ 1/6</text>
+    <rect x="210" y="75" width="60" height="32" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <text x="240" y="96" fontSize="11" fill="currentColor" textAnchor="middle">✕ illegal</text>
+    <rect x="278" y="75" width="60" height="32" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <text x="308" y="96" fontSize="11" fill="currentColor" textAnchor="middle">✕ illegal</text>
+    <text x="8" y="135" fontSize="10.5" fill="currentColor" fillOpacity="0.8">6 legal pairs, 2 with en = 1: P(en = 1) = 2/6 = 1/3</text>
+  </svg>
+</VisualRecap>
+
+- **Core:** all active constraints are one Boolean problem; implication and `if`/`else` are two-way rules; a failed call returns 0 and changes nothing.
+- **Practitioner:** the item holds the legal space; tests aim it with knobs, `constraint_mode()`, derived classes or inline `with`; check every return value.
+- **Expert:** three LRM orders can make a solvable problem fail; seeds reproduce only the same code on the same simulator.
+
+## Make It Work
+
+### Worked example: one frame item, every technique
+
+This example builds a frame for a made-up serial link: a frame kind plus a list of header options, each with a type code and a length. It uses one technique from each sub-lesson: an `if`/`else` rule, an implication that reads a knob, `foreach` with an index guard, `sum() with`, `unique`, a hook, a same-name override in a derived class, `randcase`, and `randomize(null)` as a checker. A procedural checker then re-checks every rule, so the constraints are never trusted to check themselves.
+
+First, the shape of the code: what extends what, and who calls what.
+
+<ArchitectureDiagram
+  title="Classes and calls in the frame example"
+  gapX={150}
+  caption="probe_frame extends frame_item, replaces the whole c_kind block by name and adds c_big. tb_top calls randomize() through a frame_item handle, so the derived rules apply; then check_item() re-checks each result procedurally and with randomize(null)."
+  nodes={[
+    { id: "tb", label: "tb_top", sublabel: "initial: 1000 calls", kind: "generic", col: 1, row: 0 },
+    { id: "pkg", label: "frame_pkg", kind: "generic", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
+    { id: "base", label: "frame_item", sublabel: "c_size c_kind c_opts", kind: "generic", col: 0, row: 1 },
+    { id: "chk", label: "check_item()", sublabel: "procedural re-check", kind: "generic", col: 1, row: 1 },
+    { id: "der", label: "probe_frame", sublabel: "c_kind replaced, c_big added", kind: "generic", col: 0, row: 2 }
+  ]}
+  edges={[
+    { from: "der", to: "base", style: "structural", label: "extends" },
+    { from: "tb", to: "base", style: "control", label: "randomize()" },
+    { from: "tb", to: "chk", style: "causal", label: "check each item" },
+    { from: "chk", to: "base", style: "control", label: "randomize(null)" }
+  ]}
+/>
+
+The package holds the item, the derived item and the checker:
+
+```systemverilog
+// compile
+// frame_pkg.sv: the module's integrating example. Plain SystemVerilog, no UVM.
+package frame_pkg;
+
+  typedef enum bit [1:0] {DATA, ACK, PROBE} frame_kind_e;
+
+  class frame_item;
+    rand frame_kind_e kind;
+    rand bit [2:0]    n_opt;           // number of header options
+    rand bit [3:0]    opt_type[];      // one type code per option
+    rand bit [7:0]    opt_len[];       // option lengths in bytes
+    bit               allow_probe = 1; // test knob: a state variable, never random
+    bit [7:0]         chk;             // XOR of the lengths: a stand-in for a CRC
+
+    // Size rules. Array sizes are solved before element rules (§18.5.7.1).
+    constraint c_size {
+      n_opt inside {[1:7]};
+      opt_type.size() == n_opt;
+      opt_len.size()  == n_opt;
+    }
+
+    // if-else is two implications, and both are two-way Boolean rules,
+    // not if-statements (§18.5.5, §18.5.6).
+    constraint c_kind {
+      if (kind == ACK) n_opt == 1;
+      else             n_opt >= 2;
+      !allow_probe -> (kind != PROBE);  // reads only the knob: a guard (§18.5.12)
+    }
+
+    // Element rules. The guard i > 0 keeps opt_len[i - 1] in bounds (§18.5.7.1).
+    constraint c_opts {
+      foreach (opt_len[i]) {
+        opt_len[i] inside {[2:16]};
+        opt_len[i] % 2 == 0;                      // whole 16-bit words
+        if (i > 0) opt_len[i] <= opt_len[i - 1];  // longest option first
+      }
+      opt_len.sum() with (int'(item)) <= 40;  // int'() avoids an 8-bit sum (§18.5.7.2)
+      unique {opt_type};                      // no option type twice (§18.5.4)
+    }
+
+    // Runs only after a successful solve (§18.6.2, §18.6.3).
+    function void post_randomize();
+      chk = opt_len.xor();
+    endfunction
+  endclass
+
+  // A test-specific variant. The same name replaces the whole base c_kind
+  // block, knob rule included; a new name adds a rule (§18.5.2).
+  class probe_frame extends frame_item;
+    constraint c_kind { kind == PROBE; n_opt >= 4; }
+    constraint c_big  { opt_len.sum() with (int'(item)) >= 16; }
+  endclass
+
+  // Re-checks every rule with procedural code, independent of the constraints.
+  // Returns "" for a legal item, otherwise the name of the broken rule.
+  function automatic string check_item(frame_item it);
+    probe_frame  pf;
+    bit          is_probe;
+    int unsigned total = 0;
+
+    is_probe = $cast(pf, it);
+    if (it.n_opt == 0) return "c_size n_opt";  // 3 bits, so 7 is the maximum anyway
+    if (it.opt_type.size() != it.n_opt) return "c_size opt_type";
+    if (it.opt_len.size() != it.n_opt)  return "c_size opt_len";
+    if (is_probe) begin
+      if (it.kind != PROBE || it.n_opt < 4) return "probe_frame c_kind";
+    end else begin
+      if (it.kind == ACK && it.n_opt != 1)     return "c_kind ACK";
+      if (it.kind != ACK && it.n_opt < 2)      return "c_kind other";
+      if (!it.allow_probe && it.kind == PROBE) return "c_kind knob";
+    end
+    foreach (it.opt_len[i]) begin
+      if (it.opt_len[i] < 2 || it.opt_len[i] > 16) return "c_opts range";
+      if (it.opt_len[i] % 2 != 0) return "c_opts even";
+      if (i > 0 && it.opt_len[i] > it.opt_len[i - 1]) return "c_opts order";
+      total += it.opt_len[i];
+    end
+    if (total > 40) return "c_opts sum";
+    if (is_probe && total < 16) return "probe_frame c_big";
+    foreach (it.opt_type[i])
+      for (int j = i + 1; j < it.opt_type.size(); j++)
+        if (it.opt_type[i] == it.opt_type[j]) return "c_opts unique";
+    if (it.chk != it.opt_len.xor()) return "post_randomize";
+    // The checker form: no variable is random, so it only evaluates every active
+    // constraint against the current values (§18.11.1).
+    if (!it.randomize(null)) return "randomize(null)";
+    return "";
+  endfunction
+
+endpackage
+```
+
+The test module creates 1000 items, about one in four of them the derived class, and randomizes each through a base-class handle:
+
+```systemverilog
+// compile
+// tb_top.sv: compile after frame_pkg.sv.
+module tb_top;
+  import frame_pkg::*;
+
+  initial begin
+    frame_item  item;
+    probe_frame pf;
+    string      why;
+    int         n_pass, n_fail, n_probe_obj;
+    int         n_kind[3];  // indexed by the frame_kind_e value
+
+    for (int i = 0; i < 1000; i++) begin
+      // randcase draws from this thread's generator: weights 3 to 1 (§18.16).
+      randcase
+        3: item = new();
+        1: begin
+          pf   = new();
+          item = pf;                 // base handle, derived object
+          n_probe_obj++;
+        end
+      endcase
+      item.allow_probe = (i % 4 != 0);  // the knob: no PROBE on every fourth call
+
+      // randomize() is virtual, so a derived object uses its own constraints
+      // even through a base handle (§18.5.2).
+      if (!item.randomize()) $fatal(1, "randomize() failed on call %0d", i);
+
+      why = check_item(item);
+      if (why == "") n_pass++;
+      else begin
+        n_fail++;
+        $error("call %0d broke %s", i, why);
+      end
+      n_kind[item.kind]++;
+    end
+
+    $display("kinds: DATA=%0d ACK=%0d PROBE=%0d (probe_frame objects: %0d)",
+             n_kind[DATA], n_kind[ACK], n_kind[PROBE], n_probe_obj);
+    $display("PASS=%0d FAIL=%0d", n_pass, n_fail);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative, not from a simulator run). The `PASS` line is exact; the counts on the first line depend on the seed and on the simulator.
+
+```text
+kinds: DATA=418 ACK=72 PROBE=510 (probe_frame objects: 247)
+PASS=1000 FAIL=0
+```
+
+**Reading the result.**
+- **`PASS=1000 FAIL=0`** follows from the standard, whatever the seed: every element rule can hold for every option count the size stage can pick, so no call fails, and every item obeys every rule. If your run prints a `$fatal` or an `$error` line instead, you changed a rule; the rule name in the message tells you which.
+- **About 250 `probe_frame` objects** because `randcase` picks the second branch with weight 1 of 4 (§18.16).
+- **ACK is rare, and that is not a bug.** ACK allows one option count, while DATA and PROBE allow six each, and without `dist` or `solve…before` the solver favours no kind: it picks among legal combinations (§18.5.9). The exact share depends on how your simulator spreads its choices (see [Expert: what IEEE 1800-2023 leaves to the simulator](#expert-what-ieee-1800-2023-leaves-to-the-simulator)). A test that needs ACK must ask for it, with a knob, a `dist` (I-SV-2A) or an inline `with`; a coverpoint on `kind` shows the imbalance at once ([I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)).
+- **`probe_frame` objects ignore the knob.** Their `c_kind` replaced the *whole* base `c_kind` block, including the line that reads `allow_probe`. Replacement works per block, not per line (§18.5.2). Put a rule that derived classes must keep in a block of its own.
+
+### Run it
+
+1. Put the two blocks in `frame_pkg.sv` and `tb_top.sv`.
+2. Compile both files in one compilation, package first, with your simulator's SystemVerilog mode, and run `tb_top`.
+3. Rerun with another seed. The `PASS` line must not change; the counts will. The seed option is simulator-specific (IEEE 1800 does not define one): check your simulator's documentation.
+4. Open-source simulators support constrained randomization to different degrees (tool-dependent); this example was not checked on one.
+
+### How to build a constrained item, step by step
+
+1. **List the rules from the spec** in plain words, one per line, before writing any SystemVerilog.
+2. **Give each rule a named constraint block**, grouped by what a test may want to switch off or replace (`c_size`, `c_kind`, `c_opts`). Unnamed rules cannot be switched off or overridden, and replacement takes a whole block.
+3. **Write conditions as implications or `if`/`else`**, and predict how often each condition will hold: a narrow consequence makes its condition rare.
+4. **Constrain every array size directly**, and make sure every element rule can hold for every legal size; sizes are decided first.
+5. **Check widths**: cast with `int'()` inside `sum() with`, and use unsigned or bounded types for lengths and delays.
+6. **Put test choices in knobs or derived classes**, never in edits to the shared item.
+7. **Check every `randomize()` result**, and re-check the values with independent procedural code or `randomize(null)` while you develop the item.
+
+**Checklist before moving on:**
+- [ ] I can explain why `en` is 1 on about one call in three in `en -> v < 2` with a 2-bit `v`.
+- [ ] I can name the steps of one `randomize()` call, and say which hook has already run when the call fails.
+- [ ] I can point to the line of the worked example that uses each technique: `if`/`else`, an implication on a knob, `foreach` with a guard, `sum() with`, `unique`, a hook, an override, `randcase` and `randomize(null)`.
+- [ ] I can explain why `probe_frame` ignores `allow_probe`, and why ACK is the rarest kind.
+- [ ] I know which sub-lesson to open for each symptom in the debugging table.
+
+## Push Further
+
+### Expert: intermittent failures from LRM solve orders
+
+The governing rule ("solved together") is the general rule of §18.3: when a solution exists, the solver finds one. IEEE 1800-2023 makes three exceptions. In each, some variables are decided first and become state variables for the rest, so an early choice can leave no solution even though another early choice would have worked.
+
+| Order | What is decided first | The standard's warning | Clause |
+|---|---|---|---|
+| `randc` | `randc` variables, before `rand` variables | "this can sometimes cause randomize() to fail" | §18.4.2 |
+| array sizes | `size()` of an array that also has `foreach` or reduction constraints | "This implicit ordering can cause the solver to fail in some situations" | §18.5.7.1, §18.5.7.2 |
+| function arguments | random variables passed to a function called in a constraint | the "subdivision can cause the overall constraints to fail" | §18.5.11 |
+| for contrast: `solve…before` | only the distribution changes | it "does not change the solution space and, therefore, cannot cause the solver to fail" | §18.5.9 |
+
+**A traced size-first failure.**
+
+```systemverilog
+// snippet
+rand bit [3:0] len;
+rand bit [7:0] d[];
+constraint c_len  { len inside {[1:10]}; }
+constraint c_size { d.size() == len; }
+constraint c_val  { foreach (d[i]) d[i] == i * 30; }  // last element: (len - 1) * 30
+```
+
+| Size chosen first | The element rule needs | Result |
+|---|---|---|
+| `len` = 1 … 9 | `d[len - 1]` = 0 … 240, which fits in 8 bits | success |
+| `len` = 10 | `d[9]` = 270, which no 8-bit value equals | `randomize()` returns 0 |
+
+If the size is picked uniformly from its 10 legal values, about one call in ten fails, although lengths 1–9 always work. Nothing is random about the bug: the size stage cannot see the element rules. The fix is to bound the size so that every element rule can hold (`len inside {[1:9]}`).
+
+The signature of all three orders is a failure rate between 0 % and 100 % with nothing changed between calls. [Conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) shows how to remove each order, and [solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug) turns the symptom into a triage procedure.
+
+### Expert: reviewing a constrained-random item
+
+A staff-level review of a sequence item asks the same questions every time. Each one catches a bug class from a different sub-lesson.
+
+| Review question | The bug it prevents | Clause | Taught in |
+|---|---|---|---|
+| Is every rule in a named block, grouped by what a test may switch off or replace? | a test cannot remove an unnamed rule; replacing a block also drops every other line in it | §18.5.2, §18.9 | [controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization) |
+| Is every array size bounded directly, so that every element rule can hold for every size? | intermittent size-first failures | §18.5.7.1 | [conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) |
+| Does every reduction over narrow elements use `with (int'(item))`? | an 8-bit sum that wraps, so a budget rule constrains nothing | §18.5.7.2 | [conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) |
+| Are lengths and delays unsigned, or bounded at both ends? | negative values from `rand int` | §6.11.3 | [solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug) |
+| Are knobs read by constraints 2-state (`bit`, `int`)? | an X or Z value inside a constraint is an error | §18.3 | [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) |
+| Are functions called in constraints free of side effects, and does every argument value leave a solution? | functions run an unspecified number of times; their arguments are solved first | §18.5.11 | [conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) |
+| Is every `randomize()` result checked, including the ones inside UVM macros? | a failed call keeps old values; the `` `uvm_do `` macros only warn (`RNDFLD`) | §18.6.3; uvm-core 2020.3.1 `uvm_sequence_defines.svh` | [solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug) |
+| Are new objects and threads created after the existing ones, or seeded by the objects themselves? | a small code change shifts every later seed, so old failing seeds stop reproducing | §18.14.1, §18.14.3 | [procedural randomization and seeds](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) |
+| Does a coverpoint watch every mode the constraints allow? | an over-constraint that silently removes a mode | — | [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) |
+
+The worked example answers yes to every row that applies to it except the last (it has no coverpoint), and its knob shows why the first row matters: `probe_frame` drops the knob rule because it replaces all of `c_kind`.
+
+### Expert: what IEEE 1800-2023 leaves to the simulator
+
+Clause 18 defines which results are legal and how they are distributed, not how a simulator finds them. Each item below is **tool-dependent**; the standard's own wording is cited where it exists.
+
+| Question | What the standard says | Consequence |
+|---|---|---|
+| Which solver engine, how fast, and what it reports on failure | nothing: the clause defines results, not algorithms | run times, memory and failure messages differ between simulators; label any vendor option you document |
+| Which other constraints join the array sizes in the first stage | §18.5.7.1 says size constraints are solved first; it does not list what else is solved with them | value frequencies, such as the kind counts in the worked example, can differ between simulators even when every result is legal |
+| How often a function in a constraint is called | "an unspecified number of times (at least once) in an unspecified order" (§18.5.11) | a function that logs, counts or changes state behaves differently from tool to tool |
+| The seed of a run | "The default seed is an implementation-dependent value" (§18.14.1); the saved generator state is an implementation-dependent string (§18.13.4) | a seed reproduces a run only on the same simulator, version and code; it does not transfer between tools |
+| How to pass a seed on the command line | not defined by IEEE 1800 | every simulator names its own option; regression scripts must know the tool |
+
+[Procedural randomization and seeds](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) treats seeds across simulators in depth, and [conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints) the performance of large array constraints.
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: it fails on some calls, but a solution exists"
+  question="A randomize() call fails on roughly one call in ten. You can write down values by hand that satisfy every constraint, and nothing changes between calls. How is that possible, and what do you look for?"
+  options={[
+    { text: "The solver gives up after a time limit, so a tight problem fails at random.", isCorrect: false, feedback: "Solver limits are tool-dependent, but the standard requires a solution whenever one exists (§18.3), except where it imposes an order. Look for that order first." },
+    { text: "An order the standard imposes decided some variables first: an array size before its foreach or reduction rules, a function's arguments before the function result, or a randc variable before rand ones. Bound the early variables so every choice leaves a solution.", isCorrect: true, feedback: "Correct (§18.5.7.1, §18.5.11, §18.4.2). solve…before, by contrast, cannot cause a failure (§18.5.9)." },
+    { text: "A soft constraint is dropped on some calls, which leaves the others in conflict.", isCorrect: false, feedback: "Dropping a soft constraint only removes a rule; soft constraints never make a call fail (§18.5.13.1)." },
+    { text: "The seed is bad; change it and the failure goes away.", isCorrect: false, feedback: "Another seed hides the failure but does not remove the dead end. A fixed seed should make the failure repeat on the same call." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: one call, in order"
+  question="An item has a rand sub-object handle that points to an object. Walk through what happens, in order, when the test calls item.randomize() with { len > 4; }."
+  options={[
+    { text: "pre_randomize() runs on the item and then on the enabled rand sub-object. The solver takes the active variables and constraints of both objects, plus the inline rule, and solves them together, apart from any order the standard imposes. On success the values are assigned, post_randomize() runs on both, and the call returns 1; on failure it returns 0, nothing changes, and post_randomize() is skipped.", isCorrect: true, feedback: "Correct (§18.6.2, §18.5.8, §18.7, §18.6.3). The sub-object's constraints are global constraints of the same problem." },
+    { text: "The item is randomized first; then randomize() is called separately on the sub-object, so the sub-object's constraints cannot refer to the item.", isCorrect: false, feedback: "A rand object member is solved concurrently with its container (§18.4, §18.5.8): one problem, not two calls." },
+    { text: "The inline rule replaces the item's class constraints for this call, then the solve runs and post_randomize() always runs to clean up.", isCorrect: false, feedback: "Inline constraints are applied along with the class constraints (§18.7), and post_randomize() is not called when the call fails (§18.6.3)." },
+    { text: "pre_randomize() runs only if the call succeeds, because it prepares the values that were just chosen.", isCorrect: false, feedback: "pre_randomize() runs first, before the solve (§18.6.2); post_randomize() is the one that needs success." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Module quiz
+
+<Quiz
+  questions={[
+    {
+      question: "A class has rand bit en and rand bit [3:0] v, with constraint c { en -> v < 2; }. Over many calls, how often is en equal to 1?",
+      answers: [
+        { text: "About half the time: en is picked first, then v is restricted.", correct: false, feedback: "That reads the implication as procedural code. The solver picks among legal (en, v) pairs, not en first." },
+        { text: "About 1 call in 9.", correct: true, feedback: "Right. 16 pairs have en = 0 and 2 have en = 1, so 2 of 18 legal pairs: 1/9." },
+        { text: "About 1 call in 16.", correct: false, feedback: "That counts the 2 good pairs out of all 32 pairs, but the 14 illegal pairs are never picked." },
+        { text: "en is 1 half the time, and those calls fail when v comes out 2 or larger.", correct: false, feedback: "The solver never picks a value and then fails here: it only returns legal pairs." }
+      ],
+      explanation: "An implication is the Boolean !en || (v < 2), solved together with everything else (§18.5.5). The legal pairs are the 16 with en = 0 and the 2 with en = 1, and each legal pair is equally likely (§18.5.9), so P(en = 1) = 2/18 = 1/9. A narrow right-hand side makes the left-hand side rare.",
+      objective: 1
+    },
+    {
+      question: "A class declares rand bit [2:0] ids[9] and constraint c { unique {ids}; }. What happens when you call randomize()?",
+      answers: [
+        { text: "It succeeds; unique is relaxed when it cannot be met.", correct: false, feedback: "unique is a hard constraint. Only soft constraints are dropped, and unique cannot be soft." },
+        { text: "It succeeds with exactly one repeated value.", correct: false, feedback: "unique allows no repeated value at all among the members of the group (§18.5.4)." },
+        { text: "Every call fails: nine elements cannot all differ when only eight 3-bit values exist.", correct: true, feedback: "Right. The pigeonhole principle: the problem has no solution, so randomize() returns 0 on every call." },
+        { text: "It does not compile, because arrays are not allowed in unique.", correct: false, feedback: "An unpacked array of integral elements is a legal member of a unique group (§18.5.4)." }
+      ],
+      explanation: "unique requires every member of the group to differ (§18.5.4). Nine 3-bit elements need nine distinct values out of eight, so the problem has no solution and every call returns 0. Size unique groups against the number of legal values.",
+      objective: 2
+    },
+    {
+      question: "A class has rand bit [3:0] len and rand bit [7:0] d[], with len inside {[1:10]}, d.size() == len, and foreach (d[i]) d[i] == i * 30. What happens over many calls?",
+      answers: [
+        { text: "It never fails: the solver sees that len = 10 is impossible and picks 1 to 9.", correct: false, feedback: "That would be true if everything were solved together, but sizes are solved before the foreach rules (§18.5.7.1)." },
+        { text: "It fails on about 1 call in 10: when the size stage picks len = 10, d[9] would have to be 270.", correct: true, feedback: "Right. The size is decided first and becomes a state variable for the foreach rules, which cannot be met for len = 10." },
+        { text: "It fails on every call, because 270 does not fit in 8 bits.", correct: false, feedback: "Only the call that picks len = 10 needs d[9]. Lengths 1 to 9 need at most 240." },
+        { text: "It does not compile: a foreach constraint cannot multiply by its index.", correct: false, feedback: "Loop variables may appear in constraint expressions; the LRM's own example uses A[j] > 2 * j (§18.5.7.1)." }
+      ],
+      explanation: "When an array has both size and iterative constraints, the size constraints are solved first and the size is a state variable inside the foreach (§18.5.7.1), and the standard warns that this order can make the solver fail. Fix it by bounding the size: len inside {[1:9]}.",
+      objective: 2
+    },
+    {
+      question: "Base class: constraint c_len { len < 16; }. Derived class: constraint c_len { len > 100; }, with rand bit [7:0] len. A base-class handle points to a derived object, and you call randomize() through it. What values can len take?",
+      answers: [
+        { text: "101 to 255: the derived c_len replaces the base c_len, and randomize() uses the object's constraints.", correct: true, feedback: "Right. Same name replaces (§18.5.2), and randomize() is virtual, so the handle type does not matter." },
+        { text: "None: len < 16 and len > 100 conflict, so every call fails.", correct: false, feedback: "The two blocks do not accumulate, because they have the same name. A different name would add a rule and cause this conflict." },
+        { text: "0 to 15, because the handle has the base-class type.", correct: false, feedback: "randomize() is virtual and honours the constraints of the object, whatever the handle type (§18.5.2)." },
+        { text: "It does not compile: two constraint blocks cannot share a name.", correct: false, feedback: "Reusing a base-class block name in a derived class is the defined way to override it (§18.5.2)." }
+      ],
+      explanation: "A derived-class constraint with the same name as a base-class constraint replaces it, and a new name adds a constraint (§18.5.2). randomize() is virtual, so it uses the derived object's constraints even through a base handle. That is why a test can swap in a derived item without touching the code that randomizes it.",
+      objective: 3
+    },
+    {
+      question: "A class has constraint c_len { len <= max_len; }, where max_len is a plain (non-rand) member. Its post_randomize() sets max_len = 8. Which call is affected by the new value?",
+      answers: [
+        { text: "The current call: the solver re-solves len with the new limit.", correct: false, feedback: "post_randomize() runs after the values are assigned (§18.6.2). Nothing is solved again." },
+        { text: "The current call: it now returns 0 if len came out larger than 8.", correct: false, feedback: "The return value is decided before post_randomize() runs; the hook cannot change it." },
+        { text: "Only the next call, which reads max_len = 8 as a state variable.", correct: true, feedback: "Right. A hook can change state that later calls read, never the call it runs in." },
+        { text: "None: post_randomize() is not allowed to write class members.", correct: false, feedback: "post_randomize() is an ordinary function and may write members; that is what it is for." }
+      ],
+      explanation: "post_randomize() runs after the solver has assigned the new values (§18.6.2), so this call's len is already final. max_len is a state variable that the next call reads as a constant. To limit the current call, set the knob before calling randomize(), or use an inline with.",
+      objective: 3
+    },
+    {
+      question: "Inside a task, you need to pick one of three error-injection actions with weights 3, 1 and 4, without writing a class. Which construct fits, and how often is the second action chosen?",
+      answers: [
+        { text: "randcase; the second action is chosen on 1 call in 3.", correct: false, feedback: "The weights are not ignored: each branch is chosen with its weight divided by the sum of the weights (§18.16)." },
+        { text: "randsequence; on 1 call in 4.", correct: false, feedback: "randsequence generates sequences from a grammar. And 1 in 4 is not the share of weight 1 in a total of 8." },
+        { text: "randcase; the second action is chosen on 1 call in 8.", correct: true, feedback: "Right. The weights sum to 8, so the branches are chosen with probability 3/8, 1/8 and 4/8 (§18.16)." },
+        { text: "std::randomize() with a dist; on 3 calls in 8.", correct: false, feedback: "std::randomize() could pick a value that you then branch on, but 3/8 is the first branch's share, not the second's." }
+      ],
+      explanation: "randcase picks one branch with probability equal to its weight over the sum of all weights (§18.16): 3/8, 1/8 and 4/8 here. std::randomize() randomizes variables in scope (§18.12), and randsequence generates sequences from a grammar of productions (§18.17).",
+      objective: 4
+    },
+    {
+      question: "A class declares rand int delay with constraint c { delay < 10; }, and the driver waits for delay clock cycles. Debugging shows huge waits. What is wrong?",
+      answers: [
+        { text: "Nothing in the constraint: rand variables are unsigned, so delay is 0 to 9.", correct: false, feedback: "rand does not change a type's signedness. int is a signed type (§6.11.3)." },
+        { text: "int is signed, so delay < 10 also allows negative values, and almost all legal values are negative. Use int unsigned or delay inside {[0:9]}.", correct: true, feedback: "Right. Over two billion negative values satisfy delay < 10, and each legal value is equally likely." },
+        { text: "The solver prefers small values, so the problem must be in the driver.", correct: false, feedback: "Without dist or solve…before, every legal value is equally likely; the solver has no preference for small numbers." },
+        { text: "The constraint only applies when delay is declared signed.", correct: false, feedback: "The constraint always applies. int is already signed, and that is the problem." }
+      ],
+      explanation: "int is a 32-bit signed type (§6.11.3), and rand keeps the declared type. delay < 10 therefore admits about 2.1 billion negative values and only ten non-negative ones. A negative delay used as a cycle count becomes a huge wait. Bound both ends, or use an unsigned type.",
+      objective: 5
+    },
+    {
+      question: "A test fails with seed 1234. You add one item = new() near the start of the test, before the existing objects are created, rerun seed 1234, and it passes. Is the bug fixed?",
+      answers: [
+        { text: "Yes: the same seed gives the same stimulus, so the failure is gone.", correct: false, feedback: "The same seed repeats a run only when objects, threads and random calls are created in the same order (§18.14.1). You changed that order." },
+        { text: "Not proven: the new object took the next value of the thread's generator, so every object created after it got a different seed and the stimulus changed.", correct: true, feedback: "Right. Reproduce on the old code with the old seed, find the cause there, then run many seeds on the new code." },
+        { text: "Yes, provided the simulator version did not change.", correct: false, feedback: "The simulator version matters too, but here the code change alone moved the seeds of every later object." },
+        { text: "Seeds are valid for one run only, so the question cannot be answered.", correct: false, feedback: "A seed reproduces a run on the same code and the same simulator (§18.14). That is how failing regressions are replayed." }
+      ],
+      explanation: "Each new object is seeded from the next random value of the thread that creates it (§18.14.1, object stability). Inserting an object early shifts the seed of every object created after it, so seed 1234 now produces different stimulus. Add new objects after existing ones, or have objects whose streams must stay fixed seed themselves with srandom() (§18.14.3).",
+      objective: 5
+    },
+    {
+      question: "In 10,000 calls, IPV6 packets never appear and randomize() never returns 0. What is the most likely cause?",
+      answers: [
+        { text: "An unlucky seed; run more calls.", correct: false, feedback: "With three protocols equally likely, missing one in 10,000 calls is practically impossible by chance." },
+        { text: "randomize() fails silently on the IPV6 calls.", correct: false, feedback: "A failed call returns 0, and the question says it never does. Check the return value anyway." },
+        { text: "Some combination of constraints makes IPV6 illegal, so the solver never picks it: a coverage hole, not a failure.", correct: true, feedback: "Right. Force IPV6 with an inline with: the call then fails, and the smallest conflicting set shows the wrong rule." },
+        { text: "The dist weight for IPV6 is too low.", correct: false, feedback: "A nonzero weight never makes a legal value impossible; only a weight of 0, or a constraint, removes it." }
+      ],
+      explanation: "When constraints exclude a value, the solver simply never picks it, and nothing fails. The symptom is a coverage hole, which only a coverpoint or a count reveals. Forcing the missing value turns the hole into a failure that you can triage by switching blocks off one at a time (solver-debug, and the lab).",
+      objective: 5
+    }
+  ]}
+/>
+
+The module flashcard deck reviews the governing rule, the call steps, the three LRM orders, override, the checker form, signedness and seeds. Each sub-lesson has its own deck for its depth. The cards follow below, under "Reinforce the essentials".
+
+### Kata: a storage write command
+
+**Objective:** write an item with conditional, array and inherited constraints, predict its two traps, and prove it with a self-checking harness.
+
+**Spec** (a made-up storage device):
+- `mode` is `SEQ`, `SPLIT` or `TRIM`; `n_blk` (1 to 8) is the number of blocks; `blk_len[]` holds one length per block (`rand bit [7:0]`).
+- R1: `blk_len` has `n_blk` elements.
+- R2: `TRIM` uses exactly one block; `SPLIT` uses at most four.
+- R3: every block is 4 to 64 bytes and a multiple of 4.
+- R4: in `SEQ` mode, each block is longer than the one before.
+- R5: the total of all blocks is at most 256 bytes.
+- Then write `small_cmd`, a derived class that caps the total at 32 bytes by replacing R5's block.
+
+**Predict first:**
+1. Which rule needs an index guard, and why?
+2. If you write R5 as `blk_len.sum() <= 256`, what goes wrong?
+3. Does `small_cmd` ever fail? If it does, on which calls, and how do you fix it without weakening R4?
+
+**Harness:** randomize 1000 `wr_cmd` and 1000 `small_cmd` objects, check every return value, re-check R1–R5 procedurally, and print `PASS=<n> FAIL=0`.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+```systemverilog
+// compile
+package wr_pkg;
+  typedef enum bit [1:0] {SEQ, SPLIT, TRIM} wr_mode_e;
+
+  class wr_cmd;
+    rand wr_mode_e mode;
+    rand bit [3:0] n_blk;
+    rand bit [7:0] blk_len[];
+
+    constraint c_size { n_blk inside {[1:8]}; blk_len.size() == n_blk; }  // R1
+    constraint c_mode {                                                   // R2
+      if (mode == TRIM)       n_blk == 1;
+      else if (mode == SPLIT) n_blk <= 4;
+    }
+    constraint c_blk {                                                    // R3, R4
+      foreach (blk_len[i]) {
+        blk_len[i] inside {[4:64]};
+        blk_len[i] % 4 == 0;
+        if (i > 0) (mode == SEQ) -> (blk_len[i] > blk_len[i - 1]);
+      }
+    }
+    constraint c_total { blk_len.sum() with (int'(item)) <= 256; }       // R5
+  endclass
+
+  class small_cmd extends wr_cmd;
+    constraint c_total { blk_len.sum() with (int'(item)) <= 32; }  // replaces R5
+    constraint c_small { (mode == SEQ) -> (n_blk <= 3); }         // keeps sizes feasible
+  endclass
+endpackage
+```
+
+1. **The index guard is R4.** It reads `blk_len[i - 1]`, which is out of bounds for `i = 0`. `if (i > 0)` involves only a loop variable, so it is a guard: no constraint is created for `i = 0` (§18.5.7.1, §18.5.12).
+2. **`blk_len.sum() <= 256` constrains nothing.** Without `with`, the sum has the element type, `bit [7:0]` (§18.5.7.2), so it wraps and is always at most 255. A 300-byte command would pass. `with (int'(item))` sums at 32 bits.
+3. **Without `c_small`, `small_cmd` fails on some SEQ calls.** Sizes are solved before the reduction (§18.5.7.2). Increasing multiples of 4 add up to at least 4 + 8 + 12 + 16 = 40 for four blocks, so any SEQ call whose size stage picks `n_blk` of 4 or more has no solution for the total of 32. If your simulator picks `(mode, n_blk)` uniformly in the size stage, that is 5 of the 13 legal pairs: roughly 38% of calls. `c_small` bounds the size directly, so every size the first stage can pick leaves a solution; three SEQ blocks need at least 4 + 8 + 12 = 24 bytes.
+
+A harness in the style of the worked example (check every return value with `$fatal`, re-check each rule with procedural code, count) prints `PASS=1000 FAIL=0` for each class. Before you add `c_small`, the same harness stops on the first failing `small_cmd` call.
+
+</details>
+
+### Lab: Silent Failure Triage
+
+A packet generator fails for one protocol, the test ignores the failure, and the log fills with packets that look valid. You make the failure loud, find the conflicting constraints with `constraint_mode()`, fix the rule that disagrees with the spec, and then see the same bug turn into a silent coverage hole. [Solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug) teaches the triage procedure the lab uses.
+
+<LabLink labId="randomization-advanced-1" />
 
 ## References & Next Topics
-- **IEEE 1800-2023, Clause 18:** Constrained random value generation.
-- Next: [`/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals`](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index).
+
+**Primary sources** (IEEE 1800-2023)
+- §18.3 Concepts and usage (the general solver rule; enum values; 2-state values only); §18.4 Random variables (array resizing; `rand real`); §18.4.2 Randc modifier
+- §18.5.2 Constraint inheritance (same-name replacement; `:initial`, `:extends`, `:final`); §18.5.3 Distribution; §18.5.4 Uniqueness constraints; §18.5.5 Implication; §18.5.6 if–else constraints
+- §18.5.7.1 foreach iterative constraints; §18.5.7.2 Array reduction iterative constraints; §18.5.8 Global constraints; §18.5.9 Variable ordering; §18.5.10 Static constraint blocks; §18.5.11 Functions in constraints; §18.5.12 Constraint guards; §18.5.13.1 Soft constraint priorities
+- §18.6.2 Pre_randomize() and post_randomize(); §18.6.3 Behavior of randomization methods; §18.7 Inline constraints
+- §18.8 Disabling random variables with rand_mode(); §18.9 Controlling constraints with constraint_mode(); §18.10 Dynamic constraint modification; §18.11.1 Inline constraint checker
+- §18.12 std::randomize(); §18.14 Random stability (§18.14.1, §18.14.3); §18.16 Random weighted case; §18.17 Random production generator
+- §6.11.3 Signed and unsigned integer types; §11.6.1 Rules for expression bit lengths
+
+**UVM:** uvm-core 2020.3.1, `src/macros/uvm_sequence_defines.svh` (`` `uvm_do ``, `` `uvm_rand_send ``, the `RNDFLD` warning).
+
+**Prerequisites:** [I-SV-2A Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index); [I-SV-1 Polymorphism](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) for virtual methods and derived classes; [F2B Dynamic Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index) for dynamic arrays and their methods.
+
+**Related**
+- [Conditional and array constraints](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints): objectives 1 and 2 in depth.
+- [Controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization): objective 3 in depth.
+- [Procedural randomization and seeds](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods): objective 4 and the seed half of objective 5.
+- [Solver debug and failure triage](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug): objective 5, and the home of the lab.
+- [I-SV-3A Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index): measuring what randomization produced, and finding holes.
+- [I-UVM-1B The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index): swapping in a derived item with a factory override.
+- [I-UVM-3A Sequences Fundamentals](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): randomizing sequence items in UVM.
+- [E-DBG-1 Advanced UVM Debug](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): seed-based regression triage.
+
+<NextLesson />

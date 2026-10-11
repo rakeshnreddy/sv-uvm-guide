@@ -1,73 +1,839 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz, InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Local Variables in Sequences"
+description: "Write data-integrity properties that capture a value per attempt and check it later, including overlapping and variable-latency transfers, and debug a check that pairs the wrong data."
+flashcards: "I-SV-4B_Local_Variables"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+---
 
-export const metadata = {
-  title: "Local Variables in Sequences | Advanced Temporal Logic",
-  description: "Capture and reuse values within sequences to create robust properties.",
-};
+## Quick Take
 
-<InfoPage
-  title="Local Variables in Sequences"
-  sv_concept_tags={["local variables", "sequences"]}
+- **What it is:** A **local variable** is a variable you declare inside a named `sequence` or `property` (IEEE 1800-2023 §16.10). Every evaluation attempt of the assertion gets its own fresh copy. The attempt stores a value in it when part of the sequence matches, and compares against it later in the same attempt.
+- **Why it matters:** Data-integrity checks say "the byte that went in is the byte that comes out". The value is known at one clock tick and checked at a later one, often after a delay that varies, and often while other transfers are still in flight. `$past` needs a fixed delay, and a module-level variable is overwritten by the next transfer. A local variable gives each transfer its own private copy.
+- **The Analogy:** A parcel tag. Each parcel that enters the warehouse gets its own tag that records what is inside; at the exit, you compare the parcel with its own tag. A second parcel gets a second tag, so tags never overwrite each other. *Where it breaks:* the tag exists only inside the attempt, so nobody outside can read it, not even the assertion's own failure message. And a tag does not tell you which parcel leaving the warehouse is yours: when several are in flight, you must also number them, which this page calls a **ticket**.
+
+**You will be able to:**
+1. Predict, for overlapping attempts, which value each attempt captures in its local variable and on which edge each comparison happens and with what result.
+2. Write data-integrity properties with local variables, for fixed and for variable latency, using `[->1] ##0` to check on the handshake tick and a ticket when several transfers are in flight.
+3. Apply the rules for declaring, assigning and referencing local variables, and report a captured value with a subroutine call attached to a sequence (§16.11).
+4. Debug a failing data check from its log and trace: a shared module-level variable, a `[->1]` that pairs the wrong transfer, `##1` where `##0` was meant, or a bare sequence asserted without an implication.
+
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+**Core path:** the sections from "Words this page uses" through "Mistake 3", then Make It Work. The sections after Mistake 3 and Push Further add practitioner and expert depth. This page assumes [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) and the repetition operators from the [module overview](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/index).
+
+### Words this page uses
+
+- **Attempt.** A concurrent assertion starts a new evaluation, an **attempt**, at every tick of its leading clock (§16.14.5). Many attempts can be alive at once.
+- **Sampled value.** Assertions read every signal as it was just before the clock edge, in the **Preponed** region, the first region of the time slot (§16.5.1). Assignments made at the edge itself are not seen until the next edge. [F3B: Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) shows the regions in order.
+- **Antecedent and consequent.** In `a |-> b`, the left side `a` is the antecedent and the right side `b` the consequent. The consequent is checked only when the antecedent matches; when it does not, the attempt is a **vacuous success**, a pass that checked nothing (§16.12.7, §16.14.8).
+- **Match, end point.** A sequence matches over a run of ticks; the tick where the match ends is its end point.
+- **Handshake, transfer, in flight.** A transfer happens on a **handshake**, the tick where valid (and ready, if the interface has one) are both high. A transfer is **in flight** between its input handshake and its output handshake.
+
+### The problem: a value you need later
+
+Suppose a pipeline returns every input byte unchanged, exactly two clock ticks later. `$past`, from I-SV-4A, can express it:
+
+```systemverilog
+// snippet
+// Fixed latency: $past looks back a constant number of ticks (§16.9.3).
+a_fixed: assert property (@(posedge clk) disable iff (!rst_n)
+  in_vld |-> ##2 (out_data == $past(in_data, 2)));
+```
+
+This works because the delay is a constant: the tick count of `$past` must be an elaboration-time constant (§16.9.3). Make the latency vary, as it does in a FIFO, a cache or a bus that can stall, and `$past(in_data, N)` has no single N to use. The standard motivates local variables with exactly this case: a pipeline whose latency varies needs a variable that belongs to one transaction check, lives as long as that check, and does not collide with checks of other transactions that overlap it (§16.10).
+
+A local variable is that variable. Here is the same fixed-latency rule written with one:
+
+```systemverilog
+// snippet
+property p_fixed_latency;
+  logic [7:0] v;                                  // 1. declare: one copy per attempt
+  @(posedge clk) disable iff (!rst_n)
+    (in_vld, v = in_data) |-> ##2 (out_data == v); // 2. assign, 3. compare
+endproperty
+
+a_fixed_latency: assert property (p_fixed_latency)
+  else $error("output byte differs from the byte that went in 2 ticks earlier");
+```
+
+Read it in three steps:
+
+1. **Declare.** `logic [7:0] v;` sits after the `property` header and before the clock. It needs an explicit data type (§16.10).
+2. **Assign.** `(in_vld, v = in_data)` is a **match item**: when the expression before the comma matches, the assignments after it run, in order (§16.10). Here that happens on every edge where `in_vld` is sampled high, and `v` takes the sampled value of `in_data` at that edge.
+3. **Compare.** Two ticks later, `out_data == v` uses the value this attempt stored. On edges where `in_vld` is low, the antecedent does not match, nothing is stored, and the attempt is a vacuous success.
+
+The standard's own example is the same shape with a pipeline that takes five cycles and adds one: `(valid_in, x = pipe_in) |-> ##5 (pipe_out1 == (x+1))` (§16.10).
+
+### One copy per attempt
+
+The picture below runs `p_fixed_latency` on a trace where two bytes enter back to back. **Predict first:** the attempt that starts at edge 1 stores `11`; the attempt that starts at edge 2 stores `22`. Does the second store overwrite the first?
+
+<TimingDiagram
+  title="Two overlapping attempts, two private copies of v"
+  caption="Property: (in_vld, v = in_data) |-> ##2 (out_data == v). Each value is the one sampled at that rising edge; X means don't care while the valid is low. A1 stores 11 at edge 1 and A2 stores 22 at edge 2, in separate copies, so A1 compares 11 at edge 3 and A2 compares 22 at edge 4. A4 stores 33 and passes at edge 6."
+  edges={8}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_vld", kind: "bit", values: [0, 1, 1, 0, 1, 0, 0, 0] },
+    { name: "in_data", kind: "bus", values: [undefined, "11", "22", undefined, "33", undefined, undefined, undefined] },
+    { name: "out_data", kind: "bus", values: [undefined, undefined, undefined, "11", "22", undefined, "33", undefined] }
+  ]}
+  markers={[
+    { edge: 3, tone: "pass", short: "A1", label: "Attempt A1 started at edge 1 with v = 11; out_data is 11 at edge 3: pass" },
+    { edge: 4, tone: "pass", short: "A2", label: "Attempt A2 started at edge 2 with its own v = 22; out_data is 22 at edge 4: pass" },
+    { edge: 6, tone: "pass", short: "A4", label: "Attempt A4 started at edge 4 with v = 33; out_data is 33 at edge 6: pass" }
+  ]}
+/>
+
+| Attempt starts at edge | `in_vld` | Its own `v` | Compared at edge | `out_data` there | Result |
+|---|---|---|---|---|---|
+| 1 | 1 | 11 | 3 | 11 | pass |
+| 2 | 1 | 22 | 4 | 22 | pass |
+| 4 | 1 | 33 | 6 | 33 | pass |
+| 0, 3, 5, 6, 7 | 0 | never assigned | none | none | vacuous success |
+
+**What the trace shows.** The standard creates a new copy of every local variable at the beginning of each evaluation attempt (§16.10), and the copy disappears when the attempt ends. A1 and A2 are alive at the same time, edges 2 and 3, and each holds its own `v`. Nothing can overwrite another attempt's copy, so there is no `static` or `automatic` keyword for local variables: the declaration takes a data type only, and the lifetime is always "this attempt".
+
+### Mistake 1: a module-level variable
+
+The most common first attempt stores the input in an ordinary variable of the module, then compares against it in the assertion:
+
+```systemverilog
+// snippet
+logic [7:0] last_data;                       // ONE variable for the whole module
+always_ff @(posedge clk) if (in_vld) last_data <= in_data;
+
+a_shared: assert property (@(posedge clk) disable iff (!rst_n)
+  in_vld |-> ##2 (out_data == last_data));   // compares with whatever is stored now
+```
+
+Run it on the same trace. **Predict:** which attempt fails?
+
+<TimingDiagram
+  title="A module-level variable is shared by every attempt"
+  caption="Same trace as above, with the module variable last_data added. last_data is written at edge 1 (11) and edge 2 (22), so its sampled value at edge 3 is already 22. A1 compares out_data 11 with 22 and fails at edge 3, on a correct pipeline. A2 and A4 pass only because no newer byte arrived in their window."
+  edges={8}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_vld", kind: "bit", values: [0, 1, 1, 0, 1, 0, 0, 0] },
+    { name: "in_data", kind: "bus", values: [undefined, "11", "22", undefined, "33", undefined, undefined, undefined] },
+    { name: "last_data", kind: "bus", values: [undefined, undefined, "11", "22", "22", "33", "33", "33"] },
+    { name: "out_data", kind: "bus", values: [undefined, undefined, undefined, "11", "22", undefined, "33", undefined] }
+  ]}
+  markers={[
+    { edge: 3, tone: "fail", short: "A1", label: "A1 (input 11 at edge 1) compares out_data 11 with last_data 22, which the edge-2 input overwrote: fail" },
+    { edge: 4, tone: "pass", short: "A2", label: "A2 compares out_data 22 with last_data 22: pass" },
+    { edge: 6, tone: "pass", short: "A4", label: "A4 compares out_data 33 with last_data 33: pass" }
+  ]}
+/>
+
+**Why it fails.** `last_data` is one variable, so the input at edge 2 overwrites the value A1 still needs. The check passes for isolated transfers and fails only when transfers overlap, which is exactly when the design is busiest. That is the misconception to drop: *local variables are not shared between attempts; module variables are*. If you ever do need state shared across attempts, such as a running count, that is the job of a module-level variable written by procedural code, as the ticket counters later on this page are.
+
+### Variable latency: wait with `[->1]`, check with `##0`
+
+When the output can come any number of ticks later, wait for the output handshake instead of counting ticks. Two operators from the module overview do this:
+
+- **Goto repetition** `out_vld[->1]` waits through any number of ticks with `out_vld` low and ends exactly on the first tick where `out_vld` is high (§16.9.2).
+- **`##0`** joins two sequences so that the second starts on the same tick where the first ends (§16.7). `##1` starts it one tick later.
+
+```systemverilog
+// snippet
+property p_var_latency;
+  logic [7:0] v;
+  @(posedge clk) disable iff (!rst_n)
+    (in_vld, v = in_data) |=> out_vld[->1] ##0 (out_data == v);
+endproperty
+```
+
+Read it as: "when a byte enters, from the next tick wait for the first `out_vld`, and on that same tick `out_data` must equal the stored byte." **Predict:** in the trace below, on which edge does each version compare `out_data`?
+
+<TimingDiagram
+  title="##0 checks on the handshake tick, ##1 one tick later"
+  caption="One byte, 5A, enters at edge 1 and comes out at edge 4, the only edge with out_vld high. The ##0 version compares at edge 4 and passes. The ##1 version compares at edge 5, when out_vld is low and the DUT has already moved out_data on to 77, and fails."
+  edges={7}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_vld", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "in_data", kind: "bus", values: [undefined, "5A", undefined, undefined, undefined, undefined, undefined] },
+    { name: "out_vld", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0] },
+    { name: "out_data", kind: "bus", values: [undefined, undefined, undefined, undefined, "5A", "77", undefined] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", short: "v=5A", label: "The attempt starts at edge 1 and stores v = 5A" },
+    { edge: 4, tone: "pass", short: "##0", label: "out_vld[->1] ends at edge 4; ##0 compares out_data 5A with v on the same tick: pass" },
+    { edge: 5, tone: "fail", short: "##1", label: "With ##1 the comparison moves to edge 5, where out_data is 77: fail" }
+  ]}
+/>
+
+**Mistake 2: `##1` where `##0` was meant.** `##0` does not wait a cycle in a singly clocked sequence: it starts the second sequence on the same clock tick where the first one ends (§16.7). Writing `##1` after `[->1]` checks the data one tick after the handshake, which fails on a correct design whose output moves on at once. Crossing clocks changes this rule, see [Multiclock Assertions](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/multi-clocking).
+
+**A related slip: `[=1]` instead of `[->1]`.** Nonconsecutive repetition `out_vld[=1]` is `out_vld[->1] ##1 !out_vld[*0:$]` (Annex F.3.4.2.3): it can end on the handshake tick *or on any later tick before the next `out_vld`*. With `[=1] ##0`, a wrong value on the handshake tick passes if the right value shows up on one of those later ticks. The two operators are not interchangeable here; use `[->1]`.
+
+### Mistake 3: asserting a bare sequence
+
+```systemverilog
+// snippet
+property p_bare;                  // WRONG: no implication
+  logic [7:0] v;
+  @(posedge clk) (in_vld, v = in_data) ##2 (out_data == v);
+endproperty
+a_bare: assert property (p_bare);
+```
+
+An attempt starts on every edge, and in `assert property` a sequence used as the whole property must match from that attempt's start (§16.12.2). On an edge where `in_vld` is low, the very first tick already shows that the sequence cannot match, so the attempt **fails**. It is not a vacuous success: vacuity comes only from an implication whose antecedent does not match. A bare sequence therefore fails on every idle edge. Put the trigger in an antecedent: `(in_vld, v = in_data) |-> ##2 (out_data == v)`.
+
+### Transfers in flight: the pairing bug and the ticket
+
+`p_var_latency` is right when only one transfer can be in flight. Now let the design accept new data while older data is still inside, as any FIFO or pipeline does. The trace below comes from the Make It Work bench: an in-order FIFO whose output side has a ready signal, `out_rdy`, so a transfer leaves on a tick where `out_vld && out_rdy`. Four bytes, T0 to T3, enter at edges 2, 3, 5 and 6 and leave, in order, at edges 4, 7, 8 and 9. The FIFO has a planted bug: it stores T2 (C3) as C2.
+
+First, the obvious property:
+
+```systemverilog
+// snippet
+// WRONG with several transfers in flight: pairs each input with the NEXT output.
+(in_vld, exp_data = in_data) |=> (out_vld && out_rdy)[->1] ##0 (out_data == exp_data);
+```
+
+**Predict:** which attempts fail, and on which edges?
+
+<TimingDiagram
+  title="The pairing bug: each attempt grabs the next output handshake"
+  caption="Edge n is the rising edge at 10n + 5 ns; reset is released before edge 2. Values are those sampled at each edge, including the X the FIFO shows before its memory is written. T1 enters at edge 3 while T0 is still inside, so T1's goto ends at T0's handshake at edge 4 and compares A1 with B2. T2 and T3 both end at T1's handshake at edge 7 and compare B2. None of the three failures points at the real bug in T2."
+  edges={11}
+  cycleWidth={40}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_vld", kind: "bit", values: [0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0] },
+    { name: "in_data", kind: "bus", values: ["00", "00", "A1", "B2", "B2", "C3", "D4", "D4", "D4", "D4", "D4"] },
+    { name: "out_vld", kind: "bit", values: [undefined, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0] },
+    { name: "out_rdy", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0] },
+    { name: "out_data", kind: "bus", values: [undefined, undefined, undefined, "A1", "A1", "B2", "B2", "B2", "C2", "D4", undefined] }
+  ]}
+  markers={[
+    { edge: 4, tone: "fail", short: "T1", label: "T0 passes here (A1 = A1), but T1, which stored B2, also ends at this handshake and compares A1: fail" },
+    { edge: 7, tone: "fail", short: "T2 T3", label: "T2 (stored C3) and T3 (stored D4) both end at T1's handshake and compare B2: two failures" }
+  ]}
+/>
+
+**What went wrong.** Each attempt is private, so this is not Mistake 1. The problem is *which* handshake each attempt waits for. T1's goto starts at edge 4 and ends at the first output handshake it sees, which belongs to T0, the older transfer still in flight. The property is wrong even on a perfect design: remove the planted bug and the same three attempts still fail.
+
+**The fix: a ticket.** Count the transfers on each side with two counters in the bench. When a byte enters, capture the input count as its ticket; the byte's output is the handshake where the output count equals that ticket.
+
+```systemverilog
+// snippet
+logic [7:0] in_cnt, out_cnt;          // modelling code, not part of the DUT
+always_ff @(posedge clk or negedge rst_n)
+  if (!rst_n) begin
+    in_cnt  <= '0;
+    out_cnt <= '0;
+  end else begin
+    if (in_vld)             in_cnt  <= in_cnt  + 1'b1;   // transfers accepted
+    if (out_vld && out_rdy) out_cnt <= out_cnt + 1'b1;   // transfers delivered
+  end
+
+property p_in_order_data;
+  logic [7:0] tkt;                    // this transfer's place in the stream
+  logic [7:0] exp_data;               // the byte it must come out with
+  @(posedge clk) disable iff (!rst_n)
+    (in_vld, tkt = in_cnt, exp_data = in_data)
+      |=> (out_vld && out_rdy && out_cnt == tkt)[->1] ##0 (out_data == exp_data);
+endproperty
+```
+
+The sampled `in_cnt` at a transfer's input edge is the number of transfers accepted before it, and the sampled `out_cnt` at an output handshake is the number delivered before it. In an in-order design, transfer k enters when `in_cnt` is k and leaves when `out_cnt` is k. A local variable can appear inside the Boolean of a goto repetition, as `tkt` does here, like any other variable in an expression (§16.10). The 8-bit counters wrap, which is safe while fewer than 256 transfers are in flight.
+
+<TimingDiagram
+  title="With tickets, each attempt waits for its own transfer"
+  caption="Same trace with the two counters. Tickets: T0 = 0 (edge 2), T1 = 1 (edge 3), T2 = 2 (edge 5), T3 = 3 (edge 6). At edge 4 the handshake has out_cnt 0, so only T0 checks there. T1 waits until out_cnt is 1 at edge 7. T2 checks at edge 8 and finds C2 instead of C3: the one real failure."
+  edges={11}
+  cycleWidth={40}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_vld", kind: "bit", values: [0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0] },
+    { name: "in_data", kind: "bus", values: ["00", "00", "A1", "B2", "B2", "C3", "D4", "D4", "D4", "D4", "D4"] },
+    { name: "in_cnt", kind: "bus", values: [undefined, "0", "0", "1", "2", "2", "3", "4", "4", "4", "4"] },
+    { name: "out_vld", kind: "bit", values: [undefined, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0] },
+    { name: "out_rdy", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0] },
+    { name: "out_cnt", kind: "bus", values: [undefined, "0", "0", "0", "0", "1", "1", "1", "2", "3", "4"] },
+    { name: "out_data", kind: "bus", values: [undefined, undefined, undefined, "A1", "A1", "B2", "B2", "B2", "C2", "D4", undefined] }
+  ]}
+  markers={[
+    { edge: 4, tone: "pass", short: "T0", label: "Handshake with out_cnt 0 matches T0's ticket; A1 = A1: pass" },
+    { edge: 7, tone: "pass", short: "T1", label: "Handshake with out_cnt 1 matches T1's ticket; B2 = B2: pass" },
+    { edge: 8, tone: "fail", short: "T2", label: "Handshake with out_cnt 2 matches T2's ticket; C2 is not C3: fail, the planted bug" },
+    { edge: 9, tone: "pass", short: "T3", label: "Handshake with out_cnt 3 matches T3's ticket; D4 = D4: pass" }
+  ]}
+/>
+
+Keep the counters next to the assertion (in the interface or the checker that holds it), and reset them with the same signal as the `disable iff`. A reset then clears the counters and disables every attempt in flight together. If the design completes transfers **out of order**, one global ticket is not enough: Push Further shows a per-ID ticket, and the point where a scoreboard becomes the better tool.
+
+### Seeing the captured value: subroutine calls on match
+
+A failing data check is far easier to debug when the log shows what the attempt stored. The action block cannot show it: a local variable is not visible in the context that instantiates its sequence or property (§16.10), and the assertion statement is that context. Hierarchical names such as `p_in_order_data.exp_data` are illegal too (§16.10).
+
+Instead, attach a call to a subsequence, in the same comma list as the assignments (§16.11):
+
+```systemverilog
+// snippet
+(in_vld, tkt = in_cnt, exp_data = in_data)
+  |=> ((out_vld && out_rdy && out_cnt == tkt)[->1], show_pair(tkt, exp_data, out_data))
+      ##0 (out_data == exp_data);
+```
+
+The rules, each from §16.11:
+
+- **What you may call:** tasks, void functions, their class-method forms, and system tasks such as `$display`.
+- **When it runs:** at every end point of the subsequence it is attached to, so here once per pairing, on a pass or a fail alike. Calls in one list run in list order.
+- **Where it runs:** scheduled in the **Reactive** region, like an action block. The Reactive region comes after the Observed region, where assertions are evaluated (§4.4.2.5, §4.4.2.6, §16.14.1; regions in [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)). The assertion never waits for the call and receives nothing back.
+- **Which values it sees:** arguments are passed by value (or by `ref`/`const ref`). By-value arguments use sampled values, the same ones the match used, so `out_data` prints as the assertion saw it. A local variable that has been assigned by that point may be an argument, and must then be passed by value.
+- **Where it is illegal:** on a subsequence that can match empty, the same rule as for assignments.
+
+Make It Work shows the log this produces.
+
+### Rules and restrictions
+
+| Rule | Legal | Illegal | Why | Source |
+|---|---|---|---|---|
+| Declare inside a named `sequence` or `property`, with an explicit type | `property p; logic [7:0] v; …` | a declaration inside an inline `assert property (…)` | The inline form has no place for declarations; name the property first | §16.10, §16.12 |
+| Assign before you reference | `(a, v = d) ##1 (b == v)` | `a ##1 (b == v)` with `v` never assigned | A local variable has no default value; it starts unassigned | §16.10 |
+| Attach assignments and calls only to a subsequence that cannot match empty | `(a ##1 b[*0:1], x = e)` | `a ##1 (b[*0:1], x = e)` | An empty match has no tick at which to perform the assignment | §16.10, §16.11 |
+| Goto and nonconsecutive repetition take only a Boolean | `(b[->1], v = d)` | `(b, v = d)[->1]` | `[->]` and `[=]` apply to an expression; a parenthesised sequence with match items allows only `[*]` | §16.9.2 (Syntax 16-6) |
+| Match items may change only local variables | `(a, n++)` with `n` a local variable already assigned | `(a, cnt++)` with `cnt` a module variable | Assertion expressions must have no side effects on design or bench state | §16.6 |
+| Not in a disable condition | `disable iff (!rst_n)` | `disable iff (v == 0)` | The disable condition is evaluated with current values and applies to all attempts at once, so there is no single attempt's copy to read | §16.12 |
+| Not in a sampled-value function or a clocking event | `$stable(out_data)` | `$past(v)`, `@(posedge v)` | A sampled-value function samples its argument at earlier clock ticks, and a clocking event decides when attempts run; a local variable exists only inside one attempt | §16.9.3, §16.10 |
+| Not visible outside the property | a §16.11 call that prints `v` | `v` in the action block; `p.v` from elsewhere | The variable exists only inside the attempt | §16.10 |
+
+Two more facts complete the picture. The **sampled value of a local variable is its current value** (§16.5.1): a comparison sees the value the attempt itself assigned, not a Preponed copy. And a declaration may carry an initializer, `logic [7:0] v = in_data;`; it runs when the attempt begins, in the Observed region, with the sampled values of that time slot (§16.10).
+
+### More ways to assign: several assignments and accumulation
+
+A match-item list may hold several assignments, performed left to right, and a later one may use an earlier one: `(b[->1], x = e, y = x && f)` (§16.10). Assignments may use `+=`, `++` and the other C operators on local variables (§16.6), and repeating a parenthesised match item accumulates. This property checks that a reported `total` equals the sum of the four data beats that follow a `start`:
+
+```systemverilog
+// snippet
+property p_burst_sum;
+  logic [15:0] sum;
+  @(posedge clk) disable iff (!rst_n)
+    (start, sum = 0) ##1 (beat[->1], sum += data)[*4] |=> (total == sum);
+endproperty
+```
+
+Each iteration of `[*4]` waits for the next `beat` and adds that tick's `data`, the pattern of the standard's `(a[->1], x += data)[*4]` (§16.10). A traced attempt, with `start` at edge 1:
+
+| Edge | `start` | `beat` | `data` | What happens | `sum` after |
+|---|---|---|---|---|---|
+| 1 | 1 | 0 | – | `(start, sum = 0)` matches; the attempt continues | 0x0000 |
+| 2 | 0 | 1 | 0x10 | first `beat[->1]` ends; `sum += 0x10` | 0x0010 |
+| 3 | 0 | 1 | 0x20 | second | 0x0030 |
+| 4 | 0 | 0 | – | waiting; nothing assigned | 0x0030 |
+| 5 | 0 | 1 | 0x30 | third | 0x0060 |
+| 6 | 0 | 1 | 0x40 | fourth: the antecedent matches | 0x00A0 |
+| 7 | – | – | – | `\|=>`: `total` must be 0x00A0 | 0x00A0 |
+
+### Debugging data checks
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Fails on every edge where nothing happens | A bare sequence asserted (Mistake 3) | Put the trigger in an antecedent: `\|->` or `\|=>` |
+| Fails only when transfers overlap, and the expected value belongs to a newer transfer | A module-level variable shared by all attempts (Mistake 1) | Declare the value as a local variable |
+| Fails only when transfers overlap, and the actual value belongs to an older transfer | `[->1]` paired the wrong output | Add a ticket, or a per-ID ticket for out-of-order designs |
+| Fails one tick after a correct handshake | `##1` after `[->1]` (Mistake 2) | Use `##0` |
+| Passes although the data was wrong on the handshake tick | `[=1]` instead of `[->1]`, or the comparison is outside the waited-for tick | Use `[->1] ##0 (check)` |
+| Compile error about a local variable | Referenced before assignment, used in `disable iff`, `$past` or the action block, or attached to an empty-matching subsequence | Apply the rules table above; the exact message is tool-dependent |
+| Failures start right after a mid-test reset | Ticket counters reset by a different signal than the `disable iff` | Reset counters and assertion together |
+| No failure for a transfer that never came out | `[->1]` waits forever and the attempt is still open when simulation ends, which is not a failure for `assert property` (§16.12.2) | Bound the wait (the Kata shows how); the module overview explains weak and strong |
+
+Error messages differ between simulators. Read them for the assertion name and the time, then reproduce the attempt by hand on the waveform as this page does.
+
+### Local variables in real testbenches
+
+- **Where the check lives.** Data-integrity assertions sit in the interface of the agent that watches the bus, or in a checker attached with `bind` without editing the RTL ([I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index)). The ticket counters go next to them, never in the design.
+- **When to use one.** In-order data paths where a short rule describes the expected output: FIFOs, pipelines, bridges that pass data through, request/response pairs. One property covers every overlap pattern the stimulus produces.
+- **When not to.** Out-of-order completion with many IDs, transformations that need a real reference model, or checks that must compare whole transactions: use a scoreboard ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)). Many benches use both: the assertion catches the cycle where data went wrong, and the scoreboard checks the end-to-end result.
+- **In a UVM bench.** The assertion still reports with `$error`; routing interface assertion failures into the UVM report is covered in [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index).
+
+<VisualRecap
+  title="Capture per attempt, pair by ticket, check with ##0"
+  rule="Each attempt gets its own copy of every local variable. Assign it in a match item when the input handshake matches, find the matching output with a goto repetition, and compare on that same tick with ##0."
+  code={`property p;
+  logic [7:0] tkt, d;   // one copy per attempt
+  @(posedge clk) disable iff (!rst_n)
+    (in_hs, tkt = in_cnt, d = in_data)
+      |=> (out_hs && out_cnt == tkt)[->1]
+          ##0 (out_data == d);
+endproperty`}
+  mistake="Storing the value in a module-level variable, or waiting for the next output handshake with no ticket: both pair a transfer with someone else's data as soon as two transfers overlap."
+  inTestbench="Interface or bound-checker assertions on FIFOs, pipelines and request/response paths; tickets for in-order streams, a scoreboard for out-of-order ones."
 >
+  <svg viewBox="0 0 300 120" role="img" aria-label="Two attempts, A1 and A2, each with its own box holding its own v: A1 holds 11 and A2 holds 22. A crossed-out arrow between the boxes shows they never share a value." style={{ width: "100%", maxWidth: 340 }}>
+    <rect x="10" y="20" width="110" height="70" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="65" y="42" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor">attempt A1</text>
+    <rect x="35" y="52" width="60" height="26" rx="6" className="fill-cyan-500/10 stroke-cyan-500" />
+    <text x="65" y="70" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, monospace" fill="currentColor">v = 11</text>
+    <rect x="180" y="20" width="110" height="70" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="235" y="42" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor">attempt A2</text>
+    <rect x="205" y="52" width="60" height="26" rx="6" className="fill-cyan-500/10 stroke-cyan-500" />
+    <text x="235" y="70" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, monospace" fill="currentColor">v = 22</text>
+    <line x1="124" y1="55" x2="176" y2="55" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <line x1="140" y1="45" x2="160" y2="65" stroke="currentColor" strokeWidth="2" />
+    <line x1="160" y1="45" x2="140" y2="65" stroke="currentColor" strokeWidth="2" />
+    <text x="150" y="110" textAnchor="middle" fontSize="11" fill="currentColor">no sharing between attempts</text>
+  </svg>
+</VisualRecap>
 
-  ## Local Variables in Sequences
-  *IEEE 1800-2023, Clause 16.10: Local variables*
+## Make It Work
 
-  Local variables let an assertion remember data from an earlier point of an attempt and compare it later in the same attempt.
+### An in-order FIFO with variable latency
 
-  <InteractiveCode>
-  ```systemverilog
-  // data must still hold the requested value when ack arrives one cycle later
-  property p_data_held_until_ack;
-    logic [7:0] v;                         // one private copy per attempt
+The bench below is the trace from the pairing pictures. `pipe_fifo` is an in-order FIFO; the bench decides when to take data, so the latency varies from 2 to 4 ticks. Its parameter `CORRUPT` plants a bug: the write with that index (counting from 0) is stored with bit 0 flipped. The assertion checks every byte with a ticket and prints each pairing through an attached call.
+
+```systemverilog
+// compile
+// In-order FIFO, 8 deep. No full flag: this bench never has more than 4 words inside.
+module pipe_fifo #(parameter int CORRUPT = -1) (  // write index to damage; -1: none
+  input  logic       clk, rst_n,
+  input  logic       in_vld,
+  input  logic [7:0] in_data,
+  output logic       out_vld,
+  input  logic       out_rdy,
+  output logic [7:0] out_data
+);
+  timeunit 1ns; timeprecision 1ns;
+
+  logic [7:0] mem [8];
+  logic [2:0] wr_ptr, rd_ptr;
+  logic [3:0] count;
+  int         n_wr;                       // writes so far; used only by the planted bug
+
+  assign out_vld  = (count != 0);
+  assign out_data = mem[rd_ptr];
+
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n) begin
+      wr_ptr <= '0;
+      rd_ptr <= '0;
+      count  <= '0;
+      n_wr   <= 0;
+    end else begin
+      if (in_vld) begin
+        // planted bug: one write is stored with bit 0 flipped
+        mem[wr_ptr] <= (n_wr == CORRUPT) ? (in_data ^ 8'h01) : in_data;
+        wr_ptr      <= wr_ptr + 1'b1;
+        n_wr        <= n_wr + 1;
+      end
+      if (out_vld && out_rdy) rd_ptr <= rd_ptr + 1'b1;
+      case ({in_vld, out_vld && out_rdy})
+        2'b10:   count <= count + 1'b1;
+        2'b01:   count <= count - 1'b1;
+        default: ;                        // none, or one in and one out
+      endcase
+    end
+endmodule
+
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  logic       clk = 1'b0, rst_n = 1'b0;
+  logic       in_vld = 1'b0, out_rdy = 1'b0, out_vld;
+  logic [7:0] in_data = '0, out_data;
+  int         n_pairs, n_fail;
+
+  always #5 clk = ~clk;                   // rising edge n at 10n + 5 ns
+
+  pipe_fifo #(.CORRUPT(2)) dut (.*);      // damage the third write (C3 is stored as C2)
+
+  clocking cb @(posedge clk);             // the bench drives only through cb
+    output rst_n, in_vld, in_data, out_rdy;
+  endclocking
+
+  // Ticket counters: modelling code next to the assertion, reset like its disable iff
+  logic [7:0] in_cnt, out_cnt;
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n) begin
+      in_cnt  <= '0;
+      out_cnt <= '0;
+    end else begin
+      if (in_vld)             in_cnt  <= in_cnt  + 1'b1;
+      if (out_vld && out_rdy) out_cnt <= out_cnt + 1'b1;
+    end
+
+  // Called by the assertion at each pairing (§16.11): runs in the Reactive region,
+  // and its by-value arguments carry this attempt's values.
+  function automatic void show_pair(logic [7:0] tkt, logic [7:0] exp_data,
+                                    logic [7:0] got);
+    n_pairs++;
+    $display("[%0t] pair ticket %0d: expected %h, got %h", $time, tkt, exp_data, got);
+  endfunction
+
+  property p_in_order_data;
+    logic [7:0] tkt;                      // this transfer's place in the stream
+    logic [7:0] exp_data;                 // the byte it must come out with
     @(posedge clk) disable iff (!rst_n)
-      (req, v = data) |=> (ack && data == v);
+      (in_vld, tkt = in_cnt, exp_data = in_data)
+        |=> ((out_vld && out_rdy && out_cnt == tkt)[->1],
+             show_pair(tkt, exp_data, out_data))
+            ##0 (out_data == exp_data);
   endproperty
 
-  a_data_held: assert property (p_data_held_until_ack)
-    else $error("data changed between request and ack");
-  ```
-  </InteractiveCode>
+  a_in_order_data: assert property (p_in_order_data)
+    else begin
+      n_fail++;
+      $error("[%0t] a_in_order_data: data changed in flight", $time);
+    end
 
-  The antecedent `(req, v = data)` matches only on edges where `req` is high, and stores the sampled `data` into `v` for that attempt. `|=>` then checks `ack` and the stored value one edge later. Without the implication, a sequence asserted on its own, such as `(req, v = data) ##1 (ack && data == v)`, must match from every attempt's start edge, so it **fails on every clock where `req` is low** (§16.12.2). Use the trace lab in [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) to see that failure pattern with a bare `req ##2 ack`.
+  // Proves the interesting case happened: a byte entered while another was inside
+  c_accept_while_busy: cover property (@(posedge clk) disable iff (!rst_n)
+    in_vld && (in_cnt != out_cnt));
 
-  ### Why Use Local Variables?
+  initial begin
+    repeat (2) @(cb);                     // reset is sampled low at edges 0 and 1
+    cb.rst_n   <= 1'b1;                   // each drive is sampled at the next edge
+    cb.in_vld  <= 1'b1;
+    cb.in_data <= 8'hA1;                  // T0 enters at edge 2
+    @(cb);
+    cb.in_data <= 8'hB2;                  // T1 enters at edge 3, while T0 is inside
+    @(cb);
+    cb.in_vld  <= 1'b0;
+    cb.out_rdy <= 1'b1;                   // edge 4: take T0 (latency 2)
+    @(cb);
+    cb.in_vld  <= 1'b1;
+    cb.in_data <= 8'hC3;                  // T2 enters at edge 5
+    cb.out_rdy <= 1'b0;                   // stall the output: T1 waits
+    @(cb);
+    cb.in_data <= 8'hD4;                  // T3 enters at edge 6
+    @(cb);
+    cb.in_vld  <= 1'b0;
+    cb.out_rdy <= 1'b1;                   // edges 7, 8, 9: take T1, T2, T3
+    repeat (3) @(cb);
+    cb.out_rdy <= 1'b0;
+    repeat (2) @(cb);                     // edge 11 (115 ns): every attempt is done
+    $display("[%0t] PASS=%0d FAIL=%0d", $time, n_pairs - n_fail, n_fail);
+    $finish;
+  end
+endmodule
+```
 
-  - Each evaluation attempt gets its own copy, so overlapping transactions do not overwrite each other's data (§16.10).
-  - They check relationships across time without extra modeling code in the testbench or design.
+**Run it.** Save both modules in one file, compile it with any simulator that supports IEEE 1800-2023 concurrent assertions, and run `tb_top`. No plusargs are needed. Both modules use a 1 ns time unit and precision, so `%0t` prints whole nanoseconds. Support for local variables in open-source simulators varies and was not verified for this page; no simulator was run, and the log below was traced by hand from the rules on this page.
 
-  ### Advanced Tips
+**Expected output** (illustrative, traced by hand; the simulator adds its own header, and the prefix and location on the `$error` line are tool-dependent):
 
-  - Local variables have no `static` or `automatic` qualifier. The declaration takes only a data type (the `assertion_variable_declaration` grammar, §16.10 and A.2.10), and each attempt always gets its own private copy. To share state across attempts, use a module-level variable written by procedural code, or modeling code in a checker.
-  - Local variables cannot be passed to sampled-value functions such as `$past` (§16.9.3), and they cannot appear in a `disable iff` condition (§16.12).
-  - Pair local variables with `default clocking` and `default disable iff` to keep long properties readable.
+```text
+[45] pair ticket 0: expected a1, got a1
+[75] pair ticket 1: expected b2, got b2
+[85] pair ticket 2: expected c3, got c2
+Error: [85] a_in_order_data: data changed in flight
+[95] pair ticket 3: expected d4, got d4
+[115] PASS=3 FAIL=1
+```
 
-  ## Check Your Understanding
+The two lines at 85 ns both come from the Reactive region of the same time slot, the attached call and the action block. Events in the Reactive region can be processed in any order (§4.4.2.6), so the two lines may print in either order. Your tool's end-of-run assertion report (its format is tool-dependent) should also show `c_accept_while_busy` covered 3 times, at edges 3, 5 and 6.
 
-  <Quiz questions={[
-    {
-      question: "What is a key benefit of using local variables inside a sequence or property?",
-      answers: [
-        { text: "They share the same value across all assertions", correct: false },
-        { text: "Each evaluation attempt has its own copy of the variable", correct: true },
-        { text: "They are visible to the entire design", correct: false },
-        { text: "They must be declared as `static`", correct: false }
-      ],
-      explanation: "Local variables are created per attempt and removed when the attempt ends (§16.10). That is what keeps overlapping transactions apart."
-    }
-  ]} />
+**Trace the attempts.** Edge n is at 10n + 5 ns. Read this table next to the log and the ticket picture above.
 
-  <div className="mt-8">
-    <InterviewQuestionPlayground
-      question="An assertion checks that a burst read returns the exact same address that was requested. However, if two read requests happen back-to-back, the assertion fails on the second read, incorrectly checking against the first request's address. What is the most likely cause?"
-      options={[
-        { text: "`|=>` was used instead of `|->`.", isCorrect: false, feedback: "Overlapping vs non-overlapping implication just shifts the check by one cycle, it doesn't cause data corruption between threads." },
-        { text: "The assertion used a module-level variable to store the address instead of an SVA local variable inside the sequence.", isCorrect: true, feedback: "Correct! If a normal `logic` variable in the module is used to store state, a second request will overwrite the first request's data before the first request finishes checking. SVA local variables (`logic [31:0] addr;` declared *inside* the property/sequence) get a new private copy for *every* attempt that starts." },
-        { text: "The property was evaluated in the reactive region rather than the observed region.", isCorrect: false, feedback: "This relates to scheduling semantics, not data shadowing." },
-        { text: "The local variable was not explicitly typed as `automatic`.", isCorrect: false, feedback: "SVA local variables take no lifetime qualifier at all: neither `automatic` nor `static`. Every attempt always gets its own private copy." }
-      ]}
-    />
-  </div>
+| Edge (time) | Input side | `in_cnt` | Output side (`out_vld`, `out_rdy`, `out_data`) | `out_cnt` | What the assertion does |
+|---|---|---|---|---|---|
+| 2 (25 ns) | A1 enters | 0 | 0, 0, X | 0 | T0 starts: `tkt` = 0, `exp_data` = A1 |
+| 3 (35 ns) | B2 enters | 1 | 1, 0, A1 | 0 | T1 starts: `tkt` = 1, `exp_data` = B2; no output handshake |
+| 4 (45 ns) | idle | 2 | 1, 1, A1 | 0 | T0's handshake: `show_pair` prints, A1 = A1, T0 passes |
+| 5 (55 ns) | C3 enters | 2 | 1, 0, B2 | 1 | T2 starts: `tkt` = 2, `exp_data` = C3; the FIFO stores C2 |
+| 6 (65 ns) | D4 enters | 3 | 1, 0, B2 | 1 | T3 starts: `tkt` = 3, `exp_data` = D4 |
+| 7 (75 ns) | idle | 4 | 1, 1, B2 | 1 | T1's handshake: B2 = B2, pass |
+| 8 (85 ns) | idle | 4 | 1, 1, C2 | 2 | T2's handshake: C2 is not C3, fail |
+| 9 (95 ns) | idle | 4 | 1, 1, D4 | 3 | T3's handshake: D4 = D4, pass |
 
-</InfoPage>
+### Break it on purpose
+
+1. **Remove the ticket.** In the consequent, replace `(out_vld && out_rdy && out_cnt == tkt)` with `(out_vld && out_rdy)` and rerun. **Predict** before you run: the attempts now pair with the next handshake, as in the pairing-bug picture.
+
+   ```text
+   [45] pair ticket 0: expected a1, got a1
+   [45] pair ticket 1: expected b2, got a1
+   Error: [45] a_in_order_data: data changed in flight
+   [75] pair ticket 2: expected c3, got b2
+   [75] pair ticket 3: expected d4, got b2
+   Error: [75] a_in_order_data: data changed in flight
+   Error: [75] a_in_order_data: data changed in flight
+   [115] PASS=1 FAIL=3
+   ```
+
+   (Illustrative; lines with the same time may appear in a different order.) Three failures, and the log blames the wrong transfers. Now also set `.CORRUPT(-1)`: the same three failures remain, which proves the property, not the FIFO, is wrong.
+
+2. **Fix the FIFO instead.** Restore the ticket and set `.CORRUPT(-1)`. All four pairings pass and the last line becomes `[115] PASS=4 FAIL=0`.
+
+3. **Swap `##0` for `##1`.** Restore everything, then change `##0 (out_data == exp_data)` to `##1 (out_data == exp_data)`. **Predict** which pairings fail. (T0 is compared at edge 5, where `out_data` already shows B2, so it fails; work out the other three yourself, then check against the trace table.)
+
+### How to write a data-integrity property
+
+1. **Write the rule in one English sentence**, naming the input event, the output event and the data relation: "every byte accepted on the input leaves the output unchanged, in order".
+2. **Pick the capture point** and make it the antecedent, with the assignments in a match item: `(in_vld, exp_data = in_data)`.
+3. **Pick the waiting operator.** Fixed latency: `##N`. Variable latency, one transfer at a time: `out_hs[->1]`. Several in flight, in order: add a ticket counter and wait for `(out_hs && out_cnt == tkt)[->1]`.
+4. **Compare on the handshake tick with `##0`**, and write the relation exactly as the design's specification states it (unchanged, plus one, a CRC).
+5. **Report what was captured** with an attached call when a failure needs context; keep the failure message true for every way the property can fail.
+6. **Cover the interesting case** (overlap, back-to-back, maximum depth), so a pass means the check really ran.
+7. **Bound the wait** if a missing output must fail during the run (the Kata below shows how).
+
+**Checklist before moving on:**
+
+- [ ] I can say, for two overlapping attempts, which value each one stores and on which edge each compares.
+- [ ] My local variables are declared in a named property with explicit types, and assigned in a match item before they are used.
+- [ ] My consequent compares with `##0` on the tick where the goto repetition ends.
+- [ ] With more than one transfer in flight, each attempt waits for its own transfer by ticket (or ID).
+- [ ] My trigger is in an antecedent, never a bare sequence.
+- [ ] No local variable appears in `disable iff`, `$past`/`$stable`, a clocking event or an action block; I print captured values with a §16.11 call.
+- [ ] I ran the bench, matched the log line by line to the trace table, and broke it on purpose at least once.
+
+## Push Further
+
+### Expert: One attempt can fork into several threads
+
+An antecedent with a range can match more than once from one start. For each match, the consequent is evaluated separately (§16.12.7), and the evaluation behaves as if it forked one thread per match, each carrying the local-variable values assigned on its own path (§16.10; a range such as `##[1:3]` is defined as an `or` of its alternatives, §16.7). In
+
+```systemverilog
+// snippet
+(req ##[1:3] (gnt, id = gnt_id)) |=> (rsp && rsp_id == id)
+```
+
+a `gnt` on two of the three ticks gives two threads with two `id` values, and *both* consequents must pass. If only the first grant counts, keep one thread with `first_match`, which accepts match items inside its parentheses: `first_match(req ##[1:3] (gnt, id = gnt_id))` (§16.9.8). Interview angle: "Why did one request produce two failure messages?"
+
+### Expert: Flow rules for `or`, `and` and `intersect`
+
+A local variable keeps its value through a plain chain of `##` and repetitions. Through `or`, `and` and `intersect` it may not, because the two operands are evaluated like parallel threads (§16.10; the precise conditions are in Annex F.5.4):
+
+- **Sibling threads cannot see each other's assignments.** `(a ##1 (b, x = data) ##1 c) or (d ##1 (e == x))` is illegal: the right operand reads an `x` that only the left one assigns.
+- **After `or`**, a variable is usable only if every operand leaves it assigned. Each matching operand continues as its own thread with its own value.
+- **After `and` and `intersect`**, a variable assigned in only one operand flows out; one assigned in both is blocked, and becomes unassigned, because the two threads merge into one and cannot agree on a value.
+
+A variable that does not flow out becomes unassigned, and referencing it before it is assigned again is illegal (§16.10).
+
+### Expert: Local variable formal arguments
+
+A named sequence can return a captured value to its caller through a **local variable formal argument**, declared with `local` and a direction: `sequence s_cap(local output logic [7:0] lv); …` (§16.8.2). Directions `input`, `inout` and `output` are allowed for sequences; a named property's local formal arguments must be `input` (§16.12.19). This lets an assertion library offer reusable "capture" sequences. Another way is an untyped formal argument bound to a whole local variable of the caller, which the sequence assigns (§16.10).
+
+### Expert: Two leading clocks give two copies
+
+In a multiclock property, a declaration initializer runs at the first tick of the property's leading clock at or after the attempt begins. If one named property has two distinct leading clocks, for example an `and` of two subproperties clocked by `clk1` and `clk2`, the standard creates a separate copy of the local variable per leading clock, each initialized at its own clock's tick (§16.13.7). The two copies can hold different values, so do not expect them to agree. Clock crossing itself is taught in [Multiclock Assertions](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/multi-clocking).
+
+### Expert: Measure latency in time, inside the assertion
+
+To bound latency in nanoseconds rather than ticks, capture the time in a local variable: `(count == 0, l_t = $realtime) ##1 (count == 7)[->1] |-> $realtime - l_t < 50.5` (§16.6). The standard warns against the alternative, capturing time in procedural code and comparing it in the assertion: the procedure sees current values and the assertion sees sampled ones, so the two readings belong to different ticks and the measured interval is off by a clock period.
+
+### Expert: Per-ID tickets, cost, and the scoreboard boundary
+
+- **Out-of-order by ID.** Protocols such as AXI keep order only among transfers with the same ID ([B-AXI-3](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index)). Keep one counter per ID and capture the ID too: `(in_vld, id = in_id, tkt = in_cnt[in_id], d = in_data) |=> (out_vld && out_id == id && out_cnt[id] == tkt)[->1] ##0 (out_data == d)`. A local variable may index an array like any other variable (§16.10).
+- **Cost (tool-dependent).** Every open attempt keeps its own copies alive until it finishes, so a property with an unbounded wait on a busy interface can hold thousands of attempts. The standard also notes that an attempt indexing a large dynamic structure with a local variable may force the tool to sample the whole structure (§16.6). Measure with your simulator's assertion profiling before you scale a check up.
+- **The boundary.** When the expected output needs a model (reordering, transformation, dropped or merged transfers), write a scoreboard ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)). Formal tools accept local variables too; how much each one costs the proof is tool-dependent ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)).
+
+### Interview angles
+
+Try each question before you open the answers.
+
+<InterviewQuestionPlayground
+  question="An assertion checks that a burst read returns the address that was requested. When two read requests are issued back to back, the first read fails: it is compared with the second request's address. What is the most likely cause?"
+  options={[
+    { text: "|=> was used instead of |->.", isCorrect: false, feedback: "Overlapping and nonoverlapping implication move the check by one tick for every attempt alike; they cannot swap data between two requests." },
+    { text: "The address was stored in a module-level variable instead of an SVA local variable.", isCorrect: true, feedback: "Right. The second request overwrote the one variable before the first read was checked, so the first read was compared with the second address. A local variable declared in the property gives each attempt its own copy (§16.10)." },
+    { text: "The property was evaluated in the Reactive region instead of the Observed region.", isCorrect: false, feedback: "Concurrent assertions are always evaluated in the Observed region; the scheduling region cannot pair a read with the wrong request." },
+    { text: "The local variable was not declared automatic.", isCorrect: false, feedback: "Local variables take no lifetime keyword at all; every attempt always gets its own private copy." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  question="A colleague wants the failure message of a data-integrity assertion to print the expected value, which the property holds in a local variable v. What do you suggest?"
+  options={[
+    { text: "Print v in the else branch of the assertion's action block.", isCorrect: false, feedback: "Local variables are not visible where the property is instantiated, and the assertion statement is that place (§16.10)." },
+    { text: "Print p.v with a hierarchical reference.", isCorrect: false, feedback: "Hierarchical references to a local variable are not allowed (§16.10)." },
+    { text: "Print $sampled(v) in the action block.", isCorrect: false, feedback: "Local variables may not be arguments of sampled-value functions (§16.9.3), and v is still not visible there." },
+    { text: "Attach a void function or $display to the subsequence where the comparison happens, passing v by value.", isCorrect: true, feedback: "Right. Calls attached to a sequence run at each end point, in the Reactive region, with the attempt's own local values and the sampled signal values (§16.11)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  question="A memory controller returns read data out of order across IDs, but in order within each ID. Up to 16 reads are in flight. How do you check that every read returns the right data?"
+  options={[
+    { text: "One global ticket: capture in_cnt and wait for out_cnt == tkt.", isCorrect: false, feedback: "A global ticket assumes the whole stream is in order. Reads with different IDs overtake each other, so the counts no longer line up." },
+    { text: "A per-ID ticket (one counter per ID, capture the ID and its count), or a scoreboard with one queue per ID.", isCorrect: true, feedback: "Right. Order holds within an ID, so a per-ID count pairs each read with its own response. When the expected data needs a memory model, a scoreboard is the simpler place for it." },
+    { text: "Wrap the consequent in first_match so each attempt takes the first response.", isCorrect: false, feedback: "first_match keeps the earliest match, which is exactly the wrong pairing when an older read with another ID responds first." },
+    { text: "Use out_vld[=1] instead of [->1] so later responses can also match.", isCorrect: false, feedback: "[=1] lets the check pass on a later tick before the next response; it does not identify which response belongs to which read." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+Answer from the rules, not from the pictures. Every question maps to one objective. The flashcards under **Reinforce the essentials**, at the end of this section, cover the same rules.
+
+<Quiz questions={[
+  {
+    question: "Property: (in_vld, v = in_data) |-> ##3 (out_data == v). in_vld is high at edges 1 (in_data 0A) and 2 (in_data 0B), and low elsewhere. out_data is 0A at edge 4 and 0B at edge 5. What do the two attempts report?",
+    answers: [
+      { text: "The attempt from edge 1 fails at edge 4, because the attempt from edge 2 overwrote v with 0B", correct: false, feedback: "That is how a module-level variable behaves. Each attempt has its own copy of a local variable, so the second store cannot touch the first (§16.10)." },
+      { text: "Both pass: the edge-1 attempt compares 0A at edge 4, the edge-2 attempt compares 0B at edge 5", correct: true, feedback: "Right. Each attempt stores its own v and counts ##3 from its own start." },
+      { text: "The attempt from edge 2 fails, because ##3 counts from the first request", correct: false, feedback: "Every attempt counts from its own antecedent match; nothing ties the second attempt to the first one's start." },
+      { text: "Both are still pending at edge 5, because local variables are only compared at the end of simulation", correct: false, feedback: "The comparison happens on the tick the consequent reaches: edge 4 for one attempt, edge 5 for the other." }
+    ],
+    explanation: "A new copy of each local variable is created for every attempt (§16.10). Attempt 1 stores 0A and checks at edge 4; attempt 2 stores 0B and checks at edge 5. Overlap is exactly the case local variables exist for.",
+    objective: 1
+  },
+  {
+    question: "Inside property p, the local variable v holds the captured input byte. Which use of v is legal?",
+    answers: [
+      { text: "disable iff (!rst_n || v == 0)", correct: false, feedback: "A disable condition may not reference local variables (§16.12); it is evaluated with current values, outside any attempt." },
+      { text: "... |=> $stable(v)", correct: false, feedback: "Local variables may not be arguments of sampled-value functions such as $stable or $past (§16.9.3)." },
+      { text: "... |-> ##2 (out_data == v + 8'd1)", correct: true, feedback: "Right. A local variable can be used in any expression inside the property, like a static variable of the same type (§16.10)." },
+      { text: "else $error(\"expected %h\", v) in the assertion's action block", correct: false, feedback: "Local variables are not visible where the property is instantiated (§16.10). Print them with a subroutine call attached to a sequence (§16.11)." }
+    ],
+    explanation: "Inside the property a local variable behaves like any variable in an expression. It may not appear in disable iff, in sampled-value functions, in clocking events or outside the property.",
+    objective: 3
+  },
+  {
+    question: "An in-order FIFO with a correct design holds up to three bytes. The check (in_vld, v = in_data) |=> (out_vld && out_rdy)[->1] ##0 (out_data == v) fails only when a byte enters while another is still inside, and each failure compares the expected byte with the previous byte's data. What is the cause?",
+    answers: [
+      { text: "All attempts share v, so the newest byte overwrites it", correct: false, feedback: "Local variables are per attempt (§16.10). The expected value in each failure is the attempt's own byte; the actual value is the wrong one." },
+      { text: "##0 should be ##1, so the data is compared after the handshake", correct: false, feedback: "##0 compares on the handshake tick, which is correct; ##1 would compare one tick later and add failures (§16.7)." },
+      { text: "Replace [->1] with [=1] so the attempt can skip the older byte's handshake", correct: false, feedback: "[=1] does not skip a handshake: it ends on the first one or on a later quiet tick. It cannot tell transfers apart." },
+      { text: "Each attempt's [->1] ends at the next output handshake, which can belong to an older byte still inside; pair by ticket", correct: true, feedback: "Right. The goto ends at the first handshake it sees, whoever owns it. The ticket makes each attempt wait for its own transfer." }
+    ],
+    explanation: "The local variable is fine; the pairing is wrong. With several transfers in flight, the next output handshake can belong to an older transfer. A ticket (or an ID, when order holds only per ID) identifies the attempt's own output.",
+    objective: 4
+  },
+  {
+    question: "A data check is written (in_vld, v = in_data) |=> out_vld[->1] ##1 (out_data == v). It fails on correct traces where out_data changes right after the handshake. Which change makes it compare on the handshake tick?",
+    answers: [
+      { text: "Replace ##1 with ##0", correct: true, feedback: "Right. ##0 starts the comparison on the same tick where out_vld[->1] ends (§16.7)." },
+      { text: "None is needed: ##1 after [->1] already compares on the handshake tick", correct: false, feedback: "##1 starts the next sequence one tick after the end of the goto repetition, that is, one tick after the handshake (§16.7)." },
+      { text: "##0 would not help, because ##0 also waits one cycle; switch |=> to |-> instead", correct: false, feedback: "##0 does not wait in a singly clocked sequence. Changing the implication moves where the wait starts, not where the comparison lands." },
+      { text: "Replace [->1] with [=1]", correct: false, feedback: "[=1] can end on later quiet ticks, so the check could pass with a wrong value on the handshake tick (Annex F.3.4.2.3)." }
+    ],
+    explanation: "The goto repetition ends exactly on the handshake tick, and ##0 fuses the comparison onto that tick. ##1 is the classic off-by-one in data checks.",
+    objective: 2
+  },
+  {
+    question: "A property has (out_vld[->1], show(v, out_data)) in its consequent, where show is a void function that prints its arguments. When does show run, and what does it print for out_data?",
+    answers: [
+      { text: "In the Observed region, before the property's result is known, with the current value of out_data", correct: false, feedback: "Attached calls are scheduled in the Reactive region, like action blocks (§16.11)." },
+      { text: "Once, when the whole property finishes, with the value out_data has at that moment", correct: false, feedback: "Attached calls run at every end point of the subsequence they are attached to, here the tick where out_vld[->1] ends (§16.11)." },
+      { text: "In the Reactive region of the tick where out_vld[->1] ends, with the sampled value of out_data and this attempt's own v", correct: true, feedback: "Right. By-value arguments use sampled values, consistent with the match, and local variables are passed by value (§16.11)." },
+      { text: "Never: subroutines cannot be called from inside a property", correct: false, feedback: "Tasks, void functions and system tasks can be attached to a sequence (§16.11)." }
+    ],
+    explanation: "§16.11: attached calls run at each end point of their sequence, in list order, scheduled in the Reactive region; by-value arguments use sampled values; local variables are passed by value. This is how you log what an attempt captured.",
+    objective: 3
+  },
+  {
+    question: "A named property's body is (in_vld, v = in_data) ##2 (out_data == v), with no implication, and it is used in assert property. The bench is idle most of the time. What does the log show?",
+    answers: [
+      { text: "Nothing on idle edges: those attempts are vacuous successes", correct: false, feedback: "Vacuous success needs an implication whose antecedent does not match. A bare sequence has no antecedent." },
+      { text: "A compile error, because v is unassigned on idle edges", correct: false, feedback: "The property is legal: v is assigned before it is referenced on every path that reaches the comparison." },
+      { text: "Failures only after reset, so adding disable iff (!in_vld) fixes it", correct: false, feedback: "Disabling on !in_vld would hide the symptom and also stop the check whenever the input goes idle mid-transfer. Use an implication." },
+      { text: "A failure on every edge where in_vld is low, because a bare sequence must match from every attempt", correct: true, feedback: "Right (§16.12.2). Write (in_vld, v = in_data) |-> ##2 (out_data == v)." }
+    ],
+    explanation: "In assert property a sequence used as a property must match from each attempt's start; an idle edge cannot match, so it fails. Triggers belong in an antecedent.",
+    objective: 4
+  },
+  {
+    question: "Which of these is legal inside a named property that declares logic [7:0] v, where cnt is a module-level int?",
+    answers: [
+      { text: "(out_vld[->1], v = out_data)", correct: true, feedback: "Right. The goto applies to a Boolean, and the assignment is attached to a subsequence that always spans at least one tick." },
+      { text: "(out_vld, v = out_data)[->1]", correct: false, feedback: "Goto repetition applies only to a Boolean expression; a parenthesised sequence with match items allows only consecutive repetition [*] (§16.9.2)." },
+      { text: "(out_vld[*0:1], v = out_data)", correct: false, feedback: "out_vld[*0:1] can match empty, and assignments may not be attached to a subsequence that admits an empty match (§16.10)." },
+      { text: "(out_vld, cnt++)", correct: false, feedback: "Match items may change only local variables; any other side effect is illegal in an assertion (§16.6)." }
+    ],
+    explanation: "Attach the match item to the goto, not the goto to the match item; never attach to an empty-matching subsequence; and assign only local variables.",
+    objective: 3
+  }
+]} />
+
+### Kata: four transfers in flight, with a bounded wait
+
+**Objective:** write a ticket check whose wait is bounded, so a missing or wrong response fails during the run.
+
+**Interface** (one clock `clk`, active-low reset `rst_n`): requests `req_vld`, `req_rdy`, `req_data[7:0]`; responses `rsp_vld`, `rsp_data[7:0]`, with no ready on the response side. **Rule:** responses come back in order, each 1 to 8 ticks after its request handshake, carrying `req_data + 1`. Up to 4 requests may be outstanding.
+
+**Trace for task 3:** request handshakes at edges 1 (`req_data` 10), 2 (20) and 3 (30); `rsp_vld` high at edges 4 (`rsp_data` 11), 6 (21) and 9 (30), low elsewhere.
+
+**Tasks:**
+1. Write the ticket counters `req_cnt` and `rsp_cnt`, and a property that captures a ticket and the expected byte at each request handshake.
+2. Make the wait bounded: the response must arrive within 8 ticks, and a wrong byte must fail on the tick it arrives.
+3. Predict, on the trace above, which request fails and on which edge.
+4. Add a `cover property` that proves the bench reached 4 outstanding requests.
+5. A teammate writes the consequent as `|-> ##[1:8] (rsp_vld && rsp_cnt == tkt && rsp_data == exp_data + 8'd1)`. Does it catch the same bug, and on which edge?
+
+<details>
+<summary>Reveal the worked solution</summary>
+
+**1 and 2.** Count handshakes on each side, and replace the unbounded `[->1]` with "no response of mine for 0 to 7 ticks, then my response, correct":
+
+```systemverilog
+// snippet
+logic [7:0] req_cnt, rsp_cnt;
+always_ff @(posedge clk or negedge rst_n)
+  if (!rst_n) begin
+    req_cnt <= '0;
+    rsp_cnt <= '0;
+  end else begin
+    if (req_vld && req_rdy) req_cnt <= req_cnt + 1'b1;
+    if (rsp_vld)            rsp_cnt <= rsp_cnt + 1'b1;
+  end
+
+property p_rsp_data;
+  logic [7:0] tkt, exp_data;
+  @(posedge clk) disable iff (!rst_n)
+    (req_vld && req_rdy, tkt = req_cnt, exp_data = req_data)
+      |=> (!(rsp_vld && rsp_cnt == tkt))[*0:7]
+          ##1 (rsp_vld && rsp_cnt == tkt && rsp_data == exp_data + 8'd1);
+endproperty
+a_rsp_data: assert property (p_rsp_data)
+  else $error("response missing within 8 ticks, or wrong data");
+```
+
+`|=>` starts the consequent one tick after the request, and `[*0:7] ##1` places the response 1 to 8 ticks after it. The repetition cannot step over a tick where this ticket's response is present, so the attempt ends on its own response: a wrong byte fails there, and a missing response fails 8 ticks after the request. `exp_data + 8'd1` is computed in 8 bits in this comparison, so FF + 1 wraps to 00 like the design. The failure message names both causes, because the property fails for either.
+
+**3.** Tickets: edge 1 gets 0, edge 2 gets 1, edge 3 gets 2. `rsp_cnt` is 0 at edge 4, 1 at edge 6 and 2 at edge 9. Requests 0 and 1 pass at edges 4 (11 = 10 + 1) and 6 (21 = 20 + 1). Request 2's response arrives at edge 9, six ticks after its request, carrying 30 instead of 31: **it fails at edge 9**.
+
+**4.**
+
+```systemverilog
+// snippet
+c_four_outstanding: cover property (@(posedge clk) disable iff (!rst_n)
+  (req_cnt - rsp_cnt) == 8'd4);
+```
+
+The subtraction is done in 8 bits here, so it stays correct when the counters wrap.
+
+**5.** It catches the bug, but later. With tickets there is exactly one tick with `rsp_vld && rsp_cnt == tkt`, so a wrong byte means no tick in the window can match, and the attempt fails only when the window closes: edges 4 to 11 for the request at edge 3, so **at edge 11**, two ticks after the bad response. The `[*0:7] ##1` form points at the guilty tick, which is why it is preferred for debug.
+
+</details>
+
+### Lab (planned)
+
+The planned lab `assertions-1` checks a pipeline's data integrity with local variables and a bound checker. It is not available yet; until then, the Make It Work bench and the kata above are the hands-on practice for this page.
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023):
+
+- §16.10 local variables: per-attempt creation, declarations and initialization (Observed region, sampled values), match-item assignments, no empty-match attachment, assign before reference, flow and unassignment, no hierarchical references, not in clocking events, not visible where instantiated, the `or`/`and`/`intersect` flow rules.
+- §16.11 calling subroutines on match of a sequence: every end point, list order, Reactive region, sampled by-value arguments, local variables passed by value.
+- §16.5.1 sampled values (a local variable's sampled value is its current value); §16.6 Boolean expressions (side effects only on local variables; capturing time; sampling large structures); §16.7 `##0` and `##1`; §16.9.2 repetition (Syntax 16-6: goto and nonconsecutive repetition on Booleans only); §16.9.3 sampled-value functions (no local variable arguments); §16.9.8 `first_match` with match items.
+- §16.8.2 and §16.12.19 local variable formal arguments; §16.12 disable conditions (no local variables); §16.12.2 sequence properties (weak in `assert property`); §16.12.7 implication (each antecedent match evaluated separately); §16.12.14 abort conditions (no local variables); §16.13.7 local-variable initialization with multiple leading clocks; §16.14.1 action blocks run in the Reactive region.
+- Annex F.3.4.2.3 (goto and nonconsecutive repetition defined); Annex F.5.4 (local variable flow).
+- §4.4.2.5 Observed and §4.4.2.6 Reactive regions (evaluation, then action blocks and attached calls, in any order); §14.3 default clocking-block skews and §14.16 synchronous drives (the Make It Work stimulus); §6.8 variable declaration initializers.
+- §16.14.5 a new attempt at every leading-clock tick; §16.14.8 vacuous and nonvacuous evaluations.
+
+**Prerequisites:** [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) for attempts, sampling, implication, vacuity and `disable iff`; the [module overview](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/index) for `[->]`, `[=]`, `##0` and weak versus strong properties; [F4C: Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) for driving through `cb`.
+
+**Related:**
+
+- [Multiclock Assertions](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/multi-clocking): properties that cross clock domains, where `##0` behaves differently.
+- [I-SV-4C: Checkers and Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index): packaging a data-integrity check and attaching it to RTL without editing it.
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): end-to-end and out-of-order data checking.
+- [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): interface assertions inside a VIP and their reporting.
+- [B-AXI-3: AXI Ordering and IDs](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index): per-ID ordering, the case for per-ID tickets.
+- [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index): the same properties under formal proof.
+
+<NextLesson />

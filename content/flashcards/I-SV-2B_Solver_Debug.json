@@ -1,1 +1,67 @@
-[]
+[
+  {
+    "id": "isv2b-sd-1",
+    "question": "What does a failed `randomize()` do to the object?",
+    "answer": "It returns 0, every random variable keeps its previous value, and `post_randomize()` is not called; `pre_randomize()` has already run (IEEE 1800-2023 §18.6.2, §18.6.3). For a fresh object the unchanged values are the declared defaults."
+  },
+  {
+    "id": "isv2b-sd-2",
+    "question": "Can `post_randomize()` repair or relax a failed `randomize()` call?",
+    "answer": "No. It is not called when the call fails (§18.6.3), and after a success it runs once the values are chosen, so it can only change state that the next call reads."
+  },
+  {
+    "id": "isv2b-sd-3",
+    "question": "A protocol value never appears, yet `randomize()` never fails. What is it, and how do you expose it?",
+    "answer": "A coverage hole: a contradiction makes that value infeasible, and the solver picks only among the legal combinations that remain (§18.3, §18.5.9). Force the value with `randomize() with { … }` to turn the hole into a failure you can triage."
+  },
+  {
+    "id": "isv2b-sd-4",
+    "question": "What is a minimal conflicting set, and why is the last block you switched off not automatically the bug?",
+    "answer": "A set of active constraints that cannot all hold, where removing any one member makes the rest satisfiable. Every member is a suspect; the last block switched off is just one member, and only the specification decides which rule is wrong."
+  },
+  {
+    "id": "isv2b-sd-5",
+    "question": "Which constraints can `constraint_mode(0)` not switch off during triage, and which never belong to a conflict?",
+    "answer": "It works only on named blocks (§18.9), so inline `with` constraints stay active until you edit the call. Soft constraints never belong to a minimal conflicting set: a conflicting soft constraint is discarded (§18.5.13.1)."
+  },
+  {
+    "id": "isv2b-sd-6",
+    "question": "How do `rand_mode(0)` and `randomize(null)` help triage a failure?",
+    "answer": "`v.rand_mode(0)` freezes `v` at its current value as a state variable (§18.8), so you can test the rest at a value you trust. `randomize(null)` randomizes nothing and returns 1 only if every active constraint holds for the current values (§18.11.1), so it shows which block rejects a spec-legal value."
+  },
+  {
+    "id": "isv2b-sd-7",
+    "question": "Which three rules of IEEE 1800-2023 can make `randomize()` fail although a legal combination exists?",
+    "answer": "Random function arguments are solved first (§18.5.11), array sizes before `foreach` (§18.5.7.1), and `randc` before `rand` (§18.4.2). The symptom is a steady fraction of failing calls on every seed; `solve…before` and nonzero `dist` weights cannot cause failure (§18.5.9, §18.5.3)."
+  },
+  {
+    "id": "isv2b-sd-8",
+    "question": "Are `rand` variables unsigned? Can `rand int delay; constraint c { delay < 10; }` give a negative delay?",
+    "answer": "No, they take the signedness of their type, and `int` is signed (§6.11.3). Almost every legal value of `delay` is negative; write `delay inside {[0:9]}` or use `int unsigned` with a bound."
+  },
+  {
+    "id": "isv2b-sd-9",
+    "question": "With `rand bit [7:0] x, y, z;`, why is `x = 200, y = 100` legal for `z == x + y` but not for `x + y < 300`?",
+    "answer": "In `z == x + y` every operand is 8 bits, so the sum wraps to 44 and `z = 44` satisfies it (§11.6.1, §18.6.1). The 32-bit literal 300 makes `x + y < 300` a 32-bit expression, so 300 is not less than 300."
+  },
+  {
+    "id": "isv2b-sd-10",
+    "question": "A derived class adds `constraint c_jumbo { len > 64; }` to a base with `c_len { len inside {[1:16]}; }`. What happens through a base-class handle?",
+    "answer": "Every call fails. A new name adds a constraint, only the same name replaces one, and `randomize()` is virtual, so the object's constraints apply whatever the handle type (§18.5.2)."
+  },
+  {
+    "id": "isv2b-sd-11",
+    "question": "Why can a UVM test pass although its `` `uvm_do_with `` constraints conflict?",
+    "answer": "In uvm-core 2020.3.1 the macro reports a failed `randomize()` only as `UVM_WARNING` with ID `RNDFLD` and still calls `finish_item()`, so the driver gets a just-created item. Randomize explicitly with `` `uvm_fatal `` on failure, or promote `RNDFLD` to an error on the sequencer."
+  },
+  {
+    "id": "isv2b-sd-12",
+    "question": "Why is `assert (pkt.randomize());` unsafe?",
+    "answer": "When assertions are switched off, no new assertion attempts start (§20.11), so the expression, and with it the `randomize()` call, is not evaluated and the packet silently keeps its old values. Write `if (!pkt.randomize()) $fatal(1, …);`."
+  },
+  {
+    "id": "isv2b-sd-13",
+    "question": "A failing seed passes after you edited the code. Is the bug fixed?",
+    "answer": "Not proven. A seed reproduces a run only for unchanged code: an extra object or thread shifts the seeds of everything created after it in that thread (§18.14.1). Prove the fix with a seed-independent reproducer and a fresh batch of seeds."
+  }
+]
