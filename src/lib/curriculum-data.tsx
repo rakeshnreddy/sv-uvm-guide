@@ -808,7 +808,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-3C: Your First Complete UVM Testbench",
             "slug": "index",
-            "description": "Assemble, compile, run and debug a complete single-agent UVM testbench for a small DUT, ending with an analysis-FIFO scoreboard and a clean report."
+            "description": "Assemble, compile, run and debug a complete single-agent UVM testbench for a small DUT: top module, interface, configuration object, agent, sequences, an analysis-FIFO scoreboard with check_phase accounting, two tests (one with a factory override), a passive reuse of the agent, and the four classic bring-up failures read from logs."
           }
         ],
         "track": "core",

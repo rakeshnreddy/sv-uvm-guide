@@ -2,6 +2,76 @@
   {
     "id": "iuvm3c-1",
     "question": "Why can a UVM test end at time 0 even though its sequence still has items to send?",
-    "answer": "The run phase ends as soon as no objection is raised. If neither the test nor the sequence raises one before time advances, the phase ends at once and the sequence never runs to completion. Raise an objection around the sequence in the test (or in the sequence) and drop it when the work is done."
+    "answer": "`run_phase` ends as soon as no objection is raised; the end of a sequence has nothing to do with it. If the test (or the top sequence) raises no objection before time advances, the phase ends in its first time slot and kills the sequence and driver threads. Raise an objection before `seq.start()` and drop it after."
+  },
+  {
+    "id": "iuvm3c-2",
+    "question": "In what order do the four compile units of a first UVM bench compile, and why?",
+    "answer": "DUT, interface, `uvm_pkg`, your package, then `tb_top`. The package names `virtual mem_if` and imports `uvm_pkg`, so both come first; `tb_top` instantiates the DUT and interface and imports the package, so it comes last."
+  },
+  {
+    "id": "iuvm3c-3",
+    "question": "Why does the interface live outside the package, and how do the class files get into the package?",
+    "answer": "A package may declare types, data, tasks, functions and similar items, not interfaces or modules (IEEE 1800-2023 §26.2). The classes go into one package through `` `include `` lines in dependency order: item, configuration, sequences, driver, monitor, subscriber, agent, scoreboard, env, tests."
+  },
+  {
+    "id": "iuvm3c-4",
+    "question": "Why must tb_top set the virtual interface before run_test(), and why can't the test fetch it with `tb_top.mem_if0`?",
+    "answer": "The test reads it in `build_phase`, which `run_test()` runs; a `set()` after `run_test()` is never reached. A class in a package may not use hierarchical references (§26.2), and even outside a package the path would tie the test to one top module."
+  },
+  {
+    "id": "iuvm3c-5",
+    "question": "What does an agent configuration object hold, and who reads it?",
+    "answer": "One object per agent with `vif`, `is_active` and knobs such as `coverage_enable`. The test fills it and publishes it once with `uvm_config_db#(mem_cfg)::set(this, \"env.agt\", \"cfg\", cfg)`; the agent gets it, copies `is_active`, and hands the same handle to its driver and monitor."
+  },
+  {
+    "id": "iuvm3c-6",
+    "question": "What does a passive agent build, and what decides it?",
+    "answer": "Only the monitor (and here the coverage subscriber). The agent creates the sequencer and driver only when `get_is_active()` returns `UVM_ACTIVE`, and it sets `is_active` from its configuration in `build_phase`; the env and the agent class do not change."
+  },
+  {
+    "id": "iuvm3c-7",
+    "question": "Why does the monitor sample every signal through mon_cb with #1step, and how does it handle registered read data?",
+    "answer": "`#1step` gives the values just before the edge, the ones the DUT's flip-flops used. Read data appears one edge after the read is accepted, so the monitor holds the read item until the next edge, fills in `rdata`, and only then calls `ap.write()`."
+  },
+  {
+    "id": "iuvm3c-8",
+    "question": "Why does the scoreboard take items through a uvm_tlm_analysis_fifo instead of checking inside write()?",
+    "answer": "An analysis `write()` is a function and cannot wait. The analysis FIFO accepts every write at once (it is unbounded) and the scoreboard's own `run_phase` thread takes items out with `get()`, which may block; the FIFO also gives `used()` for end-of-test accounting."
+  },
+  {
+    "id": "iuvm3c-9",
+    "question": "What should a scoreboard's check_phase check, and what line should report_phase print?",
+    "answer": "That nothing is pending (`item_fifo.used() == 0`) and that something was checked (a non-zero count of checked items). Then one greppable line: `SCB_SUMMARY matches=N mismatches=M pending=P`."
+  },
+  {
+    "id": "iuvm3c-10",
+    "question": "A scoreboard reports 0 mismatches but saw zero transactions. Did the test pass?",
+    "answer": "No. Zero mismatches out of zero checks proves nothing: the same output comes from a missing objection, an unconnected analysis port or stimulus that never reached the DUT. Make zero traffic an error in `check_phase`."
+  },
+  {
+    "id": "iuvm3c-11",
+    "question": "How do you run a second test that changes only the stimulus, and how does the log prove it worked?",
+    "answer": "Extend the first test and, in `build_phase`, call `mem_wr_rd_seq::type_id::set_type_override(mem_rand_seq::get_type())`; select it with `+UVM_TESTNAME=mem_rand_test`, which wins over the `run_test()` argument. Print `seq.get_type_name()`: it must read the override class."
+  },
+  {
+    "id": "iuvm3c-12",
+    "question": "What do the four classic bring-up failures look like in the log?",
+    "answer": "Null vif: a `NOVIF` fatal at 0 ns from your checked `get()`. Objection never raised: every report at 0 ns and zero checks; never dropped: `PH_TIMEOUT` and no `SCB_SUMMARY`. Unconnected analysis port: a normal run with zero scoreboard traffic. Missing `item_done()`: `Get_next_item called twice` every clock, then a timeout."
+  },
+  {
+    "id": "iuvm3c-13",
+    "question": "Why is a forgotten agt.ap.connect(sb.item_export) silent, while a forgotten item_export.connect(item_fifo.analysis_export) is a build error?",
+    "answer": "An analysis port needs zero connections, so leaving it unconnected is legal. An analysis export needs at least one connection below it, so the end-of-elaboration check reports `connection count of 0 does not meet required minimum of 1` and then `BUILDERR`."
+  },
+  {
+    "id": "iuvm3c-14",
+    "question": "Why does the smoke test set a drain time, and what proves it is long enough?",
+    "answer": "The last read's data arrives one clock after its request, so dropping the objection when the sequence returns would end the run before the monitor publishes it. A 20 ns drain keeps the phase open; the monitor's `check_phase` reports `MON_INFLIGHT` if a read is still waiting."
+  },
+  {
+    "id": "iuvm3c-15",
+    "question": "What does a UVM_FATAL such as PH_TIMEOUT skip, and what does that mean for the verdict?",
+    "answer": "A fatal ends the run through `die()`, which runs `pre_abort()` and prints the report summary but never runs `check_phase` or `report_phase` (uvm-core 2020.3.1). No `SCB_SUMMARY` appears, and the run is a failure regardless of the error count."
   }
 ]

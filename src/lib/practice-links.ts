@@ -268,13 +268,7 @@ export const LAB_LESSON_OVERRIDES: Readonly<Record<string, readonly LessonRef[]>
   'basics-1': ['F2D_Reusable_Code_and_Parallelism/tasks-functions'],
   'randomization-advanced-1': ['I-SV-2B_Advanced_Constrained_Randomization/solver-debug'],
   'coverage-advanced-1': ['I-SV-3B_Advanced_Functional_Coverage/closure-workflow'],
-  'uvm-mini-capstone': [
-    'A-UVM-6_Scoreboards_and_Reference_Models/index',
-    'I-UVM-1B_The_UVM_Factory/index',
-    'I-UVM-2A_Component_Roles/index',
-    'I-UVM-2B_TLM_Connections/index',
-    'I-UVM-3A_Fundamentals/index',
-  ],
+  'uvm-mini-capstone': ['I-UVM-3C_First_Complete_Testbench/index'],
   'axi-scoreboard-lab': [
     'B-AXI-6_AXI_Verification_Performance/index',
     'A-UVM-6_Scoreboards_and_Reference_Models/index',

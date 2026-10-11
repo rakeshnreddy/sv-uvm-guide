@@ -35,17 +35,15 @@ describe('lab back link', () => {
 });
 
 describe('lab lesson context', () => {
-  it('shows the launching lesson, the capstone checkpoints and the prerequisite labs', () => {
+  it('shows the launching lesson of a re-owned lab (uvm-mini-capstone now launches from I-UVM-3C)', () => {
     const capstone = lab('uvm-mini-capstone');
     const { items, doAfter } = getLabPrerequisites(capstone);
     render(<LabLessonContext lessons={getLabLessons(capstone)} prerequisites={{ items, doAfter }} />);
     expect(screen.getByText('Learn it in')).toBeInTheDocument();
-    expect(screen.getByText('Related lessons')).toBeInTheDocument();
-    expect(screen.getByText('Before you start')).toBeInTheDocument();
     const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs[0]).toBe('/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index');
-    expect(hrefs).toContain('/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index');
-    expect(hrefs).toContain('/practice/lab/scoreboard-decoupling');
+    expect(hrefs[0]).toBe('/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index');
+    // The T2 bench no longer waits on a T3 lab.
+    expect(hrefs).not.toContain('/practice/lab/scoreboard-reference-model');
   });
 
   it('warns about a forward dependency with "Do this lab after"', () => {

@@ -332,13 +332,13 @@ describe('reverse lookup for a lesson practice panel', () => {
   it('lists the practice a lesson teaches, in manifest order', () => {
     const entries = getPracticeForLesson('I-UVM-2A_Component_Roles/index', getAllLabs());
     const ids = entries.map((entry) => entry.item.id);
-    expect(ids).toEqual(
-      expect.arrayContaining(['exercise:uvm-agent-builder', 'diagram:uvm-component-relationships', 'lab:uvm-mini-capstone']),
-    );
+    expect(ids).toEqual(expect.arrayContaining(['exercise:uvm-agent-builder', 'diagram:uvm-component-relationships']));
     expect(entries.find((entry) => entry.item.id === 'exercise:uvm-agent-builder')?.teaches).toBe(true);
-    const capstone = entries.find((entry) => entry.item.id === 'lab:uvm-mini-capstone');
-    expect(capstone?.teaches).toBe(false);
-    expect(capstone?.after?.ref).toBe('A-UVM-6_Scoreboards_and_Reference_Models/index');
+    // The first complete UVM bench launches its capstone lab.
+    const capstone = getPracticeForLesson('I-UVM-3C_First_Complete_Testbench/index', getAllLabs()).find(
+      (entry) => entry.item.id === 'lab:uvm-mini-capstone',
+    );
+    expect(capstone?.teaches).toBe(true);
   });
 
   it('includes a lab only when labs are passed, and nothing for an unknown lesson', () => {

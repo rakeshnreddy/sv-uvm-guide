@@ -1,9 +1,1622 @@
 ---
 title: "I-UVM-3C: Your First Complete UVM Testbench"
-description: "Assemble, compile, run and debug a complete single-agent UVM testbench for a small DUT, ending with an analysis-FIFO scoreboard and a clean report."
+description: "Assemble, compile, run and debug a complete single-agent UVM testbench for a small DUT: top module, interface, configuration object, agent, sequences, an analysis-FIFO scoreboard with check_phase accounting, two tests (one with a factory override), a passive reuse of the agent, and the four classic bring-up failures read from logs."
 flashcards: "I-UVM-3C_First_Complete_Testbench"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
 
-This lesson is being written.
+- **What it is:** A complete UVM testbench (TB) for one small design under test (DUT): a top module that makes the clock, the reset, the DUT and its interface, and starts UVM; a package of classes (an item, two sequences, a driver, a monitor, an agent with its configuration object, a scoreboard, a coverage subscriber, an environment and two tests); and a log that ends with a verdict. Every piece was taught on its own in I-UVM-1A to I-UVM-3A. This lesson assembles them into one bench that compiles, runs, checks itself and can be debugged from its log (IEEE 1800.2-2020 §13, §14, Annex C.4, Annex F.7).
+- **Why it matters:** This bench is the shape of every UVM environment you will meet, and it is the gate of Tier 2 (milestone M2, and the seed of M3). The hard part is no longer any single class: it is the joins between them. A virtual interface that never arrives, an objection nobody raises, an analysis port nobody connects, a driver that forgets `item_done()`: each one gives a bench that compiles cleanly and then hangs, ends at 0 ns, or "passes" having checked nothing. You learn to make the bench prove it ran, and to read those four failures straight from the log.
+- **The Analogy:** A new restaurant's opening night. The building (`tb_top`) supplies power and the street address (clock, reset, the interface). The manager (the test) hands each station its instructions (the configuration object) and decides the menu (which sequence runs). The kitchen line (the agent) takes orders (sequence items), cooks them (the driver), and a runner (the monitor) reports every plate that actually left the pass. The inspector (the scoreboard) checks every plate against the recipe and, at closing, counts the plates that never arrived. *Where it breaks:* a real inspector who saw no plates would notice that the kitchen never opened; a scoreboard reports "0 mismatches" happily unless you make it count, and a real restaurant does not close itself the moment nobody is holding the door (UVM's run phase does, unless someone raises an objection).
+
+**You will be able to:**
+1. **Write** the top module: a clock and a reset, the DUT, an interface with clocking blocks, a `uvm_config_db` set of the virtual interface, and `run_test()`.
+2. **Write** the test, env and agent (with a configuration object that selects active or passive), the driver, monitor and sequencer, a sequence, and a scoreboard fed through `uvm_tlm_analysis_fifo` with `check_phase` accounting; and **organize** them in a package compiled in the right order.
+3. **Run** two tests from the command line, one of them changing the stimulus through a factory override, and **predict** the key lines of each log.
+4. **Diagnose** the four classic bring-up failures from their logs: a null virtual interface, an objection never raised or never dropped, an unconnected analysis port, and a missing `item_done()`.
+5. **Reuse** the same agent, unchanged, as a passive agent in a second environment and **check** the topology and the scoreboard count (the M2 seed).
+
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+### Words you need first
+
+Each term was taught in an earlier lesson; this list is a reminder, with the link to go back to.
+
+- **Component:** a long-lived UVM object in the testbench tree (test, env, agent, driver, monitor, sequencer, scoreboard), created in `build_phase` with `::type_id::create(name, parent)` ([I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index)).
+- **Phase:** a step every component goes through in a fixed order: `build_phase` (create children, top-down), `connect_phase` (connect ports), `end_of_elaboration_phase`, `run_phase` (the only one that takes simulation time), then `check_phase` and `report_phase` (bottom-up, at the end) ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+- **Objection:** a counter on a task phase. `run_phase` lasts while at least one component holds an objection, and ends as soon as none does ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+- **Sequence item, sequence, sequencer, driver:** the item is one unit of stimulus; a sequence creates items; the sequencer hands them, one at a time, to the driver, which turns each into pin activity and then calls `item_done()` ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)).
+- **Monitor and analysis port:** the monitor watches the pins and publishes one new item per observed transfer with `ap.write(t)`; every connected subscriber receives the same handle. A **subscriber** (`uvm_subscriber`) is a component with a built-in analysis export, `analysis_export`, whose `write()` function you implement; a coverage collector is the usual example. **Promoting** a port means connecting a child's port to a port of the same kind on its parent, so that the parent's users see one port on its boundary ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index), [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
+- **Analysis FIFO:** `uvm_tlm_analysis_fifo #(T)`, an unbounded buffer whose `analysis_export` accepts `write()` calls and whose `get()` hands the items, in order, to a thread that may wait ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
+- **Virtual interface:** a class variable that holds a handle to an interface instance in the module hierarchy, so class code can reach the pins ([F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index)). A **clocking block** inside the interface defines when those pins are sampled and driven relative to a clock edge ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)).
+- **Elaboration, time slot, regions:** elaboration is the step in which the tool builds the design hierarchy (modules, interfaces, their instances) before simulation time 0. A time slot is all the activity at one simulation time, processed in ordered regions; this lesson names three: Active (where `always_ff` and class code run), NBA (where nonblocking assignments update) and Re-NBA (where clocking-block drives update) ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)).
+- **Configuration database:** `uvm_config_db#(T)`, a typed store keyed by a path in the component tree; `set()` publishes, `get()` fetches ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
+- **Factory and override:** `::type_id::create()` asks the factory for an object; a **type override** makes it return a derived class instead ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
+- **Report summary:** the block UVM prints at the end of every run with the count of `UVM_INFO`, `UVM_WARNING`, `UVM_ERROR` and `UVM_FATAL` messages; a run passes only if errors and fatals are both 0 and the bench proves it checked something ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)).
+
+### The bench at a glance
+
+Here is the whole bench this lesson builds. Before you read the caption, **predict**: which component creates the stimulus, which one touches the pins, and through which object does the driver find the interface it drives?
+
+<ArchitectureDiagram
+  title="The complete mem bench: the component tree under uvm_test_top and the module tb_top"
+  caption="Read it bottom to top. tb_top's initial block publishes the virtual interface mem_if0; the test copies it into cfg and publishes cfg to env.agt. The test starts seq on agt's sqr; drv pulls items through seq_item_port and drives the pins through vif.drv_cb. mon samples the pins through vif.mon_cb and writes one new item per transfer on its ap, promoted to agt.ap; sb receives them through item_export, and cov (built because cfg.coverage_enable is 1) records what was exercised."
+  nodes={[
+    { id: "test", label: "uvm_test_top", sublabel: "mem_smoke_test", kind: "test", col: 0, row: 0, colSpan: 4, rowSpan: 3, container: true },
+    { id: "seq", label: "seq", sublabel: "mem_wr_rd_seq (object)", kind: "sequence", col: 0, row: 0 },
+    { id: "cfg", label: "cfg", sublabel: "mem_cfg (object)", kind: "generic", col: 3, row: 0 },
+    { id: "env", label: "env", sublabel: "mem_env", kind: "env", col: 0, row: 1, colSpan: 3, rowSpan: 2, container: true },
+    { id: "agt", label: "agt", sublabel: "mem_agent", kind: "agent", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true, badge: "active" },
+    { id: "sqr", label: "sqr", sublabel: "mem_sqr", kind: "sequencer", col: 0, row: 1 },
+    { id: "cov", label: "cov", sublabel: "mem_cov", kind: "subscriber", col: 1, row: 1 },
+    { id: "drv", label: "drv", sublabel: "mem_drv", kind: "driver", col: 0, row: 2 },
+    { id: "mon", label: "mon", sublabel: "mem_mon", kind: "monitor", col: 1, row: 2 },
+    { id: "sb", label: "sb", sublabel: "mem_sb", kind: "scoreboard", col: 2, row: 2 },
+    { id: "tb", label: "tb_top", sublabel: "module", kind: "generic", col: 0, row: 3, colSpan: 4, container: true },
+    { id: "mif", label: "mem_if0", sublabel: "mem_if: drv_cb, mon_cb", kind: "interface", col: 0, row: 3, colSpan: 2 },
+    { id: "dut", label: "dut", sublabel: "mem_dut", kind: "dut", col: 2, row: 3 },
+    { id: "init", label: "initial block", sublabel: "set vif, then run_test()", kind: "generic", col: 3, row: 3 }
+  ]}
+  ports={[
+    { id: "sqr.imp", node: "sqr", side: "bottom", kind: "imp", label: "seq_item_export" },
+    { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
+    { id: "mon.ap", node: "mon", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "agt.ap", node: "agt", side: "right", at: 0.75, kind: "analysis_port", label: "ap" },
+    { id: "sb.exp", node: "sb", side: "left", kind: "export", label: "item_export" },
+    { id: "cov.imp", node: "cov", side: "bottom", kind: "analysis_imp", label: "analysis_export" }
+  ]}
+  edges={[
+    { from: "seq", to: "sqr", style: "causal", label: "start(env.agt.sqr)" },
+    { from: "drv.port", to: "sqr.imp", style: "control", label: "get_next_item / item_done" },
+    { from: "mon.ap", to: "agt.ap", style: "data" },
+    { from: "agt.ap", to: "sb.exp", style: "data", label: "write(t)" },
+    { from: "mon.ap", to: "cov.imp", style: "data", label: "write(t)" },
+    { from: "mif", to: "drv", style: "structural", label: "vif.drv_cb" },
+    { from: "mif", to: "mon", style: "structural", label: "vif.mon_cb" },
+    { from: "mif", to: "dut", style: "structural", label: "pins" },
+    { from: "init", to: "cfg", style: "causal", label: "vif via uvm_config_db; the test copies it into cfg" },
+    { from: "cfg", to: "agt", style: "data", label: "cfg via uvm_config_db", via: [[2, 1]] }
+  ]}
+/>
+
+**Debrief.** The stimulus comes from `seq`, an object, not a component: it is created and started by the test in `run_phase`. Only `drv` touches the DUT's inputs, and only `mon` reads the pins on behalf of the checkers. The driver finds `mem_if0` through `cfg`, never through a hierarchical path: `tb_top` publishes the handle, the test copies it into the configuration object, and the agent passes the same object to its children. The scoreboard sits in the env, beside the agent, because it judges the DUT, not the protocol. The names in the picture are exactly the names in the code below.
+
+Seven ideas make this bench work. The rest of this section takes them one at a time: the DUT and its protocol; files and compile order; `tb_top`; the agent and its configuration; the driver and monitor; the scoreboard and its accounting; and the end of the test. Then come the two tests, the four bring-up failures and the passive reuse.
+
+### The DUT and its protocol
+
+Write a bench from the specification, not from the RTL. The DUT, `mem_dut`, is a 16-entry, 8-bit memory with a one-cycle request bus:
+
+| Signal | Direction | Meaning |
+|---|---|---|
+| `clk` | input | Everything happens on its rising edge. |
+| `rst_n` | input | Synchronous reset, active low: every location and `rdata` become 0. |
+| `valid` | input | A request is present this cycle. The DUT accepts it at the rising edge where `valid` is 1; there is no back-pressure. |
+| `we` | input | 1: write `wdata` to `addr`. 0: read `addr`. |
+| `addr` | input, 4 bits | The location. |
+| `wdata` | input, 8 bits | The data to write. |
+| `rdata` | output, 8 bits | The data of a read, valid in the cycle **after** the edge that accepted the read, and held until the next read. |
+
+The last row is the one that shapes the bench: a write is complete at the edge that accepts it, but a read's data appears one edge later. The monitor has to remember the read until its data arrives, and the test must not end before that edge.
+
+The waveform shows the boundary between the smoke test's writes and its reads. Each value is the one **sampled at that rising edge**, which is exactly what the monitor's clocking block sees (input skew `#1step`: the value just before the edge, the same value the DUT's flip-flops capture). Edge 0 is the rising edge at 175 ns and edge 5 the one at 225 ns.
+
+<TimingDiagram
+  title="mem_if0 at the smoke test's switch from writes to reads"
+  caption="Edges 0 and 1 (175 and 185 ns) accept writes of E1 to address E and F0 to address F. Edge 2 (195 ns) accepts a read of address 0: rdata still shows the old value 00. Edge 3 (205 ns) shows 0F, the data of that read, while the bus already carries the next read. Each read's data is one edge behind its request."
+  edges={6}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "valid", kind: "bit", values: [1, 1, 1, 1, 1, 1] },
+    { name: "we", kind: "bit", values: [1, 1, 0, 0, 0, 0] },
+    { name: "addr", kind: "bus", values: ["E", "F", "0", "1", "2", "3"] },
+    { name: "wdata", kind: "bus", values: ["E1", "F0", "00", "00", "00", "00"] },
+    { name: "rdata", kind: "bus", values: ["00", "00", "00", "0F", "1E", "2D"] }
+  ]}
+  markers={[
+    { edge: 2, tone: "sample", label: "195 ns: read of address 0 accepted; the monitor holds it" },
+    { edge: 3, tone: "pass", label: "205 ns: rdata = 0F is that read's data; the monitor publishes the read" }
+  ]}
+/>
+
+**Predict before you read on:** a read of address 3 is accepted at 225 ns. At which edge does the monitor publish it, and with which `rdata`?
+
+<details>
+<summary>Answer</summary>
+
+At 235 ns, one edge after the accept, with `rdata` = `3C`: the smoke test wrote `{a, ~a}` to every address `a`, so address 3 holds `{3, C}`.
+
+</details>
+
+### Files, packages and compile order
+
+A UVM bench is many files, but only four compile units. Two kinds of code live in different places:
+
+- **Design elements** (modules and interfaces) live outside any package. An interface is not a class; it is instantiated in `tb_top`, and classes reach it only through a virtual interface.
+- **Classes** live in one package, here `mem_pkg`. Each class sits in its own `.svh` file, and `mem_pkg.sv` pulls them in with `` `include `` in dependency order. `` `include `` pastes the file's text where the directive stands (IEEE 1800-2023 §22.4), so the package compiles as if it were one long file.
+
+| Order | File | Contains | Needs before it |
+|---|---|---|---|
+| 1 | `mem_dut.sv` | module `mem_dut` | nothing |
+| 2 | `mem_if.sv` | interface `mem_if` with `drv_cb` and `mon_cb` | nothing (it must precede the package that names `virtual mem_if`) |
+| — | uvm-core 2020.3.1 | `uvm_pkg` (often precompiled by your simulator) | nothing |
+| 3 | `mem_pkg.sv` | package `mem_pkg`, which includes `mem_item.svh`, `mem_cfg.svh`, `mem_seqs.svh`, `mem_drv.svh`, `mem_mon.svh`, `mem_cov.svh`, `mem_agent.svh`, `mem_sb.svh`, `mem_env.svh`, `mem_tests.svh` | `uvm_pkg`, `mem_if` |
+| 4 | `tb_top.sv` | module `tb_top` | `mem_pkg`, `mem_if`, `mem_dut` |
+
+**Trace the include order** inside `mem_pkg`: `mem_item` first, because every other class names it; `mem_cfg` next, because the driver, monitor and agent hold one; the sequences; then the driver, monitor and coverage subscriber; the agent, which declares handles of those three; the scoreboard; the env, which declares an agent and a scoreboard; and the tests last, because they name the env, the configuration and the sequences. A class must be declared before it is used as a type in the same compilation unit; `typedef class` is the forward declaration for the rare case of two classes that need each other (§8.27).
+
+**Pitfalls.**
+- *An interface inside the package.* A package may declare types, nets, variables, tasks, functions, sequences, properties and checkers (§26.2), not interfaces or modules. Keep `mem_if.sv` separate.
+- *Include order backwards.* If `mem_agent.svh` comes before `mem_drv.svh`, the compiler stops in `mem_agent.svh`: `mem_drv` is not yet a type. The error points at the agent, not at the include list.
+- *A class file compiled on its own as well as included.* The class then exists twice, once in `mem_pkg` and once in the compilation-unit scope, and a handle of one is not a handle of the other. Compile only `mem_pkg.sv`; list the `.svh` files only through an include path.
+
+### `tb_top`: clock, reset, interface, `run_test()`
+
+`tb_top` is the only module the bench needs. It does five things, and the order inside its last `initial` block matters:
+
+```systemverilog
+// snippet: the heart of tb_top.sv (complete file in Make It Work)
+mem_if  mem_if0 (.clk(clk), .rst_n(rst_n));         // the pins, bundled
+mem_dut dut (.clk(clk), .rst_n(rst_n), .valid(mem_if0.valid), .we(mem_if0.we),
+             .addr(mem_if0.addr), .wdata(mem_if0.wdata), .rdata(mem_if0.rdata));
+
+initial begin
+  clk = 1'b0;
+  forever #5 clk = ~clk;            // rising edges at 5, 15, 25 ns ...
+end
+
+initial begin
+  rst_n = 1'b0;
+  repeat (2) @(posedge clk);
+  rst_n <= 1'b1;                    // nonblocking: the flops at this edge still see 0
+end
+
+initial begin
+  uvm_config_db#(virtual mem_if)::set(null, "uvm_test_top", "vif", mem_if0);
+  run_test("mem_smoke_test");       // +UVM_TESTNAME on the command line wins
+end
+```
+
+- **Clock and reset.** A 10 ns clock and two reset edges. Reset is released with a nonblocking assignment at a rising edge, so the DUT's flip-flops at that edge (15 ns) still read 0 and the first edge with reset inactive is 25 ns. A blocking release at the same edge would race with them ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)).
+- **The set comes before `run_test()`.** `run_test()` builds the test and runs every phase, and by default ends the simulation with `$finish` when the run is over, so it never returns to the next line. The test reads the virtual interface in its `build_phase`, so the handle must already be in the database. A `set()` written after `run_test()` in the same block is never reached.
+- **The scope `"uvm_test_top"`.** With a `null` context the second argument is the whole path (Annex C.4.2.2.1). `uvm_test_top` is the name `run_test()` gives the test, so exactly the test can `get()` it. The test then hands the handle on inside the configuration object; nothing below the test reads `"vif"`.
+
+**Misconception: "setting the vif from the test by a hierarchical reference is the same thing."** It looks equivalent: `cfg.vif = tb_top.mem_if0;` in the test would give the same handle. It is not:
+- The test lives in `mem_pkg`, and an item in a package may not refer to the design hierarchy (IEEE 1800-2023 §26.2: "Items within packages shall not have hierarchical references to identifiers except those created within the package or made visible by import of another package"). The line does not compile.
+- Even in code outside a package, the test would then work only under a top module named `tb_top` with an instance named `mem_if0`. In Make It Work the same package runs under a second top, `tb_sys_top`; a hard-coded path would break it. The module that owns the instance publishes it; classes stay independent of where the pins live.
+
+### The agent and its configuration object
+
+An agent needs several settings: the virtual interface, whether it is active, and whether it builds coverage. Instead of three `set()`/`get()` pairs, the test fills one **configuration object** and publishes it once (the pattern from [I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)):
+
+```systemverilog
+// snippet: mem_cfg (complete file in Make It Work)
+class mem_cfg extends uvm_object;
+  `uvm_object_utils(mem_cfg)
+  virtual mem_if          vif;                     // from tb_top, via the test
+  uvm_active_passive_enum is_active = UVM_ACTIVE;  // UVM_PASSIVE: monitor only
+  bit                     coverage_enable = 1;     // build the coverage subscriber
+  // ... constructor
+endclass
+```
+
+The agent does four things in `build_phase`, in this order:
+1. Gets `cfg` (`uvm_config_db#(mem_cfg)::get(this, "", "cfg", cfg)`), and stops with `` `uvm_fatal `` if it is missing or its `vif` is `null`. One check here protects the driver and the monitor.
+2. Copies `cfg.is_active` into its own `is_active`, the field `get_is_active()` returns (IEEE 1800.2-2020 §13.4.2.2). `uvm_agent` itself builds nothing; it only stores the setting.
+3. Always creates the monitor (and the coverage subscriber when `cfg.coverage_enable` is 1).
+4. Creates the sequencer and driver only when `get_is_active()` returns `UVM_ACTIVE`.
+
+Right after creating each child, the agent hands it the same `cfg` handle (`mon.cfg = cfg;`). That works because a child's `build_phase` runs after its parent's `build_phase` has returned. In `connect_phase` the agent connects `drv.seq_item_port` to `sqr.seq_item_export` (active only), promotes `mon.ap` to its own `ap`, and connects `mon.ap` to the coverage subscriber. The env then sees one port on the agent's boundary and never reaches inside it ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index), one level at a time).
+
+**Pitfall: a driver that is built anyway.** If the agent created the driver without checking `get_is_active()`, a passive agent would drive the bus too, fighting the real source of the traffic. The guard is not optional.
+
+### Driver and monitor: one transfer each
+
+The **driver** turns one item into one request:
+
+```systemverilog
+// snippet: mem_drv::run_phase (complete file in Make It Work)
+vif.drv_cb.valid <= 1'b0;                       // idle the bus from the first edge
+do @(vif.drv_cb); while (vif.drv_cb.rst_n !== 1'b1);
+forever begin
+  seq_item_port.get_next_item(req);
+  vif.drv_cb.valid <= 1'b1;
+  vif.drv_cb.we    <= req.we;
+  vif.drv_cb.addr  <= req.addr;
+  vif.drv_cb.wdata <= req.wdata;
+  @(vif.drv_cb);                                // the DUT accepts it at this edge
+  vif.drv_cb.valid <= 1'b0;                     // overridden if another item follows
+  seq_item_port.item_done();
+end
+```
+
+A drive through a clocking block with output skew `#0` lands in the Re-NBA region of the edge's time slot, after the DUT's flip-flops have sampled that edge (IEEE 1800-2023 §14.16), so the DUT sees it at the next edge. A drive made between edges takes effect as if made at the next clocking event. When two drives to the same clocking output mature in the same slot, the last one wins (§14.16.2). That is why the bus stays busy with back-to-back items: `valid <= 0` after one item is overridden by `valid <= 1` for the next item in the same slot.
+
+**Trace the start, and predict first.** Reset is released with `rst_n <= 1'b1` at the 15 ns edge, and the driver waits until `drv_cb` samples `rst_n` as 1. At which rising edge does the driver leave its reset loop and drive the first request (a write of `0F` to address 0), and at which edge does the DUT accept it? Commit to two times, then read the waveform. As before, each value is the one sampled at that rising edge.
+
+<TimingDiagram
+  title="mem_if0 from reset to the first accepted request"
+  caption="Edges 0 to 4 are the rising edges at 5, 15, 25, 35 and 45 ns. rst_n is released by a nonblocking assignment at 15 ns, so it is sampled as 0 there and as 1 from 25 ns. The driver idles valid at time 0; that drive takes effect at the first edge, so valid is still z when sampled at 5 ns: a clocking-block output to a net drives z until its first drive takes effect. we, addr and wdata stay z until the first request is driven. At 25 ns drv_cb samples rst_n = 1, the driver leaves its loop and drives the write; the drive lands in the Re-NBA region, after the edge's sampling, so it is first sampled at 35 ns, where the DUT accepts it. At 45 ns the second write (1E to address 1) follows back to back."
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [0, 0, 1, 1, 1] },
+    { name: "valid", kind: "bit", values: ["z", 0, 0, 1, 1] },
+    { name: "we", kind: "bit", values: ["z", "z", "z", 1, 1] },
+    { name: "addr", kind: "bus", values: ["Z", "Z", "Z", "0", "1"] },
+    { name: "wdata", kind: "bus", values: ["Z", "Z", "Z", "0F", "1E"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "15 ns: rst_n <= 1 executes here, but the DUT's flip-flops and drv_cb sample 0" },
+    { edge: 2, tone: "drive", label: "25 ns: drv_cb samples rst_n = 1; the driver leaves its loop and drives valid=1, we=1, addr=0, wdata=0F" },
+    { edge: 3, tone: "pass", label: "35 ns: the DUT accepts the first request, the write of 0F to address 0" }
+  ]}
+/>
+
+**Debrief.** The driver drives at 25 ns, and the DUT accepts at 35 ns: one edge between the drive and the accept, every time, because a zero-skew clocking drive matures after the flip-flops of its own edge have sampled. The same one-edge offset explains every time in this lesson's logs: item `k` of the smoke test is accepted at 35 + 10k ns.
+
+The **monitor** watches every edge, creates a **new** item for every transfer, and publishes it. Writes are complete at once; a read waits one edge for its data:
+
+```systemverilog
+// snippet: the core of mem_mon::run_phase (complete file in Make It Work)
+@(vif.mon_cb);
+if (rd_pending != null) begin                   // the read accepted one edge ago
+  rd_pending.rdata = vif.mon_cb.rdata;          // its data is here now
+  ap.write(rd_pending);
+  rd_pending = null;
+end
+if (vif.mon_cb.valid === 1'b1) begin
+  mem_item t = mem_item::type_id::create("t");  // new object per transfer
+  t.we   = vif.mon_cb.we;
+  t.addr = vif.mon_cb.addr;
+  if (t.we) begin
+    t.wdata = vif.mon_cb.wdata;
+    ap.write(t);
+  end else begin
+    rd_pending = t;
+  end
+end
+```
+
+- **Why `#1step` for every input here.** `mon_cb` samples every signal just before the edge: the values the DUT's flip-flops used at that edge. Everything that qualifies a transfer (`valid`, `we`, `addr`, `wdata`) must be seen this way. With an input skew of `#0`, the monitor would see a value *after* the edge's nonblocking updates (§14.4, §14.13) and mix "before" and "after" in one transaction. This bench also reads `rdata` with `#1step`, one edge after the read was accepted, which is why the monitor holds the read in `rd_pending`.
+- **The one exception, and this module's lab.** A result that the DUT registers at the *same* edge as the request may be sampled with `#0` at that edge, because `#0` sees it after the update. The lab's FIFO samples its `dout` that way. Its earlier version broke because it also sampled the `full` and `empty` flags with `#0`: the flags qualify the transfer, so they need `#1step`. The rule, from the expert item on monitor sampling skew in [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): `#1step` for whatever decides whether a transfer happened; `#0` only for a same-edge registered result.
+- **Why a new item each time.** Subscribers receive the handle, not a copy. Reusing one object would let the next transfer overwrite an item the scoreboard has not read yet.
+- **Why `rdata` is `logic`.** The item's `rdata` field is 4-state, so an X from the DUT reaches the scoreboard and fails the compare, instead of silently turning into 0.
+
+### One transaction through the bench
+
+Follow one read, of address 3, from the sequence to the scoreboard. The times come from the smoke test: the request is driven at 215 ns, accepted at 225 ns, and its data is published at 235 ns. **Predict** first: when does `finish_item()` return to the sequence, before or after the scoreboard has checked this read?
+
+<SequenceDiagram
+  title="One read through the mem bench"
+  caption="finish_item() returns at 225 ns, when the driver calls item_done(); the scoreboard checks the read only at 235 ns, one edge later, after the monitor has seen its data. The sequence never waits for checking."
+  participants={[
+    { id: "seq", label: "seq", sublabel: "mem_wr_rd_seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", sublabel: "mem_sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", sublabel: "mem_drv", kind: "driver" },
+    { id: "dut", label: "dut", sublabel: "mem_dut via mem_if0", kind: "dut" },
+    { id: "mon", label: "mon", sublabel: "mem_mon", kind: "monitor" },
+    { id: "sb", label: "sb", sublabel: "mem_sb", kind: "scoreboard" }
+  ]}
+  messages={[
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { from: "seq", to: "sqr", label: "start_item(it)" },
+    { kind: "note", from: "seq", to: "sqr", label: "granted at once: the driver is already waiting" },
+    { kind: "self", from: "seq", label: "it.we = 0, it.addr = 3" },
+    { from: "seq", to: "sqr", label: "finish_item(it)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req (the same handle as it)" },
+    { kind: "async", from: "drv", to: "dut", label: "drv_cb: valid=1, we=0, addr=3 (215 ns)" },
+    { kind: "divider", label: "rising edge at 225 ns" },
+    { kind: "self", from: "dut", label: "accept the read: rdata <= mem[3]" },
+    { kind: "self", from: "mon", label: "mon_cb sees valid=1, we=0, addr=3: new item t, held in rd_pending" },
+    { from: "drv", to: "sqr", label: "item_done(): a function, returns at once" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" },
+    { kind: "divider", label: "rising edge at 235 ns" },
+    { kind: "self", from: "mon", label: "mon_cb sees rdata = 3C: t.rdata = 3C" },
+    { kind: "async", from: "mon", to: "sb", label: "ap.write(t), through agt.ap and sb.item_export into item_fifo" },
+    { kind: "self", from: "sb", label: "item_fifo.get(t); 3C matches model[3]: n_match++" }
+  ]}
+/>
+
+**Debrief.** The handshake (steps 1 to 5 and 9 to 10) and the checking path (steps 8 and 11 to 13) are independent; steps 6 and 7 are the pin activity between them, the driver's drive and the DUT's accept. The sequence finishes as soon as the driver has put the item on the pins; the item the scoreboard checks is a *different* object, built by the monitor from what the pins showed. That independence is the point of the architecture: the checker sees what the DUT did, not what the stimulus intended. It is also why the end of the sequence is not the end of the checking.
+
+### The scoreboard: an analysis FIFO and check_phase accounting
+
+The scoreboard predicts what each read should return and compares. Its reference model is tiny: an array `model[16]` that mirrors what the DUT should hold, updated on every observed write and consulted on every observed read.
+
+<ArchitectureDiagram
+  title="Inside mem_sb"
+  caption="agt.ap writes each item into sb.item_export, which mem_sb connects to its own item_fifo in connect_phase. A run_phase thread takes the items out in order with get(), updates model on writes and compares on reads, and counts. After run_phase, check_phase looks for items left in the FIFO and for a run with no checked read; report_phase prints one SCB_SUMMARY line."
+  gapX={80}
+  nodes={[
+    { id: "agt", label: "agt", sublabel: "mem_agent", kind: "agent", col: 0, row: 0 },
+    { id: "sb", label: "sb", sublabel: "mem_sb", kind: "scoreboard", col: 1, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "fifo", label: "item_fifo", sublabel: "uvm_tlm_analysis_fifo #(mem_item)", kind: "fifo", col: 1, row: 0 },
+    { id: "thread", label: "run_phase", sublabel: "get(t), then check_item(t)", kind: "generic", col: 2, row: 0 },
+    { id: "model", label: "model[16]", sublabel: "what each address should hold", kind: "model", col: 3, row: 0 },
+    { id: "counts", label: "counters", sublabel: "n_writes, n_reads, n_match, n_mismatch", kind: "generic", col: 2, row: 1 },
+    { id: "end", label: "check_phase, report_phase", sublabel: "pending? no traffic? SCB_SUMMARY", kind: "generic", col: 3, row: 1 }
+  ]}
+  ports={[
+    { id: "agt.ap", node: "agt", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "sb.exp", node: "sb", side: "left", at: 0.25, kind: "export", label: "item_export" },
+    { id: "fifo.imp", node: "fifo", side: "left", kind: "analysis_imp", label: "analysis_export" }
+  ]}
+  edges={[
+    { from: "agt.ap", to: "sb.exp", style: "data", label: "write(t)" },
+    { from: "sb.exp", to: "fifo.imp", style: "data" },
+    { from: "fifo", to: "thread", style: "data", label: "get(t)" },
+    { from: "thread", to: "model", style: "causal", label: "update or compare" },
+    { from: "thread", to: "counts", style: "causal", label: "count" },
+    { from: "counts", to: "end", style: "causal", label: "after run_phase" }
+  ]}
+/>
+
+- **Why a FIFO between the port and the checker.** An analysis port's `write()` is a function: it cannot wait. The analysis FIFO accepts every `write()` at once (it is unbounded, IEEE 1800.2-2020 §12.2.8.3) and the scoreboard's own `run_phase` thread takes items out with `get()`, which may block. This scoreboard never needs to wait, but the shape is the one every scoreboard grows into: when a check must wait for a later item, a clock or a model, only a thread can do it.
+- **Why an export on the scoreboard.** The env connects `agt.ap` to `sb.item_export`, a `uvm_analysis_export` that `mem_sb` connects to its FIFO. The env never reaches inside the scoreboard, and the scoreboard can change how it buffers without touching the env.
+- **Compare with `!==`.** `t.rdata !== model[t.addr]` treats X and Z as values, so an X on `rdata` fails ([F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index)).
+
+**Accounting in `check_phase`.** `check_phase` runs after `run_phase` has ended, bottom-up (IEEE 1800.2-2020 §9.8.1.7). It is the place to ask "did I check everything, and did I check anything?":
+- `item_fifo.used()` (§12.2.8.2.3) must be 0. Items still in the FIFO were observed but never judged.
+- `n_reads` must not be 0. A scoreboard that checked no read has proved nothing about the DUT, whatever its mismatch count says.
+
+**Misconception: "a scoreboard that saw zero transactions passed."** `0 mismatches` is also what a scoreboard prints when its port was never connected, the run ended at 0 ns, or the stimulus never reached the DUT. That is why `mem_sb` raises `SCB_NO_TRAFFIC` as an error. `report_phase` then prints one line a regression script can grep, in this course's milestone format:
+
+```text
+SCB_SUMMARY matches=16 mismatches=0 pending=0
+```
+
+The scoreboard reports; the report server decides. A run passes when the summary shows `UVM_ERROR :    0` and `UVM_FATAL :    0` **and** the `SCB_SUMMARY` line is present with a non-zero match count. Never print "TEST PASSED" from a component: it would print even after another component's error.
+
+### Ending the test: objections and drain time
+
+**Misconception: "the run ends when the sequence ends."** It does not, in either direction. `run_phase` ends when no objection is raised, whatever any thread is doing ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)):
+- With **no objection**, `run_phase` ends in the first time slot: the sequence, driver and monitor threads are killed at 0 ns, and the log shows the report phase at 0 ns.
+- With an objection that is **never dropped**, `run_phase` never ends on its own; the global timeout ends the run with a fatal.
+- With the objection dropped **the moment the sequence returns**, the run ends one edge too early for this DUT: the last read's data arrives at the next edge.
+
+The test therefore raises an objection before anything consumes time, starts the sequence, and drops the objection when the sequence returns, with a **drain time** of two clocks on the test (`phase.get_objection().set_drain_time(this, 20ns)`, §10.5.1.3.7). After the drop, the phase waits the drain time before it ends, which covers the read-data latency. The monitor's `check_phase` proves it: a read still waiting for data at the end raises `MON_INFLIGHT`.
+
+<SequenceDiagram
+  title="How the smoke test ends"
+  caption="The test owns the objection. It drops it at 345 ns, when the last item_done() returns; the 20 ns drain lets the monitor publish the last read at 355 ns. run_phase ends at 365 ns, and only then do check_phase and report_phase run."
+  participants={[
+    { id: "test", label: "test", sublabel: "mem_smoke_test", kind: "test" },
+    { id: "phase", label: "run phase", sublabel: "its objection", kind: "generic" },
+    { id: "seq", label: "seq", sublabel: "mem_wr_rd_seq", kind: "sequence" },
+    { id: "mon", label: "mon", sublabel: "mem_mon", kind: "monitor" },
+    { id: "sb", label: "sb", sublabel: "mem_sb", kind: "scoreboard" }
+  ]}
+  messages={[
+    { from: "test", to: "phase", label: "raise_objection(this): count 1, at 0 ns" },
+    { from: "test", to: "phase", label: "get_objection().set_drain_time(this, 20ns)" },
+    { from: "test", to: "seq", label: "start(env.agt.sqr)" },
+    { kind: "divider", label: "32 items, accepted at 35, 45 ... 345 ns" },
+    { kind: "return", from: "seq", to: "test", label: "start() returns at 345 ns" },
+    { from: "test", to: "phase", label: "drop_objection(this): count 0, 20 ns drain starts" },
+    { kind: "divider", label: "355 ns" },
+    { kind: "async", from: "mon", to: "sb", label: "write(t): the read of address F, rdata F0" },
+    { kind: "note", from: "test", to: "sb", label: "365 ns: drain over, run_phase ends; driver, monitor and scoreboard threads are killed" },
+    { from: "phase", to: "mon", label: "check_phase: rd_pending is null" },
+    { from: "phase", to: "sb", label: "check_phase: item_fifo empty, n_reads = 16" },
+    { from: "phase", to: "sb", label: "report_phase: SCB_SUMMARY matches=16 mismatches=0 pending=0" }
+  ]}
+/>
+
+**Predict:** change the drain time to 0 and keep everything else. Which check fires, at what time, and what does `SCB_SUMMARY` say?
+
+<details>
+<summary>Answer</summary>
+
+`run_phase` ends at 345 ns, in the same time slot as the drop. The last read (address F) was accepted at 345 ns and still sits in the monitor's `rd_pending`, waiting for data that would arrive at 355 ns. The monitor's `check_phase` therefore raises `UVM_ERROR @ 345 ns: uvm_test_top.env.agt.mon [MON_INFLIGHT] read of addr f never got its data`. The scoreboard checked only 15 reads, so it prints `SCB_SUMMARY matches=15 mismatches=0 pending=0`: its own checks pass, because the read never reached it. Only the monitor knew a read was missing, which is why that check exists.
+
+</details>
+
+**Why a drain time and not a delay.** A `#20ns` before `drop_objection` would also work today, but it hides the intent and is easy to forget when the DUT's latency changes. The drain time belongs to the objection, applies every time the count reaches zero, and is visible in a phase trace. For a DUT whose latency varies, use `phase_ready_to_end` in the scoreboard instead ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). Also set a global timeout (`uvm_root::get().set_timeout(1ms)`, Annex F.7.3.3) so that a hang ends in a millisecond of simulated time, not at uvm-core's default of 9200 s.
+
+### Two tests and a factory override
+
+Both tests are compiled into every run; the command line picks one. `run_test()` creates the test named by `+UVM_TESTNAME` if it is present, and otherwise the one named in its argument (Annex F.7.3.1, G.2.1). Every test is created with the instance name `uvm_test_top`, which is why the configuration paths start there.
+
+- **`mem_smoke_test`** builds the configuration and the env, and in `run_phase` creates its stimulus through the factory: `mem_wr_rd_seq::type_id::create("seq")`. The directed sequence writes every address with a different pattern, then reads every address back.
+- **`mem_rand_test`** extends `mem_smoke_test` and adds one line to `build_phase`:
+
+```systemverilog
+// snippet: mem_rand_test::build_phase
+mem_wr_rd_seq::type_id::set_type_override(mem_rand_seq::get_type());
+super.build_phase(phase);
+```
+
+`set_type_override` (IEEE 1800.2-2020 §8.2.4.2.5) tells the factory: whenever anyone asks for a `mem_wr_rd_seq`, return a `mem_rand_seq`. The inherited `run_phase` still asks for a `mem_wr_rd_seq`, and gets 40 random reads and writes instead. `mem_rand_seq` must extend `mem_wr_rd_seq`, because the handle that receives it is a `mem_wr_rd_seq`. The proof is in the log: the test prints `seq.get_type_name()`, which reads `mem_rand_seq` in the second test.
+
+The same override can come from the command line without a new test class: `+UVM_TESTNAME=mem_smoke_test +uvm_set_type_override=mem_wr_rd_seq,mem_rand_seq` (Annex G.2.7). A test class is still the better home for an override you will rerun: it is reviewed, versioned and named in the regression list.
+
+**Pitfall: creating the sequence with `new()`.** `mem_wr_rd_seq seq = new("seq");` bypasses the factory, so the override silently does nothing: the second test runs the directed sequence. Every object you might want to replace is created with `::type_id::create`.
+
+### The four bring-up failures, from their logs
+
+Almost every first bench fails in one of four ways. Each has a recognizable signature in the log; learn the signatures and you can fix most bring-up problems without opening a waveform. The log lines are from a hand trace of this bench (illustrative; file and line fields removed, times as `tb_top`'s `$timeformat` prints them).
+
+| Failure | What the log shows | Cause | Fix |
+|---|---|---|---|
+| **1. Null virtual interface** | `UVM_FATAL @ 0 ns: uvm_test_top [NOVIF] virtual mem_if 'vif' not found: set it in tb_top before run_test()` and nothing else from the bench | `tb_top`'s `set()` is missing, comes after `run_test()`, or uses another type (a modport-typed virtual interface is a different type) or another scope | Publish `virtual mem_if` with `set(null, "uvm_test_top", "vif", mem_if0)` before `run_test()` |
+| **2a. Objection never raised** | Everything at `@ 0 ns`; `[SCB_NO_TRAFFIC] no read was checked (0 writes seen)`; `SCB_SUMMARY matches=0` | `run_phase` ended in the first time slot and killed the sequence | `phase.raise_objection(this)` before anything consumes time; drop it after `start()` returns |
+| **2b. Objection never dropped** | `UVM_FATAL @ 1000000 ns: reporter [PH_TIMEOUT] Explicit timeout of 1000000 ns hit, indicating a probable testbench issue`, and **no** `SCB_SUMMARY` | A missing `drop_objection`, or a sequence stuck forever (see failure 4) | Drop on every path; find what the stuck thread waits for (`+UVM_OBJECTION_TRACE`, uvm-core impl.) |
+| **3. Unconnected analysis port** | A clean-looking run with `[SCB_NO_TRAFFIC]` at the end, `COV_SUMMARY` at 100.0% and `SCB_SUMMARY matches=0` | `agt.ap.connect(sb.item_export)` missing in `mem_env`: an analysis port may legally have no connection, so nothing complains | Add the connection; keep the zero-traffic check so this can never pass |
+| **4. Missing `item_done()`** | `UVM_ERROR @ 35 ns: uvm_test_top.env.agt.sqr [uvm_test_top.env.agt.sqr] Get_next_item called twice without item_done or get in between`, then the same line every 10 ns, then `PH_TIMEOUT` | The driver loops back to `get_next_item()` without `item_done()`; the sequencer hands it the same item again, and `finish_item()` in the sequence never returns | Call `seq_item_port.item_done()` once per item, after the item is on the pins |
+
+Four details make the signatures reliable:
+- **A fatal skips the checking phases.** `PH_TIMEOUT` and `NOVIF` end the run through uvm-core's `die()`, which runs `pre_abort()` and prints the report summary but never runs `check_phase` or `report_phase` (`uvm_root.svh`). A log without `SCB_SUMMARY` is never a pass.
+- **Failure 3 is silent by design.** `uvm_analysis_port` requires zero connections, and the end-of-elaboration check reports only ports and exports below their minimum (or above their maximum) connection count. Compare: if `mem_sb` forgot its *own* line, `item_export.connect(item_fifo.analysis_export)`, the export (which needs at least one connection) fails loudly at 0 ns: `UVM_ERROR @ 0 ns: uvm_test_top.env.sb.item_export [Connection Error] connection count of 0 does not meet required minimum of 1`, then `UVM_FATAL @ 0 ns: reporter [BUILDERR] stopping due to build errors`. Coverage at 100% next to a scoreboard with no traffic is the giveaway: the monitor ran, the scoreboard was never told.
+- **Failure 4 floods the log.** One error per clock until the timeout. Add `+UVM_MAX_QUIT_COUNT=5` (Annex G.2.6) while you debug: the run stops after five errors, and the summary says `Quit count reached!`.
+- **A null handle that slips past the check** (a driver that reads its own `vif` and forgets to test the `get()` result) is a simulator error, not a UVM message: using a null virtual interface "shall result in a fatal run-time error" (IEEE 1800-2023 §25.9), and the message points at the driver line, far from the missing `set()`. Check every required `get()` and stop with `` `uvm_fatal ``.
+
+**See failure 4 happen.** The handshake explorer below runs a model of the sequencer. It opens on the bug scenario "no item_done()". **Predict** before you step: where is the sequence when the driver loops back to `get_next_item()`, and what does the log show? Then step through and compare.
+
+<AnimatedUvmSequenceDriverHandshakeDiagram initialPreset="missing_item_done" />
+
+**Debrief.** The sequence never leaves `finish_item()` for its first item, because only `item_done()` releases it; the driver gets the same item back on every loop, with one `UVM_ERROR` per loop. Nothing in this picture ends the run: in the real bench the test's objection stays raised until the global timeout. Use the explorer's fix button to see the clean handshake, then compare with failure 2b in the table, which ends the same way for a different reason.
+
+### Reusing the agent passively (the M2 seed)
+
+Later, `mem_dut` will sit inside a subsystem, and another RTL block will drive its bus. The bench should still watch and check that bus, without driving it. Nothing in `mem_pkg` changes: a second environment reuses `mem_agent` and `mem_sb`, and the second test sets one field, `cfg.is_active = UVM_PASSIVE`.
+
+<ArchitectureDiagram
+  title="The second bench: mem_agent reused passively in mem_sys_env"
+  caption="mem_traffic_gen, an RTL stand-in, now drives mem_if0. mem_sys_test sets cfg.is_active to UVM_PASSIVE, so mem_agt builds mon and cov but no sqr and no drv. The same ap feeds the same scoreboard class, which checks the RTL's traffic exactly as before."
+  nodes={[
+    { id: "test", label: "uvm_test_top", sublabel: "mem_sys_test", kind: "test", col: 0, row: 0, colSpan: 4, rowSpan: 2, container: true },
+    { id: "cfg", label: "cfg", sublabel: "mem_cfg, UVM_PASSIVE", kind: "generic", col: 0, row: 0 },
+    { id: "env", label: "env", sublabel: "mem_sys_env", kind: "env", col: 1, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "agt", label: "mem_agt", sublabel: "mem_agent", kind: "agent", col: 1, row: 0, colSpan: 2, rowSpan: 2, container: true, badge: "passive" },
+    { id: "none", label: "no sqr, no drv", sublabel: "not built", kind: "generic", col: 1, row: 0, state: "dim" },
+    { id: "cov", label: "cov", sublabel: "mem_cov", kind: "subscriber", col: 2, row: 0 },
+    { id: "mon", label: "mon", sublabel: "mem_mon", kind: "monitor", col: 1, row: 1 },
+    { id: "sb", label: "sb", sublabel: "mem_sb", kind: "scoreboard", col: 3, row: 1 },
+    { id: "tb", label: "tb_sys_top", sublabel: "module", kind: "generic", col: 0, row: 2, colSpan: 4, container: true },
+    { id: "gen", label: "gen", sublabel: "mem_traffic_gen (RTL)", kind: "generic", col: 0, row: 2 },
+    { id: "mif", label: "mem_if0", sublabel: "mem_if", kind: "interface", col: 1, row: 2, colSpan: 2 },
+    { id: "dut", label: "dut", sublabel: "mem_dut", kind: "dut", col: 3, row: 2 }
+  ]}
+  ports={[
+    { id: "mon.ap", node: "mon", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "agt.ap", node: "agt", side: "right", at: 0.75, kind: "analysis_port", label: "ap" },
+    { id: "sb.exp", node: "sb", side: "left", kind: "export", label: "item_export" },
+    { id: "cov.imp", node: "cov", side: "bottom", kind: "analysis_imp", label: "analysis_export" }
+  ]}
+  edges={[
+    { from: "gen", to: "mif", style: "structural", label: "drives valid, we, addr, wdata" },
+    { from: "mif", to: "dut", style: "structural", label: "pins" },
+    { from: "mif", to: "mon", style: "structural", label: "vif.mon_cb" },
+    { from: "mon.ap", to: "agt.ap", style: "data" },
+    { from: "agt.ap", to: "sb.exp", style: "data", label: "write(t)" },
+    { from: "mon.ap", to: "cov.imp", style: "data", label: "write(t)" },
+    { from: "cfg", to: "agt", style: "data", label: "cfg via uvm_config_db" }
+  ]}
+/>
+
+Three details make the reuse work:
+- **The interface's request signals are nets** (`wire`). In the first bench the driver's clocking block drives them; in the second, `mem_traffic_gen`'s output ports do. A clocking-block output on a net creates its own driver that stays `'z` until the first synchronous drive (§14.16), so the unused `drv_cb` does not interfere. With variables (`logic`), the same interface could not legally be driven by both (see the expert item on one interface type on both sides of the DUT in [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)).
+- **The test, not the agent, decides.** `mem_sys_env` creates `mem_agent` exactly as `mem_env` does. If the agent were active here, its driver would fight `mem_traffic_gen` for the bus.
+- **Check the shape and the count.** The second test prints the topology at the end of elaboration: under `mem_agt` you must see `cov` and `mon` and no `sqr` or `drv`. The scoreboard must report `matches=16` for the 16 reads the RTL makes.
+
+### Recap
+
+- `tb_top` owns the pins: clock, reset with a nonblocking release, the DUT, the interface, the `set()` of the virtual interface, then `run_test()`.
+- Interfaces outside the package; classes in one package, included in dependency order; compile DUT, interface, `uvm_pkg`, package, top.
+- The test fills one configuration object per agent; the agent builds from it (monitor always, sequencer and driver only when active) and hands it to its children.
+- The driver drives through `drv_cb`; the monitor samples through `mon_cb` with `#1step`, builds a new item per transfer, and holds a read until its data arrives.
+- The scoreboard takes items from an analysis FIFO in its own thread, and its `check_phase` fails the run if anything is pending or nothing was checked; `SCB_SUMMARY` is the grep line.
+- The test's objection, with a drain time for the read latency, decides when the run ends. A fatal skips `check_phase` and `report_phase`.
+- The four failures have four signatures: `NOVIF` at 0 ns; everything at 0 ns or a `PH_TIMEOUT`; `SCB_NO_TRAFFIC` beside full coverage; `Get_next_item called twice` every clock.
+
+## Make It Work
+
+### The complete bench, file by file
+
+The fourteen blocks below are one compile-ready set: four compile units (`mem_dut.sv`, `mem_if.sv`, `mem_pkg.sv` with its ten included files, and `tb_top.sv`). Each block is a whole file. The code has been checked by reading against IEEE 1800-2023 and uvm-core 2020.3.1; no simulator run is behind this page.
+
+```systemverilog
+// compile: mem_dut.sv (file 1 of 4)
+// 16 x 8-bit memory with a one-cycle request bus. Read data is registered:
+// it appears in the cycle after the edge that accepted the read.
+module mem_dut #(
+  parameter int BUG = 0                // 1: reads ignore addr[3] (a planted bug)
+) (
+  input  logic       clk,
+  input  logic       rst_n,            // synchronous, active low
+  input  logic       valid,            // a request this cycle
+  input  logic       we,               // 1: write, 0: read
+  input  logic [3:0] addr,
+  input  logic [7:0] wdata,
+  output logic [7:0] rdata
+);
+  timeunit 1ns; timeprecision 1ps;
+
+  logic [7:0] mem [16];
+  logic [3:0] rd_addr;
+
+  // The planted bug aliases addresses 8 to 15 onto 0 to 7, for reads only.
+  assign rd_addr = (BUG == 1) ? {1'b0, addr[2:0]} : addr;
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      foreach (mem[i]) mem[i] <= '0;
+      rdata <= '0;
+    end else if (valid && we) begin
+      mem[addr] <= wdata;
+    end else if (valid && !we) begin
+      rdata <= mem[rd_addr];
+    end
+  end
+endmodule
+```
+
+```systemverilog
+// compile: mem_if.sv (file 2 of 4; outside the package, because it is not a class)
+interface mem_if (input logic clk, input logic rst_n);
+  timeunit 1ns; timeprecision 1ps;
+
+  // Request signals are nets, so the same interface also works when RTL, not
+  // the driver, drives them (the passive bench). rdata is driven by the DUT only.
+  wire        valid;
+  wire        we;
+  wire  [3:0] addr;
+  wire  [7:0] wdata;
+  logic [7:0] rdata;
+
+  // The driver's view: drives land just after the edge (Re-NBA region), so the
+  // DUT samples them at the next edge.
+  clocking drv_cb @(posedge clk);
+    default input #1step output #0;
+    output valid, we, addr, wdata;
+    input  rst_n;
+  endclocking
+
+  // The monitor's view: inputs only, sampled just before the edge (#1step),
+  // the same values the DUT's flip-flops capture at that edge.
+  clocking mon_cb @(posedge clk);
+    default input #1step;
+    input valid, we, addr, wdata, rdata, rst_n;
+  endclocking
+endinterface
+```
+
+```systemverilog
+// compile: mem_pkg.sv (file 3 of 4)
+// Every class of the bench, in dependency order. The .svh files are found
+// through the include path; never compile them on their own.
+package mem_pkg;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  `include "mem_item.svh"
+  `include "mem_cfg.svh"
+  typedef uvm_sequencer #(mem_item) mem_sqr;   // no new code needed
+  `include "mem_seqs.svh"
+  `include "mem_drv.svh"
+  `include "mem_mon.svh"
+  `include "mem_cov.svh"
+  `include "mem_agent.svh"
+  `include "mem_sb.svh"
+  `include "mem_env.svh"
+  `include "mem_tests.svh"
+endpackage
+```
+
+```systemverilog
+// compile: mem_item.svh (included by mem_pkg.sv)
+// One request on the bus. A sequence fills we, addr and wdata; the monitor
+// fills the same fields from the pins, plus rdata for a read.
+class mem_item extends uvm_sequence_item;
+  `uvm_object_utils(mem_item)
+
+  rand bit       we;              // 1: write, 0: read
+  rand bit [3:0] addr;
+  rand bit [7:0] wdata;           // meaningful for writes
+  logic    [7:0] rdata;           // 4-state, so an X from the DUT is not hidden
+
+  function new(string name = "mem_item");
+    super.new(name);
+  endfunction
+
+  virtual function string convert2string();
+    if (we) return $sformatf("WRITE addr=%h wdata=%h", addr, wdata);
+    return $sformatf("READ  addr=%h rdata=%h", addr, rdata);
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_cfg.svh (included by mem_pkg.sv)
+// Everything one mem_agent needs, in one object. The test fills it in and
+// publishes it once; the agent hands the same handle to its children.
+class mem_cfg extends uvm_object;
+  `uvm_object_utils(mem_cfg)
+
+  virtual mem_if          vif;                     // from tb_top, via the test
+  uvm_active_passive_enum is_active = UVM_ACTIVE;  // UVM_PASSIVE: monitor only
+  bit                     coverage_enable = 1;     // build the coverage subscriber
+
+  function new(string name = "mem_cfg");
+    super.new(name);
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_seqs.svh (included by mem_pkg.sv)
+// Directed: write every address with its own pattern, then read every one back.
+class mem_wr_rd_seq extends uvm_sequence #(mem_item);
+  `uvm_object_utils(mem_wr_rd_seq)
+
+  function new(string name = "mem_wr_rd_seq");
+    super.new(name);
+  endfunction
+
+  virtual task body();
+    for (int a = 0; a < 16; a++) send(1'b1, 4'(a), {4'(a), ~4'(a)}); // 0F ... F0
+    for (int a = 0; a < 16; a++) send(1'b0, 4'(a), 8'h00);
+  endtask
+
+  // One item: create it, wait for the driver (start_item), fill it in, and
+  // hand it over (finish_item returns after the driver's item_done).
+  protected task send(bit we, bit [3:0] addr, bit [7:0] wdata);
+    mem_item it = mem_item::type_id::create("it");
+    start_item(it);
+    it.we    = we;
+    it.addr  = addr;
+    it.wdata = wdata;
+    finish_item(it);
+  endtask
+endclass
+
+// Random: num_items random reads and writes. mem_rand_test makes the factory
+// return this class wherever a mem_wr_rd_seq is requested.
+class mem_rand_seq extends mem_wr_rd_seq;
+  `uvm_object_utils(mem_rand_seq)
+
+  int unsigned num_items = 40;
+
+  function new(string name = "mem_rand_seq");
+    super.new(name);
+  endfunction
+
+  virtual task body();
+    repeat (num_items) begin
+      mem_item it = mem_item::type_id::create("it");
+      start_item(it);
+      if (!it.randomize()) `uvm_fatal("RAND", "mem_item randomization failed")
+      finish_item(it);
+    end
+  endtask
+endclass
+```
+
+```systemverilog
+// compile: mem_drv.svh (included by mem_pkg.sv)
+class mem_drv extends uvm_driver #(mem_item);
+  `uvm_component_utils(mem_drv)
+
+  mem_cfg cfg;                          // handed over by mem_agent
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    virtual mem_if vif = cfg.vif;
+    vif.drv_cb.valid <= 1'b0;           // idle the bus from the first edge
+    do @(vif.drv_cb); while (vif.drv_cb.rst_n !== 1'b1);
+    forever begin
+      seq_item_port.get_next_item(req);
+      vif.drv_cb.valid <= 1'b1;
+      vif.drv_cb.we    <= req.we;
+      vif.drv_cb.addr  <= req.addr;
+      vif.drv_cb.wdata <= req.wdata;
+      @(vif.drv_cb);                    // the DUT accepts the request at this edge
+      vif.drv_cb.valid <= 1'b0;         // a following item overrides this drive
+      seq_item_port.item_done();        // releases finish_item() in the sequence
+    end
+  endtask
+endclass
+```
+
+```systemverilog
+// compile: mem_mon.svh (included by mem_pkg.sv)
+class mem_mon extends uvm_monitor;
+  `uvm_component_utils(mem_mon)
+
+  mem_cfg cfg;                            // handed over by mem_agent
+  uvm_analysis_port #(mem_item) ap;       // one new item per observed transfer
+  protected mem_item rd_pending;          // a read accepted, its data not yet seen
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    ap = new("ap", this);
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    virtual mem_if vif = cfg.vif;
+    forever begin
+      @(vif.mon_cb);
+      if (vif.mon_cb.rst_n !== 1'b1) begin
+        rd_pending = null;                // reset cancels a read in flight
+        continue;
+      end
+      // The read accepted at the previous edge has its data now.
+      if (rd_pending != null) begin
+        rd_pending.rdata = vif.mon_cb.rdata;
+        ap.write(rd_pending);
+        rd_pending = null;
+      end
+      if (vif.mon_cb.valid === 1'b1) begin
+        mem_item t = mem_item::type_id::create("t");
+        if ($isunknown({vif.mon_cb.we, vif.mon_cb.addr}))
+          `uvm_error("MON_X", "valid is 1 but we or addr is X or Z")
+        t.we   = vif.mon_cb.we;
+        t.addr = vif.mon_cb.addr;
+        if (t.we) begin
+          t.wdata = vif.mon_cb.wdata;
+          ap.write(t);                    // a write is complete at once
+        end else begin
+          rd_pending = t;                 // its data arrives one edge later
+        end
+      end
+    end
+  endtask
+
+  // A read still waiting for its data means the run ended one edge too early.
+  virtual function void check_phase(uvm_phase phase);
+    super.check_phase(phase);
+    if (rd_pending != null)
+      `uvm_error("MON_INFLIGHT", $sformatf("read of addr %h never got its data",
+                                           rd_pending.addr))
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_cov.svh (included by mem_pkg.sv)
+// Optional: which kinds of request the monitor saw, by address half.
+class mem_cov extends uvm_subscriber #(mem_item);
+  `uvm_component_utils(mem_cov)
+
+  protected mem_item tr;                  // the item being sampled
+
+  covergroup mem_cg;
+    option.per_instance = 1;
+    cp_we:     coverpoint tr.we;
+    cp_addr:   coverpoint tr.addr { bins low = {[0:7]}; bins high = {[8:15]}; }
+    we_x_addr: cross cp_we, cp_addr;
+  endgroup
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    mem_cg = new();                       // an embedded covergroup is built in new()
+  endfunction
+
+  // uvm_subscriber declares write(T t); an override keeps the argument name t.
+  virtual function void write(mem_item t);
+    tr = t;
+    mem_cg.sample();
+  endfunction
+
+  virtual function void report_phase(uvm_phase phase);
+    super.report_phase(phase);
+    `uvm_info("COV_SUMMARY", $sformatf("we x addr coverage = %0.1f%%",
+                                       mem_cg.get_inst_coverage()), UVM_NONE)
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_agent.svh (included by mem_pkg.sv)
+class mem_agent extends uvm_agent;
+  `uvm_component_utils(mem_agent)
+
+  mem_cfg cfg;
+  mem_sqr sqr;
+  mem_drv drv;
+  mem_mon mon;
+  mem_cov cov;
+  uvm_analysis_port #(mem_item) ap;       // the monitor's stream, at the boundary
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (!uvm_config_db#(mem_cfg)::get(this, "", "cfg", cfg))
+      `uvm_fatal("NOCFG", {"no mem_cfg set for ", get_full_name()})
+    if (cfg.vif == null)
+      `uvm_fatal("NOVIF", {"mem_cfg.vif is null for ", get_full_name()})
+    is_active = cfg.is_active;            // get_is_active() returns this from now on
+    ap  = new("ap", this);
+    mon = mem_mon::type_id::create("mon", this);
+    mon.cfg = cfg;
+    if (cfg.coverage_enable)
+      cov = mem_cov::type_id::create("cov", this);
+    if (get_is_active() == UVM_ACTIVE) begin
+      sqr = mem_sqr::type_id::create("sqr", this);
+      drv = mem_drv::type_id::create("drv", this);
+      drv.cfg = cfg;
+    end
+  endfunction
+
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    mon.ap.connect(ap);                   // promote: the env sees agt.ap only
+    if (cov != null)
+      mon.ap.connect(cov.analysis_export);
+    if (get_is_active() == UVM_ACTIVE)
+      drv.seq_item_port.connect(sqr.seq_item_export);
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_sb.svh (included by mem_pkg.sv)
+class mem_sb extends uvm_scoreboard;
+  `uvm_component_utils(mem_sb)
+
+  uvm_analysis_export   #(mem_item) item_export;  // the env connects agt.ap here
+  uvm_tlm_analysis_fifo #(mem_item) item_fifo;    // buffers items for run_phase
+
+  protected bit [7:0] model [16];   // reference model: what each address holds
+  int unsigned n_writes, n_reads, n_match, n_mismatch;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    item_export = new("item_export", this);
+    item_fifo   = new("item_fifo", this);
+  endfunction
+
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    item_export.connect(item_fifo.analysis_export);
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    mem_item t;
+    forever begin
+      item_fifo.get(t);                   // waits until the monitor publishes
+      check_item(t);
+    end
+  endtask
+
+  protected function void check_item(mem_item t);
+    if (t.we) begin
+      model[t.addr] = t.wdata;            // predict: later reads return wdata
+      n_writes++;
+      return;
+    end
+    n_reads++;
+    if (t.rdata !== model[t.addr]) begin
+      n_mismatch++;
+      `uvm_error("SCB_MISMATCH", $sformatf("%s, expected rdata=%h",
+                                           t.convert2string(), model[t.addr]))
+    end else begin
+      n_match++;
+      `uvm_info("SCB_MATCH", t.convert2string(), UVM_HIGH)
+    end
+  endfunction
+
+  // After run_phase: did we judge everything we saw, and did we judge anything?
+  virtual function void check_phase(uvm_phase phase);
+    super.check_phase(phase);
+    if (item_fifo.used() != 0)
+      `uvm_error("SCB_PENDING", $sformatf("%0d items were never checked",
+                                          item_fifo.used()))
+    if (n_reads == 0)
+      `uvm_error("SCB_NO_TRAFFIC", $sformatf(
+        "no read was checked (%0d writes seen): this run proves nothing", n_writes))
+  endfunction
+
+  virtual function void report_phase(uvm_phase phase);
+    super.report_phase(phase);
+    `uvm_info("SCB_SUMMARY",
+              $sformatf("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+                        n_match, n_mismatch, item_fifo.used()), UVM_NONE)
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_env.svh (included by mem_pkg.sv)
+class mem_env extends uvm_env;
+  `uvm_component_utils(mem_env)
+
+  mem_agent agt;
+  mem_sb    sb;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    agt = mem_agent::type_id::create("agt", this);
+    sb  = mem_sb::type_id::create("sb", this);
+  endfunction
+
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    agt.ap.connect(sb.item_export);       // forget this and nothing complains
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_tests.svh (included by mem_pkg.sv)
+class mem_smoke_test extends uvm_test;
+  `uvm_component_utils(mem_smoke_test)
+
+  mem_env env;
+  mem_cfg cfg;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    cfg = mem_cfg::type_id::create("cfg");
+    if (!uvm_config_db#(virtual mem_if)::get(this, "", "vif", cfg.vif))
+      `uvm_fatal("NOVIF",
+                 "virtual mem_if 'vif' not found: set it in tb_top before run_test()")
+    uvm_config_db#(mem_cfg)::set(this, "env.agt", "cfg", cfg);
+    env = mem_env::type_id::create("env", this);
+    uvm_root::get().set_timeout(1ms);     // a hang ends here, not after 9200 s
+  endfunction
+
+  virtual function void end_of_elaboration_phase(uvm_phase phase);
+    uvm_root::get().print_topology();     // the tree, before anything runs
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    mem_wr_rd_seq seq = mem_wr_rd_seq::type_id::create("seq");
+    phase.raise_objection(this, "mem sequence running");
+    // A read's data returns one clock after the request: keep the phase open
+    // two more clocks after the drop, so the monitor can publish the last read.
+    phase.get_objection().set_drain_time(this, 20ns);
+    `uvm_info("TEST", {"starting ", seq.get_type_name()}, UVM_LOW)
+    seq.start(env.agt.sqr);
+    phase.drop_objection(this, "mem sequence done");
+  endtask
+endclass
+
+// Same bench, random stimulus: one factory override, no other change.
+class mem_rand_test extends mem_smoke_test;
+  `uvm_component_utils(mem_rand_test)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    mem_wr_rd_seq::type_id::set_type_override(mem_rand_seq::get_type());
+    super.build_phase(phase);
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: tb_top.sv (file 4 of 4)
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+  import mem_pkg::*;        // some tools elaborate only packages that are referenced
+
+  logic clk;
+  logic rst_n;
+
+  mem_if  mem_if0 (.clk(clk), .rst_n(rst_n));
+  mem_dut #(.BUG(0)) dut (.clk(clk), .rst_n(rst_n), .valid(mem_if0.valid),
+                          .we(mem_if0.we), .addr(mem_if0.addr),
+                          .wdata(mem_if0.wdata), .rdata(mem_if0.rdata));
+
+  initial begin
+    clk = 1'b0;
+    forever #5 clk = ~clk;              // rising edges at 5, 15, 25 ns ...
+  end
+
+  initial begin
+    rst_n = 1'b0;
+    repeat (2) @(posedge clk);
+    rst_n <= 1'b1;                      // nonblocking: the flops at 15 ns still see 0
+  end
+
+  initial begin
+    $timeformat(-9, 0, " ns", 0);       // %t in the log reads "35 ns"
+    // Publish the interface first: the test reads it in build_phase.
+    uvm_config_db#(virtual mem_if)::set(null, "uvm_test_top", "vif", mem_if0);
+    run_test("mem_smoke_test");         // +UVM_TESTNAME=<test> overrides this
+  end
+endmodule
+```
+
+### Run it
+
+The steps are tool-neutral; switches differ between simulators, so check your tool's UVM documentation.
+
+1. **Point the compiler at uvm-core 2020.3.1.** Many simulators ship a precompiled UVM library selected with one switch (tool-dependent). Otherwise compile the library's `src/uvm_pkg.sv` with `src` on the include path, together with its DPI file `src/dpi/uvm_dpi.cc`, or define `UVM_NO_DPI` to compile without the C side (uvm-core then reads `+UVM_TESTNAME` with `$value$plusargs` and loses some features).
+2. **Use one time unit everywhere.** Every file of this bench declares `timeunit 1ns; timeprecision 1ps;`, but `uvm_pkg` declares none, and IEEE 1800-2023 §3.14.2.3 makes it an error for some design elements to specify a time unit while others do not. Give the compile a default time unit and precision of 1 ns / 1 ps with your tool's switch, so that uvm-core gets the same unit. It matters beyond legality: `set_drain_time(this, 20ns)` and `set_timeout(1ms)` pass `time` values that uvm-core waits on in its own time unit (see the expert item on time units in [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+3. **Compile in order** with the bench's directory on the include path: `mem_dut.sv`, `mem_if.sv`, `mem_pkg.sv`, `tb_top.sv`. Elaborate with `tb_top` as the top module.
+4. **Run each test** by name:
+
+```bash
+# Generic shape; <sim> stands for your simulator's run command.
+<sim> ... +UVM_TESTNAME=mem_smoke_test
+<sim> ... +UVM_TESTNAME=mem_rand_test       # add your tool's seed switch to vary it
+```
+
+Open-source simulators' UVM support is limited and changes between releases; whether this bench runs on one is tool-dependent, and this page does not claim it.
+
+### Expected output
+
+This is a hand trace of the smoke test, not a simulator log (abridged: the release-notes banner and the topology table are shortened, and file and line fields are removed). The message format and the order of the report lines follow uvm-core 2020.3.1; spacing, and the topology table's extra columns, differ between tools.
+
+```text
+UVM_INFO @ 0 ns: reporter [UVM/RELNOTES] (release-notes banner)
+UVM_INFO @ 0 ns: reporter [RNTST] Running test mem_smoke_test...
+UVM_INFO @ 0 ns: reporter [UVMTOP] UVM testbench topology:
+  (table abridged to the component names and types)
+  uvm_test_top        mem_smoke_test
+    env               mem_env
+      agt             mem_agent
+        cov           mem_cov
+        drv           mem_drv
+        mon           mem_mon
+        sqr           uvm_sequencer
+      sb              mem_sb
+        item_fifo     uvm_tlm_analysis_fifo #(T)
+UVM_INFO @ 0 ns: uvm_test_top [TEST] starting mem_wr_rd_seq
+UVM_INFO @ 365 ns: uvm_test_top.env.agt.cov [COV_SUMMARY] we x addr coverage = 100.0%
+UVM_INFO @ 365 ns: uvm_test_top.env.sb [SCB_SUMMARY] SCB_SUMMARY matches=16 mismatches=0 pending=0
+UVM_INFO @ 365 ns: reporter [UVM/REPORT/SERVER]
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :    6
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+** Report counts by id
+[COV_SUMMARY]     1
+[RNTST]     1
+[SCB_SUMMARY]     1
+[TEST]     1
+[UVM/RELNOTES]     1
+[UVMTOP]     1
+```
+
+How to read it:
+- **The verdict:** `UVM_ERROR :    0`, `UVM_FATAL :    0` and an `SCB_SUMMARY` line with `matches=16`, the 16 reads. All three are needed.
+- **The times:** the first request is accepted at 35 ns and the 32nd at 345 ns; the last read's data is published at 355 ns; the 20 ns drain ends `run_phase` at 365 ns, where `check_phase` and `report_phase` run. Reports come bottom-up, so `cov` (inside `agt`) reports before `sb`.
+- **The six INFO messages:** the banner, `RNTST`, the topology header, the test's `TEST` line, and the two summaries. Raise the verbosity with `+UVM_VERBOSITY=UVM_HIGH` and every `SCB_MATCH` appears too ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)).
+
+For `+UVM_TESTNAME=mem_rand_test`, the lines that differ are:
+
+```text
+UVM_INFO @ 0 ns: reporter [RNTST] Running test mem_rand_test...
+UVM_INFO @ 0 ns: uvm_test_top [TEST] starting mem_rand_seq
+UVM_INFO @ <end> ns: uvm_test_top.env.sb [SCB_SUMMARY] SCB_SUMMARY matches=<reads> mismatches=0 pending=0
+```
+
+`starting mem_rand_seq` is the proof that the override worked; without it, the test would have quietly rerun the directed sequence. `<reads>` is the number of reads among the 40 random items, and `<end>` is 445 ns (40 items accepted from 35 ns to 425 ns, plus the 20 ns drain); both the read count and the coverage percentage depend on the seed.
+
+### Prove it can fail
+
+A bench you have never seen fail is not evidence. Set `.BUG(1)` on the DUT in `tb_top` (reads ignore address bit 3) and rerun the smoke test. **Predict** how many mismatches appear and when, then compare:
+
+```text
+UVM_ERROR @ 285 ns: uvm_test_top.env.sb [SCB_MISMATCH] READ  addr=8 rdata=0f, expected rdata=87
+UVM_ERROR @ 295 ns: uvm_test_top.env.sb [SCB_MISMATCH] READ  addr=9 rdata=1e, expected rdata=96
+  ... (one per read of addresses a to e)
+UVM_ERROR @ 355 ns: uvm_test_top.env.sb [SCB_MISMATCH] READ  addr=f rdata=78, expected rdata=f0
+UVM_INFO @ 365 ns: uvm_test_top.env.sb [SCB_SUMMARY] SCB_SUMMARY matches=8 mismatches=8 pending=0
+...
+UVM_ERROR :    8
+UVM_FATAL :    0
+```
+
+The reads of addresses 0 to 7 still match; each read of 8 to F returns the location eight below it (address 8 returns `0f`, what address 0 holds). Eight errors, one per broken read, and a summary that names the damage. Set `.BUG(0)` again before you go on.
+
+### The same agent, passive, in a second bench
+
+These three files, compiled with `mem_dut.sv`, `mem_if.sv` and an **unchanged** `mem_pkg.sv`, make the second bench. Compile them as a separate run with `tb_sys_top` as the top module.
+
+```systemverilog
+// compile: mem_traffic_gen.sv (an RTL stand-in for the block that will drive mem_dut)
+// After reset: 16 back-to-back writes (address a gets {a, ~a}), then 16 reads.
+module mem_traffic_gen (
+  input  logic       clk,
+  input  logic       rst_n,
+  output logic       valid,
+  output logic       we,
+  output logic [3:0] addr,
+  output logic [7:0] wdata
+);
+  timeunit 1ns; timeprecision 1ps;
+
+  logic [5:0] step;                     // 0-15 write, 16-31 read, 32 done
+
+  always_ff @(posedge clk) begin
+    if (!rst_n)             step <= '0;
+    else if (step != 6'd32) step <= step + 6'd1;
+  end
+
+  assign valid = rst_n && (step != 6'd32);
+  assign we    = !step[4];
+  assign addr  = step[3:0];
+  assign wdata = {step[3:0], ~step[3:0]};
+endmodule
+```
+
+```systemverilog
+// compile: sys_pkg.sv (reuses mem_pkg unchanged)
+package sys_pkg;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+  import mem_pkg::*;
+
+  // A subsystem env. It would hold its own agents as well; here it reuses
+  // mem_agent (passive) and mem_sb to check traffic that RTL generates.
+  class mem_sys_env extends uvm_env;
+    `uvm_component_utils(mem_sys_env)
+
+    mem_agent mem_agt;
+    mem_sb    sb;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      mem_agt = mem_agent::type_id::create("mem_agt", this);
+      sb      = mem_sb::type_id::create("sb", this);
+    endfunction
+
+    virtual function void connect_phase(uvm_phase phase);
+      super.connect_phase(phase);
+      mem_agt.ap.connect(sb.item_export);
+    endfunction
+  endclass
+
+  class mem_sys_test extends uvm_test;
+    `uvm_component_utils(mem_sys_test)
+
+    mem_sys_env env;
+    mem_cfg     cfg;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      cfg = mem_cfg::type_id::create("cfg");
+      if (!uvm_config_db#(virtual mem_if)::get(this, "", "vif", cfg.vif))
+        `uvm_fatal("NOVIF", "virtual mem_if 'vif' not found: set it in tb_sys_top")
+      cfg.is_active = UVM_PASSIVE;          // the only setting that changes
+      uvm_config_db#(mem_cfg)::set(this, "env.mem_agt", "cfg", cfg);
+      env = mem_sys_env::type_id::create("env", this);
+      uvm_root::get().set_timeout(1ms);
+    endfunction
+
+    virtual function void end_of_elaboration_phase(uvm_phase phase);
+      uvm_root::get().print_topology();     // expect mon and cov; no sqr, no drv
+    endfunction
+
+    // No stimulus to send: the RTL stand-in drives one burst. Object from the
+    // first transfer until the bus goes idle, plus the read-data latency.
+    virtual task run_phase(uvm_phase phase);
+      virtual mem_if vif = cfg.vif;
+      phase.raise_objection(this, "watching RTL traffic");
+      phase.get_objection().set_drain_time(this, 20ns);
+      @(vif.mon_cb iff vif.mon_cb.valid === 1'b1);
+      @(vif.mon_cb iff vif.mon_cb.valid === 1'b0);
+      phase.drop_objection(this, "RTL burst over");
+    endtask
+  endclass
+endpackage
+```
+
+```systemverilog
+// compile: tb_sys_top.sv
+module tb_sys_top;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+  import sys_pkg::*;
+
+  logic clk;
+  logic rst_n;
+
+  mem_if          mem_if0 (.clk(clk), .rst_n(rst_n));
+  mem_traffic_gen gen (.clk(clk), .rst_n(rst_n), .valid(mem_if0.valid),
+                       .we(mem_if0.we), .addr(mem_if0.addr), .wdata(mem_if0.wdata));
+  mem_dut         dut (.clk(clk), .rst_n(rst_n), .valid(mem_if0.valid),
+                       .we(mem_if0.we), .addr(mem_if0.addr), .wdata(mem_if0.wdata),
+                       .rdata(mem_if0.rdata));
+
+  initial begin
+    clk = 1'b0;
+    forever #5 clk = ~clk;
+  end
+
+  initial begin
+    rst_n = 1'b0;
+    repeat (2) @(posedge clk);
+    rst_n <= 1'b1;
+  end
+
+  initial begin
+    $timeformat(-9, 0, " ns", 0);
+    uvm_config_db#(virtual mem_if)::set(null, "uvm_test_top", "vif", mem_if0);
+    run_test("mem_sys_test");
+  end
+endmodule
+```
+
+Expected output (hand trace, abridged as before):
+
+```text
+UVM_INFO @ 0 ns: reporter [RNTST] Running test mem_sys_test...
+UVM_INFO @ 0 ns: reporter [UVMTOP] UVM testbench topology:
+  uvm_test_top        mem_sys_test
+    env               mem_sys_env
+      mem_agt         mem_agent
+        cov           mem_cov
+        mon           mem_mon
+      sb              mem_sb
+        item_fifo     uvm_tlm_analysis_fifo #(T)
+UVM_INFO @ 365 ns: uvm_test_top.env.mem_agt.cov [COV_SUMMARY] we x addr coverage = 100.0%
+UVM_INFO @ 365 ns: uvm_test_top.env.sb [SCB_SUMMARY] SCB_SUMMARY matches=16 mismatches=0 pending=0
+...
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+The topology has no `sqr` and no `drv` under `mem_agt`, and the passive monitor saw all 32 transfers: 16 writes (accepted from 25 ns to 175 ns) and 16 reads (accepted from 185 ns to 335 ns), every read matched. The test drops its objection at 345 ns, when `mon_cb` first samples `valid` as 0, and the drain ends the run at 365 ns. That is the M2 signature: one agent class, active in one bench and passive in another, changed only through its configuration.
+
+### How to build your own first bench
+
+1. **Write the DUT's protocol down** as a table: which edge accepts a request, when results are valid, what reset does. Every later decision (clocking skews, the monitor's state, the drain time) comes from it.
+2. **Write the interface** with a driver clocking block and a monitor clocking block. Use nets for signals that another source may drive in a passive bench.
+3. **Write the item**, then the **configuration object** (`vif`, `is_active`, knobs), then one directed **sequence**.
+4. **Write the driver** (drive through `drv_cb`, one `item_done()` per item) and the **monitor** (sample through `mon_cb`, a new item per transfer, state for anything that completes later).
+5. **Write the agent:** get the configuration, set `is_active`, build the monitor always and the sequencer and driver only when active, hand `cfg` to the children, connect, promote the analysis port.
+6. **Write the scoreboard:** an export, an analysis FIFO, a `run_phase` thread, a model, counters, `check_phase` for pending items and zero traffic, and one `SCB_SUMMARY` line.
+7. **Write the env** (build and connect), **the test** (configuration, timeout, topology, objection with drain, sequence created through the factory), and **`tb_top`** (clock, reset, DUT, interface, `set()` then `run_test()`).
+8. **Organize and compile:** the package with includes in dependency order; compile DUT, interface, `uvm_pkg`, package, top.
+9. **Run, then break it:** check the verdict lines, plant a DUT bug and see the scoreboard catch it, then remove the bug.
+10. **Add a second test** that changes only what it must (an override or a configuration field) and prove from the log that it did.
+
+**Checklist before moving on:**
+- [ ] `tb_top` publishes `virtual mem_if` before `run_test()`, and no class names `tb_top` in a hierarchical path.
+- [ ] Interfaces are outside the package; the package includes its files in dependency order; the four units compile in order.
+- [ ] The agent builds its sequencer and driver only when `get_is_active()` returns `UVM_ACTIVE`, and every required `get()` is checked.
+- [ ] The monitor samples through its clocking block with `#1step` and creates a new item for every transfer.
+- [ ] The scoreboard's `check_phase` fails a run with pending items or no checked transaction, and `report_phase` prints `SCB_SUMMARY`.
+- [ ] The test raises its objection before anything consumes time, drops it after the sequence, and covers the DUT's latency with a drain time.
+- [ ] Both tests run from the command line, and the log proves which sequence ran.
+- [ ] You have seen the bench fail on a planted bug and pass without it.
+- [ ] You can name the failure behind each of the four bring-up signatures.
+- [ ] The second bench runs the same agent passive, with no driver in the topology and a matching scoreboard count.
+
+## Push Further
+
+### Expert: compilation units, packages and include order
+
+- **What `` `include `` really does.** It pastes text (IEEE 1800-2023 §22.4). The package is then one long scope, so declaration order inside it is the include order. A class used as a type before its declaration is an error unless forward-declared with `typedef class` (§8.27).
+- **Why one package and not `$unit`.** Declarations outside any module or package go into the compilation-unit scope, `$unit` (§3.12.1). Whether two files share one `$unit` depends on whether the tool compiles them together, which is a tool switch. Two copies of the same class in two compilation units are two different types, and a handle of one cannot hold an object of the other. A package is one named scope, compiled once, imported everywhere: the type identity problem disappears.
+- **What a package may not contain.** Packages hold types, data, tasks, functions and similar declarations, may not contain hierarchical references to the design, and may not refer to items in `$unit` (§26.2). Interfaces and modules are design elements and stay outside.
+- **Import is not elaboration.** `import mem_pkg::*;` makes names visible; it does not create anything. Whether a compiled but unreferenced package is elaborated (and so registers its classes with the factory) is tool-dependent, which is why `tb_top` imports `mem_pkg` even though it names none of its classes.
+- **Interview angle:** "Two engineers each include `my_item.svh` in their own package. What breaks, and how do you fix it?" (Two distinct `my_item` types; a `uvm_config_db#(my_item)` set by one package's code is invisible to a `get()` compiled in the other. Put shared types in one package that both import.)
+
+### Expert: what `run_test()` does with the command line
+
+- **Test selection.** If `+UVM_TESTNAME` is present, `run_test()` creates that test through the factory by name; otherwise it uses its argument (IEEE 1800.2-2020 Annex F.7.3.1, G.2.1). If several `+UVM_TESTNAME` arguments are given, the first is used and a warning is issued (G.2.1).
+- **The names in the errors** (uvm-core 2020.3.1, `uvm_root.svh`): a name the factory does not know gives `UVM_FATAL [INVTST] Requested test from command line +UVM_TESTNAME=<name> not found.` A run with no test at all gives `[NOCOMP]`. Calling `run_test()` twice gives `[TTINST]`. Registering the test with `` `uvm_component_utils `` is what makes the name known.
+- **When the command line is applied.** uvm-core applies `+uvm_set_type_override` and the other `+uvm_set_*` arguments in `uvm_root`'s own `build_phase`, which runs before the test's (`uvm_root.svh`), so a command-line override is in place before any component or sequence is created. It then logs `UVM_CMDLINE_PROC` with the override applied.
+- **Interview angle:** "Why do regressions select tests with `+UVM_TESTNAME` instead of recompiling with a different `run_test()` argument?" (One compiled image runs every test; the command line, not the source, records which test ran.)
+
+### Expert: when the run really ends, and what a fatal skips
+
+- **Normal end.** After the last objection drops and every drain time has passed, `run_phase` ends, its threads are killed (IEEE 1800.2-2020 §9.6, §10.5.1), and `extract_phase`, `check_phase`, `report_phase` and `final_phase` run (§9.8.1). `run_test()` then prints the report summary and, by default, calls `$finish`.
+- **Fatal end.** A `UVM_FATAL` (including `PH_TIMEOUT`, `NOVIF` and a reached quit count) calls `uvm_root::die()` in uvm-core 2020.3.1, which runs `pre_abort()` on every component and prints the summary, then calls `$finish` (`uvm_root.svh`). `check_phase` and `report_phase` never run. Override `pre_abort()` in the scoreboard to print the pending count when a run is killed.
+- **The default timeout** is 9200 s (`` `UVM_DEFAULT_TIMEOUT ``, `uvm_global_defines.svh`), and its fatal says "Default timeout"; after `set_timeout()` it says "Explicit timeout" (`uvm_phase_hopper.svh`). `set_timeout()` must be called before `run_phase` starts (Annex F.7.3.3).
+- **Drain time versus `phase_ready_to_end`.** A drain time is right when the leftover work has a known bound (one read latency here). When it does not, the component that knows (usually the scoreboard) raises an objection from `phase_ready_to_end` and drops it when its expected items have arrived ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index), [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
+- **Interview angle:** "A regression job's log ends with `PH_TIMEOUT` and the report summary shows `UVM_ERROR : 0`. Is it a pass?" (No: a fatal is a failure, and the checking phases never ran.)
+
+### Expert: why the virtual interface travels through the configuration database
+
+- **Packages cannot see the design.** Classes in a package cannot use hierarchical references (IEEE 1800-2023 §26.2), so the only way in is a value passed at run time. The configuration database is UVM's standard carrier (IEEE 1800.2-2020 Annex C.4.2).
+- **The type is part of the key.** A `set()` of `virtual mem_if` is invisible to a `get()` of `virtual mem_if.some_modport`: a modport is part of a virtual interface's type (IEEE 1800-2023 §25.9), and the database matches types exactly ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
+- **One handle per instance, scoped narrowly.** Setting the handle for `"uvm_test_top"` and passing it on in `cfg` means a second interface instance (a second agent) can never pick up the wrong one through a wildcard. A `set(null, "*", "vif", ...)` matches every component and is how two agents end up watching the same bus.
+- **A null virtual interface** is a fatal run-time error when used (§25.9). The error appears at the first use, often in `run_phase`, far from the missing `set()`; a checked `get()` moves the report to time 0 and names the cause.
+- **Interview angle:** "Why not make the virtual interface a static member of a global class and assign it from `tb_top`?" (It works for one instance, but it hard-wires one interface to every user, defeats per-instance configuration and passive reuse, and hides the dependency from the tree.)
+
+### Expert: the analysis FIFO at scale
+
+- **It is unbounded** (IEEE 1800.2-2020 §12.2.8.3). If the scoreboard thread falls behind, or never runs, the FIFO keeps growing; nothing blocks the monitor and nothing warns. `used()` (§12.2.8.2.3) in `check_phase` catches leftovers at the end, but not memory growth during a long run.
+- **It stores handles, not copies.** The monitor must create a new item per transfer. A monitor that reuses one object fills the FIFO with N handles to the same item, and every check sees the last transfer's values.
+- **Imps versus FIFOs.** A scoreboard whose checks are all zero-time can implement `write()` directly through `` `uvm_analysis_imp_decl `` and skip the FIFO; one that must wait needs the FIFO and a thread. The FIFO also gives you `used()` and `is_empty()` for free accounting ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) compares the forms).
+- **Cost at scale** (tool-dependent): every published item is an object allocation, and every subscriber connected to a port adds a call per transfer. On a high-rate interface, measure before adding subscribers; keep the coverage subscriber switchable (`coverage_enable`) as this agent does.
+
+### Expert: the same agent on both sides of a hierarchy
+
+- **Passive is a build-time decision.** `uvm_agent` reads `is_active` in its `build_phase` (IEEE 1800.2-2020 §13.4.2.2; uvm-core also accepts integer and string settings for it). Changing `cfg.is_active` after the build changes nothing.
+- **Nets make the interface reusable.** A clocking-block output on a net adds a driver that stays `'z` until the first synchronous drive (IEEE 1800-2023 §14.16); on a variable, an output clocking signal and a continuous driver from RTL cannot coexist (see the expert item on one interface type on both sides of the DUT in [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)).
+- **End of test without a sequence.** A passive bench has no stimulus of its own to wait for. This page's second test waits on the bus going idle, which works because the stand-in sends one burst; a real subsystem test ends on its own active stimulus, and the passive agents simply keep watching ([A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index)).
+- **Interview angle:** "Your passive agent at chip level reports zero transactions. List three causes in order of likelihood." (The `vif` points at the wrong instance; the monitor waits for a reset or clock that is now different at chip level; the agent's analysis port is not connected in the new env.)
+
+### Interview angles
+
+Attempt each question before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: a first UVM bench that passes"
+  question="A new UVM bench prints UVM_ERROR : 0 and UVM_FATAL : 0 on its first run. What do you check before you call it a pass?"
+  options={[
+    { text: "Nothing more: a clean report summary is the definition of a passing UVM test.", correct: false, feedback: "A clean summary is also what a run with no objection (ended at 0 ns) or an unconnected scoreboard prints. The summary counts problems reported; it does not count checks made." },
+    { text: "That the scoreboard checked a non-zero number of items, nothing was pending, the run ended after the stimulus, and a planted bug makes it fail.", correct: true, feedback: "Right. Look for SCB_SUMMARY with matches greater than 0 and pending=0, the end time of the run, and a mutant run with errors. Make the zero-traffic case an error so it can never pass again." },
+    { text: "That the topology printed at the end of elaboration contains every expected component.", correct: false, feedback: "A correct topology shows the bench was built, not that anything ran through it or was checked. An unconnected analysis port does not appear in it." },
+    { text: "That the run reached the global timeout, which proves all stimulus was sent.", correct: false, feedback: "Reaching the timeout is a UVM_FATAL, which is a failure; and a fatal skips check_phase and report_phase entirely." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: bring-up triage"
+  question="A colleague's new bench hangs until the timeout, and the log shows one UVM_ERROR per clock from the sequencer. What do you look at first?"
+  options={[
+    { text: "The driver's loop: an item_done() is missing, so get_next_item() is called twice and the sequence never leaves finish_item().", correct: true, feedback: "Right. The sequencer's error text names it: Get_next_item called twice without item_done or get in between. One item_done() per get_next_item() fixes both the errors and the hang." },
+    { text: "The objection in the test: it was never raised, so the run cannot end.", correct: false, feedback: "A missing raise ends the run at 0 ns, the opposite symptom. The hang here comes from a sequence that cannot finish." },
+    { text: "The scoreboard's run_phase: its get() is blocked and holds the phase open.", correct: false, feedback: "A blocked thread never holds a phase open; only objections do. When run_phase ends, the scoreboard's thread is simply killed." },
+    { text: "The analysis connection from the agent to the scoreboard.", correct: false, feedback: "A missing analysis connection is silent and does not hang the run; it ends normally with no checked transactions." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "In this bench, tb_top releases reset with rst_n <= 1'b1 after two rising edges (5 and 15 ns), and the driver waits until drv_cb samples rst_n as 1 before its first item. At which rising edge does the DUT accept the first request?",
+      answers: [
+        { text: "15 ns, the edge where reset is released", correct: false, feedback: "The nonblocking release updates rst_n after the flip-flops at 15 ns have sampled it, so the DUT is still in reset at 15 ns, and drv_cb samples 0 there too." },
+        { text: "25 ns, the first edge where drv_cb samples rst_n as 1", correct: false, feedback: "The driver leaves its reset loop at 25 ns and drives the request then, but a clocking-block drive lands after that edge's sampling, so the DUT sees it at the next edge." },
+        { text: "35 ns, one edge after the driver drives the request at 25 ns", correct: true, feedback: "Right: the drive at 25 ns matures in the Re-NBA region of that slot (IEEE 1800-2023 §14.16), and the DUT's flip-flops capture it at 35 ns." },
+        { text: "5 ns, because the driver idles the bus at time 0", correct: false, feedback: "Idling drives valid to 0; no request exists until the driver has left reset and received an item." }
+      ],
+      explanation: "Reset is released with a nonblocking assignment at 15 ns, so the first edge with reset inactive is 25 ns. The driver's loop exits there (drv_cb samples rst_n with #1step at 25 ns and sees 1), gets the first item and drives it. A zero-skew synchronous drive takes effect after the edge it was made at (§14.16), so the DUT accepts the request at 35 ns, as the expected log's timing shows.",
+      objective: 1
+    },
+    {
+      question: "A teammate removes the uvm_config_db set from tb_top and writes cfg.vif = tb_top.mem_if0; in mem_smoke_test::build_phase instead. What happens?",
+      answers: [
+        { text: "It works the same: both give the test the same handle before build_phase", correct: false, feedback: "The handle would be the same, but the test is a class in mem_pkg, and items in a package may not use hierarchical references (IEEE 1800-2023 §26.2)." },
+        { text: "It does not compile; outside a package it would also tie the test to one top", correct: true, feedback: "Right. §26.2 forbids hierarchical references in packages. Even where the reference compiles, the test only works under a top named tb_top with an instance named mem_if0, so the second bench (tb_sys_top) would break." },
+        { text: "It compiles, but cfg.vif stays null until run_phase starts", correct: false, feedback: "A hierarchical reference is resolved at elaboration, not at a phase; the real problem is that the package may not contain it at all." },
+        { text: "It works only if the test is selected with +UVM_TESTNAME", correct: false, feedback: "Test selection has nothing to do with whether a class may name the design hierarchy." }
+      ],
+      explanation: "The module that owns the interface instance publishes it; classes receive it through the configuration database. A hierarchical reference from a package class is illegal (§26.2), and outside a package it hard-codes one top's hierarchy, which defeats reuse under another top.",
+      objective: 1
+    },
+    {
+      question: "mem_pkg.sv is edited so that mem_agent.svh is included before mem_drv.svh. What happens?",
+      answers: [
+        { text: "Nothing: a package is elaborated as a whole, so include order does not matter", correct: false, feedback: "Include pastes text in order (IEEE 1800-2023 §22.4), and a class must be declared before it is used as a type." },
+        { text: "A UVM_FATAL at time 0: the factory cannot find mem_drv", correct: false, feedback: "This fails at compile time, long before the factory exists." },
+        { text: "A warning only; the factory resolves the class name at run time", correct: false, feedback: "Type names in declarations are resolved by the compiler, not the factory." },
+        { text: "A compile error in mem_agent.svh: mem_drv is not yet a known type there", correct: true, feedback: "Right. The agent declares a mem_drv handle; at that point in the package's text mem_drv has not been declared. Reorder the includes (or, for a true cycle, use typedef class, §8.27)." }
+      ],
+      explanation: "A package built from includes compiles as one long text in include order, so each class must appear before any class that names it: item, configuration, sequences, driver, monitor and subscriber, agent, scoreboard, env, tests.",
+      objective: 2
+    },
+    {
+      question: "A run ends with SCB_SUMMARY matches=0 mismatches=0 pending=0. In this lesson's bench, what else does the log show, and is the run a pass?",
+      answers: [
+        { text: "UVM_ERROR : 0, and it is a pass: nothing mismatched", correct: false, feedback: "Zero mismatches out of zero checks proves nothing. That is exactly why mem_sb's check_phase treats it as an error." },
+        { text: "A BUILDERR fatal, because the scoreboard was not connected", correct: false, feedback: "A missing connection from agt.ap is legal and silent: analysis ports need no connection. Only ports and exports below their minimum report at the end of elaboration." },
+        { text: "An SCB_NO_TRAFFIC error from check_phase, so UVM_ERROR : 1 and a fail", correct: true, feedback: "Right. n_reads is 0, so check_phase raises SCB_NO_TRAFFIC. Look next at the end time: 0 ns means no objection; a normal end time means the analysis connection or the stimulus is missing." },
+        { text: "A PH_TIMEOUT, because the scoreboard's get() never returned", correct: false, feedback: "A blocked get() never holds a phase open; only objections do, and the scoreboard raises none." }
+      ],
+      explanation: "A scoreboard that saw no traffic reports zero mismatches just like one that saw perfect traffic. Accounting in check_phase (n_reads == 0 is an error, items left in the FIFO are an error) turns every silent failure into a visible one; SCB_SUMMARY then reports the counts.",
+      objective: 2
+    },
+    {
+      question: "tb_top calls run_test(\"mem_smoke_test\"), and you run with +UVM_TESTNAME=mem_rand_test. Which test runs, and which sequence class drives the bus?",
+      answers: [
+        { text: "mem_smoke_test with mem_wr_rd_seq: the argument in the code wins", correct: false, feedback: "The plusarg wins over the argument (IEEE 1800.2-2020 Annex F.7.3.1): that is what lets one compiled image run every test." },
+        { text: "mem_rand_test with mem_wr_rd_seq: its run_phase asks for that class", correct: false, feedback: "run_phase asks the factory, and the type override answers mem_rand_seq. Only new() would bypass it." },
+        { text: "Both tests run, one after the other", correct: false, feedback: "A run builds one uvm_test_top; calling run_test() twice is a fatal (TTINST in uvm-core)." },
+        { text: "mem_rand_test with mem_rand_seq: plusarg first, then the build_phase override", correct: true, feedback: "Right. run_test() creates mem_rand_test; its build_phase overrides mem_wr_rd_seq with mem_rand_seq, so the inherited run_phase's create() returns mem_rand_seq. The log line 'starting mem_rand_seq' proves it." }
+      ],
+      explanation: "+UVM_TESTNAME selects the test (Annex G.2.1) and overrides the run_test() argument (F.7.3.1). The type override set in mem_rand_test's build_phase applies to every later factory create of mem_wr_rd_seq, including the one in the inherited run_phase.",
+      objective: 3
+    },
+    {
+      question: "The log shows 'Get_next_item called twice without item_done or get in between' from uvm_test_top.env.agt.sqr at 35 ns and every 10 ns after, and the run ends with PH_TIMEOUT. What is the cause?",
+      answers: [
+        { text: "The driver's loop has no item_done(), so the same item returns each loop", correct: true, feedback: "Right. The sequencer reports the second get_next_item() and returns the item it already handed out; finish_item() in the sequence never returns, so the test never drops its objection." },
+        { text: "The sequence calls start_item() twice for the same item", correct: false, feedback: "That is a sequence-side error with a different message; this one names get_next_item, which only the driver calls." },
+        { text: "The driver's seq_item_port is not connected to the sequencer", correct: false, feedback: "An unconnected seq_item_port gives the driver no sequencer at all: its first get_next_item() uses a null interface handle, a simulator error, not this sequencer message." },
+        { text: "The test never raised an objection", correct: false, feedback: "With no objection the run ends at 0 ns. A run that reaches the timeout had an objection that was never dropped." }
+      ],
+      explanation: "Every get_next_item() needs one item_done(). Without it, uvm-core's sequencer reports the repeated call (uvm_sequencer.svh) and returns the same item, the sequence blocks in finish_item(), the objection stays raised and the global timeout ends the run with a fatal. +UVM_MAX_QUIT_COUNT shortens the flood while debugging.",
+      objective: 4
+    },
+    {
+      question: "The test's run_phase is: create seq; seq.start(env.agt.sqr); with no raise_objection or drop_objection. What does the log show?",
+      answers: [
+        { text: "The run ends when the sequence ends, after 32 items, with matches=16", correct: false, feedback: "This is the classic misconception. A phase ends when no objection is raised, not when a sequence finishes." },
+        { text: "Everything is reported at 0 ns, with SCB_NO_TRAFFIC and matches=0", correct: true, feedback: "Right. With no objection, run_phase ends in its first time slot and kills the sequence and driver threads before the driver even leaves reset; check_phase then finds no checked read." },
+        { text: "A PH_TIMEOUT fatal, because nothing ever ends the phase", correct: false, feedback: "That is the symptom of an objection raised and never dropped. With none raised, the phase ends at once." },
+        { text: "An OBJTN_ZERO fatal, because the phase has a count of zero", correct: false, feedback: "OBJTN_ZERO reports a drop below zero, which needs a drop_objection call; here there is none." }
+      ],
+      explanation: "run_phase lasts while an objection is raised (IEEE 1800.2-2020 §10.5.1). With none, it ends in the first time slot and every thread in it is killed (§9.6): no item reaches the DUT, and only the scoreboard's zero-traffic check makes the failure visible.",
+      objective: 4
+    },
+    {
+      question: "Two runs fail. Run A: 'uvm_test_top.env.sb.item_export [Connection Error] connection count of 0 does not meet required minimum of 1', then BUILDERR at 0 ns. Run B: completes normally, COV_SUMMARY shows 100.0%, then SCB_NO_TRAFFIC. Which missing line caused which?",
+      answers: [
+        { text: "A: item_export.connect(item_fifo.analysis_export) in mem_sb. B: agt.ap.connect(sb.item_export) in mem_env.", correct: true, feedback: "Right. An analysis export needs at least one connection below it, so A is caught at the end of elaboration. An analysis port needs none, so B is legal and silent; the coverage subscriber, connected inside the agent, still sees traffic." },
+        { text: "A: agt.ap.connect(sb.item_export) in mem_env. B: item_export.connect(item_fifo.analysis_export) in mem_sb.", correct: false, feedback: "Swapped. The error names sb.item_export, the export that lost its connection to the FIFO; a missing connection from agt.ap would not be reported at all." },
+        { text: "Both: mon.ap.connect(ap) is missing in the agent", correct: false, feedback: "That would starve the scoreboard silently (like B), but it could not produce A's error, which is about the scoreboard's export." },
+        { text: "A: tb_top never set the virtual interface. B: no objection was raised.", correct: false, feedback: "A missing vif gives NOVIF, and a missing objection ends the run at 0 ns with no coverage; neither matches these logs." }
+      ],
+      explanation: "uvm_analysis_export is constructed with a minimum of one connection and uvm_analysis_port with a minimum of zero (uvm-core tlm1/uvm_analysis_port.svh), and only minimums are checked at the end of elaboration. Coverage at 100% beside a scoreboard with no traffic points straight at the env's connection.",
+      objective: 4
+    },
+    {
+      question: "You reuse mem_agent in mem_sys_env, with mem_sys_test setting cfg.is_active = UVM_PASSIVE. Which statement is right?",
+      answers: [
+        { text: "Only the test's configuration changes; the topology shows mon and cov but no sqr or drv", correct: true, feedback: "Right. The agent copies is_active from cfg and builds the sequencer and driver only when active. The same ap feeds the same scoreboard class, which checks the RTL's traffic." },
+        { text: "You need a second agent class, a passive copy without the driver", correct: false, feedback: "That duplicates code and breaks the point of the pattern: one agent class, active or passive by configuration." },
+        { text: "The agent still builds the driver, which stays idle, so the topology is unchanged", correct: false, feedback: "A built driver idles the bus by driving valid, which fights the RTL source. The get_is_active() guard keeps it out of the tree." },
+        { text: "Set is_active after run_test() starts; the agent re-reads it in run_phase", correct: false, feedback: "is_active is used in build_phase, when the children are created; a later change has no effect." }
+      ],
+      explanation: "Passive reuse changes one configuration field (IEEE 1800.2-2020 §13.4.2.2). The interface's request signals are nets, so the RTL stand-in can drive them while the unused clocking block's drivers stay 'z (IEEE 1800-2023 §14.16). Check it with print_topology and the scoreboard count.",
+      objective: 5
+    }
+  ]}
+/>
+
+### Kata 1 (guided): a third test through the factory
+
+**Objective:** add a test that changes only the stimulus, run it, and predict its summary before you look.
+
+**The task:** write `mem_pairs_seq`, which extends `mem_wr_rd_seq` and, for every address `a` from 0 to 15, writes `{a, ~a}` and immediately reads `a` back. Write `mem_pairs_test`, which extends `mem_smoke_test` and overrides `mem_wr_rd_seq` with `mem_pairs_seq`. Add both to the package (where?), run with `+UVM_TESTNAME=mem_pairs_test`, and predict: the `TEST` line, the `SCB_SUMMARY` line, and the time of the last report.
+
+<details>
+<summary>Hint</summary>
+
+The sequence can reuse the protected `send()` task it inherits. The 32 items are still back to back, so the timing is the same as the smoke test's except for which item is a read.
+
+</details>
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// compile: add to mem_seqs.svh, after mem_rand_seq
+class mem_pairs_seq extends mem_wr_rd_seq;
+  `uvm_object_utils(mem_pairs_seq)
+
+  function new(string name = "mem_pairs_seq");
+    super.new(name);
+  endfunction
+
+  virtual task body();
+    for (int a = 0; a < 16; a++) begin
+      send(1'b1, 4'(a), {4'(a), ~4'(a)});
+      send(1'b0, 4'(a), 8'h00);          // read back at once
+    end
+  endtask
+endclass
+```
+
+```systemverilog
+// compile: add to mem_tests.svh, after mem_rand_test
+class mem_pairs_test extends mem_smoke_test;
+  `uvm_component_utils(mem_pairs_test)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    mem_wr_rd_seq::type_id::set_type_override(mem_pairs_seq::get_type());
+    super.build_phase(phase);
+  endfunction
+endclass
+```
+
+Expected lines:
+
+```text
+UVM_INFO @ 0 ns: uvm_test_top [TEST] starting mem_pairs_seq
+UVM_INFO @ 365 ns: uvm_test_top.env.sb [SCB_SUMMARY] SCB_SUMMARY matches=16 mismatches=0 pending=0
+```
+
+Item `k` is still accepted at 35 + 10k ns, so the last read (item 31, address F) is accepted at 345 ns, its data is published at 355 ns, and the drain ends the run at 365 ns. Each read follows its write by one edge: the write to address `a` is accepted at one edge and the read at the next, and the DUT's write has updated the location by then, so every read matches. The new classes go after the classes they extend, because the package compiles in include order.
+
+**Reflect:** what does `mem_pairs_test` report with `.BUG(1)`? Trace it before you read on. In the pairs order, addresses 0 to 7 are written (and read back correctly) before any of 8 to F is read. Each read of an address from 8 to F then returns the location eight below it, which holds `0f` to `78`, while the model expects `87` to `f0`: `matches=8 mismatches=8`, the same verdict as the smoke test, reached through a different order.
+
+</details>
+
+### Kata 2 (debug): four logs, four bugs
+
+Each excerpt below comes from this bench with one line changed. Name the failure, the missing or wrong line, and the fix, before you open the answer.
+
+1. `UVM_FATAL @ 0 ns: uvm_test_top [NOVIF] virtual mem_if 'vif' not found: set it in tb_top before run_test()`, then the report summary.
+2. `UVM_INFO @ 0 ns: uvm_test_top [TEST] starting mem_wr_rd_seq`, then at 0 ns: `[SCB_NO_TRAFFIC]`, `COV_SUMMARY ... 0.0%`, `SCB_SUMMARY matches=0 mismatches=0 pending=0`.
+3. A run that ends at 365 ns with `COV_SUMMARY ... 100.0%`, then `[SCB_NO_TRAFFIC] no read was checked (0 writes seen)`.
+4. `UVM_ERROR @ 35 ns: uvm_test_top.env.agt.sqr [uvm_test_top.env.agt.sqr] Get_next_item called twice without item_done or get in between`, repeated every 10 ns, then `UVM_FATAL @ 1000000 ns: reporter [PH_TIMEOUT] Explicit timeout of 1000000 ns hit, indicating a probable testbench issue`.
+
+<details>
+<summary>Answers</summary>
+
+1. **Null virtual interface.** The `set()` in `tb_top` is missing, placed after `run_test()`, or uses another type or scope. Fix: `uvm_config_db#(virtual mem_if)::set(null, "uvm_test_top", "vif", mem_if0);` before `run_test()`.
+2. **Objection never raised.** Everything happens at 0 ns: `run_phase` ended in its first time slot and killed the sequence. Fix: `phase.raise_objection(this, ...)` before `seq.start()`, and `drop_objection` after it.
+3. **Unconnected analysis port.** The run ended normally and the monitor ran (coverage is full), but the scoreboard received nothing: `agt.ap.connect(sb.item_export);` is missing in `mem_env::connect_phase`. Nothing reports it except the zero-traffic check.
+4. **Missing `item_done()`.** The driver loops back to `get_next_item()` without `seq_item_port.item_done()`. The sequence is stuck in `finish_item()`, the objection is never dropped, and the timeout fires. Fix: one `item_done()` after the item is on the pins.
+
+</details>
+
+### Lab: the FIFO environment capstone
+
+Build the same architecture yourself, from TODOs, for a small FIFO with a planted ordering bug: an active agent, a factory override of the sequence, an analysis-FIFO scoreboard with accounting, a coverage subscriber, a run that must catch the bug and a run that must be clean. The solution is unlocked separately.
+
+<LabLink labId="uvm-mini-capstone" />
+
+The flashcards below drill the file layout, the configuration path, the accounting rules and the four bring-up signatures.
+
+## References & Next Topics
+
+**Primary sources:**
+- IEEE 1800.2-2020: §8.2.4.2.5 `set_type_override` on the object registry; §9.6 and §9.8.1 phase ending and the common phases (§9.8.1.7 `check_phase`); §10.5.1 objections (§10.5.1.3.7 `set_drain_time`); §12.2.8.2.3 `used()`, §12.2.8.2.4 `is_empty()`, §12.2.8.3 `uvm_tlm_analysis_fifo`; §13.4 `uvm_agent` (§13.4.2.2 `get_is_active`), §13.5 monitor, §13.6 scoreboard, §13.7 driver, §13.9 subscriber; §15.5 `uvm_sequencer`; Annex C.4.2 `uvm_config_db` (C.4.2.2.1 `set`, C.4.2.2.2 `get`); Annex F.7.3.1 `run_test`, F.7.3.3 `set_timeout`, F.7.4.2 `print_topology`; Annex G.2.1 `+UVM_TESTNAME`, G.2.2 `+UVM_VERBOSITY`, G.2.6 `+UVM_MAX_QUIT_COUNT`, G.2.7 `+uvm_set_type_override`.
+- IEEE 1800-2023: §3.12.1 compilation units; §8.27 `typedef class`; §14.4 input and output skews, §14.13 input sampling, §14.16 synchronous drives (§14.16.2 several drives in one slot); §22.4 `` `include ``; §25.9 virtual interfaces (a null virtual interface is a fatal run-time error); §26.2 package declarations (no hierarchical references).
+- uvm-core 2020.3.1 (implementation details named on this page): `uvm_root.svh` (`die()`, `RNTST`, `INVTST`, `BUILDERR`, `print_topology`), `uvm_phase_hopper.svh` (`PH_TIMEOUT`), `uvm_sequencer.svh` (the repeated `get_next_item` error), `uvm_port_base.svh` (`Connection Error`), `tlm1/uvm_analysis_port.svh` (minimum connection counts), `uvm_report_server.svh` (summary format), `uvm_global_defines.svh` (`UVM_DEFAULT_TIMEOUT`).
+
+**Prerequisites:** [I-UVM-2A: Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index), [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index), [I-UVM-2C: Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index), [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) and [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index).
+
+**Related:**
+- [I-SV-9: Why UVM](/curriculum/T2_Intermediate/I-SV-9_Why_UVM/index): the promise this bench keeps, from SystemVerilog roles to UVM components.
+- [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index): overrides by type and instance, and from the command line.
+- [I-UVM-1C: UVM Phasing and Synchronization](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): objections, drain time, `phase_ready_to_end` and the timeout in depth.
+- [F2E: Your First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index): the same drive, predict, compare, count, report loop without UVM.
+- [F4C: Synchronizing with Clocking and Program Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): clocking-block skews and race-free driving.
+- [I-UVM-3B: Advanced Sequencing and Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index): virtual sequences when a bench has several agents.
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): reference models, out-of-order matching and end-of-test draining.
+- [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): packaging an agent like `mem_agent` as reusable verification IP.
+
+<NextLesson />
