@@ -162,31 +162,31 @@ Scores R1–R9 (0–3) and S1/S2/S3/S4 counts come from the analyst. Verifier ch
 | L39 | Lab `ahb-axi-bridge-debug | **minor** | – – – – – – – – – | 0/0/4/5 | S | ✓ |
 | L40 | B-AMBA-F2_Future_Protocols_ACE_CHI | **rewrite** | 1 1 1 1 0 1 1 0 1 | 1/13/13/7 | L | ✓ |
 | L40 | B-AMBA-F3_Interview_Debug_Clinic | **major** | 1 2 1 2 0 1 2 1 1 | 0/6/9/5 | L | ✓ |
-| L41 | E-CUST-1_UVM_Methodology_Customization | **major** | 1 2 1 2 1 1 2 1 1 | 0/8/8/5 | L (page L, lab S) | pending |
-| L41 | E-PERF-1_UVM_Performance | **rewrite** | 1 1 2 1 1 1 1 1 1 | 1/9/9/3 | XL (page L, lab M–L, plus one visualizer if the lead approves it) | pending |
-| L41 | Lab `methodology-custom-phase | **minor** |          | 0/0/3/3 | S | pending |
-| L41 | Lab `uvm-performance-1` (coming soon) | **rewrite** |          | 1/3/4/1 | M | pending |
-| L42 | E-DBG-1_Advanced_UVM_Debug_Methodologies (index + 2 sub-lessons + deck) | **major** | 1 2 1 2 2 1 2 1 1 | 1/6/16/4 | L | pending |
-| L42 | Lab `debug-waveform-trigger` (owned) | **major** | — — — — — — — — — | 0/3/4/1 | M | pending |
-| L43 | E-INT-1_Integrating_UVM_with_Formal_Verification | **major** | 1 1 1 2 1 1 2 1 1 | 1/9/17/6 | L (page L, lab M; about 2 days) | pending |
-| L43 | Lab `formal-harness | **rewrite** | -1 -1 -1 -1 -1 -1 -1 -1 -1 | 1/3/3/1 | M | pending |
-| L44 | E-PSS-1_Portable_Stimulus_Standard | **major** | 1 2 1 2 1 1 1 1 1 | 0/12/12/14 | L (page L, deck S) | pending |
-| L44 | Lab `pss-portable-intent | **minor** |          | 0/0/3/7 | S | pending |
-| L45 | I-SV-8_Power_Intent_and_UPF | **rewrite** | 1 1 0 1 0 0 1 0 1 | 0/14/9/4 | L (page L, new deck S, two katas included) | pending |
-| L45 | E-PWR-1_Power_Aware_Verification | **major** | 1 1 1 2 1 1 2 1 1 | 1/12/14/3 | L (page L, deck S) | pending |
-| L45 | Lab `power-aware-retention | **rewrite** (small) | -1 -1 -1 -1 -1 -1 -1 -1 -1 | 0/3/4/3 | M | pending |
-| L46 | E-EMU-1_Emulation_Aware_Verification | **rewrite** | 1 1 1 1 1 1 1 1 1 | 3/13/18/5 | L (page L, deck S) | pending |
-| L46 | E-UVM-ML-1_Multi_Language_Verification | **rewrite** | 1 1 1 1 1 1 1 1 1 | 0/13/13/2 | L (page L, deck S) | pending |
-| L47 | E-SOC-1_SoC-Level_Verification_Strategies (index + `pss.mdx` + deck) | **major** | 1 2 1 1 1 1 2 1 1 | 0/12/15/5 | L (index L, `pss.mdx` S, deck S) | pending |
-| L47 | E-PYUVM-1_Python_Based_Verification (index + deck) | **rewrite** | 1 1 1 2 0 1 1 1 1 | 1/11/9/4 | L (page L including the kata, deck S) | pending |
-| L47 | Lab `soc-vip-reuse | **major** |          | 0/2/7/3 | M | pending |
-| L47 | Lab `soc-strategy-capstone | **minor** |          | 0/0/5/2 | S | pending |
-| L48 | E-RISCV-1_RISC_V_Verification_Methodology | **rewrite** | 1 1 1 1 1 1 1 1 1 | 3/11/8/4 | L (page L, deck S) | pending |
-| L48 | E-AI-1_AI_Driven_Verification | **rewrite** | 1 1 1 2 1 1 1 1 1 | 1/11/10/3 | L (page L, deck S) | pending |
+| L41 | E-CUST-1_UVM_Methodology_Customization | **major** | 1 2 1 2 1 1 2 1 1 | 0/8/8/5 | L (page L, lab S) | ✓ |
+| L41 | E-PERF-1_UVM_Performance | **rewrite** | 1 1 2 1 1 1 1 1 1 | 1/9/9/3 | XL (page L, lab M–L, plus one visualizer if the lead approves it) | ✓ |
+| L41 | Lab `methodology-custom-phase | **minor** |          | 0/0/3/3 | S | ✓ |
+| L41 | Lab `uvm-performance-1` (coming soon) | **rewrite** |          | 1/3/4/1 | M | ✓ |
+| L42 | E-DBG-1_Advanced_UVM_Debug_Methodologies (index + 2 sub-lessons + deck) | **major** | 1 2 1 2 2 1 2 1 1 | 1/6/16/4 | L | ✓ |
+| L42 | Lab `debug-waveform-trigger` (owned) | **major** | — — — — — — — — — | 0/3/4/1 | M | ✓ |
+| L43 | E-INT-1_Integrating_UVM_with_Formal_Verification | **major** | 1 1 1 2 1 1 2 1 1 | 1/9/17/6 | L (page L, lab M; about 2 days) | ✓ |
+| L43 | Lab `formal-harness | **rewrite** | -1 -1 -1 -1 -1 -1 -1 -1 -1 | 1/3/3/1 | M | ✓ |
+| L44 | E-PSS-1_Portable_Stimulus_Standard | **rewrite** (verifier: major → rewrite, lead accepted) | 1 2 1 2 1 1 1 1 1 | 0/12/12/14 | L (page L, deck S) | ✓ |
+| L44 | Lab `pss-portable-intent | **minor** |          | 0/0/3/7 | S | ✓ |
+| L45 | I-SV-8_Power_Intent_and_UPF | **rewrite** | 1 1 0 1 0 0 1 0 1 | 0/14/9/4 | L (page L, new deck S, two katas included) | ✓ |
+| L45 | E-PWR-1_Power_Aware_Verification | **major** | 1 1 1 2 1 1 2 1 1 | 1/12/14/3 | L (page L, deck S) | ✓ |
+| L45 | Lab `power-aware-retention | **rewrite** (small) | -1 -1 -1 -1 -1 -1 -1 -1 -1 | 0/3/4/3 | M | ✓ |
+| L46 | E-EMU-1_Emulation_Aware_Verification | **rewrite** | 1 1 1 1 1 1 1 1 1 | 3/13/18/5 | L (page L, deck S) | ✓ |
+| L46 | E-UVM-ML-1_Multi_Language_Verification | **rewrite** | 1 1 1 1 1 1 1 1 1 | 0/13/13/2 | L (page L, deck S) | ✓ |
+| L47 | E-SOC-1_SoC-Level_Verification_Strategies (index + `pss.mdx` + deck) | **major** | 1 2 1 1 1 1 2 1 1 | 0/12/15/5 | L (index L, `pss.mdx` S, deck S) | ✓ |
+| L47 | E-PYUVM-1_Python_Based_Verification (index + deck) | **rewrite** | 1 1 1 2 0 1 1 1 1 | 1/11/9/4 | L (page L including the kata, deck S) | ✓ |
+| L47 | Lab `soc-vip-reuse | **major** |          | 0/2/7/3 | M | ✓ |
+| L47 | Lab `soc-strategy-capstone | **minor** |          | 0/0/5/2 | S | ✓ |
+| L48 | E-RISCV-1_RISC_V_Verification_Methodology | **rewrite** | 1 1 1 1 1 1 1 1 1 | 3/11/8/4 | L (page L, deck S) | ✓ |
+| L48 | E-AI-1_AI_Driven_Verification | **rewrite** | 1 1 1 2 1 1 1 1 1 | 1/11/10/3 | L (page L, deck S) | ✓ |
 | G29 | Interview banks (6) | 5 major, 1 rewrite (`uvm.json`) | — | 7 S1 | L | ✓ |
 | G30 | Navigation (8 units) | 6 major, 2 rewrite | — | 0 S1, 23 S2 | L | ✓ |
 
-Pending analysis: none. Pending verification: L41–L48.
+Pending analysis: none. Pending verification: none.
 
 **What the first 30 verdicts show.**
 - R1 (objectives) and R9 (completeness and depth) score 1 on every page: no lesson states measurable objectives, and none has an expert layer.
