@@ -1053,6 +1053,27 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "A-UVM-9: Reset Handling and Error Injection",
+        "slug": "A-UVM-9_Reset_and_Error_Injection",
+        "topics": [
+          {
+            "title": "A-UVM-9: Reset Handling and Error Injection",
+            "slug": "index",
+            "description": "Keep agents, scoreboards and tests correct when reset is asserted mid-traffic and when errors are injected on purpose, while real failures are still caught."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-1D_Reporting_and_Run_Control",
+          "A-UVM-6_Scoreboards_and_Reference_Models",
+          "A-UVM-5_UVM_Callbacks",
+          "A-UVM-8_Multi_Agent_Topologies"
+        ],
+        "milestones": [
+          "M8"
+        ]
+      },
+      {
         "title": "A-UVM-4A: RAL Fundamentals",
         "slug": "A-UVM-4A_RAL_Fundamentals",
         "topics": [

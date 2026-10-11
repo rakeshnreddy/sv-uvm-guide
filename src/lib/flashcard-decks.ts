@@ -20,6 +20,7 @@ import I_UVM_4_Policy_Classes from '../../content/flashcards/I-UVM-4_Policy_Clas
 import I_UVM_5_Container_Classes from '../../content/flashcards/I-UVM-5_Container_Classes.json';
 import I_UVM_6_UVM_Recording_Classes from '../../content/flashcards/I-UVM-6_UVM_Recording_Classes.json';
 import I_SV_5_Synchronization_and_IPC from '../../content/flashcards/I-SV-5_Synchronization_and_IPC.json';
+import A_UVM_9_Reset_and_Error_Injection from '../../content/flashcards/A-UVM-9_Reset_and_Error_Injection.json';
 import E_DBG_1_Effective_Debug from '../../content/flashcards/E-DBG-1_Effective_Debug.json';
 import E_DBG_1_Hang_Lab from '../../content/flashcards/E-DBG-1_Hang_Lab.json';
 import E_SOC_1_PSS_Bridge from '../../content/flashcards/E-SOC-1_PSS_Bridge.json';
@@ -148,6 +149,7 @@ export const flashcardDecks: Record<string, any[]> = {
   'I-UVM-5_Container_Classes': I_UVM_5_Container_Classes,
   'I-UVM-6_UVM_Recording_Classes': I_UVM_6_UVM_Recording_Classes,
   'I-SV-5_Synchronization_and_IPC': I_SV_5_Synchronization_and_IPC,
+  'A-UVM-9_Reset_and_Error_Injection': A_UVM_9_Reset_and_Error_Injection,
   'E-DBG-1_Effective_Debug': E_DBG_1_Effective_Debug,
   'E-DBG-1_Hang_Lab': E_DBG_1_Hang_Lab,
   'E-SOC-1_PSS_Bridge': E_SOC_1_PSS_Bridge,

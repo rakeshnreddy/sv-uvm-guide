@@ -373,12 +373,13 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         id: 'environments',
         title: 'Scoreboards, VIP and multi-agent environments',
         summary:
-          'Build a reference-model scoreboard, package a reusable VIP agent, extend it with callbacks, and coordinate several agents with virtual sequences.',
+          'Build a reference-model scoreboard, package a reusable VIP agent, extend it with callbacks, coordinate several agents with virtual sequences, and keep it all correct across mid-test reset and injected errors.',
         modules: [
           { id: 'A-UVM-6_Scoreboards_and_Reference_Models' },
           { id: 'A-UVM-7_VIP_Construction' },
           { id: 'A-UVM-5_UVM_Callbacks' },
           { id: 'A-UVM-8_Multi_Agent_Topologies' },
+          { id: 'A-UVM-9_Reset_and_Error_Injection' },
         ],
         practice: [
           lab('scoreboard-reference-model'),

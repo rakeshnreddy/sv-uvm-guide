@@ -127,14 +127,6 @@ export interface PlannedModule {
  */
 export const PLANNED_MODULES: readonly PlannedModule[] = [
   {
-    code: 'A-UVM-9',
-    title: 'Reset Handling and Error Injection',
-    tierId: 'T3_Advanced',
-    after: 'A-UVM-8_Multi_Agent_Topologies',
-    lane: 'UVM environments',
-    summary: 'Keep agents, scoreboards and tests correct across mid-test reset and deliberate error injection.',
-  },
-  {
     code: 'B-APB-1',
     title: 'APB Protocol & Verification',
     tierId: 'T3_Advanced',
