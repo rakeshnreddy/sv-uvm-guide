@@ -91,12 +91,12 @@ export const curriculumData: Module[] = [
           {
             "title": "Structs, Unions and Enums",
             "slug": "structs-unions-enums",
-            "description": "Group related fields with packed and unpacked structs and unions, and name values safely with enums and their methods."
+            "description": "Declare packed and unpacked structs, unions and enums with typedef, predict their bit layout, and use enum methods and casts safely in transactions and register fields."
           },
           {
             "title": "Operators and Expressions",
             "slug": "operators-and-expressions",
-            "description": "Predict what SystemVerilog expressions return: precedence, bit widths and signedness, 4-state equality, wildcard matching, streaming and shifts."
+            "description": "Predict what SystemVerilog expressions return: precedence, bit widths and signedness, 4-state equality and wildcard matching, concatenation, shifts and streaming."
           }
         ],
         "track": "core",
