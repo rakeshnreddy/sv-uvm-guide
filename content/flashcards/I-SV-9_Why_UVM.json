@@ -2,6 +2,66 @@
   {
     "id": "isv9-1",
     "question": "What does UVM standardise that a hand-built SystemVerilog testbench leaves to each team?",
-    "answer": "How components are created (the factory), configured (the configuration database), connected (TLM ports), run in order (phasing) and fed with stimulus (sequences). Because every UVM testbench follows the same rules, verification IP can be reused across projects instead of being rewritten."
+    "answer": "How components are created (the factory), configured (the configuration database), run in order and ended (phasing and objections), connected (TLM ports), fed with stimulus (sequences) and how they report and decide pass or fail (reporting). Because every UVM testbench follows the same rules, agents and environments can be reused instead of rewritten."
+  },
+  {
+    "id": "isv9-2",
+    "question": "Name the layers of a class-based SystemVerilog testbench for a FIFO and the job of each.",
+    "answer": "Transaction (one operation as data), generator (creates randomized transactions), driver (turns them into pin activity through a clocking block), monitor (turns pin activity back into transactions), scoreboard (predicts with a reference model and compares), coverage (samples what happened), environment (builds and connects the layers) and test (chooses knobs and runs the environment)."
+  },
+  {
+    "id": "isv9-3",
+    "question": "Why must a generator or monitor create a new transaction object for every item it sends through a mailbox?",
+    "answer": "A mailbox carries handles, not copies. If one object is reused, the sender overwrites it before the receiver reads it, so the consumer sees the wrong or duplicated values."
+  },
+  {
+    "id": "isv9-4",
+    "question": "Which limit of the hand-built bench does the UVM factory remove, and what new failure does it bring?",
+    "answer": "It removes hard-coded `new` of concrete classes: code calls `fifo_drv::type_id::create(\"drv\", this)` and a test can substitute a subclass with `set_type_override` without editing the env. The new failure: an override registered after the create, or for the wrong type, silently does not apply."
+  },
+  {
+    "id": "isv9-5",
+    "question": "Which limit does the configuration database remove, and what new failure does it bring?",
+    "answer": "It removes the chain of constructors that carries the virtual interface and knobs from `tb_top` down to the driver and monitor: `tb_top` calls `uvm_config_db#(virtual fifo_if)::set`, and each component calls `get` in `build_phase`. The new failure: a path or name mismatch makes `get` return 0, so always check it and report `uvm_fatal`."
+  },
+  {
+    "id": "isv9-6",
+    "question": "Which limits do phasing and objections remove, and what new failure do they bring?",
+    "answer": "Phasing replaces hand-ordered build, connect, run and check code with standard phases that every component follows (build top-down, then connect, run, extract, check and report). Objections replace counting and `#delay` end-of-test rules: the run phase ends when every objection is dropped. New failures: forgetting to raise ends the test at time 0 with no traffic, and forgetting to drop hangs it."
+  },
+  {
+    "id": "isv9-7",
+    "question": "What replaces 'the monitor puts each transaction into one mailbox per consumer'?",
+    "answer": "One `uvm_analysis_port` in a `uvm_monitor`. Each consumer connects an analysis imp or export to it, and `ap.write(t)` calls every connected `write` in turn, in zero time, so adding a consumer never edits the monitor. New failure: an analysis port with nothing connected is legal, so a scoreboard that receives nothing still passes unless it checks its counts."
+  },
+  {
+    "id": "isv9-8",
+    "question": "What replaces the generator class and the generator-to-driver mailbox?",
+    "answer": "A `uvm_sequence` that creates and randomizes items, running on a `uvm_sequencer`; the driver pulls items through `seq_item_port.get_next_item` and returns them with `item_done`. Sequences can be swapped, layered and reused without touching the env. New failure: a driver that never calls `item_done` hangs `finish_item`."
+  },
+  {
+    "id": "isv9-9",
+    "question": "Which limit does UVM reporting remove?",
+    "answer": "Scattered `$display` and `$error` calls and a hand-made PASS/FAIL line that can miss errors raised elsewhere, such as in a bound assertion. `uvm_info`, `uvm_error` and `uvm_fatal` go through the report server, which filters by verbosity, counts every severity and prints the report summary used for pass or fail. A plain `$error` bypasses those counts."
+  },
+  {
+    "id": "isv9-10",
+    "question": "Map the hand-built layers to UVM base classes.",
+    "answer": "Transaction to `uvm_sequence_item`; generator to `uvm_sequence` plus `uvm_sequencer`; driver to `uvm_driver`; monitor to `uvm_monitor`; scoreboard to `uvm_scoreboard`; coverage to `uvm_subscriber`; environment to `uvm_env`; test to `uvm_test`. UVM adds `uvm_agent` to group sequencer, driver and monitor so the group can be reused active or passive."
+  },
+  {
+    "id": "isv9-11",
+    "question": "What is UVM, and what is it not?",
+    "answer": "IEEE 1800.2-2020 defines UVM as a set of APIs that define a base class library written in SystemVerilog; uvm-core 2020.3.1 is Accellera's reference implementation, compiled with your bench as `uvm_pkg`. It is not a language or a simulator mode, it does not make simulation faster, and it gives you no DUT-specific checks, reference models or functional coverage (the register layer's mirror checks and built-in register sequences are the exception)."
+  },
+  {
+    "id": "isv9-12",
+    "question": "What was the first IEEE standard for UVM, and which edition does this course use?",
+    "answer": "IEEE 1800.2-2017 was the first (approved 14 February 2017). This course uses its revision, IEEE 1800.2-2020 (approved 4 June 2020), with the uvm-core 2020.3.1 reference implementation. Before IEEE, Accellera released UVM 1.0 in February 2011 and UVM 1.2 in June 2014."
+  },
+  {
+    "id": "isv9-13",
+    "question": "When is UVM usually not worth its overhead?",
+    "answer": "When the bench is small, short-lived and will not be reused: for example a small block with a stable spec, one or two engineers, no VIP to integrate and formal available for most properties. A plain class-based SystemVerilog bench, or formal, may be the better trade. Reuse horizon, team size, VIP, regression scale and protocol complexity push the decision toward UVM."
   }
 ]

@@ -1,260 +1,1239 @@
 ---
-title: "Why UVM? The Bridge from SystemVerilog to Verification Methodology"
-description: "Understand the testbench scalability and reuse problems that motivated the Universal Verification Methodology, and preview the four pillars you will master across T2 and T3."
+title: "I-SV-9: Why UVM? From a Layered SystemVerilog Testbench to UVM"
+description: "Map a layered class-based SystemVerilog testbench onto UVM and explain which scaling and reuse problems each UVM mechanism removes."
+flashcards: "I-SV-9_Why_UVM"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
-
-import { Quiz } from '@/components/ui';
 
 ## Quick Take
-- **What it is:** A motivational bridge connecting everything you've learned about SystemVerilog language features to the structured verification methodology (UVM) you're about to learn.
-- **Why it matters:** Without understanding *why* UVM exists, its complexity feels arbitrary. This module shows the concrete pain points that UVM's architecture was designed to eliminate.
-- **The Analogy:** Imagine building a city with no zoning laws, no plumbing standards, and no street naming system. Every building works in isolation, but nothing connects. UVM is the city planning framework for verification.
 
-> **Retention Hook:** UVM isn't complexity for its own sake — it's the *engineering response* to the chaos of unstructured testbenches at scale.
+- **What it is:** The **Universal Verification Methodology (UVM)** is a standard base class library for building testbenches in SystemVerilog. IEEE 1800.2-2020 defines it as "a set of application programming interfaces (APIs) that defines a base class library (BCL)" (§1.1), and Accellera's **uvm-core 2020.3.1** is the reference implementation you compile with your bench. This lesson takes the layered, class-based testbench (TB) you can already write and shows which part of it each UVM mechanism replaces.
+- **Why it matters:** A hand-built class bench works for one block and one engineer. When the project grows (more tests, a second team, reuse at subsystem or SoC level), the same few limits appear in every bench: hard-coded construction, settings passed through constructor chains, end-of-test rules invented per bench, consumers wired point to point, stimulus welded into the environment, and a home-made pass/fail line. Each UVM mechanism removes one of those limits. Without that map, UVM looks like ceremony; with it, every base class has a reason.
+- **The Analogy:** UVM is the standard pipe fittings and building code of testbench construction. Any plumber can work on any house, and a part made for one house fits the next. *Where it breaks:* the building code does not build the house. UVM gives you no checks, reference models or coverage for your design under test (DUT); you still write those (the register layer's built-in checks are the one exception). And a garden shed does not need a building code: a small bench that will never be reused may be better off without UVM.
 
----
+**You will be able to:**
+1. **Draw** a layered class-based SystemVerilog testbench for a FIFO (transaction, generator, driver, monitor, scoreboard, coverage, environment, test) and state each layer's job and how it is connected (handle, mailbox, virtual interface).
+2. **Explain**, for each of the factory, phasing, the configuration database, TLM, sequences and reporting, which limit of the layered bench it removes and what new failure mode it brings.
+3. **Map** each layer to its UVM base class (`uvm_sequence_item`, `uvm_sequence`, `uvm_sequencer`, `uvm_driver`, `uvm_monitor`, `uvm_agent`, `uvm_scoreboard`, `uvm_env`, `uvm_test`).
+4. **Decide** whether UVM is worth its overhead for a given block or project, and justify the decision.
+5. **Compare** the IEEE 1800.2-2020 standard with the uvm-core reference implementation, and place both in UVM's history.
 
-## The Testbench Scaling Problem
+<BeforeYouStart />
 
-Throughout T1 and the SystemVerilog modules of T2, you've been writing testbenches that look something like this:
+## Build Your Mental Model
+
+**How to read this lesson.** The core path is the first four subsections: the layered bench you can already build, where it strains, the six UVM mechanisms that remove those strains, and the side-by-side picture of the same bench in UVM. Then come what UVM is (and is not), its history, and when it is worth using. Make It Work gives you the complete layered FIFO bench that every picture on this page is drawn from. Not sure your SystemVerilog is ready for UVM? Take the readiness self-check under Practice & Reinforce first.
+
+This lesson does not teach UVM syntax. The short UVM fragments below are marked `// snippet` and only show *what you will write*; each mechanism has its own lesson, linked as you go.
+
+### The layered testbench you can already build
+
+In the SystemVerilog half of this tier you met every piece of a **layered testbench**: classes and handles ([I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index)), constrained-random transactions ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)), covergroups ([I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)), mailboxes and threads ([I-SV-5](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index)), and interfaces with clocking blocks ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)). Put together, they give each job in the bench its own class:
+
+| Layer (instance in Make It Work) | Class | Single job | Talks to the next layer through |
+|---|---|---|---|
+| Transaction | `fifo_txn` | One FIFO operation as data: `op` (WRITE or READ), `data`, and `accepted` (filled in by the monitor) | It *is* the message |
+| Generator (`gen`) | `fifo_gen` | Creates a new randomized `fifo_txn` for every item | Bounded mailbox `gen2drv` (bound 1) |
+| Driver (`drv`) | `fifo_drv` | Turns one transaction per clock into pin activity | Virtual interface `vif`, through the clocking block `drv_cb` |
+| Monitor (`mon`) | `fifo_mon` | Turns pin activity back into transactions; never drives | `vif.mon_cb` in, mailboxes `mon2sb` and `mon2cov` out |
+| Scoreboard (`sb`) | `fifo_sb` | Predicts with a reference model (a queue) and compares | Reads `mon2sb` |
+| Coverage (`cov`) | `fifo_cov` | Samples a covergroup on what really happened | Reads `mon2cov` |
+| Environment (`env`) | `fifo_env` | Builds the layers, connects them, starts them, decides when the test is over | Holds a handle to every layer |
+| Test (`test`) | `fifo_test` | Reads the knob `n` from `+N=`, builds the env, prints the verdict | Constructor arguments |
+
+The key property is **one job per class**: the driver knows the pins but not what to send, the generator knows what to send but not the pins, and the scoreboard never looks at the pins at all. Follow one transaction through the picture below, from `gen` to `sb`.
+
+<ArchitectureDiagram
+  title="The layered class-based FIFO testbench from Make It Work"
+  caption={"Follow one write: gen creates a fifo_txn and puts it into gen2drv; drv takes it and drives bus.drv_cb; dut stores the data; mon sees it through bus.mon_cb, creates a new fifo_txn and puts one into mon2sb and a copy into mon2cov; sb updates its reference queue and cov samples it. Every name matches the code in Make It Work. test is the fifo_test object; it passes the vif, DEPTH and the knob n (from +N=) down through constructors."}
+  nodes={[
+    { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 4, rowSpan: 4, container: true },
+    { id: "test", label: "test", sublabel: "fifo_test", kind: "test", col: 0, row: 0, colSpan: 3, rowSpan: 4, container: true },
+    { id: "env", label: "env", sublabel: "fifo_env", kind: "env", col: 0, row: 0, colSpan: 3, rowSpan: 3, container: true },
+    { id: "gen", label: "gen", sublabel: "fifo_gen", kind: "generic", col: 0, row: 0 },
+    { id: "gen2drv", label: "gen2drv", sublabel: "mailbox, bound 1", kind: "fifo", col: 1, row: 0 },
+    { id: "drv", label: "drv", sublabel: "fifo_drv", kind: "driver", col: 2, row: 0 },
+    { id: "sb", label: "sb", sublabel: "fifo_sb", kind: "scoreboard", col: 0, row: 1 },
+    { id: "mon2sb", label: "mon2sb", sublabel: "mailbox", kind: "fifo", col: 1, row: 1 },
+    { id: "mon", label: "mon", sublabel: "fifo_mon", kind: "monitor", col: 2, row: 1 },
+    { id: "cov", label: "cov", sublabel: "fifo_cov", kind: "generic", col: 0, row: 2 },
+    { id: "mon2cov", label: "mon2cov", sublabel: "mailbox", kind: "fifo", col: 1, row: 2 },
+    { id: "n", label: "n", sublabel: "knob from +N=", kind: "generic", col: 1, row: 3 },
+    { id: "bus", label: "bus", sublabel: "fifo_if", kind: "interface", col: 3, row: 0 },
+    { id: "dut", label: "dut", sublabel: "sync_fifo", kind: "dut", col: 3, row: 1 }
+  ]}
+  edges={[
+    { from: "gen", to: "gen2drv", style: "data", label: "put(t)" },
+    { from: "gen2drv", to: "drv", style: "data", label: "try_get(t)" },
+    { from: "drv", to: "bus", style: "data", label: "drv_cb" },
+    { from: "bus", to: "dut", style: "structural", label: "pins" },
+    { from: "bus", to: "mon", style: "data", label: "mon_cb" },
+    { from: "mon", to: "mon2sb", style: "data", label: "try_put(t)" },
+    { from: "mon2sb", to: "sb", style: "data", label: "get(t)" },
+    { from: "mon", to: "mon2cov", style: "data", label: "try_put(t.copy())" },
+    { from: "mon2cov", to: "cov", style: "data", label: "get(t)" }
+  ]}
+/>
+
+**Predict before you read on.** Using only the picture, answer three questions: (1) if the FIFO's data width changes from 8 to 16 bits, which classes change? (2) If a second FIFO is added to the chip, which classes are copied or edited? (3) If one test needs a driver that corrupts data on purpose, which classes change?
+
+**Debrief.** (1) The transaction, the interface and everything that declares `bit [7:0]`: a width change ripples through the bench, which is why real benches parameterize types. (2) Almost everything below the test: `fifo_env` builds exactly one set of layers with `new`, so a second FIFO means a second set of handles, mailboxes and constructor calls, or a copied environment. (3) `fifo_env`, because the line `drv = new(vif, gen2drv);` names the concrete class, plus `fifo_test`, which must pass a knob to choose the new driver. Questions 2 and 3 are where the hand-built bench strains; that is the subject of the next subsection.
+
+**Two mistakes everyone makes in this bench**, and you must not carry into UVM:
+- **Reusing one transaction handle.** A mailbox carries *handles*, not copies (IEEE 1800-2023 §15.4). If the generator or monitor calls `new` once and then refills the same object, the receiver sees values that were overwritten after they were sent. Create a new object for every item, as `fifo_gen.run` and `fifo_mon.publish` do. The full story is in [I-SV-5: Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes).
+- **Driving the DUT with blocking assignments at the clock edge.** The bench and the DUT wake on the same edge, and the simulator may run them in any order (§4.7), so the drive races the flops (§4.8). Drive through a clocking block (`vif.drv_cb.wr_en <= 1'b1`) and sample through one (`vif.mon_cb`), as in [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index). UVM does not fix this for you: a UVM driver still drives through a clocking block.
+
+### Where the layered bench strains
+
+Nothing in the Make It Work bench is wrong. It is race-free, self-checking and passes with zero mismatches. Its limits appear only when the bench has to grow. Here are the six, each shown in the bench's own code.
+
+**1. Construction is hard-coded.** `fifo_env` names every concrete class:
 
 ```systemverilog
-module tb_fifo;
-  logic clk, rst_n, wr_en, rd_en;
-  logic [7:0] wr_data, rd_data;
-  logic full, empty;
+// snippet: fifo_env::new
+gen = new(gen2drv, n, depth);
+drv = new(vif, gen2drv);   // to use err_drv in one test you must edit this line
+mon = new(vif, mon2sb, mon2cov);
+```
 
-  // DUT instantiation
-  sync_fifo #(.DEPTH(8), .WIDTH(8)) dut (.*);
+To substitute an error-injecting driver, a slower monitor or a mock scoreboard in one test, you edit the environment, or add a knob and an `if` for every variant.
 
-  // Clock generation — hard-coded
-  initial clk = 0;
-  always #5 clk = ~clk;
+**2. Settings travel through constructor chains.** The virtual interface, `DEPTH` and the knob `n` go from `tb_top` to `fifo_test`, then to `fifo_env`, then to each layer. Every new setting adds an argument to every constructor on its path, and a deeper hierarchy makes the chain longer.
 
-  // Stimulus — hand-written, non-reusable
-  initial begin
-    rst_n = 0; wr_en = 0; rd_en = 0; wr_data = 0;
-    #20 rst_n = 1;
+**3. Build, connect, run and end of test are ordered by hand.** `fifo_env::new` builds and connects in one step (the mailboxes are passed into constructors), and `fifo_env::run` starts every thread and then decides by counting when the test is over:
 
-    // Write 5 items
-    repeat (5) begin
-      @(posedge clk);
-      wr_en = 1;
-      wr_data = $urandom_range(0, 255);
-    end
-    @(posedge clk) wr_en = 0;
-
-    // Read 5 items
-    repeat (5) begin
-      @(posedge clk);
-      rd_en = 1;
-    end
-    @(posedge clk) rd_en = 0;
-
-    #100 $finish;
+```systemverilog
+// snippet: fifo_env::run
+fork
+  sb.run(gen.n_total);       // the test ends when the scoreboard has seen n_total items
+  begin
+    repeat (4 * gen.n_total + 100) @(vif.mon_cb);   // a hand-made watchdog
+    timed_out = 1'b1;
   end
-
-  // Checking — manual, fragile
-  always @(posedge clk) begin
-    if (wr_en && full)
-      $error("Write to full FIFO!");
-    if (rd_en && empty)
-      $error("Read from empty FIFO!");
-  end
-endmodule
+join_any
 ```
 
-This testbench **works** for a simple FIFO. But consider what happens when the project scales:
+A second environment needs its own counting rule. Two environments in one bench must agree on who decides the end, and a rule like `#10000 $finish` cuts off transactions still in flight.
 
-- **10 DUTs** on a chip, each needing its own stimulus and checking logic.
-- **New team member** joins and must understand how the bus protocol stimulus works — there's no standard interface.
-- **Protocol changes** from AXI3 to AXI4 — you must rewrite stimulus in 15 different test files.
-- **Coverage closure** requires 500 directed tests because the stimulus is manual and repetitive, not constrained-random.
+**4. Consumers are wired point to point.** The monitor owns one mailbox per consumer (`mon2sb`, `mon2cov`). Adding a protocol checker means editing the monitor's constructor and its `publish` function, and the environment.
 
-The fundamental issue: **nothing in this testbench is separable, configurable, or reusable**. The stimulus generation, checking logic, coverage collection, and sequencing are all tangled in a single monolithic `initial` block.
+**5. Stimulus is welded into the environment.** `fifo_gen` is one random loop followed by drain reads. A directed corner case, a different traffic mix or a reused stimulus library means a new generator class and an edit to `fifo_env` to construct it.
 
----
+**6. Messages and the verdict are home-made.** The bench reports with `$display` and `$error`, and `fifo_test` computes `PASS=… FAIL=…` from the scoreboard's own counters. An `$error` from the bound assertion module `fifo_sva` is *not* in that count: the bench can print `FAIL=0` while an assertion failed. There is also no standard way to make the log quieter or louder.
 
-## The Reuse Problem
+**What this adds up to: copy-paste reuse.** At subsystem or SoC level the FIFO is written by RTL, not by your driver. To reuse your monitor, scoreboard and coverage there, without the generator and driver, you copy `fifo_env`, delete the stimulus half and re-wire the rest. Two copies then drift apart. This is the "reuse problem" UVM was built for.
 
-At a semiconductor company, verification engineers work on multiple chips across generations. Consider a team verifying an SPI controller:
+**Debugging the layered bench (symptom, cause, fix).** These are the failures you will see in this kind of bench; Make It Work turns three of them into a debug challenge.
 
-**Chip A (2024):** Engineer writes a 2,000-line SPI testbench from scratch.
+| Symptom in the log | Cause | Fix |
+|---|---|---|
+| Mismatches start where a read completes on the same edge as a new write, then continue; `pending` is not 0 | One transaction handle reused: the write overwrote an object still in a mailbox | `new` per item in the generator and the monitor |
+| Every read mismatches; the "actual" value is always the previous read's data | The monitor captures `rd_data` at the edge where `rd_en` was sampled, ignoring the DUT's one-cycle read latency | Remember the accepted read and capture `rd_data` at the next edge |
+| `mismatches=0` but `pending` is not 0, or fewer items than expected | The test ended before the scoreboard drained (a fixed delay, or ending when the generator returns) | End when the scoreboard has seen every item, with a watchdog |
+| `TIMEOUT` and the bench hangs at a `get` | A layer never started, or a bounded mailbox has no reader | Check every `fork` branch is started; check mailbox bounds |
+| Results change when files are reordered or the tool changes | Blocking drives or unclocked samples at the active edge | Drive through `drv_cb`, sample through `mon_cb` |
 
-**Chip B (2025):** A different engineer verifies the same SPI controller (slightly modified). They can't reuse Chip A's testbench because:
-- The clock scheme is different (single clock → dual clock domain).
-- The pin names changed (`spi_mosi` → `spi_copi`).
-- The checking logic assumed a specific data width that's now parameterized.
-- There's no clean API boundary — the stimulus is interleaved with clock generation and DUT-specific wiring.
+### Six UVM mechanisms and the pain each removes
 
-The engineer rewrites 80% of the testbench from scratch. **This is the reuse crisis** that the industry faced in the early 2000s.
+Each limit above has one standard answer. The table is the summary; the notes after it show what you will write and the new mistake each mechanism brings, because no mechanism is free.
+
+| Limit of the layered bench | UVM mechanism | What you write instead | Standard | Taught in |
+|---|---|---|---|---|
+| 1. Hard-coded `new` of concrete classes | **Factory**: create by type, substitute by override | `fifo_drv::type_id::create("drv", this)`, and in one test `fifo_drv::type_id::set_type_override(err_drv::get_type())` | IEEE 1800.2-2020 Clause 8 (§8.2.3.2.4, §8.2.3.2.5) | [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index) |
+| 2. Settings and the vif passed through constructors | **Configuration database** | `uvm_config_db#(virtual fifo_if)::set(…)` in `tb_top`, `get(…)` in the component's `build_phase` | Annex C.4 | [I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) |
+| 3. Hand-ordered build, connect and run; end of test by counting | **Phasing** and **objections** | `build_phase`, `connect_phase`, `run_phase`, `check_phase`, `report_phase`; `phase.raise_objection(this)` and `drop_objection` around the stimulus | §9.8, §9.3.1.7, §10.5 | [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) |
+| 4. One mailbox per consumer | **TLM** analysis ports | One `uvm_analysis_port` in the monitor; each consumer connects to it | §12.2.10 | [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) |
+| 5. Generator welded into the env | **Sequences** on a **sequencer** | A `uvm_sequence` the test starts on the agent's `uvm_sequencer`; the driver pulls with `seq_item_port` | §14.1–§14.3, §15.5, §13.7 | [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index), [I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index) |
+| 6. `$display`, `$error` and a home-made verdict | **Reporting** | `` `uvm_info ``, `` `uvm_error ``, `` `uvm_fatal ``; the report server counts every severity and prints the summary | Clause 6, Annex B.1 | [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) |
+| The sum of 1, 2 and 4: copy-paste reuse | **Agent**, active or passive | `uvm_agent` groups sequencer, driver and monitor; `is_active` from the configuration database decides whether the driver and sequencer are built | §13.4, §13.4.2.2 | [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index) |
+
+**Factory.** Components ask the factory for a type instead of calling `new`, so a test can substitute a subclass without touching the environment:
 
 ```systemverilog
-// Chip A's testbench — NOT reusable
-module tb_spi_chip_a;
-  // 200 lines of clock/reset setup specific to Chip A
-  // 500 lines of stimulus tied to Chip A's pin names
-  // 300 lines of checking tied to Chip A's data widths
-  // Total: ~1,000 lines, zero reuse value
-endmodule
+// snippet: fifo_agent::build_phase asks the factory, not new()
+drv = fifo_drv::type_id::create("drv", this);
 
-// Chip B's engineer copies, pastes, and modifies
-// Result: two diverging testbenches, both buggy in different ways
+// snippet: err_test::build_phase, before the environment is built
+fifo_drv::type_id::set_type_override(err_drv::get_type());   // err_drv extends fifo_drv
+super.build_phase(phase);                                    // the base test builds env
 ```
 
-### The Cost Multiplier
+The override applies to every later request for `fifo_drv` "provided no instance override applies", and the original type "shall be a super class of the override_type" (§8.2.3.2.5). *New failure mode:* an override registered after the component was created, or for a type nobody requests, does nothing, and no error tells you so.
 
-| Aspect | Naive Testbench | Impact |
-|--------|----------------|--------|
-| Setup time per new chip | 4–6 weeks | Delays tape-out |
-| Bug escape rate | Higher (no standard checkers) | Silicon re-spins ($2–10M each) |
-| Onboarding time for new engineers | 3–4 weeks per TB | Kills team velocity |
-| Protocol change propagation | Manual grep-and-replace | Introduces new bugs |
-
----
-
-## The Standardization Solution
-
-The industry recognized this problem in the mid-2000s and responded with methodology libraries:
-
-### The OVM → UVM Arc
-
-1. **2006 — AVM (Advanced Verification Methodology):** Mentor Graphics released one of the first SV-based methodology libraries. It introduced the concept of standardized components, but was proprietary.
-
-2. **2008 — OVM (Open Verification Methodology):** Cadence and Mentor joined forces to create an open-source methodology. OVM introduced *phases*, *factories*, and *TLM communication* — the seeds of modern verification architecture.
-
-3. **2011 — UVM 1.0 (Universal Verification Methodology):** Accellera merged OVM with Synopsys's VMM ideas. UVM became the **single, vendor-neutral standard**, now backed by all three major EDA vendors (Synopsys, Cadence, Siemens EDA).
-
-4. **2020 — IEEE 1800.2-2020:** UVM was elevated to a full **IEEE standard**, giving it the same formal status as SystemVerilog itself (IEEE 1800-2017). This is the version you will learn in this guide.
-
-> **Key insight:** UVM is not a "tool" — it is a **class library** written in SystemVerilog. Everything you've learned about OOP, interfaces, constrained randomization, and assertions is the *foundation* on which UVM is built.
-
----
-
-## UVM's Core Value Propositions: The Four Pillars
-
-UVM solves the scaling and reuse problems through four architectural pillars:
-
-### 1. The Factory — Build Without Hard-Coding
-
-Instead of directly instantiating components with `new()`, UVM uses a **factory pattern**. This means you can swap out any component type (e.g., replace a basic driver with a protocol-error-injecting driver) *without modifying a single line of existing testbench code*.
+**Configuration database.** `tb_top` publishes the virtual interface once; each component that needs it reads it by name:
 
 ```systemverilog
-// Without factory — hard-coded, not overridable
-my_driver drv = new("drv", this);
+// snippet: tb_top, before run_test()
+uvm_config_db#(virtual fifo_if)::set(null, "uvm_test_top.env.agt*", "vif", bus);
 
-// With UVM factory — overridable from the test level
-my_driver drv;
-drv = my_driver::type_id::create("drv", this);
-// A test can now say: set_type_override_by_type(my_driver::get_type(), error_driver::get_type());
-// and every 'create' call produces an error_driver instead!
+// snippet: fifo_drv::build_phase
+if (!uvm_config_db#(virtual fifo_if)::get(this, "", "vif", vif))
+  `uvm_fatal("NOVIF", "no virtual interface set for this driver")
 ```
 
-### 2. Phasing — Orchestrated Lifecycle
+Nothing between `tb_top` and the driver changes when a setting is added (Annex C.4.2.2.1, C.4.2.2.2). *New failure mode:* `get` returns 0 when the path or the field name does not match. Ignore the return value and the vif stays `null` until the first access fails.
 
-UVM defines a **standard phase sequence** that every component follows: `build_phase` → `connect_phase` → `run_phase` → `report_phase` (and more). This guarantees that all components are *constructed* before they're *connected*, and all are *connected* before simulation *runs*.
-
-No more ad-hoc `initial` blocks racing each other.
-
-### 3. TLM (Transaction-Level Modeling) — Decoupled Communication
-
-Components communicate through **typed ports and exports**, not by directly referencing each other's internal signals. A monitor doesn't know (or care) whether a scoreboard or a coverage collector is listening — it just writes transactions to an `analysis_port`.
-
-This is the key to reuse: swap out the scoreboard, add a protocol checker, or remove the coverage collector — the monitor's code never changes.
-
-### 4. Sequences — Programmable Stimulus
-
-Instead of hard-coding stimulus in `initial` blocks, UVM uses **sequence objects** that generate transactions on demand. Sequences can be composed, layered, randomized, and overridden — turning stimulus from a static script into a programmable, reusable library.
+**Phasing and objections.** Every component implements the same phase methods, and the library calls them in a fixed order: `build_phase` top-down, then `connect_phase`, `end_of_elaboration_phase` and `start_of_simulation_phase`, all at time 0, then `run_phase`, then `extract_phase`, `check_phase`, `report_phase` and `final_phase` (§9.8.1). The run phase ends when every objection has been dropped, not when a task returns (§13.1.4.1.5):
 
 ```systemverilog
-// A reusable sequence — works with ANY driver that accepts my_transaction
-class write_burst_seq extends uvm_sequence #(my_transaction);
-  `uvm_object_utils(write_burst_seq)
+// snippet: fifo_test::run_phase
+phase.raise_objection(this);
+seq.start(env.agt.sqr);
+phase.drop_objection(this);
+```
+
+*What phasing does not do:* it orders construction and connection, but every component's `run_phase` runs concurrently (§9.6), so run-time races against the DUT are still prevented by clocking blocks, not by UVM. *New failure modes:* forget to raise and the run phase ends at time 0 with no traffic, which can look like a pass; forget to drop and the test hangs until a timeout.
+
+**TLM analysis ports.** The monitor publishes once; any number of subscribers listen:
+
+```systemverilog
+// snippet: fifo_mon
+uvm_analysis_port #(fifo_item) ap;   // built in build_phase: ap = new("ap", this);
+ap.write(t);                         // in run_phase, once per observed item
+
+// snippet: fifo_env::connect_phase
+agt.mon.ap.connect(sb.item_imp);         // an analysis imp the scoreboard declares
+agt.mon.ap.connect(cov.analysis_export); // uvm_subscriber's built-in imp
+```
+
+`write` "Sends the specified value to all connected interfaces" (§12.2.10.1.4): it calls each subscriber's `write` function in turn, in zero time. Adding a checker adds one `connect` line in the environment; the monitor is not edited. *New failure mode:* an analysis port with nothing connected is legal, so a scoreboard that was never connected receives nothing and reports no mismatches. A good scoreboard checks in `check_phase` that it saw traffic.
+
+**Sequences.** The generator becomes a sequence object that runs on the agent's sequencer; the driver pulls items:
+
+```systemverilog
+// snippet
+class fifo_rand_seq extends uvm_sequence #(fifo_item);
+  `uvm_object_utils(fifo_rand_seq)
+  int unsigned n = 1000;
+
+  function new(string name = "fifo_rand_seq");
+    super.new(name);
+  endfunction
 
   task body();
-    repeat (10) begin
-      my_transaction txn = my_transaction::type_id::create("txn");
-      start_item(txn);
-      assert(txn.randomize() with { txn.op == WRITE; txn.burst_len inside {[1:8]}; });
-      finish_item(txn);
+    repeat (n) begin
+      req = fifo_item::type_id::create("req");
+      start_item(req);
+      if (!req.randomize()) `uvm_fatal("RAND", "fifo_item randomize failed")
+      finish_item(req);
     end
   endtask
 endclass
 ```
 
----
+A sequence runs on any sequencer for `fifo_item`; `start` takes "the sequencer on which to run this sequence" (§14.2.3.1), and the driver pulls through `seq_item_port` (§13.7.2.1). Tests choose, combine and layer sequences without editing the environment. *New failure mode:* a driver that never calls `item_done` leaves `finish_item` waiting forever.
 
-## Naive TB vs. UVM TB — Head-to-Head Comparison
+**Reporting.** Every message goes through the report server, which filters by verbosity, counts each severity, and prints a summary at the end:
 
-| Dimension | Naive Testbench | UVM Testbench |
-|-----------|----------------|---------------|
-| **Reusability** | ❌ Copy-paste across projects | ✅ Agents and sequences reused via factory |
-| **Configurability** | ❌ Edit source code to change behavior | ✅ `uvm_config_db` sets parameters without code changes |
-| **Scalability** | ❌ Monolithic — 1 file per DUT | ✅ Hierarchical — env → agents → driver/monitor/sequencer |
-| **Self-Checking** | ❌ Manual `$error` calls | ✅ Scoreboards with reference models auto-compare |
-| **Coverage Closure** | ❌ Directed tests, slow convergence | ✅ Constrained-random + functional coverage feedback |
-| **Debug** | ❌ `$display` statements | ✅ Structured reporting (`uvm_info`, `uvm_error`) with verbosity control |
-| **Multi-Protocol** | ❌ Rewrite for each protocol | ✅ Drop in a new VIP agent; virtual sequences coordinate |
-| **Team Collaboration** | ❌ Everyone modifies the same file | ✅ Standard component roles — driver, monitor, scoreboard — with clear ownership |
+```systemverilog
+// snippet: fifo_sb::write
+`uvm_error("SCB", $sformatf("read %02h, expected %02h", t.data, exp))
+```
 
----
+Pass or fail becomes "no `UVM_ERROR` and no `UVM_FATAL` in the report summary", which every UVM bench shares (§6.5.1.2.6 `get_severity_count`). *New failure mode:* a plain `$error`, such as one in an assertion's action block, bypasses the report server and is missing from those counts.
 
-## What You'll Build
+**Experiment: one agent, two personalities.** The last row of the table is the reuse payoff. Predict which components exist inside a *passive* agent at SoC level, then switch levels and check.
 
-Over the next modules, you will construct a complete UVM verification environment piece by piece. Here's a preview of the architecture you're heading toward:
+<VIPReuseVisualizer />
 
-<InteractiveUvmArchitectureDiagram />
+**Debrief.** In passive mode only the monitor and coverage are built; the driver and sequencer handles stay `null`, because the agent builds them only when `get_is_active()` returns `UVM_ACTIVE` (§13.4.2.2). The same agent class serves block level and SoC level with one configuration setting, which is exactly the copy of `fifo_env` the hand-built bench needed.
 
-Each box in this diagram corresponds to a concept you'll learn in a dedicated module:
+### The same bench in UVM, side by side
 
-- **I-UVM-1A:** `uvm_object` vs. `uvm_component` — the building blocks.
-- **I-UVM-1B:** The factory — how `create()` dispatches.
-- **I-UVM-1C:** Phasing — the lifecycle that orchestrates construction, connection, and execution.
-- **I-UVM-2A:** Component roles — driver, monitor, agent.
-- **I-UVM-2B:** TLM connections — wiring components together.
-- **I-UVM-2C:** Configuration — `uvm_config_db` and resource sharing.
-- **I-UVM-3A/3B:** Sequences — programmable, layered stimulus generation.
+Put the two benches next to each other. On the left, the hand-built bench after three ordinary change requests: (a) one test needs `err_drv`, an error-injecting driver; (b) the SoC team wants the monitor, scoreboard and coverage with RTL driving the FIFO; (c) a protocol checker must see every transaction. The classes you would edit are marked. On the right, the same bench built from UVM base classes, with the six mechanisms marked where they live.
 
-By the end of T2, you'll have a fully functioning, reusable UVM testbench. In T3, you'll extend it with scoreboards, VIP construction, and multi-agent topologies.
+<div className="grid gap-6 2xl:grid-cols-2">
 
----
+<ArchitectureDiagram
+  title="Hand-built bench: classes edited by three change requests"
+  caption={"(a) err_drv for one test: edit fifo_env (the new line names fifo_drv) and fifo_test (pass a knob). (b) Passive reuse at SoC level: edit fifo_env so gen and drv are not built, and fifo_test to say so, or copy the env. (c) A protocol checker: edit fifo_mon (a third mailbox) and fifo_env (build and wire it). Same instance names as the first picture."}
+  nodes={[
+    { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 4, rowSpan: 4, container: true },
+    { id: "test", label: "test", sublabel: "fifo_test", kind: "test", col: 0, row: 0, colSpan: 3, rowSpan: 4, container: true, badge: "edit: a, b" },
+    { id: "env", label: "env", sublabel: "fifo_env", kind: "env", col: 0, row: 0, colSpan: 3, rowSpan: 3, container: true, badge: "edit: a, b, c" },
+    { id: "gen", label: "gen", sublabel: "fifo_gen", kind: "generic", col: 0, row: 0 },
+    { id: "gen2drv", label: "gen2drv", sublabel: "mailbox, bound 1", kind: "fifo", col: 1, row: 0 },
+    { id: "drv", label: "drv", sublabel: "fifo_drv", kind: "driver", col: 2, row: 0 },
+    { id: "sb", label: "sb", sublabel: "fifo_sb", kind: "scoreboard", col: 0, row: 1 },
+    { id: "mon2sb", label: "mon2sb", sublabel: "mailbox", kind: "fifo", col: 1, row: 1 },
+    { id: "mon", label: "mon", sublabel: "fifo_mon", kind: "monitor", col: 2, row: 1, state: "error", badge: "edit: c" },
+    { id: "cov", label: "cov", sublabel: "fifo_cov", kind: "generic", col: 0, row: 2 },
+    { id: "mon2cov", label: "mon2cov", sublabel: "mailbox", kind: "fifo", col: 1, row: 2 },
+    { id: "n", label: "n", sublabel: "knob from +N=", kind: "generic", col: 1, row: 3 },
+    { id: "bus", label: "bus", sublabel: "fifo_if", kind: "interface", col: 3, row: 0 },
+    { id: "dut", label: "dut", sublabel: "sync_fifo", kind: "dut", col: 3, row: 1 }
+  ]}
+  edges={[
+    { from: "gen", to: "gen2drv", style: "data", label: "put(t)" },
+    { from: "gen2drv", to: "drv", style: "data", label: "try_get(t)" },
+    { from: "drv", to: "bus", style: "data", label: "drv_cb" },
+    { from: "bus", to: "dut", style: "structural", label: "pins" },
+    { from: "bus", to: "mon", style: "data", label: "mon_cb" },
+    { from: "mon", to: "mon2sb", style: "data", label: "try_put(t)" },
+    { from: "mon2sb", to: "sb", style: "data", label: "get(t)" },
+    { from: "mon", to: "mon2cov", style: "data", label: "try_put(t.copy())" },
+    { from: "mon2cov", to: "cov", style: "data", label: "get(t)" }
+  ]}
+/>
+
+<ArchitectureDiagram
+  title="The same bench in UVM roles, with the six mechanisms marked"
+  caption={"Same instance names. gen2drv's place is taken by the sequencer sqr; the generator's job moves into seq (fifo_rand_seq), an object the test starts on env.agt.sqr. drv pulls items through seq_item_port. mon publishes once through its analysis port ap, and both sb and cov receive every write. The badges mark the factory (drv), the configuration database (agt reads vif and is_active), phasing with an objection (the test) and reporting (sb). For (a) only a test changes; for (b) one configuration setting makes agt passive; for (c) the env gains one connect line and mon is not edited."}
+  nodes={[
+    { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 4, rowSpan: 4, container: true },
+    { id: "test", label: "uvm_test_top", sublabel: "fifo_test", kind: "test", col: 0, row: 0, colSpan: 3, rowSpan: 4, container: true, badge: "phases; objection in run_phase" },
+    { id: "env", label: "env", sublabel: "fifo_env", kind: "env", col: 0, row: 0, colSpan: 3, rowSpan: 3, container: true },
+    { id: "agt", label: "agt", sublabel: "fifo_agent", kind: "agent", col: 1, row: 0, colSpan: 2, rowSpan: 2, container: true, badge: "config_db: vif, is_active" },
+    { id: "sqr", label: "sqr", sublabel: "uvm_sequencer", kind: "sequencer", col: 1, row: 0 },
+    { id: "drv", label: "drv", sublabel: "fifo_drv", kind: "driver", col: 2, row: 0, badge: "factory create" },
+    { id: "mon", label: "mon", sublabel: "fifo_mon", kind: "monitor", col: 2, row: 1, state: "ok" },
+    { id: "sb", label: "sb", sublabel: "fifo_sb", kind: "scoreboard", col: 0, row: 1, badge: "uvm_error counted" },
+    { id: "cov", label: "cov", sublabel: "fifo_cov", kind: "subscriber", col: 0, row: 2 },
+    { id: "seq", label: "seq", sublabel: "fifo_rand_seq", kind: "sequence", col: 1, row: 3 },
+    { id: "bus", label: "bus", sublabel: "fifo_if", kind: "interface", col: 3, row: 0 },
+    { id: "dut", label: "dut", sublabel: "sync_fifo", kind: "dut", col: 3, row: 1 }
+  ]}
+  ports={[
+    { id: "drv.sip", node: "drv", side: "left", kind: "port", label: "seq_item_port" },
+    { id: "sqr.sie", node: "sqr", side: "right", kind: "export", label: "seq_item_export" },
+    { id: "mon.ap", node: "mon", side: "left", kind: "analysis_port", label: "ap" },
+    { id: "sb.imp", node: "sb", side: "right", kind: "analysis_imp", label: "item_imp" },
+    { id: "cov.imp", node: "cov", side: "right", kind: "analysis_imp", label: "analysis_export" }
+  ]}
+  edges={[
+    { from: "drv.sip", to: "sqr.sie", style: "control", label: "get_next_item / item_done" },
+    { from: "seq", to: "sqr", style: "control", label: "start(env.agt.sqr)" },
+    { from: "drv", to: "bus", style: "data", label: "drv_cb" },
+    { from: "bus", to: "dut", style: "structural", label: "pins" },
+    { from: "bus", to: "mon", style: "data", label: "mon_cb" },
+    { from: "mon.ap", to: "sb.imp", style: "data", label: "write(t)" },
+    { from: "mon.ap", to: "cov.imp", style: "data", label: "write(t)" }
+  ]}
+/>
+
+</div>
+
+**Text equivalent: what each change request costs.**
+
+| Change request | Hand-built bench: what you edit | UVM bench: what you edit |
+|---|---|---|
+| (a) `err_drv` in one test | `fifo_env` (the `new` line or a knob), `fifo_test` | A new test class with one `set_type_override` line; nothing else |
+| (b) Passive reuse at SoC level | `fifo_env` (skip `gen` and `drv`) and `fifo_test`, or a copied env | One `uvm_config_db` setting of `is_active` to `UVM_PASSIVE`; the agent class is unchanged |
+| (c) Add a protocol checker | `fifo_mon` (a third mailbox), `fifo_env` | `fifo_env` builds the checker and adds one `connect` line; `fifo_mon` is unchanged |
+| Run 5000 items | Command line `+N=5000` (already a knob) | The same, or `uvm_config_db` set in the test |
+| Quieten the log | Edit every `$display` | Command line `+UVM_VERBOSITY=UVM_LOW` (Annex G.2.2) |
+
+**Debrief.** Every arrow in the left picture has a standard counterpart on the right, name for name. Two things are *new* in UVM: the **agent** (`agt`), a reusable grouping of sequencer, driver and monitor, and the **sequence** (`seq`), which is not a component at all but an object the test starts. And notice what stayed the same: the DUT, the interface with its clocking blocks, the reference queue inside the scoreboard and the covergroup inside the coverage class. UVM gives those a standard home; it does not write them for you.
+
+### Mapping each layer to a UVM base class
+
+| Hand-built layer or wiring | UVM base class or mechanism | Standard |
+|---|---|---|
+| `fifo_txn` | `uvm_sequence_item` (which extends `uvm_transaction`, then `uvm_object`) | §14.1, §5.4 |
+| `fifo_gen` | `uvm_sequence` running on a `uvm_sequencer` | §14.3, §15.5 |
+| Mailbox `gen2drv` | The driver's `seq_item_port` connected to the sequencer's `seq_item_export` | §13.7.2.1, §15.5.2.2 |
+| `fifo_drv` | `uvm_driver` | §13.7 |
+| `fifo_mon` | `uvm_monitor` with a `uvm_analysis_port` | §13.5, §12.2.10.1 |
+| Mailboxes `mon2sb`, `mon2cov` | One analysis port connected to analysis imps or exports | §12.2.10 |
+| `fifo_sb` | `uvm_scoreboard` (an empty base class: the reference model and the compare stay your code) | §13.6 |
+| `fifo_cov` | `uvm_subscriber` (an analysis export plus a `write` you define) | §13.9 |
+| (no equivalent) | `uvm_agent`: sequencer, driver and monitor grouped for active or passive reuse | §13.4 |
+| `fifo_env` | `uvm_env` | §13.3 |
+| `fifo_test` | `uvm_test`, chosen at run time with `+UVM_TESTNAME` | §13.2, Annex G.2.1 |
+| `tb_top` | Still a module: it sets the vif in the configuration database and calls `run_test()` | Annex C.4, F.7.3.1 |
+| vif and knobs through constructors | `uvm_config_db` | Annex C.4 |
+| Counting and a watchdog | Objections | §9.3.1.7, §10.5 |
+| `$display`, `$error`, PASS/FAIL line | `` `uvm_info `` / `` `uvm_error `` / `` `uvm_fatal `` and the report summary | Annex B.1, §6.5 |
+
+Two more facts about the shape of a UVM bench, which [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) develops:
+- **Components** (test, env, agent, sequencer, driver, monitor, scoreboard, subscriber) are "quasi-static objects that exist throughout simulation" and form a hierarchy, while **transactions** "are transient in nature" (§5.1). Your `fifo_txn` objects are created and dropped all the time; your `fifo_drv` lives for the whole test.
+- Every component is created in a parent's `build_phase` with `::type_id::create(name, this)`, never with `new`, so the factory can substitute it and the hierarchy knows its name.
+
+### What UVM is, and what it is not
+
+<ArchitectureDiagram
+  title="Where UVM sits: a SystemVerilog library compiled with your bench"
+  caption={"Read it bottom up. Your simulator implements IEEE 1800-2023 SystemVerilog. uvm_pkg is ordinary SystemVerilog source (uvm-core 2020.3.1) that implements the API IEEE 1800.2-2020 defines, and it is compiled with your bench. Your classes extend its base classes. Nothing in UVM is a language extension or a simulator mode."}
+  nodes={[
+    { id: "yours", label: "your testbench", sublabel: "fifo_test, fifo_env, fifo_agent", kind: "test", col: 0, row: 0 },
+    { id: "pkg", label: "uvm_pkg", sublabel: "uvm-core 2020.3.1 source", kind: "generic", col: 0, row: 1 },
+    { id: "std", label: "IEEE 1800.2-2020", sublabel: "the UVM API standard", kind: "generic", col: 1, row: 1 },
+    { id: "sim", label: "SystemVerilog simulator", sublabel: "compiles and runs all of it", kind: "generic", col: 0, row: 2 },
+    { id: "lrm", label: "IEEE 1800-2023", sublabel: "the language standard", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "yours", to: "pkg", style: "structural", label: "import uvm_pkg::*; extends" },
+    { from: "pkg", to: "std", style: "causal", label: "implements" },
+    { from: "pkg", to: "sim", style: "structural", label: "compiled by" },
+    { from: "sim", to: "lrm", style: "causal", label: "implements" }
+  ]}
+/>
+
+- **UVM is a library and an API standard.** IEEE 1800.2-2020 specifies the classes and their behaviour (§1.1); uvm-core is Accellera's reference implementation. All of UVM is exported through `uvm_pkg` (§1.4.5): a UVM file starts with `import uvm_pkg::*;` and `` `include "uvm_macros.svh" ``.
+- **It is not a language or a simulator feature.** Every UVM class is ordinary SystemVerilog built on classes, parameterized classes, virtual interfaces and mailbox-like queues you already know. Many simulators ship a precompiled copy for convenience (tool-dependent), but it is still compiled SystemVerilog.
+- **It does not make simulation faster.** It adds objects, phases, factory lookups, configuration lookups and message filtering on top of the same scheduler. Its payoff is engineering time, reuse and consistency, not simulation speed. See Expert: what UVM costs.
+- **It does not verify your design for you.** `uvm_scoreboard` is only "the base class for user-defined scoreboards" (§13.6); the reference model, the comparison and the covergroups are your code, written with SystemVerilog's own randomization and coverage (IEEE 1800-2023 Clauses 18 and 19). The register layer is the one exception: a `mirror` with checking reports mismatches (§18.1.5.6) and Annex E supplies built-in register test sequences ([A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index)).
+
+### Where UVM came from
+
+UVM did not appear from nothing; it standardized what several vendor libraries had already proven. The IEEE 1800.2-2020 Introduction (informative) gives the lineage: UVM "is built on the Open Verification Methodology (OVM), which combined the Advanced Verification Methodology (AVM) with the Universal Reuse Methodology (URM) and concepts from the e Reuse Methodology (eRM)", and it "also infuses concepts and code from the Verification Methodology Manual (VMM)". Its TLM facilities are based on the OSCI SystemC TLM work, though not an exact copy.
+
+<ArchitectureDiagram
+  title="UVM lineage and standard editions"
+  caption={"Arrows mean 'fed into' or 'was followed by'. Dates are announcement or approval dates: AVM 8 May 2006 (open source, Apache 2.0); OVM 1.0 9 January 2008; Accellera UVM 1.0 February 2011 (announced 21 February 2011); UVM 1.2 24 June 2014; IEEE 1800.2-2017 approved 14 February 2017; IEEE 1800.2-2020 approved 4 June 2020; uvm-core 2020.3.1 released 3 September 2024. URM, eRM and VMM are shown as sources of concepts without dates."}
+  nodes={[
+    { id: "avm", label: "AVM", sublabel: "May 2006", kind: "generic", col: 0, row: 0 },
+    { id: "urm", label: "URM", sublabel: "concepts", kind: "generic", col: 1, row: 0 },
+    { id: "erm", label: "eRM", sublabel: "concepts", kind: "generic", col: 2, row: 0 },
+    { id: "vmm", label: "VMM", sublabel: "concepts and code", kind: "generic", col: 3, row: 0 },
+    { id: "ovm", label: "OVM 1.0", sublabel: "Jan 2008", kind: "generic", col: 1, row: 1 },
+    { id: "uvm10", label: "UVM 1.0", sublabel: "Accellera, Feb 2011", kind: "generic", col: 2, row: 1 },
+    { id: "uvm12", label: "UVM 1.2", sublabel: "Accellera, Jun 2014", kind: "generic", col: 3, row: 1 },
+    { id: "s2017", label: "IEEE 1800.2-2017", sublabel: "first IEEE UVM standard", kind: "generic", col: 1, row: 2 },
+    { id: "s2020", label: "IEEE 1800.2-2020", sublabel: "approved 4 Jun 2020", kind: "generic", col: 2, row: 2 },
+    { id: "core", label: "uvm-core 2020.3.1", sublabel: "reference implementation", kind: "generic", col: 3, row: 2 }
+  ]}
+  edges={[
+    { from: "avm", to: "ovm", style: "causal" },
+    { from: "urm", to: "ovm", style: "causal" },
+    { from: "erm", to: "ovm", style: "causal" },
+    { from: "ovm", to: "uvm10", style: "causal" },
+    { from: "vmm", to: "uvm10", style: "causal" },
+    { from: "uvm10", to: "uvm12", style: "causal" },
+    { from: "uvm12", to: "s2017", style: "causal", label: "then IEEE" },
+    { from: "s2017", to: "s2020", style: "causal", label: "revised" },
+    { from: "s2020", to: "core", style: "causal", label: "implemented by" }
+  ]}
+/>
+
+Three facts to keep straight, because interviewers and older material get them wrong:
+- **The first IEEE UVM standard is IEEE 1800.2-2017**, not 2020. IEEE 1800.2-2020 is its revision ("Revision of IEEE Std 1800.2-2017"), and it is the edition this course follows.
+- **"UVM 1.2" is a pre-IEEE Accellera release.** Code written for it mostly runs on uvm-core, and uvm-core marks the leftovers it still supports as `@uvm-compat` (Expert: the standard and the implementation).
+- **The standard and the implementation are different documents.** The standard says what a class must do; uvm-core is one implementation of it, with some features the standard does not define. This course labels those "uvm-core impl.".
+
+### When UVM is worth it, and when it is not
+
+UVM is the usual choice for simulation benches that will be reused or shared, but "usual" is not "always". Weigh these criteria for a given block:
+
+| Criterion | Points toward UVM | Points toward a plain SV bench or formal |
+|---|---|---|
+| Reuse horizon | The block, its agent or its env will be reused at subsystem or SoC level, or on the next chip | One-off block, no reuse planned |
+| Team | Several engineers, several sites, people joining mid-project | One or two engineers |
+| VIP | You must integrate bought or in-house verification IP, which is commonly delivered as UVM agents | No external VIP |
+| Regression scale | Many tests and seeds, tests chosen on the command line, consistent pass/fail across a farm | A handful of directed tests |
+| Protocol complexity | Layered or multi-interface protocols, virtual sequences across agents | One simple interface |
+| Alternative methods | Simulation is the main method | Formal can prove most properties of a small, control-heavy block ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)) |
+| Tools | Your simulator supports UVM fully (tool-dependent: check your vendor's documentation) | Your flow lacks full class-based SystemVerilog support (tool-dependent) |
+
+**Three worked decisions.**
+1. **A 200-line CRC block**, two engineers, a stable spec, formal available, no reuse planned. Formal for the properties plus a small self-checking class bench for end-to-end data is enough. UVM's structure would cost more than it saves here.
+2. **A single-protocol subsystem** (a DMA engine with one bus interface) that the SoC team will reuse. UVM: the bus agent will be reused passively at SoC level, and tests will be selected and combined in regressions.
+3. **SoC integration** of a dozen IP blocks, each with an existing UVM agent. UVM without question: the passive agents, scoreboards and register models come from the block teams, and virtual sequences coordinate them ([A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index)).
+
+Two misconceptions to retire: "every bench needs UVM" (scenario 1 does not) and "UVM is chosen for simulation speed" (it is chosen for reuse and consistency, at some run-time cost).
+
+### Recap
+
+- A layered class bench gives each job its own class: transaction, generator, driver, monitor, scoreboard, coverage, environment, test, connected by mailboxes and a virtual interface with clocking blocks.
+- It strains at scale in six places: hard-coded construction, constructor-chain configuration, hand-ordered phases and end of test, point-to-point consumers, welded-in stimulus, and a home-made verdict. Together they force copy-paste reuse.
+- Six UVM mechanisms remove them, each with its own new failure mode: the factory, the configuration database, phasing with objections, TLM analysis ports, sequences on a sequencer, and reporting; the agent packages them for active or passive reuse.
+- Each layer has a UVM base class; the sequence and the agent are the two genuinely new shapes.
+- UVM is an IEEE 1800.2-2020 API with the uvm-core reference implementation: a SystemVerilog library, not a language, not faster, and not a substitute for your own checks, models and coverage. It is worth its overhead when reuse, team size, VIP and regression scale demand it.
+
+## Make It Work
+
+### The bridge bench: a layered FIFO testbench in plain SystemVerilog
+
+This is the bench every picture above is drawn from, and the **bridge capstone** of the SystemVerilog half of the tier. It is race-free (clocking blocks), self-checking (a reference queue in the scoreboard), measures coverage, and binds assertions to the DUT. Read it once as a whole, then find each of the six limits in it.
+
+The five design units are in one listing, separated by file comments. Compile them in the order shown: the interface must be known before the package that declares `virtual fifo_if`.
+
+```systemverilog
+// compile
+// ---------------------------------------------------------------- sync_fifo.sv
+// DUT: synchronous FIFO, registered read (rd_data is valid one cycle after a
+// read is accepted). DEPTH must be a power of two.
+module sync_fifo #(parameter int WIDTH = 8, parameter int DEPTH = 8) (
+  input  logic             clk,
+  input  logic             rst_n,
+  input  logic             wr_en,
+  input  logic [WIDTH-1:0] wr_data,
+  input  logic             rd_en,
+  output logic [WIDTH-1:0] rd_data,
+  output logic             full,
+  output logic             empty
+);
+  localparam int AW = $clog2(DEPTH);
+  logic [WIDTH-1:0] mem [DEPTH];
+  logic [AW:0]      wptr, rptr;     // the extra bit tells full from empty
+
+  assign full  = (wptr[AW] != rptr[AW]) && (wptr[AW-1:0] == rptr[AW-1:0]);
+  assign empty = (wptr == rptr);
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      wptr    <= '0;
+      rptr    <= '0;
+      rd_data <= '0;
+    end else begin
+      if (wr_en && !full) begin
+        mem[wptr[AW-1:0]] <= wr_data;
+        wptr              <= wptr + 1'b1;
+      end
+      if (rd_en && !empty) begin
+        rd_data <= mem[rptr[AW-1:0]];
+        rptr    <= rptr + 1'b1;
+      end
+    end
+  end
+endmodule
+
+// ------------------------------------------------------------------ fifo_if.sv
+interface fifo_if (input logic clk);
+  logic       rst_n;
+  logic       wr_en, rd_en;
+  logic [7:0] wr_data, rd_data;
+  logic       full, empty;
+
+  // Driver view: drives land in Re-NBA, after the DUT's flops sampled the edge.
+  clocking drv_cb @(posedge clk);
+    output wr_en, wr_data, rd_en;
+  endclocking
+
+  // Monitor view: every input is the value from just before the edge (1step).
+  clocking mon_cb @(posedge clk);
+    input rst_n, wr_en, wr_data, rd_en, rd_data, full, empty;
+  endclocking
+endinterface
+
+// ----------------------------------------------------------------- fifo_sva.sv
+// Flag assertions, kept out of the design file and bound in from tb_top.
+module fifo_sva (input logic clk, rst_n, wr_en, rd_en, full, empty);
+  a_not_full_and_empty: assert property (
+    @(posedge clk) disable iff (!rst_n) !(full && empty))
+    else $error("SVA a_not_full_and_empty failed");
+  a_write_fills: assert property (
+    @(posedge clk) disable iff (!rst_n) (wr_en && !rd_en && empty) |=> !empty)
+    else $error("SVA a_write_fills failed");
+  a_read_frees: assert property (
+    @(posedge clk) disable iff (!rst_n) (rd_en && !wr_en && full) |=> !full)
+    else $error("SVA a_read_frees failed");
+endmodule
+
+// ------------------------------------------------------------- fifo_tb_pkg.sv
+package fifo_tb_pkg;
+
+  typedef enum bit {WRITE, READ} fifo_op_e;
+
+  // Transaction: one requested operation, or one observed transfer.
+  class fifo_txn;
+    rand fifo_op_e op;
+    rand bit [7:0] data;
+    bit            accepted;   // monitor only: 0 if the DUT ignored the request
+
+    constraint c_op   { op dist {WRITE := 1, READ := 1}; }
+    constraint c_data { data dist {8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] :/ 8}; }
+
+    function fifo_txn copy();
+      fifo_txn c = new();
+      c.op       = op;
+      c.data     = data;
+      c.accepted = accepted;
+      return c;
+    endfunction
+
+    function string convert2string();
+      return $sformatf("%s data=%02h accepted=%0b", op.name(), data, accepted);
+    endfunction
+  endclass
+
+  // Generator: n_random random items, then DEPTH reads to drain the FIFO.
+  class fifo_gen;
+    mailbox #(fifo_txn) gen2drv;
+    int unsigned        n_random, n_total;
+
+    function new(mailbox #(fifo_txn) gen2drv, int unsigned n_random,
+                 int unsigned depth);
+      this.gen2drv  = gen2drv;
+      this.n_random = n_random;
+      n_total       = n_random + depth;
+    endfunction
+
+    task run();
+      fifo_txn t;
+      for (int unsigned i = 0; i < n_total; i++) begin
+        t = new();                // a new object for every item
+        if (i < n_random) begin
+          if (!t.randomize()) $fatal(1, "fifo_gen: randomize failed");
+        end else begin
+          if (!t.randomize() with { op == READ; })
+            $fatal(1, "fifo_gen: randomize failed");
+        end
+        gen2drv.put(t);           // bound 1: blocks until the driver takes the last one
+      end
+    endtask
+  endclass
+
+  // Driver: one item per clock; idle while in reset or when nothing is ready.
+  class fifo_drv;
+    virtual fifo_if     vif;
+    mailbox #(fifo_txn) gen2drv;
+
+    function new(virtual fifo_if vif, mailbox #(fifo_txn) gen2drv);
+      this.vif     = vif;
+      this.gen2drv = gen2drv;
+    endfunction
+
+    task run();
+      fifo_txn t;
+      forever begin
+        @(vif.drv_cb);
+        if (vif.rst_n === 1'b1 && gen2drv.try_get(t) > 0) begin
+          vif.drv_cb.wr_en   <= (t.op == WRITE);
+          vif.drv_cb.rd_en   <= (t.op == READ);
+          vif.drv_cb.wr_data <= t.data;
+        end else begin
+          vif.drv_cb.wr_en <= 1'b0;
+          vif.drv_cb.rd_en <= 1'b0;
+        end
+      end
+    endtask
+  endclass
+
+  // Monitor: one transaction per requested operation, accepted or not.
+  class fifo_mon;
+    virtual fifo_if     vif;
+    mailbox #(fifo_txn) mon2sb, mon2cov;   // one mailbox per consumer
+
+    function new(virtual fifo_if vif, mailbox #(fifo_txn) mon2sb,
+                 mailbox #(fifo_txn) mon2cov);
+      this.vif     = vif;
+      this.mon2sb  = mon2sb;
+      this.mon2cov = mon2cov;
+    endfunction
+
+    task run();
+      bit rd_pending;
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.rst_n !== 1'b1) begin
+          rd_pending = 1'b0;
+          continue;
+        end
+        // A read accepted at the previous edge: rd_data now holds its value.
+        if (rd_pending) publish(READ, vif.mon_cb.rd_data, 1'b1);
+        rd_pending = 1'b0;
+        // What the DUT saw at this edge: the same pre-edge values its flops used.
+        if (vif.mon_cb.wr_en) publish(WRITE, vif.mon_cb.wr_data, !vif.mon_cb.full);
+        if (vif.mon_cb.rd_en) begin
+          if (vif.mon_cb.empty) publish(READ, 8'h00, 1'b0);
+          else rd_pending = 1'b1;
+        end
+      end
+    endtask
+
+    function void publish(fifo_op_e op, bit [7:0] data, bit accepted);
+      fifo_txn t = new();               // a new object per observation
+      t.op       = op;
+      t.data     = data;
+      t.accepted = accepted;
+      void'(mon2sb.try_put(t));         // unbounded mailboxes are never full
+      void'(mon2cov.try_put(t.copy())); // each consumer owns its object
+    endfunction
+  endclass
+
+  // Scoreboard: a queue is the reference model of the FIFO.
+  class fifo_sb;
+    mailbox #(fifo_txn) mon2sb;
+    int unsigned        depth;
+    bit [7:0]           model[$];
+    int unsigned        n_seen, matches, mismatches;
+
+    function new(mailbox #(fifo_txn) mon2sb, int unsigned depth);
+      this.mon2sb = mon2sb;
+      this.depth  = depth;
+    endfunction
+
+    task run(int unsigned expected);   // returns after `expected` observations
+      fifo_txn t;
+      repeat (expected) begin
+        mon2sb.get(t);
+        n_seen++;
+        check(t);
+      end
+    endtask
+
+    function void check(fifo_txn t);
+      bit [7:0] exp;
+      bit       ok;
+      if (t.op == WRITE) begin
+        ok = (t.accepted == (model.size() < depth));  // accepted exactly when not full
+        if (ok && t.accepted) model.push_back(t.data);
+      end else if (!t.accepted) begin
+        ok = (model.size() == 0);                     // rejected exactly when empty
+      end else if (model.size() == 0) begin
+        ok = 1'b0;                                    // data from an empty FIFO
+      end else begin
+        exp = model.pop_front();
+        ok  = (t.data == exp);
+      end
+      if (ok) matches++;
+      else begin
+        mismatches++;
+        $error("SCB mismatch: %s (expected %02h, model size %0d)",
+               t.convert2string(), exp, model.size());
+      end
+    endfunction
+  endclass
+
+  // Coverage: what the DUT really did, including writes when full and reads when empty.
+  class fifo_cov;
+    mailbox #(fifo_txn) mon2cov;
+    fifo_txn            t;
+
+    covergroup cg;
+      cp_op:    coverpoint t.op;
+      cp_acc:   coverpoint t.accepted;
+      x_op_acc: cross cp_op, cp_acc;
+      cp_data:  coverpoint t.data iff (t.op == WRITE && t.accepted) {
+        bins zero = {8'h00};
+        bins mid  = {[8'h01:8'hFE]};
+        bins max  = {8'hFF};
+      }
+    endgroup
+
+    function new(mailbox #(fifo_txn) mon2cov);
+      this.mon2cov = mon2cov;
+      cg = new();
+    endfunction
+
+    task run();
+      forever begin
+        mon2cov.get(t);
+        cg.sample();
+      end
+    endtask
+  endclass
+
+  // Environment: builds, connects and starts every layer, and decides the end.
+  class fifo_env;
+    virtual fifo_if     vif;
+    mailbox #(fifo_txn) gen2drv, mon2sb, mon2cov;
+    fifo_gen            gen;
+    fifo_drv            drv;
+    fifo_mon            mon;
+    fifo_sb             sb;
+    fifo_cov            cov;
+    bit                 timed_out;
+
+    function new(virtual fifo_if vif, int unsigned depth, int unsigned n);
+      this.vif = vif;
+      gen2drv  = new(1);              // bounded: the generator runs one item ahead
+      mon2sb   = new();
+      mon2cov  = new();
+      gen = new(gen2drv, n, depth);   // every concrete class is named here
+      drv = new(vif, gen2drv);
+      mon = new(vif, mon2sb, mon2cov);
+      sb  = new(mon2sb, depth);
+      cov = new(mon2cov);
+    endfunction
+
+    task run();
+      fork                            // start every layer
+        gen.run();
+        drv.run();
+        mon.run();
+        cov.run();
+      join_none
+      fork                            // end of test, decided by hand
+        sb.run(gen.n_total);
+        begin
+          repeat (4 * gen.n_total + 100) @(vif.mon_cb);
+          timed_out = 1'b1;
+          $error("TIMEOUT: scoreboard saw %0d of %0d items", sb.n_seen, gen.n_total);
+        end
+      join_any
+      repeat (2) @(vif.mon_cb);       // let fifo_cov sample the last item
+      disable fork;                   // stop the forever loops and the watchdog
+    endtask
+
+    function void report();
+      $display("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+               sb.matches, sb.mismatches, sb.model.size());
+      $display("COVERAGE fifo_cov.cg = %0.1f%%", cov.cg.get_coverage());
+    endfunction
+  endclass
+
+  // Test: reads the knob, builds the env, prints the verdict.
+  class fifo_test;
+    fifo_env     env;
+    int unsigned n;
+
+    function new(virtual fifo_if vif, int unsigned depth);
+      if (!$value$plusargs("N=%d", n)) n = 1000;
+      env = new(vif, depth, n);
+    endfunction
+
+    task run();
+      int unsigned fails;
+      env.run();
+      env.report();
+      fails = env.sb.mismatches + env.sb.model.size() + env.timed_out;
+      $display("PASS=%0d FAIL=%0d", env.sb.matches, fails);
+    endtask
+  endclass
+
+endpackage
+
+// ------------------------------------------------------------------- tb_top.sv
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+  import fifo_tb_pkg::*;
+
+  localparam int DEPTH = 8;
+
+  logic clk;
+  initial clk = 1'b0;
+  always #5 clk = ~clk;                // rising edges at 5, 15, 25 ns ...
+
+  fifo_if bus (.clk(clk));
+
+  sync_fifo #(.WIDTH(8), .DEPTH(DEPTH)) dut (
+    .clk(clk), .rst_n(bus.rst_n),
+    .wr_en(bus.wr_en), .wr_data(bus.wr_data), .rd_en(bus.rd_en),
+    .rd_data(bus.rd_data), .full(bus.full), .empty(bus.empty)
+  );
+
+  // Every name in a bind instantiation is resolved inside the target (§23.11).
+  bind sync_fifo fifo_sva u_sva (.*);
+
+  // Reset is written directly, between clock edges, never through a clocking block.
+  initial begin
+    bus.rst_n = 1'b0;
+    #22 bus.rst_n = 1'b1;
+  end
+
+  initial begin
+    fifo_test test;
+    test = new(bus, DEPTH);
+    test.run();
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative: no simulator run produced this listing; every operation the generator sends produces exactly one observation, so with the default `+N` the counts are 1000 random items plus 8 drain reads):
+
+```text
+SCB_SUMMARY matches=1008 mismatches=0 pending=0
+COVERAGE fifo_cov.cg = 100.0%
+PASS=1008 FAIL=0
+```
+
+The simulator adds its own `$finish` line. The coverage figure depends on the seed: a seed whose random walk never fills the FIFO misses the "write rejected" cross bin and reports less than 100%.
+
+**Run it.** Compile the five units in the order shown with any SystemVerilog simulator that supports classes, constrained randomization, covergroups, clocking blocks, `bind` and concurrent assertions (support for covergroups and assertions in open-source simulators varies: tool-dependent), with `tb_top` as the top. Run with `+N=1000`, then with `+N=5000` and two different seeds.
+
+**How to read and extend it, step by step.**
+1. **Trace one write.** Find the generator's `put`, the driver's `drv_cb` drives, the monitor's `publish(WRITE, …)` and the scoreboard's `push_back`. Match each to an arrow in the first picture.
+2. **Trace one read.** Note the one-cycle read latency: the monitor sets `rd_pending` at the edge where it sees `rd_en`, and publishes the read with `rd_data` at the *next* edge. Check why the scoreboard still sees writes and reads in the order the DUT applied them.
+3. **Find the six limits.** Mark in the code: the hard-coded `new` lines (limit 1), the constructor chain carrying `vif`, `depth` and `n` (2), the hand-made end of test in `fifo_env::run` (3), the two mailboxes in `fifo_mon` (4), the generator built inside `fifo_env::new` (5), and the `$display` verdict that cannot see `fifo_sva`'s `$error` (6).
+4. **Annotate the mapping.** Next to each class, write its UVM base class and the mechanism that would replace its ad-hoc part. Check your answers against the mapping table.
+5. **Run the change requests.** For each of (a), (b) and (c) from the side-by-side picture, list the edits you would make here. Then read the debug challenge below.
+
+### Debug challenge: three mutants
+
+Each mutant is a small edit to the bench above. Predict the symptom in the log before you open the answer.
+
+**Mutant 1.** In `fifo_mon::publish`, the monitor allocates one object in its constructor and reuses it: `t.op = op; t.data = data; …` with no `new`.
+
+<details>
+<summary>Symptom, cause and fix</summary>
+
+**Symptom:** the first mismatch appears at an edge where a read completes and a new write arrives together (a READ followed immediately by a WRITE). From then on reads keep mismatching, and `pending` is not 0 at the end. **Cause:** at that edge `publish` runs twice before the scoreboard's thread resumes. Both mailbox entries hold the same handle, so the scoreboard sees the WRITE twice and never sees the READ: the model gains an extra entry, skips a pop, and is off by one from then on. **Fix:** `fifo_txn t = new();` in every call, as in the listing. The same rule applies to UVM monitors, which create a new item before every `ap.write`.
+</details>
+
+**Mutant 2.** The monitor ignores the read latency: `if (vif.mon_cb.rd_en && !vif.mon_cb.empty) publish(READ, vif.mon_cb.rd_data, 1'b1);` at the edge where it sees `rd_en`.
+
+<details>
+<summary>Symptom, cause and fix</summary>
+
+**Symptom:** almost every accepted read mismatches, and the reported data is always the *previous* read's value (or `00` for the first read after reset). **Cause:** `rd_data` is a flop that updates at the edge that accepts the read; `mon_cb` samples the value from just before that edge (§14.13), which is the previous read's data. **Fix:** remember the accepted read and capture `rd_data` one edge later, as `rd_pending` does. A clocking block removes races, not the DUT's latency: the monitor must model the protocol's timing.
+</details>
+
+**Mutant 3.** `fifo_env::run` ends the test when the generator returns: `sb.run(gen.n_total)` moves into the `join_none` group, and `gen.run()` takes its place in the `join_any`.
+
+<details>
+<summary>Symptom, cause and fix</summary>
+
+**Symptom:** `SCB_SUMMARY` shows `mismatches=0` but `matches` a little below 1008. If the unchecked items were reads that would have emptied the model, `pending` is not 0 and the verdict is `FAIL`; if not, the bench prints `FAIL=0` after checking fewer items than it sent, a **false pass**. **Cause:** `gen.run()` returns as soon as its last `put` succeeds, which is before the driver drives the last item and before the last read data appears; the two extra clocks are not always enough. **Fix:** end when the scoreboard has seen every item, with a watchdog, and make the verdict also check that the scoreboard saw as many items as were sent. In UVM this is the objection raised by the test around the sequence, plus the scoreboard's own checks in `check_phase` ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+</details>
+
+**Checklist before moving on:**
+- [ ] I can draw the layered bench from memory, with every connection labelled handle, mailbox or virtual interface.
+- [ ] I can point to each of the six limits in the bench's code.
+- [ ] For each limit I can name the UVM mechanism that removes it and the new failure that mechanism brings.
+- [ ] I can map every class in the bench to its UVM base class, and say what the agent and the sequence add.
+- [ ] I can explain why the monitor creates a new object per observation and captures `rd_data` one edge late.
+- [ ] I can argue, for a block I know, whether UVM is worth its overhead.
+
+## Push Further
+
+### Expert: the standard and the implementation
+
+IEEE 1800.2-2020 defines an API, not source code. Several of its rules matter in practice:
+- **Inheritance is not exact.** "Class declarations shown in this document … do not imply class A and class B are adjacent in the inheritance tree; implementations are free to have other classes between A and B" (§1.4.3). uvm-core, for example, inserts `uvm_sequencer_param_base` between `uvm_sequencer_base` and `uvm_sequencer`. Code that depends on such an intermediate class is not portable.
+- **Order is not guaranteed.** "An implementation … may choose any operation order or sorting order for 'equivalent data' objects", so output "may differ between implementations" (§1.4.4). Do not write checks that depend on the order in which equivalent components or settings are visited.
+- **Random stability is limited.** APIs that run user code "are not guaranteed to be random stable" (§1.4.6).
+- **uvm-core adds features the standard does not define.** Examples (uvm-core impl.): the plusargs `+UVM_TIMEOUT`, `+UVM_OBJECTION_TRACE`, `+UVM_PHASE_TRACE` and `+UVM_CONFIG_DB_TRACE`; `uvm_root::set_enable_print_topology`; and the methods `check_config_usage` and `print_config`. Annex G.2 lists the plusargs the standard does define, such as `+UVM_TESTNAME` and `+UVM_VERBOSITY`.
+- **uvm-core keeps compatibility shims**, marked `@uvm-compat` in its source: the global `uvm_top` ("Provided for compatibility with 1.2", `uvm_root.svh`) and the OVM-style `build()`, `connect()` and `run()` methods (`uvm_component.svh`, where `uvm_component::build_phase` simply calls `build()`). The standard spells the root `uvm_root::get()`.
+- **uvm-core deliberately diverges in one default.** Its automatic configuration mode defaults to `CONFIG_CHECK_NAMES`, which its source calls "a divergence from 1800.2, however the performance increase is drastic"; compiling with `+define+UVM_COMPONENT_CONFIG_MODE_DEFAULT=CONFIG_STRICT` restores the standard behaviour (`uvm_global_defines.svh`).
+
+*Practical rule:* write to the standard, and label every uvm-core-only feature you use, so the bench survives a different implementation or a newer uvm-core release.
+
+### Expert: what UVM costs and how to measure it
+
+UVM's benefits are paid for in simulation time and memory, and the costs scale with how you use it:
+- **Objects and phases.** Every component is an object in a hierarchy, and every phase visits every component.
+- **Factory and configuration lookups.** `create` consults the override tables; `uvm_config_db::get` searches the resource pool. uvm-core's own default above exists because automatic configuration was expensive enough to change the standard behaviour.
+- **Field automation.** The standard itself warns that the `uvm_field_*` macros "may not be as run-time efficient nor as flexible as direct implementations of the do_* methods" (Annex B.2.2 NOTE).
+- **Messages.** The report macros check the verbosity and action "before any string formatting is performed" (Annex B.1), so a filtered `` `uvm_info `` is cheap. Formatting done outside the macros, such as a `$sformatf` stored in a variable first or a plain `$display`, is paid on every call, and hot loops make that visible.
+- **Transaction traffic.** A new object per item, analysis fan-out and recording all allocate memory.
+
+This page gives no speed figures on purpose: they depend on the simulator, the bench and the switches. Measure with your simulator's profiler before and after a change (tool-dependent), and see [E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index) for the techniques.
+
+### Expert: choosing a methodology for a block, a subsystem or an SoC
+
+The decision is rarely "UVM or nothing" for a whole chip; it is made per level and per block.
+- **Block level.** Small control blocks are often better served by formal plus a light bench ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)). Datapath-heavy or protocol blocks benefit from UVM because their agents are reused later.
+- **Subsystem and SoC.** UVM's value peaks here: passive agents from block benches, register models, virtual sequences, and VIP that is commonly delivered as UVM agents ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)).
+- **Emulation and acceleration.** Testbench code that must run with an emulator needs synthesizable transactors and a split between the timed and untimed sides ([E-EMU-1](/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index)); a UVM bench needs restructuring for it.
+- **Python and multi-language flows.** Teams also build benches in Python (cocotb, pyuvm) or mix languages ([E-PYUVM-1](/curriculum/T4_Expert/E-PYUVM-1_Python_Based_Verification/index), [E-UVM-ML-1](/curriculum/T4_Expert/E-UVM-ML-1_Multi_Language_Verification/index)). Simulator and open-source tool support for full UVM varies: tool-dependent, so check it before committing.
+
+A staff-level answer names the reuse plan, the people and the tools before it names a library.
+
+### Expert: migrating a legacy bench to UVM
+
+A mature hand-built bench is rarely rewritten in one step. Migrate layer by layer, keeping the bench green after each step:
+1. **Keep what is already right:** the transaction (extend `uvm_sequence_item` and add a constructor `new(string name = "fifo_item")`), the reference model inside the scoreboard, the covergroups, the interface and its clocking blocks, and the bound assertions.
+2. **Wrap, then replace, the plumbing:** the generator becomes a sequence; the generator-to-driver mailbox becomes `seq_item_port` and a sequencer; monitor mailboxes become one analysis port; the vif moves to the configuration database; the counting end of test becomes an objection in the test.
+3. **Route every error through the report server**, including assertion action blocks, so the summary is the single verdict.
+4. **Check the deprecation list.** Annex H lists constructs that have been deprecated from UVM or are under consideration for deprecation; uvm-core's `@uvm-compat` shims help old code compile but are not part of the standard.
+
+Old UVM 1.2 or OVM code follows the same path: compile it against uvm-core, then remove its reliance on `@uvm-compat` features one at a time.
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: port a mature bench to UVM?"
+  question="A team has a mature 2,000-line directed bench for a block that will now be reused at SoC level. Should they port it to UVM?"
+  options={[
+    { text: "Always: every bench should be UVM.", isCorrect: false, feedback: "A blanket rule ignores cost. The question is whether the reuse, team and regression needs justify the effort." },
+    { text: "Probably, because SoC reuse is planned: migrate layer by layer so the monitor, scoreboard and coverage become a reusable passive agent and env, keeping the transaction, model and checks.", isCorrect: true, feedback: "Right. Reuse at SoC level is the strongest reason for UVM. An incremental migration keeps the proven parts and keeps the bench green." },
+    { text: "No: UVM would make the existing tests run faster, but the port costs too much.", isCorrect: false, feedback: "UVM does not make simulation faster; it adds run-time work. Its payoff is reuse and consistency." },
+    { text: "No: a directed bench can never be expressed in UVM.", isCorrect: false, feedback: "Directed tests are simply sequences with fixed values; UVM handles them easily." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: what UVM does not give you"
+  question="Your manager says: 'Once we adopt UVM, checking and coverage come for free.' What do you answer?"
+  options={[
+    { text: "Correct: uvm_scoreboard compares expected and actual automatically.", isCorrect: false, feedback: "uvm_scoreboard is an empty base class (IEEE 1800.2-2020 §13.6). You write the reference model and the comparison." },
+    { text: "UVM gives structure, substitution, configuration, phasing, TLM, sequences and reporting; the DUT-specific checks, reference models and coverage are still our code. The register layer's mirror checks are the exception.", isCorrect: true, feedback: "Right. UVM standardizes where those pieces live and how they connect, not what they check." },
+    { text: "Coverage comes free because UVM adds covergroups to SystemVerilog.", isCorrect: false, feedback: "Covergroups are part of SystemVerilog itself (IEEE 1800-2023 Clause 19) and work in any class bench." },
+    { text: "Checking comes free because uvm_monitor reports protocol errors.", isCorrect: false, feedback: "uvm_monitor is a base class with no protocol knowledge; protocol checks are written by you or come with VIP." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: mechanisms and their failure modes"
+  question="Pick the pairing that is right: the ad-hoc code a UVM mechanism replaces, and the new failure it introduces."
+  options={[
+    { text: "Configuration database: replaces hard-coded new; new failure: an override that never applies.", isCorrect: false, feedback: "That describes the factory. The configuration database replaces constructor-chain settings; its failure is a get that silently returns 0." },
+    { text: "Objections: replace counting and #delay end-of-test rules; new failure: a test that ends at time 0 when nobody raises, or hangs when nobody drops.", isCorrect: true, feedback: "Right. The run phase ends when all objections are dropped (§13.1.4.1.5), so both mistakes are possible." },
+    { text: "Analysis ports: replace mailboxes; new failure: write() blocks when a subscriber is slow.", isCorrect: false, feedback: "write() is a function and cannot block. The real failure is an unconnected port, which is legal and delivers to nobody." },
+    { text: "Reporting: replaces $display; new failure: uvm_error stops the simulation at the first error.", isCorrect: false, feedback: "By default an error is counted, not fatal; the quit count is configurable (§6.5.1.2.3). The real failure is a plain $error that the summary never counts." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: is UVM a language?"
+  question="A candidate says 'UVM is a language extension that simulators implement'. How do you correct it?"
+  options={[
+    { text: "It is correct: UVM keywords are parsed by the simulator.", isCorrect: false, feedback: "There are no UVM keywords; uvm_ names are classes and macros written in SystemVerilog." },
+    { text: "UVM is an IEEE 1800.2 API defining a base class library written in SystemVerilog; uvm-core is Accellera's reference implementation, compiled with the bench as uvm_pkg.", isCorrect: true, feedback: "Right (IEEE 1800.2-2020 §1.1, §1.4.5). Simulators may ship it precompiled, but it is still SystemVerilog source." },
+    { text: "UVM is a simulator mode that speeds up constrained-random tests.", isCorrect: false, feedback: "UVM runs on the normal scheduler and adds work; randomization is SystemVerilog's own (Clause 18)." },
+    { text: "UVM is a vendor tool flow, different for each simulator.", isCorrect: false, feedback: "The point of the standard is that the same UVM code runs on any compliant simulator." }
+  ]}
+/>
 
 ## Practice & Reinforce
 
-<Quiz questions={[
+### Retrieval check
+
+<Quiz
+  questions={[
     {
-      "question": "What is the primary problem that UVM was designed to solve?",
-      "answers": [
-        {"text": "SystemVerilog was too slow for simulation.", "correct": false},
-        {"text": "Testbenches were not reusable, scalable, or standardized across projects and teams.", "correct": true},
-        {"text": "Verilog did not support object-oriented programming.", "correct": false},
-        {"text": "EDA vendors needed a common license format.", "correct": false}
+      question: "In the layered FIFO bench, which layer holds the expected-value model and compares it with what the monitor observed?",
+      answers: [
+        { text: "The driver, because it knows what it sent", correct: false, feedback: "The driver only turns transactions into pins. Checking in the driver would trust the stimulus instead of observing the DUT." },
+        { text: "The monitor, because it sees both directions", correct: false, feedback: "The monitor only reports what happened. Keeping it free of checks lets it be reused passively, where nobody drives the expected values." },
+        { text: "The scoreboard, which keeps a reference queue and compares each observed read", correct: true, feedback: "Right. fifo_sb predicts with its model queue and compares, and never looks at the pins." },
+        { text: "The test, because it prints PASS or FAIL", correct: false, feedback: "The test only summarizes counters the scoreboard produced." }
       ],
-      "explanation": "UVM addresses the core engineering problem of testbench reuse, scalability, and standardization. Without it, every new chip required rewriting verification infrastructure from scratch."
+      explanation: "One job per layer: the generator decides what to send, the driver drives, the monitor observes, the scoreboard predicts and compares, coverage samples, and the env and test assemble and run. Mixing checking into the driver or monitor breaks passive reuse.",
+      objective: 1
     },
     {
-      "question": "Which of the following is NOT one of UVM's four architectural pillars?",
-      "answers": [
-        {"text": "Factory", "correct": false},
-        {"text": "Phasing", "correct": false},
-        {"text": "Synthesis", "correct": true},
-        {"text": "TLM Communication", "correct": false}
+      question: "One test must use err_drv (which extends fifo_drv) instead of fifo_drv, without editing the environment or agent. Which UVM mechanism does this?",
+      answers: [
+        { text: "The configuration database: set the driver type for that test", correct: false, feedback: "The configuration database passes values and handles. It does not change which class a create() call builds." },
+        { text: "A factory type override in that test, set before the environment is built", correct: true, feedback: "Right: fifo_drv::type_id::set_type_override(err_drv::get_type()) in the test's build_phase, before the env creates the driver (§8.2.3.2.5)." },
+        { text: "A TLM connection from the test to the driver", correct: false, feedback: "TLM moves transactions between components; it does not select component types." },
+        { text: "Phasing: build err_drv in a later phase", correct: false, feedback: "Components are created in build_phase; phasing orders the build, but the type substitution is the factory's job." }
       ],
-      "explanation": "UVM's four pillars are the Factory (flexible instantiation), Phasing (lifecycle orchestration), TLM (decoupled communication), and Sequences (programmable stimulus). UVM is a verification methodology — it has nothing to do with synthesis."
+      explanation: "Hard-coded new is limit 1, and the factory removes it: components call ::type_id::create, and a test registers a type override. Its failure mode is an override registered too late or for a type nobody requests, which silently does nothing.",
+      objective: 2
     },
     {
-      "question": "Why does the UVM factory use `type_id::create()` instead of direct `new()` calls?",
-      "answers": [
-        {"text": "It is faster at runtime.", "correct": false},
-        {"text": "It allows type and instance overrides without modifying existing code.", "correct": true},
-        {"text": "SystemVerilog requires it for all class construction.", "correct": false},
-        {"text": "It automatically generates coverage.", "correct": false}
+      question: "In the hand-built bench the virtual interface travels from tb_top through the constructors of the test, the env and the driver. What replaces that chain in UVM?",
+      answers: [
+        { text: "A factory override of the driver", correct: false, feedback: "The factory chooses types; it does not deliver values such as an interface handle." },
+        { text: "uvm_config_db#(virtual fifo_if)::set in tb_top, and get in the driver's and monitor's build_phase, with the return value checked", correct: true, feedback: "Right (Annex C.4.2.2). Nothing between tb_top and the driver changes when a setting is added." },
+        { text: "A sequence that carries the vif in every item", correct: false, feedback: "Sequence items carry transaction data, not testbench structure." },
+        { text: "An objection raised in tb_top", correct: false, feedback: "Objections control when a phase ends; they carry no values." }
       ],
-      "explanation": "The factory pattern allows tests to override component types (e.g., replace a normal driver with an error-injecting driver) from a central location, without touching the environment or agent code that calls `create()`."
+      explanation: "Limit 2, constructor-chain configuration, is removed by the configuration database. Its new failure mode is a get that returns 0 because a path or field name does not match, so always check the return value and report uvm_fatal.",
+      objective: 2
+    },
+    {
+      question: "A hand-built test ends with #10000 $finish, and sometimes the last few transactions are never checked. What is the UVM fix?",
+      answers: [
+        { text: "Keep the delay but increase it, and add a drain time", correct: false, feedback: "Any fixed time can be too short for some seed. Drain time only extends a phase after the last objection is dropped; it does not replace the objection." },
+        { text: "Call $finish from the scoreboard when its queue is empty", correct: false, feedback: "An empty queue can happen mid-test, and $finish skips extract, check and report." },
+        { text: "Raise an objection in the test before starting the sequence and drop it after the sequence finishes; the run phase ends when all objections are dropped", correct: true, feedback: "Right (§13.1.4.1.5, §9.3.1.7). The scoreboard then confirms in check_phase that nothing is left pending." },
+        { text: "Raise the verbosity so the missing transactions are printed", correct: false, feedback: "Verbosity changes what is printed, not when the test ends." }
+      ],
+      explanation: "Limit 3, the hand-made end of test, is removed by phasing with objections. The new failure modes are a run phase that ends at time 0 when nothing is raised, and a hang when an objection is never dropped.",
+      objective: 2
+    },
+    {
+      question: "A bound assertion prints $error while the hand-built bench prints PASS=1008 FAIL=0. Which UVM mechanism makes that error count toward the verdict?",
+      answers: [
+        { text: "Reporting: the assertion's action block uses `uvm_error, so the report server counts it and the summary shows UVM_ERROR greater than 0", correct: true, feedback: "Right. Only messages that go through the report server are counted (§6.5.1.2.6); a plain $error is not." },
+        { text: "TLM: connect the assertion to the scoreboard's analysis export", correct: false, feedback: "Assertions are not components with analysis ports; the issue is how the failure is reported." },
+        { text: "The factory: override the assertion module", correct: false, feedback: "The factory creates classes, not modules, and substitution does not change counting." },
+        { text: "Nothing: UVM counts every $error automatically", correct: false, feedback: "A plain $error bypasses the UVM report server and is missing from its severity counts." }
+      ],
+      explanation: "Limit 6, the home-made verdict, is removed by reporting: every message goes through the report server, and pass or fail is read from its summary. The new failure mode is code that still uses $display or $error and escapes the count.",
+      objective: 2
+    },
+    {
+      question: "The hand-built monitor puts every transaction into two mailboxes, one for the scoreboard and one for coverage. What is the UVM shape?",
+      answers: [
+        { text: "A uvm_driver whose seq_item_port feeds both consumers", correct: false, feedback: "seq_item_port pulls items from a sequencer into a driver; it is the stimulus path, not the observation path." },
+        { text: "A uvm_monitor that owns one uvm_tlm_analysis_fifo per consumer", correct: false, feedback: "That copies the hand-built limit into UVM: the monitor would still know its consumers." },
+        { text: "A uvm_monitor with one uvm_analysis_port; the scoreboard and a uvm_subscriber connect to it, and write() calls each of them in turn in zero time", correct: true, feedback: "Right (§12.2.10.1.4, §13.5, §13.9). A new consumer means one connect line in the env; the monitor is untouched." },
+        { text: "A uvm_sequencer that broadcasts items to every component", correct: false, feedback: "A sequencer arbitrates stimulus for a driver; it does not observe the DUT." }
+      ],
+      explanation: "Mailbox-per-consumer is limit 4; TLM analysis ports remove it. The generator and gen2drv mailbox map to a sequence on a sequencer plus seq_item_port; the monitor maps to uvm_monitor with an analysis port.",
+      objective: 3
+    },
+    {
+      question: "Which list maps the hand-built layers to UVM base classes correctly?",
+      answers: [
+        { text: "fifo_txn: uvm_component; fifo_gen: uvm_driver; fifo_cov: uvm_scoreboard", correct: false, feedback: "Transactions are transient objects (uvm_sequence_item), not components; the generator becomes a sequence; coverage is a subscriber." },
+        { text: "fifo_txn: uvm_sequence_item; fifo_gen: uvm_sequence on a uvm_sequencer; fifo_drv: uvm_driver; fifo_mon: uvm_monitor; fifo_sb: uvm_scoreboard; fifo_cov: uvm_subscriber; fifo_env: uvm_env; fifo_test: uvm_test", correct: true, feedback: "Right. UVM adds uvm_agent to group the sequencer, driver and monitor." },
+        { text: "fifo_txn: uvm_object; fifo_gen: uvm_sequencer only; fifo_env: uvm_agent; fifo_test: uvm_env", correct: false, feedback: "The sequencer only arbitrates; the stimulus itself is a sequence. The env is uvm_env, the test uvm_test." },
+        { text: "Every layer becomes a uvm_component, including the transaction and the generator", correct: false, feedback: "Transactions and sequences are objects without a place in the component hierarchy (§5.1)." }
+      ],
+      explanation: "Components are quasi-static and form the hierarchy; transactions and sequences are transient objects (IEEE 1800.2-2020 §5.1). The agent is the one new component with no hand-built equivalent.",
+      objective: 3
+    },
+    {
+      question: "Two engineers verify a 200-line CRC block with a stable spec. Formal tools are available and no reuse is planned. What is the best methodology call?",
+      answers: [
+        { text: "UVM, because every testbench needs UVM", correct: false, feedback: "That is the 'every bench needs UVM' misconception. UVM's payoff is reuse and scale, which this block does not need." },
+        { text: "UVM, because it will simulate faster than a plain bench", correct: false, feedback: "UVM adds run-time work; it is not chosen for speed." },
+        { text: "Formal for the properties plus a small self-checking SystemVerilog bench; UVM is not required", correct: true, feedback: "Right. Small, stable, no reuse: the overhead outweighs the benefit." },
+        { text: "No verification: a CRC is too simple to need it", correct: false, feedback: "Simple blocks still need verification; the question is how much infrastructure." }
+      ],
+      explanation: "Weigh reuse horizon, team size, VIP, regression scale, protocol complexity, alternative methods and tool support. A small, stable, one-off block points away from UVM; planned SoC reuse points toward it.",
+      objective: 4
+    },
+    {
+      question: "What is UVM?",
+      answers: [
+        { text: "A language extension to SystemVerilog that simulators parse natively", correct: false, feedback: "There are no UVM keywords. uvm_ names are SystemVerilog classes and macros." },
+        { text: "A simulator mode that speeds up constrained-random stimulus", correct: false, feedback: "Randomization is SystemVerilog's own (IEEE 1800-2023 Clause 18); UVM adds work rather than removing it." },
+        { text: "An IEEE 1800.2 API that defines a SystemVerilog base class library; uvm-core is the reference implementation, compiled with your bench as uvm_pkg", correct: true, feedback: "Right (§1.1, §1.4.5)." },
+        { text: "A proprietary methodology owned by one EDA vendor", correct: false, feedback: "UVM is an IEEE standard with an Accellera open-source reference implementation." }
+      ],
+      explanation: "The standard defines the API; the implementation is SystemVerilog source you compile. Features only uvm-core defines are labelled uvm-core impl. in this course.",
+      objective: 5
+    },
+    {
+      question: "Which was the first IEEE standard for UVM?",
+      answers: [
+        { text: "IEEE 1800.2-2020", correct: false, feedback: "1800.2-2020 is a revision; its front matter says 'Revision of IEEE Std 1800.2-2017'." },
+        { text: "IEEE 1800.2-2017", correct: true, feedback: "Right: approved 14 February 2017. The 2020 revision was approved on 4 June 2020." },
+        { text: "Accellera UVM 1.2", correct: false, feedback: "UVM 1.2 (June 2014) is an Accellera release, not an IEEE standard." },
+        { text: "IEEE 1800-2005", correct: false, feedback: "That is the first SystemVerilog standard, not UVM." }
+      ],
+      explanation: "Lineage: AVM and URM and eRM concepts into OVM; OVM plus VMM concepts into Accellera UVM 1.0 (2011) and 1.2 (2014); then IEEE 1800.2-2017, revised as IEEE 1800.2-2020, implemented by uvm-core.",
+      objective: 5
     }
-]} />
+  ]}
+/>
+
+### Readiness self-check for the UVM track
+
+UVM uses every one of these SystemVerilog skills from its first lesson. If you miss one, review the linked lesson before I-UVM-1A.
+
+<Quiz
+  questions={[
+    {
+      question: "A generator calls t = new() once, then in a loop randomizes t and puts it into an unbounded mailbox. What does the consumer see?",
+      answers: [
+        { text: "Every randomized value, in order, because put() copies the object", correct: false, feedback: "put() stores the handle, not a copy (IEEE 1800-2023 §15.4.3)." },
+        { text: "Several entries that all refer to one object, holding whatever values it had last", correct: true, feedback: "Right. Review I-SV-5: Mailboxes and I-SV-1 if this surprised you." },
+        { text: "A compile error, because a handle cannot be put twice", correct: false, feedback: "It compiles; the bug is at run time." },
+        { text: "Only the first item, because later puts are ignored", correct: false, feedback: "Every put stores another entry; they just share one object." }
+      ],
+      explanation: "Handles versus objects: create a new object for each item. Review /curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes."
+    },
+    {
+      question: "At rising edge k the driver executes vif.drv_cb.wr_en <= 1'b1 (output skew 0). At which edge do the DUT's flops first see wr_en = 1?",
+      answers: [
+        { text: "Edge k, because the drive happens at that edge", correct: false, feedback: "The drive lands in the Re-NBA region of edge k, after the flops have already sampled (§14.16)." },
+        { text: "Edge k+1", correct: true, feedback: "Right. That is why clocking-block drives cannot race the DUT. Review F4C if needed." },
+        { text: "Edge k+2, because clocking blocks add a cycle of delay", correct: false, feedback: "There is no extra cycle; the value is simply in place before the next edge." },
+        { text: "It depends on process order", correct: false, feedback: "Removing that dependence is exactly what the clocking block is for." }
+      ],
+      explanation: "Drive through clocking blocks and sample through them. Review /curriculum/T1_Foundational/F4C_Clocking_Blocks/index."
+    },
+    {
+      question: "Which line checks a randomization correctly?",
+      answers: [
+        { text: "assert(t.randomize());", correct: false, feedback: "If assertions are disabled, the randomize call inside assert may never run (§20.11)." },
+        { text: "t.randomize();", correct: false, feedback: "A failed randomize leaves old values and nobody notices." },
+        { text: "if (!t.randomize()) $fatal(1, \"randomize failed\");", correct: true, feedback: "Right. In UVM code the same pattern uses `uvm_fatal." },
+        { text: "void'(t.randomize());", correct: false, feedback: "This discards the result explicitly, which hides a failure." }
+      ],
+      explanation: "randomize() returns 1 on success and 0 on failure; check it. Review /curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index."
+    },
+    {
+      question: "fork A; B; join_any returns when A finishes. What happens to B?",
+      answers: [
+        { text: "B is killed automatically", correct: false, feedback: "join_any only stops waiting; the other branches keep running." },
+        { text: "B keeps running until it finishes or is stopped, for example with disable fork", correct: true, feedback: "Right. That is how the bench's watchdog is cleaned up. Review I-SV-5 and F2C." },
+        { text: "B is restarted", correct: false, feedback: "Nothing is restarted." },
+        { text: "The simulation ends", correct: false, feedback: "Only $finish (or the end of all activity) ends the simulation." }
+      ],
+      explanation: "Thread control is the backbone of every bench, and UVM's run_phase threads too. Review /curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index."
+    },
+    {
+      question: "A covergroup embedded in a class has no clocking event. When does it sample?",
+      answers: [
+        { text: "On every clock edge", correct: false, feedback: "Without a clocking event there is no automatic sampling." },
+        { text: "Whenever any of its coverpoint variables changes", correct: false, feedback: "Covergroups do not watch variables for changes." },
+        { text: "Only when the code calls cg.sample()", correct: true, feedback: "Right, as fifo_cov does after each get. Review I-SV-3A." },
+        { text: "Once, at the end of simulation", correct: false, feedback: "Coverage is collected during simulation, at each sample." }
+      ],
+      explanation: "A uvm_subscriber's write() method is where such a sample() call lives. Review /curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index."
+    },
+    {
+      question: "class reg_t #(type T = int); static int count; endclass. How many count variables exist if code uses reg_t#(int) and reg_t#(byte)?",
+      answers: [
+        { text: "One, shared by every specialization", correct: false, feedback: "Each specialization of a parameterized class is its own class with its own static members." },
+        { text: "Two: one per specialization", correct: true, feedback: "Right. UVM's type_id is exactly this: a parameterized registry class per type with static members. Review I-SV-1: Parameterized Classes." },
+        { text: "None until an object is constructed", correct: false, feedback: "Static members exist without any object." },
+        { text: "One per object", correct: false, feedback: "That describes non-static members." }
+      ],
+      explanation: "The factory relies on parameterized classes with static members and on $cast between base and derived handles. Review /curriculum/T2_Intermediate/I-SV-1_OOP/parameterized-classes and /curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls."
+    }
+  ]}
+/>
+
+### Kata: predict the cost of a change request
+
+For each change request, list the classes you would edit in the Make It Work bench, then name the UVM mechanism that would avoid most of those edits. Write your answers before opening the solution.
+
+1. Swap in a driver that drops every tenth write.
+2. Add a second coverage collector for a new metric.
+3. Reuse the monitor, scoreboard and coverage at SoC level, where RTL drives the FIFO.
+4. Set the number of items from the command line.
+5. End the test exactly when the scoreboard has checked everything, in a bench that has two environments.
+6. Make the log quiet except for errors.
+
+<details>
+<summary>Worked solution</summary>
+
+| # | Hand-built: classes edited | UVM mechanism | UVM: what changes |
+|---|---|---|---|
+| 1 | New `fifo_drv` subclass; `fifo_env` (the `new` line or a knob); `fifo_test` | Factory | New subclass plus one `set_type_override` in a new test |
+| 2 | `fifo_mon` (third mailbox, constructor, `publish`); `fifo_env` | TLM analysis port | New subscriber built in the env and one `connect` line; monitor untouched |
+| 3 | A copy of `fifo_env` without `gen` and `drv`, or knobs through `fifo_env` and `fifo_test` | Agent with `is_active` from the configuration database | One configuration setting; the agent and env classes are unchanged |
+| 4 | Nothing: `n` is already a `+N=` knob, but it is threaded through two constructors | Configuration database | The test reads it once and sets it; or `+uvm_set_config_int` (Annex G.2.8) |
+| 5 | Both envs' `run` tasks and the test, to agree on who decides the end | Phasing with objections | Each top sequence or test raises and drops; the run phase ends when all are dropped |
+| 6 | Every `$display` call | Reporting | `+UVM_VERBOSITY=UVM_LOW` or a verbosity setting; no code edits |
+
+Item 4 is the honest exception: a well-written hand-built bench can already take command-line knobs. What it cannot do without edits is deliver them to a component deep in the hierarchy.
+</details>
+
+### Kata: the bridge capstone
+
+Build the Make It Work bench yourself, from an empty file, on your simulator. **Acceptance:** zero mismatches over at least 1,000 random items, `pending=0`, coverage of at least 90%, the three bound assertions passing, and `PASS=<n> FAIL=0`. Then:
+1. Inject each of the three mutants and confirm the symptom you predicted.
+2. Make one change the bench cannot express cleanly (for example, the driver that drops every tenth write in one test only) and record every file you had to edit. Keep that list: you will redo the same change with a factory override in [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index).
+
+<details>
+<summary>Self-check list for the capstone</summary>
+
+- The interface has two clocking blocks, and no class touches a DUT input outside `drv_cb`.
+- The generator and the monitor call `new` for every item.
+- The monitor captures read data one edge after the accepted `rd_en`.
+- The scoreboard checks rejected writes and reads too, so a broken `full` or `empty` flag is caught.
+- The end of test waits for the scoreboard, with a watchdog that reports a timeout.
+- The verdict counts mismatches, pending items and the timeout. Note that it still cannot see `fifo_sva`'s `$error`: that is limit 6.
+</details>
+
+A dedicated lab for this capstone (`fifo-1`) is planned. When you reach the UVM half, the same FIFO is rebuilt in UVM in this lab (do it after [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)):
+
+<LabLink labId="uvm-mini-capstone" />
+
+The flashcards for this lesson follow below, under "Reinforce the essentials".
 
 ## References & Next Topics
-- IEEE 1800.2-2020 UVM LRM: Clause 1 (Overview and Philosophy).
-- Accellera UVM 1.2 User Guide: Chapter 1 — "Introduction to UVM".
-- Next: [I-UVM-1A: UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) — Begin constructing your first UVM building blocks.
+
+**Primary sources**
+- IEEE 1800.2-2020, *IEEE Standard for Universal Verification Methodology Language Reference Manual*: Introduction (informative: lineage from AVM, URM, eRM, OVM and VMM); §1.1 Scope; §1.4.3 Inheritance; §1.4.4 Operation order on equivalent data objects; §1.4.5 uvm_pkg; §1.4.6 Random stability; §5.1 Base classes overview; Clause 6 Reporting classes (§6.5 Report server, §6.5.1.2.6 get_severity_count); Clause 8 Factory classes (§8.2.3.2.4 create, §8.2.3.2.5 set_type_override); §9.3.1.7 Phase done objections; §9.6 and §9.8 phases; §10.5 Objection mechanism; §12.2.10 Analysis ports (§12.2.10.1.4 write); §13.1.4.1.5 run_phase; §13.2 uvm_test; §13.3 uvm_env; §13.4 uvm_agent (§13.4.2.2 get_is_active); §13.5 uvm_monitor; §13.6 uvm_scoreboard; §13.7 uvm_driver (§13.7.2.1 seq_item_port); §13.9 uvm_subscriber; §14.1 uvm_sequence_item; §14.2.3.1 start; §14.3 uvm_sequence; §15.5 uvm_sequencer (§15.5.2.2 seq_item_export); §18.1.5.6 mirror; Annex B.1 Report macros; Annex B.2.2 Field macros; Annex C.4 UVM configuration database; Annex E; Annex F.7.3.1 run_test; Annex G.2 command line arguments; Annex H Deprecation.
+- IEEE 1800-2023, *IEEE Standard for SystemVerilog*: §4.7 Nondeterminism; §4.8 Race conditions; Clause 8 Classes; §14.3 Clocking block declaration; §14.13 Input sampling; §14.16 Synchronous drives; §15.4 Mailboxes; Clause 18 Constrained random value generation; Clause 19 Functional coverage; §20.11 Assertion control system tasks; §23.11 Binding auxiliary code to scopes or instances; §25.9 Virtual interfaces.
+- uvm-core 2020.3.1, Accellera reference implementation (github.com/accellera-official/uvm-core): `src/macros/uvm_global_defines.svh`, `src/base/uvm_root.svh`, `src/base/uvm_component.svh`, `src/base/uvm_objection.svh`, `src/base/uvm_phase.svh`.
+- History: IEEE SA records for IEEE 1800.2-2017 (approved 2017-02-14) and IEEE 1800.2-2020 (approved 2020-06-04); Mentor AVM announcement (2006-05-08); Cadence and Mentor OVM announcement (2008-01-09); Accellera UVM 1.0 (announced 2011-02-21) and UVM 1.2 (2014-06-24) releases.
+- Legacy reading: Accellera *UVM 1.2 User's Guide* (2015), Chapter 1 "Overview". It describes the pre-IEEE UVM 1.2 library.
+
+**Related**
+- [I-UVM-1A UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index): objects versus components, registration and the hierarchy.
+- [I-UVM-1B The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index), [I-UVM-1C UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index), [I-UVM-1D Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index).
+- [I-UVM-2A Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index), [I-UVM-2B TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index), [I-UVM-2C Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index).
+- [I-UVM-3A Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index), [I-UVM-3B Advanced Sequencing](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index), and [I-UVM-3C Your First Complete UVM Testbench](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index), where the whole UVM version of a bench like this one is assembled and run.
+- [I-UVM-4 Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index), [I-UVM-5 Container Classes](/curriculum/T2_Intermediate/I-UVM-5_UVM_Container_Classes/index), [I-UVM-6 Recording Classes](/curriculum/T2_Intermediate/I-UVM-6_UVM_Recording_Classes/index).
+- [F4B Interfaces and Modports](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index) and [I-SV-4C Checkers and Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index): the interface and the bound assertions in the capstone.
+- [A-UVM-7 VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) and [E-PERF-1 UVM Performance](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index): reuse and cost at scale.
+
+**A map of where each UVM component role is taught.** Select a box to see its responsibilities and the lesson that goes deeper. Read it as a navigation map, not as a data-flow diagram: the test contains the environment, which contains the agents and analysis components.
+
+<InteractiveUvmArchitectureDiagram />
+
+<NextLesson />

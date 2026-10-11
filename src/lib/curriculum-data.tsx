@@ -570,15 +570,17 @@ export const curriculumData: Module[] = [
             "description": "Pass transactions between testbench threads through typed, bounded mailboxes: predict when each call waits and what it returns, choose each channel's depth, and avoid the shared-handle bug."
           },
           {
-            "title": "Semaphores | Advanced SystemVerilog for Verification",
+            "title": "Semaphores: Keys, Mutual Exclusion and Deadlock",
             "slug": "semaphores",
-            "description": "Control access to shared resources using semaphore keys."
+            "description": "Guard shared resources with single- and multi-key semaphores, predict key counts and wake-up order, and diagnose leaked keys, lock-order deadlocks and starvation from their symptoms."
           }
         ],
         "track": "core",
         "prerequisites": [
           "F2C_Procedural_Code_and_Flow_Control",
-          "I-SV-1_OOP"
+          "I-SV-1_OOP",
+          "F4B_Interfaces_and_Modports",
+          "F4C_Clocking_Blocks"
         ],
         "milestones": [
           "M2",
@@ -592,7 +594,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-6: Compiler Directives & Generate Constructs",
             "slug": "index",
-            "description": "Master SystemVerilog's compile-time toolkit: preprocessor directives, macro hygiene, and generate blocks for scalable, configurable verification IP."
+            "description": "Predict and write hygienic macros and conditional builds, generate labelled checker instances and find their paths, and choose compile-, elaboration- or run-time configuration for a testbench."
           }
         ],
         "track": "core",
@@ -611,7 +613,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-7: DPI & Foreign Language Interfaces",
             "slug": "index",
-            "description": "Connect SystemVerilog to C/C++ and beyond using the Direct Programming Interface. Master import/export semantics, type marshaling, memory ownership, and build workflows."
+            "description": "Call C reference models from SystemVerilog through DPI-C with correct type mapping, memory ownership, scope and time semantics, and build, load and debug the shared library."
           }
         ],
         "track": "core",
@@ -625,13 +627,13 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "Why UVM? The Bridge from SystemVerilog to Verification Methodology",
+        "title": "I-SV-9: Why UVM? From a Layered SystemVerilog Testbench to UVM",
         "slug": "I-SV-9_Why_UVM",
         "topics": [
           {
-            "title": "Why UVM? The Bridge from SystemVerilog to Verification Methodology",
+            "title": "I-SV-9: Why UVM? From a Layered SystemVerilog Testbench to UVM",
             "slug": "index",
-            "description": "Understand the testbench scalability and reuse problems that motivated the Universal Verification Methodology, and preview the four pillars you will master across T2 and T3."
+            "description": "Map a layered class-based SystemVerilog testbench onto UVM and explain which scaling and reuse problems each UVM mechanism removes."
           }
         ],
         "track": "core",
@@ -653,7 +655,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-1A: UVM Objects and Components",
             "slug": "index",
-            "description": "Understand the fundamental split between data containers and structural elements in UVM testbenches."
+            "description": "Choose between uvm_object and uvm_component, write registered classes with correct constructors, and predict the component tree and object-method behaviour they produce."
           }
         ],
         "track": "core",

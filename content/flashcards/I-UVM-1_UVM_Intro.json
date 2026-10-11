@@ -2,26 +2,76 @@
   {
     "id": "uvm1-objects-components",
     "question": "How do `uvm_object` and `uvm_component` differ in a UVM testbench?",
-    "answer": "`uvm_object` derivatives are transactional data that can be created, copied, and sent around; `uvm_component` derivatives live in the hierarchy, run through phasing, and wire the environment together."
+    "answer": "`uvm_object` derivatives are data (sequence items, sequences, configuration objects): created when needed, passed by handle and copied or cloned when needed. `uvm_component` derivatives form the quasi-static tree: built by time 0, each with a parent and a unique full name, and stepped through the phases (IEEE 1800.2-2020 §5.1)."
   },
   {
     "id": "uvm1-register",
-    "question": "Why must each class call `uvm_object_utils` or `uvm_component_utils`?",
-    "answer": "The macros register the class with the factory so it can be constructed via `type_id::create`, cloned, and targeted by overrides."
+    "question": "What does `uvm_object_utils(T)` or `uvm_component_utils(T)` add to a class?",
+    "answer": "A `type_id` typedef (the factory proxy you call as `T::type_id::create`), `get_type()`, `get_object_type()` and `get_type_name()` (Annex B.2.1.2, B.2.1.3). The object macro also adds `create()`, which `clone()` relies on; in uvm-core 2020.3.1 components get no `create()` and are built by the registry with `new(name, parent)`."
   },
   {
     "id": "uvm1-create",
-    "question": "What happens if a component calls `new()` instead of `type_id::create()`?",
-    "answer": "The factory never sees the construction request, so any overrides or configuration that rely on the factory are ignored."
+    "question": "What do you lose if a component is built with `new()` instead of `T::type_id::create()`?",
+    "answer": "The factory is bypassed, so no type or instance override can ever replace that class. The component is still a normal child of the parent you pass, and `uvm_config_db` settings still reach it."
   },
   {
-    "id": "uvm1-override-scope",
-    "question": "When would you choose an instance override over a type override?",
-    "answer": "Use an instance override when only a specific hierarchy path should swap implementations—for example, one agent in a multi-agent environment."
+    "id": "i-uvm-1a-1",
+    "question": "Why does an object constructor need `string name = \"…\"` while a component constructor takes `(string name, uvm_component parent)`?",
+    "answer": "The object macro's `create()` calls `new()` with no argument, so every object constructor argument needs a default (B.2.1.2). The component registry always calls `new(name, parent)` (§8.2.3.2.1), and the constructor must call `super.new(name, parent)` (§13.1.2.1)."
   },
   {
-    "id": "uvm1-verify",
-    "question": "How can you confirm that a factory override actually took effect?",
-    "answer": "Print the topology or log `get_type_name()` calls (e.g., via `uvm_top.print_topology()` or custom `print_type()` methods) to see the substituted class names."
+    "id": "i-uvm-1a-2",
+    "question": "Where, and with which parent, does a component create its children?",
+    "answer": "In its own `build_phase`, with `T::type_id::create(\"leaf_name\", this)`. The parent is the argument you pass, not the code that makes the call."
+  },
+  {
+    "id": "i-uvm-1a-3",
+    "question": "What is `uvm_test_top`, and what happens to a component created with a `null` parent?",
+    "answer": "`run_test` creates the test through the factory with the name `uvm_test_top` (F.7.3.1). A component with a `null` parent becomes a child of `uvm_root`, the implicit top (§13.1.2.1, F.7), so its full name is just its leaf name and settings scoped to its intended path miss it."
+  },
+  {
+    "id": "i-uvm-1a-4",
+    "question": "What happens if two children of one parent get the same leaf name?",
+    "answer": "IEEE 1800.2-2020 §13.1.2.1 requires an error; uvm-core 2020.3.1 stops with `UVM_FATAL [CLDEXT]`. Ports and exports are children too, so they share the same name space."
+  },
+  {
+    "id": "i-uvm-1a-5",
+    "question": "When can a component be created, and what does uvm-core do if you try later?",
+    "answer": "No later than the build phase, which runs at time 0. uvm-core 2020.3.1 reports `UVM_FATAL [ILLCRT] It is illegal to create a component … after the build phase has ended.`"
+  },
+  {
+    "id": "i-uvm-1a-6",
+    "question": "What does `super.build_phase(phase)` do in a UVM base class, and what breaks if you skip it?",
+    "answer": "It runs automatic configuration: `apply_config_settings` when `use_automatic_config()` returns 1, the default (§13.1.4.1.1, §13.1.5.2). It creates no children. Skip it and registered fields and, in uvm-core, an agent's `is_active` keep their defaults, silently."
+  },
+  {
+    "id": "i-uvm-1a-7",
+    "question": "When should you use `copy()` and when `clone()`?",
+    "answer": "`copy(rhs)` fills an object you already have. `clone()` creates a new object of the same type (`create(get_name())`, then `copy`) and returns a `uvm_object`, so `$cast` it back. A clone never consults the factory."
+  },
+  {
+    "id": "i-uvm-1a-8",
+    "question": "What are the rules for writing `do_copy` and `do_compare`?",
+    "answer": "Both `$cast` `rhs` to your type. `do_copy` calls `super.do_copy(rhs)` first (§5.3.8.2). `do_compare` returns 1 on a match and compares through the comparer, for example `comparer.compare_field_int`, combined with `super.do_compare` (§5.3.9, §5.3.9.2)."
+  },
+  {
+    "id": "i-uvm-1a-9",
+    "question": "What is the difference between `convert2string()` and `print()`?",
+    "answer": "`convert2string()` returns a one-line string you put in your own messages; its default is `\"\"` (§5.3.6.4). `print()` formats every field through a printer policy, a table by default, and writes it straight to the output."
+  },
+  {
+    "id": "i-uvm-1a-10",
+    "question": "Why can a component not be cloned?",
+    "answer": "A component is unique: one leaf name under one parent in a tree fixed at build time. uvm-core's `uvm_component::clone` reports `UVM_ERROR [ILLCLN]` and returns `null`; share the handle instead."
+  },
+  {
+    "id": "i-uvm-1a-11",
+    "question": "How do `lookup()` and `uvm_root::get().find()` differ?",
+    "answer": "`lookup(\"env.agt.drv\")` follows an exact path relative to the calling component (a leading `.` makes it absolute) and allows no wildcards (§13.1.3.7). `find(\"*.drv\")` matches a wildcard pattern against every full name and returns the first match (F.7.4.1)."
+  },
+  {
+    "id": "i-uvm-1a-12",
+    "question": "Does a failing `compare()` fail the test?",
+    "answer": "No. uvm-core's default comparer logs `MISCMP` as `UVM_INFO` at `UVM_LOW` and `compare()` returns 0. The scoreboard must check the result and raise its own `` `uvm_error ``."
   }
 ]

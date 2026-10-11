@@ -2,26 +2,76 @@
   {
     "id": "isv6-1",
     "question": "`define macro vs parameter?",
-    "answer": "A macro is text substitution done before parsing (§22.5.1): no type, no scope, global from the point of definition. A parameter is a typed, scoped constant resolved at elaboration and overridable per instance."
+    "answer": "A macro is text that the compiler pastes in as it reads the source (§22.5.1): it has no type, and it stays defined from its definition until `undef or the end of the compilation unit, whatever module it was written in. A parameter is a typed, scoped constant set at elaboration and overridable per instance."
   },
   {
     "id": "isv6-2",
     "question": "What does a loop generate construct create?",
-    "answer": "Elaborated copies of its body, one per genvar value (§27.4). A labelled loop gives each iteration a scope such as gen_chk[2]."
+    "answer": "Elaborated copies of its body, one per genvar value, all built before time 0 (§27.4). A labelled loop gives each copy a scope such as gen_chk[2]."
   },
   {
     "id": "isv6-3",
-    "question": "Hierarchical path of the instance chk_inst inside `for (genvar i…) begin : gen_chk`?",
-    "answer": "top.gen_chk[i].chk_inst — the block label and index are part of the path, which is what config_db strings, bind targets and waveform searches must use."
+    "question": "Hierarchical path of the instance chk_inst inside `for (genvar i…) begin : gen_chk` in module top?",
+    "answer": "top.gen_chk[i].chk_inst: the block label and the index are part of the path, not of the instance name. bind instance paths, %m, hierarchical references and waveform viewers use this path; uvm_config_db scopes name UVM components (uvm_test_top.env…) instead."
   },
   {
     "id": "isv6-4",
     "question": "What name does an unlabelled generate block get?",
-    "answer": "An implementation-independent external name of the form genblk<n> (§27.6). Always label generate blocks so paths are readable and stable."
+    "answer": "genblk<n>, where n is the position of its generate construct among all the generate constructs in the scope, labelled or not (§27.6). Label every generate block so that its path cannot change when someone adds a construct above it."
   },
   {
     "id": "isv6-5",
     "question": "`ifdef vs generate if?",
-    "answer": "`ifdef selects source text at compile time from macro definitions. A generate if selects hardware at elaboration from parameter values, so different instances can differ."
+    "answer": "`ifdef keeps or skips source text at compile time, depending on whether a macro is defined. A generate if chooses at elaboration, from parameter values, which block of the design is built, so different instances of the same module can differ."
+  },
+  {
+    "id": "isv6-6",
+    "question": "With `define SQ(x) x*x and a = 2, what does y = `SQ(a+1); assign?",
+    "answer": "5, not 9. The argument text is pasted as written, giving a+1*a+1 (§22.5.1). Write `define SQ(x) ((x)*(x)): parentheses around every use of an argument and around the whole body."
+  },
+  {
+    "id": "isv6-7",
+    "question": "Why can `MAX(bump(), 0) call bump() twice?",
+    "answer": "Macro arguments are substituted as text, not evaluated once like function arguments, and ((a) > (b) ? (a) : (b)) contains a twice (§22.5.1). The selected branch calls bump() a second time. Use a function when an argument has a side effect."
+  },
+  {
+    "id": "isv6-8",
+    "question": "What do `\" and `` do inside macro text?",
+    "answer": "`\" builds a string literal in which arguments are substituted: `\"x = %0d`\" with x = cnt becomes \"cnt = %0d\". `` joins tokens with no space: n``_q with n = state becomes state_q. Inside an ordinary \"...\" string nothing is substituted (§22.5.1)."
+  },
+  {
+    "id": "isv6-9",
+    "question": "Why does if (c) `uvm_info(\"ID\", \"msg\", UVM_LOW); else ... fail to compile?",
+    "answer": "In uvm-core, `uvm_info expands to a begin…end block that already completes the if, so the ; after it is a separate null statement and the else has no if to belong to. Write the UVM report macros without a semicolon. The same expansion passes `__FILE__ and `__LINE__, which expand where the macro is used, so the log names the caller's line."
+  },
+  {
+    "id": "isv6-10",
+    "question": "Does `resetall undefine macros?",
+    "answer": "No. It resets the directives that have defaults, such as `timescale (to the tool default) and `default_nettype (to wire) (§22.3); text macros are not affected (§22.5). `undef removes one macro, and `undefineall removes every macro in the compilation unit, include guards and UVM macros included (§22.5.3)."
+  },
+  {
+    "id": "isv6-11",
+    "question": "file_a.sv ends with `default_nettype none. Why does the next file in the same compilation unit now fail?",
+    "answer": "A directive stays in force across all later files of the compilation unit until another directive replaces it (§22.2, §3.12.1), so the next file can no longer create implicit nets. End file_a.sv with `default_nettype wire, or compile third-party code as its own unit."
+  },
+  {
+    "id": "isv6-12",
+    "question": "Is always_ff @(posedge clk) q[i] <= d[i]; legal inside a for (genvar i …) loop generate block?",
+    "answer": "Yes. Inside each generated block, i is an implicit localparam holding that block's value, and procedural code may read it (§27.4). What is illegal is using a genvar as the loop variable of a procedural for loop; use int there."
+  },
+  {
+    "id": "isv6-13",
+    "question": "Why does tb_top.gen_chk[k].u_chk fail to compile when k is a run-time variable?",
+    "answer": "An index after an instance array or generate block name in a hierarchical path is an instance select and must be a constant expression (§23.6). Reach each instance from inside a generate loop, or copy handles into an array at time 0 and index that array."
+  },
+  {
+    "id": "isv6-14",
+    "question": "After `define TB_COVERAGE 0, does `ifdef TB_COVERAGE keep its block?",
+    "answer": "Yes. `ifdef tests only whether the name is defined as a macro, never its text (§22.6). To switch a flag off, leave it undefined or `undef it."
+  },
+  {
+    "id": "isv6-15",
+    "question": "A regression must turn a checker on for some runs only, without rebuilding. Macro, parameter or plusarg?",
+    "answer": "A plusarg read with $test$plusargs or $value$plusargs (§21.6), or a configuration object: both are read at run time. A `define needs a recompile, and a parameter or generate change needs a new elaboration."
   }
 ]
