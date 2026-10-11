@@ -406,6 +406,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         modules: [
           { id: 'B-AMBA-1_Protocol_Families_and_Tradeoffs' },
           { id: 'B-AMBA-2_Protocol_Intuition_and_Memory_Hooks' },
+          { id: 'B-APB-1_APB_Protocol_and_Verification' },
           { id: 'B-AHB-1_AHB_Design_Timing_Mechanics' },
           { id: 'B-AHB-2_AHB_Pitfalls_and_Deadlocks' },
           { id: 'B-AHB-3_AHB_Verification' },

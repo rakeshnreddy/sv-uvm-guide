@@ -1163,6 +1163,26 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "B-APB-1: APB Protocol & Verification",
+        "slug": "B-APB-1_APB_Protocol_and_Verification",
+        "topics": [
+          {
+            "title": "B-APB-1: APB Protocol & Verification",
+            "slug": "index",
+            "description": "Read, drive and check APB transfers and build the simplest complete protocol agent, with PREADY wait states and PSLVERR errors."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "A-UVM-7_VIP_Construction",
+          "B-AMBA-2_Protocol_Intuition_and_Memory_Hooks"
+        ],
+        "milestones": [
+          "M5",
+          "M7"
+        ]
+      },
+      {
         "title": "AHB Protocol Design & Timing",
         "slug": "B-AHB-1_AHB_Design_Timing_Mechanics",
         "topics": [

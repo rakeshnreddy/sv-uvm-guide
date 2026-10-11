@@ -206,7 +206,7 @@ describe('modules by tier', () => {
     const map = screen.getByRole('group', { name: 'Curriculum map' });
     const links = within(map).getAllByRole('link');
     expect(links).toHaveLength(tiers.reduce((n, t) => n + t.modules.length, 0));
-    expect(within(map).getAllByText('Planned')).toHaveLength(PLANNED_MODULES.length);
+    expect(within(map).queryAllByText('Planned')).toHaveLength(PLANNED_MODULES.length);
     const f2d = links.find((a) => a.getAttribute('href') === '/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index')!;
     expect(f2d).toHaveAccessibleDescription(/Needs F2C\. Unlocks F2E, F3A, F4A/);
     act(() => {

@@ -126,14 +126,6 @@ export interface PlannedModule {
  * fails while a planned code is also a real module.
  */
 export const PLANNED_MODULES: readonly PlannedModule[] = [
-  {
-    code: 'B-APB-1',
-    title: 'APB Protocol & Verification',
-    tierId: 'T3_Advanced',
-    after: 'B-AMBA-2_Protocol_Intuition_and_Memory_Hooks',
-    lane: 'AMBA protocols',
-    summary: 'Read, drive and check APB transfers and build the simplest complete protocol agent.',
-  },
 ];
 
 // ---------------------------------------------------------------------------

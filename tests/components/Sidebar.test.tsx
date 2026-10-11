@@ -75,7 +75,7 @@ describe('course outline model', () => {
       expect(tier.moduleCount).toBe(manifest.tiers[index].modules.length);
     });
     expect(outline).toHaveLength(4);
-    expect(outline.reduce((sum, tier) => sum + tier.moduleCount, 0)).toBe(73);
+    expect(outline.reduce((sum, tier) => sum + tier.moduleCount, 0)).toBe(74);
   });
 
   it('groups consecutive elective modules and labels their track', () => {
