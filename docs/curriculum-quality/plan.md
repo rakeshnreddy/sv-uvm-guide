@@ -211,9 +211,9 @@ Each wave runs the implementation workflow:
 | W2-SV | L07a/b (F4A, F4B), L09a–c and L10a/b (I-SV-1 pages), L11 (I-SV-2A), L12a–e (I-SV-2B pages and lab), L13 (I-SV-3A), L14a–d (I-SV-3B pages and lab), L15a/b (I-SV-4A pages), L16a–d (I-SV-4B pages, I-SV-4C), L16e (lab assertions-1) | L07–L16 verified; the lead gives every module and split sub-lesson its own deck | integrated (ee80d622) |
 | W2-UVM | L20a/b (I-UVM-1B, 1C), L21a/b (2A, 2B), L22a/b (2C with config-debug, 3A), L23a–d and L24a–e (I-UVM-3B pages) | L20–L24 verified; decks as for W2-SV | integrated (f817f3e3, 1ca80725) |
 | W3 | L25 (I-UVM-4/5/6), N03 (I-UVM-1D), N04 (I-UVM-3C) | L25 verified; the lead adds N03/N04 placeholders | integrated (f817f3e3, fd561ca8) |
-| W4 | L26–L31 (RAL, callbacks, scoreboards, VIP, multi-agent); N05 (A-UVM-9) later | L26–L31 verified | integrated (a848ca73); N05 A-UVM-9 scaffolded (3b3a7113), authoring |
-| W5 | L32–L40 (AMBA), N06 (B-APB-1) | L32–L40 verified | waiting |
-| W6 | L41–L48 (expert tier), G29 bank fixes | L41–L48 analysed and verified | running (16 groups) |
+| W4 | L26–L31 (RAL, callbacks, scoreboards, VIP, multi-agent); N05 (A-UVM-9) later | L26–L31 verified | integrated (a848ca73); N05 A-UVM-9 integrated (d71d8e21) |
+| W5 | L32–L40 (AMBA), N06 (B-APB-1) | L32–L40 verified | authoring (first run cut off by a usage limit; restarted 2026-10-11 as wf_5c2a93ed, authors continue from their partial work) |
+| W6 | L41–L48 (expert tier), G29 bank fixes | L41–L48 analysed and verified | 10 groups authored, in review (wf_3c68019d; their first reviews never ran); L45b, L47a–c, L48a/b re-authoring with W5; G29 banks running (wf_3c258e81) |
 
 Waves overlap when usage allows. A group whose verifier could not run still proceeds; its accuracy reviewer then also re-checks the analyst's S1/S2 claims.
 
