@@ -1,1 +1,82 @@
-[]
+[
+  {
+    "id": "isv8-1",
+    "question": "What is UPF, and what happens to the RTL when you load it?",
+    "answer": "UPF (IEEE 1801, the Unified Power Format) is a side file of Tcl commands that describes power intent: domains, supplies, switches and protection strategies. The RTL is unchanged; simulation, synthesis, equivalence checking and place and route read the RTL and the UPF together (IEEE 1801-2018 §1.3)."
+  },
+  {
+    "id": "isv8-2",
+    "question": "What is a power domain, and how do -elements and -include_scope build one?",
+    "answer": "A group of instances that share one primary supply and power up and down together. `create_power_domain PD_CPU -elements {u_cpu}` puts u_cpu and everything below it in the domain; `-include_scope` puts the current scope itself in it. Every instance ends up in exactly one domain, and a more specific -elements entry wins."
+  },
+  {
+    "id": "isv8-3",
+    "question": "Supply port, supply net, supply set, supply-set handle: what is each?",
+    "answer": "A supply port is a power connection point (a pad at the top). A supply net carries a supply to its loads. A supply set bundles functions such as power and ground. A handle such as `PD_CPU.primary` is the slot in a domain that you fill with `associate_supply_set`."
+  },
+  {
+    "id": "isv8-4",
+    "question": "What does create_power_switch do, and can it turn 1.2 V into 0.8 V?",
+    "answer": "It connects an input supply to an output supply when its control expression is true (`-on_state`) and turns the output off otherwise (`-off_state`); the control is a design net such as `cpu_pwr_en`. It cannot change voltage: a 0.8 V domain needs its own 0.8 V supply as the switch input."
+  },
+  {
+    "id": "isv8-5",
+    "question": "What does a power-aware simulator do to a domain when its supply turns off?",
+    "answer": "It corrupts it: every register and every signal driven from the domain takes X (4-state types) or a default value, typically 0 (2-state types such as bit), and the domain's processes stop responding until power returns."
+  },
+  {
+    "id": "isv8-6",
+    "question": "VDD_CPU comes back on. What do the domain's registers hold before any reset or restore?",
+    "answer": "X. Power returning restores nothing: registers stay X until a domain reset, a retention restore or a normal clocked load writes them."
+  },
+  {
+    "id": "isv8-7",
+    "question": "What does an isolation strategy do, and which supply must its cells use?",
+    "answer": "`set_isolation` puts cells on selected boundary ports that drive a clamp value (0, 1, Z or latch) while the isolation signal is active, so receivers that stay on never see X. The cells must use an always-on `-isolation_supply_set`; an X isolation enable gives X."
+  },
+  {
+    "id": "isv8-8",
+    "question": "How does a retention strategy keep a register through power-down?",
+    "answer": "`set_retention -elements {...}` gives each listed register a shadow on an always-on retention supply. A save event copies the register into the shadow; after power returns, a restore event copies it back. Saving after power-off saves X."
+  },
+  {
+    "id": "isv8-9",
+    "question": "Are isolation and retention interchangeable?",
+    "answer": "No. Isolation protects the always-on receivers while the source is off and keeps nothing. Retention keeps selected state inside the switched domain for after power-up and protects nobody while it is off. `-clamp_value latch` holds an output value; it does not retain a register."
+  },
+  {
+    "id": "isv8-10",
+    "question": "What is a level-shifter strategy, and how does it show up in RTL simulation?",
+    "answer": "`set_level_shifter` says which crossings between domains at different voltages need shifters (`-applies_to`, `-rule low_to_high|high_to_low|both`, `-location`); implementation inserts the cells. In RTL simulation values pass through unchanged, so most level-shifter bugs are found by static checkers (tool-dependent)."
+  },
+  {
+    "id": "isv8-11",
+    "question": "Supply value, supply-set power state, domain power state, simstate: how do they stack?",
+    "answer": "Supplies carry a state and voltage such as `{FULL_ON 0.8}`. A supply set's power state is defined from them with `-supply_expr` and carries a simstate (NORMAL ... CORRUPT) that tells the simulator how to behave. A domain's power state is defined from its supply sets with `-logic_expr`."
+  },
+  {
+    "id": "isv8-12",
+    "question": "Does a power state table (create_pst, add_pst_state) drive power-aware simulation?",
+    "answer": "No. A PST lists legal combinations of supply-port states for static analysis. It has been legacy since IEEE 1801-2013 (§6.23 in 1801-2018). Simulation follows the supply values and the simstates of the current power states."
+  },
+  {
+    "id": "isv8-13",
+    "question": "What is the safe power-down and power-up order for a domain with isolation, retention and a gated clock?",
+    "answer": "Down: stop the clock, isolate, save, power off. Up: power on (wait for the acknowledge), reset the domain, restore, restart the clock, release isolation. Each controlled change goes on its own clock cycle."
+  },
+  {
+    "id": "isv8-14",
+    "question": "After wake-up, a retained register holds its reset value instead of its saved value. What went wrong?",
+    "answer": "The domain reset came after (or during) the restore and overwrote it. Reset first, then restore. With the clock stopped, the domain reset must be asynchronous to take effect at all."
+  },
+  {
+    "id": "isv8-15",
+    "question": "What happened to set_isolation_control and set_retention_control?",
+    "answer": "They are UPF 1.0 split commands. IEEE 1801-2013 deprecated them, and they are not in the IEEE 1801-2018 command list: their control options (`-isolation_signal`, `-isolation_sense`, `-save_signal`, `-restore_signal`) belong in `set_isolation` and `set_retention`."
+  },
+  {
+    "id": "isv8-16",
+    "question": "How does a testbench power the chip in a power-aware simulation?",
+    "answer": "It drives every top-level supply port, usually at time 0, with functions from the simulator's `UPF` package, for example `void'(supply_on(\"u_soc/VDD\", 1.2));` (IEEE 1801-2018 §11.2 HDL interface). The state of an undriven supply port is tool-dependent, and the path syntax is too."
+  }
+]

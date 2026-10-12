@@ -1,34 +1,77 @@
 [
   {
-    "front": "Why is hardware emulation used for verification?",
-    "back": "Emulation runs RTL 100-10,000x faster than software simulation, enabling system-level workloads (OS boot, firmware execution, video streaming) that would take weeks in simulation."
+    "id": "e-emu-1-1",
+    "question": "Why move a SoC testbench onto an emulator?",
+    "answer": "To run workloads that need billions of clock cycles, such as OS boot, firmware and long traffic, in hours instead of weeks. Published co-emulation results range from 60x to 491x over simulation on six designs (Mentor, Veloce TBX, DVCon 2011); the speed-up depends on the use mode and the bench."
   },
   {
-    "front": "What are the three major emulation platforms?",
-    "back": "Cadence Palladium Z2/Z3, Synopsys ZeBu EP1, and Siemens Veloce Strato/Primo. Each uses custom FPGA or processor-based architecture for RTL acceleration."
+    "id": "e-emu-1-2",
+    "question": "How do the three main emulator families differ in architecture?",
+    "answer": "Cadence Palladium uses custom emulation processors, Siemens Veloce Strato CS uses Siemens' custom Crystal accelerator chip, and Synopsys ZeBu uses commercial AMD/Xilinx FPGAs (vendor announcements, 2021-2025). The architecture drives compile turnaround, speed and debug visibility, so the platforms are not interchangeable."
   },
   {
-    "front": "What is Transaction-Level Acceleration (TLA)?",
-    "back": "TLA replaces pin-level UVM drivers/monitors with transaction-level transactors that communicate via a host-emulator bridge. This eliminates pin-wiggling overhead and achieves higher throughput."
+    "id": "e-emu-1-3",
+    "question": "What is transaction-based acceleration (co-emulation)?",
+    "answer": "The DUT and the timed BFMs run in the emulator; the untimed UVM part runs on the host. They exchange whole transactions by function or task calls (or SCE-MI pipes), so pin activity runs at emulator speed and the host synchronizes per transaction, not per clock edge."
   },
   {
-    "front": "What UVM modifications are required for emulation?",
-    "back": "Remove `$display`/`$monitor` from synthesized code, use fixed-point time precision, replace DPI calls with emulator-supported APIs, and restructure sequences for transaction batching."
+    "id": "e-emu-1-4",
+    "question": "What changes when you prepare a UVM agent for co-emulation?",
+    "answer": "Move the timed driver and monitor code into BFM interfaces in an HDL-side top next to the DUT and the clock and reset generators. Keep untimed proxy classes in an HVL-side top that reach the BFMs only by calls: SCE-MI 2 functions and zero-time tasks, or BFM tasks through a virtual interface where the tool supports it (for example Veloce TBX). Remove every # delay, clock wait and DUT-signal wait from HVL code."
   },
   {
-    "front": "What is a virtual probe in emulation?",
-    "back": "A virtual probe allows observing internal RTL signals from the testbench side without physical test points. It uses the emulator's signal access infrastructure for non-intrusive debug."
+    "id": "e-emu-1-5",
+    "question": "What debug visibility does an emulator give, and at what cost?",
+    "answer": "It depends on the platform: Cadence and Siemens market full-visibility capture (FullVision; Veloce Strato CS), while ZeBu offers several dump and probe types, some of which must be enabled when the design is compiled (Synopsys, DVCon 2019). Every option costs capture depth, run speed, compile turnaround or host storage, so you plan triggers and capture windows."
   },
   {
-    "front": "What is compile-time vs. run-time configuration in emulation?",
-    "back": "Compile-time: emulator compiles the full RTL design (takes hours). Run-time: test parameters, stimulus, and scenarios change without recompilation. Minimize compile-time changes."
+    "id": "e-emu-1-6",
+    "question": "Why does compile turnaround matter when choosing an emulator?",
+    "answer": "Every RTL or BFM change needs a new emulator compile, so compile time limits how many debug turns you get per day. Vendors quote compile times as marketing claims (Cadence: 10 billion gates in under 10 hours on Palladium Z2, 2021), so date and source them."
   },
   {
-    "front": "How does emulation handle clock generation?",
-    "back": "Emulator generates clocks internally at its own rate. The emulated clock frequency is typically much lower than silicon but much faster than simulation. External clock sources connect via bridge."
+    "id": "e-emu-1-7",
+    "question": "Where do clocks and resets come from in a co-emulation bench?",
+    "answer": "From synthesizable generators in the HDL-side top (or the emulator's clock configuration). They are still part of the testbench, but the HVL side never advances time."
   },
   {
-    "front": "What is speed bridging in emulation?",
-    "back": "Speed bridging interfaces the fast-running emulator with the slower software testbench. It handles the speed mismatch between emulated hardware and host-side UVM components."
+    "id": "e-emu-1-8",
+    "question": "What is a speed bridge (speed adapter)?",
+    "answer": "In-circuit emulation hardware that connects the slowly running emulated design to a real device running at full speed, such as a PCIe link, by buffering and rate-adapting its traffic (Cadence SpeedBridge, Synopsys ZeBu Speed Adapters). It is not the link between the emulator and the host testbench."
+  },
+  {
+    "id": "e-emu-1-9",
+    "question": "What are the three SCE-MI 2 interfaces?",
+    "answer": "The function-based interface (a subset of SystemVerilog DPI), the pipe-based interface (one-way streaming with flush) and the macro-based message-passing interface carried over from SCE-MI 1.1 (Accellera SCE-MI 2.4, Clause 4)."
+  },
+  {
+    "id": "e-emu-1-10",
+    "question": "Why must the HVL side stay fast, not just untimed?",
+    "answer": "In the SCE-MI 2 function- and pipe-based use models, time on the hardware side is frozen while the software side is called (SCE-MI 2.4 §4.4.4). Host CPU time spent in the solver, logging or the scoreboard therefore lowers throughput directly."
+  },
+  {
+    "id": "e-emu-1-11",
+    "question": "Why should a monitor BFM push transactions with a void function rather than a task?",
+    "answer": "Clocks run only on the HDL side, so calls from HDL to HVL must not consume time; use functions. Some tools can also dispatch one-way void calls without stopping the emulator clocks (Veloce TBX, DVCon 2011), which is a tool-dependent extension, not part of SCE-MI 2."
+  },
+  {
+    "id": "e-emu-1-12",
+    "question": "Does an unmodified UVM bench run with the DUT on an emulator?",
+    "answer": "Usually yes, through signal-level acceleration, but every edge or signal the host code waits on is a host-emulator synchronization, so the gain is small (Synopsys customer table: 1.5x to 80x signal-based against 25x to 2091x transaction-based). The speed comes from splitting the bench."
+  },
+  {
+    "id": "e-emu-1-13",
+    "question": "Which argument types are portable across the SCE-MI 2 function-based interface?",
+    "answer": "The Table 5.3 subset: C-compatible integer types (byte to longint, signed or unsigned), bit, packed 1-D and multi-dimensional arrays of bit and logic, and packed structs; plus constant strings for import \"DPI-C\" only. Class handles, dynamic arrays, queues and non-constant strings are not portable."
+  },
+  {
+    "id": "e-emu-1-14",
+    "question": "Why can a reset bug pass on the emulator but fail in simulation?",
+    "answer": "Emulators are usually 2-state: SCE-MI 2 coerces X to 1 and Z to 0 when the HDL engine is 2-state, and warns that results may differ from a 4-state simulator (SCE-MI 2.4 §5.6.1.3.1). Keep X and reset checks in simulation."
+  },
+  {
+    "id": "e-emu-1-15",
+    "question": "Why does a SystemVerilog packed struct arrive with its fields swapped in a C struct of the same order?",
+    "answer": "In SystemVerilog the first member of a packed struct is the most significant, but in a C struct the first member sits at the lowest address. Reverse the C field order or pack the fields explicitly (SCE-MI 2.4 §5.6.1.3.3)."
   }
 ]

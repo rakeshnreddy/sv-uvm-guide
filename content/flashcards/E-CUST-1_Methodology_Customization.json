@@ -1,34 +1,87 @@
 [
   {
-    "front": "What is UVM methodology customization and when is it needed?",
-    "back": "Customization involves extending or modifying UVM base class behavior to match project-specific requirements: custom reporting, modified phase ordering, project-wide base classes, or custom registries."
+    "id": "e-cust-1-1",
+    "question": "What is a UVM methodology layer, and what does 'without forking' mean?",
+    "answer": "A thin, versioned package (base classes, helpers, conventions, checks) that block teams build on, sitting on an unmodified, pinned uvm-core. 'Without forking' means you add behaviour only through UVM's extension points and never copy and edit uvm-core's sources."
   },
   {
-    "front": "What is a project-wide UVM base class and why use one?",
-    "back": "A common project base class (e.g., `my_uvm_test`) extends `uvm_test` and adds project-standard features: custom logging formats, default timeout, coverage hooks. All tests inherit from it."
+    "id": "e-cust-1-2",
+    "question": "Why is forking (editing a copy of) uvm-core a bad way to add team conventions?",
+    "answer": "Every upgrade must be re-merged by hand, so teams stop upgrading; VIP qualified against stock uvm-core may misbehave; and bug reports against a patched library cannot be reproduced by vendors or Accellera. Report real bugs upstream and work around them in your layer."
   },
   {
-    "front": "How do you customize the UVM report server?",
-    "back": "Extend `uvm_report_server`, override `compose_report_message()` for format changes, or override `process_report_message()` to redirect output. Register with `uvm_report_server::set_server()`."
+    "id": "e-cust-1-3",
+    "question": "Name the UVM extension points that let a team customize behaviour without editing uvm-core.",
+    "answer": "Role base classes, factory overrides (§8.3.1.4), callbacks (§10.7), configuration objects through `uvm_config_db` (C.4), the report server and report catchers (§6.5.2, §6.6), phase callbacks such as `phase_started` (§13.1.4.3.1), default sequences (§15.3.5), policy classes (§16), and, rarely, custom phases."
   },
   {
-    "front": "What is a custom UVM phase and when would you add one?",
-    "back": "Custom phases extend the standard 12-phase flow for project needs (e.g., `traffic_phase` between `main_phase` and `shutdown_phase`). Use sparingly — most needs can be met with existing phases."
+    "id": "e-cust-1-4",
+    "question": "Why does a project layer use per-role bases (`proj_driver #(REQ) extends uvm_driver #(REQ)`) instead of one `proj_component` root?",
+    "answer": "SystemVerilog has single inheritance (IEEE 1800-2023 §8.13). A class derived from a `uvm_component`-based root could not also be a `uvm_driver`, so it would lose `seq_item_port`. One base per role keeps the UVM role class and adds project policy."
   },
   {
-    "front": "How do you implement a global timeout in UVM?",
-    "back": "In your base test, call `uvm_top.set_timeout(time_value, overridable)` in `build_phase`. This sets a maximum simulation time after which a fatal error is issued."
+    "id": "e-cust-1-5",
+    "question": "How do you give every UVM message line a project-specific format without forking?",
+    "answer": "Extend `uvm_default_report_server` (§6.5.2), override `compose_report_message()` (§6.5.1.2.15), and install it once with `uvm_report_server::set_server()` (§6.5.1.2.19), which copies the existing counts. `uvm_report_server` itself is a virtual class with pure virtual methods."
   },
   {
-    "front": "What is a methodology layer and how does it sit above raw UVM?",
-    "back": "A methodology layer is a set of project-standard base classes, utilities, and conventions built on top of UVM. Examples: unified error reporting, testbench configuration framework, register model helpers."
+    "id": "e-cust-1-6",
+    "question": "What three parts does a custom UVM task phase need?",
+    "answer": "A phase class extending `uvm_task_phase` with a static `get()` returning one IMP (protected constructor); an `exec_task(comp, phase)` override that casts `comp` and calls your method; and one `uvm_phase::add()` call on the container (schedule or domain) that holds its anchor phase."
   },
   {
-    "front": "How do you create a project-standard configuration object pattern?",
-    "back": "Define a `my_config extends uvm_object` with all configurable fields, create it in the test, and pass it via `uvm_config_db`. All components `get()` this single config object in `build_phase()`."
+    "id": "e-cust-1-7",
+    "question": "A custom phase class has no `exec_task` override. What happens at run time?",
+    "answer": "The phase node starts and ends in the same time slot: the inherited `exec_task` is empty, so no component method runs and nobody raises an objection. UVM never calls a method just because its name (`load_fw_phase`) matches the phase; `+UVM_PHASE_TRACE` shows the phase skipped."
   },
   {
-    "front": "What is `uvm_cmdline_processor` and how does it enable runtime customization?",
-    "back": "It parses simulator command-line arguments. Teams use it for runtime test parameters: `+num_trans=1000`, `+enable_coverage=1`, avoiding recompilation for test variations."
+    "id": "e-cust-1-8",
+    "question": "Why does `uvm_domain::get_common_domain().add(p, .after_phase(uvm_reset_phase::get()))` fail?",
+    "answer": "`add()` finds its anchor only inside the container it is called on (§9.3.1.4.4, §9.3.1.6.1). `reset` lives in the uvm domain's schedule, not in the common domain, so uvm-core issues `UVM_FATAL [PH_BAD_ADD] cannot find after_phase 'reset' within node 'common'` during build."
+  },
+  {
+    "id": "e-cust-1-9",
+    "question": "When does `add()` splice a new phase in series, and when does it create a parallel branch?",
+    "answer": "`.after_phase(A)` alone (or an after/before pair that are neighbours) splices it in series: `A`'s successors now wait for it. `.with_phase(C)`, or an after/before pair with phases between them, creates a parallel branch, and the shared successor waits for both paths."
+  },
+  {
+    "id": "e-cust-1-10",
+    "question": "`get()` returns the same phase object every time. Why can the phase still run twice?",
+    "answer": "The object is the singleton IMP, but every `add()` call creates a new schedule node that refers to it (§9.2.1). Calling `add()` twice, for example from an env with two instances, puts two nodes in the schedule. Register once, from the test, behind a static guard."
+  },
+  {
+    "id": "e-cust-1-11",
+    "question": "Are custom phases the standard way to add a reset or configuration step? What do most teams use instead?",
+    "answer": "No. Use sparingly: most needs fit existing run-time phases (`post_reset_phase`, `configure_phase`), the top virtual sequence, or `uvm_event`/`uvm_barrier`. A custom phase runs for every component in its domain (including VIP), re-runs on jumps, and is usually inserted with uvm-core-only calls."
+  },
+  {
+    "id": "e-cust-1-12",
+    "question": "What makes a CI pass/fail gate for UVM regressions honest?",
+    "answer": "All of: the UVM report summary is present; `UVM_ERROR` and `UVM_FATAL` are 0; no assertion or simulator-format errors appear in the log (they bypass UVM counts); the exit status is 0; and every checker reports a positive count, so a run that checked nothing fails."
+  },
+  {
+    "id": "e-cust-1-13",
+    "question": "How does a base test pin the uvm-core version at run time?",
+    "answer": "Compare `uvm_pkg::UVM_VERSION_STRING` (standard, IEEE 1800.2-2020 B.7.2) with the pinned string, for example `\"Accellera:1800.2:UVM:2020.3.1\"`, and issue a `UVM_FATAL` on a mismatch. Only the value is implementation-defined; avoid the legacy `` `UVM_MINOR_REV ``, which reads 3.0 in that release."
+  },
+  {
+    "id": "e-cust-1-14",
+    "question": "Which commonly used phase-insertion calls are uvm-core implementation rather than IEEE 1800.2-2020 API, and what is the standard route?",
+    "answer": "`uvm_domain::get_uvm_schedule()`, `get_common_domain()` and `get_uvm_domain()` are uvm-core only; §9.4.2 defines `new`, `get_domains`, `add_uvm_phases` and `jump`. Standard route: `uvm_domain::get_domains(doms)` then `doms[\"uvm\"].add(...)`."
+  },
+  {
+    "id": "e-cust-1-15",
+    "question": "A VIP is moved into its own domain with `set_domain`. Does it run a custom phase that was added to `get_uvm_schedule()`?",
+    "answer": "No. `define_domain` (§13.1.4.4.3) gives the new domain its own copy of the run-time schedule, built fresh in uvm-core without your phase, and a task phase runs only for components in its own domain (or the common one). Add the phase to that domain's schedule, once, if it needs it."
+  },
+  {
+    "id": "e-cust-1-16",
+    "question": "How do you set a global timeout in a project base test, using standard API?",
+    "answer": "Call `uvm_root::get().set_timeout(<time>)` in the base test's `build_phase` (F.7.3.3); a hang then ends as a `UVM_FATAL` instead of a killed job. `uvm_top` is a uvm-core backward-compatibility handle, not standard API."
+  },
+  {
+    "id": "e-cust-1-17",
+    "question": "What evidence diagnoses the three forms of methodology drift?",
+    "answer": "Phase misordering: `+UVM_PHASE_TRACE` (uvm-core impl.) and `PH_BAD_ADD` messages. Bypassed bases: lint on `extends uvm_driver`/`uvm_monitor` outside the project package, plus `print_topology()` (F.7.4.2) and the factory `print()` (§8.3.1.7.5). Version drift: the pinned `UVM_VERSION_STRING` check."
   }
 ]

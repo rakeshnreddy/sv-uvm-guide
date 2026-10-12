@@ -836,37 +836,65 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "formal-harness",
-    "version": "1",
+    "version": "2",
     "title": "Formal Assumption Harness",
-    "description": "Identify an over-constrained formal assumption that masks a real FIFO overflow bug, relax it, and fix the design.",
+    "description": "Diagnose a FIFO harness whose proofs are vacuous, triage a real and a spurious counterexample against the interface specification, replay the real one in UVM, and fix the full flag.",
     "owningModule": "E-INT-1",
     "routeSlug": "formal-harness",
     "status": "available",
     "labPrerequisites": [],
-    "modulePrerequisites": [],
+    "modulePrerequisites": [
+      "I-SV-4B",
+      "I-SV-4C",
+      "E-INT-1"
+    ],
     "steps": [
       {
         "id": "1",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 1: Read the Buggy Harness",
-        "instructions": "Open `testbench_buggy.sv`. Identify the three `assume` properties. Notice that `a_never_consecutive_push` is far more restrictive than what a real environment guarantees.",
+        "title": "Step 1: Read the harness and predict",
+        "instructions": "Open `testbench_buggy.sv` and find `fifo`, `fifo_props` and the `bind`. List each `assume`, `assert` and `cover`, and say whether the interface specification in the README supports each assumption (it promises only: no push while `full`, no pop while `empty`). Predict the formal result for `p_count_in_range`, `p_full_is_correct`, `c_reach_depth` and `c_push_pop`.",
         "starterCode": ""
       },
       {
         "id": "2",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 2: Relax the Over-Constraint",
-        "instructions": "Comment out `a_never_consecutive_push`. Re-run the formal engine. Observe the counterexample: rapid consecutive pushes overflow the FIFO because the `full` flag updates one cycle late.",
+        "title": "Step 2: Run as shipped and read the covers first",
+        "instructions": "Expected: `p_count_in_range` proven; `p_full_is_correct` proven but vacuous; `c_reach_depth` unreachable; `c_push_pop` covered at edge 1. Name the assumption that makes a full FIFO unreachable and explain why the specification does not support it. Explain why `c_push_pop` did not reveal it. Check in the lesson's visualizer: late-flag RTL, contract, `a_never_fill` on.",
         "starterCode": ""
       },
       {
         "id": "3",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 3: Remove the over-constraint and triage the counterexample",
+        "instructions": "Delete `a_never_fill`. Expected: `p_full_is_correct` counterexample at edge 4 (push at edges 0 to 3; count = 4 and full = 0 at edge 4); `p_count_in_range` counterexample at edge 5; `c_reach_depth` covered at edge 4. Check every environment-driven input in the trace against the specification and decide: design bug or missing assumption? Explain why the fifth push in the second counterexample is legal.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
         "version": "1",
         "completion": "self_attested",
-        "title": "Step 3: Fix the Design",
-        "instructions": "Open `testbench_solution.sv`. Notice that `full` and `empty` are now combinational (`assign`). Re-run: the assertion passes and the cover property is now reachable.",
+        "title": "Step 4: Write the replay sequence",
+        "instructions": "In `cex_replay_seq.sv`, fill `push_v` and `pop_v` with the inputs of edges 0 to 3 of the step-3 trace and complete the loop. Assign the item fields rather than calling `randomize()`, and say why. Predict the simulation result: `p_full_is_correct` fails 4 edges after the first replayed push, with count = 4 and full = 0, on a driver that applies one item per clock and idles afterwards.",
+        "starterCode": ""
+      },
+      {
+        "id": "5",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: Fix the RTL and re-prove",
+        "instructions": "Fix `full` in `fifo` with a registered flag computed from the next count (`full <= (count_next == DEPTH)`), not with `assign full = (count == DEPTH)`, which would make `p_full_is_correct` restate the RTL. Expected with the contract only: both assertions proven (not vacuous), `c_reach_depth` covered at edge 4, `c_push_pop` covered at edge 1. The replay test now passes.",
+        "starterCode": ""
+      },
+      {
+        "id": "6",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 6: Triage a spurious counterexample",
+        "instructions": "On the fixed RTL, comment out `a_no_push_when_full`. Expected: `p_count_in_range` counterexample at edge 5 (push at edges 0 to 4; count = 4 and full = 1 at edge 4); `p_full_is_correct` proven. Decide whether it is a design bug, explain why replaying it with only the formal run's own assumptions could not tell you, then restore the assumption.",
         "starterCode": ""
       }
     ],
@@ -884,7 +912,19 @@ export const GENERATED_LAB_MANIFESTS = [
         "editable": true
       },
       {
+        "path": "cex_replay_seq.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
         "path": "testbench_solution.sv",
+        "role": "solution",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "cex_replay_seq_solution.sv",
         "role": "solution",
         "language": "systemverilog",
         "editable": false
@@ -970,14 +1010,16 @@ export const GENERATED_LAB_MANIFESTS = [
     "routeSlug": "methodology-custom-phase",
     "status": "available",
     "labPrerequisites": [],
-    "modulePrerequisites": [],
+    "modulePrerequisites": [
+      "I-UVM-1C"
+    ],
     "steps": [
       {
         "id": "1",
         "version": "1",
         "completion": "self_attested",
         "title": "Step 1: Complete the Singleton",
-        "instructions": "Open `testbench.sv` and complete the `load_fw_phase_c` singleton: declare `m_inst` and implement `get()` so every call returns the same phase instance.",
+        "instructions": "Open `testbench.sv` and complete the `load_fw_phase_c` singleton: declare `m_inst` and implement `get()` so every call returns the same phase object (the phase IMP). The constructor is `protected`, as in uvm-core's built-in phases, so only `get()` can create it.",
         "starterCode": ""
       },
       {
@@ -985,7 +1027,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 2: Connect the Phase to the Environment",
-        "instructions": "Override `exec_task(uvm_component comp, uvm_phase phase)` in `load_fw_phase_c`: `$cast` `comp` to `soc_env` and call `env.load_fw_phase(phase)`. Then implement `soc_env::load_fw_phase`: raise an objection, check `reset_done`, print `uvm_info(\"ORDER\", \"load_fw\", UVM_LOW)`, wait 20ns, set `firmware_loaded`, and drop the objection. Without `exec_task`, the phase runs but never calls your code.",
+        "instructions": "Override `exec_task(uvm_component comp, uvm_phase phase)` in `load_fw_phase_c`: `$cast` `comp` to `soc_env` and call `env.load_fw_phase(phase)`. Then implement `soc_env::load_fw_phase`: raise an objection, check `reset_done`, print `uvm_info(\"ORDER\", \"load_fw\", UVM_LOW)`, wait 20ns, set `firmware_loaded`, increment `fw_loads`, and drop the objection. Without `exec_task`, the phase runs but never calls your code.",
         "starterCode": ""
       },
       {
@@ -993,7 +1035,23 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 3: Insert Into the Schedule and Run",
-        "instructions": "In `base_test::build_phase`, call `uvm_domain::get_uvm_schedule().add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get()))`; `reset_phase` lives in the uvm run-time schedule, not the common domain. Run and check the log: `[ORDER] reset` at 0, `load_fw` at 50, `configure` at 70 and `main` at 80 ns, with no `ORDER` errors.",
+        "instructions": "In `base_test::build_phase`, call `uvm_domain::get_uvm_schedule().add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get()))` once (`get_uvm_schedule()` is a uvm-core implementation call); `reset_phase` lives in the uvm run-time schedule, not the common domain. Run and check the log: `[ORDER] reset` at 0, `load_fw` at 50, `configure` at 70 and `main` at 80 ns, with no `ORDER` errors. Add `+UVM_PHASE_TRACE` to see each phase start and end.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 4: Break It and Predict",
+        "instructions": "Starting from your working solution, predict each log before you run it, then confirm it (README, \"Break it and predict\"): (a) delete `exec_task`: `configure` at 50 ns with the ORDER errors, and the trace shows `load_fw` skipped; (b) call `add()` on `uvm_domain::get_common_domain()`: `UVM_FATAL [PH_BAD_ADD] cannot find after_phase 'reset' within node 'common'` during build; (c) add `.before_phase(uvm_configure_phase::get())`: the same ORDER times, but the trace shows `post_reset` starting at 50 ns beside `load_fw` (a parallel branch); (d) remove the `phase_registered` guard and register twice: `load_fw` at 50 and 70 ns, `configure` at 90 ns, and `Firmware loaded 2 times`.",
+        "starterCode": ""
+      },
+      {
+        "id": "5",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: Try the Existing Phase Instead",
+        "instructions": "Remove the phase registration and move the body of `load_fw_phase` into a `post_reset_phase` task in `soc_env`. Predict, then confirm, that the log shows `reset` at 0, `load_fw` at 50 and `configure` at 70 ns, the same order with no change to the shared schedule. Write one sentence on when a team would still add a custom phase.",
         "starterCode": ""
       }
     ],
@@ -1080,7 +1138,8 @@ export const GENERATED_LAB_MANIFESTS = [
     "status": "available",
     "labPrerequisites": [],
     "modulePrerequisites": [
-      "I-UVM-3A"
+      "I-UVM-3A",
+      "I-UVM-3B"
     ],
     "steps": [
       {
@@ -1088,7 +1147,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 1: Constrain the Write's Buffer",
-        "instructions": "Open `starter/mem_test.pss`. In `write_mem`, constrain the output buffer: `wr.addr % 4 == 0` for 4-byte alignment and `wr.data in [0x0000..0xFFFF]` for the data range.",
+        "instructions": "Open `starter/mem_test.pss`. In `write_mem`'s `legal_write` constraint, make the output buffer's address 4-byte aligned and keep its data in the range 0x0000 to 0xFFFF. Use PSS syntax: set membership is `in`, not `inside`. Check yourself: which field names do your constraints refer to, and why do they live on `wr` rather than in `read_verify`?",
         "starterCode": ""
       },
       {
@@ -1096,7 +1155,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 2: Bind Read-Verify to the Write",
-        "instructions": "Give `read_verify` an `input mem_buf_s rd;`. In the activity, traverse `wr_a: do write_mem;` then `rd_a: do read_verify;`, and add `bind wr_a.wr rd_a.rd;` so the read consumes exactly the buffer that write produced.",
+        "instructions": "Give `read_verify` a buffer input named `rd`. In `mem_read_write_test`'s activity, traverse the write and then the read with the labels `wr_a` and `rd_a`, and bind the read's input to the write's output so the read consumes exactly that buffer. Then fill the four `exec body` templates: SV templates wrapped in `begin ... end` that start `mem_write_seq` and `mem_read_seq` on `p_sequencer.mem_sqr` (the read reports `PSS_MEM_VERIFY` on a mismatch), and C templates that call `mem_write32()`, `mem_read32()` and `test_fail()`.",
         "starterCode": ""
       },
       {
@@ -1104,7 +1163,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 3: Compare Generated Targets",
-        "instructions": "Compare the generated UVM and C excerpts in the README (the full files in `solution/` unlock when you finish). Identify where each `exec body` template and each solved value from your PSS constraints appears in both targets.",
+        "instructions": "Predict first: if you delete the `bind`, what may the tool do with the read's input? Write your answer down, then check it against the README's Expected Outcome. Compare the generated UVM and C excerpts in the README (the full files in `solution/` unlock when you finish): find where each `exec body` template and each solved value from your constraints appears in both targets, and note that the tool prints bit values in decimal.",
         "starterCode": ""
       }
     ],
@@ -1843,9 +1902,9 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "debug-waveform-trigger",
-    "version": "1",
-    "title": "Triggering Waveforms via Event Bus",
-    "description": "Build an event bus subscriber that listens for watchdog timeout tags and starts selective waveform capture only when the failure is near.",
+    "version": "2",
+    "title": "A Waveform Window from a Debug Event Bus",
+    "description": "Connect a subscriber to a debug event bus, prove that a dump started by a watchdog trigger misses the cause of a bus stall, and capture the cause with a two-run waveform window controlled from tb_top.",
     "owningModule": "E-DBG-1",
     "routeSlug": "debug-waveform-trigger",
     "status": "available",
@@ -1856,26 +1915,42 @@ export const GENERATED_LAB_MANIFESTS = [
     "steps": [
       {
         "id": "1",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 1: Inspect the Event Bus",
-        "instructions": "Open `testbench.sv` and locate the `debug_event_bus` plus the watchdog publisher that emits `WATCHDOG_TIMEOUT`.",
+        "title": "Step 1: Run the starter and read the log",
+        "instructions": "Compile testbench.sv with tb_top as the top module and run it. The run ends with UVM_FATAL [WDG] at 5150 ns after the bus broadcasts WATCHDOG_TIMEOUT at 5100 ns ('no transfer for 2075 ns after 300 beats'). Work out when the last beat was accepted, and predict whether a dump started at the trigger would show why the beats stopped.",
         "starterCode": ""
       },
       {
         "id": "2",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 2: Add the Subscriber",
-        "instructions": "Implement `waveform_trigger_sub` as a `uvm_subscriber#(debug_event)` and trigger waveform capture when the timeout tag appears.",
+        "title": "Step 2: Add the subscriber and start a dump on the trigger",
+        "instructions": "In waveform_trigger_sub, get the global uvm_event 'dump_now' from uvm_event_pool in build_phase and trigger it from write() when the tag is WATCHDOG_TIMEOUT. Create trig_sub in dbg_env and connect bus.ap to trig_sub.analysis_export. Rerun and open after_trigger.vcd: it covers 5100 to 5150 ns only, with ready already 0. Explain why, using IEEE 1800-2023 §21.7.1.3.",
         "starterCode": ""
       },
       {
         "id": "3",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 3: Make the subscriber name the window",
+        "instructions": "In write(), compute start_ns = last_ok_ns - pre_ns (0 if negative) and print it with `uvm_info(\"WAVE_TRIG\", ..., UVM_NONE). Rerun and confirm the log says 'Last transfer at 3025 ns: rerun with +DUMP_START=2825'.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
         "version": "1",
         "completion": "self_attested",
-        "title": "Step 3: Wire and Verify",
-        "instructions": "Connect the subscriber to the event bus, rerun, and confirm selective waveform capture starts only near the timeout.",
+        "title": "Step 4: Open the window in a rerun",
+        "instructions": "In tb_top's dump_ctl block, read +DUMP_START with $value$plusargs; if present, wait until that time and dump to window.vcd, otherwise keep the trigger behaviour. Rerun with the same seed and build plus +DUMP_START=2825. In window.vcd, find the rising edge at which tb_top.u_sink.ready falls and the value of accepted just after it.",
+        "starterCode": ""
+      },
+      {
+        "id": "5",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: Check your understanding",
+        "instructions": "Compare your files with solution.sv and answer the five questions in Step 5 of the README: single-pass capture, same seed and same build, why dump control lives in tb_top, what $dumplimit does, and how you would size the window for a 20-hour run.",
         "starterCode": ""
       }
     ],
@@ -1903,15 +1978,59 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "uvm-performance-1",
-    "version": "1",
-    "title": "UVM Performance Metrics",
-    "description": "Profile and optimize UVM testbench performance footprint.",
+    "version": "2",
+    "title": "Find and Remove UVM Hotspots with a Profile",
+    "description": "Measure a slow but correct UVM bench, find five hidden costs (message formatting, configuration lookups, objections, a quadratic search and per-clock coverage sampling) from a profile and operation counters, and remove them without changing what the bench checks.",
     "owningModule": "E-PERF-1",
     "routeSlug": "uvm-performance-1",
-    "status": "coming_soon",
+    "status": "available",
     "labPrerequisites": [],
-    "modulePrerequisites": [],
-    "steps": [],
+    "modulePrerequisites": [
+      "I-UVM-1C",
+      "A-UVM-6"
+    ],
+    "steps": [
+      {
+        "id": "1",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 1: Measure the baseline",
+        "instructions": "Compile lab1_bottleneck/perf_lab_tb.sv once with tb_top as the top module. Run it three times with the same seed, each wrapped in /usr/bin/time -p, and record the median CPU time (user + sys). Record the end time of the run, the SCB_SUMMARY line (matches=1000 mismatches=0 pending=0) and the PERF_SUMMARY counters (fmt=1000 cfg_get=1000 raises=1001 cmp=499500, samples about 4008, cov=100.0) in the README's results table. Never use $time as a speed measurement: it is simulated time.",
+        "starterCode": ""
+      },
+      {
+        "id": "2",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 2: Profile and attribute",
+        "instructions": "Run once with your simulator's profiler on (tool-dependent). Sort by self time and attribute the top rows to DUT, testbench, UVM library and simulator kernel. For each UVM-library row near the top, find its callers and call count. Match each PERF_SUMMARY counter to a profile row and to the line of perf_lab_tb.sv that causes it, and predict which fix will save the most CPU time.",
+        "starterCode": ""
+      },
+      {
+        "id": "3",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 3: Remove the five costs, one at a time",
+        "instructions": "Fix one suspect at a time, recompile, and rerun three times with the same seed. After every change, the end time, SCB_SUMMARY, cov=100.0 and UVM_ERROR : 0 must be identical to the baseline; do not remove any check, message or coverage, and keep creating a new item per packet. Record each run in the results table. The final counters must read fmt=0 cfg_get=1 raises=1 cmp=1000 samples=1000. The README has hints if you are stuck.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 4 (optional): The analysis FIFO experiment",
+        "instructions": "Put a uvm_tlm_analysis_fifo between the monitor and the scoreboard and move the checking into a run_phase get() loop, as shown in the README. Predict the counters and the CPU time, then measure. Explain why the CPU time does not drop: what the FIFO's write() does, which process now runs the checks, and whether the simulation runs processes in parallel. Remove the FIFO afterwards.",
+        "starterCode": ""
+      },
+      {
+        "id": "5",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: Confirm and reflect",
+        "instructions": "Confirm the final log: PERF_SUMMARY items=1000 fmt=0 cfg_get=1 raises=1 cmp=1000 samples=1000 cov=100.0, SCB_SUMMARY matches=1000 mismatches=0 pending=0, UVM_ERROR : 0, UVM_FATAL : 0, and the same end time as the baseline. Compare your file with solution/perf_lab_tb.sv and answer the four questions in Step 5 of the README.",
+        "starterCode": ""
+      }
+    ],
     "assets": [
       {
         "path": "lab1_bottleneck/README.md",
@@ -1920,13 +2039,13 @@ export const GENERATED_LAB_MANIFESTS = [
         "editable": false
       },
       {
-        "path": "lab1_bottleneck/tb_buggy.sv",
+        "path": "lab1_bottleneck/perf_lab_tb.sv",
         "role": "starter",
         "language": "systemverilog",
         "editable": true
       },
       {
-        "path": "lab1_bottleneck/tb_solution.sv",
+        "path": "lab1_bottleneck/solution/perf_lab_tb.sv",
         "role": "solution",
         "language": "systemverilog",
         "editable": false

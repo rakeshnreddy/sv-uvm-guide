@@ -1,36 +1,64 @@
 {
   "id": "formal-harness",
-  "version": "1",
+  "version": "2",
   "title": "Formal Assumption Harness",
-  "description": "Identify an over-constrained formal assumption that masks a real FIFO overflow bug, relax it, and fix the design.",
+  "description": "Diagnose a FIFO harness whose proofs are vacuous, triage a real and a spurious counterexample against the interface specification, replay the real one in UVM, and fix the full flag.",
   "owningModule": "E-INT-1",
   "routeSlug": "formal-harness",
   "status": "available",
   "labPrerequisites": [],
-  "modulePrerequisites": [],
+  "modulePrerequisites": [
+    "I-SV-4B",
+    "I-SV-4C",
+    "E-INT-1"
+  ],
   "steps": [
     {
       "id": "1",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 1: Read the Buggy Harness",
-      "instructions": "Open `testbench_buggy.sv`. Identify the three `assume` properties. Notice that `a_never_consecutive_push` is far more restrictive than what a real environment guarantees.",
+      "title": "Step 1: Read the harness and predict",
+      "instructions": "Open `testbench_buggy.sv` and find `fifo`, `fifo_props` and the `bind`. List each `assume`, `assert` and `cover`, and say whether the interface specification in the README supports each assumption (it promises only: no push while `full`, no pop while `empty`). Predict the formal result for `p_count_in_range`, `p_full_is_correct`, `c_reach_depth` and `c_push_pop`.",
       "starterCode": ""
     },
     {
       "id": "2",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 2: Relax the Over-Constraint",
-      "instructions": "Comment out `a_never_consecutive_push`. Re-run the formal engine. Observe the counterexample: rapid consecutive pushes overflow the FIFO because the `full` flag updates one cycle late.",
+      "title": "Step 2: Run as shipped and read the covers first",
+      "instructions": "Expected: `p_count_in_range` proven; `p_full_is_correct` proven but vacuous; `c_reach_depth` unreachable; `c_push_pop` covered at edge 1. Name the assumption that makes a full FIFO unreachable and explain why the specification does not support it. Explain why `c_push_pop` did not reveal it. Check in the lesson's visualizer: late-flag RTL, contract, `a_never_fill` on.",
       "starterCode": ""
     },
     {
       "id": "3",
+      "version": "2",
+      "completion": "self_attested",
+      "title": "Step 3: Remove the over-constraint and triage the counterexample",
+      "instructions": "Delete `a_never_fill`. Expected: `p_full_is_correct` counterexample at edge 4 (push at edges 0 to 3; count = 4 and full = 0 at edge 4); `p_count_in_range` counterexample at edge 5; `c_reach_depth` covered at edge 4. Check every environment-driven input in the trace against the specification and decide: design bug or missing assumption? Explain why the fifth push in the second counterexample is legal.",
+      "starterCode": ""
+    },
+    {
+      "id": "4",
       "version": "1",
       "completion": "self_attested",
-      "title": "Step 3: Fix the Design",
-      "instructions": "Open `testbench_solution.sv`. Notice that `full` and `empty` are now combinational (`assign`). Re-run: the assertion passes and the cover property is now reachable.",
+      "title": "Step 4: Write the replay sequence",
+      "instructions": "In `cex_replay_seq.sv`, fill `push_v` and `pop_v` with the inputs of edges 0 to 3 of the step-3 trace and complete the loop. Assign the item fields rather than calling `randomize()`, and say why. Predict the simulation result: `p_full_is_correct` fails 4 edges after the first replayed push, with count = 4 and full = 0, on a driver that applies one item per clock and idles afterwards.",
+      "starterCode": ""
+    },
+    {
+      "id": "5",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 5: Fix the RTL and re-prove",
+      "instructions": "Fix `full` in `fifo` with a registered flag computed from the next count (`full <= (count_next == DEPTH)`), not with `assign full = (count == DEPTH)`, which would make `p_full_is_correct` restate the RTL. Expected with the contract only: both assertions proven (not vacuous), `c_reach_depth` covered at edge 4, `c_push_pop` covered at edge 1. The replay test now passes.",
+      "starterCode": ""
+    },
+    {
+      "id": "6",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 6: Triage a spurious counterexample",
+      "instructions": "On the fixed RTL, comment out `a_no_push_when_full`. Expected: `p_count_in_range` counterexample at edge 5 (push at edges 0 to 4; count = 4 and full = 1 at edge 4); `p_full_is_correct` proven. Decide whether it is a design bug, explain why replaying it with only the formal run's own assumptions could not tell you, then restore the assumption.",
       "starterCode": ""
     }
   ],
@@ -48,7 +76,19 @@
       "editable": true
     },
     {
+      "path": "cex_replay_seq.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": true
+    },
+    {
       "path": "testbench_solution.sv",
+      "role": "solution",
+      "language": "systemverilog",
+      "editable": false
+    },
+    {
+      "path": "cex_replay_seq_solution.sv",
       "role": "solution",
       "language": "systemverilog",
       "editable": false

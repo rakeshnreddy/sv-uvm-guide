@@ -1,1 +1,77 @@
-[]
+[
+  {
+    "id": "e-dbg-1-hang-1",
+    "question": "What is a hang in a UVM run, and how does it end?",
+    "answer": "A run whose run_phase never ends on its own because at least one run-phase objection is never dropped while nothing makes progress. Only the phase timeout ends it, with UVM_FATAL [PH_TIMEOUT] (or a heartbeat or watchdog, if configured) (set_timeout, IEEE 1800.2-2020 F.7.3.3); check_phase and report_phase never run."
+  },
+  {
+    "id": "e-dbg-1-hang-2",
+    "question": "Which three pieces of evidence do you collect for a hang, and in what order?",
+    "answer": "1) How the run ended (PH_TIMEOUT, HBFAIL, or time stopped) and the last meaningful message. 2) Who still holds the run-phase objection. 3) Where each holder, and whatever it waits for, is blocked (breadcrumbs, sequencer, FIFOs, ports)."
+  },
+  {
+    "id": "e-dbg-1-hang-3",
+    "question": "What is the wait-for chain, and what are the three places it can end?",
+    "answer": "Start at the objection holder and keep asking what it waits for and who would provide it. It ends at the holder itself (an objection never dropped), at a partner that will never act (a blocked get), or back at the start (a deadlocked handshake). The end names the owner to fix."
+  },
+  {
+    "id": "e-dbg-1-hang-4",
+    "question": "Why is the objection holder usually not the component to fix?",
+    "answer": "A holder blocked in a get or wait is the victim: for example a scoreboard holding an objection while it waits in act_fifo.get() is behaving correctly. Dropping its objection ends the run but hides the real bug, such as a missing monitor connection, and the scoreboard then reports nothing."
+  },
+  {
+    "id": "e-dbg-1-hang-5",
+    "question": "Why do a longer timeout or a drain time never fix a hang?",
+    "answer": "The timeout only bounds the hang: the same hang happens later. A drain time starts only after the objection total reaches zero (IEEE 1800.2-2020 §10.5.1.3.7), which is exactly what never happens in a hang."
+  },
+  {
+    "id": "e-dbg-1-hang-6",
+    "question": "Give two causes of an objection that is never dropped.",
+    "answer": "An early return or continue on an error path that skips the drop, and a sequence with set_automatic_phase_objection(1) whose body() is a forever loop; §14.2.4.4 warns that its objection will never be dropped. Fix it in the holder."
+  },
+  {
+    "id": "e-dbg-1-hang-7",
+    "question": "Why is a missing analysis connection a silent hang, and how do you catch it?",
+    "answer": "uvm-core builds uvm_analysis_port with a minimum of zero connections, so a missing connect() gives no error and write() goes nowhere; a scoreboard then blocks for ever in act_fifo.get(). Check ap.size() (§5.5.2.12) in end_of_elaboration_phase and watch for exp_fifo.used() growing while act_fifo.used() stays 0."
+  },
+  {
+    "id": "e-dbg-1-hang-8",
+    "question": "What is a deadlocked handshake, and which rule prevents the classic one?",
+    "answer": "A circular wait: the driver waits for READY before raising VALID while the DUT waits for VALID before raising READY. The sender's VALID must not depend on the receiver's READY (Arm IHI0022E §A3.3.1 for AXI). Fix the driver: raise VALID, then hold it until READY."
+  },
+  {
+    "id": "e-dbg-1-hang-9",
+    "question": "How do +UVM_OBJECTION_TRACE, get_objectors() and display_objections() differ?",
+    "answer": "+UVM_OBJECTION_TRACE logs every raise and drop with ID OBJTN_TRC (uvm-core only). get_objectors() fills a queue with the objects that raised and have not dropped (IEEE 1800.2-2020 §10.5.1.5.1); in uvm-core it can also list an object whose own count is 0 while a descendant still holds, so filter with get_objection_count(obj) > 0 (§10.5.1.5.3). display_objections() prints the counts as a table (uvm-core only)."
+  },
+  {
+    "id": "e-dbg-1-hang-10",
+    "question": "How do you set up a uvm_heartbeat, and what does it report?",
+    "answer": "Create a dedicated uvm_objection, then new(name, cntxt, objection), set_mode(UVM_ALL_ACTIVE, UVM_ANY_ACTIVE or UVM_ONE_ACTIVE) and set_heartbeat(event, comps) (§10.6.2). Watched components raise or drop the objection as they make progress; a silent window gives a UVM_FATAL with ID HBFAIL. Call stop() when stimulus ends (§10.6.2.7)."
+  },
+  {
+    "id": "e-dbg-1-hang-11",
+    "question": "With heartbeat triggers every 100 ns from time 0 and a component that is silent from the start, when does HBFAIL fire, and why?",
+    "answer": "At 200 ns. In uvm-core the first trigger only opens a window; the second checks it. Beats also count only if the objection propagates through the heartbeat's context component, so watched components must sit below it."
+  },
+  {
+    "id": "e-dbg-1-hang-12",
+    "question": "Why can a zero-delay loop hang a run without any PH_TIMEOUT?",
+    "answer": "In uvm-core the timeout watchdog is a # delay, and heartbeat triggers need time too. A loop that never lets simulation time advance stops both, so only the simulator's own stop or a job time limit (tool-dependent) ends the run."
+  },
+  {
+    "id": "e-dbg-1-hang-13",
+    "question": "A run ends at 0 ns with UVM_ERROR : 0 and UVM_FATAL : 0. Is it a hang or a pass?",
+    "answer": "Neither: a zero-activity run. Nobody raised a run-phase objection, so run_phase ended at once and killed the stimulus (+UVM_PHASE_TRACE prints 'No objections raised, skipping phase'). Raise before seq.start(), and make the scoreboard fail when it compared nothing."
+  },
+  {
+    "id": "e-dbg-1-hang-14",
+    "question": "A report catcher prints a hang dump on PH_TIMEOUT. What must catch() return, and why?",
+    "answer": "THROW, so the fatal is still printed, counted and ends the run. CAUGHT stops processing of the message (§6.5.1.2.14), so the hang would be counted as nothing: a debug catcher must add information, never change the verdict."
+  },
+  {
+    "id": "e-dbg-1-hang-15",
+    "question": "A hang reproduces with seed 42, but disappears after you rebuild with extra debug code. What do you do?",
+    "answer": "Treat it as unfixed. The rebuild can change the random draws (IEEE 1800-2023 §18.14.1), so rerun seed 42 on the original build with plusarg-only visibility (+UVM_OBJECTION_TRACE, +UVM_PHASE_TRACE), and keep debug kits compiled in, switched by plusargs."
+  }
+]

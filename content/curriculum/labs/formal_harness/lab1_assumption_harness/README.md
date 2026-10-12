@@ -1,54 +1,129 @@
-# Lab: Formal Assumption Harness
+# Lab: Formal Assumption Harness (E-INT-1)
 
 ## Overview
 
-In this lab you will translate a constrained-random UVM scenario into a formal assumption/property harness for a simple FIFO. The buggy testbench contains an **over-constrained assumption** that masks a real overflow bug. Your goal is to identify the masking assumption, relax it, observe the counterexample, and then fix the design constraint properly.
+This lab belongs to [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index). You inherit a formal harness for the control block of a 4-entry FIFO. Its proofs all came back green, and the FIFO still has a bug. You will find out why the proofs lie, triage a real and a spurious counterexample, replay the real one in UVM, and fix the RTL.
 
-## Learning Objectives
+No formal tool or simulator runs on this site. Every step therefore states the result to expect, and you can check each formal result in the lesson's **Formal vs simulation explorer** (`FormalVsSimulationVisualizer`), which runs an exhaustive search over the same design. If you have a formal tool, run the files; your results should match the tables below.
 
-1. Understand how UVM constraints map to formal `assume` properties.
-2. Experience how over-constraining hides real bugs from the formal engine.
-3. Practice the counterexample-to-directed-test feedback loop.
+## Learning objectives
 
-## Setup
+1. **Diagnose** an over-constrained harness from its covers: a vacuous proof and an unreachable cover.
+2. **Triage** a counterexample against the interface specification and **decide** whether it is a design bug or a missing assumption.
+3. **Write** a UVM sequence that replays a formal counterexample, and **predict** the failure it reproduces.
+4. **Fix** the RTL so that the assertion checks something real, and confirm the proofs and covers.
 
-The lab contains two files:
+## Files
 
-| File | Description |
-|------|-------------|
-| `testbench_buggy.sv` | Formal harness with an overly strict assumption that prevents the engine from finding a real overflow bug. |
-| `testbench_solution.sv` | Corrected harness where assumptions match design intent. |
+| File | Role | What it holds |
+|------|------|---------------|
+| `testbench_buggy.sv` | starter (editable) | The DUT `fifo`, the property module `fifo_props`, and the `bind` that attaches it |
+| `cex_replay_seq.sv` | starter (editable) | A UVM sequence item and a replay sequence with empty arrays |
+| `testbench_solution.sv` | solution | The harness and RTL after steps 2 to 5 |
+| `cex_replay_seq_solution.sv` | solution | The completed replay sequence |
+
+Solution files unlock when you complete the lab; everything a step needs is in the starter files and this guide.
+
+## The interface specification
+
+The FIFO's users (the **environment**) drive `push` and `pop`; the FIFO drives `count`, `full` and `empty`. The FIFO specification promises only two things about the environment:
+
+- it never pushes while `full` is 1;
+- it never pops while `empty` is 1.
+
+Pushing and popping in the same cycle is legal. Pushing into the last free slot is legal. Any assumption beyond these two rules needs a specification clause to back it.
+
+**Conventions.** Edges are counted from 0, the first rising clock edge after reset is released. Values are those sampled at each edge. Formal commands and report formats are tool-dependent; the results are not.
 
 ## Steps
 
-### Step 1: Read the Buggy Harness
+### Step 1: Read the harness and predict
 
-Open `testbench_buggy.sv`. Notice the three assumptions:
+Open `testbench_buggy.sv`. Find the three parts: `fifo`, `fifo_props` and the `bind`. In `fifo_props`, list each `assume`, each `assert` and each `cover`. For each assumption, say whether the specification above supports it.
 
-- `a_legal_push` — prevents push when full (correct)
-- `a_legal_pop` — prevents pop when empty (correct)
-- `a_never_consecutive_push` — **never allows two consecutive pushes** (this is the over-constraint)
+Write down your prediction for the formal run as shipped: the status of `p_count_in_range`, `p_full_is_correct`, `c_reach_depth` and `c_push_pop`.
 
-The safety assertion `prop_full_correct` checks that `full` matches `(count == DEPTH)`.
+### Step 2: Run as shipped, and read the covers first
 
-### Step 2: Run Formal (Mentally or in a Formal Tool)
+Expected formal results:
 
-With all three assumptions active, the formal engine reports **all properties proven**. But `a_never_consecutive_push` is so restrictive that the FIFO can barely fill — it effectively prevents the engine from exploring states where the FIFO is more than half full.
+| Property | Result |
+|---|---|
+| `p_count_in_range` | proven |
+| `p_full_is_correct` | proven, but vacuous |
+| `c_reach_depth` | **unreachable** |
+| `c_push_pop` | covered at edge 1 |
 
-**Question:** Is the design actually safe, or did we just prevent the engine from seeing the bug?
+Everything is green, yet `c_reach_depth`, the antecedent of `p_full_is_correct`, can never happen. Which assumption makes a full FIFO unreachable? Is it in the specification? (In the visualizer: late-flag RTL, contract, and `a_never_fill` on.)
 
-### Step 3: Relax the Over-Constraint
+Why is `c_push_pop` still covered? Because a cover detects an over-constraint only for the behaviour it targets. Every assumption needs a cover for something it must still allow.
 
-Remove or comment out `a_never_consecutive_push`. Now re-run. The formal engine finds a **counterexample**: a rapid burst of pushes overflows past `DEPTH` because the RTL's `count` incrementing logic has a one-cycle latency before `full` updates.
+### Step 3: Remove the over-constraint and triage the counterexample
 
-### Step 4: Fix the Design
+Delete `a_never_fill`. Expected formal results:
 
-The solution is NOT to keep the over-constraint. Instead:
-1. Fix the RTL so `full` updates combinationally from `count`, or
-2. Add a proper guard in the push logic to check `count < DEPTH` instead of relying on `full`.
+| Property | Result |
+|---|---|
+| `p_full_is_correct` | counterexample at edge 4 |
+| `p_count_in_range` | counterexample at edge 5 |
+| `c_reach_depth` | covered at edge 4 |
+| `c_push_pop` | covered at edge 1 |
 
-See `testbench_solution.sv` for the corrected harness.
+The trace for `p_full_is_correct`:
 
-## Key Takeaway
+| Edge | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| `push` | 1 | 1 | 1 | 1 | 0 |
+| `pop` | 0 | 0 | 0 | 0 | 0 |
+| `count` | 0 | 1 | 2 | 3 | 4 |
+| `full` | 0 | 0 | 0 | 0 | 0 |
 
-Over-constraining formal assumptions is the equivalent of never testing a code path — it gives false confidence. Always audit assumptions to ensure they match **actual environment behavior**, not wishful thinking.
+Triage it against the specification, not against the assumptions: check every input the environment drives, edge by edge. Is any of them illegal? Decide: design bug, or missing assumption?
+
+Then explain the second counterexample: at edge 4 `full` still reads 0, so a fifth push is legal by the contract, and the counter goes to 5 at edge 5. (In the visualizer: late-flag RTL with the contract.)
+
+### Step 4: Write the replay sequence
+
+Open `cex_replay_seq.sv`. Fill `push_v` and `pop_v` from the trace of step 3 and complete the loop. Decide whether to assign the item's fields or call `randomize()`, and say why.
+
+Drive edges 0 to 3: edge 4 is where the failure is sampled. Predict what a simulation reports, and when, with this sequence on a driver that applies one item per clock and idles when it has none.
+
+Expected: `p_full_is_correct` fails 4 edges after the first replayed push, with `count` = 4 and `full` = 0, exactly as in formal. In the lesson's bench the failure is routed to UVM reporting, so the summary shows `UVM_ERROR :    1`.
+
+### Step 5: Fix the RTL and re-prove
+
+Fix `full` in `fifo` so that it is 1 at the very edge where `count` reaches `DEPTH`. Two fixes work functionally:
+
+- `assign full = (count == DEPTH);` makes `p_full_is_correct` restate the RTL's own equation, so the proof checks nothing beyond it;
+- a registered flag computed from the next count, `full <= (count_next == DEPTH)`, keeps the register and gives the assertion a different implementation to check.
+
+Use the second. Expected formal results with the contract only:
+
+| Property | Result |
+|---|---|
+| `p_count_in_range` | proven |
+| `p_full_is_correct` | proven (not vacuous) |
+| `c_reach_depth` | covered at edge 4 |
+| `c_push_pop` | covered at edge 1 |
+
+The replay test from step 4 now passes, and it stays in the regression as a guard.
+
+### Step 6: A spurious counterexample
+
+On the fixed RTL, comment out `a_no_push_when_full` and re-run. Expected:
+
+| Property | Result |
+|---|---|
+| `p_count_in_range` | counterexample at edge 5: push at edges 0 to 4; at edge 4 `count` = 4 and `full` = 1; `count` = 5 at edge 5 |
+| `p_full_is_correct` | proven |
+
+Triage it. The push at edge 4 happens while `full` is 1, which the specification forbids, so the counterexample is spurious: the fix belongs in the harness, not the RTL. Restore the assumption. (In the visualizer: correct RTL, `a_no_push_when_full` off. Its replay binds the full interface contract, which is why it reports `a_no_push_when_full` failing at edge 4.)
+
+Notice that replaying this trace with only the formal run's own assumptions would not have told you this: with `a_no_push_when_full` switched off, nothing in `fifo_props` checks the push at edge 4.
+
+## Key takeaways
+
+- A proof is only as good as its assumptions. Read the covers before the assertions; an unreachable antecedent means a vacuous proof.
+- Write assumptions from the interface specification, never from what a driver or a sequence happens to do. Simulation then checks them against the real environment.
+- A counterexample satisfies every assumption formal used. Decide "bug or assumption gap" by checking its inputs against the specification.
+- An assertion that restates the RTL's own equation proves nothing about intent.

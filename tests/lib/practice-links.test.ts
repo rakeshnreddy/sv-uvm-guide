@@ -288,6 +288,13 @@ describe('lab prerequisites', () => {
         status: 'lesson',
         forward: false,
       }),
+      expect.objectContaining({
+        kind: 'lesson',
+        id: 'I-UVM-3B',
+        href: '/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index',
+        status: 'lesson',
+        forward: false,
+      }),
     ]);
     expect(doAfter).toBeUndefined();
   });

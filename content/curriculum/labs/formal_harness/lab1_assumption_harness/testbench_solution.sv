@@ -1,73 +1,65 @@
-// testbench_solution.sv — Corrected formal harness
-// Fix 1: Removed the over-constraining a_never_consecutive_push
-// Fix 2: Made full/empty combinational so they update immediately
+// compile
+// testbench_solution.sv: the harness after steps 2-5 of lab formal-harness (E-INT-1)
+//
+// Changes from testbench_buggy.sv:
+//   - a_never_fill is removed: the FIFO spec never promised it (step 2).
+//   - full is registered from the NEXT count, so it is 1 at the very edge
+//     where count reaches DEPTH (step 5).
+//
+// Why not "assign full = (count == DEPTH);"? It also fixes the bug, but then
+// p_full_is_correct restates the RTL's own equation and proves trivially.
+// With a registered flag computed from count_next, the assertion checks a
+// different implementation of the requirement, so the proof means something.
+//
+// Expected formal results (contract only): p_count_in_range proven,
+// p_full_is_correct proven (not vacuous), c_reach_depth covered at edge 4,
+// c_push_pop covered at edge 1.
 
-module fifo_formal_harness_fixed #(parameter DEPTH = 4) (
-  input logic clk, rst_n
+module fifo #(
+  parameter int DEPTH = 4
+) (
+  input  logic                   clk, rst_n, push, pop,
+  output logic [$clog2(DEPTH):0] count,
+  output logic                   full, empty
 );
+  logic [$clog2(DEPTH):0] count_next;
 
-  // DUT signals (free variables for formal)
-  logic push, pop;
-  logic [$clog2(DEPTH):0] count;
-  logic full, empty;
+  // The interface contract forbids push while full and pop while empty,
+  // so the counter is deliberately unguarded.
+  assign count_next = count + push - pop;
 
-  // ----------------------------------------------------------
-  // Fixed FIFO model: full/empty are combinational
-  // ----------------------------------------------------------
-  always_ff @(posedge clk or negedge rst_n) begin
+  always_ff @(posedge clk or negedge rst_n)
     if (!rst_n) begin
-      count <= 0;
+      count <= '0;
+      full  <= 1'b0;
     end else begin
-      if (push && !pop && count < DEPTH)
-        count <= count + 1;
-      else if (pop && !push && count > 0)
-        count <= count - 1;
+      count <= count_next;
+      full  <= (count_next == DEPTH);  // FIX: computed from the next count
     end
-  end
 
-  // FIX: full and empty are combinational — no one-cycle delay
-  assign full  = (count == DEPTH);
   assign empty = (count == 0);
-
-  // ----------------------------------------------------------
-  // Formal assumptions (only what the real environment guarantees)
-  // ----------------------------------------------------------
-
-  // Legal push: environment won't push when full
-  property a_legal_push;
-    @(posedge clk) disable iff (!rst_n)
-      !(push && full);
-  endproperty
-  assume property (a_legal_push);
-
-  // Legal pop: environment won't pop when empty
-  property a_legal_pop;
-    @(posedge clk) disable iff (!rst_n)
-      !(pop && empty);
-  endproperty
-  assume property (a_legal_pop);
-
-  // NOTE: a_never_consecutive_push is intentionally REMOVED.
-  // The real environment CAN push on consecutive cycles.
-  // Over-constraining hid the bug.
-
-  // ----------------------------------------------------------
-  // Safety assertion
-  // ----------------------------------------------------------
-  property prop_full_correct;
-    @(posedge clk) disable iff (!rst_n)
-      (count == DEPTH) |-> full;
-  endproperty
-  assert property (prop_full_correct)
-    else $error("FAIL: count == DEPTH but full is deasserted");
-
-  // ----------------------------------------------------------
-  // Cover property — now reachable without over-constraint
-  // ----------------------------------------------------------
-  property prop_fill_and_drain;
-    @(posedge clk) disable iff (!rst_n)
-      (count == 0) ##[1:20] (count == DEPTH) ##[1:20] (count == 0);
-  endproperty
-  cover property (prop_fill_and_drain);
-
 endmodule
+
+module fifo_props #(
+  parameter int DEPTH = 4
+) (
+  input logic                   clk, rst_n, push, pop, full, empty,
+  input logic [$clog2(DEPTH):0] count
+);
+  default clocking @(posedge clk); endclocking
+  default disable iff (!rst_n);
+
+  // Interface contract (FIFO spec), and nothing more.
+  a_no_push_when_full: assume property (!(push && full));
+  a_no_pop_when_empty: assume property (!(pop && empty));
+
+  // Obligations on the DUT's outputs.
+  p_count_in_range:    assert property (count <= DEPTH);
+  p_full_is_correct:   assert property ((count == DEPTH) |-> full);
+
+  // Sanity covers: both must be reached before any proof counts.
+  c_reach_depth:       cover  property (count == DEPTH);
+  c_push_pop:          cover  property (push && pop);
+endmodule
+
+bind fifo fifo_props #(.DEPTH(DEPTH)) u_fifo_props (.*);

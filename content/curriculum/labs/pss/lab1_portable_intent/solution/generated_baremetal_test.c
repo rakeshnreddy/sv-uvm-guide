@@ -5,6 +5,8 @@
  * The PSS tool solved the scenario (here addr = 0x1040, data = 0xBEEF),
  * then pasted each action's `exec body C` template in the solved order,
  * with every {{...}} reference replaced by its solved value.
+ * Values are shown in hex for readability; mustache prints a bit field
+ * as unsigned decimal, so a real tool emits 4160 and 48879.
  * Real tools differ in naming and structure; some solve at run time instead.
  */
 

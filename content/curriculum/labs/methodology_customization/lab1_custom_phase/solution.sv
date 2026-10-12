@@ -7,12 +7,13 @@ typedef class soc_env;
 // 1. Custom Phase Definition
 // ──────────────────────────────────────────────────
 
-// A phase is a singleton: every get() returns the same instance, which is
-// the node add() inserts into the schedule.
+// Every get() returns the same phase object (the phase IMP). add() wraps it
+// in a new schedule node, so call add() once.
 class load_fw_phase_c extends uvm_task_phase;
   local static load_fw_phase_c m_inst;
 
-  function new(string name = "load_fw");
+  // protected, as in uvm-core's built-in phases: only get() may construct it.
+  protected function new(string name = "load_fw");
     super.new(name);
   endfunction
 
@@ -41,6 +42,7 @@ class soc_env extends uvm_env;
   bit reset_done;
   bit firmware_loaded;
   bit configure_done;
+  int unsigned fw_loads;   // counts load_fw executions (see check_phase)
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -62,6 +64,7 @@ class soc_env extends uvm_env;
     `uvm_info("ORDER", "load_fw", UVM_LOW)
     #20ns; // Simulate firmware load latency
     firmware_loaded = 1'b1;
+    fw_loads++;
     phase.drop_objection(this);
   endtask
 
@@ -83,6 +86,9 @@ class soc_env extends uvm_env;
     super.check_phase(phase);
     if (!(reset_done && firmware_loaded && configure_done))
       `uvm_error("ORDER", "Expected reset -> load_fw -> configure milestones were not observed")
+    // A phase registered twice runs twice: each add() makes a new node.
+    if (fw_loads > 1)
+      `uvm_error("ORDER", $sformatf("Firmware loaded %0d times", fw_loads))
   endfunction
 endclass
 
@@ -93,6 +99,8 @@ endclass
 class base_test extends uvm_test;
   `uvm_component_utils(base_test)
 
+  // One add() per simulation. The guard matters when registration is reachable
+  // from more than one place (for example a class with several instances).
   static bit phase_registered;
   soc_env env;
 
@@ -101,7 +109,8 @@ class base_test extends uvm_test;
   endfunction
 
   // reset_phase lives in the uvm run-time schedule, not in the common
-  // domain, so add() is called on that schedule. With only after_phase,
+  // domain, so add() is called on that schedule. get_uvm_schedule() is a
+  // uvm-core implementation call (not part of IEEE 1800.2-2020). With only after_phase,
   // load_fw is spliced in series: reset -> load_fw -> post_reset.
   // (get_common_domain().add(...) would stop with PH_BAD_ADD: from the
   // common domain, add() cannot find reset.)

@@ -1,307 +1,1432 @@
 ---
 title: "E-EMU-1: Emulation-Aware Verification"
-description: "Adapt UVM testbenches for hardware emulation platforms — transaction-level acceleration, virtual probes, and the compile-time vs. run-time tradeoffs that determine emulation success."
+description: "Split a UVM agent into a synthesizable HDL-side BFM and an untimed HVL-side proxy so the bench runs fast on an emulator, debug a co-emulation run that does not speed up, and choose between simulation, emulation and FPGA prototyping using sourced trade-offs."
 flashcards: "E-EMU-1_Emulation"
+sources:
+  - title: "Standard Co-Emulation Modeling Interface (SCE-MI) Reference Manual"
+    type: "standard"
+    identifier: "Accellera SCE-MI"
+    version: "2.4 (November 2016)"
+  - title: "IEEE Standard for SystemVerilog: Unified Hardware Design, Specification, and Verification Language"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "Accellera UVM reference implementation (uvm-core)"
+    type: "vendor"
+    identifier: "uvm-core"
+    version: "2020.3.1"
+  - title: "AMBA AXI and ACE Protocol Specification"
+    type: "standard"
+    identifier: "Arm IHI 0022E"
+  - title: "Off to the Races With Your Accelerated SystemVerilog Testbench (DVCon US 2011)"
+    type: "tertiary"
+    identifier: "H. van der Schoot, A. Saha, A. Garg, K. Suresh (Mentor Graphics)"
+  - title: "Simulation Acceleration with ZeBu to Speed IP and Platform Verification (DVCon US 2019)"
+    type: "tertiary"
+    identifier: "H. Miller, W.-H. Han (Synopsys)"
+  - title: "Cadence Palladium Z3 and Protium X3 announcement"
+    type: "vendor"
+    identifier: "Cadence press release, 2024-04-18"
+  - title: "Cadence Palladium Z2 and Protium X2 announcement"
+    type: "vendor"
+    identifier: "Cadence press release, 2021-04-05"
+  - title: "Siemens Veloce CS (Strato CS, Primo CS, proFPGA CS) announcement"
+    type: "vendor"
+    identifier: "Siemens EDA press release, 2024-02-20"
+  - title: "Synopsys ZeBu EP1 announcement"
+    type: "vendor"
+    identifier: "Synopsys press release, 2021-05-13"
+  - title: "Synopsys HAPS-200 and ZeBu-200 announcement"
+    type: "vendor"
+    identifier: "Synopsys blog, 2025-02-13"
+  - title: "Cadence SpeedBridge Adapter for PCI Express 3.0 announcement"
+    type: "vendor"
+    identifier: "Cadence press release, 2013-07-29"
 ---
 
 ## Quick Take
-- **What it is:** Emulation-aware verification is the set of techniques, patterns, and constraints required to run UVM-based testbenches on hardware emulation platforms (Cadence Palladium Z2, Synopsys ZeBu EP1, Siemens Veloce Strato), where the DUT is synthesized onto FPGA or custom emulation hardware and runs 100–10,000× faster than RTL simulation.
-- **Why it matters:** At the SoC level, RTL simulation throughput hits a wall — a full boot sequence that takes 72 hours in VCS runs in 2 minutes on Palladium. Emulation is mandatory for SoC-level regression, firmware co-verification, and performance validation. But standard UVM testbenches cannot run unmodified on emulators — they require architectural changes.
-- **Scale of adoption:** In 2025–2026, every top-10 semiconductor company uses hardware emulation for their most complex SoC designs. Emulation capacity is typically the most expensive and contended resource in a verification organization.
 
-## Why Emulation: Speed/Capacity Tradeoffs
+- **What it is:** An **emulator** is a machine that runs a compiled hardware copy of your design in special-purpose hardware: arrays of custom processors, custom chips or FPGAs. It is much faster than simulating the design in software on an ordinary computer, the **host** (or workstation). **Emulation-aware verification** is the set of testbench changes that let a UVM bench keep up with it. The timed part of the bench, which wiggles the pins every clock, moves into the emulator next to the design under test (DUT). The untimed UVM part (sequences, scoreboard, coverage) stays on the host. The two parts then talk in whole transactions instead of stopping each other on every clock edge.
+- **Why it matters:** Boot, firmware and long-traffic tests need billions of clock cycles, which no simulator finishes in a working day. How a bench is written decides how much of the emulator's speed you actually get. Mentor reported co-emulation running 60× to 491× faster than simulation on six designs of 1 to 34 million gates (DVCon US 2011, Table 1). Synopsys's customer table shows 1.5× to 80× when the bench still talks to the emulator signal by signal, against 25× to 2091× when it talks in transactions (DVCon US 2019). Both are vendor-authored figures. The gap between those two ranges is what this lesson teaches.
+- **The Analogy:** A factory floor (the emulator) and its head office (the host). If the office phones the floor before every hand movement, the machines spend most of the day waiting for the phone. If the office sends whole work orders, the floor runs flat out between orders, and the office only hears back when an order is done. *Where it breaks:* while the office is still writing the next order, the floor stands still. In the standard co-emulation models, hardware time is frozen while host code runs (SCE-MI 2.4 §4.4.4), so a slow office slows the floor even when it never phones. And the office cannot watch every machine all the time: seeing inside the emulator costs capacity, speed or storage.
 
-| Metric | RTL Simulation | Hardware Emulation | FPGA Prototyping |
+**You will be able to:**
+1. **Explain** why per-cycle synchronization between a host testbench and an emulated DUT limits throughput, and **predict** how many synchronization points a pin-level driver and a split driver need for one burst.
+2. **Refactor** a UVM driver and monitor into BFM interfaces in an HDL-side top and untimed proxy classes in an HVL-side top, with fixed-size packed types and converters for the data that crosses.
+3. **Apply** the coding rules for each side (an untimed HVL side, the HDL side's synthesizable subset, clocks and resets in the HDL top, the SCE-MI 2 argument types and calling rules) and **debug** a co-emulation run that compiles badly or barely speeds up.
+4. **Choose** debug-visibility options (full-visibility capture, probes, triggers and capture windows, in-emulation assertions, reproduction in simulation) for a failure, and **state** what each one costs.
+5. **Compare** simulation, emulation and FPGA prototyping for a verification goal, quoting vendor claims with their source and date.
+
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+### Words you need first
+
+This lesson builds on agents, virtual interfaces and the configuration database from [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index), on DPI from [I-SV-7](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index), and on measuring where a bench spends its time from [E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index). A few new words come up on every page of emulation documentation, so here they are in one place.
+
+| Term | Plain meaning |
+|---|---|
+| **synthesizable** | Code a compiler can turn into hardware: flops, gates and memories. A class object or a `#10` delay is not; an `always_ff` block is. Emulator compilers accept more than ASIC synthesis does, and *how much* more is tool-dependent. |
+| **host** | The ordinary computer that runs the simulator and the UVM classes. |
+| **HDL side** | Everything that runs in the emulator: the DUT plus the timed testbench code next to it. HDL means hardware description language. |
+| **HVL side** | Everything that stays on the host: the class-based, untimed part of the bench. HVL means hardware verification language. |
+| **BFM** (bus functional model), also **transactor** | Code that turns a transaction into clocked pin activity, or pin activity back into a transaction. In this lesson it is an **interface** that holds the protocol's signals plus the tasks and functions that drive and sample them. |
+| **proxy** | The class that stands in for a BFM on the HVL side. It keeps the UVM driver's or monitor's place in the agent, but touches no pins: it only *calls* its BFM. |
+| **synchronization point** | A moment where the host and the emulator must agree on time before either can go on: every clock edge, delay or signal change the host code waits on, and every call across the boundary. |
+| **gates** (MG, BG) | Capacity in equivalent logic gates: millions (MG) or billions (BG). Vendors quote capacity this way. |
+
+### Three ways to run a design, and four ways to use an emulator
+
+You can run the same RTL in three kinds of engine.
+
+- **RTL simulation.** A simulator runs the design as software on the host. You get every language feature, 4-state values (X and Z) and any waveform you ask for, but a big SoC runs very slowly.
+- **Emulation.** The design is compiled into an emulator. The three main product families are built very differently, and the differences matter for this lesson:
+  - **Cadence Palladium** uses custom Cadence emulation processors (Palladium Z3, announced 2024-04-18, quoted at 16 million to 48 billion gates).
+  - **Siemens Veloce Strato CS** uses Siemens' purpose-built Crystal accelerator chip (announced 2024-02-20).
+  - **Synopsys ZeBu** uses commercial FPGAs: ZeBu EP1 used Xilinx Virtex UltraScale+ VU19P devices and was quoted at "10 MHz" and up to 2 billion gates (2021-05-13); ZeBu-200 uses AMD Versal Premium VP1902 devices (2025-02-13).
+- **FPGA prototyping.** The design is placed and routed onto FPGA boards, mainly so software teams can run real software on it early. Examples: Cadence Protium X3 (AMD VP1902, 2024-04-18), Siemens Veloce Primo CS and proFPGA CS (AMD VP1902, 2024-02-20), and Synopsys HAPS-200 (quoted at "up to 10s of MHz", 2025-02-13).
+
+Every number above is a vendor claim with the date it was made. Product generations change every few years, so date any figure you repeat.
+
+An emulator can be used in several **use modes**. A speed-up figure means nothing until you know which one it was measured in.
+
+| Use mode | What runs on the host | What runs in the emulator | How they talk |
 |---|---|---|---|
-| **Speed** | 1–100 Hz | 100 KHz – 2 MHz | 10–100 MHz |
-| **Capacity** | Up to ~500M gates | Up to 15B gates | Up to 500M gates |
-| **Debug visibility** | Full waveform access | Selective probing | Limited visibility |
-| **Setup cost** | Low (compile-and-run) | High (synthesis + mapping) | Medium (synthesis + place-route) |
-| **Accuracy** | Cycle-accurate by definition | Cycle-accurate | May have timing differences |
-| **Typical use** | IP-level, subsystem | Full SoC boot, firmware | Performance validation, SW development |
-| **Cost per seat** | $50K–$200K/year | $1M–$5M/year | $100K–$500K |
+| **Signal-level acceleration** (simulation acceleration) | the unmodified UVM bench, drivers and monitors included | the DUT | pin values, every time the host code waits on a clock or a signal |
+| **Transaction-based acceleration** (co-emulation, co-modeling) | the untimed UVM part: sequences, proxies, scoreboard, coverage | the DUT plus the BFMs | calls that carry whole transactions |
+| **In-circuit emulation** (ICE) | run control and debug only | the DUT, wired through **speed bridges** to real devices | real interface traffic, rate-adapted |
+| **Standalone** | nothing but run control | the DUT plus a fully synthesizable testbench | none during the run |
 
-**Key insight:** Emulation is not "faster simulation." The DUT runs in hardware, while the testbench runs in software. The bottleneck shifts from DUT computation to **testbench–DUT communication**.
+A **speed bridge** (Cadence SpeedBridge; Synopsys calls them ZeBu Speed Adapters) is hardware that connects the slowly running emulated design to a real device running at full speed, such as a PCIe link, by buffering and rate-adapting its traffic (Cadence, 2013-07-29; Synopsys, 2021-05-13). It is not the link between the emulator and your UVM bench. This lesson is about the second row, co-emulation, because that is where a UVM bench lives.
 
-## Emulation Platforms Overview
+<ArchitectureDiagram
+  title="Where each part of the bench runs in three emulator use modes"
+  caption="Compare the edge labels. In signal-level acceleration the whole UVM bench stays on the host and the two sides meet at every clock edge the bench waits on. In co-emulation the BFMs move into the emulator and the sides meet once per transaction. In in-circuit emulation the DUT talks to a real device through a speed bridge, and the host only loads, runs and debugs."
+  cellWidth={140}
+  gapX={56}
+  nodes={[
+    { id: "sba", label: "Signal-level acceleration", kind: "generic", col: 0, row: 0, rowSpan: 2, container: true },
+    { id: "sba_tb", label: "UVM bench", sublabel: "host: drv + mon on pins", kind: "env", col: 0, row: 0 },
+    { id: "sba_dut", label: "DUT", sublabel: "emulator", kind: "dut", col: 0, row: 1 },
+    { id: "tba", label: "Co-emulation (TBA)", kind: "generic", col: 1, row: 0, rowSpan: 2, container: true },
+    { id: "tba_tb", label: "UVM bench", sublabel: "host: untimed proxies", kind: "env", col: 1, row: 0 },
+    { id: "tba_hw", label: "BFMs + DUT", sublabel: "emulator", kind: "dut", col: 1, row: 1 },
+    { id: "ice", label: "In-circuit emulation", kind: "generic", col: 2, row: 0, rowSpan: 3, container: true },
+    { id: "ice_host", label: "host", sublabel: "load, run, debug", kind: "generic", col: 2, row: 0 },
+    { id: "ice_dut", label: "DUT", sublabel: "emulator", kind: "dut", col: 2, row: 1 },
+    { id: "ice_dev", label: "real device", sublabel: "e.g. a PCIe link", kind: "generic", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "sba_tb", to: "sba_dut", style: "data", label: "pins, every edge" },
+    { from: "tba_tb", to: "tba_hw", style: "data", label: "1 call per transaction" },
+    { from: "ice_host", to: "ice_dut", style: "control", label: "run control" },
+    { from: "ice_dut", to: "ice_dev", style: "data", label: "speed bridge" }
+  ]}
+/>
 
-### Cadence Palladium Z2/Z3
+The engines also differ in ways a speed number hides. Here they are side by side, in qualitative terms.
 
-- Custom emulation hardware with up to 15 billion gates capacity
-- Xcelium co-simulation for testbench execution
-- Virtual/physical interfaces for external stimulus
-- SpeedBridge adapters for legacy BFM integration
+| | RTL simulation | Emulation | FPGA prototyping |
+|---|---|---|---|
+| **Speed** | slowest; falls as the design grows | far faster; how much depends on the use mode and the bench (figures in Quick Take) | usually the fastest of the three, built for running software |
+| **Turnaround after an RTL change** | a recompile, minutes for most blocks | an emulator compile; Cadence quotes "10 billion gates in under 10 hours" for Palladium Z2 (2021-04-05) | FPGA place and route, usually the longest |
+| **Debug visibility** | any signal you choose to dump; dumping costs run time and disk | depends on the platform: full-visibility capture on some, chosen probes on others | depends on the platform; generally less than emulation |
+| **Value system** | 4-state (X and Z propagate) | usually 2-state; X and Z are coerced | 2-state |
+| **Typical goal** | block and subsystem verification; all detailed debug | SoC tests, OS boot, firmware, long traffic, power and performance runs | software development and system validation |
 
-### Synopsys ZeBu EP1
+The value-system row needs one more sentence. SCE-MI 2.4 §5.6.1.3.1 says that when the hardware side supports only 2 states, an X arriving from the software side is coerced to 1 and a Z to 0, and warns that a model using 4-state types may then give results that differ from a 4-state simulator. A reset or initialization bug that shows up as X in simulation can be silent on an emulator.
 
-- Custom processor-based emulation architecture
-- VCS co-simulation for UVM testbenches
-- ZeBu Server provides multi-user access to emulation resources
-- Fast Transaction Interface (FTI) for transaction-level acceleration
+**Misconception: "the emulators are interchangeable."** They are not. A processor-based emulator, a custom-chip emulator and an FPGA-based emulator differ in compile turnaround, run speed, capacity and how much you can see. A methodology tuned for one, such as a vendor's transactor pragmas or debug flow, does not carry over unchanged to another.
 
-### Siemens Veloce Strato
+### Why an unmodified bench gains little speed
 
-- FPGA-based emulation architecture
-- Questa co-simulation for testbench  
-- Transaction-Based Acceleration (TBA) with Veloce transactors
-- Multi-user access through Veloce OS
-
-## Transaction-Level Acceleration (TLA)
-
-### The Problem: Pin-Level Bottleneck
-
-A standard UVM driver wiggles individual pins on every clock edge:
+Start with the bench you already know. Its driver reaches the DUT's pins through a **virtual interface** (a class handle to an interface instance, IEEE 1800-2023 §25.9) and times every drive and sample with the interface's **clocking block** ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)). Here is a correct pin-level driver task for an AXI write burst with a fixed length of four beats. It follows the VALID/READY rule: a transfer happens on a rising clock edge where both VALID and READY are high (Arm IHI0022E §A3.2.1; see [B-AXI-1](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index)).
 
 ```systemverilog
-// Pin-level driver — one signal change per clock cycle
-// This is SLOW on an emulator because each signal change
-// requires a software-to-hardware round-trip
-task drive_axi_write(axi_transaction txn);
-  @(posedge vif.aclk);
-  vif.awvalid <= 1'b1;
-  vif.awaddr  <= txn.addr;
-  vif.awlen   <= txn.burst_length - 1;
-
-  @(posedge vif.aclk iff vif.awready);
-  vif.awvalid <= 1'b0;
-
-  for (int i = 0; i < txn.burst_length; i++) begin
-    @(posedge vif.aclk);
-    vif.wvalid <= 1'b1;
-    vif.wdata  <= txn.data[i];
-    vif.wlast  <= (i == txn.burst_length - 1);
-    @(posedge vif.aclk iff vif.wready);
+// snippet: a pin-level driver task (class axi_wr_driver, simulation only).
+// AWSIZE, AWBURST, AWID and WSTRB are left out: the slave assumes full-width INCR.
+task drive_burst(axi_wr_item req);
+  @(vif.drv_cb);                                  // align to a clock edge
+  vif.drv_cb.awaddr  <= req.addr;
+  vif.drv_cb.awlen   <= 8'd3;                     // 4 beats
+  vif.drv_cb.awvalid <= 1'b1;
+  do @(vif.drv_cb); while (!vif.drv_cb.awready);  // AW handshake
+  vif.drv_cb.awvalid <= 1'b0;
+  for (int i = 0; i < 4; i++) begin
+    // Drive beat i in the same time step as beat i-1's handshake: no idle edge.
+    vif.drv_cb.wdata  <= req.data[i];
+    vif.drv_cb.wlast  <= (i == 3);
+    vif.drv_cb.wvalid <= 1'b1;
+    do @(vif.drv_cb); while (!vif.drv_cb.wready); // beat i handshake
   end
-  vif.wvalid <= 1'b0;
+  vif.drv_cb.wvalid <= 1'b0;
+  vif.drv_cb.wlast  <= 1'b0;
+  vif.drv_cb.bready <= 1'b1;
+  do @(vif.drv_cb); while (!vif.drv_cb.bvalid);   // B handshake
+  vif.drv_cb.bready <= 1'b0;
 endtask
 ```
 
-On an emulator, each `@(posedge vif.aclk)` is a synchronization point between the software testbench and the hardware DUT. With thousands of clock edges per transaction, the overhead dominates execution time.
+Two details make this correct. A clocking-block input such as `vif.drv_cb.wready` is the value sampled just *before* the edge (default input skew `1step`, IEEE 1800-2023 §14.3), which is exactly what a flop in the DUT sees. And a drive such as `vif.drv_cb.wdata <= …` executed right after `@(vif.drv_cb)` changes the signal in the Re-NBA region of that same time step (§14.16), so the next beat appears straight after the edge that accepted the previous one.
 
-### The Solution: Transaction-Level Transactors
+**Classic mistake: the extra edge per beat.** A very common version puts an `@(posedge vif.aclk)` at the *top* of the beat loop and then waits for WREADY. After beat 0's handshake, that extra wait spends one more edge with WVALID still high and WDATA still holding beat 0, so a slave that keeps WREADY high accepts beat 0 twice. Trace it with WREADY held at 1:
 
-A transactor moves the pin-wiggling logic **inside the emulated hardware** and exposes a transaction-level API to the software testbench:
+| Edge | WVALID | WDATA on the bus | What the slave does |
+|---|---|---|---|
+| n | 1 | D0 | accepts D0 (handshake of beat 0) |
+| n+1 | 1 | D0 (the loop-top wait, nothing re-driven) | accepts D0 **again** |
+| n+2 | 1 | D1 | accepts D1 |
+| n+3 | 1 | D1 | accepts D1 **again** |
 
-```
-Software (Host)                    Hardware (Emulator)
-┌──────────────────┐              ┌──────────────────────────┐
-│  UVM Testbench   │   TL API    │  Emulated Design         │
-│                   │ ──────────►│                           │
-│  TL Driver:      │   1 call    │  ┌─────────────────────┐ │
-│  write(addr,data)│   per txn   │  │  Transactor (synth)  │ │
-│                   │             │  │  Converts TL → pins  │ │
-│  TL Monitor:     │             │  │  Handles protocol    │ │
-│  txn = get()     │ ◄────────── │  │  timing internally   │ │
-│                   │   1 call    │  └──────────┬──────────┘ │
-│                   │   per txn   │             │             │
-│                   │             │          DUT ports        │
-└──────────────────┘              └──────────────────────────┘
-```
+Four beats become seven transfers, and WLAST arrives on the wrong count. The fix is the one above: drive the next beat in the same time step as the previous handshake.
 
-### Code Comparison: Pin-Level vs Transaction-Level
+Now put that driver on the host and the DUT in an emulator. The host and the emulator are two separate machines with separate notions of time. Each time the driver executes `@(vif.drv_cb)`, the host must tell the emulator "run until the next edge", and the emulator must report back the sampled READY before the host can decide what to drive next. That round trip is a **synchronization point**, and while one side works the other waits. Synopsys's guidance for signal-level acceleration puts it bluntly: when host code advances time, "HW needs to sync with SW every event clock" (DVCon US 2019).
 
-**Pin-level driver (simulation only):**
+**Predict first.** Use the DUT model from Make It Work: it accepts AW at once, stalls the first W beat for one cycle, and returns B on the edge after the last beat. How many times does `drive_burst` wait for an emulator edge in one burst? And if the whole task moved into the emulator so the host made one call per burst, how many calls would there be? Write both numbers down, then read the diagram.
+
+<SequenceDiagram
+  title="Pin-level driving: one host round trip per edge the driver waits on"
+  caption="Each numbered call is host code reaching an @(vif.drv_cb); each return is the emulator reporting the sampled values. Count the round trips: 8 for one burst, and the monitor adds a wait of its own on every edge."
+  participants={[
+    { id: "drv", label: "axi_wr_driver", sublabel: "HVL, on the host" },
+    { id: "emu", label: "drv_cb + DUT", sublabel: "HDL, in the emulator", kind: "dut" }
+  ]}
+  messages={[
+    { kind: "note", from: "drv", to: "emu", label: "the emulator waits while the host runs the code between waits" },
+    { from: "drv", to: "emu", label: "wait (align)" },
+    { kind: "return", from: "emu", to: "drv", label: "edge 0" },
+    { from: "drv", to: "emu", label: "AWVALID=1; wait" },
+    { kind: "return", from: "emu", to: "drv", label: "edge 1: AWREADY=1, AW done" },
+    { from: "drv", to: "emu", label: "WVALID=1, D0; wait" },
+    { kind: "return", from: "emu", to: "drv", label: "edge 2: WREADY=0, stall" },
+    { from: "drv", to: "emu", label: "hold D0; wait" },
+    { kind: "return", from: "emu", to: "drv", label: "edge 3: D0 accepted" },
+    { from: "drv", to: "emu", label: "D1; wait" },
+    { kind: "return", from: "emu", to: "drv", label: "edge 4: D1 accepted" },
+    { from: "drv", to: "emu", label: "D2; wait" },
+    { kind: "return", from: "emu", to: "drv", label: "edge 5: D2 accepted" },
+    { from: "drv", to: "emu", label: "D3, WLAST=1; wait" },
+    { kind: "return", from: "emu", to: "drv", label: "edge 6: D3 accepted" },
+    { from: "drv", to: "emu", label: "WVALID=0, BREADY=1; wait" },
+    { kind: "return", from: "emu", to: "drv", label: "edge 7: BVALID=1, B done" }
+  ]}
+/>
+
+**Debrief.** The driver waits 8 times: one alignment edge, one for the AW handshake, five for the W channel (four beats plus one stall) and one for B. With the burst moved into the emulator the host makes **one** call, and all eight edges run at emulator speed. A real burst with more beats or more stalls has proportionally more round trips, and the monitor, which waits on every edge, adds one per clock on top. That is why the signal-based rows in Synopsys's table sit at 1.5× to 80× while the transaction-based rows reach 25× to 2091×.
+
+**Misconception: "a standard UVM bench runs unmodified on an emulator at emulator speed."** It usually *runs*: in signal-level acceleration the tool keeps the bench on the host and exchanges pin values. It just gains little, because the bench's own waits set the pace. The speed comes from moving the waits into the emulator, which is the split below.
+
+### The split: a BFM in the HDL top, an untimed proxy in the HVL top
+
+The method that makes one bench run well in both simulation and co-emulation has three steps (van der Schoot et al., DVCon US 2011 §4):
+
+1. Use **two top-level modules**. `hdl_top` holds everything that must run in the emulator: the DUT, the clock and reset generators, and the BFMs. `hvl_top` holds everything else and calls `run_test()`.
+2. Move every timed line of the driver and the monitor into **BFM interfaces** under `hdl_top`. A BFM is an `interface`, not a module, so the HVL side can still reach it through a virtual interface handle.
+3. Make the driver and the monitor **proxies**: they keep their place in the UVM agent, but reach their BFMs only by calling the BFMs' tasks and functions (IEEE 1800-2023 §25.7). No class reads or writes a pin.
+
+The picture shows the bench built in Make It Work. Every name matches the code there.
+
+<ArchitectureDiagram
+  title="The dual-top AXI write bench: proxies in hvl_top, BFMs and DUT in hdl_top"
+  caption="Read across the middle. The driver proxy calls write_burst() on drv_bfm (one call per burst); mon_bfm calls the void function burst_seen() on its proxy once per completed burst. Everything left of that line is class-based and untimed; everything right of it is static, clocked and compiled into the emulator. The scoreboard compares what the driver proxy sent (sent_ap) with what the monitor proxy saw (ap). uvm_test_top and env are left out for space."
+  cellWidth={120}
+  gapX={52}
+  nodes={[
+    { id: "hvl", label: "hvl_top (host)", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 3, container: true },
+    { id: "agt", label: "agt", sublabel: "axi_wr_agent", kind: "agent", col: 1, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "scb", label: "scb", sublabel: "axi_wr_scoreboard", kind: "scoreboard", col: 0, row: 0 },
+    { id: "mon", label: "mon", sublabel: "axi_wr_monitor (proxy)", kind: "monitor", col: 2, row: 0 },
+    { id: "sqr", label: "sqr", sublabel: "uvm_sequencer", kind: "sequencer", col: 1, row: 1 },
+    { id: "drv", label: "drv", sublabel: "axi_wr_driver (proxy)", kind: "driver", col: 2, row: 1 },
+    { id: "hdl", label: "hdl_top (emulator)", kind: "generic", col: 3, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "mon_bfm", label: "mon_bfm", sublabel: "axi_wr_mon_bfm", kind: "interface", col: 3, row: 0 },
+    { id: "drv_bfm", label: "drv_bfm", sublabel: "axi_wr_bfm", kind: "interface", col: 3, row: 1 },
+    { id: "dut", label: "dut", sublabel: "axi_wr_mem", kind: "dut", col: 4, row: 0, rowSpan: 2 },
+    { id: "gen", label: "clk/rst gen", sublabel: "aclk, aresetn", kind: "generic", col: 4, row: 2 }
+  ]}
+  ports={[
+    { id: "drv.port", node: "drv", side: "left", kind: "port", label: "seq_item_port" },
+    { id: "sqr.export", node: "sqr", side: "right", kind: "export", label: "seq_item_export" },
+    { id: "mon.ap", node: "mon", side: "left", kind: "analysis_port", label: "ap" },
+    { id: "drv.sent", node: "drv", side: "bottom", kind: "analysis_port", label: "sent_ap" },
+    { id: "scb.obs", node: "scb", side: "right", kind: "analysis_imp", label: "obs_imp" },
+    { id: "scb.exp", node: "scb", side: "bottom", kind: "analysis_imp", label: "exp_imp" }
+  ]}
+  edges={[
+    { from: "drv.port", to: "sqr.export", style: "control", label: "get_next_item" },
+    { from: "drv", to: "drv_bfm", style: "control", label: "write_burst(b)" },
+    { from: "mon_bfm", to: "mon", style: "data", label: "burst_seen(b)" },
+    { from: "mon.ap", to: "scb.obs", style: "data", label: "write(t)" },
+    { from: "drv.sent", to: "scb.exp", style: "data", label: "write(req)", via: [[2, 1.6], [0, 1.6]] },
+    { from: "drv_bfm", to: "dut", style: "structural", label: "AW, W, B pins" },
+    { from: "dut", to: "mon_bfm", style: "structural", label: "observed" },
+    { from: "gen", to: "dut", style: "structural", label: "aclk, aresetn" }
+  ]}
+/>
+
+**The driver BFM.** All the clocked code of `drive_burst` moves, almost unchanged, into a task inside the BFM interface. The task takes the whole burst as one fixed-size packed argument. The full interface is in Make It Work; this is its heart:
+
 ```systemverilog
+// snippet: inside interface axi_wr_bfm (HDL side)
+task automatic write_burst(input axi_wr_burst_t burst);
+  @(drv_cb);
+  drv_cb.awaddr  <= burst.addr;
+  drv_cb.awlen   <= 8'(BEATS - 1);
+  drv_cb.awvalid <= 1'b1;
+  do @(drv_cb); while (!drv_cb.awready);
+  drv_cb.awvalid <= 1'b0;
+  for (int i = 0; i < BEATS; i++) begin
+    drv_cb.wdata  <= burst.data[i];
+    drv_cb.wlast  <= (i == BEATS - 1);
+    drv_cb.wvalid <= 1'b1;
+    do @(drv_cb); while (!drv_cb.wready);
+  end
+  drv_cb.wvalid <= 1'b0;
+  drv_cb.wlast  <= 1'b0;
+  drv_cb.bready <= 1'b1;
+  do @(drv_cb); while (!drv_cb.bvalid);
+  drv_cb.bready <= 1'b0;
+endtask
+```
+
+The waveform shows what this task does in hardware for one burst. Edge 0 is the edge where the task's first `@(drv_cb)` returns. As everywhere in the diagram kit, the value drawn at edge k is the value sampled at edge k.
+
+<TimingDiagram
+  title="write_burst running in the emulator: AW, one stall, four W beats, B"
+  caption="A transfer happens only at an edge where VALID and READY are both 1 (ticks). Edge 2 is the slave's one-cycle stall: WVALID is 1 but WREADY is 0, so D0 is held and accepted at edge 3. Each later beat is driven straight after the previous handshake, so no beat is sent twice. All eight edges run at emulator speed inside one host call."
+  edges={8}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0, 0] },
+    { name: "AWREADY", kind: "bit", values: [1, 1, 0, 0, 0, 0, 0, 0] },
+    { name: "WVALID", kind: "bit", values: [0, 0, 1, 1, 1, 1, 1, 0] },
+    { name: "WREADY", kind: "bit", values: [0, 0, 0, 1, 1, 1, 1, 0] },
+    { name: "WDATA", kind: "bus", values: [undefined, undefined, "D0", "D0", "D1", "D2", "D3", "D3"] },
+    { name: "WLAST", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 0] },
+    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 1] },
+    { name: "BREADY", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 1] }
+  ]}
+  markers={[
+    { edge: 1, tone: "pass", label: "AW handshake" },
+    { edge: 2, tone: "pending", label: "W stall: WREADY 0" },
+    { edge: 3, tone: "pass", label: "beat 0 (D0)" },
+    { edge: 4, tone: "pass", label: "beat 1 (D1)" },
+    { edge: 5, tone: "pass", label: "beat 2 (D2)" },
+    { edge: 6, tone: "pass", label: "beat 3 (D3, WLAST)" },
+    { edge: 7, tone: "pass", label: "B handshake" }
+  ]}
+/>
+
+**The driver proxy.** What is left in the class is the part that was never timed: get an item, convert it, call the BFM, report done.
+
+```systemverilog
+// snippet: the driver proxy's run_phase (HVL side)
 task run_phase(uvm_phase phase);
-  axi_transaction txn;
+  bfm.wait_for_reset();                 // the BFM counts the clocks, not the class
   forever begin
-    seq_item_port.get_next_item(txn);
-    // 50+ clock cycles of pin wiggling per transaction
-    drive_axi_write(txn);
+    seq_item_port.get_next_item(req);
+    sent_ap.write(req);                 // expected stream for the scoreboard
+    bfm.write_burst(req.to_packed());   // one call: all edges run in the emulator
     seq_item_port.item_done();
   end
 endtask
 ```
 
-**Transaction-level driver (emulation-optimized):**
-```systemverilog
-task run_phase(uvm_phase phase);
-  axi_transaction txn;
-  forever begin
-    seq_item_port.get_next_item(txn);
-    // Single function call — transactor handles pin timing
-    transactor.write(txn.addr, txn.data, txn.burst_length);
-    seq_item_port.item_done();
-  end
-endtask
-```
+**The monitor pushes instead of pulling.** A monitor proxy that called a BFM task such as `bfm.wait_for_burst()` in a loop would make the host start and wait for every burst. It is better for the monitor BFM to watch the pins on its own and *push* each completed burst to its proxy (DVCon US 2011 §4.3.2). To do that, the BFM holds a handle to its proxy, a **back-pointer**: the proxy writes `bfm.proxy = this;` through its virtual interface, and the BFM calls `proxy.burst_seen(b)` at the end of each burst. `burst_seen` is a `void` function, so it consumes no time. Calls from the HDL side to the HVL side must be functions, never time-consuming tasks, because only the HDL side has clocks (DVCon US 2011, footnote to §4.3.2).
 
-The transaction-level version reduces the software-hardware synchronization points from ~50 per transaction to **1 per transaction**, delivering 10–50× speedup.
+<SequenceDiagram
+  title="Split BFM: one call in per burst, one one-way call out"
+  caption="Compare with the pin-level diagram: the same eight edges now run inside the emulator between call 1 and its return, and the monitor's traffic is one void call per burst instead of a wait on every edge."
+  participants={[
+    { id: "drv", label: "drv", sublabel: "axi_wr_driver, HVL", kind: "driver" },
+    { id: "drv_bfm", label: "drv_bfm", sublabel: "axi_wr_bfm, HDL", kind: "interface" },
+    { id: "mon_bfm", label: "mon_bfm", sublabel: "axi_wr_mon_bfm, HDL", kind: "interface" },
+    { id: "mon", label: "mon", sublabel: "axi_wr_monitor, HVL", kind: "monitor" }
+  ]}
+  messages={[
+    { from: "drv", to: "drv_bfm", label: "write_burst(req.to_packed())" },
+    { kind: "divider", label: "edges 0 to 7 run in the emulator: AW, stall, 4 beats, B" },
+    { kind: "self", from: "mon_bfm", label: "sample AW, W and B handshakes" },
+    { kind: "async", from: "mon_bfm", to: "mon", label: "proxy.burst_seen(b)" },
+    { kind: "return", from: "drv_bfm", to: "drv", label: "write_burst returns" },
+    { kind: "note", from: "mon_bfm", to: "mon", label: "a void function: no time passes on the HVL side" }
+  ]}
+/>
 
-## Virtual Probes and In-Emulation Debug
+**Debrief against your prediction.** Eight host round trips became one call and one return, plus one one-way call from the monitor. Some tools go further and dispatch one-way void calls without even stopping the emulator clocks (Veloce TBX, DVCon US 2011 §4.3.2). That is a tool-dependent extension: in the standard SCE-MI 2 models, hardware time is frozen while the software side is called (SCE-MI 2.4 §4.4.4).
 
-### The Debug Visibility Challenge
+**The rules for the HVL side.** The HVL side must be **untimed**: no `#` delays, no waits on clocks (`@(posedge vif.aclk)`, `@(vif.drv_cb)`), no waits on DUT signals (`wait (vif.done)`), and no polling of HDL signals (DVCon US 2011 §3). Waits on *abstract* events are fine. A UVM driver blocking in `get_next_item`, a proxy waiting on a class event, a test waiting for the scoreboard's count: none of these advance hardware time. SCE-MI's own proxy example waits on an event after each call (SCE-MI 2.4 §4.7.9.3.1).
 
-In simulation, you can observe every signal in the design with zero overhead. In emulation, you can only observe signals that have been **probed** — and probe capacity is limited by the emulator's interconnect bandwidth.
+**What moves and what stays.**
+- BFMs are statically elaborated with `hdl_top`, so they cannot be created by the UVM factory or configured through `uvm_config_db`. The proxies can, and they control their BFMs by calls (DVCon US 2011 §5).
+- Only fixed-size, packed data crosses the boundary. A class handle or a dynamic array cannot be an argument to a BFM task that becomes hardware. Each item therefore gets a pair of **converters**: `to_packed()` turns the class into a packed struct, `from_packed()` turns it back (DVCon US 2011 §4.3.1 recommends one converter per transaction type).
+- Where the virtual interface handles come from varies by tool. This lesson's example sets them from `hvl_top` with the hierarchical names `hdl_top.drv_bfm` and `hdl_top.mon_bfm`, the only cross-references between the tops. Some emulation flows want the binding written inside `hdl_top` with a tool pragma instead. Check your tool's documentation.
 
-### Virtual Probes
+**One portability trap in the standard.** It is tempting to give the BFM interface a port of the pin interface type, as the 2011 paper's samples do (`interface fpu_monitor_bfm(fpu_pin_if fpu_pins)`). IEEE 1800-2023 §25.9 makes that illegal as soon as you declare a virtual interface of the BFM's type: "it shall be illegal to use an interface containing those references in the declaration of a virtual interface." Give BFMs plain signal ports, or declare the signals inside the BFM itself, as Make It Work does.
 
-Virtual probes are selectable signal groups defined at compile time but enabled/disabled at runtime:
+**Packing order across the boundary.** A packed struct is just a bit vector with named fields, and "the first member specified is the most significant" (IEEE 1800-2023 §7.2.1). On the C side of a DPI call it arrives as a canonical bit-vector array, least significant word first. SCE-MI 2.4 §5.6.1.3.3 traces exactly this example:
 
-```
-// Probe groups defined during emulation compilation
-probe_group "axi_master_if" {
-  /tb_top/dut/axi_master/awaddr
-  /tb_top/dut/axi_master/awvalid
-  /tb_top/dut/axi_master/awready
-  /tb_top/dut/axi_master/wdata
-  /tb_top/dut/axi_master/wvalid
-  /tb_top/dut/axi_master/bresp
-}
+| | SystemVerilog side | C side, naive | C side, correct |
+|---|---|---|---|
+| Declaration | `typedef struct packed { byte unsigned idNum; int unsigned value; } TransactionType;` | `struct { unsigned char idNum; unsigned value; };` | `struct { unsigned value; unsigned char idNum; };` (order reversed) |
+| Bit layout | bits 39:32 = `idNum`, bits 31:0 = `value` | first member at the lowest address | first member at the lowest address |
+| What C reads for `{ idNum = 1, value = 32'hbeefcafe }` | | `idNum` gets the low byte of `value` (`8'hfe`), and `value` reads the word that holds `idNum` (1 in its low byte) | `value = 32'hbeefcafe`, `idNum = 1` |
 
-probe_group "dma_engine" {
-  /tb_top/dut/dma/state
-  /tb_top/dut/dma/src_addr
-  /tb_top/dut/dma/dst_addr
-  /tb_top/dut/dma/byte_count
-}
-```
+The naive C struct is also padded after its byte field, so even the widths do not line up. The portable fix is to reverse the field order on the C side, as the standard shows, or to pack the fields explicitly with `svPutPartselBit` and `svGetPartselBit`. A UVM-to-BFM converter in pure SystemVerilog, like the one in Make It Work, does not have this problem, because both ends use the same packed type.
 
-**Best practice:** Define probe groups during compilation for each major subsystem. Enable only the groups needed for the current debug scenario. Over-probing reduces emulation speed by up to 50%.
+**Pitfalls of the split.**
+- A `#` delay, clock wait or DUT-signal wait left in a proxy: the bench still works in simulation, but in co-emulation every such wait is a synchronization point.
+- An HDL-to-HVL call that is a task, or a function that calls a task: the HDL side cannot wait for the host to consume time.
+- A dynamic array, queue, class handle or non-constant string as a BFM argument: the emulator compiler rejects it, or the tool falls back to slow signal-level communication.
+- A class that reads a DUT signal through a virtual interface "just for a check": that is a cross-boundary access on every read.
 
-### In-Emulation Assertions
+### How the two sides talk: SCE-MI 2
 
-SystemVerilog assertions that are **synthesizable** can execute inside the emulated hardware at full emulation speed:
+The **Standard Co-Emulation Modeling Interface** (SCE-MI) is the Accellera standard for connecting HDL code running in an emulator or simulator to software models running on a host. The current release is SCE-MI 2.4 (November 2016). It defines three interfaces, each a use model of its own (SCE-MI 2.4 Clause 4):
 
-```systemverilog
-// This assertion CAN run in emulation (synthesizable)
-property p_fifo_overflow;
-  @(posedge clk) disable iff (rst)
-  (fifo_count < FIFO_DEPTH) || !write_en;
-endproperty
-assert property (p_fifo_overflow);
+- **Function-based:** a subset of SystemVerilog DPI. "The function call itself is the transaction" (§4.7.4).
+- **Pipe-based:** one-way **transaction pipes** for streaming (§4.8).
+- **Macro-based:** the message-passing interface from SCE-MI 1.1, with explicit clock control (§4.1).
 
-// This assertion CANNOT run in emulation (uses $display)
-property p_debug_info;
-  @(posedge clk)
-  valid |-> ##1 begin
-    $display("Transaction completed at time %0t", $time);  // NOT synthesizable
-    1;
-  end
-endproperty
-```
+**Myth to unlearn: "DPI cannot cross into the emulated design."** It is the other way round. In the function-based interface, DPI *is* the emulator transport. The synthesizable HDL-side transactor **calls** imported functions whose bodies are on the host, and **implements** exported functions that the host calls (§4.7.3, "Define a function in one language, call it from the other"). The emulator compiler maps those calls onto the link between emulator and host. What is restricted is the subset:
+- **Argument types** (§5.6.1.3, Table 5.3): C-compatible integer types (`byte` to `longint`, signed or unsigned), `bit`, packed one-dimensional and multi-dimensional arrays of `bit` and `logic`, and packed structs. A `string` is allowed only for `import "DPI-C"` functions, that is from the HDL side to C, and only as a constant (§5.6.1.3.2). Class handles, dynamic arrays, queues and `chandle` arguments on the HDL side are not in the subset.
+- **Time:** DPI functions always execute in zero time. SCE-MI supports DPI tasks too, but "No DPI imported task calls … can be time consuming" (§5.6.2.1).
+- **Nesting:** two levels are required: the HDL side calls an import, which calls an export, which returns. Deeper chains are undefined in SCE-MI 2 (§5.6.2.3).
+- **Many messages per time step:** several calls in the same time step are allowed and must be supported (§5.6.2.2, §4.9.8).
+- **Frozen time:** in the function- and pipe-based models, "time on the HW side is frozen implicitly when the SW side is called" (§4.4.4).
 
-## Compile-Time vs Run-Time Configuration
+**SV-Connect** is the part of SCE-MI 2 for SystemVerilog HVL benches like yours (§4.7.9, §5.6.3). The HVL side and the HDL side both declare DPI functions, and a thin C layer between them, which vendors are encouraged to generate automatically (§4.7.9.2.1), relays each call. HVL-side function names carry a prefix (default `svc`) and an extra first `chandle` argument naming the HDL scope (§5.6.3.1.1, §5.6.3.1.3). And SV-Connect is defined for **functions only**: a long operation is started by an inbound (HVL-to-HDL) function call and announced finished by a later outbound (HDL-to-HVL) call (§5.6.3.1.4). Expert: Standard SCE-MI 2 calls versus vendor BFM tasks, under Push Further, shows that pattern.
 
-### What Changes for Emulation
+**Pipes** are for streams. A producer calls `send` and a consumer calls `receive`; input pipes carry data from the host to the HDL side, output pipes the other way. In **deferred visibility** mode a pipe may buffer elements, and the consumer sees them only when the pipe fills or is flushed. In **immediate visibility** mode the consumer sees each element the next time it gets control. A **flush** guarantees the writer that the reader has consumed what was sent (§4.8.1). Buffering lets many items share one synchronization.
 
-| Aspect | Simulation | Emulation |
+<SequenceDiagram
+  title="Three ways across the SCE-MI 2 boundary"
+  caption="Inbound and outbound calls are zero-time DPI functions, and hardware time is frozen while the host side runs (§4.4.4). A pipe lets the host send several items that the infrastructure may buffer; flush returns only when the HDL side has consumed them (§4.8.1)."
+  participants={[
+    { id: "sw", label: "host side", sublabel: "HVL classes or C" },
+    { id: "hw", label: "HDL side", sublabel: "transactor in the emulator", kind: "interface" }
+  ]}
+  messages={[
+    { from: "sw", to: "hw", label: "inbound: call HDL export" },
+    { kind: "return", from: "hw", to: "sw", label: "returns in zero time" },
+    { from: "hw", to: "sw", label: "outbound: call import" },
+    { kind: "note", from: "sw", to: "hw", label: "hardware time frozen while the host runs" },
+    { kind: "return", from: "sw", to: "hw", label: "returns; clocks resume" },
+    { kind: "async", from: "sw", to: "hw", label: "input pipe: send(item) x4" },
+    { from: "sw", to: "hw", label: "flush" },
+    { kind: "return", from: "hw", to: "sw", label: "flush returns: items consumed" }
+  ]}
+/>
+
+**Where the BFM tasks of this lesson fit.** The split in the previous section calls *time-consuming* BFM tasks from the HVL side through a virtual interface. That is not SCE-MI 2: it is a vendor extension. Mentor's paper describes its remote calls as "inspired by" the SCE-MI 2 function model, with "extensions … most notably task calls in the workstation to emulator direction in which use of time-consuming/multi-cycle processing elements is allowed" (DVCon US 2011 §4.3). Synopsys documents a similar style for ZeBu, where UVM drivers and monitors call methods on BFM interfaces running in ZeBu (DVCon US 2019). The pattern simulates on any IEEE 1800-2023 simulator, which is why the lesson teaches it, but which emulators accept it, and with which pragmas, is tool-dependent.
+
+**Use the DPI explorer to check your type instincts.** The explorer below models full IEEE 1800-2023 DPI, which allows more than SCE-MI 2 does. For each SystemVerilog type in its first panel, predict two things before you reveal the answer: which C type arrives, and whether the type is in the SCE-MI 2 portable subset of Table 5.3.
+
+<DPIBoundaryInspector />
+
+**Debrief.** The C-compatible integer types, a scalar `bit`, and packed `bit` and `logic` vectors are in both DPI and the SCE-MI 2 subset. A scalar `logic` is legal DPI but is not listed in Table 5.3; declare it as `bit`, or as a one-bit packed vector `logic [0:0]`. `real`, `shortreal`, `chandle` and the open arrays are legal DPI but not in Table 5.3, so a transactor that uses them is not portable to every emulator. `string` is in the subset only as a constant input of an `import "DPI-C"` function. In the second panel, the rule that matters most here is time: a DPI task that consumes time is legal in a simulator but not in SCE-MI 2.
+
+### Practitioner depth: emulation-friendly coding rules
+
+Each rule below has a reason, a symptom you will see if it is broken, and a fix. "Tool-dependent" means the rule's details differ between emulators, so check your tool's documentation.
+
+| Rule | Why | Symptom if broken | Fix |
+|---|---|---|---|
+| The HVL side is untimed: no `#`, no clock or DUT-signal waits, no polling | each one is a synchronization point (DVCon US 2011 §3) | low speed-up; the profile shows synchronization dominating | move the wait into a BFM task, or have the BFM push an event by a void call |
+| HDL-to-HVL calls are functions, preferably `void` | clocks exist only on the HDL side (DVCon US 2011 §4.3.2 footnote) | compile error, or the emulator stops for every call | make the callback a function; let the proxy do any waiting on HVL events |
+| Only Table 5.3 types cross: integers, `bit`, packed arrays, packed structs | the SCE-MI 2 subset is what emulators synthesize (§5.6.1.3) | compile error, or a fall-back to slow communication | add packed types and `to_packed()`/`from_packed()` converters |
+| HDL-side code stays within the tool's synthesizable subset | it must become hardware | emulator compile errors | tool-dependent: Veloce TBX documents implicit state machines, initial and final blocks, `wait`, named events and system tasks (DVCon US 2011 §4.1); ZeBu documents behavioral compilation of clocking blocks, `fork`/`join` and `wait` (DVCon US 2019) |
+| Clocks and resets come from generators in `hdl_top` | an HVL clock is a synchronization on every edge (DVCon US 2019, "Moving clocks from SW to HW") | very low speed; host CPU busy toggling a clock | move the generators into `hdl_top`; some tools want a pragma, such as TBX's `// tbx clkgen` (DVCon US 2011, Sample A.1) |
+| Keep one timescale across the project | the finest HDL precision sets the event-clock granularity: `#1` at 1ns/1ns on the host against 1ns/1fs in hardware gives "1,000,000 synchronization points" (DVCon US 2019) | unexplained slowness after a file with a fine `timeprecision` is added | one project-wide timescale, checked in simulation first |
+| Covergroups live on the HVL side | DVCon US 2011 §5: synthesis "does not readily handle" covergroups | compile error or lost coverage | sample in the proxy, or in a subscriber of its analysis port; hardware coverage is tool-dependent (ZeBu documents an option for it, DVCon US 2019) |
+| Protocol assertions can stay in the BFM or DUT | assertion synthesis exists on some platforms (TBX, DVCon US 2011 §5; ZeBu `assertion_synthesis`, DVCon US 2019) | assertions silently absent if not enabled | tool-dependent: enable assertion synthesis, or keep the checks in simulation runs |
+| Report from the proxies, not from HDL code | whether `$display` in HDL code is accepted is tool-dependent (TBX synthesizes system tasks), and every HDL-side message is an HDL-to-HVL transfer | slow runs with heavy logging | pass status to the proxy and report there with `` `uvm_info `` |
+| Expect 2-state behaviour | X and Z are coerced on 2-state engines (SCE-MI 2.4 §5.6.1.3.1) | a reset or initialization bug passes on the emulator but fails in simulation | keep X and reset checks in simulation runs of the same bench |
+
+### Practitioner depth: getting software and data into the emulated design
+
+The boot and firmware tests that justify an emulator need a program image in the DUT's memories before the processor comes out of reset. Loading it through the bus, one write per word, would cost a synchronization per word. Instead, emulation flows load memories directly, a **backdoor** load. SCE-MI 2.4 defines a C-side backdoor memory API, the direct memory interface (`scemi_mem_` calls), and a register access API (§4.11). Vendor flows add their own: Synopsys shows host code loading a memory inside ZeBu with `$readmemh` on the hardware hierarchy, and a run-time `memory -read|-write` command (DVCon US 2019). The same deck warns against "100k's" of individual backdoor accesses from the host, which are slow; load whole images instead. Exact commands are tool-dependent.
+
+### Practitioner depth: what you can see inside an emulator
+
+**Misconception: "emulation gives full waveform visibility for free."** Nothing gives it for free. Even in simulation, dumping waveforms costs run time and disk, which is why you dump selectively ([E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index)). On an emulator the options and their costs depend on the platform:
+
+- **Full-visibility capture.** Cadence markets FullVision on Palladium and Protium, which captures all design signals without recompiling for each new set (Cadence product material). Siemens describes Veloce Strato CS as "maintaining full visibility" (2024-02-20). Capture still has a cost: the depth of the capture window, run speed while capturing, and host storage.
+- **Probes and dump types.** On ZeBu, signals for waveform capture are grouped into value sets and dumped with dump types such as FWC, QIWC and dynamic probes, and some debug actions must be enabled when the design is compiled: forcing a hardware signal needs `zforce`, depositing needs `zinject`, and reading or breaking on a hardware signal needs `probe_signals` (DVCon US 2019). Each enabled feature costs compile work and capacity.
+- **Triggers and capture windows.** You rarely capture a whole run of billions of cycles. You run to a **trigger**, such as an assertion failure, a signal value or a cycle count, and keep a window of cycles around it. Synopsys's own guidance: "Full vision is usually only achievable with a short run", so "run till first point of failure" (DVCon US 2019).
+- **In-emulation assertions.** Assertions synthesized into the emulator watch every cycle at full speed and make ideal triggers, where the tool supports assertion synthesis.
+- **Reproduction in simulation.** Once you know roughly when and where a failure happens, the same single-source bench can reproduce it in simulation with full 4-state visibility.
+
+The picture is a generic illustration of a capture window around a trigger. The number of cycles before and after the trigger is a setting whose limits are tool-dependent.
+
+<TimingDiagram
+  title="Trigger and capture window (generic illustration)"
+  caption="The run is long; only the shaded window is captured. An in-emulation assertion fails at edge 8 and acts as the trigger. The tool keeps a pre-trigger history (edges 4 to 7) and a post-trigger tail (edges 9 to 10). Everything outside the window is never stored, so plan the trigger before the run."
+  edges={12}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "a_fail", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0] },
+    { name: "capturing", kind: "bit", values: [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0] }
+  ]}
+  markers={[
+    { edge: 4, tone: "info", label: "window starts: pre-trigger history" },
+    { edge: 8, tone: "fail", label: "trigger: assertion fails" },
+    { edge: 10, tone: "info", label: "window ends: post-trigger tail" }
+  ]}
+  highlights={[{ from: 4, to: 10, tone: "info", label: "captured" }]}
+/>
+
+A workable flow for a failure deep in a long run:
+1. Find the failure cheaply: an in-emulation assertion, a scoreboard error with a cycle count, or a bisection over check points.
+2. Rerun with a trigger and a capture window placed just before the failure.
+3. Read the captured window; force or deposit values only if the platform enabled it at compile time.
+4. Reproduce in simulation with the same bench, starting from the closest point you can reach (a shorter test, or a saved state where the tool supports it), to get 4-state visibility and step-by-step debug.
+
+### Practitioner depth: debugging a slow or broken co-emulation run
+
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| **Randomization** | Full SV constraint solver at runtime | Constraints must be solvable in the software testbench; DUT cannot `randomize()` |
-| **`$display` / `$info`** | Works everywhere | Only in software testbench; NOT in synthesized DUT code |
-| **Time precision** | Any `timescale` | Must match emulator clock period; typically 1ns/1ps |
-| **DPI-C** | Unrestricted | Only in software testbench partition — cannot cross into emulated DUT |
-| **Force/release** | Works on any signal | Limited to probed signals |
-| **Clocks** | Generated in testbench | Generated by emulator hardware; testbench uses emulator clock API |
+| Speed-up of only a few times; the profiler shows synchronization or host time dominating | `#` delays, clock waits or HDL-signal polling left in proxies; an HVL clock generator | move waits into BFM tasks; move generators into `hdl_top` |
+| Slower than expected after a "harmless" change | a new file with a finer `timeprecision`, which multiplies event-clock synchronizations | one project-wide timescale |
+| Speed-up flat even with BFMs | the monitor BFM is pulled by its proxy (a call per burst *and* a wait), or HDL-to-HVL callbacks are tasks | push with a `void` function through a back-pointer |
+| Host CPU at 100 %, emulator mostly idle | heavy HVL work per transaction: solver, logging, scoreboard (hardware time is frozen meanwhile, §4.4.4) | profile the host side ([E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index)); lower verbosity; batch with pipes |
+| Emulator compile fails in a BFM | a non-synthesizable construct for this tool, or a class type the BFM uses but does not import from a package | rewrite within the tool's subset; import the proxy's package into the BFM |
+| Fields arrive garbled | packing-order mismatch between a packed struct and a C struct, or a converter that packs in the wrong order | one packed type on both ends, or reverse the C field order (§5.6.1.3.3) |
+| Hang: the run stops advancing | a BFM waiting for a READY that never comes, with no timeout in hardware; or an HVL proxy waiting on an event the BFM never triggers | add a cycle-count timeout inside the BFM and report it through the proxy |
+| Passes on the emulator, fails in simulation | 2-state coercion hides X (§5.6.1.3.1) | fix the reset or initialization bug; keep X checks in simulation |
 
-### Emulation-Safe Coding Guidelines
+Profilers that count synchronizations are tool-dependent. Synopsys documents VCS's `-simprofile` for finding `#` delays on the host and `-simxl=profile` for a communication profile of a simulation-acceleration run (DVCon US 2019).
+
+### Recap: the mistakes everyone makes
+
+- Expecting an unmodified bench to run at emulator speed. It runs, but its own waits set the pace.
+- Leaving `#` delays, clock waits or DUT-signal polling in proxies after the split.
+- Calling HVL tasks from the HDL side. Callbacks must be functions.
+- Passing class handles, dynamic arrays or strings across the boundary instead of packed types.
+- Treating "DPI does not cross into the emulator" as a rule. DPI is the standard transport, within a subset.
+- Assuming full visibility is free, or that every emulator offers it the same way.
+- Comparing speed-ups without asking which use mode and which bench produced them.
+
+## Make It Work
+
+### Worked example: an AXI write agent split for co-emulation
+
+This is one complete file. It compiles on an IEEE 1800-2023 simulator with uvm-core 2020.3.1 and runs there as an ordinary simulation, which is how you prove the split is correct before an emulator compile. The protocol is an AXI4 write subset: fixed four-beat INCR bursts of 32-bit data, no AWSIZE, AWBURST, AWID or WSTRB, and the AW handshake before the first W beat. The DUT is a small synthesizable write-only memory that stalls the first W beat by one cycle.
+
+Two notes on the code style. The usual convention of a single top module named `tb_top` does not apply here: co-emulation needs two tops, `hdl_top` and `hvl_top`, and the virtual interface handles are set in `hvl_top` before `run_test()`. And the BFMs use time-consuming tasks called from the HVL side, which is the vendor-extension style explained in "How the two sides talk"; tool pragmas, which differ by emulator, are left out.
 
 ```systemverilog
-// ❌ NOT emulation-safe: $display in RTL
-always_ff @(posedge clk) begin
-  if (state == ERROR)
-    $display("ERROR state reached!");  // Will cause synthesis failure
-end
+// compile
+// axi_wr_split.sv: one file. Compile order matters: the package, then the
+// interfaces that import it, then the DUT and the two tops.
+`timescale 1ns/1ns
+`include "uvm_macros.svh"
 
-// ✅ Emulation-safe: Use assertion instead
-property p_no_error_state;
-  @(posedge clk) state != ERROR;
-endproperty
-assert property (p_no_error_state);
+package axi_wr_pkg;
+  import uvm_pkg::*;
 
-// ❌ NOT emulation-safe: Dynamic array in RTL
-logic data_q[$];  // Queues are not synthesizable
+  localparam int BEATS = 4;                  // every burst: AWLEN = BEATS-1
 
-// ✅ Emulation-safe: Fixed-size array
-logic [31:0] data_array [0:MAX_DEPTH-1];
-integer head, tail;
+  // The only data that crosses HVL <-> HDL: fixed-size, 2-state, packed.
+  typedef struct packed {
+    bit [31:0]            addr;
+    bit [BEATS-1:0][31:0] data;              // data[0] is the first beat
+    bit [1:0]             resp;              // BRESP (unused on the way in)
+  } axi_wr_burst_t;
+
+  `uvm_analysis_imp_decl(_exp)
+  `uvm_analysis_imp_decl(_obs)
+
+  class axi_wr_item extends uvm_sequence_item;
+    rand bit [31:0] addr;
+    rand bit [31:0] data [BEATS];
+    bit      [1:0]  resp;                    // 0 = OKAY, the expected response
+
+    // 16-byte aligned inside a 256-byte slave: a burst never crosses 4KB.
+    constraint c_addr { addr[3:0] == 4'h0; addr < 32'h100; }
+
+    `uvm_object_utils(axi_wr_item)
+
+    function new(string name = "axi_wr_item");
+      super.new(name);
+    endfunction
+
+    // Converters: the only code that knows the packed layout.
+    function axi_wr_burst_t to_packed();
+      axi_wr_burst_t b;
+      b.addr = addr;
+      foreach (data[i]) b.data[i] = data[i];
+      b.resp = resp;
+      return b;
+    endfunction
+
+    function void from_packed(axi_wr_burst_t b);
+      addr = b.addr;
+      foreach (data[i]) data[i] = b.data[i];
+      resp = b.resp;
+    endfunction
+
+    virtual function void do_copy(uvm_object rhs);
+      axi_wr_item that;
+      super.do_copy(rhs);
+      if (!$cast(that, rhs)) `uvm_fatal("COPY", "not an axi_wr_item")
+      addr = that.addr;
+      data = that.data;
+      resp = that.resp;
+    endfunction
+
+    virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+      axi_wr_item that;
+      if (!$cast(that, rhs)) return 0;
+      return super.do_compare(rhs, comparer) && addr == that.addr &&
+             data == that.data && resp == that.resp;
+    endfunction
+
+    virtual function string convert2string();
+      return $sformatf("addr=%h data=%h %h %h %h resp=%0d",
+                       addr, data[0], data[1], data[2], data[3], resp);
+    endfunction
+  endclass
+
+  class axi_wr_seq extends uvm_sequence #(axi_wr_item);
+    `uvm_object_utils(axi_wr_seq)
+    int unsigned n = 4;
+
+    function new(string name = "axi_wr_seq");
+      super.new(name);
+    endfunction
+
+    task body();
+      repeat (n) begin
+        req = axi_wr_item::type_id::create("req");
+        start_item(req);
+        if (!req.randomize()) `uvm_fatal("RAND", "axi_wr_item randomize failed")
+        finish_item(req);
+      end
+    endtask
+  endclass
+
+  // Driver proxy: untimed. Every clocked line lives in axi_wr_bfm.
+  class axi_wr_driver extends uvm_driver #(axi_wr_item);
+    `uvm_component_utils(axi_wr_driver)
+    virtual axi_wr_bfm bfm;
+    uvm_analysis_port #(axi_wr_item) sent_ap;  // what was sent: expected stream
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      sent_ap = new("sent_ap", this);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(virtual axi_wr_bfm)::get(this, "", "drv_bfm", bfm))
+        `uvm_fatal("NO_BFM", "virtual axi_wr_bfm 'drv_bfm' was not set")
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      bfm.wait_for_reset();                    // the BFM counts the clocks
+      forever begin
+        seq_item_port.get_next_item(req);
+        sent_ap.write(req);
+        bfm.write_burst(req.to_packed());      // one call per burst
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  // Monitor proxy: the BFM pushes each burst here through a back-pointer.
+  class axi_wr_monitor extends uvm_monitor;
+    `uvm_component_utils(axi_wr_monitor)
+    virtual axi_wr_mon_bfm bfm;
+    uvm_analysis_port #(axi_wr_item) ap;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      ap = new("ap", this);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(virtual axi_wr_mon_bfm)::get(this, "", "mon_bfm", bfm))
+        `uvm_fatal("NO_BFM", "virtual axi_wr_mon_bfm 'mon_bfm' was not set")
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+      super.connect_phase(phase);
+      bfm.proxy = this;                        // the back-pointer
+    endfunction
+
+    // Called from the HDL side: a void function, so no time passes here.
+    function void burst_seen(axi_wr_burst_t b);
+      axi_wr_item t = axi_wr_item::type_id::create("t");
+      t.from_packed(b);                        // a new object per burst
+      ap.write(t);
+    endfunction
+  endclass
+
+  class axi_wr_agent extends uvm_agent;
+    `uvm_component_utils(axi_wr_agent)
+    uvm_sequencer #(axi_wr_item) sqr;
+    axi_wr_driver  drv;
+    axi_wr_monitor mon;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      sqr = uvm_sequencer#(axi_wr_item)::type_id::create("sqr", this);
+      drv = axi_wr_driver::type_id::create("drv", this);
+      mon = axi_wr_monitor::type_id::create("mon", this);
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  class axi_wr_scoreboard extends uvm_scoreboard;
+    `uvm_component_utils(axi_wr_scoreboard)
+    uvm_analysis_imp_exp #(axi_wr_item, axi_wr_scoreboard) exp_imp;
+    uvm_analysis_imp_obs #(axi_wr_item, axi_wr_scoreboard) obs_imp;
+    axi_wr_item  expected [$];
+    int unsigned matches, mismatches, observed;
+    event        burst_observed;               // an abstract event: no HDL time
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      exp_imp = new("exp_imp", this);
+      obs_imp = new("obs_imp", this);
+    endfunction
+
+    function void write_exp(axi_wr_item t);
+      axi_wr_item c;
+      $cast(c, t.clone());                     // copy before storing
+      expected.push_back(c);
+    endfunction
+
+    function void write_obs(axi_wr_item t);
+      axi_wr_item e;
+      observed++;
+      if (expected.size() == 0) begin
+        mismatches++;
+        `uvm_error("SCB", {"unexpected burst: ", t.convert2string()})
+      end else begin
+        e = expected.pop_front();
+        if (e.compare(t)) matches++;
+        else begin
+          mismatches++;
+          `uvm_error("SCB", {"expected ", e.convert2string(),
+                             " got ", t.convert2string()})
+        end
+      end
+      -> burst_observed;
+    endfunction
+
+    function void check_phase(uvm_phase phase);
+      super.check_phase(phase);
+      `uvm_info("SCB", $sformatf("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+                                 matches, mismatches, expected.size()), UVM_NONE)
+      if (expected.size() != 0)
+        `uvm_error("SCB", "bursts were sent but never observed")
+    endfunction
+  endclass
+
+  class axi_wr_env extends uvm_env;
+    `uvm_component_utils(axi_wr_env)
+    axi_wr_agent      agt;
+    axi_wr_scoreboard scb;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      agt = axi_wr_agent::type_id::create("agt", this);
+      scb = axi_wr_scoreboard::type_id::create("scb", this);
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+      agt.drv.sent_ap.connect(scb.exp_imp);
+      agt.mon.ap.connect(scb.obs_imp);
+    endfunction
+  endclass
+
+  class axi_wr_test extends uvm_test;
+    `uvm_component_utils(axi_wr_test)
+    axi_wr_env env;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env = axi_wr_env::type_id::create("env", this);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      axi_wr_seq seq;
+      phase.raise_objection(this);
+      seq = axi_wr_seq::type_id::create("seq");
+      seq.start(env.agt.sqr);
+      // End of test on testbench state, not on time or pins:
+      // wait until the monitor has reported every burst.
+      while (env.scb.observed < seq.n) @(env.scb.burst_observed);
+      phase.drop_objection(this);
+    endtask
+  endclass
+endpackage
+
+// Driver BFM: the AXI write signals, a clocking block and the clocked tasks.
+// Plain signal ports (no interface ports), so a virtual interface may name it.
+interface axi_wr_bfm (
+  input  logic        aclk, aresetn,
+  output logic [31:0] awaddr,
+  output logic [7:0]  awlen,
+  output logic        awvalid,
+  input  logic        awready,
+  output logic [31:0] wdata,
+  output logic        wlast, wvalid,
+  input  logic        wready,
+  input  logic [1:0]  bresp,
+  input  logic        bvalid,
+  output logic        bready
+);
+  import axi_wr_pkg::*;
+
+  // Default skews: inputs sampled just before the edge, outputs driven at it.
+  clocking drv_cb @(posedge aclk);
+    output awaddr, awlen, awvalid, wdata, wlast, wvalid, bready;
+    input  awready, wready, bresp, bvalid;
+  endclocking
+
+  task automatic wait_for_reset();
+    drv_cb.awvalid <= 1'b0;
+    drv_cb.wvalid  <= 1'b0;
+    drv_cb.wlast   <= 1'b0;
+    drv_cb.bready  <= 1'b0;
+    wait (aresetn == 1'b1);
+    @(drv_cb);
+  endtask
+
+  task automatic write_burst(input axi_wr_burst_t burst);
+    @(drv_cb);
+    drv_cb.awaddr  <= burst.addr;
+    drv_cb.awlen   <= 8'(BEATS - 1);
+    drv_cb.awvalid <= 1'b1;
+    do @(drv_cb); while (!drv_cb.awready);    // AW handshake
+    drv_cb.awvalid <= 1'b0;
+    for (int i = 0; i < BEATS; i++) begin
+      drv_cb.wdata  <= burst.data[i];          // next beat right after the last
+      drv_cb.wlast  <= (i == BEATS - 1);
+      drv_cb.wvalid <= 1'b1;
+      do @(drv_cb); while (!drv_cb.wready);   // beat i handshake
+    end
+    drv_cb.wvalid <= 1'b0;
+    drv_cb.wlast  <= 1'b0;
+    drv_cb.bready <= 1'b1;
+    do @(drv_cb); while (!drv_cb.bvalid);     // B handshake
+    drv_cb.bready <= 1'b0;
+  endtask
+endinterface
+
+// Monitor BFM: watches the same signals and pushes each completed burst.
+interface axi_wr_mon_bfm (
+  input logic        aclk, aresetn,
+  input logic [31:0] awaddr,
+  input logic [7:0]  awlen,
+  input logic        awvalid, awready,
+  input logic [31:0] wdata,
+  input logic        wlast, wvalid, wready,
+  input logic [1:0]  bresp,
+  input logic        bvalid, bready
+);
+  import axi_wr_pkg::*;
+
+  axi_wr_monitor proxy;                        // set by the proxy: the back-pointer
+
+  clocking mon_cb @(posedge aclk);
+    input awaddr, awvalid, awready, wdata, wvalid, wready, bresp, bvalid, bready;
+  endclocking
+
+  initial begin : observe
+    axi_wr_burst_t b;
+    wait (proxy != null);
+    wait (aresetn == 1'b1);
+    forever begin
+      do @(mon_cb); while (!(mon_cb.awvalid && mon_cb.awready));
+      b.addr = mon_cb.awaddr;
+      for (int i = 0; i < BEATS; i++) begin
+        do @(mon_cb); while (!(mon_cb.wvalid && mon_cb.wready));
+        b.data[i] = mon_cb.wdata;
+      end
+      do @(mon_cb); while (!(mon_cb.bvalid && mon_cb.bready));
+      b.resp = mon_cb.bresp;
+      proxy.burst_seen(b);                     // one-way void call to the HVL side
+    end
+  end
+endinterface
+
+// DUT: a write-only memory with one wait state on the first W beat.
+// It ends a burst on WLAST and ignores AWLEN.
+module axi_wr_mem (
+  input  logic        aclk, aresetn,
+  input  logic [31:0] awaddr,
+  input  logic [7:0]  awlen,
+  input  logic        awvalid,
+  output logic        awready,
+  input  logic [31:0] wdata,
+  input  logic        wlast, wvalid,
+  output logic        wready,
+  output logic [1:0]  bresp,
+  output logic        bvalid,
+  input  logic        bready
+);
+  typedef enum logic [1:0] {IDLE, STALL, DATA, RESP} state_e;
+  state_e      state;
+  logic [5:0]  widx;                           // word index of the next beat
+  logic [31:0] mem [64];
+
+  assign awready = (state == IDLE);
+  assign wready  = (state == DATA);
+  assign bvalid  = (state == RESP);
+  assign bresp   = 2'b00;                      // always OKAY
+
+  always_ff @(posedge aclk or negedge aresetn) begin
+    if (!aresetn) begin
+      state <= IDLE;
+      widx  <= '0;
+    end else begin
+      case (state)
+        IDLE:    if (awvalid) begin
+                   widx  <= awaddr[7:2];
+                   state <= STALL;
+                 end
+        STALL:   state <= DATA;                // the one wait state
+        DATA:    if (wvalid) begin
+                   widx <= widx + 6'd1;
+                   if (wlast) state <= RESP;
+                 end
+        RESP:    if (bready) state <= IDLE;
+        default: state <= IDLE;
+      endcase
+    end
+  end
+
+  always_ff @(posedge aclk)
+    if (state == DATA && wvalid) mem[widx] <= wdata;
+endmodule
+
+// Everything that runs in the emulator: DUT, generators, BFMs.
+module hdl_top;
+  logic        aclk, aresetn;
+  logic [31:0] awaddr, wdata;
+  logic [7:0]  awlen;
+  logic        awvalid, awready, wlast, wvalid, wready, bvalid, bready;
+  logic [1:0]  bresp;
+
+  // Clock and reset generators belong to the HDL side (tool pragmas omitted).
+  initial begin
+    aclk = 1'b0;
+    forever #5 aclk = ~aclk;
+  end
+  initial begin
+    aresetn = 1'b0;
+    repeat (4) @(negedge aclk);                // release away from the active edge
+    aresetn = 1'b1;
+  end
+
+  axi_wr_bfm     drv_bfm (.*);
+  axi_wr_mon_bfm mon_bfm (.*);
+  axi_wr_mem     dut     (.*);
+endmodule
+
+// Everything that stays on the host: the UVM test, untimed.
+module hvl_top;
+  import uvm_pkg::*;
+  import axi_wr_pkg::*;
+
+  initial begin
+    // The only cross-references between the tops: handing over the BFM handles.
+    uvm_config_db#(virtual axi_wr_bfm)::set(null, "uvm_test_top.*", "drv_bfm",
+                                            hdl_top.drv_bfm);
+    uvm_config_db#(virtual axi_wr_mon_bfm)::set(null, "uvm_test_top.*", "mon_bfm",
+                                                hdl_top.mon_bfm);
+    run_test("axi_wr_test");
+  end
+endmodule
 ```
 
-## UVM Modifications Required for Emulation
+**Expected output** (illustrative: written by hand from the code, not captured from a run; the time 365 follows from the 10 ns clock and reset released at 40 ns, with each burst taking eight edges):
 
-### Testbench Partitioning
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test axi_wr_test...
+UVM_INFO axi_wr_split.sv(…) @ 365: uvm_test_top.env.scb [SCB] SCB_SUMMARY matches=4 mismatches=0 pending=0
 
-The fundamental emulation challenge is **partitioning** the testbench:
+--- UVM Report Summary ---
 
-```
-┌───────────────────────────────────────────────────────────┐
-│ SOFTWARE PARTITION (host CPU)                            │
-│                                                          │
-│  • UVM test, env, agents, sequences, scoreboard         │
-│  • Constraint solving (randomize())                      │
-│  • Coverage collection (covergroup)                      │
-│  • Reporting ($display, uvm_info)                        │
-│  • Reference model comparison                            │
-└──────────────────────┬───────────────────────────────────┘
-                       │  Transaction-Level Interface
-                       │  (transactor API)
-┌──────────────────────┴───────────────────────────────────┐
-│ HARDWARE PARTITION (emulator)                            │
-│                                                          │
-│  • DUT (synthesized RTL)                                │
-│  • Transactors (synthesized protocol adapters)           │
-│  • In-emulation assertions (synthesizable SVA)          │
-│  • Clock generation (emulator hardware)                  │
-│  • Reset generation (emulator hardware)                  │
-└───────────────────────────────────────────────────────────┘
+** Report counts by severity
+UVM_INFO :    …
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
 ```
 
-### Checklist: Preparing a UVM Testbench for Emulation
+The exact banner lines, file and line fields and the `UVM_INFO` count depend on the simulator and uvm-core build. The two lines that matter are the scoreboard summary and `UVM_ERROR :    0` with `UVM_FATAL :    0`.
 
-1. **Replace pin-level drivers** with transaction-level transactor calls
-2. **Move clock/reset generation** to the emulator configuration — do not generate clocks in the testbench
-3. **Remove `$display`** from all synthesized code — use assertions instead
-4. **Replace dynamic arrays** in DUT code with fixed-size structures
-5. **Define probe groups** for debug visibility
-6. **Set emulator-compatible timescale** (typically `1ns/1ps`)
-7. **Partition coverage collection** — covergroups stay in software; in-emulation assertions go to hardware
-8. **Update Makefile** to support separate compilation for software and hardware partitions
+**Run it.**
+- **Simulation, any IEEE 1800-2023 simulator with uvm-core 2020.3.1:** compile the one file with the UVM library, and elaborate with both `hdl_top` and `hvl_top` as top-level modules. Neither is instantiated, so most simulators pick both automatically; some want each top named on the command line, with a tool-specific switch. No open-source flow has been verified for this example; Verilator's UVM support is limited.
+- **Co-emulation:** the steps are tool-specific. You tell the emulator compiler that the `hdl_top` hierarchy goes into hardware and the rest stays in the host simulator, and you add the tool's pragmas or configuration commands. For example, Synopsys's flow names the hardware top in a UTF file with `simxl_set_hwtop` (DVCon US 2019), and Veloce TBX marks clock generators and BFM tasks with pragmas such as `// tbx clkgen` and `// pragma tbx xtf` (DVCon US 2011, Appendix). Follow your emulator's documentation.
 
-## Knowledge Check
+### How to split an agent, step by step
+
+1. **Find the timed code.** In the driver and monitor, mark every line with `@`, `#`, `wait`, `##` or a read of a virtual-interface signal.
+2. **Create the BFM interfaces.** One for driving, one for monitoring. Give them the protocol signals as plain ports (or as their own signals), a clocking block, and tasks that hold all the marked lines.
+3. **Define the packed types.** One packed struct per transaction kind that crosses, built only from the Table 5.3 types. Add `to_packed()` and `from_packed()` to the item.
+4. **Reduce the driver to a proxy.** It gets items, converts them, calls one BFM task per item, and reports done.
+5. **Make the monitor push.** Give the monitor BFM a back-pointer to its proxy, set it in the proxy's `connect_phase`, and call a `void` function on the proxy for each completed transaction.
+6. **Move clocks and resets** into `hdl_top`, with the DUT and the BFM instances.
+7. **Hand over the handles.** In `hvl_top` (or wherever your tool wants the binding), set the virtual interface handles with `uvm_config_db` before `run_test()`.
+8. **Prove it in simulation.** Run the same test and seed before and after the split; the scoreboard results and coverage must match.
+9. **Audit the HVL side.** Search every class for `#`, clock waits, DUT-signal waits and polling loops. Event waits and blocking TLM calls may stay.
+
+**Checklist before moving on:**
+- [ ] I can count the synchronization points of a pin-level driver for one transaction, and say why the split version needs one call.
+- [ ] Every class in my bench is untimed: no `#`, no clock or DUT-signal waits, no polling of HDL signals.
+- [ ] Every BFM argument is a fixed-size packed type from the SCE-MI 2 subset, and each item has converters.
+- [ ] HDL-to-HVL calls are `void` functions; my monitor BFM pushes through a back-pointer.
+- [ ] Clocks and resets are generated in `hdl_top`, and the project uses one timescale.
+- [ ] My BFM interfaces have no interface-typed ports, so virtual interfaces may name them.
+- [ ] I can say which parts of my flow are standard SCE-MI 2 and which are vendor extensions.
+
+## Push Further
+
+### Expert: Standard SCE-MI 2 calls versus vendor BFM tasks
+
+The worked example calls a time-consuming task, `write_burst`, from the HVL side. Standard SV-Connect does not allow that: it "is defined for functions only", and a time-consuming operation is started by an inbound function and completed by an outbound function (SCE-MI 2.4 §5.6.3.1.4); DPI tasks must not consume time (§5.6.2.1). The same split in that style looks like this:
+
+```systemverilog
+// snippet: function-only handshake in the SCE-MI 2 style (shown with virtual-
+// interface calls for readability; real SV-Connect uses DPI import/export pairs).
+// HDL side, inside the BFM:
+//   function void start_burst(input axi_wr_burst_t b);   // inbound, zero time
+//     pending = b;  go = 1'b1;                           // an FSM picks it up
+//   endfunction
+//   ... at the B handshake: proxy.burst_done(bresp);      // outbound, void
+// HVL side, in the driver proxy:
+event done_ev;
+function void burst_done(bit [1:0] bresp);   // called from the HDL side
+  -> done_ev;
+endfunction
+task run_phase(uvm_phase phase);
+  forever begin
+    seq_item_port.get_next_item(req);
+    bfm.start_burst(req.to_packed());        // returns at once
+    @(done_ev);                              // an abstract event: allowed
+    seq_item_port.item_done();
+  end
+endtask
+```
+
+Trade-offs to weigh at staff level:
+- **Portability.** The function-only style follows the standard's rules; the task style depends on a vendor's extension, but reads exactly like the simulation driver it replaced (DVCon US 2011 §4.3).
+- **Hardware design.** With functions only, the BFM's protocol logic must be an explicit state machine started by a flag; with tasks, the emulator compiler infers that state machine for you (implicit FSMs, DVCon US 2011 §2).
+- **Interface ports.** The 2011 samples give BFM interfaces a pin-interface port, which IEEE 1800-2023 §25.9 forbids for any interface named by a virtual interface. Some tools accept it; standard-clean code does not need it.
+
+### Expert: SCE-MI pipes and batching
+
+Function calls are strictly reactive: one call, one return. For streams, SCE-MI 2 adds **transaction pipes** (SCE-MI 2.4 §4.8). They are unidirectional and named by the HDL endpoint's hierarchical path; both ends call into the pipe, one with `send` and one with `receive`. In **deferred visibility** mode the infrastructure may absorb elements on non-blocking sends and the consumer sees them only "until the pipe either fills or is flushed"; in **immediate visibility** mode the consumer sees each element the next time it gets control (§4.8.1). Batching is the whole point: many transactions share one synchronization. The price is latency and a harder end-of-test, because data can sit in a buffer: flush before you check, or your scoreboard reports pending items. Pipes also support variable-length messages with an end-of-message mark (§4.8.8) and multiple transactions in zero time (§4.8.8.1.3). A design that streams packets one way (video frames, network traffic) fits pipes; a register-access protocol that needs each response before the next request fits function calls.
+
+### Expert: Throughput engineering
+
+A useful mental model, illustrative rather than any vendor's formula: run time ≈ (emulated cycles ÷ emulator clock rate) + (number of synchronizations × (link latency + host work per synchronization)). Every technique in this lesson attacks one term:
+- **Fewer synchronizations:** BFM tasks instead of pin waits; monitor pushes instead of pulls; pipes for streams. Synopsys's guidance is to "initiate all actions from HW as much as you can" and to keep the host side free of scheduling (DVCon US 2019).
+- **Less host work per synchronization:** hardware time is frozen while the host side runs (SCE-MI 2.4 §4.4.4), so the constraint solver, `uvm_info` formatting and scoreboard searches all show up as emulator idle time. Profile the host side as in [E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index).
+- **No accidental synchronizations:** the timescale granularity trap (one `#1` at a coarse unit against a femtosecond hardware precision gives a million synchronization points, DVCon US 2019).
+- **Tool-dependent optimizations:** Veloce TBX can dispatch one-way void calls without stopping the clocks (DVCon US 2011 §4.3.2). Synopsys reports that repeated `repeat (N) @(posedge clk)` waits on the host can be optimized "under the hood" in simulation acceleration, and that rarely changing signals can stay signal-level because only changes are communicated (DVCon US 2019). Measure before you rewrite.
+
+Once synchronization is gone, the emulator's clock rate is the ceiling. That is when a bench is "emulation-bound", and only a faster platform, a smaller design partition, or fewer cycles per test help.
+
+### Expert: Choosing a platform and use mode
+
+Choose by the goal, then check the claims:
+- **Debug turns per day** depend on compile turnaround. It differs by architecture: FPGA-based systems must run FPGA place and route, custom-silicon emulators have their own compilers. Vendors quote figures such as "10 billion gates in under 10 hours" (Cadence, Palladium Z2, 2021-04-05); treat them as claims for the vendor's chosen design.
+- **Capacity** claims change with every generation: Palladium Z3 is quoted at 16 MG to 48 BG (2024-04-18), ZeBu EP1 at up to 2 BG (2021-05-13). Ask for the figure on a design like yours.
+- **Speed** claims depend on the use mode. ZeBu EP1 was marketed at "10 MHz" and HAPS-200 at "up to 10s of MHz"; neither tells you what your co-emulation bench will reach.
+- **Real interfaces:** in-circuit emulation with speed bridges exercises real devices and real software stacks; transaction-based "virtual" targets on the host are easier to control, reproduce and share. Teams often use both.
+- **Hand-off to prototyping:** when the RTL is stable and the goal is running software at speed, FPGA prototyping takes over, with less visibility and longer compiles.
+- **Scenario reuse:** a scenario described once can be targeted at simulation and emulation alike; see [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index).
+
+### Expert: Debug at emulation scale
+
+- **Capture strategy is a budget.** Full-visibility platforms still cost capture depth and host storage; probe-based flows also cost compile-time planning. Synopsys's own advice is to bring a design up "in the shortest running test available", because "full vision is usually only achievable with a short run" (DVCon US 2019).
+- **Enable control early.** On ZeBu, forcing a hardware signal from the run-time shell requires `zforce` in the compile setup, depositing requires `zinject`, and watching or breaking on a hardware signal requires `probe_signals` (DVCon US 2019). Deciding this after the failure costs a recompile.
+- **Triggers from assertions.** Synthesized assertions turn the emulator into its own logic analyzer: they watch every cycle and give you a precise trigger for the capture window.
+- **Reproduce in simulation.** The single-source bench is the strongest debug tool you have. Reach the failure with a shorter test or a saved state, where the tool supports it, and debug there with 4-state values. Remember that a mismatch between the two may be 2-state coercion rather than a bug in either (SCE-MI 2.4 §5.6.1.3.1).
+- **Backdoor access** (SCE-MI 2.4 §4.11) lets C code read and write memories and registers at one instant, which is how you check a firmware image or dump a buffer without a bus transaction.
+
+### Expert: One bench for simulation and emulation
+
+The goal of the dual-top method is a **single source** that runs in both, "without the use of hooks like compile-time or run-time switches that would disable entire branches of code" (DVCon US 2011 §3). Practical consequences:
+- **Topology is static on the HDL side.** BFMs are elaborated with `hdl_top`; use a shared parameter package and conditional or loop `generate` blocks to instantiate the right number, and let the HVL side's dynamic proxies decide which ones are active (DVCon US 2011 §5). An `` `ifdef EMULATION `` that swaps whole drivers is two code bases.
+- **The factory and `uvm_config_db` reach proxies, not BFMs.** Type overrides of a driver proxy work as usual; an override cannot change a BFM.
+- **Coverage stays in classes**, assertions may go into hardware where the tool synthesizes them.
+- **X checking stays in simulation.** Emulators are usually 2-state, so reset and initialization checks that rely on X need simulation runs of the same bench.
+- **Prove equivalence regularly.** A nightly simulation run of the split bench with fixed seeds catches a proxy that has quietly grown a `#` delay.
+
+### Expert: Interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: the bench that only got 3x faster"
+  question="Your team moved the DUT of a UVM bench onto an emulator. The test runs only about 3x faster than simulation. Where do you look first?"
+  options={[
+    { text: "At what the host side waits on: profile synchronization counts, then look for # delays, clock or DUT-signal waits and polling in drivers and monitors, an HVL clock generator, HDL-to-HVL tasks and a fine timescale. Then split the agents into BFMs and proxies.", isCorrect: true, feedback: "Right. A small speed-up is almost always synchronization-bound, not emulator-bound: the bench is probably running in signal-level acceleration. Name the use mode, measure, then remove the waits from the host side." },
+    { text: "Ask for a faster emulator or a higher emulator clock.", isCorrect: false, feedback: "If the run is synchronization-bound, the emulator spends most of its time waiting for the host. A faster clock shortens only the part that is already short." },
+    { text: "Turn off coverage and assertions to save emulator capacity.", isCorrect: false, feedback: "Coverage on the host side costs host time, which matters, but it is rarely the first-order cost compared with a synchronization on every clock edge. Measure before cutting checks." },
+    { text: "Move the scoreboard into the emulator so all checking happens in hardware.", isCorrect: false, feedback: "Scoreboards are class-based and belong on the host; they cost host work per transaction, not a synchronization per edge." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: one bench for two engines"
+  question="Design a UVM bench that runs in plain simulation and in co-emulation from the same source. What goes in hdl_top, what goes in hvl_top, and how do they connect?"
+  options={[
+    { text: "hdl_top: DUT, clock and reset generators, BFM interfaces with the clocked tasks, instantiated from a shared parameter package with generate. hvl_top: the UVM test and env, with drivers and monitors as untimed proxies that call BFM tasks through virtual interfaces and receive pushed transactions through void functions. Packed structs and converters carry the data. The same file simulates anywhere.", isCorrect: true, feedback: "Right. Mention which parts are standard SCE-MI 2 (zero-time functions, the type subset) and which depend on the tool (time-consuming BFM tasks, one-way calls, pragmas)." },
+    { text: "Keep one top and wrap the pin-level drivers in `ifdef EMULATION so the emulator build uses transactors instead.", isCorrect: false, feedback: "That is two code bases that drift apart, and the emulator build is never proven in simulation. The dual-top method avoids such switches." },
+    { text: "Make the whole UVM bench synthesizable so it all runs in the emulator.", isCorrect: false, feedback: "That is standalone mode. UVM classes, the factory, the solver and covergroups are not synthesizable; you would have to rewrite the bench as hardware." },
+    { text: "Create the BFMs with the UVM factory in build_phase so the emulator can pick them up.", isCorrect: false, feedback: "BFMs are statically elaborated with hdl_top; the factory creates class objects at run time and can reach only the proxies." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: a failure at cycle 2 billion"
+  question="A firmware test fails on the emulator after about 2x10^9 cycles. It cannot run that far in simulation. How do you debug it?"
+  options={[
+    { text: "Localize it cheaply first (an in-emulation assertion, a scoreboard error with its cycle count), rerun with a trigger and a capture window just before the failure, read the window, and reproduce in simulation from the closest point you can reach, such as a shorter test or a saved state where the tool supports it. Check for 2-state effects if simulation disagrees.", isCorrect: true, feedback: "Right. Visibility is a budget: plan the trigger and window, and use the single-source bench to get 4-state debug once you know where to look." },
+    { text: "Dump every signal for the whole run and search the waveform afterwards.", isCorrect: false, feedback: "Even platforms that market full visibility capture a window, not billions of cycles of every signal; the storage and run-time cost would be enormous." },
+    { text: "Rerun the whole test in simulation from time 0 with full dumping.", isCorrect: false, feedback: "Two billion cycles of a SoC is exactly what simulation cannot do in reasonable time; that is why the test was on the emulator." },
+    { text: "Add $display statements throughout the RTL and recompile.", isCorrect: false, feedback: "Whether HDL-side system tasks are accepted is tool-dependent, every message is an HDL-to-HVL transfer, and each attempt costs an emulator compile." }
+  ]}
+/>
+
+Further questions to practise aloud:
+- Why are calls from the HDL side to the HVL side functions and not tasks?
+- What exactly does SCE-MI 2 standardize, and what do the vendors add?
+- When would you use a pipe instead of a function call?
+
+## Practice & Reinforce
+
+### Retrieval quiz
 
 <Quiz
   questions={[
     {
-      question: "What is the primary bottleneck when running a standard UVM testbench on an emulator?",
-      options: [
-        "The emulator's clock frequency is too low",
-        "Software-to-hardware synchronization for every pin-level signal change",
-        "The emulator cannot synthesize SystemVerilog constructs",
-        "UVM phases are incompatible with emulation"
+      question: "The pin-level driver task drive_burst from this lesson runs on the host and writes one four-beat burst to the lesson's DUT model (AW accepted at once, one stall on the first W beat, B returned on the edge after the last beat). How many times does the task wait for an emulator clock edge, and how many host calls does the split version (write_burst in the BFM) need for the same burst?",
+      objective: 1,
+      answers: [
+        { text: "4 waits, one per data beat; 1 call for the split version", correct: false, feedback: "Count every @(vif.drv_cb) the task executes, not just the beats: the alignment edge, the AW handshake, the stall and the B handshake are waits too." },
+        { text: "8 waits; 1 call for the split version", correct: true, feedback: "Right: 1 alignment + 1 AW + 5 for W (4 beats and 1 stall) + 1 B = 8 round trips, against one call whose eight edges all run in the emulator." },
+        { text: "8 waits in both versions, because the BFM still toggles every pin", correct: false, feedback: "Pin activity is not synchronization. In the split version the pins still toggle, but inside the emulator at its own clock rate; the host makes one call." },
+        { text: "0 waits: the emulator runs the whole UVM bench in hardware", correct: false, feedback: "In signal-level acceleration and in co-emulation the UVM classes stay on the host. Only standalone mode runs a whole, fully synthesizable bench in hardware." }
       ],
-      correctAnswer: 1,
-      explanation: "Each pin-level signal change in a standard UVM driver requires a synchronization round-trip between the software testbench (host CPU) and the hardware partition (emulator). With thousands of signal changes per transaction, this communication overhead dominates execution time."
+      explanation: "A synchronization point happens wherever host code waits on hardware time. drive_burst waits at edges 0 to 7: alignment, AW, the stall, four beats and B, so 8. The monitor adds a wait of its own on every edge. Moving the task into a BFM leaves one call and one return per burst."
     },
     {
-      question: "How does Transaction-Level Acceleration (TLA) improve emulation throughput?",
-      options: [
-        "By increasing the emulator's clock frequency",
-        "By moving pin-wiggling logic into synthesized transactors inside the emulator, reducing software-hardware synchronization to one call per transaction",
-        "By compressing the DUT design to fit on fewer FPGAs",
-        "By running the testbench on a faster host CPU"
+      question: "A team runs its unmodified UVM bench with the DUT mapped onto an emulator. What should they expect?",
+      objective: 1,
+      answers: [
+        { text: "Full emulator speed, because the DUT is now hardware", correct: false, feedback: "The bench's own waits still run on the host, and every one is a synchronization: the bench sets the pace, not the emulator." },
+        { text: "Nothing runs: UVM classes are not synthesizable, so the bench must be rewritten first", correct: false, feedback: "That confuses co-simulation with standalone emulation. In signal-level acceleration the classes stay on the host and talk to the DUT through pin values." },
+        { text: "It usually runs in signal-level acceleration, but the speed-up is small because every edge the host code waits on is a synchronization; splitting the bench gives the real gain", correct: true, feedback: "Right. Synopsys's customer table shows 1.5x to 80x for signal-based runs against 25x to 2091x for transaction-based ones (vendor data, DVCon US 2019)." },
+        { text: "It runs only after the stimulus has been rewritten in the Portable Stimulus Standard", correct: false, feedback: "PSS helps reuse scenarios across platforms, but it is not required to run on an emulator, and it does not remove synchronization." }
       ],
-      correctAnswer: 1,
-      explanation: "TLA transactors are synthesized hardware blocks inside the emulator that implement the pin-level protocol timing. The software testbench sends a single transaction-level API call, and the transactor handles all the clock-by-clock signal manipulation inside the emulator hardware."
+      explanation: "An unmodified bench runs, slowly. The speed-up depends on how often the host and the emulator synchronize, which the split reduces from once per waited edge to once per transaction."
     },
     {
-      question: "Why can't `$display` statements exist in emulated DUT code?",
-      options: [
-        "$display is deprecated in SystemVerilog",
-        "$display is not synthesizable and cannot execute in the hardware partition",
-        "$display would slow down the emulator's clock",
-        "$display output cannot be captured by the emulator"
+      question: "You are splitting an AXI write agent for co-emulation. Which piece of code moves into the HDL-side BFM interface?",
+      objective: 2,
+      answers: [
+        { text: "req.randomize() with the item's constraints", correct: false, feedback: "The constraint solver works on class objects and stays on the HVL side, in the sequence." },
+        { text: "The scoreboard's compare of expected and observed bursts", correct: false, feedback: "Scoreboards are untimed, class-based analysis code on the HVL side." },
+        { text: "The uvm_config_db get of the virtual interface handle", correct: false, feedback: "That runs in the proxy's build_phase: it is how the HVL side finds its BFM." },
+        { text: "The clocked VALID/READY loop that drives one burst", correct: true, feedback: "Right. Every line that waits on a clock or samples a pin moves into the BFM; the proxy keeps only the untimed get, convert, call and done." }
       ],
-      correctAnswer: 1,
-      explanation: "The DUT partition runs on emulator hardware (FPGAs or custom chips), which can only execute synthesizable constructs. $display is a simulation-only system task with no hardware equivalent. It must be replaced with synthesizable assertions or moved to the software testbench partition."
+      explanation: "The split follows timing: timed, pin-level code goes to the HDL side, where it can run at emulator speed; untimed, class-based code (stimulus generation, configuration, checking) stays on the HVL side."
+    },
+    {
+      question: "An HDL transactor passes typedef struct packed { byte unsigned idNum; int unsigned value; } to a C function by DPI. The C author declares struct { unsigned char idNum; unsigned value; } and casts the svBitVecVal pointer to it. What does C read for idNum = 1, value = 32'hbeefcafe?",
+      objective: 2,
+      answers: [
+        { text: "idNum = 1 and value = 32'hbeefcafe: DPI maps packed structs member by member", correct: false, feedback: "DPI passes a packed struct as a canonical bit vector, not member by member (SCE-MI 2.4 §5.6.1.3.3)." },
+        { text: "The fields are mixed up: idNum gets the low byte of value (8'hfe), and value reads the word that holds idNum", correct: true, feedback: "Right. In SystemVerilog the first member is the most significant, but the C struct puts its first member at the lowest address. Reverse the C field order or pack explicitly." },
+        { text: "A compile error: packed structs are not allowed across DPI", correct: false, feedback: "Packed structs are in the SCE-MI 2 subset (Table 5.3); the problem is layout, not legality." },
+        { text: "Random values, because emulators are 2-state", correct: false, feedback: "Both fields here are 2-state already. 2-state coercion affects X and Z, not field order." }
+      ],
+      explanation: "The packed struct is the 40-bit vector {idNum, value}: value in bits 31:0, idNum in bits 39:32. As svBitVecVal words, word 0 holds value and word 1 holds idNum. The naive C struct reads its first member from the lowest address, the low byte of word 0, and value from the next aligned word. SCE-MI 2.4 §5.6.1.3.3 shows the fix: reverse the C field order."
+    },
+    {
+      question: "After the split, a co-emulation run is still only 3x faster than simulation. The profile shows host-emulator synchronization dominating. The driver proxy contains: while (!vif.irq) @(posedge vif.aclk); before each item. What is the best fix?",
+      objective: 3,
+      answers: [
+        { text: "Raise the emulator clock frequency", correct: false, feedback: "The run is synchronization-bound: the emulator mostly waits for the host. A faster clock does not remove the host round trips." },
+        { text: "Move the wait into the BFM, as a task such as wait_irq(), or have the BFM push an event to the proxy with a void function", correct: true, feedback: "Right. The HVL side must not poll HDL signals or wait on clocks; the waiting belongs on the HDL side, where it costs nothing." },
+        { text: "Add probes on irq to see why it is slow", correct: false, feedback: "Probes help you see signals; they do not remove a synchronization per clock edge, and they cost capacity or compile time." },
+        { text: "Make the proxy class synthesizable so it runs in the emulator too", correct: false, feedback: "Classes are not synthesizable. The fix is to move the timed part, not the class." }
+      ],
+      explanation: "Polling an HDL signal from HVL code costs a synchronization on every clock edge it loops over. The rule is: no # delays, clock waits, DUT-signal waits or polling in HVL code. Abstract event waits and blocking TLM calls are fine."
+    },
+    {
+      question: "In the SCE-MI 2 function-based interface, how does a synthesizable HDL-side transactor exchange data with software on the host?",
+      objective: 3,
+      answers: [
+        { text: "It cannot use DPI, because DPI does not cross into the emulated partition; each vendor replaces it with a proprietary API", correct: false, feedback: "This is the myth to unlearn. SCE-MI 2's function-based interface is built on SystemVerilog DPI (SCE-MI 2.4 Clause 4, §4.7)." },
+        { text: "By reading and writing files with $fscanf and $fdisplay on the host", correct: false, feedback: "File I/O is not a co-emulation transport, and it would not run in the emulator." },
+        { text: "By force and release on probed signals", correct: false, feedback: "Force and release are debug features, enabled per platform; they are not how transactors exchange transactions." },
+        { text: "It calls imported DPI functions implemented on the host and implements exported functions the host calls, using only the SCE-MI 2 type subset and zero-time calls", correct: true, feedback: "Right: define a function in one language and call it from the other (§4.7.3), within the Table 5.3 types and with no time-consuming DPI tasks (§5.6.2.1)." }
+      ],
+      explanation: "In SCE-MI 2, DPI is the standard emulator transport. The emulator compiler maps imported and exported calls onto the host link. The restriction is a subset: argument types (Table 5.3), zero time, and two levels of nesting."
+    },
+    {
+      question: "Which argument of an HDL-side export \"DPI-C\" function, called from the host, stays inside the portable SCE-MI 2 subset?",
+      objective: 3,
+      answers: [
+        { text: "input string name, to label the transaction", correct: false, feedback: "SCE-MI 2 allows strings only for import \"DPI-C\" functions (HDL to C), and only constant ones (§5.6.1.3.2)." },
+        { text: "input byte unsigned payload[], a dynamic array", correct: false, feedback: "Dynamic and open arrays are not in Table 5.3. Use a fixed-size packed array, or a pipe for variable-length data." },
+        { text: "input axi_wr_burst_t b, a packed struct of bit fields", correct: true, feedback: "Right. Packed structs are in the subset and map to a canonical bit-vector array on the C side." },
+        { text: "input axi_wr_item item, a class handle", correct: false, feedback: "Class handles are not DPI types at all; convert the object to a packed struct first." }
+      ],
+      explanation: "Table 5.3 lists the C-compatible integer types, bit, packed 1-D and multi-dimensional arrays of bit and logic, and packed structs, plus constant strings for imports only. Anything else is non-portable or illegal."
+    },
+    {
+      question: "A verification lead plans debug for a new SoC on an emulator. Which plan is accurate?",
+      objective: 4,
+      answers: [
+        { text: "Plan for all signals on all cycles at no cost, just as in simulation", correct: false, feedback: "This misconception has two errors: simulation dumping costs run time and disk, and emulator capture always costs depth, speed, capacity or storage." },
+        { text: "Visibility depends on the platform (full-visibility capture on some, probes and compile-time debug enables on others), and every option costs capture depth, speed, capacity or storage; so plan triggers, capture windows and in-emulation assertions, and reproduce in simulation", correct: true, feedback: "Right. Visibility is a budget you plan before the run, and the single-source bench gives you 4-state debug in simulation." },
+        { text: "Only signals probed at compile time are ever visible, on every platform", correct: false, feedback: "That is true of some flows, not all: Cadence and Siemens market full-visibility capture on their emulators." },
+        { text: "Skip emulator debug entirely and rerun every failure in simulation from time 0", correct: false, feedback: "Failures billions of cycles in cannot be reached in simulation in reasonable time; that is why the test was on the emulator." }
+      ],
+      explanation: "Each platform offers a different mix of full-visibility capture, probes, dump types, forcing and triggers, each with a cost. The practical flow is trigger, capture a window, then reproduce in simulation."
+    },
+    {
+      question: "Which statement about the main emulator architectures is accurate?",
+      objective: 5,
+      answers: [
+        { text: "ZeBu uses custom processors and Veloce Strato uses FPGAs", correct: false, feedback: "That is swapped: ZeBu uses commercial FPGAs (EP1: Xilinx VU19P; ZeBu-200: AMD VP1902), and Veloce Strato CS uses Siemens' custom Crystal chip." },
+        { text: "All three use the same commercial FPGAs, so results and methodology transfer unchanged", correct: false, feedback: "Palladium and Veloce Strato CS use custom silicon. The platforms differ in compile turnaround, speed and visibility, so they are not interchangeable." },
+        { text: "Palladium uses custom emulation processors, Veloce Strato CS a custom Crystal accelerator chip and ZeBu commercial FPGAs, so compile turnaround, speed and visibility differ", correct: true, feedback: "Right, per the vendors' announcements (Cadence 2024-04-18, Siemens 2024-02-20, Synopsys 2021-05-13 and 2025-02-13)." },
+        { text: "Emulators and FPGA prototyping systems are the same machines sold under different names", correct: false, feedback: "Vendors sell them as separate families (Protium, Veloce Primo CS and proFPGA CS, HAPS), with different goals: prototyping trades visibility and compile time for speed." }
+      ],
+      explanation: "Architecture drives the trade-offs. Processor-based and custom-chip emulators are built for fast compiles and debug; FPGA-based emulators and prototypes use commercial FPGAs. Quote any figure with its vendor and date."
     }
   ]}
 />
 
+The flashcards for this lesson appear at the end of this section, under "Reinforce the essentials". They cover the use modes, the architectures, the split, the HVL rules, SCE-MI 2's interfaces and types, visibility and its costs, speed bridges, 2-state behaviour and packing order.
+
+### Kata: split a pin-level stream driver
+
+Start from this single-top driver for a simple valid/ready byte stream: the DUT accepts a byte at an edge where `valid` and `ready` are both 1.
+
+```systemverilog
+// snippet: the starting point (one top, pin-level driver)
+interface strm_if (input logic clk, input logic rst_n);
+  logic       valid, ready;
+  logic [7:0] data;
+  clocking cb @(posedge clk);
+    output valid, data;
+    input  ready;
+  endclocking
+endinterface
+
+class strm_item extends uvm_sequence_item;
+  rand bit [7:0]    data;
+  rand int unsigned gap;                     // idle cycles before the byte
+  constraint c_gap { gap < 4; }
+  `uvm_object_utils(strm_item)
+  function new(string name = "strm_item"); super.new(name); endfunction
+endclass
+
+class strm_driver extends uvm_driver #(strm_item);
+  `uvm_component_utils(strm_driver)
+  virtual strm_if vif;
+  // new() and a build_phase that gets vif are omitted
+  task run_phase(uvm_phase phase);
+    vif.cb.valid <= 1'b0;
+    @(vif.cb iff vif.rst_n);
+    forever begin
+      seq_item_port.get_next_item(req);
+      repeat (req.gap) @(vif.cb);
+      vif.cb.valid <= 1'b1;
+      vif.cb.data  <= req.data;
+      do @(vif.cb); while (!vif.cb.ready);
+      vif.cb.valid <= 1'b0;
+      seq_item_port.item_done();
+    end
+  endtask
+endclass
+```
+
+1. Predict: for an item with `gap = 2` and a DUT that holds `ready` low for one cycle, how many synchronization points does the pin-level driver spend on that item?
+2. Write `strm_bfm`, an interface with the stream signals as its own ports, a clocking block, and the tasks `wait_reset()` and `send(input bit [7:0] data, input int unsigned gap)`.
+3. Reduce `strm_driver` to a proxy whose `run_phase` contains no `@`, `#` or `wait`.
+4. Write `hdl_top` (clock, reset, DUT, `strm_bfm`) and `hvl_top` (sets the virtual interface, calls `run_test()`).
+5. Self-check: list every argument that crosses the boundary and confirm it is in Table 5.3.
+
+<details>
+<summary>Worked solution</summary>
+
+1. **Four** waits on that item: `repeat (2)` waits twice, then the `do … while` loop waits once at the stalled edge and once at the accepting edge. The split version makes one call.
+
+2. and 3.
+
+```systemverilog
+// snippet: the split (package and DUT omitted)
+interface strm_bfm (
+  input  logic       clk, rst_n,
+  output logic       valid,
+  output logic [7:0] data,
+  input  logic       ready
+);
+  clocking cb @(posedge clk);
+    output valid, data;
+    input  ready;
+  endclocking
+
+  task automatic wait_reset();
+    cb.valid <= 1'b0;
+    wait (rst_n == 1'b1);
+    @(cb);
+  endtask
+
+  task automatic send(input bit [7:0] d, input int unsigned gap);
+    repeat (gap) @(cb);                      // idle cycles run in hardware
+    cb.valid <= 1'b1;
+    cb.data  <= d;
+    do @(cb); while (!cb.ready);
+    cb.valid <= 1'b0;
+  endtask
+endinterface
+
+class strm_driver extends uvm_driver #(strm_item);
+  `uvm_component_utils(strm_driver)
+  virtual strm_bfm bfm;                      // got from uvm_config_db in build_phase
+  function new(string name, uvm_component parent); super.new(name, parent); endfunction
+  task run_phase(uvm_phase phase);
+    bfm.wait_reset();
+    forever begin
+      seq_item_port.get_next_item(req);
+      bfm.send(req.data, req.gap);           // one call per item
+      seq_item_port.item_done();
+    end
+  endtask
+endclass
+```
+
+4.
+
+```systemverilog
+// snippet: the two tops (strm_dut is your DUT with ports clk, rst_n, valid, data, ready)
+module hdl_top;
+  logic clk, rst_n, valid, ready;
+  logic [7:0] data;
+  initial begin clk = 1'b0; forever #5 clk = ~clk; end
+  initial begin rst_n = 1'b0; repeat (4) @(negedge clk); rst_n = 1'b1; end
+  strm_bfm bfm (.*);
+  strm_dut dut (.*);
+endmodule
+
+module hvl_top;
+  import uvm_pkg::*;
+  initial begin
+    uvm_config_db#(virtual strm_bfm)::set(null, "uvm_test_top.*", "bfm", hdl_top.bfm);
+    run_test();
+  end
+endmodule
+```
+
+5. `d` is `bit [7:0]`, a packed array of `bit`; `gap` is `int unsigned`, a C-compatible integer type. Both are in Table 5.3. Note that `wait_reset()` and `send()` are time-consuming tasks called from the HVL side, so this split relies on the vendor-extension style; a function-only version would start the send with a function and report completion through a `void` callback.
+
+</details>
+
+### Debug challenge: five emulation killers
+
+A colleague "split" an agent, but the emulator compile fails and, after a workaround, the run is barely faster. Find all five problems and give each fix.
+
+```systemverilog
+// snippet: the colleague's proxies (pkt_bfm and pkt_mon_bfm are HDL-side BFMs)
+class pkt_driver extends uvm_driver #(pkt_item);
+  virtual pkt_bfm bfm;
+  task run_phase(uvm_phase phase);
+    forever begin
+      seq_item_port.get_next_item(req);
+      #10ns;                                         // (A) "settle time"
+      while (!bfm.ready_for_next) @(posedge bfm.clk); // (B)
+      bfm.send(req.payload, req.get_name());         // (C) payload is byte payload[]
+      seq_item_port.item_done();                     // (D) send's 2nd arg is a string
+    end
+  endtask
+endclass
+
+class pkt_monitor extends uvm_monitor;
+  virtual pkt_mon_bfm bfm;
+  uvm_analysis_port #(pkt_item) ap;
+  // Called by pkt_mon_bfm for every packet: proxy.collect(p);
+  task collect(pkt_packed_t p);                      // (E)
+    pkt_item t = pkt_item::type_id::create("t");
+    @(posedge bfm.clk);                              // "let the bus settle"
+    t.from_packed(p);
+    ap.write(t);
+  endtask
+endclass
+```
+
+<details>
+<summary>Answers</summary>
+
+- **(A) `#10ns` in the driver proxy.** A time advance on the HVL side, so a synchronization per item, and with a fine hardware precision possibly many more. Fix: remove it; if the protocol needs idle cycles, give `send` a cycle-count argument and wait in the BFM.
+- **(B) Polling `bfm.ready_for_next` every clock.** A synchronization on every edge it loops over. Fix: wait inside the BFM (`send` waits for ready itself), or have the BFM push a `void` notification that the proxy waits for as an event.
+- **(C) `byte payload[]` across the boundary.** Dynamic arrays are not in the SCE-MI 2 subset (Table 5.3), and the emulator compiler cannot build hardware for them. Fix: a fixed-size packed array with a length field, one call per beat, or an input pipe for variable-length data (§4.8.8).
+- **(D) A `string` from HVL to HDL.** SCE-MI 2 allows strings only for `import "DPI-C"` functions (HDL to C), and only constant ones (§5.6.1.3.2). Fix: send a numeric id, or drop the name; report names from the proxy.
+- **(E) The monitor BFM calls a task, and the task waits on a clock.** HDL-to-HVL calls must be functions, and the HVL side must not wait on clocks. Fix: make it `function void collect(pkt_packed_t p)`, with no clock wait; any settling belongs in the BFM before it calls.
+
+(A), (B) and (E) make the run slow; (C), (D) and (E) are what break the emulator compile.
+
+</details>
+
+### Lab
+
+There is no runnable lab for this module: a meaningful one needs an emulator. The kata and the worked example compile and run on any IEEE 1800-2023 simulator with uvm-core 2020.3.1, which is how you prove a split before an emulator compile.
+
 ## References & Next Topics
 
-- **Cadence Palladium:** [cadence.com/en_US/home/tools/system-design-and-verification/acceleration-and-emulation/palladium-z2.html](https://www.cadence.com/en_US/home/tools/system-design-and-verification/acceleration-and-emulation/palladium-z2.html)
-- **Synopsys ZeBu:** [synopsys.com/verification/emulation/zebu-server.html](https://www.synopsys.com/verification/emulation/zebu-server.html)
-- **Siemens Veloce:** [sw.siemens.com/en-US/portfolio/verification/veloce/](https://sw.siemens.com/en-US/portfolio/verification/veloce/)
-- **Prerequisite:** [A-UVM-8: Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) — SoC-level environments that need emulation.
-- **Prerequisite:** [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) — transaction-level communication that TLA extends to hardware.
-- **Related:** [E-PERF-1: UVM Performance](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index) — simulation performance optimization before considering emulation.
+**Primary sources**
+- **Accellera SCE-MI 2.4 (Standard Co-Emulation Modeling Interface, November 2016):** Clause 4 (the three interfaces and use models); §4.4.4 controlled and uncontrolled time ("time on the HW side is frozen implicitly when the SW side is called"); §4.7.3 define a function in one language, call it from the other; §4.7.4 the function call is the transaction; §4.7.9 SV-Connect (§4.7.9.2.1 generated C layer, §4.7.9.3.1 inbound example with a `uvm_driver` proxy); §4.8.1 transaction pipes (deferred and immediate visibility, flush); §4.8.8 variable-length messaging; §4.9.6 the DPI subset; §4.9.8 multiple messages in zero time; §4.11 backdoor memory and register APIs; §5.6.1.3 Table 5.3 supported types (§5.6.1.3.1 4-state coercion, §5.6.1.3.2 constant strings, §5.6.1.3.3 packed structs and field order); §5.6.2.1 functions and tasks (no time-consuming DPI tasks); §5.6.2.2 multiple messages in zero time; §5.6.2.3 two-level nesting; §5.6.3.1.1 naming convention; §5.6.3.1.3 function arguments; §5.6.3.1.4 functions only.
+- **IEEE 1800-2023:** §7.2.1 packed structures (first member most significant); §11.2.2 aggregate expressions (unpacked array equality); §14.3 clocking block declarations (default skews); §14.16 synchronous drives; §23.3.2.4 implicit `.*` port connections; §23.6 hierarchical names; §25.7 tasks and functions in interfaces; §25.9 virtual interfaces (no interface-typed ports or outside references in an interface named by a virtual interface); Clause 35 DPI.
+- **IEEE 1800.2-2020:** §13.5 `uvm_monitor`; §13.7 `uvm_driver`; §12.2.10 analysis ports; §5.3.8 and §5.3.9 copy and compare; §10.5.1 objections; Annex B.5 `` `uvm_analysis_imp_decl ``; Annex C.4.2 `uvm_config_db`.
+- **Arm IHI0022E:** §A3.2.1 handshake process ("Transfer occurs only when both the VALID and READY signals are HIGH"); §A3.2.2 channel signaling requirements; §A3.4.1 address structure (4KB boundary).
+- **Methodology papers (vendor-authored):** H. van der Schoot, A. Saha, A. Garg, K. Suresh (Mentor Graphics), "Off to the Races With Your Accelerated SystemVerilog Testbench", DVCon US 2011: §2 terminology and TBX synthesis support, §3 requirements (untimed HVL side, abstract events allowed, single source), §4.1 to §4.3 dual tops, BFM interfaces and remote proxies, §4.3.1 transaction conversion, §4.3.2 back-pointers and one-way calls, §5 static BFMs, topology and coverage, §6 Table 1 results. H. Miller, W.-H. Han (Synopsys), "Simulation Acceleration with ZeBu to Speed IP and Platform Verification", DVCon US 2019: acceleration ladder, customer acceleration table, time-synchronization and general guidelines, debug and profiling commands.
+- **Vendor announcements (dated claims):** Cadence Palladium Z3 and Protium X3 (2024-04-18); Cadence Palladium Z2 and Protium X2 (2021-04-05); Cadence SpeedBridge Adapter for PCI Express 3.0 (2013-07-29); Siemens Veloce CS (2024-02-20); Synopsys ZeBu EP1 (2021-05-13); Synopsys HAPS-200 and ZeBu-200 (2025-02-13); Cadence FullVision product material.
+
+**Prerequisites:** [A-UVM-8 Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index), [I-SV-7 DPI and Foreign Language Interfaces](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index), [E-PERF-1 UVM Performance](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index).
+
+**Related**
+- [F4C Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): sampling and driving through clocking blocks, used by every BFM here.
+- [F2A Structs, Unions and Enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums): packed structs, the data that crosses the boundary.
+- [I-UVM-2B TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index): analysis ports and imps used by the scoreboard.
+- [I-UVM-2C Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): handing virtual interfaces to components.
+- [B-AXI-1 AXI Channel Architecture](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index): the VALID/READY rules used in the example.
+- [E-DBG-1 Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): waveform and log debug that the emulator flow feeds.
+- [E-PSS-1 Portable Stimulus Standard](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index): one scenario description for simulation and emulation.
+- [E-SOC-1 SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): where emulation fits in a SoC verification plan.
+- [E-UVM-ML-1 Multi-Language Verification](/curriculum/T4_Expert/E-UVM-ML-1_Multi_Language_Verification/index): connecting SystemC and other languages to a UVM bench.
+
+<NextLesson />

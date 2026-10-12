@@ -1,34 +1,77 @@
 [
   {
-    "front": "What are the main performance bottlenecks in UVM testbenches?",
-    "back": "Factory lookups in hot loops, excessive `uvm_config_db::get()` calls, field macro overhead (`uvm_field_*`), deep objection hierarchies, and analysis port fan-out with heavyweight processing."
+    "id": "e-perf-1-1",
+    "question": "Which three clocks does a simulation run have, and which of them can show a speed-up?",
+    "answer": "Simulated time (`$time`), CPU time and wall-clock time. Only CPU and wall-clock time can show a speed-up; a pure performance fix leaves simulated time and every result unchanged."
   },
   {
-    "front": "Why are `uvm_field_*` macros a performance concern?",
-    "back": "The field macros generate generic `do_copy`, `do_compare`, `do_print`, and `do_pack` implementations that use reflection. Hand-written overrides of these methods can be 10-50x faster."
+    "id": "e-perf-1-2",
+    "question": "Why can't printing `$time` at the end of a test prove that an optimization worked?",
+    "answer": "`$time` is simulated time (IEEE 1800-2023 §20.3): the same test with the same seed reaches the same value however fast the code runs. Measure CPU time outside the simulator, e.g. `user` + `sys` from `/usr/bin/time -p`."
   },
   {
-    "front": "How do you reduce `uvm_config_db` overhead?",
-    "back": "Cache the retrieved value in `build_phase` instead of calling `get()` repeatedly. Use a single configuration object with all settings instead of many individual config entries."
+    "id": "e-perf-1-3",
+    "question": "What is the measurement protocol for claiming a speed-up?",
+    "answer": "Same build, seed and plusargs; one change at a time; median of 3 to 5 runs; record tool, version and host; check that results (summary, scoreboard counts, coverage) did not change; label every number."
   },
   {
-    "front": "What is transaction-level modeling (TLM) performance optimization?",
-    "back": "Batch multiple low-level operations into a single TLM transaction. Instead of one item per clock cycle, send burst transactions that represent multiple clock cycles of activity."
+    "id": "e-perf-1-4",
+    "question": "In a profile, what are self time, total time and calls, and how do you attribute rows?",
+    "answer": "Self time is spent in a routine's own code, total time includes its callees, calls is an exact count. Sort by self time and attribute rows to DUT, TB, UVM library or kernel/I/O; UVM-library time is usually caused by a TB call, so look at callers and call counts."
   },
   {
-    "front": "How does objection overhead impact performance?",
-    "back": "Each `raise`/`drop` propagates up the component hierarchy. In hot loops, this creates O(depth × iterations) overhead. Raise once at the start and drop once at the end of a sequence."
+    "id": "e-perf-1-5",
+    "question": "Name the common UVM hotspots a profile finds.",
+    "answer": "Messages formatted outside the guard, `uvm_config_db::get` per item, objections raised and dropped per item, transaction recording left on, throwaway object creation/copy/print, field automation in hot `copy`/`compare`, coverage sampled per clock, and your own quadratic searches."
   },
   {
-    "front": "What is the recommended approach for high-performance randomization?",
-    "back": "Minimize constraint complexity, avoid `solve...before`, pre-compute static fields, and use smaller randomization groups. Profile with `randomize()` timing to find hot constraints."
+    "id": "e-perf-1-6",
+    "question": "At `UVM_LOW`, why is `uvm_report_info(\"MON\", $sformatf(...), UVM_HIGH)` costlier than `` `uvm_info `` with the same message?",
+    "answer": "A direct call evaluates its arguments first, so the string is built and then filtered inside `uvm_report` (§6.3.3.3). The macro checks verbosity and action before calling, so a filtered message is never built (B.1.1.1). Guard other expensive debug work with `uvm_report_enabled` (§6.3.3.2)."
   },
   {
-    "front": "How do you profile a UVM testbench for performance?",
-    "back": "Use simulator profiling tools (VCS `simprofile`, Xcelium `xmprof`, Questa `qverilog -profile`). Profile both UVM overhead and DUT simulation time separately."
+    "id": "e-perf-1-7",
+    "question": "Why is a `uvm_config_db::get` on every transaction expensive, and what is the fix?",
+    "answer": "In uvm-core each `get` calls `lookup_name`, which matches the scope of every entry with that field name (`uvm_is_match`), then picks the highest precedence and reads it with an audit record. Read once in `build_phase`, or `get` a configuration object handle once."
   },
   {
-    "front": "What is the performance impact of analysis port fan-out?",
-    "back": "Each subscriber's `write()` is called synchronously in the monitor's thread. Heavy processing in `write()` slows the monitor. Use FIFOs to decouple processing if subscribers do significant work."
+    "id": "e-perf-1-8",
+    "question": "What does a per-item objection cost, and where should objections be raised?",
+    "answer": "Each raise and drop updates the source and every ancestor, and in uvm-core a drop to zero starts a background drain process. Raise once in the test or top sequence; `set_automatic_phase_objection` (§14.2.4.4) must not be used with a `forever` body."
+  },
+  {
+    "id": "e-perf-1-9",
+    "question": "What do the `uvm_field_*` macros cost, and when are hand-written `do_copy`/`do_compare` worth it?",
+    "answer": "The macros implement `do_execute_op` (IEEE 1800.2-2020 B.2.1.1), so every copy, compare, print and pack visits each field through a policy object at run time. For item types a profile shows near the top, hand-write `do_copy`/`do_compare` and take those fields out of the macro path (no field macros, or flag them `UVM_NOCOPY | UVM_NOCOMPARE`): `copy()` and `compare()` run the macro walk first and then the `do_` hook, so keeping both does the work twice (§5.3.8.1, B.2.2). The gain is tool-dependent, so measure it."
+  },
+  {
+    "id": "e-perf-1-10",
+    "question": "Does putting a `uvm_tlm_analysis_fifo` in front of a CPU-heavy subscriber make the simulation faster?",
+    "answer": "No. `ap.write()` calls each subscriber in turn inside the monitor's process; the FIFO's `write()` is a zero-time `try_put`, and the same work then runs in another process of the same simulation, which executes one process at a time. Use a FIFO when a subscriber must wait for time; make a heavy `write()` cheaper instead."
+  },
+  {
+    "id": "e-perf-1-11",
+    "question": "What goes wrong if a monitor reuses one transaction object to save allocations?",
+    "answer": "Analysis ports and FIFOs pass handles, so every component that stores items holds the same object and sees only the latest values (IEEE 1800-2023 §8.12). A monitor must create a new item per transaction."
+  },
+  {
+    "id": "e-perf-1-12",
+    "question": "Why prefer `@(posedge vif.clk iff vif.ready)` to `while (!vif.ready) @(posedge vif.clk)`, and what does `#0` cost?",
+    "answer": "The `iff` form resumes the process only at the edge where `ready` is 1 (§9.4.2.3); the loop resumes at every edge. Note the `iff` form always waits for an edge. `#0` reschedules the process in the Inactive region for an extra pass (§4.4.2.3) and usually hides a race."
+  },
+  {
+    "id": "e-perf-1-13",
+    "question": "Does mixing `=` and `<=` cause infinite delta loops?",
+    "answer": "No. It causes races and simulation/synthesis mismatches. Zero-time hangs (time stuck, 100% CPU) come from a loop with no timing control, such as `while (!done);`, or zero-delay feedback."
+  },
+  {
+    "id": "e-perf-1-14",
+    "question": "What is \"compile once, run many\", and what bounds regression wall time?",
+    "answer": "Build one simulation image and select tests with `+UVM_TESTNAME` (G.2.1), seeds with the tool's seed option, and knobs with plusargs. Jobs = min(licences, cores, queue slots, memory); for similar tests, wall time is about ceil(tests / jobs) x time per test, e.g. 400 tests of 20 min each with 50 licences take about 8 x 20 = 160 min (illustrative)."
+  },
+  {
+    "id": "e-perf-1-15",
+    "question": "What may you switch off in a regression to save time, and what must stay on?",
+    "answer": "Switch off waves, transaction recording, debug verbosity and trace plusargs, and turn them on when rerunning a failing seed. Never switch off scoreboards, assertions, error checks or the coverage the verification plan needs: a fast run that stopped checking reports false passes."
   }
 ]

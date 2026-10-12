@@ -1,34 +1,87 @@
 [
   {
-    "front": "What are the primary UVM debug features?",
-    "back": "Transaction recording (uvm_recorder), objection tracing (+UVM_OBJECTION_TRACE), factory printing (uvm_factory::get().print()), config DB tracing (+UVM_CONFIG_DB_TRACE), phase tracing (+UVM_PHASE_TRACE) and report catchers."
+    "id": "e-dbg-1-1",
+    "question": "Name the four ways a UVM run's verdict can lie.",
+    "answer": "1) Errors removed before counting: a catcher returns CAUGHT or the action is UVM_NO_ACTION. 2) Failures UVM never saw: `$error`, an assertion's default fail action, or assertions switched off with `$assertoff`. 3) Zero activity: nothing was compared. 4) An early end (fatal, quit count, timeout) hides the real first failure."
   },
   {
-    "front": "What is transaction recording in UVM and how do you enable it?",
-    "back": "It records transaction spans for waveform viewers. Set recording_detail to UVM_FULL through uvm_config_db before the build phase (set_config_int is the deprecated UVM 1.1 form; a set in run_phase is too late), then bracket activity with begin_tr()/end_tr(), typically in drivers and monitors. Without end_tr the transaction stays open and empty."
+    "id": "e-dbg-1-2",
+    "question": "Does `UVM_ERROR : 0` prove that a test passed?",
+    "answer": "No. It proves only that no counted check failed. A pass also needs a present summary, a positive check count (not `0 compares`), no simulator-format error lines, and no hidden errors (no `UVM_NO_ACTION` on errors, no unaccounted caught or demoted errors)."
   },
   {
-    "front": "What does `+UVM_OBJECTION_TRACE` show?",
-    "back": "It prints every `raise_objection` and `drop_objection` call with the component name, count, and description. Essential for debugging hanging simulations caused by unmatched objections."
+    "id": "e-dbg-1-3",
+    "question": "What does removing `UVM_COUNT` from the `UVM_ERROR` action change?",
+    "answer": "Only the quit counter: those errors no longer move the run toward `+UVM_MAX_QUIT_COUNT`. The server still counts every report it executes, so the summary still shows them and the run still fails. Only CAUGHT and `UVM_NO_ACTION` remove a report before counting."
   },
   {
-    "front": "How do you debug a simulation that hangs during `run_phase`?",
-    "back": "Enable `+UVM_OBJECTION_TRACE` to find unmatched objections, check for FIFO deadlocks (get without put), verify `item_done()` calls, and use `+UVM_PHASE_TRACE` to see phase transitions."
+    "id": "e-dbg-1-4",
+    "question": "What is a `uvm_report_catcher`, and what do THROW and CAUGHT do?",
+    "answer": "A callback registered with `uvm_report_cb::add(obj, c)` whose `catch()` the report server calls for each report from `obj` (or every object if `obj` is null) (IEEE 1800.2-2020 §6.6). It can change severity, ID, message, verbosity, action or context. THROW passes the report on; CAUGHT ends processing: no later catcher runs and the report is neither printed nor counted."
   },
   {
-    "front": "What is `uvm_top.print_topology()` and when should you call it?",
-    "back": "It prints the full UVM component hierarchy with types and parent-child relationships. Call it at the end of `build_phase` to verify the testbench was constructed correctly."
+    "id": "e-dbg-1-5",
+    "question": "Where in the reporting path does a catcher run, and what severity does it see?",
+    "answer": "After the macro pre-check and after the report handler has applied severity overrides and chosen the action, inside the report server, before the CAUGHT/`UVM_NO_ACTION` drop and counting (§6.5.1.2.14). It sees the overridden severity, so a `+uvm_set_severity` demotion can make an `UVM_ERROR`-only catcher match nothing."
   },
   {
-    "front": "How do you set message verbosity per-component in UVM?",
-    "back": "Use `comp.set_report_verbosity_level(UVM_HIGH)` programmatically, or `+uvm_set_verbosity=comp_path,_ALL_,UVM_DEBUG,run` on the command line for runtime control."
+    "id": "e-dbg-1-6",
+    "question": "What makes an error-injection catcher safe?",
+    "answer": "It matches severity, ID and message; demotes with `set_severity(UVM_INFO)` and returns THROW so the report stays visible; counts each demotion; and the test checks that count in `check_phase`, failing on too few or too many. It is registered on the reporting component, not `null`."
   },
   {
-    "front": "What is a UVM report catcher?",
-    "back": "A uvm_report_catcher registered with uvm_report_cb::add intercepts messages before the report server processes them. It can change severity, verbosity, ID or message, and return THROW (continue) or CAUGHT (stop: the message is neither printed nor counted)."
+    "id": "e-dbg-1-7",
+    "question": "Why does `uvm_report_cb::add(env.chk, c)` in the test's `build_phase` attach the catcher to every component?",
+    "answer": "Build is top-down (§9.8.1.1), so `env.chk` is still null when the test's `build_phase` runs. A callback added with a null object is type-wide (§10.7.2.3.1). Register in `connect_phase` or later, when the component exists."
   },
   {
-    "front": "How do you correlate transactions across multiple agents during debug?",
-    "back": "Use a common transaction ID field that propagates through the pipeline. Transaction recording with matching IDs allows waveform viewers to link related transactions across agents."
+    "id": "e-dbg-1-8",
+    "question": "Which trace answers 'did my configuration arrive?', and what is its catch?",
+    "answer": "`+UVM_CONFIG_DB_TRACE` (uvm-core): compare the `CFGDB/GET` line (`= null (failed lookup)` on a miss) with the matching `CFGDB/SET` line. The lines are issued at `UVM_LOW`, so `+UVM_VERBOSITY=UVM_NONE` hides them. `check_config_usage()` (uvm-core) lists settings that were never read."
+  },
+  {
+    "id": "e-dbg-1-9",
+    "question": "When should you call `print_topology()`, and why not at the end of `build_phase`?",
+    "answer": "Call `uvm_root::get().print_topology()` (Annex F.7.4.2) in `end_of_elaboration_phase`, or set uvm-core's `set_enable_print_topology(1)` to print it then. Build is top-down, so at the end of the test's `build_phase` the components below the env do not exist yet and the tree is partial."
+  },
+  {
+    "id": "e-dbg-1-10",
+    "question": "How do you find who is holding a phase open?",
+    "answer": "Rerun with `+UVM_OBJECTION_TRACE` (uvm-core) and find the `OBJTN_TRC` `raised` line with no matching `dropped`. From code, `phase.get_objection().get_objectors(list)` (§10.5.1.5.1) returns the objects still objecting. A `PH_TIMEOUT` fatal marks the hang; `uvm_heartbeat` (§10.6) finds a silent component earlier."
+  },
+  {
+    "id": "e-dbg-1-11",
+    "question": "What is a debug event bus, and what must it never replace?",
+    "answer": "A component with a `uvm_analysis_port` on which components publish small debug events (tag, detail, time); debug subscribers react, for example by opening a waveform window. `write()` is a zero-time function, so subscribers must not block. It never replaces `` `uvm_error ``: failures must still go through the report server to be counted."
+  },
+  {
+    "id": "e-dbg-1-12",
+    "question": "Why can't a subscriber class in a package call `$dumpvars(0, tb_top)`, and what is the portable pattern?",
+    "answer": "Package items cannot make hierarchical references (IEEE 1800-2023 §26.2). The subscriber triggers a named event from `uvm_event_pool::get_global(\"dump_now\")` (IEEE 1800.2-2020 §10.4.1.2.3), and an `initial` block in `tb_top` waits on the same key and calls `$dumpfile` and `$dumpvars`."
+  },
+  {
+    "id": "e-dbg-1-13",
+    "question": "Why does a waveform dump started when a watchdog fires never show the cause of the stall?",
+    "answer": "`$dumpvars` starts dumping at the end of the current time unit (IEEE 1800-2023 §21.7.1.3), so a trigger-started dump records only what follows the trigger. Log the last good time, then rerun the same seed and build with a window (for example `+DUMP_START=<t>`) that opens before it. Single-run history buffers are tool-dependent."
+  },
+  {
+    "id": "e-dbg-1-14",
+    "question": "How do you turn on transaction recording for one agent in a debug rerun?",
+    "answer": "Call `env.agt.set_recording_enabled_hier(1)` (Annex D.2.3) in `connect_phase` or `end_of_elaboration_phase`: it reaches only children that already exist. The sequencer then records items automatically (§15.2.1.2.10–11); drivers and monitors use `begin_tr`/`end_tr`. uvm-core's `recording_detail` setting is read in each component's constructor, so it must be set before creation."
+  },
+  {
+    "id": "e-dbg-1-15",
+    "question": "How do you correlate transactions across agents in a recording?",
+    "answer": "Give related transactions IDs (`set_transaction_id`, or `set_id_info` to copy IDs into a response) and link them explicitly with `uvm_tr_database::establish_link` and `uvm_related_link`, `uvm_parent_child_link` or `uvm_cause_effect_link` (IEEE 1800.2-2020 §7.1.5, §7.3). How a viewer draws those links is tool-dependent."
+  },
+  {
+    "id": "e-dbg-1-16",
+    "question": "What must a regression log for every run, and why is the seed not enough?",
+    "answer": "Test name, seed, build identity (source revision and compile options), simulator version and the full command line. Random stability (IEEE 1800-2023 §18.14) depends on the order objects and threads are created, so after a code change the same seed can produce different stimulus: reproduce on the archived original build first."
+  },
+  {
+    "id": "e-dbg-1-17",
+    "question": "List the rules of an honest CI gate for a UVM regression.",
+    "answer": "Fail a run if: the report summary is missing; `UVM_ERROR` or `UVM_FATAL` is above 0; a checker's count line is missing or zero; simulator-format error lines appear; the catcher summary shows caught or demoted errors in a test not on the reviewed list; or the command line holds `UVM_NO_ACTION` for errors, or the log an `INVLCMDARGS` warning."
   }
 ]

@@ -1,34 +1,77 @@
 [
   {
-    "front": "When is multi-language verification (UVM-ML) needed?",
-    "back": "When an SoC environment mixes SV UVM agents with SystemC TLM-2.0 models, C++ reference models, or e-language components. UVM-ML unifies phasing and TLM communication across languages."
+    "id": "e-uvm-ml-1-1",
+    "question": "When is DPI enough to connect a model in another language, and when is it not?",
+    "answer": "DPI fits a function-shaped C/C++ model: an imported function runs in zero simulated time (IEEE 1800-2023 §35.5.1.1). A SystemC model with its own sockets and processes needs its kernel plus a TLM bridge; reaching it through DPI alone means hand-written glue."
   },
   {
-    "front": "What is Accellera UVM-ML (Open Architecture)?",
-    "back": "A framework that enables UVM components written in different languages (SV, SystemC, e) to communicate via TLM and share a unified phase execution order."
+    "id": "e-uvm-ml-1-2",
+    "question": "Where does UVM-ML OA come from, and what is its status?",
+    "answer": "It was developed by Cadence and AMD, has been open source since 2012 (Accellera community downloads) and ships with Cadence Xcelium. It is a library, not a standard; the last release found in published work is 1.9, and Accellera's Multi-Language Working Group is listed as inactive."
   },
   {
-    "front": "How does UVM-ML handle TLM connections across language boundaries?",
-    "back": "Through a backplane adapter that translates TLM transactions between language runtimes. SV `uvm_analysis_port` connects to SystemC `tlm_analysis_port` via the UVM-ML bridge layer."
+    "id": "e-uvm-ml-1-3",
+    "question": "How does a UVM-SV socket get connected to SystemC with UVM-ML OA?",
+    "answer": "`import uvm_ml::*;` after `uvm_pkg`, start with `uvm_ml_run_test(tops)`, register the SV socket in `phase_ended()` of build with `uvm_ml::ml_tlm2#()::register(sock)`, register the SC socket with `ML_TLM2_REGISTER_TARGET(...)`, then call `void'(uvm_ml::connect(sock.get_full_name(), \"<SC path>\"))` in `connect_phase`."
   },
   {
-    "front": "What is unified phasing in UVM-ML?",
-    "back": "All components across all languages execute the same UVM phases (build, connect, run, etc.) in the same order, coordinated by a single phasing engine in the UVM-ML backplane."
+    "id": "e-uvm-ml-1-4",
+    "question": "Does UVM-ML OA synchronize UVM run-time sub-phases across languages on every simulator?",
+    "answer": "No. HPE (DVCon US 2018) reported it unsupported up to 1.8 and supported in 1.9 only on Cadence Xcelium, and built its own objection-based synchronizer. Treat cross-language phase and objection behaviour as library-, version- and tool-dependent, and test it."
   },
   {
-    "front": "What are the practical limitations of UVM-ML?",
-    "back": "Limited commercial tool support (mainly Cadence), debugging complexity across language boundaries, performance overhead from inter-language marshaling, and steep learning curve."
+    "id": "e-uvm-ml-1-5",
+    "question": "What does a language crossing cost, according to the one published comparison?",
+    "answer": "Cadence (DVCon Europe 2018) measured one bench at 167 MB and 0.6 s CPU with UVM-ML against 146 MB and 0.4 s with hand-written DPI-C, and found the DPI version more complex to write. The cost is tool-dependent: measure it on your simulator."
   },
   {
-    "front": "When should you use UVM-ML vs. DPI for cross-language integration?",
-    "back": "UVM-ML for structured TLM-level communication and phase synchronization. DPI for simple function calls across SV/C boundaries. UVM-ML is heavier but provides proper verification infrastructure."
+    "id": "e-uvm-ml-1-6",
+    "question": "Who made UVM Connect (UVMC), and how do you connect a port with it?",
+    "answer": "Mentor Graphics, now Siemens EDA (not Synopsys); open source under Apache 2.0, introduced in 2012. SV calls `uvmc_tlm #()::connect(port, \"lookup\")`, SystemC calls `uvmc_connect(port, \"lookup\")`; equal lookup strings are connected just before end_of_elaboration."
   },
   {
-    "front": "What is a SystemC TLM-2.0 model and why is it used in verification?",
-    "back": "A high-level transaction-based model written in SystemC that runs much faster than RTL. Used as reference models, stimuli generators, or virtual platform components in verification environments."
+    "id": "e-uvm-ml-1-7",
+    "question": "How is SystemC TLM-2.0 standardized, and how does it relate to UVM TLM-2?",
+    "answer": "SystemC, including TLM-1 and TLM-2.0, is IEEE 1666; TLM joined in 1666-2011 and the current revision is 1666-2023. IEEE 1800.2-2020 says UVM's TLM is based on the OSCI work but is not an exact replication, so a bridge must convert between them."
   },
   {
-    "front": "How do you create a hybrid SV-SystemC verification environment?",
-    "back": "SV UVM handles pin-level DUT interaction via agents. SystemC TLM models handle high-level protocol/algorithmic verification. UVM-ML bridges connect them with consistent phasing."
+    "id": "e-uvm-ml-1-8",
+    "question": "What is the usual split in a SystemVerilog plus SystemC bench?",
+    "answer": "SystemVerilog UVM agents drive and monitor the DUT pins. The SystemC model sits behind a TLM-2.0 target socket as the reference model. A bridge carries generic payloads from a UVM initiator socket in the predictor to the model."
+  },
+  {
+    "id": "e-uvm-ml-1-9",
+    "question": "Which attributes does the UVM generic payload carry, and what is its default response status?",
+    "answer": "Command, 64-bit address, data byte array, data length, byte enables and their length, streaming width, response status and extensions (IEEE 1800.2-2020 §12.3.4.2). The initiator sets `UVM_TLM_INCOMPLETE_RESPONSE`, and the target must replace it before `b_transport` returns."
+  },
+  {
+    "id": "e-uvm-ml-1-10",
+    "question": "What does the `delay` argument of `b_transport(t, delay)` mean?",
+    "answer": "It is a timing annotation: an offset of the transaction's timing points from the simulation times of the call and the return (§12.3.2.2.3). It is not a wait. A target that adds 10 ns and returns at once returns at the call's simulation time; the caller decides whether to wait it out."
+  },
+  {
+    "id": "e-uvm-ml-1-11",
+    "question": "What do the phases and return values of `nb_transport` signify?",
+    "answer": "Phases are `BEGIN_REQ`, `END_REQ`, `BEGIN_RESP`, `END_RESP` (§12.3.3.1). Every call is a phase transition; the return says `UVM_TLM_ACCEPTED` (no change on this return), `UVM_TLM_UPDATED` (the callee moved the phase) or `UVM_TLM_COMPLETED` (done) (§12.3.3.2)."
+  },
+  {
+    "id": "e-uvm-ml-1-12",
+    "question": "Name three differences between UVM TLM-2 and SystemC TLM-2.0 that a bridge must handle.",
+    "answer": "Time is a `uvm_tlm_time` class handle in UVM but an `sc_time` reference in SystemC. UVM's payload holds a data array that `set_data` copies, while SystemC's points to initiator memory. UVM's `uvm_tlm_if` has only the three transport methods, with no DMI or debug transport."
+  },
+  {
+    "id": "e-uvm-ml-1-13",
+    "question": "Can a C library's own threads call back into SystemVerilog through DPI?",
+    "answer": "Not portably. DPI defines nothing for threads your C code starts; calls from outside an import call chain are simulator defined (IEEE 1800-2023 §35.5.3). Keep the threads inside C behind a queue that a `context` import polls."
+  },
+  {
+    "id": "e-uvm-ml-1-14",
+    "question": "Why do fields come out reversed when a C struct is copied from a SystemVerilog packed struct?",
+    "answer": "The first member of a packed struct is the most significant (IEEE 1800-2023 §7.2.1), and DPI's canonical `svBitVecVal` puts the 32 least significant bits in element 0 (Annex H.7.7). A C struct puts its first member at the lowest address, so convert with shifts and masks, not `memcpy`."
+  },
+  {
+    "id": "e-uvm-ml-1-15",
+    "question": "A mixed-language test ends while the SystemC model is still working. What is missing?",
+    "answer": "End-of-test ownership. `run_phase` ends when the last objection drops, so either the test waits for every response before dropping its objection, or the SystemC side raises and drops objections through the bridge (for example UVMC's Command API)."
   }
 ]

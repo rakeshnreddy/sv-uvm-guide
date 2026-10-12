@@ -1,42 +1,1005 @@
-import { InfoPage } from "@/components/templates/InfoPage";
+---
+title: "Systematic Debug: Reproduce, Isolate, Hypothesize, Confirm"
+description: "Triage a failing UVM regression by first failure and signature, reproduce one failure exactly, then isolate its cause, test a hypothesis and lock the fix in."
+flashcards: "E-DBG-1_Effective_Debug"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+---
 
-export const metadata = {
-  title: "Effective Debug Techniques in UVM | The Professional Verification Craft",
-  description: "Tried-and-true methods for diagnosing tricky failures.",
-};
+## Quick Take
 
-<InfoPage title="Effective Debug Techniques in UVM" uvm_concept_tags={["debug"]}>
+- **What it is:** A repeatable method for turning a red regression into a root cause. You **triage** (find each run's first failure, give it a signature, group runs by signature), **reproduce** one failure exactly, **isolate** it in time, place and stimulus, form a **hypothesis** that predicts something you have not seen yet, **confirm** it with a directed test, and only then fix the bug and **lock in** the fix as a regression check.
+- **Why it matters:** A large UVM regression can produce hundreds of failing runs overnight, each with thousands of log lines. Without a method, engineers read the last error, add prints until the failure disappears, and "fix" symptoms. With one, a single root cause is debugged once, every step can be checked by someone else, and the fix comes with proof.
+- **The Analogy:** An air-accident investigator. They start from the first thing that went wrong, not the wreckage. They recreate the exact conditions, rule out causes one at a time with tests that could prove them wrong, and only then issue the fix and a new rule so it cannot happen again. *Where it breaks:* a simulation is deterministic, so with the same build and seed you can replay the "accident" as often as you like and stop it at any instant, which no investigator can do. But the replay is exact only while nothing in its recipe changes, and a careless debug edit is a change.
 
-## Level 1: Read the First Failure
+**You will be able to:**
+1. **Diagnose** how a UVM run ended and find its first failure, separating it from the errors it caused.
+2. **Write** a normalized failure signature, use it to bucket a regression's failures, and **choose** which bucket to debug first.
+3. **Plan** an exact reproduction (same test, seed, build, simulator version and plusargs), and **predict** whether a debug edit keeps the seed's stimulus.
+4. **Debug** a reproduced failure by isolating it in time, place and stimulus, and write a hypothesis that predicts something you have not yet observed.
+5. **Design** a directed test that confirms or refutes the hypothesis, then shrink the failure and lock the fix in as a regression check.
 
-Debugging is detective work. Start by narrowing down what changed between a passing and failing run — and read the log from the top, not the bottom.
+<BeforeYouStart />
 
-- **Find the first `UVM_ERROR` or `UVM_FATAL`.** Later errors are usually consequences. The report summary at the end lists counts by severity and by ID; the ID of the first error is your failure signature.
-- **Check how the run ended.** A `PH_TIMEOUT` fatal means a hang (practise in the [Hang Lab](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab)). A run that ends at 0 ns with no traffic means nobody raised an objection.
-- **Check that the verdict is honest.** `UVM_ERROR : 0` proves nothing if a catcher returns `CAUGHT`, an action is `UVM_NO_ACTION`, or an assertion reported with `$error` (the simulator prints it; UVM never counts it).
+## Build Your Mental Model
 
-## Level 2: Turn Up Visibility Surgically
+**How to read this lesson.** The core path is the loop picture, the first failure, signatures and buckets, and exact reproduction. Practitioner depth follows: which debug edits keep a seed, isolation, hypotheses, shrinking and the debugging table. Make It Work walks the whole loop on a small bench with a planted bug. Push Further holds the expert corner cases. The [module overview](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) owns [verdict honesty](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index#honest-verdicts-what-uvm_error--0-does-and-does-not-prove), report catchers and tracing switches; this page uses them and links back.
 
-Use command-line switches so you do not have to recompile, and target only the components and IDs involved.
+A few words in one line each:
 
-| Need | Switch or call |
-| --- | --- |
-| More detail from one agent | `+uvm_set_verbosity=uvm_test_top.env.agt.*,_ALL_,UVM_HIGH,run` |
-| One noisy ID quiet | `+uvm_set_action=uvm_test_top.*,DRV_DBG,UVM_INFO,UVM_NO_ACTION` |
-| Who holds the phase open | `+UVM_OBJECTION_TRACE`, or `phase.get_objection().display_objections()` |
-| Did my configuration arrive | `+UVM_CONFIG_DB_TRACE` and `check_config_usage()` |
-| Which class was really built | `uvm_factory::get().print()` and `uvm_top.print_topology()` |
-| Transactions next to signals | `set_recording_enabled(1)` on the agents, plus the simulator's database switch |
+- A **regression** is a script that runs many tests, each with many random **seeds**, and marks every run pass or fail from its log.
+- A **seed** is the number that starts the simulator's random number generators (RNGs). The same seed with the same build repeats every random value (IEEE 1800-2023 §18.13.1).
+- A **build** is one compiled image of the testbench (TB) and the design under test (DUT): the source revision plus every compile option and define.
+- A **plusarg** is a run-time command-line option that starts with `+`, such as `+UVM_TESTNAME=<test>`; code reads it without a rebuild (IEEE 1800-2023 §21.6; IEEE 1800.2-2020 Annex G).
+- The **driver** turns sequence items into pin activity, the **monitor** turns pin activity back into transactions, and the **scoreboard** compares them with the expected values of a **reference model** ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
+- A UVM **log line** has the form `SEVERITY file(line) @ time: reporter [ID] message`, and the run ends with a **report summary** of counts by severity and by ID ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)). The logs on this page omit `file(line)` to keep lines short.
 
-Verbosity only affects `UVM_INFO`. Warnings, errors and fatals are always issued; change what they *do* with actions, never hide them with `UVM_NO_ACTION` in a regression.
+### The debug loop
 
-## Level 3: Reproduce, Compare, Shrink
+Every step below answers one question, and you do not move on until it is answered.
 
-Long simulations often mask the real failure.
+<ArchitectureDiagram
+  title="The systematic debug loop"
+  caption="Read left to right on the top row, then right to left on the bottom row. The dashed edge is the loop: a refuted hypothesis sends you back to isolate further, never straight to a fix."
+  nodes={[
+    { id: "triage", label: "1 Triage", sublabel: "first failure, signature, bucket", kind: "generic", col: 0, row: 0 },
+    { id: "repro", label: "2 Reproduce", sublabel: "same test, seed, build, tool, plusargs", kind: "generic", col: 1, row: 0 },
+    { id: "isolate", label: "3 Isolate", sublabel: "when, where, which stimulus", kind: "generic", col: 2, row: 0 },
+    { id: "hyp", label: "4 Hypothesize", sublabel: "a cause that predicts", kind: "generic", col: 2, row: 1 },
+    { id: "confirm", label: "5 Confirm", sublabel: "run the prediction", kind: "generic", col: 1, row: 1 },
+    { id: "lock", label: "6 Fix and lock in", sublabel: "directed test, coverage", kind: "generic", col: 0, row: 1 }
+  ]}
+  edges={[
+    { from: "triage", to: "repro", style: "data", label: "one run per bucket" },
+    { from: "repro", to: "isolate", style: "data", label: "fails on demand" },
+    { from: "isolate", to: "hyp", style: "data", label: "narrow window" },
+    { from: "hyp", to: "confirm", style: "data", label: "prediction" },
+    { from: "confirm", to: "lock", style: "data", label: "confirmed" },
+    { from: "confirm", to: "isolate", style: "causal", label: "refuted" }
+  ]}
+/>
 
-1. **Reproduce exactly:** same test, same seed, same code. Record the seed in every log header.
-2. **Compare:** a passing seed against the failing one, or the last passing code revision against this one. The first divergence in the transaction stream or the log usually points at the cause.
-3. **Shrink:** cut the test length, disable unrelated agents, and reduce the stimulus until it fails within seconds. Re-check that it still fails after each change — adding threads, objects or messages can shift what a seed produces (IEEE 1800-2023 §18.14).
-4. **Lock it in:** turn the reproduction into a directed regression test or an assertion so the bug cannot return silently.
+The two mistakes everyone makes at first are skipping step 2 (debugging a run you cannot replay) and jumping from step 3 to step 6 (fixing what you *think* is wrong). One more rule the picture does not draw: if step 2 fails, because the run will not fail again, you go back and check the recipe of the run (Step 2 below), not on to a different seed. The rest of this section takes the steps in order.
 
-</InfoPage>
+### Step 1a: find the first failure
+
+The **first failure** of a run is its earliest `UVM_ERROR` or `UVM_FATAL` in simulation time. In one log file, time never goes backwards, so it is the first such line in the file. Debug it first, because later errors are usually **consequences** of it, a **cascade**: a scoreboard whose expected-data queue slipped by one item reports every following item as wrong, and a stuck handshake ends, much later, in a timeout.
+
+**A worked log.** Read this log of a failing DMA (direct memory access) test, whose agent drives and monitors an AXI bus, and decide which line to debug. Times are in ps. `RVALID` and `RREADY` are the AXI read-data handshake signals; you only need to know that the monitor checks their protocol.
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test dma_rand_test...
+UVM_WARNING @ 1205: uvm_test_top.env.axi_agt.mon [AXI_PROTO] RVALID dropped before RREADY: id=0x3
+UVM_ERROR @ 1215: uvm_test_top.env.scb [MISMATCH] read data wrong: exp=0xa5 act=0x00 pkt=9
+UVM_ERROR @ 1325: uvm_test_top.env.scb [MISMATCH] read data wrong: exp=0x17 act=0xa5 pkt=10
+UVM_ERROR @ 1435: uvm_test_top.env.scb [MISMATCH] read data wrong: exp=0x3e act=0x17 pkt=11
+UVM_ERROR @ 52000: uvm_test_top.env.scb [ORPHAN] 3 expected items were never compared
+UVM_FATAL @ 1000000: reporter [PH_TIMEOUT] Explicit timeout of 1000000 hit, indicating a probable testbench issue
+```
+
+| Time | Line | Role | Why |
+|---|---|---|---|
+| 1205 | `AXI_PROTO` warning | the **lead** | The monitor saw a protocol violation on the same read, 10 ps before the first error. Not a failure by itself, but read it with the first failure. |
+| 1215 | `MISMATCH` pkt 9 | **first failure** | Earliest error. Debug this one. |
+| 1325, 1435 | `MISMATCH` pkt 10, 11 | consequence | Each `act` equals the previous `exp`: the scoreboard's queue is one item behind, so these errors repeat the first one. |
+| 52000 | `ORPHAN` | consequence | Expected items left over at the end, from the same slip. |
+| 1000000 | `PH_TIMEOUT` | consequence | The run never finished. Something stayed blocked after the bad read; [Hang Triage](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab) teaches that triage. |
+
+So the rule is: start at the first `UVM_ERROR` or `UVM_FATAL`, then read the few lines **before** it for warnings about the same transaction. The summary's `UVM_FATAL :    1` and the timeout are the loudest lines in this log, and the least useful.
+
+**Classify how the run ended** before you debug anything, because the ending decides where you look:
+
+| How the log ends | What it means | First move |
+|---|---|---|
+| Report summary with `UVM_ERROR` greater than 0, no fatal | The run completed; checks failed | Debug the first error |
+| `UVM_FATAL … [PH_TIMEOUT]` | Something kept `run_phase` open until the timeout (Annex F.7.3.3) | First error before it, if any; otherwise hang triage |
+| `Quit count reached!` in the summary | The run stopped early at `+UVM_MAX_QUIT_COUNT` (Annex G.2.6) | The last counted error is the Nth error, not the first; read from the top |
+| `UVM_FATAL … [BUILDERR]` at end of elaboration | Errors were reported during build, so UVM stopped before simulation (Annex F.7.3.6) | The first build-time `UVM_ERROR`, such as a missing configuration |
+| No report summary at all | A crash, a `$fatal`, a simulator error or a killed job (tool-dependent) | The simulator's own messages at the end of the log |
+| Summary with no errors, but nothing was checked | A zero-activity run, not a pass | [Verdict honesty](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index#honest-verdicts-what-uvm_error--0-does-and-does-not-prove) on the module overview |
+
+**Pitfalls.** Searching the log for the text "error" finds lines such as `UVM_INFO … error_inject=0` before the real failure; match the severity at the start of the line instead. A long run killed by the regression's wall-clock limit has no summary and looks like a crash; check the job status first.
+
+### Step 1b: failure signatures and buckets
+
+A **failure signature** is the first failure with everything run-specific removed, so that two runs with the same root cause produce the same string. A **bucket** is the set of failing runs that share a signature. You debug one run per bucket, not one per failing test.
+
+Build a signature from the first-failure line:
+
+1. Keep the **severity** and the **ID**. If the ID is the reporter's own full name, replace it with `{PATH}`. uvm-core 2020.3.1 does this for some of its own errors: the sequencer's "Get_next_item called twice" error uses `get_full_name()` as its ID (`uvm_sequencer.svh`).
+2. Keep the **reporter path**, but replace array indices: `agt[3]` and `agt[0]` are the same component type with the same bug.
+3. In the **message text**, replace hex values with `{H}` and decimal numbers with `{N}`.
+4. Drop the time and the `file(line)`.
+5. **Reorder** the result as `SEVERITY [ID] path: message`, so that sorted signatures group by ID.
+
+**Traced example.** One raw line, step by step:
+
+| Step | Result |
+|---|---|
+| Raw | `UVM_ERROR /proj/tb/axi_mon.sv(212) @ 5000: uvm_test_top.env.agt[3].mon [AXI_PROTO] RVALID dropped before RREADY: id='h3` |
+| Drop time and file | `UVM_ERROR uvm_test_top.env.agt[3].mon [AXI_PROTO] RVALID dropped before RREADY: id='h3` |
+| Normalize indices | `UVM_ERROR uvm_test_top.env.agt[N].mon [AXI_PROTO] …` |
+| Normalize values | `UVM_ERROR uvm_test_top.env.agt[N].mon [AXI_PROTO] RVALID dropped before RREADY: id={H}` |
+| Reorder | `UVM_ERROR [AXI_PROTO] uvm_test_top.env.agt[N].mon: RVALID dropped before RREADY: id={H}` |
+
+The script below applies these rules to every log of a regression and prints one line per bucket, largest first. It is a sketch for your regression flow; real flows add the test name, seed and build to each entry.
+
+```python
+import re
+import sys
+from collections import defaultdict
+
+# severity, optional file(line), time, reporter path, [ID], message.
+# The ID pattern is non-greedy so that an ID such as [env.agt[0].sqr] still matches.
+LINE = re.compile(r"^(UVM_ERROR|UVM_FATAL) (?:\S+\(\d+\) )?@ ?\d+: (\S+) \[(.+?)\] (.*)$")
+
+def signature(sev, path, ident, msg):
+    if ident == path:                       # some UVM IDs are the reporter's own path
+        ident = "{PATH}"
+    path = re.sub(r"\[\d+\]", "[N]", path)  # agt[3] and agt[0] are the same bug
+    msg = re.sub(r"\b0x[0-9a-fA-F_]+|'h[0-9a-fA-F_]+", "{H}", msg)
+    msg = re.sub(r"\b\d+\b", "{N}", msg)
+    return f"{sev} [{ident}] {path}: {msg}"
+
+def first_failure(log):
+    with open(log) as f:
+        for line in f:
+            m = LINE.match(line.rstrip("\n"))
+            if m:
+                return signature(*m.groups())
+    return "NO_UVM_ERROR_OR_FATAL"          # judge this run by other evidence
+
+buckets = defaultdict(list)
+for log in sys.argv[1:]:
+    buckets[first_failure(log)].append(log)
+for sig, logs in sorted(buckets.items(), key=lambda kv: -len(kv[1])):
+    print(f"{len(logs)}  {sig}  {' '.join(logs)}")
+```
+
+The summary line `UVM_ERROR :    3` does not match the pattern, because it has no `@ time:`; only message lines do. Runs with no UVM error still need the checks on the module overview (simulator-format errors, zero activity), which this sketch does not do.
+
+**Choosing which bucket to debug first.** Prefer, in order: a signature that is **new** since the last good regression; the bucket that blocks the most tests; and, within a bucket, the run whose first failure comes **earliest in simulation time**, because it is the cheapest to rerun.
+
+**Pitfalls.**
+- *Too fine:* leaving indices, addresses or path-like IDs in the signature splits one bug into many buckets.
+- *Too coarse:* keeping only the ID merges different bugs. `MISMATCH` from two scoreboards is two signatures, which is why the reporter path stays in.
+- *Bucketing by test name:* one test can hit three bugs, and one bug can fail ten tests. Bucket by signature, then check one run per bucket really is the bug the bucket claims; a signature is a strong hint, not a proof.
+- *Messages that put variable data first* (`"0x3c != 0x3d in pkt 17 read data"`) still normalize, but messages that print a variable-length list do not. Write messages with constant text first and `key=value` fields last.
+
+### Step 2: reproduce exactly
+
+A failure you cannot replay cannot be isolated, so before any debug edit you rerun the failing run and see it fail again. A run is a deterministic function of its recipe:
+
+<ArchitectureDiagram
+  title="What decides the stimulus and the result of one run"
+  caption="Five inputs feed one deterministic simulation. Change any of them and the random streams, and so the stimulus, may change. The seed alone names nothing: it is a starting point for one build on one simulator."
+  gapY={28}
+  nodes={[
+    { id: "test", label: "test name", sublabel: "+UVM_TESTNAME", kind: "generic", col: 0, row: 0 },
+    { id: "seed", label: "seed", sublabel: "simulator option (tool-dependent)", kind: "generic", col: 0, row: 1 },
+    { id: "build", label: "build", sublabel: "source revision + compile options", kind: "generic", col: 0, row: 2 },
+    { id: "tool", label: "simulator + version", sublabel: "and its UVM library", kind: "generic", col: 0, row: 3 },
+    { id: "args", label: "run-time plusargs", sublabel: "every +arg of the failing run", kind: "generic", col: 0, row: 4 },
+    { id: "sim", label: "simulation", sublabel: "random streams + DUT", kind: "generic", col: 1, row: 2 },
+    { id: "log", label: "the failing log", sublabel: "first failure, signature", kind: "generic", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "test", to: "sim", style: "data" },
+    { from: "seed", to: "sim", style: "data" },
+    { from: "build", to: "sim", style: "data" },
+    { from: "tool", to: "sim", style: "data" },
+    { from: "args", to: "sim", style: "data" },
+    { from: "sim", to: "log", style: "data", label: "deterministic" }
+  ]}
+/>
+
+The **reproduction contract**: rerun the same test, the same seed, the **same build**, the same simulator version and the same plusargs. Each part matters:
+
+- **Seed.** IEEE 1800-2023 leaves the default seed implementation-dependent (§18.14.1) and defines no call that returns it, so the regression script must choose the seed, pass it with the simulator's own option, and write it in the log header. [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) lists those options and the seeding rules.
+- **Build.** Random values are handed out in the order the code asks for them (§18.14.1), so changed TB code can change which values the failing transaction receives. Keep the failing build (or its revision and compile options) with every failure.
+- **Simulator version.** The standard fixes the generator algorithm only for `$random` and the `$dist_*` functions (§20.14, Annex N). For `$urandom`, `randomize()` and the solver it requires only that the same seed gives the same sequence (§18.13.1). A seed is therefore not portable between simulators, and a new version may choose differently (tool-dependent).
+- **Plusargs.** A plusarg can change the test, the number of items, a configuration knob or a factory override. Copy the failing command line, do not retype it.
+
+**Misconception: "The same seed reproduces the failure after I rebuild with my changes."** Not necessarily. If the seed passes on your new build, you have learned only that *this build with this seed* passes. The rebuild may have moved the failing stimulus to another transaction, or away entirely. Go back to the archived failing build, confirm it still fails, and add visibility with plusargs on *that* build.
+
+**Debugging the reproduction.** If the archived build with the same seed and command line does *not* fail again, the run is not deterministic. Look for a race between processes (IEEE 1800-2023 §4.7, §4.8; [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)), C code called through the DPI that reads the clock or uninitialized memory, input files that changed, or simulator options that differ (tool-dependent). Push Further covers flaky failures at scale.
+
+### Will my debug edit keep the seed?
+
+Once a failure reproduces, you add visibility. Some ways of adding it leave the random streams alone, and some move them. The rules underneath are in IEEE 1800-2023 §18.14 and, for UVM, IEEE 1800.2-2020 §1.4.6, §6.2.2.2 and Annex F.4.1.4.26. [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) teaches the mechanism; here is what it means for debug edits.
+
+Two kinds of random stream matter. Each **process** (a thread such as a component's `run_phase`) has its own generator, and draws such as `$urandom` or `new` take its next value in order (IEEE 1800-2023 §18.14.1, §18.14.2). Each **object** has its own generator too, which `randomize()` uses (§18.14.3), and UVM seeds objects by type and full name (Annex F.4.1.4.26). In uvm-core 2020.3.1, `start_item` reseeds every sequence item from its type, its full name and a per-name count (`uvm_sequence_base.svh`, `set_item_context` in `uvm_sequence_item.svh`, `uvm_create_random_seed` in `uvm_misc.svh`). So an edit in the driver can move the driver's own later draws, such as random idle gaps, but not the field values of the items it receives.
+
+**Predict first.** For each debug edit below, on seed 42, decide whether the stimulus stays the same, then open the answers.
+
+1. Add `+uvm_set_verbosity`, `+uvm_set_action` or `+UVM_MAX_QUIT_COUNT` to the command line (no rebuild).
+2. Turn on the simulator's waveform dump (no rebuild).
+3. Add `` `uvm_info("DRV", $sformatf("a=%0h", req.a), UVM_HIGH) `` to the driver and rebuild.
+4. Add `` `uvm_info("DRV", req.sprint(), UVM_HIGH) `` to the driver, rebuild, and run at `UVM_HIGH`.
+5. Add a coverage subscriber component.
+6. Add a `$urandom` or `std::randomize()` call, a `new` or a `fork` in the driver's `run_phase`.
+7. Rename a sequence, or start an extra item of the same type and name earlier (for example another `create("req")` in the same sequence).
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answers</summary>
+
+| Debug edit (same seed) | Same stimulus? | Why |
+|---|---|---|
+| 1. Verbosity, action or quit-count plusargs | yes | No TB code changes. uvm-core 2020.3.1 also saves and restores the random state while it applies the verbosity and action settings (`m_set_cl_msg_args` in `uvm_component.svh`); the quit count is applied by `uvm_root` and only sets a report-server limit |
+| 2. Waveform dump | yes | Dumping draws no random values |
+| 3. Field-only message | yes | Report messages preserve the random state of the calling thread (IEEE 1800.2-2020 §6.2.2.2), and `$sformatf` draws nothing |
+| 4. `sprint()` message | **not guaranteed** | `sprint()` runs user code (`do_print`), which §1.4.6 does not guarantee to be random stable. uvm-core's printer can also create element objects with `new` in the driver's thread (`uvm_printer.svh`), which moves that thread's later draws. Items' field values do not move in uvm-core (reseeded by name), so on a driver with no random draws of its own, such as the one in Make It Work, nothing changes; on a driver with random delays, the timing does |
+| 5. Coverage subscriber | yes, for other components | UVM seeds components by type and full name, not by creation order (Annex F.4.1.4.26), and uvm-core reseeds every component's phase processes by name. Only later draws in the *same* `build_phase` call that created it can shift |
+| 6. A draw, `new` or `fork` in the driver | **no**, for that driver's draws | Each takes the next value from the thread's generator, so every later draw in that thread moves (§18.14.1, §18.14.2): random delays, `$urandom` choices, objects created after it |
+| 7. Renamed sequence, extra item with the same name | **no**, for those items | In uvm-core their seeds come from type, full name and a per-name count (`uvm_misc.svh`), so the rename, or every later item with that name, gets new values |
+
+</details>
+
+The safe habit: **debug with plusargs and waveforms on the unchanged build first.** When you must edit code, keep message arguments free of object creation and random calls, rebuild, and check that the failure still happens at the same transaction (the driver's log line for it should be identical) before trusting anything else.
+
+### Step 3: isolate in time, place and stimulus
+
+**Isolating** means narrowing the failure until only a few candidate causes remain. Narrow three things:
+
+1. **Time.** You know the time of the first failure. Raise visibility only for a window before it: the `time` form of `+uvm_set_verbosity` (Annex G.2.3) raises verbosity from a given time, and `+UVM_MAX_QUIT_COUNT=1` (G.2.6) stops the run at the first counted error, so the log ends at your failure. The time value is in UVM's time unit, which is tool-dependent, so check one run before relying on it. A waveform dump of the same window shows the pins. Start it *before* the failure: `$dumpvars` begins recording only at the end of the time unit in which it is called (IEEE 1800-2023 §21.7.1.3), so a dump started by the error itself cannot show the cause.
+2. **Place.** Decide which part of the bench is wrong. In a scoreboard mismatch there are only three suspects: the **TB plumbing** (the driver drove something other than the item, or the monitor recorded something other than the pins), the **reference model** (the scoreboard's expected value is wrong), or the **DUT**. Compare the probes in the picture below.
+3. **Stimulus.** Find what is special about the failing transaction: its fields, the transactions just before it, the configuration. Passing transactions in the same log are evidence too.
+
+<ArchitectureDiagram
+  title="Four probes that split a scoreboard mismatch three ways"
+  caption="The bench from Make It Work. Probe 1 is the driver's DRV log line, probe 2 the waveform on aif, probe 3 the item the monitor writes, probe 4 the scoreboard's expected value. If 1 differs from 3, the TB plumbing is wrong. If 1, 2 and 3 agree, the mismatch is between the model (4) and the DUT's y; check both against the specification."
+  nodes={[
+    { id: "env", label: "env (add_env)", kind: "env", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "sqr", label: "sqr", sublabel: "uvm_sequencer #(add_item)", kind: "sequencer", col: 0, row: 0 },
+    { id: "drv", label: "drv (probe 1)", sublabel: "add_driver: DRV lines", kind: "driver", col: 0, row: 1 },
+    { id: "scb", label: "scb (probe 4)", sublabel: "add_scb: expected value", kind: "scoreboard", col: 2, row: 0 },
+    { id: "mon", label: "mon (probe 3)", sublabel: "add_monitor: observed item", kind: "monitor", col: 2, row: 1 },
+    { id: "aif", label: "aif (probe 2)", sublabel: "add_if: valid, a, b, y in the waveform", kind: "interface", col: 0, row: 2, colSpan: 3 },
+    { id: "dut", label: "dut", sublabel: "sat_add", kind: "dut", col: 1, row: 3 }
+  ]}
+  ports={[
+    { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
+    { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" },
+    { id: "mon.ap", node: "mon", side: "top", kind: "analysis_port", label: "ap" },
+    { id: "scb.imp", node: "scb", side: "bottom", kind: "analysis_imp", label: "analysis_export" }
+  ]}
+  edges={[
+    { from: "drv.port", to: "sqr.export", style: "control", label: "get_next_item" },
+    { from: "mon.ap", to: "scb.imp", style: "data", label: "write(t)" },
+    { from: "drv", to: "aif", style: "data", label: "cb.valid, cb.a, cb.b" },
+    { from: "aif", to: "mon", style: "data", label: "mon_cb samples" },
+    { from: "aif", to: "dut", style: "structural", label: "a, b in; y out" }
+  ]}
+/>
+
+**Pitfall: isolating by editing.** Commenting out agents or constraints to "see if it still fails" changes the stimulus (previous section). Narrow with plusargs, the time window and the waveform first; change code only to *test* a hypothesis, in a new directed test.
+
+### Step 4: hypothesize; step 5: confirm
+
+A **hypothesis** is a specific claim about the cause that **predicts an observation you have not made yet**. A good one can be proved wrong by one run. "The adder is flaky" and "something is wrong in the scoreboard" predict nothing, so no run can refute them, and they lead to random edits.
+
+| Hypothesis | Testable? | What it predicts |
+|---|---|---|
+| "The adder is flaky." | no | Nothing specific |
+| "Overflow is broken." | weakly | Every item with `a + b > 255` fails; one passing overflow item in the log refutes it |
+| "The DUT saturates only above 256, so it fails exactly when `a + b == 256`." | yes | (128, 128) fails; (127, 128) and (128, 129) pass; every past failure has `a + b == 256` |
+
+**Confirming** means running the prediction, ideally in a small **directed test** (a test whose stimulus you choose rather than randomize) that would *fail* if the hypothesis were wrong. Check the prediction against evidence you already have, too: every failure in the bucket should fit it. A hypothesis that survives both is confirmed; one that fails either is refuted, and you go back to isolating. Never skip to a fix on an unconfirmed hypothesis, because a "fix" that makes one seed pass may only have moved the stimulus away from the bug.
+
+### Shrink and lock in
+
+**Shrinking** makes a reproduced failure smaller and faster while it still fails: fewer transactions, fewer active agents, a shorter run. Shrink **from the end**. Cutting transactions *after* the first failure leaves every earlier random draw untouched, so the failing transaction stays the same. Removing transactions *before* it, or disabling an agent that draws random values, changes what later draws produce, so recheck that the same failure still happens after every cut.
+
+**Traced example.** On the Make It Work bench, the failing seed of run 1 fails at item 57 (counting from 0), at 1165 ns. Every item is created with the same name, `req`, so in uvm-core item *k* receives the seed for the *k*-th use of that name.
+
+| Shrink | Items generated | The item that failed (old item 57) | Same failure? |
+|---|---|---|---|
+| None: the full run | 0 to 199 | the 58th item created: `a=0x9c b=0x64` | yes, at 1165 ns |
+| `+NUM_ITEMS=60`: cut after the failure | 0 to 59 | still the 58th item created, so the same seed and the same values | yes, at 1165 ns ([Run 2](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/effective-debug#walking-the-loop-on-this-bench) in Make It Work shows the log) |
+| First 50 items never generated | old items 50 to 199 | now only the 8th item created, so it receives the seed old item 7 got, and different values | probably not: that item no longer gets `0x9c, 0x64` |
+
+**Locking in** turns the confirmed cause into a check that runs in every regression from now on:
+
+- the directed test from step 5, which fails on the old build and passes on the fixed one;
+- a coverage point on the condition, so the random tests show they reach it ([I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)); or an assertion, when the rule is about signals;
+- a rerun of the whole bucket and many new seeds on the fixed build.
+
+A passing rerun of the old seed on the fixed build counts as evidence only if the stimulus did not move: compare its driver lines with the failing run's.
+
+### Debugging the method itself
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| The failing seed passes after your rebuild | The rebuild changed the stimulus | Rerun on the archived failing build; add visibility with plusargs |
+| Same build, same seed, same command line, different result | Nondeterminism: a race, DPI code reading the clock or uninitialized memory, a changed input file, different simulator options | Run it twice more to confirm; then hunt the race ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)) or the external input |
+| The failure vanishes at `UVM_HIGH` and returns at `UVM_LOW` | A message argument runs code that draws random values or creates objects (`sprint()`) in a thread whose later draws matter, such as a driver with random delays | Use field-only messages, or raise verbosity only for IDs whose messages draw nothing |
+| One bug fills ten buckets | Signature too fine: indices, addresses or path IDs not normalized | Add normalization rules |
+| One bucket hides two different bugs | Signature too coarse | Keep the reporter path; split by a message field |
+| The fix makes the seed pass, then the bug escapes | The hypothesis was never confirmed; the fix moved the stimulus | Confirm with a directed test that failed before the fix |
+
+### In a real regression flow
+
+Nightly regressions run thousands of tests. A triage script records, for every failing run, the first-failure line, the normalized signature, the test, seed, build and full command line. It groups runs into buckets and marks each bucket **new** or **known** against the last good regression. Engineers then take one bucket each, reproduce one run on the archived build, and work the loop. The fix lands together with its directed test, and the bucket stays open until a full regression on the fixed build no longer shows the signature. Teams that skip this end up debugging the same root cause several times under different test names.
+
+### Recap
+
+- The first failure is the earliest `UVM_ERROR` or `UVM_FATAL`; later errors are usually its consequences. Classify the ending before you debug.
+- A signature is the first failure with indices, values, times and path-like IDs normalized. Bucket by signature, not by test name.
+- Reproduce with the same test, seed, build, simulator version and plusargs. A seed is not a scenario.
+- Plusargs and waveforms keep the stimulus; code edits may not. Check that the failing transaction is unchanged after any rebuild.
+- Isolate by time, place and stimulus; a hypothesis must predict something new; confirm it with a directed test before you fix.
+- Shrink from the end, then lock the fix in with the directed test, coverage and a fresh regression.
+
+## Make It Work
+
+### Worked example: a saturating adder that fails on half the seeds
+
+The DUT is an 8-bit **saturating adder**: `y` is `a + b`, or `0xff` when the sum does not fit in 8 bits. It has a planted bug that makes it fail only for some random values, as real bugs do. The bench is a minimal UVM environment (a real bench would wrap `sqr`, `drv` and `mon` in an agent). It contains the three things this lesson needs: a reproduction line in the log, error messages that normalize well, and a directed test that the factory can swap in.
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+
+interface add_if (input logic clk);
+  logic       valid = 1'b0;  // qualifies a and b for the monitor
+  logic [7:0] a, b;
+  logic [7:0] y;             // registered: shows the result one clock later
+  clocking cb @(posedge clk);       // driver view
+    default input #1step output #1;
+    output valid, a, b;
+  endclocking
+  clocking mon_cb @(posedge clk);   // monitor view: values just before each edge
+    default input #1step;
+    input valid, a, b, y;
+  endclocking
+endinterface
+
+// 8-bit saturating adder with a planted boundary bug.
+module sat_add (input  logic       clk,
+                input  logic [7:0] a, b,
+                output logic [7:0] y);
+  logic [8:0] sum;
+  always_comb sum = a + b;                     // 9-bit context keeps the carry
+  always_ff @(posedge clk)
+    y <= (sum > 9'd256) ? 8'hFF : sum[7:0];    // BUG: the limit should be 9'd255
+endmodule
+
+package add_pkg;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  class add_item extends uvm_sequence_item;
+    `uvm_object_utils(add_item)
+    rand bit [7:0] a, b;
+    logic    [7:0] y;        // observed result; 4-state so an X shows in the compare
+    function new(string name = "add_item");
+      super.new(name);
+    endfunction
+    function string convert2string();
+      return $sformatf("a=0x%02h b=0x%02h", a, b);
+    endfunction
+  endclass
+
+  class add_seq extends uvm_sequence #(add_item);
+    `uvm_object_utils(add_seq)
+    int unsigned n_items = 200;
+    function new(string name = "add_seq");
+      super.new(name);
+    endfunction
+    task body();
+      repeat (n_items) begin
+        req = add_item::type_id::create("req");
+        start_item(req);
+        if (!req.randomize()) `uvm_fatal("RAND", "add_item randomize failed")
+        finish_item(req);
+      end
+    endtask
+  endclass
+
+  // Directed stimulus that tests the hypothesis "fails exactly when a + b == 256".
+  class add_boundary_seq extends add_seq;
+    `uvm_object_utils(add_boundary_seq)
+    function new(string name = "add_boundary_seq");
+      super.new(name);
+    endfunction
+    task body();
+      bit [7:0] a_vals[5] = '{8'd127, 8'd128, 8'd128, 8'd255, 8'd1};
+      bit [7:0] b_vals[5] = '{8'd128, 8'd128, 8'd129, 8'd1, 8'd255};
+      foreach (a_vals[i]) begin    // sums: 255, 256, 257, 256, 256
+        req = add_item::type_id::create("req");
+        start_item(req);
+        req.a = a_vals[i];
+        req.b = b_vals[i];
+        finish_item(req);
+      end
+    endtask
+  endclass
+
+  class add_driver extends uvm_driver #(add_item);
+    `uvm_component_utils(add_driver)
+    virtual add_if vif;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      if (!uvm_config_db#(virtual add_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NO_VIF", "add_if not set for the driver")
+    endfunction
+    task run_phase(uvm_phase phase);
+      forever begin
+        seq_item_port.get_next_item(req);
+        @(vif.cb);
+        vif.cb.valid <= 1'b1;
+        vif.cb.a     <= req.a;
+        vif.cb.b     <= req.b;
+        // Probe 1: what was driven. Field-only text, so it draws no random values.
+        `uvm_info("DRV", $sformatf("drive %s", req.convert2string()), UVM_HIGH)
+        @(vif.cb);
+        vif.cb.valid <= 1'b0;      // one item every two clocks keeps the monitor simple
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  class add_monitor extends uvm_monitor;
+    `uvm_component_utils(add_monitor)
+    virtual add_if vif;
+    uvm_analysis_port #(add_item) ap;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      ap = new("ap", this);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      if (!uvm_config_db#(virtual add_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NO_VIF", "add_if not set for the monitor")
+    endfunction
+    task run_phase(uvm_phase phase);
+      add_item t;
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.valid === 1'b1) begin
+          t = add_item::type_id::create("t");   // a new object per transaction
+          t.a = vif.mon_cb.a;
+          t.b = vif.mon_cb.b;
+          @(vif.mon_cb);                        // y is registered: one edge later
+          t.y = vif.mon_cb.y;
+          ap.write(t);
+        end
+      end
+    endtask
+  endclass
+
+  class add_scb extends uvm_subscriber #(add_item);
+    `uvm_component_utils(add_scb)
+    int unsigned n_match, n_mismatch;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void write(add_item t);
+      bit [8:0] sum      = t.a + t.b;            // reference model, from the spec
+      bit [7:0] expected = (sum > 9'd255) ? 8'hFF : sum[7:0];
+      if (t.y !== expected) begin
+        n_mismatch++;
+        // Constant text first, key=value fields last: easy to normalize.
+        `uvm_error("MISMATCH", $sformatf("sat_add result wrong: exp=0x%02h act=0x%02h %s",
+                   expected, t.y, t.convert2string()))
+      end
+      else begin
+        n_match++;
+        `uvm_info("CHK", $sformatf("ok %s y=0x%02h", t.convert2string(), t.y), UVM_HIGH)
+      end
+    endfunction
+    function void check_phase(uvm_phase phase);
+      if (n_match + n_mismatch == 0)
+        `uvm_error("NO_CHECKS", "the scoreboard compared nothing")
+    endfunction
+    function void report_phase(uvm_phase phase);
+      `uvm_info("SCB_SUMMARY",
+                $sformatf("matches=%0d mismatches=%0d", n_match, n_mismatch), UVM_LOW)
+    endfunction
+  endclass
+
+  class add_env extends uvm_env;
+    `uvm_component_utils(add_env)
+    uvm_sequencer #(add_item) sqr;
+    add_driver                drv;
+    add_monitor               mon;
+    add_scb                   scb;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      sqr = uvm_sequencer#(add_item)::type_id::create("sqr", this);
+      drv = add_driver::type_id::create("drv", this);
+      mon = add_monitor::type_id::create("mon", this);
+      scb = add_scb::type_id::create("scb", this);
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+      mon.ap.connect(scb.analysis_export);
+    endfunction
+  endclass
+
+  class add_rand_test extends uvm_test;
+    `uvm_component_utils(add_rand_test)
+    add_env      env;
+    int unsigned n_items;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      env = add_env::type_id::create("env", this);
+      // +NUM_ITEMS=<n> shrinks a run without a rebuild (IEEE 1800-2023 §21.6).
+      if (!$value$plusargs("NUM_ITEMS=%d", n_items)) n_items = 200;
+      // Safety net for hangs. UVM applies this value in uvm_pkg's time unit (see "Run it").
+      uvm_root::get().set_timeout(1ms, 1);
+    endfunction
+    function void start_of_simulation_phase(uvm_phase phase);
+      uvm_cmdline_processor clp = uvm_cmdline_processor::get_inst();
+      string args[$];
+      string cmd;
+      clp.get_args(args);
+      foreach (args[i]) cmd = {cmd, " ", args[i]};
+      // What a rerun needs that the TB can see; the script logs the seed and build.
+      `uvm_info("REPRO", $sformatf("test=%s n_items=%0d cmdline:%s",
+                get_type_name(), n_items, cmd), UVM_NONE)
+    endfunction
+    task run_phase(uvm_phase phase);
+      add_seq seq;
+      phase.raise_objection(this);
+      seq = add_seq::type_id::create("seq");
+      seq.n_items = n_items;
+      seq.start(env.sqr);
+      #20ns;   // two clocks: let the monitor deliver the last result
+      phase.drop_objection(this);
+    endtask
+  endclass
+
+  // The lock-in test: same bench, directed stimulus, chosen with +UVM_TESTNAME.
+  class add_boundary_test extends add_rand_test;
+    `uvm_component_utils(add_boundary_test)
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      add_seq::type_id::set_type_override(add_boundary_seq::get_type());
+      super.build_phase(phase);
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  import uvm_pkg::*;
+  import add_pkg::*;       // makes sure the test classes are elaborated and registered
+
+  logic clk;
+  initial clk = 1'b0;
+  always #5ns clk = ~clk;
+
+  add_if  aif (.clk(clk));
+  sat_add dut (.clk(clk), .a(aif.a), .b(aif.b), .y(aif.y));
+
+  initial begin
+    uvm_config_db#(virtual add_if)::set(null, "uvm_test_top.env.*", "vif", aif);
+    run_test("add_rand_test");
+  end
+endmodule
+```
+
+**Run it.** Compile the file with your simulator's UVM library (uvm-core 2020.3.1 or the simulator's built-in UVM, with `+incdir` pointing at `uvm_macros.svh`), with `tb_top` as the top module. Run with `+UVM_TESTNAME=add_rand_test` or `+UVM_TESTNAME=add_boundary_test`, and pass a seed with your simulator's seed option (tool-dependent). The regression script should print that seed and the build revision in the log header. Compile `uvm_pkg` with the same 1 ns time unit as this file (with your simulator's default-timescale option, for example): the standard leaves the time unit of `uvm_pkg` unspecified (IEEE 1800.2-2020 §1.4.5), and UVM applies time values passed to it, such as the `set_timeout(1ms)` argument, and prints `@ time`, in that unit. With a 1 ps unit the timeout would fire at 1 µs, before item 57, and the logs below would print times in ps.
+
+**Why only some seeds fail.** 255 of the 65,536 possible (a, b) pairs sum to exactly 256. With uniform random values, each item has about a 0.39% chance to hit one, so a 200-item run fails on roughly 54% of seeds (1 − (65281/65536)²⁰⁰ ≈ 0.54). A regression of this test is red about half the time, with different item numbers each time.
+
+### Walking the loop on this bench
+
+**Run 1: the regression failure.** One failing seed's log, end to end. **Expected output** (illustrative, worked out by hand from the code above, not copied from a simulator run: the item values come from one hypothetical failing seed, and your simulator's times may be printed in another unit):
+
+```text
+UVM_INFO @ 0: reporter [UVM/RELNOTES] (release-notes banner)
+UVM_INFO @ 0: reporter [RNTST] Running test add_rand_test...
+UVM_INFO @ 0: uvm_test_top [REPRO] test=add_rand_test n_items=200 cmdline: <sim> +UVM_TESTNAME=add_rand_test <seed option>
+UVM_ERROR @ 1165: uvm_test_top.env.scb [MISMATCH] sat_add result wrong: exp=0xff act=0x00 a=0x9c b=0x64
+UVM_ERROR @ 2845: uvm_test_top.env.scb [MISMATCH] sat_add result wrong: exp=0xff act=0x00 a=0xc8 b=0x38
+UVM_INFO @ 4015: uvm_test_top.env.scb [SCB_SUMMARY] matches=198 mismatches=2
+UVM_INFO @ 4015: reporter [UVM/REPORT/SERVER]
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :    4
+UVM_WARNING :    0
+UVM_ERROR :    2
+UVM_FATAL :    0
+** Report counts by id
+[MISMATCH]     2
+[REPRO]     1
+[RNTST]     1
+[SCB_SUMMARY]     1
+[UVM/RELNOTES]     1
+```
+
+The timing follows from the code: the clock rises at 5, 15, 25 … ns; item *i* is driven just after the edge at 5 + 20*i* ns, sampled at the next edge, and its registered result reaches the scoreboard at 25 + 20*i* ns. So the first failure at 1165 ns is item 57. The run ends at 4015 ns: the last `item_done()` is at 3995 ns, and the test waits 20 ns more (two clocks, `#20ns` in `run_phase`) before it drops its objection, so the monitor can deliver the last result. That delay is written in the test's own scope, so it is 20 ns whatever time unit `uvm_pkg` has.
+
+**Triage.** The first failure is the `MISMATCH` at 1165 ns. Its signature is `` UVM_ERROR [MISMATCH] uvm_test_top.env.scb: sat_add result wrong: exp={H} act={H} a={H} b={H} ``, and every failing seed of this test lands in that one bucket.
+
+**Run 2: reproduce, shrink and add visibility, on the same build.** Rerun the same seed with:
+
+```bash
+<sim> +UVM_TESTNAME=add_rand_test <seed option> +NUM_ITEMS=60 \
+  +uvm_set_verbosity=uvm_test_top.env.drv,DRV,UVM_HIGH,build \
+  +uvm_set_verbosity=uvm_test_top.env.scb,CHK,UVM_HIGH,build
+```
+
+`+NUM_ITEMS=60` cuts the run *after* item 57, so items 0 to 57 are unchanged and the failure stays at 1165 ns. The two plusargs raise one ID in one component each; none of them changes the stimulus. An excerpt (illustrative, same assumptions; lines with the same time may appear in either order):
+
+```text
+UVM_INFO @ 485: uvm_test_top.env.drv [DRV] drive a=0xe0 b=0x41
+UVM_INFO @ 505: uvm_test_top.env.scb [CHK] ok a=0xe0 b=0x41 y=0xff
+UVM_INFO @ 1125: uvm_test_top.env.drv [DRV] drive a=0x31 b=0x7a
+UVM_INFO @ 1145: uvm_test_top.env.scb [CHK] ok a=0x31 b=0x7a y=0xab
+UVM_INFO @ 1145: uvm_test_top.env.drv [DRV] drive a=0x9c b=0x64
+UVM_ERROR @ 1165: uvm_test_top.env.scb [MISMATCH] sat_add result wrong: exp=0xff act=0x00 a=0x9c b=0x64
+UVM_INFO @ 1215: uvm_test_top.env.scb [SCB_SUMMARY] matches=59 mismatches=1
+```
+
+**Isolate.** Probe 1 (`DRV`: `a=0x9c b=0x64`) equals the monitor's fields in the error message (probe 3), so the TB plumbing is fine. The model expects `0xff` because 0x9c + 0x64 = 256, which does not fit in 8 bits: the specification says saturate, so the model is right. The DUT returned `0x00`. The suspect is the DUT, for this stimulus.
+
+**Hypothesize.** "Overflow is broken" is refuted by evidence already in the log: item 24 (0xe0 + 0x41 = 289) saturated correctly at 505 ns. Both failures in run 1 have `a + b == 256` exactly (0x9c + 0x64 and 0xc8 + 0x38). New hypothesis: *the DUT saturates only when the sum is above 256*. It predicts that 255 and 257 pass and every sum of 256 fails.
+
+**Confirm.** `add_boundary_test` drives exactly those sums. The waveform of its first three items shows the prediction holding:
+
+<TimingDiagram
+  title="add_boundary_test on the buggy DUT: sums 255, 256 and 257"
+  caption="values[k] is the value sampled at rising edge k. The driver puts an item on a and b after one edge with valid high; the DUT samples it at the next edge, and the registered y shows the result one edge later. Only the sum of 256 (edge 3 in, edge 4 out) is wrong."
+  edges={7}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "valid", kind: "bit", values: [0, 1, 0, 1, 0, 1, 0] },
+    { name: "a", kind: "bus", values: [undefined, "7f", "7f", "80", "80", "80", "80"] },
+    { name: "b", kind: "bus", values: [undefined, "80", "80", "80", "80", "81", "81"] },
+    { name: "y", kind: "bus", values: [undefined, undefined, "ff", "ff", "00", "00", "ff"] }
+  ]}
+  markers={[
+    { edge: 2, tone: "pass", label: "sum 255: y = 0xff, correct" },
+    { edge: 4, tone: "fail", label: "sum 256: y = 0x00, scb expects 0xff" },
+    { edge: 6, tone: "pass", label: "sum 257: y = 0xff, correct" }
+  ]}
+/>
+
+**Run 3: the directed test on the buggy build.** **Expected output** (worked out from the code; no random values are involved, so only the time unit can differ):
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test add_boundary_test...
+UVM_INFO @ 0: uvm_test_top [REPRO] test=add_boundary_test n_items=200 cmdline: <sim> +UVM_TESTNAME=add_boundary_test
+UVM_ERROR @ 45: uvm_test_top.env.scb [MISMATCH] sat_add result wrong: exp=0xff act=0x00 a=0x80 b=0x80
+UVM_ERROR @ 85: uvm_test_top.env.scb [MISMATCH] sat_add result wrong: exp=0xff act=0x00 a=0xff b=0x01
+UVM_ERROR @ 105: uvm_test_top.env.scb [MISMATCH] sat_add result wrong: exp=0xff act=0x00 a=0x01 b=0xff
+UVM_INFO @ 115: uvm_test_top.env.scb [SCB_SUMMARY] matches=2 mismatches=3
+...
+UVM_ERROR :    3
+UVM_FATAL :    0
+```
+
+Exactly the three sums of 256 fail, and 255 and 257 pass: the hypothesis is confirmed. (`n_items=200` is printed by the base test but ignored by the directed sequence.)
+
+**Run 4: fix and lock in.** Change the DUT's limit to `9'd255`. Then `add_boundary_test` ends with `SCB_SUMMARY matches=5 mismatches=0` and `UVM_ERROR :    0`. Add it to the regression. Rerun the old failing seed: this fix touched only the DUT, and this TB draws no random values that depend on the DUT's outputs, so its `DRV` lines should be identical to run 2's. Check that they are; only then does its pass count as evidence. Finally, run many new seeds of `add_rand_test`.
+
+### How to debug a regression failure, step by step
+
+1. **Classify each failing run's ending** (completed with errors, timeout, quit count, build error, no summary, zero activity).
+2. **Extract the first failure** of each run and **normalize** it into a signature.
+3. **Bucket** by signature; mark buckets new or known; pick one bucket and, inside it, the run that fails earliest.
+4. **Reproduce** that run on its archived build with its exact command line, and see it fail.
+5. **Shrink from the end** (`+NUM_ITEMS`, a shorter test) and recheck that the same transaction still fails.
+6. **Isolate** with plusargs: one component and one ID at a time, `+UVM_MAX_QUIT_COUNT=1`, a time window, a waveform of that window. Split TB plumbing, model and DUT with the probes.
+7. **Write a hypothesis** that predicts an observation you have not made, and check it against every failure in the bucket.
+8. **Confirm** with a directed test that fails if the hypothesis is right and the bug is present.
+9. **Fix**, then **lock in**: the directed test joins the regression, add coverage or an assertion, rerun the bucket and many new seeds.
+10. **Write it down**: signature, root cause, fix and test, so the next person who sees the signature starts at the answer.
+
+**Checklist before moving on:**
+- [ ] I can find the first failure in a log with a cascade and a timeout, and say why the timeout is not it.
+- [ ] I can turn a first-failure line into a normalized signature, including a path-like ID.
+- [ ] I can list the five parts of a reproduction, and explain why a passing seed on a new build proves little.
+- [ ] I can say which debug edits keep a seed's stimulus and which may move it.
+- [ ] I can split a scoreboard mismatch into TB plumbing, model or DUT with the four probes.
+- [ ] I can write a hypothesis that one directed run could refute, and the test that would refute it.
+- [ ] I know why shrinking from the end keeps the failing transaction.
+
+## Push Further
+
+### Expert: what UVM promises about random stability, and what it does not
+
+IEEE 1800.2-2020 §1.4.6 is short: "Any APIs that result in user code being executed are not guaranteed to be random stable. All other APIs are guaranteed to be random stable, unless otherwise specified." The consequences for debugging:
+
+- **Stable by the standard.** Report messages: `new_report_message` "will preserve the random stability of the calling thread" (§6.2.2.2), and the macros build messages with it. Name-based seeding: with UVM seeding enabled (the default), "UVM-based objects are seeded based on their type and full hierarchical name rather than allocation order" (Annex F.4.1.4.26; `reseed`, §5.3.3.3).
+- **Not guaranteed, because user code runs.** `print()` and `sprint()` (they call your `do_print`), `convert2string`, `copy` and `compare` hooks, report catchers' `catch()` and callbacks. If yours create objects or draw random values, enabling them shifts streams.
+- **What uvm-core 2020.3.1 adds (implementation, not standard):** `uvm_component::new` calls `reseed()`; before every phase callback, each component's phase process is reseeded from the phase type and the component's full name (`uvm_topdown_phase.svh`, `uvm_bottomup_phase.svh`, `uvm_task_phase.svh`); sequences and items are reseeded in `set_item_context` (`uvm_sequence_item.svh`); resource lookups, transaction recording and command-line message settings save and restore the caller's random state (`uvm_resource_pool.svh`, `uvm_recorder.svh`, `uvm_component.svh`). The damage of one extra `new` is therefore limited to later draws in the same component's same phase call.
+- **The seeds still follow the simulator seed.** uvm-core hashes the names with `uvm_global_random_seed`, which the package initializes with `$urandom`, so a different simulator seed gives different UVM streams (`uvm_misc.svh`).
+
+Staff-level angle: if a team must add instrumentation to a long-lived regression without invalidating its stored seeds, every debug hook must be stream-neutral: field-only messages, and no `new`, `fork` or random call in a TB thread. Self-seeding a new debug object in its constructor (IEEE 1800-2023 §18.14.3) protects only that object's own stream; its `new` still takes a draw from the creating thread. Verify by diffing the driver logs of one seed before and after the change.
+
+### Expert: comparing runs: two seeds, two builds and bisecting
+
+- **Two seeds, one build.** Different seeds produce different stimulus from the first random draw, so there is no meaningful "first divergence" between a passing and a failing seed. What the comparison *can* show is correlation: which stimulus features every failing seed has and no passing seed has (here, a sum of exactly 256). Coverage from both sets answers that faster than log diffs.
+- **One seed, two builds.** When a failure appears after a code change, run the same seed on the last good build and the first bad one. If the change did not alter the TB's random draws or their order (for example an RTL-only change in a TB whose draws do not depend on DUT responses), the stimulus is identical and the first differing *monitor* transaction is where behaviour diverged. Diff the *driver* streams first: if they already differ from item 0, the stimulus moved, and the comparison means nothing. This follows from the ordering rule in IEEE 1800-2023 §18.14.1; reactive TBs, whose draws depend on DUT timing, can shift even on RTL-only changes.
+- **Bisecting revisions.** Once a *directed* test reproduces the bug, its stimulus does not depend on the seed, so you can search the revision history for the commit that introduced it, for example with `git bisect run` and a script that runs the test (tool-dependent: your version-control system and simulator).
+
+### Expert: triage at scale: new, known and flaky failures
+
+Methodology; the tooling is tool-dependent.
+
+- **New versus known.** Keep a database of signatures with their bug IDs. A regression report then shows new signatures first. A known signature with a sudden jump in count is also news: a fix may have regressed.
+- **Flaky failures.** Rerun each new signature once on the same build, seed and command line. A run that does not repeat is nondeterministic, and that is a bug in itself: a race (IEEE 1800-2023 §4.7, §4.8), DPI code that reads the clock or uninitialized memory, or an input that changed. Never mark it "flaky" and move on; a nondeterministic bench cannot reproduce the next real bug either.
+- **Expected failures and waivers.** While an RTL fix is pending, a team may waive one known signature. The waiver must be narrow (severity, ID, path and message pattern), counted, tied to a bug ID and removed with the fix; a report catcher that demotes every `MISMATCH` is not a waiver, it is a blindfold. The module overview shows the narrow, counted catcher.
+- **Budgets.** At thousands of runs, triage cost matters more than simulation cost: record the signature, seed, build and command line automatically; cap reruns per signature; and prefer one deep debug of the earliest-failing run per bucket over shallow looks at many.
+
+### Interview angles
+
+<InterviewQuestionPlayground
+  title="Interview angle: the seed that stopped failing"
+  question={"A random test failed overnight with seed 42 at item 3,117. This morning you added a few debug prints, including `uvm_info(\"DRV\", req.sprint(), UVM_HIGH), rebuilt, and reran seed 42 at UVM_HIGH. It passes. What do you conclude, and what do you do?"}
+  options={[
+    { text: "The bug is intermittent; mark the test flaky, keep the prints, and rerun it nightly.", isCorrect: false, feedback: "Nothing shows nondeterminism yet: you changed the build. Rerun the archived build first; a real flaky failure would also fail to repeat there." },
+    { text: "The prints fixed a timing race, so the bug is in the scheduling of the driver's threads.", isCorrect: false, feedback: "A UVM message does not change simulation time or process order in a way that fixes races; the more likely change is the stimulus. Confirm on the old build before forming any hypothesis." },
+    { text: "Nothing yet: the rebuild and sprint() may have moved the stimulus. Rerun seed 42 on the archived build, then add visibility with plusargs or field-only messages.", isCorrect: true, feedback: "Right. sprint() runs user code (IEEE 1800.2-2020 §1.4.6) and can create objects in the driver's thread, which shifts that thread's later random draws, such as random delays, and the rebuild itself may have changed other draws. A passing seed on a changed build is not evidence; after any rebuild, check that item 3,117 is unchanged." },
+    { text: "Try seeds 41 and 43; with neighbouring seeds, one of them will hit the same scenario.", isCorrect: false, feedback: "Neighbouring seeds share nothing: each seed gives unrelated stimulus. You would be starting a new search, not reproducing the failure." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: 140 red runs on Monday morning"
+  question="A 2,000-run regression has 140 failures after the weekend's merges. You have one day. How do you spend the first hour?"
+  options={[
+    { text: "Bucket the 140 runs by first-failure signature, mark buckets new or known, then reproduce the earliest-failing run of the largest new bucket on its build.", isCorrect: true, feedback: "Right. 140 runs are usually a handful of root causes. Bucketing lets you assign one engineer per root cause, and the earliest-failing run is the cheapest to rerun." },
+    { text: "Open the first failing log in the list and debug it until it is understood.", isCorrect: false, feedback: "That may be the 70th instance of one bug, or the least important one. Group first." },
+    { text: "Revert all weekend merges, rerun the whole regression and compare results.", isCorrect: false, feedback: "It may be needed later, but it tells you nothing about which merge or which bug, and it throws away the failing evidence." },
+    { text: "Raise UVM_VERBOSITY to UVM_FULL for the whole regression and rerun everything.", isCorrect: false, feedback: "That multiplies run time and log size for 2,000 runs, and code-path changes at high verbosity can even move some seeds. Reproduce one run per bucket with targeted plusargs instead." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+Start with the quiz, which covers all five objectives. Then do the two katas: the first is the module's log-bucketing drill, the second practises hypotheses on the Make It Work bench. The flashcards at the end of this section cover the whole page.
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "A failing run's log contains, in order: UVM_WARNING @ 900 [CFG] timeout_cycles not set; UVM_INFO @ 1200 [MON] error_inject=0 burst_len=4; UVM_ERROR @ 3400 [MISMATCH] read data wrong; UVM_ERROR @ 3500 [MISMATCH] read data wrong; UVM_FATAL @ 1000000 [PH_TIMEOUT]. Which line is the first failure?",
+    objective: 1,
+    answers: [
+      { text: "The PH_TIMEOUT fatal, because it is the most severe message.", correct: false, feedback: "Severity is not order. The timeout is the run's ending, usually a consequence of something that went wrong earlier." },
+      { text: "The UVM_INFO line at 1200, because a search for 'error' finds it first.", correct: false, feedback: "It is an information message that happens to contain the word error. Match the severity at the start of the line, not the text." },
+      { text: "The MISMATCH error at 3400.", correct: true, feedback: "Right. It is the earliest UVM_ERROR or UVM_FATAL. Read the lines just before it for related warnings, then debug it." },
+      { text: "The CFG warning at 900, because it is the first non-info message.", correct: false, feedback: "Read it, but a warning is not a failure unless your project fails runs on warnings. The first failure is the first error or fatal." }
+    ],
+    explanation: "The first failure is the earliest UVM_ERROR or UVM_FATAL in time. Later errors and the final timeout are usually consequences, and a text search for 'error' also matches information messages."
+  },
+  {
+    question: "A run ends at time 0 with UVM_FATAL [BUILDERR] stopping due to build errors. Above it is UVM_ERROR @ 0: uvm_test_top.env.agt.drv [NO_VIF] add_if not set. What is the first failure, and why did the run stop?",
+    objective: 1,
+    answers: [
+      { text: "NO_VIF; BUILDERR is uvm_root stopping the run because build reported an error.", correct: true, feedback: "Right. At end of elaboration uvm_root saw an error count above 0 and issued the BUILDERR fatal so simulation would not start. Debug the configuration error (a missing or mis-scoped uvm_config_db set); BUILDERR is its consequence." },
+      { text: "BUILDERR; UVM found a bug in its own build phase and stopped before the test ran.", correct: false, feedback: "BUILDERR is UVM reporting that errors happened during build (Annex F.7.3.6). It points at an earlier error." },
+      { text: "Neither; the run passed because no time elapsed.", correct: false, feedback: "A fatal and an error are in the summary, so it failed; and a run that stops at time 0 checked nothing." },
+      { text: "NO_VIF, and the run stopped because UVM_ERROR always ends a run.", correct: false, feedback: "By default an error is displayed and counted and the run continues. It stopped because of the end-of-elaboration check." }
+    ],
+    explanation: "Annex F.7.3.6: at end of elaboration uvm_root checks the error count and issues a fatal (ID BUILDERR in uvm-core) if it is above 0. The first failure is the build-time error that caused it."
+  },
+  {
+    question: "Which normalized signature puts these two first failures in one bucket but keeps a third, 'UVM_ERROR @ 90: uvm_test_top.env.ref_scb [MISMATCH] crc wrong: exp=0x1 act=0x0', out of it? (1) UVM_ERROR @ 18350: uvm_test_top.env.scb [MISMATCH] read data wrong: exp=0x3c act=0x3d pkt=17; (2) UVM_ERROR @ 204500: uvm_test_top.env.scb [MISMATCH] read data wrong: exp=0xa0 act=0xa1 pkt=203.",
+    objective: 2,
+    answers: [
+      { text: "UVM_ERROR [MISMATCH]", correct: false, feedback: "Too coarse: it also matches the ref_scb CRC error, which is a different checker and probably a different bug." },
+      { text: "UVM_ERROR @ 18350 [MISMATCH] uvm_test_top.env.scb: read data wrong: exp=0x3c act=0x3d pkt=17", correct: false, feedback: "Too fine: with the time and values left in, every run is its own bucket." },
+      { text: "dma_rand_test", correct: false, feedback: "Bucketing by test name is not by cause: one test can hit several bugs and one bug can fail several tests." },
+      { text: "UVM_ERROR [MISMATCH] uvm_test_top.env.scb: read data wrong: exp={H} act={H} pkt={N}", correct: true, feedback: "Right. Severity, ID, reporter path and the message with values replaced: (1) and (2) match, the CRC error does not." }
+    ],
+    explanation: "A signature keeps what identifies the cause (severity, ID, which checker, the message template) and removes what varies per run (time, values, indices)."
+  },
+  {
+    question: "Your regression shows 16 buckets that differ only in the agent index: UVM_ERROR [uvm_test_top.env.agt[0].sqr] uvm_test_top.env.agt[0].sqr: Get_next_item called twice ..., then the same with agt[1], and so on up to agt[15]. What is wrong with the signatures?",
+    objective: 2,
+    answers: [
+      { text: "Nothing: 16 agents means 16 independent bugs, one in each agent's driver.", correct: false, feedback: "The same driver class in 16 agents with the same message is almost certainly one bug in that class." },
+      { text: "The ID equals the reporter's full name (uvm-core uses get_full_name() as this error's ID); normalize it and the path indices.", correct: true, feedback: "Right. Rule 1 replaces an ID equal to the reporter path with {PATH}, and rule 2 turns agt[0] to agt[15] into agt[N], so the 16 buckets become one." },
+      { text: "The message text should be dropped from signatures so that all sequencer errors merge.", correct: false, feedback: "The message text is often what distinguishes causes; normalize its values instead of dropping it." },
+      { text: "Sequencer errors should not be bucketed; they are always TB bugs.", correct: false, feedback: "TB bugs need triage too, and bucketing them is how you see that one driver class is wrong everywhere." }
+    ],
+    explanation: "Path-like IDs and instance numbers make a signature too fine. Normalizing them groups one root cause into one bucket."
+  },
+  {
+    question: "Seed 42 failed last night. You fixed a typo in a sequence's constraint, rebuilt, and reran seed 42: it passes. What does this show?",
+    objective: 3,
+    answers: [
+      { text: "Very little: the rebuild changed what seed 42 produces. Confirm on the archived build, then test the scenario directly.", correct: true, feedback: "Right. A seed is a starting point for one build, not a name for a scenario. Reproduce on the old build, then confirm any fix with a directed test or with stimulus you have checked is unchanged." },
+      { text: "The bug is fixed: same seed, no failure, so the constraint typo was the cause.", correct: false, feedback: "The constraint change alters what that class's randomize() returns, so seed 42 now drives different stimulus. The pass says nothing about the bug." },
+      { text: "Try seeds 41 and 43, since neighbouring seeds give similar stimulus.", correct: false, feedback: "Neighbouring seeds produce unrelated stimulus. This is a new search, not a reproduction." },
+      { text: "Raise the verbosity on the new build until the failure comes back.", correct: false, feedback: "Verbosity does not bring back stimulus that the rebuild moved, and some debug code can move it further." }
+    ],
+    explanation: "Random values are handed out in the order the code asks for them (IEEE 1800-2023 §18.14.1). Changing the code can change which values the failing transaction gets, so a passing seed on a new build is not evidence of a fix."
+  },
+  {
+    question: "On the unchanged build, seed 42 fails at item 57. You want to see more of what the driver does. Which debug change does IEEE 1800.2 not guarantee to keep the stimulus, so that you must check afterwards that the failing transaction is unchanged?",
+    objective: 3,
+    answers: [
+      { text: "Adding +uvm_set_verbosity=uvm_test_top.env.drv,DRV,UVM_HIGH,build to the command line.", correct: false, feedback: "No code changes, and uvm-core preserves the random state while it applies command-line report settings. The stimulus is the same." },
+      { text: "Adding `uvm_info(\"DRV\", $sformatf(\"a=%0h\", req.a), UVM_HIGH) and rebuilding.", correct: false, feedback: "Report messages preserve the caller's random state (IEEE 1800.2-2020 §6.2.2.2) and $sformatf draws nothing, so this edit is stream-neutral." },
+      { text: "Turning on the simulator's waveform dump.", correct: false, feedback: "Dumping draws no random values, so the stimulus does not change." },
+      { text: "Adding `uvm_info(\"DRV\", req.sprint(), UVM_HIGH), rebuilding, and running at UVM_HIGH.", correct: true, feedback: "Right. sprint() runs user code (do_print), which §1.4.6 does not guarantee to be random stable, and uvm-core's printer can create objects with new in the driver's thread, which moves that thread's later draws, such as random delays. On a driver with no random draws of its own, like the Make It Work driver, item 57 would in fact be unchanged, because uvm-core reseeds each item by name in start_item; you know that only after you check." }
+    ],
+    explanation: "Plusargs, waveforms and field-only messages keep the stimulus. Code that runs user hooks or creates objects is not guaranteed to: it can move the later draws of the thread it runs in. Debug with plusargs and waveforms first, and after any rebuild check that the failing transaction is unchanged."
+  },
+  {
+    question: "A scoreboard reports exp=0xff act=0x00 a=0x9c b=0x64. The driver's DRV line for the same item says a=0x9c b=0x64, the waveform on aif shows the same inputs, and the specification says the adder saturates at 0xff. Which part of the bench is wrong?",
+    objective: 4,
+    answers: [
+      { text: "The monitor, because it reported a mismatch.", correct: false, feedback: "The monitor's fields equal the driver's and the pins, so it recorded what happened. Reporting is the scoreboard's job." },
+      { text: "The reference model, because 0x9c + 0x64 is 0x100, so it should expect 0x00.", correct: false, feedback: "0x100 does not fit in 8 bits, so the specification says saturate to 0xff: the model's expectation is right." },
+      { text: "The DUT: the probes agree and the model matches the specification.", correct: true, feedback: "Right. Probes 1, 2 and 3 agree, which rules out the TB plumbing; the model matches the specification, which rules out the model. Only the DUT's y disagrees." },
+      { text: "The driver, because the error appeared 20 ns after it drove the item.", correct: false, feedback: "The delay is the registered output and the monitor's next sample, by design. The driver drove exactly the item." }
+    ],
+    explanation: "A mismatch has three suspects: TB plumbing (compare what was driven with what was observed), the reference model (check it against the specification), and the DUT (what remains)."
+  },
+  {
+    question: "Two failures in a bucket have (a, b) = (0x9c, 0x64) and (0xc8, 0x38). Earlier in the same log, (0xe0, 0x41) passed with y = 0xff. Which hypothesis should you test next?",
+    objective: 4,
+    answers: [
+      { text: "The adder is flaky under random stimulus.", correct: false, feedback: "This predicts nothing a single run could refute, so it cannot guide the next experiment." },
+      { text: "Overflow is broken: every sum above 255 fails, so any large a and b fail.", correct: false, feedback: "Already refuted by the log: 0xe0 + 0x41 = 289 saturated correctly." },
+      { text: "The scoreboard's model is wrong for large values of a and b.", correct: false, feedback: "The model's expectation 0xff matches the specification for both failures; and 'large values' predicts no specific run." },
+      { text: "It fails exactly when a + b == 256: (128, 128) fails; (127, 128) and (128, 129) pass.", correct: true, feedback: "Right. Both failures sum to exactly 256, the passing overflow does not, and the hypothesis names a directed run that would refute it." }
+    ],
+    explanation: "A good hypothesis fits all the evidence already in the log, including passing transactions, and predicts the result of a run you have not done yet."
+  },
+  {
+    question: "Seed 42 fails at item 57 of 200. You rerun with +NUM_ITEMS=60. A colleague suggests instead removing the first 50 items so the failure comes sooner. What happens in each case?",
+    objective: 5,
+    answers: [
+      { text: "Both keep the failing item, because the seed is the same and decides every value.", correct: false, feedback: "The seed starts the streams; what each item receives depends on how many draws came before it." },
+      { text: "+NUM_ITEMS=60 keeps items 0 to 57, so item 57 still fails; removing earlier items changes later draws.", correct: true, feedback: "Right. Shrink from the end. Removing stimulus before the failure changes the per-name counts and thread draws that later items depend on, so the failure may move or vanish." },
+      { text: "Both lose the failure, because any change to the run invalidates the seed.", correct: false, feedback: "Cutting after the failure leaves every earlier draw untouched: items 0 to 57 are the same." },
+      { text: "Removing the first 50 items is better, because the run is shorter and fails sooner.", correct: false, feedback: "Shorter, but probably no longer the same failure. Recheck after every cut." }
+    ],
+    explanation: "Random values are handed out in order (IEEE 1800-2023 §18.14.1; uvm-core also seeds items by name and a per-name count). Stopping earlier changes nothing before the stop; removing earlier stimulus shifts what follows."
+  },
+  {
+    question: "On a colleague's copy of the adder bench, whose scoreboard has no NO_CHECKS guard, you rerun the failing seed after an RTL fix. The summary shows UVM_ERROR :    0 and UVM_FATAL :    0, and SCB_SUMMARY says matches=0 mismatches=0. The command line still contains +NUM_ITEMS=0 from an experiment. Is the fix confirmed?",
+    objective: 5,
+    answers: [
+      { text: "No: it compared nothing. Remove the plusarg and require a positive check count.", correct: true, feedback: "Right. The run drove no items, so it is no evidence at all. The Make It Work bench's NO_CHECKS guard in check_phase would have turned this run into one UVM_ERROR, which is why every scoreboard should have one. Then confirm the fix with the directed test." },
+      { text: "Yes: no errors, no fatals, and the scoreboard reported no mismatches.", correct: false, feedback: "UVM_ERROR : 0 proves that no check failed, not that any check ran. Nothing was compared." },
+      { text: "Yes, if no report catcher is registered, because then nothing could hide an error.", correct: false, feedback: "Catchers are one way a verdict can lie; a run that checked nothing is another." },
+      { text: "No, because a fixed run must print at least one UVM_WARNING.", correct: false, feedback: "There is no such rule. The problem is the zero comparisons." }
+    ],
+    explanation: "A pass needs positive evidence: a non-zero check count as well as zero errors and fatals. The module overview covers verdict honesty in full."
+  },
+  {
+    question: "The RTL fix will land next week. Meanwhile the bucket's failures are blocking the regression. What is the right way to lock in what you learned?",
+    objective: 5,
+    answers: [
+      { text: "Register a report catcher that demotes every MISMATCH to UVM_INFO until the fix lands.", correct: false, feedback: "That hides every future mismatch too, including new bugs. A catcher that demotes every error is not a fix." },
+      { text: "Remove add_rand_test from the regression until the fix lands next week.", correct: false, feedback: "That stops all checking of the adder, not only the known bug." },
+      { text: "Add add_boundary_test now, and waive only this signature, narrowly and counted, until the fix.", correct: true, feedback: "Right. The directed test fails until the fix lands and proves it afterwards. The waiver matches only this signature, is counted, is tied to the bug ID, and is removed with the fix." },
+      { text: "Pin the regression to seeds that pass until the RTL fix lands.", correct: false, feedback: "That hides the bug by choosing stimulus that avoids it, and those seeds stop meaning anything after the next TB change." }
+    ],
+    explanation: "Lock-in means a check that fails while the bug exists and passes once it is fixed. Any temporary waiver must be narrow, counted and tied to a bug, never a blanket demotion."
+  }
+]} />
+
+### Kata 1 (log reading): bucket three failing logs
+
+Three runs failed overnight on the same build. Times are in ps. For each log, find the **first failure**, write its **normalized signature**, then form **buckets** and choose which run to rerun first. Finally, write the rerun command line (use `<sim>` and `<seed option>` for the tool-dependent parts).
+
+**Log A** (`dma_rand_test`, seed 1001)
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test dma_rand_test...
+UVM_ERROR @ 18350: uvm_test_top.env.scb [MISMATCH] read data wrong: exp=0x3c act=0x3d pkt=17 addr=0x40001a00
+UVM_ERROR @ 18450: uvm_test_top.env.scb [MISMATCH] read data wrong: exp=0x11 act=0x3c pkt=18 addr=0x40001a04
+UVM_ERROR @ 18550: uvm_test_top.env.scb [MISMATCH] read data wrong: exp=0x9f act=0x11 pkt=19 addr=0x40001a08
+... 37 more MISMATCH lines ...
+UVM_ERROR @ 52000: uvm_test_top.env.scb [ORPHAN] 3 expected items were never compared
+--- UVM Report Summary ---
+UVM_ERROR :   41
+UVM_FATAL :    0
+```
+
+**Log B** (`dma_burst_test`, seed 77)
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test dma_burst_test...
+UVM_WARNING @ 90120: uvm_test_top.env.axi_agt.mon [SLOW_RSP] response 12 took 43 cycles
+UVM_ERROR @ 204500: uvm_test_top.env.scb [MISMATCH] read data wrong: exp=0xa0 act=0xa1 pkt=203 addr=0x40007f30
+UVM_ERROR @ 204600: uvm_test_top.env.scb [MISMATCH] read data wrong: exp=0x07 act=0xa0 pkt=204 addr=0x40007f34
+--- UVM Report Summary ---
+UVM_WARNING :    1
+UVM_ERROR :    2
+UVM_FATAL :    0
+```
+
+**Log C** (`dma_rand_test`, seed 4242)
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test dma_rand_test...
+UVM_ERROR @ 7730: uvm_test_top.env.axi_agt.sqr [uvm_test_top.env.axi_agt.sqr] Get_next_item called twice without item_done or get in between
+UVM_FATAL @ 1000000: reporter [PH_TIMEOUT] Explicit timeout of 1000000 hit, indicating a probable testbench issue
+--- UVM Report Summary ---
+UVM_ERROR :    1
+UVM_FATAL :    1
+```
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+1. **First failures.**
+   - A: the `MISMATCH` at 18350 (pkt 17). The 40 errors after it are consequences: each `act` equals the previous `exp` (pkt 18's `act=0x3c` is pkt 17's `exp`), so the scoreboard's queue is one item out of step, and `ORPHAN` is the leftover at the end.
+   - B: the `MISMATCH` at 204500 (pkt 203). The `SLOW_RSP` warning is about 114 ns earlier and about another response; note it, but it is not the failure. Pkt 204's `act` is pkt 203's `exp` again.
+   - C: the sequencer error at 7730. The `PH_TIMEOUT` is the consequence: a driver that called `get_next_item` twice is out of step with the sequencer, and the run hangs until the timeout.
+2. **Signatures.**
+   - A and B: `` UVM_ERROR [MISMATCH] uvm_test_top.env.scb: read data wrong: exp={H} act={H} pkt={N} addr={H} ``.
+   - C: `` UVM_ERROR [{PATH}] uvm_test_top.env.axi_agt.sqr: Get_next_item called twice without item_done or get in between ``. The ID equals the reporter path, so it becomes `{PATH}`.
+3. **Buckets.** Bucket 1 holds A and B: two different tests, one signature, and the same pattern (`act` is `exp + 1` at the first failure). Bucket 2 holds only C: same test as A, but a different bug, a driver protocol error in the TB. Bucketing by test name would have put A and C together and B alone, which is wrong both ways.
+4. **Which first.** Both buckets need an owner. Bucket 2's run fails at 7.73 ns, so it is the cheapest rerun of all, and a TB bug like this one can hide DUT bugs in every test that uses the agent. Within bucket 1, rerun A, whose first failure (18.35 ns) is much earlier than B's (204.5 ns).
+5. **Rerun command for bucket 1**, on the archived build:
+
+```bash
+<sim> +UVM_TESTNAME=dma_rand_test <seed option> 1001 +UVM_MAX_QUIT_COUNT=1 \
+  +uvm_set_verbosity=uvm_test_top.env.scb,_ALL_,UVM_HIGH,build
+```
+
+`+UVM_MAX_QUIT_COUNT=1` ends the run at the pkt 17 mismatch, so the log stops at the first failure; the verbosity plusarg raises only the scoreboard. Neither changes the stimulus. Add `+uvm_set_verbosity` for the monitor next if you need probe 3.
+
+</details>
+
+### Kata 2 (hypothesis): predict, then confirm
+
+Use the Make It Work bench, on the buggy build.
+
+1. Before running anything, predict which of these pairs fail: (0x00, 0xff), (0x80, 0x80), (0x40, 0xc0), (0x81, 0x80), (0xff, 0xff).
+2. Write the `a_vals` and `b_vals` arrays of a directed sequence that tests your prediction, and give the expected `SCB_SUMMARY` line.
+3. A colleague "fixes" the DUT by deleting `sum` and writing `y <= (a + b > 8'd255) ? 8'hFF : a + b;`. Predict what `add_boundary_test` reports now, and why.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+1. Sums: 0x00 + 0xff = 255 (pass), 0x80 + 0x80 = 256 (**fail**), 0x40 + 0xc0 = 256 (**fail**), 0x81 + 0x80 = 257 (pass), 0xff + 0xff = 510 (pass, saturates). Two failures.
+2. `a_vals = '{8'h00, 8'h80, 8'h40, 8'h81, 8'hff}` and `b_vals = '{8'hff, 8'h80, 8'hc0, 8'h80, 8'hff}`, with two `MISMATCH` errors and `SCB_SUMMARY matches=3 mismatches=2`. If you see a different count, the hypothesis is refuted: go back to isolating.
+3. Every overflowing pair now fails. In `a + b > 8'd255` both operands of `>` are 8 bits wide, so `a + b` is evaluated in 8 bits and the carry is lost (IEEE 1800-2023 §11.6.1); the comparison is never true and nothing saturates. The boundary test reports four mismatches out of five (only the sum of 255 passes): the directed test caught a bad fix, which is exactly what locking in is for.
+
+</details>
+
+### Flashcards
+
+The deck for this lesson covers the debug loop, the first failure and how runs end, signatures and buckets, the reproduction contract, which debug edits keep a seed, isolation probes, testable hypotheses, shrinking from the end, and locking a fix in.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800.2-2020:
+  - §1.4.6 (random stability of UVM APIs), §5.3.3.1–5.3.3.3 (`get_uvm_seeding`, `set_uvm_seeding`, `reseed`), §6.2.2.2 (`new_report_message` preserves random stability);
+  - §1.4.5 (`uvm_pkg` and its time unit), §8.2.4.2.5 (`set_type_override` on an object registry), §13.9 (`uvm_subscriber`), §14.1.2.2 (`set_item_context`);
+  - Annex F.2.2.2 (actions, including `UVM_STOP`), F.4.1.4.26 (UVM seeding by type and full name), F.7.3.3 (`set_timeout`), F.7.3.6 (end-of-elaboration error check);
+  - Annex G.1.2 and G.1.3.1 (`uvm_cmdline_processor::get_inst`, `get_args`), G.2.1 (`+UVM_TESTNAME`), G.2.3 (`+uvm_set_verbosity`, including the `time` form), G.2.6 (`+UVM_MAX_QUIT_COUNT`).
+- uvm-core 2020.3.1 (behaviour labelled "uvm-core" on this page): `src/seq/uvm_sequencer.svh` (path-like ID of the "Get_next_item called twice" error), `src/base/uvm_root.svh` (`BUILDERR`), `uvm_phase_hopper.svh` (`PH_TIMEOUT`), `uvm_report_server.svh` (line and summary format), `uvm_object.svh` and `uvm_misc.svh` (`reseed`, `uvm_create_random_seed`, `uvm_global_random_seed`), `uvm_component.svh`, `uvm_topdown_phase.svh`, `uvm_bottomup_phase.svh`, `uvm_task_phase.svh`, `src/seq/uvm_sequence_item.svh` (reseeding), `uvm_printer.svh` (element creation), `uvm_resource_pool.svh` and `uvm_recorder.svh` (random-state preservation).
+- IEEE 1800-2023: §4.7 and §4.8 (nondeterminism, races), §11.6.1 (expression bit lengths), §18.13.1 (`$urandom` determinism), §18.14, §18.14.1 and §18.14.3 (random stability; thread and object stability), §20.14 and Annex N (standard algorithm for `$random` and `$dist_*`), §21.6 (`$value$plusargs`), §21.7.1.3 (when `$dumpvars` starts recording).
+
+**Prerequisites:** the [module overview](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) ([verdict honesty](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index#honest-verdicts-what-uvm_error--0-does-and-does-not-prove), catchers, tracing switches), [I-UVM-1C: UVM Phasing and Synchronization](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) (objections, timeouts), [I-UVM-6: UVM Recording Classes](/curriculum/T2_Intermediate/I-UVM-6_UVM_Recording_Classes/index) and [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).
+
+**Related**
+
+- [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): the log line format, the report summary and the plusargs used here.
+- [I-SV-2B: Procedural Randomization, Seeds and Random Stability](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods): how seeds and random stability work, and the simulators' seed options.
+- [F3C: Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): the races behind nondeterministic failures.
+- [I-SV-3A: Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index): coverage points that lock a corner case in.
+- [I-UVM-3B: Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake): the protocol behind the "Get_next_item called twice" error.
+- [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index): error-injection tests whose expected errors must not be bucketed as failures.
+- [Hang Triage: Objections, Timeouts and Heartbeats](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab): triage for the runs that end in `PH_TIMEOUT`.
+
+<NextLesson />

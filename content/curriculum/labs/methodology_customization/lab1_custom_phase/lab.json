@@ -7,14 +7,16 @@
   "routeSlug": "methodology-custom-phase",
   "status": "available",
   "labPrerequisites": [],
-  "modulePrerequisites": [],
+  "modulePrerequisites": [
+    "I-UVM-1C"
+  ],
   "steps": [
     {
       "id": "1",
       "version": "1",
       "completion": "self_attested",
       "title": "Step 1: Complete the Singleton",
-      "instructions": "Open `testbench.sv` and complete the `load_fw_phase_c` singleton: declare `m_inst` and implement `get()` so every call returns the same phase instance.",
+      "instructions": "Open `testbench.sv` and complete the `load_fw_phase_c` singleton: declare `m_inst` and implement `get()` so every call returns the same phase object (the phase IMP). The constructor is `protected`, as in uvm-core's built-in phases, so only `get()` can create it.",
       "starterCode": ""
     },
     {
@@ -22,7 +24,7 @@
       "version": "1",
       "completion": "self_attested",
       "title": "Step 2: Connect the Phase to the Environment",
-      "instructions": "Override `exec_task(uvm_component comp, uvm_phase phase)` in `load_fw_phase_c`: `$cast` `comp` to `soc_env` and call `env.load_fw_phase(phase)`. Then implement `soc_env::load_fw_phase`: raise an objection, check `reset_done`, print `uvm_info(\"ORDER\", \"load_fw\", UVM_LOW)`, wait 20ns, set `firmware_loaded`, and drop the objection. Without `exec_task`, the phase runs but never calls your code.",
+      "instructions": "Override `exec_task(uvm_component comp, uvm_phase phase)` in `load_fw_phase_c`: `$cast` `comp` to `soc_env` and call `env.load_fw_phase(phase)`. Then implement `soc_env::load_fw_phase`: raise an objection, check `reset_done`, print `uvm_info(\"ORDER\", \"load_fw\", UVM_LOW)`, wait 20ns, set `firmware_loaded`, increment `fw_loads`, and drop the objection. Without `exec_task`, the phase runs but never calls your code.",
       "starterCode": ""
     },
     {
@@ -30,7 +32,23 @@
       "version": "1",
       "completion": "self_attested",
       "title": "Step 3: Insert Into the Schedule and Run",
-      "instructions": "In `base_test::build_phase`, call `uvm_domain::get_uvm_schedule().add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get()))`; `reset_phase` lives in the uvm run-time schedule, not the common domain. Run and check the log: `[ORDER] reset` at 0, `load_fw` at 50, `configure` at 70 and `main` at 80 ns, with no `ORDER` errors.",
+      "instructions": "In `base_test::build_phase`, call `uvm_domain::get_uvm_schedule().add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get()))` once (`get_uvm_schedule()` is a uvm-core implementation call); `reset_phase` lives in the uvm run-time schedule, not the common domain. Run and check the log: `[ORDER] reset` at 0, `load_fw` at 50, `configure` at 70 and `main` at 80 ns, with no `ORDER` errors. Add `+UVM_PHASE_TRACE` to see each phase start and end.",
+      "starterCode": ""
+    },
+    {
+      "id": "4",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 4: Break It and Predict",
+      "instructions": "Starting from your working solution, predict each log before you run it, then confirm it (README, \"Break it and predict\"): (a) delete `exec_task`: `configure` at 50 ns with the ORDER errors, and the trace shows `load_fw` skipped; (b) call `add()` on `uvm_domain::get_common_domain()`: `UVM_FATAL [PH_BAD_ADD] cannot find after_phase 'reset' within node 'common'` during build; (c) add `.before_phase(uvm_configure_phase::get())`: the same ORDER times, but the trace shows `post_reset` starting at 50 ns beside `load_fw` (a parallel branch); (d) remove the `phase_registered` guard and register twice: `load_fw` at 50 and 70 ns, `configure` at 90 ns, and `Firmware loaded 2 times`.",
+      "starterCode": ""
+    },
+    {
+      "id": "5",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 5: Try the Existing Phase Instead",
+      "instructions": "Remove the phase registration and move the body of `load_fw_phase` into a `post_reset_phase` task in `soc_env`. Predict, then confirm, that the log shows `reset` at 0, `load_fw` at 50 and `configure` at 70 ns, the same order with no change to the shared schedule. Write one sentence on when a team would still add a custom phase.",
       "starterCode": ""
     }
   ],

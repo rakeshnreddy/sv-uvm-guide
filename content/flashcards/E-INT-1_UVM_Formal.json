@@ -1,34 +1,77 @@
 [
   {
-    "front": "What is formal verification and how does it differ from simulation?",
-    "back": "Formal verification mathematically proves properties hold for ALL possible inputs (exhaustive). Simulation only checks the specific stimuli applied. Formal finds corner cases simulation would miss."
+    "id": "e-int-1-1",
+    "question": "What does a formal proof of an assertion establish, and what does it not?",
+    "answer": "That no input sequence the assumptions allow, starting from reset, makes the assertion fail. It says nothing about behaviour the assumptions exclude, and a bounded result covers only sequences up to its depth. Simulation checks only the stimulus it actually runs."
   },
   {
-    "front": "What are the two main formal verification techniques?",
-    "back": "Model checking (proves assertions over all reachable states) and equivalence checking (proves two designs are functionally identical). Model checking is most relevant for UVM integration."
+    "id": "e-int-1-2",
+    "question": "Property checking versus equivalence checking: what does each prove?",
+    "answer": "Property (model) checking proves assertions over the reachable states of one design, under its assumptions. Equivalence checking is a formal app that proves two designs produce the same outputs. This lesson uses property checking."
   },
   {
-    "front": "How does formal verification integrate with a UVM testbench?",
-    "back": "Formal tools verify SVA properties on the RTL directly. The UVM testbench can share the same SVA assertions via `bind` statements, ensuring simulation and formal check the same properties."
+    "id": "e-int-1-3",
+    "question": "How can simulation and formal check exactly the same properties?",
+    "answer": "Put the properties in one module, interface or checker and attach it to the DUT with `bind`. Both engines elaborate the same bound instance; a simulator checks it on the stimulus it runs, a formal tool proves it over every allowed input sequence."
   },
   {
-    "front": "What is a `bind` statement and how does it enable formal-simulation convergence?",
-    "back": "`bind` attaches an assertion module to a DUT module externally. Both simulation and formal tools see the same assertions without modifying DUT source. This is the industry-standard integration pattern."
+    "id": "e-int-1-4",
+    "question": "What does `bind fifo fifo_props #(.DEPTH(DEPTH)) u_fifo_props (.*);` do, and why `.DEPTH(DEPTH)`?",
+    "answer": "It instantiates `fifo_props` inside every `fifo` without editing the RTL. Ports and parameters in a bind resolve in the target's scope (IEEE 1800-2023 §23.11), so `DEPTH` is each FIFO's own depth; a hard-coded value would check the wrong depth on other instances."
   },
   {
-    "front": "What is bounded model checking (BMC)?",
-    "back": "BMC checks properties up to a finite number of clock cycles (the bound). It's faster than full proof but may miss bugs beyond the bound. Useful for initial bug hunting."
+    "id": "e-int-1-5",
+    "question": "What is a bounded result to depth N, and how do you choose N?",
+    "answer": "No violation in any allowed input sequence through edge N; nothing is known beyond N, so it is not a proof. Choose N at least as deep as your deepest cover (a heuristic): a bound of 3 cannot even fill a 4-entry FIFO, and misses the late-flag bug at edge 4."
   },
   {
-    "front": "What are assume-guarantee proofs in formal verification?",
-    "back": "You `assume` properties about the inputs (constraints) and `guarantee` (assert) properties about the outputs. Assumes limit the input space, making proofs tractable for complex designs."
+    "id": "e-int-1-6",
+    "question": "What is assume-guarantee reasoning, and what makes it safe?",
+    "answer": "Prove block B under assumptions about its inputs, then discharge each assumption by proving it as an assertion on the block that drives those inputs (or by checking it in every simulation). An undischarged wrong assumption silently weakens B's proof."
   },
   {
-    "front": "What is a formal counterexample?",
-    "back": "A trace (input sequence) that violates an assertion. Formal tools produce minimal counterexamples, which are invaluable for understanding and fixing corner-case bugs."
+    "id": "e-int-1-7",
+    "question": "What is a counterexample (CEX), and is it always a design bug?",
+    "answer": "A trace from reset that obeys every assumption in force and makes an assertion fail. It is a design bug only if every environment-driven input in it is legal per the interface specification; otherwise it exposes a missing assumption (a spurious CEX)."
   },
   {
-    "front": "When should you use formal vs. simulation-based verification?",
-    "back": "Formal excels at control-heavy logic (FSMs, arbiters, FIFOs). Simulation excels at data-heavy paths and system-level scenarios. Optimal methodology uses both complementarily."
+    "id": "e-int-1-8",
+    "question": "Which logic suits formal first, and which suits simulation first?",
+    "answer": "Formal first: control-dominated blocks with small interfaces and deep corner cases (FIFO control, arbiters, FSMs, handshakes, credit counters). Simulation first: deep datapaths, long multi-block flows, software-driven scenarios and performance. Interface protocols: both, with one shared checker."
+  },
+  {
+    "id": "e-int-1-9",
+    "question": "`assume property` versus `restrict property`: what is the difference?",
+    "answer": "Both constrain a formal analysis the same way. A simulator checks and reports an `assume` like an assertion (§16.14.2), but ignores a `restrict`, which has no action block (§16.14.4). Use `restrict` for deliberately formal-only constraints such as case splits."
+  },
+  {
+    "id": "e-int-1-10",
+    "question": "What does a simulator do with an `assume property` whose rule the testbench breaks?",
+    "answer": "It reports the failure, like an assertion (IEEE 1800-2023 §16.14.2); with no `else` clause it calls `$error`. It does not stop the driver from producing the illegal value, and the `$error` does not reach the UVM summary unless you route it there."
+  },
+  {
+    "id": "e-int-1-11",
+    "question": "How do you detect a vacuous proof?",
+    "answer": "Cover the antecedent of every implication as its own property, and give every assumption a cover for a behaviour it must still allow. An unreachable cover means the proofs that depend on it are vacuous: a vacuous success is neither a pass nor a fail (§16.14.8)."
+  },
+  {
+    "id": "e-int-1-12",
+    "question": "Over-constraint versus under-constraint: what does each look like in a formal report?",
+    "answer": "Over-constraint: proofs that come back fast and green, with an unreachable cover or a vacuous implication; real bugs are hidden. Under-constraint: a counterexample whose trace uses an input the specification forbids (a spurious CEX)."
+  },
+  {
+    "id": "e-int-1-13",
+    "question": "Why can a sequence-item constraint not be copied into a harness as an assumption?",
+    "answer": "A constraint is solved once per item, before the item is driven, on data the sequence copied in, and it often encodes test intent (biases, one operation at a time). An assumption holds at every clock edge on the live signals and must come from the interface specification."
+  },
+  {
+    "id": "e-int-1-14",
+    "question": "You replay a CEX in UVM with the same property module the formal run used, and no assumption fires. Is it a design bug?",
+    "answer": "Not yet known. The trace satisfies every assumption formal used, so those cannot fire, and a missing assumption is not there to fire. Check each environment-driven input against the specification, or replay with an independent protocol checker."
+  },
+  {
+    "id": "e-int-1-15",
+    "question": "Name four formal apps and what each proves (names and features are tool-dependent).",
+    "answer": "Connectivity checking (signals wired as specified); coverage unreachability (coverage items that can never be hit); sequential equivalence (two versions of a design behave the same at their outputs); X-propagation (unknown values cannot reach outputs or control)."
   }
 ]

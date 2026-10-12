@@ -11,13 +11,14 @@ class load_fw_phase_c extends uvm_task_phase;
   // TODO 1a: Declare a static singleton handle
   // local static load_fw_phase_c m_inst;
 
-  function new(string name = "load_fw");
+  // protected, as in uvm-core's built-in phases: only get() may construct it.
+  protected function new(string name = "load_fw");
     super.new(name);
   endfunction
 
   // TODO 1b: Implement the singleton get() method.
-  // The schedule holds exactly one node per phase, so every get() must
-  // return the same instance.
+  // Every get() must return the same phase object (the phase IMP). Each
+  // add() call wraps that IMP in a new schedule node, so add() it only once.
   // static function load_fw_phase_c get();
   //   ...
   // endfunction
@@ -41,6 +42,7 @@ class soc_env extends uvm_env;
   bit reset_done;
   bit firmware_loaded;
   bit configure_done;
+  int unsigned fw_loads;   // counts load_fw executions (see check_phase)
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -61,6 +63,7 @@ class soc_env extends uvm_env;
   //   2. Report `uvm_error("ORDER", ...) if reset_done is not set
   //   3. Print `uvm_info("ORDER", "load_fw", UVM_LOW)
   //   4. Wait 20ns to simulate firmware loading, then set firmware_loaded
+  //      and increment fw_loads
   //   5. Drop the objection
 
   task configure_phase(uvm_phase phase);
@@ -81,6 +84,9 @@ class soc_env extends uvm_env;
     super.check_phase(phase);
     if (!(reset_done && firmware_loaded && configure_done))
       `uvm_error("ORDER", "Expected reset -> load_fw -> configure milestones were not observed")
+    // A phase registered twice runs twice: each add() makes a new node.
+    if (fw_loads > 1)
+      `uvm_error("ORDER", $sformatf("Firmware loaded %0d times", fw_loads))
   endfunction
 endclass
 

@@ -1,100 +1,372 @@
 ---
 title: "E-PSS-1: Portable Stimulus Standard"
-description: "Write your test intent once and compile it to simulation, emulation, or post-silicon targets using the Accellera Portable Stimulus Standard (PSS 2.0)."
+description: "Model a test scenario once in Accellera PSS 3.0 (actions, activities, flow objects and resources) and explain how a tool turns it into a UVM virtual sequence and a bare-metal C test, and when that is worth doing."
 flashcards: "E-PSS-1_PSS"
+sources:
+  - title: "Portable Test and Stimulus Standard"
+    type: "standard"
+    identifier: "Accellera PSS 3.0 (August 2024)"
+    version: "3.0"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
-- **What it is:** The Portable Test and Stimulus Standard (PSS) is an Accellera standard (version 2.1 was approved in October 2023 and version 3.0 in August 2024). It is a declarative language for expressing *test intent* — the abstract scenario logic — independently of any particular execution platform.
-- **Why it matters:** Modern verification teams must run the same test scenarios on RTL simulation, FPGA prototypes, emulation platforms, and post-silicon validation. Without PSS, each target requires hand-porting of test logic, a quadratic maintenance burden that fragments coverage metrics and introduces target-specific bugs.
-- **Industry context:** Several EDA vendors ship commercial PSS tools, and open-source front ends exist (for example the ANTLR-based `pssparser` from the PSSTools project). Tools differ in which PSS version and which targets they support, so check before you rely on a feature.
 
-## The Portability Problem PSS Solves
+- **What it is:** The **Portable Test and Stimulus Standard (PSS)** is a language for writing **test intent**: what a scenario must do (write a buffer, then read it back while a DMA copy runs), kept separate from how each platform does it. It is published by **Accellera**, an industry standards body. Version 2.1 was approved in October 2023 and version 3.0, the current release, in August 2024. PSS has no IEEE number.
+- **Why it matters:** A system-on-chip (SoC) runs the same scenarios on RTL simulation, emulation, FPGA prototypes and the finished chip (post-silicon). Written by hand, that is one test per scenario per platform, and every change is made four times. With PSS you write one scenario model; a tool binds the pieces together, adds missing setup actions, schedules around shared hardware and emits a UVM sequence or a C test from the same model. You still write, once per action and platform, the small code template that performs it.
+- **The Analogy:** A PSS model is a trip itinerary handed to a travel agent. The itinerary says which cities, in which order (the activity). The agent (the PSS tool) adds the connecting flights you left out (inferred actions), makes sure two travellers never get the same hotel room (resource locks) and prints each airline's ticket in that airline's format (the `exec` templates). *Where it breaks:* the agent cannot invent an airline. Every action needs a hand-written realization for every platform, and nothing gets checked unless a template or your UVM scoreboard checks it.
 
-Consider a memory subsystem verification scenario that must check read-after-write coherency. Without PSS, you write:
+**You will be able to:**
+1. Write a PSS model with components, pools, atomic and compound actions, an activity (sequence, `parallel`, `schedule`, `select`, `repeat`) and data constraints (`in`, `dist`, `default`).
+2. Choose buffer, stream or state flow objects and `lock` or `share` resource claims for a scenario, and predict which actions the tool infers, which may run at the same time, and when no legal scenario exists.
+3. Explain how one model becomes a UVM virtual sequence and a bare-metal C test through `exec` templates, and name what stays hand-written.
+4. Debug common modelling errors: a resource declared as an `input`, a missing `bind`, a `default` that contradicts a constraint, parallel locks that exceed the pool, and an SV template that does not compile.
+5. Decide whether PSS adds value over UVM virtual sequences for a given project, and justify the decision.
 
-| Target | What you write | Effort |
-|---|---|---|
-| **RTL Simulation** | A UVM virtual sequence calling read/write sequences on an AXI agent | ~200 lines SV |
-| **FPGA Prototype** | A C test using memory-mapped register writes from an embedded processor | ~150 lines C |
-| **Emulation** | A transaction-level acceleration (TLA) sequence with emulator-specific APIs | ~180 lines SV |
-| **Post-Silicon** | A bare-metal firmware test running on the real chip via JTAG | ~120 lines C |
+<BeforeYouStart />
 
-That is **four separate implementations** of the same logical test, each with independent bugs and maintenance costs. PSS replaces all four with a single declarative specification that a compiler translates to each target.
+## Build Your Mental Model
 
-## PSS Language Fundamentals
+**How to read this lesson.** The core path is the first six sections: intent versus realization, the vocabulary in one small model, actions and their templates, activities, flow objects and resources, then the visualizer. Practitioner depth follows: data constraints, generation into UVM and C, and when PSS is worth adopting. Make It Work builds a complete model with its generated code and a debugging table. Push Further holds the expert material.
 
-### Actions, Components, and Activity Graphs
+This lesson assumes [virtual sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences): a sequence that coordinates other sequences, usually running on a **virtual sequencer** that holds handles to the real sequencers and reaches them through `p_sequencer`. A PSS tool's UVM output is exactly such a sequence. Section numbers below (§) are from **Accellera PSS 3.0** unless they say IEEE 1800-2023.
 
-PSS programs are built from four core concepts:
+### Intent versus realization: what the tool writes and what you write
 
-1. **Components** — reusable containers for actions, pools and resources (memory subsystems, DMA engines, processors).
-2. **Actions** — test operations. Their inputs and outputs are *flow objects*: a `buffer` (the producer completes before the consumer starts), a `stream` (producer and consumer run in parallel) or a `state`. Actions claim *resources* with `lock` (exclusive) or `share`.
-3. **Activities** — the scenario: which actions run, in sequence or in `parallel`. The tool completes whatever the activity leaves out.
-4. **Exec blocks** — `exec body C = """..."""` and `exec body SV = """..."""` templates that say how an action is realised on each target.
+Take one scenario: write a word to memory and read it back (read-after-write). Without PSS, a team that runs on four platforms writes it four times:
+
+| Platform | What you write by hand (illustrative) |
+|---|---|
+| RTL simulation | A UVM virtual sequence that starts write and read sequences on a memory agent |
+| Emulation | A transaction-level sequence or software test for the emulator's interface |
+| FPGA prototype | A C test that writes and reads memory-mapped addresses from an embedded processor |
+| Post-silicon | A bare-metal C test: C code that runs directly on the chip's processor, with no operating system |
+
+Each copy has its own bugs, and a change to the address map is made four times. (The **design under test**, DUT, is the same in every row; only the code that drives it changes.) PSS replaces the four *scenario descriptions* with one model. It does **not** replace the code that touches each platform: every action keeps a small template per platform, and your UVM environment and C hardware-abstraction layer (HAL, the C functions such as `mem_write32()` that hide register addresses) stay exactly as they are.
+
+<ArchitectureDiagram
+  title="One PSS model, two realizations"
+  cellWidth={160}
+  gapX={40}
+  caption="Read top to bottom. The PSS tool reads one model and emits two scenario-level programs (generated). Everything below them, the UVM sequences and environment and the C HAL, is hand-written and reused. Names match the Make It Work example. MMIO is memory-mapped I/O: the processor reads and writes the DUT's registers and memory as addresses."
+  nodes={[
+    { id: "pss", label: "mem_stress.pss", sublabel: "one model: actions, activity, templates", kind: "generic", col: 0, row: 0, colSpan: 2 },
+    { id: "tool", label: "PSS tool", sublabel: "binds, infers, schedules, solves", kind: "generic", col: 0, row: 1, colSpan: 2 },
+    { id: "vseq", label: "mem_stress_a_vseq", sublabel: "generated from exec body SV", kind: "sequence", col: 0, row: 2 },
+    { id: "ctest", label: "mem_stress_a()", sublabel: "generated from exec body C", kind: "generic", col: 1, row: 2 },
+    { id: "seqs", label: "mem_wr_seq, mem_rd_seq", sublabel: "hand-written UVM sequences", kind: "sequence", col: 0, row: 3 },
+    { id: "hal", label: "mem_write32, mem_read32", sublabel: "hand-written C HAL", kind: "generic", col: 1, row: 3 },
+    { id: "env", label: "UVM env", sublabel: "hand-written: sequencer, driver, monitor, scoreboard", kind: "env", col: 0, row: 4 },
+    { id: "dut", label: "DUT", sublabel: "memory subsystem", kind: "dut", col: 0, row: 5, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "pss", to: "tool", style: "causal", label: "read" },
+    { from: "tool", to: "vseq", style: "causal", label: "emit" },
+    { from: "tool", to: "ctest", style: "causal", label: "emit" },
+    { from: "vseq", to: "seqs", style: "control", label: "start()" },
+    { from: "ctest", to: "hal", style: "control", label: "call" },
+    { from: "seqs", to: "env", style: "control", label: "items" },
+    { from: "env", to: "dut", style: "data", label: "pins" },
+    { from: "hal", to: "dut", style: "data", label: "MMIO" }
+  ]}
+/>
+
+**What the picture shows.** The words "generated" and "hand-written" are the whole story of adoption. The tool writes the scenario layer: which action runs when, with which values. You write, once, the realization layer: the per-platform template inside each action and the environment those templates call.
+
+**The two mistakes everyone makes here.**
+- *"PSS replaces UVM."* It does not. The generated UVM code is a sequence that starts your sequences; the agents, scoreboard and coverage are still yours.
+- *"PSS is IEEE 2401" (or P2851).* PSS is an Accellera standard with no IEEE number. IEEE 2401-2019 is a format for chip-package-board design data, and IEEE 2851-2023 is a functional-safety data format. Cite PSS as "Accellera PSS 3.0 (2024)".
+
+**Versions.** 1.0 (2018), 2.0 (2021), 2.1 (October 2023, which added `dist` weights) and 3.0 (August 2024, which added behavioral coverage). A 3.1 draft went to public review in 2026; until Accellera approves it, 3.0 is the standard. Tools differ in which version they accept, so check before you rely on a feature.
+
+### The vocabulary in one small model
+
+Read these terms once; the model below uses every one of them.
+
+- A **component** is a reusable block of the system (a memory subsystem, a DMA engine). It owns actions and pools. Components form a tree whose root is called `pss_top` by default (§9.4.1).
+- An **action** is one test operation, such as "write memory". An **atomic** action is realized by `exec body` templates; a **compound** action contains an activity built from other actions (§10).
+- An **activity** is the scenario inside a compound action: which actions are **traversed** (executed as part of the scenario), in what order (§12).
+- A **flow object** is data one action hands to another: a `buffer`, `stream` or `state` (§13). An action declares it as an `input` or `output`.
+- A **resource** is something an action needs for its whole execution, such as a DMA channel. Actions claim it with `lock` or `share`, never as an input (§14).
+- A **pool** is where objects of one type are exchanged or held. Every flow-object exchange and every resource claim goes through a pool (§15). A **static bind directive**, such as `bind buf_p *;`, says which actions use which pool.
+- The **PSS tool** (the processing tool, in the standard's words) reads the model, completes what the activity leaves open, picks random values with its **solver**, and generates target code.
+
+Here is how one buffer pool connects two actions, before you read the code:
+
+<ArchitectureDiagram
+  title="Pools and binding in mem_subsys_c"
+  cellWidth={112}
+  gapX={22}
+  caption="raw_test_a, the root action in pss_top, traverses w1 and then r1. write_a outputs a mem_buf_s (its out_buf) into buf_p, and read_check_a inputs one (its in_buf) from the same pool. bind buf_p *; connects the pool to every action in mem_subsys_c. The activity's bind statement then pins which buffer the read gets: the one w1 wrote."
+  nodes={[
+    { id: "root", label: "raw_test_a", sublabel: "in pss_top: w1, then r1", kind: "generic", col: 0, row: 0, colSpan: 3 },
+    { id: "mem", label: "mem : mem_subsys_c", kind: "generic", col: 0, row: 1, colSpan: 3, container: true },
+    { id: "wa", label: "write_a", sublabel: "output out_buf", kind: "generic", col: 0, row: 1 },
+    { id: "bp", label: "buf_p", sublabel: "mem_buf_s pool", kind: "generic", col: 1, row: 1 },
+    { id: "ra", label: "read_check_a", sublabel: "input in_buf", kind: "generic", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "root", to: "wa", style: "causal", label: "w1" },
+    { from: "root", to: "ra", style: "causal", label: "r1" },
+    { from: "wa", to: "bp", style: "data" },
+    { from: "bp", to: "ra", style: "data" }
+  ]}
+/>
+
+The minimal correct model. It is complete: a tool given `raw_test_a` as the root action can generate both targets from it.
 
 ```pss
-// Accellera PSS: two actions linked by a buffer flow object
-buffer mem_buf_s {
+// A complete PSS model: write a word, then read the same word back
+buffer mem_buf_s {                      // flow object: data one action hands to another
   rand bit[32] addr;
   rand bit[32] data;
-  constraint { addr in [0x1000..0x1FFC]; addr % 4 == 0; } // aligned, one 4 KB region
+  constraint { addr in [0x1000..0x2FFC]; addr % 4 == 0; }   // aligned, two 4KB regions
 }
 
 component mem_subsys_c {
-  pool mem_buf_s buf_p;   // where mem_buf_s objects are exchanged
-  bind buf_p *;
+  pool mem_buf_s buf_p;                 // where mem_buf_s objects are exchanged
+  bind buf_p *;                         // every action in this component uses buf_p
 
-  action write_a {
+  action write_a {                      // atomic: realized by its exec body templates
     output mem_buf_s out_buf;
-    exec body C  = """ mem_write32({{out_buf.addr}}, {{out_buf.data}}); """;
+    exec body C = """ mem_write32({{out_buf.addr}}, {{out_buf.data}}); """;
     exec body SV = """
-      wr = mem_wr_seq::type_id::create("wr");
-      wr.addr = {{out_buf.addr}}; wr.data = {{out_buf.data}};
-      wr.start(m_sequencer);
+      begin
+        mem_wr_seq wr = mem_wr_seq::type_id::create("wr");
+        wr.addr = {{out_buf.addr}};
+        wr.data = {{out_buf.data}};
+        wr.start(p_sequencer.mem_sqr, this);
+      end
     """;
   }
 
   action read_check_a {
     input mem_buf_s in_buf;
     // Bare metal has no scoreboard, so the C template checks the data itself.
-    exec body C  = """ if (mem_read32({{in_buf.addr}}) != {{in_buf.data}}) test_fail(); """;
+    exec body C = """
+      if (mem_read32({{in_buf.addr}}) != {{in_buf.data}})
+        test_fail("read-after-write mismatch");
+    """;
     // In UVM the scoreboard checks every monitored read, so the SV template only reads.
     exec body SV = """
-      rd = mem_rd_seq::type_id::create("rd");
-      rd.addr = {{in_buf.addr}};
-      rd.start(m_sequencer);
+      begin
+        mem_rd_seq rd = mem_rd_seq::type_id::create("rd");
+        rd.addr = {{in_buf.addr}};
+        rd.start(p_sequencer.mem_sqr, this);
+      end
     """;
   }
 }
-```
 
-### Activity Graphs: Declarative Test Flow
-
-The activity block defines the test scenario's execution order:
-
-```pss
-component pss_top {
+component pss_top {                     // the default root component (§9.4.1)
   mem_subsys_c mem;
 
-  action raw_coherency_test {
+  action raw_test_a {                   // compound: its body is an activity
     activity {
-      do mem_subsys_c::write_a;      // produces a mem_buf_s
-      do mem_subsys_c::read_check_a; // its input binds to that buffer
+      w1: do mem_subsys_c::write_a;     // labelled traversal: w1 names this write
+      r1: do mem_subsys_c::read_check_a;
+      bind w1.out_buf r1.in_buf;        // the read consumes exactly w1's buffer
     }
   }
 }
 ```
 
-No constraint links the two addresses: the read's input buffer *is* the write's output buffer, so address and data flow through the binding. The activity says **what** must happen and **in which order**; the `exec` blocks say **how** each action runs on each target; the tool picks the schedule, the bindings and the values.
+Three syntax points that trip SystemVerilog engineers: set membership is `in` (§8.5.9), not `inside`; widths are written `bit[32]` (the `bit[31:0]` form is deprecated, §7.2.1); and a traversal is named with a label, `w1: do write_a;` (§12.3.1), because PSS has no `do write_a as w1` form (`as` exists only for package import aliases).
 
-### Interactive: Explore PSS Portability
+### Actions and their exec templates
 
-Pick a scenario, read its PSS source, and predict what a PSS tool does with the activity. Notice which actions the tool adds on its own, when it refuses to generate anything, and what changes between the C and UVM output:
+An atomic action says *how* it runs on each platform with **target-template exec blocks**: `exec body C = """..."""` and `exec body SV = """..."""` (§22.1, §22.5). The triple-quoted string is foreign code. The tool pastes it **verbatim** into the generated test, in schedule order, after replacing each `{{expression}}` with the solved value; this `{{ }}` notation is called **mustache** (§22.5.3). The language identifiers C, CPP and SV are the ones the standard reserves (§22.5.1).
+
+Three consequences follow directly from "pasted verbatim":
+
+- **Wrap SystemVerilog declarations in `begin … end`.** The tool pastes several templates into one task body. Without the wrapper, the second action's `mem_wr_seq wr = …` lands after statements of the first, and declares `wr` a second time in the same scope; both are compile errors in SystemVerilog.
+- **Values arrive as decimal text.** Mustache prints a `bit` field as unsigned decimal and an `int` as signed decimal (§22.5.3.2). A solved address of `0x1040` appears in the generated code as `4160`, which is legal in both C and SystemVerilog.
+- **The tool does not check your template.** A typo in a template becomes a compile error in the generated file, not a PSS error. Only scalar fields can be referenced in mustache (§22.5.3).
+
+Templates are one of three realization mechanisms. The other two are **imported functions**, where a PSS function declaration is bound to an existing C or SystemVerilog API (§22.4; the same idea as DPI in [I-SV-7](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index)), and target-template functions (§22.6). Besides `body`, an action can carry `exec header` (for example a C `#include`) and `exec declaration` templates (§22.1.2).
+
+### Activities: the scenario
+
+An activity lists **action traversals**. Statements run in sequence unless you say otherwise (§12.3). These are the statements you will use:
+
+| Statement | Meaning | PSS 3.0 |
+|---|---|---|
+| `w1: do T;` | Traverse an action of type `T`; the label `w1` names it | §12.3.1 |
+| `bind w1.out_buf r1.in_buf;` | Both fields reference the same flow object | §12.9 |
+| `parallel { A B }` | Branches start together; no branch may wait for another | §12.3.4 |
+| `schedule { A B }` | The tool picks any legal order, sequential or overlapping | §12.3.5 |
+| `sequence { A B }` (or just braces) | A then B, as a group, for example one branch of a `parallel` | §12.3.3 |
+| `select { [70]: A; [30]: B; }` | Pick one branch per evaluation, by weight and optional guard; at least two branches | §12.4.4 |
+| `repeat (n) A` | Run `A` n times in sequence; `n` may be a random field | §12.4.1 |
+| `foreach`, `if`-`else`, `match`, `repeat … while` | Data-driven loops and branches | §12.4 |
+
+The Make It Work scenario combines most of them. Picture it before you read its code:
+
+<ArchitectureDiagram
+  title="The mem_stress_a activity: repeat, parallel, two bound sequences"
+  cellWidth={150}
+  gapX={40}
+  caption="Each round runs two branches that start together. Inside a branch the write completes before its bound read starts, because the read inputs the write's buffer. The next round starts only after both branches finish."
+  nodes={[
+    { id: "rep", label: "repeat (rounds)", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "round", label: "one round", sublabel: "next round waits for both branches", kind: "generic", col: 0, row: 0, colSpan: 2 },
+    { id: "par", label: "parallel", kind: "generic", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
+    { id: "w0", label: "w0: write_a", sublabel: "locks a region", kind: "generic", col: 0, row: 1 },
+    { id: "w1", label: "w1: write_a", sublabel: "locks the other region", kind: "generic", col: 1, row: 1 },
+    { id: "r0", label: "r0: read_check_a", sublabel: "shares w0's region", kind: "generic", col: 0, row: 2 },
+    { id: "r1", label: "r1: read_check_a", sublabel: "shares w1's region", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "round", to: "w0", style: "causal", label: "start together" },
+    { from: "round", to: "w1", style: "causal" },
+    { from: "w0", to: "r0", style: "causal", label: "bind" },
+    { from: "w1", to: "r1", style: "causal", label: "bind" }
+  ]}
+/>
+
+**Two pitfalls.**
+- **`schedule` is not `parallel`.** `parallel` forbids any dependency between branches. `schedule` lets the tool add whatever ordering the rules need, including running everything one after the other (§12.3.5.1).
+- **A buffer cannot cross `parallel` branches.** If branch 1's action inputs a buffer that branch 2's action outputs, the reader must wait for the writer, which `parallel` forbids, so the activity is illegal (§12.3.4.2). Keep a producer and its consumer in the same branch, as `w0` and `r0` are.
+
+### Flow objects: buffer, stream and state
+
+Each kind of flow object carries data *and* a timing rule. Choose the kind by the timing your hardware has.
+
+| Kind | Models | Producers and consumers | Timing rule |
+|---|---|---|---|
+| `buffer` | Data left in memory | Exactly one producer, any number of consumers | A consumer starts after the producer completes (§13.1.1) |
+| `stream` | Data in flight on a bus or link | Exactly one producer and exactly one consumer | Both start at the same time (§13.2.1) |
+| `state` | The current value of something, such as a configuration | One object per pool at any time; `initial` marks the reset state | A writer never overlaps any reader or writer; readers may overlap (§13.3.1) |
+
+A buffer is the `mem_buf_s` you have already seen. A stream and a state look like this:
+
+```pss
+// stream: producer and consumer run together, like a sender and a receiver
+stream pkt_s { rand bit[16] len; }
+
+enum mode_e { LOW_POWER, NORMAL }
+
+// state: one current configuration; writers and readers are ordered by the tool
+state cfg_s { rand mode_e mode; }
+
+component nic_c {
+  pool pkt_s link_p;  bind link_p *;
+  pool cfg_s cfg_p;   bind cfg_p *;
+
+  action send_a      { output pkt_s out_pkt; }
+  action receive_a   { input  pkt_s in_pkt; }
+  action configure_a { output cfg_s new_cfg; }
+  action transfer_a {
+    input cfg_s cur_cfg;
+    constraint !cur_cfg.initial;          // never run on the reset configuration
+    constraint cur_cfg.mode == mode_e::NORMAL;
+  }
+}
+```
+
+The three timing rules, drawn. Each column is one step of scenario time and a high level means the action is executing; these are scheduling pictures, not clocked waveforms.
+
+<TimingDiagram
+  title="Buffer: consumers start after the producer completes"
+  caption="write_a produces one mem_buf_s. Two read_check_a actions consume it; both start only after write_a has completed, and they may overlap each other. (Step k = edge k.)"
+  edges={8}
+  signals={[
+    { name: "write_a", kind: "bit", values: [1, 1, 1, 0, 0, 0, 0, 0] },
+    { name: "read_check_a #1", kind: "bit", values: [0, 0, 0, 1, 1, 0, 0, 0] },
+    { name: "read_check_a #2", kind: "bit", values: [0, 0, 0, 0, 1, 1, 1, 0] }
+  ]}
+/>
+
+<TimingDiagram
+  title="Stream: producer and consumer start together"
+  caption="send_a outputs a pkt_s and receive_a inputs it. They start in the same step; the standard says they run in parallel. If no receive_a is traversed, the tool infers one. (Step k = edge k.)"
+  edges={8}
+  signals={[
+    { name: "send_a", kind: "bit", values: [0, 1, 1, 1, 1, 0, 0, 0] },
+    { name: "receive_a", kind: "bit", values: [0, 1, 1, 1, 1, 1, 0, 0] }
+  ]}
+/>
+
+<TimingDiagram
+  title="State: a writer never overlaps a reader or another writer"
+  caption="configure_a #1 writes cfg_s; then two transfer_a actions read it and overlap each other; configure_a #2 waits until both readers have finished. (Step k = edge k.)"
+  edges={8}
+  signals={[
+    { name: "configure_a #1", kind: "bit", values: [1, 1, 0, 0, 0, 0, 0, 0] },
+    { name: "transfer_a #1", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0, 0] },
+    { name: "transfer_a #2", kind: "bit", values: [0, 0, 1, 1, 1, 0, 0, 0] },
+    { name: "configure_a #2", kind: "bit", values: [0, 0, 0, 0, 0, 1, 1, 0] }
+  ]}
+/>
+
+**Binding and inference.** An activity is a *partial* specification. If you leave an input unbound, the tool must complete the scenario: it binds the input to a suitable producer that is traversed, or it **infers** (adds) a producer action that the activity never mentions, and if no completion exists it reports an error (§17.1). Inference can chain: an inferred action may itself need an inferred producer. When every input is explicitly bound to traversed actions, the tool may not add actions at all.
+
+That is why `raw_test_a` says `bind w1.out_buf r1.in_buf;`. Without it, the read may consume the output of any earlier write, including one the tool inferred, and your "read back what I wrote" check reads some other address. Explicit binds are only legal between fields bound to the same pool (§12.9.1).
+
+### Resources: lock and share
+
+A resource is something an action holds for its whole execution: a DMA channel, a processor core, a memory region. You declare `resource mem_region_r { }`, size its pool with `pool [2] mem_region_r region_p;` (the size defaults to 1, §15.1), and every instance gets a built-in `instance_id` from 0 to size − 1 (§14.1.1). An action claims an instance in one of two modes (§14.2.1):
+
+- `lock`: no other action may use that instance while the locking action executes.
+- `share`: no other action may *lock* that instance while the sharing action executes; other sharers are fine.
+
+The tool picks which instance each claim gets. Two actions that overlap in time on the same instance are legal only if both share.
+
+<TimingDiagram
+  title="Claims on region instance 0"
+  caption="Two read_check_a actions share region 0 and overlap. write_a #2 locks region 0, so it waits until both sharers have finished; nothing else may use region 0 while it runs. (Step k = edge k.)"
+  edges={8}
+  signals={[
+    { name: "write_a #1 (lock)", kind: "bit", values: [1, 1, 0, 0, 0, 0, 0, 0] },
+    { name: "read_check_a #1 (share)", kind: "bit", values: [0, 0, 1, 1, 1, 0, 0, 0] },
+    { name: "read_check_a #2 (share)", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0, 0] },
+    { name: "write_a #2 (lock)", kind: "bit", values: [0, 0, 0, 0, 0, 1, 1, 0] }
+  ]}
+/>
+
+**The classic mistake: a resource as an input.** `input mem_region_r region;` does not compile, because `input` and `output` accept only buffer, stream and state types (§13.4.1). Data flows; resources are claimed. Write `lock mem_region_r region;` or `share mem_region_r region;`.
+
+**Not the UVM sequencer's lock.** [Sequencer `lock()` and `grab()`](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) are run-time arbitration requests inside one sequencer. A PSS `lock` is a rule the tool satisfies *when it builds the scenario*, before anything runs. If no assignment of instances works, there is no test to run, and the tool tells you at generation time.
+
+**`schedule` versus `parallel` with one region.** Take the `mem_stress_a` activity pictured earlier (two branches, `w0` then `r0`, and `w1` then `r1`) and shrink the region pool to `pool [1]`. Every action now claims region 0: the writes lock it and the reads share it. Under `parallel`, both branches must start together, so `w0` and `w1` would hold the same lock at once, and no legal scenario exists. Under `schedule`, the tool may order the actions, and one legal order is this:
+
+<TimingDiagram
+  title="schedule with pool [1]: one legal order"
+  caption="All four actions claim region 0. Each write's lock excludes every other claim, so the tool serializes: w0, r0, w1, r1 (w1, r1, w0, r0 is equally legal). Under parallel the same model has no legal scenario, because w0 and w1 must start together. (Step k = edge k.)"
+  edges={8}
+  signals={[
+    { name: "w0: write_a (lock)", kind: "bit", values: [1, 1, 0, 0, 0, 0, 0, 0] },
+    { name: "r0: read_check_a (share)", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0, 0] },
+    { name: "w1: write_a (lock)", kind: "bit", values: [0, 0, 0, 0, 1, 1, 0, 0] },
+    { name: "r1: read_check_a (share)", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 1] }
+  ]}
+/>
+
+### Try it: what does the tool complete?
+
+The visualizer below holds four scenarios built on `write_a`, `read_check_a` and a `dma_copy_a` action that inputs one buffer, outputs another and locks a DMA channel from `chan_p`. For each scenario, read the PSS source, then answer its prediction before you open the resolved schedule:
+
+1. **Write, then read back.** Does the tool add anything?
+2. **Read only.** `read_check_a` has an unbound input and nothing writes. What appears before it?
+3. **Two DMA copies in parallel, pool [2].** Which channel does each copy get, and where do their input buffers come from?
+4. **Two DMA copies in parallel, pool [1].** What does the tool do?
 
 <PssIntentMapVisualizer />
 
-## Data Constraints in PSS
+**What you just saw.**
+- **Scenario 1** needs nothing new: the traversed `write_a` completes before the read, so it can supply the buffer. The visualizer always binds to it; a real tool may also bind the input to an inferred producer unless you pin it with `bind` (§17.1).
+- **Scenario 2** forces **inference**: no traversed action produces a `mem_buf_s`, so the tool adds a `write_a` before the read. The visualizer picks the shortest producer chain; a tool could legally pick `dma_copy_a`, which would itself need an inferred producer.
+- **Scenarios 3 and 4** show resources. With two channels the copies get `instance_id` 0 and 1 and run together. Each copy's `src` input still needs a producer, so the tool infers writes before the `parallel` block; the visualizer infers one per copy, although one write could legally feed both, because a buffer may have many consumers. With one channel, `parallel` cannot be satisfied, so the tool reports at solve time that no legal scenario exists, and generates nothing.
+
+Four simplifications in the visualizer, so do not copy them into a real model:
+- Its SV templates start sequences on `m_sequencer` to stay short. In a virtual sequence you use `p_sequencer.mem_sqr`, as on this page.
+- Its source writes widths as `bit[31:0]`. Prefer `bit[32]`; the range form is deprecated (§7.2.1).
+- Its generated code shows solved values in hex, such as `0x00001A3C`. A real tool prints a `bit` field as unsigned decimal, `6716` (§22.5.3.2).
+- Its generator wraps each SV template in `begin : label … end` for you. A real tool pastes templates verbatim (§22.5), so your templates must carry their own `begin … end`, as `write_a` and `read_check_a` do on this page.
+
+### Data constraints: `in`, `dist` and `default`
 
 PSS constraints look like SystemVerilog constraints, but weighting and defaults work differently. Notice where each kind of bias lives:
 
@@ -103,7 +375,7 @@ component mem_c {
   action burst_write {
     rand bit[8] len;
     constraint len in [1..16];
-    // dist is a separate directive (PSS 2.1 and later), not an operator inside an expression
+    // dist is a separate directive (PSS 2.1 and later), not an operator in an expression
     constraint len_bias { dist len in [1 := 10, 4 := 30, 8..16 :/ 60]; }
   }
   action single_write { }
@@ -129,140 +401,216 @@ component mem_c {
 }
 ```
 
-Key differences from SV constraints:
-- In SystemVerilog, `x dist {...}` is itself a constraint: a set-membership test plus weights (IEEE 1800-2023 §18.5.3). In PSS, `dist x in [...];` is a directive that biases the solver. When a constraint disagrees, the constraint wins and the solve does not fail.
-- There is no `soft` keyword in the PSS 3.0 grammar. A `default` value constraint (`constraint default x == 1000;`) fixes a value until an enclosing or derived context overrides it with its own `default`, or removes it with `default disable x;`. A plain constraint that disagrees with an active default is a contradiction, not an override.
-- Weighted choices between *actions* belong in the activity: `select` branches with a `[weight]`, re-drawn on every pass of the `repeat`. A `dist` on a field of `stress_test` would be solved once for the whole test.
-- Constraints can relate fields of different actions, flow objects and resources, so the tool solves the whole scenario at once.
+<ArchitectureDiagram
+  title="The stress_test activity"
+  cellWidth={150}
+  gapX={40}
+  caption="Each pass of the repeat evaluates the select again: burst_write with probability 70/100, single_write with 30/100, then read_verify. In 10 passes there are exactly 10 read_verify actions and about 7 burst_write actions."
+  nodes={[
+    { id: "rep", label: "repeat (num_iterations)", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "sel", label: "select", sublabel: "drawn again on every pass", kind: "generic", col: 0, row: 0, colSpan: 2 },
+    { id: "bw", label: "burst_write", sublabel: "weight 70", kind: "generic", col: 0, row: 1 },
+    { id: "sw", label: "single_write", sublabel: "weight 30", kind: "generic", col: 1, row: 1 },
+    { id: "rv", label: "read_verify", sublabel: "every pass", kind: "generic", col: 0, row: 2, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "sel", to: "bw", style: "causal", label: "70" },
+    { from: "sel", to: "sw", style: "causal", label: "30" },
+    { from: "bw", to: "rv", style: "causal" },
+    { from: "sw", to: "rv", style: "causal" }
+  ]}
+/>
 
-## Compiling PSS to SystemVerilog UVM Sequences
+**Predict before you look at the chart.** With `len in [1..16]` and the `len_bias` directive, which values of `len` can occur, and how often?
 
-When targeting RTL simulation, a PSS tool typically generates a UVM sequence (or virtual sequence) whose body:
-1. Runs the actions in the schedule the tool solved, including any it inferred.
-2. Expands each action's `exec body SV` template (usually starting a UVM sequence on the right sequencer) with the solved values filled in.
-3. Leaves checking to the UVM environment: the scoreboard already compares monitored traffic against its reference model.
+<figure className="not-prose my-6">
+  <svg viewBox="0 0 360 190" role="img" aria-label="Probability of each len value from 1 to 16. len 1: 10 percent. len 4: 30 percent. len 8 to 16: 6.7 percent each. len 2, 3, 5, 6 and 7: never." style={{ width: "100%", maxWidth: 480 }}>
+    <line x1="20" y1="150" x2="344" y2="150" stroke="currentColor" />
+    <rect x="22" y="130" width="14" height="20" className="fill-cyan-500/40 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="82" y="90" width="14" height="60" className="fill-cyan-500/40 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="162" y="137" width="14" height="13" className="fill-cyan-500/40 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="182" y="137" width="14" height="13" className="fill-cyan-500/40 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="202" y="137" width="14" height="13" className="fill-cyan-500/40 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="222" y="137" width="14" height="13" className="fill-cyan-500/40 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="242" y="137" width="14" height="13" className="fill-cyan-500/40 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="262" y="137" width="14" height="13" className="fill-cyan-500/40 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="282" y="137" width="14" height="13" className="fill-cyan-500/40 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="302" y="137" width="14" height="13" className="fill-cyan-500/40 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="322" y="137" width="14" height="13" className="fill-cyan-500/40 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="29" y="124" fontSize="10" textAnchor="middle" fill="currentColor">10%</text>
+    <text x="89" y="84" fontSize="10" textAnchor="middle" fill="currentColor">30%</text>
+    <text x="249" y="128" fontSize="10" textAnchor="middle" fill="currentColor">6.7% each</text>
+    <text x="29" y="164" fontSize="9" textAnchor="middle" fill="currentColor">1</text>
+    <text x="49" y="164" fontSize="9" textAnchor="middle" fill="currentColor">2</text>
+    <text x="69" y="164" fontSize="9" textAnchor="middle" fill="currentColor">3</text>
+    <text x="89" y="164" fontSize="9" textAnchor="middle" fill="currentColor">4</text>
+    <text x="109" y="164" fontSize="9" textAnchor="middle" fill="currentColor">5</text>
+    <text x="129" y="164" fontSize="9" textAnchor="middle" fill="currentColor">6</text>
+    <text x="149" y="164" fontSize="9" textAnchor="middle" fill="currentColor">7</text>
+    <text x="169" y="164" fontSize="9" textAnchor="middle" fill="currentColor">8</text>
+    <text x="189" y="164" fontSize="9" textAnchor="middle" fill="currentColor">9</text>
+    <text x="209" y="164" fontSize="9" textAnchor="middle" fill="currentColor">10</text>
+    <text x="229" y="164" fontSize="9" textAnchor="middle" fill="currentColor">11</text>
+    <text x="249" y="164" fontSize="9" textAnchor="middle" fill="currentColor">12</text>
+    <text x="269" y="164" fontSize="9" textAnchor="middle" fill="currentColor">13</text>
+    <text x="289" y="164" fontSize="9" textAnchor="middle" fill="currentColor">14</text>
+    <text x="309" y="164" fontSize="9" textAnchor="middle" fill="currentColor">15</text>
+    <text x="329" y="164" fontSize="9" textAnchor="middle" fill="currentColor">16</text>
+    <text x="99" y="182" fontSize="10" textAnchor="middle" fill="currentColor">2, 3, 5, 6, 7: never</text>
+    <text x="249" y="182" fontSize="10" textAnchor="middle" fill="currentColor">len</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">P(len) for burst_write. The weights are 10 for 1, 30 for 4, and 60 spread over the nine values 8 to 16 (:/ divides a weight across a range; := gives each value the full weight). Values outside the dist list are excluded unless another constraint forces them.</figcaption>
+</figure>
 
-The exact mapping (a sequence per action, a virtual sequence per scenario, or calls into a runtime library) is tool-dependent.
+Key differences from SystemVerilog constraints:
+- **`dist` is a directive, and it excludes unlisted values.** In SystemVerilog, `x dist {...}` is itself a constraint: a set-membership test plus weights (IEEE 1800-2023 §18.5.3). In PSS, `dist x in [...];` is a separate directive (§16.1.11). Unless a constraint conflicts, the value must fall inside the `dist` list, with probability proportional to its weight; so in `burst_write`, 2, 3, 5, 6 and 7 never occur. If a constraint does conflict, the constraint wins and the solve does not fail.
+- **No `soft`; use `default`.** There is no `soft` keyword in PSS 3.0 (§4.4). A `default` value constraint (`constraint default x == 1000;`) fixes a value until a containing or derived context overrides it with its own `default`, or removes it with `default disable x;` (§16.1.10). A plain constraint that disagrees with an active default is a contradiction, not an override. Compare SystemVerilog `soft`, which simply yields to hard constraints (IEEE 1800-2023 §18.5.13; [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks)). A `default` may only be applied to a `rand` field.
+- **Weighted choices between actions belong in the activity.** `select` branches with a `[weight]` are drawn again on every pass of the `repeat` (§12.4.4). A `dist` on a field of `stress_test` would be solved once for the whole test.
+- **Constraints can relate fields of different actions**, flow objects and resources. Values are chosen as each action is traversed, but the tool looks ahead over the rest of the activity, so an early choice never strands a later constraint (§16.4.9).
 
-### Side-by-Side: PSS vs Generated UVM
+### From model to UVM and to C
 
-```pss
-// ── PSS Source (inside component pss_top, as above) ──
-action raw_coherency_test {
-  activity {
-    do mem_subsys_c::write_a;
-    do mem_subsys_c::read_check_a;
-  }
-}
-```
+What a tool produces for simulation is tool-dependent, but the common shape follows from the template rules:
 
-The generated UVM equivalent (simplified; the values are the ones the tool solved):
+1. The tool solves the scenario: the schedule, the bindings, any inferred actions, the resource instances and the values.
+2. For UVM it emits a sequence, typically a **virtual sequence** that runs on your virtual sequencer, whose `body()` contains each scheduled action's `exec body SV` template in order, with `fork … join` for `parallel` branches. The templates start your existing sequences on real sequencers through `p_sequencer` (declared by `` `uvm_declare_p_sequencer ``).
+3. For bare metal it emits a C function made of the `exec body C` templates, plus any `exec header C` text.
 
-```systemverilog
-// ── Generated UVM Sequence ──
-class raw_coherency_test_seq extends uvm_sequence #(uvm_sequence_item);
-  `uvm_object_utils(raw_coherency_test_seq)
+**Where checking lives.** A template can check (the C `read_check_a` compares the read data, because bare metal has no scoreboard), or it can leave checking to your UVM **scoreboard** ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)), which compares every monitored read against a reference memory whoever started it. This page's SV templates only read. The lab uses the other pattern, a self-checking SV template. Both are legitimate; pick one per environment so a read is not checked twice by different rules.
 
-  mem_wr_seq wr;
-  mem_rd_seq rd;
+**What stays hand-written.** The `exec` templates (or imported functions) for every action and platform; the UVM sequences, agents, scoreboard and coverage they rely on; the virtual sequencer; and the C HAL. The tool writes only the scenario layer, the part that changes from test to test.
 
-  function new(string name = "raw_coherency_test_seq");
-    super.new(name);
-  endfunction
+**Generated values: before the run or on the target?** The listings in Make It Work assume values were solved when the test was generated, so the code contains constants. Some tool flows instead generate code once per model and solve on the target at run time (§22.8 lists the flows). Ask your tool which it does.
 
-  task body();
-    // Step 1: write_a (its exec body SV, solved values filled in)
-    wr = mem_wr_seq::type_id::create("wr");
-    wr.addr = 32'h0000_1A3C; wr.data = 32'h5E2D_19A7;
-    wr.start(m_sequencer);
+### When PSS adds value, and when it does not
 
-    // Step 2: read_check_a reads the same buffer, so the same address
-    rd = mem_rd_seq::type_id::create("rd");
-    rd.addr = 32'h0000_1A3C;
-    rd.start(m_sequencer);
+PSS is a cost: a tool licence, a new language, a realization layer someone must own, and debugging through generated code. It pays when the scenario layer is the expensive part.
 
-    // No compare here: the scoreboard checks every monitored read
-    // against its reference memory, whoever started it.
-  endtask
-endclass
-```
+| Question | Favours UVM virtual sequences | Favours PSS |
+|---|---|---|
+| How many platforms run the scenarios? | One (simulation) | Several: simulation, emulation, prototype, silicon |
+| How much concurrency must be legal and varied? | A few hand-written `fork … join` blocks | Many combinations constrained by shared resources |
+| How long are setup chains? | Short and fixed | Many prerequisites that inference can fill in |
+| Who owns per-platform realization? | Nobody needs to | A named owner for each platform's templates or HAL |
+| How will failures be debugged? | In code you wrote | Through generated code: keep the tool's schedule report with every failing seed |
 
-## Compiling PSS to C for Bare-Metal Firmware Tests
+**Two worked decisions.**
+- *A block-level team with one simulation target, an existing UVM environment and a dozen scenarios.* Use virtual sequences. PSS adds a tool and a layer without removing a platform.
+- *An SoC team whose use-case library (boot, DMA under load, low-power entry) must run in simulation, on an emulator and on first silicon.* PSS pays: one scenario library, three realizations written once, and the tool explores concurrency that hand-written tests would leave untested.
 
-When targeting post-silicon or an embedded processor, the tool expands each action's `exec body C` template instead:
-
-```c
-// ── Generated C Bare-Metal Test (simplified) ──
-#include "mem_subsystem_api.h"   // mem_write32(), mem_read32(), test_fail()
-
-void raw_coherency_test(void) {
-    // write_a: its exec body C, with the solved buffer values filled in
-    mem_write32(0x00001A3C, 0x5E2D19A7);
-
-    // read_check_a: it reads the same buffer, so the same address and data
-    if (mem_read32(0x00001A3C) != 0x5E2D19A7) test_fail();
-}
-```
-
-Both outputs come from the same PSS model: the UVM version starts sequences from the `exec body SV` templates, the C version calls the functions in the `exec body C` templates. Change a constraint once and both targets change. Here the values were solved when the test was generated; some tools instead emit code that solves on the target at run time.
-
-## Tool Ecosystem
-
-Commercial PSS tools come from several EDA vendors, and open-source parsers exist for syntax checking and research. Rather than trusting a feature list, ask each tool:
+**The tool landscape.** Commercial PSS tools include Cadence Perspec System Verifier, Siemens EDA Questa inFact, Synopsys VC Portable Stimulus and Breker Verification Systems' Trek family (TrekGen, TrekUVM, TrekSoC, TrekSoC-Si). Their public launch announcements (2018) cover PSS 1.0; check each vendor for 2.1 and 3.0 support. The open-source PSSTools `pssparser` is a parser useful for checking syntax, not a generator. PSS 3.0 defines one input language, the DSL used on this page (§1.2); some early tools also advertised a C++ input format, so check what your tool accepts. Ask any tool:
 
 | Question | Why it matters |
 |---|---|
-| Which PSS version does it accept (2.1, 3.0)? | Features such as the `dist` directive or 3.0 behavioral coverage may be missing |
-| Which targets can it generate (SV/UVM, C, others)? | Portability only pays off for the targets you actually run |
-| Does it solve values at generation time or on the target? | Pre-solved tests are reproducible; run-time solving needs a solver on the target |
-| How much does it infer? | Inferred actions and bindings are where PSS saves the most work, and where tools differ most |
+| Which PSS version does it accept (2.1, 3.0, the 3.1 draft)? | `dist` needs 2.1; behavioral coverage needs 3.0 |
+| Which targets does it generate (SV/UVM, C, others)? | Portability pays only for the targets you run |
+| Does it solve before the run or on the target? | Pre-solved tests are reproducible; run-time solving needs a solver on the target |
+| How much does it infer, and can you see why? | Inference saves the most work and is where tools differ most |
 
-PSS pays off when the same scenario has to run on more than one execution target. How many targets justify the cost depends on your team and tools; there is no standard threshold.
+### Pitfalls and misconceptions
 
-## Hands-On Example: Memory Test with Portability Comparison
+- **"PSS replaces UVM."** It generates scenario-level code that runs on your UVM environment.
+- **"PSS is an IEEE standard."** It is Accellera's, with no IEEE number.
+- **A resource as an `input`.** Resources are claimed with `lock` or `share` (§13.4.1, §14.2).
+- **`schedule` used as if it meant `parallel`.** `schedule` may serialize everything (§12.3.5).
+- **An unbound input when several producers exist.** The tool may bind or infer something you did not intend (§17.1); add `bind`.
+- **A pool too small for parallel locks.** No legal scenario (§12.3.4, §14.2.1).
+- **SV templates without `begin … end`.** The generated SystemVerilog does not compile (§22.5).
+- **`dist` read as SystemVerilog `soft`.** Unlisted values are excluded, not just rare (§16.1.11).
 
-Here is a complete PSS model for a memory stress test. Before reading it, predict: which actions may run at the same time on the same memory region?
+### Recap
+
+- PSS is Accellera's language for test intent; the tool writes the scenario layer and you write the realization layer once.
+- Components own actions and pools; `bind` directives connect pools to actions.
+- Atomic actions carry `exec` templates that are pasted verbatim with decimal values; compound actions carry activities.
+- Activities order traversals with sequence, `parallel`, `schedule`, `select` and `repeat`; explicit `bind` pins which object an action consumes.
+- Buffers, streams and states differ in timing; resources are claimed, never passed.
+- PSS pays when many platforms or resource-constrained concurrency make the scenario layer expensive.
+
+## Make It Work
+
+### A complete model: two writers, two readers, two regions
+
+The scenario: in each round, two write-then-read pairs run in parallel, each in its own 4KB memory region, and every read checks the word its own write produced. The number of rounds is random with a default of 2. **Predict before you read the generated code:** in round 1, can both writes use region 0? What would change with `pool [1]`?
 
 ```pss
-component mem_test_suite {
-  // Two 4 KB regions. A resource is claimed with lock or share; it is never an input.
-  resource mem_region_r { }
-  pool [2] mem_region_r region_p;        // instance_id 0 and 1
+// compile (Accellera PSS 3.0; checked against the standard by reading, not by a tool)
+buffer mem_buf_s {
+  rand bit[32] addr;
+  rand bit[32] data;
+  constraint { addr in [0x1000..0x2FFC]; addr % 4 == 0; }
+}
+
+resource mem_region_r { }               // one 4KB memory region
+
+component mem_subsys_c {
+  pool mem_buf_s buf_p;
+  bind buf_p *;
+  pool [2] mem_region_r region_p;       // instance_id 0: 0x1000-0x1FFC, 1: 0x2000-0x2FFC
   bind region_p *;
 
-  // What the writer hands to the reader: a buffer flow object.
-  buffer burst_s {
-    rand int     region_id;
-    rand bit[32] start_addr;
-    rand bit[32] burst_len;
-    constraint start_addr % 4 == 0;
-    constraint burst_len in [1..16];
-  }
-  pool burst_s burst_p;
-  bind burst_p *;
-
-  action write_burst {
-    lock   mem_region_r region;          // exclusive while it writes
-    output burst_s      burst;
+  action write_a {
+    lock   mem_region_r region;         // nothing else uses this region while it writes
+    output mem_buf_s    out_buf;
     constraint {
-      burst.region_id == region.instance_id;
-      burst.start_addr >= 0x1000 * (region.instance_id + 1);
-      burst.start_addr + burst.burst_len * 4 <= 0x1000 * (region.instance_id + 2);
+      out_buf.addr >= 0x1000 * (region.instance_id + 1);
+      out_buf.addr <  0x1000 * (region.instance_id + 2);
     }
+    exec body C = """ mem_write32({{out_buf.addr}}, {{out_buf.data}}); """;
+    exec body SV = """
+      begin
+        mem_wr_seq wr = mem_wr_seq::type_id::create("wr");
+        wr.addr = {{out_buf.addr}};
+        wr.data = {{out_buf.data}};
+        wr.start(p_sequencer.mem_sqr, this);
+      end
+    """;
   }
 
-  action read_verify_burst {
-    share  mem_region_r region;          // readers may overlap; a writer may not
-    input  burst_s      burst;           // the burst some write_burst produced
-    constraint region.instance_id == burst.region_id;
+  action read_check_a {
+    share  mem_region_r region;         // readers may overlap; a writer may not
+    input  mem_buf_s    in_buf;
+    constraint {
+      in_buf.addr >= 0x1000 * (region.instance_id + 1);
+      in_buf.addr <  0x1000 * (region.instance_id + 2);
+    }
+    exec body C = """
+      if (mem_read32({{in_buf.addr}}) != {{in_buf.data}})
+        test_fail("read-after-write mismatch");
+    """;
+    exec body SV = """
+      begin
+        mem_rd_seq rd = mem_rd_seq::type_id::create("rd");
+        rd.addr = {{in_buf.addr}};
+        rd.start(p_sequencer.mem_sqr, this);
+      end
+    """;
   }
+}
 
-  action mem_stress {
+component pss_top {
+  mem_subsys_c mem;
+
+  action mem_stress_a {
+    rand bit[8] rounds;
+    constraint rounds in [1..8];
+    constraint default rounds == 2;     // a containing test may set its own default
+    exec header C = """ #include "mem_test_platform.h" """;
+
     activity {
-      repeat (100) {
-        wb:  do write_burst;
-        rvb: do read_verify_burst;
-        bind wb.burst rvb.burst;         // read back exactly this iteration's burst
+      repeat (rounds) {
+        parallel {
+          sequence {
+            w0: do mem_subsys_c::write_a;
+            r0: do mem_subsys_c::read_check_a;
+            bind w0.out_buf r0.in_buf;
+          }
+          sequence {
+            w1: do mem_subsys_c::write_a;
+            r1: do mem_subsys_c::read_check_a;
+            bind w1.out_buf r1.in_buf;
+          }
+        }
       }
     }
   }
@@ -270,73 +618,566 @@ component mem_test_suite {
 ```
 
 What each piece guarantees:
-- **`lock` / `share`:** a `write_burst` holds its region exclusively, so nothing else that claims that region runs alongside it. Two `read_verify_burst` actions may share one region. With a pool of two regions, two writers can still run in parallel on different instances.
-- **The buffer:** `burst_s` carries the address, length and region from the writer to the reader. The explicit `bind` pins each read to the write of the same iteration; without it, the tool may pick any earlier `write_burst` output.
-- **`in`, not `inside`:** PSS writes set membership as `burst_len in [1..16]`.
-- **Labels, not `as`:** `wb: do write_burst;` names a traversal so later statements can refer to `wb`.
+- **The two locks force two regions.** `w0` and `w1` start together and each locks a region for its whole execution, so they must get different instances. With `pool [1]` they cannot, and the tool reports that no legal scenario exists.
+- **The read follows its write's region.** Both actions tie the address to `region.instance_id`, and the `bind` makes them the same buffer, so `r0` shares exactly the region `w0` locked.
+- **Nothing is inferred.** Every input is explicitly bound to a traversed action, so the tool may not add actions (§17.1).
 
-A tool can lower this one model to a UVM virtual sequence for RTL simulation, a C test for an embedded core or post-silicon, or both. How much code that becomes, and whether values are solved before the run or on the target, depends on the tool.
+**The generated UVM side.** Below, the hand-written environment pieces the templates call, then the virtual sequence a tool might generate for `rounds = 2` (simplified: tool-specific glue omitted, comments added for reading). Note the decimal values: `6716` is `0x1A3C`.
 
-## Hands-On Lab
+```systemverilog
+// compile (env pieces the templates call, then the generated virtual sequence)
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 
-<LabLink labId="pss-portable-intent" />
+// ---- Hand-written: already in your UVM environment ----
+class mem_item extends uvm_sequence_item;
+  `uvm_object_utils(mem_item)
+  bit        is_write;
+  bit [31:0] addr;
+  bit [31:0] data;
+  function new(string name = "mem_item"); super.new(name); endfunction
+endclass
 
-## Knowledge Check
+class mem_wr_seq extends uvm_sequence #(mem_item);
+  `uvm_object_utils(mem_wr_seq)
+  bit [31:0] addr, data;
+  function new(string name = "mem_wr_seq"); super.new(name); endfunction
+  task body();
+    req = mem_item::type_id::create("req");
+    start_item(req);
+    req.is_write = 1'b1; req.addr = addr; req.data = data;
+    finish_item(req);
+  endtask
+endclass
+
+class mem_rd_seq extends uvm_sequence #(mem_item);
+  `uvm_object_utils(mem_rd_seq)
+  bit [31:0] addr;
+  function new(string name = "mem_rd_seq"); super.new(name); endfunction
+  task body();
+    req = mem_item::type_id::create("req");
+    start_item(req);
+    req.is_write = 1'b0; req.addr = addr;
+    finish_item(req);   // the monitor publishes the read data; the scoreboard checks it
+  endtask
+endclass
+
+class mem_vsqr extends uvm_sequencer;     // virtual sequencer: handles only
+  `uvm_component_utils(mem_vsqr)
+  uvm_sequencer #(mem_item) mem_sqr;      // assigned by the env in connect_phase
+  function new(string name, uvm_component parent); super.new(name, parent); endfunction
+endclass
+
+// ---- Generated from mem_stress_a (rounds = 2: the default held) ----
+class mem_stress_a_vseq extends uvm_sequence;
+  `uvm_object_utils(mem_stress_a_vseq)
+  `uvm_declare_p_sequencer(mem_vsqr)      // the sequencer type comes from tool setup
+
+  function new(string name = "mem_stress_a_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    // round 1: w0 locked region 0, w1 locked region 1
+    fork
+      begin
+        begin  // w0: write_a
+          mem_wr_seq wr = mem_wr_seq::type_id::create("wr");
+          wr.addr = 6716;
+          wr.data = 1580013991;
+          wr.start(p_sequencer.mem_sqr, this);
+        end
+        begin  // r0: read_check_a, bound to w0.out_buf
+          mem_rd_seq rd = mem_rd_seq::type_id::create("rd");
+          rd.addr = 6716;
+          rd.start(p_sequencer.mem_sqr, this);
+        end
+      end
+      begin
+        begin  // w1: write_a
+          mem_wr_seq wr = mem_wr_seq::type_id::create("wr");
+          wr.addr = 8256;
+          wr.data = 48879;
+          wr.start(p_sequencer.mem_sqr, this);
+        end
+        begin  // r1: read_check_a, bound to w1.out_buf
+          mem_rd_seq rd = mem_rd_seq::type_id::create("rd");
+          rd.addr = 8256;
+          rd.start(p_sequencer.mem_sqr, this);
+        end
+      end
+    join
+    // round 2: the tool swapped the regions (w0 region 1, w1 region 0)
+    fork
+      begin
+        begin  // w0: write_a
+          mem_wr_seq wr = mem_wr_seq::type_id::create("wr");
+          wr.addr = 12032;
+          wr.data = 324508639;
+          wr.start(p_sequencer.mem_sqr, this);
+        end
+        begin  // r0: read_check_a
+          mem_rd_seq rd = mem_rd_seq::type_id::create("rd");
+          rd.addr = 12032;
+          rd.start(p_sequencer.mem_sqr, this);
+        end
+      end
+      begin
+        begin  // w1: write_a
+          mem_wr_seq wr = mem_wr_seq::type_id::create("wr");
+          wr.addr = 4100;
+          wr.data = 610839776;
+          wr.start(p_sequencer.mem_sqr, this);
+        end
+        begin  // r1: read_check_a
+          mem_rd_seq rd = mem_rd_seq::type_id::create("rd");
+          rd.addr = 4100;
+          rd.start(p_sequencer.mem_sqr, this);
+        end
+      end
+    join
+  endtask
+endclass
+```
+
+The two branches of each round run on one real sequencer, `mem_sqr`, so its arbitration interleaves their items. Here is what happens at run time for `w0` and `r0` in round 1; the other branch does the same in parallel.
+
+<SequenceDiagram
+  title="The generated sequence at run time: w0, then r0"
+  columnWidth={140}
+  caption="The driver pulls items: finish_item() returns only after the driver calls item_done(). No sequence compares data. The monitor publishes each transfer to the scoreboard, which updates its reference memory on the write and compares on the read. When the monitor publishes, relative to item_done(), depends on the agent."
+  participants={[
+    { id: "vseq", label: "mem_stress_a_vseq", kind: "sequence" },
+    { id: "seq", label: "mem_wr_seq / mem_rd_seq", kind: "sequence" },
+    { id: "sqr", label: "mem_sqr", kind: "sequencer" },
+    { id: "drv", label: "driver", kind: "driver" },
+    { id: "mon", label: "monitor", kind: "monitor" },
+    { id: "scb", label: "scoreboard", kind: "scoreboard" }
+  ]}
+  messages={[
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { from: "vseq", to: "seq", label: "wr.start(p_sequencer.mem_sqr, this)" },
+    { from: "seq", to: "sqr", label: "start_item(req)" },
+    { kind: "note", from: "seq", to: "sqr", label: "returns when mem_sqr grants mem_wr_seq" },
+    { from: "seq", to: "sqr", label: "finish_item(req)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req (write 6716)" },
+    { kind: "self", from: "drv", label: "drive the write" },
+    { kind: "async", from: "mon", to: "scb", label: "write(t): ref_mem[6716] = data" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" },
+    { kind: "return", from: "seq", to: "vseq", label: "start returns" },
+    { kind: "divider", label: "r0: rd.start(p_sequencer.mem_sqr, this), same handshake" },
+    { kind: "async", from: "mon", to: "scb", label: "write(t): read data compared with ref_mem[6716]" }
+  ]}
+/>
+
+**The generated C side** (simplified). A real generated test dispatches the two parallel branches to two cores or threads, which is tool- and platform-dependent; here they are listed one after the other for reading.
+
+```c
+/* Generated from mem_stress_a (rounds = 2), values solved at generation time */
+#include "mem_test_platform.h"   /* from exec header C */
+
+void mem_stress_a(void) {
+    /* round 1, branch 0 (region 0): w0 then r0 */
+    mem_write32(6716, 1580013991);
+    if (mem_read32(6716) != 1580013991)
+        test_fail("read-after-write mismatch");
+    /* round 1, branch 1 (region 1): w1 then r1 */
+    mem_write32(8256, 48879);
+    if (mem_read32(8256) != 48879)
+        test_fail("read-after-write mismatch");
+    /* round 2, branch 0 (region 1) */
+    mem_write32(12032, 324508639);
+    if (mem_read32(12032) != 324508639)
+        test_fail("read-after-write mismatch");
+    /* round 2, branch 1 (region 0) */
+    mem_write32(4100, 610839776);
+    if (mem_read32(4100) != 610839776)
+        test_fail("read-after-write mismatch");
+}
+```
+
+**Expected output** (illustrative: not from a real run; it assumes a test that starts `mem_stress_a_vseq` on the virtual sequencer and an [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) scoreboard that compares each read):
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test mem_pss_test...
+UVM_INFO @ 1210: uvm_test_top.env.scb [SCB] SCB_SUMMARY matches=4 mismatches=0 pending=0
+
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :    2
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+On the bare-metal target the same scenario passes when `mem_stress_a()` returns without calling `test_fail()`; how the platform reports that is up to its harness.
+
+### How to build a PSS scenario
+
+1. **List the actions and the data they exchange.** Each operation the hardware can do is an action; each piece of data passed between them is a flow object.
+2. **Pick a flow-object kind for each exchange.** Data left in memory is a buffer, data in flight is a stream, a mode or configuration is a state.
+3. **Model shared hardware as resources** and size each pool to the number of real instances. Claim with `lock` for exclusive use and `share` otherwise.
+4. **Write the activity**, then add `bind` for every exchange whose producer matters to the check.
+5. **Write the `exec` templates** for each platform: wrap SystemVerilog in `begin … end`, start real sequences through `p_sequencer`, and decide where checking lives.
+6. **Generate, then read the resolved schedule before you run it**: which actions were inferred, which instances were assigned, which values were chosen.
+7. **Run on each platform** and keep the seed and schedule report with every failure.
+
+### Debugging a PSS model
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| The tool rejects `input dma_chan_r chan;` | A resource used as an input (§13.4.1) | `lock` or `share` it (§14.2) |
+| "No legal scenario" or a solve failure | A plain constraint contradicts an active `default` (§16.1.10); parallel locks exceed the pool (§12.3.4, §14.2.1); no pool bound for an input | Override with `constraint default …` or `default disable`; enlarge the pool or use `schedule`; add the static `bind` |
+| Unexpected extra actions in the schedule | Inference completed an unbound input (§17.1) | Add explicit `bind`s; use an `atomic` block (§12.3.7) to keep inferred actions out of a region |
+| The read checks the wrong address | The input was bound to a different producer | Add `bind w.out_buf r.in_buf;` |
+| Generated SystemVerilog does not compile | Template declarations outside `begin … end`, or a template typo (templates are not checked, §22.5) | Wrap every SV template; compile one generated test early |
+| C and UVM runs disagree | The two templates of an action do different things | Review each action's templates side by side |
+| The UVM test hangs in `start_item` | A child sequence was started on the virtual sequencer, which has no driver | Start children on `p_sequencer.<real sequencer>` |
+
+**Checklist before moving on:**
+- [ ] I can name every PSS element in the Make It Work model: component, pool, bind directive, atomic and compound action, activity, flow object, resource.
+- [ ] I can say which flow-object kind fits a piece of data and what timing rule it imposes.
+- [ ] I can predict what the tool does with `pool [1]` under `parallel` and under `schedule`.
+- [ ] I can point to what the tool generated and what I must hand-write in the UVM and C outputs.
+- [ ] I can explain why every SV template is wrapped in `begin … end` and why the values are decimal.
+- [ ] I can argue for or against PSS for a given project with the decision table.
+
+## Push Further
+
+### Expert: inference, binding and determinism
+
+When bindings are left implicit, the tool completes the scenario by binding to traversed actions or by inferring new ones, and it may choose randomly or by policy, including coverage goals (§17.1). Only when every required input is explicitly bound to traversed actions is it forbidden to add actions. Inference chains until a producer needs nothing more, or a tool limit is hit and an error is reported; the informative Annex E describes how candidates are considered. Explicit binds must also respect pools: both fields must be statically bound to the same pool instance (§12.9.1), and a field and its pool must be of exactly the same type, not a base or derived type (§15.3.1).
+
+Two tools for control. An **`atomic { }` block** (§12.3.7) keeps inferred actions and resource-driven reordering from slipping between the actions it contains; inferred actions are never inside an atomic set. **Hierarchical binding** (§12.10) lets a compound action delegate its own input or output to a sub-action with `bind`; the outer action's boundary then sets the timing, so an input buffer must be ready before the compound action's whole activity begins.
+
+*Interview angle:* "Your read-after-write test sometimes reads an address no traversed write produced. Why?" Because the input was unbound and the tool inferred or chose another producer; pin it with `bind`.
+
+### Expert: parallel, schedule and join specifiers
+
+`parallel` (§12.3.4) gives a synchronized start and forbids any scheduling dependency between branches, so any binding or lock that would force one branch to wait for another makes the activity illegal. `schedule` (§12.3.5) requires all its statements to execute in any order that satisfies the other rules; sequential orders are valid. Both accept **join specifiers** (§12.3.6): `join_branch(label, …)` continues after the named branches, `join_select(n)` after n randomly chosen branches, `join_none` immediately, and `join_first(n)` after the first n to complete at run time.
+
+*Predict:* two lockers on a `pool [1]` resource. Under `parallel` there is no legal scenario; under `schedule` the tool serializes them. The same model with `pool [2]` is legal under both.
+
+### Expert: when values are chosen, and the limits of the solver
+
+Random fields are chosen as the activity is traversed, with **relationship lookahead** over constraints from the rest of the traversal, including inferred actions, bindings and scheduling (§16.4.9), and across sub-actions (§16.4.10). The solve-side exec kinds run in a defined order: `pre_solve` before solving, `post_solve` after, `pre_body` before code is generated for the body (§22.1.2). Values assigned by an `exec body` are checked against the constraints only after the block completes; a conflict is illegal and the tool does not backtrack (§16.4.13). Practical rule: compute derived values in `post_solve`, and never assign a constrained field from target code.
+
+### Expert: PSS `default` and `dist` versus SystemVerilog `soft` and `dist`
+
+A PSS `default` is an equality that holds until it is disabled or replaced by another default. Precedence: a higher-level containing context beats a lower one, a derived type beats its base, and a later declaration beats an earlier one in the same type (§16.1.10 d). A default on an aggregate applies to all its random scalar fields, and defaults may not be conditioned on non-constant expressions. SystemVerilog `soft` (IEEE 1800-2023 §18.5.13) is resolved by priority among soft constraints and always yields to hard ones; it never causes a contradiction.
+
+PSS `dist` (§16.1.11) is a directive: constraints take priority over it, and with several `dist` directives on overlapping expressions the resulting distribution is undefined. SystemVerilog `dist` (IEEE 1800-2023 §18.5.3) is a constraint whose set membership is hard. Porting a SystemVerilog constraint set to PSS line by line therefore changes behaviour in both directions. PSS 3.0 has no `soft`; a 3.1 draft is in public review, so check your tool's version before assuming either way.
+
+### Expert: realization flows and exec kinds
+
+PSS 3.0 defines three mapping mechanisms: imported functions bound to a foreign API (§22.4), target-template functions (§22.6) and target-template exec blocks (§22.5). It also defines three flows: no target code generation (the test calls existing APIs directly), per-model generation and per-test generation (§22.8, Tables 25 and 26). Not every mechanism works in every flow: target-template exec blocks need generated code, and `exec header` and `declaration` may only be templates (§22.1.2). The target exec kinds are `body`, `run_start`, `run_end`, `header` and `declaration`; `run_start` and `run_end` are restricted to pre-generation flows. Whether a given tool solves before the run or on the target is **tool-dependent**.
+
+*Architecture consequence:* if you need on-target randomization on silicon, design the realization around imported functions into your HAL, not around pasted templates with constants.
+
+### Expert: coverage in PSS
+
+PSS 3.0 has two kinds of coverage. **Data coverage** uses covergroups on PSS fields (Clause 18), typically measured on the generation side. **Behavioral coverage**, new in 3.0, uses `cover` statements and `monitor` declarations that describe an action order to observe in the executed scenarios (Clause 19). Neither replaces your UVM functional coverage of DUT behaviour. How much a tool automates, for example generating scenarios until a cover target is hit, is **tool-dependent**.
+
+### Expert: PSS versus UVM virtual sequences at scale
+
+Methodology trade-offs, not standard rules:
+- **Integration.** Generate against one virtual sequencer type per environment, start children on real sequencers through `p_sequencer`, raise objections in the test (not in generated code), and regenerate per seed rather than editing generated files.
+- **Ownership.** The realization layer is a product: one owner per platform, reviewed like VIP. Templates that drift apart between C and SV produce "passes in simulation, fails on silicon" reports that are really model bugs.
+- **Debug.** Archive the tool's resolved schedule with every failing run. Without it, a failure in generated code cannot be traced back to the action and constraint that produced it.
+- **Cost model.** PSS reduces work in proportion to scenarios × platforms; it adds a fixed cost (tool, training, realization). With one platform, the multiplier is 1.
+- **Versions and tools (tool-dependent).** Tools support different versions and input formats; public announcements of the main commercial tools date from PSS 1.0. Pin the version in your flow and test a feature before you design around it.
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: why can't a resource be an input?"
+  question="A candidate writes input dma_chan_r chan; in an action. Explain why PSS rejects it and what the model should say instead."
+  options={[
+    { text: "Inputs and outputs model data that flows between actions (buffer, stream, state). A channel is not produced or consumed; it is held for the action's whole execution, so it is claimed with lock or share from a sized pool.", isCorrect: true, feedback: "Correct (§13.4.1, §14.2.1). The claim mode is what lets the tool schedule around shared hardware." },
+    { text: "Because resources must first be bound with bind chan_p *; after that, input is legal.", isCorrect: false, feedback: "Binding does not change the grammar: input accepts only buffer, stream and state types (§13.4.1)." },
+    { text: "Because a channel is modified by the copy, so it must be an output.", isCorrect: false, feedback: "Resources are never inputs or outputs. Use lock if the action needs exclusive use." },
+    { text: "PSS accepts it; the tool infers a producer for the channel.", isCorrect: false, feedback: "Inference adds producer actions for flow objects. A resource has no producer; the model does not compile." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: parallel versus schedule with a pool of one"
+  question="Two actions each lock a resource from a pool of size 1. What happens under parallel, and under schedule?"
+  options={[
+    { text: "Both are illegal: a pool of one can never serve two lockers.", isCorrect: false, feedback: "A pool of one serves any number of lockers one at a time. Only parallel forbids the ordering that requires." },
+    { text: "Under parallel there is no legal scenario, because one action would have to wait for the other; under schedule the tool serializes them.", isCorrect: true, feedback: "Correct (§12.3.4, §12.3.5, §14.2.1). The tool reports the parallel case at solve time (§17.1)." },
+    { text: "Both run concurrently; the second lock fails at run time on the target.", isCorrect: false, feedback: "PSS locks are solved when the scenario is built, not arbitrated at run time like a UVM sequencer lock." },
+    { text: "Under parallel the tool silently converts to schedule.", isCorrect: false, feedback: "parallel is a requirement, not a hint. The tool reports an error." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: what stays hand-written?"
+  question="Your manager hopes PSS will remove the need to maintain the UVM environment and the C HAL. What do you tell them?"
+  options={[
+    { text: "Correct: the tool generates drivers, monitors and the HAL from actions.", isCorrect: false, feedback: "No PSS mechanism generates agents or a HAL. The tool emits scenario-level code that calls them." },
+    { text: "The tool generates the scenario layer only. The exec templates or imported functions per platform, the UVM sequences, agents, scoreboard and coverage, and the C HAL stay hand-written, written once and reused by every scenario.", isCorrect: true, feedback: "Correct (§22.4, §22.5). The savings come from not rewriting scenarios per platform." },
+    { text: "Only the scoreboard remains; everything else is generated.", isCorrect: false, feedback: "The scoreboard, the agents and the realization layer all remain." },
+    { text: "Nothing changes: PSS just produces documentation.", isCorrect: false, feedback: "PSS produces runnable scenario code; it just does not replace the environment that code runs on." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: when would you not use PSS?"
+  question="Give the strongest reason not to adopt PSS on a project."
+  options={[
+    { text: "PSS cannot express concurrency, so it is unsuitable for SoCs.", isCorrect: false, feedback: "parallel, schedule and resources exist precisely to express concurrency." },
+    { text: "A single-platform block-level bench with a modest scenario set: virtual sequences cover it, and PSS adds a tool, a language and a realization layer without removing any platform.", isCorrect: true, feedback: "Correct. The benefit scales with scenarios × platforms; with one platform the multiplier is 1." },
+    { text: "PSS tests cannot be reproduced.", isCorrect: false, feedback: "Pre-solved tests are reproducible from their seed; on-target solving needs more care, but that is a flow choice." },
+    { text: "PSS is not an IEEE standard, so it cannot be used in industry.", isCorrect: false, feedback: "Accellera standards (UVM began as one) are widely used; the lack of an IEEE number is not a technical limit." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
 
 <Quiz
   questions={[
     {
       question: "What is the primary problem that the Portable Stimulus Standard (PSS) solves?",
-      options: [
-        "It replaces SystemVerilog as the primary verification language",
-        "It eliminates the need to maintain separate test implementations for different execution targets",
-        "It provides faster constraint solving than SystemVerilog randomization",
-        "It automatically generates DUT RTL from test specifications"
+      objective: 5,
+      answers: [
+        { text: "It replaces SystemVerilog as the primary verification language", correct: false, feedback: "PSS sits above SystemVerilog and UVM: its SV templates start your existing UVM sequences, which still run in a SystemVerilog simulator." },
+        { text: "It eliminates the need to maintain separate test implementations for different execution targets", correct: true, feedback: "Right, at the scenario level: one model replaces one hand-written test per platform. Each action still needs a realization per target, written once." },
+        { text: "It provides faster constraint solving than SystemVerilog randomization", correct: false, feedback: "Speed is not the point; PSS solves a scenario (schedule, bindings, resources, values), not one object." },
+        { text: "It automatically generates DUT RTL from test specifications", correct: false, feedback: "PSS describes tests, not designs. It generates test code only." }
       ],
-      correctAnswer: 1,
-      explanation: "PSS allows test intent to be written once and compiled to multiple targets (simulation, emulation, FPGA, post-silicon), eliminating the quadratic maintenance burden of hand-porting tests."
+      explanation: "PSS lets you write the scenario once and have a tool generate it for simulation, emulation, prototypes and silicon, instead of rewriting each test per platform. It does not replace SystemVerilog or UVM, and each action still needs one hand-written realization per platform (exec templates or imported functions)."
     },
     {
-      question: "In PSS, what is the relationship between an 'action' and an 'activity'?",
-      options: [
-        "Actions contain activities; activities are sub-steps within an action",
-        "Activities contain actions; activities define the ordering of action executions",
-        "Actions and activities are synonymous terms",
-        "Activities are compile-time constructs; actions are runtime constructs"
+      question: "A compound action declares an activity. What does that activity specify?",
+      objective: 1,
+      answers: [
+        { text: "The C and SystemVerilog code that each target runs", correct: false, feedback: "That is the job of exec blocks on atomic actions (§22.5)." },
+        { text: "Which sub-actions are traversed, how they are scheduled, and their bindings and constraints", correct: true, feedback: "Correct (§10). It is a partial specification that the tool completes." },
+        { text: "Which pools the actions are connected to", correct: false, feedback: "Static bind directives in components do that (§15.3)." },
+        { text: "The values the solver picked for the scenario", correct: false, feedback: "Values are the solver's output, not part of the model." }
       ],
-      correctAnswer: 1,
-      explanation: "An activity graph is a declarative ordering specification that defines when and how actions (atomic test operations) execute. The activity expresses sequencing, parallelism, and repetition."
+      explanation: "Per PSS 3.0 Clause 10, the activity of a compound action specifies the intended schedule of its sub-actions, their object binding and any constraints. Target code lives in exec blocks, pool connections in bind directives, and solved values come from the tool."
     },
     {
-      question: "When a PSS compiler targets UVM simulation, what does it generate for each PSS 'action'?",
-      options: [
-        "A uvm_driver class with pin-level signal manipulation",
-        "A uvm_sequence class with a body() task implementing the action's logic",
-        "A uvm_monitor class that observes DUT outputs",
-        "A uvm_component class registered with the factory"
+      question: "In the Make It Work model, you change pool [2] mem_region_r region_p; to pool [1]. What does the tool do with mem_stress_a?",
+      objective: 2,
+      answers: [
+        { text: "It runs w0 and w1 one after the other on region 0", correct: false, feedback: "That ordering is a dependency between parallel branches, which parallel forbids. schedule would allow it." },
+        { text: "It reports that no legal scenario exists", correct: true, feedback: "Correct (§12.3.4, §14.2.1, §17.1). w0 and w1 start together and each needs exclusive use of a region; one region cannot serve both." },
+        { text: "It lets w0 and w1 share region 0, because they write different addresses", correct: false, feedback: "Both lock. A lock excludes every other claim on that instance, whatever the addresses." },
+        { text: "It generates the test, and the second write fails at run time on the target", correct: false, feedback: "Resource claims are resolved when the scenario is built, so the problem is reported at solve time and nothing is generated." }
       ],
-      correctAnswer: 1,
-      explanation: "The exact mapping is tool-dependent. A common pattern is that each action's exec body SV template starts a UVM sequence, and the scenario becomes a (virtual) sequence whose body() runs the actions in the order the tool solved. Some tools emit one sequence per scenario or call a runtime library instead. Tools do not generate drivers, monitors or other components from actions: those come from your UVM environment."
+      explanation: "parallel requires a synchronized start with no dependency between branches. Two locks on a single-instance pool would force one write to wait for the other, so there is no valid completion and the tool must report an error (§17.1)."
     },
     {
-      question: "In the Hands-On model, write_burst claims its region with lock and read_verify_burst claims it with share. Which pair may a PSS tool schedule at the same time on the same region instance?",
-      options: [
-        "Two read_verify_burst actions",
-        "A write_burst and a read_verify_burst",
-        "Two write_burst actions",
-        "No pair: claiming a resource forbids all concurrency"
+      question: "In the Make It Work model, write_a locks a region and read_check_a shares one. Which pair may run at the same time on the same region instance?",
+      objective: 2,
+      answers: [
+        { text: "Two read_check_a actions", correct: true, feedback: "Correct: share is non-exclusive, so sharers may overlap." },
+        { text: "A write_a and a read_check_a", correct: false, feedback: "A lock excludes every other claim, including shares, for the locking action's whole execution." },
+        { text: "Two write_a actions", correct: false, feedback: "Two locks on one instance can never overlap." },
+        { text: "No pair: claiming a resource forbids all concurrency", correct: false, feedback: "share exists precisely to allow concurrent use; and different instances never conflict." }
       ],
-      correctAnswer: 0,
-      explanation: "share is non-exclusive, so several sharers can use one resource instance together. lock is exclusive: while a write_burst holds a region, no other action that claims that same region, by lock or by share, can run. Concurrency is still possible on the other region in the pool of two."
+      explanation: "§14.2.1: locking excludes any other use of the instance while the locking action executes; sharing only guarantees that nobody locks it meanwhile. So two sharers may overlap, and concurrency is always possible on the other region of the pool."
+    },
+    {
+      question: "A colleague writes resource dma_chan_r { } and action copy_a { input dma_chan_r chan; } and the tool rejects the model. What is wrong?",
+      objective: 4,
+      answers: [
+        { text: "Resources may be inputs only after a pool is bound: add bind chan_p *;", correct: false, feedback: "Binding never makes a resource an input; the grammar forbids it." },
+        { text: "input and output accept only buffer, stream or state types; claim the channel with lock dma_chan_r chan;", correct: true, feedback: "Correct (§13.4.1, §14.2)." },
+        { text: "The copy changes the channel, so it must be output dma_chan_r chan;", correct: false, feedback: "output has the same restriction as input: flow objects only." },
+        { text: "Declare dma_chan_r as a state so it can be an input", correct: false, feedback: "A state models a current value (one object per pool), not an instance held for an action's whole execution; you would lose instance_id and pool sizing." }
+      ],
+      explanation: "Data flows between actions as buffers, streams or states; resources are claimed. The flow_object_type in the input/output grammar is buffer, state or stream only, so a resource must use lock or share."
+    },
+    {
+      question: "Your SoC team adopts PSS on top of an existing UVM environment. Which statement is true?",
+      objective: 3,
+      answers: [
+        { text: "The PSS tool replaces the UVM environment: tests become generated C", correct: false, feedback: "The C output is for processor-based platforms. In simulation the UVM environment stays." },
+        { text: "Drivers and monitors are generated from the actions", correct: false, feedback: "No PSS mechanism generates agents. Templates call code you already have." },
+        { text: "The tool generates scenario-level code, such as a virtual sequence whose templates start your existing sequences; agents, scoreboard and coverage stay hand-written", correct: true, feedback: "Correct. The realization layer is yours, written once." },
+        { text: "Every existing UVM sequence must first be rewritten in PSS", correct: false, feedback: "The opposite: SV templates start the existing sequences." }
+      ],
+      explanation: "PSS describes scenarios. Its UVM output is typically a virtual sequence built from exec body SV templates, which start the sequences you already have on the real sequencers. Everything below the scenario layer stays."
+    },
+    {
+      question: "write_a's C template is mem_write32({{out_buf.addr}}, {{out_buf.data}}); and the tool solved addr = 0x1040 and data = 0xBEEF (both bit[32]). What text does the generated C test contain?",
+      objective: 3,
+      answers: [
+        { text: "mem_write32(0x1040, 0xBEEF);", correct: false, feedback: "Mustache does not print hex. A bit field is formatted as unsigned decimal (§22.5.3.2)." },
+        { text: "mem_write32(4160, 48879);", correct: true, feedback: "Correct: the template is pasted verbatim with each reference replaced by the value in decimal." },
+        { text: "mem_write32(out_buf.addr, out_buf.data);", correct: false, feedback: "The references are substituted; PSS field names do not exist in the generated C." },
+        { text: "A call into a runtime library that solves addr and data on the target", correct: false, feedback: "Some flows solve on the target, but the stem says the tool already solved the values, so they are pasted as text." }
+      ],
+      explanation: "Target-template exec blocks are inserted verbatim with embedded expressions replaced by their values (§22.5), and a bit value is printed as unsigned decimal (§22.5.3.2): 0x1040 is 4160 and 0xBEEF is 48879."
+    },
+    {
+      question: "burst_write has rand bit[8] len; constraint len in [1..16]; and dist len in [1 := 10, 4 := 30, 8..16 :/ 60];. Which values can len take?",
+      objective: 1,
+      answers: [
+        { text: "Any value from 1 to 16; unlisted values are just rarer", correct: false, feedback: "That is the soft-hint model. Without a conflicting constraint, values outside the dist list are excluded (§16.1.11)." },
+        { text: "Only 1, 4 and 8 to 16: P(1) = 10%, P(4) = 30%, each of 8 to 16 about 6.7%", correct: true, feedback: "Correct: := gives each value its weight, :/ splits 60 over nine values." },
+        { text: "Uniform over 1 to 16: dist is only a hint that tools may ignore", correct: false, feedback: "The directive is normative: in the absence of conflicting constraints the value must fall in the list." },
+        { text: "The solve fails, because the dist list does not cover 1 to 16", correct: false, feedback: "A dist list need not cover the whole domain; it narrows it." }
+      ],
+      explanation: "§16.1.11: in the absence of conflicting constraints, the value must fall within the dist_list, with probability proportional to its weight. 1 gets 10, 4 gets 30, and 8..16 :/ 60 gives each of the nine values 60/9. Total 100."
+    },
+    {
+      question: "stress_test has constraint default num_iterations == 1000;. Another action declares stress_test s; with constraint s.num_iterations == 5000; and traverses s. The tool reports a contradiction. Why, and what is the fix?",
+      objective: 4,
+      answers: [
+        { text: "5000 should win, as a hard constraint beats a SystemVerilog soft one; it is a tool bug", correct: false, feedback: "PSS defaults are not soft constraints: an active default is an equality, and a disagreeing constraint is a contradiction (§16.1.10 a)." },
+        { text: "The default is an equality until disabled or replaced by another default; write constraint default s.num_iterations == 5000; or add constraint default disable s.num_iterations;", correct: true, feedback: "Correct (§16.1.10 a, b, d). A default from the containing context overrides the inner one." },
+        { text: "1000 wins because it was declared first; the tool should warn, not fail", correct: false, feedback: "Declaration order only matters between defaults in the same type, and later wins." },
+        { text: "num_iterations must not be rand for a default constraint to apply", correct: false, feedback: "The reverse: a default may only be applied to a rand field (§16.1.10 c)." }
+      ],
+      explanation: "A PSS default holds as an equality unless disabled. A plain constraint that disagrees is a contradiction. Override it with a default from the containing context (higher-level context wins) or remove it with default disable."
+    },
+    {
+      question: "Keep pool [1] in the Make It Work model, but replace parallel with schedule. What happens now?",
+      objective: 2,
+      answers: [
+        { text: "Still no legal scenario: schedule is another spelling of parallel", correct: false, feedback: "schedule lets the tool add the orderings the rules need, including fully sequential ones (§12.3.5)." },
+        { text: "A legal scenario: the tool orders the actions so that no write overlaps another claim on region 0, for example w0, r0, w1, r1", correct: true, feedback: "Correct. Each branch keeps its internal order; the lock forces the writes apart." },
+        { text: "Everything runs concurrently and the locks are ignored", correct: false, feedback: "schedule keeps every other scheduling rule, including resource locks." },
+        { text: "Legal only if you also add a bind for the region", correct: false, feedback: "Resources are not bound with an activity bind; the static pool bind already exists." }
+      ],
+      explanation: "§12.3.5: all statements in a schedule block execute, in any order that satisfies the other requirements. The single region forces the two writes (and each write against the reads) apart, which schedule allows and parallel does not."
+    },
+    {
+      question: "Your write_a SV template is three statements without begin … end: a declaration of wr, an assignment, and wr.start(...). The generated sequence does not compile once two actions follow each other. Why?",
+      objective: 4,
+      answers: [
+        { text: "Templates are pasted verbatim, so the second action's declaration of wr lands after statements and redeclares wr in the same scope; wrap each template in begin … end", correct: true, feedback: "Correct (§22.5). Each begin … end block is its own scope, so declarations are legal and names do not clash." },
+        { text: "Mustache values must be written in hex for SystemVerilog", correct: false, feedback: "Decimal literals are legal SystemVerilog; formatting is not the problem." },
+        { text: "SV templates may only call functions, not start sequences", correct: false, feedback: "Templates are arbitrary target code; starting a sequence is the usual content." },
+        { text: "The tool rewrites templates into legal SystemVerilog, so the error must be in the env", correct: false, feedback: "Templates are not checked or rewritten; the tool inserts them as text." }
+      ],
+      explanation: "Because target templates are inserted verbatim into one task body, two unwrapped templates produce a declaration after a statement and a duplicate declaration. Wrapping each template in begin … end gives each its own scope."
+    },
+    {
+      question: "A block-level team has one simulation target, an existing UVM environment and about a dozen scenarios. The lead asks whether to adopt PSS. What is the best answer?",
+      objective: 5,
+      answers: [
+        { text: "Yes: PSS is always better than virtual sequences", correct: false, feedback: "PSS has fixed costs (tool, language, realization layer) that pay off only with several platforms or large scenario spaces." },
+        { text: "Not now: with one platform and few scenarios, virtual sequences do the job at lower cost; revisit if the scenarios must run on emulation or silicon", correct: true, feedback: "Correct: the benefit scales with scenarios × platforms." },
+        { text: "Yes, because PSS tools are free", correct: false, feedback: "The generators are commercial tools; open-source parsers check syntax but do not generate tests." },
+        { text: "No, because PSS cannot generate UVM code", correct: false, feedback: "It can, typically as a virtual sequence built from exec body SV templates." }
+      ],
+      explanation: "Adopt PSS when the scenario layer is the expensive part: many platforms, resource-constrained concurrency, long setup chains. A single-platform block bench gains little and pays the fixed costs."
+    },
+    {
+      question: "A vendor datasheet claims 'IEEE 2851 Portable Stimulus compliance'. What do you conclude, and what do you ask?",
+      objective: 5,
+      answers: [
+        { text: "Fine: IEEE 2851 is the IEEE number of PSS", correct: false, feedback: "IEEE 2851-2023 is a functional-safety data format, not PSS." },
+        { text: "PSS is an Accellera standard with no IEEE number, so the claim is wrong; ask which Accellera PSS version (2.1, 3.0) and which features the tool supports", correct: true, feedback: "Correct. Version support decides whether features such as dist weights (2.1) or behavioral coverage (3.0) exist." },
+        { text: "Fine, as long as it also claims IEEE 2401", correct: false, feedback: "IEEE 2401-2019 is a chip-package-board design format, also unrelated to PSS." },
+        { text: "PSS is an Arm specification, so ask for the Arm issue", correct: false, feedback: "Arm publishes AMBA; PSS is Accellera's." }
+      ],
+      explanation: "PSS is published by Accellera (2.1 in 2023, 3.0 in 2024) and has no IEEE number. A wrong standard name in a datasheet is a reason to ask exactly which PSS version and features the tool implements."
     }
   ]}
 />
 
+### Kata: fix the model
+
+This model has six errors. Find each one, fix it, and name the rule it breaks, before you open the answer.
+
+```pss
+resource chan_r { }
+buffer data_s { rand bit[32] addr; }
+
+component dma_c {
+  pool [1] chan_r chan_p;
+  bind chan_p *;
+  pool data_s data_p;
+  bind data_p *;
+
+  action load_a {
+    output data_s dst;
+    constraint dst.addr inside [0x0..0xFF];
+  }
+
+  action copy_a {
+    input chan_r ch;
+    input data_s src;
+    rand bit[8] n;
+    rand bit[8] burst;
+    constraint soft n == 4;
+    constraint burst dist { 4 := 80, 8 := 20 };
+  }
+
+  action two_copies_a {
+    activity {
+      do load_a as l1;
+      parallel {
+        c1: do copy_a;
+        c2: do copy_a;
+      }
+    }
+  }
+}
+```
+
+<details>
+<summary>Answer: the six fixes</summary>
+
+1. `input chan_r ch;` becomes `lock chan_r ch;`. A resource is claimed, never an input (§13.4.1, §14.2.1).
+2. `do load_a as l1;` becomes `l1: do load_a;`. A traversal is named with a label (§12.3.1); `as` exists only for package import aliases.
+3. `dst.addr inside [0x0..0xFF]` becomes `dst.addr in [0x0..0xFF]`. PSS set membership is `in` (§8.5.9).
+4. `constraint soft n == 4;` becomes `constraint default n == 4;`. PSS 3.0 has no `soft` (§4.4); a `default` on a `rand` field is the nearest equivalent, but a conflicting plain constraint is a contradiction (§16.1.10).
+5. `constraint burst dist { 4 := 80, 8 := 20 };` becomes `constraint dist burst in [4 := 80, 8 := 20];`. The PSS distribution is a directive with square brackets (§16.1.11).
+6. `c1` and `c2` both lock a channel under `parallel` from a pool of one, so there is no legal scenario. Use `pool [2] chan_r chan_p;`, or replace `parallel` with `schedule` if the copies may run one after the other (§12.3.4, §12.3.5, §14.2.1).
+
+Also note what is *not* an error: both copies input `src` without a `bind`, and `l1`'s buffer may feed both, because a buffer may be the input of any number of actions (§13.1.1). Add `bind l1.dst c1.src;` and `bind l1.dst c2.src;` if the copies must use that buffer and nothing the tool infers.
+
+</details>
+
+### Lab: portable intent end to end
+
+Write the read-after-write intent yourself, bind the read to the write, and compare the generated UVM and C targets. The lab's SV template checks the read data itself, the self-checking pattern described above.
+
+<LabLink labId="pss-portable-intent" />
+
+The flashcards for this lesson follow below, under "Reinforce the essentials".
+
 ## References & Next Topics
 
-- **Accellera Portable Test and Stimulus Standard (PSS) 2.1** (approved October 2023) and **3.0** (approved August 2024) — the language specification, published by Accellera.
-- **Accellera PSS Working Group** — [accellera.org/activities/working-groups/portable-stimulus](https://accellera.org/activities/working-groups/portable-stimulus) for the latest specification.
-- **PSSTools `pssparser`** — [github.com/PSSTools/pssparser](https://github.com/PSSTools/pssparser), an open-source parser useful for checking PSS syntax.
-- **Prerequisite:** [I-UVM-3A: Sequence Fundamentals](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) — understand UVM sequences before seeing how PSS generates them.
-- **Prerequisite:** [A-UVM-8: Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) — virtual sequencers are the primary PSS compilation target for multi-agent environments.
-- **Next:** [E-PYUVM-1: Python-Based Verification](/curriculum/T4_Expert/E-PYUVM-1_Python_Based_Verification/index) — Python co-verification with cocotb and pyUVM complements PSS for ML-driven hardware teams.
+**Primary sources**
+- **Accellera Portable Test and Stimulus Standard 3.0** (August 2024), the current release; **2.1** was approved in October 2023. Sections cited (3.0 numbering):
+  - §1.2 language design (the DSL); §4.4 keywords; §7.2.1 integer types; §8.5.9 set membership
+  - §9.4.1 component instance tree and `pss_top`; §10 actions
+  - §12.3.1 action traversal; §12.3.3 sequential block; §12.3.4 `parallel`; §12.3.5 `schedule`; §12.3.6 join specifiers; §12.3.7 `atomic`
+  - §12.4.1 `repeat`; §12.4.4 `select`; §12.9 explicit `bind`; §12.10 hierarchical flow-object binding
+  - §13.1 buffers; §13.2 streams; §13.3 states; §13.4 using flow objects
+  - §14.1 declaring resources; §14.2 claiming resources; §15.1 pools; §15.3 static pool binding
+  - §16.1.10 default value constraints; §16.1.11 distribution directive; §16.4.9 relationship lookahead; §16.4.10 lookahead and sub-actions; §16.4.13 body blocks and external data
+  - §17.1 implicit binding and action inference; Clause 18 data coverage; Clause 19 behavioral coverage
+  - §22.1.2 exec block kinds; §22.4 foreign procedural interface; §22.5 target-template exec blocks (§22.5.1 target language, §22.5.3 mustache references and formatting); §22.6 target-template functions; §22.8 comparison between mapping mechanisms; Annex E (informative) inference
+- **IEEE 1800-2023**: §18.5.3 Distribution; §18.5.13 Soft constraints.
+- **uvm-core 2020.3.1**: `src/macros/uvm_sequence_defines.svh` (`` `uvm_declare_p_sequencer ``); `src/seq/uvm_sequence.svh` (`req`); `src/seq/uvm_sequence_base.svh` (`start()`).
+- **Accellera PSS Working Group**: [accellera.org/activities/working-groups/portable-stimulus](https://accellera.org/activities/working-groups/portable-stimulus), for the specification and the status of 3.1.
+- **PSSTools `pssparser`**: [github.com/PSSTools/pssparser](https://github.com/PSSTools/pssparser), an open-source parser for checking PSS syntax.
+
+**Prerequisites:** [A-UVM-8: Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) and [I-UVM-3B: Virtual Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences). Review: [I-UVM-3A: Sequence Fundamentals](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index).
+
+**Related**
+- [I-UVM-3B: The Virtual Sequencer](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer): `p_sequencer` and the handles the generated sequence uses.
+- [I-UVM-3B: Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration): run-time `lock()` and `grab()`, in contrast with PSS `lock`.
+- [I-SV-2A: Constraint Blocks](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks): SystemVerilog `dist` and `soft`.
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): where checking lives when templates only stimulate.
+- [I-SV-7: DPI and Foreign Language Interfaces](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index): the idea behind imported functions.
+- [E-EMU-1: Emulation-Aware Verification](/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index): one of the platforms PSS targets.
+- [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): where use-case scenarios fit in an SoC plan.
+
+<NextLesson />

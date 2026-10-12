@@ -1,28 +1,104 @@
 ---
 title: "E-CUST-1: UVM Methodology Customization"
-description: "Design project-wide extensions to UVM—custom bases, phases, and governance—to keep large teams aligned without forking the methodology."
+description: "Build a project layer on an unmodified uvm-core (role bases, conventions, config helpers, CI gates) and add a custom run-time phase only when it is justified."
 flashcards: "E-CUST-1_Methodology_Customization"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
-- **What it is:** A blueprint for tailoring UVM to your organisation—custom base classes, phases, and guardrails that scale across projects.
-- **Why it matters:** Enterprise verification breaks down when every team reinvents the environment; a curated methodology keeps stimulus consistent and debuggable.
-- **The Analogy:** Imagine a bespoke software framework: you package utilities, logging, and policy into a base layer so feature teams focus on design-specific checks.
-- **The Standard:** IEEE 1800.2-2020 Clause 9 (Phasing) defines user-defined phases and the scheduling API (`uvm_phase::add` is 9.3.1.6.1). `uvm_component` (13.1) is the base for every component class.
 
-> **Signal:** If every new block duplicates config plumbing or logging conventions, invest in a methodology layer.
+- **What it is:** A **methodology layer** is a thin, versioned package of base classes, helpers, conventions and checks that every block team builds its testbench (TB) on. It sits on top of an **unmodified, pinned** copy of the UVM library: uvm-core 2020.3.1, the Accellera reference implementation of IEEE 1800.2-2020. You customize UVM through the extension points the standard already gives you (base classes, factory overrides, callbacks, configuration objects, the report server, phase callbacks, default sequences). A **custom phase**, a new step added to UVM's phase schedule, is a rare, last-resort part of the layer.
+- **Why it matters:** Without a layer, each block team reinvents configuration plumbing, log formats and pass/fail rules, and an SoC team inherits ten incompatible benches. With a **fork** of uvm-core (a copy whose sources your team edits), you can no longer upgrade, share verification IP (VIP) built against the stock library, or file a bug report anyone else can reproduce. The layer gives you the consistency without the fork.
+- **The Analogy:** A company style guide plus a shared helper library on top of a language's standard library. You add helpers and rules; you never edit the standard library itself. *Where it breaks:* some UVM customizations are not opt-in helpers. A custom phase, a new phase domain or a replaced report server changes behaviour for **every** component in the simulation, including VIP that has never heard of your project, which is closer to patching the language runtime than adding a library. That is why those three need the strongest justification.
+
+**You will be able to:**
+1. **Design** a project base layer (role bases for drivers and monitors, an item base, a sequence base, a base test, a configuration helper and reporting conventions) on an unmodified uvm-core, and **justify** each addition.
+2. **Choose** the UVM extension point (factory override, callback, configuration object, report server or catcher, phase callback, default sequence) that meets a team requirement without forking uvm-core.
+3. **Implement** a custom run-time phase (a `uvm_task_phase` with `exec_task`, inserted with `uvm_phase::add`), **predict** where and when it runs, and **explain** why most teams avoid custom phases.
+4. **Define** governance: coding guidelines, lint rules, an honest CI gate, and a pinned uvm-core version.
+5. **Diagnose** methodology drift (phase misordering, bypassed bases, version drift) from phase traces, factory and topology prints, and lint output.
+
+<BeforeYouStart />
+
+Recommended as well: [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) (the report server and the pass/fail rule this lesson turns into a CI gate), [I-UVM-2C: Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) (the configuration database), and the previous module, [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index).
 
 ## Build Your Mental Model
 
-### Custom Base Classes
+**How to read this lesson.** The core path is four sections: customize without forking, the project base layer, custom phases (with the visualizer), and when not to add a custom phase. Practitioner depth follows: where a new phase lands in the schedule, governance and CI gates, and diagnosing methodology drift. Make It Work builds a complete custom-phase test you can run and break, and Push Further holds the expert corner cases.
 
-Wrap standard UVM components with project behaviour—configuration handles, logging, metrics—so every derived component inherits the same posture.
+Words this page uses, in one line each (each links to where it is taught in full):
+
+- A **component** is an object of a class derived from `uvm_component`; components form a tree that lives for the whole run ([I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index)).
+- A **phase** is one named step of a UVM run, such as `build_phase` or `run_phase`, that UVM calls on every component. The twelve **run-time phases** (`pre_reset_phase` … `post_shutdown_phase`) are tasks that run one after another *beside* `run_phase`. An **objection** is a component's "not finished yet" flag: a task phase ends when every objection to it has been dropped ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+- A **schedule** is a graph of phase nodes that says which phase follows which. A **domain** is a group of components that move through one schedule together. Every component starts in the `uvm` domain, whose schedule (`uvm_sched` in uvm-core) holds the twelve run-time phases; the separate `common` domain holds `build` … `final`.
+- The **factory** creates objects by type so a test can swap in a derived type, an **override** ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)). A **callback** is a hook object that a component calls at a point its author chose ([A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index)). The **configuration database** (`uvm_config_db`) passes settings down the tree by path ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
+- **Forking a library** means copying its sources into your project and editing them. It has nothing to do with the SystemVerilog `fork` statement, which this page also uses.
+
+### Customize without forking
+
+A methodology layer answers one question for a team: "where does project-specific behaviour live?" The answer must never be "inside uvm-core". UVM was designed to be extended from the outside, and IEEE 1800.2-2020 standardizes each extension point. Pick the point by the requirement, not by habit:
+
+| Team requirement | Extension point (no fork) | Standard | Taught in |
+|---|---|---|---|
+| Every block driver gets the project config and the same hooks | A role base class: `proj_driver #(REQ) extends uvm_driver #(REQ)` | §13.7; IEEE 1800-2023 §8.13 | this lesson |
+| One test swaps a component or item type | Factory type or instance override | §8.3.1.4.1–8.3.1.4.2 | [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index) |
+| Add behaviour at a point a VIP author exposed (error injection, coverage) | Callbacks | §10.7 | [A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index) |
+| Per-test knobs read by many components | A configuration object through the configuration database | Annex C.4 | [I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) |
+| One log-line format for the whole project | Extend `uvm_default_report_server`, override `compose_report_message`, install with `uvm_report_server::set_server` | §6.5.2, §6.5.1.2.15, §6.5.1.2.19 | [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) and below |
+| Demote or promote one known message | A report catcher | §6.6 | [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) |
+| Run project code when any phase starts or ends | `phase_started` / `phase_ended` in the base class | §13.1.4.3.1, §13.1.4.3.3 | this lesson |
+| Start a sequence automatically in a phase | A default sequence | §15.3.5, Annex G.2.9 | [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) |
+| Change how objects print, compare or copy | Policy classes (`uvm_printer`, `uvm_comparer`, `uvm_copier`) | §16.2, §16.3, §16.6 | [I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) |
+| A step that no existing phase or sequence can express | A custom phase (rare) | §9.3.1.1.1, §9.3.1.6.1, §9.6 | this lesson |
+
+Every row is a way to *add* code that UVM calls. None of them edits uvm-core. Before you read on, look at the diagram and find where each row of the table plugs in.
+
+<ArchitectureDiagram
+  title="Where team customizations live"
+  caption="Read it bottom up. uvm-core 2020.3.1 is pinned and never edited. proj_pkg extends it through standard extension points (role base classes, a report server installed with set_server, callbacks registered with add). Block environments and VIP extend proj_pkg's bases, and tests choose types with factory overrides and set knobs through the configuration database. The node on the right, an edited copy of uvm-core, is the fork this lesson rules out: nothing should point to it."
+  cellWidth={150}
+  cellHeight={70}
+  gapX={60}
+  gapY={56}
+  nodes={[
+    { id: "tests", label: "tests", sublabel: "proj_base_test → soc_test", kind: "test", col: 0, row: 0, colSpan: 2 },
+    { id: "blocks", label: "block envs and VIP", sublabel: "apb_driver, apb_monitor, soc_env", kind: "env", col: 0, row: 1, colSpan: 2 },
+    { id: "proj", label: "proj_pkg (methodology layer)", sublabel: "role bases, proj_config, report server, callbacks", kind: "generic", col: 0, row: 2, colSpan: 2 },
+    { id: "uvm", label: "uvm-core 2020.3.1", sublabel: "pinned, unmodified", kind: "generic", col: 0, row: 3, colSpan: 2, state: "ok" },
+    { id: "fork", label: "edited copy of uvm-core", sublabel: "a fork: no upgrades, VIP mismatch", kind: "generic", col: 2, row: 3, state: "error", badge: "never" }
+  ]}
+  edges={[
+    { from: "tests", to: "blocks", style: "control", label: "factory overrides, config_db" },
+    { from: "blocks", to: "proj", style: "structural", label: "extends" },
+    { from: "proj", to: "uvm", style: "structural", label: "extends, set_server, add callbacks" }
+  ]}
+/>
+
+**Misconception: "forking uvm-core is acceptable for team conventions."** It looks cheap: one edited line in `uvm_report_server.svh` and every log has your format. The bill comes later:
+
+- **No clean upgrade.** Every uvm-core release must be re-merged by hand, so teams stop upgrading, and bug fixes never arrive.
+- **VIP mismatch.** Commercial and in-house VIP is compiled and qualified against stock uvm-core. Behaviour it relies on may no longer hold in your copy.
+- **Unreproducible bugs.** A bug report against "uvm-core plus our patches" cannot be reproduced by the tool vendor, the VIP vendor or Accellera.
+- **Hidden behaviour.** New engineers read the standard and the public source and get a different answer from your simulation.
+
+If you find a real bug in uvm-core, report it upstream and work around it in your layer (for example with a derived class and a factory override) until the fix ships.
+
+### The project base layer
+
+A **base layer** is the set of classes your block teams extend instead of the raw UVM classes. Each class earns its place by removing a decision that every team would otherwise make differently. SystemVerilog has **single inheritance**: "each class is derived from a single base class" (IEEE 1800-2023 §8.13). So the layer is a set of **per-role** bases, one beside each UVM role class, not one project root above everything. A class derived from a `proj_component extends uvm_component` root could never also be a `uvm_driver`, and would lose the driver's `seq_item_port` (§13.7.2.1).
 
 ```systemverilog
+// snippet: proj_pkg, the project layer (inside a package that imports uvm_pkg)
 class proj_config extends uvm_object;
   `uvm_object_utils(proj_config)
-  bit enable_scoreboard_hooks;
-  bit enable_coverage_sampling;
+  bit    enable_coverage = 1;
+  bit    enable_security_checks;
   string firmware_image;
 
   function new(string name = "proj_config");
@@ -30,18 +106,18 @@ class proj_config extends uvm_object;
   endfunction
 endclass
 
-// One way to fetch the project config. A helper, not a common component base:
-// a single uvm_component root cannot also be a uvm_driver (no seq_item_port).
+// One lookup for every component: one key, one failure message that names the culprit.
 class proj_cfg_util;
   static function proj_config get(uvm_component c);
     proj_config cfg;
-    if (!uvm_config_db#(proj_config)::get(c, "", "proj_cfg", cfg))
-      `uvm_fatal("NO_CFG", {"Project config missing for ", c.get_full_name(), ": set it in the base test"})
+    if (!uvm_config_db #(proj_config)::get(c, "", "proj_cfg", cfg))
+      `uvm_fatal("PROJ/NO_CFG", {"proj_config missing for ", c.get_full_name(),
+                                 ": set it in proj_base_test"})
     return cfg;
   endfunction
 endclass
 
-// Per-role bases keep the UVM role class and add project policy.
+// Drivers: keep uvm_driver (and its seq_item_port), add the config and a policy hook.
 class proj_driver #(type REQ = uvm_sequence_item) extends uvm_driver #(REQ);
   `uvm_component_param_utils(proj_driver #(REQ))
   proj_config cfg;
@@ -55,16 +131,19 @@ class proj_driver #(type REQ = uvm_sequence_item) extends uvm_driver #(REQ);
     cfg = proj_cfg_util::get(this);
   endfunction
 
-  // Called for every project driver; block teams override it instead of editing the base.
-  virtual function void post_configure();
+  // Block teams override this hook instead of editing the base.
+  virtual function void apply_project_policy();
   endfunction
 
   function void end_of_elaboration_phase(uvm_phase phase);
     super.end_of_elaboration_phase(phase);
-    post_configure();
+    `uvm_info("PROJ/BASE", {"proj_driver base active in ", get_full_name()}, UVM_HIGH)
+    apply_project_policy();
   endfunction
 endclass
 
+// Monitors: keep the uvm_monitor type (§13.5) and declare the analysis port here,
+// because uvm_monitor itself declares no port.
 class proj_monitor #(type T = uvm_sequence_item) extends uvm_monitor;
   `uvm_component_param_utils(proj_monitor #(T))
   proj_config cfg;
@@ -80,25 +159,176 @@ class proj_monitor #(type T = uvm_sequence_item) extends uvm_monitor;
     cfg = proj_cfg_util::get(this);
   endfunction
 endclass
+
+// Items: one error-injection flag and one log format for every protocol.
+class proj_item extends uvm_sequence_item;
+  `uvm_object_utils(proj_item)
+  bit inject_error;   // set by error tests, read by drivers and scoreboards
+
+  function new(string name = "proj_item");
+    super.new(name);
+  endfunction
+
+  // Convention: block items override convert2string() with their fields;
+  // the base adds the common prefix so every log line parses the same way.
+  function string to_log();
+    return $sformatf("[%s%s] %s", get_type_name(), inject_error ? " ERR" : "",
+                     convert2string());
+  endfunction
+endclass
+
+// Sequences: a typed handle to the project config without each sequence looking it up.
+class proj_base_seq #(type REQ = proj_item) extends uvm_sequence #(REQ);
+  `uvm_object_param_utils(proj_base_seq #(REQ))
+  proj_config cfg;
+
+  function new(string name = "proj_base_seq");
+    super.new(name);
+  endfunction
+
+  virtual task pre_start();
+    if (cfg == null && get_sequencer() != null)
+      cfg = proj_cfg_util::get(get_sequencer());
+  endtask
+endclass
+
+// Tests: version pin, timeout, config object and report conventions, written once.
+class proj_base_test extends uvm_test;
+  `uvm_component_utils(proj_base_test)
+  localparam string PINNED_UVM = "Accellera:1800.2:UVM:2020.3.1";
+  proj_config cfg;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (UVM_VERSION_STRING != PINNED_UVM)
+      `uvm_fatal("PROJ/UVM_VERSION", {"compiled against ", UVM_VERSION_STRING,
+                                      "; proj_pkg is pinned to ", PINNED_UVM})
+    uvm_root::get().set_timeout(10ms);   // a hang ends as a UVM_FATAL, not a killed job
+    cfg = proj_config::type_id::create("cfg");
+    set_knobs(cfg);
+    uvm_config_db #(proj_config)::set(this, "*", "proj_cfg", cfg);
+  endfunction
+
+  // Derived tests override this instead of rewriting build_phase.
+  virtual function void set_knobs(proj_config cfg);
+  endfunction
+endclass
 ```
 
-**What this buys you:**
-- `proj_config` centralizes project toggles in one object that the base test sets.
-- `proj_cfg_util::get` gives every component the same lookup, with a fatal that names the component when the base test forgot the config.
-- Per-role bases (`proj_driver`, `proj_monitor`) keep the UVM role classes, so `seq_item_port` and analysis ports still exist, while adding project policy. `post_configure()` is called from `end_of_elaboration_phase`, so a block team only overrides it.
-- Why not one `proj_component` base for everything: a class derived from `uvm_component` cannot also be a `uvm_driver` or `uvm_monitor`. Share behaviour through helpers, per-role bases, or callbacks instead.
+Before you read the justification table, cover it and say, for each class, which decision it takes away from a block team.
 
-### Custom Phases & Schedules
+| Addition | What it removes from every block team | Why it is shaped this way |
+|---|---|---|
+| `proj_config` | Inventing knob names and where they live | One object, set once by the base test, read by everyone |
+| `proj_cfg_util::get` | Twenty slightly different `uvm_config_db::get` calls with silent failures | One key and a fatal that names the component whose lookup failed |
+| `proj_driver #(REQ)` | Re-fetching config and forgetting project hooks | Keeps `uvm_driver` so `seq_item_port` still exists; the hook runs from `end_of_elaboration_phase` |
+| `proj_monitor #(T)` | Choosing the analysis port's name and type | Keeps the `uvm_monitor` type, which lets tools and code tell monitors apart (§13.5); the port is declared here because `uvm_monitor` has none |
+| `proj_item` | Ad-hoc error flags and log formats per protocol | Scoreboards and log parsers see the same prefix everywhere |
+| `proj_base_seq #(REQ)` | Each sequence finding its own config | Uses `get_sequencer()` (a component) as the lookup context |
+| `proj_base_test` | Forgetting the timeout, the version check or the config | Each rule is written once and inherited; `set_knobs` is the only thing a test writes |
 
-Insert bespoke phases to coordinate activities (firmware load, security attestation, traffic ramp-up) without shoehorning code into `run_phase`. A custom task phase needs three things: a singleton phase class, an `exec_task` that calls your component, and an `add()` on the container that holds its anchor.
+**Reporting conventions** belong in the layer too, written as rules rather than code ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) teaches the mechanisms):
+
+- **ID taxonomy:** `<BLOCK>/<TOPIC>`, for example `APB/PROTOCOL` or `PROJ/NO_CFG`, so one `+uvm_set_action` or catcher can target a whole family.
+- **Verbosity policy:** nothing per-transaction at `UVM_LOW` or below; regressions run at `UVM_LOW`; debug reruns raise one component and one ID.
+- **One line format:** if the project needs extra fields in every line, change the format once in a project report server, never by editing uvm-core:
 
 ```systemverilog
-typedef class soc_env;
+// snippet: proj_pkg, one log-line format for the whole project
+class proj_report_server extends uvm_default_report_server;
+  string test_name = "unknown";
+
+  function new(string name = "proj_report_server");
+    super.new(name);
+  endfunction
+
+  // Append, never prepend: regression parsers anchor on the leading severity.
+  virtual function string compose_report_message(uvm_report_message report_message,
+                                                 string report_object_name = "");
+    return {super.compose_report_message(report_message, report_object_name),
+            " [test=", test_name, "]"};
+  endfunction
+endclass
+
+// In proj_base_test::build_phase, once per run:
+//   proj_report_server srv = new();
+//   srv.test_name = get_type_name();
+//   uvm_report_server::set_server(srv);   // copies the existing counts (§6.5.1.2.19)
+```
+
+`uvm_report_server` itself is a virtual class whose methods are pure virtual (§6.5.1.1, §6.5.1.2.15), so you extend `uvm_default_report_server`, which "provides a full implementation" (§6.5.2), and override only what you change.
+
+**Pitfalls in base classes**, each with why it bites:
+
+- **A forgotten `super.<phase>()`.** If a block driver overrides `end_of_elaboration_phase` without calling `super.end_of_elaboration_phase(phase)`, the base's `apply_project_policy()` call never runs, silently. Make it a lint rule (Governance, below).
+- **A hook named like a phase.** A method called `post_configure()` in a component is easily confused with the run-time phase `post_configure_phase` (§9.8.2.6). Name hooks by intent: `apply_project_policy`.
+- **Parameterized bases have no factory name.** Classes registered with `` `uvm_component_param_utils `` or `` `uvm_object_param_utils `` are registered without a type name, so name-based lookup (`create_component_by_name`, or `+uvm_set_type_override`, Annex G.2.7) cannot find them; use type-based overrides (uvm-core `uvm_object_defines.svh`, the comment above the B.2.1.3 macros).
+- **Abstract bases.** A `virtual class` base with `pure virtual` hooks must use `` `uvm_component_abstract_param_utils `` (B.2.1.3), because the factory cannot construct a virtual class. The kata at the end of this page uses one.
+- **Bases that hide cost.** A base whose `run_phase` calls `uvm_config_db::get` per transaction, or formats messages that are then filtered, multiplies that cost by every block in the SoC. Look up configuration in `build_phase`; [E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index) measures the rest.
+
+The class hierarchy below matches the code above. Each block class extends one project base, which extends one UVM role class.
+
+<ArchitectureDiagram
+  title="The project base layer: one base per UVM role"
+  caption="Columns, left to right: the UVM role class, the project base from proj_pkg, and a block team's class. Arrows point from a class to the class it extends. There is no single project root, because a class can extend only one base (IEEE 1800-2023 §8.13). The block classes on the right are examples. The kata at the end of this page writes apb_driver on top of one more project layer, proj_reset_driver, which itself extends proj_driver."
+  cellWidth={150}
+  cellHeight={56}
+  gapX={56}
+  gapY={28}
+  legend={false}
+  nodes={[
+    { id: "u_drv", label: "uvm_driver #(REQ)", kind: "driver", col: 0, row: 0 },
+    { id: "p_drv", label: "proj_driver #(REQ)", sublabel: "cfg, apply_project_policy", kind: "driver", col: 1, row: 0 },
+    { id: "b_drv", label: "apb_driver", sublabel: "block team", kind: "driver", col: 2, row: 0 },
+    { id: "u_mon", label: "uvm_monitor", kind: "monitor", col: 0, row: 1 },
+    { id: "p_mon", label: "proj_monitor #(T)", sublabel: "cfg, ap", kind: "monitor", col: 1, row: 1 },
+    { id: "b_mon", label: "apb_monitor", sublabel: "block team", kind: "monitor", col: 2, row: 1 },
+    { id: "u_item", label: "uvm_sequence_item", kind: "generic", col: 0, row: 2 },
+    { id: "p_item", label: "proj_item", sublabel: "inject_error, to_log", kind: "generic", col: 1, row: 2 },
+    { id: "b_item", label: "apb_item", sublabel: "block team", kind: "generic", col: 2, row: 2 },
+    { id: "u_seq", label: "uvm_sequence #(REQ)", kind: "sequence", col: 0, row: 3 },
+    { id: "p_seq", label: "proj_base_seq #(REQ)", sublabel: "cfg in pre_start", kind: "sequence", col: 1, row: 3 },
+    { id: "b_seq", label: "apb_write_seq", sublabel: "block team", kind: "sequence", col: 2, row: 3 },
+    { id: "u_test", label: "uvm_test", kind: "test", col: 0, row: 4 },
+    { id: "p_test", label: "proj_base_test", sublabel: "version pin, timeout, set_knobs", kind: "test", col: 1, row: 4 },
+    { id: "b_test", label: "apb_smoke_test", sublabel: "block team", kind: "test", col: 2, row: 4 }
+  ]}
+  edges={[
+    { from: "p_drv", to: "u_drv", style: "structural", label: "extends" },
+    { from: "b_drv", to: "p_drv", style: "structural", label: "extends" },
+    { from: "p_mon", to: "u_mon", style: "structural" },
+    { from: "b_mon", to: "p_mon", style: "structural" },
+    { from: "p_item", to: "u_item", style: "structural" },
+    { from: "b_item", to: "p_item", style: "structural" },
+    { from: "p_seq", to: "u_seq", style: "structural" },
+    { from: "b_seq", to: "p_seq", style: "structural" },
+    { from: "p_test", to: "u_test", style: "structural" },
+    { from: "b_test", to: "p_test", style: "structural" }
+  ]}
+/>
+
+**Where it lives in a real TB.** `proj_pkg` is compiled once per project, after `uvm_pkg` and before any block package, and every block package imports it. **When not to add a base:** if a behaviour is optional per test (error injection, extra coverage), a callback or an override is better than a base-class method that every component carries.
+
+### Custom phases: the mechanism
+
+The standard explicitly allows new phases: "Users and implementations may add run-time phases before or after any of these specified phases" (IEEE 1800.2-2020 §9.8.2). §9.3.1.1.1 gives the recipe. A custom **task phase** (one that may consume simulation time) needs exactly three parts:
+
+1. **A phase class, instantiated once.** Extend `uvm_task_phase` (§9.6) and provide a static `get()` that always returns the same object. The standard calls this object the phase **IMP** (implementation): "instantiated once as a singleton IMP … and one or more times as nodes in a graph" (§9.2.1). Give it a `protected` constructor, as uvm-core does for every built-in phase, so nobody can create a second one.
+2. **An `exec_task` override.** For every component in the phase's domain, UVM forks one call to `exec_task(comp, phase)` (§9.6, §9.3.1.5.2). That proxy is the only path by which your component's *task* code runs in the new phase, and the inherited `exec_task` is empty. Your override casts `comp` to the class that has the method and calls it.
+3. **One `add()` call on the container that holds the anchor.** `uvm_phase::add(phase, with_phase, after_phase, before_phase, …)` (§9.3.1.6.1) creates a new **schedule node** that refers to the IMP and links it into the graph. The anchors "shall already exist in the schedule or domain" you call `add()` on.
+
+```systemverilog
+// snippet: the three parts (the complete, compilable file is in Make It Work)
+typedef class soc_env;   // forward declaration: exec_task only needs a handle type
 
 class load_fw_phase_c extends uvm_task_phase;
   local static load_fw_phase_c m_inst;
 
-  function new(string name = "load_fw");
+  protected function new(string name = "load_fw");   // 1. only get() constructs it
     super.new(name);
   endfunction
 
@@ -107,16 +337,711 @@ class load_fw_phase_c extends uvm_task_phase;
     return m_inst;
   endfunction
 
-  // Forked once per component in the domain
+  // 2. Forked once per component in the domain; only soc_env has work to do.
   virtual task exec_task(uvm_component comp, uvm_phase phase);
     soc_env env;
     if ($cast(env, comp)) env.load_fw_phase(phase);
   endtask
 endclass
 
-class base_test extends uvm_test;
-  `uvm_component_utils(base_test)
-  soc_env env;
+// 3. In the test's build_phase, before any run-time phase starts.
+//    get_uvm_schedule() is uvm-core impl. (not in IEEE 1800.2-2020; see Push Further).
+uvm_domain::get_uvm_schedule().add(load_fw_phase_c::get(),
+                                   .after_phase(uvm_reset_phase::get()));
+```
+
+**IMP versus node.** `get()` always returns the same IMP, but every `add()` builds a *new* node that points to it (uvm-core `uvm_phase.svh`, `add()`). Two `add()` calls therefore put two `load_fw` nodes in the schedule, and the phase runs twice. Register once, from one place. A static "already added" bit in the test is the usual guard; the danger is an `add()` placed in a class that has several instances (an env or an agent), or reached from two code paths. (A second *test* is not the danger: one simulation runs one test.)
+
+**Classic mistake: no `exec_task`.** The class compiles, `add()` succeeds, the phase starts and ends at once, and nothing in `soc_env` runs. UVM never calls a component method because its *name* matches the phase (`load_fw_phase`); only your `exec_task` makes that call. The built-in phases work the same way: `uvm_main_phase` has an `exec_task` that calls `comp.main_phase(phase)`.
+
+**Why `typedef class soc_env;` is enough here, but not everywhere.** A forward typedef (IEEE 1800-2023 §8.27) lets `exec_task` declare a handle, `$cast` to it and call a method through it before `soc_env` is defined. It does not let other code use `soc_env::type_id` before the definition: selecting a type with `::` through an incomplete forward type is illegal (§6.18, whose own example is `C::T x; // illegal`). So define `soc_env` before any class that calls `soc_env::type_id::create`, as Make It Work does.
+
+The sequence diagram shows what happens when the new node runs, using the names from the code above.
+
+<SequenceDiagram
+  title="One run of the load_fw node"
+  caption="When reset ends, the load_fw node starts. It calls phase_started on every component in the uvm domain, then load_fw_phase_c::execute forks one exec_task per component. Only soc_env passes the $cast, so only it raises and drops an objection. When the count reaches 0, the node calls phase_ready_to_end and phase_ended, and post_reset starts. Remove exec_task and steps 3 to 6 disappear: nobody objects and the node ends in the same time slot it started."
+  participants={[
+    { id: "node", label: "load_fw node", sublabel: "in uvm_sched", kind: "generic" },
+    { id: "imp", label: "load_fw_phase_c", sublabel: "the IMP", kind: "generic" },
+    { id: "env", label: "soc_env", kind: "env" },
+    { id: "obj", label: "phase objection", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "reset_phase ends (50 ns in Make It Work)" },
+    { from: "node", to: "env", label: "phase_started(phase)" },
+    { from: "node", to: "imp", label: "execute(comp, phase): fork per component" },
+    { kind: "self", from: "imp", label: "exec_task(comp, phase): $cast(env, comp)" },
+    { from: "imp", to: "env", label: "env.load_fw_phase(phase)" },
+    { from: "env", to: "obj", label: "phase.raise_objection(this)" },
+    { kind: "divider", label: "#20ns: firmware load" },
+    { from: "env", to: "obj", label: "phase.drop_objection(this)" },
+    { kind: "note", from: "obj", label: "count is 0: the node may end" },
+    { from: "node", to: "env", label: "phase_ready_to_end(phase)" },
+    { from: "node", to: "env", label: "phase_ended(phase)" },
+    { kind: "divider", label: "post_reset_phase starts (70 ns)" }
+  ]}
+/>
+
+`phase_started`, `phase_ready_to_end` and `phase_ended` (§13.1.4.3.1–13.1.4.3.3) are called for custom phases exactly as for built-in ones (§9.6.2.2), and a sequencer also starts any default sequence registered for the phase (§15.3.5). They are functions, though, so `exec_task` remains the only way to run *time-consuming* component code in the phase.
+
+### Explore the phase schedule
+
+The model below implements `uvm_phase::add()` from uvm-core 2020.3.1. Choose the container ("Add to"), the position, and whether the class has an `exec_task`, then read the generated code.
+
+**Predict first.** For each of these six settings, write down one of the four outcomes the visual offers (it fails with `PH_BAD_ADD`; it runs in its own slot; it runs in a parallel branch; it runs but calls nothing), and whether `soc_env` is called:
+
+1. `get_common_domain()` with `.after_phase(reset)`.
+2. `get_uvm_schedule()` with `.after_phase(reset)`.
+3. `get_uvm_schedule()` with `.after_phase(reset), .before_phase(configure)`.
+4. `get_uvm_schedule()` with `.with_phase(main)`.
+5. Setting 2 with the `exec_task` override removed.
+6. `get_common_domain()` with `.after_phase(extract)`, and then `get_uvm_schedule()` with the same position.
+
+<MethodologyPhaseVisualizer />
+
+**What the model showed, and why:**
+
+1. **`PH_BAD_ADD` during `build_phase`.** `add()` looks up its anchor with `find(..., stay_in_scope = 1)`, which searches only "this phase's schedule and domain" (§9.3.1.4.4). The common domain holds `build` … `final`; `reset` lives in the `uvm` domain's schedule, so it is not found: `UVM_FATAL [PH_BAD_ADD] cannot find after_phase 'reset' within node 'common'`.
+2. **Its own slot, in series:** `reset → load_fw → post_reset`. With only `after_phase`, `add()` moves `reset`'s successors to the new node, so `post_reset` now waits for `load_fw`.
+3. **A parallel branch.** `reset` and `configure` are not neighbours (`post_reset` and `pre_configure` lie between them), so `add()` creates a branch from `reset` to `configure` beside the existing phases. `post_reset` starts when `reset` ends, at the same time as `load_fw`, and `configure` waits for both paths.
+4. **A parallel branch beside `main`,** sharing `main`'s predecessor and successor. `post_main` cannot start until `load_fw` ends too.
+5. **It runs, but calls nothing.** The phase starts, nobody raises an objection, it ends at once, and `soc_env.load_fw_phase` never runs. In a real log the only evidence is a phase-trace line saying the phase was skipped (Diagnosing drift, below).
+6. **Legal on the common domain, fatal on the uvm schedule.** `extract` lives in the common domain, so the second form fails with `PH_BAD_ADD`. The first form runs, but in a dangerous place: after `run_phase` ended, its threads were killed (drivers and monitors stopped), `extract_phase` has already collected results, and uvm-core's timeout watchdog guards only `run_phase` (F.7.3.3 applies the timeout "in uvm_run_phase"), so a hang there is never timed out.
+
+The visual assumes every component is in the default `uvm` domain and does not model jumps or user-defined domains; Push Further covers both.
+
+### Where a new phase lands
+
+`add()` takes at most one *predecessor* argument (`with_phase`, `after_phase` or `start_with_phase`) and at most one *successor* argument (`with_phase`, `before_phase` or `end_with_phase`) (§9.3.1.6.1). The rules you need in practice, all derived from uvm-core's `add()`:
+
+| Call | Result | Who waits for whom |
+|---|---|---|
+| `.after_phase(A)` | Series: `A → new → (A's old successors)` | Everything after `A` now waits for `new` |
+| `.before_phase(B)` | Series: `(B's old predecessors) → new → B` | `B` waits for `new` |
+| `.after_phase(A), .before_phase(B)` with `A`, `B` neighbours | Series between them | as above |
+| `.after_phase(A), .before_phase(B)` with phases between them | Parallel branch from `A` to `B` | `B` waits for both paths |
+| `.with_phase(C)` | Parallel with `C`, same predecessors and successors | `C`'s successors wait for both |
+| no anchor | Appended at the end of the container | the container's end waits for it |
+
+uvm-core also refuses an after/before pair in the wrong order (`PH_BAD_ADD … is not before phase …`) and two predecessor arguments at once.
+
+**Edit the schedule in `build_phase`.** The run-time phases start after `start_of_simulation_phase` (§9.8.2), so a schedule edited during `build_phase` is complete before any of them begins. Registering from the test's `build_phase` (or a static function it calls) also gives one obvious owner.
+
+**Time can pass in a phase nobody objects to.** "If two (or more) phases … share a common successor … phase advancement is delayed until all predecessors of the common successor are ready" (§9.6). In setting 3 above, `pre_configure` has nothing to do, yet it cannot finish into `configure` until `load_fw` has ended, so it stays open for 20 ns with no objection. This is the same rule that keeps `run_phase` open until `post_shutdown_phase` ends.
+
+**A task phase must not share a successor with a function phase.** §9.6: "A task phase shall not share a successor with a topdown_phase or bottomup_phase, as that setup could try to make the topdown_phase or bottomup_phase consume time." For example, `get_common_domain().add(my_task_phase_c::get(), .with_phase(uvm_extract_phase::get()))` makes a time-consuming phase run beside the zero-time `extract` and share its successor `check`. uvm-core's `add()` does not check for this, so nothing warns you; treat it as a review rule.
+
+### When not to add a custom phase
+
+**Misconception: "custom phases are the standard way to add reset or configuration steps."** They are legal and standardized, but most teams avoid them, for concrete reasons:
+
+- **Global reach.** The new node runs for every component in its domain, and forks one `exec_task` per component (§9.6), including third-party VIP that has no code for it.
+- **Ownership.** The schedule is shared, global state. Two block teams that each add "their" phase interact in ways neither designed.
+- **Jumps re-run it.** A phase jump back to `reset` (§9.3.1.9.1) re-runs every phase after it, including your custom one, so its work must be safe to repeat.
+- **Portability.** The usual insertion calls (`get_uvm_schedule()`, `get_common_domain()`) are uvm-core implementation, not IEEE 1800.2-2020 API.
+- **Separate domains do not see it.** A VIP placed in its own domain gets a fresh copy of the run-time schedule without your phase (Push Further).
+- **The existing phases already exist for this.** Twelve run-time phases leave room for almost any ordering need.
+
+Choose the mechanism by the requirement:
+
+| Requirement | Preferred mechanism | Why |
+|---|---|---|
+| Wait for PLL lock after reset | `post_reset_phase` in the env, or the first step of the top virtual sequence | An existing phase with exactly this meaning |
+| Load firmware before registers are programmed | `pre_configure_phase` or `configure_phase` work, or a step of the top virtual sequence | Same ordering, no new node |
+| Several components must reach a checkpoint together | `uvm_event` or `uvm_barrier` ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)) | Synchronizes exactly the components involved |
+| Per-test ordering of stimulus | The top virtual sequence ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index)) | Tests own stimulus, not the schedule |
+| A VIP needs its own reset and configure cadence | A separate domain (Push Further) | Isolates the VIP instead of changing everyone's schedule |
+| A project-wide step that every component must take part in, which no existing phase names, and that a sequence cannot express | A custom phase, owned by the methodology team, added once by `proj_base_test` | The rare case the mechanism exists for |
+
+Reset strategy in depth (reset-aware drivers, mid-test reset) is a planned T3 module; this lesson only needs the decision above.
+
+### Governance: guidelines, lint, CI gates, pinned versions
+
+**Governance** is how the layer stays the layer: written rules, automatic checks that enforce them, and a release process for `proj_pkg`. Four parts:
+
+1. **Coding guidelines.** A short document with the rules from this page: extend the project bases, register with the `` `uvm_*_utils `` macros, look up configuration in `build_phase`, objections only in tests or top sequences, report only through the UVM macros with `<BLOCK>/<TOPIC>` IDs, custom phases only from the methodology team.
+2. **Lint rules.** Text checks that run on every merge request. Make each one precise, or teams learn to ignore it:
+
+   | Rule | What it catches | Scope |
+   |---|---|---|
+   | `extends uvm_driver` or `extends uvm_monitor` outside `proj_pkg` | A bypassed base | Block code only: `proj_pkg` itself, scoreboards (`uvm_scoreboard`) and helpers (`uvm_component`) legitimately extend UVM classes |
+   | An override of `*_phase` with no `super.` call in its body | A base hook that never runs | All components |
+   | `uvm_config_db` `get` inside `run_phase` or a task it calls | Per-transaction lookups | All components |
+   | `raise_objection` in a driver or monitor | Objections owned by the wrong component | Drivers, monitors |
+   | `$display`, `$error` in UVM classes | Messages the report server never counts | All UVM code |
+   | `uvm_domain::get_uvm_schedule().add` or `get_common_domain().add` outside `proj_pkg` | Unowned custom phases | All code |
+
+3. **An honest CI gate.** A run passes only if **all** of these hold, each for a reason ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) and [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) show the failures each one catches):
+   - the `--- UVM Report Summary ---` block is present (a missing summary means a crash, a kill or a `$fatal`);
+   - `UVM_ERROR :    0` and `UVM_FATAL :    0` in that summary, matched with anchored patterns;
+   - no assertion failures and no simulator-format errors anywhere in the log, because an SVA or `$error` failure does not enter the UVM counts;
+   - the simulator exit status is 0: a non-zero status always fails, but 0 alone proves nothing, since UVM ends passing and failing runs alike with `$finish`;
+   - an activity floor: every checker reports a positive count (for example `matched > 0`), and the log names the test that was meant to run.
+4. **A pinned uvm-core version.** Every project compiles against one uvm-core release, and the base test proves it at run time by comparing `uvm_pkg::UVM_VERSION_STRING` with the pinned string, as `proj_base_test` does above. The parameter is standard (IEEE 1800.2-2020 B.7.2); only its *value* is implementation-defined, and uvm-core 2020.3.1 gives `"Accellera:1800.2:UVM:2020.3.1"` (`src/base/uvm_version.svh`). `proj_pkg` itself is versioned too: breaking changes to a base class bump its major version and ship with a migration note.
+
+<ArchitectureDiagram
+  title="The methodology release pipeline"
+  caption="A change to proj_pkg goes through lint, a build against the pinned uvm-core, and a regression of the example environments. The gate passes only when every criterion from point 3 holds: summary present, UVM_ERROR and UVM_FATAL 0, no assertion or simulator errors, exit status 0 and a positive check count. Only then is a new proj_pkg version released to block teams."
+  cellWidth={150}
+  cellHeight={64}
+  gapX={56}
+  gapY={56}
+  nodes={[
+    { id: "pr", label: "proj_pkg change", sublabel: "merge request", kind: "generic", col: 0, row: 0 },
+    { id: "lint", label: "lint", sublabel: "the six rules above", kind: "generic", col: 1, row: 0 },
+    { id: "build", label: "build", sublabel: "against pinned uvm-core 2020.3.1", kind: "generic", col: 2, row: 0 },
+    { id: "regr", label: "example-env regression", sublabel: "block and SoC examples", kind: "env", col: 2, row: 1 },
+    { id: "gate", label: "CI gate", sublabel: "summary, 0 errors, 0 assert fails, exit 0, checks > 0", kind: "generic", col: 1, row: 1 },
+    { id: "rel", label: "release proj_pkg vN", sublabel: "changelog, migration note", kind: "generic", col: 0, row: 1, state: "ok" }
+  ]}
+  edges={[
+    { from: "pr", to: "lint", style: "data" },
+    { from: "lint", to: "build", style: "data" },
+    { from: "build", to: "regr", style: "data" },
+    { from: "regr", to: "gate", style: "data", label: "logs" },
+    { from: "gate", to: "rel", style: "data", label: "all pass" }
+  ]}
+/>
+
+### Diagnosing methodology drift
+
+**Methodology drift** is the slow divergence between what the layer says and what the benches do. It has three common forms, and each leaves evidence you can collect in one run. The trace plusargs below are uvm-core implementation (none of them is in IEEE 1800.2-2020); `print_topology` (F.7.4.2) and the factory `print` (§8.3.1.7.5) are standard.
+
+| Symptom | Evidence to collect | Cause | Fix |
+|---|---|---|---|
+| `load_fw` work never happens; `configure_phase` complains | `+UVM_PHASE_TRACE`: `load_fw` starts and is skipped in the same time slot | No `exec_task`, or its `$cast` targets the wrong class | Add or fix `exec_task` |
+| `UVM_FATAL [PH_BAD_ADD]` at time 0 | The message names the container it searched (`within node 'common'`) | Anchor and container do not match | Call `add()` on the container that holds the anchor |
+| A custom phase runs twice | Two `load_fw` start lines in the phase trace; a counter shows 2 | `add()` called twice | Register once, from the test |
+| One block ignores project settings; its config errors appear late | The `PROJ/BASE` lines (at `UVM_HIGH`) list every component built on a base; compare them with `print_topology()`. Lint finds the source line | A bypassed base (`extends uvm_driver` directly) | Migrate the class to `proj_driver`; keep the lint rule on |
+| An override "does nothing" | `uvm_factory::get().print()` shows the override registered, but the topology shows the original type | The component was created with `new` instead of `type_id::create`, or created before the override was set | Create through the factory; set overrides before the parent's `build_phase` creates the child |
+| Behaviour changes after a tool or library update | The `PROJ/UVM_VERSION` fatal, or the version string in the log header differs from last week's | Version drift | Restore the pinned release, or upgrade deliberately with a regression |
+| A knob is set but ignored | `+UVM_CONFIG_DB_TRACE`, or `check_config_usage()` in `report_phase` (both uvm-core impl.) | Wrong path or key | Fix the path or key |
+
+A traced log excerpt for the first row (uvm-core 2020.3.1 message IDs and texts; the `UVM_INFO` prefix is shortened to the time, and the full phase names and instance ids are illustrative):
+
+```text
+@ 50 [PH/TRC/STRT] Phase 'uvm.uvm_sched.load_fw' (id=…) Starting phase
+@ 50 [PH/TRC/SKIP] Phase 'uvm.uvm_sched.load_fw' (id=…)
+     No objections raised, skipping phase
+@ 50 [PH/TRC/STRT] Phase 'uvm.uvm_sched.post_reset' (id=…) Starting phase
+```
+
+`load_fw` starts and is skipped at the same time as `reset` ends: the phase exists, but nothing in it objected. With a working `exec_task` you would see `PH/TRC/DONE` for `load_fw` 20 ns later instead.
+
+### Recap
+
+- Customize UVM through its extension points; never edit uvm-core. Pick the point by the requirement.
+- The base layer is one base per UVM role (single inheritance), plus a config helper, an item base, a sequence base and a base test, each removing one decision from block teams.
+- A custom task phase is three parts: a singleton IMP with a protected constructor, an `exec_task` proxy, and one `add()` on the container that holds the anchor. Without `exec_task` it runs and does nothing.
+- `.after_phase` alone splices in series; non-adjacent anchors or `with_phase` make a parallel branch. The wrong container gives `PH_BAD_ADD`.
+- Most needs fit an existing run-time phase, a sequence or a synchronization object. Custom phases are owned by the methodology team.
+- Governance is guidelines, precise lint rules, an honest CI gate and a pinned uvm-core version checked at run time.
+
+## Make It Work
+
+### A custom phase you can run
+
+This complete file adds a `load_fw` phase between `reset` and `post_reset`, checks the uvm-core version, sets a timeout, and proves in `check_phase` that the firmware was loaded exactly once. It is the same design as the lab, written as a package plus `tb_top`.
+
+```systemverilog
+// compile
+`include "uvm_macros.svh"
+
+package soc_pkg;
+  timeunit 1ns;
+  timeprecision 1ps;
+  import uvm_pkg::*;
+
+  typedef class soc_env;
+
+  // Part 1: the phase IMP. One object, shared by every node that refers to it.
+  class load_fw_phase_c extends uvm_task_phase;
+    local static load_fw_phase_c m_inst;
+
+    protected function new(string name = "load_fw");
+      super.new(name);
+    endfunction
+
+    static function load_fw_phase_c get();
+      if (m_inst == null) m_inst = new();
+      return m_inst;
+    endfunction
+
+    // Part 2: the proxy. Forked once per component in the domain.
+    virtual task exec_task(uvm_component comp, uvm_phase phase);
+      soc_env env;
+      if ($cast(env, comp)) env.load_fw_phase(phase);
+    endtask
+  endclass
+
+  // soc_env is defined before base_test, which uses soc_env::type_id (§6.18).
+  class soc_env extends uvm_env;
+    `uvm_component_utils(soc_env)
+    bit          reset_done;
+    int unsigned fw_loads;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    task reset_phase(uvm_phase phase);
+      phase.raise_objection(this);
+      `uvm_info("ORDER", "reset", UVM_LOW)
+      #50ns;
+      reset_done = 1;
+      phase.drop_objection(this);
+    endtask
+
+    // Called only through load_fw_phase_c::exec_task.
+    task load_fw_phase(uvm_phase phase);
+      phase.raise_objection(this);
+      if (!reset_done) `uvm_error("ORDER", "load_fw ran before reset finished")
+      `uvm_info("ORDER", "load_fw", UVM_LOW)
+      #20ns;   // stands in for a backdoor load of the firmware image
+      fw_loads++;
+      phase.drop_objection(this);
+    endtask
+
+    task configure_phase(uvm_phase phase);
+      phase.raise_objection(this);
+      if (fw_loads == 0) `uvm_error("ORDER", "configure ran before firmware was loaded")
+      `uvm_info("ORDER", "configure", UVM_LOW)
+      #10ns;
+      phase.drop_objection(this);
+    endtask
+
+    function void check_phase(uvm_phase phase);
+      super.check_phase(phase);
+      if (fw_loads != 1)
+        `uvm_error("FW", $sformatf("firmware loaded %0d times, expected 1", fw_loads))
+    endfunction
+  endclass
+
+  class base_test extends uvm_test;
+    `uvm_component_utils(base_test)
+    localparam string PINNED_UVM = "Accellera:1800.2:UVM:2020.3.1";
+    static bit load_fw_added;   // one add() per simulation: each add() makes a node
+    soc_env env;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (UVM_VERSION_STRING != PINNED_UVM)
+        `uvm_fatal("VERSION", {"compiled against ", UVM_VERSION_STRING,
+                               ", pinned ", PINNED_UVM})
+      `uvm_info("VERSION", UVM_VERSION_STRING, UVM_LOW)
+      // Compile uvm_pkg with the same time unit as this package (see I-UVM-1C).
+      uvm_root::get().set_timeout(1ms);
+      // Part 3: reset lives in the uvm schedule, so the new phase goes there.
+      // get_uvm_schedule() is uvm-core impl.; Push Further shows the standard route.
+      if (!load_fw_added) begin
+        uvm_domain::get_uvm_schedule().add(load_fw_phase_c::get(),
+                                           .after_phase(uvm_reset_phase::get()));
+        load_fw_added = 1;
+      end
+      env = soc_env::type_id::create("env", this);
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  import uvm_pkg::*;
+  import soc_pkg::*;
+  initial run_test("base_test");
+endmodule
+```
+
+**Expected output** (illustrative: derived by tracing the phase rules above through uvm-core 2020.3.1, not captured from a simulator; the message prefix and the printed time units depend on your simulator and on how `uvm_pkg` was compiled):
+
+```text
+UVM_INFO @ 0: uvm_test_top [VERSION] Accellera:1800.2:UVM:2020.3.1
+UVM_INFO @ 0: uvm_test_top.env [ORDER] reset
+UVM_INFO @ 50: uvm_test_top.env [ORDER] load_fw
+UVM_INFO @ 70: uvm_test_top.env [ORDER] configure
+
+--- UVM Report Summary ---
+...
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+`reset` objects for 50 ns, `load_fw` for 20 ns and `configure` for 10 ns. `post_reset` and `pre_configure` have no objections and end in the time slot they start, so `configure` starts at 70 ns. `main_phase` through `post_shutdown_phase` follow at 80 ns with no objections, `run_phase` ends with them, and `check_phase` finds `fw_loads == 1`.
+
+**Run it.** Compile uvm-core 2020.3.1 (its `src/uvm_pkg.sv`, with `src` on the include path) and then this file, elaborate `tb_top`, and run. The test name is fixed by `run_test("base_test")`, so no `+UVM_TESTNAME` is needed. Add `+UVM_PHASE_TRACE` (uvm-core impl.) to see the schedule. Simulator switches are tool-specific; UVM support in open-source simulators is still limited, so use a commercial simulator or check your tool's UVM status first.
+
+### Break it on purpose
+
+Predict each log before you run it. Every row was traced through uvm-core's `add()` and the §9.6 rules; confirm it with `+UVM_PHASE_TRACE`.
+
+| Change | What you will see | Why |
+|---|---|---|
+| Delete `exec_task` from `load_fw_phase_c` | `configure` at 50 ns with `UVM_ERROR [ORDER] configure ran before firmware was loaded`, then `UVM_ERROR [FW] firmware loaded 0 times, expected 1` | The node runs, nobody objects, it ends at 50 ns |
+| Call `add()` on `uvm_domain::get_common_domain()` | `UVM_FATAL [PH_BAD_ADD] cannot find after_phase 'reset' within node 'common'` at time 0, during `build_phase` | The common domain cannot see `reset` |
+| Add `.before_phase(uvm_configure_phase::get())` to the call | The same `[ORDER]` times; the trace shows `post_reset` and `pre_configure` starting at 50 ns beside `load_fw` | A parallel branch from `reset` to `configure`; `configure` waits for both paths |
+| Remove the `load_fw_added` guard and call `add()` twice | `load_fw` at 50 and 70 ns, `configure` at 90 ns, `UVM_ERROR [FW] firmware loaded 2 times` | Each `add()` makes a node; the second is spliced right after `reset`, before the first |
+| Move `class base_test` above `class soc_env` | A compile error on `soc_env::type_id` in a conforming tool (some tools accept it) | `soc_env` is still an incomplete forward type there (IEEE 1800-2023 §6.18) |
+
+### How to add a custom phase (when you must)
+
+1. **Justify it.** Check the "When not to add a custom phase" table. Write down why no existing phase, sequence or `uvm_event` works.
+2. **Write the IMP:** extend `uvm_task_phase` (or `uvm_topdown_phase` / `uvm_bottomup_phase` for a zero-time step), add `local static` `m_inst`, a `protected` constructor and a static `get()`.
+3. **Write the proxy:** override `exec_task` (or `exec_func`) to `$cast` the component and call a method with a distinct name.
+4. **Pick the container that holds the anchor:** run-time anchors live in the `uvm` schedule; `build` … `final` live in the common domain. Avoid anchors after `run_phase` unless the step needs no drivers or monitors.
+5. **Register once,** from the test's `build_phase` or a static function in `proj_pkg`, guarded by a static bit.
+6. **Make the work idempotent,** because a jump back to `reset` runs it again.
+7. **Prove it:** run with `+UVM_PHASE_TRACE`, read the start and end times of your phase, and keep a counter checked in `check_phase`.
+
+**Checklist before moving on:**
+- [ ] I can map five team requirements to an extension point from the table, without editing uvm-core.
+- [ ] My phase class has a `protected` constructor, a static `get()` and an `exec_task` that casts to the right component.
+- [ ] I can say which container holds `reset`, `configure`, `main` and `extract`, and predict `PH_BAD_ADD` for a mismatch.
+- [ ] I can predict the start times of `post_reset` and `configure` for a series splice and for a parallel branch.
+- [ ] I can explain why a second `add()` runs the phase twice, and where the guard belongs.
+- [ ] I can name two existing mechanisms that would replace a proposed `pll_lock` phase.
+- [ ] I can list the five conditions of an honest CI gate and say what each one catches.
+
+## Push Further
+
+### Expert: standard API versus uvm-core API for phase insertion
+
+`uvm_domain::get_uvm_schedule()`, `get_common_domain()` and `get_uvm_domain()` are used in almost every custom-phase example, but none is in IEEE 1800.2-2020: §9.4.2 defines only `new`, `get_domains`, `add_uvm_phases` and `jump`, and uvm-core marks the three as non-standard (no `@uvm-ieee` tag in `uvm_domain.svh`). `set_phase_imp` is marked `@uvm-compat`. A standard-only route exists:
+
+```systemverilog
+// snippet: standard API only (§9.4.2.2, §9.3.1.6.1)
+uvm_domain doms[string];
+uvm_domain::get_domains(doms);   // always has doms["common"] and doms["uvm"]
+doms["uvm"].add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get()));
+```
+
+§9.3.1.6.1 allows `add` on a domain node, and §9.4.2.2 says `domains["uvm"]` "contains the UVM run-time phases". In uvm-core, `find` from the `uvm` domain node descends into its schedule because that schedule belongs to the same domain (`m_find_successor`). This route was traced through the source but not run: confirm the splice with `+UVM_PHASE_TRACE`. Two more standard details: §9.3.1.6.4 declares `get_schedule` as returning `string` while describing a node, which looks like an erratum (uvm-core returns `uvm_phase`), so prefer `get_parent()` (§9.3.1.6.2) in portable code; and `add()` also takes `start_with_phase` and `end_with_phase`, which align a new phase with the start or end of an existing one (§9.3.1.6.1).
+
+### Expert: custom phases and separate domains
+
+`set_domain(dom)` (§13.1.4.4.1) moves a component, and by default its subtree, into another domain, and calls `define_domain(dom)` (§13.1.4.4.3), whose default "adds a copy of the uvm phasing schedule to the given domain". In uvm-core that copy is built fresh with `add_uvm_phases` (`uvm_component.svh`, `define_domain`), so it does **not** contain a phase you added to `get_uvm_schedule()`. uvm-core's task-phase traversal also runs a node only for components whose domain is the node's domain or the common domain (`uvm_task_phase.svh`, `traverse`). Consequences:
+
+- A VIP that an integrator places in its own domain silently skips your `load_fw` phase.
+- To give a domain its own custom phase, add it to that domain's schedule, once, after the domain is defined:
+
+```systemverilog
+// snippet: integrator env's build_phase, after vip_env is created
+// (vip_dom is a uvm_domain member of the env)
+vip_dom = new("vip");                     // §9.4.2.1: names must be unique
+vip_env.set_domain(vip_dom);              // builds vip_dom's own run-time schedule
+vip_dom.find(uvm_reset_phase::get()).get_parent()
+       .add(vip_cal_phase_c::get(), .after_phase(uvm_reset_phase::get()));
+```
+
+- Do not put such an `add()` inside an overridden `define_domain`: `set_domain` calls `define_domain` on every component it reaches, so the phase would be added once per component.
+- Components created after `set_domain` inherit their parent's domain (uvm-core `uvm_component::new`). Whether the new domain runs in lockstep with `uvm` is a separate decision: `sync` and `unsync` (§9.3.1.8.1–9.3.1.8.2), taught in [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index).
+
+(The `vip_cal_phase_c` class is written exactly like `load_fw_phase_c`. Traced through uvm-core, not run.)
+
+### Expert: jumps re-run custom phases
+
+`phase.jump(target)` (§9.3.1.9.1) ends the current phase prematurely and continues the schedule from `target`; `uvm_domain::jump` (§9.4.2.4) does it for every active phase of a domain. A jump from `main` back to `reset` re-runs `reset`, then your spliced `load_fw`, then everything after it. In Make It Work, `fw_loads` would reach 2 and `check_phase` would fail. Write custom-phase work to be **idempotent** (safe to repeat): reload the image deliberately and reset the counter in `reset_phase`, or count per reset epoch. Also, threads still running when a phase ends are killed ("any remaining forked … exec_task threads are forcibly and immediately killed", §9.6), so a `load_fw_phase` that forks a background thread loses it when the phase ends.
+
+### Expert: typed proxies, phase callbacks and default sequences
+
+- **Typed proxies.** For a phase that calls methods of an extended component class, the standard recommends a parameterized proxy: "extend the base … phase class with parameterized component class context … to create a specialized proxy" (§9.3.1.1.1 c). In practice, `class load_fw_phase_t #(type T = soc_env) extends load_fw_phase_c` whose `exec_task` casts to `T` lets one phase serve several env types without editing it.
+- **Phase callbacks.** `phase_started(phase)` and `phase_ended(phase)` (§13.1.4.3.1, §13.1.4.3.3) fire for custom phases too, for every component in the domain. A project base can use them for timing or logging without each block knowing the phase exists: compare `phase.get_name()` with `"load_fw"`.
+- **Default sequences.** A default sequence can target any phase of a sequencer (§15.3.5). Its scope is the sequencer path plus the phase, as in the standard's own example `"path.to.sequencer.main_phase"` (G.2.9); uvm-core looks it up at `<sequencer full name>.<phase name>_phase` (`uvm_sequencer_base.svh`), so a firmware sequence for the custom phase is set at `"env.agt.sqr.load_fw_phase"` relative to the test.
+
+### Expert: enforcing the base layer at run time
+
+Lint finds bypassed bases in source; a run-time check finds them in the elaborated tree, including classes generated by scripts. An **interface class** (IEEE 1800-2023 §8.26) works as a marker that any project base can implement in addition to its single base class, and a handle can be `$cast` to it (§8.26.5):
+
+```systemverilog
+// snippet: proj_pkg
+interface class proj_conformant;
+  pure virtual function string proj_base_name();
+endclass
+
+// proj_monitor now also implements the marker:
+//   class proj_monitor #(type T = uvm_sequence_item) extends uvm_monitor
+//     implements proj_conformant;
+//     virtual function string proj_base_name(); return "proj_monitor"; endfunction
+
+// In proj_base_test:
+function void end_of_elaboration_phase(uvm_phase phase);
+  uvm_component comps[$];
+  super.end_of_elaboration_phase(phase);
+  uvm_root::get().find_all("*", comps);    // F.7.4.1
+  foreach (comps[i]) begin
+    uvm_monitor     mon;
+    proj_conformant pc;
+    if ($cast(mon, comps[i]) && !$cast(pc, comps[i]))
+      `uvm_error("PROJ/BASE", {comps[i].get_full_name(), " bypasses proj_monitor"})
+  end
+endfunction
+```
+
+The limit is instructive: this works for roles with a non-parameterized UVM base (`uvm_monitor`, `uvm_scoreboard`, `uvm_agent`, `uvm_env`). Drivers have no common non-parameterized base below `uvm_component` (`uvm_driver #(REQ, RSP)` is parameterized, §13.7.1), so the driver rule stays a lint rule. Exempt third-party VIP by path.
+
+### Expert: pinning and upgrading uvm-core
+
+- **Run time:** compare `uvm_pkg::UVM_VERSION_STRING` (B.7.2) with the pinned string and fatal on a mismatch, as `proj_base_test` does. Its value is implementation-defined, so pin the exact string of your release.
+- **Compile time:** `` `UVM_VERSION `` is `2020` (B.7.1), and the version ladder defines `` `UVM_VERSION_POST_2017 `` (B.7.3) for code that must also compile on IEEE 1800.2-2017 libraries. uvm-core adds finer defines such as `` `UVM_VERSION_POST_2020_2_0 `` (uvm-core only). Do not rely on the legacy `` `UVM_MINOR_REV ``: in the 2020.3.1 tag it reads `3.0` (`uvm_version_defines.svh`), not the release you might expect.
+- **Upgrades** are a project: build the new uvm-core beside the old, run the example-environment regression on both, read the release notes for behaviour changes (deprecated `@uvm-compat` APIs especially), then move the pin in one commit. Fixes you need go upstream; your layer carries a workaround until they ship.
+
+### Expert: the cost of a methodology layer
+
+Tool-dependent in magnitude, standard in mechanism. Each task phase forks one `exec_task` per component in its domain (§9.6), even for components that do nothing in it, so a custom phase in an SoC with thousands of components costs thousands of short-lived threads per run. Base classes multiply every per-component cost: a `uvm_config_db::get` in a run-time loop, string formatting in a hook that is called per item, or a `+UVM_OBJECTION_TRACE`-style audit trail left on in regressions (uvm-core impl., very verbose). Measure before and after any base-class change on the largest environment, with CPU time measured outside the simulator. [E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index) teaches the measurement.
+
+### Interview angles
+
+<InterviewQuestionPlayground
+  title="Interview angle: the team wants a load_fw phase"
+  question="A colleague proposes a custom load_fw phase between reset and post_reset for an SoC environment with three third-party VIPs. Argue for and against, and say what you would do."
+  options={[
+    { text: "Approve it: custom phases are the standard way to add a step after reset.", isCorrect: false, feedback: "They are standardized, not standard practice. The phase runs for every component in the domain, the VIPs have no code for it, a jump to reset re-runs it, and the usual insertion calls are uvm-core-only." },
+    { text: "Patch uvm_runtime_phases.svh so that reset_phase also loads the firmware.", isCorrect: false, feedback: "That is a fork of uvm-core: no clean upgrades, VIP qualified against stock uvm-core, and unreproducible bug reports." },
+    { text: "Prefer post_reset_phase work in the env, or the first step of the top virtual sequence; accept a custom phase only if every component must take part and no existing phase or sequence can express the step, and then add it once from proj_base_test.", isCorrect: true, feedback: "Right. That keeps ordering where it belongs (an existing phase or the test's stimulus) and keeps the shared schedule unchanged unless there is a project-wide reason." },
+    { text: "Put the firmware load in run_phase with a #50ns delay.", isCorrect: false, feedback: "A delay guesses when reset ends and breaks the moment reset timing changes. Synchronize on the phase or an event instead." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: the phase that never calls your env"
+  question="Your custom phase appears in the +UVM_PHASE_TRACE output, but soc_env::load_fw_phase never runs and no error is printed. What is missing, and how do you prove it?"
+  options={[
+    { text: "The method name must be exactly load_fw_phase; rename it.", isCorrect: false, feedback: "UVM never matches methods by name. Only the phase class's exec_task calls component code." },
+    { text: "The phase class has no exec_task override (or its $cast targets the wrong class). The trace shows the phase skipped because no objection was raised; add exec_task that casts comp to soc_env and calls load_fw_phase.", isCorrect: true, feedback: "Right. The inherited exec_task is empty (§9.3.1.5.2), so the node starts and ends in one time slot, which PH/TRC/SKIP shows." },
+    { text: "The phase was added to the wrong container; the fix is get_common_domain().", isCorrect: false, feedback: "A wrong container gives UVM_FATAL PH_BAD_ADD at build time; here the phase does appear in the trace." },
+    { text: "Custom phases only run in the common domain.", isCorrect: false, feedback: "Run-time custom phases belong in the uvm schedule; the common domain cannot even see reset." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: guaranteeing the base layer"
+  question="How do you make sure, across 40 block teams, that every driver and monitor uses the project bases?"
+  options={[
+    { text: "Set a factory type override from uvm_driver to proj_driver.", isCorrect: false, feedback: "An override replaces the type that is created; it cannot change the base class of a block team's driver, and uvm_driver is parameterized, so there is no single type to override." },
+    { text: "Add a custom checking phase that inspects every component.", isCorrect: false, feedback: "A function in end_of_elaboration_phase of the base test does the same without changing everyone's schedule." },
+    { text: "Ask teams to follow the guideline and review by hand.", isCorrect: false, feedback: "Guidelines without automatic checks drift. Review cannot cover 40 teams reliably." },
+    { text: "A lint rule on extends uvm_driver and extends uvm_monitor outside proj_pkg, run on every merge request, plus a run-time check in proj_base_test for monitors through a marker interface class, and a PROJ/BASE info line from each base.", isCorrect: true, feedback: "Right. Source checks catch it before review; the run-time check catches generated code; the info lines make it visible in any log." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+Start with the quiz, which covers all five objectives. Then do the kata and the two challenges, and open the lab. Return to the flashcards over the next few days.
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "load_fw_phase_c has no exec_task override. The base test adds it with get_uvm_schedule().add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get())), and soc_env has a task named load_fw_phase that raises an objection for 20 ns. What happens when reset ends at 50 ns?",
+    objective: 3,
+    answers: [
+      { text: "UVM calls soc_env.load_fw_phase because its name matches the phase, so configure starts at 70 ns", correct: false, feedback: "UVM never matches methods by name. Only exec_task calls component code, and the inherited one is empty." },
+      { text: "load_fw starts and ends at 50 ns: nothing calls soc_env, nobody objects, and configure starts at 50 ns", correct: true, feedback: "Right. The node exists and runs, but with the empty inherited exec_task (§9.3.1.5.2) no component code runs, so there is nothing to wait for (§9.6)." },
+      { text: "A compile error, because exec_task is pure virtual in uvm_task_phase", correct: false, feedback: "exec_task is an ordinary virtual task with an empty body; the class compiles without an override." },
+      { text: "UVM_FATAL PH_BAD_ADD during build_phase", correct: false, feedback: "PH_BAD_ADD is about the anchor's container. reset is in the uvm schedule, so the add succeeds." }
+    ],
+    explanation: "A custom task phase reaches components only through exec_task, which UVM forks once per component in the domain (§9.6). Without an override the phase runs, nobody objects, and it ends in the time slot it started. The name match is a myth, the method is not pure virtual, and the container is correct."
+  },
+  {
+    question: "In build_phase, the test calls uvm_domain::get_common_domain().add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get())). What happens?",
+    objective: 3,
+    answers: [
+      { text: "load_fw runs after reset, as written", correct: false, feedback: "add() can only anchor to a phase inside the container it is called on." },
+      { text: "load_fw runs in parallel with run_phase", correct: false, feedback: "Nothing is added: the anchor lookup fails first." },
+      { text: "The call is silently ignored and the test runs without load_fw", correct: false, feedback: "uvm-core reports a fatal; it does not ignore a missing anchor." },
+      { text: "UVM_FATAL [PH_BAD_ADD] cannot find after_phase 'reset' within node 'common', during build_phase", correct: true, feedback: "Right. find() with stay_in_scope = 1 searches only the common domain's own phases (§9.3.1.4.4); reset lives in the uvm schedule." }
+    ],
+    explanation: "The anchors 'shall already exist in the schedule or domain' (§9.3.1.6.1). The common domain holds build … final, and reset is in the uvm domain's schedule, so uvm-core's add() reports PH_BAD_ADD naming the container it searched."
+  },
+  {
+    question: "The phase is added with .after_phase(uvm_reset_phase::get()), .before_phase(uvm_configure_phase::get()) on the uvm schedule. reset ends at 50 ns and load_fw objects for 20 ns; no other phase objects. When do post_reset and configure start?",
+    objective: 3,
+    answers: [
+      { text: "post_reset at 70 ns, configure at 70 ns", correct: false, feedback: "That would be a series splice. reset and configure are not neighbours, so this is a branch: post_reset does not wait for load_fw." },
+      { text: "post_reset at 50 ns, configure at 50 ns", correct: false, feedback: "configure now has two predecessors, pre_configure and load_fw, and waits for both." },
+      { text: "post_reset at 50 ns, configure at 70 ns", correct: true, feedback: "Right. The branch runs beside post_reset and pre_configure, and configure waits until both paths have finished." },
+      { text: "Neither: UVM_FATAL because the anchors must be adjacent", correct: false, feedback: "Non-adjacent anchors are legal; they create a parallel branch. uvm-core only refuses them in the wrong order." }
+    ],
+    explanation: "With phases between the after and before anchors, uvm-core's add() links reset → load_fw → configure as an extra path. post_reset starts at 50 ns; configure starts only when its predecessors pre_configure and load_fw have both ended, at 70 ns (§9.6: advancement is delayed until all predecessors of the common successor are ready)."
+  },
+  {
+    question: "The DUT needs 2 µs for its PLL to lock after reset, before any register is programmed. What do most experienced teams do?",
+    objective: 3,
+    answers: [
+      { text: "Add a pll_lock custom phase after reset: custom phases are the standard way to add reset steps", correct: false, feedback: "This is the misconception. A custom phase changes the shared schedule for every component, including VIP that has no code for it." },
+      { text: "Wait for lock in post_reset_phase in the env, or as the first step of the top virtual sequence", correct: true, feedback: "Right. post_reset_phase exists for exactly this, and the top virtual sequence owns per-test ordering. No schedule change is needed." },
+      { text: "Edit uvm_runtime_phases.svh in the team's copy of uvm-core so reset_phase waits for lock", correct: false, feedback: "That is a fork: it blocks upgrades and breaks VIP qualified against stock uvm-core." },
+      { text: "#2us at the start of the test's run_phase", correct: false, feedback: "A fixed delay is a guess about when reset ends, and it runs beside, not after, the run-time phases." }
+    ],
+    explanation: "Twelve run-time phases already exist, and post_reset_phase has exactly the meaning needed. Most teams avoid custom phases because of their global reach, jump behaviour and portability. Forking uvm-core and fixed delays are worse still."
+  },
+  {
+    question: "Every UVM message line in the project must end with the name of the test that produced it. Which solution is correct and needs no fork?",
+    objective: 2,
+    answers: [
+      { text: "Edit compose_report_message in the team's copy of uvm_report_server.svh", correct: false, feedback: "That is a fork of uvm-core, with all its costs." },
+      { text: "Extend uvm_report_server and override only compose_report_message", correct: false, feedback: "uvm_report_server is a virtual class whose methods are pure virtual (§6.5.1.1); you would have to implement all of them." },
+      { text: "Extend uvm_default_report_server, override compose_report_message to append the test name, and install it once with uvm_report_server::set_server()", correct: true, feedback: "Right (§6.5.2, §6.5.1.2.15, §6.5.1.2.19). set_server also copies the counts already collected." },
+      { text: "Raise +UVM_VERBOSITY so the test name is printed", correct: false, feedback: "Verbosity filters information messages; it does not change the line format." }
+    ],
+    explanation: "The report server is a standard extension point. uvm_default_report_server provides a full implementation, so a derived class overrides only the format. Appending (not prepending) keeps the leading severity that regression parsers anchor on."
+  },
+  {
+    question: "Why does the project layer use proj_driver #(REQ) extends uvm_driver #(REQ) and proj_monitor extends uvm_monitor, rather than a single proj_component extends uvm_component that every class derives from?",
+    objective: 1,
+    answers: [
+      { text: "Single inheritance: a class derived from proj_component could not also derive from uvm_driver, so it would lose seq_item_port", correct: true, feedback: "Right. IEEE 1800-2023 §8.13: each class is derived from a single base class. Per-role bases keep the UVM role class and add policy." },
+      { text: "The factory cannot create classes derived from a project base", correct: false, feedback: "The factory creates any registered class, however deep its hierarchy." },
+      { text: "uvm_component cannot be extended by user code", correct: false, feedback: "Every component you write extends uvm_component, directly or indirectly." },
+      { text: "Per-role bases simulate faster", correct: false, feedback: "The choice is about what the classes can be, not speed." }
+    ],
+    explanation: "SystemVerilog classes have one base class. A driver must be a uvm_driver to have seq_item_port (§13.7.2.1), so project policy goes into one base per role. The monitor base keeps the uvm_monitor type and declares its own analysis port, because uvm_monitor declares none (§13.5)."
+  },
+  {
+    question: "A block team's driver extends uvm_driver directly. Its configuration errors appear late, and the project hook apply_project_policy never runs. What catches this before code review?",
+    objective: 5,
+    answers: [
+      { text: "A factory type override of uvm_driver with proj_driver", correct: false, feedback: "An override replaces the type that is created; it cannot change what a class extends." },
+      { text: "A custom checking phase after extract", correct: false, feedback: "A new phase adds schedule risk and finds the problem only after the run; lint finds it before." },
+      { text: "Running the test at UVM_FULL verbosity", correct: false, feedback: "Verbosity shows more messages; it does not reveal which base a class extends." },
+      { text: "A lint rule that flags extends uvm_driver outside proj_pkg, run on every merge request", correct: true, feedback: "Right. It finds the source line before review. At run time, the missing PROJ/BASE info line for that component is the confirming evidence." }
+    ],
+    explanation: "A bypassed base is a source-level fact, so a source check finds it earliest. The rule must be scoped: proj_pkg itself, scoreboards and helpers legitimately extend UVM classes. Runtime evidence (PROJ/BASE lines compared with print_topology) confirms it."
+  },
+  {
+    question: "Which CI pass rule is honest?",
+    objective: 4,
+    answers: [
+      { text: "UVM_ERROR : 0 in the report summary, since every error in the run is counted there", correct: false, feedback: "An SVA or $error failure is not counted there, and a test that compared nothing also reports 0 errors." },
+      { text: "The test prints TEST PASSED from its report_phase after checking its own error flag", correct: false, feedback: "Any code can print that string, including a test that crashed later or checked nothing." },
+      { text: "Summary present, UVM_ERROR and UVM_FATAL 0, no assertion or simulator errors, exit status 0, and a positive count from every checker", correct: true, feedback: "Right. Each condition closes one hole: crashes, UVM errors, non-UVM errors, abnormal exits and zero-activity runs." },
+      { text: "The simulation reached $finish before the timeout fired and the exit status is 0", correct: false, feedback: "UVM ends failing runs with $finish too, and exit status 0 is tool-dependent: it does not prove the UVM counts are 0." }
+    ],
+    explanation: "The UVM counts see only messages that go through UVM; assertions and $error bypass them. Exit status alone is tool-dependent and UVM ends every run with $finish. A positive check count guards against runs that did nothing."
+  },
+  {
+    question: "After a tool upgrade, regressions behave slightly differently, and nobody knows whether uvm-core changed too. Which check in proj_base_test turns this into a clear failure?",
+    objective: 4,
+    answers: [
+      { text: "Compare `UVM_MINOR_REV with the expected release number", correct: false, feedback: "In the 2020.3.1 tag `UVM_MINOR_REV reads 3.0; it is a legacy define, not a reliable release identifier." },
+      { text: "Compare uvm_pkg::UVM_VERSION_STRING with the pinned string and issue a UVM_FATAL on a mismatch", correct: true, feedback: "Right. The parameter is standard (B.7.2); its value identifies the implementation, for example Accellera:1800.2:UVM:2020.3.1." },
+      { text: "Check that `UVM_VERSION is defined", correct: false, feedback: "It is defined by every IEEE 1800.2-2020 library (B.7.1), so it cannot tell releases apart." },
+      { text: "Print the simulator version in the log", correct: false, feedback: "Useful, but the question is which UVM library was compiled, and printing alone does not fail the run." }
+    ],
+    explanation: "UVM_VERSION_STRING is required in uvm_pkg by B.7.2 and identifies the implementation; comparing it with a pinned value and failing on a mismatch makes version drift visible on day one."
+  },
+  {
+    question: "An env class calls get_uvm_schedule().add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get())) in its build_phase. The test creates two of these envs. What do you see?",
+    objective: 5,
+    answers: [
+      { text: "load_fw runs twice, one node after the other; each env loads firmware twice and the configure phase starts 20 ns later than expected", correct: true, feedback: "Right. Two nodes are spliced after reset, and each node forks exec_task for every component, so both envs act in both nodes." },
+      { text: "Nothing unusual: get() returns the same object, so the second add is ignored", correct: false, feedback: "get() returns the same IMP, but every add() creates a new node that refers to it." },
+      { text: "UVM_FATAL PH_BAD_ADD on the second call", correct: false, feedback: "The anchor reset still exists in the uvm schedule, so the second add succeeds." },
+      { text: "The two envs run load_fw in parallel, once each", correct: false, feedback: "Both nodes are in series after reset, and both envs take part in each node." }
+    ],
+    explanation: "The IMP is a singleton, but nodes are not (§9.2.1). Registering from a class with several instances is the classic cause of a phase that runs twice. Register once, from the test, behind a static guard."
+  },
+  {
+    question: "Your project needs error injection in the APB driver for some tests only. The APB VIP calls a callback hook before driving each item. Which choice fits best?",
+    objective: 2,
+    answers: [
+      { text: "Edit the VIP's driver source to add an inject_error branch", correct: false, feedback: "Editing VIP source is a fork of the VIP; the next release overwrites it." },
+      { text: "Add a custom inject phase after main", correct: false, feedback: "A phase cannot change what the driver does with each item, and it changes the schedule for everyone." },
+      { text: "Register a callback object on the driver in the error tests only", correct: true, feedback: "Right (§10.7). The VIP author exposed the hook for this; tests that do not register it are unaffected." },
+      { text: "Add an inject_error method to proj_driver for every driver", correct: false, feedback: "The VIP driver does not extend your base, and optional per-test behaviour belongs in a callback or override, not in every component." }
+    ],
+    explanation: "Callbacks are the extension point for behaviour at a point the component author chose, switched on per test. A factory override of the driver is the alternative when no hook exists."
+  }
+]} />
+
+### Kata: a base driver with reset hooks
+
+Objective 1 in code. The project wants every block driver to behave the same way around reset: outputs idle while reset is asserted, items driven only after reset is released, and a clean stop when reset asserts in the middle of a test. Here is an abstract base that adds the reset contract on top of `proj_driver` (so it keeps the config and the policy hook); a block team supplies the four hooks.
+
+```systemverilog
+// snippet: kata starter, part of proj_pkg
+virtual class proj_reset_driver #(type REQ = uvm_sequence_item) extends proj_driver #(REQ);
+  `uvm_component_abstract_param_utils(proj_reset_driver #(REQ))
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  // The contract: four hooks every block driver implements.
+  pure virtual task wait_reset_released();
+  pure virtual task wait_reset_asserted();
+  pure virtual task drive_item(REQ item);
+  pure virtual task idle_outputs();
+
+  task run_phase(uvm_phase phase);
+    forever begin
+      idle_outputs();
+      wait_reset_released();
+      fork
+        drive_loop();
+        wait_reset_asserted();
+      join_any
+      disable fork;
+      // TODO 2: an item taken with get_next_item but not finished is still pending here.
+    end
+  endtask
+
+  protected task drive_loop();
+    REQ item;
+    forever begin
+      seq_item_port.get_next_item(item);
+      drive_item(item);
+      seq_item_port.item_done();
+    end
+  endtask
+endclass
+```
+
+1. **Write `apb_driver`** on top of this base for an `apb_if` with `pclk`, `presetn` (active low), `psel`, `penable`, `pwrite`, `paddr`, `pwdata` and a clocking block `drv_cb`, driving an `apb_item` with `addr`, `data` and `write`. Keep the protocol minimal: one setup cycle, one access cycle.
+2. **Decide and implement** what happens to an item taken but not finished when reset asserts. Calling `get_next_item` again without `item_done` is an error, and the sequence that sent the item stays blocked in `finish_item` until `item_done` is called.
+3. **Predict** what a run shows if you skip step 2 and reset asserts once in the middle of an item.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+**Step 2 first, because it belongs in the base.** Track the pending item and complete the handshake after `disable fork`:
+
+```systemverilog
+// snippet: changes to proj_reset_driver
+protected bit m_item_pending;
+
+protected task drive_loop();
+  REQ item;
+  forever begin
+    seq_item_port.get_next_item(item);
+    m_item_pending = 1;
+    drive_item(item);
+    seq_item_port.item_done();
+    m_item_pending = 0;
+  end
+endtask
+
+// in run_phase, after disable fork:
+if (m_item_pending) begin
+  // Finish the handshake so the sequence's finish_item returns. The item was cut
+  // short by reset; sequences check their own status or the reset epoch.
+  seq_item_port.item_done();
+  m_item_pending = 0;
+end
+```
+
+Putting this in the base is the point of the kata: every block driver gets the same, reviewed reset behaviour instead of forty variants. `disable fork` kills both branches and anything they started. If the base ever forks other long-lived threads from `run_phase`, wrap the `fork … join_any; disable fork;` in its own `fork begin … end join` so that `disable fork` cannot reach them.
+
+**Step 1, the block driver:**
+
+```systemverilog
+// snippet: block code, extends the project base
+class apb_driver extends proj_reset_driver #(apb_item);
+  `uvm_component_utils(apb_driver)
+  virtual apb_if vif;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -124,138 +1049,110 @@ class base_test extends uvm_test;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    // reset lives in the uvm schedule, so the new phase goes there too
-    uvm_domain::get_uvm_schedule().add(load_fw_phase_c::get(),
-                                       .after_phase(uvm_reset_phase::get()));
-    env = soc_env::type_id::create("env", this);
-  endfunction
-endclass
-
-class soc_env extends uvm_env;
-  `uvm_component_utils(soc_env)
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
+    if (!uvm_config_db #(virtual apb_if)::get(this, "", "vif", vif))
+      `uvm_fatal("APB/NO_VIF", "virtual apb_if not set")
   endfunction
 
-  virtual task load_fw_phase(uvm_phase phase);
-    phase.raise_objection(this);
-    load_firmware_backdoor();   // e.g. poke() a RAL memory
-    `uvm_info("FW", "Firmware loaded", UVM_LOW)
-    phase.drop_objection(this);
+  virtual task wait_reset_released();
+    @(vif.drv_cb iff vif.drv_cb.presetn === 1'b1);
+  endtask
+
+  virtual task wait_reset_asserted();
+    @(vif.drv_cb iff vif.drv_cb.presetn === 1'b0);
+  endtask
+
+  virtual task idle_outputs();
+    vif.drv_cb.psel    <= 1'b0;
+    vif.drv_cb.penable <= 1'b0;
+  endtask
+
+  virtual task drive_item(apb_item item);
+    vif.drv_cb.psel    <= 1'b1;      // setup cycle
+    vif.drv_cb.penable <= 1'b0;
+    vif.drv_cb.pwrite  <= item.write;
+    vif.drv_cb.paddr   <= item.addr;
+    vif.drv_cb.pwdata  <= item.data;
+    @(vif.drv_cb);
+    vif.drv_cb.penable <= 1'b1;      // access cycle
+    @(vif.drv_cb);
+    vif.drv_cb.psel    <= 1'b0;
+    vif.drv_cb.penable <= 1'b0;
   endtask
 endclass
 ```
 
-**Scheduling insights:**
-- The phase class is a singleton, so every `get()` returns the same node.
-- `exec_task` is the only way a phase reaches your components. The inherited one is empty: without this override the phase runs, nothing raises an objection, and it ends at once.
-- `get_uvm_schedule().add(..., .after_phase(uvm_reset_phase::get()))` splices `load_fw` between `reset` and `post_reset`. Every component in the `uvm` domain enters and leaves it together, alongside `run_phase`. With `.with_phase(...)`, or an `after`/`before` pair that has phases between them, it would run as a parallel branch instead.
-- Edit the schedule in `build_phase`, before the run-time phases start, and register the phase once (guard it with a static bit if several tests share the base).
+(`presetn` must be an `input` of `drv_cb` and the bus signals its `output`s. This minimal driver ignores `PREADY` wait states; real APB timing belongs to a planned APB protocol module.) `apb_driver` is a concrete class, so it uses `` `uvm_component_utils ``, while the abstract base uses the abstract macro.
 
-### Explore the Phase Schedule
+**Step 3, without the fix:** reset asserts and `disable fork` kills `drive_loop` between `get_next_item` and `item_done`. The sequence that sent the item stays blocked in `finish_item` for the whole reset. When reset is released, `drive_loop` calls `get_next_item` again while the first item is still outstanding. uvm-core's sequencer reports `Get_next_item called twice without item_done or get in between` as a `UVM_ERROR` (`uvm_sequencer.svh`) and, because the item is still at the head of its request FIFO, hands the driver the *same* item again (`uvm_sequencer_param_base.svh`, `m_safe_select_item`). So the run shows one `UVM_ERROR` and the item driven twice, once cut short by reset and once complete, which a scoreboard may also flag as a duplicate. (Traced through the uvm-core source, not run.)
 
-Pick where to add `load_fw` and predict whether it runs and calls `soc_env`. The model then shows the resulting schedule, the `PH_BAD_ADD` fatal when the anchor is out of scope, and what happens without `exec_task`.
+</details>
 
-<MethodologyPhaseVisualizer />
+### Debug challenge: three broken insertions
 
-## Make It Work
+Each variant below compiles. For each, predict the first line of the log that tells you something is wrong, then check your answer against the Break-it table in Make It Work or in the visualizer.
 
-1. **Codify policy:** Publish a methodology package (base classes, utilities, adapters) with semantic versioning and CI tests.
-2. **Seed configuration early:** Base tests push `proj_config` and any shared services (coverage bus, scoreboards) via [`uvm_config_db`](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index).
-3. **Offer extension hooks:** Provide virtual methods or callbacks instead of hard-coded behaviour so block teams extend safely.
-4. **Enforce adoption:** Create linting/check scripts that flag drivers and monitors extending `uvm_driver`/`uvm_monitor` directly when a project base exists, and missing custom phases.
+1. `load_fw_phase_c` is unchanged, but the `$cast` in `exec_task` targets `soc_base_env`, and the test creates `soc_env`, which extends `uvm_env` (not `soc_base_env`).
+2. The `get_uvm_schedule().add(...)` call, without its guard, is moved from the test into `soc_env::build_phase`, and the test builds two envs, `env0` and `env1`.
+3. The call is `get_uvm_schedule().add(load_fw_phase_c::get(), .after_phase(uvm_extract_phase::get()))`.
 
-**Checklist before moving on:**
-- [ ] You know where methodology overrides live (base tests, packages, repos).
-- [ ] You have a plan to distribute configs and shared services automatically.
-- [ ] You can describe how teams add behaviour via hooks/callbacks instead of editing core code.
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answers</summary>
 
-## Failure Modes & Methodology Drift
+1. The `$cast` fails for every component, so the effect is the same as no `exec_task`: `UVM_ERROR [ORDER] configure ran before firmware was loaded` at 50 ns, and with `+UVM_PHASE_TRACE` a `PH/TRC/SKIP` line for `load_fw`. Lesson: cast to the class that has the method, and consider a `` `uvm_warning `` in `exec_task` when no component in the domain matched.
+2. Two nodes: `load_fw` at 50 ns for both envs and again at 70 ns for both, `configure` at 90 ns, and each env's counter reaches 2. Fix: register from the test, once.
+3. `UVM_FATAL [PH_BAD_ADD] cannot find after_phase 'extract' within node 'uvm_sched'`, during `build_phase`: `extract` lives in the common domain.
 
-### Phase Misordering
+</details>
 
-`add()` only finds its anchor inside the schedule or domain you call it on. `get_common_domain()` holds `build` … `final`; it cannot see `reset_phase` or `configure_phase`, which live in the uvm schedule. The first call below therefore stops the test during `build_phase` with `UVM_FATAL [PH_BAD_ADD] cannot find after_phase 'reset' within node 'common'`. (This follows from reading `uvm_phase::add` and `find` in uvm-core 2020.3.1; confirm on your simulator.)
+### Governance exercise: write the gate
 
-```systemverilog
-// WRONG: reset is not in the common domain
-uvm_domain::get_common_domain()
-  .add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get()));
+Three runs end like this (summaries abbreviated):
 
-// RIGHT: add it to the schedule that contains reset
-uvm_domain::get_uvm_schedule()
-  .add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get()));
-```
+- **Run A:** `UVM_ERROR :    0`, `UVM_FATAL :    0`, `SCB matched=412`, but earlier in the log the simulator printed an assertion failure for `a_hold`.
+- **Run B:** `UVM_ERROR :    0`, `UVM_FATAL :    0`, `SCB matched=0`.
+- **Run C:** `UVM_ERROR :    0`, `UVM_FATAL :    0`, `SCB matched=388`, exit status 0, no other errors.
 
-A task phase added to the common domain after `extract_phase` is legal, runs, and can consume time. The trouble is what it runs into: the drivers and monitors forked in `run_phase` were killed when `run_phase` ended, `extract_phase` has already collected the results, and the `PH_TIMEOUT` watchdog only guards `run_phase`, so a hang there is never timed out.
+Write the CI rule (in words or pseudo-code) that passes only run C, and name the condition that fails A and the one that fails B.
 
-### Missing Base-Class Adoption
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show a model answer</summary>
 
-When a team creates a component inheriting directly from `uvm_driver` instead of `proj_driver`:
-- They lose project-wide config access, logging, and metrics.
-- Their driver silently skips `post_configure` hooks.
-- Debug telemetry shows gaps—some components report, others don't.
+Pass if and only if: the summary block is present; the anchored `UVM_ERROR` and `UVM_FATAL` counts are 0; no line matches the simulator's assertion or error format (tool-specific patterns); the exit status is 0; and every checker's count is positive. Run A fails on the assertion-failure condition: the assertion reported through `$error`, which the UVM counts never see. Run B fails on the activity floor: zero comparisons means the test checked nothing. Run C passes every condition.
 
-**Mitigation:** Add a lint rule or CI check that greps for raw `uvm_component`, `uvm_driver`, `uvm_monitor` inheritance and flags violations.
+</details>
 
-### Methodology Version Drift
-
-When multiple projects pin different methodology package versions:
-- Shared VIPs break silently if the base-class API changes.
-- Factory overrides registered by the methodology may not align with block-team expectations.
-
-**Mitigation:**
-- Use semantic versioning: major bumps for breaking API changes.
-- Publish a migration guide with each major release.
-- Automate regression of methodology examples to catch breaking changes.
-
-## Push Further: Governance at Scale
-
-### CI Enforcement Pipeline
-
-```
-┌──────────────┐    ┌──────────────────┐    ┌────────────────┐
-│ Methodology  │───▶│ Regression Suite  │───▶│ Adoption Lint  │
-│ Package PR   │    │ (example envs)   │    │ (grep checks)  │
-└──────────────┘    └──────────────────┘    └────────────────┘
-```
-
-- **Regression suite:** Run a curated set of block-level and SoC-level environments against every methodology change to catch regressions.
-- **Adoption lint:** After release, sweep block repositories for raw UVM inheritance, missing custom phases, and outdated methodology package versions.
-
-### Multi-Site Scaling
-
-| Concern | Strategy |
-|---|---|
-| **Distribution** | Publish methodology as a versioned package with a changelog |
-| **Training** | Host API docs and playbooks so new hires ramp quickly |
-| **Support** | Rotate methodology office hours across sites |
-| **Metrics** | Track adoption rate, override frequency, and phase-usage statistics |
-| **Migration** | Ship migration scripts that update base-class imports and phase registrations |
-
-### Metrics Integration
-
-Instrument base classes with telemetry counters:
-- Coverage snapshot frequency
-- Factory override count per test
-- Phase duration histograms
-- Objection-raise/drop audit trail
-
-These feed SoC-level dashboards and regression health indicators.
-
-## Practice & Reinforce
+### Lab
 
 <LabLink labId="methodology-custom-phase" />
 
-- **Extend the base class:** Add a hook to register security monitors only when `cfg.enable_security` is set.
-- **Audit exercise:** Grep a real project for raw `uvm_component` inheritance and propose a migration plan.
-- **Phase experiment:** Add the phase to the common domain after `reset_phase`, observe the `PH_BAD_ADD` fatal, then move it to the uvm schedule.
+The lab builds the Make It Work design step by step from a starter: the singleton, `exec_task`, the insertion, and a "break it and predict" step with the wrong container, a parallel branch and a double registration.
+
+### Flashcards
+
+The deck for this lesson covers the methodology layer and why not to fork, the extension points, per-role bases, the report server, the three parts of a custom phase, the missing-`exec_task` symptom, `PH_BAD_ADD`, series versus parallel splices, IMP versus node, when to avoid custom phases, the CI gate, version pinning, uvm-core-only APIs, custom domains and drift evidence.
 
 ## References & Next Topics
 
-- **IEEE 1800.2-2020 Clause 9** — Phase scheduling, user-defined phases, and domain management.
-- **IEEE 1800.2-2020 13.1** — `uvm_component`, the base of every component class.
-- **Accellera UVM User Guide**, Section 7 — Phase flow and methodology tips.
-- **Prerequisite:** [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) — standard phase flow and objection mechanics.
-- **Related:** [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index) — another extension mechanism complementary to base-class hooks.
-- **Next:** [E-DBG-1: Advanced Debug](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) — debug telemetry that methodology layers should export to.
+**Primary sources**
+
+- IEEE 1800.2-2020:
+  - Phasing: §9.2.1 (singleton IMP and nodes), §9.3.1.1.1 (custom phase definition, typed proxies), §9.3.1.4.4 (`find`), §9.3.1.5.1–9.3.1.5.2 (`exec_func`, `exec_task`), §9.3.1.6.1 (`add`), §9.3.1.6.2 (`get_parent`), §9.3.1.6.4 (`get_schedule`), §9.3.1.8.1–9.3.1.8.2 (`sync`, `unsync`), §9.3.1.9.1 (`jump`), §9.4.2.1–9.4.2.4 (`uvm_domain`: `new`, `get_domains`, `add_uvm_phases`, `jump`), §9.6 (task phases, sibling waits, the shared-successor rule), §9.6.2.2 (`traverse`), §9.8.2 (run-time phases; users may add phases), §9.8.2.6 (`post_configure_phase`);
+  - Components: §13.1.4.3.1–13.1.4.3.3 (`phase_started`, `phase_ready_to_end`, `phase_ended`), §13.1.4.4.1–13.1.4.4.3 (`set_domain`, `get_domain`, `define_domain`), §13.5 (`uvm_monitor`), §13.7, §13.7.2.1 (`uvm_driver`, `seq_item_port`);
+  - Extension points: §6.5.1.1, §6.5.1.2.15, §6.5.1.2.19, §6.5.2 (report server), §6.6 (report catcher), §8.3.1.4.1–8.3.1.4.2 (overrides), §8.3.1.7.5 (factory `print`), §10.7 (callbacks), §14.2.4.4 (`set_automatic_phase_objection`), §15.3.5 (default sequences), §16.2, §16.3, §16.6 (policy classes);
+  - Annexes: B.2.1.3 (component utility macros, including the abstract forms), B.7.1–B.7.3 (version globals), C.4 (`uvm_config_db`), F.7.3.3 (`set_timeout`), F.7.4.1 (`find_all`), F.7.4.2 (`print_topology`), G.2.4 (`+uvm_set_action`), G.2.7 (`+uvm_set_type_override`, name-based), G.2.9 (`+uvm_set_default_sequence`).
+- uvm-core 2020.3.1 (implementation behaviour, labelled "uvm-core" on this page): `src/base/uvm_phase.svh` (`add`, `find`, `m_find_successor`, `PH_BAD_ADD`, `+UVM_PHASE_TRACE`), `uvm_domain.svh` (`get_uvm_schedule`, `get_common_domain`, `get_uvm_domain`), `uvm_task_phase.svh` (`traverse` domain filter, `execute`), `uvm_phase_hopper.svh` (`PH/TRC/*` messages, run-only timeout watchdog), `uvm_runtime_phases.svh` (protected constructors), `uvm_component.svh` (`set_domain`, `define_domain`), `uvm_report_server.svh`, `uvm_version.svh`, `src/macros/uvm_version_defines.svh`, `src/macros/uvm_object_defines.svh`, `src/seq/uvm_sequencer_base.svh` (default-sequence scope).
+- IEEE 1800-2023: §6.18 (incomplete forward types), §8.13 (single inheritance), §8.26 and §8.26.5 (interface classes and casting to them), §8.27 (typedef class).
+
+**Prerequisites:** [I-UVM-1C: UVM Phasing and Synchronization](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index), [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index), [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index).
+
+**Related**
+
+- [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): the report server, actions and the pass/fail rule behind the CI gate.
+- [I-UVM-2C: Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): the configuration database behind `proj_cfg_util`.
+- [I-UVM-4: UVM Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index): printers, comparers and copiers as extension points.
+- [I-UVM-3B: Advanced Sequencing and Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index): the top virtual sequence that usually replaces a custom phase.
+- [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): packaging reusable components on top of a project layer.
+- [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): report catchers, honest verdicts and failure bucketing.
+- [E-PERF-1: UVM Performance](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index): measuring the cost of base classes and phases.
+
+<NextLesson />

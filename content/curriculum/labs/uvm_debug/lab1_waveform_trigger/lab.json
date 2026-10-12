@@ -1,8 +1,8 @@
 {
   "id": "debug-waveform-trigger",
-  "version": "1",
-  "title": "Triggering Waveforms via Event Bus",
-  "description": "Build an event bus subscriber that listens for watchdog timeout tags and starts selective waveform capture only when the failure is near.",
+  "version": "2",
+  "title": "A Waveform Window from a Debug Event Bus",
+  "description": "Connect a subscriber to a debug event bus, prove that a dump started by a watchdog trigger misses the cause of a bus stall, and capture the cause with a two-run waveform window controlled from tb_top.",
   "owningModule": "E-DBG-1",
   "routeSlug": "debug-waveform-trigger",
   "status": "available",
@@ -13,26 +13,42 @@
   "steps": [
     {
       "id": "1",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 1: Inspect the Event Bus",
-      "instructions": "Open `testbench.sv` and locate the `debug_event_bus` plus the watchdog publisher that emits `WATCHDOG_TIMEOUT`.",
+      "title": "Step 1: Run the starter and read the log",
+      "instructions": "Compile testbench.sv with tb_top as the top module and run it. The run ends with UVM_FATAL [WDG] at 5150 ns after the bus broadcasts WATCHDOG_TIMEOUT at 5100 ns ('no transfer for 2075 ns after 300 beats'). Work out when the last beat was accepted, and predict whether a dump started at the trigger would show why the beats stopped.",
       "starterCode": ""
     },
     {
       "id": "2",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 2: Add the Subscriber",
-      "instructions": "Implement `waveform_trigger_sub` as a `uvm_subscriber#(debug_event)` and trigger waveform capture when the timeout tag appears.",
+      "title": "Step 2: Add the subscriber and start a dump on the trigger",
+      "instructions": "In waveform_trigger_sub, get the global uvm_event 'dump_now' from uvm_event_pool in build_phase and trigger it from write() when the tag is WATCHDOG_TIMEOUT. Create trig_sub in dbg_env and connect bus.ap to trig_sub.analysis_export. Rerun and open after_trigger.vcd: it covers 5100 to 5150 ns only, with ready already 0. Explain why, using IEEE 1800-2023 §21.7.1.3.",
       "starterCode": ""
     },
     {
       "id": "3",
+      "version": "2",
+      "completion": "self_attested",
+      "title": "Step 3: Make the subscriber name the window",
+      "instructions": "In write(), compute start_ns = last_ok_ns - pre_ns (0 if negative) and print it with `uvm_info(\"WAVE_TRIG\", ..., UVM_NONE). Rerun and confirm the log says 'Last transfer at 3025 ns: rerun with +DUMP_START=2825'.",
+      "starterCode": ""
+    },
+    {
+      "id": "4",
       "version": "1",
       "completion": "self_attested",
-      "title": "Step 3: Wire and Verify",
-      "instructions": "Connect the subscriber to the event bus, rerun, and confirm selective waveform capture starts only near the timeout.",
+      "title": "Step 4: Open the window in a rerun",
+      "instructions": "In tb_top's dump_ctl block, read +DUMP_START with $value$plusargs; if present, wait until that time and dump to window.vcd, otherwise keep the trigger behaviour. Rerun with the same seed and build plus +DUMP_START=2825. In window.vcd, find the rising edge at which tb_top.u_sink.ready falls and the value of accepted just after it.",
+      "starterCode": ""
+    },
+    {
+      "id": "5",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 5: Check your understanding",
+      "instructions": "Compare your files with solution.sv and answer the five questions in Step 5 of the README: single-pass capture, same seed and same build, why dump control lives in tb_top, what $dumplimit does, and how you would size the window for a 20-hour run.",
       "starterCode": ""
     }
   ],

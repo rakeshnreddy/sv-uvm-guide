@@ -950,7 +950,7 @@ export const curriculumData: Module[] = [
           {
             "title": "Power Intent and UPF Fundamentals",
             "slug": "index",
-            "description": "Understanding IEEE 1801 Unified Power Format (UPF), supply networks, power states, and isolation strategies for low-power verification."
+            "description": "Write IEEE 1801 (UPF) power intent for a two-domain design, and predict how a power-aware simulator corrupts, isolates and retains state across power-down and power-up."
           }
         ],
         "track": "elective",
@@ -1427,24 +1427,25 @@ export const curriculumData: Module[] = [
           {
             "title": "E-DBG-1: Advanced UVM Debug Methodologies",
             "slug": "index",
-            "description": "Instrument your UVM environment with traceability, telemetry, and heuristics so complex failures become explainable fast."
+            "description": "Decide whether a UVM verdict is honest, write narrow report catchers, pick the trace that answers a debug question, and plan event-driven waveform windows and a reproducible regression flow."
           },
           {
-            "title": "Effective Debug Techniques in UVM | The Professional Verification Craft",
+            "title": "Systematic Debug: Reproduce, Isolate, Hypothesize, Confirm",
             "slug": "effective-debug",
-            "description": "Tried-and-true methods for diagnosing tricky failures."
+            "description": "Triage a failing UVM regression by first failure and signature, reproduce one failure exactly, then isolate its cause, test a hypothesis and lock the fix in."
           },
           {
-            "title": "Hang Lab: Practising UVM Deadlock Recovery",
+            "title": "Hang Triage: Objections, Timeouts and Heartbeats",
             "slug": "hang-lab",
-            "description": "Use the debugging simulator to rehearse objection tracing, heartbeat analysis, and item_done triage on realistic UVM hangs."
+            "description": "Diagnose a hung UVM run from its evidence, classify it as an objection never dropped, a blocked get or a deadlocked handshake, fix it in the component that owns it, and catch the next one early with a timeout and a heartbeat."
           }
         ],
         "track": "core",
         "prerequisites": [
           "I-UVM-6_UVM_Recording_Classes",
           "I-UVM-1C_UVM_Phasing",
-          "A-UVM-6_Scoreboards_and_Reference_Models"
+          "A-UVM-6_Scoreboards_and_Reference_Models",
+          "I-UVM-1D_Reporting_and_Run_Control"
         ],
         "milestones": [
           "M8"
@@ -1457,7 +1458,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-CUST-1: UVM Methodology Customization",
             "slug": "index",
-            "description": "Design project-wide extensions to UVM—custom bases, phases, and governance—to keep large teams aligned without forking the methodology."
+            "description": "Build a project layer on an unmodified uvm-core (role bases, conventions, config helpers, CI gates) and add a custom run-time phase only when it is justified."
           }
         ],
         "track": "core",
@@ -1477,13 +1478,14 @@ export const curriculumData: Module[] = [
           {
             "title": "E-PERF-1: UVM Performance",
             "slug": "index",
-            "description": "Profile, architect, and operationalize UVM environments so regressions stay fast without sacrificing fidelity."
+            "description": "Measure where a UVM regression spends its time, fix the hotspots that matter, and plan regression throughput with numbers you can defend."
           }
         ],
         "track": "core",
         "prerequisites": [
           "I-UVM-1C_UVM_Phasing",
-          "A-UVM-6_Scoreboards_and_Reference_Models"
+          "A-UVM-6_Scoreboards_and_Reference_Models",
+          "I-UVM-1D_Reporting_and_Run_Control"
         ],
         "milestones": [
           "M8"
@@ -1496,7 +1498,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-INT-1: Integrating UVM with Formal Verification",
             "slug": "index",
-            "description": "Bridge simulation and proof: share assertions, align coverage, and orchestrate flows where UVM and formal reinforce each other."
+            "description": "Share one SVA property library between simulation and formal, write assumptions that match the interface specification, triage and replay counterexamples in UVM, and plan which engine proves what."
           }
         ],
         "track": "core",
@@ -1517,7 +1519,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-PSS-1: Portable Stimulus Standard",
             "slug": "index",
-            "description": "Write your test intent once and compile it to simulation, emulation, or post-silicon targets using the Accellera Portable Stimulus Standard (PSS 2.0)."
+            "description": "Model a test scenario once in Accellera PSS 3.0 (actions, activities, flow objects and resources) and explain how a tool turns it into a UVM virtual sequence and a bare-metal C test, and when that is worth doing."
           }
         ],
         "track": "core",
@@ -1581,7 +1583,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-EMU-1: Emulation-Aware Verification",
             "slug": "index",
-            "description": "Adapt UVM testbenches for hardware emulation platforms — transaction-level acceleration, virtual probes, and the compile-time vs. run-time tradeoffs that determine emulation success."
+            "description": "Split a UVM agent into a synthesizable HDL-side BFM and an untimed HVL-side proxy so the bench runs fast on an emulator, debug a co-emulation run that does not speed up, and choose between simulation, emulation and FPGA prototyping using sourced trade-offs."
           }
         ],
         "track": "elective",
@@ -1620,7 +1622,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-UVM-ML-1: Multi-Language Verification",
             "slug": "index",
-            "description": "Connect SystemVerilog UVM agents with SystemC TLM-2.0 models and C++ reference models using the Accellera UVM-ML Open Architecture framework."
+            "description": "Choose between DPI, a TLM-2 bridge and co-simulation to connect a C++ or SystemC model to a UVM bench, and use UVM TLM-2 sockets and the generic payload at the language boundary."
           }
         ],
         "track": "elective",

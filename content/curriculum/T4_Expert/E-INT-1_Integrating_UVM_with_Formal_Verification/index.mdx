@@ -1,112 +1,266 @@
 ---
 title: "E-INT-1: Integrating UVM with Formal Verification"
-description: "Bridge simulation and proof: share assertions, align coverage, and orchestrate flows where UVM and formal reinforce each other."
+description: "Share one SVA property library between simulation and formal, write assumptions that match the interface specification, triage and replay counterexamples in UVM, and plan which engine proves what."
 flashcards: "E-INT-1_UVM_Formal"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
 ---
 
 import { InteractiveCode } from '@/components/ui';
 
 ## Quick Take
-- **What it is:** A partnership between UVM simulation and formal tools using shared assertions, interface assumptions, and coverage targets.
-- **Why it matters:** Simulation finds deep data-path bugs; formal proves corner-case safety. Together they close gaps faster than either technique alone.
-- **The Analogy:** Imagine mission control (UVM) running real-time rehearsals while a mathematical twin (formal) proves the mission profile safe under every scenario.
 
-> **Signal:** When UVM tests add endless directed scenarios to hit corner cases, formal proofs can slash effort if assertions already exist.
+- **What it is:** One library of SystemVerilog Assertions (SVA), bound to the design under test (DUT) and read by two engines. A **simulator** checks the properties on the stimulus your UVM testbench happens to run. A **formal tool** reads the same RTL and properties and analyses *every* input sequence that the `assume` properties allow, starting from reset, so it either proves a property or returns a **counterexample** (CEX): a trace from reset that makes it fail.
+- **Why it matters:** Formal reaches corner cases that random stimulus rarely hits, such as "four pushes in a row, then check the flag". Simulation reaches deep, multi-block and software-driven scenarios, and it checks that the formal assumptions hold in the real environment. Each engine covers the other's blind spot only if both use the same properties and the assumptions are honest.
+- **The Analogy:** Formal is a building inspector who checks every room on the floor plan; simulation is a fire drill run in the real building. *Where it breaks:* the inspector trusts the plan. A room left off the plan is never inspected (an **over-constraining** assumption hides a bug), and a door drawn by mistake creates hazards that do not exist (an **under-constraining** assumption gives a spurious counterexample). The fire drill, unlike the inspector, only visits the rooms people happen to walk through.
+
+**You will be able to:**
+1. **Explain** what `assert`, `assume`, `cover` and `restrict` mean to a simulator and to a formal tool, and **predict** how adding or removing an assumption changes a proof result.
+2. **Build** a formal harness from an interface checker: bind it to the DUT, assume the inputs the environment drives, assert and cover the outputs, and add covers that expose over-constraint.
+3. **Explain** why a sequence-item constraint is not an assumption, and **diagnose** over-constraint (vacuous proofs, unreachable covers) and under-constraint (spurious counterexamples).
+4. **Triage** a counterexample against the interface specification, **replay** it in UVM, and **decide** whether it is a design bug or an assumption gap.
+5. **Plan** a hybrid flow: **choose** which properties go to formal and which to simulation, and report each result as proven, bounded to depth N, counterexample, covered or unreachable.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### Assertions as the bridge
+This lesson uses one small design throughout: the control block of a 4-entry FIFO. It has two inputs, `push` and `pop`, driven by whoever uses the FIFO (the **environment**), and three outputs computed by the DUT: an occupancy `count`, and the flags `full` and `empty`. The storage array is left out because no property here needs it. The same design runs inside the `FormalVsSimulationVisualizer` further down, so every number on this page can be checked there.
 
-SystemVerilog Assertions (SVA) become the common artefact: `assert` in simulation, `prove` in formal, `cover` for reachability/coverage. The **same property library** serves both flows—no duplicate specification, no semantic drift.
+### What formal verification does
 
-<InteractiveCode
-  language="systemverilog"
-  fileName="fifo_uvm_formal.sv"
-  code={`module fifo_properties #(parameter DEPTH = 8)
-  (input logic clk, rst_n, push, pop,
-   input logic [$clog2(DEPTH):0] count,
-   input logic full, empty);
+Start with words you already know from simulation and add five new ones.
 
-  // Safety property
-  property p_full_is_correct;
-    @(posedge clk) disable iff (!rst_n)
-      (count == DEPTH) |-> full;
-  endproperty
-  assert property (p_full_is_correct);
+- The DUT's **state** is the value of all its flip-flops; here, `count` (and, in the buggy version, a registered `full`). After reset the state is known: `count == 0`.
+- A **free input** is an input the formal tool may set to any value at every clock edge. Here `push` and `pop` are free: they are input ports of the block the tool analyses.
+- A **reachable state** is a state that some sequence of input values can lead to from reset. Simulation visits the reachable states its stimulus happens to drive through; formal reasons about all of them.
+- A **proof** of an assertion means: no input sequence the assumptions allow, starting from reset, makes it fail.
+- A **counterexample (CEX)** is a trace (input values and sampled outputs, edge by edge from reset) that obeys every assumption in force and makes an assertion fail. A **witness** is the same kind of trace for a `cover`: it shows the covered behaviour happening.
 
-  // Assumption: constrains formal, checked in simulation
-  property p_legal_transactions;
-    @(posedge clk) disable iff (!rst_n)
-      !(push && full) && !(pop && empty);
-  endproperty
-  assume property (p_legal_transactions);
+Formal tools look only at the logic that can affect a property, its **cone of influence**: the signals in the property plus everything that feeds them, back to the free inputs. The tool computes the cone; you choose the block boundary.
 
-  // Coverage goal (formal + UVM)
-  property p_cover_fill_and_drain;
-    @(posedge clk) disable iff (!rst_n)
-      (count == 0) ##1 push[*DEPTH] ##1 (count == DEPTH) ##1 pop[*DEPTH] ##1 (count == 0);
-  endproperty
-  cover property (p_cover_fill_and_drain);
-endmodule
+The picture below shows the whole reachable-state space of the FIFO counter under the interface contract "never push while full, never pop while empty". Formal explores this graph from reset, along every edge the assumptions allow. The second row shows what happens when someone adds a wrong assumption that forbids pushing into the last free slot: the edge into `count = 4` disappears, and with it every behaviour that needs a full FIFO.
 
-// One bind for both flows: module name, parameters, instance name, ports
-bind fifo fifo_properties #(.DEPTH(8)) u_fifo_props (.clk(clk), .rst_n(rst_n), .push(push), .pop(pop),
-                     .count(count), .full(full), .empty(empty));
-
-// Illustrative formal-tool commands (real syntax differs per tool)
-prove -property p_full_is_correct
-cover -property p_cover_fill_and_drain`}
-  explanationSteps={[
-    { target: "6-11", title: "Shared safety assertion", explanation: "`assert` in simulation, `prove` in formal—same code base enforces FIFO correctness." },
-    { target: "13-18", title: "Assumptions: constraints in formal, checks in simulation", explanation: "Formal only explores inputs that satisfy the `assume`. Simulation checks the same `assume` like an assertion (IEEE 1800-2023 §16.14.2), so a testbench that breaks the contract is flagged." },
-    { target: "20-25", title: "Coverage handshake", explanation: "`cover` drives both reachability proofs and UVM coverage goals." },
-    { target: "28-30", title: "Bind once", explanation: "Attach properties in simulation via `bind` so the DUT sees identical checkers in both worlds." },
-    { target: "32-34", title: "Tool directives (illustrative)", explanation: "Every formal tool has its own command syntax; what carries over is that you name the properties to prove or cover, and the bound `assume` properties constrain every proof." }
+<ArchitectureDiagram
+  title="Reachable states of the FIFO counter, with and without an over-constraining assumption"
+  caption="Top row: under the contract alone, push edges lead from reset (count 0) to count 4, so formal can reach a full FIFO. Bottom row: with the extra assumption a_never_fill (no push when count is 3), no edge enters count 4, so a full FIFO is unreachable and every check about it is skipped. Pop edges (count k to k-1) and push-and-pop together (count unchanged) also exist; they are not drawn."
+  nodes={[
+    { id: "s0", label: "count 0", sublabel: "reset", kind: "generic", col: 0, row: 0 },
+    { id: "s1", label: "count 1", kind: "generic", col: 1, row: 0 },
+    { id: "s2", label: "count 2", kind: "generic", col: 2, row: 0 },
+    { id: "s3", label: "count 3", kind: "generic", col: 3, row: 0 },
+    { id: "s4", label: "count 4", sublabel: "full", kind: "generic", col: 4, row: 0, state: "ok" },
+    { id: "t0", label: "count 0", sublabel: "reset", kind: "generic", col: 0, row: 1 },
+    { id: "t1", label: "count 1", kind: "generic", col: 1, row: 1 },
+    { id: "t2", label: "count 2", kind: "generic", col: 2, row: 1 },
+    { id: "t3", label: "count 3", kind: "generic", col: 3, row: 1 },
+    { id: "t4", label: "count 4", sublabel: "unreachable", kind: "generic", col: 4, row: 1, state: "dim" }
+  ]}
+  edges={[
+    { from: "s0", to: "s1", style: "data", label: "push" },
+    { from: "s1", to: "s2", style: "data", label: "push" },
+    { from: "s2", to: "s3", style: "data", label: "push" },
+    { from: "s3", to: "s4", style: "data", label: "push" },
+    { from: "t0", to: "t1", style: "data", label: "push" },
+    { from: "t1", to: "t2", style: "data", label: "push" },
+    { from: "t2", to: "t3", style: "data", label: "push" }
   ]}
 />
 
-### Interactive: Formal vs Simulation comparison
+Two consequences follow, and the rest of the lesson builds on them:
+- **A proof is only as good as its assumptions.** Formal proves "no failure in the states I can reach". If an assumption cuts away states the real environment can reach, the proof says nothing about them.
+- **A counterexample is relative to the assumptions.** If the assumptions are too loose, formal can reach states the real environment never produces, and the CEX describes a situation that cannot happen.
 
-Toggle the assumptions and switch to the buggy RTL. Predict what formal reports before each run, then replay each counterexample in UVM and decide whether it is a real RTL bug or a hole in your assumptions.
+Formal does not replace simulation. It works best on blocks of modest size with deep corner cases; it struggles with large datapaths and long end-to-end flows. Choosing between the two is the last section of this lesson. For the general choice of verification methods, see [F1B: The Verification Mindset](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index).
 
-<FormalVsSimulationVisualizer />
+### One property library, two engines
 
-## Formal Harness Architecture
+The design is checked by one property module, `fifo_props`, attached to the DUT with `bind`. You met `bind` in [I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index): it instantiates a module, interface, program or checker inside a target module without editing the target's source (IEEE 1800-2023 §23.11). Both engines elaborate the same bound module, so they check the same lines.
 
-Building a formal testbench from an existing UVM environment requires stripping the RTL down to a small cone of logic and replacing UVM agents with formal assumptions.
+```systemverilog
+// snippet: the heart of fifo_props (the full file is in Make It Work)
+default clocking @(posedge clk); endclocking
+default disable iff (!rst_n);
 
-### From UVM env to formal harness
+// The interface contract: what the environment promises
+a_no_push_when_full: assume property (!(push && full));
+a_no_pop_when_empty: assume property (!(pop && empty));
 
-| UVM Component | Formal Equivalent | Notes |
+// Obligations on the DUT
+p_count_in_range:    assert property (count <= DEPTH);
+p_full_is_correct:   assert property ((count == DEPTH) |-> full);
+
+// Behaviour the assumptions must still allow
+c_reach_depth:       cover  property (count == DEPTH);
+c_push_pop:          cover  property (push && pop);
+```
+
+Every statement has a **label** (`a_no_push_when_full:`). The label gives the assertion a hierarchical name, such as `tb_top.dut.u_fifo_props.p_full_is_correct`, which reports, assertion-control tasks and formal-tool commands can refer to. Unlabelled assertions get a tool-chosen name, which is harder to track. The names used here are the names the visualizer uses.
+
+The same line means different things to the two engines. IEEE 1800-2023 §16.2 lists four kinds of concurrent assertion statement:
+
+| Statement | What a simulator does | What a formal tool does | Clause |
+|---|---|---|---|
+| `assert property` | Evaluates an attempt at every clock edge; on failure runs the `else` action, or calls `$error` if there is none | Treats it as a **proof obligation**: reports proven, a CEX, or a bounded or undetermined result | §16.14.1, §16.2 |
+| `assume property` | **Checks it and reports a failure, just like an assertion.** It does not stop your UVM driver from breaking it | Treats it as a **hypothesis**: explores only traces that satisfy it and never checks it ("there is no obligation to verify that the assumed properties hold") | §16.14.2 |
+| `cover property` | Counts attempts, successes, and successes that were vacuous | Searches for a witness trace: **covered** at some edge, or **unreachable** | §16.14.3 |
+| `restrict property` | **Ignores it.** It is not checked and has no action block | Constrains the analysis exactly like `assume` | §16.14.4 |
+
+Read the `assume` row twice, because the two most common misunderstandings live there. In simulation an `assume` is a check: if your testbench pushes while `full` is 1, the simulator reports `a_no_push_when_full` failing (some tools can also generate stimulus from assumptions; that is tool-dependent). In formal an `assume` is a filter on the inputs: the tool never tries a trace that breaks it, so it can never report it failing.
+
+`restrict` exists for constraints that are deliberately *not* true of the environment, such as analysing one operating mode per formal run. The standard's example restricts an ALU's control bit to "add" for one session and to "subtract" in another (§16.14.4):
+
+```systemverilog
+// snippet: one formal session analyses addition only; simulation is unaffected
+r_add_only: restrict property (@(posedge clk) ctr == '0);
+```
+
+If you wrote this as an `assume`, every simulation that exercised subtraction would report a failure.
+
+**Where properties can live.** Concurrent assertions belong in modules, interfaces and programs (§16.14.5), in checkers (Clause 17), and inside `always` or `initial` procedures as procedural concurrent assertions (§16.14.6). They cannot do useful work in a class: expressions in a concurrent assertion "shall not reference non-static class properties or methods" (§16.6). That is why a UVM monitor or scoreboard, which are classes, cannot be part of a formal harness. Formal tools also read only synthesizable RTL plus SVA; which constructs each tool accepts is tool-dependent.
+
+<ArchitectureDiagram
+  title="One property module, two engines"
+  caption="The bound module u_fifo_props sits inside the fifo instance in both flows. In simulation the UVM driver supplies push and pop, one random run at a time, and failures go to the log. In formal the tool supplies push and pop itself, every sequence the assume lines allow, and reports a result per property."
+  nodes={[
+    { id: "test", label: "UVM test (simulation)", kind: "test", col: 0, row: 0, rowSpan: 2, container: true },
+    { id: "sqr", label: "sqr", kind: "sequencer", col: 0, row: 0 },
+    { id: "drv", label: "drv", kind: "driver", col: 0, row: 1 },
+    { id: "dut", label: "fifo (bind target)", kind: "dut", col: 1, row: 0, rowSpan: 2, container: true },
+    { id: "rtl", label: "count, full, empty", sublabel: "RTL", kind: "dut", col: 1, row: 0 },
+    { id: "props", label: "u_fifo_props", sublabel: "fifo_props, bound", kind: "generic", col: 1, row: 1 },
+    { id: "formal", label: "formal tool", sublabel: "free push, pop", kind: "generic", col: 2, row: 0 },
+    { id: "results", label: "results", sublabel: "per property", kind: "generic", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "sqr", to: "drv", style: "control", label: "items" },
+    { from: "drv", to: "rtl", style: "data", label: "push, pop" },
+    { from: "formal", to: "rtl", style: "data", label: "push, pop" },
+    { from: "rtl", to: "props", style: "structural", label: "bind (.*)" },
+    { from: "props", to: "results", style: "causal", label: "proven, CEX, covered" }
+  ]}
+/>
+
+**One library does not mean identical semantics.** The standard itself warns that tools using cycle-based evaluation can behave differently from event-based simulation in some scenarios (§16.2). X values, the initial state before reset, delays and `initial` blocks in the RTL are the usual sources of difference; the Push Further item [Where simulation and formal disagree](#expert-where-simulation-and-formal-disagree) lists them.
+
+**Classic mistake: assuming a DUT output.** An `assume` on a signal the DUT drives, such as `assume property ((count == DEPTH) |-> full)`, tells formal to ignore every trace in which the DUT gets `full` wrong. The matching assertion then "proves", and the bug is hidden. Rule: assume only signals the environment drives; assert the signals the DUT drives.
+
+### Reading a formal result: bounded and full proofs
+
+A formal run returns one status per property. Exact names differ by tool (tool-dependent), but the meanings are these:
+
+| Status | Meaning | Is it a proof? |
 |---|---|---|
-| Driver + Sequencer | Free inputs + `assume` properties | Assumptions written from the interface specification replace constrained stimulus; formal explores every input they allow |
-| Monitor | Not needed | Formal engines observe all signals natively |
-| Scoreboard | `assert` properties | Correctness is expressed as SVA, not procedural checks |
-| Coverage | `cover` properties | Reachability proofs replace sampling-based coverage |
-| Config/Factory | Parameters | Formal harnesses are statically parameterized |
+| **Proven** | No allowed input sequence from reset violates the assertion, at any depth | Yes, relative to the assumptions |
+| **Bounded to depth N** | No violation in any allowed sequence through edge N; nothing is known beyond | No |
+| **Counterexample at edge k** | A concrete trace from reset, obeying every assumption, fails at edge k | It disproves the property, relative to the assumptions |
+| **Covered at edge k** | A witness trace reaches the cover at edge k | It shows the behaviour is reachable |
+| **Unreachable** | No allowed sequence ever reaches the cover | It shows the behaviour is impossible under the assumptions |
+| **Undetermined** | The tool ran out of time or memory | No |
 
-### Building the harness step by step
+This lesson counts edges from 0, the first rising clock edge after reset is released, and uses the values sampled at each edge (§16.5.1). A **bounded run to depth N** checks every allowed input sequence through edge N. Tools count from 0 or from 1 and call the bound "depth", "cycles" or "steps" (tool-dependent), so check the convention before you compare numbers.
 
-1. **Isolate the DUT block** — formal scales best on small blocks with a well-defined interface and shallow state. Extract the block you want to prove.
-2. **Declare free inputs** — inputs left undriven become unconstrained; the formal engine explores all possible values.
-3. **Add assumptions** — restrict free inputs to what the interface specification (or the upstream block) guarantees. If the interface already has protocol assertions, reuse those properties as `assume`. Sequence constraints can suggest rules, but they are not equivalent to assumptions (see below).
-4. **Assert safety properties** — these are the same properties your UVM assertions check in simulation.
-5. **Add cover properties** — verify that interesting states are reachable under your assumptions.
-6. **Bind the property module** — use `bind` so the same checkers attach in both simulation and formal without modifying the DUT.
+Bounded runs are often all a tool can finish on a large design, and they are useful: they find shallow bugs fast. But a bounded pass is not a proof. The timing diagram shows why, with the late-flag bug you will meet in the visualizer: `full` is a register that copies `count == DEPTH` one edge late.
 
-> ⚠️ **Over-constraining is the #1 formal pitfall.** If your assumptions are tighter than what the real environment produces, the formal engine cannot find real bugs. Audit each assumption against the interface specification, not against the UVM driver: a driver can be wrong too, and copying its habits imports testbench bugs into the proof. Add a `cover` for each behaviour an assumption must still allow.
+<TimingDiagram
+  title="A bound of 3 misses a bug at edge 4"
+  caption="Late-flag RTL with the interface contract assumed. Four pushes from reset give count = 4 at edge 4, while the registered full still reads 0, so p_full_is_correct fails at edge 4. A bounded run to depth 3 explores edges 0 to 3, where count never reaches 4: it reports no failure, and c_reach_depth is not reached within the bound either. A bound of 4 finds the counterexample."
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "push", kind: "bit", values: [1, 1, 1, 1, 0] },
+    { name: "pop", kind: "bit", values: [0, 0, 0, 0, 0] },
+    { name: "count", kind: "bus", values: [0, 1, 2, 3, 4] },
+    { name: "full", kind: "bit", values: [0, 0, 0, 0, 0] }
+  ]}
+  highlights={[{ from: 0, to: 3, tone: "info", label: "explored by a bound of 3" }]}
+  markers={[
+    { edge: 3, tone: "info", label: "bound N = 3 ends here: no failure, and c_reach_depth not yet reached" },
+    { edge: 4, tone: "fail", label: "p_full_is_correct fails: count = 4, full = 0" }
+  ]}
+/>
 
-## Assumption Alignment
+Notice the warning sign in the bounded run: the cover `c_reach_depth` was not reached within the bound. A bound that never fills the FIFO cannot test anything about a full FIFO. A practical rule follows: **choose a bound at least as deep as your deepest cover**. That rule is a heuristic, not a guarantee. Only a full proof, or a bound at least as deep as the longest shortest path to any reachable state (the design's sequential depth), covers every reachable state.
 
-### Constraints and assumptions: related, not equivalent
+### Building a harness: what carries over from the UVM environment
 
-A sequence-item constraint and a formal assumption can describe the same rule, but they act at different times and on different data. Before you read the explanation, predict which of the three constraints below would be safe to turn into an assumption:
+A **formal harness** is the formal tool's equivalent of a testbench: the DUT, the assumptions on its inputs, the assertions and covers on its outputs, and any small modelling code they need. You do not translate the UVM environment class by class. Most of it is class code, which a formal tool cannot read (§16.6), and most of it is not needed: formal supplies its own stimulus and reads every signal directly. What carries over is the properties.
+
+<ArchitectureDiagram
+  title="From UVM environment to formal harness"
+  caption="Each UVM role is re-expressed as SVA in a module, interface or checker bound to the DUT. The class code itself (driver, monitor, scoreboard, covergroup) is not part of the harness. Only properties that are already SVA, such as the interface's protocol checker, carry over unchanged."
+  nodes={[
+    { id: "env", label: "UVM environment (classes)", kind: "env", col: 0, row: 0, rowSpan: 4, container: true },
+    { id: "drv", label: "drv + sqr", sublabel: "constrained stimulus", kind: "driver", col: 0, row: 0 },
+    { id: "mon", label: "mon", sublabel: "protocol checks", kind: "monitor", col: 0, row: 1 },
+    { id: "scb", label: "scb", sublabel: "data checks", kind: "scoreboard", col: 0, row: 2 },
+    { id: "cov", label: "covergroup", kind: "subscriber", col: 0, row: 3 },
+    { id: "fh", label: "formal harness (SVA, bound)", kind: "generic", col: 2, row: 0, rowSpan: 4, container: true },
+    { id: "free", label: "free inputs + assume", sublabel: "interface checker, assume mode", kind: "generic", col: 2, row: 0 },
+    { id: "chk", label: "assert on outputs", sublabel: "interface checker, assert mode", kind: "generic", col: 2, row: 1 },
+    { id: "aux", label: "assert + auxiliary model", sublabel: "e.g. a free-variable checker", kind: "generic", col: 2, row: 2 },
+    { id: "cvr", label: "cover property", kind: "generic", col: 2, row: 3 }
+  ]}
+  edges={[
+    { from: "drv", to: "free", style: "causal", label: "replaced by" },
+    { from: "mon", to: "chk", style: "causal", label: "rules move to SVA" },
+    { from: "scb", to: "aux", style: "causal", label: "re-expressed as" },
+    { from: "cov", to: "cvr", style: "causal", label: "re-expressed as" }
+  ]}
+/>
+
+| UVM part | In the formal harness | Why |
+|---|---|---|
+| Sequencer, sequences, driver | Free inputs, filtered by `assume` properties written from the interface specification | Formal generates its own stimulus; the assumptions say what is legal |
+| Monitor | Not carried over. Its protocol rules, if they are SVA in the interface or a checker, carry over as bound assertions | The tool reads signals directly; a class cannot hold a useful concurrent assertion (§16.6) |
+| Scoreboard | Assertions on outputs, plus a small auxiliary model where the check needs memory (see [Symbolic data](#expert-symbolic-data-with-constant-free-variables)) | Transaction-level checks must be re-expressed on signals |
+| Covergroups | `cover property` statements for the scenarios that matter | They complement sampled coverage; they do not replace it |
+| Configuration, factory | Parameters | The harness is elaborated once, statically |
+
+**How to build one, step by step:**
+1. **Choose the block boundary.** Pick a block with a well-defined interface and modest state: a FIFO controller, an arbiter, a protocol FSM. Make its inputs the input ports of the top the formal tool reads, so they are free. (Whether an undriven internal signal is treated as free is tool-dependent; ports are not.)
+2. **State reset.** Tell the tool which signal is the reset and its active level; the analysis starts from the reset state. The command is tool-dependent.
+3. **Assume the environment's rules**, written per clock from the interface specification. The best source is the interface's own protocol checker (next paragraph). Never copy sequence constraints mechanically (next section).
+4. **Assert the DUT's obligations** on its outputs: the same properties simulation checks.
+5. **Cover what the assumptions must still allow**: one cover per assumption for a behaviour it must not forbid, plus a cover for the **antecedent** of each implication (its left-hand side, the condition that must hold before the check applies).
+6. **Bind** the property module to the DUT, passing parameters through: `bind fifo fifo_props #(.DEPTH(DEPTH)) u_fifo_props (.*);`. Parameters and ports in a bind resolve in the target's scope (§23.11), so `DEPTH` means the FIFO's own `DEPTH`. A hard-coded `#(.DEPTH(8))` would silently check the wrong depth on a FIFO of any other size.
+
+**One rule, two directives.** An interface rule constrains whoever drives the signal. When you verify the FIFO, the environment drives `push`, so the rule is an assumption. When you verify the block that *produces* `push`, the same rule is an obligation on that block. Write the rule once and choose the directive by parameter:
+
+```systemverilog
+// compile
+module fifo_push_rule_chk #(parameter bit ASSUME_IT = 1'b1) (
+  input logic clk, rst_n, push, full
+);
+  default clocking @(posedge clk); endclocking
+  default disable iff (!rst_n);
+  // Assume where the environment drives push (the FIFO's harness);
+  // assert where the block under test drives it (the producer's harness).
+  if (ASSUME_IT) begin : g_env_drives
+    a_no_push_when_full: assume property (!(push && full));
+  end else begin : g_dut_drives
+    a_no_push_when_full: assert property (!(push && full));
+  end
+endmodule
+```
+
+Proving a block under an assumption, then proving that assumption as an assertion on the block that drives the signal, is called **assume-guarantee** reasoning. The same properties can also live in a `checker` instead of a module; you can bind a checker too (§23.11), and you need a checker when the harness uses free variables (Push Further).
+
+### Constraints are not assumptions
+
+A sequence-item constraint and a formal assumption can describe the same rule, but they act at different times on different data. Before you read the explanation steps, predict which of the three constraints below could be copied unchanged into `fifo_props` as an assumption.
 
 <InteractiveCode
   language="systemverilog"
   fileName="constraint_vs_assumption.sv"
-  code={`// UVM sequence item: stimulus for ONE transaction, solved before it is driven
-class fifo_txn extends uvm_sequence_item;
+  code={`// snippet: a sequence item and two assumptions, side by side
+// UVM sequence item: solved once per item, before it is driven
+class fifo_item extends uvm_sequence_item;
   rand bit push, pop;
   bit      full_seen, empty_seen; // copied in by the sequence before randomize()
 
@@ -115,141 +269,829 @@ class fifo_txn extends uvm_sequence_item;
     empty_seen -> !pop;
   }
   constraint c_one_op { !(push && pop); } // this test's choice, not an interface rule
+
+  \`uvm_object_utils(fifo_item)
+  function new(string name = "fifo_item");
+    super.new(name);
+  endfunction
 endclass
 
-// Interface rule: evaluated at every clock edge, on the live signals
-property a_legal_push;
-  @(posedge clk) disable iff (!rst_n)
-    full |-> !push;
-endproperty
-assume property (a_legal_push);
-
-property a_legal_pop;
-  @(posedge clk) disable iff (!rst_n)
-    empty |-> !pop;
-endproperty
-assume property (a_legal_pop);`}
+// Interface rules: checked at every clock edge, on the live signals
+// (these lines live inside fifo_props, the module bound to the DUT)
+a_no_push_when_full: assume property (!(push && full));
+a_no_pop_when_empty: assume property (!(pop && empty));`}
   explanationSteps={[
-    { target: "6-9", title: "Constraint: decided once per item", explanation: "`c_legal` is solved when the sequence calls `randomize()`. The flags hold whatever the sequence copied in at that moment, and the item may reach the pins cycles later, after `full` has changed. The rule it hints at is real; the constraint cannot enforce it per cycle." },
-    { target: "10", title: "Test intent, not a rule", explanation: "`c_one_op` shapes this test's traffic. As an assumption it would forbid simultaneous push and pop, and every bug that needs both would become unreachable: an over-constraint." },
-    { target: "13-24", title: "Assumption: applies at every clock", explanation: "The rule comes from the interface specification and holds on the live signals at every edge, however late an item is driven. Simulation checks the same `assume` like an assertion (IEEE 1800-2023 §16.14.2), so a testbench that breaks it is reported." }
+    { target: "7-10", title: "Constraint: decided once per item", explanation: "`c_legal` is solved when the sequence calls `randomize()`. The flags hold whatever the sequence copied in at that moment, and the item may reach the pins edges later, after `full` has changed. The rule it hints at is real; the constraint cannot enforce it per clock." },
+    { target: "11", title: "Test intent, not a rule", explanation: "`c_one_op` shapes this test's traffic. As an assumption it would forbid push and pop together, and every bug that needs both would become unreachable: an over-constraint." },
+    { target: "13-16", title: "A registered item", explanation: "The factory macro and the constructor make `fifo_item::type_id::create()` legal; the replay sequence later in this lesson depends on them." },
+    { target: "21-22", title: "Assumption: applies at every clock", explanation: "The rule comes from the interface specification and holds on the live signals at every edge, however late an item is driven. Simulation checks the same `assume` like an assertion (IEEE 1800-2023 §16.14.2), so a testbench that breaks it is reported." }
   ]}
 />
 
-Constraints can inspire assumptions, but they are not automatically equivalent:
-- Constraints are solved per transaction, ahead of time; they cannot see cycle-level DUT state.
-- Drivers implement protocol rules (handshakes, timing) that never appear in any constraint.
-- Many constraints express test intent (biases, narrowed ranges) that would over-constrain a proof.
+**The answer: none of the three, as written.** The two halves of `c_legal` express real interface rules, but on stale copies of the flags; they become the per-clock assumptions `a_no_push_when_full` and `a_no_pop_when_empty`, on the live `full` and `empty`. `c_one_op` is test intent and must not become an assumption at all.
 
-So write assumptions from the interface specification, per clock, on the signals at the DUT boundary. The best source is the interface's own protocol assertions: the same properties are asserted where the DUT drives a signal and assumed where the environment drives it.
+The timing diagram shows the gap between "solved" and "driven". A driver that pipelines items (accepts the next item while the current one is still on the pins) is one way it happens.
 
-### Common assumption pitfalls
+<TimingDiagram
+  title="Solved at edge 0, driven at edge 3"
+  caption="Item B is randomized at edge 0, when full = 0, so c_legal allows push = 1. Item A, already in the driver's pipeline, pushes at edge 1 and fills the FIFO (count 3 to 4, full = 1 from edge 2). Item B reaches the pins at edge 3 and pushes while full: a_no_push_when_full fails at edge 3. The constraint held when the item was solved; the interface rule fails at the pins three edges later."
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "count", kind: "bus", values: [3, 3, 4, 4] },
+    { name: "push", kind: "bit", values: [0, 1, 0, 1] },
+    { name: "pop", kind: "bit", values: [0, 0, 0, 0] },
+    { name: "full", kind: "bit", values: [0, 0, 1, 1] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", label: "item B randomized: full_seen = 0, so c_legal allows push = 1" },
+    { edge: 1, tone: "drive", label: "item A pushes: count 3 to 4" },
+    { edge: 3, tone: "fail", label: "item B pushes while full = 1: a_no_push_when_full fails" }
+  ]}
+/>
+
+In summary:
+- Constraints are solved per item, ahead of time; they cannot see the DUT's state at the edge where the item is applied.
+- Drivers implement protocol timing (handshakes, idle cycles) that appears in no constraint.
+- Many constraints are test intent: biases, narrowed ranges, "one operation at a time". As assumptions they over-constrain the proof.
+- A `dist` bias inside an `assume` only steers random simulation. In formal, "the properties that are assumed shall hold in the same way with or without biasing", and in an `assert` or `cover` a `dist` is treated like `inside` with the weights ignored (§16.14.2). Test biases never belong in assumptions.
+
+Checker **free variables** (checker variables declared `rand`, which formal treats as "any value the assumptions allow") are the closest SystemVerilog gets to "constraints inside the harness": a simulator re-solves the checker's assumptions at each of their clock events, with no `randomize()` call, whereas class constraints are solved only when `randomize()` is called (§17.7.2). See [I-SV-4C: free variables](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index#expert-free-variables-assume-sets-and-formal).
+
+So write assumptions from the **interface specification**, per clock, on the signals at the DUT boundary. Constraints are only a prompt for which rules to look up. Audit each assumption against the specification, not against the UVM driver: a driver can be wrong too, and copying its habits imports testbench bugs into the proof. See [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) if you need a refresher on how constraints are solved.
+
+### Over-constraint, vacuity and sanity covers
+
+An assumption that forbids something the real environment does is an **over-constraint**. Formal then never looks at those behaviours, and properties that depend on them prove for the wrong reason.
+
+The sharpest form is a **vacuous proof**. An implication such as `(count == DEPTH) |-> full` succeeds trivially, without checking `full`, at every edge where its left side (the **antecedent**) is false (§16.12.7). Such a success is **vacuous**: per §16.14.8 it "is not considered a pass or a failure". If an over-constraint makes `count == DEPTH` unreachable, every attempt is vacuous and the tool still says "proven". Some tools flag vacuous proofs; many do not by default (tool-dependent). You need your own detector, and covers are that detector:
+
+1. **Cover each antecedent**, as its own property: `c_reach_depth: cover property (count == DEPTH);`. If it is unreachable, the implication is proven only vacuously. Do not rely on covering the implication itself: a `cover property` of an implication can count vacuous successes (§16.14.3 lists "succeeded because of vacuity" as a separate count), so cover the antecedent.
+2. **Give each assumption a cover** for a behaviour it must still allow. For example, `c_push_pop: cover property (push && pop);` goes unreachable the moment someone assumes "one operation at a time".
+3. **Read the covers before the assertions.** An unreachable cover, or every assertion proving almost instantly, means over-constraint or contradictory assumptions (assumptions that no trace can satisfy, which empty the input space so everything proves).
+4. **Let simulation audit the assumptions.** Because a simulator checks every `assume` (§16.14.2), a legal random environment that does something an assumption forbids reports it. In the visualizer's model, with the correct RTL, the over-tight `a_never_fill` fails at edge 14 of random seed 1.
+
+For cover statements, know one more distinction. `cover sequence` reports *every* match per evaluation attempt, while `cover property` counts at most one success per attempt (§16.14.3). Use `cover sequence` when you want to know how many ways a scenario completed.
+
+#### Interactive: predict four formal runs
+
+The visualizer runs a real exhaustive search over the FIFO model: the RTL on the left (correct, or with the late `full` register), the shared property module on the right with buttons to toggle each assumption, and a formal report and a random simulation below. Write a prediction for each run before you set it up; the visualizer asks you to commit to one before it shows the result.
+
+| Run | RTL | Assumptions | Your prediction for the two assertions and the cover |
+|---|---|---|---|
+| A | Correct | Contract only (the default) | |
+| D | Late flag | Contract, then turn **on** `a_never_fill` | |
+| B | Correct | Turn **off** `a_no_push_when_full` | |
+| C | Late flag | Contract only | |
+
+Do runs A and D now. Runs B and C belong to the next section, so you can come back to them.
+
+<FormalVsSimulationVisualizer />
+
+**Debrief, runs A and D.** In run A both assertions are proven and `c_reach_depth` is covered at edge 4, after four pushes from reset. In run D, with the late-flag bug *present*, both assertions are again proven, but the report marks `p_full_is_correct` "proven (vacuous)" and `c_reach_depth` unreachable. `a_never_fill` forbids pushing when `count` is 3, so the FIFO never fills, the antecedent never matches, and the bug that needs a full FIFO is invisible. Same green result, opposite meaning: only the cover tells them apart.
+
+### Under-constraint and counterexample triage
+
+The opposite mistake is a **missing** assumption, or **under-constraint**. Formal then explores input sequences the real environment never produces and can return a **spurious counterexample**: a real trace of the RTL that can never occur in the product.
 
 | Pitfall | Symptom | Fix |
 |---|---|---|
-| **Over-constraining** | Everything proves, but bugs exist in silicon | Audit each assumption against the interface specification; add a `cover` for each behaviour it must still allow |
-| **Under-constraining** | Spurious CEX: the trace uses an input sequence the real environment never produces | Add the missing assumption from the specification; replay the CEX in simulation to confirm |
-| **Vacuous proofs** | Property passes but antecedent is never true | Add a cover property for the antecedent; verify reachability |
-| **Assumption/assertion confusion** | Properties accidentally assumed instead of asserted | Review property directives; use linting tools |
+| Over-constraint | Everything proves, often quickly; a cover is unreachable; a bug later appears in simulation or silicon | Find the assumption the specification does not support; remove or relax it; re-check the covers |
+| Under-constraint | A CEX whose trace uses an input the specification forbids | Add the missing rule as an assumption, from the specification; re-run formal: the CEX must disappear |
+| Vacuous proof | An implication proves but its antecedent cover is unreachable | Same as over-constraint, or fix a wrong antecedent, a `disable iff` that is always true, or the wrong clock |
+| Assume on a DUT output | The matching assertion proves; the bug is hidden | Assume only environment-driven signals; assert DUT-driven ones |
 
-## Counterexample Replay
+So every counterexample needs **triage**: deciding whether it shows a design bug or an assumption gap. The decision is made against the **specification**, not against the assumptions, because a CEX satisfies every assumption formal used: those same assumptions cannot fire on it. The rule:
 
-When a formal engine finds a counterexample trace, that trace is a witness **relative to your assumptions**: a real bug if every input in it is legal, or a missing assumption if it is not. Replaying it in UVM, where the same `assume` properties are checked like assertions (IEEE 1800-2023 §16.14.2), tells you which. Converting a genuine one into a directed UVM test closes the formal→simulation feedback loop.
+1. **Check every environment-driven input in the trace against the interface specification.** Read the trace edge by edge, or replay it in simulation with an *independent* input-side checker bound: the interface's complete protocol checker or VIP assertions on the signals the environment drives.
+2. **If an input is illegal, the CEX is spurious.** Add the missing rule as an assumption and re-run formal. Replaying the old trace with the new assumption bound shows it firing at the illegal input.
+3. **If every input is legal, it is a design bug.** Output-side checks (the scoreboard, assertions on DUT outputs) failing on legal inputs confirm it. They never make a CEX spurious: they check the DUT, not the stimulus.
+4. **If the replay does not reproduce the failure**, you have a reproduction problem (reset alignment, X, driver timing), not a verdict. Fix the replay first.
 
-### The replay workflow
+Replaying the CEX in UVM with *only the same* `fifo_props` bound tells you that it reproduces, not that it is a bug. The visualizer can classify its counterexamples because its replay environment binds the **full interface contract**, even when the formal run had an assumption switched off. That contract checker plays the role of step 1's independent input-side checker.
 
-1. **Export the CEX** — formal tools produce VCD, FSDB, or waveform databases. Extract signal values per cycle.
-2. **Build a directed sequence** — create a UVM sequence that replays the exact input values from the CEX trace. This works only if the driver applies one item per clock with the trace's timing; otherwise drive the trace values directly from a small directed testbench.
-3. **Run in UVM** — execute the directed sequence in your full UVM environment to reproduce the bug with full scoreboard and coverage instrumentation.
-4. **Debug with waveforms** — use the familiar simulation debug flow to root-cause the failure.
-5. **Verify the fix** — re-run formal to confirm the property now proves, then add the CEX-derived test to your regression suite as a permanent guard.
+**Debrief, run B (correct RTL, `a_no_push_when_full` off).** Formal reports `p_count_in_range` failing at edge 5. The trace pushes at edges 0 to 4; at edge 4 `count` is 4 and `full` is 1, and the push overflows the counter to 5. Pushing while full breaks the specification, so the CEX is spurious: the replay's contract checker reports `a_no_push_when_full` failing at edge 4. Restore the assumption; nothing in the RTL changes.
 
-<InteractiveCode
-  language="systemverilog"
-  fileName="cex_replay.sv"
-  code={`// Directed sequence from formal counterexample
-class cex_replay_seq extends uvm_sequence #(fifo_txn);
-  \`uvm_object_utils(cex_replay_seq)
+**Debrief, run C (late-flag RTL, contract).** Formal reports `p_full_is_correct` failing at edge 4: four legal pushes, then `count == 4` with `full == 0`. It also reports `p_count_in_range` failing at edge 5: at edge 4 the stale `full` still reads 0, so a fifth push is *legal* by the contract, and the counter overflows. Every input obeys the specification, so this is a design bug.
 
-  function new(string name = "cex_replay_seq");
-    super.new(name);
-  endfunction
+**Debrief, the simulation panel.** With the late-flag RTL and the contract, random seed 1 fails `p_full_is_correct` at edge 15, while seed 2 never fills the FIFO in 16 edges and passes. Formal found the bug at edge 4 whatever the seed. That is the case for formal in one sentence: it does not depend on stimulus luck.
 
-  task body();
-    fifo_txn txn;
+### Choosing formal or simulation, and reporting results
 
-    // Cycle 1-4: push items rapidly (from CEX trace)
-    repeat(4) begin
-      txn = fifo_txn::type_id::create("txn");
-      start_item(txn);
-      txn.push = 1; txn.pop = 0;
-      finish_item(txn);
-    end
+A hybrid plan assigns each property, and each verification-plan feature, to the engine that can close it.
 
-    // Cycle 5: push while full — this is the bug trigger
-    txn = fifo_txn::type_id::create("txn");
-    start_item(txn);
-    txn.push = 1; txn.pop = 0;  // full flag was late
-    finish_item(txn);
-    \`uvm_info("CEX", "Replayed counterexample trace", UVM_LOW)
-  endtask
-endclass`}
-  explanationSteps={[
-    { target: "2-8", title: "Directed sequence", explanation: "A hand-crafted sequence replays the exact input values from the formal counterexample." },
-    { target: "12-18", title: "Fill the FIFO", explanation: "Rapid consecutive pushes — the formal engine proved these expose the late full-flag bug." },
-    { target: "21-25", title: "Bug trigger", explanation: "The fifth push occurs before the registered `full` flag updates. This is the cycle that violates the safety assertion." }
+| Choose | When the logic is | Examples |
+|---|---|---|
+| Formal first | Control-dominated, a small interface, deep corner cases, properties that are easy to state | FIFO control and flags, arbiters (one-hot grant, bounded wait), FSMs, handshakes, credit counters, interrupt masking |
+| Simulation first | Large datapaths, long end-to-end flows across many blocks, software-driven scenarios, performance | A pixel filter compared with a C model over a frame, a DMA throughput test, boot code |
+| Both | Interface protocols | The same protocol checker is proven on each block in formal and checked in every simulation |
+
+Formal results and simulation results are reported per property and traced to the verification plan:
+
+| Property | Feature | Engine | Status | Assumptions (spec source) | Covers | Owner |
+|---|---|---|---|---|---|---|
+| `p_full_is_correct` | FIFO flags | formal | proven | `a_no_push_when_full`, `a_no_pop_when_empty` (FIFO spec, interface rules) | `c_reach_depth` covered at 4 | block owner |
+| `p_count_in_range` | no overflow | formal | proven | as above | `c_push_pop` covered at 1 | block owner |
+| `p_data_order` | data integrity | simulation | 0 failures in the nightly regression | none (scoreboard) | covergroup bins 100% | DV owner |
+
+Each line names its depth when the result is bounded ("bounded to 30"), and each assumption names the specification clause it comes from and whether any regression ever violated it. Reviewers can then see exactly what "proven" rests on.
+
+<ArchitectureDiagram
+  title="From plan to sign-off"
+  caption="Each verification-plan feature is checked by properties. Each property goes to the engine that can close it. Each result is reported with its status, depth and assumptions, and the review signs off on that evidence."
+  nodes={[
+    { id: "feat", label: "vplan feature", kind: "generic", col: 0, row: 0 },
+    { id: "prop", label: "property", sublabel: "assert or cover", kind: "generic", col: 1, row: 0 },
+    { id: "formal", label: "formal", sublabel: "control logic", kind: "generic", col: 2, row: 0 },
+    { id: "sim", label: "simulation", sublabel: "deep or long flows", kind: "generic", col: 2, row: 1 },
+    { id: "status", label: "status per property", sublabel: "with depth, assumptions", kind: "generic", col: 1, row: 1 },
+    { id: "review", label: "sign-off review", kind: "generic", col: 0, row: 1 }
+  ]}
+  edges={[
+    { from: "feat", to: "prop", style: "data", label: "checked by" },
+    { from: "prop", to: "formal", style: "data" },
+    { from: "prop", to: "sim", style: "data" },
+    { from: "formal", to: "status", style: "data", label: "proven, bounded, CEX" },
+    { from: "sim", to: "status", style: "data", label: "pass, fail, hits" },
+    { from: "status", to: "review", style: "data" }
   ]}
 />
 
-### Practice: Formal Assumption Harness Lab
+**Share rules, not constraints.** Keep interface rules as properties in one library: assumed by formal where the environment drives, asserted where a DUT drives, and checked by every simulation. Sequence constraints stay in the testbench as test intent.
 
-Apply the concepts above in a hands-on lab:
+### Recap
+
+- One bound property library serves both engines; `assume` is a check in simulation and a hypothesis in formal, and `restrict` is ignored by simulators (objective 1).
+- A harness keeps only SVA: free inputs filtered by assumptions from the specification, assertions and covers on outputs, bound with parameters passed through (objective 2).
+- Constraints are solved per item and often encode test intent; assumptions hold at every edge on live signals. Over-constraint shows up as vacuous proofs and unreachable covers, under-constraint as spurious counterexamples (objective 3).
+- Triage every CEX against the specification; the assumptions formal used cannot fire on its own trace (objective 4).
+- Give each property to the engine that can close it, and report status, depth and assumptions per property; a bounded pass is not a proof (objective 5).
+
+## Make It Work
+
+### Worked example: FIFO flags, one checker, two engines
+
+Three files. `fifo.sv` is the DUT, with a parameter that switches in the late-flag bug. `fifo_props.sv` is the shared property module and its bind. `fifo_tb.sv` is a small UVM bench that replays a formal counterexample.
+
+```systemverilog
+// compile
+// fifo.sv: the control block of a FIFO (occupancy counter and flags)
+module fifo #(
+  parameter int DEPTH     = 4,
+  parameter bit LATE_FULL = 1'b0  // 1 = the bug: full is registered, one edge late
+) (
+  input  logic                   clk, rst_n, push, pop,
+  output logic [$clog2(DEPTH):0] count,
+  output logic                   full, empty
+);
+  // The interface contract forbids push while full and pop while empty,
+  // so the counter is deliberately unguarded: an illegal input overflows it.
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n) count <= '0;
+    else        count <= count + push - pop;
+
+  if (LATE_FULL) begin : g_late_full
+    always_ff @(posedge clk or negedge rst_n)  // BUG: copies count one edge late
+      if (!rst_n) full <= 1'b0;
+      else        full <= (count == DEPTH);
+  end else begin : g_full
+    assign full = (count == DEPTH);
+  end
+
+  assign empty = (count == 0);
+endmodule
+```
+
+```systemverilog
+// compile
+// fifo_props.sv: one property library for simulation and formal
+module fifo_props #(
+  parameter int DEPTH          = 4,
+  parameter bit OVER_CONSTRAIN = 1'b0  // 1 adds a_never_fill: a deliberate mistake
+) (
+  input logic                   clk, rst_n, push, pop, full, empty,
+  input logic [$clog2(DEPTH):0] count
+);
+`ifdef FIFO_PROPS_UVM  // defined only by the simulation compile
+  import uvm_pkg::*;
+  // Failures reach the UVM report server, so they count in the summary.
+  `define FIFO_FAIL(msg) uvm_report_error("FIFO_PROPS", msg)
+`else
+  `define FIFO_FAIL(msg) $error(msg)
+`endif
+
+  default clocking @(posedge clk); endclocking
+  default disable iff (!rst_n);
+
+  // Interface contract (FIFO spec): the environment never pushes while full
+  // and never pops while empty. Assumed here, because the environment drives
+  // push and pop; simulation checks them on every edge.
+  a_no_push_when_full: assume property (!(push && full))
+    else `FIFO_FAIL("a_no_push_when_full: push while full");
+  a_no_pop_when_empty: assume property (!(pop && empty))
+    else `FIFO_FAIL("a_no_pop_when_empty: pop while empty");
+
+  // Obligations on the DUT's outputs.
+  p_count_in_range: assert property (count <= DEPTH)
+    else `FIFO_FAIL("p_count_in_range: count > DEPTH");
+  p_full_is_correct: assert property ((count == DEPTH) |-> full)
+    else `FIFO_FAIL("p_full_is_correct: count == DEPTH but full == 0");
+
+  // Sanity covers: the antecedent above, and push with pop together.
+  c_reach_depth: cover property (count == DEPTH);
+  c_push_pop:    cover property (push && pop);
+
+  // A wrong assumption, kept here only to demonstrate over-constraint.
+  if (OVER_CONSTRAIN) begin : g_over
+    a_never_fill: assume property (!(push && count == DEPTH - 1));
+  end
+endmodule
+
+// One bind for both flows. DEPTH and every port resolve in fifo's scope.
+bind fifo fifo_props #(.DEPTH(DEPTH)) u_fifo_props (.*);
+```
+
+The simulation side drives the DUT through a clocking block and replays the run-C counterexample: `p_full_is_correct` failing at edge 4. The replay sequence is the pattern the visualizer generates from a trace: copy the trace's `push` and `pop` columns into arrays, and send one item per clock.
+
+```systemverilog
+// compile
+// fifo_tb.sv: a minimal UVM bench that replays a formal counterexample
+interface fifo_if (input logic clk);
+  logic       rst_n, push, pop, full, empty;
+  logic [2:0] count;  // $clog2(DEPTH) + 1 bits for DEPTH = 4
+  clocking cb @(posedge clk);
+    output push, pop;
+    input  full, empty, count;
+  endclocking
+endinterface
+
+package fifo_tb_pkg;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  class fifo_item extends uvm_sequence_item;
+    rand bit push, pop;
+    bit      full_seen, empty_seen;
+    constraint c_legal { full_seen -> !push; empty_seen -> !pop; }
+    `uvm_object_utils(fifo_item)
+    function new(string name = "fifo_item");
+      super.new(name);
+    endfunction
+  endclass
+
+  class cex_replay_seq extends uvm_sequence #(fifo_item);
+    `uvm_object_utils(cex_replay_seq)
+    // Inputs copied from the formal trace (run C, p_full_is_correct), edges 0..3
+    bit push_v[4] = '{1, 1, 1, 1};
+    bit pop_v[4]  = '{0, 0, 0, 0};
+    function new(string name = "cex_replay_seq");
+      super.new(name);
+    endfunction
+    task body();
+      foreach (push_v[i]) begin
+        req = fifo_item::type_id::create($sformatf("cex_%0d", i));
+        start_item(req);
+        req.push = push_v[i];  // assigned, not randomized: c_legal is NOT applied,
+        req.pop  = pop_v[i];   // so the trace is replayed exactly as formal found it
+        finish_item(req);
+      end
+    endtask
+  endclass
+
+  class fifo_drv extends uvm_driver #(fifo_item);
+    `uvm_component_utils(fifo_drv)
+    virtual fifo_if vif;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(virtual fifo_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "virtual interface not set")
+    endfunction
+    task run_phase(uvm_phase phase);
+      @(vif.cb);
+      vif.cb.push <= 1'b0;  // idle before reset is released
+      vif.cb.pop  <= 1'b0;
+      wait (vif.rst_n === 1'b1);
+      forever begin
+        @(vif.cb);
+        seq_item_port.try_next_item(req);
+        if (req != null) begin  // one item per clock edge, as in the trace
+          vif.cb.push <= req.push;
+          vif.cb.pop  <= req.pop;
+          seq_item_port.item_done();
+        end else begin          // nothing to send: idle, never repeat a push
+          vif.cb.push <= 1'b0;
+          vif.cb.pop  <= 1'b0;
+        end
+      end
+    endtask
+  endclass
+
+  class fifo_cex_replay_test extends uvm_test;
+    `uvm_component_utils(fifo_cex_replay_test)
+    uvm_sequencer #(fifo_item) sqr;
+    fifo_drv                   drv;
+    virtual fifo_if            vif;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      sqr = uvm_sequencer#(fifo_item)::type_id::create("sqr", this);
+      drv = fifo_drv::type_id::create("drv", this);
+      if (!uvm_config_db#(virtual fifo_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "virtual interface not set")
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+    task run_phase(uvm_phase phase);
+      cex_replay_seq seq = cex_replay_seq::type_id::create("seq");
+      phase.raise_objection(this);
+      seq.start(sqr);
+      repeat (3) @(vif.cb);  // let the edges after the last push be sampled
+      `uvm_info("CEX", "replayed 4 items from the run-C trace", UVM_LOW)
+      phase.drop_objection(this);
+    endtask
+  endclass
+endpackage
+
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  import fifo_tb_pkg::*;
+
+  logic clk = 1'b0;
+  always #5 clk = ~clk;
+
+  fifo_if vif (clk);
+
+  fifo #(.DEPTH(4), .LATE_FULL(1'b1)) dut (
+    .clk(clk), .rst_n(vif.rst_n), .push(vif.push), .pop(vif.pop),
+    .count(vif.count), .full(vif.full), .empty(vif.empty)
+  );
+
+  initial begin
+    vif.rst_n = 1'b0;
+    repeat (2) @(posedge clk);
+    vif.rst_n <= 1'b1;
+  end
+
+  initial begin
+    uvm_config_db#(virtual fifo_if)::set(null, "uvm_test_top*", "vif", vif);
+    run_test("fifo_cex_replay_test");
+  end
+endmodule
+```
+
+### Run it
+
+No formal tool or simulator runs on this site, so the results below come from the exhaustive model behind the visualizer and from tracing the bench by hand. Commands are tool-dependent; the steps are not.
+
+**Formal** (any SVA-capable property checker):
+1. Read `fifo.sv` and `fifo_props.sv` (which contains the bind). Set the top to `fifo` with `LATE_FULL` as the run requires.
+2. Declare the clock `clk` and the reset `rst_n`, active low. The analysis starts from the reset state.
+3. Prove all assertions and check all covers. Read the covers first.
+4. For run B, comment out `a_no_push_when_full`; for run D, change the bind to `#(.DEPTH(DEPTH), .OVER_CONSTRAIN(1'b1))`.
+
+**Simulation** (any simulator with UVM 1800.2 support): compile `fifo.sv`, `fifo_props.sv` and `fifo_tb.sv` with the define `FIFO_PROPS_UVM` and uvm-core 2020.3.1, then run `tb_top`. Open-source simulators' UVM support varies and was not verified for this example.
+
+### Expected output
+
+Formal, four runs (illustrative; computed by an exhaustive search of the same model the visualizer uses; edges counted from 0 after reset):
+
+| Run | Setup | `p_count_in_range` | `p_full_is_correct` | `c_reach_depth` | `c_push_pop` | Verdict |
+|---|---|---|---|---|---|---|
+| A | `LATE_FULL = 0`, contract | proven | proven | covered at edge 4 | covered at edge 1 | done |
+| B | `LATE_FULL = 0`, `a_no_push_when_full` off | CEX at edge 5 (push at edges 0–4; full = 1 at edge 4) | proven | covered at edge 4 | covered at edge 1 | spurious: restore the assumption |
+| C | `LATE_FULL = 1`, contract | CEX at edge 5 | CEX at edge 4 (count = 4, full = 0) | covered at edge 4 | covered at edge 1 | design bug: fix the RTL |
+| D | `LATE_FULL = 1`, contract + `OVER_CONSTRAIN = 1` | proven | proven, but vacuous | unreachable | covered at edge 1 | over-constrained: remove `a_never_fill` |
+
+Note `c_push_pop` in run D: still covered. A cover detects an over-constraint only for the behaviour it targets, which is why every assumption needs its own.
+
+A caveat about run A: with `LATE_FULL = 0`, `full` *is* `count == DEPTH`, so `p_full_is_correct` restates the RTL and proves trivially. Its value is in catching a changed implementation, such as the late register. An assertion that copies the RTL's own equation proves nothing about intent; in the lab you fix the flag a different way and the assertion then checks something real.
+
+Simulation of `tb_top` (illustrative log; message format and time units are tool-dependent, times here are in ps). The four pushes are sampled at 35, 45, 55 and 65 ns, so edge 4 of the trace is 75 ns:
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test fifo_cex_replay_test...
+UVM_ERROR @ 75000: reporter [FIFO_PROPS] p_full_is_correct: count == DEPTH but full == 0
+UVM_INFO fifo_tb.sv(99) @ 85000: uvm_test_top [CEX] replayed 4 items from the run-C trace
+
+--- UVM Report Summary ---
+
+** Report counts by severity
+...
+UVM_WARNING :    0
+UVM_ERROR :    1
+UVM_FATAL :    0
+```
+
+The replay fails exactly as formal predicted: 4 edges after the first replayed push. Without the `FIFO_PROPS_UVM` define, the same failure appears as a simulator-format `$error` line instead, and the summary says `UVM_ERROR :    0`, so a regression that judges pass or fail only from the UVM summary would mark this failing test as passed. Either route assertion failures to the UVM report server, as here, or make the regression also fail on simulator assertion errors. [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index#interface-checks-that-count) covers this for VIP interfaces. After the RTL fix (`LATE_FULL = 0`), the same test ends with `UVM_ERROR :    0` and `UVM_FATAL :    0`.
+
+### How-to: from first proof to a regression test
+
+1. **Run formal with the contract only.** Read the covers first: every cover must be reached before any "proven" means anything.
+2. **Read each status**: proven, bounded to N (not a proof), CEX at edge k, covered, unreachable, undetermined.
+3. **Triage each CEX against the specification** before touching the RTL: is every environment-driven input legal at every edge?
+4. **If an input is illegal**: add the missing rule as an assumption, from the specification, and re-run. The CEX must disappear, and every cover must still be reached.
+5. **If every input is legal**: replay the trace in UVM. Copy the `push`/`pop` columns into arrays, assign rather than randomize, drive one item per clock, and count edges from the first replayed item. Confirm the same property fails at the same edge.
+6. **Fix the RTL, re-prove**, and add the replay test to the regression. It must fail before the fix, pass after, and its failure must count in the regression's pass/fail.
+
+<SequenceDiagram
+  title="From counterexample to regression test"
+  caption="The design-bug path for run C, then the spurious path. The trace is checked against the specification before the RTL is touched; the replay confirms reproduction; the fix is re-proven; the replay test guards the regression."
+  participants={[
+    { id: "ft", label: "formal tool", kind: "generic" },
+    { id: "you", label: "you", kind: "generic" },
+    { id: "spec", label: "interface spec", kind: "generic" },
+    { id: "tb", label: "UVM bench", kind: "env" },
+    { id: "reg", label: "regression", kind: "generic" }
+  ]}
+  messages={[
+    { from: "you", to: "ft", label: "prove p_full_is_correct" },
+    { kind: "return", from: "ft", to: "you", label: "CEX at edge 4" },
+    { kind: "note", from: "ft", to: "you", label: "the trace obeys every assumption in force" },
+    { from: "you", to: "spec", label: "check each input in the trace" },
+    { kind: "return", from: "spec", to: "you", label: "all legal" },
+    { kind: "divider", label: "design bug" },
+    { from: "you", to: "tb", label: "run cex_replay_seq (trace arrays)" },
+    { kind: "return", from: "tb", to: "you", label: "p_full_is_correct fails at edge 4", tone: "error" },
+    { kind: "self", from: "you", label: "fix the RTL" },
+    { from: "you", to: "ft", label: "re-prove" },
+    { kind: "return", from: "ft", to: "you", label: "proven; covers reached" },
+    { from: "you", to: "reg", label: "add the replay test" },
+    { kind: "divider", label: "spurious branch (run B)" },
+    { from: "you", to: "spec", label: "check each input in the trace" },
+    { kind: "return", from: "spec", to: "you", label: "push while full at edge 4", tone: "error" },
+    { from: "you", to: "ft", label: "restore a_no_push_when_full, re-run" }
+  ]}
+/>
+
+### Debugging formal results
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Everything proves almost instantly | Over-constraint; contradictory assumptions; a `disable iff` stuck true; the wrong clock or reset polarity; or a genuinely easy property | Check the covers; drop assumptions one at a time and watch which proofs change; check reset and clock declarations |
+| A cover is unreachable | An assumption forbids it, or the cover is written wrongly | Find the assumption (remove each in turn); check it against the specification |
+| A CEX has an illegal input | Under-constraint | Add the rule from the specification as an assumption; re-run |
+| The CEX does not reproduce in simulation | Reset or initial-state differences; X values; the driver does not apply one item per clock; `randomize()` changed the replayed values | Align reset and edge 0; assign item fields instead of randomizing; check the driver's timing |
+| A result is "bounded" or "undetermined" | The proof does not converge | See [Bounded proofs, induction and convergence](#expert-bounded-proofs-induction-and-convergence) |
+| The replay fails but the regression passes | Assertion failures do not reach the UVM report summary | Route them to UVM reporting, or fail the regression on simulator assertion errors |
+
+### In a real project
+
+- **Property library:** interface rules live in one checker per interface, versioned with the interface, assumed or asserted by parameter.
+- **Two run targets:** the same bind file feeds the formal run and the simulation compile; CI runs a short formal job (bounded proofs and covers) on every change and full proofs nightly.
+- **Result exchange:** every CEX the team accepts as a design bug becomes a replay test; every assumption added after triage cites the specification clause it encodes.
+- **Governance:** a feature closes only when its properties are proven (or bounded to an agreed depth), its covers are reached, and its simulation coverage is met.
+
+**Checklist before moving on:**
+- [ ] Every assumption is on a signal the DUT does not drive, and cites the specification.
+- [ ] Every assumption has a cover for a behaviour it must still allow, and every cover is reached.
+- [ ] Every proven implication has a covered antecedent.
+- [ ] Each CEX was checked against the specification before the RTL was touched.
+- [ ] The replay test fails before the fix, passes after, and its failure counts in the regression.
+- [ ] Results are reported per property with status, depth and assumptions.
+
+## Push Further
+
+### Expert: What each directive means to each engine
+
+- **`assume` in simulation is a check, not a generator** (§16.14.2). A failing assumption in simulation means either the testbench broke the interface rule or the assumption is wrong; both are worth knowing. Some tools can drive random simulation from assumptions; that is tool-dependent.
+- **`dist` in assumptions** biases random simulation only. Formal treats the assumption as if the weights were absent, and in an `assert` or `cover` the `dist` acts like `inside` (§16.14.2).
+- **Weak and strong sequences.** A bare sequence used as a property is weak in `assert` and `assume` and strong elsewhere, including `cover` (§16.12.2). So in `assert property (req |-> ##[1:$] ack)` the consequent is weak: the assertion cannot fail at the end of a simulation in which `ack` never came. Use `s_eventually` (§16.12.13) or a bounded `##[1:N]` when the obligation must bite. In a `cover`, the same bare sequence is strong and counts only completed matches.
+- **Cover counting.** `cover property` records attempts, successes (at most one per attempt) and successes because of vacuity; `cover sequence` records every match per attempt (§16.14.3). Disabled evaluations are not counted as successes.
+- **Case splits with `restrict`** (§16.14.4) need care: two sessions that restrict a signal to 0 and to 1 at every edge together cover only traces where the signal is constant. That is complete for a static mode bit, but not for a signal that can change during a trace.
+
+### Expert: Bounded proofs, induction and convergence
+
+Engines, option names and result labels are tool-dependent; the ideas are general.
+- **Bounded model checking** unrolls the design N edges from reset and searches for a violation. It finds shallow bugs fast and returns short traces, often the shortest (tool-dependent), but it proves nothing beyond N.
+- **Full proofs** need an argument that covers every reachable state. One common technique is **k-induction**: show that the property holding for k consecutive edges implies it holds at the next. Induction can fail on *unreachable* states, so engineers add **helper assertions** (invariants such as `count <= DEPTH` for a property about `full`) that rule those states out; each helper must itself be proven.
+- **Convergence aids:** smaller parameters (prove DEPTH 4, argue the RTL is parameter-generic), case splits with `restrict`, and assume-guarantee decomposition. **Cut points and black boxes** replace logic with free signals. That over-approximates the design, which can cause spurious CEXs, and the black-boxed logic itself is not verified at all. A cover reached on the over-approximated design may be unreachable in the real one, so abstraction can hide over-constraint and dead code. Assumptions, by contrast, *remove* behaviour and can hide bugs.
+- **CI practice:** a short bounded job on every change catches regressions in minutes; full proofs run nightly. Report bounded results with their depth, never as "proven".
+
+### Expert: Symbolic data with constant free variables
+
+A scoreboard checks data for the values the test happened to send. Formal can check data integrity for *every* value at once with a **constant free variable**: a checker variable declared `rand const`, which holds one nondeterministic value for the whole trace (§17.7). The standard's `data_legal` checker records "a value that went in" and asserts the same value comes out:
+
+```systemverilog
+// snippet: the data-integrity pattern of IEEE 1800-2023 §17.7 (abridged)
+rand const bit [$bits(in_data)-1:0] mem_data;
+sequence transaction;
+  start_ev && (in_data == mem_data) ##1 end_ev[->1];
+endsequence
+a1: assert property (@clock transaction |-> out_data == mem_data);
+```
+
+Because `mem_data` can be any value, formal checks the transfer for every possible data value. A simulator randomizes `mem_data` once instead (§17.7.2), so in simulation it checks only the transactions whose data happen to match. The standard's representative-bit example (one symbolic bit index instead of a 64-bit compare) is "equivalent in formal verification" but "not equivalent in simulation". This is how the scoreboard's job moves into a formal harness, and it is why harnesses use the `checker` construct: free variables exist only in checkers. Syntax: [I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index#expert-free-variables-assume-sets-and-formal).
+
+### Expert: Liveness, fairness and bounded response
+
+"Every request is eventually granted" is a **liveness** property, for example `req |-> s_eventually gnt` (§16.12.13). Simulation can never prove it, because a finite run cannot show that something never happens; it can only fail to see it. Formal can, and a liveness CEX is a **lasso**: a prefix followed by a loop that repeats forever without the grant (presentation tool-dependent). Liveness proofs usually need **fairness** assumptions about the environment, such as "the requester eventually releases the bus", and each one is a claim to audit like any other assumption. The practical alternative is a **bounded-response** safety property, `req |-> ##[1:8] gnt`: it states the real requirement (a latency budget), has finite counterexamples, and works the same way in simulation.
+
+### Expert: Where simulation and formal disagree
+
+The standard notes that cycle-based evaluation can differ from event-based simulation (§16.2). Each of these can make a counterexample fail to replay, or a simulation failure fail to appear in formal:
+- **X values.** In an assertion, X counts as false (§16.6). Many formal tools treat X sources as free 0/1 values instead of propagating X (tool-dependent).
+- **Initial state.** Formal starts from the declared reset; registers without reset may be free. A simulator starts them at X or at an initializer (tool-dependent).
+- **Delays, `initial` blocks and `$random` in RTL** are ignored or rejected by formal tools (tool-dependent).
+- **Action blocks** run in simulation; formal tools ignore them (tool-dependent).
+- **Free checker variables** are re-solved at each assume-set clock event in simulation (§17.7.2), but range over all legal values in formal.
+
+### Expert: Assume-guarantee and keeping formal-only constraints out of simulation
+
+Every assumption is a debt. Pay it by **discharging** it: prove the same property as an assertion on the block that drives the signal (the `ASSUME_IT` checker above), or rely on every simulation regression checking it, since simulators check assumptions (§16.14.2). An undischarged wrong assumption silently weakens every proof that uses it. Watch for **circular** assume-guarantee: block A's proof assumes what B guarantees, and B's proof assumes what A guarantees; naive circular reasoning can be unsound, so tools that support it impose conditions (tool-dependent).
+
+Some constraints are deliberately formal-only: case splits, reduced modes, convergence restrictions. Keep them from failing simulations in one of three ways: write them as `restrict` (§16.14.4), which simulators ignore; switch them off in simulation with assertion control (`$assertcontrol` and `$assertoff`, §20.11); or compile them only for formal with a define your flow sets (tool-dependent naming). Prefer `restrict`: the intent is visible in the code.
+
+### Expert: Formal apps (awareness)
+
+Formal tools package common jobs as **apps**: automated flows that need little or no property writing. Names, features and availability are tool-dependent; the categories are widespread:
+- **Connectivity checking:** proves that signals are connected as a specification table says (SoC pin muxing, interrupt wiring).
+- **Coverage unreachability:** proves that some simulation coverage items can never be hit, so they can be excluded with evidence instead of by opinion.
+- **Sequential equivalence:** proves that two versions of a design (before and after clock gating, retiming or a bug fix) behave the same at their outputs.
+- **X-propagation:** looks for X values that can reach outputs or control logic from uninitialized or unknown sources.
+- **Register (CSR) checking:** proves register access behaviour (reset values, access policies) from a register description.
+- **Security and data-propagation:** proves that a secret cannot reach a given output, or only through approved paths.
+- **Automatic checks:** generated properties for FSM reachability, deadlock, dead code and arithmetic overflow.
+
+Each app proves something specific under its own assumptions; read its report with the same triage discipline as a hand-written proof.
+
+### Expert: Signing off a hybrid flow
+
+Sign-off asks two questions: did every property get the result it needs, and are the properties enough?
+- **Per property:** status (proven, bounded to N, CEX open, CEX closed by an added assumption, undetermined), mapped to verification-plan features, with the assumptions and their specification sources.
+- **Per assumption:** its source, whether it was discharged (proven elsewhere), and whether any simulation regression ever violated it.
+- **Are the assertions enough?** Tools offer **formal coverage** metrics (tool-dependent): which logic lies in the cone of influence of the proven assertions, which logic a proof actually depended on, and **mutation** checks that change the design and ask whether some assertion fails. Logic no assertion depends on is unverified, however green the proofs.
+- **Merging with simulation coverage:** some flows merge formal results into the simulation coverage database (tool-dependent). Merge only with the rules agreed up front: a cover proved unreachable may exclude a bin; a bounded result may not.
+
+### Interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: the proof that came back in seconds"
+  question="Your FIFO controller's formal run proves every assertion in a few seconds, on the first try. What do you do before you report it?"
+  options={[
+    { text: "Report it as proven: a quick proof on the first try means the block is simple and the RTL is correct.", isCorrect: false, feedback: "A proof is relative to the assumptions. An over-constraint can make every implication vacuous, and the tool may still say proven." },
+    { text: "Increase the proof bound and run again until it takes longer, then report the deeper result.", isCorrect: false, feedback: "If the result is a full proof, the bound is not the issue. If an assumption makes the FIFO unable to fill, no bound will ever reach a full FIFO." },
+    { text: "Check that every cover is reached, then look for contradictory assumptions, a stuck disable iff, or a wrong clock or reset.", isCorrect: true, feedback: "Right. A quick proof is either easy or vacuous, and only the covers tell you which. Drop assumptions one at a time and watch which proofs change." },
+    { text: "Run the same properties in simulation; if they pass there too, the proof is good.", isCorrect: false, feedback: "Simulation can show an assumption is violated by the real environment, which is useful, but passing assertions in simulation say nothing about states the proof never explored." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: a counterexample lands on your desk"
+  question="Formal returns a counterexample for an output assertion of a block you own. Walk through your decision."
+  options={[
+    { text: "Check each environment-driven input against the spec: illegal means add the missing assumption; all legal means a design bug to replay, fix and re-prove.", isCorrect: true, feedback: "Right. The assumptions formal used cannot fire on its own trace, so the decision is made against the specification." },
+    { text: "Replay it in UVM with the same property module bound; if no assumption fires, it is a design bug.", isCorrect: false, feedback: "The trace already satisfies every assumption formal used, so those cannot fire. A missing assumption is, by definition, not there to fire." },
+    { text: "File an RTL bug straight away: a formal tool only reports a failing trace when the design is wrong.", isCorrect: false, feedback: "A CEX is a bug only if its inputs are legal. Under-constrained runs produce spurious counterexamples." },
+    { text: "Check whether the scoreboard flags the replay; if it does, the CEX is spurious.", isCorrect: false, feedback: "A scoreboard checks DUT outputs. A scoreboard mismatch on legal inputs confirms a design bug; it never shows the inputs were illegal." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: where would you use formal first?"
+  question="You have one formal licence for a quarter. Which block in a typical SoC subsystem do you start with, and why?"
+  options={[
+    { text: "The video datapath, compared with the C reference model over a whole frame of pixels.", isCorrect: false, feedback: "A deep datapath over long sequences is where formal struggles to converge; a simulation scoreboard against the C model is the right tool." },
+    { text: "The full SoC boot flow, from reset vector to the OS prompt.", isCorrect: false, feedback: "Software-driven, system-level flows belong to simulation and emulation." },
+    { text: "The DMA engine's sustained throughput under realistic traffic.", isCorrect: false, feedback: "Performance is measured over realistic traffic in simulation; formal answers yes/no questions about behaviour." },
+    { text: "An arbiter: one-hot grant, every request granted within N cycles.", isCorrect: true, feedback: "Right. Small state, crisp properties and corner cases random stimulus rarely reaches. Interface protocols are next, because their checkers serve both engines." }
+  ]}
+/>
+
+Further questions to practise aloud:
+- Why can a UVM scoreboard not be part of a formal harness, and what replaces it?
+- What is the difference between `assume` and `restrict`, and when do you need `restrict`?
+- A bounded run to depth 50 passes. What can you claim in the sign-off review, and what can you not?
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "fifo_props (with no action blocks) is bound in a UVM simulation. At edge 9 the driver pushes while full is 1. What does the simulator do with a_no_push_when_full?",
+      objective: 1,
+      answers: [
+        { text: "Nothing: assumptions only matter to formal tools", correct: false, feedback: "That describes restrict (§16.14.4), not assume. Simulators check assumptions." },
+        { text: "It reports the assumption failing at edge 9, just as it would report a failing assertion", correct: true, feedback: "Right. Like an asserted property, an assumed property shall be checked and reported if it fails to hold (§16.14.2); with no else clause the tool calls $error." },
+        { text: "It blocks the push, because assumptions constrain the stimulus", correct: false, feedback: "This treats an assumption like a class constraint. A UVM driver is not constrained by an assume; the simulator only checks it." },
+        { text: "It reports the failure and the UVM summary's UVM_ERROR count goes up automatically", correct: false, feedback: "The default $error is a simulator message. It reaches the UVM report server only if the action block calls UVM reporting." }
+      ],
+      explanation: "In simulation an assume is checked like an assert (§16.14.2): it neither filters stimulus nor is it ignored. Its failure is a $error unless you route it to UVM, so it does not change the UVM summary by itself. Only restrict is ignored by simulators."
+    },
+    {
+      question: "One formal session should analyse only the ALU's ADD mode, while every simulation keeps exercising all modes. Which statement do you add?",
+      objective: 1,
+      answers: [
+        { text: "assume property (@(posedge clk) op == ADD);", correct: false, feedback: "Simulators check assumptions, so every simulation that exercises SUB or any other mode would report a failure." },
+        { text: "cover property (@(posedge clk) op == ADD);", correct: false, feedback: "A cover constrains nothing; it only asks whether ADD is reachable." },
+        { text: "assert property (@(posedge clk) op == ADD);", correct: false, feedback: "An assertion is an obligation on the design, and op is an input: formal would immediately find a trace with another op." },
+        { text: "restrict property (@(posedge clk) op == ADD);", correct: true, feedback: "Right. restrict constrains formal like assume, but simulators do not check it and it has no action block (§16.14.4)." }
+      ],
+      explanation: "assume and restrict constrain formal the same way; the difference is simulation. Use restrict for deliberately formal-only constraints such as case splits, so simulations are not flooded with failures."
+    },
+    {
+      question: "To 'stop formal producing silly traces', a colleague adds assume property ((count == DEPTH) |-> full) to the harness of the late-flag FIFO. What happens?",
+      objective: 2,
+      answers: [
+        { text: "p_full_is_correct proves vacuously and c_reach_depth becomes unreachable: the bug is hidden", correct: true, feedback: "Right. full is a DUT output. In the late-flag RTL every trace that reaches count == 4 has full == 0 at that edge, so all of them are excluded, the bug included." },
+        { text: "Formal now finds the late-flag bug faster", correct: false, feedback: "The opposite: the assumption forbids exactly the behaviour the assertion was meant to catch." },
+        { text: "Nothing changes, because an assumption can only constrain the free inputs and full is a DUT output", correct: false, feedback: "An assumption constrains whole traces. On an output, it removes the traces in which the DUT misbehaves." },
+        { text: "The tool rejects it: assumptions may not reference outputs", correct: false, feedback: "It is legal SVA, and legal mistakes are the dangerous ones. Assume only what the environment drives." }
+      ],
+      explanation: "Assume signals the environment drives; assert signals the DUT drives. An assumption on a DUT output hides precisely the bugs the matching assertion exists to find, and the antecedent cover is the only visible symptom."
+    },
+    {
+      question: "You build a formal harness for a block from its UVM environment. Which part carries over unchanged?",
+      objective: 2,
+      answers: [
+        { text: "The monitor class, which observes the DUT's signals on behalf of the formal tool", correct: false, feedback: "Formal reads the signals directly, and a class cannot hold a useful concurrent assertion: assertion expressions shall not reference non-static class properties (§16.6)." },
+        { text: "The scoreboard class, which becomes the proof obligation", correct: false, feedback: "Class code is not part of a harness. The scoreboard's checks must be re-expressed as assertions, with an auxiliary model (for example a free-variable checker) where they need memory." },
+        { text: "The interface's SVA protocol checker, bound to the block", correct: true, feedback: "Right. It is SVA in a module, interface or checker, which both engines read, and the same rule changes directive by who drives the signal." },
+        { text: "The sequence item's constraints, which become the assumptions", correct: false, feedback: "Constraints and assumptions are not interchangeable: constraints are solved per item, on stale data, and often encode test intent." }
+      ],
+      explanation: "Only SVA in modules, interfaces, programs and checkers carries over (§16.14.5, Clause 17). Stimulus is replaced by free inputs and assumptions from the specification; class-based checks are re-expressed as properties."
+    },
+    {
+      question: "Late-flag RTL, the contract plus a_never_fill. Both assertions are proven and c_reach_depth is unreachable. What do you conclude?",
+      objective: 3,
+      answers: [
+        { text: "The RTL is correct: both assertions are proven", correct: false, feedback: "A proof under an over-constrained assumption proves nothing about the behaviour the assumption removed, and the late-flag bug is still in the RTL." },
+        { text: "Rerun with a deeper bound; the cover is simply deeper than the default bound", correct: false, feedback: "Unreachable is a full result, not a bound: no allowed input sequence reaches count == DEPTH at any depth." },
+        { text: "count is declared too narrow to ever hold the value 4", correct: false, feedback: "count has $clog2(4) + 1 = 3 bits and holds 4; run A covers it at edge 4." },
+        { text: "Over-constraint: the proof of p_full_is_correct is vacuous", correct: true, feedback: "Right. The unreachable antecedent cover is the signature of a vacuous proof (§16.14.8). Remove a_never_fill and formal finds the CEX at edge 4." }
+      ],
+      explanation: "a_never_fill forbids pushing when count is 3, so the FIFO never fills, the implication's antecedent never matches and every attempt is vacuous. Covers on antecedents are the detector."
+    },
+    {
+      question: "fifo_item has constraint c_legal { full_seen -> !push; empty_seen -> !pop; } and constraint c_one_op { !(push && pop); }. Which can be copied into fifo_props unchanged as an assumption?",
+      objective: 3,
+      answers: [
+        { text: "c_one_op, because it is a simple Boolean rule on the inputs", correct: false, feedback: "It is this test's choice. Assumed, it would make push-and-pop-together unreachable: an over-constraint, which c_push_pop would expose." },
+        { text: "Neither, as written", correct: true, feedback: "Right. That gives a_no_push_when_full and a_no_pop_when_empty, and nothing for c_one_op." },
+        { text: "c_legal, because it is already the interface rule", correct: false, feedback: "It refers to full_seen and empty_seen, copies taken when the item was solved, possibly edges before the item reaches the pins." },
+        { text: "Both: every constraint has a formal equivalent", correct: false, feedback: "Constraints and assumptions are related, not interchangeable: different timing, different data, and different intent." }
+      ],
+      explanation: "Constraints are solved per item, ahead of time, on whatever the sequence copied in; assumptions hold at every edge on the live signals. Use constraints as a prompt to look up the rule in the specification."
+    },
+    {
+      question: "Correct RTL. Formal reports p_count_in_range failing at edge 5: push = 1 at edges 0 to 4, and at edge 4 count = 4 and full = 1. What is your next step?",
+      objective: 4,
+      answers: [
+        { text: "File an RTL overflow bug", correct: false, feedback: "Not every counterexample is a design bug. This one uses an input the environment never produces." },
+        { text: "Widen count so it cannot overflow", correct: false, feedback: "That changes the RTL to tolerate an input the specification forbids, and hides the missing assumption." },
+        { text: "Spurious: restore a_no_push_when_full and re-run", correct: true, feedback: "Right. This is run B: the trace pushes while full at edge 4, which the specification forbids. The fix is in the harness, not the RTL." },
+        { text: "Replay it with fifo_props bound; if no assumption fires, it is a design bug", correct: false, feedback: "With a_no_push_when_full switched off, nothing in fifo_props checks pushes while full. Triage against the specification." }
+      ],
+      explanation: "Triage every CEX against the specification first. An illegal environment input means under-constraint: add the rule as an assumption, re-run, and the CEX must disappear."
+    },
+    {
+      question: "You replay a CEX in UVM with the same fifo_props the formal run used. No assumption fires, and p_full_is_correct fails at edge 4. What have you learned?",
+      objective: 4,
+      answers: [
+        { text: "Only that the trace reproduces in simulation", correct: true, feedback: "Right. The trace satisfies every assumption formal used, so those cannot fire. Check the inputs against the spec, or with an independent protocol checker." },
+        { text: "It is a design bug, because no assumption fired", correct: false, feedback: "A missing assumption is not there to fire. The same assumptions cannot distinguish a bug from an assumption gap." },
+        { text: "The assumption set is complete", correct: false, feedback: "The replay tested the trace against the same assumptions that produced it; it says nothing about rules that are missing." },
+        { text: "The driver is protocol-correct", correct: false, feedback: "The replay sequence assigns the items' fields directly; it tells you nothing about the driver's normal behaviour." }
+      ],
+      explanation: "Only input-side checks the formal run did not use can mark a CEX spurious; output-side checks failing on legal inputs confirm a bug. Here all inputs (four pushes into an empty FIFO) are legal, so run C is a design bug, but the replay alone did not prove it."
+    },
+    {
+      question: "Late-flag RTL with the contract. A bounded run to depth 3 reports no failures. Predict what a full proof attempt reports for p_full_is_correct.",
+      objective: 5,
+      answers: [
+        { text: "Proven, because a bounded pass with no failures is a proof", correct: false, feedback: "A bound of N says nothing about edges beyond N. Choose the bound at least as deep as your deepest cover." },
+        { text: "A counterexample at edge 4", correct: true, feedback: "Right. Edges 0 to 3 cannot even reach count == 4, which c_reach_depth (not reached within 3) would have told you." },
+        { text: "Proven, because random simulation with seed 2 also passes", correct: false, feedback: "Seed 2 never fills the FIFO in 16 edges; a passing seed proves nothing about states it never visits." },
+        { text: "Undetermined: a bound cannot be extended", correct: false, feedback: "Bounds can be extended; a full proof or a bound of 4 finds the CEX here." }
+      ],
+      explanation: "A bounded result is not a proof. The bound of 3 missed a bug at edge 4; the unreached cover was the warning sign. Report bounded results with their depth."
+    },
+    {
+      question: "Which of these is the best first candidate for formal verification?",
+      objective: 5,
+      answers: [
+        { text: "A pixel filter compared with a C model over a whole frame", correct: false, feedback: "A deep datapath over long sequences: simulation with a scoreboard." },
+        { text: "Booting the operating system on the SoC", correct: false, feedback: "A software-driven, system-level flow: simulation or emulation." },
+        { text: "The DMA's sustained throughput under realistic traffic", correct: false, feedback: "Performance is measured, not proven: simulation." },
+        { text: "A 4-requester arbiter with a one-hot grant and an 8-cycle wait limit", correct: true, feedback: "Right. Control logic, a small interface, crisp properties and deep corner cases." }
+      ],
+      explanation: "Formal first for control-dominated blocks with small interfaces; simulation first for deep datapaths, long flows, software and performance; both for interface protocols."
+    }
+  ]}
+/>
+
+### Kata: constraints to assumptions, with vacuity covers
+
+**Given:** `fifo_item` with `c_legal` and `c_one_op` (above), plus a bias `push dist {1 := 3, 0 := 1}` that a test uses to fill the FIFO faster.
+
+**Tasks:**
+1. Classify each of the three as an interface rule or test intent.
+2. Write the per-clock assumptions for `fifo_props`.
+3. Add one cover per behaviour the assumptions must still allow: push and pop together, a full FIFO, and a push into the last free slot.
+4. Predict which covers become unreachable if `c_one_op` were assumed, and which if `a_never_fill` were added.
+5. Explain why the `dist` bias must not become a formal assumption.
+
+Check prediction 4 for `a_never_fill` in the visualizer (run D).
+
+<details>
+<summary>Worked solution</summary>
+
+1. `c_legal` encodes two real interface rules, but on stale copies. `c_one_op` and the `dist` bias are test intent.
+2. and 3.:
+
+```systemverilog
+// snippet: added to fifo_props
+a_no_push_when_full: assume property (!(push && full));
+a_no_pop_when_empty: assume property (!(pop && empty));
+c_push_pop:          cover  property (push && pop);
+c_reach_depth:       cover  property (count == DEPTH);
+c_push_last_slot:    cover  property (push && count == DEPTH - 1);
+```
+
+4. With the contract alone, all three are covered: `c_push_pop` at edge 1, `c_push_last_slot` at edge 3, `c_reach_depth` at edge 4. Assuming `!(push && pop)` makes `c_push_pop` unreachable and leaves the other two covered. Adding `a_never_fill` makes `c_reach_depth` and `c_push_last_slot` unreachable, while `c_push_pop` is still covered at edge 1. Each cover detects only the over-constraint that touches its own behaviour.
+5. In formal, an assumed property holds the same way with or without biasing, and the weights are ignored; in an `assert` or `cover` a `dist` acts like `inside` (§16.14.2). A bias says how often, not what is legal, so it adds nothing to a proof and belongs in the test.
+
+</details>
+
+### Debug challenge: "proven in 0.1 seconds"
+
+A colleague's run of the late-flag FIFO, with the bind set to `OVER_CONSTRAIN = 1'b1`, reports: `p_count_in_range` proven, `p_full_is_correct` proven, `c_reach_depth` unreachable, `c_push_pop` covered at edge 1. They want to sign off. What is wrong, how do the covers show it, and what will formal report once it is fixed?
+
+<details>
+<summary>Worked solution</summary>
+
+`a_never_fill` forbids pushing when `count` is 3, so the FIFO can never fill. `c_reach_depth` (the antecedent of `p_full_is_correct`) is unreachable, so that proof is vacuous. `c_push_pop` is still covered, which shows the over-constraint is specific to filling, not a global contradiction. Remove `a_never_fill` (bind with `OVER_CONSTRAIN = 1'b0`): formal reports `p_full_is_correct` failing at edge 4 (count = 4, full = 0) and `p_count_in_range` failing at edge 5 (a fifth, contract-legal push overflows the counter), with `c_reach_depth` covered at edge 4. Other causes of a too-fast proof to rule out: contradictory assumptions, a `disable iff` stuck true, the wrong clock or reset polarity, or a property that really is easy.
+
+</details>
+
+### Exercise: write the replay
+
+Formal returned this trace for `p_full_is_correct` (run C). Write the `push_v`/`pop_v` arrays and the `body()` loop of `cex_replay_seq`, and predict what the simulation reports and when.
+
+| Edge | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| `push` | 1 | 1 | 1 | 1 | 0 |
+| `pop` | 0 | 0 | 0 | 0 | 0 |
+| `count` | 0 | 1 | 2 | 3 | 4 |
+| `full` | 0 | 0 | 0 | 0 | 0 |
+
+<details>
+<summary>Worked solution</summary>
+
+Drive the inputs of edges 0 to 3; edge 4 is where the failure is sampled, and the driver idles there.
+
+```systemverilog
+// snippet: inside cex_replay_seq
+bit push_v[4] = '{1, 1, 1, 1};
+bit pop_v[4]  = '{0, 0, 0, 0};
+
+task body();
+  foreach (push_v[i]) begin
+    req = fifo_item::type_id::create($sformatf("cex_%0d", i));
+    start_item(req);
+    req.push = push_v[i];  // assigned, not randomized
+    req.pop  = pop_v[i];
+    finish_item(req);
+  end
+endtask
+```
+
+Prediction: `p_full_is_correct` fails 4 edges after the first replayed push, with `count == 4` and `full == 0`, exactly as in formal. If you randomized the items instead, `c_legal` could change the values and the trace would not replay. The driver must apply one item per clock and idle afterwards; a driver that keeps the last push asserted would overflow the FIFO and add a `p_count_in_range` failure the trace never had.
+
+</details>
+
+### Lab
+
+The `formal-harness` lab gives you this lesson's FIFO harness in its over-constrained state. You diagnose the vacuous proof with covers, triage a real and a spurious counterexample, write the replay sequence and fix the flag. No formal tool runs on the site, so each step has an expected result you can check in the visualizer above.
 
 <LabLink labId="formal-harness" />
 
-## Workflow Alignment
-
-### Plan and map
-Link requirements to both UVM scenarios and formal proof goals; track progress in a shared dashboard.
-
-### Share rules, not constraints
-Keep interface rules as properties in one library: assumed by formal, checked by simulation. Use sequence constraints only as a prompt for which rules to write, never as a mechanical translation.
-
-### Swap drivers
-Replace expensive UVM drivers with lightweight formal stubs when building formal harnesses; reuse monitors for scoreboarding.
-
-### Handshake results
-Feed proven properties back into UVM (waive unreachable coverage bins) and use formal counterexamples as directed UVM seeds.
-
-## Make It Work
-1. **Property library:** Store assertions in reusable packages with consistent naming; annotate each with owner and coverage intent.
-2. **Unified run scripts:** Provide make/CI targets that run UVM regressions and formal proofs using shared config files (JSON/TOML).
-3. **Result exchange:** Automate export of formal counterexamples to VCD/FSDB for UVM replay; import UVM coverage to identify assertions needing refinement.
-4. **Governance:** Define approval checkpoints—e.g., a feature closes only when directed UVM test, coverage, and formal proof all pass.
-
-**Checklist before moving on:**
-- [ ] Assertions live in one library consumed by both simulation and formal flows.
-- [ ] Formal assumptions come from the interface specification, and simulation checks the same properties.
-- [ ] Counterexample-to-testcase scripts exist.
-- [ ] Dashboards track both formal proof depth and UVM coverage.
-
-## Push Further
-- **Coverage unification:** Merge formal `cover` hits into your UVM coverage database to show complete progress.
-- **Formal smoke tests:** Add short bounded proofs to CI so critical properties break builds immediately.
-- **Proof planning:** Categorize properties by difficulty and schedule compute resources accordingly.
-- **Training:** Run joint UVM+formal debug workshops so teams can interpret counterexamples and waveform evidence quickly.
-- **Portable Stimulus:** See [PSS: Portable Stimulus](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/pss) for how intent-based test descriptions extend across simulation, emulation, and silicon.
-
-## Practice & Reinforce
-- Take one constraint from a UVM sequence item, write the per-cycle interface rule it was trying to express as a property, and list what the constraint could not express (timing, live DUT state).
-- Use a formal counterexample to seed a UVM regression test and verify the bug fix.
-- Run a joint coverage report combining formal `cover` and UVM coverage to identify gaps.
-- Complete the <LabLink labId="formal-harness" /> to experience over-constraining firsthand.
-
 ## References & Next Topics
-- IEEE 1800-2023 Clause 16 (Assertions) and Clause 17 (Checkers) — the shared language for simulation and formal; §16.14.2 defines how `assume` behaves in formal and in simulation.
-- Accellera *UVM User Guide* (App. on Assertions) and SVA cookbooks.
-- Cadence/Jasper, Synopsys VC Formal, Mentor Questa Formal best-practice guides.
-- Prerequisites: [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) and [I-SV-4C: Checkers](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index).
-- Debug workflows: [E-DBG-1: Advanced UVM Debug](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index).
-- Foreign interfaces: DPI content has moved to [I-SV-7: DPI & Foreign Language Interfaces](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index).
+
+**Primary sources**
+- **IEEE 1800-2023:** §16.2 (the four kinds of assertion statement; cycle-based vs event-based evaluation); §16.5.1 (sampled values); §16.6 (assertion expressions shall not reference non-static class properties; X counts as false); §16.12.2 (weak and strong sequence properties); §16.12.7 (implication); §16.12.13 (`s_eventually`); §16.14.1 (`assert`); §16.14.2 (`assume`, `dist` biasing); §16.14.3 (`cover property` and `cover sequence`, vacuous-success counts); §16.14.4 (`restrict`); §16.14.5 (where concurrent assertions may appear); §16.14.6 (procedural concurrent assertions); §16.14.8 (nonvacuous evaluation); §16.15 (`default disable iff`); §17.7 (checker variables, free and constant free variables, the `data_legal` example); §17.7.2 (assume-based randomization of checker variables); §20.11 (assertion control tasks); §23.11 (`bind`; ports and parameters resolve in the target's scope).
+- **IEEE 1800.2-2020 and uvm-core 2020.3.1:** `uvm_sequence`, `start_item`/`finish_item`, `uvm_driver` and `try_next_item` (`src/seq/uvm_sequencer.svh`); the global `uvm_report_error`, which reports through `uvm_root` (`src/base/uvm_globals.svh`).
+- **Formal tools:** commands, result names, bound conventions, apps, abstraction and formal coverage are tool-dependent; use your tool's documentation for them.
+
+**Prerequisites:** [I-SV-4B: Advanced Temporal Logic](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/index), [I-SV-4C: Checkers and Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index), [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).
+
+**Related**
+- [I-SV-4A: Vacuity](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index#vacuity-green-does-not-mean-checked): vacuous success in simulation.
+- [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index): what constraints are and when they are solved.
+- [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): interface checkers in VIP, and making their failures count in UVM.
+- [B-AXI-1: AXI Channel Architecture](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index): protocol rules to assume on one side and assert on the other.
+- [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): debugging the replayed failure.
+- [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): formal in an SoC verification plan.
+- [E-RISCV-1: RISC-V Verification Methodology](/curriculum/T4_Expert/E-RISCV-1_RISC_V_Verification_Methodology/index): formal ISA checks, which build on this lesson.
+
+<NextLesson />

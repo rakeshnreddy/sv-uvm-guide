@@ -1,50 +1,77 @@
 [
   {
-    "front": "What is the primary problem that PSS (Portable Stimulus Standard) solves?",
-    "back": "PSS eliminates the need to maintain separate test implementations for different execution targets (simulation, emulation, FPGA, post-silicon) by using a single declarative test intent specification."
+    "id": "e-pss-1-1",
+    "question": "What is the primary problem that PSS (the Portable Test and Stimulus Standard) solves?",
+    "answer": "One scenario model drives every platform (simulation, emulation, FPGA prototype, silicon) instead of a separate hand-written test per platform. Each action still needs one realization per target (exec templates or imported functions), written once and reused by every scenario."
   },
   {
-    "front": "What are the core modelling concepts in PSS?",
-    "back": "Components (containers that own actions and resource pools), actions (behaviours with inputs and outputs), flow objects (buffers, streams and states passed between actions), resources (claimed with `lock` or `share` from pools), and activities (the scheduling graph inside a compound action)."
+    "id": "e-pss-1-2",
+    "question": "What are the core modelling concepts in PSS?",
+    "answer": "Components (containers that own actions and pools), actions (atomic, realized by `exec body`; or compound, holding an activity), flow objects (`buffer`, `stream`, `state`) passed as inputs and outputs, resources claimed with `lock` or `share`, and pools with `bind` directives that say which actions exchange which objects."
   },
   {
-    "front": "How does a PSS tool generate UVM output?",
-    "back": "It is tool-dependent. The standard defines the model and `exec` blocks (for example `exec body SV`), not a fixed UVM mapping. Typically the tool solves the scenario and emits your exec templates in schedule order, for example as a virtual sequence that starts existing UVM sequences. Checking stays in the scoreboard."
+    "id": "e-pss-1-3",
+    "question": "How does a tool realize one PSS model for UVM and for bare-metal C?",
+    "answer": "It solves the scenario, then pastes each scheduled action's `exec body SV` or `exec body C` template verbatim, in schedule order, with `{{...}}` references replaced by solved values (PSS 3.0 §22.5). For UVM that is typically a virtual sequence that starts your existing sequences; for C, calls into your HAL. The exact mapping, and whether values are solved before the run or on the target, is tool-dependent (§22.8)."
   },
   {
-    "front": "What does a PSS-generated C bare-metal test look like?",
-    "back": "The `exec body C` templates of the scheduled actions, expanded in schedule order with the solved values filled in. Solving usually happens at generation time, so the C test contains concrete values and can check results inline."
+    "id": "e-pss-1-4",
+    "question": "What does an activity `bind` do, and what happens if you leave a buffer input unbound?",
+    "answer": "`bind wr.out_buf rd.in_buf;` makes both fields reference the same object, so the read consumes exactly that write's buffer (§12.9). Unbound, the activity is a partial specification: the tool may bind the input to any legal earlier producer or infer a new producer action (§17.1)."
   },
   {
-    "front": "When is PSS worth adopting?",
-    "back": "When the same scenarios must run on more than one platform (simulation, emulation, silicon) or the legal scenario space is too large to write by hand. There is no fixed threshold: weigh tool cost and learning curve against maintaining duplicated per-target tests."
+    "id": "e-pss-1-5",
+    "question": "When is PSS worth adopting, and when is it not?",
+    "answer": "Worth it when one scenario library must run on several platforms, when resource-aware concurrency or setup chains are too many to write by hand, and someone owns the realization layer. Not worth it for a single-target block bench, where UVM virtual sequences are cheaper to write and debug. There is no standard threshold."
   },
   {
-    "front": "Does PSS replace the UVM testbench?",
-    "back": "No. PSS describes test intent at the scenario level, and a PSS tool generates target code (UVM sequences, C tests) that runs on your existing environment. Drivers, monitors, scoreboards and coverage still come from UVM or the software test harness."
+    "id": "e-pss-1-6",
+    "question": "Does PSS replace the UVM testbench?",
+    "answer": "No. PSS describes scenario-level intent, and the tool generates scenario-level code (for example a virtual sequence) that runs on your existing environment. Agents, sequences, scoreboard and coverage still come from UVM, and the C HAL from the software team."
   },
   {
-    "front": "How do PSS constraints differ from SystemVerilog constraints?",
-    "back": "Both are declarative. PSS has `dist`, `in`, implication and `default` values (there is no `soft` keyword; use `default` and `default disable`). PSS constraints can span actions through flow-object and resource bindings, so the solver picks consistent values for the whole scenario rather than one object at a time."
+    "id": "e-pss-1-7",
+    "question": "How do PSS `default` constraints differ from SystemVerilog `soft` constraints?",
+    "answer": "PSS 3.0 has no `soft` keyword. `constraint default x == 1000;` acts as an equality until a higher-level or derived context replaces it with its own `default` or removes it with `default disable x;`. A plain constraint that disagrees with an active default is a contradiction, not an override (§16.1.10). An SV `soft` constraint simply yields to hard constraints (IEEE 1800-2023 §18.5.13)."
   },
   {
-    "front": "What is a PSS activity graph?",
-    "back": "A declarative specification of action ordering within a test scenario. It expresses what actions execute and in what order (sequential, parallel, repeated) without imperative control flow."
+    "id": "e-pss-1-8",
+    "question": "What is an activity?",
+    "answer": "The body of a compound action: which sub-actions are traversed and how they are scheduled (sequence by default, `parallel`, `schedule`, `select`, `repeat`, `foreach`, `if`-`else`, `match`), plus bindings and constraints. It is a partial specification; the tool completes bindings, inferred actions, resource instances and values (§10, §17.1)."
   },
   {
-    "front": "What is the relationship between PSS resources and DUT hardware?",
-    "back": "PSS resources model DUT hardware elements (memory regions, DMA channels, register blocks) that actions operate on. The solver ensures resource constraints are satisfied across all actions."
+    "id": "e-pss-1-9",
+    "question": "What are PSS resources, and how does an action use one?",
+    "answer": "Things an action needs for its whole execution (a DMA channel, a core, a memory region). They live in sized pools (`pool [N]`, default 1), carry `instance_id` 0 to N-1, and are claimed with `lock` (exclusive) or `share`. They are never declared as `input` or `output` (§13.4.1, §14.1, §14.2)."
   },
   {
-    "front": "How can PSS help with coverage-driven test generation?",
-    "back": "The solver knows the legal scenario space, so a tool can enumerate or sample it and report which legal combinations were generated. Hitting a coverage goal means generating scenarios that reach it. How much of this is automated depends on the tool."
+    "id": "e-pss-1-10",
+    "question": "What coverage does PSS itself define?",
+    "answer": "Data coverage with covergroups (PSS 3.0 Clause 18) and behavioral coverage with `cover` statements and `monitor` scenarios (Clause 19, new in 3.0). How much a tool automates, such as generating scenarios to reach a goal, is tool-dependent."
   },
   {
-    "front": "What is PSS portability verification?",
-    "back": "Checking that all target-specific generated tests (UVM, C, emulation) produce semantically equivalent results. Done by comparing transaction traces or final register states across platforms."
+    "id": "e-pss-1-11",
+    "question": "What stays hand-written when you adopt PSS?",
+    "answer": "The realization layer: the exec templates or imported functions for each target, the UVM sequences, agents, scoreboard and coverage they rely on, and the C HAL. The tool generates only the scenario-level code."
   },
   {
-    "front": "How does PSS express parallel actions?",
-    "back": "With `parallel { }` (or `schedule { }`) in an activity. The tool maps it to target constructs, for example fork/join in SystemVerilog or work on several cores or threads in C, depending on the tool and target. Parallel actions that `lock` the same resource need separate pool instances."
+    "id": "e-pss-1-12",
+    "question": "How does PSS express parallel actions, and how is `schedule` different?",
+    "answer": "`parallel { }` starts its branches together and no branch may wait for another (§12.3.4). `schedule { }` lets the tool pick any legal order, sequential or overlapping (§12.3.5). Parallel actions that `lock` the same resource type need distinct instances, so with too small a pool the tool reports that no legal scenario exists."
+  },
+  {
+    "id": "e-pss-1-13",
+    "question": "Who publishes PSS, and how should you cite it?",
+    "answer": "Accellera, not IEEE: cite \"Accellera Portable Test and Stimulus Standard 3.0 (August 2024)\" (2.1 was October 2023). IEEE 2401 (LSI-Package-Board format) and IEEE 2851 (functional-safety data format) are unrelated standards."
+  },
+  {
+    "id": "e-pss-1-14",
+    "question": "Buffer, stream or state: what timing rule does each flow object impose?",
+    "answer": "Buffer: one producer, any number of consumers, and consumers start after the producer completes (§13.1). Stream: exactly one producer and one consumer, which start together (§13.2). State: one object per pool; a writer never overlaps any reader or writer, readers may overlap, and `initial` marks the reset state (§13.3)."
+  },
+  {
+    "id": "e-pss-1-15",
+    "question": "With `constraint len in [1..16];` and `dist len in [1 := 10, 4 := 30, 8..16 :/ 60];`, which values can `len` take?",
+    "answer": "Only 1, 4 and 8 to 16: P(1) = 10%, P(4) = 30%, and each of 8 to 16 is 60/9, about 6.7%. Unless a constraint forces it, a value outside the `dist` list is excluded; a conflicting constraint wins and the solve does not fail (§16.1.11)."
   }
 ]
