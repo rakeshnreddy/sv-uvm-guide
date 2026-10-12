@@ -1,7 +1,7 @@
 {
   "id": "sva-formal-interview-bank",
   "title": "SVA & Formal Verification Interview Question Bank",
-  "description": "Interview preparation covering SystemVerilog Assertions, concurrent vs immediate assertions, temporal operators, formal verification, and assumption/constraint methodology.",
+  "description": "Interview preparation from junior to senior staff on SystemVerilog Assertions and formal verification: immediate, deferred and concurrent assertions, sampling, implication and vacuity, repetition and interval operators, local variables, reset and disable iff, strong vs weak and liveness, multiclock, bind and checkers, assertion control and coverage, and formal strategy, convergence and sign-off.",
   "topic": "sva",
   "questions": [
     {
@@ -9,60 +9,682 @@
       "topic": "sva",
       "level": "junior",
       "category": "concept",
-      "prompt": "What is the difference between a concurrent and an immediate assertion?",
-      "rubric": "Immediate assertions execute procedurally at a point in time like an if-statement. Concurrent assertions are temporal, evaluated over clock cycles, and use sequence/property syntax with |->, |=>.",
-      "model_answer": "Immediate assertions (assert()) execute procedurally at the point they are reached, like an if-check, using current values. Concurrent assertions (assert property()) are clocked and temporal: at each clocking event they are evaluated in the Observed region on values sampled in the Preponed region (IEEE 1800-2023 §16.5.1), and an attempt can span many cycles using sequence and property operators. Concurrent assertions can express unbounded behavior (e.g. s_eventually); immediate assertions cannot.",
-      "sources": ["IEEE 1800-2023 §16 (assertions)"]
+      "prompt": "What is the difference between an immediate assertion and a concurrent assertion? Where do the deferred forms `assert #0` and `assert final` fit?",
+      "rubric": "A strong answer separates three kinds. (1) Simple immediate `assert (expr)`: a procedural statement checked when execution reaches it, on current values, with no clock. (2) Deferred immediate `assert #0` / `assert final`: still immediate, but the report is queued and discarded if the process re-runs in the same time step, so zero-delay glitches in `always_comb` do not report. (3) Concurrent `assert property`: clocked; every clocking event starts an attempt that uses values sampled in the Preponed region, is evaluated in the Observed region, and can span many cycles. A senior-leaning answer adds that action blocks of concurrent assertions run in the Reactive region on current values, so messages should print `$sampled(sig)`. Weak answers say concurrent assertions see the values the design wrote at the same edge, or that immediate assertions are \"for simulation\" and concurrent ones \"for formal\".",
+      "model_answer": "**Simple immediate assertion** (`assert (expr)`, §16.3). A procedural statement, like an `if`: it is checked when execution reaches it, on the values variables have at that moment, and it has no clock and no notion of time. Use it inside procedural code: a function argument check, a class invariant, a value right after it is computed.\n\n**Deferred immediate assertion** (`assert #0 (expr)` or `assert final (expr)`, §16.4). Still immediate (no clock, no time span), but the pass/fail report is deferred. The result goes onto a per-process queue, and if the process re-runs before the report matures (for example an `always_comb` woken again by another input change in the same time step), the queued report is flushed (§16.4.1, §16.4.2). Observed deferred (`#0`) reports mature in the Observed region; final deferred reports mature in the Postponed region, after all activity in the time step. They exist because a simple immediate assertion in `always_comb` can report a zero-delay glitch while inputs are still settling.\n\n**Concurrent assertion** (`assert property`, §16.5). Clocked and temporal. Every clocking event starts a new attempt. The attempt uses the value each signal had just before the edge (its value in the Preponed region, §16.5.1) and is evaluated in the Observed region, after the design's nonblocking assignments for that edge. One attempt can span many cycles through sequences and property operators (`##[1:4]`, `[*2]`, `s_eventually`). It can sit in a module, interface or checker, or inside an `always` block that supplies its clock (§16.14.5, §16.14.6), and it is the form formal tools prove.\n\n```systemverilog\nalways_comb begin\n  a_imm: assert ($onehot0(gnt));      // may report a transient zero-delay value\n  a_def: assert #0 ($onehot0(gnt));   // reports only if the value is still bad when the report matures\nend\na_conc: assert property (@(posedge clk) $onehot0(gnt));  // checks the value just before each edge\n```\n\nOne detail that separates strong answers: the pass and fail statements of a concurrent assertion run in the Reactive region with **current** values, not the sampled values the assertion used. Print `$sampled(a)` in the message, as in the standard's `a1_bad` vs `a2_ok` example (§16.9.3).",
+      "follow_ups": [
+        "Your `always_comb` immediate assertion fires at time 100, but the waveform shows the condition true at time 100. What happened, and which form fixes it?",
+        "What value does a concurrent assertion sample for a `logic` signal at time 0? (Its default sampled value, §16.5.1: for a static variable, the value in its declaration initializer; without an initializer, the default value of the type, `1'bx` for `logic`.)",
+        "Why does the failure message of `assert property (@(posedge clk) a == b) else $error(\"%b %b\", a, b)` sometimes print two equal values?",
+        "When would you still choose a simple immediate assertion over a concurrent one?"
+      ],
+      "common_mistakes": [
+        "Saying a concurrent assertion sees the values written by nonblocking assignments at the same clock edge.",
+        "Putting a simple immediate assertion in `always_comb` and then chasing failures that are only zero-delay glitches.",
+        "Printing raw signals in a concurrent assertion's `else` clause; they show Reactive-region values, not what the assertion checked.",
+        "Believing every assertion needs an `always` block: a concurrent assertion is normally a module or interface item."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.3",
+        "IEEE 1800-2023 §16.4",
+        "IEEE 1800-2023 §16.4.1",
+        "IEEE 1800-2023 §16.4.2",
+        "IEEE 1800-2023 §16.5",
+        "IEEE 1800-2023 §16.5.1",
+        "IEEE 1800-2023 §16.9.3",
+        "IEEE 1800-2023 §16.14.5",
+        "IEEE 1800-2023 §16.14.6"
+      ],
+      "modules": [
+        "I-SV-4A_SVA_Fundamentals/immediate-vs-concurrent",
+        "I-SV-4A_SVA_Fundamentals/index",
+        "F3B_Scheduling_Regions/index"
+      ]
+    },
+    {
+      "id": "sva-sampled-value-functions",
+      "topic": "sva",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "Explain `$rose`, `$fell`, `$stable`, `$changed` and `$past`. Then write a check that `data` stays stable, and `valid` stays high, while `valid` is high and `ready` is low.",
+      "rubric": "Must say that all five work on sampled values at ticks of the assertion's clock: `$rose`/`$fell`/`$stable`/`$changed` compare the sampled value at this tick with the sampled value at the previous tick of the same clock, and `$past(e, n)` returns the sampled value n ticks ago. Must write a correct property such as `valid && !ready |=> valid && $stable(data)` with `disable iff` for reset. Strong answers know that `$rose`/`$fell` look only at the LSB (so `$rose(bus)` on a vector is a bug), that at the first tick the comparison is against the default sampled value (`x` for a `logic` declared without an initializer; the initializer value for a static variable declared with one), and that `$past` before enough ticks exist returns the default sampled value. Weak answers describe them as edge detectors on the raw signal in simulation time.",
+      "model_answer": "All of them work on **sampled values at ticks of the assertion's clock**, not on simulation-time edges (§16.9.3):\n\n- `$rose(e)`: the LSB of `e` changed to 1 since the previous tick. `$fell(e)`: the LSB changed to 0.\n- `$stable(e)`: the sampled value did not change since the previous tick. `$changed(e)`: it did.\n- `$past(e, n, gate, clk)`: the sampled value of `e` n ticks ago (n defaults to 1 and must be an elaboration-time constant; ticks where `gate` is false are skipped). If fewer than n ticks have happened, it returns the default sampled value.\n\nTraced on posedge `clk` (values are the sampled ones, taken just before each edge; edge 1 is the first clock tick):\n\n```text\nedge           1  2  3  4  5\nvalid          0  1  1  1  0\nready          0  0  0  1  0\ndata           0  A  A  A  B\n$rose(valid)   0  1  0  0  0\n$fell(valid)   1  0  0  0  1\n$stable(data)  0  0  1  1  0\n$past(ready)   x  0  0  0  1\n(edge 1 is the first tick: each function compares with the default sampled value,\n 1'bx for these logic signals declared without initializers, so x -> 0 counts as a fall and a change)\n```\n\nThe hold check: if a transfer is offered and not taken at this tick, then at the next tick it must still be offered with the same data.\n\n```systemverilog\na_hold: assert property (@(posedge clk) disable iff (!rst_n)\n  valid && !ready |=> valid && $stable(data))\n  else $error(\"payload changed while stalled: was %h, now %h\", $past(data), $sampled(data));\n```\n\nAttempts start at edges 2 and 3 (`valid && !ready`); each checks edges 3 and 4, where `valid` is still 1 and `data` is still A, so both pass. At edge 4 the handshake happens and the antecedent is false, so that attempt is vacuous.\n\nTwo traps worth naming. `$rose` and `$fell` use only the LSB, so `$rose(addr)` on a vector is almost always a bug; use `$changed(addr)` or `addr != $past(addr)`. At the first clock tick the comparison is made against the default sampled value (§16.9.3, §16.5.1). For a `logic` variable declared without an initializer that is `1'bx`, so a signal that is already 1 at the first tick counts as having risen (and one that is 0 as having fallen, as `$fell(valid)` shows at edge 1). A static variable declared with an initializer, such as `logic valid = 1'b0;`, has that initializer as its default sampled value instead.",
+      "follow_ups": [
+        "What does `$rose(state)` return when a 2-bit `state` goes from `2'b01` to `2'b10`? Why?",
+        "Rewrite `$stable(data)` using `$past`. Are the two exactly equivalent for a `logic` vector that contains `x` bits?",
+        "Where does `$past` get its clock when it is called in an `always @(posedge clk)` block rather than in an assertion?",
+        "How would you check `data` only on the cycles where `en` is high, using the gating argument of `$past`?"
+      ],
+      "common_mistakes": [
+        "Treating `$rose(bus)` as \"the bus changed\"; it looks only at the LSB.",
+        "Thinking `$past(x)` returns the value one simulation time step earlier; it is one tick of the assertion's clock earlier.",
+        "Checking only `$stable(data)` and forgetting that `valid` must also stay high until `ready`.",
+        "Forgetting `disable iff`, so the check fires across reset when `data` is legitimately cleared."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.9.3",
+        "IEEE 1800-2023 §16.5.1",
+        "IEEE 1800-2023 §16.12.7",
+        "IEEE 1800-2023 §20.12"
+      ],
+      "modules": [
+        "I-SV-4A_SVA_Fundamentals/index"
+      ]
+    },
+    {
+      "id": "sva-assert-assume-cover",
+      "topic": "sva",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "What do `assert property`, `assume property` and `cover property` mean in simulation and in formal verification? Where does `restrict property` fit?",
+      "rubric": "Must state: `assert` is an obligation on the design, checked in simulation and proven (or refuted) by formal; `assume` is a constraint on the environment that formal uses to rule out input behaviour, and simulation checks it like an assertion and reports a failure; `cover` names a scenario that must be shown to happen, counted in simulation and searched for (reachability) in formal; `restrict` is like `assume` for formal but is not checked in simulation and has no action block. Strong answers explain that the same property can be an assumption in one block's harness and an assertion in its neighbour's (assume-guarantee), and that a passing assertion means nothing without covers. Weak answers say an assumption is ignored in simulation, or that `cover` checks correctness.",
+      "model_answer": "- **`assert property`** (§16.14.1): an obligation the **design** must meet. Simulation checks it on the traces the testbench produced and runs the fail action (default `$error`) when it fails. Formal tries to prove it for every input behaviour the assumptions allow, or returns a counterexample trace.\n- **`assume property`** (§16.14.2): a rule the **environment** obeys. Formal treats it as a hypothesis: it considers only input behaviour that satisfies it and has no obligation to prove it. Simulation does not ignore it: an assumed property is checked and reported if it fails, exactly like an assertion, which tells you the testbench (or the real neighbour block) broke the rule. Some simulators can also use assumptions to generate stimulus (tool-dependent).\n- **`cover property`** (§16.14.3): a scenario that must be **shown to happen**. Simulation counts attempts, successes (at most one per attempt) and vacuous successes. Formal searches for a trace that reaches it, or proves it unreachable (wording of results is tool-dependent).\n- **`restrict property`** (§16.14.4): the same meaning as `assume` for formal, but simulation does not check it and it has no action block. It is for formal-only case splits such as \"prove the ALU with `mode == 0`\".\n\n```systemverilog\nproperty p_no_wr_when_full;\n  @(posedge clk) disable iff (!rst_n) full |-> !wr_en;\nendproperty\n\n// In the FIFO's formal harness the producer is the environment:\nasm_producer: assume property (p_no_wr_when_full);\n// In the producer's harness the same rule is an obligation on that design:\nast_producer: assert property (p_no_wr_when_full);\n// Proof that the interesting state was reached at all:\ncov_fill:     cover  property (@(posedge clk) disable iff (!rst_n) wr_en ##1 full);\n```\n\nThe rule of thumb for a block harness: **assume on inputs, assert on outputs, cover the scenarios**. An assumption is a debt: it must be proven as an assertion somewhere else, or at least checked by the simulation regressions that run the real neighbour.",
+      "follow_ups": [
+        "A simulation regression reports a failing `assume property`. Is that a design bug, a testbench bug, or a wrong assumption? How do you decide?",
+        "Why can't you put a `cover property` inside the action block of an assertion?",
+        "What does `dist` mean inside an `assume property`, and what does it become inside an `assert`?",
+        "When would you prefer `restrict` over `assume` with `$assertoff` in simulation?"
+      ],
+      "common_mistakes": [
+        "Saying simulators ignore `assume property`; they check it and report failures (§16.14.2).",
+        "Treating a green `assert` as proof the behaviour was exercised, with no cover.",
+        "Putting design obligations in `assume` to make a formal run pass.",
+        "Using `cover property (a |-> b)`: it succeeds vacuously whenever `a` is false. Cover the sequence `a ##0 b` instead."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.14.1",
+        "IEEE 1800-2023 §16.14.2",
+        "IEEE 1800-2023 §16.14.3",
+        "IEEE 1800-2023 §16.14.4"
+      ],
+      "modules": [
+        "I-SV-4A_SVA_Fundamentals/index",
+        "E-INT-1_Integrating_UVM_with_Formal_Verification/index"
+      ]
     },
     {
       "id": "sva-implication-operators",
       "topic": "sva",
       "level": "mid",
       "category": "concept",
-      "prompt": "Explain |-> vs |=> in SVA. What is vacuous truth?",
-      "rubric": "|-> is overlapping implication (consequent starts same cycle as antecedent match). |=> is non-overlapping (consequent starts next cycle). Vacuous truth occurs when antecedent never matches — the property passes trivially.",
-      "model_answer": "|-> (overlapping): if the antecedent matches at cycle N, the consequent is checked starting at cycle N. |=> (non-overlapping): consequent checked starting at cycle N+1. Equivalent to |-> ##1. Vacuous truth: if the antecedent never matches, the property is trivially true. This is dangerous in formal — you may think a property is proven but the assumption prevents the antecedent from ever firing. Use cover properties to ensure antecedents are reachable.",
-      "sources": ["IEEE 1800-2023 §16.12.6", "IEEE 1800-2023 §16.12.7"]
-    },
-    {
-      "id": "sva-past-sampling",
-      "topic": "sva",
-      "level": "senior",
-      "category": "trick",
-      "prompt": "You write `assert property (@(posedge clk) req |-> ack)`. The DUT asserts req and ack on the same clock edge. Does it pass?",
-      "rubric": "Correct: assertions sample pre-edge (Preponed) values; the attempt on the changing edge is vacuous and the check passes on the following edge. Explains |-> vs |=>. Claiming the assertion sees the settled post-NBA value of the same edge is incorrect.",
-      "model_answer": "It passes, but not on the edge you might think. Concurrent assertions use values sampled in Preponed (§16.5.1). On the edge where the DUT's nonblocking assignments raise req and ack, the assertion sees the old values (req=0), so that attempt is vacuous. On the next edge it samples req=1 and ack=1, and the overlapping implication |-> passes there. The trap is believing assertions see the same-edge NBA results — they never do. If ack should follow req by a cycle, write |=> or |-> ##1 ack.",
-      "sources": ["IEEE 1800-2023 §16.12.6"]
-    },
-    {
-      "id": "sva-formal-overconstraint",
-      "topic": "sva",
-      "level": "senior",
-      "category": "waveform-debug",
-      "prompt": "A formal tool says your property is proven in 0 seconds. What went wrong?",
-      "rubric": "Over-constrained assumptions made the antecedent unreachable. The property is vacuously true because the formal engine can never reach a state where the antecedent fires. Must mention using cover properties to verify reachability.",
-      "model_answer": "An instantaneous proof usually means over-constrained assumptions. The assumptions restrict the state space so severely that the property's antecedent can never fire — so it's vacuously true. Debug: (1) Remove assumptions one at a time. (2) Write cover properties for the antecedent to verify it is reachable. (3) Check if your assumptions contradict each other (creating an empty state space). (4) Use the formal tool's assumption analysis to find dead assumptions.",
-      "sources": ["IEEE 1800-2023 §16.14 (assume)", "Formal verification methodology guides (secondary)"]
+      "prompt": "Explain `|->` versus `|=>` in SVA. What is vacuous success, and how do you find out whether an assertion that has never failed has ever actually checked anything?",
+      "rubric": "Must define overlapping implication (consequent starts at the tick where the antecedent match ends) and non-overlapping implication (consequent starts at the next tick), and give the standard's equivalence: `s |=> p` is the same as `s ##1 1'b1 |-> p`. Must explain that an attempt whose antecedent has no match succeeds vacuously and that vacuous successes look like passes. Must name at least one detection method: a `cover property` on the antecedent or on the whole scenario, or the tool's vacuity statistics (tool-dependent). Strong answers add that each antecedent match starts its own consequent check, that `a |-> ##1 b` equals `a |=> b` only when the consequent is a sequence, and that a pass action also runs on vacuous success unless `$assertvacuousoff` is used. Weak answers say the two operators differ only in style.",
+      "model_answer": "Both are implications: `antecedent |-> consequent`. For every match of the antecedent sequence that starts at an attempt's tick, the consequent property is checked separately (§16.12.7).\n\n- **`|->` (overlapping):** the consequent starts at the tick where the antecedent match **ends**.\n- **`|=>` (non-overlapping):** the consequent starts at the **next** tick. The standard defines `s |=> p` as equivalent to `s ##1 1'b1 |-> p` (it writes the constant as a `true` macro). Writing `s |-> ##1 q` gives the same result only when `q` is a sequence, because `##1` can only prefix a sequence.\n\n```text\nedge               1   2   3\nreq (sampled)      1   0   0\nack (sampled)      1   1   0\n\na1: req |-> ack    attempt@1 checks ack@1 = 1 -> pass\na2: req |=> ack    attempt@1 checks ack@2 = 1 -> pass\nattempts @2, @3    req = 0 -> vacuous success for both\n```\n\n**Vacuous success** (§16.14.8): an attempt of `a |-> b` where `a` has no match succeeds without ever looking at `b`. The standard says such an evaluation is not counted as a pass or a failure of the intent, but in a log it looks exactly like silence. An assertion whose antecedent never fires is green and has checked nothing.\n\nHow to find out it really checked something:\n\n1. **Cover the antecedent and the scenario**: `cover property (@(posedge clk) req)` and `cover property (@(posedge clk) req ##1 ack)`. A cover of a sequence counts only real matches. Do not cover the implication itself; it succeeds vacuously whenever `req` is low.\n2. **Read the tool's assertion statistics**: most simulators report attempts, real passes and vacuous passes per assertion (report format is tool-dependent).\n3. **Know what the pass action counts**: by default the pass action runs on vacuous successes too; `$assertvacuousoff` (or `$assertcontrol` with VacuousOff) stops that (§20.11).\n4. **In formal**, vacuity usually means an assumption or a stuck `disable iff` made the antecedent unreachable; the same covers expose it.",
+      "follow_ups": [
+        "How many consequent checks does `req ##[1:3] gnt |-> done` start if `gnt` is high on all three of the following ticks? When would you use `first_match`?",
+        "What does the followed-by operator `#-#` add, and why is `req #-# ack` the natural form for a cover?",
+        "An assertion has 10,000 passes in the log. What one extra number do you need before you trust it?",
+        "Is the attempt `a |-> b` vacuous or a real pass when `a` is true and `b` is true? What about `a |=> b` when the simulation ends one tick after `a`?"
+      ],
+      "common_mistakes": [
+        "Saying `|=>` means \"one clock later\" for the whole property instead of \"the consequent starts one tick after the antecedent ends\".",
+        "Counting pass-action messages as evidence of checking when most of them are vacuous.",
+        "Writing `cover property (a |-> b)` to show `a` followed by `b` happened.",
+        "Assuming one antecedent can only start one consequent check."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.12.7",
+        "IEEE 1800-2023 §16.12.9",
+        "IEEE 1800-2023 §16.14.3",
+        "IEEE 1800-2023 §16.14.8",
+        "IEEE 1800-2023 §20.11"
+      ],
+      "modules": [
+        "I-SV-4A_SVA_Fundamentals/index"
+      ]
     },
     {
       "id": "sva-repetition-operators",
       "topic": "sva",
       "level": "mid",
       "category": "coding",
-      "prompt": "Write an SVA property that checks: after req rises, ack must go high within 1 to 4 cycles and stay high for exactly 2 cycles.",
-      "rubric": "Should use $rose(req) |-> ##[1:4] (ack [*2]) or equivalent. Must handle the range correctly and understand consecutive repetition [*N].",
-      "model_answer": "```systemverilog\nproperty p_req_ack;\n  @(posedge clk) disable iff (!rst_n)\n    $rose(req) |-> ##[1:4] (ack [*2] ##1 !ack);\nendproperty\nassert property (p_req_ack);\n```\n$rose(req) triggers on rising edge. ##[1:4] allows 1-4 cycle delay. ack [*2] requires ack high for two consecutive cycles. ##1 !ack ensures it deasserts afterward.",
-      "sources": ["IEEE 1800-2023 §16.9.2 (repetition)"]
+      "prompt": "Write an SVA property that checks: after `req` rises, `ack` must go high within 1 to 4 cycles and stay high for exactly 2 cycles. Prove with a cycle trace that a 1-cycle and a 3-cycle `ack` pulse fail.",
+      "rubric": "The reference answer is `$rose(req) |=> (!ack)[*0:3] ##1 ack[*2] ##1 !ack` (with `disable iff` for reset). It keeps `ack` low until it rises in cycle 1 to 4, then demands exactly two high cycles and a low cycle, so only one alternative can match. Mark `$rose(req) |-> ##[1:4] ack[*2]` and `$rose(req) |-> ##[1:4] (ack[*2] ##1 !ack)` as incomplete: the first never checks that `ack` falls, and the second passes a 3- to 5-cycle pulse because some delay in the window lines up with the last two high cycles. A strong answer shows the trace, explains why the free `##[1:4]` window is the problem, and mentions the `|->` variant with a leading `!ack` if `ack` must also be low in the `req` cycle.",
+      "model_answer": "Pin down where `ack` rises instead of letting a delay range float over the pulse:\n\n```systemverilog\nproperty p_req_ack;\n  @(posedge clk) disable iff (!rst_n)\n    $rose(req) |=> (!ack)[*0:3] ##1 ack[*2] ##1 !ack;\nendproperty\na_req_ack: assert property (p_req_ack);\n```\n\nRead it as: from the cycle after `req` rises, `ack` stays low for 0 to 3 cycles, then is high for exactly two consecutive cycles, then low. `(!ack)[*0:3]` with zero repetitions is an empty match, so `ack` may rise in cycle 1 (§16.9.2.1: `(empty ##n seq)` is `(##(n-1) seq)`). Because the low run must end exactly where the high run starts, only one alternative can match a given trace, and the pulse length is checked exactly.\n\nTrace (edge 0 is the tick where `$rose(req)` is true; values are sampled values):\n\n```text\nedge                 0  1  2  3  4  5   p_req_ack\n2-cycle pulse  ack   0  1  1  0  0  0   pass at 3\n1-cycle pulse  ack   0  1  0  0  0  0   fail at 2 (ack low where 2nd high cycle needed)\n3-cycle pulse  ack   0  1  1  1  0  0   fail at 3 (ack high where !ack needed)\nlate rise      ack   0  0  0  0  0  1   fail at 4 (no rise in cycles 1-4)\n```\n\n**Why the common answer is wrong.** `$rose(req) |-> ##[1:4] (ack[*2] ##1 !ack)` tries every delay 1 to 4. For the 3-cycle pulse, delay 1 fails (ack@3 is high) but delay 2 matches (ack@2, ack@3, !ack@4), so the assertion **passes**. A pulse high in cycles 1 to 5 matches at delay 4. `##[1:4] ack[*2]` is worse: it never checks that `ack` falls, so a pulse that never drops passes at cycle 2.\n\n**If `ack` must also be low in the cycle `req` rises**, check that cycle too, and switch to `|->` so the check starts there: `$rose(req) |-> !ack ##1 (!ack)[*0:3] ##1 ack[*2] ##1 !ack`. Without it, an `ack` that was already high at edge 0 and stays high through edge 2 passes.",
+      "follow_ups": [
+        "Make the window a parameter `MAX_WAIT`. Which repetition bound changes, and why must it be an elaboration-time constant?",
+        "The simulation ends at edge 2 of a 2-cycle pulse. Does `a_req_ack` report a failure? (In `assert property` the sequence is weak, §16.12.2.)",
+        "How would you add a cover that shows the 4-cycle-wait corner case was exercised?",
+        "Why does `first_match` not help the `##[1:4]` version here?"
+      ],
+      "common_mistakes": [
+        "Writing `##[1:4] ack[*2]` and never checking that `ack` falls.",
+        "Believing `##[1:4] (ack[*2] ##1 !ack)` checks the pulse length; the delay range lets any longer pulse match.",
+        "Using `ack[->2]` (goto), which allows low cycles between the two highs.",
+        "Forgetting that `$rose(req)` is evaluated on sampled values, so the check starts one tick after the design drove `req`."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.9.2",
+        "IEEE 1800-2023 §16.9.2.1",
+        "IEEE 1800-2023 §16.12.7",
+        "IEEE 1800-2023 §16.9.3",
+        "IEEE 1800-2023 §16.12.2"
+      ],
+      "modules": [
+        "I-SV-4B_Advanced_Temporal_Logic/index",
+        "I-SV-4A_SVA_Fundamentals/index"
+      ]
+    },
+    {
+      "id": "sva-deferred-assertions-glitch",
+      "topic": "sva",
+      "level": "mid",
+      "category": "trick",
+      "prompt": "At time 10 the testbench changes `valid` from 0 to 1 (a blocking assignment in an `initial` block). Which of the three assertions can report a failure at time 10, and why?",
+      "code": "```systemverilog\nmodule glitch_demo;\n  logic valid = 1'b0;\n  logic valid_n;\n  assign valid_n = !valid;              // a separate process\n\n  always_comb begin : chk\n    a_simple: assert (valid_n != valid)       else $error(\"simple\");\n    a_obs:    assert #0 (valid_n != valid)    else $error(\"observed deferred\");\n    a_fin:    assert final (valid_n != valid) else $error(\"final deferred\");\n  end\n\n  initial #10 valid = 1'b1;\nendmodule\n```",
+      "rubric": "Must explain that when `valid` changes, `chk` and the continuous assignment are both scheduled in the Active region in an order the standard leaves open, so `chk` may run once with the new `valid` and the old `valid_n`. `a_simple` reports immediately on that run (simulator-dependent whether it happens). `a_obs` and `a_fin` queue a pending report; when `valid_n` changes, `chk` is woken again, which is a flush point, so the queued report is discarded and the re-evaluation passes. Neither deferred assertion reports. Strong answers explain the difference between `#0` (matures in Observed, runs in Reactive) and `final` (matures in Postponed), and that only `final` is immune to Reactive-region code re-triggering the Active region. Weak answers say \"deferred assertions are delayed by one delta\" or that `#0` means a zero delay.",
+      "model_answer": "**Only `a_simple` can report, and whether it does depends on the simulator's scheduling order.**\n\nWhen `valid` changes at time 10, two processes become active: the continuous assignment that updates `valid_n`, and `chk`, which is sensitive to `valid` and `valid_n`. The standard does not fix their order. If `chk` runs first, it sees `valid = 1` and the old `valid_n = 1`, so `valid_n != valid` is false for that run. Then `valid_n` becomes 0, `chk` runs again, and everything passes.\n\n- **`a_simple`** (simple immediate, §16.3) reports the moment it is executed, so the first run prints `simple`. This is a zero-delay glitch report, not a design bug.\n- **`a_obs`** (observed deferred, `assert #0`) does not report on the first run. Its fail call is placed on `chk`'s deferred report queue (§16.4.1). When `chk` resumes because `valid_n` changed, that is a **flush point** for an `always_comb` process (§16.4.2), so the pending report is discarded. The second run passes. No message.\n- **`a_fin`** (final deferred, `assert final`) behaves the same way here: flushed, no message.\n\n**Where `#0` and `final` differ.** Observed deferred reports mature in the Observed region and their action runs in the Reactive region. If Reactive-region code (for example a `program` block) then changes inputs and the time step goes back to the Active region, `a_obs` may already have reported a value that the rest of the time step corrects. Final deferred reports mature in the Postponed region, after all such loops, so `assert final` reports only values that are still bad at the very end of the time step (§16.4.1).\n\nTwo practical rules: a deferred assertion's action block may contain only a single subroutine call (§16.4), and arguments passed **by value** are evaluated when the assertion expression is evaluated, so print the values you need as by-value arguments. Arguments passed by `ref` or `const ref` read current values when the call runs: in the Reactive region for `#0`, in the Postponed region for `final` (§16.4).\n\n**Time 0 is a second glitch point.** `always_comb` runs once at time 0 (§9.2.2.2.2). If `chk` runs before the continuous assignment has updated `valid_n`, `valid_n` is still `x`, `x != 0` evaluates to `x`, and an immediate assertion treats `x` as false (§16.3). So `a_simple` can also print `simple` at time 0, again depending on process order; the deferred reports from that run are flushed when `valid_n` settles and `chk` runs again.",
+      "follow_ups": [
+        "Rewrite `chk` so that even `a_simple` cannot glitch. Is restructuring the RTL or switching to `assert #0` the better fix?",
+        "What is a flush point for an `always @(a or b)` process that contains a deferred assertion?",
+        "Why is a procedural concurrent assertion in an `always_comb` (with a default clock) also protected from this glitch?",
+        "When would `assert final` miss a real bug that `assert #0` catches?"
+      ],
+      "common_mistakes": [
+        "Reading `#0` as a zero delay that moves the check to the Inactive region.",
+        "Believing all three assertions always report, or that `a_simple` always reports; the order of the two Active-region processes is not defined.",
+        "Putting several statements in a deferred assertion's action block; only a single subroutine call is allowed.",
+        "Using `assert final` everywhere and losing the ability to see mid-time-step values that Reactive code later hides.",
+        "Forgetting the time-0 run of `always_comb`: an input still at `x` makes a simple immediate assertion fail before any stimulus."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.3",
+        "IEEE 1800-2023 §16.4",
+        "IEEE 1800-2023 §16.4.1",
+        "IEEE 1800-2023 §16.4.2",
+        "IEEE 1800-2023 §4.4.2.6",
+        "IEEE 1800-2023 §9.2.2.2.2"
+      ],
+      "modules": [
+        "I-SV-4A_SVA_Fundamentals/immediate-vs-concurrent",
+        "F3B_Scheduling_Regions/index",
+        "F3C_Delta_Cycles_and_Race_Conditions/index"
+      ]
+    },
+    {
+      "id": "sva-disable-iff-reset",
+      "topic": "sva",
+      "level": "mid",
+      "category": "waveform-debug",
+      "prompt": "This assertion fails once, at edge 2, just after reset is released, and never again. The counter RTL is correct. Using the cycle table, explain the failure and fix the assertion.",
+      "code": "```systemverilog\n// DUT counter\nalways_ff @(posedge clk or negedge rst_n)\n  if (!rst_n)  cnt <= '0;\n  else if (en) cnt <= cnt + 8'd1;\n\n// rst_n comes from a reset-synchronizer flop: it rises by a nonblocking assignment at edge 1\na_inc: assert property (@(posedge clk) disable iff (!rst_n)\n  en |=> cnt == $past(cnt) + 8'd1);\n```\n\n```text\nposedge clk                 0   1   2   3   4\nrst_n  (sampled, pre-edge)  0   0   1   1   1\nrst_n  (current, Observed)  0   1   1   1   1\nen     (sampled)            1   1   1   1   1\ncnt    (sampled)            0   0   0   1   2\na_inc result                -   -   FAIL (attempt started at edge 1)\n```",
+      "rubric": "Must explain that the disable condition uses current values, not sampled ones: at edge 1 the synchronizer's nonblocking assignment has already set `rst_n` to 1 before the Observed region, so the attempt that starts at edge 1 is enabled, although its sampled values (`en = 1`) come from reset and the DUT itself still saw `rst_n = 0` at edge 1 and did not count. At edge 2 it compares sampled `cnt = 0` with `$past(cnt) + 1 = 1` and fails. Must give a working fix: add the sampled reset to the antecedent (`rst_n && en |=> ...`), or disable on the sampled value (`disable iff ($sampled(!rst_n))`), or gate the check with `$past(rst_n)`. Strong answers also state the other half of the rule: a reset pulse between edges disables every attempt in flight (disabled is neither pass nor fail), and `default disable iff` sets one policy per scope.",
+      "model_answer": "**The disable condition is not sampled.** Expressions in a sequence or property use sampled (pre-edge) values, but the `disable iff` condition is evaluated on **current** values, and it is tested throughout each attempt, from the attempt's start in the Observed region (§16.12, §16.5).\n\nWalk the table:\n\n1. **Edge 0:** `rst_n` is 0 now. The attempt is disabled.\n2. **Edge 1:** the synchronizer flop sets `rst_n` to 1 in the NBA region of edge 1, before the Observed region. The new attempt therefore sees `!rst_n` false and is **enabled**. But its antecedent uses the sampled `en = 1`, and the DUT, which ran in the Active region of edge 1, still saw `rst_n = 0` and held `cnt` at 0. The attempt is checking a cycle in which the design was in reset.\n3. **Edge 2:** the consequent compares sampled `cnt = 0` with `$past(cnt) + 1 = 0 + 1`. **Fail**, reported at edge 2 for the attempt that started at edge 1.\n4. **Edge 2 onwards:** attempts compare 1 with 0+1, 2 with 1+1, and pass.\n\n**Fixes** (any one):\n\n```systemverilog\n// 1) Require the design to have been out of reset at the antecedent's tick (sampled rst_n)\na_inc: assert property (@(posedge clk) disable iff (!rst_n)\n  rst_n && en |=> cnt == $past(cnt) + 8'd1);\n\n// 2) Disable on the sampled reset value instead of the current one\na_inc2: assert property (@(posedge clk) disable iff ($sampled(!rst_n))\n  en |=> cnt == $past(cnt) + 8'd1);\n```\n\nFix 1 makes the edge-1 attempt vacuous (sampled `rst_n` is 0) and keeps the asynchronous behaviour of `disable iff` for resets that arrive mid-transaction. `$sampled` in a disable condition is allowed and meaningful because the condition is otherwise not sampled (§16.9.3).\n\n**The other half of the rule.** Because the disable condition is current-valued and checked throughout the attempt, a reset pulse **between** two clock edges disables every attempt in flight, even though no edge ever samples the reset. A disabled attempt is neither a pass nor a failure, and no action block runs (§16.12, §16.14.1). Put one `default disable iff (!rst_n);` in each module or interface (§16.15) or checker (a checker body may contain one, §17.2) so every assertion shares the reset policy.",
+      "follow_ups": [
+        "What happens to an attempt waiting for `ack` if `rst_n` pulses low for 2 ns between two clock edges?",
+        "How do you exempt one assertion from a `default disable iff` in its scope?",
+        "Write an assertion that checks the reset values themselves: `cnt` must be 0 at the first edge after reset. Why can it not use `disable iff (!rst_n)`?",
+        "Why must a sampled value function other than `$sampled` inside a `disable iff` be given an explicit clock?"
+      ],
+      "common_mistakes": [
+        "Assuming `disable iff` is sampled at the clock edge like the rest of the property.",
+        "Blaming the RTL: the counter is correct; the assertion checks a cycle in which the design was in reset.",
+        "\"Fixing\" it by waiting a fixed number of cycles after reset with a counter in the testbench instead of expressing the real condition.",
+        "Reading a disabled attempt as a pass in coverage or statistics."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.12",
+        "IEEE 1800-2023 §16.5",
+        "IEEE 1800-2023 §16.5.1",
+        "IEEE 1800-2023 §16.9.3",
+        "IEEE 1800-2023 §16.14.1",
+        "IEEE 1800-2023 §16.15",
+        "IEEE 1800-2023 §17.2"
+      ],
+      "modules": [
+        "I-SV-4A_SVA_Fundamentals/index",
+        "I-SV-4B_Advanced_Temporal_Logic/multi-clocking"
+      ]
+    },
+    {
+      "id": "sva-axi-handshake-properties",
+      "topic": "sva",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "Write the SVA a checker on the AXI write-address channel uses to enforce the master's handshake rules: once `AWVALID` is high it stays high until `AWREADY`, the address and control stay stable while waiting, and `AWVALID` is low during reset. Add the covers that show the checker was exercised.",
+      "rubric": "Must write `AWVALID && !AWREADY |=> AWVALID` and a `$stable` check on the address and control bundle under the same antecedent, both with `disable iff (!ARESETn)`, and a reset rule written without that disable. Must not invent rules: AXI lets the slave wait for `AWVALID` before asserting `AWREADY`, so \"`AWREADY` must eventually follow `AWVALID`\" is a design requirement, not a protocol rule. Strong answers cite IHI0022E A3.2.1 and A3.1.2, add covers for a stalled handshake and for `AWREADY` before `AWVALID`, use `$sampled`/`$past` in messages, and label X-checks on `AWVALID` as checker practice rather than a spec rule.",
+      "model_answer": "The rules come from Arm IHI0022E: once `VALID` is asserted it must remain asserted until the handshake (A3.2.1), the source must keep its information stable until the transfer (A3.2.1), and during reset a master must drive `ARVALID`, `AWVALID` and `WVALID` low (A3.1.2).\n\n```systemverilog\n// Placed in the AXI interface or a bound checker; all signals sampled at posedge ACLK.\nproperty p_aw_valid_held;\n  @(posedge ACLK) disable iff (!ARESETn)\n    AWVALID && !AWREADY |=> AWVALID;\nendproperty\n\nproperty p_aw_payload_stable;\n  @(posedge ACLK) disable iff (!ARESETn)\n    AWVALID && !AWREADY |=> $stable({AWID, AWADDR, AWLEN, AWSIZE, AWBURST, AWLOCK, AWCACHE, AWPROT});\nendproperty\n\na_aw_valid_held: assert property (p_aw_valid_held)\n  else $error(\"AWVALID dropped before AWREADY\");\na_aw_stable:     assert property (p_aw_payload_stable)\n  else $error(\"AW payload changed while stalled: AWADDR was %h, now %h\", $past(AWADDR), $sampled(AWADDR));\n\n// Reset rule: no disable iff here, the check is about reset itself.\n// The first tick with ARESETn sampled high still shows the value driven during reset.\na_aw_reset: assert property (@(posedge ACLK) (!ARESETn || $rose(ARESETn)) |-> !AWVALID);\n\n// Checker practice (not an IHI0022E rule): no X on control while out of reset.\na_aw_no_x: assert property (@(posedge ACLK) disable iff (!ARESETn)\n  !$isunknown(AWVALID) && (AWVALID -> !$isunknown({AWADDR, AWLEN, AWSIZE, AWBURST})));\n\n// Evidence the rules were exercised:\nc_aw_stalled:     cover property (@(posedge ACLK) disable iff (!ARESETn) AWVALID && !AWREADY ##1 AWVALID && AWREADY);\nc_aw_ready_first: cover property (@(posedge ACLK) disable iff (!ARESETn) !AWVALID && AWREADY ##1 AWVALID && AWREADY);\n```\n\nNotes a reviewer looks for:\n\n- The antecedent `AWVALID && !AWREADY` is a stall; after a handshake (`AWVALID && AWREADY`) the master may change the payload or drop `AWVALID`, so those ticks are vacuous by design.\n- `$stable` on the concatenation catches a change in any field but cannot say which one moved. For debuggable failures, write one `$stable` assertion per field (generated in a loop or a macro of your own), or print each field's `$past` and `$sampled` values in the message.\n- There is **no** assertion that `AWREADY` must eventually rise. The slave can wait for `AWVALID` before asserting `AWREADY` (A3.3.1), and the specification sets no time limit. A latency bound such as `AWVALID |-> ##[0:16] AWREADY` is a requirement of a particular design, and should be labelled as such.\n- In a formal harness of a slave, the master rules become `assume property`, and the slave-side rules become assertions.",
+      "follow_ups": [
+        "Which of these properties become assumptions when you formally verify an AXI slave, and which stay assertions?",
+        "Why is the reset check written without `disable iff (!ARESETn)`?",
+        "Extend the checker to the W channel: what changes for `WLAST` and for the number of beats?",
+        "The `c_aw_stalled` cover never hits in a month of regressions. What does that tell you about the stability assertion, and what do you change?"
+      ],
+      "common_mistakes": [
+        "Writing `$rose(AWVALID) |-> ##[0:$] AWREADY` and calling it a protocol rule; AXI sets no time limit for `READY`.",
+        "Checking `$stable(AWADDR)` on every tick where `AWVALID` is high, which fails legally right after a handshake.",
+        "Putting `disable iff (!ARESETn)` on the reset rule, which disables the very ticks it should check.",
+        "Writing checks with no covers, so a slave that always holds `AWREADY` high leaves the stall rules untested."
+      ],
+      "sources": [
+        "Arm IHI0022E A3.2.1",
+        "Arm IHI0022E A3.1.2",
+        "Arm IHI0022E A3.3.1",
+        "IEEE 1800-2023 §16.9.3",
+        "IEEE 1800-2023 §16.12.7",
+        "IEEE 1800-2023 §20.9"
+      ],
+      "modules": [
+        "B-AXI-1_AXI_Channel_Architecture/index",
+        "I-SV-4A_SVA_Fundamentals/index"
+      ]
+    },
+    {
+      "id": "sva-goto-vs-nonconsecutive",
+      "topic": "sva",
+      "level": "mid",
+      "category": "waveform-debug",
+      "prompt": "Predict pass or fail, and the edge where it is decided, for each of the three assertions on this trace. Which one implements \"`done` exactly one cycle after the third `beat`\"?",
+      "code": "```systemverilog\na_goto:   assert property (@(posedge clk) $rose(start) |=> beat[->3] ##1 done);\na_noncon: assert property (@(posedge clk) $rose(start) |=> beat[=3]  ##1 done);\na_consec: assert property (@(posedge clk) $rose(start) |=> beat[*3]  ##1 done);\n```\n\n```text\nedge    0  1  2  3  4  5  6  7  8\nstart   0  1  0  0  0  0  0  0  0\nbeat    0  0  1  0  1  1  0  0  0\ndone    0  0  0  0  0  0  0  1  0\n```",
+      "rubric": "Correct predictions: `a_goto` fails at edge 6 (third beat at 5, so `done` is required at 6); `a_noncon` passes at edge 7 (a `[=3]` match may end at 5, 6, 7... while `beat` stays low, so `done` at 7 is accepted); `a_consec` fails at edge 3 (`beat` is low at 3). `a_goto` implements the stated rule, so it correctly flags the late `done`. Must explain that goto repetition `[->n]` ends exactly on the n-th occurrence, while nonconsecutive `[=n]` may extend over later ticks where the operand is false, and that both take only Boolean operands. Strong answers quote the standard's expansion of `[=n]` and note that `a_noncon` also never fails in simulation if `done` never comes, because the sequence is weak in an assertion.",
+      "model_answer": "All three start one attempt at edge 1, where `$rose(start)` is true (sampled `start` 0 at edge 0, 1 at edge 1). With `|=>`, the consequent starts at edge 2.\n\n```text\nassertion   what it needs                          result\na_consec    beat at 2, 3, 4, then done at 5         FAIL at 3 (beat = 0)\na_goto      3rd beat (edge 5), then done at 6        FAIL at 6 (done = 0)\na_noncon    3 beats, then any run of !beat, done     PASS at 7 (beats 2,4,5; !beat at 6; done at 7)\n```\n\n- **`[*3]` consecutive repetition** needs `beat` on three consecutive ticks starting at edge 2. Edge 3 is low, so the only alternative dies there.\n- **`[->3]` goto repetition** waits through any number of low ticks and ends **exactly on** the third tick where `beat` is true (edge 5). `##1 done` then needs `done` at edge 6. Its expansion is `(!beat[*0:$] ##1 beat)[*3]` (§16.9.2).\n- **`[=3]` nonconsecutive repetition** is like goto, but the match may be extended by any number of further ticks where `beat` is false: `(!beat[*0:$] ##1 beat)[*3] ##1 !beat[*0:$]`. Matches end at edges 5, 6, 7, ...; the one ending at 6 is followed by `done` at 7, so the attempt passes.\n\n**The spec \"`done` exactly one cycle after the third beat\" is `a_goto`.** It correctly reports this trace as a bug. `a_noncon` encodes \"`done` some time after the third beat, with no fourth beat before it\". Note what it does not forbid: by the expansion, `beat` may be high on the `done` tick itself.\n\nTwo more rules: `[->n]` and `[=n]` accept only Boolean operands (not sequences), and goto and nonconsecutive repetition cannot be applied to a Boolean that has a match item attached (§16.9.2). And in `assert property` the consequent sequence is weak: if `done` never arrives, `a_noncon` never fails in simulation (§16.12.2).",
+      "follow_ups": [
+        "Rewrite `a_noncon` so that `done` must arrive within 10 cycles of `start`. Which operator do you add?",
+        "Why is `beat[->1]` the standard way to wait for a handshake of unknown latency, and when would `beat[=1]` give a wrong pass?",
+        "What does `beat[->2:3] ##1 done` accept on this trace?",
+        "Can you write `(a ##1 b)[->2]`? What do you write instead?"
+      ],
+      "common_mistakes": [
+        "Treating `[->n]` and `[=n]` as interchangeable.",
+        "Forgetting that `|=>` moves the start of `beat` counting to the tick after `start` rises.",
+        "Applying goto or nonconsecutive repetition to a sequence instead of a Boolean.",
+        "Expecting `a_noncon` to fail at the end of a test where `done` never came."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.9.2",
+        "IEEE 1800-2023 §16.9.2.1",
+        "IEEE 1800-2023 §16.12.2",
+        "IEEE 1800-2023 §16.12.7"
+      ],
+      "modules": [
+        "I-SV-4B_Advanced_Temporal_Logic/index"
+      ]
+    },
+    {
+      "id": "sva-cover-property-vs-covergroup",
+      "topic": "sva",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "When do you use `cover property` and when a covergroup? Show how to measure the request-to-grant latency distribution, and explain the difference between `cover property` and `cover sequence`.",
+      "rubric": "Must explain that a covergroup records which values or value combinations were sampled at a sampling event (bins, crosses), while `cover property` records that a temporal scenario (an ordered pattern over cycles) happened; in formal, a cover is a reachability question. Must state that `cover sequence` counts every match per attempt while `cover property` counts at most one success per attempt and reports vacuous successes separately, and that covering an implication is a mistake. Strong answers connect the two: capture a temporal measurement with a local variable and call the covergroup's `sample()` from a sequence match item, so latency gets bins. Weak answers say the two are interchangeable or that `cover property` replaces functional coverage.",
+      "model_answer": "They answer different questions.\n\n- **Covergroup** (§19.3): *which values, and which combinations of values, did we see?* It samples at an event, sorts values into bins and crosses, and reports a percentage per bin. Use it for opcode × size × response, FIFO fill levels, register field values.\n- **`cover property`** (§16.14.3): *did this ordered scenario happen?* It describes a pattern over cycles, for example a write to a full FIFO followed by a read in the next cycle, or back-to-back retries. In formal, the same cover is a reachability question: the tool finds a trace or proves it unreachable.\n\n**Counting.** `cover sequence` reports **all matches** of each attempt. `cover property` increments its success count **at most once per attempt**, and reports separately the successes that were vacuous (§16.14.3). Disabled evaluations count as attempts but not as successes. That is why `cover property (req |-> ##[1:3] gnt)` is a mistake: the implication succeeds vacuously whenever `req` is low. Cover the sequence `req ##[1:3] gnt`, or use followed-by, `req #-# ##[1:3] gnt` (§16.12.9).\n\n**Combining them: latency with bins.** A sequence can carry a local variable and call a void function at the end of a match (§16.10, §16.11), and a covergroup's `sample()` is a void function method (§19.8):\n\n```systemverilog\n// snippet\ncovergroup lat_cg with function sample(int unsigned lat);\n  coverpoint lat { bins fast = {[1:2]}; bins mid = {[3:8]}; bins slow = {[9:16]}; }\nendgroup\nlat_cg lat_cov = new();\n\nsequence s_req_to_gnt;\n  int unsigned lat;\n  @(posedge clk) ($rose(req), lat = 0)\n    ##1 (!gnt, lat++)[*0:15]\n    ##1 (gnt, lat++, lat_cov.sample(lat));\nendsequence\nc_req_to_gnt: cover sequence (s_req_to_gnt);\n```\n\nEach attempt keeps its own `lat` (local variables are per attempt), so overlapping requests do not corrupt each other. The cover tells you the scenario happened; the covergroup tells you which latencies happened.\n\nRule of thumb: values and combinations go in covergroups; orderings, overlaps and timing corner cases go in cover properties; and every assertion's antecedent gets a cover so a vacuous pass cannot hide.",
+      "follow_ups": [
+        "A `cover property` shows 0 hits but its sequence obviously happened in the waveform. Name three causes.",
+        "Why might you want `cover sequence` rather than `cover property` for a pattern that can match several times per attempt?",
+        "How do these assertion covers get merged with covergroup coverage in a regression report? What is standard and what is tool-dependent?",
+        "In formal, what does it mean when a `cover property` is reported unreachable?"
+      ],
+      "common_mistakes": [
+        "Covering an implication and counting vacuous successes as hits.",
+        "Trying to bin values with `cover property`, or to express ordering with a cross.",
+        "Using a module-level variable instead of a local variable to measure latency, so overlapping requests overwrite each other.",
+        "Treating a reached cover as proof that the behaviour was correct; a cover shows reachability, an assertion shows correctness."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.14.3",
+        "IEEE 1800-2023 §16.12.9",
+        "IEEE 1800-2023 §16.10",
+        "IEEE 1800-2023 §16.11",
+        "IEEE 1800-2023 §19.3",
+        "IEEE 1800-2023 §19.8",
+        "IEEE 1800-2023 §19.8.1"
+      ],
+      "modules": [
+        "I-SV-4A_SVA_Fundamentals/index",
+        "I-SV-4B_Advanced_Temporal_Logic/index",
+        "I-SV-3A_Functional_Coverage_Fundamentals/index"
+      ]
+    },
+    {
+      "id": "sva-bind-and-checkers",
+      "topic": "sva",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "You may not edit the RTL of module `fifo`, which is instantiated 12 times. Attach a handshake checker to every instance, and a coverage-only checker to the single instance `tb_top.dut.u_rx_fifo`. Show the code, and say whose names the port connections refer to.",
+      "rubric": "Must write a checker (or module/interface) holding the assertions and a `bind` in both forms: `bind fifo <inst>` for every instance of the module, and `bind <hierarchical instance> <inst>` (or `bind fifo : <instance list>`) for one instance. Must state that the actual arguments in the bind are resolved in the target scope (the `fifo` instance), as if the instance were written at the end of the target module, not in the scope where the `bind` statement is. Strong answers explain checker restrictions (no module, interface or program instances inside a checker), checker-local default clocking and `default disable iff`, that only interfaces or checkers can be bound into an interface target, and that `$unit` declarations are not visible to the bound instance. Weak answers say bind edits or recompiles the RTL file.",
+      "model_answer": "```systemverilog\n// Assertions packaged as a checker (Clause 17). Formal arguments default to input.\nchecker fifo_hs_chk (logic clk, logic rst_n, logic push, logic pop, logic full, logic empty);\n  default clocking @(posedge clk); endclocking\n  default disable iff (!rst_n);\n  a_no_push_full:  assert property (push |-> !full);\n  a_no_pop_empty:  assert property (pop  |-> !empty);\n  c_fill_and_read: cover  property (push ##1 full ##[1:$] pop);\nendchecker\n\nchecker fifo_cov_chk (logic clk, logic rst_n, logic [4:0] count);\n  default clocking @(posedge clk); endclocking\n  covergroup level_cg @(posedge clk);\n    coverpoint count { bins empty = {0}; bins mid = {[1:15]}; bins full = {16}; }\n  endgroup\n  level_cg cg = new();\nendchecker\n\n// 1) Every instance of module fifo, design-wide.\n//    wr_en, rd_en, full, empty are names INSIDE fifo, not in the scope of this bind.\nbind fifo fifo_hs_chk u_hs_chk (.clk(clk), .rst_n(rst_n), .push(wr_en), .pop(rd_en),\n                                .full(full), .empty(empty));\n\n// 2) One specific instance only.\nbind tb_top.dut.u_rx_fifo fifo_cov_chk u_cov_chk (.clk(clk), .rst_n(rst_n), .count(count));\n```\n\n**Name resolution.** All actual ports and parameters in a `bind` refer to objects from the viewpoint of the target: the bound instance behaves as if it were written at the very end of the target module, so it sees the target's declarations and imports. Names declared in the scope that contains the `bind` statement are not used, and declarations in `$unit` are not visible to the bind (§23.11). There is a third form, `bind fifo : tb_top.dut.u_rx_fifo, tb_top.dut.u_tx_fifo fifo_cov_chk u_cov_chk (...);`, for a list of instances of one module.\n\n**Why a checker.** A checker can hold sequences, properties, assertions, covergroups, checker variables and `default clocking`/`default disable iff` (§17.2), and its arguments can be sequences or properties. It cannot declare or instantiate modules, interfaces or programs. A module or interface works too and is what many teams use for VIP-style monitors. If the bind target is an interface, the bound instance must be an interface or a checker (§23.11).\n\n`bind` does not edit or recompile the RTL file; it adds an instance at elaboration, so the same checker can be bound in block simulation, SoC simulation and a formal harness.",
+      "follow_ups": [
+        "The bind compiles, but `a_no_push_full` reports that `full` is unresolved in 3 of the 12 instances. What would you check?",
+        "How do you bind into an instance that sits inside a generate loop?",
+        "A team wants to switch these assertions off in one error-injection test. Which hierarchical path do you give `$assertoff`?",
+        "What are free (`rand`) checker variables used for in formal, and how do simulators treat them?"
+      ],
+      "common_mistakes": [
+        "Connecting ports to testbench names, expecting them to be resolved where the `bind` statement is written.",
+        "Believing `bind` modifies the target source, so it cannot be used on encrypted or frozen RTL.",
+        "Instantiating a module inside a checker.",
+        "Binding to the module name when only one instance should get the checker, which attaches it everywhere."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §23.11",
+        "IEEE 1800-2023 §17.2",
+        "IEEE 1800-2023 §17.3",
+        "IEEE 1800-2023 §17.7",
+        "IEEE 1800-2023 §16.15"
+      ],
+      "modules": [
+        "I-SV-4C_Checkers/index"
+      ]
+    },
+    {
+      "id": "sva-assertion-control",
+      "topic": "sva",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "An error-injection test drives bad parity on a bus for 50 cycles on purpose, and the parity assertion `a_parity` fires. How do you silence exactly that check for exactly that window? Compare `$assertoff`, `$assertkill`, `$assertfailoff` and a `disable iff` enable knob.",
+      "rubric": "Must know the semantics: `$assertoff` stops new attempts but lets attempts already in flight finish (and fail); `$assertkill` aborts in-flight attempts and then stops new ones; `$asserton` resumes; `$assertfailoff` keeps evaluating but suppresses the fail action, and action-control tasks do not change the statistics counters. Must point out the re-enable timing problem: attempts started after `$asserton` can still look back (`$past`, multi-cycle sequences) into the injected window. Strong answers prefer a checker enable knob in `disable iff` (current-valued, so it disables in-flight attempts cleanly) driven from the test's configuration, scope the control to the specific assertion by hierarchical name, and know the `levels` argument (0 means the scope and everything below it). Weak answers turn off all assertions globally for the whole test.",
+      "model_answer": "The standard's assertion control tasks (§20.11) take an optional `levels` argument and a list of scopes or individual assertions; `levels` follows `$dumpvars`, so 0 means the named scope and everything below it.\n\n- **`$assertoff`** (`$assertcontrol` control type 4, Off): no new attempts start. Attempts **already executing are not affected**, so an attempt that started before the call and sees bad parity can still fail.\n- **`$assertkill`** (type 5, Kill): aborts the attempts currently executing, then stops new ones. It also flushes pending deferred-assertion reports.\n- **`$asserton`** (type 3, On): resumes starting attempts.\n- **`$assertfailoff`** (type 9, FailOff): keeps evaluating but does not run the fail action (including the default `$error`). The action-control tasks do not affect the statistics counters, so the tool's assertion summary may still list the failures.\n\n```systemverilog\n// snippet: in the test, around the injection window\n$assertkill(0, tb_top.u_bus_if.a_parity);   // kill in-flight attempts, block new ones\ninject_bad_parity(50);                        // the test's own task\nrepeat (PARITY_WINDOW) @(posedge tb_top.clk);  // let any look-back window clear\n$asserton(0, tb_top.u_bus_if.a_parity);\n```\n\nThe `repeat` matters: if `a_parity` uses `$past` or spans several cycles, attempts started right after `$asserton` still look back into the corrupt cycles.\n\n**Often better: an enable knob in the checker.**\n\n```systemverilog\n// in the interface or checker\nbit chk_parity_en = 1'b1;   // set from the test's configuration object\na_parity: assert property (@(posedge clk) disable iff (!rst_n || !chk_parity_en)\n  valid |-> ^{data, parity} == 1'b0);\n```\n\nBecause a disable condition uses current values and is checked throughout each attempt (§16.12), clearing `chk_parity_en` turns every in-flight attempt into a **disabled** evaluation (neither pass nor fail) immediately, without hierarchical paths in the test. VIP usually exposes such knobs through its configuration object, and a test that expects the error can instead demote the expected message (for example with a UVM report catcher) if the checker reports through UVM.\n\nWhatever you use, scope it to the one assertion and the one window, and log when checking was switched off, so a later reviewer can see that the check was disabled on purpose.",
+      "follow_ups": [
+        "Why is `$assertoff` at time 0 with no arguments a dangerous default in a regression?",
+        "How do you switch off only covers, or only immediate assertions, with `$assertcontrol`?",
+        "What does `$assertvacuousoff` change, and why might you use it on a pass-action counter?",
+        "How would a UVM test drive `chk_parity_en` in an interface without hierarchical references in the test?"
+      ],
+      "common_mistakes": [
+        "Assuming `$assertoff` cancels attempts already in flight; only `$assertkill` does.",
+        "Turning on the assertion again immediately and getting false failures from attempts that look back into the injected cycles.",
+        "Disabling all assertions in the design for the whole test.",
+        "Using `$assertfailoff` and believing the assertion statistics no longer count the failures."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §20.11",
+        "IEEE 1800-2023 §21.7.1.2",
+        "IEEE 1800-2023 §16.12",
+        "IEEE 1800-2023 §16.4.1"
+      ],
+      "modules": [
+        "I-SV-4A_SVA_Fundamentals/index",
+        "A-UVM-7_VIP_Construction/index",
+        "I-SV-4C_Checkers/index"
+      ]
+    },
+    {
+      "id": "sva-past-sampling",
+      "topic": "sva",
+      "level": "senior",
+      "category": "trick",
+      "prompt": "You write `assert property (@(posedge clk) req |-> ack)`. The DUT raises `req` and `ack` with nonblocking assignments at the same clock edge N and holds them. Does the assertion pass, and at which edge? At that edge, what do `$rose(req)` and `$past(req)` return?",
+      "rubric": "Correct: it passes, but at edge N+1, not N. Concurrent assertions use values sampled in the Preponed region, so the attempt at edge N sees `req = 0` and is vacuous; the attempt at N+1 sees `req = 1`, `ack = 1` and passes. At N+1, `$rose(req)` is 1 and `$past(req)` is 0, because both compare against the value sampled at edge N. Must explain that an assertion never sees the NBA results of its own edge. Strong answers note that `|=>` would require `ack` at N+2, so for a same-edge pair `|->` is right, and that a TB driving through a clocking block gives the same one-edge view. Claiming the attempt at edge N sees the settled post-NBA values is incorrect.",
+      "model_answer": "It passes, at edge **N+1**.\n\n```text\nposedge clk                N-1   N    N+1   N+2\nreq, ack (after NBA)        0    1    1     1\nreq, ack (sampled)          0    0    1     1\nattempt result              vac  vac  pass  pass\n$rose(req)                  0    0    1     0\n$past(req)                  -    0    0     1\n```\n\nA concurrent assertion evaluates each attempt on values sampled in the Preponed region, the values just before the edge (§16.5.1). The DUT's nonblocking assignments at edge N take effect in the NBA region, after Preponed, so the attempt at edge N samples `req = 0`: the implication is vacuous. At edge N+1 the samples are `req = 1`, `ack = 1`, and `req |-> ack` passes.\n\nThe sampled-value functions use the same sampled values. At N+1, `$rose(req)` compares the sample at N+1 (1) with the sample at N (0): true. `$past(req)` is the sample at N: 0. So `$rose(req) |-> ack` also passes at N+1, non-vacuously, and only once.\n\nThe trap is believing an assertion sees the values its own edge produced. It never does: everything the design does at edge N becomes visible to assertions at edge N+1. If `ack` is meant to follow `req` by one cycle, write `req |=> ack` (checked at N+2 for the attempt at N+1); for a same-edge pair, `|->` is right.",
+      "follow_ups": [
+        "The testbench drives `req` with a blocking assignment at time N exactly, in the Active region, not through a clocking block. What does the assertion at edge N see? Why is that a race worth avoiding?",
+        "`ack` is a one-cycle pulse driven at edge N and cleared at edge N+1. At which edge(s) is `ack` sampled 1?",
+        "What does `$past(req, 2)` return at edge N+1 if simulation started at edge N-1?",
+        "How does this sampling rule explain an assertion that fails one cycle after the waveform viewer shows the bug?"
+      ],
+      "common_mistakes": [
+        "Saying the attempt at edge N sees `req = 1` because the waveform viewer shows it high at N.",
+        "Rewriting the check with `|=>` to make it pass, which changes the requirement.",
+        "Thinking `$past(req)` at edge N+1 is 1 because `req` is 1 \"now\".",
+        "Counting the attempt at edge N as a pass rather than a vacuous success."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.5.1",
+        "IEEE 1800-2023 §16.9.3",
+        "IEEE 1800-2023 §16.12.7"
+      ],
+      "modules": [
+        "I-SV-4A_SVA_Fundamentals/index",
+        "F3B_Scheduling_Regions/index"
+      ]
+    },
+    {
+      "id": "sva-formal-overconstraint",
+      "topic": "sva",
+      "level": "senior",
+      "category": "trick",
+      "prompt": "A formal run reports every assertion in this FIFO harness proven in under a second. List the reasons a proof can be that fast, find the ones planted in this harness, and say what you run before you believe the result.",
+      "code": "```systemverilog\nmodule fifo_props #(parameter int DEPTH = 4) (\n  input logic clk, rst_n, wr_en, rd_en, full, empty,\n  input logic [$clog2(DEPTH):0] count\n);\n  default clocking @(posedge clk); endclocking\n  default disable iff (rst_n);\n\n  asm_no_wr_full:  assume property (full  |-> !wr_en);\n  asm_no_rd_empty: assume property (empty |-> !rd_en);\n  asm_one_op:      assume property (!(wr_en && rd_en));\n  asm_rd_with_wr:  assume property (wr_en |-> rd_en);   // \"reads always follow writes\"\n\n  ast_full:  assert property (full == (count == DEPTH));\n  ast_count: assert property (wr_en && !full |=> count == $past(count) + 1'b1);\nendmodule\n\nbind fifo fifo_props #(.DEPTH(4)) u_props (.*);\n```",
+      "rubric": "Must find both planted bugs: (1) `default disable iff (rst_n)` has the wrong polarity, so every attempt is disabled whenever the design is out of reset and nothing is checked; (2) `asm_one_op` and `asm_rd_with_wr` together forbid `wr_en` entirely, so the FIFO never leaves empty and every property about writes or `full` is vacuous. Must list the general causes: over-constrained or contradictory assumptions, a stuck disable condition, a wrong or non-toggling clock or reset setup, a tied-off input making an antecedent unreachable, and the legitimate case of an easy proof (small cone of influence, an invariant proven by induction). Must give the sanity kit: covers on antecedents and key states that must be reached with witness traces, removing assumptions one at a time, replaying the assumptions as assertions in simulation, and reading the tool's vacuity and reset reports (tool-dependent).",
+      "model_answer": "**A fast proof is either easy or vacuous, and only covers tell you which.** General causes of a proof that comes back instantly:\n\n1. **Over-constrained assumptions**: the assumptions rule out the input behaviour that would reach the antecedent, so every attempt is vacuous (§16.14.2, §16.14.8). In the extreme, contradictory assumptions leave no legal trace at all.\n2. **A disable condition that is always true**: every attempt is disabled, which is neither a pass nor a failure (§16.12), and a tool reports no counterexample.\n3. **Clock or reset set up wrong in the harness**: the property's clock never ticks, or the design is held in reset (tool-dependent setup).\n4. **An unreachable antecedent in the design itself**: a tied-off input or a mode pin that disables the feature.\n5. **The proof really is easy**: a small cone of influence, or an invariant that induction proves in one step. This is the only good case.\n\n**Planted in this harness:**\n\n- `default disable iff (rst_n);` has the wrong polarity. Out of reset `rst_n` is 1, so every assertion **and** every assumption is disabled. Nothing is checked. It should be `default disable iff (!rst_n);` (§16.15).\n- `asm_one_op` forbids `wr_en && rd_en`, and `asm_rd_with_wr` says `wr_en` implies `rd_en`. Together they forbid `wr_en` entirely. Even with the reset fixed, the FIFO never leaves empty: `ast_count` is vacuous and `ast_full` is checked only for `count == 0`.\n\n**Sanity kit before believing any proof:**\n\n```systemverilog\n// Every antecedent and every interesting state must be REACHED, with a witness trace.\ncov_write:   cover property (wr_en && !full);\ncov_full:    cover property (full);\ncov_wr_rd:   cover property (wr_en ##1 rd_en);\ncov_refill:  cover property (full ##[1:$] empty ##[1:$] full);\n```\n\n- An unreachable cover under the assumptions means over-constraint (or dead design logic). Here `cov_write` and `cov_full` are unreachable.\n- Remove or weaken assumptions one at a time and watch which proofs and covers change.\n- Run the same assumptions as checks in simulation with the real neighbouring block; simulators check `assume property` and report failures (§16.14.2).\n- Read the tool's reports on vacuity, reset state and clock setup (tool-dependent names), and report bounded results with their depth, never as \"proven\".",
+      "follow_ups": [
+        "You fix the reset polarity and delete `asm_one_op` (keeping only a corrected \"reads follow writes\" rule). `ast_count` now gets a counterexample in which `wr_en` and `rd_en` are both high and `count` does not change. Is that a design bug, a missing assumption or an incomplete assertion? How do you decide? (Check the specification: if simultaneous read and write is legal, `ast_count` must exclude it, for example `wr_en && !rd_en && !full |=> ...`; if it is illegal, the rule belongs in an assumption that the upstream block's own assertion discharges.)",
+        "How would you write the intended rule \"reads follow writes\" without forbidding writes?",
+        "Why are the assumptions also disabled by the `default disable iff`, and why does that make things worse?",
+        "What is the difference between an unreachable cover and a cover the tool could not decide within its time limit?"
+      ],
+      "common_mistakes": [
+        "Reporting \"proven\" without a single reached cover.",
+        "Fixing over-constraint by adding more assumptions until counterexamples stop.",
+        "Missing that the disable condition also applies to assumptions in the scope.",
+        "Assuming a fast proof means a simple, correct design."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.14.2",
+        "IEEE 1800-2023 §16.14.3",
+        "IEEE 1800-2023 §16.14.8",
+        "IEEE 1800-2023 §16.12",
+        "IEEE 1800-2023 §16.15",
+        {
+          "doc": "Formal tool documentation: vacuity, reset and witness reports (tool-dependent)",
+          "verified": false
+        }
+      ],
+      "modules": [
+        "E-INT-1_Integrating_UVM_with_Formal_Verification/index",
+        "I-SV-4C_Checkers/index"
+      ]
+    },
+    {
+      "id": "sva-interval-operators",
+      "topic": "sva",
+      "level": "senior",
+      "category": "coding",
+      "prompt": "After `start` rises, a burst of exactly four `beat` cycles (not necessarily consecutive) must follow, with `last` on the fourth beat; `lock` must stay high from the cycle after `start` until that last beat; and the whole burst must finish within 8 cycles. Write one property, then explain what `within`, `and` and `first_match` would add or change.",
+      "rubric": "A strong property is `$rose(start) |=> lock throughout ((beat[->4] ##0 last) intersect 1'b1[*1:8])`. Must explain `throughout` (the Boolean holds on every tick of the sequence's match), `intersect` (both operands match with the same start and the same end, so it bounds the length), `##0` (the next sequence starts on the same tick) and goto repetition. Must contrast `and` (both match from the same start, end times may differ) and `within` (one sequence matches inside another's interval). Must explain `first_match` for antecedents with several matches and why it is not needed in an `assert` consequent. Weak answers count cycles with `##[1:8]` and lose the exact-beat check, or use `and` where the lengths must agree.",
+      "model_answer": "```systemverilog\nproperty p_burst;\n  @(posedge clk) disable iff (!rst_n)\n    $rose(start) |=> lock throughout ((beat[->4] ##0 last) intersect 1'b1[*1:8]);\nendproperty\na_burst: assert property (p_burst);\n```\n\n- `beat[->4] ##0 last`: wait through any idle ticks to the **fourth** beat, and require `last` on that same tick (goto repetition, §16.9.2; `##0` puts the start of `last` on the tick where `beat[->4]` ends, §16.7).\n- `intersect 1'b1[*1:8]`: both operands must match over the **same interval** (same start, same end, §16.9.6). The right operand matches any length 1 to 8, so the burst must finish within 8 ticks.\n- `lock throughout (...)`: `lock` must be true at every tick of that match. It is defined as `(lock)[*0:$] intersect (...)` (§16.9.9).\n- Precedence (Table 16-3 in §16.12): `##` binds tighter than `throughout`, and `throughout` binds tighter than `within`, `intersect` and `and`. So `lock throughout beat[->4] ##0 last` already means `lock throughout (beat[->4] ##0 last)`, while `lock throughout X intersect Y` groups as `(lock throughout X) intersect Y`. Keep the parentheses around the `intersect` so a reader does not have to work that out.\n\n```text\nedge    0  1  2  3  4  5  6  7\nstart   1  0  0  0  0  0  0  0   ($rose at 0; start was 0 at edge -1)\nbeat    0  1  0  1  1  0  1  0\nlast    0  0  0  0  0  0  1  0\nlock    0  1  1  1  1  1  1  0\n-> 4th beat at 6 with last, length 6 <= 8, lock high 1..6: PASS at 6\n-> if lock dropped at 4: FAIL at 4.  If the 4th beat came at 9: FAIL at 8 (no length <= 8 left)\n```\n\n**The other interval operators:**\n\n- **`and`** (§16.9.5): both sequences match from the same start, but they may end at different ticks; the composite ends at the later one. Use it when two things must both happen, not necessarily together. Here it would not bound the burst length.\n- **`within`** (§16.9.10): `s1 within s2` matches when `s2` matches and `s1` matches somewhere inside `s2`'s interval. Example: `irq[->1] within (busy[*1:$] ##1 !busy)` says an interrupt occurs during a busy period.\n- **`first_match`** (§16.9.8): keeps only the earliest match of its operand. It matters in **antecedents**: `req ##[1:4] gnt |=> data_vld` checks `data_vld` after **every** `gnt` in the window, because each antecedent match starts its own consequent (§16.12.7). `first_match(req ##[1:4] gnt) |=> data_vld` checks only after the first. When an `assert` consequent is a sequence, `first_match` changes nothing: the standard states that `weak(seq)` holds exactly when `weak(first_match(seq))` holds (§16.12.2).",
+      "follow_ups": [
+        "Which parentheses in `p_burst` change the parse, and which change the meaning? (`##` binds tighter than `throughout`, so `lock throughout beat[->4] ##0 last` is already `lock throughout (beat[->4] ##0 last)`. `throughout` binds tighter than `intersect`, so without the outer pair the property groups as `(lock throughout (beat[->4] ##0 last)) intersect 1'b1[*1:8]`; that matches the same intervals, because both operators require one shared interval, but with `and` or `within` in place of `intersect` the grouping changes which ticks `lock` must cover.)",
+        "Rewrite the length bound without `intersect`. Which version is easier for a reviewer to read?",
+        "What does `(a ##1 b) intersect (c ##2 d)` match? (Nothing: the lengths can never agree.)",
+        "Where would long-lived attempts from `beat[->4]` cost simulation performance, and how would you bound them?"
+      ],
+      "common_mistakes": [
+        "Using `and` to bound a length; `and` lets the operands end at different ticks.",
+        "Writing `##[1:8] last` and losing the exact count of beats.",
+        "Using `##1` after `beat[->4]`, which checks `last` one tick after the fourth beat.",
+        "Adding `first_match` to every consequent \"for performance\" without understanding that it changes antecedent semantics only."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.9.2",
+        "IEEE 1800-2023 §16.7",
+        "IEEE 1800-2023 §16.9.5",
+        "IEEE 1800-2023 §16.9.6",
+        "IEEE 1800-2023 §16.9.8",
+        "IEEE 1800-2023 §16.9.9",
+        "IEEE 1800-2023 §16.9.10",
+        "IEEE 1800-2023 §16.12 (Table 16-3)",
+        "IEEE 1800-2023 §16.12.2",
+        "IEEE 1800-2023 §16.12.7"
+      ],
+      "modules": [
+        "I-SV-4B_Advanced_Temporal_Logic/index"
+      ]
+    },
+    {
+      "id": "sva-local-variables-data-integrity",
+      "topic": "sva",
+      "level": "senior",
+      "category": "coding",
+      "prompt": "A pipeline accepts a byte when `in_vld` is high and delivers bytes in order, after a variable latency of at least one cycle, when `out_vld` is high. Write an assertion that each delivered byte equals the accepted byte. Then the pipeline is changed to hold up to four bytes at once. Does your property still work? Fix it if not.",
+      "rubric": "Must use a local variable captured in the antecedent: `(in_vld, exp = in_data) |=> out_vld[->1] ##0 (out_data == exp)`, and explain that each attempt has its own copy (a module variable would be overwritten by the next input). Must spot that with several bytes in flight `out_vld[->1]` pairs each input with the next output, which belongs to an older byte, so the property fails even on a correct design; and fix it with a ticket: count accepted and delivered bytes, capture the input count, and wait for the output whose count matches. Strong answers explain `##0` vs `##1`, `[->1]` vs `[=1]`, counter width versus maximum in-flight depth, and when out-of-order completion makes a scoreboard (or per-ID tickets) the better tool.",
+      "model_answer": "**One byte in flight:**\n\n```systemverilog\nproperty p_data_one;\n  logic [7:0] exp;                        // one copy per attempt\n  @(posedge clk) disable iff (!rst_n)\n    (in_vld, exp = in_data) |=> out_vld[->1] ##0 (out_data == exp);\nendproperty\n```\n\nThe match item `exp = in_data` runs when the antecedent matches and stores the sampled byte in this attempt's own local variable (§16.10). From the next tick, `out_vld[->1]` waits for the first `out_vld`, and `##0` compares `out_data` on that same tick. A module-level variable would be overwritten by the next input before the first byte comes out.\n\n**Four in flight: it breaks.** Suppose bytes A and B enter at edges 2 and 3, and A leaves at edge 4. B's attempt starts waiting at edge 4 and its `out_vld[->1]` ends at A's handshake, so it compares A with B and fails, on a correct design. The property pairs each input with the **next** output, not with **its** output.\n\n**Fix: a ticket.** Count accepted and delivered bytes; in an in-order pipeline, byte k enters when the input count is k and leaves when the output count is k.\n\n```systemverilog\nlogic [2:0] in_cnt, out_cnt;   // 3 bits: safe while fewer than 8 bytes are in flight (max 4)\nalways_ff @(posedge clk or negedge rst_n)\n  if (!rst_n) begin\n    in_cnt  <= '0;\n    out_cnt <= '0;\n  end else begin\n    if (in_vld)  in_cnt  <= in_cnt  + 3'd1;\n    if (out_vld) out_cnt <= out_cnt + 3'd1;\n  end\n\nproperty p_data_in_order;\n  logic [2:0] tkt;\n  logic [7:0] exp;\n  @(posedge clk) disable iff (!rst_n)\n    (in_vld, tkt = in_cnt, exp = in_data)\n      |=> (out_vld && out_cnt == tkt)[->1] ##0 (out_data == exp);\nendproperty\na_data_in_order: assert property (p_data_in_order);\n```\n\nThe sampled `in_cnt` at a byte's input edge is the number of bytes accepted before it; the sampled `out_cnt` at an output edge is the number delivered before it. Reset the counters with the same signal as the `disable iff`, so a reset clears both together.\n\nDetails interviewers probe: `##1` instead of `##0` checks the data one tick after the handshake; `[=1]` instead of `[->1]` lets a later tick's correct value excuse a wrong value on the handshake tick. If the design completes **out of order** by ID, keep one ticket counter per ID or move the check to a scoreboard: a property per ID multiplies attempts, and the scoreboard is cheaper to debug at that point.",
+      "follow_ups": [
+        "Why can't `exp` be a variable declared in the module, even if it is only written in the match item?",
+        "How many attempts are alive at once with four bytes in flight, and what does that cost in a long simulation (tool-dependent)?",
+        "How would formal check the same data integrity for every possible byte value without local variables? (A constant free checker variable.)",
+        "Add a bound: each byte must leave within 16 cycles. Where does the bound go?"
+      ],
+      "common_mistakes": [
+        "Storing the expected value in a module variable shared by all attempts.",
+        "Writing `out_vld[->1]` for a pipeline with several items in flight.",
+        "Using `##1` where `##0` was meant after the goto.",
+        "Sizing the ticket counters smaller than the maximum number of items in flight."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.10",
+        "IEEE 1800-2023 §16.9.2",
+        "IEEE 1800-2023 §16.7",
+        "IEEE 1800-2023 §16.12.7"
+      ],
+      "modules": [
+        "I-SV-4B_Advanced_Temporal_Logic/local-variables",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index"
+      ]
+    },
+    {
+      "id": "sva-strong-weak-liveness",
+      "topic": "sva",
+      "level": "senior",
+      "category": "trick",
+      "prompt": "The test ends while one `req` is still waiting for its `ack`, and the simulator reports no failure for this assertion. Is the simulator wrong? What would you write instead for simulation, and what does formal do with the same property?",
+      "code": "```systemverilog\na_ack: assert property (@(posedge clk) disable iff (!rst_n)\n  req |-> ##[1:$] ack);\n```",
+      "rubric": "Must say the simulator is right: a sequence used as a property in `assert property` is weak by default, and a weak sequence fails only when a finite prefix shows it cannot match, which never happens for `##[1:$] ack`. Must give the alternatives: a bounded-response property (`##[1:N] ack`), which fails in finite time and works in simulation and formal; `strong(##[1:$] ack)` or `s_eventually ack`, which make the obligation strong but on a finite run leave the attempt pending rather than failed (how simulators report pending attempts at the end of a run is tool-dependent). Must explain that formal can prove or refute liveness on infinite traces, needs fairness assumptions, and returns a lasso counterexample. Strong answers mention the four satisfaction levels for finite runs, the cost of unbounded attempts, `$rose(req)` to avoid one attempt per cycle, and that `not` flips strength.",
+      "model_answer": "**The simulator is right.** In `assert property` and `assume property`, a sequence used as a property is treated as `weak(sequence)` (§16.12.2). A weak sequence holds unless some finite prefix of the trace proves the sequence cannot match. For `##[1:$] ack`, no finite prefix can prove that `ack` will never come, so the attempt cannot fail. At the end of a finite run it **holds**; it does not fail.\n\nThe standard defines four outcomes for a finite run (§16.12.21): holds strongly, holds, pending (future obligations not met, no bad state seen) and fails. A weak obligation that was never met holds; a strong one is pending. The standard does not require a simulator to fail pending attempts; many simulators list unfinished attempts in their end-of-test report (tool-dependent).\n\n**What to write instead:**\n\n```systemverilog\n// 1) Best for simulation and formal: state the real latency budget (a safety property).\na_ack_bounded: assert property (@(posedge clk) disable iff (!rst_n)\n  $rose(req) |-> ##[1:16] ack);\n\n// 2) A true liveness requirement: strong, so it cannot be satisfied by waiting forever.\na_ack_live: assert property (@(posedge clk) disable iff (!rst_n)\n  $rose(req) |-> s_eventually ack);    // or: $rose(req) |-> strong(##[1:$] ack)\n```\n\n- The bounded form fails at a known tick, gives a short trace, and states a requirement the design should have anyway.\n- `s_eventually` and `strong(...)` are strong operators: they require the terminating condition to happen and the clock to keep ticking (§16.12.13, §16.12.15). In simulation an unmet strong obligation ends as pending, so make sure your flow reports pending attempts.\n- `$rose(req)` starts one attempt per request instead of one per cycle while `req` is high; unbounded attempts that stay open for thousands of cycles cost simulator memory and time (tool-dependent).\n\n**In formal**, liveness is checked on infinite traces. A counterexample is a lasso: a prefix and then a loop that repeats forever without `ack` (presentation is tool-dependent). Proofs usually need **fairness** assumptions about the environment, such as \"the downstream eventually accepts\", and each is a claim to justify. Many teams prove the bounded version and keep the liveness version for formal only.",
+      "follow_ups": [
+        "Why does `assert property (@(posedge clk) not (a ##1 b))` fail when the clock stops right after `a`? How does `not strong(a ##1 b)` fix it?",
+        "What is the difference between `a until b` and `a s_until b` at the end of a simulation where `b` never came?",
+        "Which fairness assumption does `a_ack_live` need when `ack` depends on a downstream `ready`?",
+        "In a `cover property`, is `req ##[1:$] ack` weak or strong?"
+      ],
+      "common_mistakes": [
+        "Believing `##[1:$]` will fail at the end of the test.",
+        "Replacing every liveness property with `s_eventually` and not checking whether the simulator reports pending attempts.",
+        "Using `req |->` instead of `$rose(req) |->` and starting thousands of identical attempts.",
+        "Claiming simulation can prove a liveness property."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.12.2",
+        "IEEE 1800-2023 §16.12.13",
+        "IEEE 1800-2023 §16.12.15",
+        "IEEE 1800-2023 §16.12.21",
+        "IEEE 1800-2023 §16.12.12",
+        "IEEE 1800-2023 §16.12.3",
+        {
+          "doc": "Simulator and formal tool documentation: end-of-test reporting of pending attempts, liveness counterexamples (tool-dependent)",
+          "verified": false
+        }
+      ],
+      "modules": [
+        "I-SV-4B_Advanced_Temporal_Logic/index",
+        "E-INT-1_Integrating_UVM_with_Formal_Verification/index"
+      ]
+    },
+    {
+      "id": "sva-multiclock-clock-flow",
+      "topic": "sva",
+      "level": "senior",
+      "category": "waveform-debug",
+      "prompt": "`a` is sampled 1 at the `src_clk` ticks at 20 ns (attempt A) and 30 ns (attempt B). For each attempt, at which `dst_clk` tick does each property check `b`? Which operator should switch clocks in a check on a two-flop synchronizer's output, how many destination ticks of latency follow it, and why is `p3` wrong?",
+      "code": "```systemverilog\np1: assert property (@(posedge src_clk) a |=> @(posedge dst_clk) b);\np2: assert property (@(posedge src_clk) a |-> @(posedge dst_clk) b);\np3: assert property (@(posedge src_clk) a ##1 @(posedge dst_clk) b);\n```\n\n```text\ntime (ns)        10  15  20  30  40  45  50  60\nposedge src_clk   x       x   x   x       x   x\nposedge dst_clk       x       x       x       x\na (at src ticks)  0       1   1   0       0   0\n```",
+      "rubric": "Correct: `|=>` (and `##1`) move to the nearest dst_clk tick strictly after the src tick; `|->` (and `##0`) move to the nearest dst_clk tick at or after it. Attempt A: p1 checks at 30, p2 at 30. Attempt B: p1 checks at 45, p2 at 30 (the clocks coincide at 30). `p3` is a bare multiclock sequence: every src_clk attempt must match, so it fails at every src tick where `a` is 0 (10, 40, ...). For a synchronizer, switch clocks with `|=>` and then add the synchronizer's latency in destination ticks, for example `$rose(a) |=> @(posedge dst_clk) ##[1:2] b` for the second flop's output (assuming the source holds `a` until the first destination tick after the attempt). Reason: a destination flop clocked in the same time slot as source tick T captures the value of `a` sampled at T, and the assertion can see that capture only at a destination tick strictly after T; each flop then adds one tick. `|->` lands one destination tick earlier only on coincident edges, so the same window measures a different latency for those attempts. Answers that stop at `|=> @(posedge dst_clk) b` check the first flop's output, not the synchronized one. Strong answers know the legality rule (maximal singly clocked subsequences must not admit empty matches) and that sampled-value functions take their clock from clock flow.",
+      "model_answer": "Multiclock operators answer one question: when the property leaves a tick of the old clock, which tick of the new clock does it go to (§16.13.1, §16.13.2)?\n\n- **`##1` and `|=>`**: the nearest tick of the new clock **strictly after** the old tick.\n- **`##0` and `|->`**: the nearest tick of the new clock **at or after** the old tick; if the new clock ticks in the same time slot, the check happens there.\n\n```text\nattempt  a sampled at   p1 (|=>) checks b at   p2 (|->) checks b at\nA        20 ns          30 ns                  30 ns   (no dst tick at 20)\nB        30 ns          45 ns                  30 ns   (dst also ticks at 30)\n```\n\n**`p3` is wrong** because it asserts a bare sequence. With no antecedent, every `src_clk` tick starts an attempt that must match `a ##1 @(posedge dst_clk) b`, so it fails at 10 ns, 40 ns, 50 ns... wherever `a` is 0. A bare sequence is useful in a `cover property`; in an assertion, put the trigger in an antecedent (`p1`).\n\n**For a synchronizer, switch clocks with `|=>`, then add the synchronizer's latency.** Let `b` be the second flop's output, and assume the source holds `a` until the first destination tick after T, the source tick where the attempt starts (the usual condition for synchronizing a level).\n\n```systemverilog\na_sync: assert property (@(posedge src_clk) $rose(a) |=> @(posedge dst_clk) ##[1:2] b);\n```\n\n- **Why `|=>`.** If a destination tick falls in the same time slot as source tick T, the first flop captures the value of `a` that the assertion sampled at T: every flop clocked in that slot reads its input before any NBA update of that slot. The assertion sees that capture only at a destination tick **strictly after** T, which is where `|=>` lands. (Sampled at T is not launched at T: a value the source flop launches at T is first sampled by the assertion at the next source tick, and a destination flop clocked at T still reads the old value.)\n- **Why `##[1:2]`.** The first flop captures the new value of `a` at the first destination tick strictly after the source tick that launched it: at or before T when a destination tick falls between the launch and T, otherwise at the landing tick. The second flop copies it one destination tick later, and sampling sees that copy one tick after that. So `b` is sampled high one or two destination ticks after the landing tick, depending on clock alignment (earlier with a much faster destination clock, which the window also accepts because `b` stays high).\n- **Why not `|->`.** On a coincident edge (attempt B) `|->` lands at T itself, one destination tick earlier than for every other attempt, so the same window measures a different latency for those attempts only. A window tuned on non-coincident attempts is then off by one tick on coincident ones, and the result changes when someone changes a clock period.\n- `p1` as written (`|=> @(posedge dst_clk) b`, with no extra delay) checks `b` at the first destination tick after T, which at best sees the **first** flop's capture, not the synchronized output.\n\n**Rules that come up next:**\n\n- When differently clocked sequences are concatenated, each maximal singly clocked subsequence must admit only nonempty matches: `@(posedge c1) a[*0:1] ##1 @(posedge c2) b` is illegal (§16.13.1).\n- Clock flow decides which clock each operand uses; a sampled-value function such as `$past(b)` in the `dst_clk` part is clocked by `dst_clk` (§16.13.3, §16.9.3).\n- One `disable iff` covers the whole property and uses current values, so for two reset domains write `disable iff (!src_rst_n || !dst_rst_n)`.",
+      "follow_ups": [
+        "Write the check \"a pulse on `src_pulse` produces exactly one `dst_pulse` within 2 to 4 `dst_clk` ticks\". Where does the clock switch go?",
+        "Under what source-side condition does `##[1:2]` hold, and what does the check look like for a single-cycle source pulse that the destination clock might not sample at all?",
+        "What does `.matched` let you do across clocks that `.triggered` does not?",
+        "If `src_clk` and `dst_clk` are generated from the same expression, what does `p2` reduce to?",
+        "Why is formal CDC verification (metastability modelling) a different problem from this assertion?"
+      ],
+      "common_mistakes": [
+        "Reading `|->` across clocks as \"at the same moment\"; it waits for the next tick of the new clock unless the clocks coincide.",
+        "Reading `|=>` as \"one full destination cycle later\" from the source tick.",
+        "Asserting a bare multiclock sequence instead of using an implication.",
+        "Using an empty-matching repetition at a clock boundary, which is illegal.",
+        "Checking `|=> @(posedge dst_clk) b` on a two-flop synchronizer: that is the first flop's output; the synchronized output needs the extra destination ticks."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.13.1",
+        "IEEE 1800-2023 §16.13.2",
+        "IEEE 1800-2023 §16.13.3",
+        "IEEE 1800-2023 §16.5.1",
+        "IEEE 1800-2023 §16.12.2",
+        "IEEE 1800-2023 §16.9.3",
+        "IEEE 1800-2023 §16.12"
+      ],
+      "modules": [
+        "I-SV-4B_Advanced_Temporal_Logic/multi-clocking",
+        "F3C_Delta_Cycles_and_Race_Conditions/index"
+      ]
     },
     {
       "id": "sva-staff-formal-strategy",
       "topic": "sva",
       "level": "staff",
       "category": "staff-system-design",
-      "prompt": "Design a formal verification strategy for an AXI interconnect. What properties would you prove? What assumptions are needed?",
-      "rubric": "Properties: no 4KB crossing for INCR bursts, VALID/READY handshake rules and the cross-channel dependencies, no deadlock (liveness), same-ID ordering, response routing through the extended ID. Assumptions: legal master behavior, slaves that eventually respond (fairness), bounded outstanding transactions. Must discuss liveness vs safety.",
-      "model_answer": "Safety properties: (1) Every INCR burst stays inside one 4KB page: assume it on master ports and assert it on slave ports (a legal WRAP or FIXED burst cannot cross). (2) VALID and its payload stay stable until the handshake, and the cross-channel dependencies hold on every port (IHI0022E A3.3.1; for example, no BVALID before the AW handshake and the last W handshake). (3) WLAST on transfer AxLEN+1, and W data forwarded in the same order as the write addresses, because AXI4 has no write interleaving (A5.4). (4) Each B/R response reaches the master that issued the request: the interconnect extends the ID with port bits on the slave side and strips them on the way back (A5.3.5). (5) Same-ID responses return to a master in issue order. (6) No data corruption in routing. Liveness properties: (7) Every VALID eventually gets READY (s_eventually). (8) No deadlock — every outstanding transaction eventually completes. Assumptions: (9) Masters follow the VALID/READY rules. (10) Slaves eventually respond; these are fairness constraints, and without them no liveness property can be proven. (11) Outstanding transaction count is bounded. (12) No reset during mid-transaction. Strategy: prove safety properties unbounded; prove liveness under the fairness assumptions, or restate it as a bounded-response safety property (every request answered within N cycles) when the design has a latency bound; use abstractions to reduce state space (e.g., data path abstraction).",
-      "sources": ["Arm IHI0022E A3.3.1, A3.4.1, A5.3.5, A5.4", "IEEE 1800-2023 §16"]
+      "prompt": "Design a formal verification strategy for an AXI interconnect. What properties would you prove, what assumptions are needed, and what techniques make the proofs converge?",
+      "rubric": "Properties: no 4KB crossing for INCR bursts, VALID/payload stability and the cross-channel dependencies on every port, WLAST on the right beat and write data in address order (no AXI4 write interleaving), response routing through the extended ID, same-ID ordering including same-ID reads to different slaves, and data integrity. Assumptions: legal master behaviour at master ports, legal slave behaviour at slave ports, bounded outstanding transactions, fairness for liveness. Must separate safety from liveness and label \"every VALID eventually gets READY\" as a design requirement, not an AXI rule. Staff-level answers add the technique layer: assume-guarantee (the same property library assumed at one side and asserted at the other), symbolic data integrity with a single tracked transaction instead of a full scoreboard, convergence through abstraction (fewer ports, narrower IDs and data), helper invariants and induction, and a sign-off report that states bounded depths and covers.",
+      "model_answer": "**Structure.** One reusable AXI property library (a checker bound to every port). At the interconnect's **master-facing ports** the masters' rules are assumptions and the interconnect's rules are assertions; at the **slave-facing ports** it is the other way round. That is assume-guarantee: every assumption about a neighbour is an assertion in that neighbour's own harness, or is checked by the SoC simulation that runs the real neighbour.\n\n**Safety properties (assert):**\n\n1. Every INCR burst stays inside one 4KB page: assume it on master ports, assert it on slave ports.\n2. VALID stays asserted and the payload stays stable until the handshake, and the cross-channel dependencies hold on every port (IHI0022E A3.2.1, A3.3.1; for example no BVALID before the AW handshake and the last W handshake).\n3. WLAST on beat AxLEN+1, and write data forwarded in the order of the write addresses, because AXI4 removed write interleaving (A5.4).\n4. Each B and R response reaches the master that issued the request: the interconnect extends the ID with port bits towards the slave and strips them on the way back (A5.3.5).\n5. Same-ID responses return to a master in issue order, **including same-ID reads sent to different slaves**, which the interconnect must reorder or stall (A5.3.1).\n6. Data integrity: track **one** symbolic transaction instead of building a scoreboard. A constant free checker variable chooses an arbitrary address/ID/data; the properties check that this transaction's data arrives unchanged at the right port (§17.7). Formal covers every possible choice at once.\n\n**Liveness (assert, under fairness):** every accepted request eventually gets its response, and the interconnect does not deadlock. Note: \"every VALID eventually gets READY\" is a **design requirement** of this interconnect, not an AXI rule; AXI lets a receiver wait for VALID before asserting READY and sets no time limit (A3.3.1). Liveness needs fairness assumptions such as \"each slave eventually responds\" and \"each master eventually accepts responses\" (also design requirements, not protocol rules). Where the design has a latency budget, prove the bounded-response safety version instead (`##[1:N]`).\n\n**Assumptions:** legal master and slave behaviour at the respective ports; a bound on outstanding transactions per master; reset held for the required cycles at the start (tool setup).\n\n**Convergence:**\n\n- **Abstraction and reduction:** prove with 2 masters × 2 slaves, narrow IDs and data, and argue the RTL is parameter-generic; black-box or cut the datapath when proving control properties (an over-approximation, so spurious counterexamples are possible and the cut logic is not verified).\n- **Invariants and induction:** add helper assertions (outstanding counters match the ID-tracking tables, no two entries own the same ID slot) so k-induction can close full proofs; each helper is proven too.\n- **Case splits** with `restrict property` (for example one burst type per run) (§16.14.4).\n- **Bounded proofs first** in CI; full proofs nightly; report bounded results with their depth.\n\n**Sign-off:** covers for back-pressure on every channel, maximum outstanding, 4KB boundary approach, same-ID reads to two slaves; every cover reached; every assumption discharged; undetermined properties listed with depth and handed to simulation with matching coverage.",
+      "follow_ups": [
+        "Your same-ID ordering proof returns a counterexample where two reads with the same ID go to different slaves. Bug or missing assumption?",
+        "How do you choose the symbolic transaction so that the proof covers every port pair?",
+        "Which of these properties would you not run in formal at all, and why?",
+        "How do you prevent a formal-only `restrict` from silently weakening the sign-off?"
+      ],
+      "common_mistakes": [
+        "Calling \"VALID must eventually get READY\" an AXI rule.",
+        "Proving liveness without listing and justifying the fairness assumptions.",
+        "Trying to prove data integrity with a full reference-model scoreboard in formal instead of a symbolic tracked transaction.",
+        "Reporting bounded results as \"proven\"."
+      ],
+      "sources": [
+        "Arm IHI0022E A3.2.1",
+        "Arm IHI0022E A3.3.1",
+        "Arm IHI0022E A3.4.1",
+        "Arm IHI0022E A5.3.1",
+        "Arm IHI0022E A5.3.5",
+        "Arm IHI0022E A5.4",
+        "IEEE 1800-2023 §16.14.2",
+        "IEEE 1800-2023 §16.14.4",
+        "IEEE 1800-2023 §16.12.13",
+        "IEEE 1800-2023 §17.7",
+        {
+          "doc": "Formal tool documentation: abstraction, induction engines, cut points (tool-dependent)",
+          "verified": false
+        }
+      ],
+      "modules": [
+        "E-INT-1_Integrating_UVM_with_Formal_Verification/index",
+        "B-AXI-1_AXI_Channel_Architecture/index",
+        "B-AXI-3_AXI_Ordering_and_IDs/index",
+        "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index"
+      ]
+    },
+    {
+      "id": "sva-formal-convergence-signoff",
+      "topic": "sva",
+      "level": "senior-staff",
+      "category": "staff-system-design",
+      "prompt": "A formal run on a cache controller ends with 30% of its assertions undetermined at the time limit: no proof and no counterexample. The program asks whether the block can be signed off. What do you do technically, and what exactly do you report?",
+      "rubric": "Senior-staff answers separate the technical recovery from the reporting. Technical: triage by risk and by cone of influence; check the bounded depth reached against the depth the design needs (longest transaction, pipeline depth, reset-to-feature sequence); add helper invariants for induction; abstract (cut points, black boxes, smaller parameters) with an understanding of over-approximation and spurious counterexamples; decompose with assume-guarantee; use symbolic data (constant free checker variables) instead of wide data compares; case-split with `restrict`; move unconverged properties to simulation with matching coverage. Reporting: a per-property status table (full proof, bounded to N, counterexample open or closed, undetermined), every assumption with its source and discharge status, reached covers, and formal coverage evidence (tool-dependent). Must refuse to call bounded results proofs. Weak answers say \"run longer\" or \"add assumptions until it converges\".",
+      "model_answer": "**First, what \"undetermined\" means.** The engines neither found a counterexample up to some depth nor closed an induction argument. When a bounded engine ran on it (tool-dependent), an undetermined property also has a **bounded depth N**: no bug exists within N cycles of reset under the current assumptions. If no bounded result is reported for a property, it has no depth claim at all. That is a real but limited result.\n\n**Technical plan:**\n\n1. **Triage.** Rank the undetermined properties by risk (coherence and data-loss checks first) and by size of their cone of influence. Check that each one's covers are reached; an undetermined property with unreached covers may be vacuous, not hard.\n2. **Is the bound enough?** Compare N with the depth the behaviour needs: the longest transaction, the deepest pipeline or queue to fill, the reset-to-feature sequence. A bound shorter than the time to fill the miss queue says almost nothing about overflow.\n3. **Help induction.** Add helper invariants that rule out unreachable states (\"valid entries in the MSHR equal the outstanding counter\", \"no two entries hold the same line\"). Prove each helper; they often converge quickly and unlock the main proofs.\n4. **Abstract.** Smaller parameters (fewer ways, fewer MSHRs, narrow data), cut points and black boxes on datapaths. Cuts over-approximate: expect spurious counterexamples, and remember the cut logic itself is unverified.\n5. **Symbolic data.** Replace wide data compares with one tracked line and a constant free checker variable for its data (§17.7).\n6. **Decompose.** Assume-guarantee between the tag pipeline and the data pipeline; case-split modes with `restrict property` (§16.14.4), listing every split so together they cover all modes.\n7. **Hand over what will not converge** to simulation: the same bound checkers run in the UVM regression, with covers and functional coverage targeting the scenarios the proof could not reach.\n\n**What to report** (never \"proven\" for a bounded result):\n\n```text\nproperty          status            depth  assumptions used        covers   follow-up\na_no_dup_line     full proof        -      A1, A2 (discharged)     4/4      -\na_wb_data         bounded           42     A1, A3 (sim-checked)    3/3      sim coverage C7\na_mshr_overflow   undetermined      18     A1                      1/2      helper H4 in progress\na_evict_order     CEX -> RTL bug    11     A1, A2                  -        JIRA-123\n```\n\nAdd: every assumption with its specification source and whether it was proven elsewhere or checked in simulation; formal coverage evidence such as cone-of-influence or proof-core coverage and mutation results (all tool-dependent); and the explicit residual risk, with the simulation coverage that covers it.\n\n**The sign-off answer** is conditional: the block can be signed off for the properties with full proofs plus the bounded ones whose depth exceeds the required depth, provided the residual set is closed by simulation coverage the team agrees on. Saying that in writing is the staff-level part of the job.",
+      "follow_ups": [
+        "A helper invariant you added gets a counterexample. What does that tell you, and is it good or bad news?",
+        "How do you show that a cut point did not hide a bug in the logic it replaced?",
+        "Which formal coverage metric would you trust most to show the assertions are sufficient, and what are its limits?",
+        "Management proposes adding assumptions until everything converges. How do you respond?"
+      ],
+      "common_mistakes": [
+        "Raising the time limit as the only plan.",
+        "Adding unjustified assumptions to reach convergence.",
+        "Reporting a bounded depth without comparing it to the depth the design needs.",
+        "Treating abstraction as free: cut points over-approximate and leave the cut logic unverified."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.14.2",
+        "IEEE 1800-2023 §16.14.3",
+        "IEEE 1800-2023 §16.14.4",
+        "IEEE 1800-2023 §17.7",
+        "IEEE 1800-2023 §16.14.8",
+        {
+          "doc": "Formal tool documentation: bounded/full proof engines, proof-core and mutation coverage (tool-dependent)",
+          "verified": false
+        }
+      ],
+      "modules": [
+        "E-INT-1_Integrating_UVM_with_Formal_Verification/index",
+        "I-SV-4C_Checkers/index"
+      ]
     }
   ]
 }

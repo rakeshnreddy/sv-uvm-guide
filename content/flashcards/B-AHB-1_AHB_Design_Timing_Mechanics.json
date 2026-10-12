@@ -1,52 +1,77 @@
 [
   {
     "id": "b-ahb-1-1",
-    "question": "What are the two phases of an AHB transfer?",
-    "answer": "The address/control phase is followed one cycle later by the data/response phase, creating a simple two-stage pipeline."
+    "question": "What are the two phases of an AHB transfer, and how do they overlap?",
+    "answer": "The address phase (one cycle, unless the previous transfer extends it) is followed by the data phase, which ends at the first edge with HREADY high. The next transfer's address phase happens during the current transfer's data phase (IHI0033B.b §3.1)."
   },
   {
     "id": "b-ahb-1-2",
     "question": "What does HREADY low do to the AHB pipeline?",
-    "answer": "It extends the current data phase and stalls the next address phase, so both sides must hold protocol-visible state stable."
+    "answer": "It extends the current data phase and also holds the next transfer's address phase, because no slave samples address or control while HREADY is low. The master keeps a waited NONSEQ or SEQ stable, except for the changes §3.6 allows (IDLE, BUSY, cancel after ERROR)."
   },
   {
     "id": "b-ahb-1-3",
     "question": "What is the difference between NONSEQ and SEQ in HTRANS?",
-    "answer": "NONSEQ starts a new transfer or burst; SEQ continues the current burst with the next address in the burst pattern."
+    "answer": "NONSEQ is a single transfer or the first beat of a burst, unrelated to the previous transfer. SEQ is a later beat: control identical to the previous beat, address = previous + size, or wrapped for a WRAP burst (Table 3-1)."
   },
   {
     "id": "b-ahb-1-4",
     "question": "How do HSIZE and HBURST interact?",
-    "answer": "HSIZE defines bytes per beat, while HBURST defines the number and address pattern of beats; both determine alignment and total span."
+    "answer": "HSIZE sets the bytes per beat (2^HSIZE) and every beat's alignment. HBURST sets the beat count and the address pattern. Together they give the burst's span and, for WRAP, the wrap block of beats x size bytes (§3.4, §3.5)."
   },
   {
     "id": "b-ahb-1-5",
-    "question": "When should an AHB slave sample address/control signals?",
-    "answer": "Sample a valid transfer when HSEL is asserted, HTRANS is NONSEQ or SEQ, and the previous transfer has completed with HREADY high."
+    "question": "When does an AHB slave sample HSELx, address and control?",
+    "answer": "Only at an edge where HREADY is high (§4.2). The transfer is real when HSELx is 1 and HTRANS is NONSEQ or SEQ. HSELx can be high while HREADY is low, for an address phase that is not accepted yet."
   },
   {
     "id": "b-ahb-1-6",
-    "question": "What is the difference between HREADY and HREADYOUT in an AHB system?",
-    "answer": "HREADYOUT is driven by an individual slave to indicate if it is ready. The interconnect multiplexes all slave HREADYOUT signals to produce the global HREADY, which is broadcast to all masters and slaves to indicate bus status."
+    "question": "What is the difference between HREADY and HREADYOUT?",
+    "answer": "HREADYOUT is one slave's output: 0 means it needs another cycle. The multiplexor selects the data-phase slave's HREADYOUT to make HREADY, which tells the master and all slaves that the previous transfer is complete (Tables 2-3, 2-5)."
   },
   {
     "id": "b-ahb-1-7",
-    "question": "Why must an AHB slave monitor the global HREADY signal?",
-    "answer": "A slave must monitor global HREADY to know when the previous transfer on the bus has completed. It cannot sample its own address and control signals until HREADY=1."
+    "question": "Why must an AHB slave watch HREADY and not only its own HREADYOUT?",
+    "answer": "Another slave may still own the data phase. Only HREADY says the previous transfer on the bus has completed, so a slave may only start its own transfer at an edge with HREADY high (Table 2-4, §4.2)."
   },
   {
     "id": "b-ahb-1-8",
-    "question": "What is the two-cycle response rule for AHB ERROR responses?",
-    "answer": "An ERROR response requires two cycles: cycle 1 drives HRESP=ERROR with HREADYOUT=0, and cycle 2 drives HRESP=ERROR with HREADYOUT=1. This gives the master time to cancel pipelined transfers."
+    "question": "What is the two-cycle ERROR response, and why does it need two cycles?",
+    "answer": "Cycle 1: HRESP 1 with HREADYOUT 0. Cycle 2: HRESP 1 with HREADYOUT 1. The next address is already on the bus, so the first cycle gives the master time to cancel it with IDLE, or to continue (§5.1.3, §3.5.2). ERROR read data is not valid (§6.1.2)."
   },
   {
     "id": "b-ahb-1-9",
-    "question": "How does a master insert wait states in AHB?",
-    "answer": "Masters cannot drive HREADY. Instead, they drive HTRANS=BUSY to indicate they need more time during a burst. The slave must respond to BUSY with a zero-wait OKAY."
+    "question": "How does a master pause in the middle of a burst, and how is that different from a wait state?",
+    "answer": "It drives HTRANS = BUSY with address and control already showing the next beat; the slave gives a zero-wait OKAY and ignores it (Table 3-1). Only slaves insert wait states, by driving HREADYOUT low."
   },
   {
     "id": "b-ahb-1-10",
-    "question": "What must a slave do when selected during an IDLE transfer?",
-    "answer": "The slave must provide a zero-wait state OKAY response (HREADYOUT=1, HRESP=OKAY) in the data phase, ignoring any data on HWDATA."
+    "question": "What must a slave, or the default slave, do with an IDLE or BUSY transfer?",
+    "answer": "Give a zero-wait OKAY and ignore it (Table 3-1). The default slave answers NONSEQ or SEQ to an unmapped address with ERROR, and IDLE or BUSY with a zero-wait OKAY (§4.2.1)."
+  },
+  {
+    "id": "b-ahb-1-11",
+    "question": "How do you compute the next address of an AHB WRAP burst, and what does WRAP8 of words from 0x34 give?",
+    "answer": "block = beats x size; next = (addr & ~(block-1)) | ((addr + size) & (block-1)). WRAP8 of words uses a 32-byte block: 0x34, 0x38, 0x3C, 0x20, 0x24, 0x28, 0x2C, 0x30 (§3.5, Figure 3-10)."
+  },
+  {
+    "id": "b-ahb-1-12",
+    "question": "What is the AHB 1KB rule, and why 1KB?",
+    "answer": "A master must not start an incrementing burst (including undefined-length INCR) that crosses a 1KB boundary (§3.5). Slave regions are at least 1KB and start on 1KB boundaries (§4.2), so the burst never changes slave. WRAP bursts stay inside their own block."
+  },
+  {
+    "id": "b-ahb-1-13",
+    "question": "Where may a BUSY transfer appear in an AHB burst?",
+    "answer": "Only between beats. Never right after a SINGLE (which must be followed by IDLE or NONSEQ). A fixed-length burst must end with SEQ. Only an undefined-length INCR may end with BUSY, followed by NONSEQ or IDLE (§3.5.1)."
+  },
+  {
+    "id": "b-ahb-1-14",
+    "question": "What does HMASTLOCK mean, and what rules apply to a locked sequence?",
+    "answer": "It marks an indivisible sequence, such as a semaphore read-then-write, with address-phase timing. All its transfers go to the same slave region, an IDLE afterwards is recommended, and slaves shared by several masters must implement it (§3.3)."
+  },
+  {
+    "id": "b-ahb-1-15",
+    "question": "How does AHB5 differ from AHB-Lite?",
+    "answer": "Same transfer rules. AHB5 adds optional capabilities declared as properties that default to False: Extended_Memory_Types, Secure_Transfers (HNONSEC), Endian, Stable_Between_Clock, Exclusive_Transfers (HEXCL, HMASTER, HEXOKAY) and Multi_Copy_Atomicity (§1.2)."
   }
 ]

@@ -1,27 +1,82 @@
 [
   {
     "id": "b-amba-f1-1",
-    "question": "What is protocol impedance mismatch in an AMBA bridge?",
-    "answer": "It is the gap between source and target semantics, such as AHB's single pipeline versus AXI's independent outstanding channels."
+    "question": "What makes AHB-to-AXI translation hard?",
+    "answer": "AHB is a pipeline: one address and control bus plus separate HWDATA and HRDATA buses, a response per transfer, only HREADYOUT for flow control, and no length for an INCR burst. AXI has five channels with VALID/READY handshakes, a length per burst, one write response per burst and no early termination. A bridge reconciles lengths, boundaries (1KB vs 4KB), responses and timing."
   },
   {
     "id": "b-amba-f1-2",
     "question": "Why must an AHB-to-AXI bridge split some bursts?",
-    "answer": "Not because of 4KB: a legal AHB incrementing burst never crosses 1KB (IHI0033B.b 3.5), so it never crosses 4KB either. The bridge splits an undefined-length INCR longer than 256 transfers, the AXI4 INCR limit (IHI0022E A3.4.1), and reshapes bursts for width conversion. It is the AXI-to-AHB direction that must split at 1KB."
+    "answer": "Not because of 4KB: a legal AHB incrementing burst never crosses 1KB (IHI0033B.b §3.5), so it never crosses 4KB either. The bridge splits an undefined-length INCR longer than 256 transfers, the AXI4 INCR limit (IHI0022E A3.4.1), and reshapes bursts for width conversion. It is the AXI-to-AHB direction that must split at 1KB."
   },
   {
     "id": "b-amba-f1-3",
-    "question": "How does an AHB-to-AXI bridge apply backpressure to AHB?",
-    "answer": "It deasserts HREADYOUT while AXI-side address, data, or response resources are unavailable."
+    "question": "How does an AHB-to-AXI bridge apply backpressure to the AHB master?",
+    "answer": "It holds HREADYOUT low in the current data phase, driving HRESP OKAY while it waits (IHI0033B.b §5.1.2). A slave cannot extend an address phase (§1.3), so the bridge must already be stalling the current data phase whenever it cannot take the next transfer."
   },
   {
     "id": "b-amba-f1-4",
-    "question": "What response mapping should a bridge preserve?",
-    "answer": "AXI OKAY/EXOKAY/SLVERR/DECERR must be translated into the closest legal source-protocol response without hiding errors."
+    "question": "How does an AHB-to-AXI bridge map AXI responses onto AHB?",
+    "answer": "OKAY becomes OKAY. SLVERR or DECERR becomes a two-cycle ERROR on the data phase it belongs to: the failing read beat, or the last beat of a non-posted write (IHI0033B.b §5.1.3). EXOKAY answers only an exclusive access; an AHB5 bridge reports exclusive success on HEXOKAY."
   },
   {
     "id": "b-amba-f1-5",
-    "question": "Why is a bridge scoreboard harder than a single-protocol scoreboard?",
-    "answer": "It must correlate one source transaction with one or more target transactions while preserving data, byte enables, ordering, and error semantics."
+    "question": "Why does a bridge scoreboard compare byte streams rather than bursts?",
+    "answer": "Splits, downsizing and WRAP-to-INCR conversion change the burst shape but never the bytes or their order. Predict the bytes each AHB beat writes, compare them with the bytes each AXI W transfer's strobes enable, and check the split policy and the responses separately."
+  },
+  {
+    "id": "b-amba-f1-6",
+    "question": "Posted versus non-posted write: when does the AHB master see the last beat complete, and where does a BRESP error go?",
+    "answer": "Non-posted: only after BRESP, because the bridge holds HREADYOUT low on the last beat; an error becomes a two-cycle ERROR on that beat. Posted: as soon as the data is buffered, so a BRESP error can only be logged (interrupt or status register). On AHB, with HPROT[4:3] both low, HPROT[2] low means the write response must come from the final destination (Table 3-5)."
+  },
+  {
+    "id": "b-amba-f1-7",
+    "question": "Can an AXI write report an error on beat 3?",
+    "answer": "No. A write gets one BRESP for the whole burst, after the last W transfer (IHI0022E A3.3.1, A3.4.4). Reads do carry a response per beat, and every beat is still transferred even after an error."
+  },
+  {
+    "id": "b-amba-f1-8",
+    "question": "An AXI INCR16 of words at 0x03F0 enters an AXI-to-AHB bridge. What does the bridge issue?",
+    "answer": "An AHB INCR4 at 0x03F0, then the remaining 12 transfers at 0x0400 (as an undefined-length INCR, or INCR8 plus INCR4 by policy). The AXI burst is legal because it stays inside 4KB, but an AHB incrementing burst must not cross the 1KB boundary at 0x0400 (IHI0033B.b §3.5)."
+  },
+  {
+    "id": "b-amba-f1-9",
+    "question": "Which legal AXI bursts have no single AHB equivalent, and what does the bridge send?",
+    "answer": "FIXED: one SINGLE per transfer. WRAP2: an INCR of 2 if it starts at its wrap boundary, otherwise two SINGLEs in wrap order. An unaligned start: smaller aligned SINGLEs for the first transfer. Sparse strobes: narrower aligned transfers, because IHI0033B.b has no write strobes."
+  },
+  {
+    "id": "b-amba-f1-10",
+    "question": "When can the AXI4 256-transfer limit force an AHB-to-AXI bridge to split?",
+    "answer": "Only when the AXI transfers are 1 or 2 bytes. A legal AHB incrementing burst stays inside 1KB, which is at most 256 transfers of 4 bytes, so word or wider transfers always fit one AXI4 INCR."
+  },
+  {
+    "id": "b-amba-f1-11",
+    "question": "What is the posted-write read-after-write hazard?",
+    "answer": "The AHB master saw its posted write complete and reads the same address, but AXI does not order a read after a write until the write's BRESP arrives (IHI0022E A5.3.4, which says this holds even for the same ID; A4.4.1 reads differently, so never rely on IDs). The read can return stale data. Fix: hold reads that overlap outstanding posted writes, or do not post that region."
+  },
+  {
+    "id": "b-amba-f1-12",
+    "question": "Why must an asynchronous bridge not pass VALID, READY and the payload through separate two-flop synchronizers?",
+    "answer": "Each bit resolves independently, so the other domain can see VALID with half-updated data, a short VALID pulse can be missed, and a late READY can count one transfer twice. Use an asynchronous FIFO with Gray-coded pointers, or a req/ack handshake with a stable payload."
+  },
+  {
+    "id": "b-amba-f1-13",
+    "question": "How can the formal assumption HSIZE <= 3'b010 hide a bridge bug?",
+    "answer": "It removes doubleword transfers, so a 64-bit-to-32-bit bridge's downsizing paths, including the WRAP16-to-two-INCR conversion, are never explored. Formal proves properties only for the inputs the assumptions allow; cover every case an assumption might exclude."
+  },
+  {
+    "id": "b-amba-f1-14",
+    "question": "What happens to an AXI exclusive access through an AXI-to-AHB-Lite bridge?",
+    "answer": "The bridge cannot support it and answers OKAY, which means the exclusive failed or is not supported; the exclusive write still updates memory (IHI0022E A7.2.5). On AHB5, HEXCL transfers are single transfers only (IHI0033B.b §8.4), so an AXI exclusive burst still cannot pass as one."
+  },
+  {
+    "id": "b-amba-f1-15",
+    "question": "Why must an AHB-to-AXI bridge never wait for AWREADY before asserting WVALID?",
+    "answer": "A slave may legally wait for WVALID before asserting AWREADY, so both would wait forever: IHI0022E A3.3.1 forbids a master from waiting for AWREADY before driving WVALID. A testbench whose slave ties AWREADY high never shows the bug; give the slave a mode that waits for WVALID."
+  },
+  {
+    "id": "b-amba-f1-16",
+    "question": "What is wrong with the liveness check 'HTRANS == NONSEQ |-> s_eventually HREADY'?",
+    "answer": "|-> starts the consequent at the accepting edge, where HREADY is already high, so it passes even if the data phase then hangs. Use 'HSEL && HREADY && HTRANS[1] |=> s_eventually HREADYOUT' on HCLK, with AXI fairness assumptions for a formal proof."
   }
 ]

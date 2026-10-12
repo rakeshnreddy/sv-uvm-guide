@@ -263,30 +263,43 @@ export interface UpfLine {
 }
 
 /**
- * Illustrative UPF for this model (IEEE 1801-2013 style command forms;
- * supply-set details omitted). Lines carry keys so a view can highlight the
- * command that governs each step.
+ * Illustrative UPF for this model, in the IEEE 1801-2018 (UPF 3.1) forms that
+ * I-SV-8 teaches: supply ports used as nets, no `-domain` on supply commands,
+ * and a separate always-on 0.8 V port (VDD_LV) as the switch input, because a
+ * switch passes its input voltage through and never converts 1.2 V to 0.8 V.
+ * Scope is soc_top. Level shifters and domain power states are omitted. Lines
+ * carry keys so a view can highlight the command that governs each step.
  */
 export function upfLines(): UpfLine[] {
   return [
-    { text: "# Illustrative UPF (IEEE 1801 style; supplies abbreviated)" },
+    { text: "# Illustrative UPF (IEEE 1801-2018 forms; scope soc_top; level shifters omitted)" },
     { key: "domain", text: "create_power_domain PD_TOP -include_scope" },
     { key: "domain", text: "create_power_domain PD_CPU -elements {u_cpu}" },
-    { key: "nets", text: "create_supply_net VDD     -domain PD_TOP" },
-    { key: "nets", text: "create_supply_net VDD_CPU -domain PD_TOP" },
-    { key: "switch", text: "create_power_switch sw_cpu -domain PD_CPU \\" },
-    { key: "switch", text: "    -input_supply_port  {vin VDD} \\" },
+    { key: "nets", text: "create_supply_port VDD    -direction in   ;# 1.2 V, always on" },
+    { key: "nets", text: "create_supply_port VDD_LV -direction in   ;# 0.8 V, always on" },
+    { key: "nets", text: "create_supply_port VSS    -direction in" },
+    { key: "nets", text: "create_supply_net  VDD_CPU                ;# switched 0.8 V" },
+    { key: "nets", text: "create_supply_set SS_AON -function {power VDD}     -function {ground VSS}" },
+    { key: "nets", text: "create_supply_set SS_RET -function {power VDD_LV}  -function {ground VSS}" },
+    { key: "nets", text: "create_supply_set SS_CPU -function {power VDD_CPU} -function {ground VSS}" },
+    { key: "nets", text: "associate_supply_set SS_AON -handle PD_TOP.primary" },
+    { key: "nets", text: "associate_supply_set SS_CPU -handle PD_CPU.primary" },
+    { key: "switch", text: "create_power_switch psw_cpu \\" },
+    { key: "switch", text: "    -input_supply_port  {vin  VDD_LV} \\" },
     { key: "switch", text: "    -output_supply_port {vout VDD_CPU} \\" },
-    { key: "switch", text: "    -control_port       {ctrl u_pmu/cpu_pwr_en} \\" },
-    { key: "switch", text: "    -on_state           {on_s vin {ctrl}}" },
+    { key: "switch", text: "    -control_port       {ctrl cpu_pwr_en} \\" },
+    { key: "switch", text: "    -on_state           {on_s vin {ctrl}} \\" },
+    { key: "switch", text: "    -off_state          {off_s {!ctrl}}" },
     { key: "iso", text: "set_isolation iso_cpu -domain PD_CPU -applies_to outputs \\" },
-    { key: "iso", text: "    -clamp_value 0 \\" },
-    { key: "iso", text: "    -isolation_signal u_pmu/cpu_iso_en -isolation_sense high" },
+    { key: "iso", text: "    -isolation_supply_set SS_AON -clamp_value 0 \\" },
+    { key: "iso", text: "    -isolation_signal cpu_iso_en -isolation_sense high -location parent" },
     { key: "ret", text: "set_retention ret_cpu -domain PD_CPU -elements {u_cpu/ctx_reg} \\" },
-    { key: "ret_save", text: "    -save_signal    {u_pmu/cpu_save high} \\" },
-    { key: "ret_restore", text: "    -restore_signal {u_pmu/cpu_restore high}" },
-    { key: "state", text: "add_power_state PD_CPU.primary \\" },
-    { key: "state_on", text: "    -state ON  {-supply_expr {power == `{FULL_ON, 0.8}} -simstate NORMAL} \\" },
-    { key: "state_off", text: "    -state OFF {-supply_expr {power == `{OFF}} -simstate CORRUPT}" },
+    { key: "ret", text: "    -retention_supply_set SS_RET \\" },
+    { key: "ret_save", text: "    -save_signal    {cpu_save high} \\" },
+    { key: "ret_restore", text: "    -restore_signal {cpu_restore high}" },
+    { key: "state", text: "add_power_state SS_CPU -supply \\" },
+    { key: "state_on", text: "    -state {ON  -simstate NORMAL \\" },
+    { key: "state_on", text: "            -supply_expr {power == {FULL_ON 0.8} && ground == {FULL_ON 0.0}}} \\" },
+    { key: "state_off", text: "    -state {OFF -supply_expr {power == OFF || ground == OFF} -simstate CORRUPT}" },
   ];
 }

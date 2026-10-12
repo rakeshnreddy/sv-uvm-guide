@@ -2,6 +2,76 @@
   {
     "id": "bapb1-1",
     "question": "When does an APB transfer complete?",
-    "answer": "In the access phase, on the rising PCLK edge where PSEL, PENABLE and PREADY are all high. The setup phase always lasts exactly one cycle; the access phase repeats for as long as PREADY is low."
+    "answer": "At the first rising PCLK edge in the ACCESS state where PSEL, PENABLE and PREADY are all HIGH. The SETUP state always lasts exactly one cycle; the ACCESS state repeats for as long as the completer holds PREADY LOW (IHI 0024E §4.1)."
+  },
+  {
+    "id": "bapb1-2",
+    "question": "Name the three APB operating states and what PSEL and PENABLE are in each.",
+    "answer": "IDLE: PSEL 0. SETUP: PSEL 1, PENABLE 0, for exactly one cycle. ACCESS: PSEL 1, PENABLE 1, until PREADY is 1; then the bus goes to IDLE, or straight to SETUP if another transfer follows (IHI 0024E §4.1)."
+  },
+  {
+    "id": "bapb1-3",
+    "question": "True or false: PENABLE is asserted in the first cycle of an APB transfer.",
+    "answer": "False. The first cycle is SETUP, with PSEL 1 and PENABLE 0. PENABLE marks the second and later cycles (the ACCESS state). A requester that raises PSEL and PENABLE together skips SETUP, and a monitor that looks for the SETUP edge sees no transfer at all."
+  },
+  {
+    "id": "bapb1-4",
+    "question": "True or false: an APB transfer completes when PENABLE rises.",
+    "answer": "False. PENABLE rising only starts the ACCESS state. The transfer completes at the edge where PREADY is also 1; every ACCESS edge with PREADY 0 before that is a wait state, and any number of them, from zero up, is legal (IHI 0024E §3.3.2)."
+  },
+  {
+    "id": "bapb1-5",
+    "question": "Which requester signals must not change while PREADY is LOW in a write's ACCESS state?",
+    "answer": "PADDR, PWRITE, PSEL, PENABLE, PWDATA, PSTRB, PPROT, PAUSER and PWUSER (IHI 0024E §3.1.2). For a read the list is PADDR, PWRITE, PSEL, PENABLE, PPROT and PAUSER (§3.3.2). The same request signals must also not change between SETUP and ACCESS (§4.1)."
+  },
+  {
+    "id": "bapb1-6",
+    "question": "When is PSLVERR valid, and what does a write that ends with PSLVERR tell you about the register?",
+    "answer": "Only in the last cycle of the transfer, when PSEL, PENABLE and PREADY are all HIGH (IHI 0024E §3.4). A write that receives an error might or might not have changed the peripheral's state; either is allowed. A read with an error may return invalid data."
+  },
+  {
+    "id": "bapb1-7",
+    "question": "Does APB support bursts or overlapping transfers?",
+    "answer": "No. APB is not pipelined and every transfer takes at least two cycles (IHI 0024E §1.1). Read and write data have no handshakes of their own, so transfers cannot overlap (§2.1.2). Sixteen words need sixteen transfers; back-to-back transfers save only the idle cycles."
+  },
+  {
+    "id": "bapb1-8",
+    "question": "What did APB3, APB4 and APB5 each add?",
+    "answer": "APB3: PREADY (wait states) and PSLVERR (errors). APB4: PPROT (protection) and PSTRB (write strobes). APB5: wake-up (PWAKEUP), user signals (PAUSER, PWUSER, PRUSER, PBUSER) and parity check signals; issue E adds optional RME support with PNSE (IHI 0024E Preface and Table B-1)."
+  },
+  {
+    "id": "bapb1-9",
+    "question": "State the PSTRB rules.",
+    "answer": "One strobe per byte lane: PSTRB[n] enables PWDATA[8n+7:8n] (IHI 0024E §3.2). It applies to writes only: the requester must drive all PSTRB bits LOW for reads. PSTRB is optional: if either side lacks it, sparse writes are not supported, and a completer with PSTRB connected to a requester without it has its PSTRB inputs tied to PWRITE (Table 3-1)."
+  },
+  {
+    "id": "bapb1-10",
+    "question": "What do the three PPROT bits mean?",
+    "answer": "PPROT[0]: LOW normal, HIGH privileged. PPROT[1]: LOW secure, HIGH non-secure. PPROT[2]: LOW data, HIGH instruction (a hint). The primary use is the secure/non-secure identifier (IHI 0024E §3.5)."
+  },
+  {
+    "id": "bapb1-11",
+    "question": "Why does apb_driver wait for a clocking-block edge before it drives SETUP?",
+    "answer": "A synchronous drive made between edges takes effect at the next clocking event, and so does the PENABLE drive made at that event: PSEL and PENABLE would rise together and SETUP would be skipped (IHI 0024E §4.1; IEEE 1800-2023 §14.16). Starting just after an edge keeps SETUP exactly one cycle."
+  },
+  {
+    "id": "bapb1-12",
+    "question": "Name the APB protocol assertions an APB4 agent's interface should carry.",
+    "answer": "SETUP is followed by an ACCESS with the same request; ACCESS is entered only from SETUP; the request is frozen while PREADY is LOW; PENABLE falls after completion; PSTRB is LOW on reads; and each signal is known when Appendix A says it must be valid. A bound on wait states is testbench policy, not an APB rule."
+  },
+  {
+    "id": "bapb1-13",
+    "question": "In an APB4 register adapter, what must reg2bus() do with rw.byte_en, and what must bus2reg() do with PSTRB?",
+    "answer": "reg2bus(): copy byte_en to PSTRB for writes only, and drive PSTRB 0000 for reads, because uvm-core 2020.3.1 fills byte_en for reads too. bus2reg(): set rw.byte_en from PSTRB for writes, so the predictor updates only the fields whose byte lanes were written."
+  },
+  {
+    "id": "bapb1-14",
+    "question": "With this lesson's adapter, what happens to the register mirror when an access ends with PSLVERR?",
+    "answer": "bus2reg() returns UVM_NOT_OK, so uvm_reg::do_predict() skips the prediction and warns PREDICT_NOK (uvm-core 2020.3.1). Because APB allows an errored write to have changed the register, check the completer's own specification, or mirror-read the register, before relying on the mirror."
+  },
+  {
+    "id": "bapb1-15",
+    "question": "Why test an APB requester against a completer with random PREADY wait states?",
+    "answer": "Hold bugs only show during wait states: a driver that changes PADDR or PWDATA while PREADY is LOW passes every test against a zero-wait completer. Random waits from 0 to N, with a_wait_hold in the interface and coverage of 0, 1 and many waits, expose them."
   }
 ]

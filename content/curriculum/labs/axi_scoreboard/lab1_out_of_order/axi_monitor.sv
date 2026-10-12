@@ -1,75 +1,63 @@
-class axi_transaction extends uvm_sequence_item;
-  `uvm_object_utils(axi_transaction)
-
-  bit [31:0] addr;
-  int unsigned id;
-  int unsigned expected_beats;
-  bit [31:0] data_beats[$];
-  bit [1:0] responses[$];
-  bit is_write;
-
-  function new(string name = "axi_transaction");
-    super.new(name);
-  endfunction
-
-  virtual function string convert2string();
-    return $sformatf("%s ID=%0d ADDR=0x%08h BEATS=%0d/%0d",
-      is_write ? "WRITE" : "READ", id, addr, data_beats.size(), expected_beats);
-  endfunction
-
-  virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
-    axi_transaction other;
-    if (!$cast(other, rhs)) return 1'b0;
-    if (!super.do_compare(rhs, comparer)) return 1'b0;
-    return id == other.id && addr == other.addr && is_write == other.is_write &&
-      expected_beats == other.expected_beats && data_beats == other.data_beats &&
-      responses == other.responses;
-  endfunction
-endclass
-class axi_monitor extends uvm_monitor;
-  `uvm_component_utils(axi_monitor)
-
-  uvm_analysis_port #(axi_transaction) ap;
-  virtual axi_if vif;
-
-  // Each ID owns an ordered queue because AXI permits multiple outstanding
-  // requests with the same ID while preserving response order within that ID.
-  axi_transaction pending_reads[int unsigned][$];
+// axi_monitor.sv (starter): included inside axi_rd_pkg by testbench.sv, so
+// uvm_pkg, the macros and axi_rd_item are already visible. It compiles as
+// given; complete the two TODO functions.
+class axi_rd_monitor extends uvm_monitor;
+  `uvm_component_utils(axi_rd_monitor)
+  virtual axi_rd_if vif;
+  uvm_analysis_port #(axi_rd_item) req_ap;   // each AR, at its handshake
+  uvm_analysis_port #(axi_rd_item) ap;       // each completed read
+  // One ordered queue of open reads per ARID. AXI allows several reads with
+  // the same ID to be outstanding (IHI0022E A5.3), so one slot per ID loses
+  // reads: never write open_q[id] = t.
+  axi_rd_item open_q[int unsigned][$];
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
-    ap = new("ap", this);
+    req_ap = new("req_ap", this);
+    ap     = new("ap", this);
   endfunction
 
-  virtual function void build_phase(uvm_phase phase);
+  function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    if (!uvm_config_db#(virtual axi_if)::get(this, "", "vif", vif))
-      `uvm_fatal("NO_VIF", "axi_monitor virtual interface is not configured")
+    if (!uvm_config_db#(virtual axi_rd_if)::get(this, "", "vif", vif))
+      `uvm_fatal("NO_VIF", "virtual interface not set")
   endfunction
 
-  virtual task run_phase(uvm_phase phase);
-    fork
-      monitor_ar_channel();
-      monitor_r_channel();
-    join
-  endtask
-
-  virtual task monitor_ar_channel();
+  task run_phase(uvm_phase phase);
     forever begin
-      @(posedge vif.ACLK);
-      // TODO: on ARVALID && ARREADY, create a transaction, capture ARADDR/ARID,
-      // set expected_beats to ARLEN + 1, and push_back into pending_reads[ARID].
+      @(vif.mon_cb);                  // sample through the clocking block
+      if (!vif.mon_cb.ARESETn) open_q.delete();   // reset ends every read
+      else begin
+        // R first: a beat at this edge can only belong to a read whose AR
+        // handshake came at an earlier edge (A3.3.1).
+        if (vif.mon_cb.RVALID && vif.mon_cb.RREADY)   on_r_beat();
+        if (vif.mon_cb.ARVALID && vif.mon_cb.ARREADY) on_ar();
+      end
     end
   endtask
 
-  virtual task monitor_r_channel();
-    forever begin
-      @(posedge vif.ACLK);
-      // TODO: on every RVALID && RREADY handshake:
-      // - use pending_reads[RID][0] (same-ID responses remain ordered),
-      // - append RDATA and RRESP,
-      // - validate beat count and RLAST,
-      // - publish and pop_front only when RLAST is accepted.
-    end
-  endtask
+  // Called at each AR handshake.
+  function void on_ar();
+    // TODO 1: create a new axi_rd_item t (type_id::create) and copy ARID,
+    //   ARADDR and ARLEN from vif.mon_cb into t.id, t.addr and t.len.
+    // TODO 2: push_back t into open_q[t.id].
+    // TODO 3: create a SECOND item rq with the same id, addr and len, and
+    //   publish it with req_ap.write(rq). The predictor keeps rq, so it
+    //   must not be t, which keeps changing as beats arrive.
+  endfunction
+
+  // Called at each R handshake.
+  function void on_r_beat();
+    // TODO 4: if open_q has no entry for vif.mon_cb.RID, or the entry is an
+    //   empty queue, report `uvm_error("UNEXPECTED_R", ...) and return. Test
+    //   exists() before reading the array (IEEE 1800-2023 7.8.6).
+    // TODO 5: take t = open_q[RID][0], the oldest open read of that ID
+    //   (same-ID data returns in issue order, A5.3.1). Append RDATA to
+    //   t.data and RRESP to t.resp. Do not judge RRESP: SLVERR and DECERR
+    //   are legal (A3.4.4); the scoreboard compares them with the prediction.
+    // TODO 6: RLAST must be HIGH exactly on beat t.len + 1 (A3.2.2). If it
+    //   is not, report `uvm_error("RLAST", ...) with the beat number.
+    // TODO 7: on RLAST, or on beat t.len + 1 even without RLAST, pop the
+    //   read from the front of its queue and publish it with ap.write(t).
+  endfunction
 endclass

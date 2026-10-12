@@ -4,8 +4,10 @@
 // The buggy bridge in testbench.sv sends a 300-transfer AHB INCR as one AXI
 // burst. AWLEN wraps to 43, but 300 W transfers follow. Your job is to prove
 // that every AXI burst carries exactly AWLEN+1 transfers, that long requests
-// are split at the AXI4 256-transfer limit, and that the AHB stimulus itself
-// is legal.
+// are split at the AXI4 256-transfer limit, that each AXI burst starts where
+// the previous one ended, and that the AHB stimulus itself is legal.
+//
+// Compile this file together with testbench.sv (top module tb_top).
 //
 // Each check is tagged:
 //   [AHB protocol] / [AXI protocol]  a rule from Arm IHI0033B.b / IHI0022E
@@ -44,6 +46,7 @@ module bridge_split_checker #(
   localparam int AXI4_MAX_INCR_BEATS = 256;
 
   int unsigned failures;          // incremented by every failing check
+  int unsigned w_bursts_checked;  // incremented by TODO 2 once per compared burst
   logic [2:0]  active_plan_size;  // HSIZE of the request being translated
 
   function automatic int beat_bytes(input logic [2:0] size);
@@ -136,22 +139,27 @@ module bridge_split_checker #(
   //==================================================================
   // A burst has AxLEN+1 transfers (IHI0022E A3.4.1), and the master asserts
   // WLAST while it drives the final write transfer (IHI0022E A3.2.2).
-  // Implement a procedural check:
-  // - On each AW handshake, latch AWLEN+1 and clear a W transfer counter.
-  // - On each W handshake, flag WLAST on any transfer other than number
-  //   AWLEN+1, and flag a missing WLAST on transfer AWLEN+1.
   //
-  // This bridge sends AW before its W transfers and has one burst
-  // outstanding, so latching AWLEN at the AW handshake is enough. A general
-  // AXI checker must queue AW lengths, because W may arrive before AW
-  // (IHI0022E A3.3).
+  // Write data can reach the interface before, with or after its address
+  // (IHI0022E A3.3), and this bridge does send W without waiting for AW. So
+  // do not latch AWLEN at the AW handshake and compare on the fly: keep two
+  // queues, in order.
+  // - On each AW handshake, push AWLEN+1 onto aw_len_q.
+  // - Count W handshakes in w_count. On a W handshake with WLAST, push
+  //   w_count onto w_len_q and restart the count.
+  // - On a W handshake without WLAST, if aw_len_q is not empty and w_count
+  //   has reached aw_len_q[0], WLAST is missing: flag it.
+  // - Whenever both queues hold an entry, pop one from each and compare.
+  //   Increment w_bursts_checked for every comparison, and failures (with an
+  //   $error) for every mismatch.
   //
   // Use "always", not "always_ff": the assertion action blocks above also
   // write "failures".
   //==================================================================
 
-  // logic [8:0] aw_transfers;   // AWLEN + 1 of the burst being written
-  // int         w_in_burst;     // W transfers seen so far in that burst
+  // int unsigned aw_len_q[$];  // AWLEN+1 of each announced burst, in order
+  // int unsigned w_len_q[$];   // W transfers of each finished W burst, in order
+  // int unsigned w_count;      // W transfers so far in the current W burst
   //
   // always @(posedge ACLK or negedge ARESETn) begin
   //   if (!ARESETn) begin
@@ -207,11 +215,37 @@ module bridge_split_checker #(
   //   end
   // end
 
+  //==================================================================
+  // TODO 5: [Bridge design] each AXI burst starts where the last one ended
+  //==================================================================
+  // - When plan_valid is asserted, set next_aw_addr to plan_addr.
+  // - On each AW handshake, check AWADDR == next_aw_addr, then advance
+  //   next_aw_addr by (AWLEN+1) << AWSIZE bytes.
+  //
+  // The long_incr_halfwords request (300 halfwords at 0x0400) must give a
+  // second burst at 0x0600. A bridge that advances its address by the number
+  // of transfers instead of the number of bytes sends it to 0x0500; only this
+  // check sees that.
+  //==================================================================
+
+  // logic [31:0] next_aw_addr;
+  //
+  // always @(posedge ACLK or negedge ARESETn) begin
+  //   if (!ARESETn) begin
+  //     --- YOUR RESET CODE HERE ---
+  //   end else begin
+  //     --- YOUR CHECKING CODE HERE ---
+  //   end
+  // end
+
   final begin
-    if (failures == 0)
-      $display("LAB PASS: every AXI burst carried AWLEN+1 transfers and no request lost a transfer");
-    else
+    if (failures != 0)
       $display("LAB FAIL: %0d checker failure(s)", failures);
+    else if (w_bursts_checked == 0)
+      $display("LAB INCOMPLETE: TODO 2 compared no AXI burst, so nothing was checked");
+    else
+      $display("LAB PASS: %0d AXI bursts carried AWLEN+1 transfers and no request lost a transfer",
+               w_bursts_checked);
   end
 
 endmodule

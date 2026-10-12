@@ -1,27 +1,82 @@
 [
   {
     "id": "b-axi-1-1",
-    "question": "What are the five AXI4 channels?",
-    "answer": "AW for write address, W for write data, B for write response, AR for read address, and R for read data/response."
+    "question": "What are the five AXI4 channels, and which side is the source of each?",
+    "answer": "AW (write address), W (write data) and AR (read address): the master is the source. B (write response) and R (read data with its response): the slave is the source. The source drives VALID and the information; the destination drives READY (IHI0022E §A3.2.1)."
   },
   {
     "id": "b-axi-1-2",
-    "question": "When does an AXI transfer occur on a channel?",
-    "answer": "A transfer occurs on the clock edge where VALID and READY are both high for that channel."
+    "question": "When does an AXI transfer happen on a channel?",
+    "answer": "At a rising ACLK edge at which VALID and READY are both HIGH (IHI0022E §A3.2.1). Every such edge is one transfer, so VALID held HIGH can carry back-to-back transfers."
   },
   {
     "id": "b-axi-1-3",
     "question": "What must a source do after asserting VALID?",
-    "answer": "It must keep VALID asserted and hold the payload stable until a VALID/READY handshake occurs."
+    "answer": "Keep VALID HIGH and keep all of the channel's information stable until the handshake edge (IHI0022E §A3.2.1). After that edge it may drop VALID or present the next item."
   },
   {
     "id": "b-axi-1-4",
-    "question": "Why can AXI writes complete later than their data beats?",
-    "answer": "The B channel is a separate response path, so the slave can acknowledge completion after accepting and processing the AW and W information."
+    "question": "When may an AXI4 slave send the write response?",
+    "answer": "Only after both the AW handshake and the WLAST handshake of that write (IHI0022E §A3.3.1). B carries one response for the whole burst (§A3.4.4)."
   },
   {
     "id": "b-axi-1-5",
-    "question": "Why is independent channel backpressure useful?",
-    "answer": "It allows congestion on one channel, such as write responses, without automatically blocking unrelated read or write-address progress."
+    "question": "What does backpressure on one AXI channel stall?",
+    "answer": "Only that channel's handshakes and what depends on it: W backpressure delays that write's B, AR backpressure delays that read's R. Other channels keep moving (IHI0022E §A3.3, §A3.3.1)."
+  },
+  {
+    "id": "b-axi-1-6",
+    "question": "Can write data transfer before its write address?",
+    "answer": "Yes. W may come before, with or after its AW (IHI0022E §A3.3), and a master must not wait for AWREADY before asserting WVALID (§A3.3.1)."
+  },
+  {
+    "id": "b-axi-1-7",
+    "question": "When may a slave assert RVALID?",
+    "answer": "Only after the AR handshake for that read: the slave must wait for both ARVALID and ARREADY (IHI0022E §A3.3.1)."
+  },
+  {
+    "id": "b-axi-1-8",
+    "question": "May READY be asserted before VALID, and dropped again before VALID arrives?",
+    "answer": "Yes, both (IHI0022E §A3.2.1). A default-HIGH AWREADY or ARREADY is even recommended, but then the slave must accept any valid address presented (§A3.2.2)."
+  },
+  {
+    "id": "b-axi-1-9",
+    "question": "Why must a source never wait for READY before asserting VALID?",
+    "answer": "A destination may legally wait for VALID. If the source also waited for READY, neither would ever assert: a deadlock. The dependency rules exist 'to prevent a deadlock situation' (IHI0022E §A3.3.1)."
+  },
+  {
+    "id": "b-axi-1-10",
+    "question": "At an AXI slave interface, may READY be a combinational function of VALID?",
+    "answer": "No. Master and slave interfaces may have no combinational paths between input and output signals, in either direction (IHI0022E §A3.1.1, §A3.2.1). The slave may wait for VALID only across clock edges."
+  },
+  {
+    "id": "b-axi-1-11",
+    "question": "What are the AXI reset rules?",
+    "answer": "ARESETn is active LOW, may assert asynchronously and must deassert synchronously with ACLK. During reset ARVALID, AWVALID, WVALID, RVALID and BVALID are LOW. A master may begin driving VALID HIGH only at a rising edge after ARESETn is HIGH (IHI0022E §A3.1.2)."
+  },
+  {
+    "id": "b-axi-1-12",
+    "question": "Write the hold check for one channel as SVA.",
+    "answer": "`valid && !ready |=> valid && $stable(info)` under `disable iff (!ARESETn)`. It fires at every stalled edge, including stalls after back-to-back transfers (IHI0022E §A3.2.1)."
+  },
+  {
+    "id": "b-axi-1-13",
+    "question": "What is wrong with a slave that sends B as soon as WLAST arrives?",
+    "answer": "If the address has not yet been accepted, it breaks the AXI4 write response dependency (IHI0022E §A3.3.1). Such an AXI3-style slave needs a wrapper that holds B until the address is accepted (§A3.3.2)."
+  },
+  {
+    "id": "b-axi-1-14",
+    "question": "Which reset assertion also checks the first edge out of reset?",
+    "answer": "`(!ARESETn || $rose(ARESETn)) |-> !valid`. Without the `$rose(ARESETn)` term it misses VALID HIGH at the first edge where ARESETn is sampled HIGH (IHI0022E §A3.1.2)."
+  },
+  {
+    "id": "b-axi-1-15",
+    "question": "What changes at the channel level from AXI3 to AXI4?",
+    "answer": "WID is removed and write data follows AW order (IHI0022E §A5.4.1). AxQOS, AxREGION and the optional xUSER signals are added, AxLOCK becomes one bit, and B must also wait for the AW handshake (§A2.2–§A2.6, §A7.4, §A3.3.1)."
+  },
+  {
+    "id": "b-axi-1-16",
+    "question": "How many responses does a 16-beat write get, and a 16-beat read? Can an error shorten either burst?",
+    "answer": "The write gets one BRESP for the burst; the read gets an RRESP on each of its 16 beats (IHI0022E §A3.4.4). No: all transfers are performed even if an error is reported, and no component can terminate a burst early (§A3.4.4, §A3.4.1)."
   }
 ]

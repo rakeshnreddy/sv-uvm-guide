@@ -1,177 +1,1762 @@
 ---
 title: "Power-Aware UVM Verification Strategy"
-description: "Expert guide on verifying power intent, corruption semantics, PMU handshakes, and shutdown/wake-up sequences within a UVM environment."
-order: 2
+description: "Verify a power-managed design in UVM: drive power cycles from a virtual sequence, keep drivers, monitors and scoreboards correct across power-down and wake-up, check the sequencing with SVA and coverage, and diagnose power bugs from their symptoms."
 flashcards: "E-PWR-1_Power_Aware_Verification"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Design and Verification of Low-Power, Energy-Aware Electronic Systems (UPF)"
+    type: "standard"
+    identifier: "IEEE 1801-2018"
 ---
 
-# Power-Aware UVM Verification Strategy
+## Quick Take
 
-While [I-SV-8: Power Intent and UPF Fundamentals](/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index) teaches you how to express power architecture using IEEE 1801 UPF syntax, verifying that architecture requires deep UVM instrumentation.
+- **What it is:** Running functional tests while the design's power intent is live, so that a power domain really switches off, loses its state and wakes up again, and building the UVM environment so that it drives those power events and stays correct through them. The power intent is the IEEE 1801 (UPF) description you met in [I-SV-8](/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index); this lesson is about the testbench (TB) around it.
+- **Why it matters:** A testbench that ignores power events fails in three ways. It **hangs**, because a driver waits for a response from a domain that has no power. It **cries wolf**, because the scoreboard counts the responses an off domain never sends as errors. Or it **passes a broken chip**, because nothing checks that state was saved, restored and reset in the right order, or that unknown values (X) never leaked into the logic that stays on.
+- **The Analogy:** Closing an airport runway for maintenance. You stop new departures (quiesce the traffic), deal with the planes already rolling (abort or finish them, and count them), close the runway (isolate, save, power off), and reopen it only after the lights, the radar and the inspection are all done (power on, reset, restore, and only then release the isolation). *Where it breaks:* a runway closure is announced in advance, but a domain can lose power abruptly; the testbench must learn of the event from the power controller or a monitor, and must cope with transfers that were cut off half-way.
 
-Power-aware verification tests **functional scenarios in the presence of power events**. What happens if an interrupt arrives exactly as a block's isolation goes high? What if the power controller drops a supply net before retaining state?
+**You will be able to:**
+1. **Predict** what drivers, monitors and scoreboards observe during a power cycle (isolation clamps, X, reset values and restored values), and **adapt** them: pause checking, flush in-flight expectations with accounting, and expect reset or restored values after wake-up.
+2. **Write** a power-cycle virtual sequence that quiesces traffic, drives clock stop, isolation, save, power, reset and restore through a power-management agent, and resumes traffic.
+3. **Write** power-aware assertions (isolation before power-down, isolation held until power, reset and restore are complete, save and restore only while powered, no X into the always-on domain) and power-sequence coverage with transition and illegal bins.
+4. **Diagnose** power bugs from their symptoms and logs: X leakage, lost retention, a wake-up that skipped or misordered the reset, and hung phases.
+5. **Choose** how to stop stimulus on a power event (quiesce, a cooperative flag, a driver abort, `kill()`, `stop_sequences()`), and **explain** why a callback cannot abort a sequence.
 
-This module provides the expert playbook for verifying corruption semantics, Power Management Unit (PMU) handshakes, and orchestrating shutdown/wake-up sequences in a modern UVM environment.
+<BeforeYouStart />
 
----
+[I-SV-8](/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index) is a Tier 2 elective, so the core path does not route you through it; if you skipped it, read it first, because this lesson assumes its vocabulary. It also helps to review [virtual sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) and [scoreboards](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).
 
-## 1. Corruption Semantics and Verification
+## Build Your Mental Model
 
-When a domain loses power (the UPF state transitions to `OFF`), the simulator enforces **corruption semantics**. All non-retained signals and registers inside the domain are driven to `X` (unknown).
+**How to read this lesson.** The core path is the first four subsections: the words, the design's power intent, what the testbench sees during a power cycle, and where power lives in a UVM environment. Practitioner depth follows, one testbench component at a time: the virtual sequence, the scoreboard, the driver, stopping stimulus, objections, assertions and coverage. Make It Work assembles all of it into one bench you can compile and run in any 4-state simulator, and Push Further holds the expert layer.
 
-### X-Propagation and The Testbench
-Your UVM testbench must handle this `X` gracefully, or the simulation will crash with false failures.
-- **Scoreboards:** The scoreboard must pause comparison for any checking logic attached to the powered-down domain. The scoreboard must also recognize that registers will reset upon wake-up, unless specifically marked as retained.
-- **Monitors/Drivers:** Bus monitors active on the boundary of an `OFF` domain must gracefully handle `X` on their inputs. If isolation cells are working correctly, the `X` will be clamped (e.g., to `0`), and the bus will appear idle but legal.
+### Words you need first
 
-```systemverilog
-// Scoreboard pseudo-code handling power down
-function void write(my_packet pkt);
-  if (pmu_agent_cfg.current_state == POWER_OFF) begin
-    // Ignore floating activity or clamped zero traffic
-    return;
-  end
-  // ... proceed with normal checking
-endfunction
-```
+- **Power domain:** a group of design instances that share one primary supply, so they switch on and off together. This lesson's design has two: **PD_TOP**, which is **always on**, and **PD_CPU**, which is **switchable**.
+- **Power management unit (PMU):** the controller, itself in the always-on domain, that drives a switchable domain's control signals in the right order: clock enable, isolation, retention save and restore, power switch and reset.
+- **Power switch:** the cell that connects a domain's supply to the main supply. Here `cpu_pwr_en` asks it to switch, and `cpu_pwr_ack` (the **acknowledge**) says it has finished switching.
+- **Power-aware simulation:** simulation with the UPF power intent loaded, so the simulator models what happens when a supply goes off. When PD_CPU loses power, the simulator **corrupts** its state: every 4-state register and net driven from inside it reads X.
+- **Isolation cell and clamp:** a gate at the domain boundary, powered from the always-on supply, that forces an output of the switchable domain to a fixed value, the **clamp**, while isolation is enabled. It protects the always-on logic from the X of an off domain.
+- **Retention register, save, restore:** a register with a shadow element on the always-on supply. A **save** copies the register into the shadow before power-down; a **restore** copies it back after power-up. Registers without retention come back as X until they are reset.
+- **Quiesce:** stop issuing new traffic and let the transfers already in progress finish, so that nothing is in flight when the power changes.
+- **Transfer, response:** in this lesson's design, PD_TOP sends a request to PD_CPU, and PD_CPU answers one cycle later with a **response**. The driver treats the response as its acknowledge.
+- **UVM and SystemVerilog terms used here:** virtual sequence and virtual sequencer ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences)); agent, driver, monitor and sequencer ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)); analysis port and `uvm_analysis_imp_decl` ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)); objection and phase ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)); `uvm_event` ([A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index)); clocking block ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)); `bind` ([I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index)); callback, a hook object a component calls at a fixed point in its own code ([A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index)); time slot, all the activity the simulator schedules at one simulation time ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)).
 
----
+### The design and its power intent
 
-## 2. Power Management Unit (PMU) Verification
+Every example on this page uses one small design. PD_CPU holds two 8-bit registers: **CTX** (`ctx_reg`), which is retained, and **SCRATCH** (`scratch`), which is not. PD_TOP reads and writes them over a one-cycle request bus (`req_valid`, `req_write`, `req_addr`, `req_wdata`) and receives a response one cycle later (`rsp_valid`, `rsp_rdata`). In the testbench the PMU's role is played by a UVM agent that drives six control signals.
 
-The PMU (or PCU - Power Controller Unit) orchestrates the power sequencing for the entire SoC. It is the most critical block to verify.
+| Power-intent element (IEEE 1801-2018 command) | In this design | Controlled by |
+|---|---|---|
+| Power domain (`create_power_domain`, §6.20) | PD_TOP is always on; PD_CPU holds `ctx_reg` and `scratch` | — |
+| Power switch (`create_power_switch`, §6.22) | VDD_CPU, PD_CPU's switched supply | `cpu_pwr_en`; the switch answers on `cpu_pwr_ack` |
+| Isolation (`set_isolation`, §6.45) | PD_CPU's outputs `rsp_valid` and `rsp_rdata`, clamped to 0 | `cpu_iso_en` (1 = clamp) |
+| Retention (`set_retention`, §6.50) | `ctx_reg` only | `cpu_save`, `cpu_restore` (one-cycle pulses) |
+| Not UPF: clock gating | PD_CPU's clock enable | `cpu_clk_en` |
+| Not UPF: domain reset | PD_CPU's asynchronous reset | `cpu_rst_n` (active low) |
 
-### State Machine Coverage
-The PMU is basically a massive state machine. You must extract its definition and verify every legal transition.
-- **Functional Coverage:** Create covergroups mapping every `{Current_State, Next_State}` pair.
-- **Illegal Transitions:** Attempt to force illegal PMU reg/bus writes (e.g., trying to jump straight from `FULL_ON` to `DEEP_SLEEP` without passing through a transient `SAVE` state) and verify the PMU handles the error cleanly instead of locking up.
+The UPF syntax itself belongs to [I-SV-8](/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index); the clause numbers above are from the table of contents of IEEE 1801-2018 (published as IEC 61523-4:2023), and its clause 9 defines the simulation semantics. So that the bench on this page runs in any simulator, Make It Work writes PD_CPU as a **behavioural model** that does in plain SystemVerilog what a power-aware simulator does with the UPF: it corrupts the state to X while VDD_CPU is off, clamps the outputs while `cpu_iso_en` is 1, and copies `ctx_reg` to and from a retention element. With real UPF, the RTL stays unchanged and the simulator adds that behaviour.
 
-### Handshake Verification
-PMUs rely on handshakes. For example, the PMU asserts `cpu_pwr_req` to the external voltage regulator, and waits for `cpu_pwr_ack`.
-- **Delay randomization:** Your UVM PMU VIP should randomize the delay between `req` and `ack` across a massive range (from 0 cycles to thousands of cycles) to expose race conditions in the RTL.
+The safe order, used everywhere on this page:
+- **Power-down:** stop the clock (CLK_OFF), isolate (ISO_ON), save (SAVE), remove power (PWR_OFF, then wait for the acknowledge).
+- **Wake-up:** restore power (PWR_ON, wait for the acknowledge), reset the domain (RST), restore the retained state (RESTORE), restart the clock (CLK_ON), and release isolation last (ISO_OFF).
 
----
+Save and isolate may swap, because both happen while the domain is powered. The wake-up steps may not: each one depends on the one before it, and the next sections show the bug each swap causes.
 
-## 3. Shutdown and Wake-up UVM Sequences
+### What the testbench sees during a power cycle
 
-To test power cycling, your **Virtual Sequences** must coordinate the functional stimulus and the power events.
+The testbench sits in, or connects to, the always-on side. What it reads from PD_CPU depends on the class of the signal and on the step of the cycle:
 
-A robust power-cycle sequence pattern:
-1. **Quiesce Traffic:** Stop sending functional stimulus to the target domain. Wait for the pipeline to drain.
-2. **Save Context:** Execute software/hardware routines to save volatile registers to memory or retention cells.
-3. **Assert Isolation:** Program the PMU to clamp the domain's outputs.
-4. **Power Down (`OFF`):** Program the PMU to drop the supply net.
-5. **Hold:** Wait a randomized duration.
-6. **Power Up (`ON`):** Restore the supply net. The domain's registers are still `X`: power returning restores nothing.
-7. **Restore Context:** Load the saved state back into the active registers.
-8. **Release Isolation:** Remove the boundary clamps only now, when the outputs are driven by valid state again.
-9. **Resume Traffic:** Send functional stimulus and use the scoreboard to verify the domain retained its state and handles new traffic correctly.
+| What you look at | While PD_CPU is off | After power returns | After PD_CPU's reset | After the restore |
+|---|---|---|---|---|
+| An isolated output (`rsp_valid`, clamp 0), as PD_TOP sees it | 0, the clamp | still the clamp | still the clamp | still the clamp; after the release, PD_CPU's real value |
+| An output with no isolation (a bug), 4-state | X | X | its reset value | PD_CPU's value |
+| A non-retained register (`scratch`) | X | X: power returning restores nothing | its reset value, 8'h00 | still 8'h00: restore touches only retained elements |
+| A retained register (`ctx_reg`) | X; the saved copy waits on the always-on supply | X | its reset value, 8'h00 | the saved value, 8'hA5 |
+| A 2-state variable inside PD_CPU | usually 0, which looks valid and hides the bug (tool-dependent) | — | its reset value | — |
 
-Steps 2 and 3 may swap: both must happen while the domain is powered, before step 4. Steps 7 and 8 may not: releasing isolation before the restore hands `X` to the always-on logic.
+Three rules come out of the table:
+- **Powered-down outputs do not read 0.** Only *isolated* outputs read the clamp. An unisolated 4-state output reads X, and an X is what isolation exists to stop. The clamp value is chosen so that the bus looks idle: `rsp_valid` clamped to 0 means "no response".
+- **Power returning restores nothing.** Corruption gives 4-state variables the value X, which is also their default initial value (IEEE 1800-2023 Table 6-7). A 2-state variable cannot hold X, and power-aware simulators typically corrupt it to 0; how they treat 2-state types, and the partial-corruption simstates of IEEE 1801-2018 §4.8, are tool-dependent. Use 4-state types (`logic`) at power boundaries so that corruption stays visible.
+- **Reset, then restore, then release.** A reset after the restore wipes the restored value. A release before the restore hands PD_TOP the wrong value (X, or the reset value). Whether a reset and a restore in the same cycle favour one or the other is tool-dependent, so never let them overlap.
 
-Step through the sequence below. Predict whether `X` ever reaches the always-on domain, then try the presets that break the order, or build your own:
+The visualizer below models one power cycle of this design, one PMU action per step, with the four assertion checks you will write later. **Predict first:** choose the preset "Release isolation before restore". At which step does PD_TOP first see X, and does `ctx` come back as 8'hA5 at the end?
 
 <PowerDomainVisualizer />
 
----
+**Debrief.** With "Release isolation before restore", X reaches PD_TOP at step 5, the release: power is back but `ctx` is still X, because power returning restored nothing. The restore at step 6 brings 8'hA5 back, one step too late, so the outcome is an X leak with the context recovered. Now try the other two broken presets:
+- "Power off before isolation": X leaks at step 2, the moment power drops, but `ctx` still comes back, because it was saved while powered.
+- "Save after power-off": the save at step 3 copies X, the restore copies X back, and X leaks at step 6 when isolation is released: both an X leak and a lost context.
 
-## 4. Power-Aware SVA Assertions
+The model leaves out three things real flows need: stopping the clock, resetting the non-retained logic after power-up, and waiting for the power switch's acknowledge. The bench on this page adds all three.
 
-SystemVerilog Assertions (SVA) are highly effective for catching low-power sequencing violations that are invisible to the UVM scoreboard.
+### Where power lives in a UVM environment
 
-**Isolation before Power Down:**
-Isolation must be active *before* the supply net drops, and remain active until the domain's outputs are valid again: after the supply returns *and* the context is restored.
-```systemverilog
-property p_iso_before_pwr_down;
-  @(posedge pmu_clk)
-  $fell(supply_net_on) |-> $past(isolation_en);
-endproperty
-assert property (p_iso_before_pwr_down) else $error("Power dropped before isolation active!");
-```
+A power-aware environment is an ordinary multi-agent environment ([A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index)) with one extra agent and three power-aware habits. The **PMU agent** drives the power controls; at block level it plays the PMU, and at SoC level the real PMU drives the controls and the agent programs it instead. The **virtual sequencer** holds handles to both agents' sequencers, so one virtual sequence can order traffic and power events. The PMU agent's **monitor** publishes every power event as a `pwr_item` on its analysis port, so that the scoreboard and the coverage collector learn of power events the same way they learn of traffic.
 
-**Retention Save/Restore:**
-The `save_en` signal must not pulse while the domain is already powered down.
-```systemverilog
-property p_save_while_powered;
-  @(posedge pmu_clk)
-  save_en |-> supply_net_on;
-endproperty
-```
+<ArchitectureDiagram
+  title="The power-aware environment used on this page"
+  caption="The virtual sequencer orders traffic (bus_agt) and power events (pmu_agt). pmu_agt's monitor publishes each power event to the scoreboard and the coverage collector; its driver turns the uvm_event cpu_offline on with isolation and off with the release, and the bus driver aborts or drops items while it is on. pwr_seq_checker is bound inside the PD_CPU model and checks the order on the always-on clock."
+  nodes={[
+    { id: "env", label: "env (pwr_env)", kind: "env", col: 0, row: 0, colSpan: 4, rowSpan: 3, container: true },
+    { id: "vsqr", label: "vsqr", sublabel: "pwr_vsqr", kind: "sequencer", col: 1, row: 0, colSpan: 2 },
+    { id: "pmu_agt", label: "pmu_agt", sublabel: "sqr, drv, mon", kind: "agent", col: 0, row: 1 },
+    { id: "bus_agt", label: "bus_agt", sublabel: "sqr, drv, mon", kind: "agent", col: 3, row: 1 },
+    { id: "cov", label: "cov", sublabel: "pwr_cov", kind: "subscriber", col: 1, row: 2 },
+    { id: "scb", label: "scb", sublabel: "pwr_scoreboard", kind: "scoreboard", col: 2, row: 2 },
+    { id: "dut", label: "u_cpu_pd (cpu_pd_model)", sublabel: "PD_CPU, isolation, retention, switch; u_chk bound inside", kind: "dut", col: 0, row: 3, colSpan: 4 }
+  ]}
+  ports={[
+    { id: "pmu.ap", node: "pmu_agt", side: "right", at: 0.7, kind: "analysis_port", label: "mon.ap" },
+    { id: "bus.req", node: "bus_agt", side: "bottom", at: 0.3, kind: "analysis_port", label: "mon.req_ap" },
+    { id: "bus.rsp", node: "bus_agt", side: "bottom", at: 0.7, kind: "analysis_port", label: "mon.rsp_ap" },
+    { id: "cov.imp", node: "cov", side: "top", kind: "analysis_imp", label: "analysis_export" },
+    { id: "scb.pwr", node: "scb", side: "top", at: 0.3, kind: "analysis_imp", label: "pwr_export" },
+    { id: "scb.req", node: "scb", side: "right", at: 0.3, kind: "analysis_imp", label: "req_export" },
+    { id: "scb.rsp", node: "scb", side: "right", at: 0.7, kind: "analysis_imp", label: "rsp_export" }
+  ]}
+  edges={[
+    { from: "vsqr", to: "pmu_agt", style: "control", label: "pmu_sqr" },
+    { from: "vsqr", to: "bus_agt", style: "control", label: "bus_sqr" },
+    { from: "pmu_agt", to: "bus_agt", style: "causal", label: "cpu_offline" },
+    { from: "pmu.ap", to: "cov.imp", style: "data", label: "pwr_item", via: [[1, 1]] },
+    { from: "pmu.ap", to: "scb.pwr", style: "data", via: [[2, 1]] },
+    { from: "bus.req", to: "scb.req", style: "data", label: "req" },
+    { from: "bus.rsp", to: "scb.rsp", style: "data", label: "rsp" },
+    { from: "pmu_agt", to: "dut", style: "structural", label: "pmu_cb" },
+    { from: "bus_agt", to: "dut", style: "structural", label: "drv_cb, mon_cb" }
+  ]}
+/>
 
-For more on assertion structure, see [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index).
+The three habits, each with its own subsection below:
+- **Stimulus is ordered in one place.** The virtual sequence quiesces the traffic before it touches the power controls, and resumes it only after the release.
+- **Checkers know about power.** The scoreboard pauses and flushes when isolation goes on, and expects reset or restored values after the release. Assertions check the order of the controls themselves.
+- **Drivers never wait for a dead domain.** Every driver that waits for a response from PD_CPU also listens for the power event, and still completes its handshake with the sequencer.
 
----
+### The power-cycle virtual sequence
 
-## 5. Power-State Coverage Strategy
-
-To achieve [coverage closure](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) on a power-aware design, you must cross functional states with power states.
-
-```systemverilog
-covergroup cg_power_aware_traffic @(posedge clk);
-  cp_op: coverpoint bus.opcode;
-  cp_pwr: coverpoint pmu.state {
-    bins ON = {STATE_ON};
-    bins SLEEP = {STATE_SLEEP};
-    bins RETENTION = {STATE_RET};
-  }
-  
-  // Prove we executed every opcode while in every valid power state
-  cr_op_x_pwr: cross cp_op, cp_pwr;
-endgroup
-```
-
----
-
-## 6. UVM Integration Patterns
-
-### Power-Aware Virtual Sequences
-Virtual sequences are the ideal place to orchestrate power events because they have handles to both the PMU sequencer and the functional (e.g., AXI/PCIe) sequencers. This is covered in depth in [Virtual Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences).
-
-### Stopping Traffic on a Power Event
-If a domain powers down mid-transfer, a driver waiting for a handshake (`ACK`) from that domain hangs. A [UVM callback](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index) does not fix this on its own: it runs only where the driver calls `` `uvm_do_callbacks ``, it can modify the item or set a flag the driver honours to drop it, and when it returns, control goes back to the driver. It has no way to stop the sequence that produced the item. Stopping traffic takes three pieces:
-
-1. **A power-aware driver.** It races each handshake against the power-down event and always pairs `get_next_item()` with `item_done()`, so the sequence that is waiting in `finish_item()` is released.
-2. **Sequences that stop.** Preferably by design: the virtual sequence quiesces traffic before it programs the PMU, and functional sequences check the power state between items and return. For an abrupt power loss, `sqr.stop_sequences()` kills every sequence running on that sequencer and flushes its queued requests; `seq.kill()` kills one sequence.
-3. **Optionally, a callback** in the driver, so a test can corrupt or drop items around the power event without editing the driver.
-
-Read the driver below and predict what happens to the sequence if the `item_done()` line is removed:
+The virtual sequence `power_cycle_vseq` runs the whole cycle. It starts traffic on the bus agent's sequencer and PMU actions on the PMU agent's sequencer, one after the other, so the order is explicit in one `body()`:
 
 ```systemverilog
-// Illustrative power-aware driver: names such as pwr, drop and status are project-specific
-task run_phase(uvm_phase phase);
-  forever begin
-    seq_item_port.get_next_item(req);
-    `uvm_do_callbacks(pwr_driver, pwr_driver_cb, pre_drive(this, req)) // may set req.drop
-    if (req.drop || pwr.state == POWER_OFF) begin
-      req.status = DROPPED;               // domain is off: do not touch its pins
-    end else begin
-      fork begin                           // isolate so disable fork kills only these
-        fork
-          drive_and_wait_ack(req);         // blocks forever if the ACK never comes
-          begin pwr.power_down.wait_trigger(); req.status = ABORTED; end
-        join_any
-        disable fork;
-      end join
-    end
-    seq_item_port.item_done();             // without it, finish_item() never returns
-  end
+// snippet: power_cycle_vseq::body() (complete class in Make It Work)
+task body();
+  run_bus(BUS_INIT);                     // CTX = 8'hA5, SCRATCH = 8'h3C
+  run_bus(BUS_CHECK);                    // read both back
+  // start() has returned, so every item is done: nothing is in flight (quiesced)
+  run_pmu({CLK_OFF, ISO_ON, SAVE, PWR_OFF, HOLD});
+  run_pmu({PWR_ON, RST, RESTORE, CLK_ON, ISO_OFF});
+  run_bus(BUS_CHECK);                    // CTX must read 8'hA5, SCRATCH 8'h00
+  run_bus(BUS_RANDOM);                   // and PD_CPU works normally again
 endtask
 ```
 
-Without `item_done()`, the sequence stays blocked in `finish_item()` and the next `get_next_item()` call is an error. One ordering rule matters if you also call `stop_sequences()`: it clears the sequencer's record of the item the driver holds, so an `item_done()` for that item afterwards is fatal (`SQRBADITMDN` in uvm-core 2020.3.1). Either let the driver finish the item first, or drop the item without calling `item_done()` once the sequences have been stopped.
+**Quiescing is free when sequences run in series.** A child sequence's `start()` returns only when its `body()` has finished, and a bus item finishes only after the driver has seen its response and called `item_done()`. So when `run_bus()` returns, no transfer is in flight, and the PMU actions can begin. When traffic runs in parallel with the power cycle (a background sequence, an interrupt responder), quiescing needs a cooperative stop, covered under stopping stimulus below.
 
-### Phasing and Objections
-An objection keeps a phase alive; it does not protect the traffic. If the domain powers down while a sequence that raised an [objection](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) is blocked on a handshake that will never complete, the objection is never dropped and the phase never ends. The test hangs, and the UVM timeout watchdog (`PH_TIMEOUT`) only guards `run_phase`, so a hang in a run-time phase such as `main_phase` may never be timed out. Quiesce or stop that traffic first (above) so the sequence finishes and drops its objection normally.
+Each PMU action is one `pwr_item`. The PMU driver starts every action at a clock edge, so two actions never share a cycle, and it waits for the switch's acknowledge on PWR_OFF and PWR_ON. Never reset or restore before the acknowledge says VDD_CPU is back: until then the domain is not powered, and a reset or restore has nothing to act on. Randomize the time the PMU waits in a real environment (here the switch model's delay is a parameter), and keep the PMU's controls stable while it waits: with a modelled switch, an X on its control input has undefined results. In the UPF, the switch and its acknowledge are part of `create_power_switch` (IEEE 1801-2018 §6.22), which has options for an acknowledge port and its delay; how a simulator models the acknowledge is tool-dependent, so this bench models it in `cpu_pd_model`.
 
----
+<SequenceDiagram
+  title="One power cycle, as power_cycle_vseq runs it"
+  caption="The virtual sequence runs each step to completion before the next. pmu_agt's monitor tells the scoreboard when isolation goes on and off; the driver's cpu_offline event tells the bus driver."
+  participants={[
+    { id: "test", label: "test", kind: "test" },
+    { id: "vseq", label: "vseq", kind: "sequence" },
+    { id: "bus", label: "bus_agt", kind: "agent" },
+    { id: "pmu", label: "pmu_agt.drv", kind: "driver" },
+    { id: "mon", label: "pmu_agt.mon", kind: "monitor" },
+    { id: "scb", label: "scb", kind: "scoreboard" }
+  ]}
+  messages={[
+    { from: "test", to: "vseq", label: "vseq.start(env.vsqr)" },
+    { from: "vseq", to: "bus", label: "bus_seq INIT, CHECK" },
+    { kind: "return", from: "bus", to: "vseq", label: "start() returns: nothing in flight" },
+    { from: "vseq", to: "pmu", label: "pmu_seq: CLK_OFF, ISO_ON, SAVE, PWR_OFF, HOLD" },
+    { kind: "note", from: "pmu", to: "mon", label: "ISO_ON: cpu_iso_en <= 1 and cpu_offline.trigger()" },
+    { kind: "async", from: "mon", to: "scb", label: "write_pwr(ISO_ON): flush, pause, remember CTX" },
+    { kind: "divider", label: "PD_CPU is off for hold_cycles" },
+    { from: "vseq", to: "pmu", label: "pmu_seq: PWR_ON, RST, RESTORE, CLK_ON, ISO_OFF" },
+    { kind: "note", from: "pmu", to: "mon", label: "PWR_ON waits for cpu_pwr_ack; ISO_OFF calls cpu_offline.reset()" },
+    { kind: "async", from: "mon", to: "scb", label: "write_pwr(ISO_OFF): expect CTX = saved, SCRATCH = 0" },
+    { from: "vseq", to: "bus", label: "bus_seq CHECK, RANDOM" },
+    { kind: "return", from: "vseq", to: "test", label: "start() returns; the test drops its objection" }
+  ]}
+/>
 
-## 7. Debug and Triage Playbook
+The power switch's handshake, as the bench drives it. The PMU driver lowers `cpu_pwr_en` just after edge 0 (205 ns in the Make It Work run); the switch model answers three cycles later.
 
-When a power-aware test fails, start here:
-1. **Did `X` leak?** If a failure is caused by an `X` value on a bus, check the isolation control signals. The PMU likely dropped the supply voltage before asserting the isolation clamps, or released them before the restore.
-2. **Did a register lose its value?** If a retention register initializes to `0` instead of its pre-sleep value upon wake-up, verify the `save_en` and `restore_en` toggles occurred exactly per the UPF constraints.
-3. **Did the testbench hang?** If the simulation runs forever, verify that your UVM driver isn't waiting for a blocked `req/ack` handshake from a domain that is currently `OFF`.
+<TimingDiagram
+  title="PWR_OFF: request, acknowledge and corruption"
+  caption="values[k] is the value sampled at edge k; edge 0 is 205 ns. cpu_pwr_en is sampled 0 from edge 1. The switch lowers cpu_pwr_ack after edge 3, so VDD_CPU is off from then on and ctx_reg is X when sampled at edge 4. The PMU driver sees the acknowledge at edge 4 and only then reports PWR_OFF as done. Isolation has been on throughout."
+  edges={6}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "cpu_iso_en", kind: "bit", values: [1, 1, 1, 1, 1, 1] },
+    { name: "cpu_pwr_en", kind: "bit", values: [1, 0, 0, 0, 0, 0] },
+    { name: "cpu_pwr_ack", kind: "bit", values: [1, 1, 1, 1, 0, 0] },
+    { name: "ctx_reg", kind: "bus", values: ["A5", "A5", "A5", "A5", undefined, undefined] }
+  ]}
+  markers={[
+    { edge: 1, tone: "pass", label: "a_iso_before_off passes: cpu_pwr_en fell with cpu_iso_en already 1" },
+    { edge: 4, tone: "info", label: "pmu_drv samples cpu_pwr_ack = 0: PWR_OFF done; pmu_mon publishes PWR_OFF" }
+  ]}
+/>
 
-For system-level integration of these concepts, proceed to [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index). For mathematical proofs of your power controller's state machine, see [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index).
+**Two rules the wake-up order depends on.**
+- **The domain reset must work with the clock stopped,** or be given a clock. In this bench PD_CPU's reset is asynchronous (`always_ff @(posedge clk or negedge cpu_rst_n ...)`), so RST works before CLK_ON. With a synchronous reset, a reset pulsed while the clock is gated never takes effect, and the non-retained state stays X; enable the clock for the reset window instead, and write that order down.
+- **Restore after the reset, never before.** The reset puts every register at its reset value, the restore then overwrites the retained ones, and the release comes last.
+
+### Monitors and scoreboards across a power cycle
+
+A monitor needs no change for power: it publishes what it sees at the boundary. Because `rsp_valid` is clamped to 0 while PD_CPU is isolated, the bus monitor simply sees no responses. The data lines may be X, but a protocol monitor samples data only with valid, so that is harmless. A monitor that samples data without looking at valid is the one that gets into trouble.
+
+The **scoreboard** is where power changes the rules. A scoreboard that knows nothing about power keeps comparing through the power cycle, and that is wrong in both directions:
+- Expectations for requests that were in flight when isolation went on never complete, so `check_phase` reports them as pending: a false failure, although PD_CPU behaved correctly.
+- After the wake-up, a model that still holds the pre-power values for every register expects SCRATCH to read 8'h3C, while a correct PD_CPU returns 8'h00.
+
+The fix is a third analysis imp, `pwr_export`, fed by the PMU monitor, and a few lines that encode the **specification** of a power cycle, not the order in which the PMU happened to act:
+
+```systemverilog
+// snippet: pwr_scoreboard::write_pwr() (complete class in Make It Work)
+function void write_pwr(pwr_item t);
+  case (t.op)
+    ISO_ON: begin                        // no response can reach PD_TOP from now on
+      dropped_by_power += exp_q.size();  // count them, then forget them
+      exp_q.delete();
+      comparing = 0;
+      m_saved   = m_ctx;                 // what retention must bring back
+    end
+    PWR_OFF: lost_power = 1;
+    ISO_OFF: begin
+      if (lost_power) begin              // what a correct wake-up gives:
+        m_ctx      = m_saved;            //   retained: the value at power-down
+        m_scratch  = 8'h00;              //   not retained: the reset value
+        lost_power = 0;
+      end
+      comparing = 1;
+    end
+    default: ;                           // the order of the steps is the checker's job
+  endcase
+endfunction
+```
+
+Notice the design decision in the last line. If the scoreboard's model copied every PMU event (reset sets the model to 0, restore loads the saved value), then a DUT whose PMU restores *before* resetting would be predicted correctly, CTX = 8'h00, and the bug would pass. The scoreboard checks **outcomes** against the specification; the assertions below check the **order** of the controls.
+
+Traced through the Make It Work run (`hold_cycles` = 5):
+
+| Time | What the monitors publish | `exp_q` after | Scoreboard action | matches | `dropped_by_power` |
+|---|---|---|---|---|---|
+| 55 ns | request: WRITE CTX 8'ha5 | a5 | model CTX = a5 | 0 | 0 |
+| 65 ns | response a5 | (empty) | match | 1 | 0 |
+| 85–155 ns | WRITE SCRATCH 3c, READ CTX, READ SCRATCH, and their responses | (empty) | three matches | 4 | 0 |
+| 185 ns | ISO_ON | (empty) | flush 0, pause, `m_saved` = a5 | 4 | 0 |
+| 245 ns | PWR_OFF | (empty) | `lost_power` = 1 | 4 | 0 |
+| 355–425 ns | PWR_ON, RST, RESTORE, CLK_ON | (empty) | ignored: the checker owns the order | 4 | 0 |
+| 435 ns | ISO_OFF | (empty) | model CTX = a5, SCRATCH = 00; resume | 4 | 0 |
+| 445–485 ns | READ CTX → a5, READ SCRATCH → 00 | (empty) | two matches | 6 | 0 |
+| 505–605 ns | four random items | (empty) | four matches | 10 | 0 |
+| 625 ns | `check_phase`, `report_phase` | (empty) | `pending=0`; summary | 10 | 0 |
+
+If the virtual sequence had powered down abruptly, with one read in flight at 185 ns, the 185 ns row would show `exp_q` holding one entry, flushed: `dropped_by_power` = 1, and the summary would report it. Count what you drop; a test that drops everything and checks nothing must not pass, so `check_phase` also fails a run with zero matches.
+
+### Drivers: aborting a transfer safely
+
+A driver that waits for PD_CPU's response waits for ever if PD_CPU loses power, or is isolated, before it answers. The bus driver therefore races the response against the power event:
+
+```systemverilog
+// snippet: bus_drv::run_phase() (complete class in Make It Work)
+forever begin
+  seq_item_port.get_next_item(req);
+  if (cpu_offline.is_on()) begin
+    req.status = BUS_DROPPED;            // PD_CPU is isolated: do not touch its pins
+  end else begin
+    fork begin                           // a guard: disable fork kills only these two
+      fork
+        drive_and_wait_rsp(req);         // blocks for ever if the response never comes
+        begin
+          cpu_offline.wait_on();         // level-sensitive: returns at once if already on
+          req.status = BUS_ABORTED;
+        end
+      join_any
+      disable fork;
+    end join
+    if (req.status == BUS_ABORTED) drive_idle();   // never leave a request on the bus
+  end
+  seq_item_port.item_done();             // every get_next_item() gets its item_done()
+end
+```
+
+Four details make it safe:
+- **The event is a level, not a pulse.** `cpu_offline` is a `uvm_event` that the PMU driver turns on with `trigger()` when it raises isolation and off with `reset()` when it releases it. `wait_on()` returns at once if the event is already on (IEEE 1800.2-2020 §10.1.1.2.2); `wait_trigger()` would miss a trigger that happened earlier in the same time slot and wait for ever (§10.1.1.2.4). [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) owns the three waits in depth.
+- **The guard fork.** `disable fork` kills every descendant of the calling process; the outer `fork begin ... end join` makes the two racing branches the only descendants (IEEE 1800-2023 §9.6.3).
+- **Idle the pins after an abort.** Isolation protects PD_TOP from PD_CPU's outputs; nothing protects PD_CPU's inputs from a request the driver left high. A wake-up must not find `req_valid` already 1.
+- **Always `item_done()`.** The sequence that sent the item is waiting in `finish_item()`, which returns only when the driver calls `item_done()`. The sequence then reads `req.status` and decides whether to stop or skip.
+
+<SequenceDiagram
+  title="The bus driver aborts a transfer when PD_CPU is isolated"
+  caption="The response never comes, so the cpu_offline branch wins the race. The driver idles the bus and still calls item_done(), which releases the sequence from finish_item()."
+  participants={[
+    { id: "seq", label: "bus_seq", kind: "sequence" },
+    { id: "sqr", label: "bus_agt.sqr", kind: "sequencer" },
+    { id: "drv", label: "bus_agt.drv", kind: "driver" },
+    { id: "pmu", label: "pmu_agt.drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { from: "seq", to: "sqr", label: "start_item(req); finish_item(req)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req" },
+    { kind: "self", from: "drv", label: "fork: drive_and_wait_rsp(req) | cpu_offline.wait_on()" },
+    { kind: "divider", label: "abrupt power-down: the response never comes" },
+    { kind: "async", from: "pmu", to: "drv", label: "cpu_offline.trigger() with ISO_ON" },
+    { kind: "self", from: "drv", label: "wait_on() returns: BUS_ABORTED; disable fork; drive_idle()" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" },
+    { kind: "note", from: "seq", to: "seq", label: "reads req.status and stops or skips" }
+  ]}
+/>
+
+**Predict:** delete the `item_done()` line from the driver. What happens to the sequence, and what does the sequencer report when the driver calls `get_next_item()` again? Check your answer in the handshake visualizer below, opened on its "missing item_done" case.
+
+<AnimatedUvmSequenceDriverHandshakeDiagram initialPreset="missing_item_done" />
+
+**Debrief.** The sequence stays blocked in `finish_item()`, so its `body()` never ends, the virtual sequence never resumes, and any objection held around it is never dropped. The driver's next `get_next_item()` makes uvm-core 2020.3.1 report `Get_next_item called twice without item_done or get in between` (`uvm_sequencer.svh`). In a power test that ends at the timeout, look for this line first.
+
+### Stopping stimulus: quiesce, flags, kill() and stop_sequences()
+
+The driver abort handles the item that is in the driver. Something must also stop the **sequences** that would keep sending items. These are your options, from the gentlest:
+
+| Mechanism | What it does | Use it when | Watch out for |
+|---|---|---|---|
+| Quiesce: let `start()` return before power-down | the virtual sequence finishes its traffic, then starts the PMU actions | planned power-down (most tests) | it needs the virtual sequence to own both the traffic and the power events |
+| Cooperative flag: the sequence checks `cpu_offline.is_on()` (or `req.status`) between items and returns | the sequence ends itself at an item boundary | long or background sequences | an item already in the driver still needs the driver's abort |
+| Driver abort and `item_done()` | releases the waiting sequence with a status | abrupt power loss with a transfer in flight | idle the pins; call `item_done()` on every path |
+| `seq.kill()` (IEEE 1800.2-2020 §14.2.5.11) | kills one sequence, and in uvm-core 2020.3.1 also its child sequences | a background sequence with no stop flag | uvm-core does not run `post_body()`/`post_start()` (see Push Further) |
+| `sqr.stop_sequences()` (§15.3.2.14) | kills every sequence on that sequencer and removes its queued requests | resetting a sequencer to idle after an abrupt power loss | the driver must not call `item_done()` for the item it holds; see below |
+| A callback (`` `uvm_do_callbacks ``) | runs your code at the hook the driver calls, then returns to the driver | changing, dropping or corrupting items around a power event without editing the driver | it cannot end a sequence |
+
+**A callback cannot abort a sequence.** `` `uvm_do_callbacks `` calls each registered callback object's method and returns (uvm-core 2020.3.1, `uvm_callback_defines.svh`); see [A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index). Whatever the callback returns, or whatever flag it sets, the sequence that sent the item stays in `finish_item()` until the driver calls `item_done()`. Only `kill()`, `stop_sequences()` or a cooperative flag the sequence itself checks can end it; a callback that calls `kill()` is using `kill()`, not the callback mechanism.
+
+**The ordering rule for `stop_sequences()`.** While the driver holds an item, that item is still in the sequencer's request FIFO; `item_done()` removes it. `stop_sequences()` empties the FIFO (uvm-core `uvm_sequencer.svh`), so a later `item_done()` for the held item finds nothing and is fatal:
+
+```text
+UVM_FATAL ... [SQRBADITMDN] Item_done() called with no outstanding requests. Each call to item_done() must be paired with a previous call to get_next_item().
+```
+
+So choose one owner per item. Either let the driver finish (or abort) the item and call `item_done()`, then stop the sequences; or tell the driver that the sequences have been stopped, and have it skip `item_done()` for the item it holds:
+
+```systemverilog
+// snippet: an abrupt-loss variant of the driver's last line
+if (stopped) stopped = 0;                // stop_sequences() already removed this item
+else         seq_item_port.item_done();
+```
+
+### Objections and phases across power events
+
+An **objection** keeps a phase alive; it does not protect the traffic ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). Two questions decide whether a power test ends cleanly.
+
+**Who owns the objection?** In this bench the **test** raises it around `vseq.start()` and drops it afterwards. Nothing that might be stopped holds it. If instead a sequence owns it, how it was raised matters:
+- a sequence started with `set_starting_phase(phase)` and `set_automatic_phase_objection(1)` raises the objection before `pre_start()` and drops it after `post_start()` or when it is killed (§14.2.4.1–§14.2.4.4);
+- uvm-core 2020.3.1's `kill()` drops that automatic objection, but `stop_sequences()` does not, and neither runs `post_body()`, so an objection dropped there by hand is never dropped (Push Further has the details).
+
+**What happens to a hung power test?** Suppose a sequence in `main_phase` holds an objection and waits for a response that never comes. The run phase starts a global timeout counter (§9.8.1.5). The run phase cannot end while `main_phase` still has its objection, because `uvm_run_phase` and `uvm_post_shutdown_phase` share `uvm_extract_phase` as their successor, and phases that share a successor end together (§9.6). So the test does end, with a fatal error, when the timeout expires: 9200 s of simulated time by default in uvm-core 2020.3.1 (`` `UVM_DEFAULT_TIMEOUT ``). That is far too long for a power test, which is why the bench sets a timeout of 100 µs with `set_timeout` (F.7.3.3).
+
+<SequenceDiagram
+  title="A power test that hangs in main_phase still ends at the global timeout"
+  caption="The run phase's timeout covers the run-time phases too, because run cannot end before post_shutdown does. The fix is a short per-test timeout and an objection owner that is never stopped."
+  participants={[
+    { id: "root", label: "uvm_root", kind: "generic" },
+    { id: "run", label: "run phase", kind: "generic" },
+    { id: "main", label: "main_phase", kind: "generic" },
+    { id: "seq", label: "bus_seq", kind: "sequence" }
+  ]}
+  messages={[
+    { kind: "self", from: "run", label: "starts the global timeout counter (§9.8.1.5)" },
+    { from: "seq", to: "main", label: "raise_objection" },
+    { kind: "divider", label: "PD_CPU powers down; the response never comes" },
+    { kind: "self", from: "seq", label: "blocked in finish_item(): no item_done()" },
+    { kind: "note", from: "run", to: "main", label: "run cannot end: it shares extract with post_shutdown (§9.6)" },
+    { kind: "divider", label: "the timeout expires (9200 s by default)" },
+    { kind: "async", from: "root", to: "run", label: "UVM_FATAL [PH_TIMEOUT] ... timeout of ... hit", tone: "error" }
+  ]}
+/>
+
+The fatal's text in uvm-core 2020.3.1 is `Default timeout of <time> hit, indicating a probable testbench issue`, or `Explicit timeout` when `set_timeout` was called. The time prints with `%0t`, so with this bench's time format it reads `Explicit timeout of 100000 ns hit`. To find the objection that never dropped, rerun with `+UVM_OBJECTION_TRACE`; uvm-core prints the list of outstanding objections at the timeout only with `+UVM_PHASE_TRACE` (both are uvm-core 2020.3.1 implementation, not IEEE 1800.2).
+
+### Power-aware assertions
+
+The scoreboard cannot see the order of the PMU's controls, so the order is checked with concurrent assertions on the PMU's outputs. They live in `pwr_seq_checker`, a module bound into the PD_CPU model (IEEE 1800-2023 §23.11), so the design source does not change. Three placement rules matter:
+- **Clock them on the always-on clock** and disable them during the always-on reset (`default disable iff (!por_n)`, §16.15). A checker clocked by PD_CPU's gated clock stops checking exactly when the power events happen.
+- **Read the controls, not the supply.** A supply is a UPF object; reading it from SystemVerilog needs the simulator's UPF package (tool-dependent). The PMU's outputs and the switch's acknowledge are ordinary signals.
+- **Write `assert property`.** A `property ... endproperty` declaration on its own checks nothing (§16.12): it must be asserted.
+
+```systemverilog
+// snippet: the six assertions of pwr_seq_checker (complete module in Make It Work)
+a_iso_before_off: assert property ($fell(cpu_pwr_en) |-> $past(cpu_iso_en))
+  else `uvm_error("PWR_SEQ", "a_iso_before_off: power switched off without isolation")
+a_iso_unless_on: assert property (!(cpu_pwr_en && cpu_pwr_ack) |-> cpu_iso_en)
+  else `uvm_error("PWR_SEQ", "a_iso_unless_on: isolation off while not fully powered")
+a_save_while_on: assert property (cpu_save |-> cpu_pwr_en && cpu_pwr_ack)
+  else `uvm_error("PWR_SEQ", "a_save_while_on: save while PD_CPU is not powered")
+a_restore_while_on: assert property (
+  cpu_restore |-> cpu_pwr_en && cpu_pwr_ack && cpu_rst_n)
+  else `uvm_error("PWR_SEQ", "a_restore_while_on: restore while unpowered or in reset")
+a_release_after_wake: assert property (
+  $fell(cpu_iso_en) |->
+    cpu_pwr_ack && cpu_clk_en && cpu_rst_n && reset_seen && restored)
+  else `uvm_error("PWR_SEQ",
+                  "a_release_after_wake: released before power, reset, restore")
+a_no_x_into_top: assert property (
+  !$isunknown(rsp_valid) && !(rsp_valid && $isunknown(rsp_rdata)))
+  else `uvm_error("PWR_SEQ", "a_no_x_into_top: X reached PD_TOP from PD_CPU")
+```
+
+What each one catches:
+- `a_iso_before_off`: power removed before isolation was on, the "power off before isolation" preset. `$past` returns the value at the previous clock tick (§16.9.3), so isolation must be on at least one edge before `cpu_pwr_en` falls.
+- `a_iso_unless_on`: isolation released while the domain is still off or still ramping up.
+- `a_save_while_on`: a save from a dead domain, which saves X.
+- `a_restore_while_on`: a restore before power is back, or during the reset, which the reset would wipe.
+- `a_release_after_wake`: the release that comes too early. `reset_seen` and `restored` are two flags the checker keeps on the always-on clock: both clear when power is lost; a reset sets `reset_seen` and clears `restored` (a reset wipes an earlier restore); a restore sets `restored`. The release is legal only after power, then reset, then restore.
+- `a_no_x_into_top`: any leak, whatever its cause: `rsp_valid` must never be X, and the data must be known whenever `rsp_valid` is 1. This is the catch-all; the others say *which* step was wrong.
+
+The assertions report through `` `uvm_error ``, so a failure counts in the UVM report summary and fails the test, like any other check in the bench.
+
+The waveform below shows a wake-up whose restore came after the release. The reset happened, so the domain reads its reset value instead of X, and only `a_release_after_wake` notices.
+
+<TimingDiagram
+  title="Isolation released before the restore"
+  caption="values[k] is the value sampled at edge k. Power is already back. The reset at edges 1 and 2 sets reset_seen (seen from edge 2). cpu_iso_en falls at edge 5, but restored is still 0, so a_release_after_wake fails there. The restore arrives at edge 6; between edges 5 and 7 a read of CTX returns its reset value, 8'h00."
+  edges={8}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "cpu_pwr_ack", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1, 1] },
+    { name: "cpu_rst_n", kind: "bit", values: [1, 0, 0, 1, 1, 1, 1, 1] },
+    { name: "reset_seen", kind: "bit", values: [0, 0, 1, 1, 1, 1, 1, 1] },
+    { name: "cpu_clk_en", kind: "bit", values: [0, 0, 0, 0, 1, 1, 1, 1] },
+    { name: "cpu_iso_en", kind: "bit", values: [1, 1, 1, 1, 1, 0, 0, 0] },
+    { name: "cpu_restore", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 0] },
+    { name: "restored", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 1] }
+  ]}
+  markers={[
+    { edge: 5, tone: "fail", label: "a_release_after_wake fails: cpu_iso_en fell while restored is 0" },
+    { edge: 6, tone: "info", label: "the restore arrives one cycle after the release" }
+  ]}
+/>
+
+For more on assertion structure, see [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index); for `bind` and checkers, [I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index).
+
+### Power-sequence coverage
+
+Assertions say that nothing illegal happened; coverage says that the legal things you care about did happen. For power, that means **transitions**, not just states. The coverage collector samples once per power event, so idle cycles are never counted:
+
+```systemverilog
+// snippet: pwr_cov's covergroup (complete class in Make It Work)
+covergroup cg_pwr with function sample(pwr_op_e op);
+  cp_op: coverpoint op {
+    ignore_bins hold = {HOLD};             // a wait, not a pin change: never published
+  }
+  cp_down: coverpoint op {
+    bins down_order = (CLK_OFF => ISO_ON => SAVE => PWR_OFF);
+  }
+  cp_up: coverpoint op {
+    bins up_order = (PWR_ON => RST => RESTORE => CLK_ON => ISO_OFF);
+    illegal_bins release_unreset = (PWR_ON => ISO_OFF);   // power-on straight to release
+    illegal_bins release_while_off = (PWR_OFF => ISO_OFF);
+  }
+endgroup
+```
+
+- `with function sample(...)` defines what one sample is (IEEE 1800-2023 §19.8.1); here, one power event.
+- A **transition bin** such as `(PWR_ON => RST => ...)` is hit when consecutive samples follow that sequence (§19.5.2). `cp_op` has only an `ignore_bins` (§19.5.5), so it gets automatic bins for every other value (§19.5.3).
+- An **illegal bin** reports a run-time error if it is ever hit (§19.5.6); the form of that error is tool-dependent.
+
+Traced through the Make It Work run, the published stream is RST (the power-on reset), CLK_OFF, ISO_ON, SAVE, PWR_OFF, PWR_ON, RST, RESTORE, CLK_ON, ISO_OFF. `cp_op` hits all nine bins, `down_order` and `up_order` are each hit once, and no illegal bin is hit: 100.00%.
+
+**Cross traffic with power only where it is legal.** A cross of "every bus operation" with "every power state" makes "a write while PD_CPU is off" a coverage goal, which is traffic to a dead domain. Exclude or forbid those cells:
+
+```systemverilog
+// snippet: traffic crossed with the power state, legal combinations only
+// PD_PARKED: clock off and isolated, but still powered
+typedef enum {PD_RUN, PD_PARKED, PD_OFF} pd_state_e;
+covergroup cg_traffic with function sample(bit write, bit addr, pd_state_e st);
+  cp_kind:  coverpoint {write, addr};      // the four operations
+  cp_state: coverpoint st;
+  x_kind_state: cross cp_kind, cp_state {
+    ignore_bins  parked = binsof(cp_state) intersect {PD_PARKED};   // not a goal
+    illegal_bins off    = binsof(cp_state) intersect {PD_OFF};      // must never happen
+  }
+endgroup
+```
+
+`ignore_bins` and `illegal_bins` on a cross are IEEE 1800-2023 §19.6.2 and §19.6.3. The power-aware coverage of a whole SoC, with dozens of domains, is better generated from the UPF power states than written by hand; see Push Further.
+
+### Pitfalls and misconceptions
+
+| Misconception or pitfall | Why it is wrong | Do this instead |
+|---|---|---|
+| "Powered-down outputs read 0." | Only isolated outputs read the clamp; unisolated 4-state outputs read X, and 2-state ones may read 0 and hide the bug. | Isolate every output of a switchable domain; keep boundary signals 4-state. |
+| "A callback can abort the running sequence." | A callback runs where the driver calls it and returns to the driver; the sequence stays in `finish_item()`. | Abort in the driver, call `item_done()`, and stop sequences with a flag, `kill()` or `stop_sequences()`. |
+| "The scoreboard can keep comparing through a power cycle." | Dropped transfers stay pending, and the model expects pre-power values from registers that were reset. | Pause and flush (with a count) at isolation; set the expected values at the release. |
+| "Power coming back restores the state." | Power returning restores nothing: the state is X until a reset or a restore. | PWR_ON, then RST, then RESTORE, then release. |
+| Reset after the restore | The reset overwrites the restored value. | Finish the reset, then restore. |
+| A property declared but not asserted | A property declaration on its own produces no result (§16.12). | `label: assert property (...)`. |
+| Assertions clocked by the gated clock | They stop exactly when power events happen. | Clock them on the always-on clock; disable them on the always-on reset. |
+| A synchronous domain reset pulsed with the clock stopped | It never takes effect; the non-retained state stays X. | Use an asynchronous domain reset, or enable the clock for the reset window. |
+| `wait_trigger()` on the power event | It misses a trigger earlier in the same time slot and waits for ever. | Keep the event on while the domain is off and use `wait_on()`. |
+| `item_done()` after `stop_sequences()` | The request FIFO was flushed: `UVM_FATAL [SQRBADITMDN]`. | One owner per item: finish it first, or skip `item_done()` for it. |
+| An objection raised in `pre_body()` and dropped in `post_body()` of a sequence that may be killed | uvm-core does not run `post_body()` on a killed sequence; the phase runs to the timeout. | Let the test own the objection, or use the automatic objection with `kill()`. |
+
+### Recap
+
+- During a power cycle, isolated outputs read the clamp, unisolated ones read X, and inside PD_CPU everything is X until the reset; only retained registers get their value back, at the restore.
+- The safe order is CLK_OFF, ISO_ON, SAVE, PWR_OFF, then PWR_ON (wait for the acknowledge), RST, RESTORE, CLK_ON, ISO_OFF, and the virtual sequence quiesces the traffic before it starts.
+- The scoreboard pauses and flushes at isolation, counts what it drops, and expects the specification's values at the release. Assertions on the always-on clock check the order. Coverage records the transitions.
+- A driver that waits for PD_CPU races the response against a level-sensitive power event, idles the bus, and always calls `item_done()`. Callbacks cannot stop sequences; flags, `kill()` and `stop_sequences()` can, each with its own rules.
+- The test owns the objection, and a short per-test timeout turns a hang into a quick, traceable failure.
+
+## Make It Work
+
+### The complete bench, file by file
+
+The blocks below are one compile-ready set: five compile units (`cpu_pd_model.sv`, `pwr_if.sv`, `pwr_seq_checker.sv`, `pwr_pkg.sv` with its five included files, and `tb_top.sv`). The PD_CPU model makes the bench runnable without power-aware tools; with real UPF, you would replace it by the RTL and load the UPF, and the UVM side would not change. The code has been checked by reading against IEEE 1800-2023 and uvm-core 2020.3.1; no simulator run is behind this page.
+
+**1. The PD_CPU model.** Corruption, isolation, retention and the power switch, written out:
+
+```systemverilog
+// compile: cpu_pd_model.sv (file 1 of 5)
+// A behavioural stand-in for "PD_CPU's RTL plus its UPF in a power-aware simulator".
+// With real UPF the simulator adds the corruption, isolation, retention and switch
+// behaviour to unchanged RTL; here it is written out, so any 4-state simulator shows it.
+module cpu_pd_model #(
+  parameter int unsigned ACK_DELAY = 3   // switch acknowledge latency, cycles (>= 1)
+) (
+  input  logic       clk,                // always-on clock
+  input  logic       por_n,              // always-on power-on reset, active low
+  input  logic       cpu_clk_en,         // 0: PD_CPU's clock is stopped
+  input  logic       cpu_iso_en,         // 1: PD_CPU's outputs are clamped to 0
+  input  logic       cpu_save,           // 1 at an edge: save ctx_reg (retention)
+  input  logic       cpu_restore,        // 1 at an edge: copy it back into ctx_reg
+  input  logic       cpu_pwr_en,         // power-switch control: 1 = VDD_CPU on
+  output logic       cpu_pwr_ack,        // the switch's acknowledge: 1 = VDD_CPU is on
+  input  logic       cpu_rst_n,          // PD_CPU reset, asynchronous, active low
+  input  logic       req_valid,          // a request from PD_TOP this cycle
+  input  logic       req_write,          // 1: write, 0: read
+  input  logic       req_addr,           // 0: CTX (retained), 1: SCRATCH (not retained)
+  input  logic [7:0] req_wdata,
+  output logic       rsp_valid,          // the response PD_TOP sees (after isolation)
+  output logic [7:0] rsp_rdata
+);
+  timeunit 1ns; timeprecision 1ps;
+
+  logic [7:0]  ctx_reg, scratch;         // PD_CPU's state
+  logic [7:0]  ret_ctx;                  // ctx_reg's retention element (always-on supply)
+  logic        cpu_rsp_valid;            // PD_CPU's outputs, before the isolation cells
+  logic [7:0]  cpu_rsp_rdata;
+  int unsigned ack_count;
+
+  // Power switch. The acknowledge follows cpu_pwr_en ACK_DELAY cycles later, and
+  // VDD_CPU counts as on exactly while the acknowledge is 1.
+  always_ff @(posedge clk or negedge por_n) begin
+    if (!por_n) begin
+      cpu_pwr_ack <= 1'b1;               // PD_CPU is powered at power-on
+      ack_count   <= 0;
+    end else if (cpu_pwr_ack != cpu_pwr_en) begin
+      if (ack_count == ACK_DELAY - 1) begin
+        cpu_pwr_ack <= cpu_pwr_en;
+        ack_count   <= 0;
+      end else begin
+        ack_count <= ack_count + 1;
+      end
+    end else begin
+      ack_count <= 0;
+    end
+  end
+
+  // PD_CPU's registers. The reset is asynchronous, so it works while the clock is
+  // stopped. Save and restore act at an always-on clock edge (this model's convention).
+  always_ff @(posedge clk or negedge cpu_rst_n or negedge cpu_pwr_ack) begin
+    if (!cpu_pwr_ack) begin              // VDD_CPU off: the state is corrupted
+      ctx_reg       <= 'x;
+      scratch       <= 'x;
+      cpu_rsp_valid <= 1'bx;
+      cpu_rsp_rdata <= 'x;
+    end else if (!cpu_rst_n) begin       // powered and in reset
+      ctx_reg       <= '0;
+      scratch       <= '0;
+      cpu_rsp_valid <= 1'b0;
+      cpu_rsp_rdata <= '0;
+    end else if (cpu_restore) begin      // only the retained register comes back
+      ctx_reg <= ret_ctx;
+    end else if (cpu_clk_en) begin       // normal operation, one request per cycle
+      cpu_rsp_valid <= req_valid;
+      if (req_valid && req_write) begin
+        if (req_addr) scratch <= req_wdata;
+        else          ctx_reg <= req_wdata;
+        cpu_rsp_rdata <= req_wdata;      // a write's response echoes the value written
+      end else if (req_valid) begin
+        cpu_rsp_rdata <= req_addr ? scratch : ctx_reg;
+      end
+    end
+  end
+
+  // The retention element is on the always-on supply. A save from a powered-down
+  // domain copies X: the real value is already gone.
+  always_ff @(posedge clk) begin
+    if (cpu_save) ret_ctx <= ctx_reg;
+  end
+
+  // Isolation cells, on the always-on supply: clamp to 0 while cpu_iso_en is 1.
+  assign rsp_valid = cpu_iso_en ? 1'b0  : cpu_rsp_valid;
+  assign rsp_rdata = cpu_iso_en ? 8'h00 : cpu_rsp_rdata;
+endmodule
+```
+
+**2. The interface.** The PMU controls start at their power-on values (powered, clocked, not isolated, PD_CPU held in reset); the PMU agent releases the reset. Declaration initializers take effect before any process starts, so there is no race at time 0.
+
+```systemverilog
+// compile: pwr_if.sv (file 2 of 5)
+interface pwr_if (input logic clk);
+  timeunit 1ns; timeprecision 1ps;
+
+  logic       por_n;                     // always-on power-on reset, driven by tb_top
+  logic       cpu_clk_en  = 1'b1;        // PMU controls, at their power-on values
+  logic       cpu_iso_en  = 1'b0;
+  logic       cpu_save    = 1'b0;
+  logic       cpu_restore = 1'b0;
+  logic       cpu_pwr_en  = 1'b1;
+  logic       cpu_rst_n   = 1'b0;        // in reset until the PMU agent releases it
+  logic       cpu_pwr_ack;               // from the power switch
+  logic       req_valid   = 1'b0;        // the request bus, idle
+  logic       req_write;
+  logic       req_addr;
+  logic [7:0] req_wdata;
+  logic       rsp_valid;                 // PD_CPU's response, after isolation
+  logic [7:0] rsp_rdata;
+
+  clocking pmu_cb @(posedge clk);        // the PMU agent's driver
+    output cpu_clk_en, cpu_iso_en, cpu_save, cpu_restore, cpu_pwr_en, cpu_rst_n;
+    input  cpu_pwr_ack, por_n;
+  endclocking
+
+  clocking drv_cb @(posedge clk);        // the bus agent's driver
+    output req_valid, req_write, req_addr, req_wdata;
+    input  rsp_valid, rsp_rdata, cpu_rst_n;
+  endclocking
+
+  clocking mon_cb @(posedge clk);        // both monitors: values just before each edge
+    input cpu_clk_en, cpu_iso_en, cpu_save, cpu_restore, cpu_pwr_ack, cpu_rst_n;
+    input req_valid, req_write, req_addr, req_wdata, rsp_valid, rsp_rdata;
+  endclocking
+endinterface
+```
+
+**3. The sequencing checker,** bound into the model by `tb_top`:
+
+```systemverilog
+// compile: pwr_seq_checker.sv (file 3 of 5)
+// Power-sequencing assertions. They watch the PMU's controls on the always-on clock,
+// so they keep working while PD_CPU is off, and they report through UVM.
+module pwr_seq_checker (
+  input logic       clk,                 // always-on clock
+  input logic       por_n,               // always-on reset
+  input logic       cpu_clk_en,
+  input logic       cpu_iso_en,
+  input logic       cpu_save,
+  input logic       cpu_restore,
+  input logic       cpu_pwr_en,
+  input logic       cpu_pwr_ack,
+  input logic       cpu_rst_n,
+  input logic       rsp_valid,           // PD_CPU's outputs as PD_TOP sees them
+  input logic [7:0] rsp_rdata
+);
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  // Since power last returned: has PD_CPU been reset, and restored after that reset?
+  logic reset_seen, restored;
+  always_ff @(posedge clk or negedge por_n) begin
+    if (!por_n) begin
+      reset_seen <= 1'b1;                // the power-on reset counts; nothing to restore
+      restored   <= 1'b1;
+    end else if (!cpu_pwr_ack) begin
+      reset_seen <= 1'b0;                // power lost: both are needed again
+      restored   <= 1'b0;
+    end else if (!cpu_rst_n) begin
+      reset_seen <= 1'b1;
+      restored   <= 1'b0;                // a reset wipes a restore that came before it
+    end else if (cpu_restore) begin
+      restored   <= 1'b1;
+    end
+  end
+
+  default clocking @(posedge clk); endclocking
+  default disable iff (!por_n);
+
+  a_iso_before_off: assert property ($fell(cpu_pwr_en) |-> $past(cpu_iso_en))
+    else `uvm_error("PWR_SEQ", "a_iso_before_off: power switched off without isolation")
+  a_iso_unless_on: assert property (!(cpu_pwr_en && cpu_pwr_ack) |-> cpu_iso_en)
+    else `uvm_error("PWR_SEQ", "a_iso_unless_on: isolation off while not fully powered")
+  a_save_while_on: assert property (cpu_save |-> cpu_pwr_en && cpu_pwr_ack)
+    else `uvm_error("PWR_SEQ", "a_save_while_on: save while PD_CPU is not powered")
+  a_restore_while_on: assert property (
+    cpu_restore |-> cpu_pwr_en && cpu_pwr_ack && cpu_rst_n)
+    else `uvm_error("PWR_SEQ", "a_restore_while_on: restore while unpowered or in reset")
+  a_release_after_wake: assert property (
+    $fell(cpu_iso_en) |->
+      cpu_pwr_ack && cpu_clk_en && cpu_rst_n && reset_seen && restored)
+    else `uvm_error("PWR_SEQ",
+                    "a_release_after_wake: released before power, reset, restore")
+  a_no_x_into_top: assert property (
+    !$isunknown(rsp_valid) && !(rsp_valid && $isunknown(rsp_rdata)))
+    else `uvm_error("PWR_SEQ", "a_no_x_into_top: X reached PD_TOP from PD_CPU")
+endmodule
+```
+
+**4. The package and its five files.** The package declares the shared types and includes the classes in dependency order:
+
+```systemverilog
+// compile: pwr_pkg.sv (file 4 of 5)
+package pwr_pkg;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  typedef enum {CLK_OFF, ISO_ON, SAVE, PWR_OFF, HOLD,
+                PWR_ON, RST, RESTORE, CLK_ON, ISO_OFF} pwr_op_e;   // one PMU action
+  typedef enum {BUS_OK, BUS_DROPPED, BUS_ABORTED} bus_status_e;  // set by bus_drv
+  typedef enum {BUS_INIT, BUS_CHECK, BUS_RANDOM} bus_mode_e;       // what bus_seq sends
+
+  `include "pwr_items.svh"               // bus_item, pwr_item
+  `include "pwr_agents.svh"              // bus and PMU drivers, monitors and agents
+  `include "pwr_checking.svh"            // pwr_scoreboard, pwr_cov
+  `include "pwr_sequences.svh"           // bus_seq, pmu_seq, pwr_vsqr, power_cycle_vseq
+  `include "pwr_env_test.svh"            // pwr_env, pwr_cycle_test
+endpackage
+```
+
+```systemverilog
+// compile: pwr_items.svh (included by pwr_pkg.sv)
+class bus_item extends uvm_sequence_item;  // one transfer between PD_TOP and PD_CPU
+  `uvm_object_utils(bus_item)
+  rand bit       write;                  // 1: write, 0: read
+  rand bit       addr;                   // 0: CTX (retained), 1: SCRATCH (not retained)
+  rand bit [7:0] wdata;
+  logic [7:0]    rdata;                  // logic, so an X from PD_CPU stays visible
+  bus_status_e   status;                 // set by the driver
+
+  function new(string name = "bus_item");
+    super.new(name);
+  endfunction
+
+  function string convert2string();
+    return $sformatf("%s %s wdata=0x%02h rdata=0x%02h %s", write ? "WRITE" : "READ",
+                     addr ? "SCRATCH" : "CTX", wdata, rdata, status.name());
+  endfunction
+endclass
+
+class pwr_item extends uvm_sequence_item;  // one PMU action
+  `uvm_object_utils(pwr_item)
+  rand pwr_op_e     op;
+  rand int unsigned cycles;              // HOLD only: cycles to stay in the current state
+  constraint c_cycles { cycles inside {[1:50]}; }
+
+  function new(string name = "pwr_item");
+    super.new(name);
+  endfunction
+
+  function string convert2string();
+    return (op == HOLD) ? $sformatf("HOLD %0d", cycles) : op.name();
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: pwr_agents.svh (included by pwr_pkg.sv)
+class bus_drv extends uvm_driver #(bus_item);
+  `uvm_component_utils(bus_drv)
+  virtual pwr_if vif;
+  uvm_event      cpu_offline;            // on while PD_CPU is isolated (set by the env)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    @(vif.drv_cb iff vif.drv_cb.cpu_rst_n === 1'b1);   // PD_CPU out of its power-on reset
+    forever begin
+      seq_item_port.get_next_item(req);
+      if (cpu_offline.is_on()) begin
+        req.status = BUS_DROPPED;        // PD_CPU is isolated: do not touch its pins
+      end else begin
+        fork begin                       // a guard: disable fork kills only these two
+          fork
+            drive_and_wait_rsp(req);
+            begin
+              cpu_offline.wait_on();     // level-sensitive: returns at once if already on
+              req.status = BUS_ABORTED;
+            end
+          join_any
+          disable fork;
+        end join
+        if (req.status == BUS_ABORTED) drive_idle();
+      end
+      seq_item_port.item_done();         // every get_next_item() gets its item_done()
+    end
+  endtask
+
+  // One request, then its response, which is the driver's acknowledge.
+  task drive_and_wait_rsp(bus_item it);
+    @(vif.drv_cb);
+    vif.drv_cb.req_valid <= 1'b1;
+    vif.drv_cb.req_write <= it.write;
+    vif.drv_cb.req_addr  <= it.addr;
+    vif.drv_cb.req_wdata <= it.wdata;
+    @(vif.drv_cb);
+    vif.drv_cb.req_valid <= 1'b0;        // a request lasts one cycle
+    @(vif.drv_cb iff vif.drv_cb.rsp_valid === 1'b1);   // blocks for ever if PD_CPU is off
+    it.rdata  = vif.drv_cb.rsp_rdata;
+    it.status = BUS_OK;
+  endtask
+
+  task drive_idle();                     // a wake-up must not find req_valid already 1
+    vif.drv_cb.req_valid <= 1'b0;
+  endtask
+endclass
+
+class bus_mon extends uvm_monitor;
+  `uvm_component_utils(bus_mon)
+  virtual pwr_if vif;
+  uvm_analysis_port #(bus_item) req_ap;  // one new item per request on the bus
+  uvm_analysis_port #(bus_item) rsp_ap;  // one new item per response PD_TOP receives
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    req_ap = new("req_ap", this);
+    rsp_ap = new("rsp_ap", this);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    bus_item t;
+    forever begin
+      @(vif.mon_cb);
+      if (vif.mon_cb.req_valid === 1'b1) begin
+        t = bus_item::type_id::create("req");
+        t.write = vif.mon_cb.req_write;
+        t.addr  = vif.mon_cb.req_addr;
+        t.wdata = vif.mon_cb.req_wdata;
+        req_ap.write(t);
+      end
+      if (vif.mon_cb.rsp_valid === 1'b1) begin   // clamped to 0 while isolated
+        t = bus_item::type_id::create("rsp");
+        t.rdata = vif.mon_cb.rsp_rdata;
+        rsp_ap.write(t);
+      end
+    end
+  endtask
+endclass
+
+class bus_agent extends uvm_agent;       // always active in this bench
+  `uvm_component_utils(bus_agent)
+  uvm_sequencer #(bus_item) sqr;
+  bus_drv                   drv;
+  bus_mon                   mon;
+  virtual pwr_if            vif;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (!uvm_config_db#(virtual pwr_if)::get(this, "", "vif", vif))
+      `uvm_fatal("NOVIF", "no virtual pwr_if 'vif' for this agent: set it in tb_top")
+    sqr = uvm_sequencer#(bus_item)::type_id::create("sqr", this);
+    drv = bus_drv::type_id::create("drv", this);
+    mon = bus_mon::type_id::create("mon", this);
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    drv.seq_item_port.connect(sqr.seq_item_export);
+    drv.vif = vif;
+    mon.vif = vif;
+  endfunction
+endclass
+
+class pmu_drv extends uvm_driver #(pwr_item);
+  `uvm_component_utils(pmu_drv)
+  virtual pwr_if vif;
+  uvm_event      cpu_offline;            // turned on with isolation, off with the release
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    @(vif.pmu_cb iff vif.pmu_cb.por_n === 1'b1);
+    vif.pmu_cb.cpu_rst_n <= 1'b1;        // power-on: release PD_CPU's reset
+    forever begin
+      seq_item_port.get_next_item(req);
+      `uvm_info("PMU", req.convert2string(), UVM_HIGH)
+      do_op(req);
+      seq_item_port.item_done();
+    end
+  endtask
+
+  // Every action starts at a clock edge, so two actions never share a cycle.
+  task do_op(pwr_item it);
+    @(vif.pmu_cb);
+    case (it.op)
+      CLK_OFF: vif.pmu_cb.cpu_clk_en <= 1'b0;
+      CLK_ON:  vif.pmu_cb.cpu_clk_en <= 1'b1;
+      ISO_ON: begin
+        vif.pmu_cb.cpu_iso_en <= 1'b1;
+        cpu_offline.trigger();           // from now on the bus cannot reach PD_CPU
+      end
+      ISO_OFF: begin
+        vif.pmu_cb.cpu_iso_en <= 1'b0;
+        cpu_offline.reset();             // before item_done(): traffic may resume next
+      end
+      SAVE: begin
+        vif.pmu_cb.cpu_save <= 1'b1;
+        @(vif.pmu_cb) vif.pmu_cb.cpu_save <= 1'b0;         // a one-cycle pulse
+      end
+      RESTORE: begin
+        vif.pmu_cb.cpu_restore <= 1'b1;
+        @(vif.pmu_cb) vif.pmu_cb.cpu_restore <= 1'b0;
+      end
+      RST: begin
+        vif.pmu_cb.cpu_rst_n <= 1'b0;
+        repeat (2) @(vif.pmu_cb);
+        vif.pmu_cb.cpu_rst_n <= 1'b1;
+      end
+      PWR_OFF: begin
+        vif.pmu_cb.cpu_pwr_en <= 1'b0;
+        @(vif.pmu_cb iff vif.pmu_cb.cpu_pwr_ack === 1'b0); // the switch confirms: off
+      end
+      PWR_ON: begin
+        vif.pmu_cb.cpu_pwr_en <= 1'b1;
+        // never reset or restore before the switch confirms: on
+        @(vif.pmu_cb iff vif.pmu_cb.cpu_pwr_ack === 1'b1);
+      end
+      HOLD: repeat (it.cycles) @(vif.pmu_cb);
+    endcase
+  endtask
+endclass
+
+class pmu_mon extends uvm_monitor;
+  `uvm_component_utils(pmu_mon)
+  virtual pwr_if vif;
+  uvm_analysis_port #(pwr_item) ap;      // one new pwr_item per change of the controls
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    ap = new("ap", this);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    logic clk_en, iso, save, restore, ack, rst_n;   // values at the previous edge
+    @(vif.mon_cb);
+    {clk_en, iso, save} = {vif.mon_cb.cpu_clk_en, vif.mon_cb.cpu_iso_en,
+                           vif.mon_cb.cpu_save};
+    {restore, ack, rst_n} = {vif.mon_cb.cpu_restore, vif.mon_cb.cpu_pwr_ack,
+                             vif.mon_cb.cpu_rst_n};
+    forever begin
+      @(vif.mon_cb);
+      if ( clk_en  && !vif.mon_cb.cpu_clk_en)  publish(CLK_OFF);
+      if (!iso     &&  vif.mon_cb.cpu_iso_en)  publish(ISO_ON);
+      if (!save    &&  vif.mon_cb.cpu_save)    publish(SAVE);
+      if ( ack     && !vif.mon_cb.cpu_pwr_ack) publish(PWR_OFF);   // the switch says: off
+      if (!ack     &&  vif.mon_cb.cpu_pwr_ack) publish(PWR_ON);
+      if (!rst_n   &&  vif.mon_cb.cpu_rst_n)   publish(RST);       // the reset has ended
+      if (!restore &&  vif.mon_cb.cpu_restore) publish(RESTORE);
+      if (!clk_en  &&  vif.mon_cb.cpu_clk_en)  publish(CLK_ON);
+      if ( iso     && !vif.mon_cb.cpu_iso_en)  publish(ISO_OFF);
+      {clk_en, iso, save} = {vif.mon_cb.cpu_clk_en, vif.mon_cb.cpu_iso_en,
+                             vif.mon_cb.cpu_save};
+      {restore, ack, rst_n} = {vif.mon_cb.cpu_restore, vif.mon_cb.cpu_pwr_ack,
+                               vif.mon_cb.cpu_rst_n};
+    end
+  endtask
+
+  function void publish(pwr_op_e op);
+    pwr_item t = pwr_item::type_id::create("pwr");
+    t.op = op;
+    ap.write(t);
+  endfunction
+endclass
+
+class pmu_agent extends uvm_agent;
+  `uvm_component_utils(pmu_agent)
+  uvm_sequencer #(pwr_item) sqr;
+  pmu_drv                   drv;
+  pmu_mon                   mon;
+  virtual pwr_if            vif;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (!uvm_config_db#(virtual pwr_if)::get(this, "", "vif", vif))
+      `uvm_fatal("NOVIF", "no virtual pwr_if 'vif' for this agent: set it in tb_top")
+    sqr = uvm_sequencer#(pwr_item)::type_id::create("sqr", this);
+    drv = pmu_drv::type_id::create("drv", this);
+    mon = pmu_mon::type_id::create("mon", this);
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    drv.seq_item_port.connect(sqr.seq_item_export);
+    drv.vif = vif;
+    mon.vif = vif;
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: pwr_checking.svh (included by pwr_pkg.sv)
+`uvm_analysis_imp_decl(_req)
+`uvm_analysis_imp_decl(_rsp)
+`uvm_analysis_imp_decl(_pwr)
+
+class pwr_scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(pwr_scoreboard)
+  uvm_analysis_imp_req #(bus_item, pwr_scoreboard) req_export;
+  uvm_analysis_imp_rsp #(bus_item, pwr_scoreboard) rsp_export;
+  uvm_analysis_imp_pwr #(pwr_item, pwr_scoreboard) pwr_export;
+
+  logic [7:0]  m_ctx, m_scratch;         // what a correct PD_CPU holds (the spec)
+  logic [7:0]  m_saved;                  // CTX at isolation: what retention brings back
+  logic [7:0]  exp_q[$];                 // expected response data, oldest first
+  bit          comparing = 1;
+  bit          lost_power;               // PD_CPU lost power since isolation went on
+  int unsigned matches, mismatches, dropped_by_power;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    req_export = new("req_export", this);
+    rsp_export = new("rsp_export", this);
+    pwr_export = new("pwr_export", this);
+    m_ctx      = 8'h00;                  // reset values after the power-on reset
+    m_scratch  = 8'h00;
+  endfunction
+
+  // A request: predict the response a correct PD_CPU gives, and remember it.
+  function void write_req(bus_item t);
+    if (!comparing) begin
+      `uvm_error("SCB_OFFLINE",
+                 {"request while PD_CPU is isolated: ", t.convert2string()})
+      return;
+    end
+    if (t.write) begin
+      if (t.addr) m_scratch = t.wdata;
+      else        m_ctx     = t.wdata;
+      exp_q.push_back(t.wdata);          // a write's response echoes the value written
+    end else begin
+      exp_q.push_back(t.addr ? m_scratch : m_ctx);
+    end
+  endfunction
+
+  function void write_rsp(bus_item t);
+    logic [7:0] want;
+    if (exp_q.size() == 0) begin
+      `uvm_error("SCB_UNEXPECTED", $sformatf("response 0x%02h with no request", t.rdata))
+      return;
+    end
+    want = exp_q.pop_front();
+    if ($isunknown(t.rdata) || t.rdata !== want) begin   // X never matches
+      mismatches++;
+      `uvm_error("SCB_MISMATCH",
+                 $sformatf("expected 0x%02h observed 0x%02h", want, t.rdata))
+    end else begin
+      matches++;
+    end
+  endfunction
+
+  // Power events: pause while the boundary is closed; say what a correct wake-up gives.
+  function void write_pwr(pwr_item t);
+    case (t.op)
+      ISO_ON: begin
+        int unsigned n;
+        n = exp_q.size();
+        dropped_by_power += n;           // responses that can no longer reach PD_TOP
+        exp_q.delete();
+        comparing = 0;
+        m_saved   = m_ctx;
+        `uvm_info("SCB_PWR", $sformatf(
+          "isolation on: comparing paused, %0d expectation(s) dropped", n), UVM_LOW)
+      end
+      PWR_OFF: lost_power = 1;
+      ISO_OFF: begin
+        if (lost_power) begin
+          m_ctx      = m_saved;          // retained: the value at power-down
+          m_scratch  = 8'h00;            // not retained: the reset value
+          lost_power = 0;
+        end
+        comparing = 1;
+        `uvm_info("SCB_PWR", $sformatf(
+          "isolation off: comparing resumed, expecting CTX=0x%02h SCRATCH=0x%02h",
+          m_ctx, m_scratch), UVM_LOW)
+      end
+      default: ;                         // the order of the steps: pwr_seq_checker
+    endcase
+  endfunction
+
+  function void check_phase(uvm_phase phase);
+    if (exp_q.size() != 0)
+      `uvm_error("SCB_PENDING", $sformatf("%0d response(s) never arrived", exp_q.size()))
+    if (matches == 0)
+      `uvm_error("SCB_NO_TRAFFIC", "no response was checked")
+  endfunction
+
+  function void report_phase(uvm_phase phase);
+    `uvm_info("SCB_SUMMARY", $sformatf(
+      "SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d dropped_by_power=%0d",
+      matches, mismatches, exp_q.size(), dropped_by_power), UVM_NONE)
+  endfunction
+endclass
+
+class pwr_cov extends uvm_subscriber #(pwr_item);
+  `uvm_component_utils(pwr_cov)
+
+  covergroup cg_pwr with function sample(pwr_op_e op);
+    cp_op: coverpoint op {
+      ignore_bins hold = {HOLD};         // a wait, not a pin change: never published
+    }
+    cp_down: coverpoint op {
+      bins down_order = (CLK_OFF => ISO_ON => SAVE => PWR_OFF);
+    }
+    cp_up: coverpoint op {
+      bins up_order = (PWR_ON => RST => RESTORE => CLK_ON => ISO_OFF);
+      illegal_bins release_unreset   = (PWR_ON => ISO_OFF);
+      illegal_bins release_while_off = (PWR_OFF => ISO_OFF);
+    }
+  endgroup
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    cg_pwr = new();
+  endfunction
+
+  function void write(pwr_item t);
+    cg_pwr.sample(t.op);
+  endfunction
+
+  function void report_phase(uvm_phase phase);
+    `uvm_info("COV_SUMMARY", $sformatf("power-sequence coverage = %.2f%%",
+              cg_pwr.get_coverage()), UVM_NONE)
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: pwr_sequences.svh (included by pwr_pkg.sv)
+class bus_seq extends uvm_sequence #(bus_item);
+  `uvm_object_utils(bus_seq)
+  bus_mode_e   mode = BUS_RANDOM;
+  int unsigned n = 4;                    // BUS_RANDOM only: how many items
+
+  function new(string name = "bus_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    int unsigned count;
+    count = (mode == BUS_RANDOM) ? n : 2;
+    for (int unsigned i = 0; i < count; i++) begin
+      req = bus_item::type_id::create($sformatf("req%0d", i));
+      start_item(req);
+      case (mode)
+        BUS_INIT: begin                  // write CTX = 8'hA5, then SCRATCH = 8'h3C
+          req.write = 1'b1;
+          req.addr  = i[0];
+          req.wdata = (i == 0) ? 8'hA5 : 8'h3C;
+        end
+        BUS_CHECK: begin                 // read CTX, then SCRATCH
+          req.write = 1'b0;
+          req.addr  = i[0];
+          req.wdata = 8'h00;
+        end
+        default: if (!req.randomize()) `uvm_fatal("RAND", "bus_item randomization failed")
+      endcase
+      finish_item(req);                  // returns after the driver's item_done()
+    end
+  endtask
+endclass
+
+class pmu_seq extends uvm_sequence #(pwr_item);
+  `uvm_object_utils(pmu_seq)
+  pwr_op_e     ops[$];                   // the PMU actions, in order
+  int unsigned hold_cycles = 1;          // used by HOLD
+
+  function new(string name = "pmu_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    foreach (ops[i]) begin
+      req = pwr_item::type_id::create($sformatf("op%0d", i));
+      start_item(req);
+      req.op     = ops[i];
+      req.cycles = hold_cycles;
+      finish_item(req);
+    end
+  endtask
+endclass
+
+class pwr_vsqr extends uvm_sequencer;    // handles only: no driver pulls from it
+  `uvm_component_utils(pwr_vsqr)
+  uvm_sequencer #(bus_item) bus_sqr;
+  uvm_sequencer #(pwr_item) pmu_sqr;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+endclass
+
+class power_cycle_vseq extends uvm_sequence;
+  `uvm_object_utils(power_cycle_vseq)
+  `uvm_declare_p_sequencer(pwr_vsqr)
+  rand int unsigned hold_cycles;         // how long PD_CPU stays off
+  constraint c_hold { hold_cycles inside {[2:20]}; }
+
+  function new(string name = "power_cycle_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    run_bus(BUS_INIT);                   // CTX = 8'hA5, SCRATCH = 8'h3C
+    run_bus(BUS_CHECK);                  // read both back
+    // start() has returned, so every item is done: nothing is in flight (quiesced)
+    `uvm_info("PWR", $sformatf("power-down: CLK_OFF ISO_ON SAVE PWR_OFF, then HOLD %0d",
+              hold_cycles), UVM_LOW)
+    run_pmu({CLK_OFF, ISO_ON, SAVE, PWR_OFF, HOLD});
+    `uvm_info("PWR", "wake-up: PWR_ON RST RESTORE CLK_ON ISO_OFF", UVM_LOW)
+    run_pmu({PWR_ON, RST, RESTORE, CLK_ON, ISO_OFF});
+    run_bus(BUS_CHECK);                  // CTX must read 8'hA5, SCRATCH 8'h00
+    run_bus(BUS_RANDOM);                 // and PD_CPU works normally again
+  endtask
+
+  task run_bus(bus_mode_e mode);
+    bus_seq s;
+    s = bus_seq::type_id::create("bus");
+    s.mode = mode;
+    s.start(p_sequencer.bus_sqr, this);
+  endtask
+
+  task run_pmu(pwr_op_e ops[$]);
+    pmu_seq s;
+    s = pmu_seq::type_id::create("pmu");
+    s.ops         = ops;
+    s.hold_cycles = hold_cycles;
+    s.start(p_sequencer.pmu_sqr, this);
+  endtask
+endclass
+```
+
+```systemverilog
+// compile: pwr_env_test.svh (included by pwr_pkg.sv)
+class pwr_env extends uvm_env;
+  `uvm_component_utils(pwr_env)
+  pwr_vsqr       vsqr;
+  bus_agent      bus_agt;
+  pmu_agent      pmu_agt;
+  pwr_scoreboard scb;
+  pwr_cov        cov;
+  uvm_event      cpu_offline;            // on while PD_CPU is isolated
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    vsqr        = pwr_vsqr::type_id::create("vsqr", this);
+    bus_agt     = bus_agent::type_id::create("bus_agt", this);
+    pmu_agt     = pmu_agent::type_id::create("pmu_agt", this);
+    scb         = pwr_scoreboard::type_id::create("scb", this);
+    cov         = pwr_cov::type_id::create("cov", this);
+    cpu_offline = uvm_event#(uvm_object)::type_id::create("cpu_offline");
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    bus_agt.mon.req_ap.connect(scb.req_export);
+    bus_agt.mon.rsp_ap.connect(scb.rsp_export);
+    pmu_agt.mon.ap.connect(scb.pwr_export);
+    pmu_agt.mon.ap.connect(cov.analysis_export);
+    vsqr.bus_sqr = bus_agt.sqr;
+    vsqr.pmu_sqr = pmu_agt.sqr;
+    bus_agt.drv.cpu_offline = cpu_offline;   // the bus driver waits on it
+    pmu_agt.drv.cpu_offline = cpu_offline;   // the PMU driver turns it on and off
+  endfunction
+endclass
+
+class pwr_cycle_test extends uvm_test;
+  `uvm_component_utils(pwr_cycle_test)
+  pwr_env env;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    env = pwr_env::type_id::create("env", this);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    power_cycle_vseq vseq;
+    // The test owns the objection: nothing that could be killed or stopped holds it.
+    phase.raise_objection(this, "power-cycle test");
+    vseq = power_cycle_vseq::type_id::create("vseq");
+    if (!vseq.randomize()) `uvm_fatal("RAND", "power_cycle_vseq randomization failed")
+    `uvm_info("TEST", $sformatf("PD_CPU will stay off for %0d cycles", vseq.hold_cycles),
+              UVM_LOW)
+    vseq.start(env.vsqr);
+    phase.get_objection().set_drain_time(this, 20ns);
+    phase.drop_objection(this, "power-cycle test");
+  endtask
+endclass
+```
+
+**5. The top module.** It makes the always-on clock and reset, instantiates the model and the interface, binds the checker, and starts UVM:
+
+```systemverilog
+// compile: tb_top.sv (file 5 of 5)
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+  import pwr_pkg::*;                     // some tools elaborate only referenced packages
+
+  logic clk;
+  pwr_if pwr_if0 (.clk(clk));
+
+  cpu_pd_model #(.ACK_DELAY(3)) u_cpu_pd (
+    .clk(clk), .por_n(pwr_if0.por_n),
+    .cpu_clk_en(pwr_if0.cpu_clk_en), .cpu_iso_en(pwr_if0.cpu_iso_en),
+    .cpu_save(pwr_if0.cpu_save), .cpu_restore(pwr_if0.cpu_restore),
+    .cpu_pwr_en(pwr_if0.cpu_pwr_en), .cpu_pwr_ack(pwr_if0.cpu_pwr_ack),
+    .cpu_rst_n(pwr_if0.cpu_rst_n),
+    .req_valid(pwr_if0.req_valid), .req_write(pwr_if0.req_write),
+    .req_addr(pwr_if0.req_addr), .req_wdata(pwr_if0.req_wdata),
+    .rsp_valid(pwr_if0.rsp_valid), .rsp_rdata(pwr_if0.rsp_rdata)
+  );
+
+  // The checker goes into every cpu_pd_model instance; its ports connect by name
+  // to the model's own ports, so the model's source does not change.
+  bind cpu_pd_model pwr_seq_checker u_chk (
+    .clk, .por_n, .cpu_clk_en, .cpu_iso_en, .cpu_save, .cpu_restore,
+    .cpu_pwr_en, .cpu_pwr_ack, .cpu_rst_n, .rsp_valid, .rsp_rdata
+  );
+
+  initial begin
+    clk = 1'b0;
+    forever #5 clk = ~clk;               // rising edges at 5, 15, 25 ns ...
+  end
+
+  initial begin
+    pwr_if0.por_n <= 1'b0;               // nonblocking: every always_ff already waits
+    repeat (2) @(posedge clk);
+    pwr_if0.por_n <= 1'b1;               // released just after 15 ns
+  end
+
+  initial begin
+    $timeformat(-9, 0, " ns", 0);        // %t in the log reads "35 ns"
+    // A hung power test should fail in microseconds, not after 9200 s. Set before
+    // run_test(), so that +UVM_TIMEOUT (applied in uvm_root's build_phase) still wins.
+    uvm_root::get().set_timeout(100us);
+    uvm_config_db#(virtual pwr_if)::set(null, "uvm_test_top.env.*", "vif", pwr_if0);
+    run_test("pwr_cycle_test");
+  end
+endmodule
+```
+
+### Run it
+
+The steps are tool-neutral; switches differ between simulators.
+
+1. **Point the compiler at uvm-core 2020.3.1**, either your simulator's built-in UVM library or `src/uvm_pkg.sv` with `src` on the include path (plus `src/dpi/uvm_dpi.cc`, or define `UVM_NO_DPI`).
+2. **Use one time unit everywhere.** Every file declares `timeunit 1ns; timeprecision 1ps;`, but `uvm_pkg` declares none, so give the compile a default time unit and precision of 1 ns / 1 ps with your tool's switch. Then `set_drain_time(this, 20ns)` and `set_timeout(100us)` mean what they say ([I-UVM-3C](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index) explains why).
+3. **Compile in order** with the bench's directory on the include path: `cpu_pd_model.sv`, `pwr_if.sv`, `pwr_seq_checker.sv`, `pwr_pkg.sv`, `tb_top.sv`. Elaborate with `tb_top` as the top module; the checker needs assertion support enabled if your tool makes it optional.
+4. **Run** `pwr_cycle_test` (it is also the `run_test()` default). Add your tool's seed switch to vary `hold_cycles`.
+
+The bench needs no power-aware simulator, because the model does the corruption. To run the same UVM environment on the real RTL with its UPF, replace `cpu_pd_model` by the RTL, load the UPF with your simulator's power-aware option, and keep everything else; the switches are tool-dependent.
+
+### Expected output
+
+This is a hand trace for a seed where `hold_cycles` is 5, not a simulator log. Context fields are shortened to `...` where they depend on how your tool names sequences, and the release-notes banner is abridged. Every time after the hold moves by 10 ns per extra hold cycle.
+
+```text
+UVM_INFO @ 0 ns: reporter [UVM/RELNOTES] (release-notes banner)
+UVM_INFO @ 0 ns: reporter [RNTST] Running test pwr_cycle_test...
+UVM_INFO @ 0 ns: uvm_test_top [TEST] PD_CPU will stay off for 5 cycles
+UVM_INFO @ 155 ns: ... [PWR] power-down: CLK_OFF ISO_ON SAVE PWR_OFF, then HOLD 5
+UVM_INFO @ 185 ns: uvm_test_top.env.scb [SCB_PWR] isolation on: comparing paused, 0 expectation(s) dropped
+UVM_INFO @ 305 ns: ... [PWR] wake-up: PWR_ON RST RESTORE CLK_ON ISO_OFF
+UVM_INFO @ 435 ns: uvm_test_top.env.scb [SCB_PWR] isolation off: comparing resumed, expecting CTX=0xa5 SCRATCH=0x00
+UVM_INFO @ 625 ns: uvm_test_top.env.cov [COV_SUMMARY] power-sequence coverage = 100.00%
+UVM_INFO @ 625 ns: uvm_test_top.env.scb [SCB_SUMMARY] SCB_SUMMARY matches=10 mismatches=0 pending=0 dropped_by_power=0
+UVM_INFO @ 625 ns: reporter [UVM/REPORT/SERVER]
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :    9
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+** Report counts by id
+[COV_SUMMARY]     1
+[PWR]     2
+[RNTST]     1
+[SCB_PWR]     2
+[SCB_SUMMARY]     1
+[TEST]     1
+[UVM/RELNOTES]     1
+```
+
+How to read it:
+- **The verdict** needs all three: `UVM_ERROR :    0`, `UVM_FATAL :    0`, and an `SCB_SUMMARY` with `matches=10` and `pending=0`. Ten responses were checked: four before the power cycle, two reads right after it (CTX = 8'hA5 retained, SCRATCH = 8'h00 reset) and four random items.
+- **The power cycle:** the last pre-power response is seen at 155 ns; isolation is on from 175 ns and the scoreboard learns of it at 185 ns; the switch acknowledges power-off at 245 ns; the hold ends at 305 ns. The wake-up's acknowledge comes at 355 ns, the reset ends at 395 ns, the restore is at 405 ns, and the scoreboard sees the release at 435 ns.
+- **The end:** the last random response arrives at 605 ns, the test drops its objection, and the 20 ns drain ends the run at 625 ns. No `PWR_SEQ` error means all six assertions held.
+
+### Prove it can fail
+
+A bench that cannot fail proves nothing. Remove `RST` from the wake-up (`run_pmu({PWR_ON, RESTORE, CLK_ON, ISO_OFF});`) and run again with the same seed. PD_CPU powers up, `ctx_reg` is restored, but `scratch` is never reset and stays X. Expected (hand trace, abridged; the two errors at 455 ns may appear in either order):
+
+```text
+UVM_ERROR @ 405 ns: reporter [PWR_SEQ] a_release_after_wake: released before power, reset, restore
+UVM_ERROR @ 455 ns: reporter [PWR_SEQ] a_no_x_into_top: X reached PD_TOP from PD_CPU
+UVM_ERROR @ 455 ns: uvm_test_top.env.scb [SCB_MISMATCH] expected 0x00 observed 0xxx
+UVM_INFO @ ... [COV_SUMMARY] power-sequence coverage = 66.67%
+```
+
+- **405 ns:** isolation is released with `reset_seen` still 0, so `a_release_after_wake` fails at once, before any traffic.
+- **455 ns:** the read of SCRATCH returns X with `rsp_valid` 1, so the catch-all assertion and the scoreboard both fail. The read of CTX at 425 ns still matches: retention worked.
+- **Coverage drops to 66.67%:** `up_order` is never hit, and `cp_up` is one of three coverpoints.
+- The random items may read SCRATCH again before writing it, so a given seed can show more errors; never fewer.
+
+### How to build your own power-aware bench
+
+1. **List the power domains and their controls** from the UPF and the PMU specification: switch, acknowledge, isolation, save, restore, clock enable, reset. Write down the power-down and wake-up orders.
+2. **Add a PMU agent** whose driver performs one action per item, starting each at a clock edge and waiting for the switch's acknowledge, and whose monitor publishes one item per change of the controls.
+3. **Give every driver that waits for a switchable domain an abort path:** a level-sensitive power event, an idle drive, and `item_done()` on every path.
+4. **Write the power-cycle virtual sequence:** quiesce, power down, hold for a random time, wake up in order, check retained and reset values, and resume traffic.
+5. **Make the scoreboard power-aware:** pause and flush with a count at isolation, set the specification's values at the release, and fail on pending items and on zero checks.
+6. **Bind the sequencing assertions** to the PMU's outputs on the always-on clock, reporting through UVM.
+7. **Cover the transitions,** with illegal bins for the orders that must never happen.
+8. **Let the test own the objection** and set a short timeout.
+9. **Mutate the order** (skip the reset, swap reset and restore, release early) and confirm that each mutation fails.
+
+**Checklist before moving on:**
+- [ ] Every driver pairs `get_next_item()` with `item_done()` on every path, including aborts, unless `stop_sequences()` already removed the item.
+- [ ] The power event is level-sensitive (`wait_on()`), and it is reset before traffic resumes.
+- [ ] The scoreboard pauses and flushes at isolation, counts what it drops, and expects reset and retained values after the release.
+- [ ] `check_phase` fails on pending expectations and on a run that checked nothing.
+- [ ] The six sequencing assertions are bound, clocked on the always-on clock, and report through UVM.
+- [ ] Transition coverage closes, and no illegal bin is hit.
+- [ ] The test owns the objection, and the timeout is set per test.
+- [ ] A wake-up without reset, and a restore before reset, both make the bench fail.
+
+## Push Further
+
+### Expert: the global timeout and hung power tests
+
+- **The model.** The run phase starts a global timeout counter; if it expires before the run phase ends, a fatal error results (IEEE 1800.2-2020 §9.8.1.5). `uvm_root::set_timeout()` sets it (F.7.3.3; §9.8.1.5 cites it as F.7.2.3, which is a cross-reference error in the standard). Because `uvm_run_phase` and `uvm_post_shutdown_phase` share `uvm_extract_phase` as successor (§9.6), the run phase cannot end while any run-time phase still has an objection, so a hang in `main_phase` is covered. In uvm-core 2020.3.1 the watchdog is forked only for the run phase (`uvm_phase_hopper.svh`), and `` `UVM_DEFAULT_TIMEOUT `` is 9200 s (`uvm_global_defines.svh`).
+- **Who wins.** `set_timeout(timeout, overridable = 1)`: a call with `overridable = 0` locks the value. uvm-core applies `+UVM_TIMEOUT` in `uvm_root::build_phase()` (`uvm_root.svh`; uvm-core implementation, not in IEEE 1800.2 Annex G), which runs before the test's `build_phase()`. So a `set_timeout()` in the test overrides the command line, and one before `run_test()` does not.
+- **Triage.** `+UVM_OBJECTION_TRACE` prints every raise and drop; `+UVM_PHASE_TRACE` makes uvm-core print the objections still outstanding when the timeout fires (uvm-core implementation). In a power test, the usual culprit is a sequence blocked in `finish_item()` behind a driver waiting for a dead domain. [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) owns hang triage in general.
+
+### Expert: kill(), stop_sequences() and the objections they leave behind
+
+- **The standard and the implementation differ.** IEEE 1800.2-2020 §14.2.5.11 says `kill()` sets the state to `UVM_STOPPED` and that `post_body()` and `post_start()` are executed. uvm-core 2020.3.1's own comment on `kill()` says they "will not be executed", and its code kills the sequence's process without running them (`uvm_sequence_base.svh`). Label any reliance on either behaviour.
+- **Automatic objections.** §14.2.4.3 says the automatic objection is dropped after `post_start()` or when `kill()` is called. uvm-core's `kill()` does drop it. `stop_sequences()` (§15.3.2.14), which §14.2.5.12 says "effectively calls sequence.kill", reaches the sequences through the sequencer's `kill_sequence()`, which calls the internal `m_kill()` and never drops the automatic objection (`uvm_sequencer_base.svh`, `uvm_sequence_base.svh`). A top-level sequence started with `set_automatic_phase_objection(1)` and then stopped by `stop_sequences()` therefore holds its phase open until the timeout. This is uvm-core 2020.3.1 behaviour.
+- **What to do.** Own the objection outside anything that may be stopped (the test, as on this page), or `kill()` a sequence whose objection is automatic. Put cleanup that must run on a kill in `do_kill()` (§14.2.5.12), which both paths call. A sequence started with `start()` has a starting phase only if you call `set_starting_phase()` (§14.2.4.1, §14.2.4.2); without one, the automatic objection raises nothing.
+
+### Expert: in-phase power cycles or phase jumping
+
+This page runs the whole power cycle inside one phase, and resets PD_CPU through the PMU agent. The alternative is to model a wake-up as a return to `reset_phase`: `uvm_phase::jump()` (IEEE 1800.2-2020 §9.3.1.9.1) or `uvm_domain::jump()` (§9.4.2.4) moves the run-time phases back, so every component's `reset_phase` runs again.
+- **For jumping:** components already written to re-initialize in `reset_phase` (flush, reload configuration) do so for free, and per-domain UVM domains can model independently switched blocks.
+- **Against:** every component in the domain must be re-entrant, objections and running sequences of the abandoned phases must be cleaned up, and jumps are hard to debug. Most teams keep power cycles in-phase and reserve jumps for full-chip reset tests.
+- **Holding a phase open.** `phase_ready_to_end()` (§13.1.4.3.2) lets a component, such as a scoreboard waiting for a wake-up to finish, raise an objection again when the phase is about to end. Reset handling in general is the subject of [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
+
+### Expert: who announces the power event
+
+On this page the PMU driver turns `cpu_offline` on and off itself, in the same thread that drives isolation, and before its `item_done()`. The order is then guaranteed: the virtual sequence cannot resume traffic before the event is off. At SoC level the real PMU decides when to isolate, and the testbench can only *observe* it, through a monitor:
+- A monitor sees the change at the next clock edge, a cycle late, and its `trigger()` can race with a driver that starts waiting in the same time slot. `wait_on()` (§10.1.1.2.2) closes that race for a level that stays on; `wait_ptrigger()` (§10.1.1.2.5) only for a trigger within the same time slot. [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) owns the three waits and the `reset()` pitfalls.
+- A sequence that resumes traffic after an observed release must wait for the monitor's event to go off (`wait_off()`, §10.1.1.2.3), not for its own PMU write to complete.
+- An analysis port carrying `pwr_item` transactions is ordered and carries data (which domain, which state); an event carries only on or off. Large environments publish transactions and derive events from them in one subscriber.
+
+### Expert: assertions and coverage inside switched domains
+
+- **Assertions that live inside PD_CPU** (protocol checkers bound to its ports, for example) see X while it is off. Disable them with `disable iff` on a power-good signal, or switch them off and on with `$assertoff`, `$asserton` and `$assertcontrol` (IEEE 1800-2023 §20.11). IEEE 1801-2018 also defines `sim_assertion_control` (§6.55) for this; what simulators do with it is tool-dependent.
+- **Coverage of UPF power states.** IEEE 1801-2018 defines `bind_checker` (§6.12) for attaching checkers and coverage to the power intent, and power states with legal transitions (§6.5 `add_power_state`, §6.7 `add_state_transition`). Several simulators can generate power-state and transition coverage from the UPF; the form is tool-dependent. For an SoC with dozens of domains, generated coverage beats hand-written covergroups.
+
+### Expert: retention corner cases
+
+Each case below is tool-dependent in its details, so check your simulator's power-aware documentation before relying on a particular value:
+- **Save while off** saves X (or whatever the corrupted value is); `a_save_while_on` catches it.
+- **Restore before power is back** restores into an unpowered register, which stays corrupted; `a_restore_while_on` catches it.
+- **Reset and restore together:** which one wins is not something to rely on; keep them in separate cycles, as this page does.
+- **The retention supply itself switched off** loses the saved value too.
+- **A register not listed in the retention strategy's elements** is not retained, however the RTL names it. When a "retained" register comes back X, check the strategy first.
+- **Partial corruption.** IEEE 1801-2018 §4.8 defines simulation states (simstates) between full operation and full corruption, so a domain can be "on" for some behaviour and corrupted for other behaviour. Which simstates a given power state uses comes from the UPF.
+
+### Expert: power-aware gate-level simulation
+
+RTL power-aware simulation inserts *behaviour*; the netlist contains the real isolation, retention and level-shifter cells, the switch network and their control wiring. A power-aware gate-level simulation applies the UPF to the netlist and catches what RTL simulation cannot: a missing or misplaced cell, a cell powered from the wrong supply, a retention flop whose save or restore pin is tied wrongly, and X-optimism in RTL `if` and `case` statements that the gates do not share. Its cost is run time and set-up effort, so teams run a small set of power-cycle tests at gate level. How the simulator maps cell models to UPF strategies is tool-dependent.
+
+### Expert: regressions and the cost of power-aware simulation
+
+- **Which tests run power-aware.** Power-aware simulation is slower than plain RTL simulation (by how much is tool- and design-dependent), so most regressions run most tests without UPF and a dedicated subset with it: every legal transition, random hold times, random acknowledge delays, and power events injected at transaction boundaries and mid-transfer.
+- **Inject at both points.** At a transaction boundary, the quiescing path is tested; mid-transfer, the abort, flush and accounting paths are. A regression that only powers down when the bus is idle never exercises the driver's abort.
+- **Make the accounting visible.** Report `dropped_by_power` in every summary and track it across the regression: a test whose drops are always zero is not testing abrupt power loss.
+
+### Expert: interview angles
+
+Attempt each question before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: a mid-transfer power loss"
+  question="You must verify that PD_CPU can lose power in the middle of a transfer with no false failures and no masked bugs. What do you change in the testbench?"
+  options={[
+    { text: "Disable the scoreboard for the whole test, and check only that the simulation does not hang.", correct: false, feedback: "That removes the false failures by removing the checks: a lost retention or a wrong reset value would pass." },
+    { text: "Give the driver an abort path on a level-sensitive power event with item_done() on every path; pause and flush the scoreboard at isolation with a dropped count and expect reset and retained values at the release; bind order assertions on the always-on clock; own the objection in the test.", correct: true, feedback: "Right. Each component gets one change: the driver cannot hang, the scoreboard neither cries wolf nor misses lost state, the assertions check the order, and a stopped sequence cannot strand the objection." },
+    { text: "Add a uvm_callback to the driver that aborts the sequence when power drops.", correct: false, feedback: "A callback returns to the driver; it cannot end the sequence that is waiting in finish_item(). The driver must abort and call item_done()." },
+    { text: "Call stop_sequences() on every sequencer at power-down and let the driver call item_done() as usual.", correct: false, feedback: "stop_sequences() empties the request FIFO, so the driver's later item_done() for the item it holds is fatal (SQRBADITMDN). In uvm-core it also leaves an automatic objection raised." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: a power test at the timeout"
+  question="A power-cycle test ends with UVM_FATAL [PH_TIMEOUT] after 9200 s of simulated time. How do you triage it?"
+  options={[
+    { text: "It cannot be a power bug: PH_TIMEOUT only guards run_phase, and the power cycle runs in main_phase.", correct: false, feedback: "Wrong model: run_phase cannot end while main_phase has an objection, because they share a successor (IEEE 1800.2-2020 §9.6), so a hang in main_phase does end at the timeout." },
+    { text: "Rerun with a short set_timeout and +UVM_OBJECTION_TRACE (and +UVM_PHASE_TRACE for the outstanding list), find the objection that never dropped, then look for a sequence blocked in finish_item() behind a driver waiting for the powered-down domain, or a stopped sequence that held the objection.", correct: true, feedback: "Right. The trace names the objector; in power tests it is almost always a driver with no abort path or an objection held by a sequence that was killed or stopped." },
+    { text: "Increase the timeout: power-aware simulation is slow, so the test needs more time.", correct: false, feedback: "9200 s of simulated time is not slowness, it is a hang. More time only delays the same failure." }
+  ]}
+/>
+
+Two more to rehearse aloud: "What does power-aware gate-level simulation catch that RTL power-aware simulation cannot?" and "How do you get power-state coverage for forty domains without writing forty covergroups?" The expert items above hold the answers.
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "The bus driver is waiting for PD_CPU's response when PD_CPU powers down. A pre_drive callback registered on the driver returns early. What happens to the sequence that sent the item?",
+      answers: [
+        { text: "It ends: returning from the callback aborts the sequence that produced the item", correct: false, feedback: "A callback returns to the driver, at the point where the driver called it. It has no handle on the sequence's thread." },
+        { text: "uvm_do_callbacks kills the parent sequence when a callback returns early", correct: false, feedback: "uvm_do_callbacks only iterates over the registered callbacks and calls their method; it kills nothing." },
+        { text: "Nothing changes: it stays in finish_item() until the driver calls item_done() or the sequence is killed or stopped", correct: true, feedback: "Right. Only the driver's item_done(), kill(), stop_sequences() or a cooperative flag the sequence checks can end it." },
+        { text: "The sequencer times the item out after the phase's drain time", correct: false, feedback: "Sequencers have no item timeout, and the drain time applies to objections, not to items." }
+      ],
+      explanation: "A callback is a hook inside the driver's code; when it returns, control is back in the driver. The sequence is blocked in finish_item() and is released only by item_done(), or ended by kill(), stop_sequences() or its own stop flag. The distractors attribute abort powers to callbacks or to timers UVM does not have.",
+      objective: 5
+    },
+    {
+      question: "A scoreboard has no power hooks, and its check_phase reports an error for every expectation still in its queue. Three requests had been accepted when isolation went on; PD_CPU, correctly, never answers them. What does the end of the test show?",
+      answers: [
+        { text: "A clean pass: transactions that never complete cannot mismatch", correct: false, feedback: "They cannot mismatch, but they stay in the queue, and this check_phase reports what is left there." },
+        { text: "SCB_PENDING-style errors for the 3 expectations: a false failure, although the DUT behaved correctly", correct: true, feedback: "Right. The fix is to flush at isolation and count the drops (dropped_by_power), not to delete the pending check." },
+        { text: "Nothing: UVM flushes analysis FIFOs and scoreboards when a domain powers down", correct: false, feedback: "UVM knows nothing about power domains; only your code can flush." },
+        { text: "Three mismatches against the clamped data value 0", correct: false, feedback: "The clamp makes rsp_valid 0, so the monitor publishes no responses at all: there is nothing to compare, only expectations left over." }
+      ],
+      explanation: "Without power hooks, a scoreboard keeps expectations for transfers that power cut off; with a pending check at the end, that is a false failure. Without the pending check it would be a silent pass, which is worse. The monitor sees no responses while isolated because valid is clamped to 0.",
+      objective: 1
+    },
+    {
+      question: "rsp_valid is isolated with clamp value 0. rsp_rdata is a 4-state signal that, by mistake, has no isolation. What does a monitor on the always-on side see while PD_CPU is off?",
+      answers: [
+        { text: "rsp_valid = 0 and rsp_rdata = 0: a powered-down domain drives zeros", correct: false, feedback: "Only isolated outputs read their clamp. An unisolated 4-state output of an off domain reads X." },
+        { text: "rsp_valid = 0 and rsp_rdata = X; the bus looks idle, and a monitor that samples data only with valid is not affected", correct: true, feedback: "Right. Still fix the isolation: a design that does use the data without valid would propagate the X." },
+        { text: "Both X, so the monitor must report a protocol error", correct: false, feedback: "rsp_valid is isolated, so it reads the clamp, 0, not X." },
+        { text: "Nothing: the power-aware simulator disables monitors attached to an off domain", correct: false, feedback: "The simulator corrupts the design's state; it does not touch testbench components." }
+      ],
+      explanation: "Isolated outputs read the clamp; unisolated 4-state outputs read X; 2-state ones may read 0 and hide the bug. Clamping valid to 0 is what makes the bus look idle.",
+      objective: 1
+    },
+    {
+      question: "Two properties are checked at each rising edge: A is $fell(cpu_pwr_en) |-> $past(cpu_iso_en), and B is $fell(cpu_iso_en) |-> cpu_pwr_ack && restored. Sampled values at edges 1 to 7: cpu_pwr_en = 1,1,0,0,1,1,1; cpu_iso_en = 0,1,1,1,1,0,0; cpu_pwr_ack = 1,1,1,0,0,1,1; restored = 1,1,1,0,0,0,1. What do they report?",
+      answers: [
+        { text: "A fails at edge 3, because isolation rose only one edge before power fell", correct: false, feedback: "One edge is enough: $past(cpu_iso_en) at edge 3 is the value at edge 2, which is 1." },
+        { text: "A passes at edge 3, and B fails at edge 6", correct: true, feedback: "Right. At edge 6 cpu_iso_en has fallen while restored is still 0: isolation was released before the restore at edge 7." },
+        { text: "Both pass: the restore happens at edge 7, and B only needs it to happen eventually", correct: false, feedback: "B is checked at the edge where isolation falls. There is no eventually in it." },
+        { text: "B fails at edge 4, when power is lost with restored = 0", correct: false, feedback: "B's antecedent is the fall of cpu_iso_en, which happens only at edge 6. At edge 4 B is vacuously true." }
+      ],
+      explanation: "A triggers at edge 3, where cpu_pwr_en falls (1 at edge 2, 0 at edge 3), and $past(cpu_iso_en) is the edge-2 value, 1: pass. B triggers only at edge 6, where cpu_iso_en falls; cpu_pwr_ack is 1 but restored is 0, so B fails. The restore at edge 7 is one cycle late.",
+      objective: 3
+    },
+    {
+      question: "A sequence in main_phase holds an objection and is blocked behind a driver that waits for a response from PD_CPU, which is powered down. The test does not call set_timeout. With uvm-core 2020.3.1, what happens?",
+      answers: [
+        { text: "Nothing ever times out: the PH_TIMEOUT watchdog only guards run_phase, not main_phase", correct: false, feedback: "The watchdog runs in the run phase, but the run phase cannot end while main_phase has an objection, because they share a successor (§9.6). So it covers the hang." },
+        { text: "main_phase ends after its drain time and the test passes", correct: false, feedback: "Drain time starts only when the last objection is dropped, which never happens here." },
+        { text: "UVM kills every sequence when a power domain switches off", correct: false, feedback: "UVM has no notion of power domains." },
+        { text: "The test hangs until the global timeout (9200 s by default) and ends with UVM_FATAL [PH_TIMEOUT]", correct: true, feedback: "Right. Set a short timeout per test, and give the driver an abort path so that the hang never happens." }
+      ],
+      explanation: "IEEE 1800.2-2020 §9.8.1.5: the run phase starts a global timeout counter and a fatal error results if it expires before the run phase ends. The run phase cannot end before post_shutdown, because they share extract as successor (§9.6), so a main_phase hang ends at the timeout, which defaults to 9200 s in uvm-core 2020.3.1.",
+      objective: 4
+    },
+    {
+      question: "On an abrupt power loss, the environment calls bus_sqr.stop_sequences() while the bus driver holds an item. The driver then aborts the transfer and calls item_done() as usual. What happens?",
+      answers: [
+        { text: "UVM_FATAL [SQRBADITMDN]: stop_sequences() emptied the request FIFO, so item_done() finds no outstanding request", correct: true, feedback: "Right. One owner per item: either finish the item first and then stop, or skip item_done() for the item that was stopped." },
+        { text: "The item completes normally and the killed sequence restarts", correct: false, feedback: "Killed sequences do not restart, and the item is no longer in the sequencer." },
+        { text: "A warning, and the item_done() is ignored", correct: false, feedback: "uvm-core reports it with uvm_report_fatal." },
+        { text: "The killed sequence receives the response", correct: false, feedback: "The sequence was killed; there is no thread left to receive anything." }
+      ],
+      explanation: "In uvm-core 2020.3.1 the item stays in the sequencer's request FIFO until item_done(); stop_sequences() flushes that FIFO, and item_done() with an empty FIFO is UVM_FATAL SQRBADITMDN (uvm_sequencer.svh).",
+      objective: 5
+    },
+    {
+      question: "After a power cycle, the non-retained STATUS register reads X and the retained CTRL register reads its saved value. The PMU's wake-up order was: power on, wait for the acknowledge, restore, clock on, release isolation. What is wrong?",
+      answers: [
+        { text: "The domain reset after power-on is missing: STATUS is never given its reset value", correct: true, feedback: "Right. Power returning restores nothing; non-retained state stays X until a reset. Add the reset after the acknowledge and before the restore." },
+        { text: "A second save is needed after power-on", correct: false, feedback: "Saves happen before power-down. A save after power-on would save the current, unrestored state." },
+        { text: "The isolation was released before the restore", correct: false, feedback: "In this order the restore comes before the release, and CTRL, the retained register, is correct." },
+        { text: "A level shifter is missing on STATUS's read path", correct: false, feedback: "A missing level shifter is a static power-intent problem; it does not turn one register X while its neighbour is correct." }
+      ],
+      explanation: "The wake-up skipped RST. Retained registers come back through the restore; non-retained ones need the domain reset. a_release_after_wake catches the missing reset at the release, before any traffic.",
+      objective: 4
+    },
+    {
+      question: "After wake-up, the retained CTX register reads 8'h00, its reset value, instead of the saved 8'hA5. Isolation was on throughout, and no assertion about X fired. What is the most likely cause?",
+      answers: [
+        { text: "The save happened after power-off", correct: false, feedback: "That saves X, so CTX would come back X, not 8'h00." },
+        { text: "Isolation was released early", correct: false, feedback: "An early release shows the wrong value to PD_TOP for a while, but the restore still loads 8'hA5 eventually." },
+        { text: "The domain reset came after (or together with) the restore, and wiped the restored value", correct: true, feedback: "Right. Finish the reset first, then restore. The checker's restored flag is cleared by a reset for exactly this reason." },
+        { text: "The retention element was clamped by isolation", correct: false, feedback: "Isolation clamps outputs at the domain boundary; it does not touch the retention element." }
+      ],
+      explanation: "A reset value where a saved value was expected means a reset overwrote the restore. A save while off gives X, and an early release gives a transient wrong value at the boundary. Keep reset and restore in separate cycles, reset first.",
+      objective: 4
+    },
+    {
+      question: "Which wake-up order should power_cycle_vseq send to the PMU agent after the hold?",
+      answers: [
+        { text: "PWR_ON, RESTORE, RST, CLK_ON, ISO_OFF", correct: false, feedback: "The reset after the restore wipes the restored value: CTX comes back as its reset value." },
+        { text: "ISO_OFF, PWR_ON, RST, RESTORE, CLK_ON", correct: false, feedback: "Releasing isolation first hands PD_TOP the X of a domain that is still off." },
+        { text: "PWR_ON (wait for the acknowledge), RST, RESTORE, CLK_ON, ISO_OFF", correct: true, feedback: "Right: power first, then reset, then restore, then the clock, and the release last." },
+        { text: "PWR_ON, RST, CLK_ON, ISO_OFF, RESTORE", correct: false, feedback: "The release comes before the restore, so PD_TOP can read CTX's reset value until the restore happens." }
+      ],
+      explanation: "Each wake-up step depends on the one before: reset and restore need power; the restore must follow the reset, or the reset wipes it; the release must come last, when every output is driven by valid state.",
+      objective: 2
+    },
+    {
+      question: "A top-level traffic sequence was started on bus_sqr with set_starting_phase(phase) and set_automatic_phase_objection(1). On an abrupt power loss, the environment calls bus_sqr.stop_sequences(). With uvm-core 2020.3.1, how does the test end?",
+      answers: [
+        { text: "Normally: stop_sequences() kills the sequence, and killing drops the automatic objection", correct: false, feedback: "kill() on the sequence drops it, but stop_sequences() goes through the sequencer's kill_sequence() and m_kill(), which never drop it in uvm-core 2020.3.1." },
+        { text: "At the timeout: the automatic objection is never dropped, so the phase cannot end", correct: true, feedback: "Right. Own the objection outside anything that may be stopped (the test), or kill() the sequence instead." },
+        { text: "Immediately, with UVM_FATAL [SQRBADITMDN]", correct: false, feedback: "That fatal comes from an item_done() after the FIFO was flushed, not from the objection." },
+        { text: "Normally, because post_body() drops the objection on the way out", correct: false, feedback: "A stopped or killed sequence does not run post_body() in uvm-core 2020.3.1, and the automatic objection is not dropped in post_body() anyway." }
+      ],
+      explanation: "IEEE 1800.2-2020 §14.2.4.3 says the automatic objection is dropped after post_start() or when kill() is called. In uvm-core 2020.3.1 kill() drops it, but stop_sequences() calls m_kill() through kill_sequence(), which does not, so the phase runs to the timeout.",
+      objective: 5
+    },
+    {
+      question: "You want coverage that proves every wake-up used the legal order and flags a release straight after power-on. Which model does that?",
+      answers: [
+        { text: "A cross of the bus opcode with every power state, sampled at every clock edge", correct: false, feedback: "It counts idle cycles as opcodes, makes traffic to an off domain a goal, and says nothing about order." },
+        { text: "A coverpoint on the PMU action with automatic bins only", correct: false, feedback: "It proves that each action happened at least once, not that they happened in the right order." },
+        { text: "A coverpoint on the PMU action, sampled once per published power event, with a transition bin for PWR_ON => RST => RESTORE => CLK_ON => ISO_OFF and an illegal transition bin for PWR_ON => ISO_OFF", correct: true, feedback: "Right. Transition bins record order (§19.5.2), illegal bins report the forbidden order at run time (§19.5.6), and per-event sampling counts events, not cycles." },
+        { text: "An assertion cover property on cpu_iso_en", correct: false, feedback: "It shows that isolation toggled, not the order of the wake-up steps." }
+      ],
+      explanation: "Order is a property of consecutive samples, so it needs transition bins, sampled per event. Illegal transition bins turn a forbidden order into a run-time error. Crosses with every power state make illegal traffic a goal.",
+      objective: 3
+    }
+  ]}
+/>
+
+### Kata 1 (debug): the wake-up that skipped reset
+
+**Objective 4.** A colleague's power test fails with these lines (abridged), and you have the virtual sequence's wake-up call: `run_pmu({PWR_ON, RESTORE, CLK_ON, ISO_OFF});`.
+
+```text
+UVM_ERROR @ 405 ns: reporter [PWR_SEQ] a_release_after_wake: released before power, reset, restore
+UVM_INFO  @ 405 ns: uvm_test_top.env.scb [SCB_PWR] isolation off: comparing resumed, expecting CTX=0xa5 SCRATCH=0x00
+UVM_ERROR @ 455 ns: reporter [PWR_SEQ] a_no_x_into_top: X reached PD_TOP from PD_CPU
+UVM_ERROR @ 455 ns: uvm_test_top.env.scb [SCB_MISMATCH] expected 0x00 observed 0xxx
+```
+
+Name the missing step, explain why CTX still read correctly, and say which line of the log you would trust first, and why.
+
+<details>
+<summary>Answer</summary>
+
+The domain reset is missing: the order should be `PWR_ON, RST, RESTORE, CLK_ON, ISO_OFF`. Power returning restored nothing, so `scratch` stayed X; `ctx_reg` read 8'hA5 because the restore loaded it from the retention element, which does not need a reset. Trust the first error, `a_release_after_wake` at 405 ns: it fires at the release, before any traffic, and it names the step. The two errors at 455 ns are consequences: the first read of SCRATCH returned X, which both the catch-all assertion and the scoreboard report.
+
+</details>
+
+### Kata 2 (write and predict): a light-sleep mode
+
+**Objective 3.** PD_CPU gets a second, cheaper low-power mode, **light sleep**: the PMU stops the clock and isolates, but keeps the power on, so nothing is saved, restored or reset. The PMU actions are `CLK_OFF, ISO_ON, HOLD, CLK_ON, ISO_OFF`.
+1. Add a transition bin for the light-sleep entry and exit to `pwr_cov`, without changing the existing bins.
+2. Predict, before you trace the code: does `a_release_after_wake` pass at the release? What does the scoreboard expect CTX and SCRATCH to read afterwards?
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// snippet: new coverpoint in pwr_cov's cg_pwr
+cp_light: coverpoint op {
+  bins light_sleep = (CLK_OFF => ISO_ON => CLK_ON => ISO_OFF);  // HOLD: not published
+}
+```
+
+1. HOLD is not a pin change, so the monitor publishes no item for it, and the transition goes straight from ISO_ON to CLK_ON. A separate coverpoint keeps the light-sleep goal apart from the full power cycle's bins; `cp_op` needs no change.
+2. **`a_release_after_wake` passes.** `reset_seen` and `restored` are cleared only when power is lost, and here `cpu_pwr_ack` stays 1, so both still hold their values from the last full wake-up (or from the power-on reset). The release finds power on, the clock on, the reset deasserted and both flags set.
+3. **The scoreboard expects the values from before the sleep.** `lost_power` is set only by PWR_OFF, so at ISO_OFF the model is left unchanged: CTX and SCRATCH must read what they held before. A light sleep that corrupted SCRATCH would now be a mismatch, which is the right verdict.
+
+**Reflect:** what would the scoreboard expect if it had copied every event (reset, restore) into its model instead of following the specification? For light sleep, the same; but replay the "restore before reset" bug from quiz question 8 against that design, and see why this page's scoreboard follows the specification.
+
+</details>
+
+### Kata 3 (choose): a brown-out in the middle of a burst
+
+**Objective 5.** A test injects an abrupt power loss on PD_CPU while a background `stream_seq` is sending a long burst on `bus_sqr`; one item is in the driver, waiting for its response. The test raises its own objection and must end cleanly after the wake-up. Choose the stopping mechanism, and list what each component does.
+
+<details>
+<summary>Answer</summary>
+
+- **Driver:** the abort path on `cpu_offline.wait_on()` ends the transfer with `BUS_ABORTED`, idles the bus, and calls `item_done()`, which releases `stream_seq` from `finish_item()`.
+- **Sequence:** either `stream_seq` checks `req.status` (or `cpu_offline.is_on()`) and returns, the cooperative stop; or the virtual sequence calls `stream_seq.kill()`. Do not use a callback: it cannot end the sequence.
+- **If you use `stop_sequences()` instead,** call it only after the driver has returned the held item, or have the driver skip `item_done()` for it; otherwise `SQRBADITMDN`. And keep the objection out of `stream_seq`: `stop_sequences()` leaves an automatic objection raised in uvm-core 2020.3.1.
+- **Scoreboard:** the in-flight expectation is flushed at ISO_ON and counted, so the summary shows `dropped_by_power=1`, and `pending=0`.
+
+</details>
+
+### Lab: retention bug and isolation sequencing
+
+Fix a broken wake-up in a plain SystemVerilog bench that uses this page's PD_CPU model and sequencing assertions (objectives 3 and 4). You run the starter and read its failures, reorder the wake-up and find that SCRATCH still reads X, write `a_release_after_wake` so the bug is caught at the release, add the domain reset to reach `PASS=5 FAIL=0`, then break the order on purpose and predict each failure. An optional last step turns the fixed order into the body of `power_cycle_vseq`.
 
 <LabLink labId="power-aware-retention" />
+
+The flashcards below drill the order of a power cycle, the scoreboard and driver rules, and the symptoms of each sequencing bug.
+
+## References & Next Topics
+
+**Primary sources:**
+- IEEE 1800.2-2020: §9.3.1.9.1 `jump`; §9.4.2.4 `uvm_domain::jump`; §9.6 task phases and the shared successor of `uvm_run_phase` and `uvm_post_shutdown_phase`; §9.8.1.5 `uvm_run_phase` and the global timeout; §10.1.1.2.2 `wait_on`, §10.1.1.2.3 `wait_off`, §10.1.1.2.4 `wait_trigger`, §10.1.1.2.5 `wait_ptrigger`, §10.1.1.2.7 `is_on`, §10.1.1.2.8 `reset`, §10.1.2.2.4 `trigger`; §10.5.1.3.7 `set_drain_time`; §13.1.4.3.2 `phase_ready_to_end`; §14.2.4.1–§14.2.4.4 starting phase and automatic objection; §14.2.5.11 `kill`; §14.2.5.12 `do_kill`; §15.3.2.14 `stop_sequences`; Annex B.3.3 `` `uvm_declare_p_sequencer ``; B.5.22 `` `uvm_analysis_imp_decl ``; F.7.3.3 `set_timeout`.
+- uvm-core 2020.3.1 (implementation details named on this page): `uvm_sequence_base.svh` (`kill`, `m_kill`, `start`), `uvm_sequencer_base.svh` (`stop_sequences`, `kill_sequence`), `uvm_sequencer.svh` (`item_done` and `SQRBADITMDN`, the repeated `get_next_item` error, the request FIFO flush), `uvm_phase_hopper.svh` (`PH_TIMEOUT`), `uvm_global_defines.svh` (`UVM_DEFAULT_TIMEOUT`), `uvm_root.svh` (`set_timeout`, `+UVM_TIMEOUT`), `uvm_objection.svh` (`+UVM_OBJECTION_TRACE`), `uvm_phase.svh` (`+UVM_PHASE_TRACE`), `uvm_event.svh`, `uvm_callback_defines.svh`.
+- IEEE 1800-2023: Table 6-7 default initial values; §9.6.3 `disable fork`; §14.3 default skews; §14.16 synchronous drives; §16.9.3 sampled value functions; §16.12 declaring properties; §16.15 `disable iff`; §19.5.2 transition bins; §19.5.3 automatic bins; §19.5.5 excluding values; §19.5.6 illegal bins; §19.6.2 and §19.6.3 excluded and illegal cross products; §19.8.1 overriding `sample`; §19.11 coverage computation; §20.9 `$isunknown`; §20.11 assertion control; §23.3.2.3 `.name` connections; §23.11 `bind`.
+- IEEE 1801-2018 (published as IEC 61523-4:2023; clause numbers from its table of contents): §4.8 simstates; §6.5 `add_power_state`; §6.7 `add_state_transition`; §6.12 `bind_checker`; §6.20 `create_power_domain`; §6.22 `create_power_switch`; §6.45 `set_isolation`; §6.50 `set_retention`; §6.55 `sim_assertion_control`; clause 9 simulation semantics.
+
+**Prerequisites:** [I-SV-8: Power Intent and UPF Fundamentals](/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index), [A-UVM-8: Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) and [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index).
+
+**Related:**
+- [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) and [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake): the mechanics the power-cycle sequence and the driver abort rely on.
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): accounting, pending checks and end-of-test draining.
+- [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index): what callbacks can and cannot do.
+- [I-UVM-1C: UVM Phasing and Synchronization](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): objections, drain time, `phase_ready_to_end` and the timeout.
+- [I-SV-4C: SystemVerilog Checkers and Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index): binding checkers into a design you do not edit.
+- [Coverage Closure Workflow](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow): closing the power-sequence coverage.
+- [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): hang triage and objection tracing.
+- [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index): proving the PMU's sequencing properties formally.
+- [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index): reset-aware agents and mid-test reset.
+- [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): power scenarios at SoC scale.
+
+<NextLesson />

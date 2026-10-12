@@ -1,177 +1,870 @@
 ---
 title: "AHB Verification Methodology"
-description: "Build a complete AHB verification environment: transaction modeling, monitor/checker architecture, protocol assertions, functional coverage, debug strategies, and interview-ready knowledge."
+description: "Build and debug an AHB verification environment (pipelined monitor, tagged protocol checker, coverage model, byte-lane scoreboard, and stimulus with random wait states and error injection) that accepts every legal transfer and flags illegal ones."
 order: 5
 flashcards: "B-AHB-3_AHB_Verification"
+sources:
+  - title: "Arm AMBA 5 AHB Protocol Specification (AHB5 and AHB-Lite)"
+    type: "standard"
+    identifier: "IHI0033B.b"
+    version: "B.b"
+  - title: "Arm AMBA AHB Protocol Specification (Issue C)"
+    type: "standard"
+    identifier: "IHI0033C"
+    version: "C"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
 ---
 
-import { LabLink } from '@/components/mdx/LabLink';
+## Quick Take
 
-# AHB Verification Methodology
+- **What it is:** An AHB **verification environment** is the testbench (TB) code around an AHB design under test (DUT) that answers two questions for every transfer: was it legal, and was it right? It has five parts. A **master driver** and a **slave responder** produce traffic with every legal timing (wait states, BUSY cycles, ERROR responses). A **monitor** watches the pins and turns each completed transfer into a transaction object. A **protocol checker**, written as SystemVerilog Assertions (SVA), judges every clock edge against Arm IHI0033B.b. A **coverage model** records which planned situations actually happened, and a **scoreboard** checks that the data is correct.
+- **Why it matters:** AHB bugs live in the pipeline: in wait states, BUSY cycles and the two-cycle ERROR response. A checker that fires on legal behaviour (a master cancelling after an ERROR) gets switched off by the team, and one that misses a one-cycle ERROR gives false confidence. An environment that passes because nothing was checked, or because its assertion messages never reach the UVM report summary, is worse than no environment.
+- **The Analogy:** A railway station. The clerk (monitor) pairs each ticket (address phase) with the passenger who actually boards later (data phase), however long the platform delay (wait states). A signal box (checker) checks every signal against the rulebook, a census taker (coverage) counts which kinds of journeys happened, and the luggage office (scoreboard) checks that every bag reached the right place. *Where it breaks:* the signal box sees only the track, the pins. A slave that writes the same data twice inside its memory during a wait state breaks no rule on the pins (the double-write pitfall of [B-AHB-2](/curriculum/T3_Advanced/B-AHB-2_AHB_Pitfalls_and_Deadlocks/index)), so only a scoreboard or a white-box check can see it. And AHB has no ticket numbers: the clerk must work out which data belongs to which address from timing alone.
 
-You now understand how AHB *should* work (Module B-AHB-1) and how it *breaks* (Module B-AHB-2).
-This module closes the loop: **how do you prove the design is correct?**
+**You will be able to:**
+1. **Write** an AHB transaction item and a passive monitor that pairs each accepted address phase with its (possibly waited) data phase, flushes on reset, and **predict** the edge at which each transfer is published.
+2. **Write** a protocol checker whose assertions accept every legal transfer (wait-state exceptions, BUSY, cancel after ERROR) and flag illegal ones (one-cycle ERROR, address or write data not held, 1KB crossing, misalignment), each tagged **[Protocol §x]** or **[Integration policy]**, and that reports through UVM.
+3. **Write** a coverage model over transfer type × burst × size × wait states × response, mapped to verification-plan items, and **show** that each assertion's antecedent was exercised.
+4. **Choose** what the checker, the scoreboard and the coverage each own, and **design** a byte-lane scoreboard for an AHB slave (and outline the interconnect version).
+5. **Debug** an AHB failure from the waveform and the log with the HREADY trace, the transaction-boundary finder, ERROR forensics and a latency budget, and **configure** the stimulus (random wait states, BUSY, error injection) that provokes it.
 
-We will build up a complete AHB verification methodology from first principles — the same approach used by VIP teams at ARM, Synopsys, and Cadence to verify AHB interconnects and slave controllers.
+<BeforeYouStart />
 
-<QuickTake>
-- **Transaction modeling** converts raw pin-level AHB signals into high-level objects for scoreboarding.
-- **Monitor + Checker** is the core passive verification component — it watches and validates without driving.
-- **Protocol assertions** catch violations in real time; functional **coverage** proves you exercised enough scenarios.
-- **Debug patterns** turn a failing waveform into a root cause in minutes, not days.
-</QuickTake>
+This lesson assumes you can read AHB timing cycle by cycle ([B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index)) and know the classic AHB bugs and the assertion for each ([B-AHB-2](/curriculum/T3_Advanced/B-AHB-2_AHB_Pitfalls_and_Deadlocks/index)). Here those pieces become one reusable environment.
 
----
+## Build Your Mental Model
 
-## 1. Transaction Modeling
+### Words you need first
 
-The first step in any bus verification environment is defining a **transaction object** that captures everything about a single AHB transfer.
+Terms from earlier lessons are linked; the AHB terms are used exactly as Arm IHI0033B.b (the AMBA 5 AHB specification) uses them, and section numbers on this page are IHI0033B.b numbers. The later issue IHI0033C (2021) says *manager* and *subordinate* for master and slave and renumbers chapter 3 from §3.5 onwards; the section map is in [B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index).
+
+- **Transfer, address phase, data phase:** one AHB read or write. In its **address phase** the master drives the address and control signals (HADDR, HWRITE, HSIZE, HBURST, HTRANS); in its **data phase** the data moves (HWDATA or HRDATA) and the slave answers on HREADY and HRESP. The next transfer's address phase overlaps the current data phase (IHI0033B.b §3.1); that overlap is the **pipeline**.
+- **Accepted:** an address phase is accepted at a rising edge of HCLK where HREADY is high and HTRANS is NONSEQ or SEQ. Until then it is only *on the bus*.
+- **Wait state:** a cycle in which the slave holds HREADY low, so the current data phase does not end, and the address phase waiting behind it is not accepted (§3.6).
+- **HREADYOUT and HREADY:** each slave drives its own HREADYOUT; the interconnect's **multiplexor** picks the one belonging to the slave that owns the current data phase and sends it to the master and to every slave as HREADY (§4.3). The **decoder** turns the address into one select, HSELx, per slave (§4.2).
+- **IDLE, BUSY, NONSEQ, SEQ:** the four HTRANS values (§3.2 Table 3-1). NONSEQ starts a transfer or a burst, SEQ is a later beat of a burst, BUSY is a pause inside a burst, IDLE means no transfer. Only NONSEQ and SEQ move data (HTRANS[1] = 1).
+- **Beat, burst:** a burst is a sequence of transfers (beats) with related addresses, described by HBURST: SINGLE, INCR (undefined length), INCR4/8/16 and WRAP4/8/16 (§3.5).
+- **Agent, driver, sequencer, active and passive:** a UVM **agent** groups the components for one interface. Its **driver** turns sequence items into pin activity, its **sequencer** passes items from running sequences to the driver, and its monitor watches the pins. An **active** agent has all three; a **passive** agent has only the monitor ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index), [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)).
+- **Monitor, analysis port:** a UVM monitor is a passive component that only watches pins; it publishes each transaction through an **analysis port**, which calls `write()` on every connected subscriber ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
+- **Subscriber, scoreboard, reference model:** a `uvm_subscriber` is a component with one analysis export, `analysis_export`, whose `write()` receives every published item (IEEE 1800.2-2020 §13.9). A **scoreboard** checks the DUT's data against a **reference model**, code that computes what the DUT should have done ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
+- **Concurrent assertion, antecedent, vacuous success:** an SVA property such as `a |=> b` is checked at every clock edge; `a` is the **antecedent**. When the antecedent is false, the attempt succeeds **vacuously**: it passes without checking anything (IEEE 1800-2023 §16.14.8; [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)).
+- **bind:** a statement that instantiates a checker module inside a design module without editing the design's source (IEEE 1800-2023 §23.11; [I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index)).
+- **Clocking block:** a block in an interface that samples inputs just before a clock edge and drives outputs just after it, so the TB and the DUT never race ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)).
+- **Verification plan (vplan):** the list of features and situations that must be shown to work, each mapped to a check and a coverage item ([I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)).
+- **Responder:** a slave-side TB component that answers transfers (wait states, OKAY or ERROR, read data) instead of starting them.
+
+### The environment and who owns what
+
+**Predict first:** a read returns the wrong data, but every protocol rule was obeyed. Which component should report it, and which must stay silent?
+
+The environment below is the one built in Make It Work, with the same names. The DUT is a small AHB-Lite SRAM slave, `ahb_sram_slave`. A module BFM (bus functional model), `ahb_master_bfm`, drives the master side; a passive agent's monitor feeds the scoreboard and the coverage collector; and the protocol checker is bound inside the DUT.
+
+<ArchitectureDiagram
+  title="The AHB slave verification environment built on this page"
+  caption="The checker sees pins, the scoreboard sees transactions. ahb_mon samples the bus through the clocking block mon_cb and publishes one ahb_item per completed transfer on ap; ahb_sb and ahb_cov each receive it through write(t). ahb_protocol_checker is bound inside ahb_sram_slave and reads the same pins."
+  nodes={[
+    { id: "test", label: "ahb_smoke_test", kind: "test", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "env", label: "ahb_env", kind: "env", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "agt", label: "ahb_agent (passive)", kind: "agent", col: 0, row: 0, container: true },
+    { id: "mon", label: "ahb_mon", kind: "monitor", col: 0, row: 0 },
+    { id: "sb", label: "ahb_sb", kind: "scoreboard", col: 2, row: 0 },
+    { id: "cov", label: "ahb_cov", kind: "subscriber", col: 2, row: 1 },
+    { id: "bus", label: "bus : ahb_if", sublabel: "mon_cb, mst_cb", kind: "interface", col: 0, row: 2 },
+    { id: "dut", label: "ahb_sram_slave", kind: "dut", col: 1, row: 2, colSpan: 2, container: true },
+    { id: "chk", label: "u_chk", sublabel: "ahb_protocol_checker (bound in)", kind: "generic", col: 2, row: 2 },
+    { id: "bfm", label: "ahb_master_bfm", sublabel: "drives through mst_cb", kind: "generic", col: 0, row: 3 }
+  ]}
+  ports={[
+    { id: "mon.ap", node: "mon", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "sb.imp", node: "sb", side: "left", kind: "analysis_imp", label: "item_imp" },
+    { id: "cov.imp", node: "cov", side: "left", kind: "analysis_imp", label: "analysis_export" }
+  ]}
+  edges={[
+    { from: "mon.ap", to: "sb.imp", style: "data", label: "write(t)" },
+    { from: "mon.ap", to: "cov.imp", style: "data", label: "write(t)" },
+    { from: "bus", to: "mon", style: "data", label: "mon_cb samples" },
+    { from: "bfm", to: "bus", style: "control", label: "mst_cb drives" },
+    { from: "bus", to: "dut", style: "structural", label: "AHB pins" }
+  ]}
+/>
+
+Each layer owns one question, and no two layers own the same one:
+
+| Concern | Checker | Monitor | Scoreboard | Coverage |
+|---|---|---|---|---|
+| Hold rules in wait states, the two-cycle ERROR, zero-wait OKAY for IDLE and BUSY | **owns** (pin-level protocol) | — | — | covers that each situation happened |
+| SEQ address and control continuity, alignment, the 1KB rule, HSIZE within the bus | **owns** | — | — | covers bursts, sizes, 1KB distance |
+| Turning pins into transfers (which data belongs to which address) | — | **owns**, with no judgement | — | — |
+| Data correctness: the right bytes come back from the right address | — | — | **owns** | — |
+| Routing through an interconnect, default-slave ERROR for unmapped addresses (§4.2.1), order of completion per interface | — | — | **owns** | covers the routes and responses |
+| Which planned situations ran | — | — | — | **owns** |
+
+**Misconception: "the checker and the scoreboard both own data ordering, so each double-checks the other."** They do not. The checker owns **pin-level protocol legality** (including multi-cycle rules such as hold-in-wait and the ERROR pair) and never data correctness; it cannot know what data *should* be at an address. The scoreboard owns **which data belongs to which transfer** and where each transfer went; it never re-checks pin timing. If both owned a rule, a failure would be reported twice with two different messages, and a fix to one would leave the other silently out of date. Each AHB interface has at most one data phase in flight and completes transfers in the order it accepts them (§3.1), so ordering on a single interface is a pin-level fact the monitor relies on; ordering *across* an interconnect is the scoreboard's job.
+
+**Debrief of the prediction:** the scoreboard reports the wrong read data; the checker stays silent, because no pin rule was broken.
+
+### Transactions: beat items and burst items
+
+The **transaction item** is the object the monitor publishes. This page publishes one item per **beat** (one NONSEQ or SEQ transfer), because the scoreboard checks data beat by beat; coverage of whole bursts reads the burst fields of each beat.
 
 ```systemverilog
-class ahb_transaction extends uvm_sequence_item;
-  `uvm_object_utils(ahb_transaction)
+// snippet: the item's fields (the full class is in Make It Work)
+typedef enum logic [1:0] {IDLE, BUSY, NONSEQ, SEQ} htrans_e;                  // Table 3-1
+typedef enum logic [2:0] {SINGLE, INCR, WRAP4, INCR4,
+                          WRAP8, INCR8, WRAP16, INCR16} hburst_e;            // Table 3-3
 
-  // Address phase fields
-  rand bit [31:0] addr;
-  rand bit        write;
-  rand bit [2:0]  size;      // HSIZE encoding
-  rand bit [2:0]  burst;     // HBURST encoding
-  rand bit [1:0]  trans;     // HTRANS encoding
+class ahb_item extends uvm_sequence_item;
+  rand logic [31:0] addr;         // address phase, sampled at the accepting edge
+  rand logic        write;
+  rand logic [2:0]  size;         // HSIZE: 2**size bytes
+  rand hburst_e     burst;
+  htrans_e          trans;        // NONSEQ (first beat) or SEQ (later beat)
+  logic [31:0]      data;         // HWDATA or HRDATA at the completing edge
+  logic             resp;         // HRESP at the completing edge: 0 OKAY, 1 ERROR
+  int unsigned      waits;        // HREADY-low edges in the data phase
+  int unsigned      beat_index;   // 0 for NONSEQ, then +1 per SEQ
+  int unsigned      busy_before;  // BUSY cycles accepted just before this beat
 
-  // Data phase fields
-  rand bit [31:0] data;
-  bit             resp;       // 0=OKAY, 1=ERROR
-  int unsigned    wait_cycles; // number of wait states observed
-
-  // Burst tracking
-  int unsigned    beat_index;  // which beat within a burst (0..N-1)
-  bit             is_last_beat;
-
-  function new(string name = "ahb_transaction");
-    super.new(name);
-  endfunction
-
-  function string convert2string();
-    return $sformatf("%s addr=0x%08h data=0x%08h size=%0d burst=%0d waits=%0d resp=%s",
-      write ? "WR" : "RD", addr, data, size, burst, wait_cycles,
-      resp ? "ERROR" : "OKAY");
-  endfunction
+  constraint c_legal {
+    (8 << size) <= 32;                     // §3.4: no wider than this 32-bit bus
+    (addr & ((32'd1 << size) - 1)) == 0;   // §3.5: every transfer is aligned
+  }
+  // ... constructor, convert2string and `uvm_object_utils in Make It Work
 endclass
 ```
 
-> [!NOTE]
-> The `wait_cycles` field is critical for performance analysis.
-> By tracking how many wait states each transfer accumulates, you can build latency distribution coverage and identify slow slaves.
+Three choices in this class matter:
 
----
+- **Sampled fields are 4-state (`logic`).** A 2-state `bit` turns an X on HRDATA into 0, so a scoreboard compare with `!==` can never see the X. With `logic`, an undriven read data bus fails the compare.
+- **Stimulus fields are constrained.** The same item can drive an active master. Without `c_legal`, `randomize()` produces unaligned or oversized transfers, which the checker would reject. The 1KB rule is a *burst* constraint (no beat of an incrementing burst may leave the first beat's 1KB block, §3.5), so it belongs in the burst sequence, not in a beat.
+- **Beat versus burst.** Per-beat items suit the scoreboard; per-burst items suit burst coverage and a burst-level predictor. A monitor can publish both through two analysis ports. Here the beat item carries `beat_index` and `busy_before`, which is enough for this page's coverage.
 
-## 2. Monitor Architecture
+Here is how one INCR4 write with a BUSY cycle and one wait state becomes four beat items. The values come from the Make It Work run, where edge k is the rising edge at 10k − 5 ns (edges 7 to 13 are 65 to 125 ns); `pending` is the item the monitor holds between the accepting edge and the completing edge.
 
-The AHB monitor is a **passive** component.  It observes the bus without driving any signals.
-Its job is to reconstruct complete transactions from the raw signal waveforms.
+| Edge | HTRANS, HADDR on the bus | HREADY | Monitor action |
+|---|---|---|---|
+| 7 | NONSEQ 0x10 (INCR4) | 1 | accept: new item, `beat_index` = 0 |
+| 8 | SEQ 0x14 | 1 | publish beat 0; accept beat 1 |
+| 9 | SEQ 0x18 | 1 | publish beat 1; accept beat 2 |
+| 10 | BUSY 0x1C | 0 | wait: beat 2 `waits` = 1; the BUSY is not accepted |
+| 11 | BUSY 0x1C | 1 | publish beat 2 (`waits` = 1); the BUSY is accepted but is not a beat: `busy_run` = 1 |
+| 12 | SEQ 0x1C | 1 | accept beat 3 with `busy_before` = 1 |
+| 13 | NONSEQ 0x01 | 1 | publish beat 3; accept the next transfer |
 
-### The Challenge: Pipelining
+Four beat items, one burst: the BUSY cycles produce no item, and the waited edge produces no item either.
 
-Because AHB pipelines the address and data phases, the monitor must **buffer** the address phase information and pair it with the data phase that arrives one or more cycles later.
+### The pipelined monitor
+
+A **passive monitor** never drives a pin. Its whole job is the pairing rule from [B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index):
+
+1. **Accept** an address phase at an edge where HREADY is high and HTRANS is NONSEQ or SEQ (§4.2: a slave samples address and control only when HREADY is high). Store it as the pending item.
+2. **Count** each later edge with HREADY low as a wait state of the pending item. The first ERROR cycle is one of them.
+3. **Complete** the pending item at the next edge with HREADY high: take HWDATA (write) or HRDATA (read) and HRESP at that edge (§3.1, §6.1.1, §6.1.2), publish it, and only then accept the next address phase at the same edge.
+4. **Flush** on reset: a transfer that reset cuts off never completes (§7.1.2), so drop it.
+
+**Predict before you look at the picture:** write A is accepted at edge 1, the slave holds HREADY low at edge 2 and high at edge 3, and B is already on the bus at edges 2 and 3. At which edge does the monitor publish A, and with which HWDATA?
+
+<TimingDiagram
+  title="Monitor pairing across one wait state"
+  caption="values[k] is sampled at rising edge k. A is accepted at edge 1, waits at edge 2 and completes at edge 3, where the monitor publishes it with HWDATA sampled at edge 3. B is on the bus at edge 2 but is accepted only at edge 3."
+  edges={6}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ A", "NONSEQ B", "NONSEQ B", "IDLE", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: [undefined, "A", "B", "B", undefined, undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 0, 1, 1, 1] },
+    { name: "HWDATA", kind: "bus", values: [undefined, undefined, "DA", "DA", "DB", undefined] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "accept A: store address and control" },
+    { edge: 2, tone: "pending", label: "A waits: waits = 1; B is not accepted (HREADY low)" },
+    { edge: 3, tone: "pass", label: "publish A with DA, waits = 1; accept B" },
+    { edge: 4, tone: "pass", label: "publish B with DB" }
+  ]}
+/>
+
+The same run as a traced table:
+
+| Edge | HTRANS, HADDR | HREADY | Pending before | Monitor action | Pending after |
+|---|---|---|---|---|---|
+| 0 | IDLE | 1 | none | nothing to accept | none |
+| 1 | NONSEQ A | 1 | none | accept A | A, waits 0 |
+| 2 | NONSEQ B | 0 | A | count a wait; do not accept B | A, waits 1 |
+| 3 | NONSEQ B | 1 | A | complete A with HWDATA at edge 3; accept B | B |
+| 4 | IDLE | 1 | B | complete B with HWDATA at edge 4 | none |
+
+**Debrief:** A is published at edge 3 with DA. The master holds write data valid until the transfer completes (§6.1.1), so DA is on the bus at edges 2 and 3; for a read, only the completing edge is guaranteed to carry valid data (§6.1.2).
+
+The core of the monitor loop, sampling through the clocking block `mon_cb`:
 
 ```systemverilog
-class ahb_monitor extends uvm_monitor;
-  `uvm_component_utils(ahb_monitor)
+// snippet: ahb_mon run_phase core (full class in Make It Work)
+forever begin
+  @(vif.mon_cb);                                   // values sampled at this edge
+  if (!vif.mon_cb.HRESETn) begin pending = null; continue; end   // 4. flush
+  if (pending != null) begin
+    if (vif.mon_cb.HREADY === 1'b1) begin          // 3. data phase ends here
+      pending.data = pending.write ? vif.mon_cb.HWDATA : vif.mon_cb.HRDATA;
+      pending.resp = vif.mon_cb.HRESP;
+      ap.write(pending);
+      pending = null;
+    end else pending.waits++;                      // 2. a wait state
+  end
+  if (vif.mon_cb.HREADY === 1'b1 && vif.mon_cb.HTRANS[1] === 1'b1) begin
+    pending = ahb_item::type_id::create("tr");     // 1. accepted at this same edge
+    pending.addr = vif.mon_cb.HADDR;               // ... and the other address fields
+  end
+end
+```
 
-  uvm_analysis_port #(ahb_transaction) ap;
-  virtual ahb_if vif;
+**Pitfalls, each with why it is wrong:**
 
-  // Pipeline buffer: stores the address phase until data phase completes
-  ahb_transaction pending_txn;
+- **Pairing the address and data of one transfer at the same edge** (the misconception "the monitor can sample address and data on the same edge"). At one edge the monitor *does* sample two things: the data of the transfer that completes there and the address of the transfer accepted there. They belong to *different* transfers. Taking A's data at A's accepting edge records the previous transfer's HWDATA.
+- **Accepting during a wait.** Capturing NONSEQ B at edge 2 produces a duplicate of B at edge 3, and a transfer cancelled after an ERROR (which was never accepted) appears as if it had happened.
+- **2-state sampled fields** hide X (see the item above).
+- **Raw `@(posedge vif.HCLK)` reads** are correct only while every driver of those signals uses nonblocking assignments. The clocking block samples just before the edge (`#1step`, IEEE 1800-2023 §14.13), so the result never depends on process order.
+- **No reset flush.** During reset every slave drives HREADYOUT high (§7.1.2), so a monitor without a flush "completes" the cut-off transfer at the first reset edge with reset-time data, and the scoreboard reports a false mismatch (see [Reset behaviour](#reset-behaviour)).
 
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-    ap = new("ap", this);
-  endfunction
+### The protocol checker
 
+The checker is a module of concurrent assertions. Each property is tagged:
+- **[Protocol §x]**: a rule in IHI0033B.b. A failure means a master or slave broke the specification.
+- **[Integration policy]**: a budget your system chooses. A slow but legal slave must never be reported as a protocol violation.
+- **[Simulation check]**: the X check. Real wires are never X, so this is not a rule of the specification, but an X in simulation makes every other antecedent false, and those properties then pass vacuously (IEEE 1800-2023 §16.6: x, z and 0 are false).
+
+The per-pitfall derivation of each property is in [B-AHB-2](/curriculum/T3_Advanced/B-AHB-2_AHB_Pitfalls_and_Deadlocks/index); here they are assembled into one reusable module, with four additions (the X checks, HWDATA hold, HSIZE within the bus, and a reset check that respects the component's minimum reset time) and UVM reporting.
+
+```systemverilog
+// snippet: the two properties that most often go wrong (full module in Make It Work)
+// [Protocol §3.6.1, §3.6.2, §3.5.2; Table 2-2 and §3.4 for HWRITE and HSIZE]
+// A waited NONSEQ/SEQ is held, unless the master cancels after the first ERROR cycle.
+property p_hold_in_wait;
+  @(posedge HCLK) disable iff (!HRESETn)
+    (!HREADY && HTRANS inside {NONSEQ, SEQ}) |=>
+        ($stable(HTRANS) && $stable(HADDR) && $stable({HWRITE, HSIZE, HBURST}))
+     || ($past(HRESP) && HTRANS == IDLE);
+endproperty
+
+// [Protocol §5.1.3, Table 5-2] an ERROR completion needs its first cycle.
+// This is the property that catches a one-cycle ERROR.
+property p_error_second_needs_first;
+  @(posedge HCLK) disable iff (!HRESETn)
+    (HRESP && HREADY) |-> $past(HRESP && !HREADY);
+endproperty
+```
+
+**Why these forms and not simpler ones:**
+
+- **`p_hold_in_wait`** replaces a plain `$stable(HTRANS)`, which fires on legal behaviour. A waited NONSEQ or SEQ must not change (§3.6.1, §3.6.2), except that a master cancelling after the first ERROR cycle drives IDLE and may change the address (§3.5.2, §3.6.2). A waited IDLE may become NONSEQ, and a waited BUSY may become SEQ (or, in an undefined-length INCR, IDLE or NONSEQ) (§3.6.1), so IDLE and BUSY never start this property; BUSY has its own, `p_busy_in_wait`.
+- **Misconception: "HTRANS must be stable through every wait state."** Only a waited NONSEQ or SEQ is held, and even that one may become IDLE in the second ERROR cycle. Writing the naive rule produces false failures on the legal traffic of §3.6.1 Figures 3-13 to 3-15 and on every cancel after ERROR.
+- **`p_error_second_needs_first`** is the only one of the two ERROR properties that sees a slave driving ERROR for a single cycle with HREADY high. The forward property, `p_error_first_then_second`, needs HREADY low to start, so on that bug it never starts an attempt and passes vacuously.
+- **`$past(expr, 1, beat_accepted)`** in the SEQ checks returns the value at the most recent earlier edge where a beat was accepted (IEEE 1800-2023 §16.9.3), which is the previous beat even if BUSY cycles or wait states came between.
+- **The 1KB check runs per beat**, with WRAP bursts exempt. A start-address formula fires on legal WRAP bursts and cannot size an undefined-length INCR. The rule itself is taught in [B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index).
+
+**Try the properties on a cycle-accurate model.** The AHB pipeline lab below evaluates the page's `p_hold_in_wait`, `p_busy_in_wait`, both ERROR properties and the per-beat 1KB check on traces generated from the specification's rules. It opens on the "Wait state" scenario; pick each scenario named below from its scenario selector and answer the prediction before you step through.
+
+<InteractiveWrapper>
+  <AhbPipelineBurstVisualizer />
+</InteractiveWrapper>
+
+**Three predictions:**
+1. **BUSY in a burst.** Keep one BUSY cycle and set *Wait states on A0* to 2. Which property fails: `p_busy_in_wait` or `p_ctrl_stable (old)`, the naive "nothing changes in a wait state" check?
+2. **Two-cycle ERROR.** With the master set to *cancels*, what is on HTRANS in the second ERROR cycle, and does `p_hold_in_wait` fail?
+3. **Debug: one-cycle ERROR.** Which of the two ERROR properties fails?
+
+**Debrief:**
+1. The waited BUSY changes to SEQ while HREADY is still low. That is legal for a fixed-length burst (§3.6.1, Figure 3-14). `p_ctrl_stable (old)` fails on it; `p_busy_in_wait` passes, and it is not vacuous: its antecedent, a waited BUSY, actually occurred.
+2. IDLE: the master saw ERROR with HREADY low and cancels the transfer waiting on the address bus (§3.5.2, §5.1.3). `p_hold_in_wait` passes through its cancel exception; the naive check fails.
+3. Only `p_error_second_needs_first`. `p_error_first_then_second` never starts, which is why a checker needs both directions.
+
+**Attaching the checker to the design.** Three ways, from most to least common:
+- **`bind`** it into the DUT module, as Make It Work does: `bind ahb_sram_slave ahb_protocol_checker u_chk (.HCLK, .HRESETn, ...);`. The port expressions are resolved inside the target module, so the checker reads the slave's own ports and the RTL source is never touched (IEEE 1800-2023 §23.11).
+- **Instantiate** it in `tb_top` on the interface signals.
+- **Write it as an interface or a `checker`.** A module can be bound into a module but not into an interface: when the bind target is an interface, the bound instance must be an interface or a checker (§23.11, footnote 4 to Syntax 23-9).
+
+**Reporting through UVM.** An action block such as `else $error("...")` reports through the simulator, not through the UVM report server, so the UVM summary can say `UVM_ERROR :    0` while the log is full of assertion failures ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) teaches this in detail; pass/fail rules are in [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)). This page's checker imports `uvm_pkg` and reports with `` `uvm_error ``, which a module may call: outside a class the macro calls the global reporting functions, which report through `uvm_root` (IEEE 1800.2-2020 F.3.2). Each assertion has a label (`a_hold_in_wait:`), so `$assertoff` and `$assertcontrol` can name it (IEEE 1800-2023 §20.11), and messages print `$sampled(HADDR)`, not `HADDR`: action blocks run in the Reactive region ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)) and would otherwise print the *current* value, which at an edge with HREADY high is already the next beat's address (§16.9.3, the `a1_bad`/`a2_ok` example).
+
+**Vacuity.** In simulation an assertion checks only the traffic that ran. A property whose antecedent never happened has checked nothing, and its "no failures" proves nothing. Each important antecedent therefore gets a `cover property` (§16.14.3), shown in [The coverage model](#the-coverage-model).
+
+### The coverage model
+
+**Functional coverage** records which situations the tests actually produced, so you know which assertions and which scoreboard compares were really exercised. It does not prove anything about traffic that did not run. Coverage lives in two places:
+
+- **Pin level, in the checker:** `cover property` statements on assertion antecedents and on short sequences such as "cancel after ERROR", plus a small covergroup on HTRANS × HREADY. These see cycles, which no transaction item records.
+- **Transaction level, in a `uvm_subscriber`:** a covergroup sampled once per published item, over direction, size, burst, beat position, wait states, response, BUSY before a beat and the distance to the next 1KB boundary.
+
+Every coverage item maps to a vplan line:
+
+| Vplan item | Coverage item | Where | Hit by the Make It Work run? |
+|---|---|---|---|
+| Every burst type in both directions | `cx_write_burst` (direction × burst) | `ahb_cov` | SINGLE and INCR4 only |
+| Every legal size in every burst type; no size wider than the bus | `cx_burst_size`; `illegal_bins wider_than_bus` on `cp_size` (IEEE 1800-2023 §19.5.6) | `ahb_cov` | 3 of 24 legal cells |
+| Wait states on each burst type: 0, 1, 2–4, 5–16, more than 16 | `cx_waits_burst` | `ahb_cov` | 0 and 1 |
+| ERROR on a first beat and on a later beat, per burst type | `cx_resp_burst_beat`, with `ignore_bins` for SEQ beats of a SINGLE (§19.5.5) | `ahb_cov` | ERROR on a SINGLE |
+| BUSY before a beat: none, one, several | `cp_busy_before` (SEQ beats only) | `ahb_cov` | none, one |
+| Incrementing burst starting near, mid-way or far from a 1KB boundary | `cp_kb_room`: bytes to the next 1KB boundary, 1–16, 17–64, 65–1024 | `ahb_cov` | far only |
+| A waited NONSEQ/SEQ (antecedent of `a_hold_in_wait`) | `c_waited_nonseq_seq` | checker | yes (edges 16 and 20) |
+| A waited BUSY (antecedent of `a_busy_in_wait`) | `c_waited_busy` | checker | yes (edge 10) |
+| A waited write (antecedent of `a_hwdata_hold`) | `c_waited_write` | checker | yes (edges 10 and 20) |
+| Master cancels after ERROR, and master continues after ERROR | `c_error_cancel`, `c_error_continue` | checker | cancel only |
+| Reset while a data phase is open; first transfer after reset | `c_reset_in_data_phase`, `c_first_after_reset` | checker | first-after-reset only |
+| Every HTRANS value with and without a wait state | `htrans_cov.cx_trans_waited` | checker | 8 of 8 cells |
+
+The last column is the honest report of one directed test: most of the plan is still open. The mid-test reset and the continuing master are holes a reset test ([A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index)) and a second master configuration must fill.
+
+The "cancel after ERROR" cover property, drawn on the ERROR forensics waveform in the debug section, needs care: it must name a clock, and it must require a NONSEQ or SEQ on the bus in the first ERROR cycle, or it also matches when IDLE was already on the bus and nothing was cancelled.
+
+```systemverilog
+// snippet: from ahb_protocol_checker (full module in Make It Work)
+c_error_cancel: cover property (@(posedge HCLK) disable iff (!HRESETn)
+  (HRESP && !HREADY && HTRANS inside {NONSEQ, SEQ}) ##1
+  (HRESP && HREADY && HTRANS == IDLE));
+c_error_continue: cover property (@(posedge HCLK) disable iff (!HRESETn)
+  (HRESP && !HREADY && HTRANS inside {NONSEQ, SEQ}) ##1
+  (HRESP && HREADY && HTRANS inside {NONSEQ, SEQ}));
+```
+
+**Pitfalls:** sampling a pin-level covergroup on every clock edge, when the plan item means "accepted beats" (gate it with `iff`, or sample per item); reading 100% on a cross and assuming the related assertion ran (cover its antecedent); and a covergroup declared but never constructed (an embedded covergroup is created with `new` in the class constructor, IEEE 1800-2023 §19.4).
+
+### The scoreboard
+
+The **scoreboard** checks data. For a memory-like slave its **reference model** is a memory of expected bytes: each completed OKAY write updates it, each completed OKAY read is compared with it.
+
+IHI0033B.b defines no write strobes (none in Table 2-2): the active byte lanes come from HADDR and HSIZE. On a little-endian bus, a byte at address `a` travels on lane `a mod (bus bytes)` (§6.2.1), and a wider transfer puts its least significant byte at the transfer address and increasingly significant bytes at increasing addresses. So the model stores **bytes**, and a byte write at 0x1001 is visible to a later word read at 0x1000. (IHI0033C later adds optional write strobes, HWSTRB; see [B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index).)
+
+| HWDATA bits | [31:24] | [23:16] | [15:8] | [7:0] |
+|---|---|---|---|---|
+| Byte lane (little-endian, 32-bit bus) | 3 | 2 | 1 | 0 |
+| Address offset (`addr mod 4`) | 3 | 2 | 1 | 0 |
+
+Traced example on an empty model:
+
+| Step | Transfer | Lanes used | Model after | Result |
+|---|---|---|---|---|
+| 1 | write byte 0xAB to 0x1001 (HSIZE = 0, HWDATA = 0x0000AB00) | lane 1 = HWDATA[15:8] | `mem_model[0x1001]` = 0xAB | write counted |
+| 2 | read word 0x1000, HRDATA = 0x1122AB44 | lanes 0–3 | unchanged | byte 0x1001 matches (0xAB); bytes 0x1000, 0x1002 and 0x1003 were never written, so the read is **unchecked** (counted as pending, with a warning) |
+
+Three rules make the scoreboard trustworthy:
+
+- **Error policy.** A read that completes with ERROR carries no valid data (§6.1.2), so it is not compared. What a slave does with a write that gets ERROR is not fixed by the protocol: this scoreboard forgets those bytes. If your slave guarantees "no write on ERROR", check that instead.
+- **End-of-test accounting.** An analysis port with nothing connected drops every item silently (its `write()` loops over zero subscribers), and the test then passes with zero checks. `check_phase` therefore fails the test when no read was compared, and `report_phase` prints `SCB_SUMMARY matches=N mismatches=0 pending=0` ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) covers end-of-test accounting).
+- **Reset policy.** Registers in the DUT return to their reset values; memory contents may or may not survive, as the DUT specification says. The model must do the same on reset, or the first reads after reset mismatch.
+
+**The interconnect version (outline).** For an interconnect DUT, put a monitor on every master port and every slave port. The scoreboard predicts each slave-port transfer from the master-port transfer through the address map: same address, direction, size and data, appearing on the slave the decoder selects. An unmapped NONSEQ or SEQ must get ERROR from the default slave, and IDLE or BUSY to an unmapped address a zero-wait OKAY (§4.2.1). Each interface completes in the order it accepts (§3.1), so match per interface in order, and across interfaces by address and master.
+
+### Stimulus side: master driver and slave responder
+
+The checker can only judge traffic that happens, so the stimulus must produce every legal timing. Which side the TB plays depends on the DUT: for a **slave DUT** the TB is the master (it chooses HTRANS, bursts and BUSY), and wait states and ERROR come from the DUT; for a **master DUT** the TB is a slave **responder** that chooses wait states and ERROR responses; an interconnect needs both.
+
+| Side | Knob | Legal range and rule |
+|---|---|---|
+| Master | IDLE cycles between transfers | 0 (fully pipelined) to many; IDLE gets a zero-wait OKAY (Table 3-1) |
+| Master | Back-to-back pipelining | the next address phase during the current data phase (§3.1) |
+| Master | BUSY insertion | only between beats of a burst; never after a SINGLE; a fixed-length burst ends with SEQ, not BUSY (§3.5.1, Table 3-1) |
+| Master | Changes during a wait | IDLE may become NONSEQ; BUSY may become SEQ (in INCR also IDLE or NONSEQ); a waited NONSEQ/SEQ is held (§3.6.1, §3.6.2) |
+| Master | After an ERROR | cancel (IDLE in the second ERROR cycle) or continue the burst; both legal (§3.5.2) |
+| Master | Write data | held valid until the transfer completes (§6.1.1) |
+| Slave | Random wait states | any number, OKAY during each, up to the slave's predetermined maximum; at most 16 recommended (§5.1.2) |
+| Slave | Error injection | two-cycle ERROR: HREADYOUT low with HRESP high, then both high; OKAY waits may come first (§5.1.3) |
+| Slave | IDLE and BUSY | always a zero-wait OKAY (Table 3-1) |
+| Slave | Reset | HREADYOUT high during reset (§7.1.2) |
+
+The `ahb_master_bfm` in Make It Work exercises the master knobs: back-to-back transfers, a BUSY inside an INCR4, and a cancel after ERROR. For the slave side, here is a responder agent with random wait states and error injection, the application of the responder pattern from [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) (the AXI counterpart is in [B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index)).
+
+**Predict:** a responder must answer the transfer accepted at edge k with ERROR. When must its driver drive HREADYOUT low with HRESP high?
+
+<SequenceDiagram
+  title="A pre-fetched slave response, from sequence to pins"
+  caption="The response for the next transfer is chosen before the transfer arrives. At the accepting edge k the driver drives the first data-phase cycle in the same time step, so the slave can wait or start an ERROR immediately; HREADYOUT stays high whenever no transfer needs it, which gives IDLE and BUSY their zero-wait OKAY."
+  participants={[
+    { id: "seq", label: "ahb_rsp_seq", kind: "sequence" },
+    { id: "sqr", label: "rsp_sqr", sublabel: "uvm_sequencer #(ahb_rsp_item)", kind: "sequencer" },
+    { id: "drv", label: "ahb_slv_drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { from: "seq", to: "sqr", label: "start_item(req)" },
+    { kind: "self", from: "seq", label: "randomize: waits, error" },
+    { from: "seq", to: "sqr", label: "finish_item(req)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req" },
+    { kind: "divider", label: "@(vif.rsp_cb): edge k accepts a transfer (HSEL, HREADY, HTRANS[1])" },
+    { kind: "self", from: "drv", label: "per wait: HREADYOUT 0, HRESP 0" },
+    { kind: "self", from: "drv", label: "error: HREADYOUT 0, HRESP 1; then 1, 1" },
+    { kind: "divider", label: "edge m: the data phase ends" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" }
+  ]}
+/>
+
+```systemverilog
+// snippet: responder item, sequence and driver. The agent's sequencer is a plain
+// uvm_sequencer #(ahb_rsp_item) named rsp_sqr. The slave-side interface ahb_slv_if has
+// a clocking block rsp_cb with inputs HSEL, HTRANS, HREADY and outputs HREADYOUT, HRESP.
+class ahb_rsp_item extends uvm_sequence_item;
+  `uvm_object_utils(ahb_rsp_item)
+  rand int unsigned waits;   // OKAY wait states before the response
+  rand bit          error;   // answer with the two-cycle ERROR
+  int unsigned      max_wait  = 15;   // this slave's predetermined maximum (§5.1.2)
+  int unsigned      error_pct = 5;    // error-injection rate, set by the test
+  constraint c_waits { waits <= max_wait;
+                       waits dist {0 :/ 60, [1:3] :/ 30, [4:max_wait] :/ 10}; }
+  constraint c_error { error dist {1 := error_pct, 0 := 100 - error_pct}; }
+  function new(string name = "ahb_rsp_item"); super.new(name); endfunction
+endclass
+
+class ahb_rsp_seq extends uvm_sequence #(ahb_rsp_item);
+  `uvm_object_utils(ahb_rsp_seq)
+  function new(string name = "ahb_rsp_seq"); super.new(name); endfunction
+  task body();
+    forever begin                                  // one response per transfer
+      req = ahb_rsp_item::type_id::create("req");
+      start_item(req);
+      if (!req.randomize()) `uvm_fatal("RAND", "ahb_rsp_item randomization failed")
+      finish_item(req);
+    end
+  endtask
+endclass
+
+class ahb_slv_drv extends uvm_driver #(ahb_rsp_item);
+  `uvm_component_utils(ahb_slv_drv)
+  virtual ahb_slv_if vif;                          // fetched in build_phase (not shown)
+  function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
+    vif.rsp_cb.HREADYOUT <= 1'b1;                  // ready by default
+    vif.rsp_cb.HRESP     <= 1'b0;
     forever begin
-      @(posedge vif.HCLK);
-
-      // ── Data phase sampling (for the PREVIOUS address phase) ──
-      if (pending_txn != null && vif.HREADY) begin
-        // Data phase is complete
-        if (pending_txn.write)
-          pending_txn.data = vif.HWDATA;
-        else
-          pending_txn.data = vif.HRDATA;
-        pending_txn.resp = vif.HRESP;
-
-        ap.write(pending_txn);  // broadcast to scoreboard
-        pending_txn = null;
-      end else if (pending_txn != null && !vif.HREADY) begin
-        pending_txn.wait_cycles++;
+      seq_item_port.get_next_item(req);            // chosen before the transfer arrives
+      // The accepting edge may be the edge that ended the previous transfer
+      // (=== so that X before the first edge never looks like an accepted transfer)
+      while (!(vif.rsp_cb.HSEL === 1'b1 && vif.rsp_cb.HREADY === 1'b1 &&
+               vif.rsp_cb.HTRANS[1] === 1'b1))
+        @(vif.rsp_cb);
+      repeat (req.waits) begin                     // OKAY wait states (§5.1.2)
+        vif.rsp_cb.HREADYOUT <= 1'b0;
+        vif.rsp_cb.HRESP     <= 1'b0;
+        @(vif.rsp_cb);
       end
-
-      // ── Address phase capture (for the CURRENT cycle) ──
-      if (vif.HTRANS inside {NONSEQ, SEQ} && vif.HREADY) begin
-        pending_txn = ahb_transaction::type_id::create("txn");
-        pending_txn.addr  = vif.HADDR;
-        pending_txn.write = vif.HWRITE;
-        pending_txn.size  = vif.HSIZE;
-        pending_txn.burst = vif.HBURST;
-        pending_txn.trans = vif.HTRANS;
+      if (req.error) begin                         // two-cycle ERROR (§5.1.3)
+        vif.rsp_cb.HREADYOUT <= 1'b0;
+        vif.rsp_cb.HRESP     <= 1'b1;
+        @(vif.rsp_cb);
+        vif.rsp_cb.HRESP     <= 1'b1;
       end
+      vif.rsp_cb.HREADYOUT <= 1'b1;                // last cycle of the data phase
+      if (!req.error) vif.rsp_cb.HRESP <= 1'b0;
+      @(vif.rsp_cb);                               // edge m: the transfer completes
+      vif.rsp_cb.HRESP <= 1'b0;                    // IDLE/BUSY next: zero-wait OKAY
+      seq_item_port.item_done();
     end
   endtask
 endclass
 ```
 
-### Key Design Decision: When to Sample
+**Debrief:** in the time step of edge k itself. The clocking-block drive takes effect at that edge (IEEE 1800-2023 §14.16), so the cycle sampled at edge k + 1 is the first ERROR cycle. A driver that waits for edge k + 1 to look at the address leaves HREADYOUT high in the first data-phase cycle, and the transfer completes with OKAY at k + 1: too late.
 
-The monitor **only samples the address phase when `HREADY` is high**.
-This is because during a wait state, the address phase of the next transfer hasn't actually been accepted yet — the master is just holding it stable.
+This responder chooses waits and errors **before** it sees the address, which is enough for random wait states and error injection. A responder that must decide from the address (an ERROR for a read-only register, read data from a memory model) is **reactive**: its monitor writes the address phase into a `uvm_tlm_analysis_fifo` in the sequencer, and the sequence reads it, decides and sends the response. All of that must finish in the time step of edge k, so it may not consume time; read data is then driven on HRDATA from the driver's memory model. A reset-aware version of this driver releases its item and drives HREADYOUT high when HRESETn falls ([A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index)).
 
-> [!IMPORTANT]
-> A common VIP bug is to capture the address phase on every cycle regardless of `HREADY`.
-> This produces duplicate transactions in the analysis stream and corrupts the scoreboard.
+### Reset behaviour
 
----
+Reset (HRESETn, the only active-low AHB signal) can be asserted asynchronously, but is released synchronously after a rising edge of HCLK (§7.1.2). During reset every master drives IDLE with address and control at valid levels, and every slave drives HREADYOUT high. Each component defines how many reset cycles it needs before its outputs reach those values.
 
-## 3. Checker: Protocol Compliance
+<TimingDiagram
+  title="A transfer cut off by reset"
+  caption="values[k] is sampled at edge k. A is accepted at edge 1 and waits at edge 2. Reset is asserted before edge 3; during reset HREADY is high, so a monitor without a flush would publish A at edge 3 with reset-time data. Reset is released after edge 4; C is the first transfer after reset."
+  edges={8}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HRESETn", kind: "bit", values: [1, 1, 1, 0, 0, 1, 1, 1] },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ A", "IDLE", "IDLE", "IDLE", "IDLE", "NONSEQ C", "IDLE"] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 0, 1, 1, 1, 1, 1] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "accept A" },
+    { edge: 2, tone: "pending", label: "A waits; its data phase is still open" },
+    { edge: 3, tone: "fail", label: "reset: A never completes; flush it (a monitor without a flush publishes it here)" },
+    { edge: 6, tone: "sample", label: "first transfer after reset: accept C" }
+  ]}
+/>
 
-The checker runs alongside the monitor and validates every cycle against the AHB specification rules.
-A production AHB checker typically contains 20–40 SVA properties. Each one below is tagged **[Protocol §x]** (a rule in Arm IHI0033B.b) or **[Integration policy]** (a budget your system chooses). Keep the two apart: a slow but legal slave must never be reported as a protocol violation.
+What each layer does about it:
 
-### 3A. Core Protocol Assertions
+- **Monitor:** drop the pending item while HRESETn is low, and accept nothing (`continue` in the loop above).
+- **Checker:** `disable iff (!HRESETn)` stops every attempt in flight when reset is asserted: an attempt that started at edge 2 (for example `a_hwdata_hold`, if A is a write) neither passes nor fails. The reset-value check is the one property without `disable iff`, and it is checked only after the component's minimum number of reset edges (`MIN_RESET_CYCLES`), because before that a slave with a synchronous reset may legally show X on HREADYOUT (§7.1.2), and X is false (IEEE 1800-2023 §16.6).
+- **Scoreboard:** apply the DUT's reset policy to the model (registers back to reset values; memory kept or cleared as specified).
+- **Driver:** drive IDLE during reset and restart after release.
+- **Coverage:** `c_reset_in_data_phase` (reset while a transfer is open) and `c_first_after_reset`.
+
+The full treatment of reset-aware drivers, monitors and scoreboards, and of mid-test reset sequences, is [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
+
+### Debug patterns
+
+Four patterns turn a failing AHB waveform into a cause. Each starts from what the log names: an assertion label, a scoreboard mismatch, a timeout.
+
+**1. The HREADY trace: who is holding the bus?** When the bus stalls, follow HREADY back to the slave driving it. HREADY is not a wire from one slave: it is the multiplexor's choice among all slaves' HREADYOUT.
+
+<ArchitectureDiagram
+  title="Where HREADY comes from (IHI0033B.b Figure 4-2)"
+  caption="The decoder turns HADDR into one HSELx per slave. The multiplexor routes HREADYOUT, HRESP and HRDATA of the slave that owns the current data phase to the master as HREADY, HRESP and HRDATA; its select is the decoder's selection retimed to the data phase (§2.4 Note). HREADY also goes back to every slave (not drawn)."
+  nodes={[
+    { id: "m", label: "master", kind: "generic", col: 0, row: 1 },
+    { id: "dec", label: "decoder", kind: "generic", col: 1, row: 0 },
+    { id: "mux", label: "multiplexor", sublabel: "select retimed to the data phase", kind: "generic", col: 1, row: 2 },
+    { id: "s1", label: "slave 1", kind: "dut", col: 2, row: 0 },
+    { id: "s2", label: "slave 2", kind: "dut", col: 2, row: 1 },
+    { id: "s3", label: "slave 3", kind: "dut", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "m", to: "dec", style: "data", label: "HADDR" },
+    { from: "dec", to: "s1", style: "control", label: "HSEL_S1" },
+    { from: "dec", to: "s2", style: "control", label: "HSEL_S2" },
+    { from: "dec", to: "s3", style: "control", label: "HSEL_S3" },
+    { from: "dec", to: "mux", style: "control", label: "select (registered)" },
+    { from: "s1", to: "mux", style: "data", label: "HREADYOUT_1, HRESP_1" },
+    { from: "s2", to: "mux", style: "data", label: "HREADYOUT_2" },
+    { from: "s3", to: "mux", style: "data", label: "HREADYOUT_3" },
+    { from: "mux", to: "m", style: "data", label: "HREADY, HRESP, HRDATA" }
+  ]}
+/>
+
+Steps: find the edge where HREADY went low; find the last earlier edge with HREADY high where a NONSEQ or SEQ was accepted; the slave selected at *that* edge owns the data phase and is the one holding HREADYOUT low. Then look inside that slave for the reason (a FIFO full, a downstream wait). If no transfer was accepted, a slave is driving HREADYOUT low for an IDLE, which breaks Table 3-1, and `a_idle_busy_zero_wait_okay` names it.
+
+**2. The transaction-boundary finder: where does each transfer start?** Count the edges where HREADY is high and HTRANS is NONSEQ (a start) or SEQ (a later beat). Looking for HTRANS *changing* to NONSEQ misses back-to-back single transfers, which keep HTRANS at NONSEQ, and counting every NONSEQ cycle counts a waited NONSEQ twice:
+
+| Edge | HTRANS, HADDR | HREADY | Boundary finder | "Changes to NONSEQ" | "Every NONSEQ cycle" |
+|---|---|---|---|---|---|
+| 1 | NONSEQ A (SINGLE) | 1 | start #1 | start | start |
+| 2 | NONSEQ B (SINGLE) | 1 | start #2 | missed: no change | start |
+| 3 | NONSEQ C (INCR4) | 0 | not accepted | — | start (wrong) |
+| 4 | NONSEQ C (INCR4) | 1 | start #3 | — | start (duplicate) |
+| 5 | SEQ C+4 | 1 | beat 1 of #3 | — | — |
+| 6 | BUSY C+8 | 1 | not a beat | — | — |
+| 7 | SEQ C+8 | 1 | beat 2 of #3 | — | — |
+
+**3. ERROR forensics: which transfer failed, and why?**
+
+<TimingDiagram
+  title="ERROR forensics on IHI0033B.b Figure 5-1"
+  caption="values[k] is sampled at edge k. A is accepted at edge 1, gets one OKAY wait (edge 2), then the first ERROR cycle (edge 3, HREADY low) and the second (edge 4, HREADY high). Having seen the first ERROR cycle, the master drives IDLE in the second, so B is never accepted; c_error_cancel matches over edges 3 and 4."
+  edges={6}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ A", "NONSEQ B", "NONSEQ B", "IDLE", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: [undefined, "A", "B", "B", undefined, undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 0, 0, 1, 1] },
+    { name: "HRESP", kind: "bus", values: ["OKAY", "OKAY", "OKAY", "ERROR", "ERROR", "OKAY"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "A accepted: the failing transfer" },
+    { edge: 2, tone: "pending", label: "OKAY wait state before the ERROR (§5.1.3)" },
+    { edge: 3, tone: "info", label: "first ERROR cycle: HRESP high, HREADY low" },
+    { edge: 4, tone: "fail", label: "second ERROR cycle: A completes with ERROR; IDLE cancels B" }
+  ]}
+/>
+
+1. Find the edge where HRESP and HREADY are both high: the ERROR completes there (edge 4). The edge before must be HRESP high with HREADY low; if it is not, `a_error_second_needs_first` has already named a slave bug.
+2. Walk back over the data phase (the first ERROR cycle and any OKAY waits before it) to the last edge with HREADY high where a NONSEQ or SEQ was accepted (edge 1). That transfer, A, failed. In the monitor log it is the item with `resp` = ERROR; with OKAY waits before the ERROR it is more than two cycles back.
+3. Check the address map: is A's address mapped? An unmapped NONSEQ or SEQ gets ERROR from the default slave (§4.2.1). Which slave was selected at edge 1?
+4. Check whether the access is legal for that slave: direction (a write to a read-only location is the specification's own example, §5.1.3), size, and HPROT (privileged or user, data or opcode, §3.7). This page's item does not record HPROT, so read it from the waveform, or add a `prot` field to the item and the monitor.
+5. Check what the master did next: cancel (IDLE in the second ERROR cycle, as here) or continue; both are legal (§3.5.2). The scoreboard's error policy decides what happens to A's data.
+
+**4. The latency budget (the "starvation detector").** IHI0033B.b defines no request or grant signals on a master (Table 2-2): arbitration between masters happens inside an interconnect, which the specification leaves out of scope (§4.1). So there is no "grant" to sort a waveform by. Instead, in a multi-master system with a multi-layer interconnect, put a monitor on each **master port** and measure, for every transfer, the cycles from the NONSEQ first appearing on that port to its acceptance there (HREADY high at that port). Report the worst case against a per-master budget, tagged **[Integration policy]**: no AHB rule bounds it. A master whose latency grows without bound while others are served is starved. Remember that a locked sequence (HMASTLOCK) must be processed before any other transfer (§3.3), so a budget must allow for the longest legal locked sequence.
+
+### Recap
+
+| Layer | Component on this page | Owns | Never does |
+|---|---|---|---|
+| Stimulus | `ahb_master_bfm` (master side), `ahb_slv_drv` (responder) | every legal timing: pipelining, BUSY, waits, ERROR, cancel | judge the traffic |
+| Observation | `ahb_mon` | pins → one `ahb_item` per completed beat; reset flush | judge anything |
+| Compliance | `ahb_protocol_checker` | pin-level protocol rules, tagged; X checks; UVM reporting | check data values |
+| Correctness | `ahb_sb` | data per byte lane, error and reset policy, accounting | re-check pin timing |
+| Completeness | `ahb_cov` and the checker's covers | which vplan situations happened, including antecedents | prove anything about traffic that did not run |
+
+## Make It Work
+
+### The complete bench, file by file
+
+The bench verifies `ahb_sram_slave`, a 256-word AHB-Lite SRAM that inserts one OKAY wait state on every 4th accepted transfer and answers addresses at or above 0x400 with ERROR. `ahb_master_bfm` runs a fixed plan: a SINGLE write, an INCR4 write with a BUSY cycle, a byte write, an INCR4 read, an ERROR write, and a read that the master cancels and re-issues after the ERROR. Compile the files in this order with your simulator's UVM library.
+
+**1. The interface** (`ahb_if.sv`):
 
 ```systemverilog
-module ahb_protocol_checker #(parameter int MAX_WAIT = 16) (
-  input logic        HCLK,
-  input logic        HRESETn,
-  input logic [31:0] HADDR,
-  input logic [1:0]  HTRANS,
-  input logic [2:0]  HBURST,
-  input logic [2:0]  HSIZE,
-  input logic        HWRITE,
-  input logic        HREADY,
-  input logic        HRESP
+// compile (part of the bench)
+`timescale 1ns/1ps
+interface ahb_if (input logic HCLK, input logic HRESETn);
+  logic [31:0] HADDR;
+  logic [1:0]  HTRANS;
+  logic        HWRITE;
+  logic [2:0]  HSIZE;
+  logic [2:0]  HBURST;
+  logic [31:0] HWDATA;
+  logic [31:0] HRDATA;
+  logic        HREADY;
+  logic        HRESP;
+  logic        bfm_done = 1'b0;   // TB only: the master BFM has finished its plan
+
+  // Master BFM: drives address, control and write data just after an edge
+  clocking mst_cb @(posedge HCLK);
+    default input #1step output #0;
+    output HADDR, HTRANS, HWRITE, HSIZE, HBURST, HWDATA;
+    input  HREADY, HRESP, HRDATA, HRESETn;
+  endclocking
+
+  // Monitor: samples everything just before the edge, drives nothing
+  clocking mon_cb @(posedge HCLK);
+    default input #1step;
+    input HRESETn, HADDR, HTRANS, HWRITE, HSIZE, HBURST, HWDATA, HRDATA, HREADY, HRESP;
+  endclocking
+endinterface
+```
+
+**2. The DUT** (`ahb_sram_slave.sv`):
+
+```systemverilog
+// compile (part of the bench)
+`timescale 1ns/1ps
+module ahb_sram_slave #(parameter int DEPTH = 256) (   // DEPTH 32-bit words
+  input  logic        HCLK,
+  input  logic        HRESETn,
+  input  logic        HSEL,
+  input  logic [31:0] HADDR,
+  input  logic [1:0]  HTRANS,
+  input  logic        HWRITE,
+  input  logic [2:0]  HSIZE,
+  input  logic [2:0]  HBURST,
+  input  logic [31:0] HWDATA,
+  input  logic        HREADY,      // multiplexed: the previous transfer has ended
+  output logic        HREADYOUT,
+  output logic        HRESP,
+  output logic [31:0] HRDATA
 );
+  localparam int AW = $clog2(DEPTH);
+  typedef enum logic [1:0] {S_OKAY, S_ERR1, S_ERR2} resp_e;
+
+  logic [31:0] mem [DEPTH];
+  logic [31:0] addr_reg;      // address of the transfer in its data phase
+  logic [3:0]  lanes_reg;     // its byte lanes (§6.2.1)
+  logic        wr_reg;        // it is a write to a mapped address
+  logic        waiting;       // this cycle is an inserted OKAY wait state
+  logic [1:0]  cnt;           // accepted transfers, modulo 4
+  resp_e       rstate;
+
+  // A NONSEQ/SEQ is accepted at an edge with HSEL and HREADY high (§4.2)
+  wire accept = HSEL && HREADY && HTRANS[1];
+  wire bad    = accept && (HADDR >= DEPTH * 4);    // unmapped: answer with ERROR
+
+  function automatic logic [3:0] lanes(logic [1:0] a, logic [2:0] sz);
+    case (sz)
+      3'd0:    return 4'b0001 << a;
+      3'd1:    return 4'b0011 << {a[1], 1'b0};
+      default: return 4'b1111;
+    endcase
+  endfunction
+
+  always_ff @(posedge HCLK or negedge HRESETn) begin
+    if (!HRESETn) begin
+      addr_reg <= '0;  lanes_reg <= '0;  wr_reg <= 1'b0;
+      waiting  <= 1'b0; cnt <= '0;
+      rstate   <= S_OKAY; HRESP <= 1'b0;
+    end else begin
+      // The data phase ends at an edge with HREADY high: write once, never per wait
+      if (HREADY && wr_reg)
+        for (int i = 0; i < 4; i++)
+          if (lanes_reg[i]) mem[addr_reg[AW+1:2]][8*i +: 8] <= HWDATA[8*i +: 8];
+      if (HREADY) begin                       // register the next data phase
+        addr_reg  <= HADDR;
+        lanes_reg <= lanes(HADDR[1:0], HSIZE);
+        wr_reg    <= accept && HWRITE && !bad;
+      end
+      // One OKAY wait state on every 4th accepted transfer
+      waiting <= accept && (cnt == 2'd3);
+      if (accept) cnt <= cnt + 2'd1;
+      // Two-cycle ERROR (§5.1.3): HREADYOUT low, then high; HRESP high in both cycles
+      case (rstate)
+        S_OKAY: if (bad) begin rstate <= S_ERR1; HRESP <= 1'b1; end
+        S_ERR1: rstate <= S_ERR2;             // HRESP stays high
+        S_ERR2: if (bad) rstate <= S_ERR1;    // the ERROR completes at this edge
+                else begin rstate <= S_OKAY; HRESP <= 1'b0; end
+        default: begin rstate <= S_OKAY; HRESP <= 1'b0; end
+      endcase
+    end
+  end
+
+  assign HREADYOUT = !waiting && (rstate != S_ERR1);   // high during reset (§7.1.2)
+  assign HRDATA    = mem[addr_reg[AW+1:2]];
+endmodule
+```
+
+**3. The master BFM** (`ahb_master_bfm.sv`). It is a module, not a UVM agent, to keep the example short; it drives only through `mst_cb`.
+
+```systemverilog
+// compile (part of the bench)
+`timescale 1ns/1ps
+module ahb_master_bfm (ahb_if bus);
+  localparam logic [1:0] IDLE = 2'b00, BUSY = 2'b01, NONSEQ = 2'b10, SEQ = 2'b11;
+  localparam logic [2:0] SINGLE = 3'b000, INCR4 = 3'b011;
+  localparam logic [2:0] BYTE = 3'd0, WORD = 3'd2;
+
+  typedef struct {
+    logic [1:0]  trans;
+    logic [31:0] addr;
+    logic        write;
+    logic [2:0]  size;
+    logic [2:0]  burst;
+    logic [31:0] wdata;
+  } step_t;
+  step_t plan[$];
+
+  function automatic void add(logic [1:0] trans, logic [31:0] addr, logic write,
+                              logic [2:0] size, logic [2:0] burst,
+                              logic [31:0] wdata = '0);
+    plan.push_back('{trans, addr, write, size, burst, wdata});
+  endfunction
+
+  task automatic drive_addr(step_t s);
+    bus.mst_cb.HTRANS <= s.trans;
+    bus.mst_cb.HADDR  <= s.addr;
+    bus.mst_cb.HWRITE <= s.write;
+    bus.mst_cb.HSIZE  <= s.size;
+    bus.mst_cb.HBURST <= s.burst;
+  endtask
+
+  // Back to back: the next address phase overlaps the current data phase (§3.1)
+  task automatic run_plan();
+    int unsigned i = 0;                       // plan[i] is on the address bus
+    drive_addr(plan[0]);
+    while (i < plan.size()) begin
+      @(bus.mst_cb);
+      if (bus.mst_cb.HREADY === 1'b1) begin
+        // plan[i] is accepted here; a write's data goes out for its data phase
+        if (plan[i].trans != BUSY && plan[i].write) bus.mst_cb.HWDATA <= plan[i].wdata;
+        i++;
+        if (i < plan.size()) drive_addr(plan[i]);
+        else                 bus.mst_cb.HTRANS <= IDLE;
+      end else if (bus.mst_cb.HRESP === 1'b1) begin
+        // First ERROR cycle: cancel what waits on the address bus by driving IDLE in
+        // the second ERROR cycle (§3.5.2), and drop the rest of a burst.
+        bus.mst_cb.HTRANS <= IDLE;
+        while (i < plan.size() && plan[i].trans != NONSEQ) i++;
+        do @(bus.mst_cb); while (bus.mst_cb.HREADY !== 1'b1);
+        if (i < plan.size()) drive_addr(plan[i]);   // re-issue: this BFM's policy
+      end
+      // otherwise an OKAY wait state: hold everything (§3.6, §6.1.1)
+    end
+    do @(bus.mst_cb); while (bus.mst_cb.HREADY !== 1'b1);   // last data phase ends
+  endtask
+
+  initial begin
+    bus.mst_cb.HTRANS <= IDLE;                // IDLE during reset (§7.1.2)
+    bus.mst_cb.HADDR  <= '0;
+    bus.mst_cb.HWRITE <= 1'b0;
+    bus.mst_cb.HSIZE  <= WORD;
+    bus.mst_cb.HBURST <= SINGLE;
+    bus.mst_cb.HWDATA <= '0;
+    add(NONSEQ, 32'h000, 1, WORD, SINGLE, 32'hA000_0000);
+    add(NONSEQ, 32'h010, 1, WORD, INCR4,  32'hB000_0010);
+    add(SEQ,    32'h014, 1, WORD, INCR4,  32'hB000_0014);
+    add(SEQ,    32'h018, 1, WORD, INCR4,  32'hB000_0018);
+    add(BUSY,   32'h01C, 1, WORD, INCR4);              // BUSY carries the next address
+    add(SEQ,    32'h01C, 1, WORD, INCR4,  32'hB000_001C);
+    add(NONSEQ, 32'h001, 1, BYTE, SINGLE, 32'h0000_AB00);  // byte lane 1
+    add(NONSEQ, 32'h010, 0, WORD, INCR4);
+    add(SEQ,    32'h014, 0, WORD, INCR4);
+    add(SEQ,    32'h018, 0, WORD, INCR4);
+    add(SEQ,    32'h01C, 0, WORD, INCR4);
+    add(NONSEQ, 32'h400, 1, WORD, SINGLE, 32'hDEAD_BEEF);  // unmapped: ERROR
+    add(NONSEQ, 32'h000, 0, WORD, SINGLE);   // cancelled in the ERROR, then re-issued
+    do @(bus.mst_cb); while (bus.mst_cb.HRESETn !== 1'b1);
+    run_plan();
+    bus.bfm_done <= 1'b1;
+  end
+endmodule
+```
+
+**4. The protocol checker** (`ahb_protocol_checker.sv`):
+
+```systemverilog
+// compile (part of the bench)
+`timescale 1ns/1ps
+`include "uvm_macros.svh"
+
+module ahb_protocol_checker #(
+  parameter int DATA_W           = 32,   // HWDATA width in bits
+  parameter int MAX_WAIT         = 16,   // [Integration policy] wait-state budget
+  parameter int MIN_RESET_CYCLES = 1     // from the slave's documentation (§7.1.2)
+) (
+  input logic              HCLK,
+  input logic              HRESETn,
+  input logic [31:0]       HADDR,
+  input logic [1:0]        HTRANS,
+  input logic [2:0]        HBURST,
+  input logic [2:0]        HSIZE,
+  input logic              HWRITE,
+  input logic [DATA_W-1:0] HWDATA,
+  input logic              HREADY,
+  input logic              HRESP
+);
+  import uvm_pkg::*;     // so the action blocks can report with `uvm_error
+
   localparam logic [1:0] IDLE = 2'b00, BUSY = 2'b01, NONSEQ = 2'b10, SEQ = 2'b11;
   localparam logic [2:0] SINGLE = 3'b000, INCR = 3'b001,
                          WRAP4 = 3'b010, WRAP8 = 3'b100, WRAP16 = 3'b110;
+  localparam int BYTES = DATA_W / 8;
 
-  // A beat's address phase ends (is accepted) at this edge
+  // A beat's address phase is accepted at an edge where this is true
   wire beat_accepted = HREADY && (HTRANS inside {NONSEQ, SEQ});
 
-  // ═══════════════════════════════════════════════
-  // 1. Wait states: hold, with the spec's exceptions
-  // ═══════════════════════════════════════════════
-  // [Protocol §3.6.1, §3.6.2, §3.5.2] a waited NONSEQ/SEQ holds,
-  // unless the master cancels after an ERROR first cycle
+  // Data-phase bookkeeping, updated only at edges with HREADY high
+  logic              dp_active;    // a NONSEQ/SEQ is in its data phase
+  logic              dp_write;     // ... and it is a write
+  logic [DATA_W-1:0] dp_bits;      // its active byte lanes, as a bit mask
+
+  function automatic logic [DATA_W-1:0] lane_bits(logic [31:0] addr, logic [2:0] size);
+    int unsigned first = addr % BYTES;           // lane of the first byte (§6.2.1)
+    lane_bits = '0;
+    for (int unsigned b = 0; b < (32'd1 << size) && first + b < BYTES; b++)
+      lane_bits[8*(first + b) +: 8] = 8'hFF;
+  endfunction
+
+  always_ff @(posedge HCLK or negedge HRESETn)
+    if (!HRESETn) begin
+      dp_active <= 1'b0;
+      dp_write  <= 1'b0;
+      dp_bits   <= '0;
+    end else if (HREADY) begin
+      dp_active <= beat_accepted;
+      dp_write  <= beat_accepted && HWRITE;
+      dp_bits   <= lane_bits(HADDR, HSIZE);
+    end
+
+  // Reset edges already seen in the current reset
+  int unsigned rst_edges;
+  always_ff @(posedge HCLK)
+    rst_edges <= HRESETn ? 0 : (rst_edges < MIN_RESET_CYCLES ? rst_edges + 1 : rst_edges);
+
+  // ---- [Simulation check] X makes every antecedent below false: catch it first ----
+  a_no_x_ctrl: assert property (@(posedge HCLK) disable iff (!HRESETn)
+    !$isunknown({HTRANS, HREADY, HRESP}))
+    else `uvm_error("AHB_CHK", $sformatf("%m: X/Z on HTRANS, HREADY or HRESP"))
+  a_no_x_addr: assert property (@(posedge HCLK) disable iff (!HRESETn)
+    HTRANS[1] |-> !$isunknown({HADDR, HWRITE, HSIZE, HBURST}))
+    else `uvm_error("AHB_CHK", $sformatf("%m: X/Z on address or control of a transfer"))
+
+  // ---- Wait states: hold, with the specification's exceptions ----
+  // [Protocol §3.6.1, §3.6.2, §3.5.2; Table 2-2, §3.4] a waited NONSEQ/SEQ is held,
+  // unless the master cancels after the first ERROR cycle
   property p_hold_in_wait;
     @(posedge HCLK) disable iff (!HRESETn)
       (!HREADY && HTRANS inside {NONSEQ, SEQ}) |=>
           ($stable(HTRANS) && $stable(HADDR) && $stable({HWRITE, HSIZE, HBURST}))
        || ($past(HRESP) && HTRANS == IDLE);
   endproperty
-  assert property (p_hold_in_wait)
-    else $error("[AHB-CHK] Waited NONSEQ/SEQ changed without an ERROR to cancel it");
+  a_hold_in_wait: assert property (p_hold_in_wait)
+    else `uvm_error("AHB_CHK", $sformatf("%m: waited NONSEQ/SEQ changed (no cancel)"))
 
   // [Protocol §3.6.1, §3.5.2] what a waited BUSY may change into
   property p_busy_in_wait;
@@ -181,378 +874,809 @@ module ahb_protocol_checker #(parameter int MAX_WAIT = 16) (
        || ($past(HBURST) == INCR && HTRANS inside {IDLE, NONSEQ})
        || ($past(HRESP) && HTRANS == IDLE);
   endproperty
-  assert property (p_busy_in_wait)
-    else $error("[AHB-CHK] Illegal change of a waited BUSY");
+  a_busy_in_wait: assert property (p_busy_in_wait)
+    else `uvm_error("AHB_CHK", $sformatf("%m: illegal change of a waited BUSY"))
 
-  // ═══════════════════════════════════════════════
-  // 2. Two-cycle ERROR response, both directions
-  // ═══════════════════════════════════════════════
-  // [Protocol §5.1.3, Table 5-2] first ERROR cycle -> second ERROR cycle
-  property p_error_first_then_second;
+  // [Protocol §6.1.1] a waited write holds its data on its active byte lanes
+  property p_hwdata_hold;
     @(posedge HCLK) disable iff (!HRESETn)
-      (HRESP && !HREADY) |=> (HRESP && HREADY);
+      (dp_write && !HREADY) |=> $stable(HWDATA & dp_bits);
   endproperty
-  assert property (p_error_first_then_second)
-    else $error("[AHB-CHK] ERROR first cycle not followed by the second");
+  a_hwdata_hold: assert property (p_hwdata_hold)
+    else `uvm_error("AHB_CHK", $sformatf("%m: HWDATA changed before the write completed"))
 
-  // [Protocol §5.1.3, Table 5-2] an ERROR completion needs a first cycle.
-  // This is the property that catches a one-cycle ERROR.
+  // ---- Two-cycle ERROR response, both directions ----
+  // [Protocol §5.1.3, Table 5-2] first ERROR cycle -> second ERROR cycle
+  a_error_first_then_second: assert property (@(posedge HCLK) disable iff (!HRESETn)
+    (HRESP && !HREADY) |=> (HRESP && HREADY))
+    else `uvm_error("AHB_CHK", $sformatf("%m: ERROR first cycle without a second"))
+
+  // [Protocol §5.1.3, Table 5-2] an ERROR completion needs its first cycle
   property p_error_second_needs_first;
     @(posedge HCLK) disable iff (!HRESETn)
       (HRESP && HREADY) |-> $past(HRESP && !HREADY);
   endproperty
-  assert property (p_error_second_needs_first)
-    else $error("[AHB-CHK] One-cycle ERROR: no first cycle with HREADY low");
+  a_error_second_needs_first: assert property (p_error_second_needs_first)
+    else `uvm_error("AHB_CHK", $sformatf("%m: one-cycle ERROR (no first cycle)"))
 
-  // ═══════════════════════════════════════════════
-  // 3. IDLE and BUSY get a zero-wait OKAY
-  // ═══════════════════════════════════════════════
-  // [Protocol §3.2 Table 3-1]
-  property p_idle_busy_zero_wait_okay;
-    @(posedge HCLK) disable iff (!HRESETn)
-      (HREADY && HTRANS inside {IDLE, BUSY}) |=> (HREADY && !HRESP);
-  endproperty
-  assert property (p_idle_busy_zero_wait_okay)
-    else $error("[AHB-CHK] IDLE/BUSY did not get a zero-wait OKAY");
+  // ---- [Protocol §3.2 Table 3-1] IDLE and BUSY get a zero-wait OKAY ----
+  a_idle_busy_zero_wait_okay: assert property (@(posedge HCLK) disable iff (!HRESETn)
+    (HREADY && HTRANS inside {IDLE, BUSY}) |=> (HREADY && !HRESP))
+    else `uvm_error("AHB_CHK", $sformatf("%m: IDLE/BUSY did not get a zero-wait OKAY"))
 
-  // ═══════════════════════════════════════════════
-  // 4. Burst rules
-  // ═══════════════════════════════════════════════
-  // [Protocol §3.2 Table 3-1] a SEQ beat has the same control as the previous beat
-  property p_seq_ctrl_matches;
-    @(posedge HCLK) disable iff (!HRESETn)
-      (HREADY && HTRANS == SEQ) |->
-        {HWRITE, HSIZE, HBURST} == $past({HWRITE, HSIZE, HBURST}, 1, beat_accepted);
-  endproperty
-  assert property (p_seq_ctrl_matches)
-    else $error("[AHB-CHK] Control changed inside a burst");
+  // ---- Bursts, sizes and addresses ----
+  // [Protocol §3.2 Table 3-1] a SEQ beat has the control of the previous beat
+  a_seq_ctrl_matches: assert property (@(posedge HCLK) disable iff (!HRESETn)
+    (HREADY && HTRANS == SEQ) |->
+      {HWRITE, HSIZE, HBURST} == $past({HWRITE, HSIZE, HBURST}, 1, beat_accepted))
+    else `uvm_error("AHB_CHK", $sformatf("%m: control changed inside a burst"))
 
   // [Protocol §3.2 Table 3-1] incrementing SEQ address = previous address + size
-  property p_seq_addr_increments;
-    @(posedge HCLK) disable iff (!HRESETn)
-      (HREADY && HTRANS == SEQ && !(HBURST inside {WRAP4, WRAP8, WRAP16})) |->
-        HADDR == $past(HADDR, 1, beat_accepted) + (32'd1 << HSIZE);
-  endproperty
-  assert property (p_seq_addr_increments)
-    else $error("[AHB-CHK] SEQ address is not the previous address + size");
+  a_seq_addr_increments: assert property (@(posedge HCLK) disable iff (!HRESETn)
+    (HREADY && HTRANS == SEQ && !(HBURST inside {WRAP4, WRAP8, WRAP16})) |->
+      HADDR == $past(HADDR, 1, beat_accepted) + (32'd1 << HSIZE))
+    else `uvm_error("AHB_CHK", $sformatf("%m: SEQ address 0x%08h is not previous + size",
+                                         $sampled(HADDR)))
 
-  // [Protocol §3.5, §4.2] incrementing bursts never cross 1KB.
-  // Per beat, so undefined-length INCR is covered; WRAP bursts are exempt.
-  property p_incr_no_1kb_cross;
-    @(posedge HCLK) disable iff (!HRESETn)
-      (HREADY && HTRANS == SEQ && !(HBURST inside {WRAP4, WRAP8, WRAP16})) |->
-        HADDR[31:10] == $past(HADDR[31:10], 1, beat_accepted);
-  endproperty
-  assert property (p_incr_no_1kb_cross)
-    else $error("[AHB-CHK] Incrementing burst crossed a 1KB boundary at 0x%08h", HADDR);
+  // [Protocol §3.5, §4.2] an incrementing burst never crosses 1KB; checked per beat,
+  // so undefined-length INCR is covered; WRAP bursts are exempt
+  a_incr_no_1kb_cross: assert property (@(posedge HCLK) disable iff (!HRESETn)
+    (HREADY && HTRANS == SEQ && !(HBURST inside {WRAP4, WRAP8, WRAP16})) |->
+      HADDR[31:10] == $past(HADDR[31:10], 1, beat_accepted))
+    else `uvm_error("AHB_CHK", $sformatf("%m: burst crossed 1KB at 0x%08h",
+                                         $sampled(HADDR)))   // the failing beat's address
 
-  // [Protocol §3.5] every transfer in a burst is aligned, not just the first
-  property p_aligned;
-    @(posedge HCLK) disable iff (!HRESETn)
-      (HTRANS inside {NONSEQ, SEQ}) |-> ((HADDR & ((32'd1 << HSIZE) - 32'd1)) == 32'd0);
-  endproperty
-  assert property (p_aligned)
-    else $error("[AHB-CHK] Unaligned transfer: addr=0x%08h size=%0d", HADDR, HSIZE);
+  // [Protocol §3.5] every transfer of a burst is aligned to its size
+  a_aligned: assert property (@(posedge HCLK) disable iff (!HRESETn)
+    HTRANS[1] |-> ((HADDR & ((32'd1 << HSIZE) - 32'd1)) == 32'd0))
+    else `uvm_error("AHB_CHK", $sformatf("%m: unaligned: addr=0x%08h size=%0d",
+                                         $sampled(HADDR), $sampled(HSIZE)))
+
+  // [Protocol §3.4 Note] HSIZE is never wider than the data bus
+  a_size_le_bus: assert property (@(posedge HCLK) disable iff (!HRESETn)
+    HTRANS[1] |-> ((32'd8 << HSIZE) <= DATA_W))
+    else `uvm_error("AHB_CHK", $sformatf("%m: HSIZE wider than the %0d-bit bus", DATA_W))
 
   // [Protocol §3.5.1] a SINGLE is followed by IDLE or NONSEQ, never BUSY or SEQ
-  property p_no_busy_after_single;
-    @(posedge HCLK) disable iff (!HRESETn)
-      (HREADY && HTRANS == NONSEQ && HBURST == SINGLE) |=> HTRANS inside {IDLE, NONSEQ};
-  endproperty
-  assert property (p_no_busy_after_single)
-    else $error("[AHB-CHK] BUSY or SEQ after a SINGLE");
+  a_no_busy_after_single: assert property (@(posedge HCLK) disable iff (!HRESETn)
+    (HREADY && HTRANS == NONSEQ && HBURST == SINGLE) |=> HTRANS inside {IDLE, NONSEQ})
+    else `uvm_error("AHB_CHK", $sformatf("%m: BUSY or SEQ after a SINGLE"))
 
-  // ═══════════════════════════════════════════════
-  // 5. Reset values
-  // ═══════════════════════════════════════════════
-  // [Protocol §7.1.2] checked DURING reset, so there is no disable iff
-  property p_reset_values;
-    @(posedge HCLK)
-      !HRESETn |-> (HTRANS == IDLE && HREADY);
-  endproperty
-  assert property (p_reset_values)
-    else $error("[AHB-CHK] Not IDLE, or HREADY low, during reset");
+  // ---- [Protocol §7.1.2] reset values, after the component's minimum reset time ----
+  // Checked during reset, so there is no disable iff
+  a_reset_values: assert property (@(posedge HCLK)
+    (!HRESETn && rst_edges >= MIN_RESET_CYCLES) |-> (HTRANS == IDLE && HREADY))
+    else `uvm_error("AHB_CHK", $sformatf("%m: not IDLE, or HREADY low, during reset"))
 
-  // ═══════════════════════════════════════════════
-  // Integration policy (not protocol)
-  // ═══════════════════════════════════════════════
-  // The spec only recommends at most 16 wait states (§5.1.2), so this is a warning.
-  property p_wait_budget;
-    @(posedge HCLK) disable iff (!HRESETn)
-      $fell(HREADY) |-> ##[1:MAX_WAIT] HREADY;
-  endproperty
-  assert property (p_wait_budget)
-    else $warning("[AHB-CHK] HREADY low for > %0d cycles (policy budget)", MAX_WAIT);
+  // ---- [Integration policy] wait-state budget: legal if exceeded, so a warning ----
+  // The specification only recommends at most 16 wait states (§5.1.2 Note)
+  a_wait_budget: assert property (@(posedge HCLK) disable iff (!HRESETn)
+    $fell(HREADY) |-> ##[1:MAX_WAIT] HREADY)
+    else `uvm_warning("AHB_POLICY", $sformatf("%m: HREADY low > %0d cycles", MAX_WAIT))
 
+  // ---- Coverage of antecedents and key sequences (§16.14.3) ----
+  c_waited_nonseq_seq: cover property (@(posedge HCLK) disable iff (!HRESETn)
+    !HREADY && HTRANS inside {NONSEQ, SEQ});
+  c_waited_busy: cover property (@(posedge HCLK) disable iff (!HRESETn)
+    !HREADY && HTRANS == BUSY);
+  c_waited_write: cover property (@(posedge HCLK) disable iff (!HRESETn)
+    dp_write && !HREADY);
+  c_error_cancel: cover property (@(posedge HCLK) disable iff (!HRESETn)
+    (HRESP && !HREADY && HTRANS inside {NONSEQ, SEQ}) ##1
+    (HRESP && HREADY && HTRANS == IDLE));
+  c_error_continue: cover property (@(posedge HCLK) disable iff (!HRESETn)
+    (HRESP && !HREADY && HTRANS inside {NONSEQ, SEQ}) ##1
+    (HRESP && HREADY && HTRANS inside {NONSEQ, SEQ}));
+  c_reset_in_data_phase: cover property (@(posedge HCLK)
+    (HRESETn && (beat_accepted || (dp_active && !HREADY))) ##1 !HRESETn);
+  c_first_after_reset: cover property (@(posedge HCLK)
+    $rose(HRESETn) ##[1:$] beat_accepted);
+
+  // Every HTRANS value with and without a wait state, sampled out of reset
+  covergroup htrans_cg @(posedge HCLK iff HRESETn);
+    cp_trans:  coverpoint HTRANS { bins idle = {IDLE}; bins busy = {BUSY};
+                                   bins nonseq = {NONSEQ}; bins seq = {SEQ}; }
+    cp_hready: coverpoint HREADY { bins waited = {1'b0}; bins ready = {1'b1}; }
+    cx_trans_waited: cross cp_trans, cp_hready;
+  endgroup
+  htrans_cg htrans_cov = new();
 endmodule
 ```
 
-`$past(expr, 1, beat_accepted)` returns the value at the most recent earlier edge where a beat was accepted (IEEE 1800-2023 §16.9.3), which is the previous beat even if BUSY cycles or wait states came in between.
-
-Why these forms and not simpler ones:
-
-- **`p_error_second_needs_first`** is the one that catches a slave driving ERROR for a single cycle with `HREADY` high. `p_error_first_then_second` alone never even starts on that bug, because its antecedent needs `HREADY` low.
-- **`p_hold_in_wait`** replaces a plain `$stable(HTRANS)` check, which fires on legal behaviour: BUSY→SEQ during a wait (§3.6.1) and IDLE after an ERROR (§3.5.2). `p_busy_in_wait` covers the BUSY cases.
-- **`p_incr_no_1kb_cross`** checks each beat. A start-address formula fires on legal WRAP bursts and cannot size an undefined-length INCR.
-
-Still missing from this list, and worth adding next: the beat count of fixed-length bursts (INCR4 must deliver four beats unless an ERROR cancels it, §3.5.2), and no fixed-length burst ending in BUSY (§3.5.1). Both need a small burst-tracking state machine beside the properties.
-
-### 3B. Assertion Severity Strategy
-
-| Severity | When to Use | Example |
-|---|---|---|
-| `$error` | Definite protocol violation | Address changed during wait state |
-| `$warning` | Suspicious but legal behavior | Wait state count > 8 cycles |
-| `$info` | Telemetry and debug tracing | Transfer completed with 0 wait states |
-
----
-
-## 4. Functional Coverage
-
-Protocol assertions prove the design *doesn't violate rules*.
-Functional coverage proves you *exercised enough scenarios* to trust the assertions.
-
-### 4A. Pin-Level Transfer Coverage
+**5. The UVM package** (`ahb_pkg.sv`):
 
 ```systemverilog
-// Every HTRANS value with and without a wait state, plus the transitions
-// the spec singles out (BUSY inside bursts, burst end or cancel after ERROR).
-covergroup ahb_htrans_cg @(posedge HCLK iff HRESETn);
-  cp_trans: coverpoint HTRANS {
-    bins idle   = {2'b00};
-    bins busy   = {2'b01};
-    bins nonseq = {2'b10};
-    bins seq    = {2'b11};
-  }
-  cp_waited: coverpoint HREADY {
-    bins waited = {1'b0};
-    bins ready  = {1'b1};
-  }
-  // e.g. IDLE->NONSEQ or BUSY->SEQ while the slave waits (§3.6.1)
-  cx_trans_waited: cross cp_trans, cp_waited;
+// compile (part of the bench)
+`timescale 1ns/1ps
+package ahb_pkg;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
 
-  cp_trans_seq: coverpoint HTRANS {
-    bins nonseq_busy = (2'b10 => 2'b01);
-    bins busy_seq    = (2'b01 => 2'b11);
-    bins seq_busy    = (2'b11 => 2'b01);
-    bins seq_idle    = (2'b11 => 2'b00);   // burst end, or cancel after ERROR
-  }
+  typedef enum logic [1:0] {IDLE, BUSY, NONSEQ, SEQ} htrans_e;                // Table 3-1
+  typedef enum logic [2:0] {SINGLE, INCR, WRAP4, INCR4,
+                            WRAP8, INCR8, WRAP16, INCR16} hburst_e;          // Table 3-3
 
-  // First ERROR cycle while the next SEQ beat waits on the address bus
-  cp_error_mid_burst: coverpoint (HRESP && !HREADY && HTRANS == 2'b11) {
-    bins hit = {1'b1};
-  }
-endgroup
-```
+  // One beat: a NONSEQ or SEQ transfer and its data phase
+  class ahb_item extends uvm_sequence_item;
+    `uvm_object_utils(ahb_item)
+    rand logic [31:0] addr;
+    rand logic        write;
+    rand logic [2:0]  size;
+    rand hburst_e     burst;
+    htrans_e          trans;
+    logic [31:0]      data;
+    logic             resp;
+    int unsigned      waits;
+    int unsigned      beat_index;
+    int unsigned      busy_before;
 
-### 4B. Transaction Coverage: Bursts, Waits and Errors
+    constraint c_legal {
+      (8 << size) <= 32;                     // §3.4
+      (addr & ((32'd1 << size) - 1)) == 0;   // §3.5
+    }
 
-The monitor samples this once per completed transfer. Declare it in your coverage package and call `cg.sample(txn)` from the subscriber's `write()`.
+    function new(string name = "ahb_item");
+      super.new(name);
+    endfunction
 
-```systemverilog
-covergroup ahb_txn_cg with function sample(ahb_transaction t);
-  cp_write: coverpoint t.write {
-    bins read  = {1'b0};
-    bins write = {1'b1};
-  }
-  cp_size: coverpoint t.size {
-    bins byte_txn = {3'b000};
-    bins half_txn = {3'b001};
-    bins word_txn = {3'b010};
-  }
-  cp_burst: coverpoint t.burst {
-    bins single = {3'b000};  bins incr   = {3'b001};
-    bins wrap4  = {3'b010};  bins incr4  = {3'b011};
-    bins wrap8  = {3'b100};  bins incr8  = {3'b101};
-    bins wrap16 = {3'b110};  bins incr16 = {3'b111};
-  }
-  cp_beat: coverpoint t.trans {
-    bins first_beat = {2'b10};   // NONSEQ
-    bins later_beat = {2'b11};   // SEQ
-  }
-  // The monitor counts every HREADY-low cycle, including the first ERROR cycle.
-  cp_wait_cycles: coverpoint t.wait_cycles {
-    bins zero_wait  = {0};
-    bins one_wait   = {1};
-    bins few_waits  = {[2:4]};
-    bins many_waits = {[5:16]};
-    bins over_16    = {[17:$]};  // legal, but above the spec's recommendation (§5.1.2)
-  }
-  cp_resp: coverpoint t.resp {
-    bins okay  = {1'b0};
-    bins error = {1'b1};
-  }
+    function string convert2string();
+      return $sformatf("%s %s addr=%08h data=%08h size=%0d beat=%0d waits=%0d %s",
+                       write ? "WR" : "RD", trans.name(), addr, data, size,
+                       beat_index, waits, resp ? "ERROR" : "OKAY");
+    endfunction
+  endclass
 
-  cx_write_burst: cross cp_write, cp_burst;
-  cx_write_size:  cross cp_write, cp_size;
-  cx_wait_burst:  cross cp_wait_cycles, cp_burst;
-  cx_resp_dir:    cross cp_resp, cp_write;
-  cx_resp_burst:  cross cp_resp, cp_burst;
-  cx_resp_beat:   cross cp_resp, cp_beat;   // ERROR on a first beat vs mid-burst
-endgroup
-```
+  // Passive monitor: one item per completed beat
+  class ahb_mon extends uvm_monitor;
+    `uvm_component_utils(ahb_mon)
+    uvm_analysis_port #(ahb_item) ap;
+    virtual ahb_if vif;
+    protected ahb_item     pending;     // accepted, data phase not yet complete
+    protected int unsigned next_beat;   // beat_index for the next SEQ
+    protected int unsigned busy_run;    // BUSY cycles accepted since the last beat
 
-> [!TIP]
-> **Coverage closure strategy:** Run your random test suite until you hit 100% on `cx_write_burst`.
-> Then write targeted directed tests for any remaining holes in `cx_resp_burst` (error during WRAP8 read, etc.).
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
 
----
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      ap = new("ap", this);
+      if (!uvm_config_db#(virtual ahb_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "no virtual interface 'vif' in the configuration database")
+    endfunction
 
-## 5. Scoreboard Strategy
-
-For an AHB slave verification environment, the scoreboard compares expected vs. actual memory contents.
-AHB has no write strobes: the active byte lanes come from `HADDR` and `HSIZE` (little-endian lane = address modulo bus bytes, §6.2.1). So the reference model stores **bytes**, and a byte write at `0x1001` is visible to a later word read at `0x1000`.
-
-```systemverilog
-class ahb_scoreboard extends uvm_scoreboard;
-  `uvm_component_utils(ahb_scoreboard)
-
-  uvm_analysis_imp #(ahb_transaction, ahb_scoreboard) ap;
-
-  // Reference model: one entry per BYTE address (32-bit, little-endian bus)
-  bit [7:0] shadow_mem [bit [31:0]];
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-    ap = new("ap", this);
-  endfunction
-
-  function void write(ahb_transaction txn);
-    int unsigned nbytes = 1 << txn.size;
-    for (int unsigned i = 0; i < nbytes; i++) begin
-      bit [31:0]   a    = txn.addr + i;
-      int unsigned lane = a % 4;                    // byte lane on a 32-bit bus
-      if (txn.resp == 1) begin
-        // Policy choice: a failed write leaves the byte unknown.
-        // A failed read carries no valid data (§6.1.2).
-        if (txn.write) shadow_mem.delete(a);
-        continue;
+    task run_phase(uvm_phase phase);
+      forever begin
+        @(vif.mon_cb);
+        if (!vif.mon_cb.HRESETn) begin               // reset kills the open transfer
+          if (pending != null)
+            `uvm_info("AHB_MON", {"reset: dropped ", pending.convert2string()}, UVM_LOW)
+          pending  = null;
+          busy_run = 0;
+          continue;
+        end
+        if ($isunknown({vif.mon_cb.HTRANS, vif.mon_cb.HREADY}))
+          `uvm_error("AHB_MON", "X/Z on HTRANS or HREADY outside reset")
+        // 1. The data phase of the pending beat ends at an edge with HREADY high
+        if (pending != null) begin
+          if (vif.mon_cb.HREADY === 1'b1) begin
+            pending.data = pending.write ? vif.mon_cb.HWDATA : vif.mon_cb.HRDATA;
+            pending.resp = vif.mon_cb.HRESP;
+            `uvm_info("AHB_MON", pending.convert2string(), UVM_MEDIUM)
+            ap.write(pending);
+            pending = null;
+          end else begin
+            pending.waits++;
+          end
+        end
+        // 2. The address phase on the bus is accepted at this edge if HREADY is high
+        if (vif.mon_cb.HREADY === 1'b1) begin
+          if (vif.mon_cb.HTRANS[1] === 1'b1) begin   // NONSEQ or SEQ
+            pending = ahb_item::type_id::create("tr");
+            pending.addr        = vif.mon_cb.HADDR;
+            pending.write       = vif.mon_cb.HWRITE;
+            pending.size        = vif.mon_cb.HSIZE;
+            pending.burst       = hburst_e'(vif.mon_cb.HBURST);
+            pending.trans       = htrans_e'(vif.mon_cb.HTRANS);
+            pending.beat_index  = (pending.trans == NONSEQ) ? 0 : next_beat;
+            pending.busy_before = busy_run;
+            next_beat = pending.beat_index + 1;
+            busy_run  = 0;
+          end else if (vif.mon_cb.HTRANS === BUSY) begin
+            busy_run++;
+          end
+        end
       end
-      if (txn.write) begin
-        shadow_mem[a] = txn.data[8*lane +: 8];
-      end else if (!shadow_mem.exists(a)) begin
-        `uvm_warning("SCB", $sformatf("Read of unwritten byte 0x%08h: cannot check", a))
-      end else if (shadow_mem[a] !== txn.data[8*lane +: 8]) begin
-        `uvm_error("SCB", $sformatf("MISMATCH at byte 0x%08h: expected 0x%02h, read 0x%02h",
-                                    a, shadow_mem[a], txn.data[8*lane +: 8]))
+    endtask
+  endclass
+
+  // Transaction coverage: sampled once per published item
+  class ahb_cov extends uvm_subscriber #(ahb_item);
+    `uvm_component_utils(ahb_cov)
+    int unsigned n_items;
+
+    covergroup ahb_txn_cg with function sample(ahb_item t);
+      cp_write: coverpoint t.write { bins read = {1'b0}; bins write = {1'b1}; }
+      cp_size: coverpoint t.size {
+        bins byte_sz = {3'd0}; bins half_sz = {3'd1}; bins word_sz = {3'd2};
+        illegal_bins wider_than_bus = {[3'd3:3'd7]};      // §3.4, 32-bit bus
+      }
+      cp_burst: coverpoint t.burst;                       // one bin per hburst_e value
+      cp_beat:  coverpoint t.trans { bins first = {NONSEQ}; bins later = {SEQ}; }
+      cp_waits: coverpoint t.waits {                // includes the first ERROR cycle
+        bins zero = {0}; bins one = {1}; bins few = {[2:4]};
+        bins many = {[5:16]}; bins over_16 = {[17:$]};    // legal, above §5.1.2's advice
+      }
+      cp_resp: coverpoint t.resp { bins okay = {1'b0}; bins error = {1'b1}; }
+      cp_busy_before: coverpoint t.busy_before iff (t.trans == SEQ) {
+        bins none = {0}; bins one = {1}; bins several = {[2:$]};
+      }
+      // Bytes from an incrementing burst's start to the next 1KB boundary (§3.5)
+      cp_kb_room: coverpoint (11'd1024 - t.addr[9:0])
+        iff (t.trans == NONSEQ && t.burst inside {INCR, INCR4, INCR8, INCR16}) {
+        bins near = {[1:16]}; bins mid = {[17:64]}; bins far = {[65:1024]};
+      }
+      cx_write_burst: cross cp_write, cp_burst;
+      cx_burst_size:  cross cp_burst, cp_size;
+      cx_waits_burst: cross cp_waits, cp_burst;
+      cx_resp_dir:    cross cp_resp, cp_write;
+      cx_resp_burst_beat: cross cp_resp, cp_burst, cp_beat {
+        ignore_bins single_has_no_seq = binsof(cp_burst) intersect {SINGLE} &&
+                                        binsof(cp_beat.later);
+      }
+    endgroup
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      ahb_txn_cg = new();
+    endfunction
+
+    function void write(ahb_item t);
+      ahb_txn_cg.sample(t);
+      n_items++;
+    endfunction
+
+    function void report_phase(uvm_phase phase);
+      `uvm_info("COV_SUMMARY", $sformatf("COV_SUMMARY items=%0d", n_items), UVM_NONE)
+    endfunction
+  endclass
+
+  // Byte-lane scoreboard: the reference model is a memory of expected bytes
+  class ahb_sb extends uvm_scoreboard;
+    `uvm_component_utils(ahb_sb)
+    uvm_analysis_imp #(ahb_item, ahb_sb) item_imp;
+    localparam int unsigned BUS_BYTES = 4;
+    protected logic [7:0] mem_model [bit [31:0]];     // one entry per byte address
+    int unsigned n_writes, n_errors, matches, mismatches, pending;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      item_imp = new("item_imp", this);
+    endfunction
+
+    function void write(ahb_item t);
+      int unsigned nbytes = 1 << t.size;
+      bit          ok = 1, known = 1;
+      if (t.resp) begin
+        // Error policy: an ERROR read has no valid data (§6.1.2); forget failed writes
+        if (t.write)
+          for (int unsigned i = 0; i < nbytes; i++) mem_model.delete(t.addr + i);
+        n_errors++;
+        return;
       end
-    end
-  endfunction
-endclass
+      for (int unsigned i = 0; i < nbytes; i++) begin
+        bit [31:0]  a    = t.addr + i;
+        logic [7:0] lane = t.data[8*(a % BUS_BYTES) +: 8];   // §6.2.1
+        if (t.write)                   mem_model[a] = lane;
+        else if (!mem_model.exists(a)) known = 0;
+        else if (lane !== mem_model[a]) begin
+          ok = 0;
+          `uvm_error("SCB_MISMATCH", $sformatf("byte 0x%08h: expected %02h, read %02h",
+                                               a, mem_model[a], lane))
+        end
+      end
+      if (t.write)  n_writes++;
+      else if (!ok) mismatches++;
+      else if (!known) begin
+        pending++;
+        `uvm_warning("SCB_UNCHECKED", {"read of unwritten bytes: ", t.convert2string()})
+      end
+      else matches++;
+    endfunction
+
+    function void check_phase(uvm_phase phase);
+      if (matches + mismatches == 0)
+        `uvm_error("SCB_EMPTY", "no read was compared: is the monitor connected?")
+    endfunction
+
+    function void report_phase(uvm_phase phase);
+      `uvm_info("SCB_SUMMARY", $sformatf(
+        "SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d writes=%0d errors=%0d",
+        matches, mismatches, pending, n_writes, n_errors), UVM_NONE)
+    endfunction
+  endclass
+
+  class ahb_agent extends uvm_agent;
+    `uvm_component_utils(ahb_agent)
+    ahb_mon mon;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      mon = ahb_mon::type_id::create("mon", this);
+      // An active master agent would also create its driver and sequencer here
+      // when get_is_active() == UVM_ACTIVE (see "Stimulus side").
+    endfunction
+  endclass
+
+  class ahb_env extends uvm_env;
+    `uvm_component_utils(ahb_env)
+    ahb_agent agt;
+    ahb_sb    sb;
+    ahb_cov   cov;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      uvm_config_db#(uvm_active_passive_enum)::set(this, "agt", "is_active", UVM_PASSIVE);
+      agt = ahb_agent::type_id::create("agt", this);
+      sb  = ahb_sb::type_id::create("sb", this);
+      cov = ahb_cov::type_id::create("cov", this);
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      agt.mon.ap.connect(sb.item_imp);
+      agt.mon.ap.connect(cov.analysis_export);
+    endfunction
+  endclass
+
+  class ahb_smoke_test extends uvm_test;
+    `uvm_component_utils(ahb_smoke_test)
+    ahb_env env;
+    virtual ahb_if vif;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env = ahb_env::type_id::create("env", this);
+      if (!uvm_config_db#(virtual ahb_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "no virtual interface 'vif' in the configuration database")
+    endfunction
+    task run_phase(uvm_phase phase);
+      phase.raise_objection(this, "waiting for ahb_master_bfm");
+      wait (vif.bfm_done === 1'b1);
+      repeat (2) @(vif.mon_cb);          // let the monitor publish the last beat
+      phase.drop_objection(this, "traffic done");
+    endtask
+  endclass
+endpackage
 ```
 
-> [!NOTE]
-> What a slave does with a write that gets an ERROR response is not fixed by the protocol. This scoreboard forgets those bytes. If your slave guarantees "no write on ERROR", check that instead.
+**6. The top** (`tb_top.sv`):
 
----
+```systemverilog
+// compile (part of the bench)
+`timescale 1ns/1ps
+module tb_top;
+  import uvm_pkg::*;
+  import ahb_pkg::*;
 
-## 6. Debug Patterns
+  logic HCLK    = 1'b0;
+  logic HRESETn = 1'b0;
+  always #5 HCLK = ~HCLK;                 // rising edges at 5, 15, 25, ... ns
 
-When a test fails, the waveform can be overwhelming.  These patterns let you triage AHB failures quickly.
+  initial begin
+    repeat (4) @(posedge HCLK);
+    HRESETn <= 1'b1;                      // released just after an edge (§7.1.2)
+  end
 
-### Pattern 1: The "HREADY Trace"
+  ahb_if bus (.HCLK(HCLK), .HRESETn(HRESETn));
+  logic hreadyout;
 
-**Always start by finding `HREADY` transitions.**  If `HREADY` drops, find *which slave* pulled it low and *why*.
-In a multi-slave system, each slave's `HREADYOUT` feeds the multiplexor that drives `HREADY` (§4.3). The decoder's `HSELx` (§4.2), registered at the last edge where `HREADY` was high, tells you which slave owns the current data phase.
+  ahb_sram_slave #(.DEPTH(256)) dut (
+    .HCLK, .HRESETn, .HSEL(1'b1),        // one slave: no decoder
+    .HADDR(bus.HADDR), .HTRANS(bus.HTRANS), .HWRITE(bus.HWRITE),
+    .HSIZE(bus.HSIZE), .HBURST(bus.HBURST), .HWDATA(bus.HWDATA),
+    .HREADY(bus.HREADY), .HREADYOUT(hreadyout),
+    .HRESP(bus.HRESP), .HRDATA(bus.HRDATA)
+  );
+  assign bus.HREADY = hreadyout;          // one slave: the multiplexor is a wire (§4.3)
 
-### Pattern 2: The "Transaction Boundary Finder"
+  ahb_master_bfm bfm (.bus(bus));
 
-Look for `HTRANS = NONSEQ` transitions — these mark the start of every new transfer or burst.
-Count `SEQ` beats after each `NONSEQ` to reconstruct the burst structure.
+  initial begin
+    uvm_config_db#(virtual ahb_if)::set(null, "uvm_test_top*", "vif", bus);
+    run_test("ahb_smoke_test");
+  end
+endmodule
 
-### Pattern 3: The "ERROR Forensics"
+// The checker reads the slave's own ports; the RTL source is untouched (§23.11)
+bind ahb_sram_slave ahb_protocol_checker #(.DATA_W(32)) u_chk (
+  .HCLK, .HRESETn, .HADDR, .HTRANS, .HBURST, .HSIZE, .HWRITE, .HWDATA, .HREADY, .HRESP
+);
+```
 
-When you see `HRESP = ERROR`:
-1. Find the address phase that was accepted at the last edge with `HREADY` high before the ERROR started. With OKAY wait states before the ERROR, that is more than two cycles back.
-2. Check whether the address falls within the slave's address range.
-3. Check whether the access type (read/write) and size are legal for that register.
-4. Check whether a protection violation (`HPROT`) occurred.
+### Run it
 
-### Pattern 4: The "Starvation Detector"
+Compile `ahb_if.sv`, `ahb_sram_slave.sv`, `ahb_master_bfm.sv`, `ahb_protocol_checker.sv`, `ahb_pkg.sv` and `tb_top.sv` together with the UVM library (uvm-core 2020.3.1), with `tb_top` as the top module, and run with `+UVM_TESTNAME=ahb_smoke_test` (optional here, because `run_test` names the test). The bench needs full concurrent-SVA support (`$past` with a gating expression, `##[1:$]`, `disable iff`), `bind` and UVM in one simulator; open-source support for that combination is **tool-dependent** and was not verified for this page.
 
-In multi-master systems, sort the waveform by master ID.
-Measure the time between successive grants for each master.
-If one master's inter-grant time grows without bound, you have a starvation bug.
+### Expected output
 
----
+Illustrative: derived by tracing the code edge by edge, not from a simulator run (no simulator was available for this program). The UVM banner and the per-phase lines are left out; the time format depends on your `$timeformat`.
 
-## 7. Interview Questions & Answers
+```text
+UVM_INFO @ 0 ns: reporter [RNTST] Running test ahb_smoke_test...
+UVM_INFO @ 65 ns: uvm_test_top.env.agt.mon [AHB_MON] WR NONSEQ addr=00000000 data=a0000000 size=2 beat=0 waits=0 OKAY
+UVM_INFO @ 75 ns: uvm_test_top.env.agt.mon [AHB_MON] WR NONSEQ addr=00000010 data=b0000010 size=2 beat=0 waits=0 OKAY
+UVM_INFO @ 85 ns: uvm_test_top.env.agt.mon [AHB_MON] WR SEQ addr=00000014 data=b0000014 size=2 beat=1 waits=0 OKAY
+UVM_INFO @ 105 ns: uvm_test_top.env.agt.mon [AHB_MON] WR SEQ addr=00000018 data=b0000018 size=2 beat=2 waits=1 OKAY
+UVM_INFO @ 125 ns: uvm_test_top.env.agt.mon [AHB_MON] WR SEQ addr=0000001c data=b000001c size=2 beat=3 waits=0 OKAY
+UVM_INFO @ 135 ns: uvm_test_top.env.agt.mon [AHB_MON] WR NONSEQ addr=00000001 data=0000ab00 size=0 beat=0 waits=0 OKAY
+UVM_INFO @ 145 ns: uvm_test_top.env.agt.mon [AHB_MON] RD NONSEQ addr=00000010 data=b0000010 size=2 beat=0 waits=0 OKAY
+UVM_INFO @ 165 ns: uvm_test_top.env.agt.mon [AHB_MON] RD SEQ addr=00000014 data=b0000014 size=2 beat=1 waits=1 OKAY
+UVM_INFO @ 175 ns: uvm_test_top.env.agt.mon [AHB_MON] RD SEQ addr=00000018 data=b0000018 size=2 beat=2 waits=0 OKAY
+UVM_INFO @ 185 ns: uvm_test_top.env.agt.mon [AHB_MON] RD SEQ addr=0000001c data=b000001c size=2 beat=3 waits=0 OKAY
+UVM_INFO @ 205 ns: uvm_test_top.env.agt.mon [AHB_MON] WR NONSEQ addr=00000400 data=deadbeef size=2 beat=0 waits=1 ERROR
+UVM_INFO @ 235 ns: uvm_test_top.env.agt.mon [AHB_MON] RD NONSEQ addr=00000000 data=a000ab00 size=2 beat=0 waits=1 OKAY
+UVM_INFO @ 255 ns: uvm_test_top.env.cov [COV_SUMMARY] COV_SUMMARY items=12
+UVM_INFO @ 255 ns: uvm_test_top.env.sb [SCB_SUMMARY] SCB_SUMMARY matches=5 mismatches=0 pending=0 writes=6 errors=1
 
-These are real questions asked in verification engineer interviews at semiconductor companies:
+--- UVM Report Summary ---
+** Report counts by severity
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
 
-**Q1: How does the AHB monitor handle the pipeline when reconstructing transactions?**
+How to read it against the trace (edge k is the rising edge at 10k − 5 ns, as in the vplan table):
+- Reset is released after the edge at 35 ns, the BFM puts the first address on the bus after the edge at 45 ns, and the first write completes at 65 ns.
+- Every 4th accepted transfer waits once: the 4th (write 0x18), the 8th (read 0x14) and the 12th (the re-issued read of 0x000). The 11th, the write to 0x400, has one waited edge too: its first ERROR cycle.
+- At 195 ns the slave is in its first ERROR cycle while the read of 0x000 waits on the address bus. The BFM cancels it (IDLE in the second ERROR cycle, which `c_error_cancel` covers) and re-issues it at 205 ns. The cancelled attempt never appears in the log, because it was never accepted.
+- The byte write puts 0xAB on lane 1, so the final word read of 0x000 returns 0xa000ab00, and all five reads match.
+- No assertion fires, so no `AHB_CHK` line appears; every antecedent cover listed as "yes" in the vplan table is hit.
 
-> The monitor buffers address-phase information (HADDR, HTRANS, HWRITE, HSIZE, HBURST) and pairs it with the data-phase signals (HWDATA/HRDATA, HRESP) that arrive one or more cycles later. The monitor only captures the address phase when HREADY is high, because during a wait state the pending address hasn't been accepted yet.
+### Prove it can fail
 
-**Q2: Why does AHB use a 1 KB burst boundary while AXI uses 4 KB?**
+A green run proves something only if the same bench goes red on a bug. Try each mutant, one at a time, and predict the first failing line before you run:
 
-> Both rules keep a burst inside one slave. In AHB, the smallest address region a slave can own is 1 KB, and masters never perform incrementing transfers over a 1 KB boundary, so a burst never crosses an address decode boundary (IHI0033B.b §4.2, §3.5). WRAP bursts are exempt because they stay inside their own beats × size block. AXI forbids any burst from crossing a 4 KB boundary; the spec says this prevents a burst from crossing a boundary between two slaves and limits the number of address increments a slave must support (IHI0022E A3.4.1). Every 4 KB boundary is also a 1 KB boundary, so a legal AHB burst never crosses 4 KB either.
+| Mutant | What should fail first |
+|---|---|
+| In `ahb_sram_slave`, write on every edge with `wr_reg`, not only when HREADY is high | Nothing on the pins, and no read mismatch: the master holds HWDATA through the wait (§6.1.1), so the extra write at 95 ns stores the same value. Only a white-box count of memory writes sees it; this is why the lab adds one. |
+| In the slave's `S_OKAY` branch, go to `S_ERR2` instead of `S_ERR1` (a one-cycle ERROR) | `a_error_second_needs_first` at 195 ns |
+| In `run_plan`, treat every edge as if HREADY were high | `a_hold_in_wait` and `a_seq_addr_increments` at 155 ns. Skipping the waited BUSY is still legal (BUSY may become SEQ in a wait), but it moves the run one edge earlier; then the SEQ of 0x18, waiting behind the read of 0x14, changes to 0x1C during the wait |
+| In `ahb_mon`, accept an address phase without checking HREADY | at 165 ns a read of 0x18 is published with 0x14's data and `SCB_MISMATCH` fires: the waiting SEQ overwrote the pending item of the read of 0x14 |
+| In `ahb_env`, delete `agt.mon.ap.connect(sb.item_imp)` | `SCB_EMPTY` in `check_phase` |
+| In the checker, replace `` `uvm_error `` with `$error` in `a_error_second_needs_first`, together with the one-cycle ERROR mutant | the simulator's own error line at 195 ns, but `UVM_ERROR :    0`: the regression passes |
 
-**Q3: How would you verify that locked transfers cannot starve a high-priority master forever?**
+### Debug walkthrough: symptom → cause → fix
 
-> A locked sequence is indivisible and must be processed before any other transfers (§3.3), so a high-priority master that wants the same slave legitimately waits for the whole sequence, wait states included. The test is therefore about *bounds*, not about pre-emption:
-> (1) a low-priority master runs the longest locked sequence your software uses, to the slowest slave;
-> (2) higher-priority masters request continuously;
-> (3) measure every master's worst-case wait and compare it with the latency budget.
-> That budget is integration policy. The arbiter is not defined by the AHB5 spec (§4.1), and it must never break a lock to meet a budget.
-
-**Q4: What is the minimum set of protocol assertions for an AHB VIP?**
-
-> Protocol: (1) hold during wait states *with* the §3.6 exceptions, (2) the two-cycle ERROR in both directions, (3) zero-wait OKAY for IDLE and BUSY, (4) SEQ control and address consistency, (5) the per-beat 1 KB check for incrementing bursts, (6) alignment of every transfer, (7) IDLE and HREADY high during reset. Integration policy, reported separately: the wait-state budget and lock-duration budget. A production VIP adds burst beat counting, early-termination handling and `HMASTLOCK` rules.
-
----
-
-## Summary
-
-A complete AHB verification environment has four layers:
-
-| Layer | Component | Purpose |
+| Symptom in the log | Cause | Fix |
 |---|---|---|
-| **Observation** | Monitor | Reconstruct pin-level signals into transactions |
-| **Compliance** | Protocol Checker | SVA assertions catch rule violations in real time |
-| **Correctness** | Scoreboard | Compare DUT behavior against a reference model |
-| **Completeness** | Coverage | Prove you exercised enough scenarios to trust the results |
+| A write is published with the previous transfer's data | address and data of one transfer paired at the same edge | complete each transfer at the next edge with HREADY high |
+| Two items with the same address for one waited transfer | address phase accepted during a wait | accept only when HREADY is high |
+| `a_hold_in_wait` fires when a master cancels after ERROR | the property lacks the §3.5.2 exception | add `$past(HRESP) && HTRANS == IDLE` to the consequent |
+| `[AHB_CHK]` lines in the log, but `UVM_ERROR :    0` and the test passes | the action block uses `$error` | report with `` `uvm_error ``, or make the regression fail on assertion failures |
+| A property never failed, and the bug was in that area | it never started: vacuous | add a `cover property` on its antecedent and read the cover report |
+| A failure message names the wrong address | the action block printed the current HADDR | print `$sampled(HADDR)` |
+| An extra item, with garbage data, right after a reset | the monitor did not flush its pending item | drop the pending item while HRESETn is low |
+| Everything passes with HREADY stuck at X | X antecedents are false; the monitor publishes nothing | `a_no_x_ctrl`, the monitor's X check, and `SCB_EMPTY` |
+| The bus hangs with HREADY low | a slave holds HREADYOUT low | the HREADY trace: find the data-phase owner |
+| `SCB_EMPTY` although transfers ran | the analysis port is not connected | connect `ap` in `connect_phase` |
 
-In the hands-on lab below, you will build an AHB-Lite monitor and checker from scratch.
+### How to build an AHB environment of your own
 
-<Quiz>
-  <QuizQuestion
-    question="Why must the AHB monitor only capture the address phase when HREADY is high?"
-    options={[
-      "Because HADDR is invalid when HREADY is low",
-      "Because during a wait state the address is being held stable but has not been accepted — capturing it would produce duplicate transactions",
-      "Because the monitor must be synchronized to the data phase",
-      "Because the arbiter does not allow address sampling during wait states"
-    ]}
-    correctAnswer="Because during a wait state the address is being held stable but has not been accepted — capturing it would produce duplicate transactions"
-    explanation="During a wait state, the master holds the address stable but the transfer has not progressed. If the monitor captures the address on every cycle, it will produce duplicate transactions in the analysis stream, corrupting the scoreboard."
-  />
-  <QuizQuestion
-    question="Which of these checks is an integration policy rather than an AHB protocol rule?"
-    options={[
-      "An ERROR completion must be preceded by an ERROR cycle with HREADY low",
-      "HREADY must not stay low for more than 16 cycles",
-      "An incrementing burst must not cross a 1 KB boundary",
-      "A SEQ beat of an incrementing burst uses the previous address plus the transfer size"
-    ]}
-    correctAnswer="HREADY must not stay low for more than 16 cycles"
-    explanation="The spec only recommends that slaves insert no more than 16 wait states, and allows exceptions such as a serial boot ROM (§5.1.2). A wait-state budget is a system choice and belongs in a separate, warning-level check. The other three are protocol rules (§5.1.3, §3.5, §3.2)."
-  />
-  <QuizQuestion
-    question="In a functional coverage plan, why is wait-state coverage important even though it is not a protocol requirement?"
-    options={[
-      "Wait states indicate design bugs",
-      "The specification requires zero wait-state coverage",
-      "Wait-state distribution reveals slave performance characteristics and helps identify latency bottlenecks",
-      "Wait states only matter in simulation, not in silicon"
-    ]}
-    correctAnswer="Wait-state distribution reveals slave performance characteristics and helps identify latency bottlenecks"
-    explanation="While wait states are legal, their distribution reveals how slaves perform under various access patterns. Covering zero-wait, few-wait, and many-wait scenarios ensures you have validated both fast-path and slow-path behavior in the slave."
-  />
-</Quiz>
+1. **Write the interface** with every AHB signal as `logic`, a monitor clocking block (`mon_cb`, inputs only) and one clocking block per driving role.
+2. **Write the item** with 4-state sampled fields and legal-stimulus constraints; decide whether you publish beats, bursts or both.
+3. **Write the monitor**: accept at HREADY-high edges with HTRANS[1], complete at the next HREADY-high edge, count waits, flush on reset, check for X. Get `vif` from `uvm_config_db` in `build_phase`, with `` `uvm_fatal `` on failure.
+4. **Assemble the checker** from the properties above, tag each one, label each assertion, report with `` `uvm_error `` and `$sampled`, and add a `cover property` per important antecedent. `bind` it into the DUT.
+5. **Write the scoreboard**: a byte-lane model, an error policy, a reset policy, and accounting with a failure when nothing was checked.
+6. **Write the coverage subscriber** and map every coverpoint and cover property to a vplan line.
+7. **Add the stimulus** for the side the TB plays: pipelined master traffic with BUSY and cancel, or a responder with random waits and error injection.
+8. **Run a smoke test, then the mutants** above, and keep each mutant as a regression check of the checks.
 
-## Hands-On Lab
+**Checklist before moving on:**
+- [ ] The monitor publishes each transfer at the edge where HREADY is high after its data phase, never at its accepting edge.
+- [ ] The monitor drops its pending item during reset, and its sampled fields are 4-state.
+- [ ] Every assertion is labelled and tagged **[Protocol §x]**, **[Integration policy]** or **[Simulation check]**, and reports through UVM with `$sampled` values.
+- [ ] Both directions of the ERROR pair are checked, and the hold rules carry the §3.6 and §3.5.2 exceptions.
+- [ ] Every important antecedent has a `cover property`, and the cover report was read.
+- [ ] X checks on HTRANS, HREADY and HRESP are in place.
+- [ ] The scoreboard compares bytes by lane, counts its compares, and fails when nothing was compared.
+- [ ] Reset was asserted in the middle of a transfer at least once, and nothing false was reported.
+- [ ] A one-cycle ERROR mutant makes the UVM summary show an error.
 
-Reconstruct pipelined transfers and separate AHB protocol rules from an environment-specific HREADY watchdog.
+## Push Further
+
+### Expert: master-port versus slave-port checking
+
+- **Acceptance differs by side.** At a master port, a transfer is accepted at an edge with HREADY high and HTRANS[1]. At a slave port it is accepted only if that slave's HSELx is also high: a slave "must only sample the HSELx, address, and control signals when HREADY is HIGH", and HSELx may be high while HREADY is low and then change before the transfer completes (IHI0033B.b §4.2).
+- **Slave obligations need data-phase ownership.** The two-cycle ERROR (§5.1.3), the zero-wait OKAY for IDLE and BUSY (Table 3-1) and HREADYOUT high in reset (§7.1.2) are obligations of one slave, so check them on *that* slave's HREADYOUT and HRESP (§2.3), and only while that slave owns the data phase: register its HSELx at each edge with HREADY high, as the multiplexor does with its select (§2.4 Note). Without that gate, the checks fire on slaves that are not selected and drive whatever they like.
+- **Beat counts differ by side.** A master must deliver every beat of a fixed-length burst unless an ERROR cancels it, but a multi-layer interconnect may terminate a burst at a slave port so another master can reach that slave, and "slaves must be designed to work correctly if the burst is not completed" (§3.5.2). A beat counter that is legal at a master port fires on legal traffic at a slave port behind such an interconnect.
+- **Interview angle:** "Where do you put the protocol checker in a two-master, three-slave multi-layer system?" (On every master port with the master-side rules, and on every slave port with HSELx-gated slave obligations and no beat-count rule; the interconnect's own behaviour is then checked between them by the scoreboard.)
+
+### Expert: burst tracking
+
+The checker above checks each beat against the previous one. Rules about the *whole* burst need a small state machine beside the properties:
+- **Beat count:** INCR4/8/16 and WRAP4/8/16 have exactly 4, 8 or 16 beats (Table 3-3), counted at accepting edges; only an ERROR cancel (§3.5.2) or, at a slave port, interconnect termination ends one early.
+- **Burst ends:** a fixed-length burst ends with SEQ, never BUSY, and no BUSY follows a SINGLE (§3.5.1); BUSY appears only between beats, and SEQ only inside a burst (Table 3-1).
+- **Constant control:** HWRITE (Table 2-2), HSIZE (§3.4) and HPROT (§3.7) stay constant through a burst; the SEQ check covers HWRITE and HSIZE beat by beat.
+- **WRAP addresses:** the next SEQ address wraps inside the block of `beats × size` bytes (§3.5). With `blk` = beats × 2^HSIZE, next = `(prev & ~(blk - 1)) | ((prev + 2^HSIZE) & (blk - 1))`. Check: a WRAP4 of words from 0x34 gives 0x38, 0x3C, then 0x30, exactly the example in §3.5.
+- **Interview angle:** "Your checker accepted an INCR4 with only three beats. Which property was missing, and when is three beats legal?" (A beat counter; three beats is legal after an ERROR cancel, and at a slave port behind a multi-layer interconnect.)
+
+### Expert: formal reuse with assume-guarantee
+
+The same checker can drive a formal tool. For a **slave DUT**, the master-side rules (hold in wait, SEQ address and control, alignment, the 1KB rule, HSIZE within the bus) describe the *environment*, so they become `assume property` (IEEE 1800-2023 §16.14.2), while the slave's obligations (the ERROR pair, zero-wait OKAY, reset values) stay `assert property`. For a master DUT it is the other way round. A `ROLE` parameter selects which, through generate blocks.
+
+Two practical points:
+- **Reporting:** a checker that imports `uvm_pkg` cannot be read unchanged by most formal tools. Hide the reporting behind a macro chosen by a define (for example `` `uvm_error `` in simulation, a plain `$error` or nothing in formal). Which tools accept what is **tool-dependent**.
+- **Vacuity:** formal tools report unreachable antecedents directly; in simulation, the `cover property` statements play that role (§16.14.3, §16.14.8). Over-constraining assumptions make assertions pass vacuously in formal too, so cover the antecedents there as well.
+
+Formal integration with UVM is the subject of [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index).
+
+### Expert: assertions in a UVM regression
+
+- **Counting.** Only messages issued through UVM reach the report server; `$error` and the default action of a failing assertion do not, so `UVM_ERROR :    0` can sit under a log full of failures. Report with `` `uvm_error ``, or make the regression script also fail on the simulator's assertion count ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)).
+- **Expected violations.** An error-injection test that drives an illegal master on purpose must not fail on the violations it planned. Options, from coarsest to finest: a `checks_enable` bit in every `disable iff`; `$assertoff`/`$assertcontrol` on named assertions (IEEE 1800-2023 §20.11), which is why every assertion here has a label; or a `uvm_report_catcher` that demotes exactly the expected ID, from the expected reporter, a counted number of times (IEEE 1800.2-2020 §6.6, `catch` §6.6.5). A catcher cannot see `$error`, because it sees only UVM reports: another reason to report through UVM. Expected-error accounting is taught in [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
+- **Messages.** Action blocks run in the Reactive region, so they print current values unless they use `$sampled` (IEEE 1800-2023 §16.9.3). `%m` in the message gives the bound instance's hierarchical name, because the report itself comes from `uvm_root`.
+- **Interview angle:** "The UVM summary is clean but the log has assertion errors. Explain, and fix it." (`$error` action blocks; switch to `` `uvm_error `` and add a mutant that proves the switch.)
+
+### Expert: specification corner cases
+
+- **IDLE alignment.** IHI0033B.b §3.5 requires the address of IDLE transfers to be aligned too, "otherwise during simulation it is likely that bus monitors could report spurious warnings"; IHI0033C makes it a recommendation ([B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index) lists the Issue C changes). This page's `a_aligned` checks NONSEQ and SEQ only.
+- **"Stable" means at rising edges.** Signals required to be stable must have the same value when sampled at successive rising edges; they may glitch between edges unless the AHB5 Stable_Between_Clock property is True (§7.1.1). `$stable` matches that meaning exactly.
+- **Endianness and the scoreboard.** BE8 (byte-invariant big-endian) uses the same lanes as little-endian for a byte access; BE32 (word-invariant) does not (§6.2.2, §6.2.3). The scoreboard's per-byte-address model with lane = `addr mod bus bytes` is therefore correct for little-endian and BE8 systems (every byte address keeps its lane), but not for BE32.
+- **Locked sequences.** A locked sequence (HMASTLOCK) is indivisible and must be processed before any other transfer (§3.3); it is recommended that an IDLE follows it (§3.3 Note, Table 3-1). A checker can bound the length of locked sequences as **[Integration policy]**.
+- **WRAP16 of 1024-bit beats.** Its wrap block is 16 × 128 = 2048 bytes, so it spans two 1KB regions; for transfers up to 512 bits a WRAP block is at most 1KB. This is derived from Table 3-2 and §3.5 (the specification states the 1KB rule only for incrementing bursts), so treat it as a design-review question.
+- **Awareness:** exclusive transfers (Chapter 8) and secure transfers with HNONSEC (§3.9) add their own rules and signals when the corresponding AHB5 properties are True.
+
+### Expert: scale and performance
+
+- **Sample only what the plan means.** Pin-level covergroups sampled on every edge cost time on long tests; sample per item, or gate with `iff` on accepted beats.
+- **Beats and bursts.** Publish per-beat items for the scoreboard and, if burst coverage needs it, a second per-burst analysis port, rather than reconstructing bursts in every subscriber.
+- **Cheap antecedents.** Every concurrent assertion starts an attempt at every edge; antecedents that are false on most edges (`HTRANS == SEQ && HREADY`) end those attempts at once. A gated `$past(x, 1, beat_accepted)` costs one stored value; an auxiliary register does the same and is easier to debug in a waveform.
+- **Sparse models.** An associative array keyed by byte address grows only with the bytes written, which suits a 4GB address space with a few kilobytes of traffic.
+- **Interview angle:** "Your regression slowed by 30% after adding the AHB checker. Where do you look first?" (Covergroups sampled every edge, unbounded `##[1:$]` covers, and per-edge `uvm_info` messages at a high verbosity.)
+
+### Interview angles
+
+Attempt each question before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: the green checker and the double-pushing FIFO"
+  question="Your AHB protocol checker is clean, and every read-back matches, but the FIFO slave behind the bus sometimes holds one entry too many. What is happening, and how do you catch it?"
+  options={[
+    { text: "The FIFO pushes on every edge of a waited write data phase, not only at the completing edge. The pins are legal and the data is the same, so add a white-box or scoreboard count of pushes against completed OKAY writes.", correct: true, feedback: "Right. The master holds HWDATA through the wait (§6.1.1), so the second push writes the same value and no pin rule breaks. Only a count of side effects sees it." },
+    { text: "The checker is missing a hold-in-wait property for HWDATA.", correct: false, feedback: "a_hwdata_hold checks the master. The master is correct here; the bug is inside the slave." },
+    { text: "The read-back test is too short; more random reads will expose it.", correct: false, feedback: "Read-backs return the right value, because the extra push stored the same data. More of them see nothing new." },
+    { text: "Raise the wait-state budget: the FIFO is slow.", correct: false, feedback: "The budget is policy about latency. It says nothing about how many times the slave acted." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: can a legal AHB burst cross 1KB?"
+  question="A designer says: 'AHB bursts never cross 1KB, so our 1KB-region slave never sees a burst from the next region.' Is that always true?"
+  options={[
+    { text: "Yes, for every burst type and size.", correct: false, feedback: "The 1KB rule in §3.5 is stated for incrementing bursts. WRAP bursts stay inside their own beats × size block, which is 2KB for a WRAP16 of 1024-bit beats." },
+    { text: "Incrementing bursts never do (§3.5, §4.2). A WRAP block is at most 1KB for transfers up to 512 bits, but a WRAP16 of 1024-bit beats spans 2KB (derived).", correct: true, feedback: "Right. On buses up to 512 bits the guarantee holds for every burst; on a 1024-bit bus, map whole 2KB blocks to one slave or forbid that burst." },
+    { text: "No: undefined-length INCR bursts may cross 1KB if they insert BUSY first.", correct: false, feedback: "BUSY changes nothing about addresses; every beat of an incrementing burst stays inside the first beat's 1KB block." },
+    { text: "Only AXI has a boundary rule; AHB relies on the decoder.", correct: false, feedback: "AXI's rule is 4KB (IHI0022E A3.4.1). AHB's 1KB rule exists so that a burst never crosses an address decode boundary (§4.2)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: can a locked sequence starve a high-priority master?"
+  question="Your multi-master system uses locked transfers. How do you verify that a high-priority master is never starved by them?"
+  options={[
+    { text: "Check that the arbiter breaks any lock when a higher-priority master requests the bus.", correct: false, feedback: "A locked sequence is indivisible and must be processed before any other transfer (§3.3). An arbiter that breaks a lock is the bug." },
+    { text: "Run the longest locked sequence your software uses, to the slowest slave, while higher-priority masters request continuously; measure each master's worst-case latency against a budget tagged [Integration policy].", correct: true, feedback: "Right. The high-priority master legitimately waits for the whole locked sequence, wait states included; the question is whether that wait stays within the system's budget." },
+    { text: "Add an assertion that HMASTLOCK is never high for more than 16 cycles, as the protocol requires.", correct: false, feedback: "No protocol rule bounds a locked sequence; 16 is the wait-state recommendation of §5.1.2. Any bound you add is integration policy." },
+    { text: "Locked transfers cannot cause starvation, so no test is needed.", correct: false, feedback: "They can delay every other master by the length of the sequence; the arbiter is outside the specification (§4.1), so its behaviour must be measured." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "Write A is accepted at edge 1. The slave holds HREADY low at edge 2 and high at edge 3. NONSEQ B is on the bus at edges 2 and 3. At which edge does a correct monitor publish A, and which HWDATA does it record?",
+    answers: [
+      { text: "Edge 3, with HWDATA sampled at edge 3", correct: true, feedback: "Right. A's data phase ends at the first edge with HREADY high after its accepting edge, and the data is taken there." },
+      { text: "Edge 1, with HWDATA sampled at edge 1", correct: false, feedback: "That pairs A's address with the data on the bus at A's own accepting edge, which belongs to the previous transfer: the 'same edge' misconception." },
+      { text: "Edge 2, with HWDATA sampled at edge 2", correct: false, feedback: "That assumes a fixed one-cycle data phase. Edge 2 is a wait state: A has not completed." },
+      { text: "Edge 2 for A, and B is accepted at edge 2 as well because it is on the bus", correct: false, feedback: "Nothing completes or is accepted at an edge with HREADY low. Accepting B at edge 2 would publish B twice." }
+    ],
+    explanation: "Accept at an HREADY-high edge with HTRANS[1]; complete at the next HREADY-high edge. A completes at edge 3 with HWDATA at edge 3 (the master held it since edge 1, §6.1.1), and B is accepted at edge 3.",
+    objective: 1
+  },
+  {
+    question: "A monitor without a reset flush has write A pending when HRESETn falls between two edges. What does it publish, and what follows?",
+    answers: [
+      { text: "Nothing: HREADY is low during reset, so A never completes", correct: false, feedback: "Slaves drive HREADYOUT high during reset (§7.1.2), so HREADY is high at the first reset edge." },
+      { text: "A, at the first reset edge, with reset-time data; the scoreboard may then report a false mismatch or store garbage", correct: true, feedback: "Right. HREADY is high in reset, so the unflushed monitor 'completes' A. Drop the pending item while HRESETn is low." },
+      { text: "A, at the first edge after reset, with the correct data", correct: false, feedback: "Reset destroyed A's data phase; no edge after reset belongs to it." },
+      { text: "A protocol error from a_hold_in_wait", correct: false, feedback: "disable iff (!HRESETn) stops every attempt in flight; the checker reports nothing." }
+    ],
+    explanation: "Reset cuts the transfer off; during reset HREADY is high. A monitor must flush its pending item while HRESETn is low, or it publishes a transfer that never happened.",
+    objective: 1
+  },
+  {
+    question: "A slave drives HRESP high for one cycle with HREADY high, completing a transfer with ERROR in a single cycle. Which assertion fails?",
+    answers: [
+      { text: "a_error_first_then_second", correct: false, feedback: "Its antecedent needs HRESP high with HREADY low. A one-cycle ERROR never has that, so it never starts an attempt and passes vacuously." },
+      { text: "Both of them", correct: false, feedback: "Only the backward property starts on this trace." },
+      { text: "a_hold_in_wait", correct: false, feedback: "Nothing waited: HREADY stayed high." },
+      { text: "a_error_second_needs_first", correct: true, feedback: "Right. At the ERROR completion it looks one edge back and finds no first ERROR cycle." }
+    ],
+    explanation: "The ERROR response takes two cycles (§5.1.3, Table 5-2). Only the backward direction, 'an ERROR completion needs a first cycle', catches the one-cycle bug, so a checker needs both directions.",
+    objective: 2
+  },
+  {
+    question: "Write A gets its first ERROR cycle while SEQ B waits on the address bus. In the next cycle the master drives IDLE at a new address. Does a_hold_in_wait fail?",
+    answers: [
+      { text: "Yes: HTRANS and HADDR must be stable through every wait state", correct: false, feedback: "That is the misconception. A cancelling master must drive IDLE during the two-cycle ERROR (§3.5.2) and may change the address (§3.6.2)." },
+      { text: "Yes: B must first be accepted, then cancelled", correct: false, feedback: "A transfer that is never accepted needs no cancelling transfer; driving IDLE is the cancel." },
+      { text: "No: a cancelling master drives IDLE in the second ERROR cycle and may change the address, and the property's exception allows it", correct: true, feedback: "Right. The consequent accepts $past(HRESP) && HTRANS == IDLE." },
+      { text: "No: any signal may change in any wait state", correct: false, feedback: "A waited NONSEQ or SEQ is held (§3.6.1, §3.6.2); only the ERROR cancel lets it become IDLE." }
+    ],
+    explanation: "Only waited NONSEQ and SEQ are held, and they may still become IDLE after a first ERROR cycle. A checker without that exception fires on legal cancellations.",
+    objective: 2
+  },
+  {
+    question: "Which of these checks is an integration policy rather than an AHB protocol rule?",
+    answers: [
+      { text: "An ERROR completion must be preceded by an ERROR cycle with HREADY low", correct: false, feedback: "Protocol: §5.1.3, Table 5-2." },
+      { text: "HREADY must not stay low for more than 16 cycles", correct: true, feedback: "Right. The specification only recommends at most 16 wait states and names exceptions such as a serial boot ROM (§5.1.2 Note)." },
+      { text: "An incrementing burst must not cross a 1KB boundary", correct: false, feedback: "Protocol: §3.5." },
+      { text: "A SEQ beat of an incrementing burst uses the previous address plus the transfer size", correct: false, feedback: "Protocol: Table 3-1." }
+    ],
+    explanation: "A wait-state budget is a system choice, so it lives in a separate, warning-level check tagged [Integration policy]. A slow but legal slave must never be reported as a protocol violation.",
+    objective: 2
+  },
+  {
+    question: "cx_write_burst is at 100%, and a_busy_in_wait has never failed in the whole regression. What must you check before you trust that BUSY handling during wait states works?",
+    answers: [
+      { text: "Nothing: no failure means the property holds", correct: false, feedback: "A property whose antecedent never occurred passes vacuously and has checked nothing." },
+      { text: "That WRAP16 bursts were covered", correct: false, feedback: "Burst-type coverage says nothing about whether a BUSY was ever waited." },
+      { text: "That the property has disable iff", correct: false, feedback: "disable iff controls reset behaviour; it does not show the property ever started." },
+      { text: "That its antecedent, a BUSY on the bus while HREADY is low, actually occurred: the c_waited_busy cover or the (BUSY, waited) cell of cx_trans_waited", correct: true, feedback: "Right. Coverage of the antecedent shows the property was exercised, not just never violated." }
+    ],
+    explanation: "In simulation an assertion checks only the traffic that ran. Cover each important antecedent (IEEE 1800-2023 §16.14.3, §16.14.8), and map the cover to a vplan line.",
+    objective: 3
+  },
+  {
+    question: "Through an interconnect, one master's read returns data that belongs to another transfer. All pins are legal. Who should report it?",
+    answers: [
+      { text: "The protocol checker, because it owns data ordering", correct: false, feedback: "The checker owns pin-level legality. It cannot know which data should come back." },
+      { text: "Both the checker and the scoreboard, so each double-checks the other", correct: false, feedback: "That is the misconception. Two owners produce duplicate reports and drift apart." },
+      { text: "The scoreboard", correct: true, feedback: "Right. Which data belongs to which transfer, and where it was routed, is data correctness." },
+      { text: "The coverage model", correct: false, feedback: "Coverage records what happened; it does not judge correctness." }
+    ],
+    explanation: "Checker: pin-level protocol legality, never data. Scoreboard: data correctness, routing and ordering across the interconnect. Coverage: which situations ran.",
+    objective: 4
+  },
+  {
+    question: "The byte-lane scoreboard starts empty. A byte write of 0xAB to 0x1001 completes OKAY, then a word read of 0x1000 returns 0x1122AB44. What does this page's ahb_sb do with the read?",
+    answers: [
+      { text: "Reports SCB_MISMATCH, because 0x1122AB44 is not 0x0000AB00", correct: false, feedback: "The model has no expected value for bytes 0x1000, 0x1002 and 0x1003; it cannot call them wrong." },
+      { text: "Counts a match, because lane 1 holds 0xAB", correct: false, feedback: "Lane 1 matches, but three bytes were never checked; counting the read as a match would overstate what was checked." },
+      { text: "Counts it as pending (unchecked) with an SCB_UNCHECKED warning: lane 1 matches, the other three bytes were never written", correct: true, feedback: "Right. Byte 0x1001 travels on lane 1 (HRDATA[15:8]); the others have no expectation." },
+      { text: "Compares HRDATA[7:0] with 0xAB, because a byte write uses lane 0", correct: false, feedback: "The lane is the address modulo the bus bytes (§6.2.1): 0x1001 uses lane 1." }
+    ],
+    explanation: "IHI0033B.b has no write strobes; lanes come from HADDR and HSIZE (§6.2.1). The model stores bytes, compares only bytes it knows, and reports reads it could not fully check.",
+    objective: 4
+  },
+  {
+    question: "The log has three '[AHB-CHK] one-cycle ERROR' lines printed by the simulator, but the UVM summary says UVM_ERROR : 0 and the regression marks the test as passed. Why?",
+    answers: [
+      { text: "The failures were vacuous", correct: false, feedback: "A vacuous success prints nothing; these are real failures." },
+      { text: "disable iff turned the errors into warnings", correct: false, feedback: "disable iff cancels attempts during reset; it never changes severity." },
+      { text: "UVM ignores errors reported during run_phase", correct: false, feedback: "UVM counts every error it is given, in any phase." },
+      { text: "The checker's action blocks use $error, which the UVM report server never counts", correct: true, feedback: "Right. Report with `uvm_error (the module imports uvm_pkg), or make the regression fail on assertion failures as well." }
+    ],
+    explanation: "Only messages issued through UVM reach the report server. A bound checker reporting with $error is invisible to UVM_ERROR, and a report catcher cannot demote it either.",
+    objective: 5
+  },
+  {
+    question: "On a waveform: NONSEQ A (SINGLE) at edge 1, NONSEQ B (SINGLE) at edge 2, NONSEQ C (INCR4) at edge 3 with HREADY low, and again at edge 4 with HREADY high; HREADY is high at edges 1, 2 and 4. How many transfers start in edges 1 to 4?",
+    answers: [
+      { text: "1: only HTRANS changing from IDLE to NONSEQ marks a start", correct: false, feedback: "Back-to-back singles keep HTRANS at NONSEQ. Looking for a change misses B and C." },
+      { text: "4: every cycle with NONSEQ is a start", correct: false, feedback: "C waits at edge 3; counting it there and again at edge 4 counts it twice." },
+      { text: "3: A at edge 1, B at edge 2, C at edge 4", correct: true, feedback: "Right. Count edges with HREADY high and HTRANS NONSEQ (a start) or SEQ (a later beat)." },
+      { text: "2: C has not started until its first SEQ", correct: false, feedback: "A burst starts with its NONSEQ, accepted at edge 4." }
+    ],
+    explanation: "The transaction-boundary finder counts accepted beats: an edge with HREADY high and HTRANS[1] = 1. BUSY cycles and waited cycles are not beats.",
+    objective: 5
+  },
+  {
+    question: "A UVM responder must answer the transfer accepted at edge k with the two-cycle ERROR. When must its driver drive HREADYOUT low with HRESP high?",
+    answers: [
+      { text: "In the time step of edge k, right after the accepting edge, so the cycle sampled at edge k+1 is the first ERROR cycle", correct: true, feedback: "Right. A clocking-block drive at edge k takes effect just after k (IEEE 1800-2023 §14.16)." },
+      { text: "After it has sampled the address at edge k+1", correct: false, feedback: "Too late: HREADYOUT was still high in the first data-phase cycle, so the transfer completed with OKAY at edge k+1." },
+      { text: "Whenever the sequence returns the response; the master waits for HRESP", correct: false, feedback: "The master does not wait for HRESP; HREADY high at edge k+1 completes the transfer." },
+      { text: "Only after holding HREADYOUT low for one OKAY wait state, because ERROR may never be the first data-phase cycle", correct: false, feedback: "OKAY waits before an ERROR are allowed (§5.1.3) but not required; the first ERROR cycle may be the first data-phase cycle." }
+    ],
+    explanation: "A responder decides each transfer's first data-phase cycle at the accepting edge. Pre-fetch the response item (random waits, error injection), or make a reactive sequence answer in zero time.",
+    objective: 5
+  }
+]} />
+
+### Flashcards
+
+The deck for this lesson drills the pairing rule, the ERROR pair, the hold exceptions, protocol versus policy, vacuity, ownership, the byte lanes, reset and the debug patterns. Review it after the quiz and again before the lab.
+
+### Kata: an HWDATA hold check and a beat counter
+
+**Task.**
+1. Using the checker's `dp_write` and `dp_bits`, write `p_hwdata_hold` yourself (§6.1.1) without looking above. Then predict, edge by edge, whether it passes on the AHB pipeline lab's **WRAP vs INCR** scenario (a write burst with one wait state on the first beat), and whether it can ever start on the **BUSY in a burst** scenario.
+2. Write an INCR4 beat counter: a property that fails if an INCR4 burst is followed by a new NONSEQ or an IDLE before its fourth beat, unless an ERROR completed in between. Predict its result on **BUSY in a burst** with the default settings.
+3. Write the `cover property` that proves `a_busy_in_wait` started at least once.
+
+<details>
+<summary>Worked solution</summary>
+
+**1.** The property is the one in the checker: `(dp_write && !HREADY) |=> $stable(HWDATA & dp_bits)`. On **WRAP vs INCR**, beat A0 is accepted, its data phase waits one edge, and the master holds A0's data through that edge (the model drives it until completion), so the one attempt that starts (at the waited edge) passes at the next edge. Every other edge has HREADY high, so no other attempt starts. On **BUSY in a burst** the burst is a *read*: `dp_write` is never 1, so the property never starts; it would pass vacuously there, which is why you cover `c_waited_write`.
+
+**2.** One possible counter, beside the checker's other bookkeeping:
+
+```systemverilog
+// snippet: INCR4 beat counter (master-port rule; see "master-port versus slave-port")
+int unsigned beats_left;          // beats still owed by the INCR4 in progress
+always_ff @(posedge HCLK or negedge HRESETn)
+  if (!HRESETn) beats_left <= 0;
+  else if (HRESP && HREADY) beats_left <= 0;          // ERROR: may cancel (§3.5.2)
+  else if (beat_accepted)
+    beats_left <= (HTRANS == NONSEQ && HBURST == 3'b011) ? 3    // INCR4 started
+                : (beats_left > 0 ? beats_left - 1 : 0);
+
+a_incr4_four_beats: assert property (@(posedge HCLK) disable iff (!HRESETn)
+  (beats_left > 0 && HREADY && !HRESP) |-> HTRANS inside {SEQ, BUSY})
+  else `uvm_error("AHB_CHK", $sformatf("%m: INCR4 ended before its 4th beat"))
+```
+
+At an edge with HREADY high, the transfer on the bus is accepted (a beat) or not (IDLE, BUSY). While beats are owed, only SEQ or BUSY may appear. On **BUSY in a burst** (NONSEQ, BUSY, SEQ, SEQ, SEQ) the counter goes 3, then stays 3 across the BUSY, then 2, 1, 0, and the property passes. It checks something (non-vacuously) at each HREADY-high edge after the NONSEQ, up to the edge that accepts the fourth beat; at the waited edge of A2 its antecedent is false. The `HRESP && HREADY` reset clears the count after an ERROR, because a master may cancel the rest of the burst there; the `!HRESP` in the antecedent matters at that same edge, the second ERROR cycle, where a cancelling master already shows IDLE while the count (sampled before the edge) is still non-zero.
+
+**3.** `c_waited_busy: cover property (@(posedge HCLK) disable iff (!HRESETn) !HREADY && HTRANS == BUSY);` On **BUSY in a burst** with *Wait states on A0* set to 2, the BUSY waits, so the cover is hit; with the defaults (no wait on A0) it is not, and `a_busy_in_wait` has checked nothing.
+
+</details>
+
+### Debug challenge: ERROR forensics on your own waveform
+
+Open [Waveform Studio](/practice/waveform-studio) and load the sample **AHB: two-cycle ERROR**. Apply the five ERROR-forensics steps: name the failing transfer's address and say whether the master cancelled or continued. Then edit HREADY so the ERROR lasts one cycle with HREADY high, and predict which of this page's assertions fails. Check your answer in the AHB pipeline lab's **Debug: one-cycle ERROR** scenario above.
+
+### Lab: build the monitor and the checker
+
+The lab builds a pin-level (non-UVM) version of this page's monitor and checker against a pre-broken SRAM slave, then repeats it on fully pipelined traffic with a master mutant. Port its monitor into `ahb_mon` afterwards to connect it to the byte-lane scoreboard.
 
 <LabLink labId="ahb-checker-lab" />
+
+## References & Next Topics
+
+**Primary sources:**
+- Arm IHI0033B.b, AMBA 5 AHB Protocol Specification (AHB5, AHB-Lite): §2.3 slave signals (Table 2-3); §2.4 decoder signals and its Note (multiplexor control retimed to the data phase); Table 2-2 master signals (HWRITE timing; no request or grant); §3.1 basic transfers; §3.2 transfer types (Table 3-1); §3.3 locked transfers; §3.4 transfer size (Table 3-2 and Note); §3.5 burst operation (Table 3-3, alignment, IDLE alignment, the 1KB rule); §3.5.1 burst termination after BUSY; §3.5.2 early burst termination; §3.6 waited transfers, §3.6.1 transfer type changes, §3.6.2 address changes (Figures 3-13 to 3-17); §3.7 protection control; §3.9 secure transfers; §4.1 interconnect; §4.2 address decoding; §4.2.1 default slave; §4.3 read data and response multiplexor (Figure 4-2); §5.1.2 transfer pending (and Note); §5.1.3 ERROR response (Figure 5-1, Table 5-2); §6.1.1 HWDATA; §6.1.2 HRDATA; §6.2.1 to §6.2.3 endianness; §7.1.1 clock (Stable_Between_Clock); §7.1.2 reset; Chapter 8 exclusive transfers.
+- Arm IHI0033C (2021): HWSTRB write strobes and the manager/subordinate terms (named only; the Issue C changes are listed in B-AHB-1).
+- IEEE 1800-2023: §14.13 input sampling; §14.16 synchronous drives; §16.6 Boolean expressions (x and z are false); §16.9.3 sampled value functions (`$past` with a gating expression, `$sampled` in action blocks); §16.12.7 implication; §16.14.1 assert; §16.14.2 assume; §16.14.3 cover; §16.14.8 nonvacuous evaluations; §19.3 covergroup; §19.4 covergroups in classes; §19.5.5 `ignore_bins`; §19.5.6 `illegal_bins`; §19.6 cross coverage; §19.8.1 `sample` with arguments; §20.9 `$isunknown`; §20.11 assertion control tasks; §23.11 bind (footnote 4 to Syntax 23-9); §25.9 virtual interfaces.
+- IEEE 1800.2-2020: §6.6 `uvm_report_catcher` (§6.6.5 `catch`); §9.8.1.7 `check_phase`; §12.2.8.3 `uvm_tlm_analysis_fifo`; §12.2.10.1 `uvm_analysis_port`; §12.2.10.2 `uvm_analysis_imp`; §13.2 `uvm_test`; §13.3 `uvm_env`; §13.4 `uvm_agent`; §13.5 `uvm_monitor`; §13.6 `uvm_scoreboard`; §13.9 `uvm_subscriber`; Annex C.4.2 `uvm_config_db`; Annex F.3.2 global reporting functions (F.3.2.1 `uvm_get_report_object` returns `uvm_root`).
+
+**Prerequisites:** [B-AHB-2: AHB Pitfalls & Real-World Failures](/curriculum/T3_Advanced/B-AHB-2_AHB_Pitfalls_and_Deadlocks/index), [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) and [I-SV-3A: Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index).
+
+**Related:**
+- [B-AHB-1: AHB Protocol Design & Timing](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index): the timing rules, the 1KB rule, and the AHB pipeline lab.
+- [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) and [I-SV-4C: Checkers & Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index): properties, vacuity and `bind`.
+- [F4C: Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): why the monitor samples through `mon_cb`.
+- [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): agents, responders and SVA that reports through UVM.
+- [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index): reset-aware components and expected-error accounting.
+- [I-UVM-1D: Reporting and Run Control](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): what makes a UVM test pass or fail.
+- [B-AXI-6: AXI Verification & Performance](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index): the same environment for AXI.
+- [B-AMBA-F1: Bridges and System Integration](/curriculum/T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index): reusing this checker on a bridge's AHB side.
+- [B-AMBA-F3: Interview & Debug Clinic](/curriculum/T3_Advanced/B-AMBA-F3_Interview_Debug_Clinic/index) and [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): more debugging practice.
+
+<NextLesson />

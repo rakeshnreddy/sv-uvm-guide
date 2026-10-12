@@ -1,27 +1,72 @@
 [
   {
     "id": "b-axi-5-1",
-    "question": "What VALID/READY dependency can create an AXI deadlock?",
-    "answer": "A source must not wait for READY before asserting VALID; if both sides wait for the other, the channel can never make progress."
+    "question": "What VALID/READY dependency can create an AXI deadlock, and who owns the bug?",
+    "answer": "A source that waits for READY before raising VALID (IHI0022E A3.3.1). A destination may wait for VALID, so when both sides wait for each other the loop closes and the source's wait is the violation to fix."
   },
   {
     "id": "b-axi-5-2",
-    "question": "Why are circular backpressure paths dangerous in an AXI interconnect?",
-    "answer": "A blocked response path can stop data acceptance, which can stop address acceptance, which can prevent the response path from draining."
+    "question": "How can a response path that does not drain close a deadlock loop?",
+    "answer": "If a bridge raises BREADY or RREADY only when it has buffer room for its next request, the request waits for space and the space waits for the response. AXI never makes a response wait for a new request, so design response paths to always drain (a design rule, not an A3.3.1 sentence)."
   },
   {
     "id": "b-axi-5-3",
     "question": "What is a common ID-width bug at interconnect boundaries?",
-    "answer": "Truncating or reusing IDs can merge unrelated ordering streams, causing responses to be matched to the wrong master transaction."
+    "answer": "Truncating or reusing IDs merges unrelated ordering streams or routes responses to the wrong master. Any ID manipulation must keep the ordering requirements of the original IDs (A6.3; ID width is implementation defined, A5.3.6)."
   },
   {
     "id": "b-axi-5-4",
     "question": "Why must WLAST be checked against AWLEN?",
-    "answer": "WLAST marks the final write-data beat; asserting it early or late corrupts burst boundaries and response accounting."
+    "answer": "The master must assert WLAST on the final write transfer, transfer AWLEN + 1 (A3.2.2). WLAST early or late corrupts burst boundaries, and in AXI4 the write response depends on the WLAST handshake."
   },
   {
     "id": "b-axi-5-5",
-    "question": "What outstanding-depth mismatch causes failures?",
-    "answer": "A master or bridge may issue more requests than a slave or buffer can track, leading to lost responses, stalled channels, or illegal throttling."
+    "question": "What outstanding-depth mismatch causes failures, and what is not the bug?",
+    "answer": "A component that keeps AxREADY HIGH beyond its tracking capacity drops or mis-orders requests: when AWREADY is HIGH the slave must be able to accept any valid address (A3.2.2). Holding READY LOW to limit outstanding requests is always legal."
+  },
+  {
+    "id": "b-axi-5-6",
+    "question": "May a slave wait for WVALID before asserting AWREADY?",
+    "answer": "Yes (A3.3.1), through a register: A3.1.1 forbids combinational paths from inputs to outputs. It deadlocks only against a master that illegally waits for AWREADY."
+  },
+  {
+    "id": "b-axi-5-7",
+    "question": "Is a bound on READY latency an AXI rule?",
+    "answer": "No. AXI allows unbounded backpressure (A3.2.1). A bound is a sourced integration or QoS contract, labelled as such; QoS itself is only a hint (A8.1.1)."
+  },
+  {
+    "id": "b-axi-5-8",
+    "question": "32-bit bus, 2 bytes at address 0x1 with AxSIZE = 1: which WSTRB?",
+    "answer": "Only lane 1 is active (a 2-byte container at 0x0), so `4'b0010` (or `4'b0000`). Writing bytes 1 and 2 in one transfer needs AxSIZE = 2 with the sparse strobe `4'b0110`."
+  },
+  {
+    "id": "b-axi-5-9",
+    "question": "Which bursts can cross a 4KB boundary, and how do you check it?",
+    "answer": "Only INCR. Compute the last byte from the aligned start: Aligned_Address + transfers x bytes - 1 (A3.4.1). A legal WRAP stays in its window and FIXED repeats one address."
+  },
+  {
+    "id": "b-axi-5-10",
+    "question": "What is the AXI4 write-ordering interconnect deadlock?",
+    "answer": "Two slaves accept two masters' addresses in opposite orders. Each slave needs write data in its acceptance order (A5.3.2) and each master sends it in its own address order (A5.4.1), so with no W buffering both streams block."
+  },
+  {
+    "id": "b-axi-5-11",
+    "question": "Can a burst end early after an error response?",
+    "answer": "No. Bursts never terminate early (A3.4.1): a write master sends the remaining transfers (strobes may be LOW) and a read slave returns every transfer, each with a response (A3.4.4)."
+  },
+  {
+    "id": "b-axi-5-12",
+    "question": "How do you expose a master that waits on READY?",
+    "answer": "Run it against the most restrictive legal slave, which raises AWREADY and WREADY only after seeing both AWVALID and WVALID. An always-ready slave hides the bug."
+  },
+  {
+    "id": "b-axi-5-13",
+    "question": "Why is `$rose(valid && !ready) |-> ##[1:N] ready` a better contract check than `valid |-> ##[0:N] ready`?",
+    "answer": "It starts one attempt per stall, so a long stall reports once. The second form starts an attempt every cycle and floods the log. Both are bounded safety checks, not liveness proofs."
+  },
+  {
+    "id": "b-axi-5-14",
+    "question": "What must an interconnect do with same-ARID reads sent to different slaves?",
+    "answer": "Return their data to the master in issue order (A5.3.1), by stalling the second read or buffering its data. Ignoring this is an ordering violation; the stall is a wait that can feed a deadlock loop."
   }
 ]

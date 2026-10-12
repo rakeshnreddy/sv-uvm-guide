@@ -96,6 +96,12 @@ export interface CatcherSpec {
   enabled?: boolean;
   /** uvm_report_cb::add(obj, catcher): a component glob, or null for every report object. */
   attachTo?: string | null;
+  /**
+   * For a demoting catcher: how many demotions the test expects. The generated
+   * catcher counts its demotions and the generated test checks the count in
+   * check_phase, so a demoter cannot silently hide errors.
+   */
+  expectedDemoted?: number;
 }
 
 export interface ReportConfig {
@@ -542,13 +548,14 @@ export function catcherSource(c: CatcherSpec): string[] {
   if (c.textContains) conds.push(`uvm_is_match("*${c.textContains}*", get_message())`);
   const indent = conds.length ? "      " : "    ";
   const body: string[] = [];
-  if (c.demoteTo) body.push(`${indent}set_severity(${c.demoteTo});`);
+  if (c.demoteTo) body.push(`${indent}set_severity(${c.demoteTo});`, `${indent}demoted++;`);
   if (c.setAction) body.push(`${indent}set_action(${formatAction(c.setAction)});`);
   body.push(`${indent}return ${c.verdict};`);
   const decision = conds.length ? [`    if (${conds.join(" && ")}) begin`, ...body, `    end`, `    return THROW;`] : body;
   return [
     `class ${className} extends uvm_report_catcher;`,
     `  \`uvm_object_utils(${className})`,
+    ...(c.demoteTo ? [`  int unsigned demoted;   // read by the test's check_phase`] : []),
     `  function new(string name = "${className}");`,
     `    super.new(name);`,
     `  endfunction`,
@@ -655,7 +662,9 @@ export const CRC_DEMOTER: CatcherSpec = {
   textContains: "bad CRC",
   demoteTo: "UVM_INFO",
   verdict: "THROW",
-  attachTo: null,
+  // Only the monitor reports the injected CRC errors: register on it alone.
+  attachTo: MON,
+  expectedDemoted: 2,
 };
 
 export const ERROR_SWALLOWER: CatcherSpec = {
@@ -673,6 +682,99 @@ export function knobsToConfig(k: ReportKnobs): ReportConfig {
   if (k.errorAction === "no-action") settings.push({ kind: "severity_action", comp: "uvm_test_top.env.*", severity: "UVM_ERROR", action: [] });
   const catchers = k.catcher === "demote-crc" ? [CRC_DEMOTER] : k.catcher === "catch-all-errors" ? [ERROR_SWALLOWER] : [];
   return { settings, catchers, maxQuitCount: k.maxQuitCount };
+}
+
+/**
+ * The handle passed to uvm_report_cb::add for a catcher, as seen from the test
+ * (uvm_test_top): an exact component path becomes its member chain
+ * ("uvm_test_top.env.agt.mon" -> "env.agt.mon"); no path means type-wide (null).
+ * add() takes one object handle, so a glob has no single handle; the explorer's
+ * catchers use only exact paths or null.
+ */
+export function reportCbTarget(c: CatcherSpec): string {
+  if (!c.attachTo || /[*?]/.test(c.attachTo)) return "null";
+  return c.attachTo.replace(/^uvm_test_top\.?/, "") || "this";
+}
+
+export interface GeneratedReportCode {
+  /** The catcher class, if any. */
+  classes: string[];
+  /** The test class that applies the configuration. */
+  test: string[];
+  /** Equivalent simulator plusargs. */
+  plusargs: string[];
+}
+
+/**
+ * The SystemVerilog an explorer configuration corresponds to. The test extends
+ * a base_test that creates env (env.agt.mon, env.agt.drv, env.scb). A catcher
+ * is registered in connect_phase, when the component exists (in build_phase
+ * env.agt.mon would still be null and add(null, ...) would make it type-wide),
+ * and a demoting catcher's count is checked in check_phase.
+ */
+export function generatedCode(knobs: ReportKnobs): GeneratedReportCode {
+  const config = knobsToConfig(knobs);
+  const catcher = config.catchers[0] ?? null;
+  const classes = catcher ? catcherSource(catcher) : [];
+  const test: string[] = [
+    "class crc_inject_test extends base_test;   // base_test creates env",
+    "  `uvm_component_utils(crc_inject_test)",
+  ];
+  const counted = catcher?.demoteTo !== undefined && catcher.expectedDemoted !== undefined;
+  if (catcher) {
+    if (counted) test.push(`  localparam int unsigned EXPECTED_DEMOTED = ${catcher.expectedDemoted};   // CRC corrupted on pkts 2 and 4`);
+    test.push(`  ${catcher.name} catcher;`);
+  }
+  test.push("", "  function new(string name, uvm_component parent);", "    super.new(name, parent);", "  endfunction");
+  if (catcher) {
+    const target = reportCbTarget(catcher);
+    test.push(
+      "",
+      "  function void build_phase(uvm_phase phase);",
+      "    super.build_phase(phase);",
+      `    catcher = ${catcher.name}::type_id::create("catcher");`,
+      "  endfunction",
+      "",
+    );
+    if (target === "null") {
+      test.push("  // null: type-wide, the catcher sees every report object's reports.");
+    } else {
+      test.push(`  // ${target} exists only after build (top-down); in build_phase it is still`);
+      test.push("  // null, and add(null, ...) would silently make the catcher type-wide.");
+    }
+    test.push(
+      "  function void connect_phase(uvm_phase phase);",
+      "    super.connect_phase(phase);",
+      `    uvm_report_cb::add(${target}, catcher);`,
+      "  endfunction",
+    );
+  }
+  const procedural = config.settings.filter((s) => s.comp !== "*");
+  if (procedural.length) {
+    test.push("", "  function void end_of_elaboration_phase(uvm_phase phase);", "    super.end_of_elaboration_phase(phase);");
+    procedural.forEach((s) => test.push(`    ${settingSource(s)}`));
+    test.push("  endfunction");
+  }
+  if (catcher && counted) {
+    test.push(
+      "",
+      "  // Accounting: if the injection stops, or the catcher matches more than it",
+      "  // should, the demoter must not hide it.",
+      "  function void check_phase(uvm_phase phase);",
+      "    super.check_phase(phase);",
+      "    if (catcher.demoted != EXPECTED_DEMOTED) begin",
+      '      `uvm_error("CRC_ACCT", $sformatf("expected %0d demoted CRC errors, got %0d",',
+      "                                       EXPECTED_DEMOTED, catcher.demoted))",
+      "    end",
+      "  endfunction",
+    );
+  }
+  if (!catcher && !procedural.length) test.push("  // no report configuration");
+  test.push("endclass");
+  const plusargs = config.settings.filter((s) => s.comp === "*").map(settingPlusarg);
+  procedural.forEach((s) => plusargs.push(`${settingPlusarg(s)}   // same effect, no recompile`));
+  if (knobs.maxQuitCount) plusargs.push(`+UVM_MAX_QUIT_COUNT=${knobs.maxQuitCount}`);
+  return { classes, test, plusargs };
 }
 
 export interface ReportPreset {

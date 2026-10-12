@@ -1,164 +1,124 @@
-// Reference overlay: use this file instead of axi_monitor.sv and axi_scoreboard.sv.
-`include "uvm_macros.svh"
-import uvm_pkg::*;
+// solution.sv (reference solution): the completed axi_monitor.sv and
+// axi_scoreboard.sv in one file. testbench.sv includes it instead of your two
+// files when you compile with +define+AXI_LAB_SOLUTION.
 
-`uvm_analysis_imp_decl(_expected)
-`uvm_analysis_imp_decl(_actual)
+`uvm_analysis_imp_decl(_exp)
+`uvm_analysis_imp_decl(_act)
 
-`ifndef AXI_SCOREBOARD_INTERFACE_DEFINED
-`define AXI_SCOREBOARD_INTERFACE_DEFINED
-interface axi_if(input bit ACLK);
-  logic ARVALID, ARREADY;
-  logic [31:0] ARADDR;
-  logic [3:0] ARID;
-  logic [7:0] ARLEN;
-  logic RVALID, RREADY;
-  logic [31:0] RDATA;
-  logic [3:0] RID;
-  logic [1:0] RRESP;
-  logic RLAST;
-endinterface
-`endif
-
-class axi_transaction extends uvm_sequence_item;
-  `uvm_object_utils(axi_transaction)
-
-  bit [31:0] addr;
-  int unsigned id;
-  int unsigned expected_beats;
-  bit [31:0] data_beats[$];
-  bit [1:0] responses[$];
-  bit is_write;
-
-  function new(string name = "axi_transaction");
-    super.new(name);
-  endfunction
-
-  virtual function string convert2string();
-    return $sformatf("%s ID=%0d ADDR=0x%08h BEATS=%0d/%0d",
-      is_write ? "WRITE" : "READ", id, addr, data_beats.size(), expected_beats);
-  endfunction
-
-  virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
-    axi_transaction other;
-    if (!$cast(other, rhs)) return 1'b0;
-    if (!super.do_compare(rhs, comparer)) return 1'b0;
-    return id == other.id && addr == other.addr && is_write == other.is_write &&
-      expected_beats == other.expected_beats && data_beats == other.data_beats &&
-      responses == other.responses;
-  endfunction
-endclass
-
-class axi_monitor extends uvm_monitor;
-  `uvm_component_utils(axi_monitor)
-
-  uvm_analysis_port #(axi_transaction) ap;
-  virtual axi_if vif;
-
-  // Each ID owns an ordered queue because AXI permits multiple outstanding
-  // requests with the same ID while preserving response order within that ID.
-  axi_transaction pending_reads[int unsigned][$];
+class axi_rd_monitor extends uvm_monitor;
+  `uvm_component_utils(axi_rd_monitor)
+  virtual axi_rd_if vif;
+  uvm_analysis_port #(axi_rd_item) req_ap;   // each AR, at its handshake
+  uvm_analysis_port #(axi_rd_item) ap;       // each completed read
+  axi_rd_item open_q[int unsigned][$];       // per ARID: a queue, never a slot
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
-    ap = new("ap", this);
+    req_ap = new("req_ap", this);
+    ap     = new("ap", this);
   endfunction
 
-  virtual function void build_phase(uvm_phase phase);
+  function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    if (!uvm_config_db#(virtual axi_if)::get(this, "", "vif", vif))
-      `uvm_fatal("NO_VIF", "axi_monitor virtual interface is not configured")
+    if (!uvm_config_db#(virtual axi_rd_if)::get(this, "", "vif", vif))
+      `uvm_fatal("NO_VIF", "virtual interface not set")
   endfunction
 
-  virtual task run_phase(uvm_phase phase);
-    fork
-      monitor_ar_channel();
-      monitor_r_channel();
-    join
-  endtask
-
-  virtual task monitor_ar_channel();
+  task run_phase(uvm_phase phase);
     forever begin
-      @(posedge vif.ACLK);
-      if (vif.ARVALID && vif.ARREADY) begin
-        axi_transaction txn = axi_transaction::type_id::create($sformatf("ar_%0d", vif.ARID), this);
-        txn.addr = vif.ARADDR;
-        txn.id = vif.ARID;
-        txn.expected_beats = int'(vif.ARLEN) + 1;
-        txn.is_write = 1'b0;
-        pending_reads[txn.id].push_back(txn);
+      @(vif.mon_cb);
+      if (!vif.mon_cb.ARESETn) open_q.delete();
+      else begin
+        if (vif.mon_cb.RVALID && vif.mon_cb.RREADY)   on_r_beat();
+        if (vif.mon_cb.ARVALID && vif.mon_cb.ARREADY) on_ar();
       end
     end
   endtask
 
-  virtual task monitor_r_channel();
-    forever begin
-      @(posedge vif.ACLK);
-      if (vif.RVALID && vif.RREADY) begin
-        int unsigned id = vif.RID;
-        if (!pending_reads.exists(id) || pending_reads[id].size() == 0) begin
-          `uvm_error("UNEXPECTED_R", $sformatf("Response beat for ID %0d has no pending request", id))
-        end else begin
-          axi_transaction txn = pending_reads[id][0];
-          txn.data_beats.push_back(vif.RDATA);
-          txn.responses.push_back(vif.RRESP);
-
-          if (vif.RLAST != (txn.data_beats.size() == txn.expected_beats))
-            `uvm_error("RLAST", $sformatf("ID %0d: RLAST=%0b at beat %0d of %0d", id, vif.RLAST, txn.data_beats.size(), txn.expected_beats))
-          if (vif.RRESP inside {2'b10, 2'b11})
-            `uvm_error("RRESP", $sformatf("ID %0d returned error response %0b", id, vif.RRESP))
-
-          if (vif.RLAST) begin
-            void'(pending_reads[id].pop_front());
-            if (pending_reads[id].size() == 0) pending_reads.delete(id);
-            ap.write(txn);
-          end
-        end
-      end
-    end
-  endtask
-endclass
-
-class axi_scoreboard extends uvm_scoreboard;
-  `uvm_component_utils(axi_scoreboard)
-
-  uvm_analysis_imp_expected #(axi_transaction, axi_scoreboard) expected_export;
-  uvm_analysis_imp_actual #(axi_transaction, axi_scoreboard) actual_export;
-  axi_transaction expected_reads[int unsigned][$];
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-    expected_export = new("expected_export", this);
-    actual_export = new("actual_export", this);
+  function void on_ar();
+    axi_rd_item t  = axi_rd_item::type_id::create("t");
+    axi_rd_item rq = axi_rd_item::type_id::create("rq");
+    t.id    = vif.mon_cb.ARID;
+    t.addr  = vif.mon_cb.ARADDR;
+    t.len   = vif.mon_cb.ARLEN;
+    open_q[t.id].push_back(t);        // behind older reads with this ID
+    rq.id   = t.id;                   // a separate object for the predictor
+    rq.addr = t.addr;
+    rq.len  = t.len;
+    req_ap.write(rq);
   endfunction
 
-  virtual function void write_expected(axi_transaction txn);
-    if (!txn.is_write) expected_reads[txn.id].push_back(txn);
-  endfunction
-
-  virtual function void write_actual(axi_transaction txn);
-    axi_transaction expected;
-    uvm_comparer comparer = new();
-    if (txn.is_write) return;
-
-    if (!expected_reads.exists(txn.id) || expected_reads[txn.id].size() == 0) begin
-      `uvm_error("UNEXPECTED", $sformatf("Unexpected read: %s", txn.convert2string()))
+  function void on_r_beat();
+    int unsigned id = vif.mon_cb.RID;
+    axi_rd_item  t;
+    bit          last_expected;
+    if (!open_q.exists(id) || open_q[id].size() == 0) begin
+      `uvm_error("UNEXPECTED_R",
+                 $sformatf("RID %0d with no outstanding read (A5.3.1)", id))
       return;
     end
+    t = open_q[id][0];                // same-ID data returns in order (A5.3.1)
+    t.data.push_back(vif.mon_cb.RDATA);
+    t.resp.push_back(vif.mon_cb.RRESP);       // recorded, never judged here
+    last_expected = (t.data.size() == t.len + 1);
+    if (vif.mon_cb.RLAST != last_expected)
+      `uvm_error("RLAST", $sformatf("RID %0d: RLAST=%0b on beat %0d of %0d (A3.2.2)",
+                 id, vif.mon_cb.RLAST, t.data.size(), t.len + 1))
+    if (vif.mon_cb.RLAST || last_expected) begin   // one fault, one error
+      void'(open_q[id].pop_front());
+      ap.write(t);
+    end
+  endfunction
+endclass
 
-    expected = expected_reads[txn.id].pop_front();
-    if (expected_reads[txn.id].size() == 0) expected_reads.delete(txn.id);
-    if (!expected.compare(txn, comparer))
-      `uvm_error("MISMATCH", $sformatf("Expected %s; actual %s; %s", expected.convert2string(), txn.convert2string(), comparer.miscompares))
-    else
-      `uvm_info("MATCH", txn.convert2string(), UVM_LOW)
+class axi_rd_scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(axi_rd_scoreboard)
+  uvm_analysis_imp_exp #(axi_rd_item, axi_rd_scoreboard) exp_imp;
+  uvm_analysis_imp_act #(axi_rd_item, axi_rd_scoreboard) act_imp;
+  axi_rd_item  exp_q[int unsigned][$];
+  int unsigned n_match, n_mismatch, n_pending;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    exp_imp = new("exp_imp", this);
+    act_imp = new("act_imp", this);
   endfunction
 
-  virtual function void check_phase(uvm_phase phase);
-    super.check_phase(phase);
-    foreach (expected_reads[id]) begin
-      if (expected_reads[id].size() != 0)
-        `uvm_error("MISSING", $sformatf("ID %0d still has %0d expected read(s)", id, expected_reads[id].size()))
+  function void write_exp(axi_rd_item e);
+    exp_q[e.id].push_back(e);
+    n_pending++;
+  endfunction
+
+  function void write_act(axi_rd_item a);
+    axi_rd_item e;
+    string      d;
+    if (!exp_q.exists(a.id) || exp_q[a.id].size() == 0) begin
+      `uvm_error("SCB_UNEXPECTED", $sformatf("no expected read for %s",
+                                             a.convert2string()))
+      return;
     end
+    e = exp_q[a.id].pop_front();      // the oldest read with this ID
+    n_pending--;
+    d = e.diff(a);
+    if (d == "") n_match++;
+    else begin
+      n_mismatch++;
+      `uvm_error("SCB_MISMATCH", $sformatf("ID %0d addr 0x%08h: %s",
+                                           e.id, e.addr, d))
+    end
+  endfunction
+
+  function void check_phase(uvm_phase phase);
+    super.check_phase(phase);
+    foreach (exp_q[id])
+      if (exp_q[id].size() != 0)
+        `uvm_error("SCB_PENDING", $sformatf("ID %0d: %0d read(s) never completed",
+                                            id, exp_q[id].size()))
+  endfunction
+
+  function void report_phase(uvm_phase phase);
+    super.report_phase(phase);
+    `uvm_info("SCB_SUMMARY", $sformatf("matches=%0d mismatches=%0d pending=%0d",
+              n_match, n_mismatch, n_pending), UVM_NONE)
   endfunction
 endclass

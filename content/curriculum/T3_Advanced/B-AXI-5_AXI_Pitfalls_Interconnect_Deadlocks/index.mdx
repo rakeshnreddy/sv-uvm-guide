@@ -1,203 +1,833 @@
 ---
 title: "AXI Pitfalls & Interconnect Deadlocks"
-description: "Learn how subtle design flaws in AXI channel handling lead to catastrophic system deadlocks, including circular channel dependencies and cyclic interconnect routing deadlocks."
+description: "Diagnose AXI channel-dependency and interconnect deadlocks, 4KB and WSTRB bugs, and tell protocol violations from legal but risky design policy."
 order: 10
 flashcards: "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks"
+sources:
+  - title: "Arm AMBA AXI and ACE Protocol Specification (AXI3, AXI4, AXI4-Lite, ACE, ACE-Lite)"
+    type: "standard"
+    identifier: "IHI0022E"
+    version: "E"
+  - title: "IEEE Standard for SystemVerilog (checker and assertion code)"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+    version: "2023"
 ---
 
-import { LabLink } from '@/components/mdx/LabLink';
+## Quick Take
 
-# AXI Pitfalls & Interconnect Deadlocks
+- **What it is:** The AXI failures that survive a clean per-interface review. A **deadlock** is a set of signals that each wait for another one in the set, so none of them ever changes and the bus stops for good. AXI has three families of them: waits between the channels of one master and one slave, ordering duties inside an **interconnect** (the switch between several masters and several slaves), and incomplete transactions. Next to them sit two classic data bugs, the 4KB-crossing burst and the wrong write strobe (WSTRB).
+- **Why it matters:** One illegal wait can hang a whole system on chip, and it often hides until the component meets a different, equally legal partner. A checker that confuses design policy with protocol raises false failures on legal slaves, or stays silent on the master that is actually broken.
+- **The Analogy:** Two people at a narrow door, each saying "after you" forever. *Where it breaks:* in AXI only one side of each channel, the destination that raises READY, may wait for the other; the source that raises VALID never may, so the protocol forbids half of the politeness that deadlocks people. And interconnect deadlocks come from ordering rules between transactions, not from two people at one door.
 
-Because AXI decouples address, data, and response channels, implementations must distinguish protocol safety from system-level progress. A source that makes `VALID` depend on `READY` violates the handshake rule; a destination may apply backpressure, but its policy can still participate in a larger wait cycle.
+**You will be able to:**
+1. Build the wait-for graph of an AXI master and slave and find the closed loop that deadlocks them, such as WVALID waiting for AWREADY while the slave waits for WVALID (IHI0022E §A3.3.1).
+2. Classify each wait as a protocol violation (a source waiting for READY, a broken required dependency, a combinational path, an unfinished burst) or a legal but risky destination policy.
+3. Explain the ordering duties an interconnect must enforce (§A5.3.1, §A5.3.2, §A5.4.1), trace how write-data ordering deadlocks a two-master, two-slave interconnect, and choose a mitigation.
+4. Write VALID and information stability assertions plus a bounded-service check that is labelled as an integration contract, not as an AXI rule.
+5. Diagnose 4KB and WSTRB bugs with B-AXI-2's burst and byte-lane equations.
 
-In this module, we will dissect the most common AXI design flaws, why they cause deadlocks, and how to write verification assertions to catch them.
+<BeforeYouStart />
 
-<QuickTake>
-- **Canonical Rule:** A source must assert `VALID` independently of the destination's `READY`.
-- **Master Bug in This Example:** `WVALID` incorrectly depends on `AWREADY`.
-- **Destination Policy:** A slave may wait for `VALID` before asserting `READY`; cross-channel gating is risky but not automatically a protocol violation.
-- **Liveness:** Bounded `READY` latency belongs to an integration or QoS contract, not the base AXI handshake rules.
-- **Cyclic Deadlocks:** Poor interconnect topology can cause traffic jams where multiple masters block each other in a circle.
-- **4KB Boundary Violations:** An INCR burst that crosses a 4KB boundary can run past the slave it was routed to (IHI0022E A3.4.1). Check INCR bursts only, from the aligned start address.
-</QuickTake>
+The checks on this page use SystemVerilog Assertions (`|->`, `|=>`, `$stable`, `$rose`, `disable iff`); refresh [I-SV-4A SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) if they are rusty.
 
----
+## Build Your Mental Model
 
-## 1. Channel Dependency Deadlocks
+**How to read this lesson.** The core path is the wait-for graph, the violation-or-policy table and the progress contract: read those first. The interconnect section, the 4KB and WSTRB diagnosis and the pitfall catalogue are practitioner depth. Make It Work gives you a bench that deadlocks and a triage procedure; Push Further holds the expert layer.
 
-The most common AXI deadlock occurs during a Write transaction when the master and slave each wait for the other to act first.
+**Words used on this page.** A **source** drives VALID and the information of a channel; the **destination** drives READY ([B-AXI-1](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index) defines both and the five channels AW, W, B, AR and R). A **handshake** is the rising clock edge where VALID and READY are both HIGH. **Backpressure** is a destination holding READY LOW; the source **stalls** with VALID HIGH. This page uses master and slave as IHI0022E issue E does; later Arm issues say manager and subordinate.
 
-### The AXI Dependency Rules
+### Wait-for graphs: how to read a deadlock
 
-Treat each arrow below as “the signal on the left waits for the signal on the right”:
+A **wait** is a design decision of the form "I will not raise signal X until I have seen signal Y". Draw it as an arrow from X to Y and say "X waits for Y". A **wait-for graph** is all the waits of the components on a bus drawn together. If you can follow arrows from a signal and come back to the same signal, you have a **closed loop**: every signal in it waits for the next, so no signal in it can be raised first, and no handshake in it ever completes. That is a deadlock.
 
-1. **`master.WVALID → slave.AWREADY` is illegal.** `WVALID` is a source-owned signal and cannot be conditional on `READY`.
-2. **`slave.AWREADY → master.WVALID` is a legal destination policy.** A destination may observe `VALID` before raising `READY`, although this cross-channel choice can be a poor implementation policy.
-3. The two edges together form a directed cycle. Cycle detection diagnoses the deadlock; rule classification attributes the protocol violation to the master edge.
+A long stall is not a deadlock. A slave that holds AWREADY LOW for 500 cycles while it drains a buffer will raise it eventually; nothing waits back on it. A deadlock is a loop, and a loop never ends by itself.
 
-### The Classic Deadlock Scenario
+**Arrow direction.** This page's arrows, like the simulator's, point from the waiting signal to the signal it waits for. The figures in IHI0022E §A3.3.1 point the other way: there a single-headed arrow points to a signal that "can be asserted before or after" the signal at its start, and a double-headed arrow to one that "must be asserted only after" it. So a double-headed arrow is a required wait and a single-headed one a wait the later signal may choose; either way the arrow points from the earlier signal to the later one, the opposite of this page's arrows.
 
-Imagine a naive Master and a naive Slave:
+**The classic loop.** IHI0022E §A3.3.1 states the rules "To prevent a deadlock situation": the source's VALID "must not be dependent on" the destination's READY, while a destination "can wait until it detects a VALID signal before it asserts its corresponding READY". Its own Caution gives the example, which B-AXI-1 walks through: a master that waits for AWREADY before driving WVALID deadlocks against a slave that waits for WVALID before asserting AWREADY. The waveform below is that hang as a logic analyzer would show it.
 
-- **Buggy Master Design:** “I won't put data on the bus until the slave accepts my address.” The source illegally waits for `AWREADY` before asserting `WVALID`.
-- **Risky Slave Policy:** “I won't accept an address until write data is present.” The destination legally delays `AWREADY` until `WVALID`, but this completes the cycle.
+<TimingDiagram
+  title="A hung write: the master waits for AWREADY, the slave waits for WVALID"
+  caption="AWVALID is HIGH from edge 1 and never handshakes. WVALID never rises, because the master is waiting for AWREADY; AWREADY never rises, because the slave is waiting for WVALID. Nothing on the pins tells you who is waiting for whom: you learn that from the two designs."
+  edges={8}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 1, 1, 1, 1, 1, 1, 1] },
+    { name: "AWREADY", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "WVALID", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "WREADY", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0] }
+  ]}
+  markers={[
+    { edge: 2, tone: "fail", label: "master: WVALID waits for AWREADY, a protocol violation (A3.3.1)" },
+    { edge: 3, tone: "info", label: "slave: AWREADY waits for WVALID, a legal destination policy (A3.3.1)" },
+    { edge: 7, tone: "pending", label: "no handshake on any channel: the loop is closed" }
+  ]}
+/>
 
-**Result:** The Master is waiting for the Slave, and the Slave is waiting for the Master. Neither asserts their signal. **Deadlock.**
+**Build the graph in four steps.** Use this on any hang, at one interface or across a whole system.
+
+1. List every signal that is being held: VALIDs that are LOW although the source has something to send, and READYs that are LOW.
+2. For each one, read the design (RTL, or the testbench model) and write down what it waits for. Pins alone cannot tell you this.
+3. Draw the arrows and look for a closed loop.
+4. Classify every arrow in the loop as legal or illegal (next section). A loop with an illegal arrow is a bug in the owner of that arrow. A loop of legal arrows is a system design bug, which is what interconnect deadlocks are.
+
+**Predict, then check.** The simulator below lets you pick each side's waits; it draws the wait-for graph and lists every loop. Before you reveal its answer to "With these waits, what happens to a single write?", predict the outcome of each preset:
+
+- *Classic W/AW deadlock*: the loop above.
+- *Legal delayed READY*: the slave's AWREADY waits for AWVALID; the master waits for nothing.
+- *Latent violation*: the master's WVALID waits for AWREADY, but this slave's AWREADY waits only for AWVALID.
+- *B-channel deadlock*: the master's BREADY waits for BVALID, and the slave's BVALID waits for BREADY.
 
 <InteractiveWrapper>
   <AxiDeadlockSimulator />
 </InteractiveWrapper>
 
-### Protocol Safety: VALID and Payload Stability
+**Debrief.**
+- **Classic:** a loop, so a deadlock. The illegal arrow is the master's; the slave's wait is legal.
+- **Legal delayed READY:** no loop and no illegal arrow. Waiting for VALID only adds latency.
+- **Latent violation:** the write completes, and the master is still broken. Its illegal wait has no partner waiting back, yet. Put the same master next to the classic slave and the loop closes. **"It works with my slave" is not evidence of compliance**; Push Further shows how to test against the most restrictive legal partner instead.
+- **B-channel deadlock:** the same shape on the response channel. The master may wait for BVALID before raising BREADY (§A3.3.1); the slave, which is the source of B, may not wait for BREADY. The read channel works the same way: RREADY may wait for RVALID, and RVALID must not wait for RREADY.
 
-Pin-level assertions can prove that source-owned `VALID` and payload signals remain stable under backpressure. They cannot always prove the internal cause of a combinational or state dependency.
+**The two classic mistakes.** First, blaming the slave in the classic loop: a destination waiting for VALID is explicitly allowed. Second, signing off a master because it passed against a slave that is always ready: the latent preset is exactly that master.
+
+### Violation, legal policy, or contract
+
+Every wait you find falls in one of three classes. A **protocol violation** breaks a sentence of IHI0022E, and the owner must fix it. A **legal policy** is a choice the specification allows, which may still be risky in a system. A **contract** is a promise your product makes beyond AXI, such as a latency bound; breaking it is a bug only against that product's specification.
+
+| The wait or behaviour | Owner | Class | Source |
+|---|---|---|---|
+| Holds AWVALID, WVALID or ARVALID LOW until it sees a READY | master | **violation** | §A3.2.1, §A3.3.1 |
+| Holds BVALID or RVALID LOW until it sees BREADY or RREADY | slave | **violation** | §A3.3.1 |
+| Holds AWREADY or WREADY LOW until it has registered AWVALID, WVALID or both | slave | **legal policy** | §A3.3.1 |
+| Computes AWREADY combinationally from WVALID in the same cycle | slave | **violation**: the wait is legal, the combinational path is not | §A3.1.1, §A3.2.1 |
+| Holds BREADY or RREADY LOW until it sees BVALID or RVALID | master | **legal policy** | §A3.3.1 |
+| Raises RVALID before the AR handshake | slave | **violation** (missing required dependency) | §A3.3.1 |
+| AXI4: raises BVALID before the AW handshake or before the WLAST handshake | slave | **violation** (missing required dependency) | §A3.3.1 |
+| Drops VALID, or changes the information, before the handshake | source | **violation** | §A3.2.1, §A3.2.2 |
+| Raises READY, then drops it before any VALID arrives | destination | **legal** | §A3.2.1 |
+| Keeps ARREADY LOW for 500 cycles while busy | slave | **legal**; may break a product contract | §A3.2.1 (no bound) |
+| AXI3 only: a slave that supports write interleaving stalls W to change its order | slave | **violation** | §A5.3.3 |
+| Stops a burst early, or answers an error without completing every transfer | either | **violation** | §A3.4.1, §A3.4.4 |
+
+Three rows deserve a sentence each.
+
+- **Combinational READY.** "On master and slave interfaces there must be no combinatorial paths between input and output signals" (§A3.1.1). So "the slave may wait for WVALID" means it sees WVALID at one edge and raises AWREADY for a later edge. `assign AWREADY = waiting && WVALID;` implements a legal policy illegally.
+- **The one READY wait that is not free.** For AXI3 interleaving slaves, §A5.3.3 says: "To avoid possible deadlock, a slave interface that supports write data interleaving must continuously accept interleaved write data." It must never stall W to reorder it. AXI4 removed write interleaving, so this applies only to AXI3 components.
+- **Completion is a deadlock rule too.** A master always sends every transfer of a burst and a slave always returns every one, even with an error response (§A3.4.1, §A3.4.4). A component that stops halfway leaves its partner waiting for a WLAST or RLAST that never comes.
+
+**Misconception to drop:** "a slave that waits for WVALID before raising AWREADY violates the protocol". It does not (§A3.3.1). It is the most restrictive legal policy, which is exactly why good verification uses it.
+
+In the simulator, try the custom combinations: give the slave "AWREADY waits for WVALID" and "WREADY waits for AWVALID" with no master waits. The badges show both waits as legal and the write completes: a slave may be that strict. Now add "AWVALID waits for WREADY" on the master and watch the loop close.
+
+### Progress is a contract, not an AXI rule
+
+**What AXI says about time.** IHI0022E gives no number of cycles within which READY must rise: a destination "is permitted to wait for VALID" and may stall for as long as it needs (§A3.2.1). The progress duties it does state are about completion and order, not about time:
+
+- every transfer of a burst completes, even after an error (§A3.4.1, §A3.4.4);
+- a peripheral slave given an access it does not support must still complete it in a protocol-compliant way, because "Compliant completion of all transaction types is required to prevent system deadlock" (§A4.1; the interoperability rules in §A10.2.4 repeat it);
+- buffered writes must reach their final destination "in a timely manner" (§A4.6), with no number attached;
+- quality-of-service (QoS) signals, AxQOS, are a hint: "The protocol does not specify the exact use of the QoS identifier" (§A8.1.1).
+
+**So where does a bound come from?** From your product: an interconnect data sheet, a system QoS specification, a display controller that must refill its buffer every so many cycles. That bound is a **contract**. Write it as a parameter, name its source in a comment, gate it so you can switch it off, and label every failure `[Integration contract]` so nobody reads it as an AXI violation. (AHB is different: its specification expects every subordinate to have a predetermined maximum number of wait states, IHI0033C §5.1.2. Do not carry that habit into AXI.)
+
+**A bounded check is a safety check.** The property below fails at a definite edge, on a finite trace, which is what simulation can check. It says "every stall ends within `MAX_WAIT` edges". It does not prove that the bus always makes progress; that is a **liveness** property, which Push Further covers.
 
 ```systemverilog
-property p_awvalid_and_payload_stable;
+// snippet: inside a checker module with ACLK, ARESETn and the AXI signals
+// [Integration contract] MAX_WAIT comes from the product spec, not from AXI.
+property p_bound(valid, ready);
   @(posedge ACLK) disable iff (!ARESETn)
-    AWVALID && !AWREADY
-      |=> AWVALID && $stable({AWID, AWADDR, AWLEN, AWSIZE, AWBURST});
+    $rose(valid && !ready) |-> ##[1:MAX_WAIT] ready;
 endproperty
+a_aw_bound: assert property (p_bound(AWVALID, AWREADY))
+  else $error("[Integration contract] AW stalled more than %0d edges", MAX_WAIT);
 ```
 
-### Optional QoS/Liveness Contract
+`$rose(valid && !ready)` is true at the first edge of a stall (IEEE 1800-2023 §16.9.3), so each stall starts one attempt and reports at most once. The common form `valid |-> ##[0:N] ready` starts a new attempt at every edge, so one long stall prints a failure on every cycle after the first.
 
-If a product requires bounded response latency, verify it separately and name it as a configured service bound. This is an environment-specific progress requirement, not a generic AXI protocol assertion.
+<TimingDiagram
+  title="Legal backpressure that breaks a contract of MAX_WAIT = 4"
+  caption="The stall begins at edge 1. With MAX_WAIT = 4 the contract needs AWREADY by edge 5; it fails there. AWREADY rises at edge 9 and the handshake is perfectly legal AXI: the failure is a product decision, not a protocol violation."
+  edges={11}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0] },
+    { name: "AWREADY", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", label: "stall starts: $rose(AWVALID && !AWREADY)" },
+    { edge: 5, tone: "fail", label: "[Integration contract] no AWREADY within 4 edges" },
+    { edge: 9, tone: "pass", label: "handshake: legal under AXI, which sets no bound" }
+  ]}
+/>
+
+**Misconception to drop:** "bounded READY latency is an AXI rule". It is a contract you choose and source. Where it lives: in the checker module you attach to the interface, next to the protocol assertions but inside its own generate block switched by a parameter, as in Make It Work.
+
+### Interconnect deadlocks
+
+An **interconnect** connects several masters to several slaves; a **crossbar** is one that lets different masters reach different slaves at the same time. Every port of an interconnect is an ordinary AXI interface, so each one can obey §A3.3.1 perfectly while the system still deadlocks. The loop runs through ordering rules between transactions, which [B-AXI-3](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index) introduced.
+
+**The three rules that make write data hard to route.**
+
+1. **A master sends write data in address order.** In AXI4, "All write data must be in the same order as the associated write addresses" (§A5.4.1). A master cannot send the data of its second write before the data of its first.
+2. **A slave takes write data in the order it accepted the addresses.** Most slaves "must receive write data in the order in which they receive the addresses", and an interconnect that combines writes from different masters to one slave "must ensure that it forwards the write data in address order", "even if the write transactions have different AWID values, and even if they come from different masters" (§A5.3.2).
+3. **W carries no address.** The interconnect learns where a W burst goes only from its AW, so it "must realign the address and write data" before routing (§A3.3, Note).
+
+**Trace the deadlock.** Two masters, M0 and M1; two slaves, S0 and S1; an interconnect that does not buffer write data. Follow the steps in the diagram, then the loop.
+
+<SequenceDiagram
+  title="The AXI4 write-ordering deadlock in a 2x2 interconnect"
+  caption="Each slave accepts the two addresses aimed at it in the opposite order to the other slave. From then on S0 needs W_d first and S1 needs W_b first, but each of those bursts is queued behind a burst that is itself stalled."
+  participants={[
+    { id: "m0", label: "M0", kind: "generic" },
+    { id: "m1", label: "M1", kind: "generic" },
+    { id: "ic", label: "interconnect", kind: "generic" },
+    { id: "s0", label: "S0", kind: "generic" },
+    { id: "s1", label: "S1", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "async", from: "m0", to: "ic", label: "AW_a to S0, then AW_b to S1" },
+    { kind: "async", from: "m1", to: "ic", label: "AW_c to S1, then AW_d to S0" },
+    { kind: "async", from: "ic", to: "s0", label: "AW_d accepted first, then AW_a" },
+    { kind: "async", from: "ic", to: "s1", label: "AW_b accepted first, then AW_c" },
+    { kind: "divider", label: "write data: every interface still obeys A3.3.1" },
+    { kind: "async", from: "m0", to: "ic", label: "W_a (M0 must send it before W_b)", tone: "error" },
+    { kind: "note", from: "ic", to: "s0", label: "S0 needs W_d first (A5.3.2): W_a is not forwarded, WREADY to M0 stays LOW" },
+    { kind: "async", from: "m1", to: "ic", label: "W_c (M1 must send it before W_d)", tone: "error" },
+    { kind: "note", from: "ic", to: "s1", label: "S1 needs W_b first: W_c is not forwarded, WREADY to M1 stays LOW" }
+  ]}
+/>
+
+<ArchitectureDiagram
+  title="The wait-for loop of the write-ordering deadlock"
+  caption="Follow the arrows: W_a waits for S0, S0 waits for W_d, W_d is queued behind W_c (A5.4.1), W_c waits for S1, S1 waits for W_b, and W_b is queued behind W_a. The loop closes, and no single interface broke a rule."
+  legend={false}
+  nodes={[
+    { id: "wa", label: "M0: W_a", sublabel: "stalled at S0", kind: "generic", col: 0, row: 0, state: "error" },
+    { id: "s0", label: "S0", sublabel: "next W must be W_d", kind: "generic", col: 1, row: 0 },
+    { id: "wd", label: "M1: W_d", sublabel: "queued behind W_c", kind: "generic", col: 2, row: 0 },
+    { id: "wc", label: "M1: W_c", sublabel: "stalled at S1", kind: "generic", col: 2, row: 1, state: "error" },
+    { id: "s1", label: "S1", sublabel: "next W must be W_b", kind: "generic", col: 1, row: 1 },
+    { id: "wb", label: "M0: W_b", sublabel: "queued behind W_a", kind: "generic", col: 0, row: 1 }
+  ]}
+  edges={[
+    { from: "wa", to: "s0", style: "causal", label: "waits for WREADY" },
+    { from: "s0", to: "wd", style: "causal", label: "waits for W_d" },
+    { from: "wd", to: "wc", style: "causal", label: "after W_c" },
+    { from: "wc", to: "s1", style: "causal", label: "waits for WREADY" },
+    { from: "s1", to: "wb", style: "causal", label: "waits for W_b" },
+    { from: "wb", to: "wa", style: "causal", label: "after W_a" }
+  ]}
+/>
+
+**Who is at fault?** No interface broke §A3.3.1. The interconnect let each slave accept the addresses in an order that the masters' write data could not follow, and then it had nowhere to park a burst. Its duty in §A5.3.2, to forward write data in address order, became impossible to meet. That is why this is called a system deadlock: the fix is in the interconnect's design, not in a master or a slave.
+
+**Mitigations.** IHI0022E states the ordering duties, not how to meet them; these are common implementation choices, so label them as such in a design review:
+
+- **Order the address acceptances.** Forward a master's AW to a slave only when that master's earlier W bursts have been routed, or only when the interconnect can see that the W order and the AW acceptance order agree.
+- **Buffer write data.** With room for one full burst per master port, the interconnect can accept W_a, let M0 send W_b, and break the loop. The hazard is then latent: deeper traffic can need more room.
+- **Accept the address together with its data.** Some slaves and bridges take an AW only when they can take its whole W burst (the legal "wait for both" policy at the slave side).
+
+**Other system deadlocks to recognise.**
+
+- **Same-ID reads to different slaves.** "The interconnect must ensure that the read data from a sequence of transactions with the same ARID value targeting different slaves is received by the master in the order in which it issued the addresses" (§A5.3.1). This is an ordering duty, not a deadlock by itself: ignore it and you get an ordering violation. Meeting it usually means stalling the second read until the first returns, or buffering its data; a stall is one more wait arrow, and it can feed a loop together with other blocking paths.
+- **Responses that cannot drain.** The specification lets a master wait for BVALID before BREADY, and a slave's response never waits for a new request. A bridge or master that raises BREADY or RREADY only when it has room for its next request can close a loop: the request waits for buffer space, and the space waits for the response. Designing response paths to always drain is a design rule, not a sentence of IHI0022E.
+- **A default slave that does not drain W.** When no slave owns an address, the interconnect "must return the DECERR response", typically from a default slave, and "Any component giving a DECERR response must meet" the requirement that all data transfers complete (§A3.4.4). A default slave that answers B without accepting the W burst violates the AXI4 response dependency as well, and leaves the master's W channel stuck behind that burst.
+- **A protection block that discards transactions.** It "must provide a protocol-compliant error response to prevent deadlock" (§B1.4.2).
+
+**How verification finds them.** Pin checks at one port cannot. You need crossed traffic: every master writing to every slave with several transactions outstanding, random READY delays on every slave port, and a hang watchdog that prints every pending VALID and READY at every port when no handshake has happened for a long time. Bind a protocol checker at every master port and every slave port of the interconnect, so a violation created inside the interconnect is seen where it happens. Formal tools can search for the loop directly; see Push Further.
+
+### Boundary and strobe bugs, diagnosed with B-AXI-2's model
+
+[B-AXI-2](/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index) owns the burst equations, the 4KB rule and the byte-lane rules. This section is about diagnosing bugs with them: from a symptom, to the rule, to the check that should have caught it.
+
+**4KB: the symptom.** Part of a burst lands in the wrong place. The interconnect routes a whole burst by its start address, so the transfers past the 4KB boundary still go to the first slave: they alias onto its own addresses, return an error, or corrupt data, depending on that slave, and the slave that owns the next page never sees them. IHI0022E does not define what happens; it simply forbids the burst: "a burst must not cross a 4KB address boundary" (§A3.4.1).
+
+**4KB: the diagnosis.** Only INCR bursts can cross. A legal WRAP stays inside its own window and a FIXED burst repeats one address. Count the last byte from the **aligned** start address:
+
+| Burst | Last byte carried | Verdict |
+|---|---|---|
+| INCR, AxADDR 0x0FE0, AxLEN 7, AxSIZE 3 | 0x0FE0 + 8 x 8 - 1 = 0x101F | **crosses**: illegal |
+| WRAP, AxADDR 0x0FF0, AxLEN 15, AxSIZE 2 | wraps inside 0x0FC0 to 0x0FFF | legal |
+| FIXED, AxADDR 0x0FFC, AxLEN 15, AxSIZE 2 | every transfer is 0x0FFC to 0x0FFF | legal |
+| INCR, AxADDR 0x0FFE, AxLEN 0, AxSIZE 2 | aligned 0x0FFC, so 0x0FFF | legal (0x0FFE + 4 overshoots: wrong formula) |
+
+**4KB: where the check lives.** It is a protocol rule on the AW and AR handshakes, so it belongs in the protocol checker (B-AXI-2's `p_incr_no_4kb` property) or in the monitor's protocol layer, not in the scoreboard. A scoreboard sees only the symptom, a data mismatch at some other address, much later.
+
+**WSTRB: the rule.** The byte lanes a transfer may use are fixed by its address, its size (AxSIZE, 2^AxSIZE bytes per transfer) and the bus width (§A3.4.1). WSTRB marks which of those lanes carry valid data: "A master must ensure that the write strobes are HIGH only for byte lanes that contain valid data" (§A3.4.3). So WSTRB may be any subset of the active lanes, including all zeros, and never a lane outside them.
+
+Work three cases on a 32-bit bus (four lanes, lane 0 is WDATA[7:0]):
+
+| Request | Active lanes (§A3.4.1 equations) | Legal WSTRB | Illegal examples |
+|---|---|---|---|
+| AxADDR 0x1, AxSIZE 1 (2 bytes), AxLEN 0 | Aligned_Address 0x0, lanes 1 to 1: **lane 1 only** | `4'b0010`, `4'b0000` | `4'b0110`, `4'b0011` |
+| AxADDR 0x1, AxSIZE 2 (4 bytes), AxLEN 0 | Aligned_Address 0x0, lanes 1 to 3 | any subset: `4'b0110` writes exactly bytes 1 and 2 | `4'b0011` (lane 0) |
+| AxADDR 0x1, AxSIZE 1, AxLEN 1, INCR | transfer 1: lane 1; transfer 2 at 0x2: lanes 2 and 3 | `4'b0010` then `4'b0100` writes exactly bytes 1 and 2 | `4'b0110` on transfer 1 |
+
+Row 1 is the misconception to drop: "2 bytes at 0x1 with AxSIZE = 1 means WSTRB `4'b0110`". With AxSIZE = 1 the transfer is a 2-byte container aligned at 0x0, and the unaligned start leaves only lane 1. To write bytes 1 and 2 in one transfer you need AxSIZE = 2 and a sparse strobe (row 2), or two transfers (row 3).
+
+The other classic bug puts the two bytes at the bottom of the bus with `4'b0011`. Lane 0 is outside the active lanes of row 1, so this is a **protocol violation** a checker can flag on the handshake, with the containment test `(WSTRB & ~active_lanes) != 0`, not only a data corruption that the scoreboard finds later.
+
+**Predict, then check.** In the visualizer, choose a preset, then type your own request: AxADDR `0x1`, AxLEN `0`, AxSIZE `2B` (that is AxSIZE 1), 32-bit bus. Before you look, predict which lanes are active. Then open the strobe panel and toggle `0110`. Change AxSIZE to `4B` and toggle `0110` again. Finally pick the "Crosses 4KB" and "Ends at 0x0FFF" presets and predict each verdict.
+
+<AxiMemoryMathVisualizer />
+
+**Debrief.** With AxSIZE 1 only lane 1 lights up, and the panel marks lane 2 of `0110` as carrying no valid data (§A3.4.3). With AxSIZE 2 the same strobe is a legal sparse write. "Crosses 4KB" (INCR of four words from 0x0FF4) ends at 0x1003, while "Ends at 0x0FFF" stops exactly at the boundary.
+
+### Pitfall catalogue
+
+Each row is a bug you will meet in real projects: what you see, the cause, the rule, and the check that catches it.
+
+| Symptom | Cause | Rule | Check |
+|---|---|---|---|
+| Hang: AWVALID HIGH, WVALID LOW, AWREADY LOW | master waits for AWREADY before WVALID | §A3.3.1 | contract bound plus hang watchdog; test against the most restrictive legal slave |
+| Hang: BVALID LOW although AW and W completed | slave's BVALID waits for BREADY | §A3.3.1 | hang watchdog; master model that waits for BVALID |
+| Write response early or burst misaligned | WLAST not on transfer AWLEN + 1 | §A3.2.2 ("The master must assert the WLAST signal while it is driving the final write transfer") | beat counter against AWLEN in the monitor or checker |
+| Responses go to the wrong master, or same-ID order breaks after an interconnect | ID bits truncated or reused at a boundary | §A5.3.5, §A5.3.6, §A6.3 ("Any manipulation of the AXI ID values ... must ensure that the ordering requirements of the original ID values are maintained") | per-hop checkers; ID-width configuration check |
+| Lost or overwritten requests under load | READY held HIGH beyond the tracking capacity | §A3.2.2 ("When AWREADY is HIGH the slave must be able to accept any valid address") | max-outstanding stress; holding READY LOW is always legal |
+| Partner hangs waiting for WLAST or RLAST | burst stopped early, or an error burst cut short | §A3.4.1, §A3.4.4 | beat count against AxLEN regardless of response |
+| W channel stuck after an access to an unmapped address | default slave answers DECERR without draining W | §A3.4.4 | address-decode test with multi-transfer writes |
+| Timing loops, or simulation-only behaviour that differs in silicon | READY or VALID computed combinationally from an input | §A3.1.1 | lint and static timing; simulation assertions cannot see it |
+| Spurious transfer straight after reset | VALID HIGH during reset or at the first edge out of it | §A3.1.2 | reset assertions (B-AXI-1) |
+| Data lost from a FIFO peripheral | master over-reads and discards beats | §A3.4.1, Note | sequence sizes bursts exactly ([B-AXI-2](/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index), Push Further) |
+
+### Recap
+
+- A deadlock is a closed loop of waits. Find it with a wait-for graph built from the designs, not from the pins.
+- A source never waits for READY; a destination may wait for VALID, through a register. Required dependencies (R after AR; in AXI4, B after AW and WLAST) and full burst completion are rules too.
+- AXI sets no time bound. A bound is a sourced, labelled integration contract, checked once per stall.
+- An interconnect must keep write data in address order at every slave; crossed address acceptance without buffering deadlocks even when every interface is compliant.
+- Diagnose 4KB and WSTRB bugs with B-AXI-2's equations: INCR only, from the aligned start; WSTRB must be a subset of the active lanes, which depend on AxSIZE.
+
+## Make It Work
+
+### A deadlock you can run, and fix
+
+The example is one file. `axi_master` is a small write-only master with a `BUGGY` input: when it is 1, the master raises WVALID only after AWREADY. `restrictive_slave` is the **most restrictive legal slave**: it raises AWREADY and WREADY only after it has registered both AWVALID and WVALID, which §A3.3.1 allows. `axi_wr_dep_checker` holds the protocol assertions and one labelled contract, and is attached to the slave with `bind` (IEEE 1800-2023 §23.11), the way a checker joins a real design without editing it. `tb_top` adds a hang watchdog that prints every channel's VALID and READY when nothing has moved for `HANG_LIMIT` edges. All writes are single transfers (AWLEN = 0), so WLAST is always 1.
 
 ```systemverilog
-property p_aw_service_bound;
-  @(posedge ACLK) disable iff (!ARESETn)
-    AWVALID |-> ##[0:MAX_AW_LATENCY] AWREADY;
-endproperty
-```
+// compile
+// deadlock_demo.sv: a master that waits for AWREADY meets the most restrictive
+// legal slave. No plusarg: the fixed master. +BUGGY_MASTER: the bug.
+`timescale 1ns/1ps
 
----
+// Protocol checks plus one integration contract, for the AW, W and B channels.
+module axi_wr_dep_checker #(
+  parameter int unsigned MAX_WAIT    = 16,   // contract bound: from the product spec
+  parameter bit          CONTRACT_ON = 1'b1
+) (
+  input logic        ACLK, ARESETn,
+  input logic        AWVALID, AWREADY,
+  input logic [31:0] AWADDR,
+  input logic        WVALID, WREADY,
+  input logic [31:0] WDATA,
+  input logic [3:0]  WSTRB,
+  input logic        WLAST,
+  input logic        BVALID, BREADY,
+  input logic [1:0]  BRESP
+);
+  int unsigned fails;   // read by tb_top for the summary line
+  task automatic fail(input string rule);
+    fails++;
+    $error("%s at %0d ns", rule, $time);
+  endtask
 
-## 2. Cyclic Interconnect Deadlocks
+  // [Protocol A3.2.1] During a stall VALID stays HIGH and the information is stable.
+  property p_hold_stable(valid, ready, info);
+    @(posedge ACLK) disable iff (!ARESETn)
+      valid && !ready |=> valid && $stable(info);
+  endproperty
+  a_aw_hold: assert property (p_hold_stable(AWVALID, AWREADY, AWADDR))
+    else fail("[Protocol A3.2.1] AW dropped or changed during a stall");
+  a_w_hold:  assert property (p_hold_stable(WVALID, WREADY, {WDATA, WSTRB, WLAST}))
+    else fail("[Protocol A3.2.1] W dropped or changed during a stall");
+  a_b_hold:  assert property (p_hold_stable(BVALID, BREADY, BRESP))
+    else fail("[Protocol A3.2.1] B dropped or changed during a stall");
 
-Even if every Master and Slave strictly obeys the channel dependency rules, the system can still deadlock due to the **topology of the interconnect**.
+  // [Protocol A3.3.1, AXI4] BVALID only after both the AW and the WLAST handshake.
+  // Sampled at an edge, the counters hold the handshakes of earlier edges.
+  int unsigned aw_cnt, wlast_cnt, b_cnt;
+  always_ff @(posedge ACLK or negedge ARESETn)
+    if (!ARESETn) begin
+      aw_cnt <= 0; wlast_cnt <= 0; b_cnt <= 0;
+    end else begin
+      if (AWVALID && AWREADY)        aw_cnt    <= aw_cnt + 1;
+      if (WVALID && WREADY && WLAST) wlast_cnt <= wlast_cnt + 1;
+      if (BVALID && BREADY)          b_cnt     <= b_cnt + 1;
+    end
+  a_b_dep: assert property (@(posedge ACLK) disable iff (!ARESETn)
+    BVALID |-> aw_cnt > b_cnt && wlast_cnt > b_cnt)
+    else fail("[Protocol A3.3.1] BVALID before its AW and WLAST handshakes");
 
-### The Traffic Jam
-
-Imagine a system with two Masters (M1, M2) and two Slaves (S1, S2).
-Both masters can access both slaves through a crossbar switch.
-
-1. **M1** issues a burst to **S1**. The interconnect buffers it.
-2. **M2** issues a burst to **S2**. The interconnect buffers it.
-3. Now, before those finish:
-   - **M1** issues a burst to **S2**.
-   - **M2** issues a burst to **S1**.
-
-If the interconnect's internal FIFOs fill up, and it doesn't have independent paths or virtual channels for different routes, a **cyclic deadlock** occurs:
-- M1's path to S2 is blocked by M2's traffic.
-- M2's path to S1 is blocked by M1's traffic.
-
-### Solving Cyclic Deadlocks
-
-System architects solve this by:
-1. **Breaking the cycle:** Designing the interconnect as a tree rather than a full mesh where possible.
-2. **Virtual Channels:** Using separate internal FIFOs for different masters or transaction types.
-3. **Strict Ordering:** Forcing responses to clear out before accepting new cross-traffic.
-
-From a verification perspective, you find these by writing a **Stress Sequence** that unleashes maximum outstanding transactions from all masters to all slaves simultaneously with random delays.
-
----
-
-## 3. The 4KB Boundary Violation
-
-AXI enforces a strict rule: **A single burst must not cross a 4 Kilobyte (0x1000) address boundary.**
-
-### Why does this rule exist?
-
-The spec gives two reasons (IHI0022E A3.4.1): the rule prevents a burst from crossing a boundary between two slaves, and it limits the number of address increments a slave must support.
-So an interconnect can decode a whole burst from its start address, and a slave only needs a 12-bit incrementer.
-If a burst starts at address `0x0FF0` and is 64 bytes long, it crosses into `0x1000`, which may belong to a different slave.
-
-### The Pitfall
-
-The protocol does not define what happens when a master breaks the rule. A typical interconnect routes the whole burst by its start address, so the beats past `0x1000` reach the first slave. Depending on the slave, they alias onto its own addresses, get an `SLVERR`, or silently corrupt data. The other slave never sees them.
-
-### The Verification Check
-
-Your monitor or scoreboard should catch this immediately:
-
-```systemverilog
-// [Protocol IHI0022E A3.4.1] Only INCR bursts can cross: a legal WRAP stays
-// inside its wrap region and a FIXED burst repeats one address.
-function void check_4kb_boundary(axi_transaction txn);
-  bit [31:0] aligned_addr, end_addr;
-  if (txn.burst != 2'b01) return;  // INCR only
-
-  // Only the first transfer may be unaligned, and it does not use the bytes
-  // below txn.addr, so count from the aligned address.
-  aligned_addr = (txn.addr >> txn.size) << txn.size;
-  end_addr     = aligned_addr + (txn.len + 1) * (1 << txn.size) - 1;
-
-  // If the top 20 bits change, we crossed a 4KB boundary
-  if ((txn.addr & 32'hFFFF_F000) != (end_addr & 32'hFFFF_F000)) begin
-    `uvm_error("AXI_VIOLATION", $sformatf("INCR burst crossed 4KB boundary! Start: %0h, End: %0h", txn.addr, end_addr))
+  // [Integration contract, not AXI] every stall ends within MAX_WAIT edges.
+  // One attempt per stall: $rose fires on the first stalled edge only.
+  if (CONTRACT_ON) begin : g_contract
+    property p_bound(valid, ready);
+      @(posedge ACLK) disable iff (!ARESETn)
+        $rose(valid && !ready) |-> ##[1:MAX_WAIT] ready;
+    endproperty
+    a_aw_bound: assert property (p_bound(AWVALID, AWREADY))
+      else fail($sformatf("[Integration contract] AW stalled > %0d edges", MAX_WAIT));
+    a_w_bound:  assert property (p_bound(WVALID, WREADY))
+      else fail($sformatf("[Integration contract] W stalled > %0d edges", MAX_WAIT));
+    a_b_bound:  assert property (p_bound(BVALID, BREADY))
+      else fail($sformatf("[Integration contract] B stalled > %0d edges", MAX_WAIT));
   end
-endfunction
+endmodule
+
+// Most restrictive legal slave: each READY waits for BOTH VALIDs (A3.3.1),
+// one edge later through a register (A3.1.1). Single-transfer writes only.
+module restrictive_slave (
+  input  logic        ACLK, ARESETn,
+  input  logic        AWVALID,
+  output logic        AWREADY,
+  input  logic [31:0] AWADDR,
+  input  logic        WVALID,
+  output logic        WREADY,
+  input  logic [31:0] WDATA,
+  input  logic [3:0]  WSTRB,
+  input  logic        WLAST,
+  output logic        BVALID,
+  input  logic        BREADY,
+  output logic [1:0]  BRESP
+);
+  logic aw_done, w_done;   // handshakes already taken for the current write
+  logic both_seen;         // used only inside the flop below: no comb. path out
+  assign both_seen = (AWVALID || aw_done) && (WVALID || w_done);
+
+  always_ff @(posedge ACLK or negedge ARESETn)
+    if (!ARESETn) begin
+      AWREADY <= 1'b0; WREADY  <= 1'b0; BVALID <= 1'b0; BRESP <= 2'b00;
+      aw_done <= 1'b0; w_done  <= 1'b0;
+    end else begin
+      if (AWVALID && AWREADY) begin
+        AWREADY <= 1'b0;
+        aw_done <= 1'b1;
+      end else if (both_seen && !aw_done) AWREADY <= 1'b1;
+      if (WVALID && WREADY) begin   // a real slave would store WDATA under WSTRB
+        WREADY <= 1'b0;
+        w_done <= 1'b1;
+      end else if (both_seen && !w_done) WREADY <= 1'b1;
+      // AXI4 (A3.3.1): the response follows both handshakes.
+      if (BVALID && BREADY) begin
+        BVALID  <= 1'b0;
+        aw_done <= 1'b0;
+        w_done  <= 1'b0;
+      end else if (aw_done && w_done && !BVALID) begin
+        BVALID <= 1'b1;
+        BRESP  <= 2'b00;            // OKAY
+      end
+    end
+endmodule
+
+// Write-only master. BUGGY = 1 makes WVALID wait for AWREADY.
+module axi_master #(parameter int unsigned N_WRITES = 4) (
+  input  logic        ACLK, ARESETn,
+  input  bit          BUGGY,
+  output logic        AWVALID,
+  input  logic        AWREADY,
+  output logic [31:0] AWADDR,
+  output logic        WVALID,
+  input  logic        WREADY,
+  output logic [31:0] WDATA,
+  output logic [3:0]  WSTRB,
+  output logic        WLAST,
+  input  logic        BVALID,
+  output logic        BREADY,
+  input  logic [1:0]  BRESP,
+  output int unsigned writes_done
+);
+  int unsigned issued;
+  logic        b_pend;     // a write is in flight: wait for its response
+
+  // This master can always take a response, so BREADY may stay HIGH (A3.2.2).
+  assign BREADY = 1'b1;
+
+  always_ff @(posedge ACLK or negedge ARESETn)
+    if (!ARESETn) begin
+      AWVALID <= 1'b0; WVALID <= 1'b0; AWADDR <= '0; WDATA <= '0;
+      WSTRB   <= '0;   WLAST  <= 1'b0; issued <= 0;  b_pend <= 1'b0;
+      writes_done <= 0;
+    end else begin
+      if (AWVALID && AWREADY) begin
+        AWVALID <= 1'b0;
+        if (BUGGY) WVALID <= 1'b1;  // BUG: W offered only after AWREADY (A3.3.1)
+      end
+      if (WVALID && WREADY) WVALID <= 1'b0;
+      if (BVALID && BREADY) begin
+        b_pend      <= 1'b0;
+        writes_done <= writes_done + 1;
+        $display("%0d ns: write %0d done, BRESP=%0d", $time, writes_done + 1, BRESP);
+      end
+      if (!b_pend && issued < N_WRITES) begin   // start the next write
+        AWVALID <= 1'b1;
+        AWADDR  <= 32'h100 + 4 * issued;
+        WDATA   <= 32'hA000 + issued;
+        WSTRB   <= 4'hF;
+        WLAST   <= 1'b1;                        // AWLEN = 0: one transfer
+        WVALID  <= !BUGGY;                      // correct: VALID never waits for READY
+        b_pend  <= 1'b1;
+        issued  <= issued + 1;
+      end
+    end
+endmodule
+
+module tb_top;
+  localparam int unsigned N_WRITES   = 4;
+  localparam int unsigned HANG_LIMIT = 32;   // edges with VALID offered, no handshake
+
+  logic        ACLK    = 1'b0;
+  logic        ARESETn = 1'b0;
+  logic        AWVALID, AWREADY, WVALID, WREADY, WLAST, BVALID, BREADY;
+  logic [31:0] AWADDR, WDATA;
+  logic [3:0]  WSTRB;
+  logic [1:0]  BRESP;
+  bit          buggy;
+  int unsigned writes_done;
+
+  always #5 ACLK = ~ACLK;
+
+  initial begin
+    buggy = $test$plusargs("BUGGY_MASTER");
+    repeat (4) @(posedge ACLK);
+    ARESETn <= 1'b1;                          // released on a clock edge (A3.1.2)
+  end
+
+  axi_master #(.N_WRITES(N_WRITES)) u_mst (.BUGGY(buggy), .*);
+  restrictive_slave u_slv (.*);
+
+  // Attach the checker to every restrictive_slave without editing it.
+  bind restrictive_slave axi_wr_dep_checker #(.MAX_WAIT(16)) u_chk (.*);
+
+  // Hang watchdog: edges where something is offered and nothing moves.
+  // A source that waits without offering anything is invisible here.
+  wire hs_any    = (AWVALID && AWREADY) || (WVALID && WREADY) || (BVALID && BREADY);
+  wire valid_any = AWVALID || WVALID || BVALID;
+  int unsigned stuck;
+  always_ff @(posedge ACLK or negedge ARESETn)
+    if (!ARESETn)                  stuck <= 0;
+    else if (hs_any || !valid_any) stuck <= 0;
+    else                           stuck <= stuck + 1;
+
+  initial begin : end_of_test
+    int unsigned fails;
+    wait (ARESETn === 1'b1);
+    fork
+      wait (writes_done == N_WRITES);
+      wait (stuck == HANG_LIMIT);
+    join_any
+    fails = u_slv.u_chk.fails;
+    if (writes_done != N_WRITES) begin
+      fails++;
+      $display("HANG at %0d ns: no handshake for %0d edges", $time, HANG_LIMIT);
+      $display("  AW: AWVALID=%b AWREADY=%b", AWVALID, AWREADY);
+      $display("  W : WVALID=%b WREADY=%b", WVALID, WREADY);
+      $display("  B : BVALID=%b BREADY=%b", BVALID, BREADY);
+    end
+    $display("PASS=%0d FAIL=%0d", writes_done, fails);
+    $finish;
+  end
+endmodule
 ```
 
----
+**Expected output** (illustrative, worked out by hand from the code: no simulator run is recorded here; your simulator adds its own prefix to `$error` lines).
 
-## 4. Misaligned Strobes (`WSTRB`)
+With `+BUGGY_MASTER`:
 
-The `WSTRB` (Write Strobe) signal allows a master to update only specific bytes within a data word.
-A common pitfall is miscalculating the `WSTRB` for **unaligned accesses**.
+```text
+[Integration contract] AW stalled > 16 edges at 215 ns
+HANG at 365 ns: no handshake for 32 edges
+  AW: AWVALID=1 AWREADY=0
+  W : WVALID=0 WREADY=0
+  B : BVALID=0 BREADY=1
+PASS=0 FAIL=2
+```
 
-If a master wants to write 2 bytes starting at address `0x1` on a 32-bit (4-byte) bus:
-- The data word must contain the bytes in lanes 1 and 2.
-- The `WSTRB` must be `4'b0110`.
+Without a plusarg:
 
-### The Pitfall
-Many custom DMA controllers incorrectly assume that if they are writing 2 bytes, they should just put the bytes at the bottom of the data bus and set `WSTRB = 4'b0011`. 
-Because the address is `0x1`, the slave expects the data on lanes 1 and 2, but sees `WSTRB = 4'b0011` (lanes 0 and 1). This results in the wrong bytes being written to memory.
+```text
+85 ns: write 1 done, BRESP=0
+135 ns: write 2 done, BRESP=0
+185 ns: write 3 done, BRESP=0
+235 ns: write 4 done, BRESP=0
+PASS=4 FAIL=0
+```
 
----
+**Read the logs.** Reset is released at 35 ns, and the master raises AWVALID just after the edge at 45 ns. The stall starts at the 55 ns edge, so the contract (16 edges) fails at 215 ns. No protocol assertion fires in the buggy run: the master's illegal wait is internal, and every pin it drives is legal. The contract and the watchdog are what turn the hang into a failure, and the wait list says where to look: AW is offered and stalled, W is not offered at all. In the fixed run each write takes five edges: VALIDs raised, READYs raised, both handshakes, BVALID raised, B handshake.
 
-<Quiz>
-  <QuizQuestion
-    question="Which dependency is the AXI protocol violation in the deadlock example?"
-    options={[
-      "Master waiting for AWREADY before asserting WVALID",
-      "Slave delaying AWREADY until it observes AWVALID",
-      "Slave delaying AWREADY until it observes WVALID",
-      "Master asserting AWVALID and WVALID in the same cycle"
-    ]}
-    correctAnswer="Master waiting for AWREADY before asserting WVALID"
-    explanation="WVALID is source-owned and must not depend on READY. The slave's delayed-READY policy can participate in the cycle, but is not itself the source-VALID protocol violation."
-  />
-  <QuizQuestion
-    question="A master issues an INCR burst starting at address 0x0FE0. The burst consists of 8 beats, and each beat is 8 bytes (AxSIZE = 3). Is this transaction legal?"
-    options={[
-      "Yes, it is a standard 64-byte burst.",
-      "No, the burst crosses a 4KB boundary.",
-      "No, INCR bursts cannot have an 8-byte AxSIZE.",
-      "Yes, but only if AxCACHE is set to bufferable."
-    ]}
-    correctAnswer="No, the burst crosses a 4KB boundary."
-    explanation="The burst length is 8 beats * 8 bytes = 64 bytes. Start address is 0x0FE0. End address is 0x0FE0 + 64 - 1 = 0x101F. Because it crosses from 0x0FFF to 0x1000, it violates the 4KB boundary rule."
-  />
-  <QuizQuestion
-    question="On a 32-bit data bus, a master writes 1 byte to address 0x3. What should the WSTRB value be?"
-    options={[
-      "4'b0001",
-      "4'b1000",
-      "4'b0111",
-      "4'b1111"
-    ]}
-    correctAnswer="4'b1000"
-    explanation="Address 0x3 corresponds to the highest byte lane (lane 3) of the 32-bit (4-byte) word. Therefore, only bit 3 of the WSTRB should be asserted: 4'b1000."
-  />
-</Quiz>
+**Run it.** Compile `deadlock_demo.sv` with any simulator that supports IEEE 1800-2023 concurrent assertions and `bind`, with `tb_top` as the top. Run it twice, with and without `+BUGGY_MASTER`. (Open-source simulators' SVA support varies; this example has not been verified on one.)
 
----
+### How to triage a hang
 
-## Hands-On Practice
+1. **Freeze at the hang.** Let a watchdog or a contract failure stop the run, not a global timeout an hour later.
+2. **List the waits.** For every channel at every port, print VALID and READY. A channel with VALID HIGH and READY LOW is stalled; a channel whose source should have something to send but shows VALID LOW is suspicious.
+3. **Draw the wait-for graph.** For each held signal, read its owner's design and write down what it waits for.
+4. **Classify every arrow** with the table in Build Your Mental Model: violation, legal policy, or contract.
+5. **Fix the owner of the illegal arrow.** If every arrow is legal, the loop is a system design problem: an interconnect ordering or buffering issue.
+6. **Rerun against the most restrictive legal partner**, like `restrictive_slave`, to prove the fix and to expose latent bugs.
+7. **Keep the contract check and the watchdog** in the regression, labelled as contracts.
 
-Put your deadlock detection skills to the test with the AXI Deadlock Hunt lab. You'll identify the illegal master dependency, distinguish it from a legal destination policy, and write protocol stability assertions plus separately configured service watchdogs.
+**Checklist before moving on:**
+- [ ] I can draw the wait-for loop of the buggy run and say which arrow is illegal and why.
+- [ ] I can explain why no protocol assertion fires in the buggy run although the master is broken.
+- [ ] My bound checks are parameterised, gated, sourced in a comment, labelled `[Integration contract]`, and report once per stall.
+- [ ] I can tell, for any wait, whether it is a violation, a legal policy or a contract, and cite the section.
+- [ ] I can trace the 2x2 write-ordering deadlock and name one mitigation.
+- [ ] I can compute the active lanes and the legal WSTRB values for an unaligned narrow write.
+
+## Push Further
+
+### Expert: proving deadlock freedom
+
+A `##[1:N]` bound is a **safety** property: a finite trace can violate it. "Every stall ends eventually" is a **liveness** property; IEEE 1800-2023 writes it with `s_eventually` (§16.12.13), for example `$rose(AWVALID && !AWREADY) |-> s_eventually AWREADY`. A finite simulation can never show that a liveness property holds, only that it has not been satisfied yet when the run stops; how simulators report a strong property still pending at the end of a run is tool-dependent.
+
+Formal tools can prove liveness, but only with **fairness** assumptions about the environment, written as `assume property` (§16.14.2): for example "the master eventually raises BREADY", or the slave's own protocol rules when you verify a master. Without them the tool finds a trivial counterexample, such as a partner that never responds. Real interconnects also need abstraction (fewer outstanding transactions, narrower data) before a proof converges, and liveness engines and their limits differ between tools (tool-dependent). A practical split: bounded contract checks in simulation and formal; liveness proofs on small configurations of the interconnect's ordering and buffering logic.
+
+### Expert: interconnect ordering duties and what they cost
+
+- **Same-ID reads across slaves (§A5.3.1).** The interconnect must return same-ARID read data in issue order even from different slaves. A simple design stalls a second same-ID read to a different slave until the first completes, which costs throughput for masters that reuse one ID. A reorder buffer keeps throughput but costs area and adds a new resource that can fill up, so its full condition must not wait on anything that waits on it.
+- **ID manipulation (§A6.3, §A5.3.5).** The interconnect appends master-port bits to IDs so that responses can be routed back; "Any manipulation of the AXI ID values associated with a transaction must ensure that the ordering requirements of the original ID values are maintained". ID width is implementation defined (§A5.3.6): a slave port narrower than the widened IDs forces compression, and compression that merges two IDs merges two ordering streams, which is safe for ordering but can create new stalls; reusing an ID before its response returns breaks routing.
+- **Interview probe:** "Where would you put a reorder buffer, and what must never wait for it?"
+
+### Expert: write-data ordering at scale
+
+AXI4 W follows AW order at every master (§A5.4.1), and the interconnect must forward write data to a slave in address order whatever the IDs and masters (§A5.3.2). Write data may also reach an interconnect before its address, which is why the interconnect must realign them before routing (§A3.3, Note). So an interconnect needs, per slave port, the order in which it forwarded AWs, and per master port, the order of that master's W bursts; the deadlock appears exactly when those two orders cannot be merged without storage.
+
+In legacy AXI3 systems, write interleaving lets a slave with an interleaving depth above one take W bursts in a different order using WID, but such a slave "must continuously accept interleaved write data" and "must never stall the acceptance of write data in an attempt to change the order of the write data" (§A5.3.3). AXI4 removed WID and interleaving (§A5.4.1), so AXI3-to-AXI4 bridges must serialise W bursts, which is where crossed-order hazards often reappear.
+
+### Expert: latent violations and the most restrictive legal partner
+
+Section §A3.3.1 gives every destination the right to wait for VALID, so the strictest partner a master can meet is a slave that raises AWREADY and WREADY only after it has seen both AWVALID and WVALID, and ARREADY only after ARVALID. Any master that waits for any READY deadlocks against it. Symmetrically, the strictest partner for a slave is a master that raises BREADY and RREADY only after it sees BVALID and RVALID. This is a methodology derived from §A3.3.1, not a requirement of it.
+
+Use it in three places: as a mode of your responder (the slave model in your verification IP), alongside random READY delays; as the formal environment, by leaving READY unconstrained so the tool explores the strict choice; and in sign-off reviews, where "passes with our always-ready slave model" is not accepted as evidence. A responder that ties READY HIGH can never expose a master that waits on READY.
+
+### Expert: completion as a deadlock-prevention duty
+
+IHI0022E ties completion to deadlock explicitly. Bursts never terminate early (§A3.4.1). "The required number of data transfers must be performed, even if an error is reported" (§A3.4.4): a read of 8 transfers that hits an error still returns 8, each with a response. A DECERR default slave must complete every data transfer too (§A3.4.4). A peripheral slave given an unsupported access may stop working correctly, but "Compliant completion of all transaction types is required to prevent system deadlock" (§A4.1; §A10.2.4 asks for completion "in a protocol-compliant fail-safe manner, to prevent system deadlock"), and a protection mechanism that discards transactions "must provide a protocol-compliant error response to prevent deadlock" (§B1.4.2).
+
+For a testbench this means: error injection never shortens a burst; a responder that injects SLVERR still drives RLAST on the right beat; and a monitor counts beats to WLAST and RLAST regardless of the response. Error responses themselves are legal and are scored, not flagged, by the scoreboard; [B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index) owns that policy, and [B-AXI-1](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index) lists the response encodings.
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: the 2x2 interconnect where every W is stalled"
+  question="A 2-master, 2-slave AXI4 interconnect hangs. Both masters show WVALID HIGH and WREADY LOW; all AW handshakes completed. What is the most likely root cause, and how would you fix it?"
+  options={[
+    { text: "The two slaves accepted the masters' addresses in opposite orders. Each slave needs W in its AW acceptance order (A5.3.2), each master sends W in its own AW order (A5.4.1), and with no W buffering the two streams block each other. Fix: order AW forwarding against W order, or buffer a full burst per master port.", isCorrect: true, feedback: "Right. Every interface is compliant; the loop runs through the interconnect's ordering duty, so the fix is in the interconnect." },
+    { text: "A master is waiting for AWREADY before WVALID.", isCorrect: false, feedback: "Both masters are offering W (WVALID HIGH) and every AW has completed, so no master is waiting for AWREADY." },
+    { text: "QoS priority inversion: raise AxQOS on the stalled master.", isCorrect: false, feedback: "QoS is a hint whose use the protocol does not specify (A8.1.1). It cannot break an ordering loop." },
+    { text: "WID mismatch between the masters' W bursts.", isCorrect: false, feedback: "AXI4 has no WID (A5.4.1). Write data is matched to addresses by order alone, which is exactly why the order matters." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: may a slave wait for WVALID before AWREADY?"
+  question="A slave holds AWREADY LOW until it has seen WVALID. Is it compliant?"
+  options={[
+    { text: "Yes, provided the wait is registered. A destination may wait for VALID before READY (A3.3.1), and there must be no combinational path from WVALID to AWREADY (A3.1.1).", isCorrect: true, feedback: "Right. It deadlocks only against a master that illegally waits for AWREADY, and that master is the one to fix." },
+    { text: "No: a slave must never make one channel's READY depend on another channel's VALID.", isCorrect: false, feedback: "A3.3.1 explicitly lets the slave wait for AWVALID or WVALID, or both, before AWREADY." },
+    { text: "Yes, even if AWREADY is computed combinationally from WVALID.", isCorrect: false, feedback: "The wait is legal; the combinational path is not (A3.1.1, A3.2.1)." },
+    { text: "Only in AXI3, because AXI4 requires AW before W.", isCorrect: false, feedback: "AXI4 allows write data before, with or after its address (A3.3)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: a 64-cycle AR acceptance bound"
+  question="A system architect asks you to verify that ARREADY is always asserted within 64 cycles of ARVALID. How do you treat this requirement?"
+  options={[
+    { text: "As an integration contract from the system spec, not an AXI rule: a parameterised, gated, labelled bounded check in simulation and formal, with the source of the number in a comment. A full progress guarantee would need a liveness proof under fairness assumptions.", isCorrect: true, feedback: "Right. AXI sets no bound (A3.2.1); the number is a product decision you must source." },
+    { text: "As an AXI protocol assertion, because AXI requires READY within a fixed number of cycles.", isCorrect: false, feedback: "IHI0022E sets no bound. Labelling the check as protocol would flag legal slaves in another product." },
+    { text: "Ignore it: backpressure is always legal, so there is nothing to verify.", isCorrect: false, feedback: "Legal under AXI is not the same as acceptable for the product. The contract is real; it is just not AXI's." },
+    { text: "Raise ARQOS so the interconnect is forced to meet the bound.", isCorrect: false, feedback: "QoS is a hint (A8.1.1); it guarantees nothing." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the DMA that aborts on SLVERR"
+  question="A DMA engine issues an 8-transfer read burst; the slave returns SLVERR on transfer 3, and the DMA stops accepting read data and moves on. What breaks?"
+  options={[
+    { text: "The slave must still return all 8 transfers (A3.4.4), and the master must complete the burst (A3.4.1). With RREADY LOW, the slave's RVALID holds forever and the read channel, and anything waiting behind it, hangs.", isCorrect: true, feedback: "Right. An error never shortens a burst; the master may discard the data but must take every transfer." },
+    { text: "Nothing: after an error the rest of the burst is cancelled.", isCorrect: false, feedback: "The protocol says the remainder of the burst is not cancelled by a single error response (A3.4.4)." },
+    { text: "Only the data is wrong; the DMA should retry the burst.", isCorrect: false, feedback: "A retry cannot start while the first burst is incomplete on an in-order path; the channel is stuck." },
+    { text: "The slave is non-compliant for mixing OKAY and SLVERR in one burst.", isCorrect: false, feedback: "A slave may signal different responses for different transfers of a read burst (A3.4.4)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: exposing a master that waits on READY"
+  question="Your slave VIP keeps AWREADY and WREADY HIGH. How do you make sure the masters you verify never wait for READY?"
+  options={[
+    { text: "Add a responder mode that raises AWREADY and WREADY only after seeing both AWVALID and WVALID (the most restrictive legal slave), plus random READY delays, a stall contract and a hang watchdog.", isCorrect: true, feedback: "Right. Against an always-ready slave a waiting master can never hang, so its bug stays latent." },
+    { text: "Add an assertion that WVALID rises in the same cycle as AWVALID.", isCorrect: false, feedback: "W may legally come before or after AW (A3.3); that assertion fails legal masters." },
+    { text: "Check that AWREADY follows AWVALID within one cycle.", isCorrect: false, feedback: "That constrains the slave, not the master, and is not an AXI rule." },
+    { text: "Nothing: pin-level assertions on the master already catch it.", isCorrect: false, feedback: "The wait is internal to the master; its pins stay legal. Only a strict partner makes it visible as a hang." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "In the classic AXI write deadlock, which wait is the protocol violation?",
+      answers: [
+        { text: "The master holds WVALID LOW until it sees AWREADY", correct: true, feedback: "Right. WVALID is source-owned and must not depend on READY (A3.3.1)." },
+        { text: "The slave holds AWREADY LOW until it sees WVALID", correct: false, feedback: "A destination may wait for VALID before READY (A3.3.1). It closes the loop, but it is legal." },
+        { text: "The slave holds AWREADY LOW until it sees AWVALID", correct: false, feedback: "Waiting for its own channel's VALID is the most ordinary legal policy." },
+        { text: "The master raises AWVALID and WVALID at the same edge", correct: false, feedback: "Write data may come before, with or after its address (A3.3)." }
+      ],
+      explanation: "A deadlock needs a loop; a violation needs a broken rule. Here the loop has two arrows, and only the master's breaks A3.3.1. The slave's wait is the legal policy that exposes the master's bug.",
+      objective: 2
+    },
+    {
+      question: "Which burst breaks the 4KB rule?",
+      answers: [
+        { text: "INCR, AxADDR 0x0FE0, AxLEN 7, AxSIZE 3", correct: true, feedback: "Right. 8 transfers of 8 bytes from 0x0FE0 end at 0x101F, past 0x1000." },
+        { text: "WRAP, AxADDR 0x0FF0, AxLEN 15, AxSIZE 2", correct: false, feedback: "A legal WRAP stays in its window, here 0x0FC0 to 0x0FFF." },
+        { text: "FIXED, AxADDR 0x0FFC, AxLEN 15, AxSIZE 2", correct: false, feedback: "Every FIXED transfer uses the same address, 0x0FFC to 0x0FFF." },
+        { text: "INCR, AxADDR 0x0FFE, AxLEN 0, AxSIZE 2", correct: false, feedback: "Count from the aligned start 0x0FFC: the only transfer carries 0x0FFE and 0x0FFF. AxADDR + 4 overshoots." }
+      ],
+      explanation: "Only INCR bursts can cross a 4KB boundary, and the last byte is Aligned_Address + transfers x bytes - 1 (A3.4.1). The other three bursts look close to the boundary but never cross it.",
+      objective: 5
+    },
+    {
+      question: "32-bit bus, single write: AWADDR = 0x1, AWSIZE = 1 (2 bytes), AWLEN = 0. Which WSTRB writes the most data legally?",
+      answers: [
+        { text: "4'b0110", correct: false, feedback: "The misconception. With AxSIZE 1 the transfer is a 2-byte container at 0x0, and the unaligned start leaves only lane 1 active; lane 2 carries no valid data." },
+        { text: "4'b0010", correct: true, feedback: "Right. Lower_Byte_Lane = Upper_Byte_Lane = 1 (A3.4.1), so only lane 1 may be HIGH (A3.4.3)." },
+        { text: "4'b0011", correct: false, feedback: "Lane 0 is outside the active lanes: a protocol violation, not just wrong data." },
+        { text: "4'b0111", correct: false, feedback: "Filling lanes from the start address for the transfer size spills outside the 2-byte container." }
+      ],
+      explanation: "Active lanes depend on address, AxSIZE and bus width; WSTRB must be a subset of them. To write bytes 1 and 2 use AxSIZE 2 with the sparse strobe 4'b0110, or two transfers with 4'b0010 then 4'b0100.",
+      objective: 5
+    },
+    {
+      question: "A slave holds AWREADY LOW for 300 cycles while it drains a buffer. Your check a_aw_bound with MAX_WAIT = 256 fails. What is the right reading?",
+      answers: [
+        { text: "It violates IHI0022E A3.2.1, which requires READY within 16 cycles", correct: false, feedback: "AXI sets no bound at all. A wait-state limit is an AHB-style expectation, not an AXI rule." },
+        { text: "The master should drop AWVALID and retry the write later", correct: false, feedback: "That would itself be a violation: VALID must stay HIGH until the handshake (A3.2.1)." },
+        { text: "AXI allows the stall; the failure is a breach of your integration contract, and it is a real bug only if the product specification promises 256 cycles", correct: true, feedback: "Right. Bounded latency is a sourced contract, labelled as such." },
+        { text: "It is a deadlock", correct: false, feedback: "The stall ends after 300 cycles; nothing waits back on it, so there is no loop." }
+      ],
+      explanation: "IHI0022E gives no number for READY latency (A3.2.1). A bound comes from the product (interconnect data sheet, QoS spec) and the check must say so, or it will flag legal slaves elsewhere.",
+      objective: 4
+    },
+    {
+      question: "A 2x2 AXI4 interconnect: S0 accepted M1's address before M0's, and S1 accepted M0's before M1's. The interconnect buffers no write data, and every W burst is now stalled. Which rules make this a deadlock?",
+      answers: [
+        { text: "Each slave takes write data in the order it accepted the addresses (A5.3.2) and each master sends write data in its own address order (A5.4.1)", correct: true, feedback: "Right. Each stalled burst blocks the burst the other slave needs, and the loop closes." },
+        { text: "The WID interleaving rules of A5.3.3", correct: false, feedback: "AXI4 has no WID and no write interleaving; that is AXI3 thinking." },
+        { text: "Same-ID ordering across slaves (A5.3.1)", correct: false, feedback: "A5.3.1 is a read-ordering duty. Here the writes block whatever their IDs, as A5.3.2 says." },
+        { text: "QoS priority inversion between M0 and M1", correct: false, feedback: "QoS is only a hint (A8.1.1); no QoS value can resolve an ordering loop." }
+      ],
+      explanation: "Every interface obeys A3.3.1, but the interconnect let the two slaves accept addresses in orders that the masters' write data cannot follow, and has nowhere to park a burst. Mitigations: order AW forwarding against W order, or buffer write data.",
+      objective: 3
+    },
+    {
+      question: "Predict: the master's WVALID waits for AWREADY; the slave's AWREADY waits only for AWVALID. What happens to a single write?",
+      answers: [
+        { text: "It deadlocks", correct: false, feedback: "There is no loop: the slave raises AWREADY without waiting for W, so the master's wait ends." },
+        { text: "It completes, and both sides are compliant", correct: false, feedback: "Completing is not compliance: the master's wait breaks A3.3.1." },
+        { text: "It completes, but the slave is the non-compliant side", correct: false, feedback: "The slave's wait for AWVALID is legal. The master owns the illegal arrow." },
+        { text: "It completes, but the master breaks A3.3.1 and would deadlock against a legal slave that waits for WVALID", correct: true, feedback: "Right. This is the latent-violation preset of the simulator." }
+      ],
+      explanation: "A wait-for graph with an illegal arrow but no loop is a latent bug: it shows up only with a stricter, legal partner. Test masters against the most restrictive legal slave.",
+      objective: 1
+    },
+    {
+      question: "A slave's RTL contains assign AWREADY = (state_q == WAIT_W) && WVALID; How do you classify it?",
+      answers: [
+        { text: "Legal: a destination may wait for VALID", correct: false, feedback: "The wait is legal, but this implementation is a combinational path from an input to an output." },
+        { text: "Violation: the wait is legal (A3.3.1), but a combinational path from WVALID to AWREADY is not (A3.1.1)", correct: true, feedback: "Right. Register the wait: see WVALID at one edge, raise AWREADY for a later one." },
+        { text: "Violation: a slave may never make AWREADY depend on WVALID", correct: false, feedback: "It may (A3.3.1); it just has to do so through a register." },
+        { text: "Legal, as long as WREADY is also combinational", correct: false, feedback: "Two combinational paths are two violations, and they risk a zero-delay loop with a partner." }
+      ],
+      explanation: "Keep the two rules apart: A3.3.1 decides which side may wait; A3.1.1 forbids combinational input-to-output paths at any interface. The deadlock lab's slave had exactly this bug before its fix.",
+      objective: 2
+    }
+  ]}
+/>
+
+### Flashcards
+
+The deck for this lesson appears below the page. It covers the wait-for loop, the violation and policy rules, the contract framing, the write-ordering deadlock, completion duties, and the 4KB and WSTRB diagnosis.
+
+### Kata: violation, policy or legal?
+
+Classify each wait or behaviour as a **violation**, a **legal but risky policy**, or **legal**, and cite the section. Where it applies, check your answer in the deadlock simulator.
+
+1. A master holds WVALID LOW until it sees AWREADY.
+2. A slave holds AWREADY LOW until it has registered WVALID.
+3. A slave drives `AWREADY = waiting && WVALID` combinationally.
+4. A slave asserts BVALID after the WLAST handshake but before the AW handshake (AXI4).
+5. A slave keeps ARREADY LOW for 500 cycles while it is busy.
+6. A master drops AWVALID after 3 cycles without a handshake.
+7. A slave raises ARREADY and drops it again before ARVALID arrives.
+8. A slave returns SLVERR on transfer 3 of an 8-transfer read burst and stops.
+
+<details>
+<summary>Worked solution</summary>
+
+1. **Violation.** A source must not wait for READY (§A3.2.1, §A3.3.1).
+2. **Legal but risky policy.** A destination may wait for VALID (§A3.3.1); it deadlocks only with a master that breaks rule 1.
+3. **Violation.** The wait is legal; the combinational input-to-output path is not (§A3.1.1, §A3.2.1).
+4. **Violation.** The AXI4 write response dependency requires both the AW and the WLAST handshakes first (§A3.3.1).
+5. **Legal.** AXI sets no bound. It may break a product contract, which you check and label separately.
+6. **Violation.** Once VALID is asserted it must remain asserted until the handshake (§A3.2.1).
+7. **Legal.** "If READY is asserted, it is permitted to deassert READY before VALID is asserted" (§A3.2.1).
+8. **Violation.** All 8 transfers must be returned, each with a response (§A3.4.4); bursts never terminate early (§A3.4.1).
+
+</details>
+
+### Debug challenge: draw the loop from a hang log
+
+A 2x2 interconnect hangs. The watchdog prints, at every port (an illustrative log):
+
+```text
+HANG: no handshake for 64 edges
+  M0: AWVALID=0 | WVALID=1 WREADY=0 (W for AW#1 -> S1) | BVALID=0
+  M1: AWVALID=0 | WVALID=1 WREADY=0 (W for AW#1 -> S0) | BVALID=0
+  S0: AW order accepted: M0#2, M1#1   | waiting for W of M0#2
+  S1: AW order accepted: M1#2, M0#1   | waiting for W of M1#2
+```
+
+Here `M0#2` means M0's second write. Draw the wait-for loop. Which component's design choice created it, and what is one mitigation?
+
+<details>
+<summary>Answer</summary>
+
+The loop: M0#1's data waits for S1, S1 waits for M1#2's data, M1#2's data is queued behind M1#1 (§A5.4.1), M1#1's data waits for S0, S0 waits for M0#2's data (§A5.3.2), and M0#2's data is queued behind M0#1. Every arrow is legal at its own interface. The interconnect created the loop: it let both slaves accept a master's second write before another master's first write, and it has no W buffering to park a burst. Mitigations: forward a master's second AW to a different slave only after its first W burst has been routed, or give each master port enough W buffering to accept a whole burst.
+
+</details>
+
+### Lab: AXI Deadlock Hunt
+
+Trace a channel-dependency deadlock from a signal log, classify each wait, write protocol checks plus labelled service watchdogs, then switch on the fixed master and prove that the write and the read complete against the same strict slave.
 
 <LabLink labId="axi-deadlock-hunt-lab" />
+
+## References & Next Topics
+
+**Primary sources**
+- Arm IHI0022E, AMBA AXI and ACE Protocol Specification: §A3.1.1 clock (no combinatorial paths); §A3.1.2 reset; §A3.2.1 handshake process; §A3.2.2 channel signaling requirements (WLAST, default READY); §A3.3 relationships between the channels (realignment Note); §A3.3.1 dependencies between channel handshake signals (Caution, AXI4 write response dependency); §A3.4.1 address structure (4KB, no early termination, byte-lane equations, read-sensitive devices Note); §A3.4.3 data read and write structure (write strobes); §A3.4.4 read and write response structure (DECERR, complete every transfer); §A4.1 transaction types and attributes (peripheral slaves); §A4.6 transaction buffering; §A5.3.1 read ordering; §A5.3.2 normal write ordering; §A5.3.3 AXI3 write data interleaving; §A5.3.5 interconnect use of transaction identifiers; §A5.3.6 width of transaction ID fields; §A5.4.1 removal of WID; §A6.3 interconnect ordering; §A8.1.1 QoS interface signals; §A10.2.4 memory slaves and peripheral slaves; §B1.4.2 implementation considerations.
+- IEEE 1800-2023, SystemVerilog: §16.9.3 sampled value functions (`$rose`, `$stable`); §16.12.7 implication; §16.12.13 eventually property (`s_eventually`); §16.14.1 assert statement; §16.14.2 assume statement; §21.6 command line input (`$test$plusargs`); §23.11 binding auxiliary code to scopes or instances.
+- Arm IHI0033C, AMBA AHB Protocol Specification: §5.1.2 transfer pending (the AHB wait-state Note, for contrast only).
+
+**Prerequisites:** [B-AXI-1 AXI4 Channel Architecture & Handshake Protocol](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index) and [B-AXI-2 AXI Burst Math](/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index).
+
+**Related**
+- [B-AXI-1 AXI4 Channel Architecture](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index): the handshake, the Caution example, and the full five-channel checker.
+- [B-AXI-2 AXI Burst Math](/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index): the burst and byte-lane equations, the 4KB assertion and the WSTRB monitor check.
+- [B-AXI-3 AXI Ordering and IDs](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index): same-ID ordering, outstanding transactions and interconnect IDs.
+- [B-AXI-4 AXI Expert Features](/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index): AxQOS and why it is only a hint.
+- [B-AXI-6 AXI Verification and Performance](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index): monitors, scoreboards, responders and error-response policy.
+- [B-AHB-2 AHB Pitfalls and Deadlocks](/curriculum/T3_Advanced/B-AHB-2_AHB_Pitfalls_and_Deadlocks/index): the AHB counterpart.
+- [B-AMBA-F3 Interview & Debug Clinic](/curriculum/T3_Advanced/B-AMBA-F3_Interview_Debug_Clinic/index): more deadlock interview drills.
+- [I-SV-4C Checkers](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index): checker modules and `bind`.
+
+<NextLesson />

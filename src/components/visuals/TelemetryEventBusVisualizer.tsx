@@ -6,18 +6,14 @@ import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
 import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
 import { VisualFrame } from "@/components/visual-system/VisualFrame";
 import {
-  catcherSource,
   crcInjectMessages,
-  CRC_DEMOTER,
   DEFAULT_KNOBS,
-  ERROR_SWALLOWER,
   errorCountOptions,
   formatAction,
+  generatedCode,
   knobsToConfig,
   reportPresets,
   runReports,
-  settingPlusarg,
-  settingSource,
   type MessageFate,
   type MessageOutcome,
   type ReportKnobs,
@@ -108,33 +104,6 @@ function Verdict({ outcomes, passed, reason }: { outcomes: MessageOutcome[]; pas
       {detail} <span className="text-muted-foreground">({reason})</span>
     </p>
   );
-}
-
-function generatedCode(knobs: ReportKnobs): { classes: string[]; test: string[]; plusargs: string[] } {
-  const config = knobsToConfig(knobs);
-  const catcher = knobs.catcher === "demote-crc" ? CRC_DEMOTER : knobs.catcher === "catch-all-errors" ? ERROR_SWALLOWER : null;
-  const classes = catcher ? catcherSource(catcher) : [];
-  const test: string[] = ["class crc_inject_test extends base_test;"];
-  if (catcher) {
-    test.push(`  ${catcher.name} catcher;`);
-    test.push("  function void build_phase(uvm_phase phase);");
-    test.push("    super.build_phase(phase);");
-    test.push(`    catcher = ${catcher.name}::type_id::create("catcher");`);
-    test.push("    uvm_report_cb::add(null, catcher);   // null: every report object");
-    test.push("  endfunction");
-  }
-  const procedural = config.settings.filter((s) => s.comp !== "*");
-  if (procedural.length) {
-    test.push("  function void end_of_elaboration_phase(uvm_phase phase);");
-    procedural.forEach((s) => test.push(`    ${settingSource(s)}`));
-    test.push("  endfunction");
-  }
-  if (test.length === 1) test.push("  // no report configuration");
-  test.push("endclass");
-  const plusargs = config.settings.filter((s) => s.comp === "*").map(settingPlusarg);
-  procedural.forEach((s) => plusargs.push(`${settingPlusarg(s)}   // same effect, no recompile`));
-  if (knobs.maxQuitCount) plusargs.push(`+UVM_MAX_QUIT_COUNT=${knobs.maxQuitCount}`);
-  return { classes, test, plusargs };
 }
 
 /**

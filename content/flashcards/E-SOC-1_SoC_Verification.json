@@ -1,42 +1,92 @@
 [
   {
-    "front": "What are the unique challenges of SoC-level verification?",
-    "back": "Multiple heterogeneous subsystems, cross-domain clock interactions, power domain crossings, firmware-hardware co-verification, and the exponential state space from component interactions."
+    "id": "e-soc-1-1",
+    "question": "Which bugs does SoC-level verification exist to find?",
+    "answer": "Bugs that only exist between blocks: wrong connectivity (interrupt lines, clock and reset enables, pin muxing), address decode, firmware-driven flows, arbitration and ordering through the interconnect, resets and power changes during traffic, and security. Each block can pass its own regression while these fail."
   },
   {
-    "front": "What is a subsystem-level vs. SoC-level testbench?",
-    "back": "Subsystem-level verifies one block (e.g., DMA engine). SoC-level integrates multiple subsystem testbenches under a top-level environment with virtual sequences coordinating across blocks."
+    "id": "e-soc-1-2",
+    "question": "What is an \"environment of environments\", and what changes when a block env is nested in a SoC env?",
+    "answer": "Block (or subsystem) environments are reused unchanged as children of the SoC env; IEEE 1800.2-2020 §13.3 says a uvm_env can be reused as a sub-environment. Only their configuration changes: every path gets one level deeper, agents driven by on-chip masters become passive, and SoC-only checks are added beside them."
   },
   {
-    "front": "How does SoC verification handle firmware co-verification?",
-    "back": "Embedded processors execute firmware in simulation via ISS (Instruction Set Simulator) or fast RTL models. UVM sequences coordinate hardware stimulus while firmware runs on the CPU model."
+    "id": "e-soc-1-3",
+    "question": "How do firmware and the UVM testbench co-operate in a SoC test?",
+    "answer": "The firmware image is loaded before reset (for example with $readmemh, IEEE 1800-2023 §21.4) and runs on an RTL CPU, an ISS or a BFM. Firmware writes agreed codes to a mailbox; a bus monitor sees them and a decoder triggers uvm_event objects the test waits on. Addresses and codes live in one shared package."
   },
   {
-    "front": "What is top-level connectivity verification?",
-    "back": "Verifying that SoC-level signal connections (interrupts, DMA channels, clock enables) are correctly wired between subsystems. Often done with connectivity assertions or register-based self-tests."
+    "id": "e-soc-1-4",
+    "question": "What rule decides whether a reused agent is active or passive at SoC level?",
+    "answer": "Ask who drives that interface in the SoC test. Passive where an on-chip master (CPU, DMA) now drives it; active where the bench still plays the other side, such as an off-chip flash, terminal or link partner. Set it per exact instance path; a wildcard can catch an agent that must stay active."
   },
   {
-    "front": "How do you scale UVM coverage for SoC-level verification?",
-    "back": "Use hierarchical coverage merging: subsystem tests generate per-block coverage, which is merged with SoC-level coverage. Cross-coverage spans subsystem boundaries for interaction coverage."
+    "id": "e-soc-1-5",
+    "question": "Is SoC coverage closure the union of every block's coverage?",
+    "answer": "No. Merged block coverage shows each block was exercised by its own bench. SoC closure needs system goals collected at SoC level, such as master x slave x response, interrupt source x target, reset x traffic and security crosses, each hit or waived with a reviewed reason."
   },
   {
-    "front": "What is the role of a testbench configuration management system at SoC scale?",
-    "back": "It manages which agents are active/passive per test, routes configuration objects to the correct subsystem environments, and controls virtual sequencer topology for different test scenarios."
+    "id": "e-soc-1-6",
+    "question": "What does a passive agent build, and what goes wrong if a block sequence is started on it?",
+    "answer": "Only the monitor side: your agent's build_phase creates the sequencer and driver only when get_is_active() == UVM_ACTIVE, so their handles stay null. Starting a sequence on that null handle with no parent gives UVM_FATAL [SEQ] at the first start_item() (uvm-core 2020.3.1)."
   },
   {
-    "front": "What is power-domain verification in SoC context?",
-    "back": "Verifying correct behavior across power domains: isolation cell functionality, retention register save/restore, level shifter correctness, and power-up/down sequencing per UPF/CPF specs."
+    "id": "e-soc-1-7",
+    "question": "Why can a derived agent ignore an is_active = UVM_PASSIVE setting?",
+    "answer": "uvm_agent reads the \"is_active\" setting in its own build_phase. If the derived agent's build_phase does not call super.build_phase(phase), the setting is never read, the agent stays UVM_ACTIVE and builds a driver that can fight the CPU. Audit with print_topology() or an automatic get_is_active() check."
   },
   {
-    "front": "How does clock-domain crossing (CDC) verification factor into SoC testbenches?",
-    "back": "CDC verification combines formal analysis (structural CDC tools) with dynamic simulation using randomized clock phase offsets to trigger metastability-related bugs at domain boundaries."
+    "id": "e-soc-1-8",
+    "question": "Firmware writes a register and the map has set_auto_predict(1) but no predictor. Is the mirror updated?",
+    "answer": "No. Auto-prediction only runs for write() and read() calls the register model itself starts (IEEE 1800.2-2020 §18.2.5.2). Only an explicit uvm_reg_predictor on a monitor of that bus sees firmware traffic. Note get() returns the desired value; get_mirrored_value() returns the mirror."
   },
   {
-    "front": "What is a SoC-level regression strategy?",
-    "back": "Tiered: quick smoke tests (basic connectivity, boot), medium tests (subsystem integration), and long tests (full system scenarios). Parallelized across compute farms with coverage-driven scheduling."
+    "id": "e-soc-1-9",
+    "question": "How many register predictors does a SoC register model need?",
+    "answer": "One per bus that can write registers (CPU bus, debug port, second processor), each bound to that bus's map and adapter, because a uvm_reg_predictor holds one map (§19.3.2.3). Memories are not predicted (§19.3), so firmware-visible memory is checked by a scoreboard or backdoor reads."
   },
   {
-    "front": "How do you debug failures in SoC-level simulations?",
-    "back": "Use transaction-level debug (not signal-level) to identify the failing subsystem, then drill down. Transaction recording, protocol checkers, and hierarchical log filtering are essential."
+    "id": "e-soc-1-10",
+    "question": "Why does a block AXI scoreboard reused across the interconnect report every response as unmatched?",
+    "answer": "The interconnect appends master-port bits to ARID, AWID and WID, so slave-side IDs are wider than master-side IDs (IHI0022E §A5.3.5). Strip the port bits or correlate at the master side. Also expect DECERR from the default slave for unmapped addresses (§A3.4.4)."
+  },
+  {
+    "id": "e-soc-1-11",
+    "question": "Does `assert property (req |-> ##[1:$] resp)` catch a lost response in simulation?",
+    "answer": "No. In assert property an unqualified sequence is weak (IEEE 1800-2023 §16.12.2), and an unbounded range can always still match, so it never fails on a finite run. Use a bounded ##[1:MAX] check in simulation and a strong form such as s_eventually (§16.12.13) in formal."
+  },
+  {
+    "id": "e-soc-1-12",
+    "question": "Why should a test wait for a firmware milestone with wait_on() rather than wait_trigger()?",
+    "answer": "wait_trigger() waits for the next trigger, so a test that arrives after the milestone waits for ever (IEEE 1800.2-2020 §10.1.1.2.4). wait_on() returns at once if the event is already on (§10.1.1.2.2). Put the wait inside a watchdog that names the missing milestone."
+  },
+  {
+    "id": "e-soc-1-13",
+    "question": "How are clock- and reset-domain crossings signed off at SoC level?",
+    "answer": "Mainly by structural CDC/RDC analysis of the RTL: approved synchronizers, reconvergence and reset crossings, with reviewed waivers. RTL simulation shows no metastability unless a tool injects it (tool-dependent), so random clock ratios alone prove nothing. IP teams can supply abstract CDC/RDC models (Accellera standard, 2026)."
+  },
+  {
+    "id": "e-soc-1-14",
+    "question": "What is traceability in a verification plan, and why does a hit coverage bin not close a feature by itself?",
+    "answer": "Each feature links to scenarios, each scenario to a check (scoreboard or assertion) and to coverage, and each to regression results. A hit bin proves only that the scenario happened; without a linked check nothing decided whether the behaviour was correct."
+  },
+  {
+    "id": "e-soc-1-15",
+    "question": "What are regression tiers and triage by first divergence?",
+    "answer": "Tiers run different content at different rates: smoke on every change, nightly with many seeds, weekly stress, and a sign-off run; their gates are project policy. Each failure carries an evidence package (seed, RTL, firmware and testbench hashes, plusargs, transaction window), and triage starts where reality first differed from expectation to pick the owner: RTL, reference model, test intent, firmware, testbench or tool."
+  },
+  {
+    "id": "e-soc-1-16",
+    "question": "Explicit predictors watch every bus that writes registers. Why also turn auto-predict off?",
+    "answer": "A sequence's frontdoor write is then predicted twice: once by auto-predict (the model's own call) and once by the predictor on the bus it crosses. Most fields end up the same, but a field with a write side effect is wrong; a toggle-on-write (W1T) field toggles twice in the mirror and once in the DUT. With auto-predict off, each access is predicted exactly once."
+  },
+  {
+    "id": "e-soc-1-17",
+    "question": "How does an expected-error test pass without hiding real errors?",
+    "answer": "A report catcher (IEEE 1800.2-2020 §6.6) demotes only the expected error messages from the injected transfers and counts them; the test fails if the count differs from the number injected. Raising the quit count, disabling the scoreboard or demoting errors in every test all lose the evidence."
+  },
+  {
+    "id": "e-soc-1-18",
+    "question": "How does a SoC goal such as master x target become code, and where do its waivers go?",
+    "answer": "As a covergroup in the SoC-only checker that sees the outcome (for example the routing scoreboard), sampled once per completed response with a custom sample() function (IEEE 1800-2023 §19.8.1). Each waived cell is an ignore_bins on the cross (§19.6.2) with its reason and reviewer beside it."
   }
 ]

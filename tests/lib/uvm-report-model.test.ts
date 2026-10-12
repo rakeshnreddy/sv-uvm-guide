@@ -6,9 +6,12 @@ import {
   crcInjectMessages,
   CRC_DEMOTER,
   DEFAULT_KNOBS,
+  ERROR_SWALLOWER,
   errorCountOptions,
+  generatedCode,
   knobsToConfig,
   REAL_BUG_INDEX,
+  reportCbTarget,
   runReports,
   settingPlusarg,
   settingSource,
@@ -17,6 +20,7 @@ import {
 } from "@/lib/uvm-report-model";
 
 const SCB = "uvm_test_top.env.scb";
+const MON = "uvm_test_top.env.agt.mon"; // CRC_DEMOTER is registered on the monitor only
 const err = (id: string, text = "boom", source = SCB, time = 10): ReportMessage => ({ id, severity: "UVM_ERROR", text, source, time });
 const info = (id: string, verbosity: ReportMessage["verbosity"], source = SCB): ReportMessage => ({ id, severity: "UVM_INFO", verbosity, text: "hello", source, time: 0 });
 
@@ -131,7 +135,7 @@ describe("uvm-report-model: report server counting (uvm_report_server::execute_r
 
 describe("uvm-report-model: report catchers (uvm_report_catcher::process_all_report_catchers)", () => {
   it("demoting ERROR→INFO without set_action switches to INFO's default action (no UVM_COUNT)", () => {
-    const run = runReports([err("CRC", "bad CRC")], { settings: [], catchers: [CRC_DEMOTER], maxQuitCount: 1 });
+    const run = runReports([err("CRC", "bad CRC", MON)], { settings: [], catchers: [CRC_DEMOTER], maxQuitCount: 1 });
     const o = run.outcomes[0];
     expect(o.finalSeverity).toBe("UVM_INFO");
     expect(o.action).toEqual(["UVM_DISPLAY"]);
@@ -143,7 +147,7 @@ describe("uvm-report-model: report catchers (uvm_report_catcher::process_all_rep
   });
 
   it("an id-specific action is kept when a catcher demotes (only a default action is re-derived)", () => {
-    const run = runReports([err("CRC", "bad CRC")], {
+    const run = runReports([err("CRC", "bad CRC", MON)], {
       settings: [{ kind: "id_action", comp: "*", id: "CRC", action: ["UVM_DISPLAY", "UVM_LOG", "UVM_COUNT"] }],
       catchers: [CRC_DEMOTER],
       maxQuitCount: 0,
@@ -269,6 +273,42 @@ describe("uvm-report-model: generated code", () => {
     expect(src).toContain('get_id() == "CRC"');
     expect(src).toContain("set_severity(UVM_INFO);");
     expect(src).toContain("virtual function action_e catch();");
+    expect(src).toContain("int unsigned demoted;");
+    expect(src).toMatch(/set_severity\(UVM_INFO\);\n\s+demoted\+\+;/);
+  });
+
+  it("Demote preset: registers on the monitor in connect_phase and checks the demotion count in check_phase", () => {
+    const { test } = generatedCode({ ...DEFAULT_KNOBS, catcher: "demote-crc" });
+    const src = test.join("\n");
+    expect(reportCbTarget(CRC_DEMOTER)).toBe("env.agt.mon");
+    expect(src).toContain("`uvm_component_utils(crc_inject_test)");
+    expect(src).toContain("function new(string name, uvm_component parent);");
+    expect(src).not.toContain("uvm_report_cb::add(null");
+    const connect = src.slice(src.indexOf("function void connect_phase"), src.indexOf("endfunction", src.indexOf("function void connect_phase")));
+    expect(connect).toContain("uvm_report_cb::add(env.agt.mon, catcher);");
+    const build = src.slice(src.indexOf("function void build_phase"), src.indexOf("endfunction", src.indexOf("function void build_phase")));
+    expect(build).not.toContain("uvm_report_cb");
+    expect(src).toContain("localparam int unsigned EXPECTED_DEMOTED = 2;");
+    expect(src).toContain("function void check_phase(uvm_phase phase);");
+    expect(src).toContain("if (catcher.demoted != EXPECTED_DEMOTED) begin");
+    expect(src).toContain('`uvm_error("CRC_ACCT"');
+    expect(src.trimEnd().endsWith("endclass")).toBe(true);
+  });
+
+  it("the attached demoter still demotes exactly the two injected CRC errors and nothing from the scoreboard", () => {
+    const run = runReports(crcInjectMessages, knobsToConfig({ ...DEFAULT_KNOBS, catcher: "demote-crc" }));
+    expect(run.demoted.UVM_ERROR).toBe(CRC_DEMOTER.expectedDemoted);
+    expect(run.outcomes[REAL_BUG_INDEX].finalSeverity).toBe("UVM_ERROR");
+    // A CRC error from another component is outside the monitor-only registration.
+    const other = runReports([err("CRC", "bad CRC on pkt 9", SCB)], { settings: [], catchers: [CRC_DEMOTER], maxQuitCount: 0 });
+    expect(other.outcomes[0].demoted).toBe(false);
+  });
+
+  it("the over-broad preset stays type-wide (null) and has no demotion check", () => {
+    const src = generatedCode({ ...DEFAULT_KNOBS, catcher: "catch-all-errors" }).test.join("\n");
+    expect(reportCbTarget(ERROR_SWALLOWER)).toBe("null");
+    expect(src).toContain("uvm_report_cb::add(null, catcher);");
+    expect(src).not.toContain("check_phase");
   });
 
   it("plusargs use the uvm_cmdline formats", () => {

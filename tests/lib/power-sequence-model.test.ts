@@ -75,4 +75,23 @@ describe("power-sequence-model (UPF power-aware semantics)", () => {
       expect(text).toContain(cmd);
     }
   });
+
+  it("feeds the power switch from the 0.8 V port, not the 1.2 V supply (a switch does not change voltage)", () => {
+    const lines = upfLines().map((l) => l.text);
+    const text = lines.join("\n");
+    expect(text).toContain("create_supply_port VDD_LV -direction in");
+    expect(text).toMatch(/-input_supply_port\s+\{vin\s+VDD_LV\}/);
+    expect(text).not.toMatch(/\{vin\s+VDD\}/);
+    expect(text).toMatch(/-output_supply_port\s+\{vout VDD_CPU\}/);
+    expect(text).toContain("create_supply_set SS_CPU -function {power VDD_CPU} -function {ground VSS}");
+    expect(text).toContain("associate_supply_set SS_CPU -handle PD_CPU.primary");
+    expect(text).toContain("-retention_supply_set SS_RET");
+    expect(text).toContain("power == {FULL_ON 0.8}");
+    // 1801-2018 forms: no -domain on supply commands, no legacy set_domain_supply_net, no backtick literals.
+    for (const line of lines.filter((l) => /create_supply_(net|port)|create_power_switch/.test(l))) {
+      expect(line).not.toContain("-domain");
+    }
+    expect(text).not.toContain("set_domain_supply_net");
+    expect(text).not.toContain("`");
+  });
 });

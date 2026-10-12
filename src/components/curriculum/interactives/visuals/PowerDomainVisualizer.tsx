@@ -35,9 +35,9 @@ import { cn } from "@/lib/utils";
 
 const ASSUMPTIONS = [
   "One switchable domain (PD_CPU) beside an always-on domain (PD_TOP). One retained register, ctx = 8'hA5, drives cpu_out across the boundary; scratch is not retained.",
-  "UPF corruption semantics: while VDD_CPU is off every PD_CPU register reads X. Retention elements and isolation cells sit on the always-on supply.",
+  "UPF corruption semantics: while VDD_CPU is off every PD_CPU register reads X. The switch psw_cpu takes the always-on 0.8 V port VDD_LV as its input (a switch does not change voltage); retention elements sit on SS_RET (VDD_LV, 0.8 V) and isolation cells on SS_AON (VDD, 1.2 V).",
   "Each step is one PMU action. Clock gating, reset, supply settling time and the PMU's req/ack handshakes are not modelled; real flows usually stop the clock before save and reset non-retained logic after power-up.",
-  "The UPF is illustrative (IEEE 1801 command forms, supplies abbreviated); check option spelling against your tool's UPF version.",
+  "The UPF is illustrative: IEEE 1801-2018 (UPF 3.1) command forms as taught in I-SV-8, scope soc_top, level shifters and domain power states omitted. Check option spelling against your tool's UPF version.",
 ];
 
 type Mode = PowerScenarioId | "custom";
@@ -148,15 +148,15 @@ function PowerDiagram({ snap }: { snap: PowerSnapshot }) {
         <rect x={206} y={146} width={68} height={24} rx={3} fill={snap.scratch === "X" ? xFill : undefined} className={snap.scratch === "X" ? "stroke-rose-500" : "fill-background stroke-violet-500/60"} />
         <text x={240} y={162} textAnchor="middle" className="fill-foreground font-mono text-[11px] font-semibold">{hex(snap.scratch)}</text>
         {/* Retention element: always-on supply, drawn solid even when the domain is off */}
-        <rect x={284} y={98} width={62} height={46} rx={3} className="fill-background stroke-emerald-600 dark:stroke-emerald-400" strokeWidth={1.5} />
-        <text x={315} y={112} textAnchor="middle" className="fill-foreground text-[9px] font-bold">RET (VDD)</text>
+        <rect x={280} y={98} width={70} height={46} rx={3} className="fill-background stroke-emerald-600 dark:stroke-emerald-400" strokeWidth={1.5} />
+        <text x={315} y={112} textAnchor="middle" className="fill-foreground text-[8.5px] font-bold">RET (VDD_LV)</text>
         <text x={315} y={130} textAnchor="middle" className="fill-foreground font-mono text-[11px]">{hex(snap.retained)}</text>
         {snap.save ? <text x={315} y={160} textAnchor="middle" className="fill-amber-600 text-[9px] font-bold dark:fill-amber-300">◆ save</text> : null}
         {snap.restore ? <text x={315} y={160} textAnchor="middle" className="fill-amber-600 text-[9px] font-bold dark:fill-amber-300">◆ restore</text> : null}
 
         {/* Power switch */}
         <text x={275} y={18} textAnchor="middle" className="fill-foreground text-[10px]">
-          sw_cpu: {snap.pwrEn ? "closed (pwr_en=1)" : "open (pwr_en=0)"}
+          psw_cpu: {snap.pwrEn ? "closed (pwr_en=1)" : "open (pwr_en=0)"}
         </text>
         <line x1={275} y1={22} x2={275} y2={30} className={off ? "stroke-slate-400" : "stroke-sky-600"} strokeWidth={2} strokeDasharray={off ? "2 3" : undefined} />
       </svg>

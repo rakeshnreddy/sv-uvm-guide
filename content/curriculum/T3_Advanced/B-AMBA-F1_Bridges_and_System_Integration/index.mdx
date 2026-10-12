@@ -1,195 +1,285 @@
 ---
 title: "AHB↔AXI Bridges & System Integration"
-description: "Master the design and verification of protocol bridge IPs, including AHB-to-AXI burst translation, AXI-to-AHB 1KB burst splitting, width conversion, reset domain crossings, and formal verification strategies for bridge correctness."
+description: "Derive when an AHB↔AXI bridge must split or reshape a burst, map responses and errors between the two protocols, choose a write-posting policy, and plan the checks, CDC scenarios and formal properties that verify a bridge."
 order: 12
 flashcards: "B-AMBA-F1_Bridges_and_System_Integration"
+sources:
+  - title: "Arm AMBA 5 AHB Protocol Specification (AHB5 and AHB-Lite)"
+    type: "standard"
+    identifier: "IHI0033B.b"
+    version: "B.b"
+  - title: "Arm AMBA AHB Protocol Specification (Issue C)"
+    type: "standard"
+    identifier: "IHI0033C"
+    version: "C"
+  - title: "Arm AMBA AXI and ACE Protocol Specification"
+    type: "standard"
+    identifier: "IHI0022E"
+    version: "E"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
 ---
 
-# AHB↔AXI Bridges & System Integration
+## Quick Take
 
-Real SoC designs rarely use a single bus protocol. A modern chip might have an AXI4 interconnect for high-performance masters (CPU, DMA, GPU) while using AHB-Lite for lower-bandwidth peripherals (UART, SPI, GPIO). **Protocol bridge IPs** sit between these domains, translating transactions from one protocol to another.
+- **What it is:** An **AHB↔AXI bridge** is a protocol converter. It is a **slave** on one bus (it answers transfers) and a **master** on the other (it starts transfers). On the AHB side it sees a pipeline: one address and control bus, plus separate write-data (`HWDATA`) and read-data (`HRDATA`) buses, where each transfer's address phase overlaps the previous transfer's data phase. On the AXI side it sees five independent channels (AW, W, B, AR, R), each with its own VALID/READY handshake. The bridge re-shapes every burst to the limits of the protocol it sends on, and translates every response back.
+- **Why it matters:** Most SoC paths between a CPU or DMA engine and its peripherals cross at least one bridge. Bridge bugs show up as corrupted data, lost errors or hangs, and they look like bugs in the master or the slave, so they are expensive to find late. The rules that decide what a bridge must do are spread over two specifications, and the most common mistake (splitting AHB bursts at 4KB) comes from mixing them up.
+- **The Analogy:** A freight broker between a railway and a trucking firm. The railway (AHB) inspects each wagon as it passes while the paperwork for the next wagon is already being read. The trucking firm (AXI) receives the order, the cargo and the signed receipt separately. The broker repacks loads to each carrier's limits (at most 256 transfers per AXI burst; never across 1KB on AHB) and decides when to sign for a delivery: at once (posted) or only when the truck's receipt comes back (non-posted). *Where it breaks:* AHB has separate tracks for outbound and inbound freight (HWDATA and HRDATA), an AXI load can never be cancelled once announced, and the broker can delay a wagon only while unloading it (`HREADYOUT` in the data phase), never at the gate (the address phase).
 
-These bridges are deceptively complex — they must handle burst splitting, response mapping, flow control mismatches, and boundary rules that differ between protocols. Bridge bugs are some of the hardest to debug because they corrupt data silently or create deadlocks that appear to be in the master or slave, not the bridge itself.
+**You will be able to:**
+1. **Derive** whether and where a bridge must split or reshape a burst, and cite the rule that forces it: AHB→AXI for the AXI4 256-transfer limit, width conversion and the unknown length of an AHB INCR, never for 4KB; AXI→AHB at 1KB, and for FIXED, WRAP2, unaligned starts and sparse strobes.
+2. **Map** responses and errors in both directions, and **justify** a posted or non-posted write policy by its error visibility, read-after-write ordering and latency.
+3. **Plan** the verification of a bridge: protocol checks on both sides, a reference-model scoreboard, error injection, CDC and reset scenarios, and formal properties with the assumptions they need.
+4. **Debug** common bridge bugs from a log or a waveform: a split off by one, `AWLEN` wrapping without the 256 cap, write data on the wrong burst or lanes, responses merged wrongly on split bursts, WRAP→INCR conversion, outstanding-queue overflow and channel-dependency deadlock, and the posted-write hazard.
 
-<QuickTake>
-- **Protocol Bridges** translate transactions between AHB and AXI, handling the fundamental asymmetry between a pipelined single-channel protocol and a decoupled five-channel protocol.
-- **Burst Translation** is the hardest part, because the two protocols have different boundary rules: AHB incrementing bursts must not cross **1KB** (IHI0033B.b 3.5), AXI bursts must not cross **4KB** (IHI0022E A3.4.1).
-- **AHB → AXI:** every 4KB boundary is also a 1KB boundary, so a legal AHB burst can never cross 4KB. The bridge splits only for the AXI 256-transfer limit (long undefined-length INCR) and for width conversion.
-- **AXI → AHB:** a legal AXI burst may still cross 1KB, so the bridge **must split at 1KB**.
-- **Formal Verification** is the gold standard for bridge correctness because the combinatorial space of burst types, sizes, and boundary conditions is too large for directed testing.
-</QuickTake>
+<BeforeYouStart />
 
----
+This lesson assumes you can build and debug an AHB environment ([B-AHB-3](/curriculum/T3_Advanced/B-AHB-3_AHB_Verification/index)) and an AXI one ([B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index)). Here the two meet in one block, and you verify the translation between them.
 
-## 1. Why Protocol Bridges Exist
+## Build Your Mental Model
 
-### The Two-Speed SoC
+### Words you need first
 
-Modern SoCs are built with a hierarchy of interconnects:
+- **Master and slave.** IHI0033B.b and IHI0022E, the issues this lesson cites, say *master* (starts transfers) and *slave* (answers them). Later Arm issues, such as IHI0033C, say *manager* and *subordinate* for the same two roles.
+- **Transfer, beat and burst.** A **transfer** (or **beat**) moves one data item. A **burst** is a group of transfers that share one starting address and control set. AHB encodes the burst type in `HBURST`; AXI encodes the number of transfers as `AxLEN + 1` (`AxLEN` means `AWLEN` or `ARLEN`).
+- **Address phase and data phase (AHB).** Each AHB transfer has a one-cycle **address phase** and a **data phase** of one or more cycles. The slave stretches the data phase by driving its `HREADYOUT` low; the interconnect returns the selected slave's `HREADYOUT` to everyone as `HREADY`. A transfer is accepted at a rising edge where `HREADY` is high and `HTRANS` is NONSEQ or SEQ (IHI0033B.b §1.3, §3.1).
+- **Boundary rules.** An AHB master must not start an incrementing burst that crosses a **1KB** address boundary (IHI0033B.b §3.5). An AXI burst must not cross a **4KB** boundary (IHI0022E A3.4.1).
+- **Posted and non-posted write.** A **posted** write is reported complete to the master as soon as the bridge has buffered it. A **non-posted** write is reported complete only when the far side has answered.
+- **Reference model and scoreboard.** A **reference model** (or predictor) computes what the design under test (DUT) should do; a **scoreboard** compares that prediction with what the DUT did ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
+- **CDC.** A **clock domain crossing** is any signal that leaves logic clocked by one clock and is sampled by logic on another, unrelated clock.
 
-| Layer | Protocol | Typical Masters | Typical Bandwidth |
-|-------|----------|----------------|-------------------|
-| High-Performance Fabric | AXI4 | CPU cores, DMA engines, GPU | 10+ GB/s |
-| Peripheral Bus | AHB-Lite / APB | UART, SPI, I2C, GPIO, Timer | 100 MB/s |
-| Configuration Bus | APB | Register access, debug | 10 MB/s |
+### Where bridges sit
 
-A **bridge IP** connects these layers. The two most common bridges are:
+Real SoCs rarely use one bus. A high-bandwidth AXI fabric connects the CPU, DMA engines and DRAM; slower peripherals sit on AHB-Lite or APB. A bridge joins two of these buses, and it is always a slave on one and a master on the other.
 
-1. **AHB-to-AXI Bridge** — An AHB master (e.g., a DMA engine on the peripheral bus) needs to access AXI memory space. The bridge converts AHB single-channel pipelined transfers into AXI five-channel transactions.
-2. **AXI-to-AHB Bridge** — An AXI master (e.g., CPU) needs to access AHB peripherals. The bridge converts decoupled AXI transactions into sequential AHB pipelined transfers.
+<ArchitectureDiagram
+  title="A two-speed SoC with bridges in both directions"
+  caption="Arrows point from the master side to the slave side. Each bridge is a slave on the bus it receives from and a master on the bus it drives. The AHB DMA engine reaches DRAM through the AHB-to-AXI bridge; the CPU reaches the AHB-Lite peripherals through the AXI-to-AHB bridge."
+  nodes={[
+    { id: "cpu", label: "CPU", sublabel: "AXI master", kind: "generic", col: 0, row: 0 },
+    { id: "axidma", label: "AXI DMA", sublabel: "AXI master", kind: "generic", col: 1, row: 0 },
+    { id: "ahbdma", label: "AHB DMA", sublabel: "AHB master", kind: "generic", col: 2, row: 0 },
+    { id: "ic", label: "AXI interconnect", kind: "generic", col: 0, row: 1, colSpan: 2 },
+    { id: "ahb2axi", label: "AHB-to-AXI bridge", kind: "dut", col: 2, row: 1 },
+    { id: "ddr", label: "DRAM controller", sublabel: "AXI slave", kind: "generic", col: 0, row: 2 },
+    { id: "axi2ahb", label: "AXI-to-AHB bridge", kind: "dut", col: 1, row: 2 },
+    { id: "sram", label: "SRAM", sublabel: "AHB slave", kind: "generic", col: 0, row: 3 },
+    { id: "apbbr", label: "AHB-to-APB bridge", kind: "generic", col: 1, row: 3 },
+    { id: "uart", label: "UART", sublabel: "APB slave", kind: "generic", col: 1, row: 4 }
+  ]}
+  edges={[
+    { from: "cpu", to: "ic", style: "data", label: "AXI" },
+    { from: "axidma", to: "ic", style: "data", label: "AXI" },
+    { from: "ahbdma", to: "ahb2axi", style: "data", label: "AHB" },
+    { from: "ahb2axi", to: "ic", style: "data", label: "AXI" },
+    { from: "ic", to: "ddr", style: "data", label: "AXI" },
+    { from: "ic", to: "axi2ahb", style: "data", label: "AXI" },
+    { from: "axi2ahb", to: "sram", style: "data", label: "AHB-Lite" },
+    { from: "axi2ahb", to: "apbbr", style: "data", label: "AHB-Lite" },
+    { from: "apbbr", to: "uart", style: "data", label: "APB" }
+  ]}
+/>
 
-### Why Bridges Are Hard
+This lesson covers the two AHB↔AXI directions. APB bridges follow the same idea with a simpler target; [B-APB-1](/curriculum/T3_Advanced/B-APB-1_APB_Protocol_and_Verification/index) covers how an APB error travels back through them.
 
-The fundamental problem is **protocol asymmetry**:
+### What differs between AHB and AXI
 
-| Feature | AHB | AXI |
-|---------|-----|-----|
-| Channels | 1 (shared address/data) | 5 (AW, W, B, AR, R) |
-| Pipelining | Address phase overlaps with previous data phase | Fully decoupled — address and data are independent |
-| Outstanding Transactions | 1 (inherently in-order) | Multiple per ID (out-of-order across IDs) |
-| Burst Length | INCR4/8/16, WRAP4/8/16, or undefined-length INCR | INCR up to 256 transfers; FIXED up to 16; WRAP 2/4/8/16 |
-| Boundary rule | Incrementing bursts must not cross 1KB (IHI0033B.b 3.5) | No burst may cross 4KB (IHI0022E A3.4.1) |
-| Response Timing | Immediate (same cycle as data) | Decoupled (B channel fires after all W beats) |
+Every row of this table is a translation the bridge must do, and so a place where it can be wrong.
 
-Every row in this table is a potential source of bridge bugs.
-
----
-
-## 2. AHB-to-AXI Bridge Architecture
-
-Before reading the block diagram, test your intuition. For each scenario, predict how many bursts come out of the bridge; the debug scenario is the old "AHB burst across 4KB" example, so check the input first. Edit the fields to find the boundaries yourself.
-
-<BridgeTranslationExplorer />
-
-### Block Diagram
-
-An AHB-to-AXI bridge contains these key blocks:
-
-1. **AHB Slave Interface** — Accepts AHB transactions from the AHB master.
-2. **Address Decoder & Splitter** — Determines if the burst needs to be split (AXI 256-transfer limit, width conversion; 1KB in the AXI-to-AHB direction).
-3. **Write Buffer** — Stores AHB write data beats until a complete AXI write burst can be issued.
-4. **Read Buffer** — Stores AXI read response data until it can be returned to AHB.
-5. **AXI Master Interface** — Issues AXI transactions downstream.
-6. **Response Mapper** — Converts AXI response codes (OKAY, SLVERR, DECERR) to AHB response (OKAY, ERROR).
-
-### Transaction Flow: AHB Write → AXI Write
-
-```
-AHB Master → Bridge AHB Slave Interface
-  1. AHB master drives HADDR, HTRANS=NONSEQ, HWRITE=1, HBURST=INCR8
-  2. Bridge accepts the address phase, starts collecting data beats
-  3. Over the next 8 cycles, AHB master drives HWDATA for each beat
-  4. Bridge buffers the data in its write buffer
-
-Bridge Internal → AXI Master Interface
-  5. Bridge issues AWVALID with translated burst parameters
-  6. Bridge drives WVALID for each buffered data beat
-  7. Bridge waits for BVALID on the B channel
-
-Bridge → AHB Master
-  8. Non-posted: the bridge has held HREADYOUT low on the last AHB data phase;
-     it now completes that phase with OKAY, or with the two-cycle ERROR if
-     BRESP is SLVERR or DECERR.
-     Posted: the AHB beats all completed with OKAY in steps 2-4, so a BRESP
-     error must be reported another way (interrupt, error register).
-```
-
-AHB completes each data phase as soon as the bridge takes the data, but AXI returns one write response for the whole burst after the last W transfer (IHI0022E A3.4.4). Step 8 is therefore a design choice, not a protocol rule:
-
-| Write policy | When the AHB master sees the last beat complete | What happens to a SLVERR/DECERR in BRESP |
+| Feature | AHB (IHI0033B.b) | AXI (IHI0022E) |
 |---|---|---|
-| **Non-posted** | Only after BRESP: the bridge holds `HREADYOUT` low on the last data phase for the whole AXI round trip | Reported on that last beat as a two-cycle ERROR (IHI0033B.b 5.1.3). The earlier beats already completed with OKAY. |
-| **Posted** | As soon as the bridge buffers the data | Cannot be reported on the bus. The bridge must log it (interrupt, error status register) or the error is lost. |
+| Buses or channels | One address and control bus, plus separate `HWDATA` and `HRDATA` buses, pipelined (§3.1) | Five channels with independent handshakes: AW, W, B, AR, R (A3.2) |
+| Flow control | Only the slave's `HREADYOUT`, and only in the data phase; "a slave cannot request that the address phase is extended" (§1.3) | VALID/READY on every channel (A3.2.1) |
+| Outstanding transfers | One address phase overlapping one data phase | Many transactions; ordering by ID (A5.3) |
+| Burst length known up front | Yes for SINGLE, INCR4/8/16, WRAP4/8/16; **no** for INCR, "incrementing burst of undefined length" (Table 3-3) | Always: `AxLEN + 1` transfers; INCR 1 to 256, all other types 1 to 16 (A3.4.1) |
+| Boundary rule | No incrementing burst across 1KB (§3.5) | No burst across 4KB (A3.4.1) |
+| Alignment | Every transfer aligned to its size (§3.5) | The first transfer may be unaligned (A3.4.3) |
+| Write strobes | None in Issue B.b (Issue C adds an optional `HWSTRB`) | `WSTRB`, one bit per byte lane (A3.4.3) |
+| Early termination | A master may cancel the rest of a burst after an ERROR (§3.5.2) | None: "No component can terminate a burst early" (A3.4.1) |
+| Read response | `HRESP` per transfer, in its data phase; OKAY during wait states (§5.1.2) | `RRESP` per R beat (A3.4.4) |
+| Write response | `HRESP` per transfer, in its data phase | One `BRESP` for the whole burst, after the last W transfer (A3.3.1, A3.4.4) |
+| Error | One code, ERROR, always two cycles (§5.1.3) | SLVERR or DECERR (A3.4.4) |
 
-Posting gives lower latency and frees the AHB bus sooner; non-posting keeps errors visible to the master that caused them. Many bridges post only writes marked Bufferable (`HPROT[2]`, IHI0033B.b 3.7), which maps to `AWCACHE[0]`, and keep the rest non-posted: for AXI Device Non-bufferable memory the write response must come from the final destination (IHI0022E A4.4.1). Whichever policy a bridge uses, document it, and make the scoreboard check that policy, because both are legal.
+The bridge also maps the control fields. For an AHB-to-AXI bridge:
 
----
+| AXI field | Comes from (AHB) | Note |
+|---|---|---|
+| `AxADDR` | `HADDR` of the first transfer of each AXI burst | |
+| `AxBURST`, `AxLEN` | `HBURST` and the transfer count | INCR4/8/16 give `AxLEN` 3/7/15; an AHB INCR has no count (see below) |
+| `AxSIZE` | `HSIZE` | Smaller when the AXI bus is narrower (downsizing) |
+| `AxCACHE[0]` (Bufferable) | `HPROT[2]` (Bufferable) | AHB Table 3-4; AXI A4.2 and Table A4-5 |
+| `AxCACHE[1]` (Modifiable) | `HPROT[3]` (Modifiable) | Issue A of AHB called this bit Cacheable (§3.7) |
+| `AxCACHE[3:2]` | `HPROT[6:4]` only if the AHB5 Extended_Memory_Types property is True | Otherwise a system choice |
+| `AxPROT[0]` (Privileged) | `HPROT[1]` | A4.7 Table A4-6 |
+| `AxPROT[1]` (Non-secure) | `HNONSEC` (AHB5 Secure_Transfers, §3.9) | Otherwise a system choice |
+| `AxPROT[2]` (Instruction) | `!HPROT[0]` | `HPROT[0]` high means a data access |
+| AW or AR | `HWRITE` | |
 
-## 3. Burst Translation Rules
+**Pitfall: "AHB is one multiplexed channel."** It is not: AHB has separate write-data and read-data buses (§3.1). What it lacks is per-channel handshakes and outstanding transactions. A bridge model that serializes AHB reads and writes on "one channel" is modelling the wrong bus.
 
-### AXI Burst Length Limits
+### Inside a bridge
 
-AXI4 supports bursts up to 256 beats (`AWLEN = 255`). AHB-Lite supports:
-- **INCR**: Undefined length (can be any number of beats)
-- **INCR4/INCR8/INCR16**: Fixed length bursts of 4, 8, or 16 beats
-- **WRAP4/WRAP8/WRAP16**: Wrapping bursts of 4, 8, or 16 beats
+An AHB-to-AXI bridge has six blocks. The picture uses the same names as the rest of this lesson.
 
-When an AHB master issues an INCR burst that would translate to more than 256 AXI transfers, the bridge must split it into multiple AXI transactions. Only an undefined-length INCR can do this, for example 1024 byte-wide transfers that fill one 1KB region.
+<ArchitectureDiagram
+  title="Blocks of an AHB-to-AXI bridge"
+  caption="The AHB slave interface is on the left (an AHB master drives it); the AXI master interface is on the right (an AXI slave answers it). Address and control go through the splitter, write data through the write buffer, read data through the read buffer, and every response through the response mapper, which is the only block that drives HRESP and HREADYOUT."
+  nodes={[
+    { id: "ahbif", label: "AHB slave interface", kind: "interface", col: 0, row: 0, rowSpan: 4 },
+    { id: "split", label: "address decoder & splitter", kind: "generic", col: 1, row: 0 },
+    { id: "wbuf", label: "write buffer", kind: "fifo", col: 1, row: 1 },
+    { id: "rbuf", label: "read buffer", kind: "fifo", col: 1, row: 2 },
+    { id: "resp", label: "response mapper", kind: "generic", col: 1, row: 3 },
+    { id: "axiif", label: "AXI master interface", kind: "interface", col: 2, row: 0, rowSpan: 4 }
+  ]}
+  edges={[
+    { from: "ahbif", to: "split", style: "data", label: "HADDR, HBURST, HSIZE, HPROT" },
+    { from: "split", to: "axiif", style: "data", label: "AW, AR" },
+    { from: "ahbif", to: "wbuf", style: "data", label: "HWDATA" },
+    { from: "wbuf", to: "axiif", style: "data", label: "W" },
+    { from: "axiif", to: "rbuf", style: "data", label: "R data" },
+    { from: "rbuf", to: "ahbif", style: "data", label: "HRDATA" },
+    { from: "axiif", to: "resp", style: "data", label: "BRESP, RRESP" },
+    { from: "resp", to: "ahbif", style: "data", label: "HRESP, HREADYOUT" }
+  ]}
+/>
 
-### Boundary Rules in Each Direction
+`HREADYOUT` is the bridge's only way to slow the AHB master down, and it works only in a data phase. "A slave cannot request that the address phase is extended" (IHI0033B.b §1.3), so whenever the bridge has no room, it must already be holding `HREADYOUT` low in the current data phase; then the master keeps the next address on the bus until the bridge raises `HREADYOUT` again. While it waits, the bridge drives `HRESP` OKAY (§5.1.2).
 
-**AHB → AXI: no 4KB split is ever needed.** "Masters must not attempt to start an incrementing burst that crosses a 1KB address boundary" (IHI0033B.b 3.5). Every 4KB boundary is also a 1KB boundary, so a legal AHB incrementing burst stays inside one 4KB page, and so does the AXI burst made from it. An AHB burst that crosses 1KB is **illegal stimulus**: the bridge may assume it never arrives, and an AHB-side checker must flag it:
+### AHB to AXI: what forces a split
+
+**Never 4KB.** "Masters must not attempt to start an incrementing burst that crosses a 1KB address boundary" (IHI0033B.b §3.5). Every 4KB boundary is also a 1KB boundary, so a legal AHB incrementing burst stays inside one 4KB page, and so does any AXI burst made from it. An AHB burst that crosses 1KB is **illegal stimulus**: the bridge may assume it never arrives, and a checker on the AHB side must flag it. This is the per-transfer form of B-AHB-3's 1KB check, so it also covers an INCR of unknown length:
 
 ```systemverilog
-// [Protocol IHI0033B.b 3.5] per-transfer check, so it also covers undefined-length INCR
+// snippet: [Protocol IHI0033B.b §3.5] per-transfer form; covers undefined-length INCR
 logic [31:0] burst_start;
 always_ff @(posedge HCLK) if (HREADY && HTRANS == 2'b10) burst_start <= HADDR; // NONSEQ
 a_ahb_no_1kb_cross: assert property (@(posedge HCLK) disable iff (!HRESETn)
-  HREADY && HTRANS == 2'b11 && !(HBURST inside {3'b010, 3'b100, 3'b110})     // SEQ, not WRAP
+  HREADY && HTRANS == 2'b11 && !(HBURST inside {3'b010, 3'b100, 3'b110}) // SEQ, not WRAP
   |-> HADDR[31:10] == burst_start[31:10]);
 ```
 
-**AXI → AHB: split at 1KB.** An AXI burst only has to stay inside 4KB. An AXI INCR16 of words at `0x03F0` is legal (it ends at `0x042F`), but it crosses `0x0400`. The bridge issues an AHB INCR4 from `0x03F0`, then the remaining 12 transfers from `0x0400` (as an undefined-length INCR, or INCR8 plus INCR4):
+**The 256-transfer limit.** An AXI4 INCR burst carries at most 256 transfers (IHI0022E A3.4.1), because `AxLEN` is 8 bits. A fixed-length AHB burst has at most 16 transfers, so only an undefined-length INCR can be longer. And because a legal INCR stays inside 1KB, it carries at most 1024 bytes: that is at most 256 transfers of 4 bytes. So the limit can force a split only when the AXI transfers are 1 or 2 bytes, for example a byte-wide DMA streaming 1024 bytes, which becomes four AXI bursts of 256.
+
+**The length nobody told the bridge.** `HBURST` = INCR means "incrementing burst of undefined length" (Table 3-3). The master can even pause with BUSY transfers and then end the burst with IDLE or NONSEQ (§3.5.1). So when the first transfer arrives, the bridge does not know what to put in `AWLEN` or `ARLEN`.
+
+<TimingDiagram
+  title="An undefined-length AHB INCR write: the length is known only at the end"
+  caption="HBURST is INCR throughout. Transfers are accepted at edges 0, 1 and 2. At edge 3 the master signals BUSY (its address shows the next transfer, 0x8C), so the bridge still cannot tell whether more data follows. Only the IDLE at edge 4 tells it the burst had three transfers."
+  edges={6}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["NONSEQ", "SEQ", "SEQ", "BUSY", "IDLE", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: ["0x80", "0x84", "0x88", "0x8C", undefined, undefined] },
+    { name: "HBURST", kind: "bus", values: ["INCR", "INCR", "INCR", "INCR", undefined, undefined] },
+    { name: "HWDATA", kind: "bus", values: [undefined, "D0", "D1", "D2", undefined, undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", label: "first transfer accepted: the bridge does not know AWLEN yet" },
+    { edge: 3, tone: "pending", label: "BUSY: more data or the end? Still unknown" },
+    { edge: 4, tone: "info", label: "IDLE ends the burst: 3 transfers" }
+  ]}
+/>
+
+**Predict first:** if the bridge must start the AXI write early to keep latency low, at which edge could it drive an `AWLEN` that is certainly right? (Not before edge 4. A bridge that starts earlier must choose a policy: single-transfer AXI bursts, or buffering until the burst ends or the buffer fills. [Expert: undefined-length INCR](#expert-undefined-length-incr-the-bridge-cannot-know-the-length) compares them.)
+
+**Width conversion and WRAP.** When the AHB transfer is wider than the AXI bus, each AHB transfer becomes several AXI transfers of the bus width, and "when downsizing to a bus width narrower than that required by the transaction size, AxSIZE, the transaction must be modified" (IHI0022E A4.3.1 Note). INCR bursts just get longer. WRAP is harder. Both protocols wrap inside a block of `transfers × size` bytes, and AHB WRAP4/8/16 are legal AXI WRAP lengths, so a same-width bridge maps them one to one. But a WRAP16 of doublewords onto a 32-bit AXI bus would need a 32-transfer AXI WRAP, and AXI WRAP bursts stop at 16 (A3.4.1). The bridge sends the same bytes in the same order as INCR bursts:
+- If the WRAP starts at the **wrap boundary** (the lowest address of the 128-byte block, A3.4.1), the bytes are already in increasing order: one AXI INCR of 32 word transfers. A WRAP16 of doublewords at 0x0100 becomes one INCR at 0x0100.
+- Otherwise, two INCR bursts: from the start address to the top of the block, then from the wrap boundary up to the start. A WRAP16 of doublewords at 0x0140 becomes INCR16 of words at 0x0140 (bytes 0x0140 to 0x017F), then INCR16 at 0x0100 (bytes 0x0100 to 0x013F).
+
+**Use the explorer now.** `BridgeTranslationExplorer` runs a tested model of both bridge directions. Pick each of the first five scenarios (the AHB→AXI ones), **predict** how many AXI bursts come out, and only then reveal. The last of the five, *Debug: 0x0FE0 INCR8*, is a trap: check the input before you count anything. Then edit the fields to find the boundaries yourself.
+
+<BridgeTranslationExplorer />
+
+**Debrief.** What the explorer showed, and the rule behind each answer:
+
+| Scenario | Result | Rule that decides it |
+|---|---|---|
+| Simple INCR4 (words at 0x1000) | 1 AXI INCR of 4 | Nothing forces a split |
+| INCR16 up to 1KB (words at 0x03C0) | 1 AXI INCR of 16 | Ending exactly at 0x03FF is legal: the last byte is still in the region |
+| 1024-byte INCR (bytes at 0x0400) | 4 AXI INCR of 256, at 0x0400, 0x0500, 0x0600, 0x0700 | AXI4 INCR stops at 256 transfers (A3.4.1) |
+| WRAP16 to 32-bit (doublewords at 0x0140) | 2 AXI INCR16 of words, at 0x0140 then 0x0100 | No 32-transfer AXI WRAP (A3.4.1); same byte order as the WRAP |
+| Debug: 0x0FE0 INCR8 (doublewords) | Nothing: the input is illegal | Bytes 0x0FE0 to 0x101F cross 0x1000, a 1KB boundary (§3.5). The AHB checker fires; the bridge is not at fault |
+
+### AXI to AHB: what forces a split or a reshape
+
+**Split at 1KB.** An AXI burst only has to stay inside 4KB (A3.4.1), so a legal AXI burst can cross a 1KB boundary, and the AHB side forbids that (§3.5). An AXI INCR16 of words at 0x03F0 is legal AXI (it ends at 0x042F), but it crosses 0x0400. The bridge issues an AHB INCR4 from 0x03F0, then the remaining 12 transfers from 0x0400, as an undefined-length INCR (or, by policy, INCR8 plus INCR4). [Make It Work](#make-it-work) builds this splitter as a complete, checked function.
+
+**How many pieces at most?** An aligned AXI4 INCR of transfers of 4 bytes or less spans at most 1KB (256 × 4 bytes), so it crosses at most one 1KB boundary and splits into at most 2 AHB bursts. With 8-byte transfers it can span 2KB and needs up to 3; with 16-byte transfers, up to 4.
+
+**Reshapes that have nothing to do with 1KB.** Some legal AXI bursts have no single AHB equivalent:
+- **FIXED** (every transfer at the same address, A3.4.1): AHB has no fixed-address burst, so each transfer becomes its own SINGLE.
+- **WRAP2**: AHB wraps only in 4, 8 or 16 transfers. A WRAP2 that starts at its wrap boundary is an INCR of 2; one that starts in the upper half becomes two SINGLEs in wrap order.
+- **Unaligned start**: AXI's first transfer may be unaligned (A3.4.3), but every AHB transfer must be aligned to its size (§3.5). The bridge sends the first partial transfer as smaller aligned SINGLEs. An AXI INCR4 of words at 0x1001 becomes a byte SINGLE at 0x1001, a halfword SINGLE at 0x1002, then a 3-transfer INCR at 0x1004.
+- **Sparse or all-zero `WSTRB`**: IHI0033B.b has no write strobes, so a write whose strobes do not cover whole aligned transfers must go out as narrower aligned transfers, and a transfer with all strobes low, which a master may use to "disable further writing" (A3.4.1), writes nothing and can be skipped.
+
+**Use the explorer again.** Pick *AXI INCR16 across 1KB*, *AXI unaligned start* and *AXI WRAP4*, predict each count, and reveal. Then set AxBURST to FIXED and predict once more.
+
+| Scenario | Result | Rule |
+|---|---|---|
+| AXI INCR16 across 1KB (words at 0x03F0) | 2 AHB bursts: INCR4 at 0x03F0, then a 12-transfer INCR at 0x0400 | No AHB incrementing burst across 1KB (§3.5) |
+| AXI unaligned start (INCR4 of words at 0x1001) | 3 AHB bursts: byte SINGLE at 0x1001, halfword SINGLE at 0x1002, 3-transfer INCR at 0x1004 | AHB transfers are aligned (§3.5) |
+| AXI WRAP4 (words at 0x100C) | 1 AHB WRAP4 at 0x100C | Same wrap block, same length |
+| FIXED (edited) | One SINGLE per transfer | AHB has no fixed burst (Table 3-3) |
+
+### The two mistakes everyone makes
+
+1. **"AHB bursts can cross 4KB, so an AHB-to-AXI bridge splits at 4KB."** Wrong twice: a legal AHB incrementing burst cannot even cross 1KB (§3.5), so a 4KB split never triggers on legal input, and a burst that does cross is illegal stimulus for a checker to flag, not something for the bridge to fix. The real AHB→AXI reasons are the 256 limit, width conversion and the unknown INCR length.
+2. **"Every legal AXI burst is a legal AHB burst."** Wrong: AXI bursts may cross 1KB, start unaligned, use FIXED or WRAP2, and carry sparse strobes. Each needs a split or a reshape on the AHB side.
+
+### Responses and errors, both directions
+
+An **AHB-to-AXI bridge** receives AXI responses and must express them on AHB:
+
+| AXI response | On AHB | Bridge action |
+|---|---|---|
+| OKAY (`2'b00`) | OKAY | Complete the data phase |
+| EXOKAY (`2'b01`) | OKAY | Answers only an exclusive access, which an AHB-Lite bridge never issues. An AHB5 bridge with the Exclusive_Transfers property reports exclusive success on `HEXOKAY` (§8.3) |
+| SLVERR (`2'b10`) | ERROR | Two-cycle ERROR on the data phase it belongs to: the failing read beat, or the last beat of a non-posted write |
+| DECERR (`2'b11`) | ERROR | Same as SLVERR: AHB has only one error code |
+
+**Reads.** AXI gives a response on every R beat, and "the required number of data transfers must be performed, even if an error is reported" (A3.4.4). So when `RRESP` is SLVERR on beat 2 of 4, the AXI slave still sends all four beats. The bridge must:
+1. Accept every R beat, whatever the AHB side does next.
+2. Give the AHB data phase of that beat a **two-cycle** ERROR: `HRESP` high with `HREADYOUT` low, then both high (§5.1.3). The first cycle gives the master time to cancel the next transfer, whose address is already on the bus.
+3. Follow the master: it may cancel the rest of the burst by driving IDLE during the ERROR, or continue (§3.5.2). If it continues, each later beat gets its own `RRESP`. If it cancels, the bridge drops the R beats nobody asked for.
+
+<TimingDiagram
+  title="AHB-to-AXI bridge: an AHB INCR4 read where the second AXI beat returns SLVERR"
+  caption="The AXI read has ARLEN = 3 (4 beats). Beat 1 completes with OKAY at edge 3. Beat 2's RRESP is SLVERR, so the bridge gives the two-cycle ERROR at edges 4 and 5. The master cancels: it drives IDLE during the ERROR, and the bridge still accepts R beats 3 and 4 and drops them."
+  edges={7}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["NONSEQ", "SEQ", "SEQ", "SEQ", "SEQ", "IDLE", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: ["0x40", "0x44", "0x44", "0x44", "0x48", undefined, undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 0, 0, 1, 0, 1, 1] },
+    { name: "HRESP", kind: "bus", values: ["OKAY", "OKAY", "OKAY", "OKAY", "ERROR", "ERROR", "OKAY"] },
+    { name: "HRDATA", kind: "bus", values: [undefined, undefined, undefined, "D1", undefined, undefined, undefined] },
+    { name: "ARVALID", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "RVALID", kind: "bit", values: [0, 0, 1, 1, 1, 1, 0] },
+    { name: "RRESP", kind: "bus", values: [undefined, undefined, "OKAY", "SLVERR", "OKAY", "OKAY", undefined] },
+    { name: "RLAST", kind: "bit", values: [0, 0, 0, 0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", label: "AR handshake (ARREADY high); beat 1 waits for data" },
+    { edge: 3, tone: "pass", label: "beat 1 completes OKAY with D1; SEQ 0x44 accepted" },
+    { edge: 4, tone: "fail", label: "ERROR cycle 1: HRESP ERROR, HREADY low" },
+    { edge: 5, tone: "fail", label: "ERROR cycle 2: HREADY high; master drives IDLE (cancel)" }
+  ]}
+/>
+
+**Predict first:** at which edge does the master first learn about the error, and can it still stop the transfer to 0x48? (Edge 4. Yes: 0x48 is on the bus but not accepted, because `HREADY` is low; the master replaces it with IDLE, §3.5.2.) The read path that produces this waveform:
 
 ```systemverilog
-// AXI-to-AHB bridge: split an AXI INCR burst at each 1KB boundary.
-// Start from the aligned address: only the first AXI transfer may be unaligned,
-// and AHB needs aligned transfers, so an unaligned first transfer goes out separately.
-function automatic int unsigned beats_to_1kb(input logic [31:0] addr, input int unsigned nbytes);
-  logic [31:0] next_1kb = (addr & ~32'h3FF) + 32'h400;
-  return (next_1kb - addr) / nbytes;
-endfunction
-
-int unsigned remaining, n;
-logic [31:0] cur;
-remaining = beats_left;     // AXI transfers still to send
-cur       = aligned_addr;   // address of the next aligned transfer
-while (remaining > 0) begin
-  n = (remaining < beats_to_1kb(cur, nbytes)) ? remaining : beats_to_1kb(cur, nbytes);
-  issue_ahb_burst(cur, n);   // INCR4/8/16 when n is 4, 8 or 16; otherwise undefined-length INCR
-  cur       += n * nbytes;
-  remaining -= n;
-end
-```
-
-### WRAP Burst Translation
-
-Both protocols wrap at the same boundary, the burst's total size (beats x transfer size), and AHB WRAP4/8/16 are all legal AXI WRAP lengths. A same-width bridge maps them directly.
-
-Width conversion is where WRAP gets hard. Downsizing an AHB WRAP16 of doublewords onto a 32-bit AXI bus would need a 32-transfer AXI WRAP, but AXI WRAP bursts stop at 16 (IHI0022E A3.4.1). The bridge sends the same bytes in the same order as two INCR bursts: from the start address up to the wrap boundary, then from the lower wrap address. Downsizing below the transfer size always forces such a modification (IHI0022E A4.3.1). In the other direction, an AXI WRAP2 has no AHB equivalent.
-
----
-
-## 4. Response Mapping and Error Handling
-
-### Response Code Translation
-
-| AXI Response | AHB Response | Bridge Action |
-|-------------|-------------|---------------|
-| `OKAY (2'b00)` | `OKAY` | Pass through |
-| `EXOKAY (2'b01)` | `OKAY` | AHB-Lite has no exclusive response. An AHB5 bridge with the Exclusive_Transfers property reports it on `HEXOKAY` (IHI0033B.b chapter 8). |
-| `SLVERR (2'b10)` | `ERROR` | Two-cycle ERROR on the AHB data phase it belongs to: the failing read beat, or the last beat of a non-posted write |
-| `DECERR (2'b11)` | `ERROR` | Same as SLVERR |
-
-### The Error Termination Problem
-
-AXI reads and writes report errors differently (IHI0022E A3.4.4):
-
-- **Reads** carry a response on every R beat, so `SLVERR` on beat 3 of an 8-beat read is possible. The AXI slave still sends all 8 beats; the burst is not cut short.
-- **Writes** get a single `BRESP` for the whole burst, after the last W transfer. There is no "error on beat 3" of an AXI write. When the AHB master sees the error depends on the posted or non-posted policy above.
-
-For the read case, the bridge must:
-
-1. Accept all 8 R beats from AXI, whatever the AHB side does.
-2. Give the AHB data phase of beat 3 a **two-cycle** ERROR: `HRESP` high with `HREADYOUT` low, then both high (IHI0033B.b 5.1.3). A one-cycle ERROR is a protocol violation, and the master would see it too late to cancel the next transfer.
-3. Then follow the AHB master: it may cancel the rest of the burst by driving IDLE, or continue (IHI0033B.b 3.5.2). If it continues, the bridge returns each later beat with that beat's own RRESP. If it cancels, the bridge discards the R beats nobody asked for.
-
-```systemverilog
-// Read path of an AHB-to-AXI bridge (sketch).
+// snippet: read path of an AHB-to-AXI bridge
 //   data_phase : an accepted AHB read is in its data phase
 //   rd_avail   : the R beat for that data phase is in the read buffer
 //   rd_err     : its RRESP is SLVERR or DECERR (RRESP[1] == 1)
-// The buffer pops the beat at the edge where HREADY is high.
+// The read buffer pops the beat at the edge where HREADY is high.
 logic err2;  // high in the second ERROR cycle
 always_ff @(posedge HCLK or negedge HRESETn)
   if (!HRESETn) err2 <= 1'b0;
@@ -197,195 +287,884 @@ always_ff @(posedge HCLK or negedge HRESETn)
 
 // ERROR: first cycle HRESP=1 with HREADYOUT=0, second cycle both high.
 assign HRESP     = err2 || (data_phase && rd_avail && rd_err);
-// HREADYOUT is low while the beat is not there yet (with OKAY) and in the first ERROR cycle.
+// HREADYOUT is low while the beat is not there yet (with OKAY) and in ERROR cycle 1.
 assign HREADYOUT = !data_phase || err2 || (rd_avail && !rd_err);
 ```
 
----
+**Writes.** "For a write transaction, a single response is signaled for the entire burst, and not for each data transfer within the burst" (A3.4.4), and the slave sends it only after the last W transfer (A3.3.1). There is no "error on beat 3" of an AXI write. When the AHB master hears about a BRESP error depends on the posting policy below.
 
-## 5. Reset and Clock Domain Crossing (CDC)
+An **AXI-to-AHB bridge** has the reverse problem: an AHB slave answers each transfer, but AXI has one `BRESP` per write burst.
+- **AHB ERROR on read transfer k** → `RRESP` = SLVERR on R beat k. The bridge still returns every R beat the AXI master asked for (A3.4.4). If it continues the AHB burst, each later beat carries its own AHB result; if it cancels, what the remaining beats carry is the bridge's documented policy (for example SLVERR on each).
+- **AHB ERROR on any write transfer** → one `BRESP` = SLVERR for the burst, sent only after the bridge has accepted every W transfer (A3.3.1). Earlier AHB transfers already updated the slave: the error does not undo them.
+- **SLVERR or DECERR?** AHB has one ERROR code, so which AXI code the bridge returns is a design policy. Document it, and make the scoreboard check it.
 
-### Synchronous Bridges
+<SequenceDiagram
+  title="AXI-to-AHB bridge: one AHB ERROR becomes one BRESP for the whole burst"
+  caption="The AXI master's INCR4 write reaches the AHB slave as four transfers. Transfer 2 gets ERROR. Whether the bridge cancels or continues the AHB burst is its policy, but it must accept all four W transfers, and it reports SLVERR once, after the last one."
+  participants={[
+    { id: "m", label: "AXI master", kind: "generic" },
+    { id: "br", label: "AXI-to-AHB bridge", kind: "dut" },
+    { id: "s", label: "AHB slave", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "async", from: "m", to: "br", label: "AW: INCR, AWLEN=3, AWADDR=0x100" },
+    { kind: "async", from: "m", to: "br", label: "W transfers 1 to 4 (WLAST on 4)" },
+    { from: "br", to: "s", label: "NONSEQ 0x100 + data 1" },
+    { kind: "return", from: "s", to: "br", label: "OKAY: transfer 1 written" },
+    { from: "br", to: "s", label: "SEQ 0x104 + data 2" },
+    { kind: "return", from: "s", to: "br", label: "ERROR (two cycles)", tone: "error" },
+    { kind: "note", from: "br", to: "s", label: "Policy: cancel transfers 3 and 4 (IDLE) or continue them" },
+    { kind: "note", from: "m", to: "br", label: "Every W transfer is still accepted: no early termination (A3.4.1)" },
+    { kind: "return", from: "br", to: "m", label: "B: BRESP=SLVERR, after the last W (A3.3.1)", tone: "error" }
+  ]}
+/>
 
-If both the AHB and AXI domains share the same clock, the bridge is purely combinational/registered logic. This is the simpler case.
+**Pitfalls.** "Write errors map per beat" is wrong in both directions: AXI has one `BRESP` per write burst, so an AHB-to-AXI bridge can only report it on the last beat (non-posted) or out of band (posted), and an AXI-to-AHB bridge folds every AHB write ERROR into that one `BRESP`. And "a one-cycle ERROR is enough" is wrong: ERROR always takes two cycles (§5.1.3).
 
-### Asynchronous Bridges (CDC)
+### Posted and non-posted writes
 
-When the AHB domain runs at a different clock frequency than the AXI domain, the bridge must include **Clock Domain Crossing (CDC)** structures:
+An AHB data phase completes as soon as the bridge takes the data, but the AXI write response arrives much later. So the bridge must decide what to do with the last AHB beat:
 
-1. **Async FIFOs** — For carrying address, data and responses across clock domains. The payload is written into the FIFO memory in one domain and read in the other.
-2. **Gray-code pointers** — Only the FIFO pointers cross the boundary, through two-flop synchronizers. Gray code changes one bit per step, so a pointer sampled mid-change is either the old or the new value.
-3. **Handshake synchronizers** — For low-rate control, a req/ack (four-phase or toggle) handshake: only the req and ack levels are synchronized, and the payload register stays stable from req until ack returns.
-4. **Reset synchronization** — Both domains may have independent resets that must be properly sequenced.
+```text
+AHB master -> bridge (AHB slave interface)
+  1. Master drives HADDR, HTRANS=NONSEQ, HWRITE=1, HBURST=INCR4
+  2. Bridge accepts each transfer and buffers its HWDATA
 
-Do **not** pass `VALID`, `READY`, or the payload bits through separate two-flop synchronizers. Each bit resolves independently and may land a cycle apart, so the other domain can see `VALID` with half-updated data. A one-cycle `VALID` pulse from a faster clock can also be missed completely, and a synchronized `READY` arrives late, so the sender may treat one transfer as two. Carry the whole transfer as one unit, through an async FIFO or a full handshake synchronizer.
+Bridge -> AXI slave (AXI master interface)
+  3. Bridge drives AW (AWLEN=3) and the W transfers; WVALID never waits for AWREADY
+  4. AXI slave returns one BRESP after the last W transfer
 
-### CDC Verification
-
-CDC bugs are the most insidious bridge failures. They manifest as:
-- **Data corruption** — Bits of a multi-bit value are sampled while they change, so the receiving domain sees a mix of old and new bits.
-- **Lost transactions** — A VALID pulse is too short and missed by the receiving domain.
-- **Deadlocks** — A READY signal from the other domain is never sampled.
-
-Verification approaches:
-1. **Formal CDC tools** (Cadence Conformal CDC, Synopsys SpyGlass CDC) — Structurally verify all crossings.
-2. **Multi-clock simulation** — Run the bridge with intentionally mismatched clocks and random phase offsets.
-3. **Reset sequencing tests** — Verify bridge behavior when one domain resets independently.
-
----
-
-## 6. Formal Verification Strategy for Bridges
-
-Formal verification is the **most effective** technique for bridge verification because:
-
-1. **Exhaustive state coverage** — Formal explores all possible burst types, sizes, addresses, and boundary conditions.
-2. **Equivalence checking** — You can prove that every AHB transaction maps to the correct AXI transaction(s).
-3. **Deadlock detection** — Formal can prove that the bridge never enters a state where it stops making progress.
-
-### Key Formal Properties
-
-```systemverilog
-// Property: Bridge must eventually complete every accepted AHB transaction
-property p_bridge_liveness;
-  @(posedge ACLK) disable iff (!ARESETn)
-    (ahb_htrans == NONSEQ) |-> s_eventually (ahb_hready == 1);
-endproperty
-
-// Property: 4KB boundary is never violated on the AXI side.
-// Only INCR can cross; start from the aligned address (IHI0022E A3.4.1).
-property p_no_4kb_violation;
-  logic [31:0] aligned;
-  @(posedge ACLK) disable iff (!ARESETn)
-    (AWVALID && AWBURST == 2'b01, aligned = (AWADDR >> AWSIZE) << AWSIZE) |->
-      (aligned[11:0] + ((AWLEN + 1) << AWSIZE)) <= 32'h1000;
-endproperty
-
-// Property: Total data bytes in == total data bytes out
-// (data integrity across the bridge)
-property p_data_conservation;
-  @(posedge ACLK) disable iff (!ARESETn)
-    (bridge_state == IDLE && prev_state == COMPLETING) |->
-      (total_ahb_bytes == total_axi_bytes);
-endproperty
+Bridge -> AHB master
+  5. Non-posted: the bridge has held HREADYOUT low on the last data phase; it
+     now completes it with OKAY, or with the two-cycle ERROR if BRESP is an error.
+     Posted: every beat already completed with OKAY in step 2, so a BRESP error
+     must be reported another way (interrupt, error status register).
 ```
 
-### Formal Constraints (Assumptions)
+<TimingDiagram
+  title="Non-posted AHB INCR4 write through an AHB-to-AXI bridge, with BRESP = SLVERR"
+  caption="Beats 1 to 3 complete with OKAY at edges 1 to 3. The bridge holds HREADY low on beat 4 from edge 4 while the AXI write finishes (OKAY during the wait, §5.1.2); the master holds HWDATA = D3 (§6.1.1). BRESP = SLVERR arrives at edge 7, so beat 4 ends with the two-cycle ERROR at edges 8 and 9."
+  edges={10}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["NONSEQ", "SEQ", "SEQ", "SEQ", "IDLE", "IDLE", "IDLE", "IDLE", "IDLE", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: ["0x40", "0x44", "0x48", "0x4C", undefined, undefined, undefined, undefined, undefined, undefined] },
+    { name: "HWDATA", kind: "bus", values: [undefined, "D0", "D1", "D2", "D3", "D3", "D3", "D3", "D3", "D3"] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 1, 1, 0, 0, 0, 0, 0, 1] },
+    { name: "HRESP", kind: "bus", values: ["OKAY", "OKAY", "OKAY", "OKAY", "OKAY", "OKAY", "OKAY", "OKAY", "ERROR", "ERROR"] },
+    { name: "AWVALID", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "WVALID", kind: "bit", values: [0, 0, 1, 1, 1, 1, 0, 0, 0, 0] },
+    { name: "WLAST", kind: "bit", values: [0, 0, 0, 0, 0, 1, 0, 0, 0, 0] },
+    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0] },
+    { name: "BRESP", kind: "bus", values: [undefined, undefined, undefined, undefined, undefined, undefined, undefined, "SLVERR", undefined, undefined] }
+  ]}
+  markers={[
+    { edge: 5, tone: "info", label: "last W transfer (WLAST)" },
+    { edge: 7, tone: "fail", label: "BRESP = SLVERR for the whole burst" },
+    { edge: 8, tone: "fail", label: "ERROR cycle 1 on beat 4" },
+    { edge: 9, tone: "fail", label: "ERROR cycle 2: beat 4 completes with ERROR" }
+  ]}
+/>
 
-You must constrain the formal environment to only present legal inputs:
+**Predict first:** a posted bridge runs the same AXI traffic. What does the AHB master see at edges 4 to 9? (Nothing: beat 4 already completed with OKAY at edge 4, and the AHB bus is free for other transfers. The SLVERR at edge 7 can only reach software through an interrupt or a status register.)
+
+| Write policy | When the AHB master sees the last beat complete | What happens to a SLVERR or DECERR in `BRESP` |
+|---|---|---|
+| **Non-posted** | Only after `BRESP`: `HREADYOUT` is held low on the last data phase for the whole AXI round trip | Reported on that last beat as a two-cycle ERROR (§5.1.3). The earlier beats already completed with OKAY |
+| **Posted** | As soon as the bridge has buffered the data | Cannot be reported on the bus. The bridge must log it (interrupt, error status register) or the error is lost |
+
+**What the protocols allow.** Both specifications tie early write responses to the bufferable attribute. On AHB, if `HPROT[4:3]` are both deasserted, `HPROT[2]` deasserted means "the write response must be given from the final destination" (IHI0033B.b Table 3-5). On AXI, Device Non-bufferable memory requires that "the write response must be obtained from the final destination" (IHI0022E A4.4.1), while the Bufferable types allow a response from an intermediate point. So a common policy is to post only writes marked Bufferable and keep the rest non-posted.
+
+**The cost of non-posting.** A non-posted write keeps `HREADYOUT` low for the whole AXI round trip. IHI0033B.b recommends that a slave inserts no more than 16 wait states, "to prevent any single access locking the bus" (§5.1.2 Note): on a single-layer AHB bus, every other master waits too. This is a recommendation, not a rule, but a slow AXI path can make it a performance bug.
+
+**The hidden cost of posting: read-after-write order.** The AHB master saw its write complete, so it may immediately read the same address. AHB requires that order to hold: for Device memory "all read and write transfers from the same master to the same slave must remain ordered" (§3.8.4), and for Normal memory, transfers "to addresses that overlap must remain ordered" (§3.8.5). AXI will not keep it for the bridge: "AXI has no ordering restrictions between read and write transactions", and a master "can only consider the earlier transaction is complete when … it receives the write response. Sending all of the write data for the transaction must not be taken as indicating completion" (IHI0022E A5.3.4).
+
+<SequenceDiagram
+  title="The posted-write hazard: a stale read after a completed write"
+  caption="The AHB master's write completed with OKAY at once (posted), so it reads the same address. The bridge issues AR before the write's BRESP, and the read overtakes the write inside the AXI system: the master gets the old value. The fix holds the read until every overlapping posted write has its BRESP."
+  participants={[
+    { id: "am", label: "AHB master", kind: "generic" },
+    { id: "br", label: "AHB-to-AXI bridge", kind: "dut" },
+    { id: "as", label: "AXI memory", kind: "generic" }
+  ]}
+  messages={[
+    { from: "am", to: "br", label: "write 0x100 = NEW" },
+    { kind: "return", from: "br", to: "am", label: "OKAY at once (posted)" },
+    { kind: "async", from: "br", to: "as", label: "AW + W to 0x100" },
+    { from: "am", to: "br", label: "read 0x100" },
+    { kind: "async", from: "br", to: "as", label: "AR to 0x100, before BRESP" },
+    { kind: "note", from: "br", to: "as", label: "No read/write ordering before BRESP (A5.3.4)" },
+    { kind: "return", from: "as", to: "br", label: "R: OLD value", tone: "error" },
+    { kind: "return", from: "br", to: "am", label: "HRDATA = OLD (stale)", tone: "error" },
+    { kind: "return", from: "as", to: "br", label: "B: OKAY (write now complete)" },
+    { kind: "divider", label: "Fix" },
+    { kind: "self", from: "br", label: "hold AR until BRESP of every overlapping posted write" }
+  ]}
+/>
+
+The fix is a hazard check: compare each new read address with the outstanding posted writes, and hold the read until the overlapping ones have their `BRESP` (A5.3.4 suggests exactly this "address check against outstanding transactions"). Or make that address region non-posted. [Expert: posted writes, ordering and latency](#expert-posted-writes-ordering-and-latency) adds the same-ID subtlety.
+
+### AXI handshake dependencies: the bridge's own deadlock
+
+A bridge is an AXI master on one side or an AXI slave on the other, and both roles have handshake rules that exist only to prevent deadlock (IHI0022E A3.3.1):
+- **As an AXI master** (AHB-to-AXI): "the master must not wait for the slave to assert AWREADY or WREADY before asserting AWVALID or WVALID". The Caution in A3.3.1 gives the exact bridge bug: "a master must not wait for AWREADY to be asserted before driving WVALID. A deadlock condition can occur if the slave is waiting for WVALID before asserting AWREADY."
+- **As an AXI slave** (AXI-to-AHB): the slave *may* wait for AWVALID, WVALID or both before asserting AWREADY or WREADY, and it must send `BVALID` only after the last W transfer (A3.3.1). Write data may even arrive before its address (A3.3). The bridge must therefore never make one channel's READY wait for a completed handshake on the other channel while that channel waits for it in turn.
+
+<SequenceDiagram
+  title="A bridge that waits for AWREADY before WVALID meets a legal slave"
+  caption="The slave is allowed to wait for WVALID before it raises AWREADY. The bridge waits for AWREADY before it raises WVALID. Neither ever moves. Fix: drive W as soon as the data is ready, independent of the AW handshake."
+  participants={[
+    { id: "br", label: "bridge (AXI master)", kind: "dut" },
+    { id: "s", label: "AXI slave", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "async", from: "br", to: "s", label: "AWVALID = 1" },
+    { kind: "self", from: "br", label: "waits for AWREADY before WVALID (the bug)", tone: "error" },
+    { kind: "self", from: "s", label: "waits for WVALID before AWREADY (legal)" },
+    { kind: "divider", label: "both wait forever: the simulation hangs" },
+    { kind: "note", from: "br", to: "s", label: "Fix: WVALID must not depend on AWREADY (A3.3.1)" }
+  ]}
+/>
+
+A test bench whose AXI slave ties `AWREADY` high never shows this bug. Give the slave a mode in which it waits for `WVALID` before `AWREADY`, and add a liveness check; the lab's slave has exactly that mode. Deadlocks between several bridges and an interconnect are covered in [B-AXI-5](/curriculum/T3_Advanced/B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index).
+
+### Clocks and resets
+
+**Synchronous bridges.** When both sides run on the same clock (or on clocks derived from one source with a known phase), the bridge is ordinary registered logic and needs no synchronizers.
+
+**Asynchronous bridges.** When `HCLK` and `ACLK` are unrelated, every signal from one side is a clock domain crossing. The standard structure is an **asynchronous FIFO** per direction:
+- The payload (address, data, response) is written into the FIFO memory in one domain and read in the other; it never passes through synchronizers.
+- Only the FIFO **pointers** cross, in **Gray code** (one bit changes per step), through **two-flop synchronizers** (two flip-flops in a row in the receiving domain, which give a metastable first flop a cycle to settle). A pointer sampled mid-change is then either the old or the new value, never a mix.
+- Low-rate control can use a **req/ack handshake**: only the req and ack levels are synchronized, and the payload register stays stable from req until ack returns.
+
+<ArchitectureDiagram
+  title="Asynchronous FIFO between the HCLK and ACLK domains"
+  caption="The payload goes through the FIFO memory; only the Gray-coded pointers cross the clock boundary, each through a two-flop synchronizer in the receiving domain. The write side compares its pointer with the synchronized read pointer to know when the FIFO is full, and the read side does the reverse to know when it is empty."
+  nodes={[
+    { id: "hdom", label: "HCLK domain", kind: "generic", col: 0, row: 0, rowSpan: 3, container: true },
+    { id: "adom", label: "ACLK domain", kind: "generic", col: 2, row: 0, rowSpan: 3, container: true },
+    { id: "wr", label: "write side", sublabel: "wptr (Gray)", kind: "generic", col: 0, row: 0 },
+    { id: "mem", label: "FIFO memory", sublabel: "payload", kind: "fifo", col: 1, row: 0 },
+    { id: "rd", label: "read side", sublabel: "rptr (Gray)", kind: "generic", col: 2, row: 0 },
+    { id: "syncw", label: "2-flop sync", sublabel: "wptr into ACLK", kind: "generic", col: 2, row: 1 },
+    { id: "syncr", label: "2-flop sync", sublabel: "rptr into HCLK", kind: "generic", col: 0, row: 2 }
+  ]}
+  edges={[
+    { from: "wr", to: "mem", style: "data", label: "write" },
+    { from: "mem", to: "rd", style: "data", label: "read" },
+    { from: "wr", to: "syncw", style: "control", label: "wptr", via: [[1, 1]] },
+    { from: "syncw", to: "rd", style: "control", label: "empty?" },
+    { from: "rd", to: "syncr", style: "control", label: "rptr", via: [[1, 2]] },
+    { from: "syncr", to: "wr", style: "control", label: "full?" }
+  ]}
+/>
+
+**Pitfall: synchronizing VALID, READY and data bit by bit.** If `VALID`, `READY` and the payload bits each go through their own two-flop synchronizer, each bit can resolve a cycle apart, so the other domain can see `VALID` with half-updated data. A one-cycle `VALID` pulse from a faster clock can also be missed entirely, and a late `READY` can make the sender count one transfer as two. Carry each transfer as one unit, through an asynchronous FIFO or a full handshake.
+
+**Resets.** The two sides have their own reset rules, and an asynchronous bridge usually has two reset domains:
+- **AXI** (IHI0022E A3.1.2): `ARESETn` may be asserted asynchronously but is deasserted synchronously with `ACLK`. During reset a master drives `ARVALID`, `AWVALID` and `WVALID` low, and a slave drives `RVALID` and `BVALID` low; the earliest a master may raise a VALID is a rising `ACLK` edge after `ARESETn` is high.
+- **AHB** (IHI0033B.b §7.1.2): `HRESETn` is asserted asynchronously and deasserted synchronously after a rising `HCLK` edge. During reset masters drive `HTRANS` IDLE and slaves drive `HREADYOUT` high.
+- **One side resets with transfers in flight.** The bridge must keep the live side protocol-legal. It cannot abort an AXI burst it has started (A3.4.1): it must still send the remaining W transfers (with all strobes low) and accept every R beat. Which responses it then gives, and what it reports, is a design policy to document and test.
+
+**Verifying CDC.** Simulation does not model metastability, so random clock ratios alone cannot prove a crossing safe. Use structural CDC analysis and, where the tool offers it, metastability injection (both **tool-dependent**), plus multi-clock simulation with several ratios and random phases, and reset tests per domain. CDC sign-off at SoC level is covered in [E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index).
+
+### Verifying a bridge: environment, checks and coverage
+
+A bridge environment reuses an agent from each side and adds the one thing neither has: a **predictor** that applies the bridge's translation rules.
+
+<ArchitectureDiagram
+  title="A bridge verification environment (AHB-to-AXI direction)"
+  caption="The AHB master agent drives stimulus; the AXI slave agent answers it with random READY delays and injected SLVERR or DECERR. Both monitors publish what they saw. The predictor turns AHB transfers into expected bytes, and the scoreboard compares them with the bytes the AXI monitor saw. A coverage subscriber samples both monitors. Each interface also carries its protocol checker."
+  nodes={[
+    { id: "env", label: "bridge_env", kind: "env", col: 0, row: 0, colSpan: 4, rowSpan: 2, container: true },
+    { id: "pred", label: "predictor", sublabel: "bridge rules", kind: "predictor", col: 1, row: 0 },
+    { id: "scb", label: "bridge_sb", kind: "scoreboard", col: 2, row: 0 },
+    { id: "ahbagt", label: "AHB master agent", sublabel: "active", kind: "agent", col: 0, row: 1 },
+    { id: "cov", label: "coverage", kind: "subscriber", col: 1, row: 1, colSpan: 2 },
+    { id: "axiagt", label: "AXI slave agent", sublabel: "reactive responder", kind: "agent", col: 3, row: 1 },
+    { id: "ahbif", label: "ahb_if", sublabel: "+ AHB checker", kind: "interface", col: 0, row: 2 },
+    { id: "dut", label: "AHB-to-AXI bridge", kind: "dut", col: 1, row: 2, colSpan: 2 },
+    { id: "axiif", label: "axi_if", sublabel: "+ AXI checker", kind: "interface", col: 3, row: 2 }
+  ]}
+  ports={[
+    { id: "ahbagt.ap", node: "ahbagt", side: "top", kind: "analysis_port", label: "ap" },
+    { id: "axiagt.ap", node: "axiagt", side: "top", kind: "analysis_port", label: "ap" },
+    { id: "pred.imp", node: "pred", side: "left", kind: "analysis_imp" },
+    { id: "scb.axi", node: "scb", side: "right", kind: "analysis_imp", label: "axi_export" }
+  ]}
+  edges={[
+    { from: "ahbagt.ap", to: "pred.imp", style: "data", label: "AHB beats", via: [[0, 0]] },
+    { from: "pred", to: "scb", style: "data", label: "expected bytes" },
+    { from: "axiagt.ap", to: "scb.axi", style: "data", label: "AXI bursts", via: [[3, 0]] },
+    { from: "ahbagt", to: "cov", style: "data" },
+    { from: "axiagt", to: "cov", style: "data" },
+    { from: "ahbagt", to: "ahbif", style: "structural" },
+    { from: "axiagt", to: "axiif", style: "structural" },
+    { from: "ahbif", to: "dut", style: "data", label: "AHB" },
+    { from: "dut", to: "axiif", style: "data", label: "AXI" }
+  ]}
+/>
+
+**The scoreboard compares bytes, not bursts.** A split, a downsize or a WRAP→INCR conversion changes the burst shape but never the bytes or their order. So the scoreboard should not predict the exact AXI bursts (that is the bridge's policy, checked separately). It should predict the byte stream: every AHB write beat becomes its bytes, every AXI W transfer becomes the bytes its strobes enable, and the two streams must match in order. The core, using two analysis imps declared with `` `uvm_analysis_imp_decl `` (uvm-core 2020.3.1, `src/macros/uvm_tlm_defines.svh`):
 
 ```systemverilog
-// Assume AHB master follows protocol
-assume property (@(posedge ACLK) disable iff (!ARESETn)
-  (HTRANS == NONSEQ) |-> (HSIZE <= 3'b010));  // Max 4-byte transfers
+// snippet: core of a bridge scoreboard (writes, AHB-to-AXI direction)
+// ahb_item: one completed AHB beat (haddr, hsize, hwrite, hwdata).
+// axi_wr_item: one AXI write burst rebuilt by the AXI monitor (awaddr, awsize,
+// wdata[$], wstrb[$]); this bridge emits INCR bursts only.
+`uvm_analysis_imp_decl(_ahb)
+`uvm_analysis_imp_decl(_axi)
 
-// Assume the AHB master obeys IHI0033B.b 3.5: incrementing bursts stay inside 1KB
-// (burst_start as in the AHB-side checker above)
-assume property (@(posedge HCLK) disable iff (!HRESETn)
-  HREADY && HTRANS == 2'b11 && !(HBURST inside {3'b010, 3'b100, 3'b110}) |->
-    HADDR[31:10] == burst_start[31:10]);
+class bridge_sb extends uvm_scoreboard;
+  `uvm_component_utils(bridge_sb)
 
-// Assume AXI slave eventually responds
-assume property (@(posedge ACLK) disable iff (!ARESETn)
-  AWVALID |-> s_eventually AWREADY);
+  localparam int BUS_BYTES = 4;  // both buses 32 bits in this example
+
+  uvm_analysis_imp_ahb #(ahb_item, bridge_sb)    ahb_export;
+  uvm_analysis_imp_axi #(axi_wr_item, bridge_sb) axi_export;
+
+  typedef struct { logic [31:0] addr; logic [7:0] data; } byte_t;
+  byte_t       exp_q[$];          // bytes the AHB master wrote, in order
+  int unsigned matches, mismatches;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    ahb_export = new("ahb_export", this);
+    axi_export = new("axi_export", this);
+  endfunction
+
+  // Predictor: each AHB write beat becomes its bytes, whatever the burst shape.
+  function void write_ahb(ahb_item t);
+    if (!t.hwrite) return;
+    for (int i = 0; i < (1 << t.hsize); i++) begin
+      logic [31:0] a = t.haddr + i;
+      exp_q.push_back('{addr: a, data: t.hwdata[8 * (a % BUS_BYTES) +: 8]});
+    end
+  endfunction
+
+  // Each AXI write burst: walk the INCR beat addresses and the enabled lanes.
+  function void write_axi(axi_wr_item t);
+    logic [31:0] aligned = (t.awaddr >> t.awsize) << t.awsize;
+    foreach (t.wdata[k]) begin
+      logic [31:0] beat = (k == 0) ? t.awaddr : aligned + (k << t.awsize);
+      logic [31:0] base = beat - (beat % BUS_BYTES);  // bus-aligned address
+      for (int lane = 0; lane < BUS_BYTES; lane++)
+        if (t.wstrb[k][lane]) compare_byte(base + lane, t.wdata[k][8 * lane +: 8]);
+    end
+  endfunction
+
+  function void compare_byte(logic [31:0] addr, logic [7:0] data);
+    byte_t e;
+    if (exp_q.size() == 0) begin
+      mismatches++;
+      `uvm_error("SCB", $sformatf("AXI wrote 0x%08h with no AHB byte pending", addr))
+      return;
+    end
+    e = exp_q.pop_front();
+    if (e.addr === addr && e.data === data) matches++;
+    else begin
+      mismatches++;
+      `uvm_error("SCB", $sformatf("expected 0x%08h=%02h, AXI wrote 0x%08h=%02h",
+                                  e.addr, e.data, addr, data))
+    end
+  endfunction
+
+  function void check_phase(uvm_phase phase);
+    if (exp_q.size() != 0)
+      `uvm_error("SCB", $sformatf("%0d AHB bytes never reached AXI", exp_q.size()))
+    `uvm_info("SCB", $sformatf("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+                               matches, mismatches, exp_q.size()), UVM_NONE)
+  endfunction
+endclass
 ```
 
----
+Responses are checked beside the bytes, against the documented policy: for a non-posted bridge, the last AHB beat of a write ends with ERROR exactly when some `BRESP` of its AXI bursts was SLVERR or DECERR; for a posted bridge, it always ends with OKAY and the error register records the failure. Reads add an ordering check: the value the AHB master reads must be the one the reference memory holds after every write the master saw complete.
 
-## 7. Common Bridge Bugs
+**Checks on each side.** Bind the AHB checker from [B-AHB-3](/curriculum/T3_Advanced/B-AHB-3_AHB_Verification/index) on the AHB port (the two-cycle ERROR, OKAY in waits, the 1KB rule as an input check) and the AXI checker from [B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index) on the AXI port (stable payload while VALID waits, `WLAST` on transfer `AxLEN + 1`, the 4KB rule from [B-AXI-2](/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index), and `WVALID` not gated by `AWREADY`). Tag each check **[Protocol]** when a specification rule forces it and **[Policy]** when it is this bridge's choice (posting, greedy splitting), so a failure tells the reader which document to open.
 
-### Bug 1: Off-by-One in Burst Splitting
+**Formal properties, in their correct forms.** Two properties that every bridge should carry, written for both simulation and formal:
 
-In the AXI-to-AHB direction, the bridge calculates 3 transfers to the 1KB boundary but issues 4, so the AHB burst crosses 1KB. **Root cause:** using `>=` instead of `>` in the boundary comparison, or computing the distance from the unaligned start address instead of the aligned one.
+```systemverilog
+// snippet: bridge properties; the AHB side is clocked by HCLK, the AXI side by ACLK
+function automatic bit crosses_4kb(logic [31:0] addr, logic [7:0] len, logic [2:0] size);
+  logic [31:0] aligned = (addr >> size) << size;   // INCR: start from the aligned address
+  return 32'(aligned[11:0]) + ((32'(len) + 1) << size) > 32'h1000;
+endfunction
 
-### Bug 2: Write Data Misalignment
+// [Protocol IHI0022E A3.4.1] no AXI INCR burst crosses 4KB (a safety net here)
+a_aw_no_4kb: assert property (@(posedge ACLK) disable iff (!ARESETn)
+  AWVALID && AWBURST == 2'b01 |-> !crosses_4kb(AWADDR, AWLEN, AWSIZE));
+a_ar_no_4kb: assert property (@(posedge ACLK) disable iff (!ARESETn)
+  ARVALID && ARBURST == 2'b01 |-> !crosses_4kb(ARADDR, ARLEN, ARSIZE));
 
-When splitting a burst, the bridge must ensure the `WSTRB` for the first beat of the second AXI burst is correct. If the original AHB transfer was unaligned, the strobe mask changes at the split point.
+// [Bridge obligation] the data phase of every transfer the bridge accepts ends
+a_ahb_liveness: assert property (@(posedge HCLK) disable iff (!HRESETn)
+  HSEL && HREADY && HTRANS[1] |=> s_eventually HREADYOUT);
+```
 
-### Bug 3: Response Ordering on Split Bursts
+`HSEL && HREADY && HTRANS[1]` is true exactly at the edge where the bridge accepts a transfer, `|=>` starts the check one edge later, in the transfer's data phase, and `s_eventually` (IEEE 1800-2023 §16.12.13) demands that `HREADYOUT` rise at some later edge; a strong property that is still pending when simulation ends fails. Compare the tempting version:
 
-If an AHB burst is split into two AXI bursts, the bridge receives two B-channel responses. It must wait for **both** before signaling completion to AHB. A common bug is returning OKAY after the first response, then receiving SLVERR on the second.
+<TimingDiagram
+  title="A liveness property that passes on a hang"
+  caption="The bridge accepts a NONSEQ at edge 1 and then never raises HREADYOUT. The property 'HTRANS == NONSEQ |-> s_eventually HREADY' is satisfied at edge 1 itself by the HREADY that accepted the transfer, so it passes. The corrected property starts at edge 2 and is still pending at the end, so it fails at end of test."
+  edges={6}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HSEL", kind: "bit", values: [0, 1, 1, 1, 1, 1] },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ", "IDLE", "IDLE", "IDLE", "IDLE"] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 0, 0, 0, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "pass", label: "old property: antecedent and consequent both true here, so it passes" },
+    { edge: 5, tone: "pending", label: "corrected property: still waiting for HREADYOUT; fails at end of test" }
+  ]}
+/>
 
-### Bug 4: WRAP-to-INCR Conversion Error
+`|->` starts the consequent at the antecedent's end point (§16.12.7), and `s_eventually` holds if its operand holds "at a current or future clock tick" (§16.12.13). The accepting `HREADY` is that current tick, so the old property never looks at the data phase. In this single-slave picture `HREADY` equals the bridge's `HREADYOUT`.
 
-When downsizing turns a WRAP16 into more than 16 AXI transfers, the bridge must issue two INCR bursts. A common bug starts the second burst at the wrong address (it must be the lower wrap boundary) or gives it the wrong length (the bytes between the wrap boundary and the start address).
+For a formal proof the environment needs **assumptions** (`assume property`, §16.14.2): the AHB master rules on the AHB port (best taken from an AHB master assertion IP used as assumptions, including the 1KB rule) and **fairness** on the AXI side (the slave eventually raises `AWREADY`, `WREADY` and `ARREADY`, and eventually sends `BVALID` after the last W and `RVALID` after AR). Without fairness the tool proves nothing about liveness, because a slave that never answers is a legal counterexample. [Expert: formal verification of a bridge that converges](#expert-formal-verification-of-a-bridge-that-converges) covers the rest.
 
-### Bug 5: Outstanding Transaction Overflow
+**Coverage.** Cover the translation cases, not just the traffic: direction × burst type (SINGLE, INCR4/8/16, WRAP4/8/16, undefined INCR, AXI FIXED and WRAP2) × length class (1, 2 to 16, 17 to 256, more than 256) × size × boundary relation (inside, ends exactly at, crosses 1KB) × alignment × response (OKAY, SLVERR, DECERR, and their beat position) × posting × backpressure on each AXI channel. Every assertion's antecedent needs a `cover property` too, or a clean run may mean nothing was checked.
 
-An AXI-to-AHB bridge accepts multiple outstanding AXI transactions (different IDs) but AHB can only process one at a time. If the bridge's internal queue overflows, it must backpressure the AXI master by deasserting AWREADY/ARREADY — but must do so without creating a channel-dependency deadlock.
+**The plan, as scenario → check → coverage:**
 
----
+| Scenario | Caught by | Coverage bin |
+|---|---|---|
+| AXI INCR that ends exactly at, or crosses, 1KB (AXI→AHB) | `a_ahb_no_1kb_cross` on the bridge's AHB master port; byte scoreboard | boundary: inside, ends at, crosses |
+| Unaligned AXI start; sparse and all-zero `WSTRB` | AHB alignment check; byte scoreboard | alignment × strobe pattern |
+| AXI FIXED, WRAP2, WRAP4/8/16 | byte scoreboard (order) | burst type × length |
+| Undefined-length AHB INCR longer than 256 transfers of 1 or 2 bytes | per-burst `WLAST` count; `a_aw_no_4kb` | length class |
+| WRAP through a downsizing bridge, starting at and above the wrap boundary | byte scoreboard (order) | wrap start: at the boundary, above it |
+| SLVERR or DECERR on read beat k | two-cycle ERROR check; response policy | response × beat position |
+| BRESP error on the second of two split bursts | response-merge policy check | split index × response |
+| AHB ERROR on transfer k of an AXI write (AXI→AHB) | one `BRESP` after the last W; all W accepted | ERROR position |
+| Posted write, then a read of an overlapping address, with random AXI latency | read check against the reference memory | overlap × posting |
+| AXI slave that waits for `WVALID` before `AWREADY`; random READY on every channel | `a_ahb_liveness`; test timeout | backpressure per channel |
+| An AXI master that fills an AXI-to-AHB bridge's queue | READY backpressure; liveness | queue full |
+| Clock ratios 1:1, 2:1, 3:1, 7:3 with random phase (async bridge) | scoreboard; liveness | ratio × direction |
+| Reset of one side mid-burst | reset rules (A3.1.2, §7.1.2); nothing pending after recovery | reset × in flight |
+| Illegal AHB input that crosses 1KB (negative test) | the AHB input check must fire, as an expected error | – |
 
-## 8. Verification Test Plan for Bridges
+### Common bridge bugs: symptom, cause, checker, fix
 
-A comprehensive bridge verification plan must cover:
+| Bug | Symptom in the log or waveform | Cause | Checker that catches it | Fix |
+|---|---|---|---|---|
+| Split off by one (AXI→AHB) | `a_ahb_no_1kb_cross` fires at the SEQ to 0x0400 of an AXI INCR16 from 0x03F0 | Room computed as `(next_1kb - a) / nbytes + 1`, or `<=` where `<` belongs: 5 transfers from 0x03F0 instead of 4 | The AHB 1KB checker on the bridge's AHB master port; the Make It Work sweep | Room is `(next_1kb - a) / nbytes` with `a` aligned; keep the `+ 1` mutant in the regression |
+| `AWLEN` wraps (AHB→AXI) | `AXI AW addr=0x00000400 AWLEN=43 (44 transfers)` then `WLAST on transfer 300` | No 256-transfer cap: 300 − 1 = 299 wraps to 43 in 8 bits | Per-burst W count against `AWLEN + 1` (the lab's TODO 2); a total-count check misses it | Cap each AXI burst at 256 transfers (A3.4.1) |
+| Write data on the wrong burst or lanes | `WLAST` only on the last transfer of the whole request; or byte mismatches that start at a split point | W transfers counted against the request instead of each AW; narrow-transfer strobes taken from the burst start, not from each transfer's address | Per-burst `WLAST` check; byte scoreboard | One beat counter per AXI burst; lanes from each transfer's address (A3.4.3) |
+| Responses merged wrongly on a split | AHB sees OKAY although the second AXI burst's `BRESP` was SLVERR | The bridge completed the AHB write after the first `BRESP` | Response-policy check in the scoreboard | Wait for every `BRESP` of the split and combine them |
+| WRAP→INCR conversion | Byte-order mismatch on a downsized WRAP; second INCR at the top of the block | Second burst started at the wrong address, or with the wrong length | Byte scoreboard (order) | First INCR from the start to the top of the block; second from the wrap boundary (lowest address) for `(start − boundary) / size` transfers |
+| Outstanding overflow or channel deadlock | Simulation hangs; `AWVALID` high, `WVALID` low, no progress | Queue overflow without READY backpressure, or W gated by `AWREADY` (A3.3.1) | `a_ahb_liveness`, a timeout, a slave that waits for `WVALID` | Backpressure with `AWREADY`/`ARREADY` only when full; never gate VALID on READY ([B-AXI-5](/curriculum/T3_Advanced/B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index)) |
+| Posted-write hazard | Read returns old data only when AXI write latency is long | Read issued before the overlapping posted write's `BRESP` (A5.3.4) | Read check against the reference memory, with random AXI latency | Address hazard check against outstanding posted writes, or non-posted for that region |
 
-### Functional Scenarios
-- Single-beat read/write (all sizes: byte, halfword, word)
-- INCR bursts (all legal lengths)
-- WRAP4, WRAP8, WRAP16 bursts
-- AXI bursts that end exactly at a 1KB boundary, and ones that cross it (AXI-to-AHB split)
-- Undefined-length AHB INCR bursts longer than 256 transfers
-- WRAP bursts through a downsizing bridge
-- Negative test: an AHB master that starts an incrementing burst across 1KB must trip the AHB-side checker
-- Back-to-back bursts with no idle cycles
-- Interleaved read and write traffic
+### Recap
 
-### Error Injection
-- AXI slave returns SLVERR on various beat positions
-- AXI slave returns DECERR
-- AXI slave stalls READY for extended periods
-- AHB master issues bursts with maximum outstanding depth
+- **Split where the target protocol forces it; check the input against the source protocol's rules.** AHB→AXI: the 256 limit (only for 1- or 2-byte transfers), width conversion, and the unknown INCR length; never 4KB. AXI→AHB: 1KB, plus reshaping for FIXED, WRAP2, unaligned starts and strobes.
+- **Responses:** AXI has one `BRESP` per write and an `RRESP` per read beat; AHB's ERROR is always two cycles. Posting hides write errors and breaks read-after-write order unless the bridge checks hazards.
+- **Deadlock:** as an AXI master, never make `WVALID` wait for `AWREADY`.
+- **Testbench:** the predictor uses the same rules, the scoreboard compares bytes rather than bursts, the checkers on both sides are tagged [Protocol] or [Policy], and the liveness property starts in the data phase.
 
-### CDC Scenarios (for async bridges)
-- Asymmetric clock ratios (2:1, 3:1, 7:3)
-- Clock jitter injection
-- Independent reset assertion on each domain
-- Reset during mid-burst transfer
+## Make It Work
 
-### Formal Properties
-- Liveness: every accepted transaction eventually completes
-- Safety: no 4KB boundary violations on the AXI side, no 1KB crossings on the AHB side
-- Data integrity: bytes in == bytes out
-- No deadlock: bridge always makes forward progress
+### Worked example: split an AXI INCR at 1KB, and check every split
 
----
+This is the reference model an AXI-to-AHB bridge's predictor needs, as a complete non-UVM unit. `split_axi_incr` turns one AXI INCR burst into the AHB bursts the bridge should issue; `check_pieces` applies every AHB rule to the result; the `initial` block prints two worked cases and then sweeps every word-aligned burst in one 4KB page.
+
+```systemverilog
+// compile
+// AXI-to-AHB splitter model with a self-checking sweep.
+`timescale 1ns/1ps
+module tb_top;
+
+  // HBURST encodings, IHI0033B.b Table 3-3.
+  localparam logic [2:0] SINGLE = 3'b000, INCR  = 3'b001,
+                         INCR4  = 3'b011, INCR8 = 3'b101, INCR16 = 3'b111;
+
+  typedef struct {
+    logic [31:0] haddr;   // start address of this AHB burst
+    logic [2:0]  hburst;
+    int unsigned beats;   // NONSEQ + SEQ transfers
+    int unsigned nbytes;  // bytes per transfer (2**HSIZE)
+  } ahb_piece_t;
+
+  function automatic logic [2:0] hburst_for(int unsigned beats);
+    case (beats)
+      1:       return SINGLE;
+      4:       return INCR4;
+      8:       return INCR8;
+      16:      return INCR16;
+      default: return INCR;   // undefined length; INCR4/8/16 + SINGLEs is another policy
+    endcase
+  endfunction
+
+  function automatic string hburst_name(logic [2:0] hb);
+    case (hb)
+      SINGLE:  return "SINGLE";
+      INCR4:   return "INCR4";
+      INCR8:   return "INCR8";
+      INCR16:  return "INCR16";
+      default: return "INCR";
+    endcase
+  endfunction
+
+  // Split one AXI INCR burst (AxADDR, len transfers of nbytes) into AHB bursts.
+  // AXI: only the first transfer may be unaligned (IHI0022E A3.4.1, A3.4.3).
+  // AHB: every transfer aligned, no incrementing burst across 1KB (IHI0033B.b 3.5).
+  function automatic void split_axi_incr(input logic [31:0] axaddr,
+                                         input int unsigned len,
+                                         input int unsigned nbytes,
+                                         ref ahb_piece_t q[$]);
+    logic [31:0] a, aligned, last, room;
+    int unsigned left, take, sz;
+    q.delete();
+    aligned = axaddr & ~32'(nbytes - 1);
+    a       = axaddr;
+    left    = len;
+    if (axaddr != aligned) begin
+      // Unaligned first transfer: send its bytes as aligned SINGLEs.
+      last = aligned + nbytes - 1;
+      while (a <= last) begin
+        sz = nbytes;
+        while (sz > 1 && ((a % sz) != 0 || a + sz - 1 > last)) sz = sz / 2;
+        q.push_back('{haddr: a, hburst: SINGLE, beats: 1, nbytes: sz});
+        a += sz;
+      end
+      left--;
+    end
+    while (left > 0) begin
+      room = ((a | 32'h3FF) + 1 - a) / nbytes;  // whole transfers left in this 1KB region
+      take = (left < room) ? left : room;
+      q.push_back('{haddr: a, hburst: hburst_for(take), beats: take, nbytes: nbytes});
+      a    += take * nbytes;
+      left -= take;
+    end
+  endfunction
+
+  // Count rule violations in q for the AXI burst it came from.
+  function automatic int unsigned check_pieces(input logic [31:0] axaddr,
+                                               input int unsigned len,
+                                               input int unsigned nbytes,
+                                               const ref ahb_piece_t q[$]);
+    int unsigned errs;
+    logic [31:0] next_addr, last_byte;
+    errs      = 0;
+    next_addr = axaddr;
+    foreach (q[i]) begin
+      last_byte = q[i].haddr + q[i].beats * q[i].nbytes - 1;
+      if (q[i].haddr != next_addr)                    errs++;  // gap or overlap
+      if (q[i].haddr % q[i].nbytes != 0)              errs++;  // AHB alignment
+      if (last_byte[31:10] != q[i].haddr[31:10])      errs++;  // 1KB rule
+      case (q[i].hburst)                                       // fixed lengths
+        SINGLE: if (q[i].beats != 1)  errs++;
+        INCR4:  if (q[i].beats != 4)  errs++;
+        INCR8:  if (q[i].beats != 8)  errs++;
+        INCR16: if (q[i].beats != 16) errs++;
+        default: ;
+      endcase
+      next_addr = q[i].haddr + q[i].beats * q[i].nbytes;
+    end
+    // Every byte of the AXI burst sent exactly once.
+    if (next_addr != (axaddr & ~32'(nbytes - 1)) + len * nbytes) errs++;
+    return errs;
+  endfunction
+
+  task automatic show(input logic [31:0] axaddr, input int unsigned len,
+                      input int unsigned nbytes);
+    ahb_piece_t q[$];
+    split_axi_incr(axaddr, len, nbytes, q);
+    $display("AXI INCR, %0d x %0d B at 0x%08h -> %0d AHB bursts",
+             len, nbytes, axaddr, q.size());
+    foreach (q[i])
+      $display("  AHB %0d: HADDR=0x%08h HBURST=%s HSIZE=%0d B transfers=%0d",
+               i + 1, q[i].haddr, hburst_name(q[i].hburst), q[i].nbytes, q[i].beats);
+  endtask
+
+  initial begin
+    ahb_piece_t  q[$];
+    int unsigned pass_n, fail_n, most;
+    show(32'h0000_03F0, 16, 4);   // legal AXI, crosses 0x0400
+    show(32'h0000_1001, 4, 4);    // unaligned start
+
+    pass_n = 0;
+    fail_n = 0;
+    most   = 0;
+    for (int unsigned s = 0; s < 4096; s += 4)
+      for (int unsigned n = 1; n <= 256 && s + n * 4 <= 4096; n++) begin
+        split_axi_incr(s, n, 4, q);
+        if (check_pieces(s, n, 4, q) == 0) pass_n++;
+        else                               fail_n++;
+        if (q.size() > most) most = q.size();
+      end
+    $display("Sweep: all word-aligned AXI INCRs of 1..256 transfers in one 4KB page");
+    $display("  most AHB bursts for one AXI burst: %0d", most);
+    $display("PASS=%0d FAIL=%0d", pass_n, fail_n);
+    $finish;
+  end
+
+endmodule
+```
+
+### Run it
+
+Compile and run the single file with any simulator that supports IEEE 1800-2023 queues, structures and `ref` arguments, with `tb_top` as the top module. Support for these constructs in open-source simulators varies by version (**tool-dependent**). The output below has not come from a simulator run: it was produced by an independent Python model of the same algorithm, and it agrees with the explorer's tested bridge model on the two printed cases.
+
+### Expected output
+
+```text
+AXI INCR, 16 x 4 B at 0x000003f0 -> 2 AHB bursts
+  AHB 1: HADDR=0x000003f0 HBURST=INCR4 HSIZE=4 B transfers=4
+  AHB 2: HADDR=0x00000400 HBURST=INCR HSIZE=4 B transfers=12
+AXI INCR, 4 x 4 B at 0x00001001 -> 3 AHB bursts
+  AHB 1: HADDR=0x00001001 HBURST=SINGLE HSIZE=1 B transfers=1
+  AHB 2: HADDR=0x00001002 HBURST=SINGLE HSIZE=2 B transfers=1
+  AHB 3: HADDR=0x00001004 HBURST=INCR HSIZE=4 B transfers=3
+Sweep: all word-aligned AXI INCRs of 1..256 transfers in one 4KB page
+  most AHB bursts for one AXI burst: 2
+PASS=229504 FAIL=0
+```
+
+The sweep covers 229 504 bursts, and none needs more than 2 AHB bursts: an aligned INCR of words spans at most 1KB, so it crosses at most one 1KB boundary.
+
+### Prove it can fail
+
+A check that never fails proves nothing. Change the room computation to `room = ((a | 32'h3FF) + 1 - a) / nbytes + 1;` (the off-by-one bug from the table above) and rerun. The 0x03F0 case now prints a 5-transfer first burst that ends at 0x0403, and the sweep reports a non-zero `FAIL` count (97 920 in the Python model), from the 1KB-rule and contiguity checks.
+
+### How to use it in a bridge testbench
+
+1. Make `split_axi_incr` the predictor's split model for the AXI-to-AHB direction, so the scoreboard knows which AHB bursts to expect if you also check the split policy.
+2. Bind `a_ahb_no_1kb_cross` on the bridge's AHB **master** port: there it checks the bridge, not the stimulus.
+3. Add `cover property` statements, or covergroup bins, for each piece type (SINGLE, INCR4/8/16, INCR) and for the 1-piece and 2-piece cases, so you know the sweep's cases also occur in the real bench.
+4. Keep the off-by-one mutant, and an unaligned-start mutant that uses `axaddr` instead of `aligned`, as regression tests of the checker itself.
+5. Extend the model with FIXED and WRAP (see the kata below) before you trust it for those burst types.
+
+**Checklist before moving on:**
+- [ ] No AHB burst the model produces crosses 1KB, and the sweep prints `FAIL=0`.
+- [ ] Every byte of the AXI burst appears exactly once, in order.
+- [ ] The unaligned first transfer goes out as aligned SINGLEs.
+- [ ] The INCR versus INCR4/8/16 choice is documented as policy, and the byte scoreboard does not depend on it.
+- [ ] The off-by-one mutant makes the sweep fail.
+
+## Push Further
+
+### Expert: undefined-length INCR, the bridge cannot know the length
+
+`HBURST` = INCR carries no length (IHI0033B.b Table 3-3), and the master may end it after a BUSY with NONSEQ or IDLE (§3.5.1). A bridge has four options, each with a cost:
+- **Single-transfer AXI bursts** for every INCR transfer: always correct, slowest, and legal for any memory type.
+- **Buffer writes** until the burst ends, the buffer fills, the 1KB region ends or 256 transfers are reached, then send one AXI burst: efficient, but it adds latency, and with a non-posted policy it holds `HREADYOUT` low longer.
+- **Speculative read bursts** (fetch, say, a cache line): allowed only when the transfer is Modifiable or Normal memory. IHI0022E A4.3.1 allows a Modifiable read to "fetch more data than required", and IHI0033B.b §3.8.5 says "Reads can fetch more data than required" for Normal memory. For Device memory "reads must not be prefetched or performed speculatively" (§3.8.4), and A3.4.1 warns that discarding read data from a read-sensitive device such as a FIFO loses data.
+- **Fixed chunks** (for example AXI INCR4 at a time), trimming the last chunk's surplus with all strobes low on writes (A3.4.1). Reads still face the speculation rule above.
+
+The explorer assumes the bridge knows the length (its assumption 2), which is true only for the buffering policy. **Interview angle:** "Your bridge sees an AHB INCR read to a peripheral FIFO. Can it issue an AXI INCR8 to prefetch?" (Not if the transfer is Device or Non-modifiable: §3.8.4 forbids speculative reads, and a FIFO loses the extra data. It must issue reads it is sure the master wants.)
+
+### Expert: early termination on AHB, none on AXI
+
+An AHB master may cancel the rest of a burst after an ERROR (IHI0033B.b §3.5.2), and a multi-layer interconnect may also terminate a burst at a slave port; "slaves must be designed to work correctly if the burst is not completed" (§3.5.2). AXI has the opposite rule: "No component can terminate a burst early" (IHI0022E A3.4.1). So once an AHB-to-AXI bridge has issued `AWLEN` or `ARLEN`:
+- for a write it must still send every announced W transfer, with all strobes low for the ones it has no data for ("the master can disable further writing by deasserting all the write strobes … the master must complete the remaining transfers");
+- for a read it must accept every R beat and drop the unwanted ones ("the master can discard read data, but it must complete all transfers").
+
+This is one more reason buffering policies matter: a bridge that issued a long `AWLEN` early pays for a cancelled AHB burst with padding transfers. **Interview angle:** "The AHB master cancels after beat 2 of an INCR8 write that the bridge already announced as AWLEN = 7. What does the bridge send?" (Six more W transfers with `WSTRB` all zero, `WLAST` on the eighth.)
+
+### Expert: what a bridge may change, by memory type
+
+Both protocols restrict how a transfer may be reshaped, by memory type:
+- **AXI** (IHI0022E A4.3.1): a Non-modifiable transaction (`AxCACHE[1]` = 0) "must not be split into multiple transactions or merged", with two exceptions: INCR bursts longer than 16 may be split, and downsizing "when downsizing to a bus width narrower than that required by the transaction size" forces a modification (Note). A Modifiable transaction may be split, merged, and widened with strobes, but no modification may move an access to a different 4KB space or split a single-copy-atomicity access (an access the system guarantees to perform as one indivisible update, A7.1).
+- **AHB5** (IHI0033B.b §3.8.4): for Device memory a burst "is permitted to be broken into a number of smaller bursts" if the total number of NONSEQ and SEQ transfers is unchanged, `HSIZE` must not change, and writes must not be merged. Normal memory (§3.8.5) allows `HBURST` and `HSIZE` to change.
+
+Two consequences. An AXI-to-AHB bridge must split a Non-modifiable AXI INCR16 that crosses 1KB, because AHB forbids the crossing; it keeps every transfer and its size, which is what §3.8.4 permits on the AHB side (this reading is the author's, combining the two rules). And a bridge may merge AHB SINGLEs into one AXI burst only for Modifiable transfers. **Interview angle:** "May your AXI-to-AHB bridge turn a Device AXI INCR8 of words into one AHB INCR4 of doublewords on a 64-bit AHB bus?" (No: for Device memory, `HSIZE` must not change, §3.8.4.)
+
+### Expert: posted writes, ordering and latency
+
+- **AHB requires the order the bridge must keep:** same master to the same slave for Device memory (§3.8.4); overlapping addresses for Normal memory (§3.8.5).
+- **AXI will not keep it before `BRESP`:** A5.3.4 says reads and writes "can complete in any order, even if the ARID value of a read transaction is the same as the AWID value of a write transaction", and completion means `BRESP`. But A4.4.1 of the same issue says that for Device memory "all Non-modifiable read and write transactions … from the same ID to the same slave must remain ordered", and for Normal memory same-ID transactions to overlapping addresses "must remain ordered". The two sections do not agree. Design to the stricter reading: wait for `BRESP`, or address-check the outstanding writes, as A5.3.4's Note suggests. Whether later issues resolve this is not verified here.
+- **Posting in the AXI-to-AHB direction:** the bridge, now an AXI slave, may send an early `BRESP` only for Bufferable types; Device Non-bufferable and Normal Non-cacheable Non-bufferable writes need the response "obtained from the final destination" (A4.4.1). The AHB side then decides nothing: the bridge's posting decision follows the AXI-side memory type.
+- **Latency budget:** a non-posted AHB write waits for the whole AXI round trip, often far beyond the 16-wait-state recommendation (§5.1.2 Note). Posted writes need a buffer deep enough for the AHB burst rate times the AXI round trip.
+
+**Interview angle:** "Your posted bridge uses the same AXI ID for reads and writes. Is the stale-read bug impossible?" (No. A5.3.4 explicitly allows a same-ID read to complete first; A4.4.1's same-ID ordering text conflicts with it, so do not rely on it. Use a hazard check.)
+
+### Expert: strobes, alignment and narrow transfers
+
+IHI0033B.b has no write strobes at all, and every AHB transfer is aligned to its size (§3.5). IHI0033C adds an optional `HWSTRB`; a bridge to such an interface can pass sparse strobes through directly, but a bridge to an Issue B.b slave cannot. So an AXI-to-AHB bridge for Issue B.b must turn each AXI transfer's strobe pattern into whole aligned AHB transfers. `WSTRB` = `4'b0110` on a word at 0x1000 enables bytes 0x1001 and 0x1002; they cannot go out as one halfword, because 0x1001 is not halfword-aligned, so they become two byte transfers. `WSTRB` = `4'b1100` becomes one halfword at 0x1002. An all-zero strobe transfer is skipped. In the other direction, a narrow AHB transfer becomes a narrow AXI transfer whose strobes select the lanes of *that transfer's* address (IHI0022E A3.4.3): a byte at 0x0401 on a 32-bit bus uses `WSTRB` = `4'b0010`. **Interview angle:** "Can an AXI-to-AHB bridge always preserve single-copy atomicity for a sparse-strobe write?" (Not when it must split the write into several AHB transfers; flag such writes as a policy decision, and avoid them for Device memory.)
+
+### Expert: exclusive and locked accesses across a bridge
+
+- **AXI to AHB-Lite:** AHB-Lite has no exclusive support, so the bridge answers an exclusive access with OKAY, which tells the master it failed or is not supported. "An exclusive write to a slave that does not support exclusive access always updates the memory location" (IHI0022E A7.2.5), so software that ignores the response corrupts its lock.
+- **AXI to AHB5 with Exclusive_Transfers:** AHB5 exclusives "must have a single data transfer" and be SINGLE or INCR (IHI0033B.b §8.4), while an AXI exclusive may be a burst of up to 16 transfers and 128 bytes (A7.2.4). A Non-modifiable AXI exclusive may change `AxSIZE` and `AxLEN` if the total bytes stay the same (A4.3.1), but an AXI exclusive wider than one AHB transfer still cannot become one AHB5 exclusive. `HMASTER` must keep each AXI master's exclusive thread distinct (§8.3).
+- **IDs:** "The ARID value of the exclusive read must match the AWID value of the exclusive write" (A7.2.4), so an AHB5-to-AXI bridge must map each `HMASTER` thread to a stable ID.
+- **Locked transfers:** AHB `HMASTLOCK` (§3.3) has no AXI4 equivalent: "AXI4 does not support locked transactions" (A7.3). An AHB-to-AXI bridge cannot pass a locked sequence on as one.
+
+### Expert: AXI ID assignment in an AHB-to-AXI bridge
+
+AHB has no IDs, so the bridge chooses `AWID` and `ARID`, and the choice decides what AXI orders for it:
+- **One fixed ID for everything:** same-ID writes complete in order and same-ID reads return in order (A5.3), so responses arrive in issue order, which makes the response mapper simple. Reads and writes are still unordered against each other (A5.3.4).
+- **Separate IDs for reads and writes:** the same, but makes the read/write independence explicit; the hazard check is mandatory.
+- **One ID per `HMASTER`** (AHB5 multi-master): keeps exclusive pairs and per-master order, at the cost of a reorder buffer if responses for different IDs return out of order.
+
+Interconnects then append their own bits to the IDs (A5.3.5), so the bridge must accept any returned `BID` and `RID` width the system uses. **Interview angle:** "Why can a bridge with one fixed ID still deliver a stale read?" (Same ID orders writes among themselves and reads among themselves, not a read against a write, A5.3.4.)
+
+### Expert: reset domain crossing in a bridge
+
+An asynchronous bridge has two reset domains, and resets that are asserted asynchronously but released synchronously to each side's clock (A3.1.2, §7.1.2). Three policies need explicit design and tests:
+- **Release order:** each side's FIFO pointers must be reset together, or one side may see a stale pointer as data.
+- **One side resets with transfers in flight:** the live AXI side must still complete any burst already announced (A3.4.1), with strobes low or read data dropped, and the bridge must decide what the reset AHB side sees when it comes back (usually nothing).
+- **Responses owed across the reset:** a posted write whose `BRESP` arrives after the AHB side reset can only be logged.
+
+Reset domain crossing analysis tools exist alongside CDC tools (**tool-dependent**). In simulation, assert each reset in the middle of every kind of burst and check that nothing is pending afterwards. [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) builds reset-aware components.
+
+### Expert: formal verification of a bridge that converges
+
+A bridge suits formal well, because its rules are local and precise, but a naive setup proves too little or never finishes:
+- **Assume-guarantee:** assume the protocol on the input side and the slave behaviour on the output side (`assume property`, IEEE 1800-2023 §16.14.2); assert the protocol on the output side and the slave obligations on the input side (§16.14.1). Use complete assertion IP, not a hand-picked subset.
+- **Fairness for liveness:** assume every AXI READY eventually rises, `BVALID` eventually follows the last W, and `RVALID` eventually follows AR. Otherwise a slave that never answers is a counterexample to every liveness property.
+- **Over-constraint hides bugs:** an assumption such as `HSIZE <= 3'b010` ("transfers are at most a word") looks harmless, but it removes the 64-bit WRAP16 downsizing case, so the WRAP→INCR bug can never be reached. Every assumption needs a `cover property` (§16.14.3) on the behaviour it might exclude.
+- **Data integrity with a tracked byte:** let the tool choose a symbolic address and data byte, written once on the AHB side; assert that the AXI side writes that byte to that address, exactly once and in order. That proves the transformation for every address, unlike a byte count, which passes with wrong data or a wrong address.
+- **Convergence:** deep buffers, 256-transfer counters and asynchronous FIFOs make full proofs expensive. Reduce parameters (a shallower buffer, a smaller maximum length), prove bounded properties, and say which. How far a given engine gets is **tool-dependent**.
+
+Formal remains a complement to simulation with a reference model: it proves the properties you wrote, under the assumptions you wrote. Methodology is in [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index).
+
+### Expert: performance and sizing
+
+These are engineering trade-offs, not specification rules:
+- **Write buffer depth** sets how long posted writes can run ahead of the AXI side; size it from the AHB burst rate and the worst AXI write round trip.
+- **Outstanding queue** in an AXI-to-AHB bridge: AHB processes one transfer at a time, so a deep queue only absorbs bursts of AXI traffic; it never raises throughput above the AHB rate.
+- **Read prefetch** for Normal memory saves AHB wait states but wastes AXI bandwidth when the master stops early.
+- **Measure, do not guess:** use the latency and bandwidth method of [B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index) on both ports, and report AHB wait states per transfer against the §5.1.2 recommendation.
+
+### Interview angles
+
+Attempt each question before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: where does the 4KB split go?"
+  question="A colleague's AHB-to-AXI bridge contains a 4KB-boundary splitter. It has never fired in a year of regressions. Should you remove it, keep it, or add coverage for it?"
+  options={[
+    { text: "Remove it from the bridge and keep an AXI-side 4KB assertion as a safety net. On legal AHB input it cannot fire: a legal incrementing burst never crosses 1KB, so it never crosses 4KB.", correct: true, feedback: "Right. The splitter is dead logic. Keep the assertion on the AXI port, plus an AHB-side 1KB input check that flags illegal stimulus." },
+    { text: "Add coverage until it fires: a year without a hit means the stimulus is weak.", correct: false, feedback: "Only illegal AHB stimulus can reach it (§3.5). Coverage would chase an impossible bin." },
+    { text: "Keep it: AHB undefined-length INCR bursts can cross 4KB.", correct: false, feedback: "The 1KB rule applies to every incrementing burst, including undefined-length INCR (§3.5)." },
+    { text: "Move it to 1KB: the bridge must split AHB bursts at 1KB.", correct: false, feedback: "That is the AXI-to-AHB direction. AHB input already respects 1KB; AXI output only needs 4KB." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: the green scoreboard and the stale read"
+  question="Your posted AHB-to-AXI bridge passes every regression with a zero-latency AXI memory model. In the SoC, software occasionally reads a value it has just overwritten. What do you change in the testbench first?"
+  options={[
+    { text: "Give the AXI memory model random write latency and reordering of reads against writes, and check reads against a reference memory that follows the AHB master's view of completion.", correct: true, feedback: "Right. With zero latency the read can never overtake the write. A5.3.4 allows it, so the bench must produce it." },
+    { text: "Add an assertion that ARID differs from AWID.", correct: false, feedback: "IDs do not order reads against writes (A5.3.4). The bug is the missing hazard check." },
+    { text: "Increase the number of random seeds.", correct: false, feedback: "With a zero-latency slave no seed can reorder the read and the write." },
+    { text: "Switch the scoreboard to compare bursts instead of bytes.", correct: false, feedback: "Burst shape is unrelated; the data value is stale." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "A CPU issues a legal AXI INCR burst of 16 words (4 bytes each) at 0x03F0 through an AXI-to-AHB bridge. What must the bridge do?",
+    answers: [
+      { text: "Issue one AHB INCR16 at 0x03F0.", correct: false, feedback: "That AHB burst would cross the 1KB boundary at 0x0400, which an AHB master must never do (IHI0033B.b §3.5). A legal AXI burst is not automatically a legal AHB burst." },
+      { text: "Split at 0x0400: an INCR4 from 0x03F0, then the remaining 12 transfers from 0x0400.", correct: true, feedback: "Right. The AXI burst (0x03F0 to 0x042F) is legal AXI, but the AHB side forbids crossing 1KB." },
+      { text: "Reject it: the AXI burst crosses a 4KB boundary.", correct: false, feedback: "0x03F0 to 0x042F is inside one 4KB page, so the AXI burst is legal (IHI0022E A3.4.1)." },
+      { text: "Split at 0x1000, the next 4KB boundary.", correct: false, feedback: "4KB is AXI's rule and this burst never reaches 0x1000. AHB's boundary is 1KB." }
+    ],
+    explanation: "An AXI burst only has to stay inside 4KB (A3.4.1); an AHB incrementing burst must not cross 1KB (§3.5). So the bridge splits at 0x0400: 4 transfers fit before it, 12 remain. The remainder goes out as an undefined-length INCR, or by policy as INCR8 plus INCR4.",
+    objective: 1
+  },
+  {
+    question: "An AHB master starts an INCR8 of doublewords at 0x0FE0 into an AHB-to-AXI bridge. What should happen?",
+    answers: [
+      { text: "The bridge splits at 0x1000 into two AXI INCR4 bursts, because AXI bursts must not cross 4KB.", correct: false, feedback: "This is the classic mistake. The input is already illegal on AHB, so there is nothing for the bridge to fix." },
+      { text: "The AHB-side checker fires: the burst crosses the 1KB boundary at 0x1000, so the stimulus is illegal and the bridge is not at fault.", correct: true, feedback: "Right. Bytes 0x0FE0 to 0x101F cross 0x1000, a 1KB boundary (§3.5). Fix the stimulus, not the bridge." },
+      { text: "The bridge passes it through as one AXI INCR8; AXI allows it.", correct: false, feedback: "It would cross 4KB on AXI too (A3.4.1). But the first problem is the illegal AHB input." },
+      { text: "The interconnect returns DECERR for the second half.", correct: false, feedback: "Nothing in the protocols promises that; the error is the master's, and a checker must catch it." }
+    ],
+    explanation: "A legal AHB incrementing burst never crosses 1KB, and every 4KB boundary is a 1KB boundary. So an AHB burst that crosses 4KB is illegal stimulus: an AHB input checker must flag it, and an AHB-to-AXI bridge never needs a 4KB splitter.",
+    objective: 1
+  },
+  {
+    question: "A 32-bit AHB master issues the longest legal undefined-length INCR of words, starting at a 1KB boundary. How many AXI bursts does a 32-bit AHB-to-AXI bridge that knows the length need?",
+    answers: [
+      { text: "One: 1KB holds exactly 256 words, the AXI4 INCR maximum.", correct: true, feedback: "Right. The 256 limit can force a split only for 1- or 2-byte transfers." },
+      { text: "Two: the bridge must split at the 256-transfer limit, and the burst is longer.", correct: false, feedback: "Count it: 1024 bytes / 4 bytes = 256 transfers, which fits one AXI4 INCR (A3.4.1)." },
+      { text: "Four: one per 256 bytes.", correct: false, feedback: "The AXI limit is 256 transfers, not 256 bytes." },
+      { text: "It depends on the 4KB boundary.", correct: false, feedback: "A legal AHB INCR stays inside 1KB, so it never meets a 4KB boundary." }
+    ],
+    explanation: "A legal INCR stays inside one 1KB region (§3.5), so it carries at most 1024 bytes: 256 word transfers, exactly one AXI4 INCR burst (A3.4.1). Halfword or byte transfers can reach 512 or 1024 transfers, and only then does the 256 limit force a split.",
+    objective: 1
+  },
+  {
+    question: "An AHB master's INCR8 write goes through a non-posted AHB-to-AXI bridge, and the AXI slave answers with BRESP = SLVERR. What does the AHB master see?",
+    answers: [
+      { text: "ERROR on beat 3, where the slave hit the problem.", correct: false, feedback: "AXI has no per-beat write response: one BRESP covers the whole burst (A3.4.4)." },
+      { text: "OKAY on beats 1 to 7; the bridge holds HREADYOUT low on beat 8 until BRESP arrives, then gives a two-cycle ERROR.", correct: true, feedback: "Right. That is what non-posted means." },
+      { text: "OKAY on all 8 beats, then a one-cycle ERROR when BRESP arrives.", correct: false, feedback: "There is no AHB data phase left to carry it, and ERROR is never one cycle (§5.1.3)." },
+      { text: "Nothing: AXI write errors cannot reach AHB.", correct: false, feedback: "That is true of a posted bridge, not a non-posted one." }
+    ],
+    explanation: "AXI returns one BRESP after the last W transfer (A3.3.1, A3.4.4). AHB completes each data phase as the bridge takes the data, so a non-posted bridge can only hold the last one, then signal ERROR in two cycles (§5.1.3). A posted bridge would have completed beat 8 with OKAY and must log the error instead.",
+    objective: 2
+  },
+  {
+    question: "An AXI master writes an INCR4 through an AXI-to-AHB bridge. The AHB slave answers transfer 2 with ERROR. What does the AXI master see?",
+    answers: [
+      { text: "SLVERR on W transfer 2.", correct: false, feedback: "The W channel carries no response; responses travel on B (A3.4.4)." },
+      { text: "OKAY, because three of the four transfers succeeded.", correct: false, feedback: "Hiding the error is never correct: the write did fail in part." },
+      { text: "One BRESP = SLVERR, after the bridge has accepted all four W transfers.", correct: true, feedback: "Right. One response per write burst, and only after the last W transfer." },
+      { text: "An immediate SLVERR, and the bridge refuses the remaining W transfers.", correct: false, feedback: "AXI has no early termination (A3.4.1), and BVALID must wait for the last W (A3.3.1)." }
+    ],
+    explanation: "Per-beat write errors do not exist on AXI. The bridge folds every AHB write ERROR into the burst's single BRESP, sent after the last W transfer (A3.3.1, A3.4.4), and it must accept every W transfer because no component may terminate a burst early (A3.4.1). Transfer 1 already updated the slave; the error does not undo it.",
+    objective: 2
+  },
+  {
+    question: "A posted AHB-to-AXI bridge completes an AHB write to 0x100 with OKAY. The master then reads 0x100, and the bridge issues AR before the write's BRESP has arrived. What can the read return?",
+    answers: [
+      { text: "Only the new value: AXI orders the read after the write because the bridge already sent all the W data.", correct: false, feedback: "A5.3.4: sending all of the write data must not be taken as indicating completion. Completion is the BRESP." },
+      { text: "Possibly the old value. AXI does not order a read after a write until the write's BRESP, so the bridge must hold the read or check for overlap.", correct: true, feedback: "Right. That is the posted-write hazard, and AHB requires the master's order to hold (§3.8.4, §3.8.5)." },
+      { text: "An AXI protocol checker error: issuing AR before BRESP is illegal.", correct: false, feedback: "It is perfectly legal AXI. The bug is in the bridge's ordering, which no AXI checker sees." },
+      { text: "Only the new value, because AHB ordering carries through the bridge automatically.", correct: false, feedback: "Nothing carries it: the bridge itself must preserve the order AHB requires." }
+    ],
+    explanation: "The AHB master saw its write complete, and AHB requires reads and writes to stay ordered (§3.8.4 Device; §3.8.5 overlapping Normal). AXI has no read/write ordering before BRESP (A5.3.4). A posted bridge must compare reads with outstanding posted writes, or not post that region.",
+    objective: 2
+  },
+  {
+    question: "Which property, together with AXI fairness assumptions, proves that the bridge completes every AHB transfer it accepts?",
+    answers: [
+      { text: "@(posedge HCLK) HTRANS == NONSEQ |-> s_eventually HREADY", correct: false, feedback: "It is satisfied at the accepting edge itself, by the HREADY that accepted the transfer, so a hung data phase passes (§16.12.7, §16.12.13)." },
+      { text: "@(posedge HCLK) HSEL && HREADY && HTRANS[1] |=> s_eventually HREADYOUT", correct: true, feedback: "Right. It starts in the data phase and needs HREADYOUT to rise later." },
+      { text: "The same correct property written as assume property.", correct: false, feedback: "That assumes the very thing you want to prove; formal would just restrict the bridge's behaviour." },
+      { text: "@(posedge HCLK) HSEL && HREADY && HTRANS[1] |=> ##[0:15] HREADYOUT, because AHB allows at most 16 wait states.", correct: false, feedback: "16 wait states is a recommendation (§5.1.2 Note), not a rule; as an assertion it is a [Policy] latency check, not liveness." }
+    ],
+    explanation: "An accepted transfer is HSEL && HREADY && HTRANS[1] at an edge. With |=> the check starts in the data phase, and s_eventually HREADYOUT then requires the data phase to end. The NONSEQ form is vacuous in practice, the assume form proves nothing, and the 16-cycle bound is a policy.",
+    objective: 3
+  },
+  {
+    question: "Your formal setup for a 64-bit-to-32-bit AHB-to-AXI bridge assumes HSIZE <= 3'b010 'to keep the proof small'. Every property passes. What is the risk?",
+    answers: [
+      { text: "None: smaller transfers are a subset, so the proof still covers the larger ones.", correct: false, feedback: "Formal proves properties only for inputs the assumptions allow." },
+      { text: "The assumption removes doubleword transfers, so the downsizing paths (and the WRAP16 to two-INCR conversion) are never checked.", correct: true, feedback: "Right. An over-constraining assumption hides bugs; cover the cases it might exclude." },
+      { text: "It makes the AXI 4KB property fail.", correct: false, feedback: "Constraining HSIZE cannot make a safety property fail; it can only make it pass for less." },
+      { text: "Formal tools reject assumptions on HSIZE.", correct: false, feedback: "They accept any legal assume property; the problem is what it excludes." }
+    ],
+    explanation: "Assumptions shrink the input space the proof covers. HSIZE <= word excludes the very transfers that need downsizing, so the WRAP→INCR bug is unreachable. Add cover properties for doubleword WRAP16 and fix the assumption to match the real master.",
+    objective: 3
+  },
+  {
+    question: "A bridge log shows 'AXI AW addr=0x00000400 AWLEN=43 (44 transfers)' for a 300-transfer AHB INCR of bytes, then 'AXI W WLAST on transfer 300 of this burst'. What is the bug?",
+    answers: [
+      { text: "The AHB request crossed 1KB, so the bridge should have split it.", correct: false, feedback: "300 bytes from 0x0400 end at 0x052B, inside one 1KB region. The input is legal." },
+      { text: "The bridge has no 256-transfer cap: 300 − 1 = 299 wrapped to 43 in the 8-bit AWLEN.", correct: true, feedback: "Right. The fix is two AXI bursts: 256 at 0x0400, then 44 at 0x0500." },
+      { text: "The AXI slave dropped WLAST.", correct: false, feedback: "The bridge, as master, drives WLAST (A3.2.2); it asserted it on transfer 300." },
+      { text: "A missing 4KB split.", correct: false, feedback: "The bytes never approach a 4KB boundary; the AHB burst is legal." }
+    ],
+    explanation: "AxLEN is 8 bits and an AXI4 INCR carries at most 256 transfers (A3.4.1). Copying 299 into AWLEN wraps it to 43. A per-burst W count against AWLEN + 1 catches it; a total-count check does not, because all 300 transfers are sent.",
+    objective: 4
+  },
+  {
+    question: "A bridge passes every test with an AXI slave that ties AWREADY high. With a vendor AXI slave, the simulation hangs: AWVALID is high, WVALID is low. What is the most likely bug?",
+    answers: [
+      { text: "The vendor slave is non-compliant: it must assert AWREADY before WVALID.", correct: false, feedback: "A slave may wait for WVALID before asserting AWREADY (A3.3.1)." },
+      { text: "The bridge waits for AWREADY before asserting WVALID, which A3.3.1 forbids; the slave is legally waiting for WVALID.", correct: true, feedback: "Right. The AXI Caution in A3.3.1 describes exactly this deadlock." },
+      { text: "The bridge needs a 4KB split.", correct: false, feedback: "Burst shape has nothing to do with a handshake deadlock." },
+      { text: "The AHB master stopped sending data.", correct: false, feedback: "The bridge already holds the data; the AXI handshake is stuck." }
+    ],
+    explanation: "A master must not wait for AWREADY or WREADY before asserting AWVALID or WVALID, and a slave may wait for WVALID before AWREADY (A3.3.1). A bench that ties AWREADY high hides the dependency; add a slave mode that waits for WVALID and a liveness check.",
+    objective: 4
+  }
+]} />
+
+### Flashcards
+
+The deck for this lesson drills the split rules in both directions, the response mapping, posting and its hazard, the handshake deadlock, CDC and the formal pitfalls. Review it after the quiz and again before the lab.
+
+### Kata: the split table
+
+For each legal AXI burst, write the AHB bursts an AXI-to-AHB bridge with 32-bit buses (64-bit in the last row) should issue: start address, `HBURST`, size and number of transfers. Use the rules from this page; the INCR versus INCR4/8/16 choice follows the worked example's policy (exact fixed lengths, otherwise INCR).
+
+| # | AXI burst |
+|---|---|
+| 1 | INCR, `AxLEN` = 7, `AxSIZE` = 2, `AxADDR` = 0x07F8 |
+| 2 | INCR, `AxLEN` = 7, `AxSIZE` = 2, `AxADDR` = 0x03E0 |
+| 3 | INCR, `AxLEN` = 1, `AxSIZE` = 2, `AxADDR` = 0x2003 |
+| 4 | FIXED, `AxLEN` = 3, `AxSIZE` = 2, `AxADDR` = 0x2000 |
+| 5 | WRAP, `AxLEN` = 1, `AxSIZE` = 2, `AxADDR` = 0x1004 |
+| 6 | WRAP, `AxLEN` = 3, `AxSIZE` = 2, `AxADDR` = 0x100C |
+| 7 | INCR, `AxLEN` = 255, `AxSIZE` = 3, `AxADDR` = 0x0200 (64-bit buses) |
+
+<details>
+<summary>Worked solution</summary>
+
+Every answer was computed with two independent models (the explorer's tested bridge model and a separate script) and they agree.
+
+| # | AHB bursts | Why |
+|---|---|---|
+| 1 | INCR of 2 words at 0x07F8, then INCR of 6 words at 0x0800 | Bytes 0x07F8 to 0x0817 cross the 1KB boundary at 0x0800 |
+| 2 | INCR8 of words at 0x03E0 | Bytes 0x03E0 to 0x03FF end exactly at the boundary: no split |
+| 3 | byte SINGLE at 0x2003, then word SINGLE at 0x2004 | Unaligned first transfer covers only 0x2003 |
+| 4 | four word SINGLEs at 0x2000 | AHB has no fixed burst |
+| 5 | word SINGLE at 0x1004, then word SINGLE at 0x1000 | WRAP2 starting in the upper half of its 8-byte block |
+| 6 | WRAP4 of words at 0x100C | Same 16-byte wrap block, legal AHB WRAP4 |
+| 7 | INCR of 64 doublewords at 0x0200, INCR of 128 at 0x0400, INCR of 64 at 0x0800 | 2KB of data from 0x0200 crosses 0x0400 and 0x0800 |
+
+Row 2 is the boundary test: a splitter that computes the last byte as `start + bytes` instead of `start + bytes - 1` thinks it reaches 0x0400 and splits it needlessly. Row 7 shows why the "at most 2 pieces" fact holds only for transfers of 4 bytes or less.
+
+</details>
+
+### Debug challenge: the stale read
+
+A posted AHB-to-AXI bridge produces this log in a test with random AXI write latency:
+
+```text
+@ 100 AHB WRITE 0x00000100 = 0x0000a5a5  HRESP=OKAY (posted)
+@ 110 AXI AW  addr=0x00000100 AWID=0 AWLEN=0
+@ 110 AXI W   data=0x0000a5a5 WSTRB=1111 WLAST=1
+@ 130 AHB READ  0x00000100
+@ 140 AXI AR  addr=0x00000100 ARID=0 ARLEN=0
+@ 160 AXI R   data=0x00001111 RRESP=OKAY RLAST=1
+@ 170 AHB READ  0x00000100 -> HRDATA=0x00001111
+@ 170 UVM_ERROR [SCB] read 0x00000100: expected 0x0000a5a5, got 0x00001111
+@ 190 AXI B   BRESP=OKAY BID=0
+```
+
+Name the cause, the rule that allows the AXI behaviour, and two fixes.
+
+<details>
+<summary>Worked solution</summary>
+
+**Cause.** The bridge posted the write (OKAY at 100) and then issued the read's AR at 140, before the write's BRESP at 190. The read completed first and returned the old value.
+
+**Rule.** "AXI has no ordering restrictions between read and write transactions … even if the ARID value of a read transaction is the same as the AWID value of a write transaction", and a write is complete only when its response arrives (IHI0022E A5.3.4). Using ID 0 for both did not help. Meanwhile AHB requires the master's read to see its own earlier write (§3.8.4, §3.8.5), so the bridge broke AHB ordering.
+
+**Fixes.** (1) A hazard check: hold any AR whose address overlaps an outstanding posted write until that write's BRESP arrives. (2) Make the region non-posted, so the AHB write itself does not complete until BRESP. Then add the scenario (posted write, overlapping read, long write latency) and a coverage bin for it.
+
+</details>
+
+### Lab: AHB-to-AXI bridge debug
+
+The lab gives you a buggy AHB-to-AXI bridge that sends a 300-transfer AHB INCR as one AXI burst. You reproduce the `AWLEN` wrap, complete a checker that counts W transfers per AXI burst (and learn why a total count misses the bug), flag illegal AHB input that crosses 1KB, and fix the split with the 256-transfer cap. An optional slave mode waits for `WVALID` before `AWREADY`, so you can see why the bridge's W channel must not wait for `AWREADY`.
 
 <LabLink labId="ahb-axi-bridge-debug" />
 
----
+## References & Next Topics
 
-<Quiz>
-  <QuizQuestion
-    question="A CPU issues a legal AXI INCR burst of 16 words (4 bytes each) starting at 0x03F0 through an AXI-to-AHB bridge. What must the bridge do?"
-    options={[
-      "Issue one AHB INCR16 starting at 0x03F0.",
-      "Split at 0x0400: an INCR4 from 0x03F0, then the remaining 12 transfers from 0x0400.",
-      "Reject it, because the AXI burst crosses a 4KB boundary.",
-      "Split at 0x1000, the next 4KB boundary."
-    ]}
-    correctAnswer="Split at 0x0400: an INCR4 from 0x03F0, then the remaining 12 transfers from 0x0400."
-    explanation="The AXI burst covers 0x03F0 to 0x042F, inside one 4KB page, so it is legal AXI (IHI0022E A3.4.1). But an AHB master must not start an incrementing burst that crosses a 1KB boundary (IHI0033B.b 3.5), so the bridge splits at 0x0400. The 12-transfer remainder goes out as an undefined-length INCR, or as INCR8 plus INCR4."
-  />
-  <QuizQuestion
-    question="Why is formal verification particularly effective for protocol bridge verification?"
-    options={[
-      "Formal verification runs faster than simulation for bridges.",
-      "The combinatorial space of burst types, sizes, and boundaries is too large for directed testing to cover exhaustively.",
-      "Formal verification can generate waveform dumps automatically.",
-      "Bridges do not require simulation because they are purely combinational."
-    ]}
-    correctAnswer="The combinatorial space of burst types, sizes, and boundaries is too large for directed testing to cover exhaustively."
-    explanation="A bridge must handle every combination of burst type (INCR, WRAP, SINGLE), size (1-128 bytes), length (1-256 beats), and starting address (with 4KB boundary implications). This combinatorial explosion makes exhaustive directed testing impractical, but formal verification explores all states automatically."
-  />
-  <QuizQuestion
-    question="An AHB master's INCR8 write goes through a non-posted AHB-to-AXI bridge, and the AXI slave answers with BRESP = SLVERR. What does the AHB master see?"
-    options={[
-      "ERROR on beat 3, the beat where the slave hit the problem.",
-      "OKAY on beats 1 to 7. The bridge holds HREADYOUT low on beat 8 until BRESP arrives, then gives a two-cycle ERROR.",
-      "OKAY on all 8 beats, then a one-cycle ERROR as soon as BRESP arrives.",
-      "Nothing: AXI write errors cannot be reported to AHB."
-    ]}
-    correctAnswer="OKAY on beats 1 to 7. The bridge holds HREADYOUT low on beat 8 until BRESP arrives, then gives a two-cycle ERROR."
-    explanation="An AXI write gets one response for the whole burst, after the last W transfer (IHI0022E A3.4.4), so there is no per-beat write error to map onto beat 3. The AHB data phases complete one at a time as the bridge buffers the data, so a non-posted bridge can only hold the last one: it keeps HREADYOUT low until BRESP arrives, then signals ERROR in two cycles (IHI0033B.b 5.1.3). A one-cycle ERROR is never legal. A posted bridge would already have completed beat 8 with OKAY, so it must report the error some other way, for example an interrupt."
-  />
-</Quiz>
+**Primary sources:**
+- Arm IHI0033B.b, AMBA 5 AHB Protocol Specification (AHB5, AHB-Lite): §1.3 operation (no address-phase extension); §3.1 basic transfers (`HWDATA` and `HRDATA`); §3.3 locked transfers; §3.4 transfer size; §3.5 burst operation (Table 3-3, alignment, the 1KB rule); §3.5.1 burst termination after BUSY; §3.5.2 early burst termination; §3.7 protection control (Table 3-4); §3.8 memory types (Table 3-5, §3.8.4 Device, §3.8.5 Normal); §3.9 secure transfers; §5.1.2 transfer pending (and its Note); §5.1.3 ERROR response; §6.1.1 `HWDATA`; §7.1.2 reset; §8.3 exclusive access signaling; §8.4 exclusive transfer restrictions.
+- Arm IHI0033C: optional `HWSTRB` write strobes and the manager/subordinate terms (named only).
+- Arm IHI0022E, AMBA AXI and ACE Protocol Specification: A3.1.2 reset; A3.2.1 handshake process; A3.2.2 channel signaling (`WLAST`); A3.3 relationships between the channels; A3.3.1 dependencies between channel handshake signals (and its Caution); A3.4.1 address structure (4KB, burst lengths, WRAP, no early termination); A3.4.3 data read and write structure (strobes, narrow and unaligned transfers); A3.4.4 read and write response structure; A4.3.1 Modifiable and Non-modifiable transactions; A4.4.1 memory type requirements; A4.7 access permissions (Table A4-6); A5.3 transaction ordering; A5.3.4 read and write interaction; A5.3.5 interconnect use of IDs; A7.2.4 exclusive access restrictions; A7.2.5 slaves that do not support exclusive access; A7.3 locked accesses.
+- IEEE 1800-2023: §16.12.7 implication; §16.12.13 eventually; §16.14.1 assert; §16.14.2 assume; §16.14.3 cover.
+- uvm-core 2020.3.1: `src/macros/uvm_tlm_defines.svh` (`` `uvm_analysis_imp_decl ``); IEEE 1800.2-2020 §13.6 `uvm_scoreboard`.
+
+**Prerequisites:** [B-AHB-3: AHB Verification Methodology](/curriculum/T3_Advanced/B-AHB-3_AHB_Verification/index) and [B-AXI-6: AXI Verification & Performance](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index).
+
+**Related:**
+- [B-AHB-1: AHB Protocol Design & Timing](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index): the 1KB rule and the pipeline in detail.
+- [B-AHB-2: AHB Pitfalls](/curriculum/T3_Advanced/B-AHB-2_AHB_Pitfalls_and_Deadlocks/index): the two-cycle ERROR and its classic bugs.
+- [B-AXI-2: AXI Burst Math](/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index): the 4KB rule, WRAP and unaligned addresses.
+- [B-AXI-4: AXI Expert Features](/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index): `AxCACHE` and exclusive accesses.
+- [B-AXI-5: AXI Pitfalls and Interconnect Deadlocks](/curriculum/T3_Advanced/B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index): handshake and interconnect deadlocks.
+- [B-APB-1: APB Protocol and Verification](/curriculum/T3_Advanced/B-APB-1_APB_Protocol_and_Verification/index): the bridges' slower neighbour.
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): predictors and scoreboards.
+- [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index): assume-guarantee and convergence.
+- [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): CDC and RDC sign-off.
+- [B-AMBA-F3: Interview & Debug Clinic](/curriculum/T3_Advanced/B-AMBA-F3_Interview_Debug_Clinic/index): bridge whiteboard and debug practice.
+
+<NextLesson />

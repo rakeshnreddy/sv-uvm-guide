@@ -14,6 +14,10 @@
 //
 // Environment watchdog (a testbench budget, NOT a protocol rule):
 //   7. p_hready_timeout           HREADY low for at most MAX_WAIT cycles
+//
+// Coverage (proves the properties above actually started):
+//   8. cover properties on the antecedents of properties 1 to 3, and on a
+//      master cancelling after an ERROR
 // ============================================================================
 
 module ahb_checker (
@@ -32,13 +36,6 @@ module ahb_checker (
 
   localparam logic [1:0] IDLE = 2'b00, BUSY = 2'b01, NONSEQ = 2'b10, SEQ = 2'b11;
   localparam logic [2:0] INCR = 3'b001;
-
-  // $past() looks one edge back. past_ok is 0 at the first edge after reset,
-  // so a property that uses $past() never looks at a cycle inside reset.
-  logic past_ok;
-  always_ff @(posedge HCLK or negedge HRESETn)
-    if (!HRESETn) past_ok <= 1'b0;
-    else          past_ok <= 1'b1;
 
   // ════════════════════════════════════════════════════════════
   // TODO 1: A waited NONSEQ/SEQ holds its address (3.6.2, 3.5.2)
@@ -107,7 +104,9 @@ module ahb_checker (
   // the other direction: whenever HRESP and HREADY are both high, the
   // previous cycle must have been the first ERROR cycle.
   //
-  // Hint: (past_ok && HRESP && HREADY) |-> $past(HRESP && !HREADY)
+  // Hint: (HRESP && HREADY) |-> $past(HRESP && !HREADY)
+  // No reset guard is needed: slaves hold HREADYOUT high during reset (7.1.2),
+  // so the edge before the first edge after reset is never a first ERROR cycle.
   //
   // a_error_needs_first_cycle: assert property (...)
   //   else $error("[AHB-CHK] One-cycle ERROR: no first cycle with HREADY low");
@@ -140,6 +139,21 @@ module ahb_checker (
   //
   // a_hready_timeout: assert property (...)
   //   else $warning("[AHB-WDOG] HREADY low for more than %0d cycles (testbench budget)", MAX_WAIT);
+  // ════════════════════════════════════════════════════════════
+
+  // ════════════════════════════════════════════════════════════
+  // TODO 8: Cover the antecedents (IEEE 1800-2023 16.14.3)
+  // ════════════════════════════════════════════════════════════
+  // A property whose antecedent never happens passes "vacuously": it checked
+  // nothing. Write one cover property for each situation below and read the
+  // cover counts in your simulator's report after each run.
+  //   c_waited_nonseq_seq : HREADY low with NONSEQ or SEQ on the bus
+  //   c_waited_busy       : HREADY low with BUSY on the bus
+  //   c_error_cancel      : first ERROR cycle with NONSEQ/SEQ on the bus, then
+  //                         the second ERROR cycle with IDLE on the bus
+  //
+  // c_waited_busy: cover property (@(posedge HCLK) disable iff (!HRESETn)
+  //   !HREADY && HTRANS == BUSY);
   // ════════════════════════════════════════════════════════════
 
 endmodule

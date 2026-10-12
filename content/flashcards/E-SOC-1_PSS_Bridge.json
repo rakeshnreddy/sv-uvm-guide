@@ -1,1 +1,82 @@
-[]
+[
+  {
+    "id": "e-soc-1-pss-1",
+    "question": "At SoC level, which layer of a test does a PSS tool generate, and which layers stay hand-written?",
+    "answer": "The tool generates the scenario layer: which action runs when, on which resource, with which values (a UVM virtual sequence or a C test). The realization layer (exec templates, UVM sequences, the C driver and HAL), the UVM environment and the checks stay hand-written, once per platform family."
+  },
+  {
+    "id": "e-soc-1-pss-2",
+    "question": "Why does PSS pay off for SoC use cases in proportion to scenarios times platforms?",
+    "answer": "Each use case is modeled once, and each action is realized once per platform family (SystemVerilog for the bench, C for everything on the CPU). Without PSS every use case is rewritten for every platform, so the saving grows with both counts; with one platform the multiplier is 1."
+  },
+  {
+    "id": "e-soc-1-pss-3",
+    "question": "The same use case runs in SoC simulation and on first silicon. Which check is the only one that survives to silicon?",
+    "answer": "The self-check in the C realization (for example `mem_equal()` and a timed `dma_wait_irq()` that call `test_fail()`). Scoreboards, assertions and the passive bench exist only in simulation, so make them check the same rule as the C code."
+  },
+  {
+    "id": "e-soc-1-pss-4",
+    "question": "Why is the SystemVerilog target not used in a SoC bench where the CPU drives the bus?",
+    "answer": "That agent is passive, so its sequencer was never built and the template's sequencer handle is null. In uvm-core a sequence started on a null sequencer runs on its parent's sequencer instead, so the test ends in a `DCLPSQ` fatal or hangs in `start_item()`. Run the C target there."
+  },
+  {
+    "id": "e-soc-1-pss-5",
+    "question": "What is wrong with the strategy line \"Stimulus: IEEE 2851 portable stimulus\"?",
+    "answer": "PSS is the Accellera Portable Test and Stimulus Standard, currently 3.0 (August 2024), and it has no IEEE number. IEEE 2851-2023 is a functional-safety data format and IEEE 2401-2019 a chip-package-board design format. Cite Accellera PSS 3.0 plus the version your tool accepts."
+  },
+  {
+    "id": "e-soc-1-pss-6",
+    "question": "Why are a PSS model's pool sizes and address windows called SoC facts with an owner?",
+    "answer": "A pool's size must equal the real number of instances (it defaults to 1, §5.2.2). If it does not match the integrated SoC, the tool schedules concurrency the chip cannot have, or misses concurrency it does have. Review them with every integration change, like the address map."
+  },
+  {
+    "id": "e-soc-1-pss-7",
+    "question": "A model runs two DMA copies under parallel, each with `lock dma_chan_r chan;`, and the pool has size 1. What does the tool do?",
+    "answer": "It reports that no legal scenario exists, before any run. Parallel rules out scheduling dependencies between branches (§12.3.4), and two actions that overlap in time cannot hold the same locked instance (§14.2)."
+  },
+  {
+    "id": "e-soc-1-pss-8",
+    "question": "Which SoC scenario categories usually belong in PSS, and which do not?",
+    "answer": "PSS: use cases that must run on several platforms (DMA under load, boot then bring-up, low-power entry and exit) and concurrency among shared resources. Not PSS: block protocol corners and register tests (UVM), top-level connectivity (formal or toggle tests), and anything that needs forcing or backdoor access (simulation-only UVM)."
+  },
+  {
+    "id": "e-soc-1-pss-9",
+    "question": "A use case passes in subsystem simulation but fails with the same solved values in SoC simulation, while the scoreboards saw a correct copy on the bus. Where do you look first?",
+    "answer": "At the two realizations of the action: the C template and the SystemVerilog template must do the same thing (for example, the driver takes a length in words but the template passes bytes). It is a model bug, not a design bug."
+  },
+  {
+    "id": "e-soc-1-pss-10",
+    "question": "Does 100% PSS behavioral coverage, plus 100% block coverage, close the SoC?",
+    "answer": "No. PSS coverage (Clauses 18 and 19) records which scenarios ran, not whether the system behaved. Closure also needs the checks and the system-level coverage goals traced to the verification plan; report PSS coverage next to them, never merged into one number."
+  },
+  {
+    "id": "e-soc-1-pss-11",
+    "question": "What is an executor in PSS 3.0, and why does it matter for a multi-cluster SoC?",
+    "answer": "The agent that runs an action's code at run time: a processor core or hardware thread, a bus-functional model, or a testbench agent (§24.6). Actions claim one with an `executor_claim_s` field. Without explicit assignment the tool picks the execution context, so claim executors where the core matters (interrupt affinity, coherence)."
+  },
+  {
+    "id": "e-soc-1-pss-12",
+    "question": "What must be archived with every failing generated SoC test so it can be reproduced?",
+    "answer": "The model revision, the tool version, the seed, the solved schedule and, for C targets, the firmware image identity (a hash). A per-test flow with solved values baked in reproduces exactly on every platform."
+  },
+  {
+    "id": "e-soc-1-pss-13",
+    "question": "A generated C test runs on the CPU in SoC simulation. What keeps the UVM register model's mirror right?",
+    "answer": "Explicit prediction: a `uvm_reg_predictor` fed by the passive APB monitor. Auto-prediction only updates the mirror for accesses the register model itself makes, so it never sees writes made by firmware."
+  },
+  {
+    "id": "e-soc-1-pss-14",
+    "question": "Do the subsystem bench's scoreboards check a generated C test in SoC simulation unchanged?",
+    "answer": "Not unchanged. They still check the bus traffic through passive monitors, but their expected values must come from what the monitors observe, because the CPU, not a bench sequence, started each transfer. Decide per scoreboard whether to keep, adapt or disable it."
+  },
+  {
+    "id": "e-soc-1-pss-15",
+    "question": "Per the PSS standard, how does one action get both a C and a SystemVerilog realization?",
+    "answer": "Put each language's target templates in its own package that extends the action (`extend action`, §20.2), and generate each test with only one of those packages (§22.5.1). Exec blocks of the same kind in one scope merge into one block that maps to at most one language (§22.1.1). How a tool selects the active packages is tool-dependent (§21.1)."
+  },
+  {
+    "id": "e-soc-1-pss-16",
+    "question": "Why does the DMA model bound `dst <= limit - len` instead of `dst + len <= limit`?",
+    "answer": "In PSS a sum takes the width of its widest operand (§8.7.1), so a 32-bit `dst + len` can wrap past 0xFFFFFFFF and satisfy the upper bound with a huge `dst`. Bounding the address itself, with a right-hand side that cannot wrap, keeps each channel inside its own window."
+  }
+]

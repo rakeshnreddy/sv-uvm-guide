@@ -1,135 +1,42 @@
 {
   "id": "sv-interview-bank",
   "title": "SystemVerilog Interview Question Bank",
-  "description": "Interview preparation covering SV language fundamentals, scheduling semantics, constrained randomization, OOP, and clocking blocks.",
+  "description": "Interview preparation from junior to senior staff: data types and operators, arrays, procedural code and scheduling, races and clocking blocks, interfaces and packages, OOP, constrained randomization, functional coverage, interprocess communication, DPI, and testbench methodology. Model answers cite IEEE 1800-2023.",
   "topic": "sv",
   "questions": [
     {
-      "id": "sv-blocking-vs-nonblocking",
+      "id": "sv-why-systemverilog",
       "topic": "sv",
       "level": "junior",
       "category": "concept",
-      "prompt": "Explain the difference between blocking and non-blocking assignments. When would you use each?",
-      "rubric": "Distinguish blocking (=) in Active region vs non-blocking (<=) deferred to NBA region. Must mention avoiding race conditions in always_ff.",
-      "model_answer": "Blocking (=) evaluates and updates immediately in the Active region. Non-blocking (<=) evaluates RHS immediately but defers the update to the NBA region. Use non-blocking in always_ff to avoid same-time-step races, and blocking in always_comb for combinational logic.",
+      "prompt": "Why do most verification teams use SystemVerilog rather than plain Verilog or a general-purpose language such as Python or C++? Name the verification features that plain Verilog lacks, and one situation where another language is the better choice.",
+      "rubric": "Strong: explains the cost-of-late-bugs motivation without inventing figures; lists the verification features (OOP, constrained random, functional coverage, assertions, interfaces/clocking blocks, dynamic structures and IPC, DPI); knows SystemVerilog absorbed Verilog; gives a reasoned case for Python, C++ or formal. Weak: \"SystemVerilog is newer\" with no features, or quotes precise cost-of-bug numbers as fact.",
+      "model_answer": "Why verification needs its own tools. A bug found after tape-out can mean a silicon respin and a schedule slip, so teams spend heavily on finding bugs before tape-out. Industry figures for the cost of a respin vary and are rarely published with sources, so treat any specific number you hear as an estimate. The point for an interview is the trend: the later a bug is found, the more it costs.\n\nWhat SystemVerilog adds over Verilog (IEEE 1364). Since IEEE 1800-2009 the two are one standard, so one language and one simulator serve both design and verification (§1.3). The verification features Verilog lacked:\n\n- Classes and OOP for reusable, extensible testbench components (Clause 8).\n\n- Constrained-random stimulus with a built-in solver, seeding and random stability (Clause 18).\n\n- Functional coverage: covergroups and `cover property` to measure what was tested (Clause 19, §16.14.3).\n\n- Assertions (SVA) for temporal checks on protocols (Clause 16).\n\n- Interfaces, clocking blocks and program blocks for race-free connection to the DUT (Clauses 14, 24, 25).\n\n- Dynamic data structures and IPC: queues, dynamic and associative arrays, mailboxes, semaphores, events (Clauses 7, 15).\n\n- DPI to call C models and let C call back (Clause 35).\n\nUVM (IEEE 1800.2) is a class library written in SystemVerilog on top of these features.\n\nWhen another language fits better. Python benches (cocotb, pyuvm) trade simulation speed and built-in constraint and coverage support for faster writing and a large software ecosystem; they suit small blocks, quick bring-up and teams with strong software skills. C or C++ suits reference models and software-driven SoC tests, usually connected through DPI. Formal tools check properties exhaustively without stimulus at all. Many teams mix them: SystemVerilog/UVM for the bench, C++ for golden models, formal for control logic.",
+      "follow_ups": [
+        "Which of these features would you give up first if you had to verify a block in plain Verilog, and how would you compensate?",
+        "What does UVM add that SystemVerilog alone does not?",
+        "Why can't a synthesizable RTL subset verify itself?"
+      ],
+      "common_mistakes": [
+        "Quoting a specific respin cost or the \"10x per stage\" rule as an established fact.",
+        "Describing SystemVerilog as only a design language with some test features bolted on."
+      ],
       "sources": [
-        "IEEE 1800-2023 \u00a710.4.1",
-        "IEEE 1800-2023 \u00a710.4.2"
-      ]
-    },
-    {
-      "id": "sv-class-vs-module",
-      "topic": "sv",
-      "level": "junior",
-      "category": "concept",
-      "prompt": "What is the difference between a class and a module in SystemVerilog?",
-      "rubric": "Modules are static hardware hierarchy; classes are dynamic runtime objects with inheritance/polymorphism. Classes cannot have ports.",
-      "model_answer": "Modules are statically instantiated at elaboration, represent hardware, have ports, and can be synthesized. Classes are dynamic objects created with new(), support inheritance and polymorphism, and are used for testbenches. Modules cannot extend; classes can.",
-      "sources": [
-        "IEEE 1800-2023 \u00a78",
-        "IEEE 1800-2023 \u00a723"
-      ]
-    },
-    {
-      "id": "sv-scheduling-regions",
-      "topic": "sv",
-      "level": "mid",
-      "category": "concept",
-      "prompt": "Walk through the SV scheduling regions in a single time step. Where do assertions evaluate?",
-      "rubric": "Must list Preponed, Active, Inactive, NBA, Observed, Reactive, Re-NBA, Postponed in order. Must separate sampling (Preponed) from evaluation (Observed) for concurrent assertions; claiming that assertions read this edge's post-NBA values is incorrect. Program code runs in Reactive; clocking drives land in Re-NBA.",
-      "model_answer": "Regions in order: Preponed (read-only; values sampled for concurrent assertions and clocking-block inputs) \u2192 Active (process wake-ups, blocking and continuous assignments, right side of nonblocking assignments) \u2192 Inactive (#0 resumes) \u2192 NBA (nonblocking updates) \u2192 Observed (concurrent assertions evaluated; @(cb) clocking events) \u2192 Reactive (program code, assertion action blocks) \u2192 Re-Inactive \u2192 Re-NBA (clocking-block drives, program nonblocking updates) \u2192 Postponed ($strobe/$monitor, read-only). Concurrent assertions are evaluated in Observed but on values sampled in Preponed \u2014 the values from before this edge's NBA updates (IEEE 1800-2023 \u00a74.4.2, \u00a716.5.1).",
-      "sources": [
-        "IEEE 1800-2023 \u00a74.4",
-        "IEEE 1800-2023 \u00a74.7"
-      ]
-    },
-    {
-      "id": "sv-clocking-block-race",
-      "topic": "sv",
-      "level": "senior",
-      "category": "trick",
-      "prompt": "A testbench uses @(posedge clk) to both drive and sample DUT signals. Why can this cause races?",
-      "rubric": "Identifies the TB drive (blocking assignment at the edge) as the primary race and explains same-region nondeterminism. Clocking blocks: inputs sampled in Preponed (#1step), drives in Re-NBA, @(cb) in Observed. Answers that sample clocking inputs after the NBA updates, or that name a nonexistent reactive drive region, are incorrect.",
-      "model_answer": "@(posedge clk) wakes testbench processes in the Active region alongside the RTL processes triggered by the same edge, and IEEE 1800 lets the simulator run them in any order (\u00a74.7). Driving DUT inputs with blocking assignments at that edge races the DUT flops that read them. Reading DUT outputs is deterministic only while every path to them uses nonblocking assignments. Clocking blocks remove both risks: inputs are sampled in Preponed with the default #1step skew (\u00a714.13), outputs are driven in Re-NBA with #0 output skew (\u00a714.16), and the @(cb) event triggers in Observed (\u00a714.10), after the design's NBA updates.",
-      "sources": [
-        "IEEE 1800-2023 \u00a714",
-        "IEEE 1800-2023 \u00a74.4.1"
-      ]
-    },
-    {
-      "id": "sv-constraint-bidirectional",
-      "topic": "sv",
-      "level": "mid",
-      "category": "concept",
-      "prompt": "Are SystemVerilog constraints solved top-down or bidirectionally?",
-      "rubric": "Constraints are solved bidirectionally/simultaneously. A constraint on B can restrict A. Mention solve...before for ordering hints.",
-      "model_answer": "SV constraints are bidirectional \u2014 all constraints are gathered and solved simultaneously by a BDD/SAT solver. A constraint on B restricts A's domain even if A appears first. Use solve a before b to control marginal distribution ordering.",
-      "sources": [
-        "IEEE 1800-2023 \u00a718.5",
-        "IEEE 1800-2023 \u00a718.5.12"
-      ]
-    },
-    {
-      "id": "sv-virtual-interface",
-      "topic": "sv",
-      "level": "junior",
-      "category": "concept",
-      "prompt": "Why do UVM testbenches use virtual interfaces?",
-      "rubric": "Interfaces are static; classes are dynamic. Virtual interface is a handle/pointer allowing class-based TB code to access static interface signals.",
-      "model_answer": "Interfaces are static module-like constructs instantiated at elaboration. Classes are dynamic. A virtual interface is a reference to an instantiated interface, allowing dynamic class-based components to access DUT signals. Passed via uvm_config_db.",
-      "sources": [
-        "IEEE 1800-2023 \u00a725.9"
-      ]
-    },
-    {
-      "id": "sv-randomize-failure",
-      "topic": "sv",
-      "level": "mid",
-      "category": "waveform-debug",
-      "prompt": "randomize() returns 0 and fields are all zero. Debug process?",
-      "rubric": "Check return value, use constraint_mode(0) to isolate, check inheritance conflicts, try rand_mode(0) per field, use simulator debug flags.",
-      "model_answer": "1) Check return value. 2) Disable all constraints with constraint_mode(0) and re-randomize. 3) Re-enable one at a time to find conflicts. 4) Check parent-class constraint inheritance. 5) Use solve...before to isolate ordering. 6) Use simulator debug flags like -solvefaildebug.",
-      "sources": [
-        "IEEE 1800-2023 \u00a718.5",
-        "IEEE 1800-2023 \u00a718.8"
-      ]
-    },
-    {
-      "id": "sv-fork-join-variants",
-      "topic": "sv",
-      "level": "mid",
-      "category": "concept",
-      "prompt": "Explain fork-join, fork-join_any, and fork-join_none. When use each?",
-      "rubric": "join waits ALL, join_any waits ANY one, join_none continues immediately. Use cases: parallel stimulus, timeout racing, background monitors.",
-      "model_answer": "fork-join: waits for ALL children (parallel stimulus). fork-join_any: waits for ANY one child (timeout patterns). fork-join_none: parent continues immediately (background monitors). Always use disable fork to clean up orphaned processes.",
-      "sources": [
-        "IEEE 1800-2023 \u00a79.3.2"
-      ]
-    },
-    {
-      "id": "sv-staff-methodology-reuse",
-      "topic": "sv",
-      "level": "staff",
-      "category": "staff-system-design",
-      "prompt": "Design the verification methodology package hierarchy for a multi-project SoC platform with 5+ projects.",
-      "rubric": "Package layers (base \u2192 protocol \u2192 project), parameterized classes, constraint layering with inheritance, factory overrides, versioning.",
-      "model_answer": "Three layers: (1) Base layer: verif_base package with parameterized transactions, generic scoreboards, coverage utilities. (2) Protocol layer: per-protocol packages (axi_verif_pkg) with agents and checkers. (3) Project layer: project-specific environments composing protocol agents, project constraints via inheritance + constraint_mode. Use factory overrides for specialization. Maintain backward-compatible base APIs.",
-      "sources": [
-        "IEEE 1800-2023 \u00a78",
-        "IEEE 1800-2023 \u00a726",
-        "IEEE 1800.2-2020 \u00a73"
-      ]
-    },
-    {
-      "id": "sv-senior-staff-constraint-perf",
-      "topic": "sv",
-      "level": "senior-staff",
-      "category": "staff-system-design",
-      "prompt": "Your regression is bottlenecked by constraint solving \u2014 each randomize() call takes 50ms. Root cause and fix?",
-      "rubric": "Must discuss constraint complexity (cross-field interactions), solver algorithm choice, constraint partitioning, pre/post_randomize, and architectural approaches like constraint reduction.",
-      "model_answer": "Root causes: (1) Large constraint sets with many cross-field interactions create exponential solver complexity. (2) Implication chains and soft constraints increase backtracking. Fixes: partition independent constraint groups into separate randomize calls, use solve...before to guide the solver, replace complex constraints with pre_randomize() procedural generation where possible, and consider constraint layering where base constraints are minimal and test-specific constraints are added. Profile with simulator constraint debug tools to identify the expensive constraint.",
-      "sources": [
-        "IEEE 1800-2023 \u00a718.5"
+        "IEEE 1800-2023 §1.3",
+        "IEEE 1800-2023 Clause 8",
+        "IEEE 1800-2023 Clause 18",
+        "IEEE 1800-2023 Clause 19",
+        "IEEE 1800-2023 §16.14.3",
+        "IEEE 1800-2023 Clause 35",
+        {
+          "doc": "Cost-of-bug and respin cost figures (industry estimates, not verifiable)",
+          "verified": false
+        }
+      ],
+      "modules": [
+        "F1C_Why_SystemVerilog/index",
+        "F1A_The_Cost_of_Bugs/index",
+        "F1B_The_Verification_Mindset/index"
       ]
     },
     {
@@ -137,13 +44,91 @@
       "topic": "sv",
       "level": "junior",
       "category": "concept",
-      "prompt": "Explain the difference between logic, wire, and reg. When must you use wire instead of logic?",
-      "rubric": "Must explain logic replaces both for single-driver signals (IEEE 1800-2023 \u00a76.11.2), wire needed for multi-driver resolution, reg is legacy and misleading name.",
-      "model_answer": "logic can replace both reg and wire for any single-driver signal \u2014 it works in continuous assigns, procedural blocks, and module ports. wire is required when multiple drivers exist (tri-state bus, bidirectional pads) because it has a resolution function to handle conflicts. reg is a legacy name retained for backward compatibility \u2014 it does NOT imply a hardware register. Modern code should use logic everywhere except multi-driver nets.",
+      "prompt": "Explain `logic`, `wire` and `reg`. Which of the declarations below compile, and when must you use a net such as `wire` instead of `logic`?",
+      "code": "```systemverilog\nmodule m (input logic a, b, en, output logic y_var);\n  logic v;\n  wire  w;\n\n  assign v = a;\n  assign v = b;            // (1)\n\n  assign w = en ? a : 1'bz;\n  assign w = en ? 1'bz : b;  // (2)\n\n  always_comb y_var = a & b;\n  assign y_var = b;        // (3)\nendmodule\n```",
+      "rubric": "Strong: variable vs net as the real distinction; the single-continuous-driver rule (§6.5); predicts (1) error, (2) legal with resolution, (3) error with the always_comb restriction; states the input-net/output-variable port default (§23.2.2.3); `reg` == `logic`. Weak: \"logic replaces wire everywhere\", or says `reg` infers a flip-flop.",
+      "model_answer": "`logic` is a 4-state data type; `reg` is the same type under an older, misleading name (it does not imply a register; §6.11.2). `wire` is a net. The difference that matters is the kind of object:\n\n- A variable (declared with `logic`) may be written by any number of procedural statements (last write wins), or by exactly one continuous assignment or one port, never a mix (§6.5).\n\n- A net may have many drivers; its value comes from the net type's resolution function. Nets cannot be assigned procedurally.\n\nSo: (1) is an error, two continuous assignments to a variable. (2) is legal: two drivers on a net, resolved (one drives `z`, so the other wins; if both drove different values the result would be `x`). (3) is an error: `y_var` is written by `always_comb` and by a continuous assignment; `always_comb` also forbids writes from any other process (§9.2.2.2).\n\nPorts. In an ANSI port list, an `input logic` port is a net by default, while an `output logic` port is a variable (§23.2.2.3). So you can drive an output from `always_ff`, but you cannot procedurally assign an input inside the module.\n\nUse a net when a signal has more than one driver: tri-state buses, `inout` pads, wired logic, or several modules driving one signal by design. Use `logic` for everything with a single driver; the compiler then catches accidental second drivers for you.",
+      "follow_ups": [
+        "Why does the `default_nettype none` compiler directive help catch bugs, and what does it change?",
+        "What does a net with two drivers of `1` and `0` resolve to? Of `1` and `z`?",
+        "Can you write `input var logic a` and what changes?"
+      ],
+      "common_mistakes": [
+        "Believing a `logic` variable resolves multiple `assign` drivers like a wire.",
+        "Believing `reg` means the signal becomes a flop.",
+        "Assuming `input logic` is a variable that can be assigned inside the module."
+      ],
       "sources": [
-        "IEEE 1800-2023 \u00a76.7",
-        "IEEE 1800-2023 \u00a76.8",
-        "IEEE 1800-2023 \u00a76.11.2"
+        "IEEE 1800-2023 §6.5",
+        "IEEE 1800-2023 §6.11.2",
+        "IEEE 1800-2023 §9.2.2.2",
+        "IEEE 1800-2023 §23.2.2.3"
+      ],
+      "modules": [
+        "F2A_Core_Data_Types/index",
+        "F4A_Modules_and_Packages/index"
+      ]
+    },
+    {
+      "id": "sv-structs-enums-typedef",
+      "topic": "sv",
+      "level": "junior",
+      "category": "coding",
+      "prompt": "Write a `typedef` enum for a 2-bit opcode (`RD`, `WR`, `IDLE`) and a packed struct for a 16-bit command header: opcode, 6-bit length, 8-bit address. Then predict what the code below prints, and explain the difference between the static cast and `$cast`.",
+      "code": "```systemverilog\nop_e  op;\nint   raw = 3;\n\ninitial begin\n  op = op_e'(raw);\n  $display(\"[%s] %0d\", op.name(), op);    // (1)\n  if (!$cast(op, raw))\n    $display(\"bad opcode %0d\", raw);       // (2)\nend\n```",
+      "rubric": "Strong: correct enum and packed struct with the MSB-first rule; predicts the empty name and the failed `$cast`; explains static cast (no check) versus `$cast` (checked, returns 0 as a function); knows the enum's default initial value comes from its base type. Weak: says the static cast errors at run time, or that a packed struct's first member is the least significant.",
+      "model_answer": "```systemverilog\ntypedef enum logic [1:0] {RD, WR, IDLE} op_e;     // RD=0, WR=1, IDLE=2\n\ntypedef struct packed {\n  op_e        op;      // bits [15:14]: first member is most significant\n  logic [5:0] len;     // bits [13:8]\n  logic [7:0] addr;    // bits [7:0]\n} cmd_hdr_t;\n\ncmd_hdr_t   hdr;\nlogic [15:0] bus;\nassign bus = hdr;      // a packed struct is one 16-bit vector\n```\n\nA packed struct has no gaps and its first member is the most significant (§7.2.1). Used as a whole it is a single vector, so it can be assigned to a bus, compared, or streamed. An unpacked struct has implementation-dependent layout and cannot be used as a vector.\n\nPrediction.\n\n1. The static cast `op_e'(raw)` always succeeds and never checks the value (§6.24.2). `op` now holds 3, which is not a member, so `op.name()` returns an empty string (§6.19.5.6). It prints `[] 3`.\n\n2. `$cast` called as a function checks that 3 is a legal `op_e` value. It is not, so `$cast` returns 0, leaves `op` unchanged and the message prints (§6.24.2).\n\nRule: use `$cast` (or a range check) whenever the value comes from outside your code: a DUT bus, a file, a plusarg. Use the static cast only when you have already proved the value is legal.\n\nAlso note: a variable of this enum starts as `'x`, the default of its `logic` base type, not as `RD` (§6.8, Table 6-7). With an `int` base type it would start at 0, which happens to equal the first member and hides a missing reset.",
+      "follow_ups": [
+        "What happens if you call `$cast(op, raw)` as a task instead of a function and the value is illegal?",
+        "When would you use a packed union, and what must be true of its members?",
+        "How would you print every member of `op_e` without hard-coding the names?"
+      ],
+      "common_mistakes": [
+        "Using a static cast on DUT data and never noticing illegal opcodes.",
+        "Assuming the first struct member occupies the low bits.",
+        "Assuming an enum variable starts at its first member."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §7.2.1",
+        "IEEE 1800-2023 §6.19.5.6",
+        "IEEE 1800-2023 §6.24.2",
+        "IEEE 1800-2023 §6.8",
+        "IEEE 1800-2023 §6.18"
+      ],
+      "modules": [
+        "F2A_Core_Data_Types/structs-unions-enums",
+        "F2A_Core_Data_Types/index"
+      ]
+    },
+    {
+      "id": "sv-equality-operators-x",
+      "topic": "sv",
+      "level": "junior",
+      "category": "trick",
+      "prompt": "Predict the result (0, 1 or x) of each expression, with `a = 4'b10x1`. Which operator would you use in a checker that must flag any unknown bit?",
+      "code": "```systemverilog\nlogic [3:0] a = 4'b10x1;\n\na ==  4'b10x1      // (1)\na === 4'b10x1      // (2)\na ==  4'b1001      // (3)\na ==? 4'b10?1      // (4)\n4'b1001 ==? a      // (5)\na inside {4'b1001, 4'b1011}   // (6)\n```",
+      "rubric": "Strong: x, 1, x, 1, 1, x with reasons; knows `==?` wildcards only the right operand and `inside` uses `==?` with the set on the right; uses `$isunknown` for X detection and `===` for intentional X/Z expectations. Weak: treats `==?` as symmetric, says `==` with X is false (rather than x), or uses `===` against known values as an X check.",
+      "model_answer": "1. x. Logical equality compares bit by bit, and an `x` in either operand makes the result unknown (§11.4.5).\n\n2. 1. Case equality compares `x` and `z` literally and never returns `x` (§11.4.5).\n\n3. x. Bit 1 is `x` versus `0`, so the result is unknown. In an `if`, unknown counts as false (§12.4).\n\n4. 1. Wildcard equality treats `x`, `z` (and `?`) in the right operand as don't-care (§11.4.6). Bit 1 of the right side is `?`, so the `x` in `a` is ignored.\n\n5. 1. Here `a` is the right operand, so its `x` in bit 1 acts as a wildcard. The other bits (1, 0, 1) match, so the result is 1.\n\n6. x. `inside` uses `==?` for integral values, with each set member as the right operand (§11.4.13). Neither member has a wildcard, the `x` in `a` is not a wildcard on the left, so both comparisons are `x`. With no match and some `x` results, `inside` returns `x`.\n\nLines 4 and 5 are the classic trap: only the right operand of `==?` can carry wildcards, so swapping the operands changes what counts as a don't-care.\n\nFor a checker: do not rely on `==` to catch X: it yields `x`, `if` takes the `else` branch, and the message is misleading. Test for unknowns explicitly with `$isunknown(sig)` (§20.9), then compare with `==`. Use `===` when the *expected* value deliberately contains `x` or `z`, for example checking that a bus is tri-stated (`bus === 'z`).",
+      "follow_ups": [
+        "What does `!(a == 4'b1001)` evaluate to, and what does an `if` do with it?",
+        "Why are `===` and `!==` illegal inside constraints?",
+        "How do `casez` and `casex` treat `z` and `x` in the case expression and the items?"
+      ],
+      "common_mistakes": [
+        "Assuming `==?` treats wildcards on both sides.",
+        "Assuming `==` returns 0 when an operand has X.",
+        "Using `inside` on 4-state DUT values and expecting unknown bits to fail the test."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §11.4.5",
+        "IEEE 1800-2023 §11.4.6",
+        "IEEE 1800-2023 §11.4.13",
+        "IEEE 1800-2023 §12.4",
+        "IEEE 1800-2023 §20.9"
+      ],
+      "modules": [
+        "F2A_Core_Data_Types/operators-and-expressions",
+        "F2A_Core_Data_Types/index"
       ]
     },
     {
@@ -151,24 +136,121 @@
       "topic": "sv",
       "level": "mid",
       "category": "trick",
-      "prompt": "What happens when a 4-state value containing X is assigned to a 2-state bit variable? Why is this dangerous?",
-      "rubric": "Must explain X/Z silently become 0, masking uninitialized signals. Should mention $isunknown() and === as mitigations.",
-      "model_answer": "X and Z bits are silently converted to 0 when assigned to 2-state types like bit, int, or byte. This is dangerous because it masks uninitialized signals and reset bugs \u2014 the testbench sees 0 where the DUT has unknown state. Mitigations: use $isunknown() before the assignment to check for X/Z, keep DUT-facing signals as 4-state logic throughout the TB, and use === instead of == for X-aware comparisons.",
+      "prompt": "The DUT's `status` output is `8'bxxxx_0000` because a register was never reset. Predict what the checker below reports in each case, and explain how X can be hidden both by 2-state types and by 4-state code.",
+      "code": "```systemverilog\nlogic [7:0] status;      // 4-state, from the DUT\nbit   [7:0] st2;         // 2-state copy\n\ninitial begin\n  st2 = status;\n  if (st2 == 8'h00)       $display(\"A: st2 is zero\");\n  if (status == 8'h00)    $display(\"B: equal\");\n  else                    $display(\"B: not equal\");\n  if (status[7])          $display(\"C: busy\");\n  else                    $display(\"C: idle\");\n  if ($isunknown(status)) $display(\"D: X/Z present\");\nend\n```",
+      "rubric": "Strong: predicts A, B-else, C-idle, D correctly with clauses; names both hiding mechanisms (2-state conversion and X in conditions); gives explicit unknown checks and `===` with the right use. Weak: only says \"X becomes 0 in 2-state\" and misses that 4-state `if` also hides X, or thinks `==` with X raises an error.",
+      "model_answer": "- A prints: a 4-state value converted to a 2-state type turns every `x` and `z` bit into 0 (§6.11.2), so `st2 == 8'h00` is true. The reset bug is gone from the testbench's view.\n\n- B prints \"not equal\": `status == 8'h00` compares `x` bits, so the result is `x` (§11.4.5), and an `if` whose condition is `x` takes the else branch (§12.4). The checker reports the wrong reason and does not mention X at all.\n\n- C prints \"idle\": same rule; `status[7]` is `x`, so the `if` is false. This is X-optimism: 4-state code that silently picks a branch.\n\n- D prints: `$isunknown` returns 1 if any bit is `x` or `z` (§20.9).\n\nSo X is hidden two ways: by copying into 2-state types, and by `if`/`case` treating an unknown condition as false. Defences:\n\n1. Keep DUT-facing data `logic` all the way into the checker.\n\n2. Check for unknowns explicitly before comparing: `if ($isunknown(status)) $error(...)`, or an assertion such as `assert property (@(posedge clk) disable iff (!rst_n) !$isunknown(status));`.\n\n3. Use `===`/`!==` when the expected value itself may contain `x` or `z`; it compares those bits exactly and never returns `x` (§11.4.5).\n\n4. In RTL review, look for `if`/`case` on signals that can be unknown after reset.",
+      "follow_ups": [
+        "What does `status === 8'bxxxx_0000` return, and when is that comparison useful?",
+        "How does a `case` statement treat an `x` selector compared with `casez` and `casex`?",
+        "Why might gate-level simulation show X where RTL showed a clean value (X-pessimism vs X-optimism)?"
+      ],
+      "common_mistakes": [
+        "Thinking `==` with an X operand is an error or always false; it returns `x`, which `if` treats as false.",
+        "Converting DUT outputs to `int` or `bit` in monitors \"for speed\".",
+        "Using `===` against a fully known expected value and believing it checks for X; it just compares."
+      ],
       "sources": [
-        "IEEE 1800-2023 \u00a76.11"
+        "IEEE 1800-2023 §6.11.2",
+        "IEEE 1800-2023 §11.4.5",
+        "IEEE 1800-2023 §12.4",
+        "IEEE 1800-2023 §20.9"
+      ],
+      "modules": [
+        "F2A_Core_Data_Types/index",
+        "F2A_Core_Data_Types/operators-and-expressions",
+        "F2C_Procedural_Code_and_Flow_Control/flow-control"
+      ]
+    },
+    {
+      "id": "sv-expression-width-signedness",
+      "topic": "sv",
+      "level": "mid",
+      "category": "trick",
+      "prompt": "Predict the value of each result and the output of the `if`. Explain the sizing and signedness rules that decide each one.",
+      "code": "```systemverilog\nlogic [3:0] a = 4'hF, b = 4'h1;\nlogic [4:0] s5;\nlogic [3:0] s4;\nlogic [7:0] u = 8'd1;\nint         i = -1;\n\ninitial begin\n  s5 = a + b;          // (1)\n  s4 = a + b;          // (2)\n  s5 = {a + b};        // (3)\n  if (i < u) $display(\"less\");       // (4)\n  else       $display(\"not less\");\nend\n```",
+      "rubric": "Strong: 5'h10, 4'h0, 5'h00, \"not less\", each tied to context- vs self-determined sizing and the any-unsigned rule; mentions part-selects and concatenations are unsigned. Weak: gets (3) wrong because it ignores self-determined concatenation operands, or claims an `int` comparison is always signed.",
+      "model_answer": "1. 5'h10. Operands of `+` are context-determined: the expression is evaluated at the width of the largest operand *including the left-hand side*, here 5 bits, so the carry is kept (§11.6.1, §11.6.2).\n\n2. 4'h0. Same rule with a 4-bit target: the carry is lost.\n\n3. 5'h00. Operands of a concatenation are self-determined (§11.6.1, Table 11-21). `a + b` is evaluated at 4 bits, giving 0, and the 4-bit concatenation is then zero-extended to 5 bits.\n\n4. \"not less\". If any operand is unsigned, the comparison is unsigned (§11.8.1). `u` is unsigned, so `i` is treated as unsigned: both are extended to 32 bits and `-1` becomes `32'hFFFF_FFFF`, which is not less than 1.\n\nThe rules in one place:\n\n- Width: find the largest operand in the context-determined part of the expression, including the assignment target; evaluate everything at that width (§11.8.2).\n\n- Some operands are always self-determined: concatenation members, shift amounts, the condition of `?:`, and the operands of relational/equality results (which are 1 bit).\n\n- Sign: decimal literals are signed, based literals (`8'd1`) unsigned unless written with `s`; part-selects, bit-selects and concatenations are always unsigned (§11.8.1). One unsigned operand makes the whole context unsigned.\n\nFixes: widen explicitly (`s5 = 5'(a) + b;`) and make intent explicit with `$signed(u)` or by declaring `u` as `logic signed [7:0]`. Many lint tools warn on mixed-sign comparisons; turn that warning on.",
+      "follow_ups": [
+        "What does `logic signed [7:0] x = -8'sd1; logic [15:0] y = x[7:0];` store in `y`, and why?",
+        "Why does `(a + b) >> 1` lose the carry for 16-bit `a` and `b`, and how do you fix it?",
+        "What width is the result of `a * b` for two 8-bit operands assigned to a 32-bit variable?"
+      ],
+      "common_mistakes": [
+        "Believing an expression's width is just its widest operand, ignoring the assignment target.",
+        "Believing one signed operand makes a comparison signed.",
+        "Forgetting that a part-select of a signed variable is unsigned."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §11.6.1",
+        "IEEE 1800-2023 §11.6.2",
+        "IEEE 1800-2023 §11.8.1",
+        "IEEE 1800-2023 §11.8.2"
+      ],
+      "modules": [
+        "F2A_Core_Data_Types/operators-and-expressions",
+        "F2A_Core_Data_Types/index"
       ]
     },
     {
       "id": "sv-packed-unpacked",
       "topic": "sv",
       "level": "mid",
-      "category": "concept",
-      "prompt": "Explain packed vs. unpacked arrays. Give an example where using the wrong one causes a bug.",
-      "rubric": "Must distinguish contiguous bits (packed, sliceable) vs. independent elements (unpacked, not sliceable). Bug example should involve illegal part-select across unpacked boundaries.",
-      "model_answer": "Packed arrays store contiguous bits \u2014 logic [3:0][7:0] data is 32 bits that can be sliced as data[31:0]. Unpacked arrays store independent elements \u2014 logic [7:0] data [0:3] is 4 separate bytes where data[31:0] is illegal. Bug example: a serializer tries to stream all bytes as data[31:0] but the array is unpacked, causing a compile error or (worse with some tools) reading garbage from adjacent memory. Use packed for protocol bus lanes; unpacked for register files and memories.",
+      "category": "coding",
+      "prompt": "Explain packed versus unpacked arrays using the two declarations below. What do `w`, `w[3]`, `w[3:2]` and `b[1:2]` select? How do you turn `b` into one 32-bit word, and what byte-order bug is common when you do?",
+      "code": "```systemverilog\nlogic [3:0][7:0] w;       // packed: 4 bytes\nlogic [7:0]      b [4];   // unpacked: 4 separate bytes, b[0]..b[3]\nlogic [31:0]     word;\n```",
+      "rubric": "Strong: `w` as one vector; `w[3]` byte, `w[3:2]` two bytes; recognises `w[31:0]` as a wrong select; states unpacked arrays can be sliced (`b[1:2]`) but not used as a vector; correct `{>>{b}}` mapping and the `{<<8{b}}` reversal; names a byte-order bug. Weak: \"unpacked arrays cannot be sliced\", or `w[31:0]` as the whole word, or a C-style \"reads adjacent memory\" explanation.",
+      "model_answer": "A packed array is one contiguous vector subdivided into fields. Used as a whole, `w` is a single 32-bit value (§7.4.1). Selects work along the leftmost packed dimension first:\n\n- `w[3]` is the most significant byte (8 bits).\n\n- `w[3:2]` is the top two bytes (16 bits), as in the LRM's `joe[7][3:2]` example (§7.4.4, §7.4.5).\n\n- `w[3][7]` is a single bit.\n\n- `w[31:0]` is not the flat word: it is a range of elements 31..0 of the 4-element byte dimension. Tools may reject it at compile time; otherwise elements beyond 3 read `x` (§11.5.1). The flat word is just `w`, or `logic [31:0]'(w)`.\n\nAn unpacked array is a collection of separate elements. Unpacked arrays can be indexed and sliced one dimension at a time: `b[1:2]` is an unpacked array of two bytes, assignable to another two-element array (§7.4.5). What you cannot do is treat `b` as a bit vector: assigning it directly to `word` is a compile error. Convert with streaming or a bit-stream cast (§11.4.14, §6.24.3):\n\n```systemverilog\nword = {>>{b}};     // b[0] lands in word[31:24], b[3] in word[7:0]\nword = {<<8{b}};    // byte order reversed: b[0] lands in word[7:0]\n```\n\nThe common bug is choosing the wrong stream direction (or declaring `[0:3][7:0]` instead of `[3:0][7:0]`). The data is all there, so nothing fails until a checker compares against a little-endian reference model and every multi-byte field is byte-swapped.\n\nUse packed for buses and fields you want to treat as numbers. Use unpacked for memories, register files and anything indexed element by element. An out-of-range read on an unpacked array returns the element type's default value rather than another element's data (§7.4.5, Table 7-1).",
+      "follow_ups": [
+        "What does `{<<{b}}` (no slice size) produce compared with `{<<8{b}}`?",
+        "Can you assign a 32-bit packed vector to `logic [7:0] b[4]` with a cast? Which syntax?",
+        "Why does a packed struct often replace a packed array for protocol headers?"
+      ],
+      "common_mistakes": [
+        "Writing `w[31:0]` to mean the whole packed array.",
+        "Saying unpacked arrays cannot be sliced; they can, one dimension at a time.",
+        "Picking `<<` or `>>` by trial and error instead of from the element-order rule."
+      ],
       "sources": [
-        "IEEE 1800-2023 \u00a77.4.1",
-        "IEEE 1800-2023 \u00a77.4.2"
+        "IEEE 1800-2023 §7.4.1",
+        "IEEE 1800-2023 §7.4.4",
+        "IEEE 1800-2023 §7.4.5",
+        "IEEE 1800-2023 §11.5.1",
+        "IEEE 1800-2023 §11.4.14",
+        "IEEE 1800-2023 §6.24.3"
+      ],
+      "modules": [
+        "F2A_Core_Data_Types/index",
+        "F2A_Core_Data_Types/operators-and-expressions",
+        "F2B_Dynamic_Structures/index"
+      ]
+    },
+    {
+      "id": "sv-array-manipulation-methods",
+      "topic": "sv",
+      "level": "junior",
+      "category": "trick",
+      "prompt": "Predict the output of each line. What type does each method return, and what goes wrong with the checksum and the sort?",
+      "code": "```systemverilog\nbyte unsigned pl[] = '{200, 100, 10};\nint           q[$] = '{5, 1, 4, 1};\nint           idx[$];\n\ninitial begin\n  $display(\"%0d\", pl.sum());                    // (1)\n  $display(\"%0d\", pl.sum() with (int'(item)));  // (2)\n  idx = q.find_index with (item == 1);\n  $display(\"%p\", idx);                          // (3)\n  q.sort();\n  $display(\"%p\", q);                            // (4)\nend\n```",
+      "rubric": "Strong: predicts 54 and 310 and explains the element-type rule (§7.12.3); knows locator methods return queues; sort is in place and void; needs a `with` key for handles. Weak: predicts 310 for (1), or uses `sum()` on bytes for checksums without widening.",
+      "model_answer": "1. 54. A reduction method returns the element type unless a `with` clause gives another type (§7.12.3). 200 + 100 + 10 = 310, which wraps in 8 bits to 310 - 256 = 54.\n\n2. 310. The `with (int'(item))` clause makes the reduction work on `int`, so nothing wraps. Always widen when you compute checksums or byte counts.\n\n3. '{1, 3}. Locator methods return a queue: `find_index` returns the indices of every match (§7.12.1).\n\n4. '{1, 1, 4, 5}. `sort()` reorders the array in place, ascending, and returns nothing (§7.12.2). (The exact text that `%p` prints varies by tool.)\n\nSorting objects. For a queue of class handles, `sort()` needs a key: `q.sort() with (item.addr);`. The `with` expression must have relational operators defined; class handles do not, so a bare `sort()` on handles is an error (§7.12.2).\n\nPractical uses: `find_index`/`find` to pull matching items out of an expected list; `sum() with` for checksums and byte counts; `sort() with (item.addr)` to normalise two lists before an order-independent compare; `unique()` to find distinct IDs.",
+      "follow_ups": [
+        "What does `q.find_first with (item > 10)` return if nothing matches?",
+        "What is `item.index` and when would you use it inside a `with` clause?",
+        "How does `unique()` differ from `unique_index()`?"
+      ],
+      "common_mistakes": [
+        "Expecting `sum()` to return a wide integer.",
+        "Expecting `find_index` to return a single `int`.",
+        "Calling `sort()` without a key on a queue of class handles."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §7.12.1",
+        "IEEE 1800-2023 §7.12.2",
+        "IEEE 1800-2023 §7.12.3"
+      ],
+      "modules": [
+        "F2B_Dynamic_Structures/index"
       ]
     },
     {
@@ -176,49 +258,1196 @@
       "topic": "sv",
       "level": "mid",
       "category": "concept",
-      "prompt": "Compare dynamic arrays, queues, and associative arrays. When would you use each in a UVM testbench?",
-      "rubric": "Must accurately distinguish the structures: dynamic arrays (size known after construct, random access), queues (FIFO/LIFO, push/pop), and associative arrays (sparse key-value lookup).",
-      "model_answer": "Dynamic arrays (IEEE 1800-2023 \u00a77.5): use when size is known after construction and random access is needed (e.g., pre-built stimulus sequences, coverage bins). Queues (\u00a77.10): use for FIFO/LIFO ordering with efficient push/pop (e.g., driver stimulus queues, monitor output buffers). Bounded queues model hardware FIFO depth. Associative arrays (\u00a77.8): use for sparse key-value lookup (e.g., scoreboard tracking outstanding TXNs by ID, config DB implementations). Always delete completed entries to avoid memory leaks.",
+      "prompt": "Compare dynamic arrays, queues and associative arrays. For each, give a testbench use, and explain why a bounded queue is not a model of a hardware FIFO.",
+      "code": "```systemverilog\nbyte        payload[];          // dynamic array\nint         q[$];               // queue\nint         q4[$:3];            // bounded queue: at most 4 elements\nmy_txn      exp_by_id[int];     // associative array keyed by ID\n\ninitial begin\n  payload = new[8];\n  payload = new[16](payload);   // resize and keep the first 8\n  repeat (6) q4.push_back(1);   // what is q4.size()?\nend\n```",
+      "rubric": "Strong: correct structure, cost and a realistic TB use for each (payload sized at run time, in-order list, sparse or by-ID map); `new[N]` vs `new[N](old)`; missing-key behaviour; the bounded-queue discard rule with the size prediction and the mailbox alternative. Weak: \"bounded queues model FIFO depth\" without the discard caveat, or a use such as \"coverage bins\" for dynamic arrays.",
+      "model_answer": "- Dynamic array (§7.5): contiguous, sized at run time with `new[N]`, constant-time indexing. `new[N]` alone discards the old contents; `new[N](old)` copies them. Use it for a packet payload whose length is chosen when the packet is randomized.\n\n- Queue (§7.10): ordered, grows and shrinks at both ends in constant time (`push_back`, `pop_front`), with constant-time indexing. Use it for an in-order expected list in a scoreboard or a driver's pending list.\n\n- Associative array (§7.8, §7.9): sparse, keyed by any index type, traversed in index order with `first`/`next`. Use it for a sparse memory model or an expected-by-ID table for out-of-order completions. Reading a missing key returns the type's default value and issues a warning (§7.8.6), so check `exists()` first.\n\nBounded queues. `q4[$:3]` may hold at most 4 elements. After any write that leaves elements beyond the bound, those elements are discarded and a warning is issued (§7.10.5). So the 5th and 6th `push_back` drop the new values and `q4.size()` is 4. A hardware FIFO blocks the writer or raises a `full` flag; a bounded queue does neither, it just loses data with a warning. To model back-pressure, check `size()` against the depth explicitly, or use a bounded mailbox, whose `put()` suspends the caller until there is room (§15.4.1, §15.4.3).\n\nMemory hygiene. Delete entries from queues and associative arrays when they are matched, and report what is left at the end of the test.",
+      "follow_ups": [
+        "What does `q.insert(1, x)` cost? Is that guaranteed by the LRM?",
+        "Which index types can an associative array use, and how does iteration order depend on them?",
+        "How would you model a FIFO with depth 4 that back-pressures a driver?"
+      ],
+      "common_mistakes": [
+        "Assuming `new[N]` keeps the old elements.",
+        "Expecting a bounded queue to block or error on overflow; it discards with a warning (§7.10.5).",
+        "Reading `exp_by_id[id]` without `exists()` and comparing against a default-constructed (null) handle."
+      ],
       "sources": [
-        "IEEE 1800-2023 \u00a77.5",
-        "IEEE 1800-2023 \u00a77.8",
-        "IEEE 1800-2023 \u00a77.10"
+        "IEEE 1800-2023 §7.5",
+        "IEEE 1800-2023 §7.8",
+        "IEEE 1800-2023 §7.8.6",
+        "IEEE 1800-2023 §7.9",
+        "IEEE 1800-2023 §7.10",
+        "IEEE 1800-2023 §7.10.5",
+        "IEEE 1800-2023 §15.4.1",
+        "IEEE 1800-2023 §15.4.3"
+      ],
+      "modules": [
+        "F2B_Dynamic_Structures/index",
+        "I-SV-5_Synchronization_and_IPC/mailboxes"
       ]
     },
     {
       "id": "sv-queue-performance",
       "topic": "sv",
-      "level": "senior",
+      "level": "mid",
       "category": "concept",
-      "prompt": "What is the performance difference between queue push_back vs. insert in the middle? Why does it matter in verification?",
-      "rubric": "Must identify push_back as O(1) and insert as O(N) due to array shifting. Should mention scoreboard bottlenecks.",
-      "model_answer": "push_back() and push_front() are O(1) \u2014 constant time regardless of queue size. insert(index, item) is O(N) because all subsequent elements must shift. In a scoreboard processing millions of transactions, mid-queue inserts can become a simulation bottleneck. If ordered insertion is needed, use an associative array with a sortable key.",
+      "prompt": "An out-of-order scoreboard keeps expected transactions in one queue and searches it with `find_first_index` for every observed transaction. Simulation slows as traffic grows. What does the LRM guarantee about queue operation costs, and how would you restructure the scoreboard?",
+      "rubric": "Strong: states what §7.10 guarantees and labels middle-insert cost as implementation behaviour; identifies the linear search as the actual cost; proposes keyed storage (associative array of queues) that keeps per-ID order and deletes empty keys. Weak: states \"insert is O(N)\" as a language fact and proposes nothing about the search.",
+      "model_answer": "The LRM guarantees constant-time access to any element and constant-time insertion and removal at either end of a queue (§7.10). It does not specify the cost of inserting or deleting in the middle; in typical implementations that moves elements and grows with the queue size, but that is implementation behaviour, not a language rule.\n\nThe real problem here is the search: `find_first_index` scans the queue, so each observed transaction costs time proportional to the number outstanding. With N outstanding, total work grows roughly as N squared as traffic grows.\n\nRestructure by key:\n\n```systemverilog\nmy_txn exp_by_id[int][$];        // associative array of queues: ID -> in-order list\n\nfunction void add_expected(my_txn t);\n  exp_by_id[t.id].push_back(t);\nendfunction\n\nfunction void check_actual(my_txn t);\n  if (!exp_by_id.exists(t.id) || exp_by_id[t.id].size() == 0)\n    $error(\"unexpected id %0d\", t.id);\n  else begin\n    my_txn e = exp_by_id[t.id].pop_front();   // same-ID order is preserved\n    if (!e.compare(t)) $error(\"mismatch id %0d\", t.id);\n    if (exp_by_id[t.id].size() == 0) exp_by_id.delete(t.id);\n  end\nendfunction\n```\n\nLookup is now by key (associative arrays are typically hashed or tree-based; the exact cost is implementation-dependent), and per-ID ordering, which protocols such as AXI require, is kept. Delete empty keys so the table does not grow forever, and report leftovers at the end of the test.",
+      "follow_ups": [
+        "How do you handle a protocol where order is guaranteed only per ID and per direction?",
+        "What end-of-test check do you add, and in which UVM phase?",
+        "When would sorting the expected queue be acceptable?"
+      ],
+      "common_mistakes": [
+        "Quoting big-O costs for queue operations as if the LRM defined them.",
+        "Optimizing insertion while leaving a linear search on every observed transaction."
+      ],
       "sources": [
-        "IEEE 1800-2023 \u00a77.10"
+        "IEEE 1800-2023 §7.10",
+        "IEEE 1800-2023 §7.8",
+        "IEEE 1800-2023 §7.9",
+        "IEEE 1800-2023 §7.12.1"
+      ],
+      "modules": [
+        "F2B_Dynamic_Structures/index",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index"
       ]
     },
     {
       "id": "sv-associative-array-leak",
       "topic": "sv",
       "level": "mid",
-      "category": "waveform-debug",
-      "prompt": "Your regression slows down over time and eventually runs out of memory. The scoreboard uses an associative array. What's the likely cause and fix?",
-      "rubric": "Must identify the lack of delete() calls causing unbounded memory growth. Should suggest checking .num() in report_phase.",
-      "model_answer": "The associative array is never cleaned up \u2014 matched or timed-out entries aren't being delete()'d. Over millions of transactions, the hash table grows unbounded, consuming memory and slowing lookups. Fix: Call expected_txns.delete(id) after every successful comparison. Add a report_phase() check that flags non-zero .num() as an error.",
+      "category": "coding",
+      "prompt": "Long regressions slow down and eventually run out of memory. The scoreboard below is the prime suspect. Find the leaks, fix them, and add the end-of-test check that would have caught the problem early.",
+      "code": "```systemverilog\nclass sb extends uvm_component;\n  `uvm_component_utils(sb)\n  uvm_tlm_analysis_fifo #(my_txn) exp_fifo;   // fed by the predictor\n  my_txn pending[int];                         // keyed by tag\n\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n    exp_fifo = new(\"exp_fifo\", this);\n  endfunction\n\n  task run_phase(uvm_phase phase);\n    my_txn e;\n    forever begin\n      exp_fifo.get(e);\n      pending[e.tag] = e;\n    end\n  endtask\n\n  function void write_actual(my_txn a);         // called by the monitor\n    if (pending.exists(a.tag) && pending[a.tag].compare(a))\n      `uvm_info(\"SB\", \"match\", UVM_HIGH)\n    else\n      `uvm_error(\"SB\", $sformatf(\"mismatch tag %0d\", a.tag))\n  endfunction\nendclass\n```",
+      "rubric": "Strong: finds the missing delete and the unbounded analysis FIFO; fixes delete on both match and mismatch; handles unexpected and duplicate tags; adds a `check_phase` leftover check (pending and FIFO). Weak: only \"call delete\" with no end-of-test check, or puts a blocking wait in `write`.",
+      "model_answer": "Leak 1: entries are never deleted. `write_actual` compares but never calls `pending.delete(a.tag)`, so every expected transaction stays in the associative array for the whole run. Memory grows with traffic, and lookups slow as the table grows (§7.8, §7.9).\n\nLeak 2: the analysis FIFO is unbounded. `uvm_tlm_analysis_fifo` is constructed with an unbounded size so that `write` can never block (uvm-core 2020.3.1 `uvm_tlm_fifos.svh`: \"analysis fifo must be unbounded\"). If the consumer ever stops draining it, or if a test produces expectations for traffic that never happens, it grows without limit.\n\nFixes:\n\n```systemverilog\nfunction void write_actual(my_txn a);\n  if (!pending.exists(a.tag)) begin\n    `uvm_error(\"SB\", $sformatf(\"unexpected tag %0d\", a.tag))\n    return;\n  end\n  if (!pending[a.tag].compare(a))\n    `uvm_error(\"SB\", $sformatf(\"mismatch tag %0d\", a.tag))\n  pending.delete(a.tag);                  // free the entry either way\nendfunction\n\nfunction void check_phase(uvm_phase phase);\n  if (pending.num() != 0)\n    `uvm_error(\"SB\", $sformatf(\"%0d expected transactions never seen\", pending.num()))\n  if (exp_fifo.used() != 0)\n    `uvm_error(\"SB\", $sformatf(\"%0d expectations left in exp_fifo\", exp_fifo.used()))\nendfunction\n```\n\nPut the leftover check in `check_phase` (IEEE 1800.2-2020 9.8.1.7), which exists for exactly this, rather than `report_phase`. Also watch for a reused tag overwriting an entry that was never matched: `pending[e.tag] = e` silently replaces it, so check `exists()` first and flag duplicates. In very long tests, also report the high-water mark of `pending.num()` periodically; a steady climb is the early warning.",
+      "follow_ups": [
+        "How would you detect expectations that will never complete because the DUT dropped them, before the end of the test?",
+        "Why can `write()` on an analysis port never block, and what does that imply for subscriber design?",
+        "How would you measure memory growth per component in a regression?"
+      ],
+      "common_mistakes": [
+        "Deleting only on a successful compare, so mismatching entries leak.",
+        "Assuming every TLM FIFO is bounded; `uvm_tlm_fifo` defaults to size 1, but the analysis FIFO is unbounded.",
+        "Overwriting a pending entry when a tag is reused and losing the original silently."
+      ],
       "sources": [
-        "IEEE 1800-2023 \u00a77.8"
+        "IEEE 1800-2023 §7.8",
+        "IEEE 1800-2023 §7.9",
+        "IEEE 1800.2-2020 9.8.1.7 (uvm_check_phase)",
+        "uvm-core 2020.3.1 src/tlm1/uvm_tlm_fifos.svh (uvm_tlm_analysis_fifo is unbounded)"
+      ],
+      "modules": [
+        "F2B_Dynamic_Structures/index",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index"
       ]
     },
     {
-      "id": "sv-array-manipulation-methods",
+      "id": "sv-blocking-vs-nonblocking",
       "topic": "sv",
       "level": "junior",
       "category": "concept",
-      "prompt": "How do array manipulation methods like find_index, sort, and sum work? Give a practical verification use case.",
-      "rubric": "Must show understanding of array locator and reduction methods. Provide concrete verification examples.",
-      "model_answer": "find_index with (item > threshold) returns indices matching a predicate; useful in coverage analysis to find which bins are uncovered. sort() / rsort() provide in-place ordering; useful to normalize transaction queues before comparison in an out-of-order scoreboard. sum() is a reduction method; useful to compute expected checksums from a packet payload array.",
+      "prompt": "Explain blocking (`=`) and nonblocking (`<=`) assignments. Both versions below start with `q1 = q2 = q3 = 0` and `d = 1`. Predict `q1`, `q2` and `q3` after the first rising edge of `clk`, and say which version is a 3-stage shift register.",
+      "code": "```systemverilog\n// Version A: nonblocking\nalways_ff @(posedge clk) begin\n  q1 <= d;\n  q2 <= q1;\n  q3 <= q2;\nend\n\n// Version B: blocking\nalways @(posedge clk) begin\n  q1 = d;\n  q2 = q1;\n  q3 = q2;\nend\n```",
+      "rubric": "Strong: defines both by *when the update happens* (immediately, or scheduled for the NBA region), predicts 1/0/0 and 1/1/1, names A as the shift register, and explains the inter-process race (§4.7) as the reason flops use `<=`. Gives the `always_ff`/`always_comb` rule. Senior signal: the program/checker nuance (Reactive and Re-NBA). Weak: \"blocking runs in order, nonblocking runs in parallel\" with no update timing, or claims an NBA updates at a later simulation time.",
+      "model_answer": "A blocking assignment `=` evaluates its right-hand side and updates the variable before the next statement runs. A nonblocking assignment `<=` evaluates its right-hand side when the statement executes but only *schedules* the update. In module code the update matures in the NBA region, after every process woken by the edge has already read the old values (§10.4.1, §10.4.2, §4.4.2.4).\n\nVersion A gives `q1 = 1, q2 = 0, q3 = 0`. Each right-hand side reads the value from before the edge, so `d` moves one stage per clock: this is the 3-stage shift register.\n\nVersion B gives `q1 = 1, q2 = 1, q3 = 1`. Each statement sees the value the previous statement has just written, so `d` falls through all three in one edge. Synthesis builds one flop driving three outputs, and reordering the three lines changes the hardware.\n\nWhy flops use `<=`. Two `always` blocks triggered by the same edge may run in either order (§4.7). If one writes `a = b` and the other `b = a`, the result depends on that order: a race. With `<=` every process reads before any variable updates, so the order no longer matters.\n\nRules of thumb: `<=` in `always_ff`; `=` in `always_comb`, where later statements must see earlier results; never assign one variable with both (a style rule, not an LRM rule). Expert nuance: the Active/NBA description is for module code. Blocking assignments in program blocks and checkers run in the Reactive region, and their nonblocking updates mature in Re-NBA (§4.4.2.6, §4.4.2.8).",
+      "follow_ups": [
+        "What do `a <= b; b <= a;` and `a = b; b = a;` each do at one edge?",
+        "A `$display(q1)` placed right after `q1 <= d;` prints which value? What would `$strobe` print?",
+        "Is `x <= 1;` legal if `x` is an automatic variable or an element of a queue? (No: §10.4.2 forbids NBAs to automatic variables and to elements of dynamically sized arrays.)"
+      ],
+      "common_mistakes": [
+        "Saying a nonblocking assignment updates \"in the next cycle\" or at a later simulation time. It updates in the same time step, in the NBA region.",
+        "Believing `<=` everywhere removes all races. A testbench that drives with `=` at the active edge still races the DUT.",
+        "Using `<=` inside `always_comb` for multi-statement logic, so later statements read stale values within the same pass."
+      ],
       "sources": [
-        "IEEE 1800-2023 \u00a77.12"
+        "IEEE 1800-2023 §10.4.1",
+        "IEEE 1800-2023 §10.4.2",
+        "IEEE 1800-2023 §4.4.2.4",
+        "IEEE 1800-2023 §4.4.2.6",
+        "IEEE 1800-2023 §4.4.2.8",
+        "IEEE 1800-2023 §4.7"
+      ],
+      "modules": [
+        "F2C_Procedural_Code_and_Flow_Control/index",
+        "F3B_Scheduling_Regions/index",
+        "F3C_Delta_Cycles_and_Race_Conditions/index"
+      ]
+    },
+    {
+      "id": "sv-always-procedures",
+      "topic": "sv",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "When do you use `always_comb`, `always @*`, `always_latch` and `always_ff`? Give at least three concrete ways `always_comb` behaves differently from `always @*`.",
+      "code": "```systemverilog\nfunction automatic logic parity(input logic [7:0] d);\n  return ^(d ^ mask);           // reads module variable `mask`\nendfunction\n\nalways_comb  y1 = parity(data); // (A)\nalways @*    y2 = parity(data); // (B)\n```",
+      "rubric": "Strong: right procedure for each style; at least three LRM differences (time-zero evaluation, function-body sensitivity, single-writer rule, no blocking statements) with the `mask` example explained; mentions latch warnings. Weak: \"always_comb is just shorthand for always @*\".",
+      "model_answer": "- `always_ff`: sequential logic. One event control, no blocking timing controls inside, written with `<=` (§9.2.2.4).\n\n- `always_comb`: combinational logic. Inferred sensitivity, written with `=` (§9.2.2.2).\n\n- `always_latch`: intended latches. Same rules as `always_comb`, but tools check that it really is latched logic (§9.2.2.3).\n\n- `always @*`: the older general-purpose form. It still works, but gives fewer guarantees.\n\nHow `always_comb` differs from `always @*` (§9.2.2.2.2):\n\n1. Runs once at time zero, after all `initial` and `always` procedures have started, so outputs are consistent with inputs from the start. `always @*` waits for its first input change; if inputs never change, its output stays at its initial value (`x` for `logic`).\n\n2. Sees inside called functions. In the code above, (A) is sensitive to `mask` because `parity` reads it. (B) is sensitive only to `data`, the argument, so a change of `mask` alone does not update `y2`: a simulation-only bug that synthesis will not reproduce.\n\n3. Single writer. Variables written by `always_comb` (including in functions it calls) cannot be written by any other process; `always @*` allows it.\n\n4. No blocking. `always_comb` may not contain timing or event controls or `fork`.\n\n5. Expressions in immediate assertions inside called functions also join the sensitivity list.\n\nTools should warn when an `always_comb` infers a latch, for example an `if` without an `else` (§9.2.2.2). That warning is one of the main reasons to prefer the specialized forms: they state intent, and the tool checks it.",
+      "follow_ups": [
+        "An `always_comb` block calls a task. What does the task body contribute to the sensitivity list?",
+        "What does `always_ff @(posedge clk iff en)` do?",
+        "Why can a missing `default` in a `case` inside `always_comb` create a latch?"
+      ],
+      "common_mistakes": [
+        "Treating `always_comb` and `always @*` as identical.",
+        "Writing a variable from both `always_comb` and another process.",
+        "Putting `#` delays or `@` inside `always_comb`."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §9.2.2.2",
+        "IEEE 1800-2023 §9.2.2.2.1",
+        "IEEE 1800-2023 §9.2.2.2.2",
+        "IEEE 1800-2023 §9.2.2.3",
+        "IEEE 1800-2023 §9.2.2.4"
+      ],
+      "modules": [
+        "F2C_Procedural_Code_and_Flow_Control/index",
+        "F2C_Procedural_Code_and_Flow_Control/flow-control"
+      ]
+    },
+    {
+      "id": "sv-unique-priority-case",
+      "topic": "sv",
+      "level": "mid",
+      "category": "trick",
+      "prompt": "For `sel` values 0 through 7, which of these three statements report a violation, and which branch runs? Are `unique` and `priority` only synthesis hints?",
+      "code": "```systemverilog\nbit [2:0] sel;\n\nunique case (sel)\n  0, 1: y = A;\n  2:    y = B;\n  4:    y = C;\nendcase\n\npriority casez (sel)\n  3'b00?: z = A;\n  3'b0??: z = B;\nendcase\n\nunique0 case (sel)\n  0, 1: w = A;\n  2:    w = B;\n  4:    w = C;\nendcase\n```",
+      "rubric": "Strong: correct violation sets (unique: 3,5,6,7; priority: 4–7; unique0: none), first-match for priority, overlap rule for unique; explains run-time semantics, deferral to Observed with glitch flushing, and the synthesis mismatch risk. Weak: \"unique is a synthesis pragma\", or expects unique0 to report missing values.",
+      "model_answer": "- `unique case`: reports a violation for 3, 5, 6 and 7, because no item matches, and it would also report if two items matched the same value (§12.5.3). For 0–2 and 4 exactly one item matches and that branch runs. With no match, no branch runs, so `y` keeps its old value.\n\n- `priority casez`: acts on the first match only. Values 0 and 1 match both items; that is allowed, and `A` runs. 2 and 3 run `B`. Values 4–7 match nothing, so it reports a violation (§12.5.3).\n\n- `unique0 case`: like `unique` for overlaps, but no violation when nothing matches (§12.5.3). 3, 5, 6, 7 silently do nothing.\n\nThey are not only synthesis hints. They are run-time checks with defined simulation semantics: the simulator must issue the violation report. The report is deferred to the Observed region and is flushed if the process re-runs in the same time step, so zero-delay glitches in combinational logic do not produce false reports (§12.4.2.1). Violation reports can be controlled with the assertion control tasks (§20.11).\n\nWhy it matters. Synthesis may build parallel (unique) or priority logic and treat unlisted values as don't-care. If simulation silently ignored unlisted values, you would sign off an RTL behaviour that the gates do not have. The violation report is the simulator telling you that your assumption was wrong.",
+      "follow_ups": [
+        "What is the difference between `unique case` with a `default` and `unique0 case`?",
+        "Why is a deferred violation report flushed when an `always_comb` re-triggers in the same time step?",
+        "How would you turn these reports off during reset without editing the RTL?"
+      ],
+      "common_mistakes": [
+        "Treating `unique`/`priority` as comments for synthesis.",
+        "Expecting `priority` to flag overlapping items.",
+        "Adding a `default` to a `unique case` and losing the violation check for unlisted values."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §12.5.3",
+        "IEEE 1800-2023 §12.4.2",
+        "IEEE 1800-2023 §12.4.2.1",
+        "IEEE 1800-2023 §20.11"
+      ],
+      "modules": [
+        "F2C_Procedural_Code_and_Flow_Control/flow-control"
+      ]
+    },
+    {
+      "id": "sv-fork-join-variants",
+      "topic": "sv",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "Explain `fork...join`, `join_any` and `join_none`. Then read the task below: which value of `i` does each `send_pkt` call receive, and which threads does the final `disable fork` kill? Rewrite it so that only the timeout race is cleaned up.",
+      "code": "```systemverilog\ntask automatic run_body();\n  fork\n    monitor_bus();                 // meant to run for the whole test\n  join_none\n\n  for (int i = 0; i < 3; i++) begin\n    fork\n      send_pkt(i);\n    join_none\n  end\n\n  fork\n    wait_for_irq();\n    #1us $display(\"timeout\");\n  join_any\n  disable fork;\nendtask\n```",
+      "rubric": "Strong: correct semantics of all three, including that join_any leaves siblings running and that join_none children start when the parent blocks; predicts 3/3/3 with the reason; states disable fork kills all descendants (§9.6.3) and names the monitor as collateral; gives the isolation wrapper and the `automatic` copy. Weak: says join_any kills the other branches, that join_none children start immediately, or that disable fork only affects the most recent fork.",
+      "model_answer": "- `join` waits for all children.\n\n- `join_any` waits for the first child to finish; the others keep running.\n\n- `join_none` does not wait. The children are scheduled, but they start only when the parent blocks or finishes (§9.3.2).\n\nLoop capture. The three `join_none` forks do not start until the parent blocks at the third `fork`. By then the loop has finished and `i == 3`, so every `send_pkt` sees 3. The LRM example in §9.3.2 shows the same effect. Fix it by copying the value in the fork's declaration area, which is initialized when the fork is entered, before the process is spawned:\n\n```systemverilog\nfor (int i = 0; i < 3; i++) begin\n  fork\n    automatic int k = i;\n    send_pkt(k);\n  join_none\nend\n```\n\n`disable fork` kills every descendant of the calling process, not just the last fork's children (§9.6.3). Here it kills `monitor_bus`, any `send_pkt` still running, and the losing branch of the race. Isolate the race in its own process so `disable fork` only sees that process's children:\n\n```systemverilog\nfork begin\n  fork\n    wait_for_irq();\n    #1us $display(\"timeout\");\n  join_any\n  disable fork;          // kills only the race's leftovers\nend join\n```\n\nUse `wait fork` to wait for all children of the current process (§9.6.1). For finer control, keep `process` handles and `kill()` a specific thread (§9.7).",
+      "follow_ups": [
+        "What does `wait fork` wait for, and why can it hang a test that has forked a forever-running monitor?",
+        "How would you kill only `send_pkt` number 1 without touching the others?",
+        "Why is `disable <block_name>` riskier than `disable fork` in reusable code?"
+      ],
+      "common_mistakes": [
+        "Expecting each `join_none` child to see its own loop value without an `automatic` copy.",
+        "Calling `disable fork` after `join_any` in a task that forked long-lived threads earlier.",
+        "Assuming `join_any` stops the other children."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §9.3.2",
+        "IEEE 1800-2023 §9.6.1",
+        "IEEE 1800-2023 §9.6.3",
+        "IEEE 1800-2023 §9.7",
+        "IEEE 1800-2023 §6.21"
+      ],
+      "modules": [
+        "F2C_Procedural_Code_and_Flow_Control/index",
+        "I-SV-5_Synchronization_and_IPC/index"
+      ]
+    },
+    {
+      "id": "sv-static-automatic-lifetime",
+      "topic": "sv",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "Two initial blocks call `send` at the same time with different addresses. What goes wrong, and how do you fix it? While you are there, explain `ref` and `const ref` arguments and when you would use them.",
+      "code": "```systemverilog\nmodule tb;\n  task send(input int addr, input int len);\n    int i;\n    for (i = 0; i < len; i++) begin\n      @(posedge clk);\n      bus_addr = addr + i;\n    end\n  endtask\n\n  initial send(32'h100, 4);\n  initial send(32'h200, 4);\nendmodule\n```",
+      "rubric": "Strong: identifies static-by-default storage shared across concurrent calls (§13.3.1); fixes with `automatic`; notes class methods are automatic; explains input/output copy timing, `ref` aliasing and `const ref`; mentions the explicit-`static` initializer rule. Weak: blames the clock edge or a race, or says module tasks are automatic by default.",
+      "model_answer": "Tasks and functions declared in a module, interface, program or package are static by default: one copy of every argument and local variable is shared by all concurrent calls (§13.3.1, §13.3.2). The second call overwrites `addr`, `len` and `i` while the first is waiting at `@(posedge clk)`, so both threads drive addresses from whichever call wrote last, and the loop counter is shared.\n\nFix: make the task automatic, so every call gets its own copy on the stack:\n\n```systemverilog\ntask automatic send(input int addr, input int len);\n  for (int i = 0; i < len; i++) begin\n    @(posedge clk);\n    bus_addr <= addr + i;\n  end\nendtask\n```\n\nMethods in classes are always automatic (§13.3.1), which is one reason class-based testbenches rarely hit this bug. A related trap: a variable with an initializer inside a static task or block must be declared `static` explicitly, because the initializer runs only once at the start of simulation, not on each call (§6.21).\n\nArgument passing (§13.5):\n\n- `input` copies the value in at the call; `output` copies out at the end.\n\n- `ref` passes a reference: no copy, and the callee sees changes the caller makes while the task is running (and vice versa). Use it for large arrays or for a task that must watch a caller's variable over time. `ref` arguments require automatic subroutines.\n\n- `const ref` passes a reference the callee cannot modify: the efficient way to pass a large array or queue read-only (§13.5.2).",
+      "follow_ups": [
+        "Why must a task with a `ref` argument be automatic?",
+        "In a `fork...join_none` inside a task, why is referring to a `ref` argument restricted?",
+        "When would you deliberately declare one variable `static` inside an automatic task?"
+      ],
+      "common_mistakes": [
+        "Assuming module tasks are automatic like class methods.",
+        "Passing a large queue by value to a function called millions of times.",
+        "Writing `int count = 0;` inside a static task and expecting it to reset on every call."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §13.3.1",
+        "IEEE 1800-2023 §13.3.2",
+        "IEEE 1800-2023 §13.5",
+        "IEEE 1800-2023 §13.5.2",
+        "IEEE 1800-2023 §6.21"
+      ],
+      "modules": [
+        "F2D_Reusable_Code_and_Parallelism/tasks-functions"
+      ]
+    },
+    {
+      "id": "sv-display-strobe-monitor",
+      "topic": "sv",
+      "level": "junior",
+      "category": "trick",
+      "prompt": "`q` is 0 before the edge and `d` is 1. Predict every line printed at the rising edge of `clk`, and explain when `$display`, `$strobe` and `$monitor` each print.",
+      "code": "```systemverilog\nalways_ff @(posedge clk) q <= d;\n\ninitial begin\n  $monitor(\"M: t=%0t q=%b\", $time, q);\n  @(posedge clk);\n  $display(\"D: q=%b\", q);\n  $strobe (\"S: q=%b\", q);\nend\n```",
+      "rubric": "Strong: D shows 0, S and M show 1, with the NBA/Postponed reasoning; knows `$monitor` excludes `$time` from its trigger list and that only one monitor is active. Weak: says `$display` shows 1 because it runs \"after the clock\", or that `$strobe` runs in the NBA region.",
+      "model_answer": "`$monitor` sets up a watch on its arguments. From then on it prints at the end of any time step in which one of them changed; a change of `$time` alone does not count (§21.2.3).\n\nAt the edge:\n\n- `D: q=0`. `$display` prints immediately when the statement executes. The `initial` block resumes in the Active region, before the nonblocking update of `q` matures in the NBA region, so it sees the old value. (Strictly, the initial block and `always_ff` may run in either order, but the NBA update is always later, so the result is the same.)\n\n- `S: q=1`. `$strobe` prints at the end of the time step, after all updates, in the Postponed region (§21.2.2, §4.4.2.9).\n\n- `M: t=<edge time> q=1`. `q` changed in this time step, so `$monitor` prints at the end of the step, also from the Postponed region.\n\nRules worth knowing: only one `$monitor` list is active at a time, and a new `$monitor` call replaces the previous one; `$monitoroff`/`$monitoron` pause and resume it (§21.2.3). Use `$display` for event-driven messages, `$strobe` when you need settled end-of-step values, and avoid `$monitor` in large testbenches because it prints on every change.",
+      "follow_ups": [
+        "Would `$display` after `#0` show the new value? Why is that a fragile habit?",
+        "What prints if you call `$monitor` twice with different arguments?",
+        "What is the difference between `$write` and `$display`?"
+      ],
+      "common_mistakes": [
+        "Expecting `$display` at the clock edge to show the post-edge value of a flop.",
+        "Using several `$monitor` calls and expecting all of them to stay active."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §21.2.1",
+        "IEEE 1800-2023 §21.2.2",
+        "IEEE 1800-2023 §21.2.3",
+        "IEEE 1800-2023 §4.4.2.9",
+        "IEEE 1800-2023 §10.4.2"
+      ],
+      "modules": [
+        "F2D_Reusable_Code_and_Parallelism/index",
+        "F3B_Scheduling_Regions/index"
+      ]
+    },
+    {
+      "id": "sv-timescale-time-rounding",
+      "topic": "sv",
+      "level": "junior",
+      "category": "trick",
+      "prompt": "With the `timescale 1ns/100ps` directive, predict what `$time` and `$realtime` print in the code below, and when `set` actually changes. Why can two modules with different time units disagree about \"the same\" delay?",
+      "code": "```systemverilog\n`timescale 1ns/100ps\nmodule t;\n  logic set;\n  initial begin\n    #1.55 set = 0;\n    $display(\"%0d %0.2f\", $time, $realtime);\n    #1.55 set = 1;\n    $display(\"%0d %0.2f\", $time, $realtime);\n  end\nendmodule\n```",
+      "rubric": "Strong: rounding of delays to precision (1.6, 3.2 ns); `$time` rounded to the unit (2, 3); `$realtime` 1.60/3.20; explains per-module units, compile-order dependence of the `timescale` directive, tool-specific defaults, and `timeunit`/`timeprecision`. Weak: says `$time` reports in the precision unit, or that `#1.55` delays exactly 1.55 ns.",
+      "model_answer": "The time unit (1 ns) scales delay values; the time precision (100 ps) is the resolution delays are rounded to (§3.14.2, §22.7).\n\n- `#1.55` is 1.55 ns, rounded to the precision: 1.6 ns. `set` becomes 0 at 1.6 ns. The second delay also rounds to 1.6 ns, so `set` becomes 1 at 3.2 ns.\n\n- `$time` returns an integer in the module's time unit, rounded: 2 after the first delay and 3 after the second. The precision does not affect that rounding (§20.3.1).\n\n- `$realtime` returns a real in the module's time unit: 1.60 and 3.20 (§20.3.3).\n\nSo the printed `$time` values (2, 3) do not match when things happened (1.6 ns, 3.2 ns). The LRM's own example with `timescale 10 ns / 1 ns` shows the same effect (§20.3.1).\n\nTwo modules can disagree because each module uses its own unit and precision. `#1` in a 1 ns module and `#1` in a 1 ps module are 1000× apart, and the same `#1.55` rounds differently under different precisions. Worse, the `timescale` directive applies to every following design element until the next one, so compile order can change a module's time unit. Files without any timescale get a tool-specific default (§22.7). Prefer `timeunit`/`timeprecision` inside each module or package, which take precedence over the `timescale` directive (§3.14.2.3).",
+      "follow_ups": [
+        "What does `$printtimescale` report and why is it useful in a mixed-vendor IP integration?",
+        "What is `#1step` in terms of time precision?",
+        "A VIP compiled with `1ps/1ps` drives a DUT compiled with `1ns/1ns`. What can go wrong with `#1` delays in the VIP?"
+      ],
+      "common_mistakes": [
+        "Assuming `$time` is in the precision unit.",
+        "Relying on a `timescale` directive in another file through compile order.",
+        "Assuming fractional delays are kept exactly."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §3.14.2",
+        "IEEE 1800-2023 §3.14.2.3",
+        "IEEE 1800-2023 §20.3.1",
+        "IEEE 1800-2023 §20.3.3",
+        "IEEE 1800-2023 §22.7"
+      ],
+      "modules": [
+        "F3A_Simulation_Semantics/index"
+      ]
+    },
+    {
+      "id": "sv-scheduling-regions",
+      "topic": "sv",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "Walk through the simulation regions of one time slot in order. Where do concurrent assertions sample their values, and where do they evaluate? Can a region run more than once in a time slot?",
+      "rubric": "Strong: all nine regions in order including Re-Inactive; sampling in Preponed versus evaluation in Observed; program code in Reactive; clocking drives in Re-NBA; `$strobe`/`$monitor` in Postponed; states that the active and reactive sets iterate before time advances. Staff signal: PLI regions and what the LRM leaves nondeterministic within a region (§4.7). Weak: says assertions read this edge's post-NBA values, or lists eight regions with no notion of iteration.",
+      "model_answer": "IEEE 1800-2023 defines nine simulation regions (§4.4.2):\n\n1. Preponed: read-only; the values that concurrent assertions and default `#1step` clocking-block inputs use are the values here, before anything changes in the slot.\n\n2. Active: module processes resume; blocking and continuous assignments update; nonblocking right-hand sides are evaluated.\n\n3. Inactive: processes resumed after `#0`.\n\n4. NBA: nonblocking updates from module code.\n\n5. Observed: concurrent assertions (properties) are evaluated; clocking-block events `@(cb)` trigger here (§14.10).\n\n6. Reactive: program-block code, checker blocking assignments, and assertion action blocks (§4.4.2.6).\n\n7. Re-Inactive: `#0` inside the reactive set.\n\n8. Re-NBA: nonblocking updates from program code and clocking-block drives (§14.16).\n\n9. Postponed: read-only; `$strobe` and `$monitor` print here (§4.4.2.9).\n\nConcurrent assertions evaluate in Observed using values sampled in Preponed (§16.5.1). So an assertion at a clock edge sees the register values from *before* that edge's NBA updates. That is the same value a flop would capture.\n\nIteration. The regions are not a single pass. When the reactive set creates new Active events (for example, a program writes a design signal), the reference algorithm goes back to Active and runs the active set again, so Observed can run more than once in a slot (§4.5, §14.13). Time advances only when every region is empty. Expert layer: there are also PLI regions (Pre-Active, Pre-NBA, Post-NBA and others) for VPI callbacks (§4.4.3).",
+      "follow_ups": [
+        "A `$display` and a `$strobe` both print `q` right after `q <= d` at a clock edge. What does each print?",
+        "Why can a program block that writes a design signal cause Observed to run twice in one time slot?",
+        "Within the Active region, which execution order does the LRM guarantee, and which does it leave open?"
+      ],
+      "common_mistakes": [
+        "Saying concurrent assertions read values after the NBA updates of the current edge.",
+        "Forgetting Re-Inactive, or calling Re-NBA part of the Reactive region; it is a separate region of the reactive set.",
+        "Treating the list as one pass, so the loop back to Active is never mentioned."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §4.4.2",
+        "IEEE 1800-2023 §4.4.2.6",
+        "IEEE 1800-2023 §4.4.2.9",
+        "IEEE 1800-2023 §4.4.3",
+        "IEEE 1800-2023 §4.5",
+        "IEEE 1800-2023 §14.10",
+        "IEEE 1800-2023 §14.16",
+        "IEEE 1800-2023 §16.5.1"
+      ],
+      "modules": [
+        "F3B_Scheduling_Regions/index",
+        "F3A_Simulation_Semantics/index",
+        "I-SV-4A_SVA_Fundamentals/index"
+      ]
+    },
+    {
+      "id": "sv-clocking-block-race",
+      "topic": "sv",
+      "level": "senior",
+      "category": "waveform-debug",
+      "prompt": "A testbench drives `valid` with a blocking assignment at `@(posedge clk)`. On simulator A the DUT captures it at edge 2; on simulator B at edge 3. The trace below is from simulator A. Explain why the two runs differ, and how a clocking block removes the race.",
+      "code": "```text\nTB code:  @(posedge clk); valid = 1;      // driven at edge 2\n\nedge          1    2    3    4\nclk           /    /    /    /\nvalid (TB)    0    1    1    1           // written in Active at edge 2\ndut.v_q  A    0    1    1    1           // DUT process ran after TB\ndut.v_q  B    0    0    1    1           // DUT process ran before TB\n```",
+      "rubric": "Strong: identifies the blocking TB drive at the active edge as the race and names §4.7 ordering freedom; explains both traces; gives the clocking-block fix with drive timing (Re-NBA), input sampling (#1step = previous Postponed value, equal to Preponed) and `@(cb)` timing (Observed). Weak: \"add `#1`\" or \"use `#0`\" as the fix; claims the drive lands in the NBA region; or says inputs are read after this edge's NBA updates.",
+      "model_answer": "At each edge, `@(posedge clk)` in the testbench and the DUT's `always_ff @(posedge clk)` both wake in the Active region, and the LRM lets the simulator run them in any order (§4.7). If the testbench runs first, its blocking write of `valid` is visible when the flop evaluates `v_q <= valid`, so the DUT captures at edge 2 (trace A). If the DUT runs first, it reads the old 0 and captures one edge later (trace B). Neither tool is wrong; the bench is.\n\nA clocking block fixes both directions:\n\n```systemverilog\nclocking cb @(posedge clk);\n  default input #1step output #0;\n  output valid;\n  input  ready;\nendclocking\n// driver: @(cb); cb.valid <= 1;\n```\n\n- Drives (`cb.valid <= 1`) with zero output skew are scheduled in the Re-NBA region (§14.16), after every design process for this edge has run, so the DUT sees the new value at the *next* edge on every simulator.\n\n- Inputs with the default `#1step` skew return the value from the Postponed region of the previous time step, which is the same value Preponed sampling sees (§14.3, §14.13, §4.4.2.1). The bench reads what a flop would capture.\n\n- `@(cb)` triggers in the Observed region (§14.10), after the design's NBA updates, so code that resumes on it runs after the RTL has settled.\n\nReading DUT outputs at a raw `@(posedge clk)` is deterministic only while every path to them is written with nonblocking assignments. The clocking block makes it deterministic regardless.",
+      "follow_ups": [
+        "What changes if the input skew is an explicit `#0`? When is the value read, and what is the risk?",
+        "Why is `#0` before the drive not a real fix?",
+        "With a `default clocking`, what does `##2` do, and why is it a compile error without one?"
+      ],
+      "common_mistakes": [
+        "Fixing the race with `#1` delays or `#0`. That moves the race, it does not remove it.",
+        "Saying clocking-block drives land in the NBA region or depend on the caller's region; zero-skew drives mature in Re-NBA (§14.16).",
+        "Blaming one simulator as buggy. Both orders are legal."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §4.7",
+        "IEEE 1800-2023 §4.4.2.1",
+        "IEEE 1800-2023 §14.3",
+        "IEEE 1800-2023 §14.10",
+        "IEEE 1800-2023 §14.13",
+        "IEEE 1800-2023 §14.16"
+      ],
+      "modules": [
+        "F4C_Clocking_Blocks/index",
+        "F3C_Delta_Cycles_and_Race_Conditions/index"
+      ]
+    },
+    {
+      "id": "sv-program-block-and-final",
+      "topic": "sv",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "What does a `program` block change about scheduling and about how the simulation ends? Why do most UVM testbenches start the test from a module instead? Where does a `final` procedure fit?",
+      "rubric": "Strong: Reactive/Re-NBA scheduling; what a program may not contain; thread-kill and implicit `$finish` rules; why UVM prefers a module top with clocking blocks; programs not deprecated; `final` runs at end of simulation with no timing controls. Weak: \"programs are deprecated\", or claims program code runs before the design in the same time slot, or places `final` inside the time-slot regions.",
+      "model_answer": "A program block is a scope for testbench code (§24.3):\n\n- Its `initial` procedures and blocking assignments run in the Reactive region, after the design's Active and NBA activity and after concurrent assertions are evaluated in Observed; its nonblocking assignments mature in Re-NBA (§4.4.2.6, §4.4.2.8). That was designed to separate testbench and design activity in the same time slot (§24.4).\n\n- It may contain declarations, classes, subroutines and `initial`/`final` procedures, but not `always` procedures, module instances, interfaces or other programs (§24.3).\n\n- When all `initial` procedures of a program finish, the program kills its remaining descendant threads. When every program's `initial` threads have finished, the simulator calls `$finish` implicitly (§24.3).\n\nWhy UVM benches use modules. UVM runs its phases in threads forked by `run_test()`, and components fork long-lived threads of their own. If `run_test()` sits in a program, the program's end-of-`initial` rules interact with those threads: ending the program kills descendants and can end the whole simulation, so phase and objection control is no longer the only thing deciding when the test stops. Clocking blocks already give the race-free sampling and driving that programs were designed for, so modern benches use a module top, class-based components, and clocking blocks in interfaces. Programs are not deprecated; they are just rarely needed.\n\n`final` procedures run once at the end of simulation, after time stops (§9.2.3). They behave like functions: no delays, no waits. Use them for last-chance reports, such as closing files or printing summary counters. They are not part of any time-slot region.",
+      "follow_ups": [
+        "A clocking block is declared in a program and the clocking event is generated by the program. What race does §14.13 warn about?",
+        "What runs first at the end of simulation: UVM's report phase or a `final` block? Why?",
+        "Can a program call a task defined in a module? Can a module call into a program?"
+      ],
+      "common_mistakes": [
+        "Calling program blocks deprecated.",
+        "Forking background threads inside a program and being surprised when they are killed at the end of `initial`.",
+        "Putting delays or event controls in a `final` procedure."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §24.3",
+        "IEEE 1800-2023 §24.4",
+        "IEEE 1800-2023 §4.4.2.6",
+        "IEEE 1800-2023 §4.4.2.8",
+        "IEEE 1800-2023 §9.2.3"
+      ],
+      "modules": [
+        "F4C_Clocking_Blocks/index",
+        "F3B_Scheduling_Regions/index"
+      ]
+    },
+    {
+      "id": "sv-package-include-type-identity",
+      "topic": "sv",
+      "level": "mid",
+      "category": "trick",
+      "prompt": "Both packages below pull in the same file with the `include` directive. Why does the assignment in `top` fail to compile, even though the class text is identical? What is the rule for sharing types across packages?",
+      "code": "```systemverilog\n// txn.svh\nclass txn;\n  rand bit [31:0] addr;\nendclass\n\npackage agent_a_pkg;\n  `include \"txn.svh\"\nendpackage\n\npackage agent_b_pkg;\n  `include \"txn.svh\"\nendpackage\n\nmodule top;\n  agent_a_pkg::txn ta = new();\n  agent_b_pkg::txn tb;\n  initial tb = ta;      // compile error\nendmodule\n```",
+      "rubric": "Strong: explains textual include creates two declarations and cites the matching-types rule; fixes with declare-once/import-elsewhere; mentions compile order and the limits of include guards. Weak: blames a missing include guard, or says identical class text gives one type.",
+      "model_answer": "The `include` directive is textual substitution, so each package declares its own class named `txn`. A class typedef matches only itself within the scope where it is declared (§6.22.1, rule d), so `agent_a_pkg::txn` and `agent_b_pkg::txn` are different types that happen to have the same name and body. Assigning one to the other is illegal, `$cast` between them fails, and a factory override registered for one never applies to the other.\n\nRule: declare each shared type once, in one package, and `import` it everywhere else:\n\n```systemverilog\npackage txn_pkg;\n  `include \"txn.svh\"           // the only place txn is declared\nendpackage\n\npackage agent_a_pkg;\n  import txn_pkg::*;\n  // agent code uses txn_pkg::txn\nendpackage\n```\n\nRelated rules:\n\n- A package must be compiled before any code that imports it (§26.3).\n\n- Importing a package does not re-export what *it* imported; use `export` if a package should pass names through (§26.6).\n\n- Two wildcard imports that both provide a name are legal until code refers to that name; then the reference is an error (§26.5, Table 26-1).\n\n- Include guards (an `ifndef TXN_SVH` / `define TXN_SVH` pair) stop a file being included twice in one compilation unit; they do not prevent this bug across packages.",
+      "follow_ups": [
+        "Why would an include guard not fix this?",
+        "What is `$unit`, and why should shared testbench code avoid declaring things there?",
+        "How does this bug show up in UVM at run time if it slips through compilation?"
+      ],
+      "common_mistakes": [
+        "Treating the `include` directive like an import.",
+        "Believing include guards protect against duplicate types across packages."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §6.22.1",
+        "IEEE 1800-2023 §26.3",
+        "IEEE 1800-2023 §26.5",
+        "IEEE 1800-2023 §26.6",
+        "IEEE 1800-2023 §22.6"
+      ],
+      "modules": [
+        "F4A_Modules_and_Packages/index"
+      ]
+    },
+    {
+      "id": "sv-interface-modport",
+      "topic": "sv",
+      "level": "junior",
+      "category": "coding",
+      "prompt": "Write an interface for a valid/ready bus with `master` and `slave` modports, connect it to a DUT, and explain what a modport does and does not do.",
+      "rubric": "Strong: compilable interface with parameter, ports and three modports; correct connection; explains modport as a direction view with no storage and that driving an input is an error; mentions clocking blocks and virtual interfaces. Weak: describes a modport as a copy of the signals or as a separate interface instance.",
+      "model_answer": "```systemverilog\ninterface vr_if #(int W = 8) (input logic clk, input logic rst_n);\n  logic [W-1:0] data;\n  logic         valid, ready;\n\n  modport master (input clk, rst_n, ready, output data, valid);\n  modport slave  (input clk, rst_n, data, valid, output ready);\n  modport mon    (input clk, rst_n, data, valid, ready);\nendinterface\n\nmodule sink (vr_if.slave bus);\n  always_ff @(posedge bus.clk) bus.ready <= 1'b1;\nendmodule\n\nmodule top;\n  logic clk, rst_n;\n  vr_if #(.W(8)) bus (.clk(clk), .rst_n(rst_n));\n  sink u_sink (.bus(bus));       // connects through the slave modport\nendmodule\n```\n\nAn interface bundles signals (and optionally tasks, functions, clocking blocks and assertions) into one port (§25.3). A modport is a view of that bundle: it lists which signals a module may see and in which direction (§25.5). It does not create storage or copy signals: `bus.ready` in `sink` is the same variable as `top.bus.ready`. Driving a signal that the modport declares as `input` is an error, so modports document and enforce who drives what.\n\nPractical points:\n\n- Put the clock and reset on the interface ports so every instance is driven by the top (§25.4).\n\n- Add a clocking block and include it in the testbench modport, so drivers use `bus.cb.data <= ...` race-free.\n\n- A class reaches the same instance through a virtual interface, optionally typed with a modport (`virtual vr_if.master`), which is null until assigned (§25.9).",
+      "follow_ups": [
+        "What goes wrong if `valid` waits for `ready` before asserting, and how would you write a handshake task in the interface that cannot deadlock?",
+        "Why give the monitor its own all-input modport?",
+        "How do you pass a parameterized interface to a class without hard-coding the width everywhere?"
+      ],
+      "common_mistakes": [
+        "Thinking a modport creates new signals or storage.",
+        "Leaving the clock as an internal interface signal driven from several places.",
+        "Driving DUT inputs from the monitor's view."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §25.3",
+        "IEEE 1800-2023 §25.4",
+        "IEEE 1800-2023 §25.5",
+        "IEEE 1800-2023 §25.9"
+      ],
+      "modules": [
+        "F4B_Interfaces_and_Modports/index"
+      ]
+    },
+    {
+      "id": "sv-virtual-interface",
+      "topic": "sv",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "Why do class-based testbenches use virtual interfaces? What happens at run time if the driver uses its virtual interface before anyone has set it?",
+      "code": "```systemverilog\ninterface bus_if #(int W = 32) (input logic clk);\n  logic [W-1:0] data;\n  logic         valid, ready;\n  clocking cb @(posedge clk);\n    output data, valid;\n    input  ready;\n  endclocking\nendinterface\n\nclass driver;\n  virtual bus_if #(32) vif;          // a handle, null until set\n  task run();\n    @(vif.cb);\n    vif.cb.valid <= 1;\n  endtask\nendclass\n```",
+      "rubric": "Strong: static instance vs dynamic objects; virtual interface as a reference; null use is a fatal run-time error; type includes parameters and modport; access through the clocking block; config_db as the hand-off. Weak: \"it's a pointer to the DUT\" with no static/dynamic reasoning, or claims a missing virtual interface is caught at elaboration.",
+      "model_answer": "An interface instance is part of the static hierarchy: it is created at elaboration, in a module. Class objects are created at run time and cannot have ports. A virtual interface is a variable that holds a reference to an interface instance, so class code can read and drive that instance's signals (§25.9). The top module instantiates the interface, connects it to the DUT and hands the reference to the classes; in UVM that hand-off goes through `uvm_config_db`.\n\nDetails that matter in practice:\n\n- A virtual interface is null until assigned, and using a null virtual interface is a fatal run-time error (§25.9). The usual cause is a `config_db` get that silently failed, so check the get and fail loudly in `build_phase`.\n\n- The type includes the interface's parameters (and modport, if one is selected). `virtual bus_if #(32)` and `virtual bus_if #(64)` are different types, and `config_db::set` and `::get` must use exactly the same type or the lookup misses (§25.9).\n\n- Drive and sample through the clocking block (`vif.cb.valid <= 1`, `@(vif.cb)`) so the class code is race-free (§25.9.1, Clause 14).\n\n- One class can be pointed at different instances at different times, which is what makes agents reusable.",
+      "follow_ups": [
+        "Your `config_db::get` returned 0. List three reasons a set and a get can fail to match.",
+        "Why might you give the driver a modport-qualified virtual interface type?",
+        "How would you share one virtual interface type across a parameterized family of agents?"
+      ],
+      "common_mistakes": [
+        "Expecting a null virtual interface to be caught at compile or elaboration time. It fails only when used, at run time.",
+        "Setting `virtual bus_if` and getting `virtual bus_if #(64)`: different types, so the get fails.",
+        "Driving `vif.valid` directly at `@(posedge vif.clk)`, which reintroduces the TB/DUT race."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §25.9",
+        "IEEE 1800-2023 §25.9.1",
+        "IEEE 1800-2023 §14.16"
+      ],
+      "modules": [
+        "F4B_Interfaces_and_Modports/index",
+        "I-UVM-2C_Configuration_and_Resources/index"
+      ]
+    },
+    {
+      "id": "sv-class-vs-module",
+      "topic": "sv",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "What is the difference between a module and a class in SystemVerilog? Why can a class-based driver not simply declare ports to reach the DUT?",
+      "code": "```systemverilog\nclass packet;\n  rand bit [7:0] addr;\nendclass\n\ninitial begin\n  packet p1, p2;\n  p1 = new();\n  p2 = p1;          // copies the handle\n  p2.addr = 8'h42;\n  $display(\"%h\", p1.addr);   // what prints?\nend\n```",
+      "rubric": "Strong: static elaborated hierarchy vs run-time objects reached through handles; predicts `42` and explains handle copying; names what a class cannot contain and links that to virtual interfaces. Weak: \"modules are for design, classes are for testbenches\" with no lifetime or handle explanation, or claims `p2 = p1` copies the object.",
+      "model_answer": "A module is static structure. It is elaborated once before simulation starts, has ports, and contains `always`, `initial` and continuous assignments and instances of other modules. Its hierarchy never changes at run time, and a synthesizable subset of modules describes hardware (Clause 23).\n\nA class is a data type. Objects are created at run time with `new` and are reached only through handles. Classes support inheritance, virtual methods and constrained randomization, and an object is reclaimed automatically once no handle refers to it (Clause 8, §8.29).\n\nHandle semantics are the first trap: `p2 = p1` copies the handle, not the object, so the code prints `42` (§8.12). A second object needs `new` (or a copy method).\n\nA class cannot contain ports, `always` or `initial` procedures, continuous assignments or module instances. Its objects come and go during simulation, while signals belong to the static hierarchy. So class code reaches DUT signals through a virtual interface: a variable that holds a reference to a static interface instance (§25.9). The top module creates the interface, connects it to the DUT and passes the handle to the classes.",
+      "follow_ups": [
+        "How would you make `p2` an independent copy? What does `p2 = new p1;` copy, and what does it not copy?",
+        "When is an object's memory freed, and what keeps it alive?",
+        "Can a class be declared inside a module? What changes if it is declared in a package instead?"
+      ],
+      "common_mistakes": [
+        "Saying assignment copies the object. It copies the handle; both names refer to one object.",
+        "Saying classes \"cannot be synthesized, so they cannot touch signals\". The real reason is that class objects are dynamic and have no ports; the bridge is a virtual interface."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §8.12",
+        "IEEE 1800-2023 §8.29",
+        "IEEE 1800-2023 §25.9",
+        "IEEE 1800-2023 Clause 23"
+      ],
+      "modules": [
+        "I-SV-1_OOP/index",
+        "F4A_Modules_and_Packages/index",
+        "F4B_Interfaces_and_Modports/index"
+      ]
+    },
+    {
+      "id": "sv-virtual-methods-cast",
+      "topic": "sv",
+      "level": "junior",
+      "category": "trick",
+      "prompt": "Predict each line's output or say why it does not compile. Then explain when you need `$cast` and what happens when it fails.",
+      "code": "```systemverilog\nclass base;\n  int x = 1;\n  function void who();          $display(\"base::who x=%0d\", x); endfunction\n  virtual function void vwho(); $display(\"base::vwho\");          endfunction\nendclass\n\nclass derived extends base;\n  int x = 2;                                     // hides base::x\n  function void who();          $display(\"derived::who x=%0d\", x); endfunction\n  virtual function void vwho(); $display(\"derived::vwho\");           endfunction\n  function void extra();        $display(\"extra\");                   endfunction\nendclass\n\ninitial begin\n  base    b;\n  derived d, d2;\n  d = new();\n  b = d;\n  b.who();             // (1)\n  b.vwho();            // (2)\n  $display(b.x);       // (3)\n  // b.extra();        // (4)\n  // d2 = b;           // (5)\n  if ($cast(d2, b)) d2.extra();              // (6)\n  b = new();\n  if (!$cast(d2, b)) $display(\"cast failed\"); // (7)\nend\n```",
+      "rubric": "Strong: handle-type binding for non-virtual methods and properties, object-type dispatch for virtual methods, both compile errors with reasons, function-form `$cast` success and failure; links virtual dispatch to factory overrides. Weak: predicts `derived::who` for (1) or `2` for (3), or says `$cast` throws an error when used as a function.",
+      "model_answer": "1. `base::who x=1`. `who` is not virtual, so the call is bound by the handle type (`base`), and `base::who` reads `base::x`.\n\n2. `derived::vwho`. A virtual method dispatches on the object type: there is one implementation per hierarchy, the most derived one (§8.20).\n\n3. 1. Properties are never virtual. `derived::x` hides `base::x`, and a `base` handle sees `base::x`.\n\n4. Compile error. `extra` is not a member of `base`; the compiler checks names against the handle type.\n\n5. Compile error. Assigning a superclass handle to a subclass variable is illegal without a cast (§8.16).\n\n6. Prints `extra`. `b` refers to a `derived` object, so the dynamic cast succeeds (§8.16, §6.24.2).\n\n7. Prints `cast failed`. `b` now refers to a plain `base` object, which is not a `derived`. Called as a function, `$cast` returns 0 and leaves `d2` unchanged; called as a task, a failed cast is a run-time error (§6.24.2).\n\nWhen you need `$cast`: any time you move from a general handle to a specific one: a factory `create` returning a base type, `clone()` returning `uvm_object`, items arriving through a generic port. Always use the function form and check the result, so a wrong type gives your message instead of a null-handle crash later.\n\nWhy it matters in UVM: factory overrides only work because the test calls methods through base-class handles and those methods are virtual. A non-virtual method in a base class silently ignores the override.",
+      "follow_ups": [
+        "A base-class constructor calls a virtual method that the derived class overrides. Which version runs, and what state will it see?",
+        "Once a method is declared virtual, can a subclass make its override non-virtual?",
+        "What is `super.vwho()` for, and when must a derived constructor call `super.new()`?"
+      ],
+      "common_mistakes": [
+        "Expecting properties to behave virtually.",
+        "Using the task form of `$cast` or ignoring the function's return value.",
+        "Forgetting `virtual` on a base method, so overrides through base handles never run."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §8.20",
+        "IEEE 1800-2023 §8.16",
+        "IEEE 1800-2023 §6.24.2",
+        "IEEE 1800-2023 §8.15"
+      ],
+      "modules": [
+        "I-SV-1_OOP/polymorphism-pitfalls",
+        "I-SV-1_OOP/index"
+      ]
+    },
+    {
+      "id": "sv-shallow-deep-copy",
+      "topic": "sv",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "Predict what the last line prints. Then write a deep `copy` method and explain how the same mistake shows up in a monitor-to-scoreboard path.",
+      "code": "```systemverilog\nclass hdr;\n  bit [7:0] id;\nendclass\n\nclass pkt;\n  bit [7:0] len;\n  hdr       h = new();\nendclass\n\ninitial begin\n  pkt p1, p2;\n  p1 = new();\n  p1.len  = 4;  p1.h.id = 1;\n  p2 = new p1;               // shallow copy\n  p2.len  = 8;  p2.h.id = 2;\n  $display(\"p1.len=%0d p1.h.id=%0d\", p1.len, p1.h.id);\nend\n```",
+      "rubric": "Strong: predicts 4 and 2 and explains handle copying for nested objects (§8.12); writes a correct deep copy that allocates nested objects and handles null; makes it virtual for polymorphic cloning; connects to the reused-monitor-object bug and the analysis-port handle semantics. Weak: predicts 1 for `h.id`, or writes a \"deep copy\" that assigns `copy.h = h`.",
+      "model_answer": "It prints `p1.len=4 p1.h.id=2`. `new p1` is a shallow copy: it allocates a new `pkt` and copies every property, but for class-handle properties it copies the handle, not the object. `p1.h` and `p2.h` refer to the same `hdr`, even though the class declaration contains `= new()` (§8.12). The shallow copy also does not call the constructor or run declaration initializers (§8.12).\n\nDeep copy:\n\n```systemverilog\nclass hdr;\n  bit [7:0] id;\n  function hdr copy();\n    copy = new();\n    copy.id = id;\n  endfunction\nendclass\n\nclass pkt;\n  bit [7:0] len;\n  hdr       h = new();\n  virtual function pkt copy();\n    copy     = new();\n    copy.len = len;\n    copy.h   = (h == null) ? null : h.copy();   // new object, not the handle\n  endfunction\nendclass\n```\n\nMake the copy method `virtual` and override it in subclasses, so copying through a base handle copies the whole derived object (a polymorphic clone). In UVM, implement `do_copy` (calling `super.do_copy`) and use `clone()`, which returns `uvm_object` and needs a `$cast`.\n\nThe scoreboard version of the bug: a monitor creates one transaction object, refills it every cycle and writes the same handle to its analysis port. Analysis ports pass the handle, not a copy, so every entry in the scoreboard's queue is the same object, and all \"expected\" items change when the next transaction is sampled. Fix: create a new object per observed transaction in the monitor (preferred), or clone in the subscriber before storing.",
+      "follow_ups": [
+        "What state does `new p1` copy besides properties? (Hint: RNG state and `rand_mode`/`constraint_mode`, §8.12.)",
+        "Why is calling `new` inside `copy()` of a base class a problem for derived classes, and how does UVM's `create`/`do_copy` split solve it?",
+        "When is sharing a sub-object on purpose the right choice?"
+      ],
+      "common_mistakes": [
+        "Assuming `= new()` in a property declaration makes shallow copies independent.",
+        "Writing a non-virtual `copy` that slices derived objects into base objects.",
+        "Reusing one transaction object in a monitor."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §8.12",
+        "IEEE 1800-2023 §8.20",
+        "IEEE 1800-2023 §8.16"
+      ],
+      "modules": [
+        "I-SV-1_OOP/copying-and-cloning",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index"
+      ]
+    },
+    {
+      "id": "sv-virtual-default-argument-trap",
+      "topic": "sv",
+      "level": "senior",
+      "category": "trick",
+      "prompt": "The base and derived versions of a virtual method have different default argument values. A call through a base handle omits the argument. Which delay value does the derived body receive?",
+      "code": "```systemverilog\nclass drv_base;\n  virtual task send(int delay = 10);\n    $display(\"base delay=%0d\", delay);\n  endtask\nendclass\n\nclass drv_fast extends drv_base;\n  virtual task send(int delay = 1);\n    $display(\"fast delay=%0d\", delay);\n  endtask\nendclass\n\ninitial begin\n  drv_base h;\n  drv_fast f;\n  f = new();\n  h = f;\n  h.send();     // ?\nend\n```",
+      "rubric": "Strong: separates which body runs (certain, derived) from which default is used (not specified by the LRM); cites §8.20's presence-only rule and §13.5.3; labels any specific answer as tool behaviour; gives the fix and the interface-class rule. Weak: answers confidently with 10 (\"like C++\") or 1 (\"because it is virtual\") as if it were a language rule, or claims the code does not compile.",
+      "model_answer": "The body that runs is certain: `send` is virtual, so `drv_fast::send` executes (§8.20). The default value is not pinned down by IEEE 1800-2023:\n\n- §8.20 requires only that the presence of a default match between the virtual method and its override: \"It is not necessary to have matching default expressions\". So the code is legal.\n\n- §13.5.3 says a default is evaluated in the scope containing the subroutine declaration, each time a call uses it, but does not say which declaration (the handle type's or the object type's) supplies the default for a virtual call.\n\nSo whether this prints `fast delay=10` or `fast delay=1` is not specified. A simulator may follow the C++ rule (the static type's default, giving 10), but that is that tool's choice, not a SystemVerilog rule. A portable testbench must not depend on it.\n\nWhat to do: treat differing defaults on virtual overrides as a bug. Keep every override's default identical to the base, or remove the default and pass the argument explicitly. For interface classes the LRM is stricter: a method default must be a constant expression with the same value in every class that implements it (§8.26.8).",
+      "follow_ups": [
+        "What must match between a virtual method and its override (§8.20)? List four things.",
+        "How would you write a lint rule that catches this?",
+        "What does the `:initial` or `:extends` method specifier in IEEE 1800-2023 protect against?"
+      ],
+      "common_mistakes": [
+        "Importing the C++ rule and stating it as SystemVerilog fact.",
+        "Thinking different default expressions are a compile error."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §8.20",
+        "IEEE 1800-2023 §13.5.3",
+        "IEEE 1800-2023 §8.26.8"
+      ],
+      "modules": [
+        "I-SV-1_OOP/polymorphism-pitfalls"
+      ]
+    },
+    {
+      "id": "sv-parameterized-class-statics",
+      "topic": "sv",
+      "level": "senior",
+      "category": "trick",
+      "prompt": "Predict both printed counts. Then explain how the same rule makes the UVM factory's type registration work.",
+      "code": "```systemverilog\nclass counter #(type T = int);\n  static int count = 0;\n  function new(); count++; endfunction\nendclass\n\ntypedef counter #(int)  cnt_int;\ntypedef counter #(byte) cnt_byte;\n\ninitial begin\n  cnt_int  a, b;\n  cnt_byte c;\n  counter  d;                      // default specialization\n  a = new(); b = new(); c = new(); d = new();\n  $display(\"%0d %0d\", cnt_int::count, cnt_byte::count);\nend\n```",
+      "rubric": "Strong: predicts 3 and 1; explains per-specialization statics and that the default specialization matches `#(int)`; connects to `uvm_*_registry` singletons; suggests a non-parameterized base for shared state. Weak: predicts 4 (one shared static) or treats `counter` without parameters as a distinct type from `counter #(int)`.",
+      "model_answer": "It prints `3 1`.\n\nA parameterized class is not a type; each specialization (the generic class plus a set of parameter values) is a separate type, and each specialization has its own copy of every static member (§8.25). `counter #(int)`, the typedef `cnt_int` and the default `counter` (T defaults to `int`) are all the same specialization, so `a`, `b` and `d` increment one counter: 3. `counter #(byte)` is a different type with its own `count`: 1. To share a static across specializations, put it in a non-parameterized base class (§8.25).\n\nUVM factory link. The `uvm_component_utils(my_comp)` macro declares `typedef uvm_component_registry #(my_comp, \"my_comp\") type_id;`. `uvm_component_registry #(T, Tname)` has a `static function get()` holding a `static` instance, so every registered class gets its own singleton proxy, created once per specialization (uvm-core 2020.3.1 `uvm_registry.svh`). That proxy registers with the factory and later builds objects of exactly type `T` when the factory asks. One generic class, a distinct singleton per registered type: that is this rule at work.\n\nPractical corollaries:\n\n- A parameterized agent with two widths has two sets of statics (instance counters, shared config caches), which surprises people who expected one.\n\n- Two specializations are different types, so a handle of one cannot hold the other; share behaviour through a common non-parameterized base class or an interface class.\n\n- Use `typedef` for each specialization you use, so every file names it the same way.",
+      "follow_ups": [
+        "Two modules each declare the same parameterized class locally. Are `C #(8)` in module A and `C #(8)` in module B the same type? (§8.25 on declaration context.)",
+        "How do you call a static method of a specialization without creating an object?",
+        "Why does the `uvm_component_param_utils` macro register without a type name, and what does that prevent?"
+      ],
+      "common_mistakes": [
+        "Expecting one static shared by every specialization.",
+        "Passing handles between specializations that \"look the same\"."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §8.25",
+        "IEEE 1800-2023 §8.25.1",
+        "uvm-core 2020.3.1 src/base/uvm_registry.svh (static get() per specialization)"
+      ],
+      "modules": [
+        "I-SV-1_OOP/parameterized-classes",
+        "I-UVM-1B_The_UVM_Factory/index"
+      ]
+    },
+    {
+      "id": "sv-abstract-vs-interface-class",
+      "topic": "sv",
+      "level": "senior",
+      "category": "concept",
+      "prompt": "You are designing the API for a reusable VIP so that users can plug in their own reference models and response checkers. When would you use an abstract base class (`virtual class` with `pure virtual` methods) and when an interface class? Show both.",
+      "rubric": "Strong: correct rules for both (constructability, contents, single extends vs multiple implements); compilable sketches; a design rationale tied to UVM's fixed base classes; mentions casting between interface-class and class handles. Weak: treats interface classes as SystemVerilog `interface` constructs, or says abstract classes cannot have implemented methods.",
+      "model_answer": "Abstract class (§8.21): a `virtual class` cannot be constructed directly; it can hold state and implemented methods next to `pure virtual` prototypes that every non-abstract subclass must implement. A class can extend only one base.\n\n```systemverilog\nvirtual class ref_model_base #(type T = int);\n  protected int unsigned n_seen;           // shared state\n  function void observe(T t);              // template method\n    n_seen++;\n    predict(t);\n  endfunction\n  pure virtual protected function void predict(T t);\nendclass\n```\n\nInterface class (§8.26): contains only `pure virtual` methods, type declarations and parameters; no data, constraints or covergroups. A class can implement several interface classes in addition to extending one base.\n\n```systemverilog\ninterface class resettable;\n  pure virtual function void on_reset();\nendclass\n\ninterface class reportable;\n  pure virtual function string summary();\nendclass\n\nclass my_model extends ref_model_base #(bus_txn) implements resettable, reportable;\n  virtual protected function void predict(bus_txn t); /* ... */ endfunction\n  virtual function void on_reset();  n_seen = 0;                  endfunction\n  virtual function string summary(); return $sformatf(\"%0d\", n_seen); endfunction\nendclass\n```\n\nChoosing:\n\n- Use an abstract base when implementations share state or a fixed algorithm (the template method above), and when there is one natural \"is-a\" hierarchy, as with UVM components, which must extend `uvm_component`.\n\n- Use interface classes for capabilities that cut across hierarchies: an object that is already a `uvm_component` or `uvm_object` can still promise `resettable` or `reportable`. A VIP can then hold a `resettable` handle and call `on_reset()` on anything that implements it, whatever its base class.\n\n- Interface-class handles can be cast to and from implementing class handles with `$cast` (§8.26.5).\n\nTrade-offs: interface classes cannot carry default behaviour, so every implementer repeats boilerplate; abstract classes lock users into one base. Many VIP APIs combine them: an abstract base for the common case and interface classes for optional capabilities.",
+      "follow_ups": [
+        "Two interface classes declare a method with the same name and different signatures. What happens when one class implements both (§8.26.6)?",
+        "Can an interface class be parameterized? What would you use that for?",
+        "Why can a UVM component not simply extend your abstract VIP base?"
+      ],
+      "common_mistakes": [
+        "Confusing interface classes with signal interfaces.",
+        "Putting data members in an interface class.",
+        "Building deep inheritance chains when a capability interface would do."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §8.21",
+        "IEEE 1800-2023 §8.26",
+        "IEEE 1800-2023 §8.26.5",
+        "IEEE 1800-2023 §8.18"
+      ],
+      "modules": [
+        "I-SV-1_OOP/parameterized-classes",
+        "I-SV-1_OOP/polymorphism-pitfalls",
+        "I-SV-1_OOP/index"
+      ]
+    },
+    {
+      "id": "sv-rand-randc-dist-soft",
+      "topic": "sv",
+      "level": "junior",
+      "category": "trick",
+      "prompt": "For the class below: (1) over four consecutive `randomize()` calls, how do the values of `r` and `c` differ? (2) What is the probability of each group of `kind` values? (3) What is `len` after `t.randomize() with { len == 20; }`?",
+      "code": "```systemverilog\nclass txn;\n  rand  bit [1:0] r;\n  randc bit [1:0] c;\n  rand  int       len;\n  rand  bit [7:0] kind;\n  constraint c_len  { soft len inside {[1:8]}; }\n  constraint c_kind { kind dist { 0 := 1, [1:3] := 1, [4:7] :/ 2 }; }\nendclass\n```",
+      "rubric": "Strong: randc permutation behaviour and solved-first caveat; correct := vs :/ arithmetic (1/6, 3/6, 2/6); unlisted values excluded; soft dropped in favour of the inline hard constraint. Weak: says randc means \"never repeats ever\", treats := and :/ the same on ranges, or says the inline constraint makes randomize() fail.",
+      "model_answer": "(1) `rand` vs `randc`. `r` is chosen independently each call, so repeats are normal. `c` is random-cyclic: it walks through a random permutation of 0..3, so four consecutive calls give each value exactly once (provided its constraints do not change), then a new permutation starts (§18.4.2). `randc` is solved before other random variables, which can make randomize() fail when a `randc` variable is tied to others by constraints.\n\n(2) `dist` weights (§18.5.3):\n\n- `0 := 1` gives value 0 weight 1.\n\n- `[1:3] := 1` gives each value in the range weight 1, so the range weighs 3.\n\n- `[4:7] :/ 2` gives the whole range weight 2, shared: 0.5 per value.\n\nTotal weight 6: `kind == 0` with probability 1/6, `kind` in 1..3 with 3/6, in 4..7 with 2/6. Values 8..255 are never chosen: values not listed in a `dist` are excluded, so a `dist` is also a hard membership constraint. Weights only shape probability: they cannot make randomize() fail on their own (§18.5.3).\n\n(3) `soft`. The inline `len == 20` is a hard constraint that conflicts with the soft `len inside {[1:8]}`, so the solver drops the soft constraint and `len` is 20 (§18.5.13). Without `soft`, the call would fail. This is why base classes use `soft` for defaults: tests can override them without disabling constraint blocks.",
+      "follow_ups": [
+        "If another constraint adds `kind > 2`, what are the new probabilities? (Careful: §18.5.3 says a `:=` range weight counts values excluded by other constraints.)",
+        "Two `soft` constraints conflict with each other. Which one wins?",
+        "How would you make `kind == 0` impossible without editing the class?"
+      ],
+      "common_mistakes": [
+        "Treating `:=` and `:/` as identical on ranges.",
+        "Thinking `dist` only biases and still allows unlisted values.",
+        "Using `randc` on wide variables and hitting implementation limits (at least 8 bits must be supported, §18.4.2)."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §18.4.1",
+        "IEEE 1800-2023 §18.4.2",
+        "IEEE 1800-2023 §18.5.3",
+        "IEEE 1800-2023 §18.5.13"
+      ],
+      "modules": [
+        "I-SV-2A_Constrained_Randomization_Fundamentals/index",
+        "I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks"
+      ]
+    },
+    {
+      "id": "sv-constraint-bidirectional",
+      "topic": "sv",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "Are SystemVerilog constraints solved top-down or all together? Using the class below, what values can `a` take, and how often is `s == 1` without and with the `solve s before d` line? Name the cases where the solver does impose an order.",
+      "code": "```systemverilog\nclass c;\n  rand bit [3:0]  a, b;\n  rand bit        s;\n  rand bit [31:0] d;\n  constraint c_ab  { a < b; b == 1; }\n  constraint c_sd  { s -> d == 0; }\n  // constraint c_ord { solve s before d; }\nendclass\n```",
+      "rubric": "Strong: bidirectional/simultaneous; derives `a == 0`; quantifies 1/(2^32+1) vs 1/2 and states that solve...before changes distribution only; names the randc and function-argument exceptions. Weak: says constraints are solved in source order, that solve...before is needed for correctness, or names a specific solver algorithm as a language fact.",
+      "model_answer": "Constraints are declarative and bidirectional: the solver looks for one assignment that satisfies every active constraint at once, and the textual order of constraints means nothing. Here `b == 1` forces `a < 1`, so `a` is always 0, even though no constraint mentions `a` on its own.\n\nThe default distribution is uniform over legal combinations (§18.5.9). For `s -> d == 0` there are 2^32 + 1 legal `{s, d}` pairs and only one has `s == 1`, so `s` is 1 with probability 1/(2^32 + 1): almost never. Adding `solve s before d` picks `s` first (50/50) and then `d`, so `s == 1` about half the time. It changes the distribution only; it does not change the solution space and cannot make randomize() fail or succeed (§18.5.9).\n\nWhere an order *is* imposed:\n\n- `randc` variables are solved before other random variables, which can make an otherwise satisfiable problem fail (§18.4.2).\n\n- Function calls in constraints: the arguments are solved first, the call runs, and its result is a state value for the rest (§18.5.11). That splits the problem and can lose solutions.\n\n- `solve ... before` orders for probability only, as above.\n\nHow the solver works internally (BDD, SAT, other) is tool-dependent; the LRM specifies the result, not the algorithm.",
+      "follow_ups": [
+        "Why can `constraint { y == f(x); }` fail where `y == x * 2` succeeds?",
+        "Does `soft` change ordering or only priority?",
+        "How would you check that a distribution is what you intended without reading solver internals?"
+      ],
+      "common_mistakes": [
+        "Treating constraints as procedural statements executed top to bottom.",
+        "Using `solve...before` to \"fix\" a failing randomize() call; it cannot (§18.5.9).",
+        "Assuming implication `s -> d == 0` makes `s == 1` common."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §18.5.9",
+        "IEEE 1800-2023 §18.4.2",
+        "IEEE 1800-2023 §18.5.11",
+        "IEEE 1800-2023 §18.5.5"
+      ],
+      "modules": [
+        "I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks",
+        "I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints"
+      ]
+    },
+    {
+      "id": "sv-randomize-failure",
+      "topic": "sv",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "This test prints `len=0 size=0` on every seed. Find the bug, explain why the fields are zero, and describe how you would localize a constraint conflict in a large class hierarchy.",
+      "code": "```systemverilog\nclass base_pkt;\n  rand bit [7:0] len;\n  rand bit [7:0] payload[];\n  constraint c_len  { len inside {[1:16]}; }\n  constraint c_size { payload.size() == len; }\nendclass\n\nclass big_pkt extends base_pkt;\n  constraint c_big { len > 32; }\nendclass\n\ninitial begin\n  big_pkt p;\n  p = new();\n  void'(p.randomize());                        // result thrown away\n  $display(\"len=%0d size=%0d\", p.len, p.payload.size());\nend\n```",
+      "rubric": "Strong: spots the inherited conflict; explains that a failed randomize() leaves prior values and skips post_randomize (§18.6.3); replaces the discarded result with an explicit check and explains why not `assert`; overrides by constraint name; bisects with constraint_mode/rand_mode and lists hidden constraint sources (inline, member objects, randc). Weak: \"randomize sets everything to zero on failure\", recommends solve...before to isolate the conflict, or wraps randomize() in an immediate assert.",
+      "model_answer": "`big_pkt` inherits `c_len` (`len` in 1..16) and adds `c_big` (`len > 32`). Together they are unsatisfiable, so `randomize()` returns 0. On failure the random variables keep the values they had before the call and `post_randomize()` is not called (§18.6.3). A fresh object still holds the defaults, so the print shows zeros. Zeros are consistent with \"never successfully randomized\", but in general a failed call just leaves whatever was there before.\n\nFix the check first. Never discard the result:\n\n```systemverilog\nif (!p.randomize()) $fatal(1, \"big_pkt randomize() failed\");   // or `uvm_fatal in UVM\n```\n\nAvoid `assert(p.randomize())`: when assertions are turned off (for example with `$assertoff`), no new assertion attempts start, so the `randomize()` call inside is never evaluated (§20.11).\n\nFix the model. To change a base rule, override the constraint by name: a derived-class constraint with the same name replaces the inherited one (§18.5.2).\n\n```systemverilog\nclass big_pkt extends base_pkt;\n  constraint c_len { len > 32; }     // replaces base_pkt::c_len\nendclass\n```\n\nLocalize conflicts in a big hierarchy:\n\n1. Re-run with all constraints off (`p.constraint_mode(0)`), then turn them on one at a time (`p.c_len.constraint_mode(1)`) until it fails (§18.9).\n\n2. Freeze suspects with `rand_mode(0)` and set them by hand to test a hypothesis (§18.8).\n\n3. Remember constraints you cannot see in the class: inherited ones, inline `with {}` blocks at the call site, constraints of `rand` member objects (§18.5.8), and `randc` variables, which are solved first and can fail on their own (§18.4.2).\n\n4. Check arithmetic traps: `sum()` over narrow elements wraps (use `sum() with (int'(item))`), and size constraints must be consistent with element constraints.\n\n5. Use your simulator's constraint-debug report (tool-dependent) to print the minimal conflicting set.\n\n`solve...before` is not a debugging tool here: it changes the distribution and cannot cause or cure a failure (§18.5.9).",
+      "follow_ups": [
+        "The class has 40 constraints across 4 levels of inheritance. How do you make the bisection automatic?",
+        "If `len` had not been declared `rand`, what would randomize() return and what would `len` hold?",
+        "How does an inline `randomize() with {...}` interact with a `soft` constraint in the class?"
+      ],
+      "common_mistakes": [
+        "Ignoring the return value, or wrapping randomize() in `assert`, which disappears when assertions are disabled (§20.11).",
+        "Believing a failed randomize() zeroes the fields. They keep their previous values (§18.6.3).",
+        "Adding `solve...before` to fix a conflict; ordering cannot change satisfiability (§18.5.9)."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §18.6.3",
+        "IEEE 1800-2023 §18.5.2",
+        "IEEE 1800-2023 §18.8",
+        "IEEE 1800-2023 §18.9",
+        "IEEE 1800-2023 §18.5.8",
+        "IEEE 1800-2023 §18.4.2",
+        "IEEE 1800-2023 §18.5.9",
+        "IEEE 1800-2023 §20.11",
+        {
+          "doc": "Simulator constraint-debug options (tool-dependent)",
+          "verified": false
+        }
+      ],
+      "modules": [
+        "I-SV-2B_Advanced_Constrained_Randomization/solver-debug",
+        "I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization",
+        "I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks"
+      ]
+    },
+    {
+      "id": "sv-inline-constraints-random-stability",
+      "topic": "sv",
+      "level": "senior",
+      "category": "trick",
+      "prompt": "(1) What do the two `randomize() with` calls below do? (2) A failing test reproduces with its seed until a colleague adds one new object in the environment's constructor; now the failure is gone. Explain why, and how you design for random stability.",
+      "code": "```systemverilog\nclass pkt;\n  rand bit [7:0] len;\nendclass\n\nclass gen;\n  bit [7:0] len = 10;              // the generator's limit\n  function void make(pkt p);\n    void'(p.randomize() with { len < len; });          // (A)\n    void'(p.randomize() with { len < local::len; });   // (B)\n  endfunction\nendclass\n```",
+      "rubric": "Strong: explains the lookup order and why (A) fails; uses `local::` correctly; describes hierarchical seeding of threads and objects and why inserting an object shifts later seeds; proposes ordering discipline and explicit `srandom` seeding; distinguishes `$urandom` from `$random`; notes seeds are not portable across tools. Weak: thinks (A) compares against the generator's field, or blames \"a random simulator bug\" for the lost failure.",
+      "model_answer": "(1) Name resolution in inline constraints. Unqualified names in a `randomize() with` block are looked up first in the object being randomized, then in the calling scope (§18.7.1). In (A) both `len`s bind to `p.len`, so the constraint is `p.len < p.len`: unsatisfiable, and the call fails (here silently, because the result is discarded). In (B) `local::len` skips the object's scope and binds to the generator's `len`, so `p.len < 10`, which is what was meant.\n\n(2) Random stability. Each object and each thread has its own random number generator (§18.14.1):\n\n- A new object's RNG is seeded from the next value of the thread that creates it, and a new thread is seeded from its parent (hierarchical seeding).\n\n- So results are reproducible only while objects and threads are created, and random numbers drawn, in the same order. Adding one object in a constructor consumes one value from the creating thread, so every object created after it gets a different seed, and the whole stimulus stream shifts.\n\nDesigning for stability:\n\n- Add new objects and threads after existing ones, as the LRM recommends (§18.14.1).\n\n- Seed important generators explicitly with `srandom()` from a value derived from the test seed and a stable name, so they do not depend on creation order (§18.13.3, §18.15).\n\n- Use `$urandom`, `$urandom_range`, `std::randomize()` and `randomize()`, which follow thread and object stability (§18.14.2, §18.14.3). `$random` is outside that model: it is not in the thread-stability list of §18.14.2, and its value is signed, so `$random % 10` can be negative (§20.14.1).\n\n- Record the seed and the simulator version with every failure. The default seed and the RNG behind `randomize()` are implementation-dependent (§18.14.1), so a seed reproduces a run only on the same tool.",
+      "follow_ups": [
+        "How does UVM seed each component and sequence so that adding a component does not perturb others? (Labelled: implementation detail of the library.)",
+        "What does `p.randomize(len)` (with an argument list) do to the other `rand` variables (§18.11)?",
+        "When would you use `std::randomize()` instead of a class?"
+      ],
+      "common_mistakes": [
+        "Assuming unqualified names in `with {}` bind to the caller's variables.",
+        "Inserting new random calls in the middle of an existing sequence and expecting old seeds to reproduce.",
+        "Using `$random % N` for indices."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §18.7.1",
+        "IEEE 1800-2023 §18.14.1",
+        "IEEE 1800-2023 §18.14.2",
+        "IEEE 1800-2023 §18.14.3",
+        "IEEE 1800-2023 §18.13.3",
+        "IEEE 1800-2023 §18.15",
+        "IEEE 1800-2023 §20.14.1"
+      ],
+      "modules": [
+        "I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks",
+        "I-SV-2B_Advanced_Constrained_Randomization/randomization-methods"
+      ]
+    },
+    {
+      "id": "sv-functional-vs-code-coverage",
+      "topic": "sv",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "What is the difference between code coverage and functional coverage? Your block reports 100% line, branch and toggle coverage. Give three kinds of bugs that can still be present.",
+      "rubric": "Strong: code coverage is automatic and structural (tool-defined metrics); functional coverage is plan-driven and written by the engineer; names at least three blind spots of code coverage (missing features, unchecked results, combinations/order, values); explains why both are needed. Weak: \"functional coverage is just more code coverage\", or treats 100% code coverage as proof of correctness.",
+      "model_answer": "Code coverage is measured automatically from the design source: which lines, branches, conditions, toggles and FSM states and arcs were exercised. The metrics and how they are computed are defined by each tool, not by IEEE 1800.\n\nFunctional coverage is written by the verification engineer from the verification plan: covergroups with coverpoints, bins and crosses (Clause 19) and `cover property` statements (§16.14.3). It records whether the features and scenarios that matter happened: every opcode with every burst length, back-to-back requests, a FIFO going full while a read is stalled.\n\nWhat 100% code coverage cannot tell you:\n\n1. Missing functionality. Code that was never written cannot be uncovered. If the spec requires an error response for misaligned accesses and the RTL simply has no such logic, every line can be covered.\n\n2. Unchecked behaviour. Coverage says code *ran*, not that its result was *checked*. A line can execute with the wrong result if no scoreboard or assertion compares it.\n\n3. Combinations and ordering. Each branch can be hit separately while the dangerous combination (two branches in the same cycle, or a specific order of events) never happens.\n\n4. Values. A 32-bit counter can toggle every bit without ever wrapping.\n\nThe two are complementary. Code coverage holes point at untested or dead RTL and at plan items you forgot. Functional coverage holes point at scenarios your stimulus misses. Sign-off normally needs both, plus evidence that the checkers were active during the covered scenarios.",
+      "follow_ups": [
+        "Functional coverage is 100% but a bug escapes to silicon. What could have gone wrong?",
+        "How do you decide which crosses are worth writing?",
+        "What would you do with code that coverage shows is unreachable?"
+      ],
+      "common_mistakes": [
+        "Equating coverage with checking.",
+        "Writing coverpoints for every signal instead of for plan items.",
+        "Treating a code-coverage exclusion list as harmless paperwork; every exclusion needs a reason."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §19.2",
+        "IEEE 1800-2023 §16.14.3",
+        {
+          "doc": "Code coverage metrics (line, branch, toggle, FSM) are tool-defined, not specified by IEEE 1800",
+          "verified": false
+        }
+      ],
+      "modules": [
+        "I-SV-3A_Functional_Coverage_Fundamentals/index",
+        "F1B_The_Verification_Mindset/index"
+      ]
+    },
+    {
+      "id": "sv-covergroup-design",
+      "topic": "sv",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "Write a covergroup in a coverage class that records, for every bus transaction: the opcode (an enum), the length in three ranges (1, 2–15, 16–255) with anything larger flagged as illegal, whether the address is word-aligned, and opcode crossed with length. Explain how and when it samples, and how many cross bins you expect.",
+      "rubric": "Strong: compilable covergroup with explicit-argument sample, enum auto bins, ranged bins, `illegal_bins` with run-time error semantics, alignment bins, a cross and the correct bin count (9); constructs the embedded covergroup in `new()`; justifies transaction-level sampling over clock sampling. Weak: samples on every clock, forgets to construct the covergroup, or uses `illegal_bins` for values that are just uninteresting.",
+      "model_answer": "```systemverilog\ntypedef enum logic [1:0] {RD, WR, RMW} op_e;\n\nclass bus_cov;\n  covergroup cg with function sample(op_e op, int unsigned len, bit [31:0] addr);\n    option.per_instance = 1;\n    cp_op  : coverpoint op;                    // one automatic bin per enum value\n    cp_len : coverpoint len {\n      bins one   = {1};\n      bins small = {[2:15]};\n      bins large = {[16:255]};\n      illegal_bins too_big = {[256:$]};\n    }\n    cp_align : coverpoint addr[1:0] {\n      bins aligned   = {0};\n      bins unaligned = {[1:3]};\n    }\n    x_op_len : cross cp_op, cp_len;\n  endgroup\n\n  function new();\n    cg = new();                 // an embedded covergroup must be created here\n  endfunction\n\n  function void write(bus_txn t);   // called once per completed transaction\n    cg.sample(t.op, t.len, t.addr);\n  endfunction\nendclass\n```\n\nSampling. `with function sample(...)` gives the covergroup an explicit sample method with arguments (§19.8.1), so it samples exactly once per transaction, with the values the monitor reconstructed, when the monitor calls `write`. Sampling on a clock (`covergroup cg @(posedge clk)`) instead counts every cycle, including idle ones, and samples signals rather than completed transactions.\n\nEmbedded covergroups must be constructed in the class's `new()`; if that assignment is missing, the covergroup does not exist and nothing is sampled, and assigning it anywhere else is illegal (§19.4).\n\nBins. `cp_op` gets one automatic bin per enum value (3). `cp_len` has 3 bins; a value of 256 or more triggers a run-time error, and illegal values are excluded from coverage (§19.5.6). Use `ignore_bins` instead when values are merely uninteresting, not wrong (§19.5.5).\n\nCross bins. `x_op_len` crosses 3 opcode bins with 3 length bins: 9 cross bins. Illegal bins are not part of the cross.\n\nOther details: automatic bins are created only for 2-state values, and an integral coverpoint without explicit bins gets at most `auto_bin_max` bins, 64 by default (§19.5, §19.7). A `default` bin catches values outside the named bins but never counts toward coverage (§19.5).",
+      "follow_ups": [
+        "How would you cover that a `WR` is immediately followed by a `RD` to the same address?",
+        "When do you write `binsof(...) intersect` in a cross, and why might `cross_retain_auto_bins` matter?",
+        "Your `cp_len` shows 100% but no transfer longer than 64 ever happened. What went wrong with the bin design?"
+      ],
+      "common_mistakes": [
+        "Forgetting `cg = new()` in the constructor, so coverage silently stays empty.",
+        "Using `illegal_bins` for don't-care values and getting run-time errors in legal tests.",
+        "Sampling on the clock, which inflates counts with idle cycles."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §19.3",
+        "IEEE 1800-2023 §19.4",
+        "IEEE 1800-2023 §19.5",
+        "IEEE 1800-2023 §19.5.5",
+        "IEEE 1800-2023 §19.5.6",
+        "IEEE 1800-2023 §19.6",
+        "IEEE 1800-2023 §19.7",
+        "IEEE 1800-2023 §19.8.1"
+      ],
+      "modules": [
+        "I-SV-3A_Functional_Coverage_Fundamentals/index",
+        "I-SV-3A_Functional_Coverage_Fundamentals/coverage-options"
+      ]
+    },
+    {
+      "id": "sv-coverage-options-instances",
+      "topic": "sv",
+      "level": "senior",
+      "category": "concept",
+      "prompt": "An environment has two instances of the same covergroup, one per port. Port 0 hits every bin; port 1 hits none. With default options, what is the type coverage, and what can you learn about each port? Explain `option` versus `type_option`, `per_instance`, `merge_instances`, and `get_coverage()` versus `get_inst_coverage()`.",
+      "rubric": "Strong: instance vs type options with examples; 50% by weighted average with defaults and 100% with merge_instances; per_instance needed to keep instance data; get_coverage vs get_inst_coverage including the get_inst_coverage option; mentions at_least/weight/goal; recommends per-port sign-off. Weak: \"type_option and option are the same\", or claims type coverage is always the union.",
+      "model_answer": "Two kinds of options (§19.7, §19.7.1):\n\n- `option.<name>` is per instance: each covergroup instance can set its own value (`name`, `weight`, `goal`, `at_least`, `auto_bin_max`, `per_instance`, `comment`, and others).\n\n- `type_option.<name>` belongs to the covergroup type as a whole, like a static class member, and is set with a constant expression (`weight`, `goal`, `comment`, `strobe`, `merge_instances`, `distribute_first`).\n\nType coverage with defaults. `type_option.merge_instances` defaults to 0, and then type coverage is the weighted average of the instances (§19.7.1). Port 0 at 100% and port 1 at 0% average to 50%. With `merge_instances = 1`, type coverage is the union of all instances' bins, so it would read 100%, even though port 1 never did anything. That is exactly the result that hides a dead port.\n\nSeeing each port. `option.per_instance` defaults to 0, and then the tool is not required to save per-instance data in the coverage database (§19.7). Set `option.per_instance = 1` (and give each instance a distinct `option.name`) when you need to know which port was exercised.\n\nMethods (§19.8): `get_coverage()` returns type coverage; `get_inst_coverage()` returns the coverage of one instance. When `merge_instances` is set, per-instance tracking for `get_inst_coverage()` needs `option.get_inst_coverage = 1`; otherwise it returns the same value as `get_coverage()` (§19.7, Table 19-1).\n\nOther options that change the number:\n\n- `at_least` (default 1): hits a bin needs before it counts as covered.\n\n- `weight`: how much a coverpoint, cross or covergroup contributes to its parent's score; `weight = 0` keeps data without scoring it.\n\n- `goal` (default 100): the target percentage.\n\nPractice: for replicated interfaces, use per-instance coverage for sign-off per port, and type coverage only for a summary.",
+      "follow_ups": [
+        "How would you exclude a coverpoint from the score while still collecting its data?",
+        "A covergroup is declared in a class with 1000 objects alive. What does that do to memory and to the report?",
+        "Where would you call `get_inst_coverage()` in a UVM test, and what would you do with the result?"
+      ],
+      "common_mistakes": [
+        "Turning on `merge_instances` and reporting 100% for a port that never ran.",
+        "Leaving `per_instance` at 0 and expecting per-port numbers in the report.",
+        "Setting a `type_option` from a run-time variable; it must be a constant expression."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §19.7",
+        "IEEE 1800-2023 §19.7.1",
+        "IEEE 1800-2023 §19.8",
+        "IEEE 1800-2023 §19.10",
+        "IEEE 1800-2023 §19.11"
+      ],
+      "modules": [
+        "I-SV-3A_Functional_Coverage_Fundamentals/coverage-options",
+        "I-SV-3B_Advanced_Functional_Coverage/coverage-apis"
+      ]
+    },
+    {
+      "id": "sv-event-triggered-race",
+      "topic": "sv",
+      "level": "mid",
+      "category": "trick",
+      "prompt": "All three processes resume at time 10. Which of `B` and `C` is guaranteed to print? Explain the race and two ways to remove it.",
+      "code": "```systemverilog\nevent done;\n\ninitial begin : A\n  #10 -> done;\nend\n\ninitial begin : B\n  #10 @(done);\n  $display(\"B woke\");\nend\n\ninitial begin : C\n  #10 wait (done.triggered);\n  $display(\"C woke\");\nend\n```",
+      "rubric": "Strong: C guaranteed; explains §4.7 ordering, the one-shot nature of `->`/`@` (§15.5.2) and the persistent `triggered` state (§15.5.3); gives `wait(ev.triggered)` and `->>` as fixes; warns about the zero-time loop. Weak: says both print because they wait \"at the same time\", or uses `#0` before `@(done)` as the fix.",
+      "model_answer": "Only C is guaranteed.\n\nAt time 10, A, B and C all resume in the Active region, in an order the LRM does not fix (§4.7). `->done` unblocks only the processes that are already waiting on `@(done)`: \"If the trigger executes first, then the waiting process remains blocked\" (§15.5.2). So if A runs before B, B misses the trigger and waits for the next one, possibly forever. If B runs first, it prints.\n\n`done.triggered` is a persistent state that stays true for the rest of the time step once the event has been triggered (§15.5.3). `wait (done.triggered)` therefore unblocks whether it executes before or after the trigger in the same time step. C always prints.\n\nFixes:\n\n1. Wait on the state: `wait (done.triggered);` in the consumer. This is the standard fix for same-time-step handshakes.\n\n2. Trigger with a nonblocking trigger, `->> done;`, which fires the event in the NBA region, after every process woken in Active has had a chance to block on `@(done)` (§15.5.1).\n\nTrap with fix 1: `triggered` stays true until time advances. A loop such as `forever begin wait (done.triggered); count++; end` runs forever in zero time once the event has fired. Make sure each pass waits for time to move on, for example `@(posedge clk)`, or use a counter or mailbox if you need to count occurrences.\n\nFor data plus synchronization, a `mailbox` is often the better tool: messages are queued, so nothing is lost if the receiver is late.",
+      "follow_ups": [
+        "What does assigning one event variable to another (`event e2 = done;`) do?",
+        "How does UVM's `uvm_event` differ from a plain `event` (labelled: library behaviour)?",
+        "When would you use a semaphore instead of an event?"
+      ],
+      "common_mistakes": [
+        "Adding `#0` before `@(done)` to win the race; it only moves the race.",
+        "Using `wait(ev.triggered)` inside a zero-time loop.",
+        "Using events to pass data, and losing occurrences that happen while nobody is waiting."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §15.5.1",
+        "IEEE 1800-2023 §15.5.2",
+        "IEEE 1800-2023 §15.5.3",
+        "IEEE 1800-2023 §4.7"
+      ],
+      "modules": [
+        "I-SV-5_Synchronization_and_IPC/events",
+        "F2D_Reusable_Code_and_Parallelism/ipc"
+      ]
+    },
+    {
+      "id": "sv-mailbox-semaphore",
+      "topic": "sv",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "The consumer below sometimes prints the same address three times. Explain why, fix it, and then show how you would use a semaphore so that two drivers never use the shared bus at the same time.",
+      "code": "```systemverilog\nclass txn;\n  rand bit [31:0] addr;\nendclass\n\nmailbox #(txn) mbx = new(1);       // bounded: holds one message\n\ntask producer();\n  txn t;\n  t = new();\n  repeat (3) begin\n    void'(t.randomize());\n    mbx.put(t);\n  end\nendtask\n\ntask consumer();\n  txn r;\n  repeat (3) begin\n    #5 mbx.get(r);\n    $display(\"addr=%h\", r.addr);\n  end\nendtask\n```",
+      "rubric": "Strong: identifies handle sharing through the mailbox and the re-randomized single object; fixes with `new` per message and a checked randomize; explains bounded vs unbounded put, try_ methods, typed mailboxes; writes a correct semaphore lock and names the no-owner and leaked-key hazards. Weak: blames the mailbox bound, or says mailboxes copy objects.",
+      "model_answer": "Why. A mailbox stores whatever singular value you put, and for a class that value is the handle (§15.4.3). The producer creates one object and re-randomizes it before each `put`. Every message in the mailbox points to the same object, so by the time the consumer reads `r.addr`, the producer may already have overwritten it. With a bound of 1 the producer is held back by one message, so the corruption depends on timing: sometimes you see three different values, sometimes repeats.\n\nFix: allocate a new object per message:\n\n```systemverilog\ntask producer();\n  txn t;\n  repeat (3) begin\n    t = new();\n    if (!t.randomize()) $fatal(1, \"randomize failed\");\n    mbx.put(t);          // blocks while the mailbox is full\n  end\nendtask\n```\n\nMailbox facts worth knowing:\n\n- `new(N)` with N > 0 makes it bounded: `put()` suspends until there is room, which models back-pressure; `new()` or `new(0)` is unbounded and never blocks a `put` (§15.4.1, §15.4.3).\n\n- `get()` blocks while empty; `try_get()`/`try_put()` never block and return 0 on failure; `peek()` copies without removing (§15.4.4–§15.4.8).\n\n- `num()` is only valid until the next `get` or `put` from any process (§15.4.2).\n\n- Use a parameterized mailbox `mailbox #(txn)` so type errors are caught at compile time; with a typeless mailbox a `get` into the wrong type is a run-time error (§15.4.5, §15.4.9).\n\nSemaphore for a shared bus:\n\n```systemverilog\nsemaphore bus_lock = new(1);        // one key\n\ntask automatic drive(txn t);\n  bus_lock.get(1);                  // blocks until the key is free\n  do_transfer(t);\n  bus_lock.put(1);                  // always return the key\nendtask\n```\n\nWaiting processes are served in FIFO order of arrival (§15.3.3). A semaphore has no owner: any process can `put`, and `put` can raise the key count above its initial value (§15.3.1, §15.3.2). So every exit path, including error paths and threads killed by `disable fork`, must return exactly the keys it took, or the bus deadlocks.",
+      "follow_ups": [
+        "A driver holding the semaphore is killed by `disable fork`. What happens to the other driver, and how do you make the lock robust?",
+        "How would you implement a request/response pair between two threads with mailboxes?",
+        "When is a bounded mailbox a better model than a bounded queue?"
+      ],
+      "common_mistakes": [
+        "Reusing one object for every message.",
+        "Forgetting to `put` the key back on an error path.",
+        "Treating `num()` as a stable value in a multi-threaded test."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §15.3.1",
+        "IEEE 1800-2023 §15.3.2",
+        "IEEE 1800-2023 §15.3.3",
+        "IEEE 1800-2023 §15.4.1",
+        "IEEE 1800-2023 §15.4.2",
+        "IEEE 1800-2023 §15.4.3",
+        "IEEE 1800-2023 §15.4.5",
+        "IEEE 1800-2023 §15.4.9"
+      ],
+      "modules": [
+        "I-SV-5_Synchronization_and_IPC/mailboxes",
+        "I-SV-5_Synchronization_and_IPC/semaphores"
+      ]
+    },
+    {
+      "id": "sv-process-control",
+      "topic": "sv",
+      "level": "senior",
+      "category": "coding",
+      "prompt": "You launch one worker thread per channel (up to 16). After a timeout you must report which channels are still running and kill only those, without touching other threads of the test. Write it with the `process` class and explain why `disable fork` or `disable <label>` is the wrong tool here.",
+      "rubric": "Strong: per-thread handles captured with `process::self()` inside each forked branch, keyed by channel with an automatic copy; waits for registration; uses `status()` for the report and `kill()` selectively; explains kill also ends descendants; explains why disable fork and disable label are too broad. Weak: uses `disable fork` and accepts the collateral damage, or calls `new` on `process`.",
+      "model_answer": "```systemverilog\ntask automatic run_channels(int n, time limit);\n  process workers[int];                  // keyed by channel, so order of start does not matter\n  int     started = 0;\n\n  for (int ch = 0; ch < n; ch++) begin\n    fork\n      automatic int k = ch;\n      begin\n        workers[k] = process::self();\n        started++;\n        run_channel(k);\n      end\n    join_none\n  end\n  wait (started == n);                    // every worker has registered itself\n\n  #limit;\n  foreach (workers[k]) begin\n    process::state st;\n    st = workers[k].status();\n    if (st != process::FINISHED) begin\n      $error(\"channel %0d still %s at timeout\", k, st.name());\n      workers[k].kill();                // also kills that worker's own children\n    end\n  end\nendtask\n```\n\nHow it works (§9.7): `process::self()` returns a handle to the calling process. `status()` reports FINISHED, RUNNING, WAITING, SUSPENDED or KILLED. `kill()` terminates that process and all its descendants. `await()` waits for another process to end (not for itself). `suspend()`/`resume()` pause and restart a process. You cannot construct a `process` with `new` or extend the class.\n\nWhy not the alternatives:\n\n- `disable fork` kills every descendant of the calling process (§9.6.3): all workers, finished or not, plus any monitors this task forked earlier. It cannot kill a selected subset.\n\n- `disable <label>` works on the static block name, so it ends every process executing that block, in all calls of the task (§9.6.2).\n\n- The process handle gives per-thread status for the report, which neither alternative provides.\n\nDetails that matter: registering into an associative array keyed by channel avoids depending on the order in which the forked processes start. The `wait (started == n)` guard prevents dereferencing a handle that has not been set yet: forked processes only start once the parent blocks. A process can also be seeded with `srandom()`, so each channel's random stream stays stable when channels are added (§9.7, §18.14).",
+      "follow_ups": [
+        "What happens if `run_channel` forks its own helper threads and you `kill()` the worker?",
+        "How would you implement a pause and resume of one channel for an error-injection test?",
+        "Why can't a process call `await()` on itself?"
+      ],
+      "common_mistakes": [
+        "Pushing handles into a queue and assuming queue position equals channel number.",
+        "Reading a handle before the forked process has set it.",
+        "Assuming `kill()` leaves the worker's children running."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §9.7",
+        "IEEE 1800-2023 §9.6.2",
+        "IEEE 1800-2023 §9.6.3",
+        "IEEE 1800-2023 §9.3.2",
+        "IEEE 1800-2023 §18.14"
+      ],
+      "modules": [
+        "I-SV-5_Synchronization_and_IPC/index",
+        "F2C_Procedural_Code_and_Flow_Control/index"
+      ]
+    },
+    {
+      "id": "sv-generate-and-macros",
+      "topic": "sv",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "When do you use a parameter, a text macro (`define`) and a generate construct? Explain the bug in the macro below and how you would make the hierarchy of the generate loop stable for assertions and waveform scripts.",
+      "code": "```systemverilog\n`define CHECK(a, b) if ((a) !== (b)) $error(\"mismatch\")\n\nmodule lanes #(parameter int N = 4) (\n  input  logic         clk,\n  input  logic [N-1:0] d,\n  output logic [N-1:0] q\n);\n  for (genvar i = 0; i < N; i++) begin : g_lane\n    always_ff @(posedge clk) q[i] <= d[i];\n  end\nendmodule\n\n// in a test:\nif (en) `CHECK(x, y); else $display(\"disabled\");\n```",
+      "rubric": "Strong: parameter vs macro vs generate with scope and elaboration-time distinctions; correct expansion and diagnosis of the dangling-else bug and a correct fix; named generate blocks with the `genblk<n>` rule; the `default_nettype none` directive. Weak: treats macros as scoped constants, or confuses a loop generate with a procedural `for` loop.",
+      "model_answer": "Parameters are typed constants that belong to a module, interface, program or class and can be overridden per instance (§6.20, §23.10). Use them for widths, depths and feature switches. `localparam` cannot be overridden (§6.20.4).\n\nText macros (the `define` directive) are textual substitution done before parsing (§22.5.1). They have no scope: once defined they apply to all following text in the compilation unit, so compile order matters and two files defining the same macro conflict. Use them sparingly: for conditional compilation with `ifdef`/`ifndef` (§22.6), include guards, and small code-generation helpers.\n\nGenerate constructs (Clause 27) replicate or select hardware at elaboration: instances, `always` blocks, assertions. A `for` with a `genvar` outside procedural code is a loop generate (§27.4); a `for` inside an `always` block is an ordinary run-time loop.\n\nThe macro bug. The line expands to\n\n```systemverilog\nif (en) if ((x) !== (y)) $error(\"mismatch\"); else $display(\"disabled\");\n```\n\nThe `else` now binds to the macro's inner `if`, so \"disabled\" prints whenever `x` equals `y`, not when `en` is 0. Fix it by making the macro a single complete statement, for example\n\n```systemverilog\n`define CHECK(a, b) do begin if ((a) !== (b)) $error(\"mismatch\"); end while (0)\n```\n\nor by always using `begin`/`end` around macro calls in `if` statements. Parenthesizing macro arguments, as this macro already does, prevents the other classic bug (operator precedence with expression arguments).\n\nStable generate names. Name every generate block (`begin : g_lane`). The instance path is then `lanes.g_lane[2]`, and scripts, `bind` statements and hierarchical references can rely on it. Unnamed generate blocks get compiler-assigned names of the form `genblk<n>`, where n depends on the position of the construct in the scope, so adding a construct above can rename them (§27.6). Add the `default_nettype none` directive to catch misspelled signals that would otherwise become implicit nets (§22.8).",
+      "follow_ups": [
+        "How do you pass a type into a module so a FIFO can store structs?",
+        "Inside a macro body, what do the grave-accent-quote and double-grave-accent sequences do (§22.5.1)?",
+        "Why can the `default_nettype none` directive break third-party IP, and how do you limit its reach?"
+      ],
+      "common_mistakes": [
+        "Using a text macro such as `define WIDTH 8` instead of a parameter, so two instances cannot differ.",
+        "Writing multi-statement macros without wrapping them.",
+        "Leaving generate blocks unnamed and then hard-coding `genblk1` in scripts."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §6.20",
+        "IEEE 1800-2023 §6.20.4",
+        "IEEE 1800-2023 §22.5.1",
+        "IEEE 1800-2023 §22.6",
+        "IEEE 1800-2023 §22.8",
+        "IEEE 1800-2023 §23.10",
+        "IEEE 1800-2023 §27.4",
+        "IEEE 1800-2023 §27.6"
+      ],
+      "modules": [
+        "I-SV-6_Compiler_Directives_and_Generates/index",
+        "F4A_Modules_and_Packages/index"
+      ]
+    },
+    {
+      "id": "sv-dpi-c-basics",
+      "topic": "sv",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "Explain the four DPI declarations below: what does each keyword promise, how do the arguments map to C, and which rules are easiest to break?",
+      "code": "```systemverilog\nimport \"DPI-C\" pure    function int  popcount(input int unsigned v);\nimport \"DPI-C\" function int  crc32(input byte unsigned data[]);   // open array\nimport \"DPI-C\" context function void model_step(input int addr, input int data);\nexport \"DPI-C\" function sv_log;\n\nfunction void sv_log(input string msg);\n  $display(\"[C] %s\", msg);\nendfunction\n```",
+      "rubric": "Strong: correct meaning of pure, context, plain import and export; zero-time imported functions; the Table H.1 mappings and open-array handle; memory-ownership rule; the 4-state pitfall. Weak: says `pure` means \"no arguments\", that any import may call exports, or that DPI functions can block on time.",
+      "model_answer": "Import makes a C function callable from SystemVerilog; export makes a SystemVerilog function or task callable from C (§35.5, §35.7).\n\n- `pure` promises the function has no side effects and its result depends only on its inputs: no file I/O, no globals, no static state (§35.5.2). The compiler may skip the call or reuse an earlier result. Only non-void functions without output or inout arguments can be `pure`. If `popcount` logged something or counted calls, declaring it `pure` would be a bug that shows up only under optimization.\n\n- Plain import (`crc32`): the function may only touch its own arguments. It may not call exported SystemVerilog functions or VPI.\n\n- `context` (`model_step`): the call is instrumented with its calling scope, so the C code may call exported functions such as `sv_log` and use VPI. Calling an export from a non-context import is an error (§35.5.3). Context calls are also a barrier to compiler optimization, so they cost more.\n\n- Imported functions complete in zero time (§35.5.1.1). Only an imported task can consume time, and it does so by calling an exported task that waits.\n\nType mapping (Annex H, Table H.1): `int` ↔ `int`, `byte` ↔ `char`, `longint` ↔ `long long`, `real` ↔ `double`, `string` ↔ `const char*`, `chandle` ↔ `void*`; scalar `bit`/`logic` ↔ `unsigned char` encodings; packed vectors pass in canonical form (`svBitVecVal`/`svLogicVecVal`, where 4-state values carry separate aval/bval words). The open array `data[]` arrives as an `svOpenArrayHandle`, read with the `svdpi.h` query and access functions, so one C function can take arrays of any size (§35.5.6.1, H.12).\n\nEasy rules to break:\n\n- Each side frees only its own memory (§35.5.1.4). Do not keep pointers to SystemVerilog argument data after the call; copy what you need.\n\n- Input arguments must not be modified by the C code (§35.5.1.2).\n\n- Passing a 4-state `logic` vector and reading only aval silently drops X and Z. Check `$isunknown` on the SystemVerilog side first.\n\n- Calling an export from a non-context import, or declaring a function `pure` that has side effects.",
+      "follow_ups": [
+        "How does a context import know which module instance called it, and what does `svSetScope` change?",
+        "Why does `byte unsigned` pass differently from `bit [7:0]` (§H.7.4)?",
+        "How would you return a variable-length result from C to SystemVerilog?"
+      ],
+      "common_mistakes": [
+        "Marking a logging or stateful C function `pure`.",
+        "Calling exports from a non-context import.",
+        "Keeping a C pointer to a SystemVerilog string or array after the call returns."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §35.5.1.1",
+        "IEEE 1800-2023 §35.5.1.2",
+        "IEEE 1800-2023 §35.5.1.4",
+        "IEEE 1800-2023 §35.5.2",
+        "IEEE 1800-2023 §35.5.3",
+        "IEEE 1800-2023 §35.5.6.1",
+        "IEEE 1800-2023 §35.7",
+        "IEEE 1800-2023 Annex H (H.7.4 Table H.1, H.12)"
+      ],
+      "modules": [
+        "I-SV-7_DPI_and_Foreign_Language_Interfaces/index"
+      ]
+    },
+    {
+      "id": "sv-staff-methodology-reuse",
+      "topic": "sv",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "You own the verification code shared by five SoC projects. Design the package and class layering, and explain how you prevent the failures that usually break shared verification libraries.",
+      "rubric": "Strong: clear tiering with dependency direction; the include-into-two-packages type-identity failure with its cause (§6.22.1); compile order; collision handling; per-specialization types and the param_utils by-type override consequence; customization through factory, constraint layering and config objects; versioning and regression ownership. Weak: a package diagram with no failure modes, or reuse by copying files per project.",
+      "model_answer": "Layering. Three tiers of packages, compiled in dependency order (a package must be compiled before anything that imports it, §26.3):\n\n1. `verif_base_pkg`: transaction base classes, generic scoreboards and comparators, reporting helpers, coverage utilities. No project or protocol knowledge.\n\n2. One package per protocol (`axi_vip_pkg`, `apb_vip_pkg`): agent, sequences, checkers, coverage, and a config object class. Each depends only on tier 1.\n\n3. One package per project: environments, virtual sequences and test lists that compose protocol agents, plus project-specific constraint layers.\n\nFailure 1: two copies of one type. If a class file is pulled into two packages with the `include` directive, the result is two distinct types, because a class typedef matches only within the scope where it is declared (§6.22.1(d)). Handles of one cannot be assigned to the other, `$cast` fails, and factory overrides miss. Rule: every class file is included into exactly one package; everyone else imports that package.\n\nFailure 2: name collisions. Wildcard imports of two packages that both define `config_t` are fine until code refers to `config_t`; then it is an error (§26.5). Prefix package-level names (`axi_`), prefer explicit imports in shared code, and never declare in `$unit`.\n\nFailure 3: parameterized classes. Each specialization is a separate type with its own statics (§8.25). In uvm-core 2020.3.1, the `uvm_component_param_utils` macro registers the class without a type-name string (by inspection of `uvm_object_defines.svh`), so by-name overrides and `+uvm_set_type_override` by name cannot find it; overrides must be by type (`set_type_override_by_type`). Keep a small set of `typedef`ed specializations per project.\n\nCustomization without forking. Projects change behaviour through factory overrides (IEEE 1800.2-2020 8.3), constraint layering in derived classes (override by constraint name, §18.5.2), `soft` defaults in the base (§18.5.13), and config objects instead of dozens of loose `config_db` fields.\n\nGovernance. Version the library (tags per release), keep a deprecation window for API changes, run a library-level regression on every change with each consuming project's smoke tests, and own a changelog. Breaking a shared base class silently breaks five projects at once.",
+      "follow_ups": [
+        "A project needs a different AXI data width. How do you avoid writing a second agent?",
+        "How do you stop a project from modifying the shared base package in place?",
+        "Where do virtual interface types live when the interface is parameterized per project?"
+      ],
+      "common_mistakes": [
+        "Including the same class file into several packages \"for convenience\".",
+        "Relying on by-name factory overrides for parameterized classes registered with the param macros.",
+        "Letting the base layer import a project package, which inverts the dependency and blocks reuse."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §6.22.1",
+        "IEEE 1800-2023 §26.3",
+        "IEEE 1800-2023 §26.5",
+        "IEEE 1800-2023 §8.25",
+        "IEEE 1800-2023 §18.5.2",
+        "IEEE 1800-2023 §18.5.13",
+        "IEEE 1800.2-2020 8.3 (UVM factory)",
+        "uvm-core 2020.3.1 src/macros/uvm_object_defines.svh (m_uvm_component_registry_param)"
+      ],
+      "modules": [
+        "F4A_Modules_and_Packages/index",
+        "I-SV-1_OOP/parameterized-classes",
+        "I-UVM-1B_The_UVM_Factory/index",
+        "E-CUST-1_UVM_Methodology_Customization/index"
+      ]
+    },
+    {
+      "id": "sv-staff-cross-simulator-portability",
+      "topic": "sv",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "Your team is moving a 3,000-test regression from simulator A to simulator B. On B, 4% of tests fail and several pass with different results. Lead the investigation: what classes of root cause do you expect, how do you triage them, and what rules do you put in place so the testbench is simulator-independent?",
+      "rubric": "Strong: frames the problem as dependence on unspecified behaviour; covers races (§4.7), time-zero initialization (§6.8), seed and RNG non-portability (§18.14.1, with the Annex N exception for `$random`), unordered iteration, and tool-lenient language use; gives a first-divergence triage method and a concrete rule set with CI enforcement. Weak: \"simulator B has bugs\", fixes test by test with `#1` delays, or expects identical seeds to reproduce across tools.",
+      "model_answer": "Start from one principle: behaviour the LRM leaves open will differ between tools, and a portable testbench must not depend on it. Then triage by class of cause.\n\n1. Races (most common). The LRM fixes only a few orderings (§4.6) and leaves the order of processes in the same region open (§4.7). Typical sources: blocking drives at `@(posedge clk)`, `#0` workarounds, reading combinationally driven signals at the clock edge, two `initial` blocks at time 0 that both touch a signal. Symptom: an edge-by-edge offset between tools. Fix: clocking blocks for all TB-to-DUT traffic (§14.13, §14.16), `<=` for all sequential RTL, no `#0`.\n\n2. Time-zero initialization. A declaration initializer runs before any `initial` or `always` procedure starts (§6.8), so it generates no event: `logic rst_n = 0;` will not trigger `@(negedge rst_n)`. Code that relied on one tool's ordering at time 0 breaks. Fix: drive resets procedurally from the top.\n\n3. Randomization. The default seed is implementation-dependent (§18.14.1), and the LRM does not define the generator behind `randomize()` and `$urandom` or the solver, so the same seed gives different stimulus on B. (`$random` and `$dist_*` do use the algorithm in Annex N, so they repeat across tools, §20.14.) Triage: a test that fails on B under one seed is a new test, not a port failure; rerun it on A with many seeds. Look for constraints that are only satisfiable by luck.\n\n4. Unspecified iteration and ordering. Associative arrays indexed by class handles iterate in an order that is \"deterministic but arbitrary\" (§7.8.3); the order of `final` procedures is arbitrary (§9.2.3); and the time unit used when no `timescale` directive is given is tool-specific (§22.7). Code that prints or compares in such orders, or relies on such defaults, differs across tools.\n\n5. Language corners and tool extensions. Constructs one tool accepts leniently (initializers on static variables in procedural blocks without `static`, §6.21; vendor-specific system tasks; non-standard plusargs), X-propagation modes and optimization switches that change visibility. Fix: compile with both tools in CI and treat warnings on one as errors on both.\n\nTriage method: bucket failures by first divergence. Dump transaction logs (not waveforms) on both tools with the same stimulus source, diff them, and find the first differing transaction and cycle. Classify: offset by one cycle (race), different stimulus (randomization), different message order (iteration), compile or elaboration difference (language). Fix by class, not by test.\n\nRules for the future: clocking blocks only for TB-DUT signals; no `#0`; all random values from object or thread RNGs with recorded seeds and stability-preserving creation order; no dependence on unordered iteration; explicit `timeunit`/`timeprecision` in every package and module; dual-tool CI for the library code; a lint gate for mixed blocking/nonblocking writes and races.",
+      "follow_ups": [
+        "How do you prove a fix removed a race instead of moving it?",
+        "Which of these classes can a lint or static check catch before simulation?",
+        "Leadership wants both simulators in sign-off. What does that cost, and what do you require of the testbench?"
+      ],
+      "common_mistakes": [
+        "Assuming a seed reproduces the same stimulus on another simulator.",
+        "Patching individual tests with delays instead of fixing the class of problem.",
+        "Comparing waveforms instead of transaction logs, which drowns the first real difference in noise."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §4.6",
+        "IEEE 1800-2023 §4.7",
+        "IEEE 1800-2023 §6.8",
+        "IEEE 1800-2023 §6.21",
+        "IEEE 1800-2023 §7.8.3",
+        "IEEE 1800-2023 §9.2.3",
+        "IEEE 1800-2023 §14.13",
+        "IEEE 1800-2023 §14.16",
+        "IEEE 1800-2023 §18.14.1",
+        "IEEE 1800-2023 §20.14",
+        "IEEE 1800-2023 §22.7"
+      ],
+      "modules": [
+        "F3C_Delta_Cycles_and_Race_Conditions/index",
+        "F4C_Clocking_Blocks/index",
+        "I-SV-2B_Advanced_Constrained_Randomization/randomization-methods",
+        "F2A_Core_Data_Types/index"
+      ]
+    },
+    {
+      "id": "sv-staff-dpi-reference-model",
+      "topic": "sv",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "The architecture team gives you a C++ golden model of an image-processing block. Design how it plugs into a UVM scoreboard through DPI for a block with four instances in the SoC, and list the failure modes you design against.",
+      "rubric": "Strong: transaction-level API with per-instance chandle handles; open arrays; correct use and avoidance of pure/context with reasons; zero-time model; memory ownership; seed passing; exception and error translation; 4-state handling; model versioning; notes tool-dependent build flow. Weak: calls the model per cycle, uses global C state, marks stateful functions `pure`, or lets C `assert` abort the simulator.",
+      "model_answer": "Interface shape. Keep the DPI boundary narrow and transaction-level: one call per frame or tile, not per pixel or per cycle. DPI calls are cheap individually but not free, and context calls block compiler optimizations (§35.5.3).\n\n```systemverilog\nimport \"DPI-C\" function chandle img_model_new(input int unsigned cfg_id, input int unsigned seed);\nimport \"DPI-C\" function int     img_model_run(input chandle m,\n                                              input  byte unsigned pix_in[],\n                                              output byte unsigned pix_out[]);\nimport \"DPI-C\" function void    img_model_free(input chandle m);\n```\n\n(A sketch: the C side wraps the C++ class behind `extern \"C\"` functions.)\n\nDesign decisions and the failure each prevents:\n\n1. One model object per scoreboard instance, held as a `chandle` (`void*` in C, Table H.1). Prevents four instances silently sharing C++ globals or statics and corrupting each other's state.\n\n2. Open arrays for pixel buffers (`svOpenArrayHandle`, §35.5.6.1, H.12) so one function handles every frame size; size the output array on the SystemVerilog side before the call.\n\n3. No `pure`: the model keeps state, so `pure` would let the compiler drop or reuse calls (§35.5.2). Use plain imports, and add `context` only for the one function that must call back into SystemVerilog (for example an exported logging function), because a non-context import may not call exports (§35.5.3).\n\n4. Zero-time, untimed model. Imported functions complete in zero time (§35.5.1.1). The scoreboard owns ordering and timing; the model only computes expected data.\n\n5. Memory ownership. Each side frees what it allocated (§35.5.1.4); `img_model_free` is called from the scoreboard's end-of-test path. The C side copies input data it needs to keep, never retaining pointers into SystemVerilog arrays.\n\n6. Determinism. Any randomness inside the model takes its seed from SystemVerilog (`seed` argument), so a failing seed reproduces the model's behaviour too.\n\n7. Error handling. C++ exceptions and `assert()` must not cross the boundary; catch them in the wrapper and return an error code that the scoreboard turns into a `uvm_error` report.\n\n8. 4-state data. Byte arrays are 2-state on the C side. Check `$isunknown` on DUT data before calling the model, or X and Z are silently compared as 0.\n\n9. Versioning. Tag the model build with the spec version and print it at start of test; a model/RTL spec mismatch looks exactly like an RTL bug.\n\nScale and reuse. Build the shared library once per regression, not per test; the compile and link flow is tool-dependent. The same narrow, untimed transaction API is what an emulation or acceleration flow can reuse later.",
+      "follow_ups": [
+        "The model is 50× slower than the RTL simulation. Where do you look first, and what do you change?",
+        "How would you run the same model as a reference in a Python (cocotb or pyuvm) bench? What changes?",
+        "How do you test the DPI wrapper itself?"
+      ],
+      "common_mistakes": [
+        "One global model instance shared by every scoreboard.",
+        "Per-cycle DPI calls that dominate simulation time.",
+        "Letting the model use its own unseeded random numbers."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §35.5.1.1",
+        "IEEE 1800-2023 §35.5.1.4",
+        "IEEE 1800-2023 §35.5.2",
+        "IEEE 1800-2023 §35.5.3",
+        "IEEE 1800-2023 §35.5.6.1",
+        "IEEE 1800-2023 Annex H (H.7.4 Table H.1, H.12)",
+        {
+          "doc": "DPI compile and link flow (tool-dependent)",
+          "verified": false
+        }
+      ],
+      "modules": [
+        "I-SV-7_DPI_and_Foreign_Language_Interfaces/index",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index",
+        "E-UVM-ML-1_Multi_Language_Verification/index"
+      ]
+    },
+    {
+      "id": "sv-senior-staff-constraint-perf",
+      "topic": "sv",
+      "level": "senior-staff",
+      "category": "staff-system-design",
+      "prompt": "Regression throughput dropped by half. Profiling shows each `randomize()` of the top-level transaction takes about 50 ms. How do you find the cause, and what architectural changes would you make to the stimulus classes?",
+      "code": "```systemverilog\nclass soc_txn;\n  rand bit [63:0] addr;\n  rand bit [31:0] len;\n  rand byte       payload[];\n  rand cfg_obj    cfg;          // rand handle: its constraints join this problem\n  constraint c_sz   { payload.size() == len; len inside {[1:4096]}; }\n  constraint c_sum  { payload.sum() with (int'(item)) == cfg.checksum; }\n  constraint c_addr { (addr * len) % 4096 == 0; }\n  constraint c_uniq { unique {payload}; }\nendclass\n```",
+      "rubric": "Strong: profiles first; names concrete causes (large-array constraints, non-linear arithmetic, rand object handles pulling in child constraints, unused constraints); proposes post_randomize procedural fill, partitioning, arithmetic reformulation, constraint_mode/rand_mode, and constraint layering; labels solver-dependent effects; checks coverage after the change. Weak: \"add solve...before\", \"buy a faster machine\", or generic \"simplify constraints\" with no mechanism.",
+      "model_answer": "Measure before changing anything. Count calls and time per call per class with the simulator's profiler (tool-dependent), and check whether the slowdown follows one constraint: turn suspects off with `constraint_mode(0)` and time again (§18.9).\n\nLikely causes in this class:\n\n- Constraints over large arrays. `c_sum`, `c_uniq` and the size constraint make every payload byte a solver variable linked to every other: up to 4096 variables in one problem (`foreach`/`unique`/`sum()`, §18.5.4, §18.5.7, §7.12.3).\n\n- Non-linear arithmetic. `addr * len` and `%` over 64-bit and 32-bit operands are expensive for most solvers.\n\n- A `rand` object handle. Declaring `cfg` as `rand` folds all of `cfg_obj`'s constraints into the same problem (§18.5.8).\n\n- Constraints left enabled that the current test does not need.\n\nChanges:\n\n1. Generate bulk data procedurally. Randomize `len` and the header with the solver, then fill `payload` in `post_randomize()` with `$urandom` and compute the checksum, instead of solving it. Payload values are rarely interesting to the solver.\n\n2. Partition the problem. Randomize `cfg` once per test, not per transaction, and make it a non-`rand` member, so its values are state for the transaction (§18.5.8).\n\n3. Reformulate arithmetic. Express \"aligned to 4 KB\" as `addr[11:0] == 0` and bound `len` separately, avoiding multiply and modulo.\n\n4. Switch off what the test does not use with `constraint_mode(0)` and `rand_mode(0)` in the test layer (§18.8, §18.9).\n\n5. Layer constraints by test. Keep the base class minimal and legal; add heavy scenario constraints only in the derived classes that need them.\n\n`solve...before` is not a performance knob in the LRM: it only changes the distribution (§18.5.9). Any speed effect is solver-specific, so measure it rather than assuming. Function calls in constraints do split the problem, because their arguments are solved first (§18.5.11), but that also changes the solution space, so use them knowingly.\n\nGuard the result. After restructuring, compare functional coverage before and after, because a faster generator that no longer reaches the same corners is a regression.",
+      "follow_ups": [
+        "How would you prove the restructured generator still hits the same corner cases?",
+        "When is moving work into `pre_randomize()` or `post_randomize()` wrong?",
+        "How would you set a per-class randomization time budget in CI?"
+      ],
+      "common_mistakes": [
+        "Treating `solve...before` as an optimization the LRM guarantees.",
+        "Declaring every member object `rand` by habit, merging unrelated constraint sets.",
+        "Optimizing without a before/after coverage comparison."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §18.5.8",
+        "IEEE 1800-2023 §18.5.9",
+        "IEEE 1800-2023 §18.5.11",
+        "IEEE 1800-2023 §18.5.4",
+        "IEEE 1800-2023 §18.5.7",
+        "IEEE 1800-2023 §18.8",
+        "IEEE 1800-2023 §18.9",
+        {
+          "doc": "Simulator profilers and solver behaviour (tool-dependent)",
+          "verified": false
+        }
+      ],
+      "modules": [
+        "I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints",
+        "I-SV-2B_Advanced_Constrained_Randomization/solver-debug",
+        "I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization",
+        "E-PERF-1_UVM_Performance/index"
       ]
     }
   ]

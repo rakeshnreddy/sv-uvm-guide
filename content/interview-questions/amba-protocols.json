@@ -1,7 +1,7 @@
 {
   "id": "amba-protocol-interview-bank",
   "title": "AMBA Protocol Interview Question Bank",
-  "description": "Interview preparation covering AHB, AXI, bridges, ACE, and CHI with rubrics and model answers for whiteboard, waveform triage, and verification-plan prompts.",
+  "description": "Interview preparation from junior to senior staff covering APB, AHB, AXI4 (including AXI4-Lite and AXI4-Stream), bridges, interconnects, ACE and CHI, with rubrics, model answers, waveform and trace triage, code, follow-up probes and common mistakes, checked against the Arm specifications.",
   "topic": "amba",
   "questions": [
     {
@@ -9,30 +9,364 @@
       "topic": "amba",
       "level": "mid",
       "category": "concept",
-      "prompt": "A firmware-visible register block sits behind a high-throughput DMA fabric. Which AMBA protocols would you use on each side and why?",
-      "rubric": "AXI for DMA/fabric throughput, APB for low-cost registers, bridge placement, latency and verification tradeoffs.",
-      "model_answer": "Use AXI for the DMA data path — it supports outstanding transactions, out-of-order completion, and high burst throughput. Use APB for the register block — it is simple, low-gate-count, and sufficient for firmware-speed accesses. Place an AXI-to-APB bridge between them. The bridge translates single-beat AXI reads/writes to APB cycles and handles wait states.",
-      "sources": ["Arm IHI0022H", "Arm IHI0024C (APB)"]
+      "prompt": "A block of firmware-visible control registers sits behind a high-throughput DMA fabric. Which AMBA protocol would you use on each side, where does the bridge go, and what must that bridge do that a quick answer forgets?",
+      "rubric": "Strong: AXI4 for the DMA fabric (bursts up to 256 beats on INCR, multiple outstanding transactions, out-of-order completion across IDs, independent read and write channels); APB for the registers (not pipelined, at least two cycles per transfer, tiny area); one AXI-to-APB bridge per peripheral cluster.\n\nSeparates a strong answer: it says the bridge's AXI port receives whatever bursts the fabric sends unless that port is AXI4-Lite, so the bridge turns every AXI beat into one APB transfer; it maps PSLVERR back to RRESP/BRESP; it explains sparse writes (WSTRB to PSTRB, which needs APB4 or later and a completer that implements PSTRB); and it names the verification cost (APB agent plus RAL adapter, an AXI agent on the other side, and bridge-specific checks).\n\nWeak: \"the bridge translates single-beat reads and writes\" with no mention of bursts, strobes or errors, or choosing AHB/AXI for the registers \"for speed\".",
+      "model_answer": "Use AXI4 on the DMA side. It carries bursts (INCR up to 256 transfers), many outstanding transactions, and out-of-order completion between different IDs, with separate read and write channels. Use APB on the register side. APB is not pipelined and every transfer takes at least two cycles, which is fine for firmware accesses and keeps each peripheral interface small (IHI0024E §1.1).\n\nPut an AXI-to-APB bridge between them, usually one bridge feeding several APB completers through their PSELx lines. The bridge is the part a quick answer gets wrong:\n\n1. **Bursts.** Unless the bridge's AXI port is declared AXI4-Lite (every transaction has burst length 1, IHI0022E B1.1), the fabric may send it multi-beat and narrow bursts. APB has no bursts, so the bridge issues one APB transfer per AXI beat and returns RLAST or collects WLAST itself.\n\n2. **Write strobes.** WSTRB can mark any subset of the active byte lanes (A3.4.3). APB4 and later have PSTRB; if the completer does not implement PSTRB, sparse writes are simply not supported (IHI0024E §3.2.1, Table 3-1). The bridge must then reject or document partial writes; a read-modify-write is an implementation choice and is not atomic.\n\n3. **Errors.** A PSLVERR on the last cycle of an APB transfer is mapped back to RRESP for reads and BRESP for writes (IHI0024E §3.4.3). SLVERR is the usual encoding (a convention, not an APB rule). A write burst gets one BRESP, so the bridge must combine the per-beat APB errors into one response.\n\n4. **Width.** PWDATA is at most 32 bits (IHI0024E §2.1), so a 64-bit AXI beat becomes two APB transfers.\n\nVerification cost: an APB agent (driver, monitor, assertions) that doubles as the RAL bus, an AXI agent on the other side, and bridge checks for beat-to-transfer mapping, strobes and error mapping.",
+      "follow_ups": [
+        "The AXI port is AXI4-Lite. What can you remove from the bridge, and what must stay (WSTRB, PSLVERR mapping)?",
+        "A 4-beat AXI write gets PSLVERR on beat 2. What does the bridge return on B, and do beats 3 and 4 still go to APB?",
+        "Why might you put AHB rather than APB behind the bridge for a block with a small on-chip memory?"
+      ],
+      "common_mistakes": [
+        "Assuming the AXI side only ever sends single-beat transactions.",
+        "Forgetting that a write error on APB may still have changed the register (IHI0024E §3.4).",
+        "Treating PSTRB as always present; it is optional and only exists from APB4 (Issue C) on."
+      ],
+      "modules": [
+        "B-AMBA-1_Protocol_Families_and_Tradeoffs/index",
+        "B-APB-1_APB_Protocol_and_Verification/index",
+        "B-AMBA-F1_Bridges_and_System_Integration/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0024E (AMBA APB Protocol Specification)",
+          "section": "§1.1 About the APB protocol; §2.1 (PWDATA width); §3.2.1 Table 3-1 (PSTRB presence); §3.4, §3.4.3 (error response and mapping of PSLVERR)",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A3.4.3 Data read and write structure (write strobes); §B1.1 Definition of AXI4-Lite",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-axi-five-channels",
+      "topic": "amba",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "Name the five AXI channels, say who drives VALID and who drives READY on each, and give the required order between them for one write and one read. Is write data allowed to arrive before the write address?",
+      "rubric": "Must have: AW, W, B, AR, R; the source of the information drives VALID and the destination drives READY (master drives AWVALID, WVALID, ARVALID, BREADY, RREADY; slave drives AWREADY, WREADY, BVALID, ARREADY, RVALID). Read: RVALID only after the AR handshake. Write: in AXI4, BVALID only after both the AW handshake and the last W handshake (WLAST). W may come before AW.\n\nStrong answers add that the master must not wait for AWREADY before asserting WVALID, that reads and writes are independent (no ordering between them), and that \"must not wait for\" applies to VALID while READY may wait.\n\nWeak: \"W follows AW\", \"B follows the last W\" without the AW condition, or READY driven by the master on AW/W/AR.",
+      "model_answer": "The channels are write address (AW), write data (W), write response (B), read address (AR) and read data (R). On every channel the **source** of the information drives VALID and the **destination** drives READY; a transfer happens at a rising edge where both are high (IHI0022E A3.2.1). So the master drives AWVALID, WVALID and ARVALID and the READY of B and R; the slave drives AWREADY, WREADY, ARREADY, and the VALID of B and R.\n\nRequired ordering (A3.3.1):\n\n1. **Read.** The slave asserts RVALID only after ARVALID and ARREADY have both been high (the AR handshake). The last beat carries RLAST.\n\n2. **Write.** The slave asserts BVALID only after the last W beat (WVALID, WREADY and WLAST) **and**, in AXI4, after the AW handshake (the AXI4 write response dependency).\n\n3. **W before AW is legal.** The master must not wait for AWREADY or WREADY before asserting AWVALID or WVALID. The slave may wait for AWVALID, WVALID or both before raising AWREADY or WREADY.\n\nReads and writes are independent: AXI has no ordering between a read and a write, even with the same ID (A5.3.4).",
+      "follow_ups": [
+        "Draw a legal write where all four W beats are accepted before AWVALID rises. When may BVALID go high?",
+        "Why does AXI4 require the AW handshake before BVALID, when AXI3 did not? (Hint: the slave takes responsibility for hazard checking when it responds.)",
+        "Which of the five channels could a slave legally stall forever according to the specification, and which rule would you add as an integration requirement instead?"
+      ],
+      "common_mistakes": [
+        "Saying write data must follow the write address.",
+        "Allowing BVALID after the last W beat before the AW handshake (illegal in AXI4).",
+        "Saying READY must wait for VALID: READY may be asserted before VALID."
+      ],
+      "modules": [
+        "B-AMBA-2_Protocol_Intuition_and_Memory_Hooks/index",
+        "B-AXI-1_AXI_Channel_Architecture/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A3.2.1 Handshake process; §A3.3.1 Dependencies between channel handshake signals (read, write and AXI4 write response dependencies); §A5.3.4 Read and write interaction",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-apb-transfer-basics",
+      "topic": "amba",
+      "level": "junior",
+      "category": "waveform-debug",
+      "prompt": "Read the APB write below (values are those held during each cycle; rising PCLK edges fall between cycles). Which cycle is the setup phase, which cycles are the access phase, how many wait states are there, and at which edge does the transfer complete?",
+      "code": "cycle      C1     C2     C3     C4     C5\nPSEL       0      1      1      1      0\nPENABLE    0      0      1      1      0\nPWRITE     -      1      1      1      -\nPADDR      -      0x10   0x10   0x10   -\nPWDATA     -      0xAB   0xAB   0xAB   -\nPREADY     x      x      0      1      x\nPSLVERR    x      x      x      0      x\n(edge k = the rising PCLK edge at the end of cycle Ck)",
+      "rubric": "Must have: C2 is SETUP (PSEL high, PENABLE low) and lasts exactly one cycle; C3 and C4 are ACCESS (PENABLE high); C3 is one wait state (PREADY low); the transfer completes at edge 4, where PSEL, PENABLE and PREADY are all high; PSLVERR is only meaningful in C4.\n\nStrong answers also say that PREADY may take any value while PENABLE is low (so the x in C2 is legal), list what must stay stable while PREADY is low (PADDR, PWRITE, PSEL, PENABLE, PWDATA, PSTRB, PPROT), and explain what changes for a back-to-back transfer to the same peripheral.\n\nWeak: counts SETUP as a wait state, says the transfer completes when PENABLE rises, or samples PSLVERR in C3.",
+      "model_answer": "**C2 is the setup phase:** PSEL is high and PENABLE is low, so PADDR, PWRITE and PWDATA must already be valid. SETUP always lasts exactly one cycle (IHI0024E §4.1).\n\n**C3 and C4 are the access phase:** PENABLE is high. In C3 the completer holds PREADY low, which is **one wait state**. In C4 PREADY is high, so the transfer **completes at edge 4**, the first edge at which PSEL, PENABLE and PREADY are all high (§3.1.2, §4.1). Every APB transfer takes at least two cycles; this one takes three.\n\nWhile PREADY is low, PADDR, PWRITE, PSEL, PENABLE, PWDATA, PSTRB and PPROT (and any user signals) must not change (§3.1.2). PREADY may take any value while PENABLE is low, so the x in C2 is legal; that lets a fixed two-cycle peripheral tie PREADY high. PSLVERR is only considered valid in the last cycle, when PSEL, PENABLE and PREADY are all high, so only C4's value counts (§3.4).\n\nAfter completion PENABLE drops. PSEL drops too, unless another transfer to the same peripheral follows: then the bus goes straight to SETUP with PSEL still high and PENABLE low (§4.1).\n\nA monitor therefore records a transfer on the edge where all three are high:\n\n```systemverilog\n// snippet: inside an APB monitor, evaluated at each rising PCLK edge (via a clocking block)\nif (vif.psel && vif.penable && vif.pready) begin\n  item.addr  = vif.paddr;\n  item.write = vif.pwrite;\n  item.data  = vif.pwrite ? vif.pwdata : vif.prdata;\n  item.err   = vif.pslverr;   // valid only in this cycle (IHI0024E §3.4)\n  ap.write(item);\nend\n```",
+      "follow_ups": [
+        "Redraw the table for a back-to-back write to the same peripheral. What are PSEL and PENABLE in the cycle after C4?",
+        "Write an assertion that PADDR is stable from SETUP until the transfer completes.",
+        "Could the completer return read data in C3 for a read? When does the requester sample PRDATA?"
+      ],
+      "common_mistakes": [
+        "Asserting PENABLE in the first cycle of the transfer.",
+        "Saying the transfer completes when PENABLE rises; it completes when PREADY is high in the access phase.",
+        "Treating PSLVERR as valid in a wait-state cycle."
+      ],
+      "modules": [
+        "B-APB-1_APB_Protocol_and_Verification/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0024E (AMBA APB Protocol Specification)",
+          "section": "§1.1 About the APB protocol; §3.1.1, §3.1.2 Write transfers (with wait states); §3.4 Error response; §4.1 Operating states",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-apb-error-strobe",
+      "topic": "amba",
+      "level": "mid",
+      "category": "trick",
+      "prompt": "An APB4 write to a control register ends with PSLVERR high, and the firmware assumes the register did not change. Is that safe? Also: in which cycle is PSLVERR valid, what must PSTRB be during a read, and what does PPROT[1] = 1 mean?",
+      "rubric": "Must have: not safe, because a write that receives an error may or may not have updated the peripheral (peripheral-specific); PSLVERR is valid only in the last cycle (PSEL, PENABLE and PREADY all high); PSTRB must be all zero for reads; PPROT[1] = 1 means Non-secure.\n\nStrong answers add: a read error may return invalid data and the requester may still use it; driving PSLVERR low outside the last cycle is recommended, not required, so a checker must not flag it; completers need not implement PSLVERR (then it is tied low); and the testbench consequence (read back after an error; make the register model's prediction on error an explicit choice).\n\nWeak: \"an error means nothing happened\", or a monitor that errors on PSLVERR high in a wait cycle.",
+      "model_answer": "**Not safe.** IHI0024E §3.4 says a transfer that receives an error might or might not have changed the peripheral's state; for a write, the register may already have been updated. A read error may return invalid data, there is no requirement to drive zeros, and the requester may still use the data. Firmware that must know the outcome reads the register back.\n\n**When PSLVERR counts.** Only in the last cycle of the transfer, when PSEL, PENABLE and PREADY are all high. Driving it low at other times is recommended but not required, so a protocol checker must ignore it outside that cycle. A completer may omit PSLVERR, in which case the requester input is tied low (§3.4).\n\n**PSTRB on reads.** PSTRB[n] qualifies byte lane PWDATA[8n+7:8n] on writes, and the requester must drive all PSTRB bits low for reads (§3.2):\n\n```systemverilog\na_pstrb_zero_on_read: assert property (@(posedge pclk) disable iff (!presetn)\n  (psel && !pwrite) |-> (pstrb == '0));\n```\n\n**PPROT[1] = 1 means Non-secure**; 0 is Secure. PPROT[0] = 1 is privileged and PPROT[2] = 1 marks an instruction access, which is only a hint (§3.5, Table 3-2). The same polarity as AXI AxPROT[1] catches out VIP writers.\n\nTestbench consequence: the scoreboard and register model cannot assume an errored write left the mirror unchanged. Choose and document the prediction policy for errored writes, and follow error-injection tests with a read-back.",
+      "follow_ups": [
+        "A bridge maps this PSLVERR onto AXI. Which response channel and which field carry it (§3.4.3)?",
+        "The requester has PSTRB but the completer does not. Is the pair compatible, and what happens to a sparse write (Table 3-1)?",
+        "How would you cover PSLVERR in a coverage model so that you hit it on reads, writes, and with and without wait states?"
+      ],
+      "common_mistakes": [
+        "Believing an error response guarantees the write had no effect.",
+        "Flagging PSLVERR high outside the last cycle as a protocol violation.",
+        "Reading PPROT[1] = 1 as Secure."
+      ],
+      "modules": [
+        "B-APB-1_APB_Protocol_and_Verification/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0024E (AMBA APB Protocol Specification)",
+          "section": "§3.2 Write strobes, §3.2.1 Table 3-1; §3.4 Error response, §3.4.3 Mapping of PSLVERR; §3.5 Protection unit support, Table 3-2",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-ahb-pipeline-basics",
+      "topic": "amba",
+      "level": "junior",
+      "category": "waveform-debug",
+      "prompt": "An AHB master reads address A and then writes address B. From the trace below, say at which edge each address phase is accepted, when A's read data is sampled, when B's write data must be on HWDATA, and what the wait state in C2 does to B.",
+      "code": "cycle     C1       C2       C3        C4\nHTRANS    NONSEQ   NONSEQ   NONSEQ    IDLE\nHADDR     A        B        B         -\nHWRITE    0        1        1         -\nHREADY    1        0        1         1\nHRDATA    -        -        Data(A)   -\nHWDATA    -        -        -         Data(B)\n(edge k = the rising HCLK edge at the end of cycle Ck)",
+      "rubric": "Must have: A's address phase is accepted at edge 1; C2 and C3 are A's data phase, extended by one wait state (HREADY low in C2); A's read data is sampled at edge 3; B's address is on the bus from C2 but is only accepted at edge 3, because slaves sample address and control only when HREADY is high; B's data phase is C4, so HWDATA carries Data(B) in C4 and is sampled at edge 4.\n\nStrong answers state the pipeline rule (a transfer's address phase happens during the previous transfer's data phase), that one HREADY stalls both the data phase of A and the address phase of B, and that the master must hold B's address and control during the wait.\n\nWeak: \"address and data of A are in the same cycle\" or \"the wait stalls only A's data\".",
+      "model_answer": "AHB is pipelined: every transfer has an address phase and a data phase, and the address phase of one transfer happens during the data phase of the previous one (IHI0033C §3.1).\n\n**A's address phase** is C1. HREADY is high at edge 1, so the slave samples A's address and control there (a slave samples HSELx, address and control only when HREADY is high, §4.2).\n\n**A's data phase** starts in C2. The slave drives HREADYOUT low, so HREADY is low in C2: one wait state. In C3 HREADY is high and HRDATA carries Data(A), which the master samples at **edge 3**. A slave need not drive valid read data until the transfer is about to complete (§3.1).\n\n**B's address phase** starts in C2 but is **extended by A's wait state**: an address phase lasts one cycle unless the previous transfer extends it (§3.1). B's address is accepted at **edge 3**, when HREADY is high, and the master holds it stable in C2 and C3 (§3.7 lists the few changes allowed during waits).\n\n**B's data phase** is C4: HWDATA carries Data(B) in C4 and is sampled at **edge 4**. Had B's slave inserted waits, the master would have to hold HWDATA until HREADY went high (§6.1.1).\n\nThe point to remember: there is one HREADY, so a wait state stalls the data phase in progress **and** the address phase behind it.",
+      "follow_ups": [
+        "Change C3 so that B's slave inserts two wait states of its own. Redraw HREADY and HWDATA.",
+        "A different slave is selected by B. Which slave's HREADYOUT does the multiplexor route to HREADY in C2, and why must its select be retimed to the data phase?",
+        "What does a slave that is not selected do with HREADY?"
+      ],
+      "common_mistakes": [
+        "Putting address and data of one transfer in the same cycle.",
+        "Saying a wait state stalls only the data phase.",
+        "Driving HWDATA in the address phase of the write."
+      ],
+      "modules": [
+        "B-AHB-1_AHB_Design_Timing_Mechanics/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0033C (AMBA AHB Protocol Specification)",
+          "section": "§3.1 Basic transfers (Issue B.b: same section); §3.7 Waited transfers (§3.6 in B.b); §4.2 Address decoding; §6.1.1 HWDATA; §2.5 Table 2-5 (HREADY)",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-ahb-htrans-burst",
+      "topic": "amba",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "An AHB master issues a WRAP8 burst of word (32-bit) transfers starting at 0x34. List each beat's address and HTRANS value, and explain the four HTRANS encodings, including when the master may use BUSY.",
+      "rubric": "Must have: wrap block = 8 beats x 4 bytes = 32 bytes, so the burst stays in 0x20-0x3F; addresses 0x34, 0x38, 0x3C, 0x20, 0x24, 0x28, 0x2C, 0x30; HTRANS NONSEQ on the first beat and SEQ on the rest; IDLE = no transfer, BUSY = idle cycle inside a burst, NONSEQ = single or first, SEQ = remaining beats.\n\nStrong answers add the BUSY rules (address and control already show the next beat; a fixed-length burst must end with SEQ, only an undefined-length INCR may end with BUSY, no BUSY straight after a SINGLE), the zero-wait OKAY response a slave gives to IDLE and BUSY, alignment of every transfer to HSIZE, and the 1KB rule for incrementing bursts.\n\nWeak: wraps at a 4KB or 1KB boundary, or wraps relative to the start address (0x34-0x53).",
+      "model_answer": "A WRAP8 of words moves 8 x 4 = 32 bytes and wraps at a 32-byte boundary, so the block is 0x20-0x3F (IHI0033C §3.6). The beats are:\n\n```text\nbeat   1       2     3     4     5     6     7     8\nHADDR  0x34    0x38  0x3C  0x20  0x24  0x28  0x2C  0x30\nHTRANS NONSEQ  SEQ   SEQ   SEQ   SEQ   SEQ   SEQ   SEQ\n```\n\nHTRANS[1:0] (§3.2, Table 3-1):\n\n**IDLE (0b00):** no transfer. The slave must give a zero-wait OKAY and ignore it. **BUSY (0b01):** the master is in a burst but needs an idle cycle; address and control already show the **next** beat. The slave gives a zero-wait OKAY and ignores it. **NONSEQ (0b10):** a single transfer or the first beat of a burst. **SEQ (0b11):** the remaining beats; the address is the previous one plus the transfer size, wrapping at the boundary for WRAP bursts.\n\nBUSY rules (§3.2, §3.6.1): fixed-length bursts (INCR4/8/16, WRAP4/8/16) must end with a SEQ, not a BUSY; only an undefined-length INCR may have BUSY as its last cycle, and it ends with the next NONSEQ or IDLE; a SINGLE must be followed by IDLE or NONSEQ, never BUSY.\n\nTwo more rules: every transfer is aligned to its size (§3.6), and a master must not start an **incrementing** burst that crosses a 1KB boundary (§3.6). A wrapping burst never leaves its own block, so the 1KB rule is stated for incrementing bursts.\n\nThe next-address rule as a function:\n\n```systemverilog\nfunction automatic logic [31:0] ahb_next_addr(logic [31:0] addr, int unsigned bytes,\n                                             int unsigned beats, bit wrap);\n  logic [31:0] blk = bytes * beats;          // wrap block size in bytes\n  if (!wrap) return addr + bytes;            // INCR\n  return (addr & ~(blk - 1)) | ((addr + bytes) & (blk - 1));\nendfunction\n// ahb_next_addr(32'h3C, 4, 8, 1) returns 32'h20\n```",
+      "follow_ups": [
+        "Insert a BUSY after beat 3. What is on HADDR during the BUSY cycle?",
+        "The same master issues an INCR4 of words at 0x3F8. Is it legal? Why does AHB use 1KB rather than 4KB?",
+        "A slave samples a BUSY with HREADY high. What must it do with it?"
+      ],
+      "common_mistakes": [
+        "Wrapping at the start address instead of at the aligned block boundary.",
+        "Ending a fixed-length burst with BUSY.",
+        "Treating BUSY as a transfer the slave must perform."
+      ],
+      "modules": [
+        "B-AHB-1_AHB_Design_Timing_Mechanics/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0033C (AMBA AHB Protocol Specification)",
+          "section": "§3.2 Transfer types, Table 3-1; §3.6 Burst operation, Table 3-4, §3.6.1 Burst termination after a BUSY transfer (§3.5 and §3.5.1 in Issue B.b)",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "amba-ahb-hready-hreadyout",
       "topic": "amba",
-      "level": "senior",
+      "level": "mid",
       "category": "trick",
       "prompt": "Explain the difference between HREADY and HREADYOUT in AHB. Why does this distinction matter for verification?",
-      "rubric": "HREADYOUT is the per-slave ready output. HREADY is the muxed bus-level signal formed by the interconnect from the selected slave's HREADYOUT. Masters and other slaves sample HREADY (not HREADYOUT). Getting this wrong in a VIP causes incorrect wait-state modeling.",
-      "model_answer": "HREADYOUT is a per-slave output indicating the slave can complete the current data phase. The interconnect's slave multiplexor selects the active slave's HREADYOUT and broadcasts it as HREADY. Masters sample HREADY for pipelining and data capture. Other slaves also sample HREADY to know when a new address phase begins. In verification, the monitor must sample HREADY (bus-level) for transaction boundary detection, while a slave VIP drives HREADYOUT. Confusing them causes incorrect wait-state counting.",
-      "sources": ["Arm IHI0033B.b §2.3, §2.5 (HREADYOUT, HREADY)", "Arm IHI0033B.b §4.3 (Read data and response multiplexor)"]
+      "rubric": "Must have: HREADYOUT is each slave's output; the interconnect's multiplexor routes the HREADYOUT of the slave that owns the current data phase onto HREADY; HREADY goes to the master and to every slave; slaves sample HSELx, address and control only when HREADY is high.\n\nSeparates a strong answer: a bus-level monitor and checker use HREADY (transaction boundaries, wait-state counts); a slave VIP drives HREADYOUT and must take HREADY as an input, because another slave's wait state extends its address phase; the multiplexor select must be the data-phase owner (retimed), not the combinational HSELx.\n\nWeak: \"they are the same signal\" or a slave model that ignores HREADY and samples its address every cycle HSEL is high.",
+      "model_answer": "**HREADYOUT** is a per-slave output: when high it indicates the slave's transfer has finished, and the slave drives it low to extend a transfer (IHI0033C §2.3, Table 2-3). The interconnect's read data and response multiplexor selects the HREADYOUT of the slave that owns the current data phase and broadcasts it as **HREADY** (§4.3). HREADY goes to the master and to **all** slaves and tells them the previous transfer is complete (§2.5, Table 2-5).\n\nSlaves need HREADY as an input because a slave may sample HSELx, address and control only when HREADY is high (§4.2). If slave S1 is in a wait state, slave S2's address phase is extended too, even though S2's own HREADYOUT is high.\n\nVerification consequences:\n\n1. A bus-level monitor uses HREADY to find transaction boundaries and to count wait states.\n\n2. A slave VIP drives HREADYOUT and **samples HREADY**; one that uses only its own HREADYOUT accepts an address early whenever another slave is waiting.\n\n3. A checker at a slave's own interface reads that slave's HREADYOUT and HRESP only while it owns the data phase.\n\n4. The multiplexor must be switched by the data-phase owner. Driving it from the combinational HSELx routes the next slave's HREADYOUT one transfer too early, so the bus waits on, or errors from, the wrong slave.",
+      "follow_ups": [
+        "HSELx can be high while HREADY is low and then change before the transfer completes (§4.2). Write the slave-side condition for accepting a transfer.",
+        "What does the default slave do, and what HREADYOUT/HRESP does it return for a NONSEQ to an unmapped address?",
+        "How would you test that a slave correctly ignores its address phase while another slave inserts wait states?"
+      ],
+      "common_mistakes": [
+        "Monitors that use a slave's HREADYOUT for bus-level timing.",
+        "Slave models that accept a transfer whenever HSEL is high, ignoring HREADY."
+      ],
+      "modules": [
+        "B-AHB-1_AHB_Design_Timing_Mechanics/index",
+        "B-AHB-3_AHB_Verification/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0033C (AMBA AHB Protocol Specification)",
+          "section": "§2.3 Table 2-3 (HREADYOUT); §2.4 Note (multiplexor select retimed to the data phase); §2.5 Table 2-5 (HREADY); §4.2 Address decoding; §4.3 Read data and response multiplexor (same section numbers in Issue B.b)",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-ahb-error-two-cycle",
+      "topic": "amba",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "Why is an AHB ERROR response two cycles long? Write bus-level SVA (on HREADY and HRESP after the multiplexor) that passes a legal ERROR and fails a one-cycle ERROR. A colleague proposes only `(HRESP && !HREADY) |=> (HRESP && HREADY)`; what does it miss?",
+      "rubric": "Must have: the pipeline reason (when the error starts, the next transfer's address is already on the bus; the first cycle, HRESP high with HREADY low, lets the master cancel it by driving HTRANS to IDLE); the encoding (first cycle HRESP=1/HREADY=0, second HRESP=1/HREADY=1); a slow slave inserts OKAY wait states before the pair; two properties, forward and backward.\n\nSeparates a strong answer: it explains that the colleague's property never fires on a one-cycle ERROR (HRESP=1 with HREADY=1 and no first cycle), so it passes vacuously; uses `disable iff` for reset; and notes where the check must live (bus level vs slave interface).\n\nWeak: a single implication, or a property that requires extra ERROR wait cycles.",
+      "model_answer": "The bus is pipelined. By the time a slave decides to signal an error, the address of the next transfer is already on the bus. The two-cycle response gives the master time to cancel that next access and drive HTRANS to IDLE before it starts (IHI0033C §5.1.3). The cycles are (Table 5-2): first ERROR cycle HRESP = 1, HREADY = 0; second ERROR cycle HRESP = 1, HREADY = 1. A slave that needs longer inserts wait states first, and during those HREADY is low and HRESP **must be OKAY** (§5.1.3).\n\nThe colleague's property checks only \"a first cycle is followed by a second\". A one-cycle ERROR (HRESP = 1 with HREADY = 1, no first cycle) never matches its antecedent, so it passes vacuously. Add the backward direction:\n\n```systemverilog\n// Bus-level checks on HREADY and HRESP after the multiplexor (IHI0033C §5.1.3, Table 5-2)\nproperty p_err_first_then_second;\n  @(posedge HCLK) disable iff (!HRESETn)\n    (HRESP && !HREADY) |=> (HRESP && HREADY);\nendproperty\n\nproperty p_err_second_needs_first;\n  @(posedge HCLK) disable iff (!HRESETn)\n    (HRESP && HREADY) |-> $past(HRESP && !HREADY);\nendproperty\n\na_err_fwd: assert property (p_err_first_then_second);\na_err_bwd: assert property (p_err_second_needs_first);\n```\n\nTogether they accept OKAY waits, then exactly one ERROR cycle with HREADY low, then the completing ERROR cycle, and they also accept back-to-back ERROR pairs. They reject a one-cycle ERROR, a pair cut short, and an ERROR that stretches with HREADY low for two cycles.\n\nAfter the first ERROR cycle the master **may** cancel the rest of a burst, and if it does it must drive HTRANS to IDLE during the two-cycle response; continuing the burst is also allowed, and a cancelled burst need not be rebuilt later (§3.6.2). So \"HTRANS must be IDLE after an ERROR\" is not a valid check, but \"if the next beat is cancelled, HTRANS is IDLE\" is.",
+      "follow_ups": [
+        "Move the checker to one slave's interface. Which signals replace HREADY and HRESP, and what extra condition do you need?",
+        "Write the companion check that IDLE and BUSY transfers receive a zero-wait OKAY.",
+        "Tag each property as a protocol rule or an integration policy. Where would a wait-state timeout go?"
+      ],
+      "common_mistakes": [
+        "Writing only the forward implication.",
+        "Expecting HRESP = ERROR during the wait states that precede the error pair.",
+        "Asserting that the master must always cancel the burst after an ERROR."
+      ],
+      "modules": [
+        "B-AHB-2_AHB_Pitfalls_and_Deadlocks/index",
+        "B-AHB-1_AHB_Design_Timing_Mechanics/index",
+        "I-SV-4A_SVA_Fundamentals/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0033C (AMBA AHB Protocol Specification)",
+          "section": "§5.1 Subordinate transfer responses, Table 5-2; §5.1.3 ERROR response; §3.6.2 Early burst termination (§3.5.2 in Issue B.b)",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-ahb-monitor-pipeline",
+      "topic": "amba",
+      "level": "senior",
+      "category": "coding",
+      "prompt": "Write the core loop of a passive, bus-level AHB monitor that turns HTRANS, HADDR, HWRITE, HSIZE, HBURST, HWDATA, HRDATA, HREADY and HRESP into one item per completed transfer. It must handle wait states, BUSY, IDLE, and a two-cycle ERROR after which the master cancels the next transfer.",
+      "rubric": "Must have: two-stage pipeline in the monitor; at an edge where HREADY is high, first complete the transfer whose data phase ends there (sample HRDATA or HWDATA and HRESP), then capture a new address phase if HTRANS is NONSEQ or SEQ; nothing happens at edges where HREADY is low; IDLE and BUSY are not captured.\n\nSeparates a strong answer: it shows why the ERROR case needs no special code (the first ERROR cycle has HREADY low; at the completing edge HTRANS is already IDLE if the master cancelled), samples through a clocking block, handles reset, and discusses burst reconstruction (undefined INCR ends at the next NONSEQ or IDLE; bursts can end early after ERROR or multi-layer termination, so compare per transfer).\n\nWeak: samples address and data on the same edge for one transfer, uses HREADYOUT, or captures BUSY cycles as transfers.",
+      "model_answer": "The monitor mirrors the bus pipeline. At each rising edge where HREADY is high, two things happen in this order: the transfer whose data phase is in progress completes, and the address phase on the bus is accepted (IHI0033C §3.1, §4.2). When HREADY is low nothing completes and nothing is accepted.\n\n```systemverilog\n// snippet: run_phase of class ahb_monitor extends uvm_monitor\n// vif.mon_cb is a clocking block @(posedge HCLK) with every bus signal as an input.\ntask run_phase(uvm_phase phase);\n  ahb_item dp;              // transfer whose data phase is in progress\n  bit      dp_valid = 0;\n  forever begin\n    @(vif.mon_cb);\n    if (!vif.mon_cb.HRESETn) begin dp_valid = 0; continue; end\n    if (!vif.mon_cb.HREADY) continue;           // wait state: nothing completes or starts\n\n    // 1. The data phase in progress ends at this edge.\n    if (dp_valid) begin\n      dp.data = dp.write ? vif.mon_cb.HWDATA : vif.mon_cb.HRDATA;\n      dp.resp = vif.mon_cb.HRESP;               // 1 here = second ERROR cycle\n      ap.write(dp);\n      dp_valid = 0;\n    end\n\n    // 2. The address phase on the bus is accepted at this edge (NONSEQ or SEQ only).\n    if (vif.mon_cb.HTRANS[1]) begin\n      dp = ahb_item::type_id::create(\"dp\");\n      dp.addr  = vif.mon_cb.HADDR;\n      dp.write = vif.mon_cb.HWRITE;\n      dp.size  = vif.mon_cb.HSIZE;\n      dp.burst = vif.mon_cb.HBURST;\n      dp.trans = vif.mon_cb.HTRANS;\n      dp_valid = 1;\n    end\n  end\nendtask\n```\n\nWhy each case works:\n\n1. **Wait states.** The slave holds HREADY low, so the loop skips those edges. The master holds HWDATA valid until HREADY is high (§6.1.1), and a slave need only drive HRDATA in the completing cycle (§3.1), so sampling at the completing edge is right for both.\n\n2. **IDLE and BUSY** have HTRANS[1] = 0 and are never captured. The slave must give them a zero-wait OKAY (§3.2), so their data phases carry nothing to record.\n\n3. **ERROR.** The first ERROR cycle has HREADY low (skipped). At the second, HREADY is high with HRESP high, so the item completes with resp = ERROR (§5.1.3, Table 5-2). If the master cancelled the next transfer, HTRANS is IDLE at that edge, so nothing is captured. If it continued the burst, the next beat is captured normally.\n\n4. **Changes during waits.** The master may change HTRANS from IDLE to NONSEQ, and in some BUSY cases the address, during a wait (§3.7). The monitor only trusts values at the HREADY-high edge, so those changes are handled.\n\nBursts: group a NONSEQ with the following SEQs. An undefined-length INCR ends at the next NONSEQ or IDLE (§3.6.1), and any burst can stop early after an ERROR or a multi-layer interconnect termination (§3.6.2). Compare transfers individually in the scoreboard, not whole bursts. For a slave-side monitor, also require HSELx at the accepting edge.",
+      "follow_ups": [
+        "Add a check that HWDATA is stable while a write's data phase is extended.",
+        "How would you extract only the active byte lanes for a narrow transfer on a 64-bit bus?",
+        "A slave holds HREADYOUT low forever. Where do you detect that, and is it a protocol rule or an integration policy?"
+      ],
+      "common_mistakes": [
+        "Sampling the address and the data of one transfer at the same edge.",
+        "Counting BUSY cycles as transfers.",
+        "Reconstructing whole bursts and failing when a burst is legally cut short."
+      ],
+      "modules": [
+        "B-AHB-3_AHB_Verification/index",
+        "B-AHB-1_AHB_Design_Timing_Mechanics/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0033C (AMBA AHB Protocol Specification)",
+          "section": "§3.1 Basic transfers; §3.2 Table 3-1; §3.6.1, §3.6.2 (§3.5.1, §3.5.2 in Issue B.b); §3.7 Waited transfers (§3.6 in B.b); §4.2; §5.1.3 Table 5-2; §6.1.1 HWDATA",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "amba-axi-valid-ready-rule",
       "topic": "amba",
       "level": "mid",
       "category": "concept",
-      "prompt": "Can AXI VALID depend on READY? Explain the rule and the failure mode.",
-      "rubric": "VALID cannot wait for READY. Payload must be stable once VALID asserts. Both sides waiting creates deadlock.",
-      "model_answer": "AXI rule A3.3.1: a source MUST NOT wait for READY before asserting VALID. VALID asserts when data is available, regardless of READY. Once VALID is high, the payload must remain stable until the handshake completes. If both master and slave wait for each other (VALID waits for READY, READY waits for VALID), deadlock occurs. READY may depend on VALID (slave can wait to see the request before accepting it).",
-      "sources": ["Arm IHI0022H §A3.3.1"]
+      "prompt": "Can AXI VALID depend on READY? State the full handshake rule for both sides, write the stability assertion for one channel, and describe the failure when the rule is broken.",
+      "rubric": "Must have: a source must not wait for READY before asserting VALID; once VALID is asserted it stays asserted, with its payload unchanged, until the handshake (VALID and READY high at a rising edge); a destination may wait for VALID before asserting READY; READY may be asserted before VALID and may be withdrawn before VALID arrives.\n\nStrong answers write the stability property with `disable iff` on reset, explain that the rule also forbids a combinational path from READY to VALID, and give the deadlock example: a master waiting for AWREADY before WVALID meets a slave waiting for WVALID before AWREADY.\n\nWeak: \"VALID and READY may wait for each other\", or forgetting that VALID may not drop before the handshake.",
+      "model_answer": "No. The rule has two halves (IHI0022E A3.2.1, A3.3.1):\n\n**Source (VALID):** it must not wait for READY before asserting VALID. Once VALID is asserted it must stay asserted until the handshake, which happens at a rising edge where VALID and READY are both high, and the information must stay stable until then. There must be no combinational path from inputs to outputs on master and slave interfaces.\n\n**Destination (READY):** it may wait for VALID before asserting READY, or it may assert READY first. If READY is asserted before VALID, it may be deasserted again before VALID arrives.\n\nThe asymmetry is what prevents deadlock: one side (the source) always makes the first move. If both waited, nothing would ever happen. The specification's own example: a master that waits for AWREADY before driving WVALID, connected to a slave that waits for WVALID before AWREADY, deadlocks (A3.3.1 Caution). The master is the one that broke the rule.\n\n```systemverilog\n// AR channel; repeat for AW, W, B (BVALID) and R (RVALID)\na_ar_hold: assert property (@(posedge aclk) disable iff (!aresetn)\n  (arvalid && !arready) |=> arvalid);\na_ar_stable: assert property (@(posedge aclk) disable iff (!aresetn)\n  (arvalid && !arready) |=> $stable({araddr, arlen, arsize, arburst, arid, arprot, arcache}));\n```\n\nThere is no matching \"READY must stay high\" assertion, because READY may legally drop before VALID arrives.",
+      "follow_ups": [
+        "Is a slave that waits for both AWVALID and WVALID before asserting AWREADY compliant?",
+        "How would you detect, in simulation, a VALID that depends combinationally on READY?",
+        "What extra stability check applies to WDATA when some WSTRB bits are low?"
+      ],
+      "common_mistakes": [
+        "Writing an assertion that READY must stay high until VALID.",
+        "Allowing VALID to drop when the destination is slow.",
+        "Blaming the slave in the AWREADY/WVALID deadlock; the master broke the rule."
+      ],
+      "modules": [
+        "B-AXI-1_AXI_Channel_Architecture/index",
+        "B-AMBA-2_Protocol_Intuition_and_Memory_Hooks/index",
+        "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A3.2.1 Handshake process; §A3.3.1 Dependencies between channel handshake signals (including the Caution)",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-axi-responses",
+      "topic": "amba",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "List the four AXI response codes and what each means. A 4-beat read gets SLVERR on beat 2: how many R beats does the master receive? A 4-beat write fails: how many write responses come back?",
+      "rubric": "Must have: OKAY (0b00), EXOKAY (0b01), SLVERR (0b10), DECERR (0b11) with their meanings; read responses are per beat and all 4 beats are still transferred; a write gets one B response for the whole burst.\n\nStrong answers add that OKAY also signals a failed exclusive access, that DECERR is typically generated by the interconnect (or a default slave) when there is no slave at the address, that AXI4-Lite does not support EXOKAY, and that error responses are legal protocol behaviour, so a monitor does not flag them; the scoreboard checks them against expectations.\n\nWeak: \"the read stops at the error\" or \"one B per beat\".",
+      "model_answer": "RRESP and BRESP use the same encoding (IHI0022E A3.4.4, Table A3-4):\n\n**OKAY (0b00):** normal access succeeded. It also means an exclusive access failed, or an exclusive access went to a slave that does not support exclusives. **EXOKAY (0b01):** the read or write part of an exclusive access succeeded. **SLVERR (0b10):** the access reached the slave, and the slave reports an error. **DECERR (0b11):** no slave at that address, typically generated by the interconnect.\n\n**Read:** the slave may give a different response on each beat, and the required number of beats is always transferred, even with errors. The master receives all 4 beats; beat 2 carries SLVERR, and the burst is not cancelled.\n\n**Write:** one response for the whole burst, on B, after the last write beat. The master gets exactly one BRESP.\n\nFor verification, SLVERR and DECERR are legal responses, not protocol violations. The monitor reports them; the scoreboard decides whether they were expected (for example, DECERR for an unmapped address is correct). AXI4-Lite does not support EXOKAY (B1.1).",
+      "follow_ups": [
+        "Who should generate DECERR when no slave decodes the address, and what must it still do with a 16-beat read?",
+        "A bridge splits one AXI write into four APB writes and one fails. Which BRESP does it return?",
+        "What data does the master see on a beat that returned SLVERR?"
+      ],
+      "common_mistakes": [
+        "Ending a read burst early on an error.",
+        "Expecting one write response per beat.",
+        "Treating SLVERR as a monitor error."
+      ],
+      "modules": [
+        "B-AXI-1_AXI_Channel_Architecture/index",
+        "B-AXI-6_AXI_Verification_Performance/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A3.4.4 Read and write response structure, Table A3-4; §B1.1 Definition of AXI4-Lite",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-axi-burst-math",
+      "topic": "amba",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "On a 32-bit AXI bus, give every beat address and the active byte lanes for (a) INCR, AxSIZE = 2, AxLEN = 3, AxADDR = 0x1002 and (b) WRAP, AxSIZE = 2, AxLEN = 3, AxADDR = 0x38. Then write an SV function that returns the address of beat N for FIXED, INCR and WRAP bursts.",
+      "rubric": "Must have: (a) 0x1002, 0x1004, 0x1008, 0x100C; beat 1 uses lanes 2-3 only, later beats lanes 0-3; (b) wrap boundary 0x30, addresses 0x38, 0x3C, 0x30, 0x34; a function built from the specification's equations (Aligned_Address, Address_N, Wrap_Boundary).\n\nStrong answers state that WSTRB may be any subset of the active lanes (including none), that WRAP needs a size-aligned start and a length of 2, 4, 8 or 16, that an unaligned INCR transfers fewer bytes than beats x size, and they check the function against both worked cases.\n\nWeak: start + (N-1) x size for every beat of an unaligned burst, or a wrap boundary computed from the start address without rounding down.",
+      "model_answer": "Use the equations of IHI0022E A3.4.1: Number_Bytes = 2^AxSIZE, Burst_Length = AxLEN + 1, Aligned_Address = INT(Start / Number_Bytes) x Number_Bytes, Address_N = Aligned_Address + (N - 1) x Number_Bytes for N > 1 (INCR, and WRAP before it wraps).\n\n**(a) INCR at 0x1002.** Number_Bytes = 4, Aligned_Address = 0x1000. Beat 1 is 0x1002; beats 2-4 are 0x1004, 0x1008, 0x100C. Byte lanes for beat 1: Lower_Byte_Lane = 0x1002 - 0x1000 = 2 and Upper_Byte_Lane = 0x1000 + 3 - 0x1000 = 3, so lanes 2-3. Beats 2-4 use lanes 0-3. The burst moves 2 + 4 + 4 + 4 = 14 bytes, not 16.\n\n**(b) WRAP at 0x38.** Total size = 4 x 4 = 16 bytes, Wrap_Boundary = INT(0x38 / 16) x 16 = 0x30. Beats: 0x38, 0x3C, then 0x40 equals boundary + 16, so it wraps to 0x30, then 0x34. All lanes 0-3 on every beat. The start is aligned to the size and the length is 4, so the burst is legal.\n\nWSTRB must be high only for lanes that hold valid data (A3.4.3), so on beat 1 of (a) it is any subset of 4'b1100, including 4'b0000.\n\n```systemverilog\ntypedef enum logic [1:0] {FIXED = 2'b00, INCR = 2'b01, WRAP = 2'b10} axi_burst_e;\n\n// Address of beat n (n = 1 is the first beat), from the IHI0022E A3.4.1 equations\nfunction automatic logic [63:0] axi_beat_addr(logic [63:0] start, logic [2:0] size,\n                                              logic [7:0] len, axi_burst_e burst,\n                                              int unsigned n);\n  longint unsigned nbytes  = 64'd1 << size;\n  longint unsigned total   = nbytes * (len + 1);     // bytes in the whole burst\n  logic [63:0]     aligned = (start / nbytes) * nbytes;\n  logic [63:0]     wrap_lo = (start / total) * total;\n  logic [63:0]     addr;\n  if (n == 1 || burst == FIXED) return start;\n  addr = aligned + (n - 1) * nbytes;                   // INCR, and WRAP before wrapping\n  if (burst == WRAP && addr >= wrap_lo + total)\n    addr -= total;                                     // back to the wrap boundary\n  return addr;\nendfunction\n// axi_beat_addr(64'h1002, 2, 3, INCR, 2) == 64'h1004\n// axi_beat_addr(64'h38,   2, 3, WRAP, 3) == 64'h30\n```\n\nThe expression `len + 1` is evaluated at 64 bits here because the multiplication's other operand is 64 bits, so AxLEN = 255 gives 256, not 0.",
+      "follow_ups": [
+        "A 64-bit bus carries INCR, AxSIZE = 1, AxADDR = 0x2, AxLEN = 3. Which lanes does each beat use?",
+        "Why can a legal WRAP burst never cross a 4KB boundary?",
+        "Extend the function to return Lower_Byte_Lane and Upper_Byte_Lane for beat N."
+      ],
+      "common_mistakes": [
+        "Computing every beat as start + (N - 1) x size for an unaligned start.",
+        "Requiring WSTRB to equal all active lanes.",
+        "Allowing a WRAP of 3 beats or with an unaligned start."
+      ],
+      "modules": [
+        "B-AXI-2_AXI_Burst_Math/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A3.4.1 Address structure (burst length, size, type and the burst address equations); §A3.4.3 Data read and write structure (write strobes, narrow transfers)",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "amba-axi-4kb-boundary",
@@ -40,29 +374,341 @@
       "level": "mid",
       "category": "concept",
       "prompt": "A 32-bit INCR burst starts at 0x0FF0 with AxLEN=7. Is it legal?",
-      "rubric": "8 beats × 4 bytes = 32 bytes. 0x0FF0 + 32 - 1 = 0x100F. First byte at 0x0FF0 is in page 0x0xxx, last byte at 0x100F is in page 0x1xxx. Crosses 4KB, so it is illegal; the master must issue two bursts instead. Strong answers note that only INCR can cross (a legal WRAP or FIXED burst never does) and that an unaligned start is measured from the aligned address.",
-      "model_answer": "Illegal. 8 beats × 4 bytes = 32 bytes total. Start address 0x0FF0, last byte address = 0x0FF0 + 31 = 0x100F. Start page = 0x0FF0[31:12] = 0x0. End page = 0x100F[31:12] = 0x1. Different pages — the burst crosses the 4KB boundary at 0x1000. The master must issue it as two bursts instead: 4 beats at 0x0FF0 (ending at 0x0FFF) and 4 beats at 0x1000. A checker for this rule applies only to INCR bursts, because a legal WRAP burst stays inside its own wrap region and a FIXED burst repeats one address.",
-      "sources": ["Arm IHI0022E A3.4.1"]
+      "rubric": "8 beats x 4 bytes = 32 bytes. 0x0FF0 + 32 - 1 = 0x100F. First byte at 0x0FF0 is in page 0x0xxx, last byte at 0x100F is in page 0x1xxx. Crosses 4KB, so it is illegal; the master must issue two bursts instead. Strong answers note that only INCR can cross (a legal WRAP or FIXED burst never does), that an unaligned start is measured from the aligned address, and why the rule exists (it keeps a burst from crossing a boundary between two slaves and limits the address increments a slave must support).",
+      "model_answer": "Illegal. 8 beats x 4 bytes = 32 bytes. Start address 0x0FF0, last byte address = 0x0FF0 + 31 = 0x100F. Start page = 0x0FF0[31:12] = 0x0; end page = 0x100F[31:12] = 0x1. The burst crosses the 4KB boundary at 0x1000 (IHI0022E A3.4.1: a burst must not cross a 4KB address boundary, which keeps a burst from spanning two slaves).\n\nThe master must issue it as two bursts: 4 beats at 0x0FF0 (ending at 0x0FFF) and 4 beats at 0x1000.\n\nA checker for this rule applies only to INCR bursts, because a legal WRAP burst stays inside its own wrap block (at most 16 x 128 bytes, aligned) and a FIXED burst repeats one address. For an unaligned start, compute the last byte from the aligned address: last = Aligned_Address + Burst_Length x Number_Bytes - 1.\n\n```systemverilog\nfunction automatic bit axi_crosses_4kb(logic [63:0] addr, logic [7:0] len, logic [2:0] size);\n  logic [63:0] aligned = (addr >> size) << size;\n  logic [63:0] last    = aligned + ((64'(len) + 1) << size) - 1;\n  return addr[63:12] != last[63:12];\nendfunction\n// axi_crosses_4kb(64'h0FF0, 7, 2) == 1\n```",
+      "follow_ups": [
+        "Change the start to 0x0FF2 with the same size and length. Is it still illegal, and how many bytes does it move?",
+        "Can an interconnect legally split a Non-modifiable INCR burst at 4KB for the master? What does A4.3.1 forbid any modification from doing?",
+        "Why does an AXI-to-AHB bridge need to split at 1KB even for a legal AXI burst?"
+      ],
+      "common_mistakes": [
+        "Applying the 4KB check to WRAP or FIXED bursts.",
+        "Using start + Burst_Length x size for an unaligned start."
+      ],
+      "modules": [
+        "B-AXI-2_AXI_Burst_Math/index",
+        "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A3.4.1 Address structure (4KB rule, burst address equations); §A4.3.1 (no modification may cause accesses to a different 4KB space)",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-axi-id-ordering",
+      "topic": "amba",
+      "level": "mid",
+      "category": "trick",
+      "prompt": "A master issues the transactions below, in order. For each observed behaviour (a)-(d), say whether AXI allows it and which rule decides.",
+      "code": "Issued by one master, in this order:\n  1. AR  ARID=1  addr=0x1000   (decodes to slave S0)\n  2. AR  ARID=2  addr=0x2000   (decodes to slave S0)\n  3. AR  ARID=1  addr=0x9000   (decodes to slave S1)\n  4. AW  AWID=1  addr=0x1000   (slave S0), with its W data\n\nObserved at the master:\n  (a) All read data for ARID=2 returns before any read data for ARID=1.\n  (b) The read of 0x9000 (ARID=1) returns before the read of 0x1000 (ARID=1).\n  (c) R beats of ARID=1 and ARID=2 interleave beat by beat.\n  (d) BRESP for the write returns before the read of 0x1000 completes,\n      and that read returns the newly written data.",
+      "rubric": "Must have: (a) legal, different IDs have no ordering; (b) illegal, same-ARID read data must return in issue order even when the reads go to different slaves, and the interconnect must enforce it; (c) legal, read data with different IDs may interleave; (d) legal, AXI has no ordering between reads and writes even with the same ID, so old or new data is acceptable.\n\nStrong answers give the consequence for the testbench (a per-ID read model; a read-after-write check only when the master waited for BRESP before issuing the read) and know the Non-modifiable exception (same ID, same slave keeps order) and its limit across the read and write channels.\n\nWeak: \"responses return in request order\", or \"same ID means a read and a write are ordered\".",
+      "model_answer": "**(a) Legal.** Transactions from the same master with different IDs have no ordering restrictions (IHI0022E A5.3).\n\n**(b) Illegal.** Read data for transactions with the same ARID must reach the master in the order the addresses were issued, and the interconnect must guarantee this even when the reads target different slaves (A5.3.1). Typical implementations stall the second same-ID read to a different slave until the first completes, or buffer and reorder the data; that choice is the interconnect designer's.\n\n**(c) Legal.** Read data from transactions with different ARIDs can be interleaved (A5.3.1). Write data cannot: AXI4 removed write interleaving, so all W beats of one write are consecutive and in AW order (A5.4).\n\n**(d) Legal.** AXI has no ordering between reads and writes, even when ARID equals AWID (A5.3.4). The read was issued before the write's response arrived, so it may return old or new data. A master that needs read-after-write ordering must wait for BRESP before issuing the read (A5.3.4). Non-modifiable transactions with the same ID to the same slave must stay ordered (A4.3.2), but the Note in A4.3.2 says ordering between the read and write channels only exists if one direction is issued after the other has received its response, so (d) is still legal.\n\nTestbench consequence: model reads per ID (a queue per ARID), accept any cross-ID order and interleaving, and accept either old or new data for a read that overlaps an in-flight write unless the test ordered them through BRESP.",
+      "follow_ups": [
+        "How does an interconnect meet (b) cheaply, and what does that cost a master that uses one ID for everything?",
+        "Two writes with the same AWID go to different slaves. Must their BRESPs return in order?",
+        "Where in your environment would you check rule (b): in an assertion or in the scoreboard?"
+      ],
+      "common_mistakes": [
+        "Expecting responses in request order across IDs.",
+        "Treating a same-ID read and write as ordered.",
+        "Allowing same-ID reordering because the reads went to different slaves."
+      ],
+      "modules": [
+        "B-AXI-3_AXI_Ordering_and_IDs/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A5.3 Transaction ordering; §A5.3.1 Read ordering; §A5.3.4 Read and write interaction; §A5.4 Removal of write interleaving support; §A4.3.2 Ordering requirements for Non-modifiable transactions",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-axi4-lite-stream",
+      "topic": "amba",
+      "level": "mid",
+      "category": "trick",
+      "prompt": "True or false, with the rule: (1) AXI4-Lite supports bursts of up to 16 beats. (2) AXI4-Lite has WSTRB. (3) An AXI4-Lite slave may return EXOKAY. (4) AXI4-Stream transfers carry an address. (5) In AXI4-Stream, a byte with TKEEP = 0 and TSTRB = 1 is a position byte. (6) A stream master may wait for TREADY before asserting TVALID.",
+      "rubric": "Must have all six: (1) false, every AXI4-Lite transaction has burst length 1; (2) true; (3) false, exclusive accesses and EXOKAY are not supported; (4) false, streams have no address (TID and TDEST identify and route streams); (5) false, TKEEP = 0 with TSTRB = 1 is reserved, a position byte is TKEEP = 1 with TSTRB = 0; (6) false, the same VALID-before-READY rule applies.\n\nStrong answers add AXI4-Lite's fixed 32- or 64-bit data width and Non-modifiable, Non-bufferable accesses, the null byte (both low) and TLAST as the packet boundary, and what this means for a VIP or scoreboard (a Lite agent still handles sparse WSTRB; a stream scoreboard compares packets and drops null bytes).\n\nWeak: treats AXI4-Lite as \"AXI without IDs\" that still bursts, or reverses TKEEP and TSTRB.",
+      "model_answer": "**(1) False.** All AXI4-Lite transactions have burst length 1, and all data accesses use the full data bus width, which is 32 or 64 bits (IHI0022E B1.1).\n\n**(2) True.** WSTRB is in the AXI4-Lite signal list (Table B1-1), so sparse writes still happen and a Lite slave must honour the strobes.\n\n**(3) False.** AXI4-Lite does not support exclusive accesses, and EXOKAY is not supported on RRESP or BRESP (B1.1). Accesses are Non-modifiable and Non-bufferable (AxCACHE = 0b0000).\n\n**(4) False.** AXI4-Stream has no address. TID identifies a stream and TDEST gives coarse routing; transfers with the same TID and TDEST belong to one stream (IHI0051A §2.6).\n\n**(5) False.** TKEEP = 0 with TSTRB = 1 is **reserved** and must not be used. TKEEP = 1, TSTRB = 1 is a data byte; TKEEP = 1, TSTRB = 0 is a position byte; TKEEP = 0, TSTRB = 0 is a null byte that may be removed from the stream (§2.4, Table 2-2).\n\n**(6) False.** A master is not permitted to wait for TREADY before asserting TVALID, and TVALID stays asserted until the handshake (§2.2.1), the same rule as AXI.\n\nTLAST marks a packet boundary (§2.5), so a stream scoreboard usually compares packets, ignores null bytes, and treats position bytes as \"no data, keep the position\".",
+      "follow_ups": [
+        "An AXI4 master with 8-beat bursts connects to an AXI4-Lite slave. What must sit between them?",
+        "Write a one-line assertion that rejects the reserved TKEEP/TSTRB combination.",
+        "May a transfer with every TKEEP bit low be dropped by an interconnect? What if TLAST is high?"
+      ],
+      "common_mistakes": [
+        "Assuming AXI4-Lite supports short bursts.",
+        "Swapping the meanings of TKEEP and TSTRB.",
+        "Forgetting that Lite slaves still see WSTRB."
+      ],
+      "modules": [
+        "B-AMBA-1_Protocol_Families_and_Tradeoffs/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§B1.1 Definition of AXI4-Lite, Table B1-1",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0051A (AMBA 4 AXI4-Stream Protocol Specification)",
+          "section": "§2.2.1 Handshake process; §2.4 Byte qualifiers, §2.4.3 Table 2-2; §2.5 Packet boundaries; §2.6 Source and destination signaling",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-axi-exclusive-access",
+      "topic": "amba",
+      "level": "senior",
+      "category": "concept",
+      "prompt": "Explain the AXI exclusive access sequence from the master's and the slave's point of view, list the restrictions on an exclusive pair, and sketch the reference model your scoreboard uses to predict EXOKAY versus OKAY.",
+      "rubric": "Must have: exclusive read then exclusive write to the same address with AWID equal to the ARID; EXOKAY on success, OKAY on failure with memory not updated; a slave that does not support exclusives returns OKAY to the exclusive read; the monitor records address and ID and is cleared by a write to that location or re-armed by a new exclusive read with the same ID; restrictions (same size, length and control signals, address aligned to the total bytes, power-of-two total of at most 128 bytes, at most 16 beats in AXI4, AxCACHE must let the monitoring slave see the access, write not started before the read completes).\n\nSeparates a strong answer: a model keyed by ID, the ordering of prediction versus monitor update for the successful write, tolerance for a monitor that watches a larger region (spurious failures are legal), and the verification scenarios (interfering write between the pair, re-arm, unsupported slave, AXI4-Lite has no exclusives).\n\nWeak: describes AXI3 locked transfers, or calls an OKAY to an exclusive write a protocol error.",
+      "model_answer": "**Sequence (IHI0022E A7.2.1).** The master performs an exclusive read (AxLOCK set). Later it performs an exclusive write to the same address with an AWID that matches the ARID of the read. The write succeeds if no other master has written that location since the exclusive read, and fails otherwise, in which case memory is not updated.\n\n**Master's view (A7.2.2).** EXOKAY on the read means the slave recorded the address. OKAY on the exclusive read means the slave does not support exclusives; the specification recommends the master does not then perform the write. EXOKAY on the write is success; OKAY is failure. The master must not start the write until the read has completed.\n\n**Slave's view (A7.2.3).** A slave without exclusive support ignores AxLOCK and returns OKAY. A slave with support has a monitor that records the address and ARID of each exclusive read and watches the location until a write occurs there, or until another exclusive read with the same ID moves it. An exclusive write whose address is no longer monitored for that ID gets OKAY and does not update memory.\n\n**Restrictions (A7.2.4)**, otherwise behaviour is UNPREDICTABLE: the write has the same size, length and control signals as the read, with an identical address; the address is aligned to the total bytes; the total is a power of two up to 128 bytes; at most 16 beats in AXI4; and AxCACHE must guarantee the monitoring slave sees the transaction (not Cacheable). AXI4-Lite has no exclusives (B1.1); AXI4 removed locked transfers (A7.3).\n\n```systemverilog\n// snippet: members of an exclusive-access reference model in the scoreboard\ntypedef struct { bit valid; bit [63:0] addr; int unsigned nbytes; } excl_mon_t;\nexcl_mon_t mon[bit [7:0]];                 // one monitor per ID (A7.2.3)\n\nfunction void on_excl_read_done(bit [7:0] id, bit [63:0] addr, int unsigned nbytes);\n  mon[id] = '{valid: 1'b1, addr: addr, nbytes: nbytes};   // re-arms this ID\nendfunction\n\n// Call before applying the write to the memory model\nfunction bit [1:0] predict_excl_write(bit [7:0] id, bit [63:0] addr);\n  if (mon.exists(id) && mon[id].valid && mon[id].addr == addr) return 2'b01; // EXOKAY\n  return 2'b00;                                                           // OKAY, no update\nendfunction\n\n// Every completed write that updates memory, exclusive or not, clears overlapping monitors\nfunction void on_write_done(bit [63:0] addr, int unsigned nbytes);\n  foreach (mon[id])\n    if (mon[id].valid && addr < mon[id].addr + mon[id].nbytes && mon[id].addr < addr + nbytes)\n      mon[id].valid = 0;\nendfunction\n```\n\nA real monitor may watch more bytes than the access, up to 128, so a neighbouring write can make a correct exclusive fail (A7.2.4). Configure the model with the DUT's monitor granularity, or let it accept OKAY where it predicted EXOKAY when only a neighbouring write intervened.\n\nScenarios to cover: a clean pair (EXOKAY, EXOKAY); another master writes between the pair (OKAY, no update); the same ID re-arms with a new exclusive read; two IDs race for one location; an exclusive to a slave without support; an exclusive write with no preceding exclusive read (the model predicts OKAY with no update).",
+      "follow_ups": [
+        "Why does the monitor key on the ID and not on the master port?",
+        "How do exclusives work on AHB5 (HEXCL, HEXOKAY, IHI0033C Chapter 10)?",
+        "An interconnect changes AxSIZE and AxLEN of an exclusive. When is that allowed (A4.3.1)?"
+      ],
+      "common_mistakes": [
+        "Treating OKAY on an exclusive write as an error response.",
+        "Forgetting that any write to the location, not just another exclusive, clears the monitor.",
+        "Building assertions that reject an exclusive write without a prior exclusive read; predict the response in the scoreboard instead."
+      ],
+      "modules": [
+        "B-AXI-4_AXI_Expert_Features_Cache_Atomics/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A7.2 Exclusive accesses (§A7.2.1-§A7.2.4); §A7.3 Locked accesses; §A3.4.4 (OKAY and EXOKAY); §B1.1; §A4.3.1 (Non-modifiable exclusives)",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-axi-cache-prot-qos",
+      "topic": "amba",
+      "level": "senior",
+      "category": "trick",
+      "prompt": "Explain what is wrong in each case. (1) A VIP drives AxPROT = 3'b010 for privileged, Secure boot-ROM data reads, and the firewall rejects them. (2) A read-to-clear interrupt status register mapped with ARCACHE = 4'b0011 occasionally loses events. (3) A display controller misses deadlines, and the proposed fix is to raise its AxQOS to 4'hF.",
+      "rubric": "Must have: (1) AxPROT[0] = 1 privileged, AxPROT[1] = 0 Secure, AxPROT[2] = 0 data, so the correct value is 3'b001, and 3'b010 means unprivileged Non-secure; (2) 0b0011 is Normal Non-cacheable Bufferable, which is Modifiable, so the interconnect may prefetch, merge or split, and a read-sensitive register must be Device (0b0000 or 0b0001), Non-modifiable; (3) AxQOS is only a hint whose use the protocol does not specify, so raising it helps only if the arbiters implement a QoS scheme and the bottleneck is arbitration.\n\nStrong answers quote what Modifiable allows (fetch more data than required, merge, split), distinguish Device Non-bufferable from Device Bufferable (where the write response may come from an intermediate point), and turn each item into a verification check or coverage point.\n\nWeak: reads AxPROT[1] = 1 as Secure, or treats QoS as a latency guarantee.",
+      "model_answer": "**(1) AxPROT polarity.** IHI0022E A4.7, Table A4-6: AxPROT[0] = 1 is privileged, AxPROT[1] = 0 is **Secure** (1 is Non-secure), AxPROT[2] = 0 is data (1 is instruction, a hint). Privileged, Secure data is 3'b001. The VIP sent 3'b010, which is unprivileged Non-secure data, so the firewall is right to reject it. The specification itself warns that wrong AxPROT[1] values lead to incorrect system behaviour (A10.3.7 Caution).\n\n**(2) Memory type.** AxCACHE = 0b0011 is Normal Non-cacheable Bufferable (Table A4-5). Normal memory is Modifiable (AxCACHE[1] = 1), so a component may fetch more data than required, merge transactions, or split them (A4.3.1). A read-to-clear register can then be read by a prefetch or merged access whose data nobody uses, and the event is lost. Registers with side effects must use a Device type: 0b0000 Device Non-bufferable or 0b0001 Device Bufferable. Both are Non-modifiable; for reads they behave the same, reads must not be prefetched, and writes must not be merged (A4.4.1). For writes, Device Bufferable allows the response to come from an intermediate point, so a write followed by a poll needs Non-bufferable if the response must mean the device saw it.\n\n**(3) QoS.** AxQOS is a 4-bit identifier whose exact use the protocol does not specify; it is recommended as a priority indicator, higher meaning more important, and 0b0000 means not participating (A8.1.1). It needs a system-level QoS scheme that every participating component implements (A8.1.2). Raising it does nothing if the arbiters ignore it, and nothing if the stall is in ordering, a full buffer, or the memory controller. Measure latency first.\n\nVerification follow-through: cover AxPROT values per master and check firewall decisions against a reference policy; check that Device-mapped regions never see modified transactions (length, size or address changes, merging); measure per-master latency and bandwidth from monitor timestamps rather than trusting QoS.",
+      "follow_ups": [
+        "Which AxCACHE value does an AXI4-Lite interface imply, and why?",
+        "Which transaction parameters may an interconnect change for a Non-modifiable transaction (Table A4-2)?",
+        "How would you write a coverage model that proves a QoS arbiter was exercised under contention?"
+      ],
+      "common_mistakes": [
+        "AxPROT[1] = 1 read as Secure.",
+        "Mapping peripherals as Normal memory because it is faster.",
+        "Treating AxQOS as a guarantee."
+      ],
+      "modules": [
+        "B-AXI-4_AXI_Expert_Features_Cache_Atomics/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A4.3.1 AxCACHE[1], Modifiable; §A4.4 Memory types, Table A4-5, §A4.4.1; §A4.7 Access permissions, Table A4-6; §A8.1.1, §A8.1.2 QoS signaling; §A10.3.7 Non-secure and Secure accesses (AxPROT Caution)",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "amba-axi-deadlock-channels",
       "topic": "amba",
       "level": "senior",
       "category": "waveform-debug",
-      "prompt": "Describe a circular backpressure deadlock in an AXI crossbar.",
-      "rubric": "Blocked B/R path prevents W/AW/AR progress. Finite buffers fill, no channel can drain. Must understand channel dependency rules.",
-      "model_answer": "Scenario: Master M1 sends writes to Slave S1, filling the W channel buffer. S1 needs to send B responses but the B channel buffer back to M1 is full (M1 is blocked reading from S2 and can't accept B). S1 stalls WREADY waiting for B buffer space. M1 stalls waiting for WREADY. Meanwhile, M1's read to S2 is blocked because S2 is waiting for writes from M2 which is blocked on S1. Result: circular wait where no channel can drain. Solution: ensure B/R channels always have higher priority than AW/W/AR in buffer allocation.",
-      "sources": ["Arm IHI0022H §A3.3", "Arm IHI0022H §A10"]
+      "prompt": "Describe a circular backpressure deadlock in an AXI crossbar. Use the trace below, from a 2-master, 2-slave AXI4 interconnect that forwards each AW to its slave as soon as it wins arbitration and has no write-data buffering: say why both masters' W channels are stuck, which rule each component is following, and how the interconnect should be fixed.",
+      "code": "Masters M0, M1; slaves S0, S1; AXI4 (no WID). Each master issues two writes:\n  M0: A0 -> S0, then A1 -> S1        M1: B0 -> S1, then B1 -> S0\n\ncycle  S0 AW accepted    S1 AW accepted    (path latency differs per route)\n 2     B1 (from M1)      A1 (from M0)\n 3     A0 (from M0)      B0 (from M1)\n\nW channels from cycle 4 (master ports | slave ports):\ncycle  M0 WVALID/WREADY          M1 WVALID/WREADY          S0 WVALID  S1 WVALID\n 4     1 / 0  data(A0), for S0   1 / 0  data(B0), for S1   0          0\n 5     1 / 0  data(A0), for S0   1 / 0  data(B0), for S1   0          0\n...    (unchanged)               (unchanged)               0          0\nBoth slaves sit idle waiting for write data; no BVALID ever appears.",
+      "rubric": "Must have: each master sends W in its own AW order (M0: A0 then A1; M1: B0 then B1); each slave takes W in the order it accepted the addresses, and the interconnect must forward W to each slave in that order (S0 needs B1's data first, S1 needs A1's data first); so the interconnect cannot forward either master's head beat and holds both masters' WREADY low, while data(B1) waits behind data(B0) on M1 and data(A1) behind data(A0) on M0: a cycle. No interface broke the handshake rules; the interconnect accepted an address order its write data could not follow.\n\nSeparates a strong answer: it names the governing rules (A5.4.1, A5.3.2), notes that forwarding data(A0) to S0 anyway would not help but would silently write A0's data as B1's (AXI4 W carries no ID), proposes concrete interconnect fixes and labels them implementation choices, knows the single-interface case (master waits for AWREADY before WVALID while the slave waits for WVALID, A3.3.1 Caution) and the same-ID multi-slave read ordering duty (A5.3.1), and says how to debug a hang by building a wait-for graph from the stuck VALID/READY pairs.\n\nWeak: \"give B and R priority\" with no rule, blaming a slave for the stall, or assuming AXI4 has WID.",
+      "model_answer": "**Why it is stuck.** In AXI4 all write data must be in the same order as the write addresses at each master (IHI0022E A5.4.1), so M0 must send data(A0) before data(A1), and M1 must send data(B0) before data(B1). A slave that does not support interleaving takes write data in the order it accepted the addresses, and an interconnect that combines writes from several masters to one slave must forward the data in address order, whatever the IDs or masters (A5.3.2). S0 accepted B1 first, so it must receive data(B1) next; S1 accepted A1 first, so it must receive data(A1) next.\n\nThe wait-for cycle: M0's W head is data(A0) for S0, but S0 must get data(B1) first, and data(B1) is behind data(B0) on M1. M1's W head is data(B0) for S1, but S1 must get data(A1) first, and data(A1) is behind data(A0) on M0. With nowhere to park a burst, the interconnect holds WREADY low to both masters and drives no WVALID to either slave. It must not simply forward data(A0) to S0: AXI4 write data carries no ID, so S0 would write A0's data as B1's.\n\n**Who is at fault.** Every interface obeys A3.3.1: the masters assert WVALID without waiting for READY, and a destination may hold READY low. The interconnect committed each slave to an address order that the masters' write data could not follow, which made its A5.3.2 duty impossible. This is a system deadlock, fixed in the interconnect. The fixes below are implementation choices:\n\n1. Forward an AW to a slave only when that master's write data for it will be next (track per-master W order, and do not let a master's later AW overtake its earlier W to another slave).\n\n2. Buffer complete write bursts (store-and-forward) so a master's W channel never blocks behind a slave.\n\n3. Restrict each master to one target slave for outstanding writes at a time (cheap; costs throughput).\n\n**Other cases to know:** (a) the single-interface deadlock: a master that waits for AWREADY before driving WVALID, with a slave that waits for WVALID before AWREADY; the master broke A3.3.1 (Caution). (b) Same-ID reads to different slaves must return in issue order (A5.3.1); a reorder buffer for this is one more resource that must not wait on anything that waits on it. (c) AXI lets a master wait for BVALID before asserting BREADY and sets no time limit (A3.3.1), so \"always accept responses\" and \"limit outstanding transactions to the response storage you have\" are design rules for masters and interconnects, not AXI rules.\n\n**Debugging a hang.** At the stuck cycle, list every channel with VALID high and READY low and, for each destination, what it is waiting for. Draw those as edges; a cycle in that graph is the deadlock, and the edge that no AXI rule requires is the bug.",
+      "follow_ups": [
+        "Would AXI3 write interleaving (WID) have prevented this? What does the slave's interleaving depth have to do with it?",
+        "Write a liveness check that would have flagged this hang, and label it as a protocol rule or an integration contract.",
+        "How would you build a formal proof of deadlock freedom for this crossbar (configuration size, assumptions, properties)?"
+      ],
+      "common_mistakes": [
+        "Proposing \"response channels get priority\" without naming the ordering rule the design violates.",
+        "Blaming a slave for the stall: here both slaves are idle and waiting for data.",
+        "Calling \"masters must always accept B and R\" an AXI rule."
+      ],
+      "modules": [
+        "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index",
+        "B-AXI-3_AXI_Ordering_and_IDs/index",
+        "B-AMBA-F3_Interview_Debug_Clinic/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A3.3.1 Dependencies between channel handshake signals (Caution); §A5.3.1 Read ordering; §A5.3.2 Normal write ordering; §A5.4.1 Removal of WID",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-axi-checker-coverage-plan",
+      "topic": "amba",
+      "level": "senior",
+      "category": "verification-plan",
+      "prompt": "You own the protocol checker and coverage model for an AXI4 memory-controller slave port. Which checks belong in assertions and which in the scoreboard, what does the coverage model cross, and how do you keep the checker from flagging legal behaviour?",
+      "rubric": "Must have: assertions for interface rules (VALID held and payload stable until handshake on all five channels; no X on VALID and on payload when VALID; burst legality on AW and AR, including the 4KB rule for INCR only; WLAST on the right beat; BVALID only after the AW handshake and the last W beat; RLAST per read); scoreboard for data, per-ID ordering, and expected responses; coverage over burst type x length x size x alignment x ID reuse x outstanding depth x response x backpressure, with illegal combinations excluded.\n\nSeparates a strong answer: it labels which checks are AXI rules and which are integration policy (READY or response latency bounds, X checks), does not treat SLVERR or DECERR as protocol errors, accepts W before AW and cross-ID reordering and interleaving, and shows real code.\n\nWeak: a single FIFO scoreboard, a 4KB check on every burst type, or a timeout presented as an AXI rule.",
+      "model_answer": "**Split the work.** Assertions own cycle-level, interface-local rules. The scoreboard owns anything that needs a memory model or matches transactions across channels and IDs.\n\n**Assertions (AXI rules, IHI0022E):**\n\n1. VALID held and payload stable while VALID is high and READY low, on all five channels (A3.2.1).\n\n2. RVALID only for an accepted AR; BVALID only after the AW handshake and the last W beat (A3.3.1, AXI4 write response dependency). These need small outstanding counters or a FIFO of AWLEN values.\n\n3. Burst legality on AW and AR: WRAP length 2, 4, 8 or 16 with a size-aligned start; FIXED at most 16 beats; INCR at most 256 beats; AxSIZE not wider than the bus; no 4KB crossing, checked for INCR only (A3.4.1).\n\n4. WLAST on beat AWLEN + 1 of each write, taking W in AW order (A5.4.1), and RLAST on the last beat of each read.\n\n5. Exclusive-pair restrictions where the port supports exclusives (A7.2.4).\n\n**Policy checks (label them):** no X on VALID and on payload while VALID, and latency bounds such as \"READY within N cycles\" or \"every AR gets RLAST within M cycles\". AXI sets no time limit; a master may even wait for BVALID before asserting BREADY (A3.3.1).\n\n**Scoreboard:** data against a memory model with byte-lane and WSTRB handling (A3.4.3); per-ID ordering (same ID in order, any order across IDs, A5.3.1); expected responses (SLVERR or DECERR where the test provoked them, EXOKAY from an exclusive model). Error responses are legal, so the monitor reports them and the scoreboard judges them.\n\n```systemverilog\n// 4KB rule: INCR only, last byte measured from the aligned address (A3.4.1)\nfunction automatic bit crosses_4kb(logic [63:0] a, logic [7:0] len, logic [2:0] size);\n  logic [63:0] aligned = (a >> size) << size;\n  logic [63:0] last    = aligned + ((64'(len) + 1) << size) - 1;\n  return a[63:12] != last[63:12];\nendfunction\n\na_ar_4kb: assert property (@(posedge aclk) disable iff (!aresetn)\n  (arvalid && arburst == 2'b01) |-> !crosses_4kb(araddr, arlen, arsize));\n\ncovergroup cg_ar @(posedge aclk iff (arvalid && arready));\n  cp_burst: coverpoint arburst { bins fixed = {0}; bins incr = {1}; bins wrap = {2}; }\n  cp_len:   coverpoint arlen   { bins one = {0}; bins two = {1}; bins four = {3};\n                                 bins eight = {7}; bins sixteen = {15};\n                                 bins long_incr[4] = {[16:255]}; }\n  cp_size:  coverpoint arsize  { bins s[] = {[0:3]}; }          // 64-bit data bus\n  cp_align: coverpoint ((araddr & ((64'd1 << arsize) - 1)) != 0)\n                               { bins aligned = {0}; bins unaligned = {1}; }\n  x_burst_len: cross cp_burst, cp_len {\n    ignore_bins wrap_illegal = binsof(cp_burst.wrap) && !binsof(cp_len) intersect {1, 3, 7, 15};\n    ignore_bins fixed_long   = binsof(cp_burst.fixed) && binsof(cp_len.long_incr);\n  }\nendgroup\n```\n\n**Coverage to add beyond the AR group:** ID reuse and outstanding depth per ID; read-data interleaving across IDs; response type per channel; backpressure shapes (READY before VALID, VALID before READY, same cycle, long READY-low runs); W before AW, W with AW, W after AW; bursts that end exactly at a 4KB boundary; partial WSTRB patterns.\n\n**Keeping it quiet on legal traffic:** run the checker against a known-good VIP-to-VIP environment with random backpressure first, and keep a list of legal-but-surprising cases as directed tests (READY withdrawn before VALID, W before AW, cross-ID reordering, error responses).",
+      "follow_ups": [
+        "How do you check BVALID's dependency on WLAST when W arrives before AW?",
+        "Which of your checks would fire falsely on an AXI3 interface, and why?",
+        "How do you prove the coverage model is complete enough to sign off the port?"
+      ],
+      "common_mistakes": [
+        "Checking 4KB on WRAP and FIXED bursts, or from the unaligned start.",
+        "Presenting latency timeouts as AXI rules.",
+        "Flagging SLVERR or DECERR in the monitor."
+      ],
+      "modules": [
+        "B-AXI-6_AXI_Verification_Performance/index",
+        "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index",
+        "B-AXI-2_AXI_Burst_Math/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A3.2.1; §A3.3.1; §A3.4.1; §A3.4.3; §A3.4.4; §A5.3.1; §A5.4.1 Removal of WID; §A7.2.4",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-axi-read-scoreboard-per-id",
+      "topic": "amba",
+      "level": "senior",
+      "category": "coding",
+      "prompt": "Write the core of an AXI4 read scoreboard that accepts every legal response order and interleaving and rejects same-ID reordering, a missing or early RLAST, extra beats, and an unknown RID. Explain why a single FIFO of expected reads cannot work.",
+      "rubric": "Must have: expected reads kept per ARID (associative array of queues); R beats matched to the head of their RID's queue; beat counting with an RLAST check; an error for an RID with nothing outstanding; an end-of-test check that every queue is empty; data compared against a memory model per beat address, which is what actually detects same-ID reordering.\n\nStrong answers explain why one FIFO fails (cross-ID reordering and interleaving are legal), handle RRESP per beat, note that IDs are wider at the slave side of an interconnect, and keep protocol checks (RLAST timing) and data checks separate.\n\nWeak: a single in-order queue, or matching beats by RID only without checking data or address.",
+      "model_answer": "Read data with different ARIDs may return in any order and may interleave beat by beat, while same-ARID data must return in issue order (IHI0022E A5.3.1). A single FIFO of expected reads would flag every legal cross-ID reorder, so keep one queue per ID:\n\n```systemverilog\n// snippet: members of class axi_rd_scoreboard extends uvm_scoreboard\ntypedef struct { bit [63:0] addr; bit [2:0] size; bit [7:0] len; bit [1:0] burst; } rd_req_t;\nrd_req_t     exp_q [bit [7:0]][$];   // per-ARID queue of outstanding reads\nint unsigned beat_n[bit [7:0]];      // beats already received for the head of each queue\n\nfunction void on_ar(bit [7:0] id, rd_req_t req);\n  if (!exp_q.exists(id)) begin exp_q[id] = {}; beat_n[id] = 0; end\n  exp_q[id].push_back(req);\nendfunction\n\nfunction void on_r(bit [7:0] id, bit [63:0] data, bit [1:0] resp, bit last);\n  rd_req_t head;\n  bit [63:0] addr;\n  if (!exp_q.exists(id) || exp_q[id].size() == 0) begin\n    `uvm_error(\"RID\", $sformatf(\"R beat with RID %0h and no outstanding read\", id))\n    return;\n  end\n  head = exp_q[id][0];\n  beat_n[id]++;\n  addr = axi_beat_addr(head.addr, head.size, head.len, axi_burst_e'(head.burst), beat_n[id]);\n  if (resp == 2'b00 && !mem.check_beat(addr, head.size, data))   // OKAY: compare data\n    `uvm_error(\"RDATA\", $sformatf(\"RID %0h beat %0d addr %0h: data mismatch\", id, beat_n[id], addr))\n  if (beat_n[id] == head.len + 1) begin\n    if (!last) `uvm_error(\"RLAST\", $sformatf(\"RID %0h: RLAST missing on final beat\", id))\n    void'(exp_q[id].pop_front());\n    beat_n[id] = 0;\n  end else if (last) begin\n    `uvm_error(\"RLAST\", $sformatf(\"RID %0h: RLAST on beat %0d of %0d\", id, beat_n[id], head.len + 1))\n    void'(exp_q[id].pop_front());\n    beat_n[id] = 0;\n  end\nendfunction\n\nfunction void check_phase(uvm_phase phase);\n  foreach (exp_q[id])\n    if (exp_q[id].size() != 0)\n      `uvm_error(\"RPEND\", $sformatf(\"RID %0h: %0d reads never answered\", id, exp_q[id].size()))\nendfunction\n```\n\nHere `axi_beat_addr` implements the A3.4.1 burst equations and `mem.check_beat` compares the active byte lanes against the memory model.\n\nHow each failure is caught: an **unknown RID** has an empty queue; **extra beats** show up as an unknown RID once the queue is empty, or as an early RLAST; a **missing RLAST** is caught on the final beat; **same-ID reordering** cannot be seen from RID alone, because both reads carry the same RID, so it is caught by the data comparison against the head's beat address. Read data for addresses that a write may still be changing is \"either old or new\" (A5.3.4), so the memory model must allow both or the test must avoid the overlap.\n\nResponses are per beat (A3.4.4): skip the data comparison on SLVERR or DECERR beats and check the response against what the test provoked. On the slave side of an interconnect the RID is wider (the interconnect appends master-port bits, A5.3.5), so key the queues by the full ID there.",
+      "follow_ups": [
+        "Extend the model to writes: what does AXI4's removal of WID do to the matching of W beats?",
+        "Your DUT is an interconnect. Where do you place this scoreboard, and how do you map IDs between its two sides?",
+        "How do you make the memory model accept either old or new data for an overlapping in-flight write?"
+      ],
+      "common_mistakes": [
+        "One FIFO for all reads.",
+        "Believing per-ID matching alone detects same-ID reordering.",
+        "Comparing data on error beats."
+      ],
+      "modules": [
+        "B-AXI-6_AXI_Verification_Performance/index",
+        "B-AXI-3_AXI_Ordering_and_IDs/index",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A5.3.1 Read ordering; §A5.3.4; §A5.3.5 Interconnect use of transaction identifiers; §A3.4.1 (burst address equations); §A3.4.4 (per-beat read responses)",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "amba-bridge-4kb-split",
       "topic": "amba",
       "level": "senior",
       "category": "coding",
-      "prompt": "Design the burst-split logic for an AHB-to-AXI bridge. When must it split an AHB burst, and does it ever need to split at 4KB?",
-      "rubric": "Must include: no 4KB split for legal AHB input (an AHB incrementing burst never crosses 1KB, and every 4KB boundary is a 1KB boundary); splitting an undefined-length INCR at 256 transfers (AXI4 INCR limit); width conversion as the other reshaping reason; AWLEN = transfers - 1 and WLAST on the last transfer of each split burst; waiting for every split burst's BRESP (non-posted) or logging errors (posted); an AHB burst that crosses 1KB is illegal stimulus for an AHB-side checker; the AXI-to-AHB direction must split at 1KB.",
-      "model_answer": "A legal AHB incrementing burst never crosses a 1KB boundary (IHI0033B.b §3.5), and every 4KB boundary is also a 1KB boundary, so the AXI bursts made from it never cross 4KB: no 4KB split is needed. The bridge splits because an AXI4 INCR burst carries at most 256 transfers (IHI0022E A3.4.1), while an undefined-length AHB INCR has no length limit of its own; a byte-wide INCR can carry 1024 transfers inside one 1KB region.\n```\nwhile (remaining > 0) begin\n  n = (remaining > 256) ? 256 : remaining;  // AXI4 INCR limit\n  // AWADDR = addr, AWLEN = n - 1, AWSIZE = HSIZE, AWBURST = INCR\n  // send n W transfers, WLAST on the n-th\n  addr      += n << size;\n  remaining -= n;\nend\n```\nWidth conversion is the other reason to reshape: a 64-bit AHB transfer on a 32-bit AXI bus becomes two AXI transfers, and a downsized WRAP16 needs two INCR bursts because AXI WRAP stops at 16 transfers. Correlate W transfers and B responses per split burst, and complete the AHB write only after every split's BRESP if the bridge is non-posted. An AHB burst that crosses 1KB is illegal stimulus: flag it with an AHB-side checker rather than splitting it. The 1KB split belongs to the other direction: an AXI-to-AHB bridge must split a legal AXI INCR at each 1KB boundary.",
-      "sources": ["Arm IHI0022E A3.4.1", "Arm IHI0033B.b §3.5"]
+      "prompt": "Design the burst-split logic for an AHB-to-AXI bridge. When must it split an AHB burst, does it ever need to split at 4KB, and what does it do with an undefined-length INCR whose length it cannot know when it must drive AWLEN?",
+      "rubric": "Must have: no 4KB split for legal AHB input (an AHB incrementing burst never crosses 1KB, and every 4KB boundary is also a 1KB boundary); lengths are known up front only for SINGLE, INCR4/8/16 and WRAP4/8/16; an undefined-length INCR can end after any beat (the master ends it with NONSEQ or IDLE, possibly after BUSY), so the bridge cannot announce its length; reasonable strategies (one AXI transfer per beat, write buffering with chunked AWLEN, speculative reads only where safe) labelled as implementation choices; AXI bursts cannot be terminated early, so a started AXI burst must be completed (writes with WSTRB = 0, reads drained and discarded); AWLEN = beats - 1 with WLAST on the last beat; width conversion; BRESP handling for posted and non-posted writes.\n\nStrong answers also handle early AHB termination (ERROR, multi-layer termination), the 256-beat INCR limit, WRAP16 downsizing (two INCR bursts only when the start is not at the wrap boundary), the AHB-side 1KB checker for illegal stimulus, and that the AXI-to-AHB direction splits at 1KB.\n\nWeak: a split loop driven by a `remaining` count for an undefined INCR, or splitting at 4KB.",
+      "model_answer": "**No 4KB split for legal input.** A master must not start an incrementing burst that crosses a 1KB boundary (IHI0033C §3.6), and every 4KB boundary is a 1KB boundary, so AXI bursts made from a legal AHB burst never cross 4KB (IHI0022E A3.4.1). An AHB burst that crosses 1KB is illegal stimulus: flag it with an AHB-side checker rather than splitting it. The 1KB split belongs to the other direction: an AXI-to-AHB bridge must split a legal AXI INCR at each 1KB boundary.\n\n**Known versus unknown length.** SINGLE, INCR4/8/16 and WRAP4/8/16 announce their length in HBURST (Table 3-4), so the bridge can drive AWLEN or ARLEN at once. An undefined-length INCR does not: the master may insert BUSY and then end the burst with NONSEQ or IDLE after any beat (§3.6.1). AXI needs the length in AWLEN/ARLEN up front and does not allow early termination (A3.4.1), so the bridge cannot simply forward the burst.\n\nStrategies for undefined INCR (implementation choices):\n\n1. **Simplest:** one AXI transfer per AHB beat (AWLEN = 0). Always correct, slow.\n\n2. **Writes:** buffer AHB beats (the bridge acts as a posted-write slave) and issue an AXI burst when the buffer reaches a chosen chunk, the burst ends, or the 256-beat AXI4 INCR limit is hit.\n\n3. **Reads:** issue a speculative longer read only where prefetching is safe (Normal, Modifiable memory); never for read-sensitive peripherals. Discard unused beats.\n\n```systemverilog\n// AHB HBURST -> beats known up front, or 0 for undefined-length INCR (IHI0033C Table 3-4)\nfunction automatic int unsigned ahb_known_beats(logic [2:0] hburst);\n  case (hburst)\n    3'b000:         return 1;    // SINGLE\n    3'b010, 3'b011: return 4;    // WRAP4, INCR4\n    3'b100, 3'b101: return 8;    // WRAP8, INCR8\n    3'b110, 3'b111: return 16;   // WRAP16, INCR16\n    default:        return 0;    // 3'b001 INCR: length not known\n  endcase\nendfunction\n\n// snippet: methods of the bridge's write path for an undefined-length INCR.\n// on_ahb_write_beat() runs for each completed AHB write beat; flush() also runs when\n// the burst ends (the next NONSEQ or IDLE is accepted). lanes() returns the WSTRB for\n// beat i from the A3.4.1 byte-lane equations; send_aw()/send_w() drive the AXI channels.\ntask on_ahb_write_beat(logic [31:0] haddr, logic [2:0] hsize, logic [31:0] hwdata);\n  if (buf_n == 0) buf_addr = haddr;\n  wbuf[buf_n] = hwdata;\n  buf_n++;\n  if (buf_n == CHUNK) flush(hsize);              // CHUNK <= 256 (AXI4 INCR limit)\nendtask\n\ntask flush(logic [2:0] hsize);\n  if (buf_n == 0) return;\n  send_aw(.addr(buf_addr), .len(buf_n - 1), .size(hsize), .burst(2'b01));  // AWLEN = beats - 1\n  for (int i = 0; i < buf_n; i++)\n    send_w(.data(wbuf[i]), .strb(lanes(buf_addr, hsize, i)), .last(i == buf_n - 1));\n  buf_n = 0;\nendtask\n```\n\n**Early termination.** AHB bursts can stop early: after an ERROR the master may cancel the remaining beats, and a multi-layer interconnect may end a burst (§3.6.2). If the bridge has already issued an AXI burst of known length, it must still complete it: send the remaining W beats with every WSTRB bit low, and accept and discard the remaining R beats (A3.4.1). Write errors on a posted write cannot be returned on the already-completed AHB transfer; log them or raise an interrupt. A non-posted bridge holds the last AHB beat (HREADYOUT low) until every split's BRESP is back, then answers with OKAY or the two-cycle ERROR.\n\n**Width conversion** is the other reason to reshape: a 64-bit AHB transfer on a 32-bit AXI bus becomes two AXI transfers. A WRAP16 of 64-bit beats on a 32-bit AXI bus becomes 32 beats, more than an AXI WRAP allows (16), so the bridge issues one INCR burst if the start is at the wrap boundary, or two INCR bursts (start to top of block, then block base to start) otherwise.",
+      "follow_ups": [
+        "The AHB master sends INCR with HPROT marking a Device access. Which of the three INCR strategies are still allowed?",
+        "Your bridge buffers 16 beats and the AHB master inserts BUSY for 200 cycles mid-burst. What do you do with the buffered beats?",
+        "Write the AHB-side assertion that flags an incrementing burst crossing 1KB."
+      ],
+      "common_mistakes": [
+        "Splitting AHB bursts at 4KB.",
+        "Driving AWLEN for an undefined INCR as if its length were known.",
+        "Abandoning an AXI burst when the AHB master cancels after an ERROR."
+      ],
+      "modules": [
+        "B-AMBA-F1_Bridges_and_System_Integration/index",
+        "B-AHB-1_AHB_Design_Timing_Mechanics/index",
+        "B-AXI-2_AXI_Burst_Math/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0033C (AMBA AHB Protocol Specification)",
+          "section": "§3.6 Burst operation, Table 3-4; §3.6.1 Burst termination after a BUSY transfer; §3.6.2 Early burst termination (§3.5, §3.5.1, §3.5.2 in Issue B.b); §4.2 (1KB minimum slave region)",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A3.4.1 Address structure (4KB rule, 256-beat INCR, WRAP lengths, no early termination)",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-staff-interconnect-design",
+      "topic": "amba",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "Whiteboard an AXI4 interconnect for four masters and two slaves. Include the ordering duties the crossbar must implement and your verification plan.",
+      "rubric": "Must include: address decode with a default slave returning DECERR; per-slave arbitration on AW and AR; ID extension with master-port bits appended to ARID/AWID, used to route RID/BID and stripped on return; the ordering duties (same-ID reads to different slaves return in issue order; same-AWID writes complete in order; write data forwarded to each slave in the order it accepted the addresses, with masters sending W in AW order); outstanding limits sized to buffering; deadlock avoidance tied to those duties.\n\nVerification: per-port protocol VIP and checkers, an end-to-end scoreboard (routing, ID handling, data, responses), ordering checks, crossing-traffic stress for W ordering, arbitration fairness and QoS measurement, deadlock freedom (formal on a reduced configuration with fairness assumptions, plus simulation hang detection), and performance.\n\nSeparates staff from senior: names the trade-offs of each ordering implementation (stall versus reorder buffer, AW admission control versus store-and-forward write buffers), sizes ID widths and outstanding depth, and labels which parts are AXI rules and which are design choices.",
+      "model_answer": "**Datapath.** Four master ports each decode the address against the map; unmapped addresses go to a default slave that returns DECERR (IHI0022E A3.4.4). Slave regions are 4KB-aligned, so no legal burst spans two slaves (A3.4.1). Each slave port has AW and AR arbiters (round-robin, optionally weighted by AxQOS, which is only a hint, A8.1.1).\n\n**IDs.** The interconnect appends master-port bits to ARID and AWID (2 bits for 4 masters), so the IDs at the slave ports are wider. It uses those bits to route RID and BID back and removes them before returning the response (A5.3.5). Where the bits go is a design choice; recommended widths are in A5.3.6.\n\n**Ordering duties (AXI rules).** (1) Read data for same-ARID reads to different slaves must reach the master in issue order (A5.3.1). (2) Same-AWID writes must complete in issue order (A5.3). (3) Write data must reach each slave in the order it accepted the addresses, whatever the masters or IDs (A5.3.2), while each master sends W in its own AW order (A5.4.1).\n\n**How to meet them (implementation choices).** For (1) and (2), either stall a same-ID request to a different slave until the earlier one completes (cheap; slows masters that reuse one ID) or add reorder buffers (area; another resource that must never wait on something that waits on it). For (3), either admit an AW to a slave only when that master's W for it can be delivered next, or buffer complete write bursts before forwarding them. Without one of these, crossing writes (M0 to S0 then S1, M1 to S1 then S0) deadlock with every interface compliant.\n\n**Buffering and limits.** Register slices per channel for timing; per-master outstanding limits sized to the response and reorder storage; per-slave AW-order FIFOs that route W.\n\n**Verification plan.**\n\n1. AXI VIP and protocol checkers on all six ports (A3.2.1, A3.3.1, A3.4.1 rules).\n\n2. End-to-end scoreboard: each master transaction appears at exactly one slave with address and control preserved apart from the ID extension; data and responses return to the right master with the original ID; DECERR for unmapped addresses.\n\n3. Ordering checks for duties (1)-(3), while accepting all legal cross-ID reordering and interleaving.\n\n4. Stress: crossing write traffic, maximum outstanding per master, random backpressure on every READY, 256-beat INCRs, 4KB-adjacent addresses, W before AW.\n\n5. Arbitration fairness and QoS behaviour measured from monitor timestamps (starvation bounds are policy).\n\n6. Deadlock freedom: formal on a reduced configuration (2x2, shallow buffers, few IDs) proving every accepted transaction eventually completes, under fairness assumptions that every READY is eventually asserted; plus hang detection in simulation.\n\n7. Performance: latency and bandwidth per path under synthetic traffic; coverage of master x slave x channel, ID reuse, outstanding depth and contention.",
+      "follow_ups": [
+        "One master issues every transaction with ARID = 0 to both slaves. What does your design do, and what does it cost?",
+        "How would you choose the slave-side ID width, and what breaks if a downstream component truncates it?",
+        "Which of your checks would you run in formal, and which only in simulation?"
+      ],
+      "common_mistakes": [
+        "Omitting same-ID ordering across slaves and W ordering at each slave.",
+        "Calling \"response channels have higher priority\" a deadlock-avoidance scheme without saying which ordering loop it breaks.",
+        "Treating QoS as a fairness guarantee."
+      ],
+      "modules": [
+        "B-AXI-3_AXI_Ordering_and_IDs/index",
+        "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index",
+        "B-AXI-6_AXI_Verification_Performance/index",
+        "B-AMBA-F3_Interview_Debug_Clinic/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "§A3.4.1; §A3.4.4 (DECERR); §A5.3, §A5.3.1, §A5.3.2; §A5.3.5 Interconnect use of transaction identifiers; §A5.3.6; §A5.4.1; §A6 AXI4 Ordering Model; §A8.1.1",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-chi-node-roles",
+      "topic": "amba",
+      "level": "senior",
+      "category": "concept",
+      "prompt": "Explain the Request, Home, Miscellaneous and Subordinate node types in CHI, which node is the Point of Coherence and Point of Serialization, and where read data can come from.",
+      "rubric": "Must have: RN-F (hardware-coherent cache, all transactions, all snoops), RN-D (I/O coherent, no coherent cache, receives DVM), RN-I (I/O coherent, no coherent cache, no DVM, no snoops); HN-F (Point of Coherence, snoops the required RN-Fs and consolidates responses; expected Point of Serialization; might include a directory or snoop filter), HN-I (no PoC, cannot process snoopable requests, PoS for I/O); MN (handles DVM); SN-F (Normal memory) and SN-I (peripherals or Normal memory).\n\nStrong answers add the data sources (interconnect cache, Subordinate, peer RN-F) and the hop-saving features DMT, DCT and DWT, and say what each changes for a scoreboard (data may arrive from a node other than Home).\n\nWeak: \"HN-F has a directory\" stated as required, RN-I receiving snoops, or no MN.",
+      "model_answer": "IHI0050E.b §1.6 classifies nodes:\n\n**Request Nodes** generate transactions. **RN-F** includes a hardware-coherent cache, may generate every transaction, and supports all snoops. **RN-D** is I/O coherent with no hardware-coherent cache, and receives DVM transactions. **RN-I** is I/O coherent with no hardware-coherent cache, receives no DVM transactions and needs no snoop support.\n\n**Home Nodes** sit in the interconnect and receive requests. **HN-F** includes the **Point of Coherence**: it snoops the RN-Fs that need it, consolidates their snoop responses and sends one response to the requester. It is expected to be the **Point of Serialization** for memory requests, and it **might** include a directory or snoop filter to avoid redundant snoops. **HN-I** has no PoC, cannot process snoopable requests (it must still answer them with a protocol-compliant message) and is expected to be the PoS for I/O requests.\n\n**MN** (Miscellaneous Node) receives DVM transactions from Request Nodes, completes them and responds.\n\n**Subordinate Nodes** receive requests from a Home. **SN-F** serves Normal memory; **SN-I** serves peripherals or Normal memory.\n\n**Where read data comes from (§1.7):** a cache in the interconnect, a Subordinate Node, or a peer RN-F. Three features cut hops: **DMT** (Direct Memory Transfer: the SN sends data straight to the requester), **DCT** (Direct Cache Transfer: a peer RN-F sends data straight to the requester and informs the Home) and **DWT** (Direct Write-data Transfer: the requester sends write data straight to the SN).\n\nVerification consequence: a scoreboard must accept read data from the Home, the SN or a peer RN-F, and must match it to the request by the transaction identifiers rather than by the source node.",
+      "follow_ups": [
+        "A snoopable request reaches an HN-I because of a software error. What must the HN-I do?",
+        "With DCT, which messages must the Home still see, and why?",
+        "How does CHI's node model differ from ACE's master/interconnect model for a coherency checker?"
+      ],
+      "common_mistakes": [
+        "Saying every HN-F has a directory.",
+        "Treating RN-I as a snooped node.",
+        "Forgetting the MN and DVM."
+      ],
+      "modules": [
+        "B-AMBA-F2_Future_Protocols_ACE_CHI/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0050E.b (AMBA 5 CHI Architecture Specification)",
+          "section": "§1.6 Component naming; §1.7 Read data source",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "amba-ace-snoop-flow",
@@ -70,69 +716,146 @@
       "level": "staff",
       "category": "concept",
       "prompt": "Walk through a dirty cache-line read by another master in ACE.",
-      "rubric": "Must cover: the initiating ReadShared on AR, the interconnect snooping other caches on AC (a ReadShared snoop, not an invalidating snoop), the CRRESP bits (DataTransfer, PassDirty, IsShared, WasUnique) and dirty data on CD, the R response carrying RRESP[3:2] = IsShared/PassDirty, the resulting ACE states (UD/SD/UC/SC/I), and who becomes responsible for the write-back.",
-      "model_answer": "1) Master A misses and issues ReadShared on AR. 2) The interconnect snoops the other caches on the AC channel with a ReadShared snoop (it broadcasts, or uses a snoop filter to target likely holders; C4.2). Master B holds the line UniqueDirty. 3) B answers on CR with DataTransfer=1 and sends the dirty line on CD. It sets IsShared=1 if it keeps a copy, and PassDirty=1 if it hands over responsibility for writing the line back (Table C3-22). The spec lets B either keep the line SharedDirty (it remains responsible) or pass dirtiness to A; which is better depends on who is likely to write the line next. 4) The interconnect returns the data to A on R with RRESP[3]=IsShared and RRESP[2]=PassDirty (C3.2.1). 5) Resulting states: if B kept a dirty copy, B is SD and A is SC; if B passed dirtiness and kept a clean copy, B is SC and A is SD; if B kept no copy (IsShared=0), A may take the line Unique. If dirty data is passed to the interconnect instead, it must be written back to memory. 6) A verification check: exactly one cache may hold a line Dirty, and a Unique line must be in only one cache (C1.2 cache state rules).",
-      "sources": ["Arm IHI0022E Part C: C1.2 (cache state model and rules), C3.2.1 (RRESP[3:2]), C3.7 Table C3-22 (CRRESP bits), C4.2 (snoop filtering)"]
-    },
-    {
-      "id": "amba-chi-node-roles",
-      "topic": "amba",
-      "level": "staff",
-      "category": "concept",
-      "prompt": "Explain Request, Home, and Subordinate node roles in CHI.",
-      "rubric": "Requester initiates transactions. Home node (HN-F/HN-I) manages coherency directory and ordering. Subordinate node (SN-F/SN-I) services memory/device requests.",
-      "model_answer": "Request Node (RN): initiates read/write/atomic transactions. Can be a processor or cluster with a hardware-coherent cache (RN-F), or an I/O-coherent requester with no coherent cache that therefore receives no snoops (RN-I; RN-D is an RN-I that also accepts DVM messages). Home Node (HN): manages coherency and ordering. HN-F handles fully-coherent addresses (has a directory/snoop filter). HN-I handles non-coherent/device addresses. Subordinate Node (SN): provides data storage. SN-F is a memory controller. SN-I is a device/peripheral. The interconnect routes requests from RN to HN, which decides if snoops are needed, then routes data from SN or a snooped RN back to the requester.",
-      "sources": ["Arm IHI0050F §2 (CHI architecture)"]
-    },
-    {
-      "id": "amba-staff-interconnect-design",
-      "topic": "amba",
-      "level": "staff",
-      "category": "staff-system-design",
-      "prompt": "Whiteboard an AXI interconnect for four masters and two slaves. Include your verification plan.",
-      "rubric": "Must include: decode logic, arbitration per slave, ID expansion, buffering strategy, response demux, deadlock avoidance. Verification: per-port VIP, routing correctness, arbitration fairness, deadlock formal, performance.",
-      "model_answer": "Architecture: 4 master ports → address decode (based on address map) → 2 slave port arbiters (round-robin with QoS). The interconnect extends each ID with 2 master-port bits (ID expansion, IHI0022E A5.3.5); the spec does not fix where those bits go, and the upper bits are a common choice. Per-slave AW/W/AR buffers prevent head-of-line blocking. The response demux uses the added port bits of BID/RID to route B/R to the correct master and strips them before returning the response. Deadlock prevention: response channels have higher buffer priority. Verification: 1) Per-port AXI VIP for protocol compliance. 2) Directed tests for all M→S routing paths. 3) Arbitration fairness under uniform and biased load. 4) Formal proof of deadlock freedom. 5) Performance: latency/bandwidth under synthetic traffic. 6) Stress: maximum outstanding transactions per master.",
-      "sources": ["Arm IHI0022E A5.3.5 (interconnect use of transaction identifiers)", "Arm IHI0022E A6 (AXI4 ordering model)"]
+      "rubric": "Must cover: the initiating ReadShared on AR, the interconnect snooping other caches on AC (a ReadShared snoop, not an invalidating snoop), the CRRESP bits (DataTransfer, PassDirty, IsShared, WasUnique) and dirty data on CD, the R response carrying RRESP[3:2] = IsShared/PassDirty, the resulting ACE states (UD/SD/UC/SC/I) per Table C5-8, and who becomes responsible for the write-back. Strong answers state the cache state rules as invariants (Unique in one cache only; at most one Dirty copy) and know the WriteBack race (a snoop arriving while the line is being written back).",
+      "model_answer": "1) Master A misses and issues ReadShared on AR. 2) The interconnect snoops the other caches on the AC channel with a ReadShared snoop (it broadcasts, or uses a snoop filter to target likely holders; C4.2). Snooping continues until a copy is obtained, a response with WasUnique arrives, or every cache has been snooped (C6.3). Master B holds the line UniqueDirty.\n\n3) B answers on CR with DataTransfer = 1 and sends the dirty line on CD. It sets IsShared = 1 if it keeps a copy, and PassDirty = 1 if it hands over responsibility for writing the line back (Table C3-22). From UD, Table C5-8 permits three end states for B: I (PassDirty = 1, IsShared = 0), SC (PassDirty = 1, IsShared = 1) or SD (PassDirty = 0, IsShared = 1). Which is better depends on who is likely to write the line next.\n\n4) The interconnect returns the data to A on R with RRESP[3] = IsShared and RRESP[2] = PassDirty (C3.2.1).\n\n5) Resulting states: if B kept a dirty copy, B is SD and A is SC; if B passed dirtiness and kept a clean copy, B is SC and A is SD; if B kept no copy (IsShared = 0), A may take the line Unique (UD if PassDirty is passed to it). If the dirty data is passed to the interconnect instead of A, it must be written back to memory.\n\n6) Verification invariants (C1.2.3 cache state rules): a line in a Unique state is in only one cache; a line in more than one cache is Shared in every one; an updated line is Dirty in at most one cache.",
+      "follow_ups": [
+        "B is writing the line back with WriteBack when the ReadShared snoop arrives. What may B answer, and why (C5.2.3)?",
+        "Which snoop does the interconnect send for a CleanUnique from A, and what is that mapping's status in the specification (Table C5-1)?",
+        "Why can a ReadShared snoop not leave B in UD?"
+      ],
+      "common_mistakes": [
+        "Saying exactly one cache must hold the line Dirty (it is at most one; dirtiness can also pass to the interconnect for write-back).",
+        "Sending an invalidating snoop for a ReadShared."
+      ],
+      "modules": [
+        "B-AMBA-F2_Future_Protocols_ACE_CHI/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "Part C: §C1.2.3 Cache state model (cache state rules); §C3.2.1 Read response signaling (RRESP[3:2]); §C3.7 Table C3-22 (CRRESP bits); §C4.2 About snoop filtering; §C5.1 Table C5-1; §C5.2.3 Memory update in progress; §C5.3.2 Table C5-8; §C6.3 Issuing snoop transactions",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "amba-ace-state-transition-debug",
       "topic": "amba",
       "level": "staff",
       "category": "waveform-debug",
-      "prompt": "Two cores share a cache line. After a write by Core 0 and a subsequent read by Core 1, Core 1 reads stale data. Walk through how you would debug this using ACE coherency state transitions.",
-      "rubric": "Must cover: identifying the expected state transitions (I→UC→UD for writer, SC or I for reader after snoop), checking AC/CR/CD snoop flow, verifying interconnect directory update, checking for missing MakeInvalid or CleanInvalid, examining whether the snoop response was lost or misrouted.",
-      "model_answer": "Debug steps: 1) Check Core 0's write: did it issue MakeUnique or CleanUnique before writing? The line should transition to Unique Dirty (UD). 2) Check the interconnect directory: does it record Core 0 as dirty owner? 3) When Core 1 issues ReadShared, check whether the interconnect sent a snoop (AC) to Core 0. 4) If AC was sent, check CR response — did Core 0 report dirty data? 5) If CR indicated dirty data, check CD channel — was dirty data actually transferred? 6) Check timing: did Core 1's read complete before the snoop to Core 0 was processed (race condition)? 7) Check for a directory update bug where Core 0's dirty state was not recorded, causing the interconnect to read stale memory instead of snooping. Root cause is typically: missing snoop due to directory not updated, snoop response lost, or read completing against memory before snoop could intervene.",
-      "sources": ["Arm IHI0022H Part D §D3 (ACE coherency states)", "Arm IHI0022H Part D §D4 (snoop transactions)"]
-    },
-    {
-      "id": "amba-chi-credit-deadlock",
-      "topic": "amba",
-      "level": "senior-staff",
-      "category": "staff-system-design",
-      "prompt": "Explain how a credit deadlock can occur in a CHI interconnect. How would you design assertions or formal properties to prevent it?",
-      "rubric": "Must cover: credit-based flow control mechanics, scenario where all credits are consumed by requests waiting for responses that need credits on another channel, circular dependency between REQ/RSP/DAT channels, assertion strategy for credit conservation (credits_issued == credits_returned + credits_in_flight), formal liveness property showing every request eventually completes.",
-      "model_answer": "Credit deadlock scenario: RN-F₀ sends N requests to HN-F, consuming all REQ credits. HN-F processes them and needs to send snoop requests to RN-F₁, but RN-F₁'s SNP credits are exhausted because RN-F₁ is waiting for RSP credits from HN-F (which is blocked waiting for snoop responses). Circular wait: RN-F₀ blocked on REQ credits → HN-F blocked on SNP credits → RN-F₁ blocked on RSP credits → back to HN-F. Prevention: 1) Reserve credits per channel family so responses always have guaranteed capacity. 2) Separate virtual channels for requests and responses. Assertions: a) Credit conservation: `assert property (@(posedge clk) credits_issued == credits_returned + credits_in_flight)`. b) Credit liveness: `assert property (@(posedge clk) credits_consumed |-> ##[1:MAX_LATENCY] credit_returned)`. c) No zero-credit stall beyond timeout: `assert property (@(posedge clk) (available_credits == 0) |-> ##[1:TIMEOUT] (available_credits > 0))`. Formal: prove that for any reachable state, there exists a sequence of events that returns at least one credit per channel.",
-      "sources": ["Arm IHI0050F §2.3 (link layer credits)", "Arm IHI0050F §2.11 (protocol layer flow)"]
+      "prompt": "Two cores both hold a cache line SharedClean. Core 0 writes the line, then Core 1 reads it and gets the old value. Using the bus trace below, walk through how you debug this with ACE state transitions, and name the most likely root cause.",
+      "code": "Line 0x8000_0040. Before t=100: Core0 = SC, Core1 = SC (both filled by ReadShared).\n\ntime  channel  port   transaction / fields\n100   AR       Core0  ARSNOOP = CleanUnique, addr 0x8000_0040\n---   AC       Core1  (no snoop observed for this line)\n108   R        Core0  RRESP[3:2] (IsShared, PassDirty) = 00\n109   RACK     Core0  1\n110   -        Core0  store to the line (no bus traffic)\n150   AR       Core1  (no read observed for this line)\n151   -        Core1  load returns the old value",
+      "rubric": "Must have: expected writer path SC -> UC on CleanUnique (IsShared = 0, PassDirty = 0) then UD on the store, or SC -> UD with MakeUnique for a full-line store; the interconnect must snoop every master that can hold a copy with an invalidating snoop (CleanInvalid by default for CleanUnique, MakeInvalid for MakeUnique), and Core 1 must end in **I**; the trace shows no AC to Core 1 and no AR from Core 1, so Core 1 hit a stale SC copy while Core 0 held the line Unique, which breaks the cache state rules.\n\nSeparates a strong answer: the debug order (snoop issued? response? state actually changed? sequencing?), the likely causes of a missing snoop (snoop filter did not track Core 1, wrong shareability domain, snoop target mask), the C6.2 sequencing rules (RACK) for the race variant, and the global invariant check that would have caught it at t=108.\n\nWeak: \"Core 1 should be SC or I after the snoop\" (SC is the bug), or starting from Core 1's ReadShared when the trace shows Core 1 never went to the bus.",
+      "model_answer": "**Expected flow.** Core 0 starts in SC. For a partial store it issues CleanUnique, which must return IsShared = 0 and PassDirty = 0 and moves Core 0 to UC (IHI0022E C4.6.1, Table C4-13); the store then makes it UD without bus traffic. A full-line store may use MakeUnique instead (C4.7.1). Either way the interconnect must snoop every cached master that can hold a copy (C6.3). The recommended snoops are CleanInvalid for CleanUnique and MakeInvalid for MakeUnique (Table C5-1), and other mappings are allowed if they force the same state change (C5.1). **Core 1 must end in I.** Its next load then misses, it issues ReadShared, the interconnect snoops Core 0 (UD), and Core 1 gets the new data.\n\n**What the trace shows.** There is no AC to Core 1 between t=100 and t=108, yet Core 0's CleanUnique completed as unique. Core 1 never issues a read: its load at t=151 hit its own SC copy. From t=108 the system held the line UC/UD in Core 0 and SC in Core 1, which breaks the cache state rules (a Unique line is in one cache only; a line in more than one cache is Shared everywhere, C1.2.3).\n\n**Debug order.**\n\n1. Was an invalidating snoop sent to every possible holder? Here, no. Check why the interconnect thought Core 1 could not hold the line: a snoop filter that missed Core 1's earlier allocation or dropped its entry without invalidating Core 1 (snoop filtering is optional and implementation-specific, C4.2, Chapter C10); a shareability-domain setting (ARDOMAIN) that excluded Core 1; or a wrong snoop target mask.\n\n2. If the snoop was sent: did Core 1 answer on CR, and did its cache actually invalidate? A CR without the state change is a Core 1 bug.\n\n3. If Core 1 did go to the bus: check sequencing. The interconnect must not snoop a master about a line before it has received the RACK for a response it gave that master on the same line, and must not respond to a master's transaction on a line while a snoop to that master on the same line awaits CRRESP (C6.2). A broken rule here lets a stale fill land after the invalidation.\n\n4. If Core 1's ReadShared was answered from memory instead of by snooping Core 0, the filter lost Core 0's ownership: same class of bug, other direction.\n\n**Most likely root cause:** the snoop filter (or snoop target logic) did not list Core 1 as a sharer, so no invalidation was sent. A system-level coherency checker that tracks every port's state and asserts the C1.2.3 invariants would have failed at t=108, long before the data mismatch.",
+      "follow_ups": [
+        "Core 0 used MakeUnique instead. Which snoop do you expect, and what changes in the expected end states?",
+        "How would you build the trace above automatically from monitors on every ACE port?",
+        "Core 1 did answer the snoop and invalidated, but still read old data from memory later. Where do you look now?"
+      ],
+      "common_mistakes": [
+        "Accepting SC for the reader after the writer's invalidation.",
+        "Debugging Core 1's ReadShared when the trace shows the load never reached the bus.",
+        "Checking the snoop name instead of the required state change (Table C5-1 mappings are recommendations)."
+      ],
+      "modules": [
+        "B-AMBA-F2_Future_Protocols_ACE_CHI/index",
+        "B-AMBA-F3_Interview_Debug_Clinic/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "Part C: §C1.2.3 (cache state rules); §C4.2; §C4.6.1 Table C4-13 (CleanUnique); §C4.7.1 (MakeUnique); §C5.1 Table C5-1; §C6.2 Sequencing transactions; §C6.3 Issuing snoop transactions; Chapter C10",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "amba-coherency-scoreboard-design",
       "topic": "amba",
       "level": "staff",
       "category": "coding",
-      "prompt": "Design a coherency reference model scoreboard for an ACE cluster with four cores. What data structures and invariant checks would you implement?",
-      "rubric": "Must include: per-line state tracking (MOESI per node), single-dirty-owner invariant, data consistency check (latest writer's data matches reads), snoop response validation, eviction tracking, and coverage of all state transitions.",
-      "model_answer": "Data structures: 1) `map<addr_t, coherent_line_t>` where `coherent_line_t` contains: `line_state_e state[NUM_NODES]`, `data_t latest_data`, `int dirty_owner` (-1 if none), `int sharer_count`. 2) `state_transition_log` recording every (node, addr, old_state, new_state, cause) tuple. Invariant checks on every state update: a) At most one node in UD or SD state per line. b) If any node is UC, no other node has a valid copy. c) `sharer_count` matches count of nodes in SC/SD state. d) Data returned on read matches `latest_data` for that line. e) On eviction of dirty line, writeback data matches `latest_data`. Transaction processing: on ReadShared, check snoop responses and update states. On MakeUnique, verify all other sharers transition to Invalid. On CleanInvalid, verify dirty data reaches point of coherency. Coverage: cross(node_id, transaction_type, initial_state, final_state) should hit all legal MOESI transitions.",
-      "sources": ["Arm IHI0022H Part D §D3 (ACE state model)", "Arm IHI0022H Part D §D8 (ACE ordering)"]
+      "prompt": "Design a coherency reference model scoreboard for an ACE cluster with four cores. What data structures and invariant checks would you implement? Show the core in SystemVerilog.",
+      "rubric": "Must include: per-line state for every cache, kept in an associative array keyed by line address; the three invariants from the cache state rules, written so that UD plus SC in another cache fails (a Unique line is in one cache only; a line in several caches is Shared in all; at most one Dirty copy); a golden copy of the line's latest value, checked against data seen on R and CD and against write-back data; state updates derived from RRESP[3:2] and CRRESP for each transaction type; eviction and write-back tracking; coverage of transitions with ACE state names.\n\nSeparates staff: it handles what the bus cannot show (silent transitions such as UC to UD on a store, and silent eviction of clean lines) by tracking an upper bound of what each cache may hold or by a white-box probe, explains why a stale hit is invisible on the bus so the state invariant is the only detector, and says how races (snoop versus WriteBack) are sequenced by the interconnect's defined order.\n\nWeak: C++ `map<>`, MOESI letters mixed with ACE names, or an invariant that only limits Dirty copies.",
+      "model_answer": "Track, for every line the test touches, the state the model believes each cache holds and the latest value of the line. Use the ACE state names (UC, UD, SC, SD, I; they map one-to-one onto MOESI, but checking against the specification is easier with its own names).\n\n```systemverilog\n// snippet: members of class ace_coh_scoreboard extends uvm_scoreboard\ntypedef enum {I, UC, UD, SC, SD} ace_state_e;      // IHI0022E C1.2.3\nlocalparam int NUM_CACHES = 4;\ntypedef bit [39:0] line_addr_t;                     // address without the line offset\n\ntypedef struct {\n  ace_state_e st[NUM_CACHES];   // state the model believes each cache may hold\n  bit [511:0] golden;           // latest value of the 64-byte line\n} line_t;\n\nline_t lines[line_addr_t];      // associative array: only lines the test touches\n\nfunction void check_line(line_addr_t a);\n  int n_valid = 0, n_unique = 0, n_dirty = 0;\n  for (int c = 0; c < NUM_CACHES; c++) begin\n    ace_state_e s = lines[a].st[c];\n    if (s != I)            n_valid++;\n    if (s inside {UC, UD}) n_unique++;\n    if (s inside {UD, SD}) n_dirty++;\n  end\n  // A Unique line is in one cache only; a line in several caches is Shared in all.\n  if (n_unique > 0 && n_valid > 1)\n    `uvm_error(\"COH_UNIQUE\", $sformatf(\"line %0h: Unique in one cache, valid in %0d\", a, n_valid))\n  // An updated line is Dirty in at most one cache.\n  if (n_dirty > 1)\n    `uvm_error(\"COH_DIRTY\", $sformatf(\"line %0h: Dirty in %0d caches\", a, n_dirty))\nendfunction\n```\n\n**Updates from the bus.** On each completed transaction, set the initiator's state from the transaction type and RRESP[3:2] (IsShared, PassDirty; C3.2.1, e.g. Table C4-13 for CleanUnique), and each snooped cache's state from its snoop type and CRRESP (IsShared = 0 means it kept no copy; Table C5-8 for the read snoops). Call `check_line` after every update. Check R and CD data against `golden` (or memory when no cache is dirty), update `golden` on observed writes, and check write-back data on WriteBack/WriteClean.\n\n**What the bus cannot show.** A cache may move UC to UD on a store and may drop a line without telling anyone (C1.2.3). So the model's state is an upper bound of what a cache **may** hold: a silent eviction makes \"SC\" possibly \"I\", which never breaks an invariant. If the design allows it, add a white-box probe of the cache tags to tighten the bound.\n\n**Why the invariant matters.** A stale hit (UD in Core 0, SC in Core 1) produces no bus traffic at all, so a data check on the bus never fires. Only the state invariant catches it, at the moment the illegal combination appears.\n\n**Races.** Two transactions to the same line are ordered by the interconnect, and the order is visible as response-before-snoop or snoop-before-response at each master (C6.2). Apply updates in that order.\n\n**Coverage.** Cross transaction type x initiator start state x snooped start state x CRRESP (IsShared, PassDirty, DataTransfer), plus WriteBack-versus-snoop races (C5.2.3) and overlapping stores (C4.10).",
+      "follow_ups": [
+        "Your four cores are behind a snoop filter. How does that change what the model must track?",
+        "How do you keep the model correct when an ACE-Lite I/O master issues ReadOnce and WriteUnique to the same lines?",
+        "Where would you put a formal property instead of the scoreboard check, and on what abstraction?"
+      ],
+      "common_mistakes": [
+        "Checking only \"at most one Dirty copy\", which passes UD in one cache with SC in another.",
+        "Expecting to see every state change on the bus.",
+        "Mixing MOESI letters with ACE names in checks and coverage."
+      ],
+      "modules": [
+        "B-AMBA-F2_Future_Protocols_ACE_CHI/index",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AMBA AXI and ACE Protocol Specification)",
+          "section": "Part C: §C1.1 Coherency overview; §C1.2.3 Cache state model (cache state rules); §C3.2.1; §C4.6.1 Table C4-13; §C4.10 Handling overlapping write transactions; §C5.2.3; §C5.3.2 Table C5-8; §C6.2",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "amba-chi-retry-verification",
       "topic": "amba",
       "level": "staff",
       "category": "verification-plan",
-      "prompt": "Write a verification plan for the CHI retry protocol (RetryAck → PCrdGrant → retry). What corner cases must be covered?",
-      "rubric": "Must cover: basic retry flow, retry under buffer full conditions, multiple outstanding retries from different requesters, PCrdGrant ordering fairness, interaction with snoops during retry wait, PCrdType matching between RetryAck, PCrdGrant and the retried request, and starvation prevention.",
-      "model_answer": "Verification plan: 1) Basic flow: RN sends request → HN returns RetryAck → RN waits → HN sends PCrdGrant → RN retries with same TxnID. Verify completion. 2) Buffer pressure: force HN buffers full, verify all requests get RetryAck, then drain buffers and verify all get PCrdGrant and complete. 3) Multi-requester fairness: 4 RNs all retried simultaneously — verify no RN starves (all get PCrdGrant within bounded time). 4) Credit type: RetryAck and PCrdGrant carry a PCrdType that names a class of completer resources (not a channel). Verify the retried request is sent only after a PCrdGrant of the same PCrdType from the same completer, with AllowRetry deasserted and that PCrdType in the request. 5) Snoop during retry: while RN is waiting for PCrdGrant, HN sends a snoop for the same address — verify snoop completes independently and retry is not corrupted. 6) Rapid retry: request retried immediately after PCrdGrant — verify no off-by-one in credit accounting. 7) Retry matching: verify the retried request repeats the original's address, opcode and size; match retries in the scoreboard by those fields and PCrdType rather than assuming the TxnID is reused (check your CHI issue's rule for TxnID on retry). 8) Timeout: if PCrdGrant never arrives (bug), verify RN does not retry without credit (protocol violation). Coverage: cross(retry_reason, requester_type, concurrent_snoops, buffer_occupancy).",
-      "sources": ["Arm IHI0050F §2.3.1 (retry mechanism)", "Arm IHI0050F §2.6 (request retry)"]
+      "prompt": "Write a verification plan for the CHI Request Retry mechanism (RetryAck, PCrdGrant, resend with a P-Credit). Which rules do you check, and which corner cases must be covered?",
+      "rubric": "Must cover: the first attempt has AllowRetry asserted and PCrdType 0; RetryAck carries the PCrdType the Completer will grant; the resend waits for both RetryAck and a PCrdGrant of that PCrdType, has AllowRetry deasserted and that PCrdType, and is guaranteed to be accepted; the resend keeps the original field values except QoS, TgtID, TxnID, ReturnTxnID (HN to SN), SLCRepHint, AllowRetry, PCrdType, TraceTag and RSVDC; the TxnID may be reused once RetryAck arrives, so a scoreboard must not assume the same TxnID; the TgtID of the resend comes from the RetryAck's SrcID or the original TgtID; PCrdGrant before RetryAck is legal; unused credits go back with PCrdReturn; the Completer must prevent starvation; at most 1024 outstanding transactions per Requester; no credit-to-transaction binding within a PCrdType.\n\nSeparates staff: the checker architecture (per-Completer, per-PCrdType credit ledger at each Requester), the scoreboard key for matching a resend to its original, and coverage of reorderings and cancellations.\n\nWeak: \"RN retries with the same TxnID\" or no PCrdGrant-before-RetryAck case.",
+      "model_answer": "**Rules to check (IHI0050E.b §2.11).**\n\n1. First attempt: AllowRetry asserted, PCrdType = 0b0000 (§2.11, §2.11.2).\n\n2. A Completer that cannot accept the request answers RetryAck with a PCrdType, records the requester (by SrcID) and the credit type, and later sends PCrdGrant with that PCrdType when it has resources.\n\n3. The Requester resends only after it has **both** the RetryAck and a PCrdGrant of the right PCrdType from that Completer (§2.11.3). The resend has AllowRetry deasserted and PCrdType set to the RetryAck's value, and it is guaranteed to be accepted.\n\n4. The resend keeps every field of the original except QoS, TgtID, TxnID, ReturnTxnID (Home to SN reads), SLCRepHint, AllowRetry, PCrdType, TraceTag and RSVDC (§2.11). **A retried transaction need not use the same TxnID**: a Requester may reuse a TxnID as soon as it receives RetryAck for it.\n\n5. The resend's TgtID is the RetryAck's SrcID or the original TgtID (§3.3.1).\n\n6. Credits are not bound to transactions: with several retried requests waiting on one PCrdType, the Requester may spend a credit on any of them (§2.11).\n\n7. An unneeded credit (for example, the transaction was cancelled) is returned with PCrdReturn, carrying that PCrdType and targeting the Completer that granted it, in a timely manner (§2.11.1, §3.3.1).\n\n8. The Completer must prevent starvation: every transaction that got RetryAck eventually gets a credit (§2.11.2). Each Requester keeps at most 1024 transactions outstanding (§2.11).\n\n**Checker and scoreboard.** At each Requester keep a ledger per (Completer, PCrdType): RetryAcks received minus resends sent, and PCrdGrants received minus credits used or returned. Flag a resend without a matching grant, a credit left unused and unreturned at end of test, and a grant without any outstanding RetryAck. Match a resend to its original by Requester, address, opcode, size and the other fields that must not change, not by TxnID.\n\n**Corner cases to cover.** PCrdGrant arriving before RetryAck (legal, rare: the Requester must store the credit, §2.11.3); several RetryAcks with different PCrdTypes from one Completer; many Requesters retried at once with a starvation bound measured (policy); a CopyBack write invalidated by a snoop while waiting for its credit (the Requester may drop it and return the credit, or resend with AllowRetry = 0, §2.11); a credit granted after the Requester cancelled; TxnID reuse right after RetryAck while the retry is pending; snoops to the same line during the wait; and QoS-ordered credit distribution.\n\n**Coverage:** cross of retry reason, PCrdType, Requester type, grant-before-ack, cancel-and-return, and concurrent outstanding retries per Completer.",
+      "follow_ups": [
+        "Why can a PCrdGrant arrive before its RetryAck, and what state must the Requester keep for it?",
+        "How would you prove the starvation-freedom requirement in formal, and what fairness assumptions would you need?",
+        "A Requester sends the same transaction twice, before the first gets RetryAck. When is that acceptable (§2.11.1 Note)?"
+      ],
+      "common_mistakes": [
+        "Requiring the retried request to reuse the original TxnID.",
+        "Waiting only for PCrdGrant (or only for RetryAck) before resending.",
+        "Forgetting PCrdReturn for unused credits."
+      ],
+      "modules": [
+        "B-AMBA-F2_Future_Protocols_ACE_CHI/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0050E.b (AMBA 5 CHI Architecture Specification)",
+          "section": "§2.11 Request Retry; §2.11.1 Credit Return; §2.11.2 Transaction Retry mechanism; §2.11.3 Transaction Retry flow; §3.3.1 Target ID determination for Request messages",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "amba-chi-credit-deadlock",
+      "topic": "amba",
+      "level": "senior-staff",
+      "category": "staff-system-design",
+      "prompt": "Explain how a credit deadlock can occur in a CHI interconnect. Which CHI rules exist to prevent it, and how would you design assertions or formal properties to show a design cannot deadlock?",
+      "rubric": "Must cover: the two credit layers (Link-layer L-Credits per channel, 1 to 15 per receiver, a flit needs one; Protocol-layer P-Credits for retried requests); how a deadlock forms (a node that needs progress on an outbound channel before it drains an inbound one, closing a cycle through full buffers); the CHI channel dependency rules (an RN must make progress on inbound RSP and DAT without needing any other channel; on inbound SNP without needing outbound REQ, though it may wait for outbound RSP or DAT; an RN-F answers snoops without a protocol-layer dependency on its outstanding requests; SN rules); per-link credit invariants as assertions; liveness with fairness assumptions in formal, or bounded response labelled as policy in simulation.\n\nSeparates senior staff: it says which node in a proposed loop breaks which rule, calls out that a Home that refuses snoop responses it is waiting for is a design error even though the protocol text lists rules only for RN and SN, separates L-Credit from P-Credit issues, and avoids branching-time (\"there exists a path\") properties that SVA cannot express.\n\nWeak: \"credits_issued == credits_returned + credits_in_flight\" as the main check, or a loop that needs an RN to stop accepting RSP.",
+      "model_answer": "**Two credit layers.** At the link layer a Transmitter needs an **L-Credit** for every flit; the Receiver grants credits with the channel's LCRDV signal, provides 1 to 15 of them, must be able to accept every flit it has credited, and must return credits without needing any action from the Transmitter (IHI0050E.b §14.2, §14.2.1). At the protocol layer, **P-Credits** let a Completer retry requests it cannot accept now (§2.11). A deadlock is a cycle of nodes each waiting for credits or buffer space that only the next node can free.\n\n**How a loop forms.** Suppose an HN-F's snoop-response buffer is full and it stops returning RSP L-Credits until it can send more snoops, while an RN-F will not take a new snoop until it can send its snoop response. The cycle closes through the Home refusing the responses it is waiting for. The RN-F's wait is permitted: an RN may wait for progress on outbound RSP or DAT before progress on inbound SNP (§13.4.1). The Home's refusal is the design error: a Home must sink snoop responses. The specification lists channel rules only for Request and Subordinate Nodes, so treat this as a design requirement for the Home.\n\n**The rules that break loops (§13.4.1, §4.11.1).** An RN must make progress on inbound RSP and DAT without needing progress on any other channel (so it accepts every Comp and CompData without sending CompAck first). It must make progress on inbound SNP without needing progress on outbound REQ. An RN-F answers snoops without any protocol-layer dependency on completion of its outstanding requests; the one exception is that it waits for all data packets of a pending request that has already received one. An SN may wait for outbound RSP before inbound REQ, but must progress on inbound REQ without needing outbound DAT, and on inbound DAT without needing any other channel.\n\n**Assertions per link (simulation and formal):**\n\n```systemverilog\n// snippet: L-Credit bookkeeping at one channel's transmitter (IHI0050E.b §14.2.1)\n// lcrdv: credit received this cycle; flitv: flit sent this cycle\nint unsigned held;   // registered, so a credit is usable from the next cycle\nalways_ff @(posedge clk or negedge rst_n)\n  if (!rst_n) held <= 0;\n  else        held <= held + lcrdv - flitv;\n\na_flit_needs_credit: assert property (@(posedge clk) disable iff (!rst_n) flitv |-> held > 0);\na_at_most_15:        assert property (@(posedge clk) disable iff (!rst_n) held <= 15);\n\n// Receiver side (design-specific): credits outstanding never exceed free buffer space\na_rx_room: assert property (@(posedge clk) disable iff (!rst_n)\n  rx_credits_outstanding + rx_occupancy <= RX_DEPTH);\n```\n\nThe model must also follow the link activation and deactivation handshake, which this sketch omits.\n\n**Node-level dependency checks:** for an RN, an assertion or formal property that inbound RSP and DAT LCRDV keep flowing while outbound channels are stalled; for an RN-F, that a snoop is answered even when all its requests are outstanding.\n\n**Liveness.** \"For any reachable state there exists a sequence that returns a credit\" is a branching-time property; SVA cannot express it. In formal, prove linear-time liveness under fairness assumptions on the environment:\n\n```systemverilog\n// The environment eventually returns credits on the Home's RSP channel\nasm_rsp_fair: assume property (@(posedge clk) disable iff (!rst_n) s_eventually rsp_lcrdv);\n// A tracked request (TxnID chosen symbolically by the tool) eventually completes\nast_done: assert property (@(posedge clk) disable iff (!rst_n)\n  (req_flitv && req_txnid == SYM_TXNID) |-> s_eventually comp_for_sym_txnid);\n```\n\nRun it on a reduced configuration (two RN-Fs, one HN-F, one SN-F, shallow buffers). In simulation use bounded-response checks (`##[1:MAX]`) and label them integration policy, because CHI sets no time limits.",
+      "follow_ups": [
+        "How do P-Credits avoid blocking the REQ channel, and what starvation requirement does the Completer then carry (§2.11.2)?",
+        "Your formal proof passes with the fairness assumption. What could still deadlock in silicon that the assumption hides?",
+        "Why may an RN-F delay a snoop response until all data packets of an in-flight read have arrived (§4.11.1)?"
+      ],
+      "common_mistakes": [
+        "Building the loop on an RN that refuses inbound RSP or DAT (CHI forbids that) instead of on the node that actually breaks a rule.",
+        "Using a conservation identity as the only check.",
+        "Writing \"there exists a path\" properties in SVA."
+      ],
+      "modules": [
+        "B-AMBA-F2_Future_Protocols_ACE_CHI/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0050E.b (AMBA 5 CHI Architecture Specification)",
+          "section": "§2.11 Request Retry, §2.11.2; §4.11.1 At the RN-F node; §13.4.1 Channel dependencies; §14.2 Link layer Credit, §14.2.1 L-Credit flow control",
+          "verified": true
+        }
+      ]
     }
   ]
 }

@@ -1,85 +1,113 @@
 ---
 title: "AXI Burst Math & Address Calculation"
-description: "Master AXI burst address computation: AWLEN/ARLEN, AWSIZE/ARSIZE, AWBURST/ARBURST, wrap boundary math, WSTRB generation, and the critical 4 KB boundary rule."
+description: "Calculate the address, byte lanes and legal WSTRB of every transfer in an AXI FIXED, INCR or WRAP burst, decide whether a burst is legal, and check and split bursts at 4KB boundaries."
 order: 7
 flashcards: "B-AXI-2_AXI_Burst_Math"
 sources:
-  - title: "Arm AMBA AXI and ACE Protocol Specification"
+  - title: "Arm AMBA AXI and ACE Protocol Specification (AXI3, AXI4, AXI4-Lite, ACE, ACE-Lite)"
     type: "standard"
-    identifier: "IHI0022H"
-    version: "H"
+    identifier: "IHI0022E"
+    version: "E"
+  - title: "IEEE Standard for SystemVerilog (checker, constraint and coverage code)"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+    version: "2023"
 ---
 
-# AXI Burst Math & Address Calculation
+## Quick Take
 
-In the previous module you learned that AXI uses five independent channels with VALID/READY handshakes.
-Now we focus on *what travels on those channels* — specifically, how burst parameters control address generation and byte-lane selection.
+- **What it is:** the arithmetic that turns one AXI address-channel request into the address and byte lanes of every data transfer in a burst, plus the rules that make a burst legal. A master sends one start address (AxADDR) and three control fields (AxLEN, AxSIZE, AxBURST); the slave works out everything else from them with the equations in Arm IHI0022E §A3.4.1.
+- **Why it matters:** every piece of an AXI testbench (TB) recomputes these numbers. The driver needs them to place data and strobes, the monitor to pull bytes off the bus, the scoreboard to know which memory bytes changed, and the protocol checker to judge legality. An off-by-one or an unaligned start silently writes the wrong bytes while every handshake looks clean.
+- **The Analogy:** a burst books a run of equal-width seats in one theatre row. AxSIZE is the seat width, AxLEN + 1 is the number of seats, and AxBURST says how the usher moves: FIXED re-books the same seat, INCR moves along the row, and WRAP circles inside one block of seats. The 4KB boundary is the aisle between two ushers (two slaves): a booking that keeps moving along the row must not continue across the aisle. *Where it breaks:* an unaligned first booking covers only part of its seat, and you may leave any of your booked seats empty (a sparse write strobe), which a theatre would not notice but a memory does.
 
-Getting burst math wrong causes **silent data corruption** — the most dangerous class of bug in interconnect design.
+**You will be able to:**
+1. Calculate the address of every transfer of a FIXED, INCR or WRAP burst from AxADDR, AxLEN, AxSIZE and AxBURST with the IHI0022E §A3.4.1 equations, including unaligned starts.
+2. Calculate the byte lanes each transfer uses (an unaligned first transfer, narrow transfers), and decide whether a WSTRB value is legal: any subset of those lanes.
+3. Decide whether a burst is legal: the length limits for each burst type, WRAP alignment, AxSIZE within the bus, and the 4KB rule, which only INCR bursts can break.
+4. Write a 4KB check that gates on INCR and counts from the aligned start, and split a crossing transfer into legal bursts.
+5. Debug a burst-math bug from its symptom: a scoreboard mismatch with no assertion failure, or a checker that fires on legal traffic.
 
-<QuickTake>
-- **AxLEN** sets the number of transfers minus one. AXI4 INCR bursts carry up to 256 transfers (`AxLEN = 255`); FIXED and WRAP up to 16; AXI3 up to 16 for every type.
-- **AxSIZE** sets the bytes per beat (encoded as 2^N: size=2 means 4 bytes per beat).
-- **AxBURST** controls address progression: FIXED, INCR, or WRAP.
-- After the first transfer, every address is **aligned** to the transfer size, even if the burst starts unaligned.
-- **WSTRB** marks the byte lanes that carry valid data. It may be any subset of the lanes that the address and size select, never a lane outside them.
-- **No burst may cross a 4 KB address boundary.** Only INCR bursts can actually do it.
-</QuickTake>
+<BeforeYouStart />
 
----
+## Build Your Mental Model
 
-## 1. Burst Parameters
+**How to read this lesson.** The core path is the first seven subsections: the vocabulary, the three burst fields, the address equations, WRAP, FIXED, byte lanes and WSTRB. Then come the 4KB rule and how masters split bursts to obey it, which is where practitioner depth starts. You need the five AXI channels and the VALID/READY handshake from [B-AXI-1](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index). The checker code later on uses SystemVerilog Assertions (SVA, see [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)) and assertion local variables ([I-SV-4B](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/local-variables)); you can read the core path without them.
 
-Every AXI address-channel transaction carries three burst control fields:
+### Vocabulary: one address, many transfers
 
-### AxLEN — Burst Length
+IHI0022E uses **master** (the component that starts a transaction, such as a CPU or a DMA engine) and **slave** (the component that answers it, such as a memory). Later Arm issues say *manager* and *subordinate*; this track follows the issue it cites.
 
-`AxLEN` encodes the number of data beats **minus one**:
+- **Burst:** one request on an address channel (AW for writes, AR for reads) followed by one or more data transfers. In this lesson **AxADDR**, **AxLEN**, **AxSIZE** and **AxBURST** mean the AW or AR version of each signal (x stands for W or R).
+- **Transfer** (also called a **beat**): one data handshake on the W or R channel. Transfers are numbered from **N = 1**, exactly as in the specification: "N is 1 for the first transfer in a burst" (§A3.4.1).
+- **Byte lane:** one 8-bit slice of the data bus. Lane *n* is `DATA[8n+7:8n]`, so a 32-bit bus has lanes 0 to 3 and a 64-bit bus has lanes 0 to 7. The bus has **Data_Bus_Bytes** lanes.
+- **Aligned:** an address is aligned to a size when it is a whole multiple of that size. 0x1004 is aligned to 4 bytes; 0x1003 is not, so a 4-byte transfer starting there is **unaligned**.
 
-| AxLEN Value | Number of Beats |
+The single most important fact on this page comes from the first paragraph of §A3.4.1: "The master begins each burst by driving control information and the address of the first byte in the transaction to the slave. As the burst progresses, the slave must calculate the addresses of subsequent transfers in the burst." Only one address ever crosses the wires per burst. Every later address exists only inside the components that compute it.
+
+<SequenceDiagram
+  title="One address, four write transfers, one response"
+  caption="The AW handshake carries the only address. The slave computes Address_2 to Address_4 itself; the W channel carries data, strobes and WLAST, never an address."
+  participants={[
+    { id: "m", label: "master", kind: "generic" },
+    { id: "s", label: "slave", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "async", from: "m", to: "s", label: "AW: AWADDR 0x1003, AWLEN 3, AWSIZE 2, INCR" },
+    { kind: "note", from: "m", to: "s", label: "slave computes 0x1003, 0x1004, 0x1008, 0x100C" },
+    { kind: "async", from: "m", to: "s", label: "W transfer 1: WSTRB 1000" },
+    { kind: "async", from: "m", to: "s", label: "W transfer 2: WSTRB 1111" },
+    { kind: "async", from: "m", to: "s", label: "W transfer 3: WSTRB 1111" },
+    { kind: "async", from: "m", to: "s", label: "W transfer 4: WSTRB 1111, WLAST = 1" },
+    { kind: "async", from: "s", to: "m", label: "B: BRESP, one response per burst" }
+  ]}
+/>
+
+### The three burst fields
+
+**AxLEN: the burst length.** AxLEN holds the number of transfers **minus one**, so `Burst_Length = AxLEN + 1` (§A3.4.1). AXI3 uses AxLEN[3:0] and AXI4 widens it to AxLEN[7:0]:
+
+| AxLEN Value | Number of Beats | Where it is legal |
+|---|---|---|
+| 0 | 1 | INCR and FIXED (a WRAP needs at least 2) |
+| 1 | 2 | every type |
+| 3 | 4 | every type |
+| 7 | 8 | every type |
+| 15 | 16 | every type; the AXI3 maximum for all types |
+| 255 | 256 | AXI4 INCR only |
+
+AXI4 extends INCR bursts to 1 to 256 transfers; FIXED stays at 1 to 16, and WRAP must be exactly 2, 4, 8 or 16 transfers (§A3.4.1). The beat count is visible on the data channels: the master must assert **WLAST** "while it is driving the final write transfer in the burst", and the slave must assert **RLAST** on the final read transfer (§A3.2.2). So a write burst always has exactly AxLEN + 1 W transfers, and a monitor that counts anything else has found a bug.
+
+**No early termination.** "No component can terminate a burst early" (§A3.4.1). A master that needs fewer bytes in a write burst deasserts all the write strobes for the remaining transfers but still completes them. In a read burst it may discard data, but it must still accept every transfer.
+
+**AxSIZE: the maximum bytes per transfer.** AxSIZE is "the maximum number of bytes to transfer in each data transfer" (§A3.4.1). It is encoded as a power of two, `Number_Bytes = 2 ^ AxSIZE` (Table A3-2):
+
+| AxSIZE Value | Bytes per Beat (maximum) |
 |---|---|
-| 0 | 1 |
-| 1 | 2 |
-| 3 | 4 |
-| 7 | 8 |
-| 15 | 16 (AXI3 max) |
-| 255 | 256 (AXI4 max) |
+| 0b000 | 1 |
+| 0b001 | 2 |
+| 0b010 | 4 (32-bit) |
+| 0b011 | 8 (64-bit) |
+| 0b100 | 16 (128-bit) |
+| 0b101 | 32 |
+| 0b110 | 64 |
+| 0b111 | 128 (1024-bit) |
 
-> [!NOTE]
-> AXI3 limits bursts to 16 transfers. AXI4 extends this to 256 transfers for INCR bursts only; FIXED bursts stay at 1 to 16 and WRAP bursts must be exactly 2, 4, 8 or 16 transfers (IHI0022E A3.4.1).
-> No component can terminate a burst early. A master that needs fewer writes deasserts all the write strobes for the remaining transfers, but still completes them.
+It is a maximum because an unaligned first transfer carries fewer bytes, as you will see below. "The size of any transfer must not exceed the data bus width of either agent in the transaction" (§A3.4.1): a 32-bit bus cannot carry `AxSIZE = 3`.
 
-### AxSIZE — Bytes per Beat
-
-`AxSIZE` is encoded as a power of 2:
-
-| AxSIZE Value | Bytes per Beat |
-|---|---|
-| 0 | 1 byte |
-| 1 | 2 bytes |
-| 2 | 4 bytes (32-bit) |
-| 3 | 8 bytes (64-bit) |
-| 4 | 16 bytes (128-bit) |
-
-The transfer size **must not exceed the data bus width**.  A 32-bit data bus cannot use `AxSIZE = 3` (8 bytes).
-
-### AxBURST — Burst Type
+**AxBURST: how the address moves** (Table A3-3):
 
 | AxBURST Value | Type | Address Behavior |
 |---|---|---|
-| 0 | **FIXED** | Same address for every beat (used for FIFO access) |
-| 1 | **INCR** | Address increments by `2^AxSIZE` each beat |
-| 2 | **WRAP** | Address increments then wraps at a calculated boundary |
+| 0b00 | **FIXED** | Every transfer uses the start address (FIFO-style ports) |
+| 0b01 | **INCR** | Address_N = Aligned_Address + (N − 1) × Number_Bytes; only an aligned start steps by exactly 2^AxSIZE every time |
+| 0b10 | **WRAP** | Like INCR, but wraps back inside an aligned window (cache-line fills) |
+| 0b11 | Reserved | Never legal; a checker flags it |
 
----
+### Where each transfer lands: the A3.4.1 equations
 
-## 2. Address Calculation
+IHI0022E §A3.4.1 defines every address with a few variables. Transfer numbers start at `N = 1`:
 
-### The Spec Equations
-
-IHI0022E A3.4.1 defines every address with a few variables. Transfer numbers start at `N = 1`:
-
-```
+```text
 Start_Address   = AxADDR
 Number_Bytes    = 2 ^ AxSIZE
 Burst_Length    = AxLEN + 1
@@ -89,9 +117,7 @@ Address_1 = Start_Address
 Address_N = Aligned_Address + (N - 1) x Number_Bytes    // INCR, and WRAP before it wraps
 ```
 
-The first transfer may be unaligned. **Every later transfer is aligned**, because the equation starts from `Aligned_Address`.
-
-### INCR Bursts
+`INT(x)` rounds down. The first transfer may be unaligned. **In INCR and WRAP bursts every later transfer is aligned**, because the equation starts from `Aligned_Address`. FIXED bursts are the exception: they never move, so an unaligned FIXED start stays unaligned on every transfer (see FIXED bursts below).
 
 **Example (aligned):** a 4-beat INCR burst with `AxSIZE = 2` (4 bytes) starting at `0x1000`:
 
@@ -111,22 +137,28 @@ The first transfer may be unaligned. **Every later transfer is aligned**, becaus
 | 3 | 0x1000 + 2 x 4 | **0x1008** | 0-3 |
 | 4 | 0x1000 + 3 x 4 | **0x100C** | 0-3 |
 
-Adding 4 to the start address each time (`0x1003, 0x1007, 0x100B, 0x100F`) is the classic driver bug: it keeps the offset in every transfer.
+The first transfer carries one byte (0x1003), not four: that is why AxSIZE is a *maximum*. Adding 4 to the start address each time (`0x1003, 0x1007, 0x100B, 0x100F`) is the classic driver bug: it keeps the start offset in every transfer.
 
-### WRAP Bursts
+**Predict, then check.** The visualizer below opens on the burst you just traced: INCR, AxLEN = 3, AxSIZE = 2, from 0x1003 on a 32-bit bus. Before you reveal anything, write down the address of the last transfer (N = 4) and the byte lanes of transfer 1. Then answer its prediction question.
 
-Wrapping bursts are used for **cache line fills**.  The address increments normally but wraps at a boundary calculated as:
+<AxiMemoryMathVisualizer />
 
-```
+**Debrief.** The tempting answer, 0x100F, is start + 3 × 4: it keeps the 0x3 offset. The model answers 0x100C, because every transfer after the first starts from Aligned_Address. Transfer 1 lights only lane 3, and its full-lane WSTRB is `4'b1000`. Now switch to the "INCR4 aligned" preset and confirm that an aligned start steps by exactly 4 every time. You will come back to the other presets in the WRAP, FIXED, WSTRB and 4KB sections.
+
+### WRAP bursts
+
+A **cache line** is the fixed-size block (for example 16 or 64 bytes) that a cache fills or evicts as a unit. When a processor misses on one word, it wants that word first, so the fill starts at the requested (critical) word and then **wraps** to fetch the rest of the line. That is what a WRAP burst does. The address increments normally but wraps inside an aligned window:
+
+```text
 Wrap_Boundary = INT(Start_Address / (Number_Bytes x Burst_Length)) x (Number_Bytes x Burst_Length)
 Upper limit   = Wrap_Boundary + Number_Bytes x Burst_Length
 ```
 
-When `Address_N` reaches the upper limit, that transfer uses `Wrap_Boundary`, and later transfers continue from there (IHI0022E A3.4.1).
+When `Address_N` reaches the upper limit, that transfer uses `Wrap_Boundary`, and later transfers continue from there (IHI0022E A3.4.1). The upper limit is never itself used as an address.
 
 **Example:** A WRAP4 burst with `AxSIZE = 2` (4 bytes) starting at `0x1004`:
 
-```
+```text
 Number_Bytes x Burst_Length = 4 x 4 = 16 bytes
 Wrap_Boundary = INT(0x1004 / 16) x 16 = 0x1000
 Upper limit   = 0x1000 + 16 = 0x1010
@@ -139,56 +171,141 @@ Upper limit   = 0x1000 + 16 = 0x1010
 | 3 | 0x100C | **0x100C** | Normal increment |
 | 4 | 0x1010 | **0x1000** | Reached the upper limit, so it wraps to Wrap_Boundary |
 
+<figure className="not-prose my-6">
+<svg viewBox="0 0 320 154" role="img" aria-labelledby="baxi2-wrap-title baxi2-wrap-desc" style={{ width: "100%", maxWidth: 520, height: "auto" }}>
+  <title id="baxi2-wrap-title">The wrap window of a WRAP4 burst of 4-byte transfers from 0x1004</title>
+  <desc id="baxi2-wrap-desc">Four word cells from 0x1000 to 0x100C form the 16-byte window. Transfer 1 is at 0x1004, transfer 2 at 0x1008, transfer 3 at 0x100C. The next address, 0x1010, is the upper limit, so transfer 4 wraps back to 0x1000, the wrap boundary.</desc>
+  <defs>
+    <marker id="baxi2-wrap-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+    </marker>
+  </defs>
+  <g fill="currentColor" fontSize="11" textAnchor="middle">
+    <text x="53" y="30">0x1000</text>
+    <text x="123" y="30">0x1004 (start)</text>
+    <text x="193" y="30">0x1008</text>
+    <text x="263" y="30">0x100C</text>
+  </g>
+  <rect x="20" y="38" width="66" height="34" rx="4" className="fill-amber-500/15 stroke-amber-500" strokeWidth="1.5" />
+  <rect x="90" y="38" width="66" height="34" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" strokeWidth="1.5" />
+  <rect x="160" y="38" width="66" height="34" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" strokeWidth="1.5" />
+  <rect x="230" y="38" width="66" height="34" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" strokeWidth="1.5" />
+  <g fill="currentColor" fontSize="12" fontWeight="600" textAnchor="middle">
+    <text x="53" y="60">N = 4</text>
+    <text x="123" y="60">N = 1</text>
+    <text x="193" y="60">N = 2</text>
+    <text x="263" y="60">N = 3</text>
+  </g>
+  <line x1="300" y1="30" x2="300" y2="80" stroke="currentColor" strokeDasharray="4 3" />
+  <text x="306" y="92" fontSize="10" fill="currentColor" textAnchor="end">0x1010</text>
+  <path d="M 263 74 C 263 128, 53 128, 53 76" fill="none" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#baxi2-wrap-arrow)" />
+  <text x="160" y="134" fontSize="10" fill="currentColor" textAnchor="middle">0x100C + 4 = 0x1010 = upper limit, so N = 4 uses 0x1000</text>
+  <text x="20" y="150" fontSize="10" fill="currentColor">Wrap_Boundary 0x1000 (amber); window = 4 x 4 = 16 bytes</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">The burst never leaves its 16-byte window: it starts at the critical word (0x1004) and wraps to the wrap boundary when the next address would reach the upper limit (IHI0022E §A3.4.1).</figcaption>
+</figure>
+
+**A WRAP that starts on its boundary never wraps.** The specification says "the address wraps for any WRAP burst for which the first address is higher than the wrap boundary" (§A3.4.1). Start the same WRAP4 at 0x1000 and the addresses are 0x1000, 0x1004, 0x1008, 0x100C: identical to INCR4, because the fourth address (0x100C) is still below the upper limit. A checker that expects every WRAP to wrap, or a coverage model that counts this burst as "wrapped", is wrong.
+
 > [!IMPORTANT]
 > **WRAP bursts must start aligned** to the transfer size and have **2, 4, 8 or 16** transfers (IHI0022E A3.4.1).
-> A WRAP4 burst of 4-byte transfers starting at `0x1003` is illegal because 0x1003 is not 4-byte aligned.
+> A WRAP4 burst of 4-byte transfers starting at `0x1003` is illegal because 0x1003 is not 4-byte aligned. In the visualizer, pick "WRAP4 at 0x1008" and predict the last address (0x1004), then pick "WRAP of 3" and predict the legality verdict (illegal length).
 
-### FIXED Bursts
+### FIXED bursts
 
-All transfers use `Start_Address`, and the valid byte lanes are the same on every beat (IHI0022E A3.4.1). Within those lanes the strobes may differ per beat. FIXED bursts are used for FIFO-mapped peripherals where repeated writes to the same address push data into a hardware queue, and are limited to 16 transfers.
+In a FIXED burst "the address is the same for every transfer in the burst", and "the byte lanes that are valid are constant for all beats in the burst. However, within those byte lanes, the actual bytes that have WSTRB asserted can differ for each beat" (§A3.4.1). FIXED bursts carry at most 16 transfers. They serve repeated accesses to one location, such as filling or emptying a **FIFO** (a first-in, first-out hardware queue) behind a single register address.
 
----
+The A3.4.2 pseudocode only realigns the address when it increments, which FIXED never does. So an unaligned FIXED burst keeps its unaligned address and the first transfer's lanes on every transfer. Traced on a 32-bit bus with `AxLEN = 3`, `AxSIZE = 2`:
 
-## 3. WSTRB — Write Strobe Generation
+| N | Address_N | Byte lanes | Full-lane WSTRB |
+|---|---|---|---|
+| 1 | 0x2001 | 1-3 | `4'b1110` |
+| 2 | 0x2001 | 1-3 | `4'b1110` |
+| 3 | 0x2001 | 1-3 | `4'b1110` |
+| 4 | 0x2001 | 1-3 | `4'b1110` |
 
-`WSTRB` is a bitmask where each bit corresponds to one byte lane of the data bus.
-A bit set to `1` means that byte lane contains valid write data.
+Pick the "FIXED unaligned" preset in the visualizer and predict the last address before you reveal it: it is 0x2001, not 0x200D (INCR behaviour) and not 0x2000 (a realigned address). The classic FIXED bug lives in monitors: one that increments the address on every transfer files three of these four transfers under the wrong address.
 
-For a 32-bit (4-byte) data bus, `WSTRB` is 4 bits wide:
-- `WSTRB = 4'b1111` — all 4 bytes valid (full-word write)
-- `WSTRB = 4'b0011` — lower 2 bytes valid (half-word write to bytes 0-1)
-- `WSTRB = 4'b0100` — only byte 2 valid (single byte write)
+### Byte lanes: narrow and unaligned transfers
 
-### Which Lanes Can Carry Data
+Two kinds of transfer use only part of the bus:
 
-The address of each transfer selects its byte lanes. IHI0022E A3.4.1 gives `Lower_Byte_Lane` and `Upper_Byte_Lane`. The upper lane of an unaligned transfer stops at the end of its size-aligned container, so a 4-byte transfer at `0x1001` uses lanes 1 to 3, not 1 to 4:
+- A **narrow transfer** is narrower than the data bus: `2 ^ AxSIZE` is less than Data_Bus_Bytes, for example a 2-byte transfer on a 4-byte bus.
+- An **unaligned transfer** starts at an address that is not a multiple of its size; only the first transfer of an INCR or WRAP burst, or every transfer of a FIXED burst, can be unaligned.
 
-```systemverilog
-// IHI0022E A3.4.1: byte lanes a transfer may use. addr = Address_N.
-// For aligned transfers this is lanes addr%DATA_BYTES .. +nbytes-1.
-function automatic logic [DATA_BYTES-1:0] active_lanes(
-  input logic [31:0] addr,
-  input logic [2:0]  size
-);
-  int unsigned nbytes  = 1 << size;
-  int unsigned aligned = (addr / nbytes) * nbytes;              // Aligned_Address
-  int unsigned lower   = addr % DATA_BYTES;                     // Lower_Byte_Lane
-  int unsigned upper   = aligned % DATA_BYTES + nbytes - 1;     // Upper_Byte_Lane
-  logic [DATA_BYTES-1:0] lanes = '0;
-  for (int unsigned lane = lower; lane <= upper; lane++) lanes[lane] = 1'b1;
-  return lanes;
-endfunction
+For both, "the address and control information determine which byte lanes the transfer uses: in incrementing or wrapping bursts, different byte lanes are used on each beat of the burst; in a fixed burst, the same byte lanes are used on each beat" (§A3.4.3). WSTRB does not choose the lanes; it marks which bytes inside them are valid.
+
+§A3.4.1 gives the lanes as two numbers. For the first transfer:
+
+```text
+Lower_Byte_Lane = Start_Address - INT(Start_Address / Data_Bus_Bytes) x Data_Bus_Bytes
+Upper_Byte_Lane = Aligned_Address + (Number_Bytes - 1)
+                  - INT(Start_Address / Data_Bus_Bytes) x Data_Bus_Bytes
 ```
 
-`WSTRB` must be a **subset** of these lanes: "A master must ensure that the write strobes are HIGH only for byte lanes that contain valid data" (IHI0022E A3.4.3). A sparse write that leaves some active lanes LOW is legal, so a checker tests containment, not equality:
+For every later transfer, `Lower_Byte_Lane = Address_N mod Data_Bus_Bytes` and `Upper_Byte_Lane = Lower_Byte_Lane + Number_Bytes - 1`. "Data is transferred on `DATA((8 x Upper_Byte_Lane) + 7 : (8 x Lower_Byte_Lane))`" (§A3.4.1). So a monitor extracts exactly those bits of WDATA or RDATA for each transfer.
 
-```systemverilog
-// w_addr / w_size: the address and size of the current W beat, tracked by the monitor
-a_wstrb_subset: assert property (@(posedge ACLK) disable iff (!ARESETn)
-  WVALID |-> (WSTRB & ~active_lanes(w_addr, w_size)) == '0);
-```
+The upper lane of an unaligned first transfer stops at the end of its size-aligned block. On a 64-bit (8-byte) bus, a 4-byte transfer at `0x1001` uses lanes 1 to 3, not lanes 1 to 4: lane 4 belongs to the next 4-byte block (0x1004 to 0x1007).
 
-**Example on a 64-bit (8-byte) data bus**, with every active lane written:
+<figure className="not-prose my-6">
+<svg viewBox="0 0 290 140" role="img" aria-labelledby="baxi2-lanes-title baxi2-lanes-desc" style={{ width: "100%", maxWidth: 480, height: "auto" }}>
+  <title id="baxi2-lanes-title">Byte lanes of an INCR burst of 4-byte transfers from 0x1003 on a 32-bit bus</title>
+  <desc id="baxi2-lanes-desc">Lanes are drawn with lane 3 on the left and lane 0 on the right. Transfer 1 at 0x1003 uses lane 3 only, carrying byte 0x1003, with WSTRB 4'b1000. Transfer 2 at 0x1004 uses lanes 3 to 0, carrying bytes 0x1007 to 0x1004, with WSTRB 4'b1111. Transfers 3 and 4 at 0x1008 and 0x100C also use all four lanes.</desc>
+  <g fill="currentColor" fontSize="10" textAnchor="middle">
+    <text x="91" y="14">lane 3</text>
+    <text x="125" y="14">lane 2</text>
+    <text x="159" y="14">lane 1</text>
+    <text x="193" y="14">lane 0</text>
+    <text x="250" y="14">WSTRB</text>
+  </g>
+  <g fill="currentColor" fontSize="10">
+    <text x="4" y="36">N=1 0x1003</text>
+    <text x="4" y="64">N=2 0x1004</text>
+    <text x="4" y="92">N=3 0x1008</text>
+    <text x="4" y="120">N=4 0x100C</text>
+  </g>
+  <g strokeWidth="1.2">
+    <rect x="76" y="22" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="110" y="22" width="30" height="22" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 2" />
+    <rect x="144" y="22" width="30" height="22" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 2" />
+    <rect x="178" y="22" width="30" height="22" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 2" />
+    <rect x="76" y="50" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="110" y="50" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="144" y="50" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="178" y="50" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="76" y="78" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="110" y="78" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="144" y="78" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="178" y="78" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="76" y="106" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="110" y="106" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="144" y="106" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="178" y="106" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  </g>
+  <g fill="currentColor" fontSize="10" textAnchor="middle" fontFamily="monospace">
+    <text x="91" y="37">03</text><text x="125" y="37">-</text><text x="159" y="37">-</text><text x="193" y="37">-</text>
+    <text x="91" y="65">07</text><text x="125" y="65">06</text><text x="159" y="65">05</text><text x="193" y="65">04</text>
+    <text x="91" y="93">0B</text><text x="125" y="93">0A</text><text x="159" y="93">09</text><text x="193" y="93">08</text>
+    <text x="91" y="121">0F</text><text x="125" y="121">0E</text><text x="159" y="121">0D</text><text x="193" y="121">0C</text>
+    <text x="250" y="37">4'b1000</text>
+    <text x="250" y="65">4'b1111</text>
+    <text x="250" y="93">4'b1111</text>
+    <text x="250" y="121">4'b1111</text>
+  </g>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Each cell shows the low byte of the address it carries; a dashed cell carries nothing. Lane 3 is on the left, matching how WSTRB is written (bit 3 first). Compare IHI0022E Figure A3-13.</figcaption>
+</figure>
+
+**Example:** 2-byte INCR burst on a 4-byte bus starting at `0x1000`. The lanes move on every transfer and cycle through the bus:
+
+| N | Address | Active Bytes | WSTRB |
+|---|---|---|---|
+| 1 | 0x1000 | Bytes 0-1 | `4'b0011` |
+| 2 | 0x1002 | Bytes 2-3 | `4'b1100` |
+| 3 | 0x1004 | Bytes 0-1 | `4'b0011` |
+| 4 | 0x1006 | Bytes 2-3 | `4'b1100` |
+
+**Example on a 64-bit (8-byte) data bus**, single transfers with every active lane written:
 
 | Address | AxSIZE | Bytes | WSTRB |
 |---|---|---|---|
@@ -198,205 +315,870 @@ a_wstrb_subset: assert property (@(posedge ACLK) disable iff (!ARESETn)
 | 0x1000 | 3 (8B) | 8 | `8'b1111_1111` |
 | 0x1001 | 2 (4B) | 3 | `8'b0000_1110` |
 
+Reads use the same lanes of `RDATA`; the master ignores the other lanes. In code, the two lane equations collapse into one function. `DATA_BYTES` is the bus width in bytes, a `localparam` in the package that holds the function (the full package is in Make It Work):
+
+```systemverilog
+// snippet: from axi_burst_pkg in Make It Work, where DATA_BYTES is a localparam.
+// IHI0022E A3.4.1: byte lanes a transfer may use. addr = Address_N.
+// Precondition: (1 << size) <= DATA_BYTES (AxSIZE fits the bus).
+function automatic logic [DATA_BYTES-1:0] active_lanes(
+  input logic [31:0] addr,
+  input logic [2:0]  size
+);
+  int unsigned nbytes  = 1 << size;
+  int unsigned aligned = (addr / nbytes) * nbytes;            // Aligned_Address
+  int unsigned lower   = addr % DATA_BYTES;                   // Lower_Byte_Lane
+  int unsigned upper   = aligned % DATA_BYTES + nbytes - 1;   // Upper_Byte_Lane
+  logic [DATA_BYTES-1:0] lanes = '0;
+  for (int unsigned lane = lower; lane <= upper; lane++) lanes[lane] = 1'b1;
+  return lanes;
+endfunction
+```
+
+For an aligned address `aligned` equals `addr`, so this gives `Lower_Byte_Lane + Number_Bytes - 1`, the later-transfer equation. Called with `Address_N`, it covers every transfer of every burst type.
+
+### WSTRB: any subset of the active lanes
+
+**WSTRB** is the write strobe: one bit per byte lane, where "WSTRB[n] corresponds to WDATA[(8n)+7: (8n)]" (§A3.4.3). A HIGH bit says that lane carries valid write data. The rule is one sentence: "A master must ensure that the write strobes are HIGH only for byte lanes that contain valid data" (§A3.4.3). Combined with the lanes above, that gives the legal set:
+
+- WSTRB may be **any subset** of the active lanes of that transfer, including all zeros. A **sparse** write (some active lanes LOW) is legal, and all-zero strobes are how a master writes fewer bytes in a burst it must still complete (§A3.4.1).
+- A strobe on a lane **outside** the active lanes is illegal.
+- "When WVALID is LOW, the write strobes can take any value" (§A3.4.3), so a checker only looks at WSTRB on a handshake.
+
+So a checker tests containment, `(WSTRB & ~lanes) == '0`, not equality. Here is the W channel for the burst from 0x1003, with a sparse second transfer and one wait cycle:
+
+<TimingDiagram
+  title="W channel of an INCR burst of 4-byte transfers from 0x1003, 32-bit bus"
+  caption="Transfers complete at edges 2, 4, 5 and 6, where WVALID and WREADY are both 1. WSTRB is X while WVALID is 0, 1000 for transfer 1 (lane 3 only), a legal sparse 0110 for transfer 2, and 1111 after that. WLAST is 1 only on transfer 4, the AxLEN+1th."
+  edges={8}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "WVALID", kind: "bit", values: [0, 0, 1, 1, 1, 1, 1, 0] },
+    { name: "WREADY", kind: "bit", values: [0, 0, 1, 0, 1, 1, 1, 0] },
+    { name: "WSTRB", kind: "bus", values: [undefined, undefined, "1000", "0110", "0110", "1111", "1111", undefined] },
+    { name: "WLAST", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 2, tone: "pass", label: "transfer 1 at 0x1003: only lane 3 is active, WSTRB 1000" },
+    { edge: 3, tone: "pending", label: "WREADY is 0: transfer 2 holds its data and strobes" },
+    { edge: 4, tone: "pass", label: "transfer 2 at 0x1004: sparse WSTRB 0110 is a legal subset of lanes 0 to 3" },
+    { edge: 6, tone: "info", label: "transfer 4: WLAST, because AWLEN + 1 = 4" }
+  ]}
+/>
+
+**Use the picture.** In the visualizer, pick "INCR from 0x1003" and open the strobe panel on transfer 1. Predict whether `4'b0001` is legal, then toggle it. It is illegal: lane 0 is outside the active lanes (lane 3 only). Toggle down to `4'b0000`: legal, an all-zero write. Then select transfer 2 and set `4'b0110`: legal sparse. The panel's verdicts are the containment rule above.
+
+**Where the WSTRB check runs.** A concurrent assertion lives in a module, an interface or a program (IEEE 1800-2023 §16.14.5), not inside a UVM class, so it cannot read a monitor's variables. It also cannot assume the beat's address is known: "the write data can appear at an interface before the write address" (IHI0022E §A3.3). So the subset check runs either in the monitor, after it pairs each W transfer with its AW request, or in a checker module that keeps a queue of AW requests and a W transfer counter, holding W transfers until their AW arrives. Make It Work shows the monitor version.
+
 > [!WARNING]
-> **Two common bugs:** computing WSTRB from AxSIZE alone, which picks the wrong lanes for narrow transfers on wide buses; and filling lanes `start..start+size-1` for an unaligned start, which spills into the next container.
+> **Two common bugs:** computing WSTRB from AxSIZE alone, which picks the wrong lanes for narrow transfers on wide buses; and filling lanes `start..start+size-1` for an unaligned start, which spills into the next block.
 > A third bug is in checkers: requiring WSTRB to *equal* the active lanes rejects legal sparse writes.
 
----
+### The 4KB rule
 
-## 4. The 4 KB Boundary Rule
+§A3.4.1 states it plainly: "A burst must not cross a 4KB address boundary." A **4KB boundary** is any address that is a multiple of 4096 (0x1000), so memory is divided into 4KB **pages** (0x0000 to 0x0FFF, 0x1000 to 0x1FFF, and so on). Every byte a burst carries must sit in the same page as its first byte.
 
-The AXI specification mandates:
+**Why 4KB.** The specification's note gives the reason: the rule "prevents a burst from crossing a boundary between two slaves. It also limits the number of address increments that a slave must support." In practice this means an interconnect (the switch that routes requests to slaves) can place slaves on 4KB boundaries and route a whole burst by its start address, and a slave never has to hand half a burst to its neighbour.
 
-> **A burst must not cross a 4 KB (0x1000) address boundary.** Every byte the burst carries must sit in the same 4 KB page as the first.
+**Only INCR can cross.** The rule applies to every burst, but only INCR can break it:
 
-### Why 4 KB?
+- A legal WRAP burst stays inside its window of Number_Bytes × Burst_Length bytes, at most 128 × 16 = 2048. The window is aligned to its own size, which divides 4096, so it never straddles a page.
+- A FIXED burst never moves.
 
-IHI0022E A3.4.1 gives the reason: the rule "prevents a burst from crossing a boundary between two slaves. It also limits the number of address increments that a slave must support." Slaves are decoded on 4 KB granularity, so a slave never has to hand a burst over to its neighbour.
+So a checker computes the crossing for INCR only. For WRAP it checks the alignment and length rules instead, and for FIXED the length.
 
-### INCR Boundary Check Formula
+**INCR boundary check formula.** Count the last byte from the **aligned** start, because every transfer after the first is aligned:
 
-For INCR bursts, compute the last byte from the **aligned** start, because every transfer after the first is aligned:
-
-```
+```text
 Last_Byte = Aligned_Address + Burst_Length x Number_Bytes - 1
 
 // LEGAL if INT(Start_Address / 4096) == INT(Last_Byte / 4096)
 ```
 
-Using `AxADDR + total` instead overshoots for unaligned starts and fails legal bursts.
-
-### WRAP Burst Alignment & Boundaries
-
-The rule applies to every burst type, but only INCR can break it. A legal WRAP burst stays inside its aligned container of at most 16 x 128 = 2048 bytes, which never straddles a 4 KB boundary. A FIXED burst never moves. So a checker computes the crossing for INCR only; for WRAP it checks the alignment and length rules instead.
+Using `AxADDR + total bytes` instead overshoots for unaligned starts and fails legal bursts.
 
 **Examples:**
 - `0x0FF0`, AxLEN=3, AxSIZE=2: last byte `0x0FFF`. **Legal**, right up to the edge.
 - `0x0FF4`, AxLEN=3, AxSIZE=2: last byte `0x1003`. **Illegal**: it crosses `0x1000`.
 - `0x0FFE`, AxLEN=0, AxSIZE=2: the single transfer carries only `0x0FFE` and `0x0FFF`. **Legal**, although `0x0FFE + 4` is `0x1002`.
-- WRAP4 of words at `0x0FFC`: addresses `0x0FFC, 0x0FF0, 0x0FF4, 0x0FF8`. **Legal**.
+- WRAP4 of words at `0x0FFC`: addresses `0x0FFC, 0x0FF0, 0x0FF4, 0x0FF8`. **Legal**: the window is 0x0FF0 to 0x0FFF.
 
-### SVA Assertion
+<figure className="not-prose my-6">
+<svg viewBox="0 0 340 172" role="img" aria-labelledby="baxi2-fence-title baxi2-fence-desc" style={{ width: "100%", maxWidth: 560, height: "auto" }}>
+  <title id="baxi2-fence-title">Three bursts near the 4KB boundary at 0x1000</title>
+  <desc id="baxi2-fence-desc">An address line from 0x0FE0 to 0x1010 with a fence at 0x1000. Burst 1, INCR of four words from 0x0FF0, covers 0x0FF0 to 0x0FFF and stops at the fence: legal. Burst 2, INCR of four words from 0x0FF4, covers 0x0FF4 to 0x1003 and crosses the fence: illegal. Burst 3, WRAP4 of words from 0x0FFC, covers 0x0FFC first and then wraps to 0x0FF0, 0x0FF4 and 0x0FF8, staying inside 0x0FF0 to 0x0FFF: legal.</desc>
+  <line x1="222" y1="16" x2="222" y2="150" stroke="currentColor" strokeWidth="2" strokeDasharray="6 3" />
+  <text x="226" y="14" fontSize="10" fill="currentColor">4KB boundary 0x1000</text>
+  <text x="30" y="26" fontSize="10" fill="currentColor">1. INCR 0x0FF0, 4 words: last byte 0x0FFF, legal ✓</text>
+  <rect x="126" y="30" width="96" height="16" rx="2" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="30" y="66" fontSize="10" fill="currentColor">2. INCR 0x0FF4, 4 words: last byte 0x1003, crosses ✕</text>
+  <rect x="150" y="70" width="72" height="16" rx="2" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <rect x="222" y="70" width="24" height="16" rx="2" className="fill-rose-500/15 stroke-rose-500" strokeDasharray="3 2" />
+  <text x="250" y="82" fontSize="10" fill="currentColor">past the fence</text>
+  <text x="30" y="106" fontSize="10" fill="currentColor">3. WRAP4 0x0FFC: 0x0FFC, 0x0FF0, 0x0FF4, 0x0FF8, legal ✓</text>
+  <g strokeWidth="1">
+    <rect x="126" y="110" width="24" height="16" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="150" y="110" width="24" height="16" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="174" y="110" width="24" height="16" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="198" y="110" width="24" height="16" className="fill-amber-500/15 stroke-amber-500" />
+  </g>
+  <g fill="currentColor" fontSize="10" textAnchor="middle">
+    <text x="138" y="122">2</text>
+    <text x="162" y="122">3</text>
+    <text x="186" y="122">4</text>
+    <text x="210" y="122">1</text>
+  </g>
+  <line x1="30" y1="150" x2="318" y2="150" stroke="currentColor" />
+  <g stroke="currentColor">
+    <line x1="30" y1="146" x2="30" y2="154" />
+    <line x1="126" y1="146" x2="126" y2="154" />
+    <line x1="318" y1="146" x2="318" y2="154" />
+  </g>
+  <g fill="currentColor" fontSize="9" textAnchor="middle">
+    <text x="30" y="166">0x0FE0</text>
+    <text x="126" y="166">0x0FF0</text>
+    <text x="222" y="166">0x1000</text>
+    <text x="312" y="166">0x1010</text>
+  </g>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Bursts 1 and 3 stay left of the fence; burst 2 carries four bytes past it. The numbers in burst 3 are transfer numbers: it starts at 0x0FFC (amber) and wraps inside its 16-byte window. In the visualizer, the "Ends at 0x0FFF" and "Crosses 4KB" presets are bursts 1 and 2: predict each verdict before you reveal it.</figcaption>
+</figure>
+
+**The 4KB assertion.** This checker property uses an assertion local variable (`aligned`, IEEE 1800-2023 §16.10) to hold the aligned start, gates on INCR (`2'b01`), and fires only on the address handshake so that a request held waiting for READY reports once, not on every cycle. (A concurrent assertion starts a new evaluation attempt at every clock, §16.14.5.)
 
 ```systemverilog
-// IHI0022E A3.4.1. Gate on INCR (2'b01) and start from the aligned address.
-property p_incr_no_4kb(valid, addr, len, size, burst);
+// snippet: inside a checker module bound to the AXI interface (ACLK, ARESETn, AW*, AR*).
+// [Protocol IHI0022E A3.4.1] Gate on INCR (2'b01) and start from the aligned address.
+property p_incr_no_4kb(valid, ready, addr, len, size, burst);
   logic [31:0] aligned;
   @(posedge ACLK) disable iff (!ARESETn)
-    (valid && burst == 2'b01, aligned = (addr >> size) << size) |->
+    (valid && ready && burst == 2'b01, aligned = (addr >> size) << size) |->
       (aligned[11:0] + ((len + 1) << size)) <= 32'h1000;
 endproperty
 
-a_aw_4kb: assert property (p_incr_no_4kb(AWVALID, AWADDR, AWLEN, AWSIZE, AWBURST))
-  else $error("INCR write burst crosses 4 KB at 0x%08h", AWADDR);
+a_aw_4kb: assert property (
+  p_incr_no_4kb(AWVALID, AWREADY, AWADDR, AWLEN, AWSIZE, AWBURST))
+  else $error("INCR write burst crosses 4KB at 0x%08h", AWADDR);
 
-a_ar_4kb: assert property (p_incr_no_4kb(ARVALID, ARADDR, ARLEN, ARSIZE, ARBURST))
-  else $error("INCR read burst crosses 4 KB at 0x%08h", ARADDR);
+a_ar_4kb: assert property (
+  p_incr_no_4kb(ARVALID, ARREADY, ARADDR, ARLEN, ARSIZE, ARBURST))
+  else $error("INCR read burst crosses 4KB at 0x%08h", ARADDR);
 ```
 
-It passes a WRAP at the page edge, a FIXED burst at `0xFFC`, and an unaligned INCR that ends at `0xFFF`, and it fails an INCR that crosses by a single byte.
+The comparison adds the page offset of the aligned start to the total bytes; it is legal when the sum is at most 4096. The literals `1` and `32'h1000` are 32 bits wide, so the sum keeps its carry (IEEE 1800-2023 §11.6.1); Push Further shows what happens when it does not. The property passes a WRAP at the page edge, a FIXED burst at `0xFFC` and an unaligned INCR that ends at `0xFFF`, and fails an INCR that crosses by a single byte. The action blocks use `$error` because this is a plain SystemVerilog checker; inside a UVM environment you would report through `` `uvm_error `` so the failure counts in the UVM report summary.
 
-### How Masters Handle This
+### How masters keep bursts legal: splitting at 4KB
 
-When a master needs to transfer data that *would* cross a 4 KB boundary, it must **split the burst** into two separate bursts:
+When a master such as a **DMA engine** (a block that copies memory without the CPU) must move data that would cross a 4KB boundary, it issues several bursts. Each burst carries:
 
-1. First burst: from the start address up to the boundary, `(boundary - Aligned_Address) / Number_Bytes` transfers.
-2. Second burst: from the 4 KB boundary to the end address.
+**min**(transfers left in the 4KB page, the length cap, transfers still needed)
 
-This splitting logic is a common source of bugs in DMA controllers and bridge adapters.
+- Transfers left in the page = (4096 − page offset of the aligned start) / Number_Bytes.
+- The length cap is 256 for an AXI4 INCR burst and 16 in AXI3 (§A3.4.1).
+- So a long copy may need more than two bursts: a 4KB page holds 1024 four-byte transfers, far more than one burst can carry.
 
----
+**Worked example:** a master writes 100 bytes from 0x0FF3 with 8-byte transfers on a 64-bit bus.
 
-## 5. Narrow Transfers
+1. Aligned_Address = 0x0FF0. Transfers left in the page = (0x1000 − 0x0FF0) / 8 = 2.
+2. Burst A: AWADDR 0x0FF3, AWLEN 1. Transfer 1 carries 0x0FF3 to 0x0FF7 (lanes 3 to 7) and transfer 2 carries 0x0FF8 to 0x0FFF: 13 bytes.
+3. 87 bytes remain, which take 11 transfers. Burst B: AWADDR 0x1000, AWLEN 10. Its last transfer, at 0x1050, carries 0x1050 to 0x1056 (lanes 0 to 6).
 
-A **narrow transfer** occurs when `AxSIZE` is smaller than the data bus width.
-For example, a 2-byte transfer on a 4-byte bus.
+| Burst | AWADDR | AWLEN | Bytes | Last byte | First WSTRB | Last WSTRB |
+|---|---|---|---|---|---|---|
+| A | 0x0FF3 | 1 | 13 | 0x0FFF | `8'b1111_1000` | `8'b1111_1111` |
+| B | 0x1000 | 10 | 87 | 0x1056 | `8'b1111_1111` | `8'b0111_1111` |
 
-During narrow transfers:
-- Only a subset of byte lanes carry valid data (controlled by WSTRB).
-- The active byte lanes **shift** on each beat of an INCR burst, cycling through the data bus.
+<figure className="not-prose my-6">
+<svg viewBox="0 0 340 132" role="img" aria-labelledby="baxi2-split-title baxi2-split-desc" style={{ width: "100%", maxWidth: 560, height: "auto" }}>
+  <title id="baxi2-split-title">Splitting a 100-byte write from 0x0FF3 at the 4KB boundary</title>
+  <desc id="baxi2-split-desc">Thirteen 8-byte transfer slots. Burst A has two transfers before the boundary: the first is partly filled, carrying 0x0FF3 to 0x0FF7, and the second carries 0x0FF8 to 0x0FFF. Then the 4KB boundary at 0x1000. Burst B has eleven transfers from 0x1000; the last is partly filled, carrying 0x1050 to 0x1056.</desc>
+  <text x="4" y="14" fontSize="10" fill="currentColor">A: AWADDR 0x0FF3, AWLEN 1, 13 bytes</text>
+  <text x="4" y="28" fontSize="10" fill="currentColor">B: AWADDR 0x1000, AWLEN 10, 87 bytes</text>
+  <g fill="none" stroke="currentColor" strokeOpacity="0.5">
+    <rect x="10" y="50" width="20" height="24" />
+    <rect x="30" y="50" width="20" height="24" />
+  </g>
+  <rect x="17.5" y="50" width="12.5" height="24" className="fill-amber-500/15 stroke-amber-500" />
+  <rect x="30" y="50" width="20" height="24" className="fill-amber-500/15 stroke-amber-500" />
+  <line x1="56" y1="40" x2="56" y2="84" stroke="currentColor" strokeWidth="2" strokeDasharray="6 3" />
+  <g className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400">
+    <rect x="62" y="50" width="20" height="24" />
+    <rect x="82" y="50" width="20" height="24" />
+    <rect x="102" y="50" width="20" height="24" />
+    <rect x="122" y="50" width="20" height="24" />
+    <rect x="142" y="50" width="20" height="24" />
+    <rect x="162" y="50" width="20" height="24" />
+    <rect x="182" y="50" width="20" height="24" />
+    <rect x="202" y="50" width="20" height="24" />
+    <rect x="222" y="50" width="20" height="24" />
+    <rect x="242" y="50" width="20" height="24" />
+    <rect x="262" y="50" width="17.5" height="24" />
+  </g>
+  <rect x="262" y="50" width="20" height="24" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+  <g fill="currentColor" fontSize="9" textAnchor="middle">
+    <text x="30" y="66">A</text>
+    <text x="172" y="66">B (11 transfers)</text>
+    <text x="56" y="96">0x1000</text>
+    <text x="22" y="96">0x0FF0</text>
+    <text x="272" y="96">0x1050</text>
+  </g>
+  <text x="4" y="114" fontSize="10" fill="currentColor">A transfer 1: WSTRB 8'b1111_1000 (lanes 3-7)</text>
+  <text x="4" y="128" fontSize="10" fill="currentColor">B transfer 11: WSTRB 8'b0111_1111 (lanes 0-6)</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Each slot is one 8-byte transfer; a partly filled slot is a transfer whose strobes cover only some lanes. Burst A (amber) stops at the boundary; burst B (cyan) starts on it. Both are legal INCR bursts (IHI0022E §A3.4.1).</figcaption>
+</figure>
 
-**Example:** 2-byte INCR burst on a 4-byte bus starting at `0x1000`:
+This logic lives in DMA engines, in bridges that convert between protocols (see [B-AMBA-F1](/curriculum/T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index)), and in TB sequences that must generate long legal transfers. It is a common source of bugs: an off-by-one in "transfers left in the page", or forgetting the 256 or 16 cap.
 
-| N | Address | Active Bytes | WSTRB |
-|---|---|---|---|
-| 1 | 0x1000 | Bytes 0-1 | `4'b0011` |
-| 2 | 0x1002 | Bytes 2-3 | `4'b1100` |
-| 3 | 0x1004 | Bytes 0-1 | `4'b0011` |
-| 4 | 0x1006 | Bytes 2-3 | `4'b1100` |
+### Pitfalls and misconceptions
 
-Reads use the same lanes of `RDATA`; the master ignores the other lanes.
+1. **"Every transfer address is start + (N − 1) × size."** Wrong for an unaligned start: from 0x1003 the addresses are 0x1003, 0x1004, 0x1008, 0x100C, because later transfers start from Aligned_Address (§A3.4.1).
+2. **"A WRAP or FIXED burst can break the 4KB rule, so check them too."** A legal WRAP stays in an aligned window of at most 2048 bytes and a FIXED burst never moves; a 4KB crossing check on them only produces false failures. Check WRAP alignment and length instead.
+3. **"WSTRB must equal the active lanes."** It may be any subset, including all zeros (§A3.4.3). Test `(WSTRB & ~lanes) == '0`.
+4. **"Check 4KB with AxADDR + total bytes."** That overshoots for unaligned starts: INCR, AxLEN = 0, AxSIZE = 2 at 0x0FFE carries only 0x0FFE and 0x0FFF, and is legal.
+5. **"An unaligned transfer uses lanes start to start + size − 1."** The upper lane stops at the end of the size-aligned block: 4 bytes at 0x1001 on a 64-bit bus use lanes 1 to 3, not 1 to 4.
+6. **"AxLEN is the number of transfers."** It is one less. A driver that sends AxLEN transfers leaves WLAST missing; a monitor that expects AxLEN reports an extra transfer.
+7. **"FIXED realigns after the first transfer, like INCR."** It does not: an unaligned FIXED burst at 0x2001 uses 0x2001 and lanes 1 to 3 on every transfer.
+8. **"Every WRAP wraps."** A WRAP that starts on its wrap boundary is address-for-address identical to INCR.
 
-Now run the equations yourself. Start with the unaligned preset and predict the last address before you reveal the table, then try the WRAP, FIXED and 4 KB presets and edit the fields. The strobe panel lets you test a sparse or a wrong `WSTRB`.
-
-<AxiMemoryMathVisualizer />
+### Recap
 
 <VisualRecap
   title="Aligned after the first transfer"
-  rule="Address_1 is the start address; every later INCR address is Aligned_Address + (N-1) x Number_Bytes, and WRAP does the same until it wraps. Lanes run from Lower_Byte_Lane to the end of the size-aligned container. WSTRB may be any subset of them. Only INCR can cross 4 KB."
+  rule="Address_1 is the start address; every later INCR address is Aligned_Address + (N-1) x Number_Bytes, and WRAP does the same until it reaches the upper limit, then returns to Wrap_Boundary. FIXED never moves. Lanes run from Lower_Byte_Lane to the end of the size-aligned block. WSTRB may be any subset of them. Only INCR can cross 4KB, and masters split at the page edge."
   code={`aligned = (start / nbytes) * nbytes;
 addr_n  = (n == 1) ? start : aligned + (n - 1) * nbytes;  // INCR
 lanes   = active_lanes(addr_n, size);                     // A3.4.1
 assert ((WSTRB & ~lanes) == '0);                          // subset, not equal`}
   mistake="Adding Number_Bytes to an unaligned start (0x1003, 0x1007, 0x100B). After the first transfer the addresses are aligned: 0x1004, 0x1008, 0x100C."
-  inTestbench="The driver computes each Address_N and WSTRB with these equations, the monitor rebuilds each beat's address the same way, and the checker tests WSTRB as a subset and the 4 KB rule from the aligned start, for INCR only."
+  inTestbench="The driver computes each Address_N and WSTRB with these equations, the monitor rebuilds each transfer's address and lanes the same way, the scoreboard applies only strobed bytes to a byte-addressed memory, and the checker tests WSTRB as a subset and the 4KB rule from the aligned start, for INCR only."
 >
-  <svg viewBox="0 0 200 112" role="img" aria-label="INCR of 4-byte transfers from 0x1003 on a 32-bit bus: the first transfer uses lane 3 only, the next three use all four lanes." style={{ width: "100%", maxWidth: 260 }}>
-    <text x="8" y="25" fontSize="11" fill="currentColor">0x1003</text>
-    <rect x="70" y="10" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="83" y="24" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <rect x="100" y="10" width="26" height="20" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="113" y="24" fontSize="10" textAnchor="middle" fill="currentColor">·</text>
-    <rect x="130" y="10" width="26" height="20" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="143" y="24" fontSize="10" textAnchor="middle" fill="currentColor">·</text>
-    <rect x="160" y="10" width="26" height="20" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="173" y="24" fontSize="10" textAnchor="middle" fill="currentColor">·</text>
-    <text x="8" y="51" fontSize="11" fill="currentColor">0x1004</text>
-    <rect x="70" y="36" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="83" y="50" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <rect x="100" y="36" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="113" y="50" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <rect x="130" y="36" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="143" y="50" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <rect x="160" y="36" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="173" y="50" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <text x="8" y="77" fontSize="11" fill="currentColor">0x1008</text>
-    <rect x="70" y="62" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="83" y="76" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <rect x="100" y="62" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="113" y="76" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <rect x="130" y="62" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="143" y="76" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <rect x="160" y="62" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="173" y="76" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <text x="8" y="103" fontSize="11" fill="currentColor">0x100C</text>
-    <rect x="70" y="88" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="83" y="102" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <rect x="100" y="88" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="113" y="102" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <rect x="130" y="88" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="143" y="102" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
-    <rect x="160" y="88" width="26" height="20" rx="3" fill="rgba(6,182,212,0.25)" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="173" y="102" fontSize="10" textAnchor="middle" fill="currentColor">■</text>
+  <svg viewBox="0 0 220 120" role="img" aria-label="INCR of 4-byte transfers from 0x1003 on a 32-bit bus, lanes drawn 3 2 1 0 from left to right: transfer 1 uses lane 3 only with WSTRB 4'b1000; transfers 2 to 4 use all four lanes with WSTRB 4'b1111." style={{ width: "100%", maxWidth: 280 }}>
+    <g fill="currentColor" fontSize="9" textAnchor="middle">
+      <text x="83" y="10">3</text><text x="113" y="10">2</text><text x="143" y="10">1</text><text x="173" y="10">0</text>
+    </g>
+    <g fill="currentColor" fontSize="10">
+      <text x="4" y="29">0x1003</text><text x="4" y="55">0x1004</text><text x="4" y="81">0x1008</text><text x="4" y="107">0x100C</text>
+    </g>
+    <rect x="70" y="14" width="26" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="100" y="14" width="26" height="20" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 2" />
+    <rect x="130" y="14" width="26" height="20" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 2" />
+    <rect x="160" y="14" width="26" height="20" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 2" />
+    <g className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400">
+      <rect x="70" y="40" width="26" height="20" rx="3" /><rect x="100" y="40" width="26" height="20" rx="3" /><rect x="130" y="40" width="26" height="20" rx="3" /><rect x="160" y="40" width="26" height="20" rx="3" />
+      <rect x="70" y="66" width="26" height="20" rx="3" /><rect x="100" y="66" width="26" height="20" rx="3" /><rect x="130" y="66" width="26" height="20" rx="3" /><rect x="160" y="66" width="26" height="20" rx="3" />
+      <rect x="70" y="92" width="26" height="20" rx="3" /><rect x="100" y="92" width="26" height="20" rx="3" /><rect x="130" y="92" width="26" height="20" rx="3" /><rect x="160" y="92" width="26" height="20" rx="3" />
+    </g>
+    <g fill="currentColor" fontSize="8" fontFamily="monospace">
+      <text x="190" y="28">1000</text><text x="190" y="54">1111</text><text x="190" y="80">1111</text><text x="190" y="106">1111</text>
+    </g>
   </svg>
 </VisualRecap>
 
-## Summary
-
 | Parameter | What It Controls | Key Rule |
 |---|---|---|
-| **AxLEN** | Number of transfers (AxLEN+1) | AXI4 INCR: up to 256; FIXED: up to 16; WRAP: 2, 4, 8, or 16 |
-| **AxSIZE** | Bytes per beat (2^N) | Must not exceed data bus width |
-| **AxBURST** | Address progression | FIXED, INCR, or WRAP |
+| **AxLEN** | Number of transfers (AxLEN+1) | AXI4 INCR: up to 256; FIXED: up to 16; WRAP: 2, 4, 8, or 16; AXI3: up to 16 for all |
+| **AxSIZE** | Maximum bytes per transfer (2^AxSIZE) | Must not exceed the data bus width of either agent |
+| **AxBURST** | Address progression | FIXED, INCR, or WRAP; 0b11 is reserved |
 | **WSTRB** | Byte-lane enables | A subset of the lanes that address + size select |
-| **Address_N** | Address of transfer N | First may be unaligned; the rest are aligned |
-| **4 KB rule** | Boundary constraint | No burst may cross a 4 KB page boundary (check INCR from the aligned start) |
+| **Address_N** | Address of transfer N | INCR and WRAP: first may be unaligned, the rest are aligned; FIXED: always Start_Address |
+| **4KB rule** | Boundary constraint | No burst may cross a 4KB page boundary; check INCR from the aligned start, and split long transfers |
 
-In the next module, we will explore AXI transaction ordering, IDs, and how the interconnect handles out-of-order completion.
+## Make It Work
 
-<Quiz>
-  <QuizQuestion
-    question="If AxLEN = 7 and AxSIZE = 2, how many total bytes does the burst transfer?"
-    options={[
-      "7 bytes",
-      "28 bytes",
-      "32 bytes",
-      "8 bytes"
-    ]}
-    correctAnswer="32 bytes"
-    explanation="Number of beats = AxLEN + 1 = 8. Bytes per beat = 2^AxSIZE = 2^2 = 4 bytes. Total = 8 × 4 = 32 bytes."
-  />
-  <QuizQuestion
-    question="A WRAP4 burst with AxSIZE=2 starts at 0x100C. What is the address of beat 1?"
-    options={[
-      "0x1010",
-      "0x1000",
-      "0x100C",
-      "0x1014"
-    ]}
-    correctAnswer="0x1000"
-    explanation="Wrap boundary = 4 beats × 4 bytes = 16 bytes. Lower wrap = 0x1000, upper wrap = 0x1010. Beat 0 = 0x100C, beat 1 = 0x100C + 4 = 0x1010 → wraps to 0x1000."
-  />
-  <QuizQuestion
-    question="On a 64-bit data bus, what is WSTRB for a 4-byte write starting at address 0x1004?"
-    options={[
-      "8'b0000_1111",
-      "8'b1111_0000",
-      "8'b1111_1111",
-      "8'b0001_0000"
-    ]}
-    correctAnswer="8'b1111_0000"
-    explanation="On a 64-bit (8-byte) bus, address 0x1004 maps to byte lanes 4-7. A 4-byte write enables bytes 4, 5, 6, 7 → WSTRB = 8'b1111_0000."
-  />
-  <QuizQuestion
-    question="A master needs an INCR burst of 16 beats × 4 bytes starting at 0x0FC4. Is this legal?"
-    options={[
-      "Yes — it fits within a single 4 KB page",
-      "No — it crosses the 4 KB boundary at 0x1000",
-      "No — 16 beats is too many for AXI",
-      "Yes — the 4 KB rule only applies to WRAP bursts"
-    ]}
-    correctAnswer="No — it crosses the 4 KB boundary at 0x1000"
-    explanation="Total bytes = 16 × 4 = 64. End address = 0x0FC4 + 63 = 0x1003. Start page = floor(0x0FC4/4096) = 0, end page = floor(0x1003/4096) = 1. The burst spans two pages, crossing the boundary at 0x1000. The master must split this into two separate bursts."
-  />
-</Quiz>
+### Example: burst math that a driver, monitor and checker can share
+
+One package of functions implements the §A3.4.1 equations. A self-checking `tb_top` tests them against the numbers on this page, then plans two 4KB splits and checks that every planned burst is legal. Put the package in your verification IP (VIP) so the driver, the monitor and the checker all use the same equations.
+
+```systemverilog
+// compile
+// IHI0022E A3.4.1 burst equations, shared by a driver, a monitor and a checker.
+package axi_burst_pkg;
+  localparam int unsigned DATA_BYTES = 8;  // 64-bit data bus: lanes 0..7
+
+  // AxBURST encodings (Table A3-3). 2'b11 is reserved, so it has no name.
+  typedef enum logic [1:0] {FIXED = 2'b00, INCR = 2'b01, WRAP = 2'b10} burst_e;
+
+  // Address_N for N = 1 .. AxLEN+1 ("Burst address", A3.4.1).
+  function automatic logic [31:0] beat_addr(
+    input logic [31:0] start, input logic [2:0] size,
+    input logic [7:0] len, input burst_e burst, input int unsigned n);
+    int unsigned nbytes  = 1 << size;
+    int unsigned total   = nbytes * (len + 1);
+    logic [31:0] aligned = (start / nbytes) * nbytes;  // Aligned_Address
+    logic [31:0] wrap_lo = (start / total) * total;    // Wrap_Boundary
+    logic [31:0] addr;
+    if (n == 1 || burst == FIXED) return start;       // FIXED never moves
+    addr = aligned + (n - 1) * nbytes;                // later transfers are aligned
+    // A legal WRAP starts aligned, so it can pass the upper limit only once.
+    if (burst == WRAP && addr >= wrap_lo + total) addr -= total;
+    return addr;
+  endfunction
+
+  // Lower_Byte_Lane .. Upper_Byte_Lane of the transfer at addr (A3.4.1).
+  // Precondition: (1 << size) <= DATA_BYTES.
+  function automatic logic [DATA_BYTES-1:0] active_lanes(
+    input logic [31:0] addr, input logic [2:0] size);
+    int unsigned nbytes  = 1 << size;
+    int unsigned aligned = (addr / nbytes) * nbytes;
+    int unsigned lower   = addr % DATA_BYTES;
+    int unsigned upper   = aligned % DATA_BYTES + nbytes - 1;  // end of the block
+    logic [DATA_BYTES-1:0] lanes = '0;
+    for (int unsigned lane = lower; lane <= upper; lane++) lanes[lane] = 1'b1;
+    return lanes;
+  endfunction
+
+  // Only INCR can cross 4KB; count the last byte from Aligned_Address.
+  function automatic bit crosses_4kb(
+    input logic [31:0] start, input logic [2:0] size,
+    input logic [7:0] len, input burst_e burst);
+    int unsigned nbytes  = 1 << size;
+    logic [31:0] aligned = (start / nbytes) * nbytes;
+    logic [31:0] last    = aligned + (len + 1) * nbytes - 1;
+    return burst == INCR && start[31:12] != last[31:12];
+  endfunction
+
+  // Transfers an INCR burst from start can make before the next 4KB
+  // boundary. The caller also caps it at 256 (AXI4) or 16 (AXI3).
+  function automatic int unsigned beats_to_4kb(
+    input logic [31:0] start, input logic [2:0] size);
+    int unsigned nbytes = 1 << size;
+    int unsigned off    = (start[11:0] / nbytes) * nbytes;  // aligned page offset
+    return (4096 - off) / nbytes;
+  endfunction
+endpackage
+
+module tb_top;
+  import axi_burst_pkg::*;
+  int unsigned pass_n, fail_n;
+
+  function automatic void check_eq(input string what, input logic [63:0] got,
+                                   input logic [63:0] want);
+    if (got === want) pass_n++;
+    else begin
+      fail_n++;
+      $display("FAIL %s: got 0x%0h, expected 0x%0h", what, got, want);
+    end
+  endfunction
+
+  // A master's split: each burst carries min(transfers left in the 4KB page,
+  // the length cap, transfers still needed), and each must pass crosses_4kb().
+  task automatic plan_split(input logic [31:0] start, input int unsigned total_bytes,
+                            input logic [2:0] size, input int unsigned max_beats);
+    logic [31:0] addr   = start;
+    int unsigned left   = total_bytes;
+    int unsigned nbytes = 1 << size;
+    while (left > 0) begin
+      int unsigned offset = addr % nbytes;  // nonzero only for an unaligned start
+      int unsigned beats  = (offset + left + nbytes - 1) / nbytes;  // still needed
+      int unsigned carried;
+      if (beats > beats_to_4kb(addr, size)) beats = beats_to_4kb(addr, size);
+      if (beats > max_beats) beats = max_beats;
+      carried = beats * nbytes - offset;  // bytes this burst can move
+      if (carried > left) carried = left;
+      $display("SPLIT AWADDR=0x%h AWLEN=%0d bytes=%0d", addr[15:0], beats - 1, carried);
+      check_eq("split stays in 4KB", crosses_4kb(addr, size, 8'(beats - 1), INCR), 0);
+      addr += carried;
+      left -= carried;
+    end
+  endtask
+
+  initial begin
+    check_eq("INCR 0x1003 N=2", beat_addr(32'h1003, 3'd2, 8'd3, INCR, 2), 32'h1004);
+    check_eq("INCR 0x1003 N=4", beat_addr(32'h1003, 3'd2, 8'd3, INCR, 4), 32'h100C);
+    check_eq("WRAP 0x1004 N=4", beat_addr(32'h1004, 3'd2, 8'd3, WRAP, 4), 32'h1000);
+    check_eq("WRAP 0x1000 N=4", beat_addr(32'h1000, 3'd2, 8'd3, WRAP, 4), 32'h100C);
+    check_eq("FIXED 0x2001 N=4", beat_addr(32'h2001, 3'd2, 8'd3, FIXED, 4), 32'h2001);
+    check_eq("lanes 0x1001 4B", active_lanes(32'h1001, 3'd2), 8'b0000_1110);
+    check_eq("lanes 0x1004 4B", active_lanes(32'h1004, 3'd2), 8'b1111_0000);
+    check_eq("0x0FF0 x4 legal", crosses_4kb(32'h0FF0, 3'd2, 8'd3, INCR), 0);
+    check_eq("0x0FF4 x4 cross", crosses_4kb(32'h0FF4, 3'd2, 8'd3, INCR), 1);
+    check_eq("0x0FFE x1 legal", crosses_4kb(32'h0FFE, 3'd2, 8'd0, INCR), 0);
+    check_eq("WRAP no cross",   crosses_4kb(32'h0FFC, 3'd2, 8'd3, WRAP), 0);
+    check_eq("0x0FF3 8B fits",  beats_to_4kb(32'h0FF3, 3'd3), 2);
+    plan_split(32'h0FF3, 100, 3'd3, 256);   // the worked example above
+    plan_split(32'h0F00, 2048, 3'd2, 256);  // hits the page edge, then the 256 cap
+    $display("PASS=%0d FAIL=%0d", pass_n, fail_n);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative: worked by hand and with a Python transcription of the §A3.4.1 equations, not from a simulator run; your simulator adds its own `$finish` message):
+
+```text
+SPLIT AWADDR=0x0ff3 AWLEN=1 bytes=13
+SPLIT AWADDR=0x1000 AWLEN=10 bytes=87
+SPLIT AWADDR=0x0f00 AWLEN=63 bytes=256
+SPLIT AWADDR=0x1000 AWLEN=255 bytes=1024
+SPLIT AWADDR=0x1400 AWLEN=191 bytes=768
+PASS=17 FAIL=0
+```
+
+The second split shows both limits. From 0x0F00 only 64 four-byte transfers fit before 0x1000; after the boundary, 448 transfers remain, so the AXI4 cap of 256 cuts the next burst, and the last burst carries the remaining 192. With `max_beats = 16` (AXI3) the same 2048 bytes would take 32 bursts of 64 bytes.
+
+**Run it.** Compile the package and `tb_top` together with any IEEE 1800-2023 simulator, with `tb_top` as the top module, and run it. No UVM library is needed. No simulator was available when this page was written, so the output above is the computed result.
+
+### The burst-legality checker
+
+The 4KB property above is one of five legality checks. Each gates on the address handshake so that one bad burst reports once; the AR side mirrors the AW side.
+
+```systemverilog
+// snippet: in the same checker module; DATA_BYTES comes from axi_burst_pkg.
+// [Protocol IHI0022E A3.4.1] One report per burst: gate on the AW handshake.
+wire aw_hs = AWVALID && AWREADY;
+
+a_aw_size:  assert property (@(posedge ACLK) disable iff (!ARESETn)
+  aw_hs |-> (32'd1 << AWSIZE) <= DATA_BYTES)
+  else $error("AWSIZE %0d is wider than the %0d-byte bus", AWSIZE, DATA_BYTES);
+a_aw_burst: assert property (@(posedge ACLK) disable iff (!ARESETn)
+  aw_hs |-> AWBURST != 2'b11)
+  else $error("AWBURST 2'b11 is reserved");
+a_aw_wrap:  assert property (@(posedge ACLK) disable iff (!ARESETn)
+  aw_hs && AWBURST == 2'b10 |->
+    AWLEN inside {8'd1, 8'd3, 8'd7, 8'd15} && (AWADDR & ((32'd1 << AWSIZE) - 1)) == 0)
+  else $error("WRAP needs 2, 4, 8 or 16 transfers and an aligned start");
+a_aw_fixed: assert property (@(posedge ACLK) disable iff (!ARESETn)
+  aw_hs && AWBURST == 2'b00 |-> AWLEN <= 8'd15)
+  else $error("FIXED burst longer than 16 transfers");
+```
+
+### Where each check lives in a UVM environment
+
+Each burst rule has one natural home. (Driver, monitor, sequencer and scoreboard roles are introduced in [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index).)
+
+- **Sequence item:** legality constraints, so random stimulus is legal by construction (Push Further shows a width trap).
+- **Driver:** computes Address_N for its own bookkeeping, places each byte on its lane, drives a full-lane or deliberately sparse WSTRB, and asserts WLAST on transfer AxLEN + 1.
+- **Monitor:** pairs W transfers with their AW request in order (W may arrive first, §A3.3), counts transfers against AxLEN + 1, checks WSTRB containment, and extracts bytes Lower_Byte_Lane to Upper_Byte_Lane from WDATA and RDATA:
+
+```systemverilog
+// snippet: monitor, after pairing W transfer n with its AW item aw (fields addr,
+// len, size, burst) and sampling its strobes into w_strb.
+logic [DATA_BYTES-1:0] lanes;
+lanes = active_lanes(beat_addr(aw.addr, aw.size, aw.len, aw.burst, n), aw.size);
+if ((w_strb & ~lanes) != '0)
+  `uvm_error("AXI_WSTRB", $sformatf("transfer %0d: WSTRB %b outside lanes %b",
+                                    n, w_strb, lanes))
+```
+
+- **Scoreboard:** a reference memory keyed by **byte** address that writes only strobed bytes. A memory keyed by the transaction address never lines up narrow and unaligned accesses.
+- **Coverage:** burst type, length, narrow or full width, aligned or unaligned start, bursts that end exactly at a page edge, and sparse, full or zero strobes (see Push Further).
+
+### Debugging burst-math bugs
+
+The log lines in the first column are illustrative.
+
+| Symptom (what the log shows) | Cause | Fix |
+|---|---|---|
+| Scoreboard mismatches on bytes 0x1004 to 0x1006, 0x1008 to 0x100A and 0x100C to 0x100E after an INCR4 of words from 0x1003; no assertion fails | The driver's own address model puts transfers 2 to 4 at 0x1007, 0x100B and 0x100F, so it drives WSTRB `4'b1000` and data on lane 3 only. The slave computes 0x1004, 0x1008 and 0x100C and writes only bytes 0x1007, 0x100B and 0x100F. `4'b1000` is a legal sparse strobe for those addresses, so no protocol check fires. | Address_N = Aligned_Address + (N − 1) × Number_Bytes |
+| `a_aw_4kb` fails on a WRAP4 at 0x0FFC | The checker is not gated on INCR | Gate on `AWBURST == 2'b01` |
+| `a_aw_4kb` fails on INCR, AxLEN = 0, AxSIZE = 2, at 0x0FFE | The checker uses AxADDR + bytes | Count from the aligned start |
+| `AXI_WSTRB` error on `4'b0010` for a transfer at 0x1000 with AxSIZE = 2 | The check tests equality with the lanes | Test the subset: `(WSTRB & ~lanes) == '0` |
+| The monitor reports wrong read data for a narrow INCR | It takes `RDATA[15:0]` on every transfer | Extract bytes Lower_Byte_Lane to Upper_Byte_Lane for each transfer |
+| WLAST is missing, or the monitor sees an extra W transfer | The driver sends AxLEN transfers | Send AxLEN + 1 and assert WLAST on the last (§A3.2.2) |
+| Scoreboard mismatches on every transfer after the first of a FIXED burst | The monitor increments FIXED addresses | Keep Start_Address for every FIXED transfer |
+
+### How to work any burst
+
+1. Write down Number_Bytes = 2^AxSIZE, Burst_Length = AxLEN + 1 and Aligned_Address.
+2. Compute Address_N for each transfer: FIXED keeps Start_Address; INCR uses the equation; WRAP uses it until the upper limit, then returns to Wrap_Boundary.
+3. Compute each transfer's lanes, Lower_Byte_Lane to Upper_Byte_Lane.
+4. Check that WSTRB is a subset of those lanes.
+5. Check legality: AxSIZE fits the bus, AxBURST is not 0b11, the length suits the type, a WRAP starts aligned, and an INCR stays in its 4KB page.
+6. If a transfer you need would cross 4KB, split it: min(transfers left in the page, the cap, transfers still needed) per burst.
+
+**Checklist before moving on:**
+- [ ] I can compute Address_N for INCR, WRAP and FIXED from an unaligned start.
+- [ ] I can compute each transfer's lanes and judge any WSTRB as legal or illegal.
+- [ ] I can state the length limits for each burst type and the WRAP rules.
+- [ ] My 4KB check gates on INCR and counts from the aligned start.
+- [ ] I can split a crossing transfer into legal bursts, including the 256 or 16 cap.
+- [ ] I can predict that the example prints `PASS=17 FAIL=0` and explain each SPLIT line.
+
+## Push Further
+
+### Expert: two ways to signal an unaligned start
+
+§A3.4.3 ("Unaligned transfers") lets a master signal an unaligned start in two ways: "use the low-order address lines to signal an unaligned start address", or "provide an aligned address and use the byte lane strobes to signal the unaligned start address". So a write of 3 bytes from 0x1001 may arrive as AWADDR 0x1001 with `4'b1110`, or as AWADDR 0x1000 with `4'b1110`. The low-order address bits "must be consistent with the information on the byte lane strobes", and "the slave is not required to take special action based on any alignment information from the master".
+
+Consequences for a TB: the scoreboard must apply strobes, not trust AxADDR, to find the first written byte; the 4KB check is unchanged because both forms have the same Aligned_Address; and leading zero strobes on transfer 1 of an aligned burst are legal, not a bug.
+
+### Expert: what an interconnect may do to your burst
+
+The burst a master sends is not always the burst a slave sees. §A4.3.1 defines AxCACHE[1] as the **Modifiable** bit:
+
+- A **Modifiable** transaction may be split into several transactions or merged with others, a read may fetch more data than required, and a write may access a larger range "using the WSTRB signals to ensure that only the appropriate locations are updated". AxADDR, AxSIZE, AxLEN and AxBURST may all change, so a WRAP can arrive at the slave as INCRs.
+- A **Non-modifiable** transaction must not be split or merged, except that one longer than 16 transfers may be split; each piece keeps every characteristic except a reduced burst length and an adapted address (§A3.4.1, §A4.3.1). A Non-modifiable exclusive access may have AxSIZE and AxLEN changed if the total bytes stay the same.
+- No modification may cause "accesses to a different 4KByte address space than that of the original transaction", or split a single-copy-atomic access (§A4.3.1).
+
+So an end-to-end scoreboard (master side to slave side) compares **bytes per address**, never bursts or transfers one for one. Which transformations a given interconnect performs (splits for AXI3 slaves, WRAP to INCR, width conversion) is implementation-defined: read the interconnect's documentation, and make the scoreboard tolerant of every legal form. A checker on the slave side can still assert that a split Non-modifiable burst kept its type, size, lock and protection.
+
+### Expert: exclusive accesses tighten the burst rules
+
+An **exclusive access** is a read-then-conditional-write pair used for semaphores (taught in [B-AXI-4](/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index)). §A7.2.4 adds burst-math rules on top of this lesson's:
+
+- the number of bytes is a power of two: 1, 2, 4, 8, 16, 32, 64 or 128;
+- the address is aligned to that total (Number_Bytes × Burst_Length);
+- in AXI4 the burst length must not exceed 16 transfers;
+- the exclusive read and write use identical addresses and control signals.
+
+Breaking these "causes UNPREDICTABLE behavior". A legality checker therefore needs AxLOCK as an input, and the exclusive alignment check uses the total size, not AxSIZE: an exclusive INCR of 4 words must start on a 16-byte boundary.
+
+### Expert: read-sensitive targets and no early termination
+
+Bursts never end early (§A3.4.1). A master that does not need all the read data still completes every transfer and discards the extra. The specification's note warns that "discarding read data that is not required can result in lost data when accessing a read-sensitive device such as a FIFO": each read pops an entry. The rule is to "use a burst length that exactly matches the size of the required data transfer".
+
+For a TB: a FIFO model in the scoreboard must pop on every completed R transfer, including discarded ones; and a sequence that reads a FIFO status register and then the data port must size the second burst from the status, typically with a FIXED burst.
+
+### Expert: width conversion and byte invariance
+
+The size rule says "the data bus width of either agent" (§A3.4.1), because an interconnect may connect a 64-bit master to a 32-bit slave. When a width converter (downsizer) must carry a transfer wider than the narrow side, the transaction "must be modified" even if it is Non-modifiable (§A4.3.1 note): an INCR of 8-byte transfers becomes twice as many 4-byte transfers.
+
+AXI is **byte invariant** (§A3.4.3): "any byte transfer to a given address passes the eight bits of data on the same data bus wires to the same address location, regardless of the endianness". So the lane equations on this page hold for big-endian and little-endian data alike, and a byte-addressed scoreboard is correct for both. Bridges and width converters are covered in [B-AMBA-F1](/curriculum/T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index).
+
+### Expert: legal-by-construction stimulus and burst coverage
+
+A sequence item can carry the legality rules as constraints (IEEE 1800-2023 §18.5; constraints are taught in [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)):
+
+```systemverilog
+// snippet: legality constraints for a 64-bit bus (DATA_BYTES = 8).
+rand bit [31:0] addr;
+rand bit [7:0]  len;
+rand bit [2:0]  size;
+rand bit [1:0]  burst;
+constraint c_legal {
+  size <= 3;                                         // 2^size <= 8 bytes
+  burst != 2'b11;                                    // reserved
+  burst == 2'b10 -> len inside {1, 3, 7, 15} && (addr & ((1 << size) - 1)) == 0;
+  burst == 2'b00 -> len <= 15;
+  burst == 2'b01 -> ((addr[11:0] >> size) << size) + ((len + 1) << size) <= 4096;
+}
+```
+
+**The width trap.** The INCR constraint works because the unsized literals `1` and `4096` are 32 bits wide, so the sum is evaluated in at least 32 bits and keeps its carry (§11.6.1, Table 11-21; §11.6.2 shows the same carry loss with a 16-bit add). Write the "last byte offset" version with every operand 12 bits wide, `addr[11:0] + ((len + 12'd1) << size) - 12'd1 <= 12'hFFF`, and the whole expression is evaluated in 12 bits. The carry out of bit 11, which *is* the crossing, is lost, every 12-bit value is at most 12'hFFF, and the constraint is always true: the solver produces crossing bursts and the checker catches them only if it was written correctly. How fast a solver handles random shift amounts is tool-dependent; measure it in your simulator.
+
+**Coverage** (covergroups, coverpoints and crosses, §19.5 and §19.6; taught in [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)): cover burst type × length bins (1, 2 to 15, 16, 17 to 255, 256), narrow versus full width, aligned versus unaligned start, a WRAP that starts on versus above its boundary, an INCR whose last byte is exactly the last byte of a page, and sparse, full and all-zero strobes. These are the corners the bugs on this page live in.
+
+### Expert: checker versus scoreboard
+
+Protocol assertions judge each transfer on its own; they cannot know what the master *meant* to write. The driver bug in the debugging table shows the gap: the driver sends transfer 2 of an INCR from 0x1003 with `4'b1000`, a legal sparse strobe for the real Address_2, 0x1004, so every protocol assertion passes. Only a byte-level scoreboard, which compares memory contents with what the sequence asked for, sees bytes 0x1004 to 0x1006 never written. A complete AXI environment needs both: assertions for rules, a scoreboard for intent. [B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index) builds both.
+
+### Interview angles
+
+Answer each one before you open the options.
+
+<InterviewQuestionPlayground
+  title="Interview angle: why aligned, why INCR"
+  question="Your 4KB assertion counts from Aligned_Address and checks INCR bursts only. A reviewer asks you to justify both choices. What do you say?"
+  options={[
+    { text: "Every transfer after the first starts from Aligned_Address, so the last byte is Aligned_Address + Burst_Length x Number_Bytes - 1; and a legal WRAP stays in an aligned window of at most 2048 bytes while FIXED never moves, so only INCR can cross.", correct: true, feedback: "Right. Counting from AxADDR overshoots for unaligned starts and fails legal bursts; checking WRAP or FIXED for crossing only produces false failures. WRAP gets alignment and length checks instead (IHI0022E §A3.4.1)." },
+    { text: "The 4KB rule only applies to INCR bursts, so the others are exempt.", correct: false, feedback: "The rule applies to every burst. WRAP and FIXED are skipped because they cannot break it when they are legal, not because they are exempt." },
+    { text: "Counting from the aligned start is a conservative choice that catches more bugs.", correct: false, feedback: "It is the exact choice, not a conservative one: it counts the bytes the burst really carries. AxADDR + total is the inexact one." },
+    { text: "Aligned_Address is used because unaligned INCR bursts are illegal.", correct: false, feedback: "Unaligned INCR bursts are legal. Only WRAP must start aligned." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: the interconnect split my burst"
+  question="Your Non-modifiable 64-transfer INCR write arrives at an AXI3 slave as four 16-transfer bursts. Your end-to-end scoreboard reports four unexpected transactions and one missing one. Is the interconnect wrong?"
+  options={[
+    { text: "No. A Non-modifiable transaction longer than 16 transfers may be split, keeping everything except the burst length and the adapted address. The scoreboard must compare bytes per address, not bursts.", correct: true, feedback: "Right (IHI0022E §A3.4.1, §A4.3.1). AXI3 compatibility is the reason the exception exists." },
+    { text: "Yes. A Non-modifiable transaction must never be split.", correct: false, feedback: "That is the general rule, but bursts longer than 16 transfers are the stated exception." },
+    { text: "Yes, unless AxCACHE[1] was HIGH.", correct: false, feedback: "With AxCACHE[1] HIGH (Modifiable) even more changes are allowed, but the split is legal here too." },
+    { text: "No, but only because the slave is AXI3; an AXI4 slave must receive the original burst.", correct: false, feedback: "The exception does not depend on the slave's version. The specification's note gives AXI3 compatibility as the reason and adds that splitting might also reduce the impact of long bursts on QoS guarantees (§A3.4.1)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: a burst that writes nothing"
+  question="A master issues a 4-transfer INCR write with WSTRB = 0 on every transfer. Is it legal, and what must the slave do?"
+  options={[
+    { text: "Legal. All-zero strobes are a subset of every transfer's lanes; the slave still accepts all four transfers (WLAST on the fourth) and returns one B response, and no memory byte changes.", correct: true, feedback: "Right. This is exactly how a master writes fewer bytes in a burst it cannot terminate early (IHI0022E §A3.4.1, §A3.4.3)." },
+    { text: "Illegal: at least one strobe must be HIGH on each transfer.", correct: false, feedback: "No such rule exists. Strobes may be any subset of the active lanes, and the empty set is a subset." },
+    { text: "Legal, but the slave may end the burst after the first transfer.", correct: false, feedback: "No component can terminate a burst early; the slave accepts all AxLEN + 1 transfers." },
+    { text: "Legal, and the slave returns no B response because nothing was written.", correct: false, feedback: "Every write burst gets exactly one B response, whatever its strobes." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "If AxLEN = 7 and AxSIZE = 2, what is the most data the burst can carry?",
+      objective: 1,
+      answers: [
+        { text: "7 bytes", correct: false, feedback: "That reads AxLEN as a byte count. AxLEN is transfers minus one, and each transfer carries up to 2^AxSIZE bytes." },
+        { text: "28 bytes", correct: false, feedback: "Off by one transfer: 7 x 4. The burst has AxLEN + 1 = 8 transfers." },
+        { text: "32 bytes", correct: true, feedback: "Right: 8 transfers x 4 bytes. It is a maximum because an unaligned first transfer or sparse strobes carry fewer." },
+        { text: "8 bytes", correct: false, feedback: "That is the number of transfers, not bytes." }
+      ],
+      explanation: "Burst_Length = AxLEN + 1 = 8 and Number_Bytes = 2^AxSIZE = 4 (IHI0022E §A3.4.1), so at most 32 bytes. Seven and 28 come from treating AxLEN as the count; 8 counts transfers instead of bytes."
+    },
+    {
+      question: "A WRAP burst with AxLEN = 3 and AxSIZE = 2 starts at 0x100C. What is the address of the second transfer (N = 2)?",
+      objective: 1,
+      answers: [
+        { text: "0x1010", correct: false, feedback: "That forgets to wrap. 0x1010 is the upper limit (Wrap_Boundary + 16), which is never used as an address." },
+        { text: "0x1000", correct: true, feedback: "Right. Wrap_Boundary = 0x1000 and the upper limit is 0x1010, so the increment from 0x100C wraps to 0x1000." },
+        { text: "0x100C", correct: false, feedback: "That is N = 1, the start address. Transfers are numbered from 1." },
+        { text: "0x1014", correct: false, feedback: "That adds two increments and ignores the wrap." }
+      ],
+      explanation: "Total = 4 x 4 = 16 bytes, Wrap_Boundary = INT(0x100C / 16) x 16 = 0x1000, upper limit 0x1010. Address_1 = 0x100C; Aligned_Address + 4 = 0x1010 equals the upper limit, so Address_2 = 0x1000 (IHI0022E §A3.4.1). The burst then continues 0x1004, 0x1008."
+    },
+    {
+      question: "On a 64-bit data bus, a 4-byte write transfer is at address 0x1004. Which WSTRB writes all four of its bytes?",
+      objective: 2,
+      answers: [
+        { text: "8'b0000_1111", correct: false, feedback: "That picks lanes from AxSIZE alone, as if every 4-byte transfer used lanes 0 to 3. Address 0x1004 selects lanes 4 to 7 on a 64-bit bus." },
+        { text: "8'b1111_0000", correct: true, feedback: "Right: Lower_Byte_Lane = 0x1004 mod 8 = 4, Upper_Byte_Lane = 7." },
+        { text: "8'b1111_1111", correct: false, feedback: "That strobes the whole bus, including lanes 0 to 3, which carry no valid data for this transfer: illegal." },
+        { text: "8'b0001_0000", correct: false, feedback: "That writes only byte 0x1004. It is a legal sparse strobe, but it does not write all four bytes." }
+      ],
+      explanation: "The address and AxSIZE select the lanes: 0x1004 mod 8 = 4, so lanes 4 to 7 (IHI0022E §A3.4.1). Writing all four bytes needs all four of those strobes. A subset such as 8'b0001_0000 would also be legal, which is why the question asks which value writes all four bytes."
+    },
+    {
+      question: "A master wants an INCR burst of 16 transfers of 4 bytes starting at 0x0FC4. Is it legal?",
+      objective: 3,
+      answers: [
+        { text: "Yes: it fits within a single 4KB page.", correct: false, feedback: "Count the last byte: 0x0FC4 + 64 - 1 = 0x1003, which is in the next page." },
+        { text: "No: it crosses the 4KB boundary at 0x1000.", correct: true, feedback: "Right. The start is already aligned, so the last byte is 0x0FC4 + 63 = 0x1003." },
+        { text: "No: 16 transfers is too many for AXI.", correct: false, feedback: "16 is legal for every burst type, and AXI4 INCR allows up to 256." },
+        { text: "Yes: the 4KB rule only applies to WRAP bursts.", correct: false, feedback: "The opposite: only INCR bursts can cross a 4KB boundary, so INCR is exactly what the check must test." }
+      ],
+      explanation: "0x0FC4 is 4-byte aligned, so Aligned_Address = 0x0FC4 and the last byte is 0x0FC4 + 16 x 4 - 1 = 0x1003. INT(0x0FC4 / 4096) = 0 but INT(0x1003 / 4096) = 1, so the burst crosses 0x1000 (IHI0022E §A3.4.1). A master would split it: 15 transfers to 0x0FFF, then 1 from 0x1000."
+    },
+    {
+      question: "Predict: an INCR burst with AxLEN = 3 and AxSIZE = 2 starts at 0x1003 on a 32-bit bus. What is the address of transfer N = 3?",
+      objective: 1,
+      answers: [
+        { text: "0x100B", correct: false, feedback: "That is start + 2 x 4: it carries the 0x3 offset into every transfer. Only transfer 1 may be unaligned." },
+        { text: "0x1008", correct: true, feedback: "Right: Aligned_Address + (3 - 1) x 4 = 0x1000 + 8." },
+        { text: "0x100C", correct: false, feedback: "Off by one: that is N = 4." },
+        { text: "0x1007", correct: false, feedback: "That is the naive address of N = 2 (start + 4)." }
+      ],
+      explanation: "Aligned_Address = 0x1000. Address_N = Aligned_Address + (N - 1) x Number_Bytes for N of 2 or more, so the burst is 0x1003, 0x1004, 0x1008, 0x100C (IHI0022E §A3.4.1)."
+    },
+    {
+      question: "Which of these bursts breaks the 4KB rule?",
+      objective: 3,
+      answers: [
+        { text: "WRAP, AxLEN = 3, AxSIZE = 2, at 0x0FFC", correct: false, feedback: "Its window is 0x0FF0 to 0x0FFF: addresses 0x0FFC, 0x0FF0, 0x0FF4, 0x0FF8. A legal WRAP never crosses 4KB." },
+        { text: "FIXED, AxLEN = 15, AxSIZE = 2, at 0x0FFC", correct: false, feedback: "A FIXED burst uses 0x0FFC for all 16 transfers. It never moves, so it never crosses." },
+        { text: "INCR, AxLEN = 1, AxSIZE = 2, at 0x0FFC", correct: true, feedback: "Right: two words, 0x0FFC to 0x1003. It crosses 0x1000." },
+        { text: "INCR, AxLEN = 0, AxSIZE = 2, at 0x0FFE", correct: false, feedback: "One transfer carrying only 0x0FFE and 0x0FFF. AxADDR + 4 = 0x1002 is the trap; count from the aligned start." }
+      ],
+      explanation: "Only INCR moves past its window. INCR from 0x0FFC with 2 transfers has last byte 0x0FFC + 8 - 1 = 0x1003: illegal. The single transfer at 0x0FFE has Aligned_Address 0x0FFC and last byte 0x0FFF: legal. WRAP and FIXED cannot cross when legal (IHI0022E §A3.4.1)."
+    },
+    {
+      question: "A checker asserts WSTRB == active_lanes(addr, size) and fires on WSTRB = 4'b0010 for a transfer at 0x1000 with AxSIZE = 2 on a 32-bit bus. What is wrong?",
+      objective: 5,
+      answers: [
+        { text: "The master: a 4-byte transfer must strobe all four lanes.", correct: false, feedback: "AxSIZE is the maximum bytes per transfer; strobes may be any subset of the active lanes." },
+        { text: "The checker: a sparse write is legal, so the check must test containment, (WSTRB & ~lanes) == 0.", correct: true, feedback: "Right. Lane 1 is inside the active lanes 0 to 3, so 4'b0010 writes one byte legally (IHI0022E §A3.4.3)." },
+        { text: "The master: only the last transfer of a burst may be sparse.", correct: false, feedback: "No such rule. Any transfer may be sparse; FIXED bursts may even change strobes on every transfer." },
+        { text: "Nothing: the slave must answer SLVERR, which the checker anticipates.", correct: false, feedback: "A legal sparse write gets a normal response. The failure is the checker's." }
+      ],
+      explanation: "\"A master must ensure that the write strobes are HIGH only for byte lanes that contain valid data\" (IHI0022E §A3.4.3): HIGH strobes must lie inside the lanes, but lanes may be left LOW. Equality rejects every legal partial write; containment is the rule."
+    },
+    {
+      question: "Which AXI4 burst is illegal?",
+      objective: 3,
+      answers: [
+        { text: "INCR, AxLEN = 255, AxSIZE = 2, from 0x0000", correct: false, feedback: "Legal: AXI4 INCR allows 256 transfers, and the last byte is 0x03FF. The '16 maximum' is AXI3, or FIXED and WRAP." },
+        { text: "INCR, AxLEN = 3, AxSIZE = 2, from 0x1003", correct: false, feedback: "Legal: INCR may start unaligned." },
+        { text: "WRAP, AxLEN = 3, AxSIZE = 2, from 0x1002", correct: true, feedback: "Right: a WRAP must start aligned to the transfer size, and 0x1002 is not 4-byte aligned." },
+        { text: "FIXED, AxLEN = 15, AxSIZE = 2, from 0x2000", correct: false, feedback: "Legal: FIXED allows 1 to 16 transfers." }
+      ],
+      explanation: "WRAP bursts must start aligned and have 2, 4, 8 or 16 transfers; INCR may start anywhere and carries up to 256 transfers in AXI4; FIXED carries up to 16 (IHI0022E §A3.4.1)."
+    },
+    {
+      question: "Predict: a DMA engine writes 64 bytes from 0x0FE8 with 8-byte transfers on a 64-bit AXI4 bus. Which bursts does it issue?",
+      objective: 4,
+      answers: [
+        { text: "One INCR burst: AWADDR 0x0FE8, AWLEN 7", correct: false, feedback: "That burst ends at 0x1027 and crosses 0x1000." },
+        { text: "AWADDR 0x0FE8, AWLEN 2; then AWADDR 0x1000, AWLEN 4", correct: true, feedback: "Right: (0x1000 - 0x0FE8) / 8 = 3 transfers fit (24 bytes), and 40 bytes remain, which take 5 transfers." },
+        { text: "AWADDR 0x0FE8, AWLEN 3; then AWADDR 0x1000, AWLEN 3", correct: false, feedback: "The first burst is off by one: AWLEN 3 is 4 transfers and reaches 0x1007." },
+        { text: "One WRAP8 burst at 0x0FE8", correct: false, feedback: "A WRAP8 of 8-byte transfers at 0x0FE8 has Wrap_Boundary 0x0FC0: after 0x0FFF it wraps back to 0x0FC0 to 0x0FE7 instead of continuing to 0x1000 to 0x1027. Wrong bytes." }
+      ],
+      explanation: "Transfers left in the page = (4096 - 0xFE8) / 8 = 3, so burst 1 is AWLEN 2 (0x0FE8 to 0x0FFF). The remaining 40 bytes from 0x1000 take 5 transfers: AWLEN 4, last byte 0x1027 (IHI0022E §A3.4.1)."
+    },
+    {
+      question: "After an INCR4 of words from 0x1003, the scoreboard reports that bytes 0x1004-0x1006, 0x1008-0x100A and 0x100C-0x100E were never written, and no assertion fired. The driver computes its addresses as start + (N - 1) x 4. Why did the protocol checks stay silent?",
+      objective: 5,
+      answers: [
+        { text: "The driver's model puts transfers 2 to 4 at 0x1007, 0x100B and 0x100F, so it drives WSTRB 4'b1000 on each. The slave computes 0x1004, 0x1008 and 0x100C, for which 4'b1000 is a legal sparse strobe, so only bytes 0x1007, 0x100B and 0x100F are written.", correct: true, feedback: "Right. The fix is Address_N = Aligned_Address + (N - 1) x 4. Only a byte-level scoreboard catches this bug." },
+        { text: "The slave ignored WSTRB.", correct: false, feedback: "A slave ignoring WSTRB would write too many bytes, not too few." },
+        { text: "The 4KB checker should have fired.", correct: false, feedback: "Nothing crosses 4KB: the burst covers 0x1003 to 0x100F." },
+        { text: "The interconnect reordered the W transfers.", correct: false, feedback: "The transfers of one burst stay in order; reordering is not the cause." }
+      ],
+      explanation: "AXI carries one address per burst; the slave computes the rest (IHI0022E §A3.4.1). The driver's wrong model changes only which strobes it drives, and 4'b1000 is legal for every computed address (§A3.4.3). Assertions check rules, not intent, so the scoreboard is the safety net."
+    },
+    {
+      question: "Which condition is a correct 4KB check for a request on the AW handshake?",
+      objective: 4,
+      answers: [
+        { text: "((AWADDR[11:0] >> AWSIZE) << AWSIZE) + ((AWLEN + 1) << AWSIZE) <= 4096, for every burst type", correct: false, feedback: "The arithmetic is right but the gating is not: a legal WRAP4 of words at 0x0FFC gives 0xFFC + 16 = 4108 and fails, and so does a legal FIXED burst near the page end." },
+        { text: "AWBURST == INCR implies ((AWADDR[11:0] >> AWSIZE) << AWSIZE) + ((AWLEN + 1) << AWSIZE) <= 4096", correct: true, feedback: "Right: INCR only, counting from the aligned page offset, evaluated with enough bits to keep the carry." },
+        { text: "AWBURST == INCR implies AWADDR[11:0] + ((AWLEN + 1) << AWSIZE) <= 4096", correct: false, feedback: "That counts from the unaligned AxADDR and overshoots: INCR, AWLEN = 0, AWSIZE = 2 at 0x0FFE gives 0xFFE + 4 = 4098 and fails, although the transfer carries only 0x0FFE and 0x0FFF." },
+        { text: "AWBURST == WRAP implies the burst ends before the next 4KB boundary", correct: false, feedback: "Legal WRAP bursts cannot cross 4KB; the INCR case is the one to check." }
+      ],
+      explanation: "The last byte is Aligned_Address + Burst_Length x Number_Bytes - 1, and only INCR can cross (IHI0022E §A3.4.1). Adding the aligned page offset to the total bytes and comparing with 4096 is the same test. Starting from the unaligned AxADDR fails legal bursts; testing WRAP and FIXED the same way fails legal bursts too."
+    },
+    {
+      question: "On a 64-bit bus, transfer 1 of an INCR burst with AxSIZE = 2 starts at 0x1001. Which WSTRB is illegal for it?",
+      objective: 2,
+      answers: [
+        { text: "8'b0000_1110", correct: false, feedback: "Legal: exactly the active lanes 1 to 3." },
+        { text: "8'b0000_0100", correct: false, feedback: "Legal: a sparse subset (lane 2 only)." },
+        { text: "8'b0000_0000", correct: false, feedback: "Legal: all-zero strobes write nothing but are a subset of every lane set." },
+        { text: "8'b0001_1110", correct: true, feedback: "Right: lane 4 is outside the active lanes. It belongs to the next 4-byte block (0x1004 to 0x1007)." }
+      ],
+      explanation: "Lower_Byte_Lane = 1 and Upper_Byte_Lane = Aligned_Address 0x1000 + 3 - 0x1000 = 3, so lanes 1 to 3 (IHI0022E §A3.4.1). Filling start to start + size - 1 would add lane 4, which carries no valid data, so its strobe must be LOW (§A3.4.3)."
+    }
+  ]}
+/>
+
+### Kata: `calc_lanes()` against the visualizer
+
+Write `calc_lanes(addr, size, data_bytes)` that returns the active lanes of one transfer as a 16-bit mask, for buses of 4, 8 or 16 bytes. Check it in a self-checking `tb_top` against these vectors, then set each one in the visualizer (address, AxSIZE and bus width) and compare with its lanes column.
+
+| addr | AxSIZE | Bus | Expected lanes |
+|---|---|---|---|
+| 0x1003 | 2 | 32-bit | `4'b1000` |
+| 0x1004 | 2 | 64-bit | `8'b1111_0000` |
+| 0x2001 (FIXED, every transfer) | 2 | 32-bit | `4'b1110` |
+| 0x1001 | 0 | 64-bit | `8'b0000_0010` |
+| 0x1001 | 2 | 64-bit | `8'b0000_1110` |
+| 0x1002 | 1 | 32-bit | `4'b1100` |
+| 0x100D | 3 | 128-bit | `16'b1110_0000_0000_0000` |
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// compile
+module tb_top;
+  // Lanes a transfer at addr may use on a bus of data_bytes lanes (A3.4.1).
+  // Precondition: (1 << size) <= data_bytes <= 16.
+  function automatic logic [15:0] calc_lanes(input logic [31:0] addr,
+                                             input logic [2:0] size,
+                                             input int unsigned data_bytes);
+    int unsigned nbytes  = 1 << size;
+    int unsigned aligned = (addr / nbytes) * nbytes;           // Aligned_Address
+    int unsigned lower   = addr % data_bytes;                  // Lower_Byte_Lane
+    int unsigned upper   = aligned % data_bytes + nbytes - 1;  // Upper_Byte_Lane
+    logic [15:0] lanes   = '0;
+    for (int unsigned lane = lower; lane <= upper; lane++) lanes[lane] = 1'b1;
+    return lanes;
+  endfunction
+
+  int unsigned pass_n, fail_n;
+
+  task automatic check(input logic [31:0] addr, input logic [2:0] size,
+                       input int unsigned data_bytes, input logic [15:0] want);
+    logic [15:0] got = calc_lanes(addr, size, data_bytes);
+    if (got === want) pass_n++;
+    else begin
+      fail_n++;
+      $display("FAIL addr=0x%h size=%0d: got %b, want %b", addr, size, got, want);
+    end
+  endtask
+
+  initial begin
+    check(32'h1003, 3'd2,  4, 16'b0000_0000_0000_1000);
+    check(32'h1004, 3'd2,  8, 16'b0000_0000_1111_0000);
+    check(32'h2001, 3'd2,  4, 16'b0000_0000_0000_1110);  // FIXED: same every time
+    check(32'h1001, 3'd0,  8, 16'b0000_0000_0000_0010);
+    check(32'h1001, 3'd2,  8, 16'b0000_0000_0000_1110);
+    check(32'h1002, 3'd1,  4, 16'b0000_0000_0000_1100);
+    check(32'h100D, 3'd3, 16, 16'b1110_0000_0000_0000);
+    $display("PASS=%0d FAIL=%0d", pass_n, fail_n);
+    $finish;
+  end
+endmodule
+```
+
+Expected output (computed, not simulated): `PASS=7 FAIL=0`. The two vectors that catch the classic bugs are 0x1001 with AxSIZE = 2 (a spill to lane 4 gives `8'b0001_1110`) and 0x1004 on the 64-bit bus (lanes from AxSIZE alone give `8'b0000_1111`). The last vector exercises the first-transfer equation on a wide bus: Aligned_Address 0x1008 puts the block at lanes 8 to 15, and the start at lane 13 trims it to lanes 13 to 15.
+
+</details>
+
+### Debug challenge: the strobe that passed every check
+
+A driver builds its W transfers with this loop, and a regression on an INCR4 of words from 0x1003 shows the scoreboard log below while every protocol assertion passes. Explain why no assertion fired, and give the one-line fix.
+
+```systemverilog
+// snippet: the buggy driver loop (32-bit bus)
+for (int unsigned n = 1; n <= req.len + 1; n++) begin
+  logic [31:0] addr = req.addr + (n - 1) * (1 << req.size);  // bug
+  drive_w(addr, req.size, n == req.len + 1);                 // lanes from addr
+end
+```
+
+```text
+UVM_ERROR @ ... [SCB_MISMATCH] addr 0x1004: expected 0x11, memory never written
+UVM_ERROR @ ... [SCB_MISMATCH] addr 0x1005: expected 0x22, memory never written
+UVM_ERROR @ ... [SCB_MISMATCH] addr 0x1006: expected 0x33, memory never written
+```
+
+<details>
+<summary>Answer</summary>
+
+The driver's model puts transfers 2 to 4 at 0x1007, 0x100B and 0x100F, so `drive_w` lights only lane 3 and drives WSTRB `4'b1000` each time. But only AWADDR travels on the bus: the slave computes 0x1004, 0x1008 and 0x100C (§A3.4.1), and `4'b1000` is a legal sparse strobe for each of them (§A3.4.3). So no protocol rule is broken; the slave simply writes bytes 0x1007, 0x100B and 0x100F and leaves the other nine bytes untouched. The fix is one line:
+
+```systemverilog
+// snippet: the fixed address computation
+logic [31:0] addr = (n == 1) ? req.addr
+                  : (req.addr >> req.size << req.size) + (n - 1) * (1 << req.size);
+```
+
+The log lines are illustrative. The lesson: protocol assertions check rules, the scoreboard checks intent.
+
+</details>
+
+### Exercise: legal-by-construction stimulus
+
+Put the `c_legal` constraint from Push Further into a sequence item, randomize 1000 items, and check each one with `crosses_4kb()` from the Make It Work package and with the WRAP and FIXED rules. Then replace the INCR line with the 12-bit "last byte offset" version and count how many crossing bursts appear.
+
+<details>
+<summary>What you should see</summary>
+
+With the 32-bit version, `crosses_4kb()` never returns 1 and every WRAP is aligned with a legal length. With the 12-bit version the INCR constraint is always true, so roughly every INCR burst whose start sits near the end of a page and whose length is large crosses; the exact count depends on the seed and the solver. Fix: keep at least one unsized literal (or cast to 32 bits) so the sum keeps the carry (IEEE 1800-2023 §11.6.1).
+
+</details>
+
+### Visualizer prediction tasks
+
+Go back to the visualizer above and work these presets. Predict first, then reveal.
+
+| Preset | Predict | Expected answer |
+|---|---|---|
+| "WRAP4 at 0x1008" | The last transfer | 0x1004 |
+| "FIXED unaligned" | The last transfer and its lanes | 0x2001, lanes 1 to 3 |
+| "Narrow on 64-bit" | The lanes of each transfer | 4 to 7, 0 to 3, 4 to 7, 0 to 3 |
+| "Crosses 4KB" | Is it legal? | No: last byte 0x1003 crosses 0x1000 |
+| "WRAP of 3" | Is it legal? | No: a WRAP must have 2, 4, 8 or 16 transfers |
+| Strobe panel, "INCR from 0x1003", transfer 1 | Is `4'b0001` legal? | No: lane 0 is outside lane 3 |
+
+The flashcards below the lesson drill the equations, the three misconceptions, the split rule and the beat count. Review them after the quiz and again before B-AXI-3.
+
+## References & Next Topics
+
+**Primary sources:**
+- Arm IHI0022E, *AMBA AXI and ACE Protocol Specification*: §A3.2.2 (WLAST, RLAST), §A3.3 (write data may precede the write address), §A3.4.1 (address structure, the 4KB rule and note, burst length, Table A3-2, Table A3-3, burst address and byte-lane equations), §A3.4.2 (pseudocode), §A3.4.3 (write strobes, narrow transfers, byte invariance, unaligned transfers), §A4.3.1 (Modifiable and Non-modifiable transactions), §A7.2.4 (exclusive access restrictions).
+- IEEE 1800-2023: §11.6.1 and Table 11-21 (expression bit lengths), §11.6.2 (bit-length example), §16.10 (local variables), §16.14.5 (concurrent assertions outside procedural code), §18.5 (constraint blocks), §19.5 (coverage points), §19.6 (cross coverage).
+
+**Prerequisites:** [B-AXI-1: AXI4 Channel Architecture & Handshake Protocol](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index). For the checker code: [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) and [I-SV-4B: local variables](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/local-variables).
+
+**Related:**
+- [B-AXI-3: AXI Transaction Ordering & IDs](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index): what happens between bursts, once each burst's bytes are right.
+- [B-AXI-4: AXI Expert Features](/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index): the Modifiable bit and exclusive-access rules.
+- [B-AXI-5: AXI Pitfalls & Interconnect Deadlocks](/curriculum/T3_Advanced/B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index): 4KB and strobe bugs in interconnect context.
+- [B-AXI-6: AXI Verification & Performance](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index): the monitor, scoreboard and coverage that use this math.
+- [B-AMBA-F1: Bridges and System Integration](/curriculum/T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index): AXI-to-AHB splits and width conversion.
+- [B-AHB-1: AHB Protocol Design & Timing](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index): AHB's 1KB rule (IHI0033B.b §3.5), the AHB counterpart of the 4KB rule.
+- [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) and [I-SV-3A: Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index): the constraint and coverage tools behind the legal-stimulus expert item.
+
+<NextLesson />

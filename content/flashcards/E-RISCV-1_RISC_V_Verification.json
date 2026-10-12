@@ -1,42 +1,77 @@
 [
   {
-    "front": "What are the unique challenges of RISC-V verification compared to ASIC peripheral verification?",
-    "back": "ISA compliance (instruction semantics), pipeline hazards, privilege mode transitions, interrupt handling correctness, and the need for ISS (Instruction Set Simulator) cross-checking."
+    "id": "e-riscv-1-1",
+    "question": "Why does a processor testbench compare at retirement rather than per clock cycle?",
+    "answer": "Retirement is when an instruction's results are committed to architectural state (x registers, pc, CSRs, memory). The RTL may take any number of cycles per instruction and an ISS has no cycles, so the sequence of retirements is the only timeline both share."
   },
   {
-    "front": "What is RISCV-DV and who developed it?",
-    "back": "RISCV-DV is Google's open-source constrained-random RISC-V instruction generator. It produces random instruction streams with configurable distributions for processor verification."
+    "id": "e-riscv-1-2",
+    "question": "Synchronous exception versus asynchronous interrupt: which can an ISS reproduce on its own?",
+    "answer": "A synchronous exception (illegal instruction, ecall, unsupported misaligned access) follows from the instruction and the configuration, so a matching ISS reproduces it. An interrupt, NMI or debug request arrives from outside the program, so the testbench must forward it."
   },
   {
-    "front": "What is the step-and-compare methodology in RISC-V verification?",
-    "back": "RTL simulation runs instructions while an ISS (Spike, QEMU) runs the same program. After each instruction, architectural state (registers, CSRs, memory) is compared. Mismatches indicate RTL bugs."
+    "id": "e-riscv-1-3",
+    "question": "Name four sources of nondeterminism that break a naive ISS compare.",
+    "answer": "Cycle and performance counters (mcycle), interrupt and debug-request arrival time, implementation-defined choices such as the misaligned-access policy, and external responses such as bus errors."
   },
   {
-    "front": "What is RISC-V ISAC?",
-    "back": "RISC-V Instruction Set Architecture Coverage (ISAC) is a tool that measures instruction-level coverage: which instruction types, operand combinations, and hazard scenarios have been exercised."
+    "id": "e-riscv-1-4",
+    "question": "What is riscv-dv, and what controls the content of its programs?",
+    "answer": "An SV/UVM random instruction generator (started by Google, now hosted by CHIPS Alliance) that writes legal-by-default RISC-V assembly programs. Testlist gen_opts plusargs, directed streams and the target's riscv_core_setting.sv control what the programs contain."
   },
   {
-    "front": "How do you integrate RISCV-DV with a UVM testbench?",
-    "back": "Wrap RISCV-DV generated instruction programs as UVM sequences. Load the binary into test memory, configure the processor model, and run the program while checking via step-and-compare."
+    "id": "e-riscv-1-5",
+    "question": "How do you insert a directed stream into a riscv-dv test, and how often does it appear?",
+    "answer": "Add `+directed_instr_<n>=<stream>,<k>` to gen_opts, for example `+directed_instr_0=riscv_int_numeric_corner_stream,4`. k is the number of insertions per 1000 instructions."
   },
   {
-    "front": "What is riscv-formal and how does it complement simulation?",
-    "back": "riscv-formal is a formal verification framework that uses SMT solvers to prove ISA compliance properties for all possible instruction sequences, catching corner cases simulation misses."
+    "id": "e-riscv-1-6",
+    "question": "What happens to a testlist key that riscv-dv does not define, such as `dist:`?",
+    "answer": "run.py reads keys by name and silently ignores unknown ones, so the setting never reaches the generator. Use only documented keys (test, gen_opts, iterations, gen_test, rtl_test, sim_opts, compare_opts and the others in the testlist header)."
   },
   {
-    "front": "What privilege modes does RISC-V define and why do they matter for verification?",
-    "back": "Machine (M), Supervisor (S), and User (U) modes. Mode transitions (traps, returns) must be verified for correct CSR updates, address translation changes, and interrupt handling."
+    "id": "e-riscv-1-7",
+    "question": "Why are random instruction streams constrained instead of being random 32-bit words?",
+    "answer": "Raw random words include illegal or reserved encodings, branches that leave the program, loads and stores to unmapped memory, and no defined end. A generator keeps instructions legal, branches inside the program, accesses on data pages and registers reserved for the stack and handlers."
   },
   {
-    "front": "How do you configure RISCV-DV instruction distributions?",
-    "back": "Via YAML configuration files that specify: instruction type weights, CSR access probabilities, branch frequency, hazard generation rates, and custom instruction extensions."
+    "id": "e-riscv-1-8",
+    "question": "What is wrong with a trace compare built on zip(rtl, iss)?",
+    "answer": "zip stops at the shorter trace, so a hung, truncated or empty RTL trace passes. A robust compare checks lengths and emptiness, compares every field of each retirement, reports the first divergence and prints the matched count."
   },
   {
-    "front": "What is an ISS and which open-source options exist for RISC-V?",
-    "back": "An Instruction Set Simulator is a golden reference model. For RISC-V: Spike (official reference), QEMU (fast, system-level), and sail-riscv (formal specification in Sail language)."
+    "id": "e-riscv-1-9",
+    "question": "What does riscv-dv's instr_trace_compare.py compare?",
+    "answer": "The sequence of integer-register updates in two trace CSVs: it skips instructions that write no register and never compares stores directly. Its run.py step iss_cmp compares two ISSes; the RTL-vs-ISS compare belongs to the core's own flow."
   },
   {
-    "front": "What are the key coverage metrics for RISC-V processor verification?",
-    "back": "Instruction coverage (all 40+ base instructions), CSR coverage (read/write of all CSRs), hazard coverage (RAW/WAW/WAR combinations), and mode transition coverage (all trap/return paths)."
+    "id": "e-riscv-1-10",
+    "question": "What is lock-step (step-and-compare) co-simulation?",
+    "answer": "The testbench steps an ISS once per retired instruction during the simulation and compares at once. Before each step it forwards interrupts, NMI and debug requests, and overrides values the ISS cannot model, such as mcycle (Ibex: set_mip, set_mcycle, then riscv_cosim_step)."
+  },
+  {
+    "id": "e-riscv-1-11",
+    "question": "A lock-step run shows no mismatch, but the core hung. Why, and what catches it?",
+    "answer": "Lock-step compares only what retires; a hung core retires nothing, so there is nothing to mismatch. A fatal cycle timeout, an end-of-test handshake from the program and a matched-instruction count catch it."
+  },
+  {
+    "id": "e-riscv-1-12",
+    "question": "What do rvfi_intr and the x0 rule mean on RVFI?",
+    "answer": "rvfi_intr is set on the first instruction of a trap handler, one whose rvfi_pc_rdata differs from the previous rvfi_pc_wdata. rvfi_rd_wdata must be zero when rd is x0, so a property must model that case."
+  },
+  {
+    "id": "e-riscv-1-13",
+    "question": "What does a riscv-formal pass guarantee?",
+    "answer": "No violation of the checked properties within the configured depth from reset: genchecks.py generates bounded model checks by default (mode bmc; a prove mode exists). With RISCV_FORMAL_ALTOPS, multiply and divide are stand-in operations, so the real multiplier is not checked."
+  },
+  {
+    "id": "e-riscv-1-14",
+    "question": "Name three tools for RISC-V ISA coverage and one caveat for each.",
+    "answer": "riscv-isac with CGF files: archived, and Spike traces omit trapping instructions (use Sail). ACT4 SystemVerilog covergroups: they belong to certification tests, which are not verification. riscv-dv cov: coverage from a trace CSV measures the program, not the RTL, unless the trace comes from the RTL."
+  },
+  {
+    "id": "e-riscv-1-15",
+    "question": "RVFI versus RVVI: what is the difference?",
+    "answer": "RVFI is the retirement interface defined by riscv-formal and also used by simulation monitors. RVVI is a draft open standard for lock-step processor DV that describes itself as a superset of RVFI: RVVI-TRACE for the core trace, RVVI-API for the reference model and RVVI-VVP for virtual peripherals."
   }
 ]

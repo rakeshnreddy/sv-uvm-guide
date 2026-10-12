@@ -1,36 +1,52 @@
 {
   "id": "soc-vip-reuse",
-  "version": "1",
+  "version": "2",
   "title": "Block to SoC: VIP Modes",
-  "description": "Configure a block-level SPI agent into passive mode so it monitors traffic driven by an embedded processor without causing bus collisions.",
+  "description": "Reuse the SPI block's APB register-port agent in passive mode so it monitors traffic driven by the SoC's processor without bus contention, and prove from the log that it is watching the right bus.",
   "owningModule": "E-SOC-1",
   "routeSlug": "soc-vip-reuse",
   "status": "available",
-  "labPrerequisites": [],
-  "modulePrerequisites": [],
+  "labPrerequisites": ["uvm-mini-capstone"],
+  "modulePrerequisites": ["A-UVM-7", "A-UVM-8"],
   "steps": [
     {
       "id": "1",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
       "title": "Step 1: Observe the Active Agent Failure",
-      "instructions": "Run `testbench.sv` without changes. Observe the `BUS_COLLISION` fatal error caused by the UVM Driver and Firmware driving simultaneously.",
+      "instructions": "Run `testbench.sv` unchanged. In the topology, find the `driver` and `sequencer` under `uvm_test_top.env.spi_env.spi_agent`. Then find the `UVM_ERROR [APB_X]` messages (the driver and the CPU both drive the APB nets, which resolve to X), the missing BOOT_DONE line, `[FW_TIMEOUT]` and `[TRAFFIC_COUNT]`.",
       "starterCode": ""
     },
     {
       "id": "2",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
       "title": "Step 2: Flip to Passive Mode",
-      "instructions": "In `soc_test::build_phase`, use the `uvm_config_db` to set `is_active` to `UVM_PASSIVE` for the `\"env.spi_agt\"` path.",
+      "instructions": "In `soc_test::build_phase`, set `is_active` to `UVM_PASSIVE` with `uvm_config_db#(uvm_active_passive_enum)::set` at the exact path `\"env.spi_env.spi_agent\"`. Rerun: the topology shows only the monitor, and the run stops with `UVM_FATAL [SEQ]` at the first `start_item()`, because the copied block sequence is started on a null sequencer handle.",
       "starterCode": ""
     },
     {
       "id": "3",
+      "version": "2",
+      "completion": "self_attested",
+      "title": "Step 3: Give the Bus to Firmware and Audit the Build",
+      "instructions": "Remove the block bring-up sequence from `soc_test::run_phase`, and add a `UVM_FATAL [MODE]` check in `end_of_elaboration_phase` unless the agent is passive. Rerun: expect BOOT_DONE and FW_PASS from the mailbox decoder, `spi_agent monitor saw 5 transfers`, `SCB_SUMMARY matches=1 mismatches=0 pending=0`, and zero errors and fatals.",
+      "starterCode": ""
+    },
+    {
+      "id": "4",
       "version": "1",
       "completion": "self_attested",
-      "title": "Step 3: Verify Monitor Behavior",
-      "instructions": "Rerun the simulation. Verify the driver is disabled but the `[SPI_MON]` continues to log firmware traffic.",
+      "title": "Step 4: Prove the Evidence Check Works",
+      "instructions": "In `tb_top`, temporarily publish `spare_bus` instead of `apb_bus` as the agent's `vif`. Rerun and confirm that `[TRAFFIC_COUNT]` names the disconnected monitor (0 transfers instead of 5). Restore `apb_bus`.",
+      "starterCode": ""
+    },
+    {
+      "id": "5",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 5: Drill the Forgotten super.build_phase",
+      "instructions": "Temporarily comment out `super.build_phase(phase);` in `spi_apb_agent::build_phase`. Rerun: the topology shows the driver and sequencer again and your audit stops the run with `UVM_FATAL [MODE]`, because `uvm_agent` reads `is_active` only in its own `build_phase`. Restore the line.",
       "starterCode": ""
     }
   ],
