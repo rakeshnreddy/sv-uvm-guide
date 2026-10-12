@@ -1059,7 +1059,7 @@ export const curriculumData: Module[] = [
           {
             "title": "A-UVM-9: Reset Handling and Error Injection",
             "slug": "index",
-            "description": "Keep agents, scoreboards and tests correct when reset is asserted mid-traffic and when errors are injected on purpose, while real failures are still caught."
+            "description": "Make agents, scoreboards and tests behave correctly when reset is asserted in the middle of traffic and when errors are injected on purpose: reset-aware drivers and monitors, scoreboard flush, a mid-test reset virtual sequence, three ways to inject errors, a narrow report catcher with expected-error accounting, and a bench that still fails on a real bug."
           }
         ],
         "track": "core",

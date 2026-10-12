@@ -1,9 +1,1870 @@
 ---
 title: "A-UVM-9: Reset Handling and Error Injection"
-description: "Keep agents, scoreboards and tests correct when reset is asserted mid-traffic and when errors are injected on purpose, while real failures are still caught."
+description: "Make agents, scoreboards and tests behave correctly when reset is asserted in the middle of traffic and when errors are injected on purpose: reset-aware drivers and monitors, scoreboard flush, a mid-test reset virtual sequence, three ways to inject errors, a narrow report catcher with expected-error accounting, and a bench that still fails on a real bug."
 flashcards: "A-UVM-9_Reset_and_Error_Injection"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
 
-This lesson is being written.
+- **What it is:** Two things every real testbench (TB) must survive without lying. **Reset in the middle of traffic:** the design under test (DUT) throws away the transfers it was working on, so every bench component must drop its own share of that work and the test must restart stimulus. **Error injection:** the test sends illegal stimulus on purpose (here, a request with bad parity) to prove the DUT detects it, and must then tell the expected error reports from real ones. This lesson adds both to the `mem` bench you built in [I-UVM-3C](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index).
+- **Why it matters:** Chips reset in the middle of work (watchdogs, software resets, power events), and error paths (parity, ECC, error responses) are where bugs hide. A bench that is not reset-aware fails on a correct DUT, and the usual "fix", demoting every error during the test, then hides the real bugs too. The skill is to make reset and injected errors *accounted for*, not *tolerated*.
+- **The Analogy:** A power cut in a restaurant kitchen during service. Each cook drops the dish in hand (the driver releases its item), the runner throws away half-plated dishes (the monitor discards the partial transfer), the inspector tears up the list of what each table is still owed (the scoreboard flushes), and the manager restarts service (the virtual sequence). Error injection is a mystery shopper who orders something deliberately wrong: the kitchen must refuse it, and the complaint that follows is expected, but only that complaint, from that table, that many times; every other complaint is real. *Where it breaks:* a real kitchen notices a power cut by itself, while every testbench component must be written to notice reset; and a report catcher is code that can silence any complaint at all, so it has to be written as narrowly as a list of named mystery shoppers.
+
+**You will be able to:**
+1. **Write** a reset-aware driver (stop, release the current item safely, wait for deassertion) and monitor (discard partial transactions), and **flush** the scoreboard's expectations on reset.
+2. **Choose** a reset strategy (reset-aware `run_phase` threads, or run-time phase jumping and its hazards) and **write** a mid-test reset virtual sequence with `stop_sequences()` and `kill()`.
+3. **Inject** errors with an error sequence, a factory override and a driver callback, and **account** for the expected errors in the scoreboard and the checkers.
+4. **Demote** expected errors with a narrow report catcher (one ID, one reporter, a count) and **prove** that unexpected errors still fail the run.
+5. **Plan** coverage of reset × state and error × response.
+
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+### Words you need first
+
+Terms from earlier lessons are linked; the new ones are defined here. The UVM features this lesson uses are sequence control (IEEE 1800.2-2020 §14.2.5.11, §15.3.2.14), callbacks (§10.7), the factory (§8) and report catchers (§6.6).
+
+- **Reset, assert, release:** reset returns the DUT to a known state. This bench's reset, `rst_n`, is **active low**: it is *asserted* when 0 and *released* (deasserted) when 1. A **synchronous** reset acts only at a clock edge, like this lesson's DUT; an **asynchronous** reset acts the moment it changes.
+- **Sampled value, time slot:** a clocking-block input holds the value its signal had just before the clock edge (input skew `#1step`), which is the value the DUT's flip-flops use at that edge; a time slot is all the activity at one simulation time ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index), [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)).
+- **In flight, partial transaction:** a transfer that has started but not completed. Here: a request on the bus that the DUT has not yet accepted, or a request accepted whose response (`rdata`, `err`) has not yet been sampled.
+- **Flush:** throw away stored items or expectations that can never be matched.
+- **Error injection:** deliberately illegal stimulus, sent to check that the DUT detects and handles it. **Expected error:** an error report the test caused on purpose.
+- **Protocol checker:** code that reports `` `uvm_error `` when the bus breaks a rule. Here it lives in the monitor.
+- **Report catcher:** an object of a `uvm_report_catcher` subclass (IEEE 1800.2-2020 §6.6). The report server runs every registered catcher on each report *before* counting it; a catcher can change its severity, ID, message or action, pass it on (`THROW`), or swallow it (`CAUGHT`). **Demote** means lowering the severity, for example from `UVM_ERROR` to `UVM_INFO`: the message is still printed but no longer counted as an error ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) shows where catchers sit in the report pipeline).
+- **Virtual sequence:** a sequence that runs on no sequencer of its own and starts other sequences on the agents' sequencers ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index); applied to several agents in [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index)).
+- **Run-time phases and phase jumps:** the twelve phases from `pre_reset_phase` to `post_shutdown_phase` that run beside `run_phase`, and `phase.jump()`, which ends a phase early and restarts the schedule elsewhere ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+- **Callback** and **factory override:** hooks a component calls so a test can change its behaviour ([A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index)); replacing a type wherever the factory creates it ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
+- **Parity:** one extra bit chosen so that the number of 1s is even. Flip any one bit and the parity is wrong, which is how hardware detects a corrupted request.
+- **Mutant:** a copy of the code with one deliberate defect. A check you trust is one you have seen fail on a mutant.
+
+### The bench you are extending
+
+The DUT is I-UVM-3C's `mem_dut`, a 16-entry, 8-bit memory with a one-cycle request bus, with two additions and one rule made explicit:
+
+| Signal or rule | Meaning |
+|---|---|
+| `par` (input, new) | Even parity over the request: a correct requester drives `par` equal to `^{we, addr, wdata}` on every request, reads included. |
+| `err` (output, new) | 1 in the cycle after the edge that accepted a request with bad parity; the DUT then **ignores** that request (no write, `rdata` unchanged). Like `rdata`, it is sampled one edge after the accept. |
+| `rst_n` (input) | Synchronous, active low. At an edge where `rst_n` is 0 the DUT accepts nothing, every location and `rdata` become `00`, and `err` becomes 0. |
+| Reset and responses | A request is accepted only at an edge where `rst_n` is 1. Its response belongs to the next edge; if `rst_n` is 0 there, the transfer is **aborted** and its response is not valid. |
+
+To control reset from a test, `rst_n` moves into a small interface, `rst_if`, with one clocking block; `tb_top` still applies the power-on reset. **Predict** before you read the caption: which component sees the reset first, and how does the scoreboard find out about it without touching any pin?
+
+<ArchitectureDiagram
+  title="The mem bench extended for reset and error injection"
+  caption="mem_reset_err_test owns two objects. vseq starts traffic on agt's sqr and stops it with stop_sequences(); it also drives the mid-test reset through rst_if0.cb (the dashed line down the left). catcher is added to env.agt.mon only. agt is active (it has sqr and drv). mon watches mem_if0; it publishes completed transfers on ap and reset events on rst_ap, which reach sb (mem_sb) through agt's promoted ports agt.ap and agt.rst_ap, as write(t) on item_export and write_rst(e) on rst_imp. In tb_top, rst_if0.rst_n is one net that goes to mem_if0 and to the dut; tb_top's initial blocks apply the power-on reset, set the virtual interfaces and call run_test(). The coverage subscriber cov is unchanged from I-UVM-3C and not drawn. Line styles: solid with a filled arrow = analysis data; dashed = causes or calls; dotted = the sequencer-driver handshake; plain = signal connections."
+  cellWidth={120}
+  gapX={40}
+  nodes={[
+    { id: "test", label: "uvm_test_top", sublabel: "mem_reset_err_test", kind: "test", col: 0, row: 0, colSpan: 4, rowSpan: 4, container: true },
+    { id: "vseq", label: "vseq", sublabel: "mem_reset_err_vseq", kind: "sequence", col: 1, row: 0 },
+    { id: "catcher", label: "catcher", sublabel: "mem_err_catcher", kind: "generic", col: 3, row: 0 },
+    { id: "env", label: "env", sublabel: "mem_env", kind: "env", col: 1, row: 1, colSpan: 2, rowSpan: 3, container: true },
+    { id: "sb", label: "sb", kind: "scoreboard", col: 2, row: 1 },
+    { id: "agt", label: "agt", sublabel: "mem_agent", kind: "agent", col: 1, row: 2, colSpan: 2, rowSpan: 2, container: true },
+    { id: "sqr", label: "sqr", sublabel: "mem_sqr", kind: "sequencer", col: 1, row: 2 },
+    { id: "drv", label: "drv", sublabel: "mem_drv", kind: "driver", col: 1, row: 3 },
+    { id: "mon", label: "mon", sublabel: "mem_mon", kind: "monitor", col: 2, row: 2 },
+    { id: "tb", label: "tb_top", sublabel: "module", kind: "generic", col: 0, row: 4, colSpan: 4, rowSpan: 2, container: true },
+    { id: "rif", label: "rst_if0", sublabel: "rst_if: cb", kind: "interface", col: 0, row: 4 },
+    { id: "mif", label: "mem_if0", sublabel: "mem_if: drv_cb, mon_cb", kind: "interface", col: 1, row: 4, colSpan: 2 },
+    { id: "dut", label: "dut", sublabel: "mem_dut", kind: "dut", col: 1, row: 5, colSpan: 2 }
+  ]}
+  ports={[
+    { id: "sqr.imp", node: "sqr", side: "bottom", kind: "imp" },
+    { id: "drv.port", node: "drv", side: "top", kind: "port" },
+    { id: "mon.ap", node: "mon", side: "top", at: 0.33, kind: "analysis_port", label: "ap" },
+    { id: "mon.rap", node: "mon", side: "top", at: 0.88, kind: "analysis_port", label: "rst_ap" },
+    { id: "sb.exp", node: "sb", side: "bottom", at: 0.33, kind: "export", label: "item_export" },
+    { id: "sb.rimp", node: "sb", side: "bottom", at: 0.88, kind: "analysis_imp", label: "rst_imp" }
+  ]}
+  edges={[
+    { from: "vseq", to: "sqr", style: "causal", label: "start(); stop_sequences()" },
+    { from: "vseq", to: "rif", style: "causal", label: "cb.rst_n <= 0 / 1", via: [[0, 0]] },
+    { from: "catcher", to: "mon", style: "causal", label: "added to env.agt.mon only", via: [[3, 2]] },
+    { from: "drv.port", to: "sqr.imp", style: "control", label: "get_next_item / item_done" },
+    { from: "mon.ap", to: "sb.exp", style: "data", label: "agt.ap" },
+    { from: "mon.rap", to: "sb.rimp", style: "data", label: "agt.rst_ap" },
+    { from: "rif", to: "mif", style: "structural", label: "rst_n" },
+    { from: "rif", to: "dut", style: "structural", label: "rst_n", via: [[0, 5]] },
+    { from: "mif", to: "drv", style: "structural", label: "vif.drv_cb" },
+    { from: "mif", to: "mon", style: "structural", label: "vif.mon_cb" },
+    { from: "mif", to: "dut", style: "structural", label: "pins" }
+  ]}
+/>
+
+**Debrief.** Only the pins carry reset, so the components that read pins see it first: the driver through `drv_cb` and the monitor through `mon_cb`, at the same clock edge as the DUT. Nothing else touches a pin. The scoreboard learns about reset the way it learns about everything else, from the monitor: a second analysis port, `rst_ap`, publishes "reset asserted" and "reset released". The test acts on reset through the virtual sequence, which is also what *causes* the mid-test reset here. The catcher is attached to one reporter, the monitor, because that is the only component allowed to raise the expected error.
+
+### What reset does to a transfer in flight
+
+Reset can arrive at any edge, so at that edge every component holds some state. Each must react in its own way:
+
+| Component | Holds at the reset edge | Must do |
+|---|---|---|
+| Driver | the item it took with `get_next_item()`, perhaps already on the pins | stop driving, give the item back with `item_done()`, wait until reset is released |
+| Monitor | a request accepted at the previous edge whose response it has not seen | discard it (it is not a completed transfer), tell its subscribers that reset happened |
+| Scoreboard | expectations: what the DUT still owes (here, what each address holds) | check what completed before reset, then forget what reset destroyed |
+| Sequences | items they are waiting to send | be stopped, then restarted by whoever owns the scenario |
+| Test | its objection | keep the run alive across the reset |
+
+Here is the reset this lesson's test applies. Values are the ones **sampled at each rising edge**, which is what the clocking blocks and the DUT's flip-flops see; edge 0 is 225 ns and edge 6 is 285 ns. Before you read the markers, **predict**: at 245 ns a read of address 5 is on the bus and the read of address 4, accepted at 235 ns, still waits for its data. What happens to each?
+
+<TimingDiagram
+  title="Reset asserted in the middle of a transfer, and how the agent and scoreboard react"
+  caption="The virtual sequence drives rst_n to 0 through rst_if0.cb at 235 ns, so it is sampled 0 from 245 ns. At 245 ns the read of address 5 is not accepted, the read of address 4 (accepted at 235 ns, rdata 4b on the bus) is aborted, and the DUT clears its memory. Reset is sampled 0 at three edges (245, 255, 265 ns); it is released at 265 ns and sampled 1 from 275 ns, when the driver drives the first request after reset, accepted at 285 ns. The number under each marker is its edge time in ns; the table below the figure says what each marker stands for."
+  edges={7}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [1, 1, 0, 0, 0, 1, 1] },
+    { name: "valid", kind: "bit", values: [1, 1, 1, 0, 0, 0, 1] },
+    { name: "we", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1] },
+    { name: "addr", kind: "bus", values: ["3", "4", "5", "5", "5", "5", "2"] },
+    { name: "rdata", kind: "bus", values: ["2d", "3c", "4b", "00", "00", "00", "00"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", short: "225", label: "225 ns: read of 3 accepted; rdata 2d is the response to the read of 2" },
+    { edge: 1, tone: "drive", short: "235", label: "235 ns: read of 4 accepted; driver drives the read of 5; vseq drives rst_n <= 0 (lands after this edge)" },
+    { edge: 2, tone: "fail", short: "245", label: "245 ns: rst_n sampled 0. DUT drops the read of 5 and clears memory; driver releases the read of 5 (item_done, DRV_RESET); monitor discards the read of 4 and publishes reset; scoreboard flushes" },
+    { edge: 3, tone: "info", short: "255", label: "255 ns: vseq calls sqr.stop_sequences(); the driver holds no item" },
+    { edge: 4, tone: "drive", short: "265", label: "265 ns: vseq drives rst_n <= 1" },
+    { edge: 5, tone: "sample", short: "275", label: "275 ns: rst_n sampled 1; the driver leaves its wait and drives the first item of errs" },
+    { edge: 6, tone: "pass", short: "285", label: "285 ns: first request after reset accepted (a write to address 2)" }
+  ]}
+/>
+
+The number under each marker is the edge time in ns. What each marker stands for:
+
+| Edge | Marker | What happens |
+|---|---|---|
+| 225 ns | info | the read of 3 is accepted; `rdata` `2d` is the response to the read of 2 |
+| 235 ns | drive | the read of 4 is accepted; the driver drives the read of 5; the virtual sequence drives `rst_n <= 0`, which lands after this edge |
+| 245 ns | fail | `rst_n` sampled 0: the DUT accepts nothing and clears its memory; the driver releases the read of 5 (`item_done()`, `DRV_RESET`); the monitor discards the read of 4 and publishes reset; the scoreboard flushes |
+| 255 ns | info | the virtual sequence calls `sqr.stop_sequences()`; the driver holds no item |
+| 265 ns | drive | the virtual sequence drives `rst_n <= 1` |
+| 275 ns | sample | `rst_n` sampled 1: the monitor publishes "reset released"; the driver drives the first item of `errs` |
+| 285 ns | pass | the first request after reset is accepted (a write to address 2) |
+
+**Debrief.** At 245 ns the read of address 5 was never accepted: the DUT was in reset at the edge that would have accepted it. The driver sees the same thing (it samples `rst_n` as 0 at that edge), so it gives the item back instead of reporting it done. The read of address 4 *was* accepted at 235 ns, and its data `4b` is even on the bus, but its response edge is 245 ns, where reset is asserted: by this protocol's rule the transfer is aborted, so the monitor discards it rather than publishing it. Neither read reaches the scoreboard, and the scoreboard does not expect them: its expectations about memory are flushed in the same time slot. Nothing is driven or published until reset is released.
+
+### The reset-aware driver
+
+The driver from I-UVM-3C waited for reset only once, at time 0. A reset-aware driver checks reset at every edge that matters, in one thread, so there is no race between "the item was accepted" and "reset arrived":
+
+```systemverilog
+// snippet: the core of mem_drv::run_phase (complete file in Make It Work)
+vif.drv_cb.valid <= 1'b0;
+wait_reset_released(vif);                      // do @(drv_cb) while rst_n !== 1
+forever begin
+  seq_item_port.get_next_item(req);
+  if (vif.drv_cb.rst_n !== 1'b1) begin         // reset came while we waited
+    release_item("before it was driven");
+    wait_reset_released(vif);
+    continue;
+  end
+  // ... drive valid, we, addr, wdata, par through drv_cb
+  @(vif.drv_cb);                               // the accept edge
+  vif.drv_cb.valid <= 1'b0;
+  if (vif.drv_cb.rst_n !== 1'b1) begin         // reset won: not accepted
+    release_item("reset at its accept edge");  // item_done(), counted, logged
+    wait_reset_released(vif);
+  end else begin
+    seq_item_port.item_done();
+  end
+end
+```
+
+- **Stop.** `valid <= 0` is driven at every accept edge, so the bus goes idle during reset.
+- **Release the current item safely.** `release_item()` calls `item_done()`. That is the only way to tell the sequencer the driver no longer holds the item. Skip it (and let nothing reset the sequencer meanwhile), and the next `get_next_item()` after reset reports `Get_next_item called twice without item_done or get in between` (uvm-core 2020.3.1, `uvm_sequencer.svh`) and hands back the *old* item.
+- **Wait for deassertion.** `wait_reset_released()` waits for the first edge where `drv_cb` samples `rst_n` as 1, exactly as at time 0.
+- **Why one thread.** A common alternative forks the drive loop against `@(negedge vif.rst_n)` and calls `disable fork`. For a synchronous reset that watches the wrong moment: the raw signal falls when reset is *driven* (here just after 235 ns), not at the edge where the DUT acts on it (245 ns); and when reset is driven at a clock edge, the watcher and the drive loop wake in the same time slot, in an order the simulator chooses. Checking the sampled `rst_n` after the accept edge decides acceptance exactly as the DUT does, once.
+
+**Pitfall: releasing after the sequencer was reset.** The driver's `item_done()` and a test's `stop_sequences()` must not happen in the wrong order. See [the virtual sequence below](#the-mid-test-reset-virtual-sequence).
+
+### The reset-aware monitor
+
+The monitor now holds *every* request for one edge, because `err` (like `rdata`) is sampled one edge after the accept. On reset it drops what it holds and says so:
+
+```systemverilog
+// snippet: the reset branch of mem_mon::run_phase (complete file in Make It Work)
+@(vif.mon_cb);
+if (vif.mon_cb.rst_n !== 1'b1) begin
+  if (!in_reset) begin                       // the first edge of a new reset
+    in_reset = 1;
+    if (pending != null) n_discarded++;      // accepted, but no response yet
+    rst_ap.write(MEM_RST_ASSERTED);          // subscribers flush now
+  end
+  pending = null;                            // a partial transfer is not a transfer
+  continue;
+end
+if (in_reset) begin
+  in_reset = 0;
+  rst_ap.write(MEM_RST_RELEASED);
+end
+// ... publish pending with its response; capture a new request; check its parity
+```
+
+- **Discard partial transactions.** A transfer exists for the checkers only when it completes. Publishing the half-seen read of address 4 would make the scoreboard compare `4b` against a memory the DUT has just cleared.
+- **Publish reset as an event.** `rst_ap` is a `uvm_analysis_port #(mem_rst_e)`, where `mem_rst_e` is an enum with `MEM_RST_ASSERTED` and `MEM_RST_RELEASED`. Subscribers stay pin-free, and a passive copy of the agent tells its scoreboard about reset the same way.
+- **Nothing during reset.** Requests seen while `rst_n` is 0 are never captured, so they are never predicted.
+
+### An asynchronous reset is watched outside the clocking block
+
+This bench's DUT resets synchronously, so sampling `rst_n` through `drv_cb` and `mon_cb` sees exactly what the DUT sees, without races. A DUT with an **asynchronous** reset reacts as soon as `rst_n` falls, possibly between edges, and its clock may even stop while reset is held. A clocking block only samples at its clocking event (IEEE 1800-2023 §14.13), so it would see the reset late, or never. Watch the raw signal instead:
+
+```systemverilog
+// snippet: monitor loop for a DUT with an asynchronous reset (not this bench's DUT)
+forever begin
+  wait (vif.rst_n === 1'b1);             // release: the level, on the raw signal
+  fork
+    collect();                           // the clocked loop through mon_cb
+    @(negedge vif.rst_n);                // assertion: at once, clock or no clock
+  join_any
+  disable fork;                          // stop collect() in the middle of a transfer
+  discard_partial_and_publish_reset();
+end
+```
+
+`@(negedge vif.rst_n)` is an event control on the signal itself (§9.4.2), so it fires when the reset is asserted, whatever the clock does. `disable fork` is safe here because no sequence runs below the monitor (§9.6.3 kills every descendant of the calling process). Assertions follow the same rule: the disable condition of `disable iff (!rst_n)` uses the current value of `rst_n`, not the sampled one (§16.5, §16.12), so a concurrent assertion is cut off at once on an asynchronous reset. The release is usually synchronized inside the DUT, so the monitor resumes sampling at the next clocking event.
+
+Here is the difference traced for an example DUT with an asynchronous reset whose clock is gated off (stopped) while reset is held. Reset falls at 238 ns, between two edges; the clock stops until reset is released at 268 ns and restarts with an edge at 275 ns. A request was accepted at 235 ns.
+
+| Time | raw `rst_n` | `clk` | `mon_cb.rst_n` (last sampled value) | `@(negedge vif.rst_n)` | Monitor that only reads `mon_cb` | Monitor with the raw-signal watcher |
+|---|---|---|---|---|---|---|
+| 235 ns | 1 | rising edge | 1 | waiting | holds the request accepted at 235 ns | same |
+| 238 ns | 1 → 0 | stops | still 1: no edge, no sample | **fires** | waits at `@(vif.mon_cb)`, unaware | `disable fork` stops `collect()`; the partial transfer is discarded; reset is published |
+| 238–268 ns | 0 | no edges | 1, stale | done | still waiting | waits for `rst_n === 1` |
+| 268 ns | 0 → 1 | still stopped | 1 | waiting again | still waiting | `wait` returns; `collect()` restarts |
+| 275 ns | 1 | first edge | 1 | waiting | wakes, sees `rst_n` 1, never learns of the reset, and publishes the 235 ns request with post-reset data | samples normally |
+
+The clocking-block monitor is not one cycle late: it misses the reset completely, and publishes a transfer the DUT aborted.
+
+**The driver for an asynchronous reset.** The same rule applies to the driver. The driver shown above learns about reset only at `@(vif.drv_cb)`; with a gated clock it can sit at that edge through a whole reset and wake with `rst_n` already released. A driver for an asynchronous reset races its drive against the raw signal, and keeps `get_next_item()` outside the fork so that a kill never lands inside a sequencer call:
+
+```systemverilog
+// snippet: drive loop for a DUT with an asynchronous reset (not this bench's DUT)
+forever begin
+  seq_item_port.get_next_item(req);
+  if (vif.rst_n === 1'b1) begin
+    fork
+      drive_one(req);                    // through drv_cb, returns after the accept edge
+      @(negedge vif.rst_n);              // assertion: at once, clock or no clock
+    join_any
+    disable fork;                        // stop drive_one() wherever it was
+  end
+  seq_item_port.item_done();             // accepted or abandoned: give the item back
+  if (vif.rst_n !== 1'b1) begin
+    vif.drv_cb.valid <= 1'b0;            // idle the bus at the next clocking event
+    wait (vif.rst_n === 1'b1);
+  end
+end
+```
+
+A clocking-block drive takes effect only at a clocking event (§14.16), so the idle value reaches the pins when the clock runs again; that is enough here because the DUT ignores its inputs while it is in reset. The virtual sequence must still let the driver release its item before it calls `stop_sequences()`.
+
+**Drivers that hold more than one item.** A pipelined driver uses `get()`, which reports the item done at once, and answers later with `put()`; a sequence that wants the answer blocks in `get_response()`. On reset such a driver holds several outstanding items and owes each one a response. Either `put()` a response marked as aborted for every outstanding item, so that each waiting `get_response()` returns, or kill the waiting sequences before the restart: `stop_sequences()` also removes the responses already queued (§15.3.2.14). A sequence left waiting for a response that will never come keeps the run alive until the timeout.
+
+### Flushing the scoreboard: expectations, not observations
+
+**Misconception: "pending expectations survive reset."** They do not. Reset destroys the DUT state those expectations describe. Every scoreboard holds some of them:
+- a **queue-based** scoreboard (the reference-model form of [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)) queues *predictions* for responses that have not yet arrived; reset means they never will, so `check_phase` would report them missing;
+- a **state-based** scoreboard like `mem_sb` keeps a model of DUT state, `model[16]`; after reset the DUT's memory is all `00`, so the model must be too, or the next reads mismatch.
+
+Observations are different. Transfers that *completed* before reset and still sit in the scoreboard's analysis FIFO are real, and must be checked, not thrown away:
+
+```systemverilog
+// snippet: mem_sb's reset handling (complete file in Make It Work)
+virtual function void write_rst(mem_rst_e e);  // from agt.rst_ap, at the reset edge
+  if (e == MEM_RST_ASSERTED) flush_on_reset();
+endfunction
+
+protected function void flush_on_reset();
+  mem_item t;
+  while (item_fifo.try_get(t)) check_item(t);  // completed before reset: still check
+  foreach (model[i]) model[i] = '0;            // the spec's reset value, not "unknown"
+  n_resets++;
+  `uvm_info("SCB_RESET", "reset: expectations flushed, model cleared to 00", UVM_LOW)
+endfunction
+```
+
+`write_rst()` is the second `write()` a scoreboard needs: `` `uvm_analysis_imp_decl(_rst) `` (Annex B.5.22) declares a class `uvm_analysis_imp_rst` whose `write()` calls `write_rst()` on its owner. For a queue-based scoreboard, the same function deletes the prediction queues and calls `flush()` on any FIFO of *predictions* (§12.2.8.2.6), counting what it threw away so that a reset that discards too much stays visible. Reset the model to what the **specification** says reset does, not to whatever the RTL happens to do.
+
+**See it in a model.** The coordination model from A-UVM-8 has a reset option. Choose **cfg, then data**, open **Show advanced**, tick the reset box (reset at 80 ns for 20 ns, which clears the DUT's enable bit `EN` and discards data in flight), and try the three **Testbench reset handling** choices. **Predict first**: which of *ignore reset*, *flush scoreboard* and *flush + restart vseq* passes, and how many items does each of the other two report missing?
+
+<MultiAgentCoordinationVisualizer />
+
+**Debrief.** *Ignore reset* reports 5 items `SCB/MISSING`: D1 to D4 were discarded or sent during reset, and D5 reached a DUT whose `EN` reset had cleared, yet the scoreboard still expects them all. *Flush scoreboard* forgets D1 and D2, but still reports D3, D4 and D5: the model's input monitor saw D3 and D4 *during* reset (a reset-aware monitor would not have), and the virtual sequence kept sending into an unconfigured DUT. Only *flush + restart vseq* passes (4 matched, 2 flushed): reset is a whole-bench event, so the scoreboard, the monitor and the stimulus must all react. The model's restart code kills the virtual sequence with `disable fork`; in uvm-core 2020.3.1 that triggers the `SEQPRTZMB` warning described in Push Further, which is why this lesson's bench stops sequences explicitly.
+
+### Choosing a reset strategy
+
+There are two ways to organize the reaction to a mid-test reset.
+
+| | Reset-aware `run_phase` threads (this lesson) | Run-time phase jumping |
+|---|---|---|
+| How | Drivers, monitors and scoreboards notice reset themselves (above); the test or a virtual sequence stops and restarts stimulus. `run_phase` never ends early. | On reset, `phase.jump(uvm_reset_phase::get())` ends the current run-time phase (say `main_phase`) and restarts the schedule at `reset_phase` (IEEE 1800.2-2020 §9.3.1.9.1; `uvm_domain::jump`, §9.4.2.4). |
+| Who must cooperate | Every component, through its own reset handling | Every component that uses the run-time phases, which must re-run `reset_phase`, `configure_phase` and `main_phase` correctly |
+| Drivers and monitors | Handle reset in `run_phase` | **Still** handle reset in `run_phase`: it runs in parallel to the run-time phases (§9.8.1.5) and a jump does not touch it |
+| Sequences | Stopped explicitly (`kill()`, `stop_sequences()`) at a chosen moment | Killed with the jumping phase's processes (Annex F.2.5.2: "All processes related to phase are being killed"), wherever they were |
+| Objections | The test's objection spans the reset | The jumping phase's objections are cleared (uvm-core 2020.3.1, `uvm_phase_hopper.svh`) |
+
+**Misconception: "phase jumping is the standard reset technique."** Phase jumping is in the standard, but it is not how you make a bench reset-aware: it does nothing for the `run_phase` threads that actually touch the pins, it kills sequences at an arbitrary point (with the driver perhaps holding their item), and it works only if every component, including third-party verification IP (VIP), implements the run-time phases and can safely run them twice. The mechanics are in [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) (its expert item on domains, `sync` and phase jumps has the picture). This course's recommendation is reset-aware `run_phase` components plus a test-level restart, which works with any VIP that is itself reset-aware; use jumping only inside a bench whose components were all designed for it.
+
+```systemverilog
+// snippet: phase jumping on reset, for comparison only (this bench does not use it)
+virtual task main_phase(uvm_phase phase);
+  mem_wr_rd_seq seq = mem_wr_rd_seq::type_id::create("seq");
+  phase.raise_objection(this);
+  fork
+    seq.start(env.agt.sqr);
+    begin
+      @(negedge rst_vif.rst_n);
+      phase.jump(uvm_reset_phase::get());  // main ends now; schedule resumes at reset
+    end
+  join_any
+  phase.drop_objection(this);
+endtask
+```
+
+The jump is not immediate: `jump()` only sets flags, and the phase ends when the phaser next processes it (uvm-core logs `PH_JUMP` at `UVM_MEDIUM`). When it does, the thread running `seq.start()` is killed, so `seq` dies wherever it was. This snippet drops its own objection as soon as `jump()` returns; any objection still raised in the phase is cleared rather than dropped.
+
+### The mid-test reset virtual sequence
+
+In this bench the virtual sequence both causes the reset and restarts traffic, so it controls the order. The order is the whole point:
+
+```systemverilog
+// snippet: mem_reset_err_vseq::body (complete file in Make It Work)
+fork
+  traffic.start(sqr, this);           // a child: stop_sequences() and kill() reach it
+join_none
+repeat (rst_edge) @(rst_vif.cb);      // rst_edge = 24: the 235 ns edge
+rst_vif.cb.rst_n <= 1'b0;             // sampled 0 from the next edge
+repeat (2) @(rst_vif.cb);             // the driver releases its item at the first one
+sqr.stop_sequences();                 // the sequencer back to idle: traffic is killed
+@(rst_vif.cb);
+rst_vif.cb.rst_n <= 1'b1;             // released after three edges in reset
+errs.start(sqr, this);                // new sequence objects after reset
+again.start(sqr, this);
+```
+
+`stop_sequences()` (IEEE 1800.2-2020 §15.3.2.14) "tells the sequencer to kill all sequences and child sequences currently operating on the sequencer, and remove all requests, locks, and responses that are currently queued". `kill()` (§14.2.5.11) does the same for one sequence and its children, on its default sequencer. **Predict** before you read the diagram: why does the virtual sequence wait until 255 ns, one edge *after* reset is first sampled, before calling `stop_sequences()`?
+
+<SequenceDiagram
+  title="Mid-test reset: who does what, in which order"
+  caption="The driver gives its item back at 245 ns, the first edge with reset; the virtual sequence stops the sequencer one edge later, when the driver holds nothing. The test's objection stays raised throughout, so the run continues across the reset."
+  participants={[
+    { id: "vseq", label: "vseq", sublabel: "mem_reset_err_vseq", kind: "sequence" },
+    { id: "rst", label: "rst_if0", sublabel: "cb", kind: "interface" },
+    { id: "traffic", label: "traffic", sublabel: "mem_wr_rd_seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", sublabel: "mem_sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", sublabel: "mem_drv", kind: "driver" },
+    { id: "mon", label: "mon", sublabel: "mem_mon", kind: "monitor" },
+    { id: "sb", label: "sb", sublabel: "mem_sb", kind: "scoreboard" }
+  ]}
+  messages={[
+    { from: "vseq", to: "traffic", label: "start(sqr, this), in fork…join_none" },
+    { kind: "divider", label: "235 ns: the read of 4 is accepted" },
+    { kind: "async", from: "vseq", to: "rst", label: "cb.rst_n <= 0 (lands after this edge)" },
+    { kind: "self", from: "drv", label: "drive the read of 5" },
+    { kind: "divider", label: "245 ns: rst_n sampled 0" },
+    { kind: "self", from: "drv", label: "accept edge saw reset: release_item()", tone: "error" },
+    { from: "drv", to: "sqr", label: "item_done(): the read of 5 is given back" },
+    { kind: "return", from: "sqr", to: "traffic", label: "finish_item returns" },
+    { from: "traffic", to: "sqr", label: "start_item(next): waits, the driver is not asking" },
+    { kind: "self", from: "mon", label: "discard the read of 4 (no response yet)" },
+    { kind: "async", from: "mon", to: "sb", label: "rst_ap.write(MEM_RST_ASSERTED): write_rst()" },
+    { kind: "note", from: "sb", label: "flush_on_reset(): model cleared to 00" },
+    { kind: "divider", label: "255 ns" },
+    { from: "vseq", to: "sqr", label: "stop_sequences(): kills traffic, removes its request" },
+    { kind: "note", from: "traffic", to: "drv", label: "safe: the driver holds no item, so the request FIFO is already empty" },
+    { kind: "divider", label: "265 ns" },
+    { kind: "async", from: "vseq", to: "rst", label: "cb.rst_n <= 1" },
+    { from: "vseq", to: "sqr", label: "errs.start(sqr, this): start_item waits for the driver" },
+    { kind: "divider", label: "275 ns: rst_n sampled 1" },
+    { kind: "async", from: "mon", to: "sb", label: "rst_ap.write(MEM_RST_RELEASED)" },
+    { from: "drv", to: "sqr", label: "get_next_item(req): the first item of errs" }
+  ]}
+/>
+
+**Debrief.** At 245 ns the driver and the virtual sequence wake at the same clock edge, in an order the simulator chooses. In uvm-core 2020.3.1, `uvm_sequencer::stop_sequences()` also empties the request FIFO, which still holds the item the driver took (`uvm_sequencer.svh`). If it ran first at 245 ns, the driver's `item_done()` that follows would find nothing: `UVM_FATAL ... [SQRBADITMDN] Item_done() called with no outstanding requests.` Waiting one edge makes the order certain. Three more rules hold the scenario together:
+- **New objects after reset.** `errs` and `again` are fresh sequence objects. Restarting the killed `traffic` would restart its body from the beginning, which is rarely what the scenario means, and uvm-core's own source calls reusing a sequence object "not recommended" (`uvm_sequence_base.svh`).
+- **Children, not orphans.** `start(sqr, this)` makes each sequence a child of the virtual sequence, so `vseq.kill()` would stop all of them too (uvm-core's `m_kill()` kills every child).
+- **Objections across reset.** The test raises its objection before starting the virtual sequence and drops it when the virtual sequence returns, so the run can never end during the reset. Never raise objections inside sequences you will kill: `kill()` drops the *automatic* objection (§14.2.4.4), but uvm-core's `stop_sequences()` does not drop it for a top-level sequence, and an objection raised by hand in a killed thread is never dropped; the run then ends at the timeout.
+
+`kill()` versus `stop_sequences()`: use `kill()` on the sequences the scenario owns, and `stop_sequences()` when the sequencer as a whole must go back to idle, for example when other code may have started sequences on it. With `kill()`, the reset step of the same virtual sequence looks like this:
+
+```systemverilog
+// snippet: mem_reset_err_vseq::body with traffic.kill() instead of sqr.stop_sequences()
+repeat (rst_edge) @(rst_vif.cb);      // the 235 ns edge
+rst_vif.cb.rst_n <= 1'b0;             // sampled 0 from the next edge
+@(rst_vif.cb);                        // 245 ns: the driver releases the read of 5 here too
+traffic.kill();                       // traffic and its children only; the FIFO is untouched
+repeat (2) @(rst_vif.cb);
+rst_vif.cb.rst_n <= 1'b1;             // released at 265 ns, as before
+errs.start(sqr, this);                // new sequence objects, as before
+again.start(sqr, this);
+```
+
+`kill()` removes the sequence's queued requests and locks but does not empty the request FIFO (§14.2.5.11; uvm-core 2020.3.1 `uvm_sequencer_base.svh`), so the driver's `item_done()` finds its item whichever of the two runs first at 245 ns. That is why this variant may kill one edge earlier. A sequence started with no parent and no handle in the scenario cannot be reached this way; that is the case for `stop_sequences()`, after the driver has released its item.
+
+**A reset agent instead of a raw interface.** This bench drives `rst_n` from the virtual sequence through a raw virtual interface, because it has one reset and one agent. Many production benches use a small reset agent instead: a driver for the reset pins, and reset sequences started on its sequencer like any other stimulus, so a virtual sequence coordinates reset with the same `start()` calls. Prefer the agent when the reset is reused across benches, when there are several reset domains, or when reset needs its own monitor and coverage.
+
+### Injecting errors: three ways in
+
+Injected errors need a knob in the stimulus. `mem_item` gets a random bit `par_err` with a **soft** default of 0 (`constraint c_par_ok { soft par_err == 0; }`), and `post_randomize()` sets `par = good_par() ^ par_err`, where `good_par()` returns `^{we, addr, wdata}`. Three mechanisms then set the knob, each at a different level:
+
+| Mechanism | What changes | Best for | Code |
+|---|---|---|---|
+| **Error sequence** | A sequence sends chosen illegal items | Directed scenarios: exactly these errors, at these points, with checks around them | `mem_par_err_seq`: a bad-parity write to address 2, a read of address 2 (must still be `00`), a bad-parity read of address 3 |
+| **Factory override** | Every `mem_item` the factory creates becomes an error-capable `mem_err_item` | Random error density, with no sequence edits, in sequences that randomize their items (`mem_rand_seq`); it does nothing where items are filled in by hand (`mem_wr_rd_seq::send()` never calls `randomize()`) | `mem_item::type_id::set_type_override(mem_err_item::get_type());` (§8.2.4.2.5) |
+| **Driver callback** | The driver corrupts an item just before driving it | Errors at the pin level, below any sequence: every Nth request, or only on one agent instance | `uvm_callbacks#(mem_drv, mem_drv_cb)::add(env.agt.drv, flip);` (§10.7.2.3.1) |
+
+The callback hook is one line in the driver, `` `uvm_do_callbacks(mem_drv, mem_drv_cb, pre_drive(this, req)) `` (Annex B.4.3), called after the reset check and before the drive. The mechanics of callbacks are [A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index)'s; here is the use:
+
+```systemverilog
+// snippet: in a test's start_of_simulation_phase (classes in Make It Work)
+mem_par_flip_cb flip = mem_par_flip_cb::type_id::create("flip");
+flip.every = 8;                                         // every 8th request
+uvm_callbacks#(mem_drv, mem_drv_cb)::add(env.agt.drv, flip);
+```
+
+**Pitfall: a soft default that silently wins.** Suppose `mem_err_item` added `constraint c_inject { par_err dist {1 := 1, 0 := 7}; }`, a constraint with a *new* name. The base's `soft par_err == 0` does not conflict with it, because "nonzero distribution weights do not change the solution space" (IEEE 1800-2023 §18.5.3), and a soft constraint is discarded only when it conflicts (§18.5.13). So `par_err` stays 0 and no error is ever injected. `mem_err_item` therefore *replaces* the base constraint by giving its own the same name, `c_par_ok` (§18.5.2). Whatever mechanism you use, check from the log that errors were actually injected.
+
+### Expected errors in the scoreboard and the checkers
+
+An injected error touches two kinds of checking, and both must expect it:
+
+- **The scoreboard predicts the error response.** `mem_sb` computes `exp_err = (t.par != t.good_par())` for every observed request, independently of how the error was injected. It reports `SCB_ERR_RSP` if the DUT's `err` differs from that prediction in either direction (a missed error and a spurious error are both DUT bugs), and a rejected request leaves the model unchanged. That is how the read of address 2 after the rejected write proves the write was really dropped. It counts `n_err_expected` and `n_err_seen`.
+- **The protocol checker fires, correctly.** The monitor's parity check reports `` `uvm_error("MEM_PARITY", ...) `` on every request with bad parity. During injection that report is *expected*, but the check is right: on any other day, bad parity means a broken requester. Turning the check off for the injection test would also hide a requester that sends bad parity by accident. Instead, the test accounts for the expected reports with a narrow catcher.
+
+**Accounting means three numbers agree** at the end of the test: the errors the test planned to inject (2), the bad-parity requests the scoreboard saw and saw rejected (`n_err_expected`, `n_err_seen`), and the reports the catcher demoted (`n_demoted`). If the checker missed an injected error, or a reset swallowed one, or the catcher demoted one too many, the counts disagree and the test reports `ERR_ACCOUNT`. When the number of injections is random (a callback or an override), the planned number is the injector's own count, read at the end of the test.
+
+### Report catchers: demote only what you expect
+
+```systemverilog
+// snippet: the decision in mem_err_catcher::catch() (complete file in Make It Work)
+virtual function action_e catch();
+  if (get_severity() != UVM_ERROR || get_id() != catch_id)
+    return THROW;                         // not ours: pass it on untouched
+  if (n_demoted >= n_allowed())
+    return THROW;                         // more than injected: a real failure
+  n_demoted++;
+  set_severity(UVM_INFO);                 // printed, not counted as an error
+  set_message($sformatf("[expected %0d of %0d] %s", n_demoted, n_allowed(), get_message()));
+  return THROW;                           // still in the log, for review
+endfunction
+```
+
+A narrow catcher limits what it touches in three ways:
+1. **One reporter.** The test attaches it to the monitor only: `uvm_report_cb::add(env.agt.mon, catcher)`. `uvm_report_cb` is the typedef `uvm_callbacks#(uvm_report_object, uvm_report_catcher)` (Annex D.4.3); with `null` instead of a component, the catcher would run on every report in the simulation.
+2. **One severity and one ID.** `get_severity()` and `get_id()` (§6.6.3.2, §6.6.3.5) must be `UVM_ERROR` and `MEM_PARITY`.
+3. **A count.** It demotes no more reports than the plan allows, `n_allowed()`, and counts what it demoted. With a fixed plan that is `expected`, set by the test before the run. When the number of injected errors is random, a fixed number cannot work: the catcher would demote the first `expected` reports and pass the rest on as errors, failing a correct DUT. The limit must then follow the injector's live count, `injector.n_injected` (see the density test in Make It Work).
+
+It demotes with `set_severity(UVM_INFO)` (§6.6.4.1) and returns `THROW` (§6.6.5), so the report is still printed and reviewable. In uvm-core 2020.3.1, changing the severity also switches the action to the new severity's default (display, no count) unless the catcher calls `set_action()` itself (`uvm_report_catcher.svh`). Returning `CAUGHT` instead would drop the report silently: the server stops processing it, so it is neither printed nor counted (§6.5.1.2.14).
+
+**Misconception: "demoting all errors during injection is fine."** It is the most dangerous line a test can contain. While it is active, a real DUT bug reports `UVM_ERROR`, the catcher demotes it with the expected ones, and the run passes. The broader the catcher (every ID, every reporter, no count), the more it hides, including the test's own accounting error. The same goes for `+uvm_set_action=...,UVM_ERROR,UVM_NO_ACTION`, which removes errors before they are even counted ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)).
+
+Here is one injected error, from the sequence to the end-of-test accounting. **Predict:** at which time, and in which component, does the expected report become `UVM_INFO`, and when does the scoreboard learn that the DUT rejected the write?
+
+<SequenceDiagram
+  title="One injected error, through the catcher and the accounting"
+  caption="The monitor's parity check reports MEM_PARITY at 285 ns, the accept edge; the catcher demotes it inside the report server before it is counted. The scoreboard checks the DUT's err response one edge later, at 295 ns. At the end, the test compares the three counts."
+  participants={[
+    { id: "errs", label: "errs", sublabel: "mem_par_err_seq", kind: "sequence" },
+    { id: "drv", label: "drv", sublabel: "mem_drv", kind: "driver" },
+    { id: "dut", label: "dut", sublabel: "mem_dut", kind: "dut" },
+    { id: "mon", label: "mon", sublabel: "mem_mon", kind: "monitor" },
+    { id: "srv", label: "report server", sublabel: "uvm_report_server", kind: "generic" },
+    { id: "cat", label: "catcher", sublabel: "mem_err_catcher", kind: "generic" },
+    { id: "sb", label: "sb", sublabel: "mem_sb", kind: "scoreboard" }
+  ]}
+  messages={[
+    { from: "errs", to: "drv", label: "send(WRITE addr=2 wdata=a5, bad_par=1): par = good_par() ^ 1 = 1 (via sqr)" },
+    { kind: "async", from: "drv", to: "dut", label: "drv_cb: valid=1, we=1, addr=2, wdata=a5, par=1 (275 ns)" },
+    { kind: "divider", label: "rising edge at 285 ns" },
+    { kind: "self", from: "dut", label: "par != ^{we, addr, wdata}: drop the write, err <= 1" },
+    { kind: "self", from: "mon", label: "mon_cb: valid=1, par=1, good_par()=0" },
+    { from: "mon", to: "srv", label: "uvm_error(\"MEM_PARITY\", \"bad parity on WRITE addr=2: par=1, expected 0\")" },
+    { from: "srv", to: "cat", label: "catch(): UVM_ERROR, MEM_PARITY, from env.agt.mon; n_demoted 0 < 2" },
+    { kind: "self", from: "cat", label: "set_severity(UVM_INFO); n_demoted = 1" },
+    { kind: "return", from: "cat", to: "srv", label: "THROW" },
+    { kind: "self", from: "srv", label: "UVM_INFO action: displayed, counted as INFO" },
+    { kind: "divider", label: "rising edge at 295 ns" },
+    { kind: "self", from: "mon", label: "mon_cb: err=1, the response" },
+    { kind: "async", from: "mon", to: "sb", label: "ap.write(t), through agt.ap into item_fifo" },
+    { kind: "note", from: "sb", label: "exp_err = 1, err = 1: both error counts +1, model unchanged" },
+    { kind: "divider", label: "check_phase at 645 ns" },
+    { kind: "note", from: "cat", to: "sb", label: "test: injected 2 = demoted 2 = predicted 2 = flagged 2, else ERR_ACCOUNT" }
+  ]}
+/>
+
+**Debrief.** The demotion happens at 285 ns inside the report server, before the report is counted (step 5 to step 8). The scoreboard knows nothing about the catcher: it receives the transfer one edge later (step 11) and judges the DUT's `err` response from its own prediction (the note under step 11). The two lines of defence are independent on purpose, and the accounting at the end ties them together.
+
+**See a narrow and a broad catcher on a real log.** The report pipeline explorer from I-UVM-1D runs `crc_inject_test`: its sequence corrupts the CRC (a checksum) of packets 2 and 4, so the monitor raises two expected `CRC` errors; packet 5 then exposes a *real* DUT bug through an `SCB` error. Use its **Report catcher** knob. **Predict the `UVM_ERROR` count** for `none`, for `crc_demoter` (demotes `CRC` errors whose text contains "bad CRC") and for `error_swallower` (returns `CAUGHT` for every `UVM_ERROR`).
+
+<TelemetryEventBusVisualizer />
+
+**Debrief.** With no catcher, 3 errors are counted (the two `CRC` errors and the `SCB` mismatch; the interface assertion's `$error` never enters UVM). `crc_demoter` leaves 1: the real bug still fails the run, and the two demoted reports appear as `UVM_INFO`. `error_swallower` leaves 0: the run "passes" with a real bug in it, and the swallowed reports are not even printed. `crc_demoter` is narrow by ID and text but has no count: a third, unplanned `CRC` error would be demoted as well. `mem_err_catcher` adds the reporter and the count.
+
+### Keeping real failures visible
+
+A catcher, a flush and an injection knob are all code that can be wrong in a way that makes a run pass. Three habits keep real failures visible:
+
+- **A negative control.** Run the same test on a DUT with a planted bug and require it to fail. `mem_dut`'s parameter `BUG = 1` writes the data of a bad-parity write anyway (it still raises `err`); the read of address 2 then returns `a5` instead of `00`, and the run must end with `UVM_ERROR : 1`. A test that passes on the mutant DUT is broken, whatever it reports on the good one.
+- **Count what was caught.** The catcher counts its demotions, the test compares them with the plan, and uvm-core prints a catcher summary (`Number of demoted UVM_ERROR reports`) before the report summary whenever a catcher exists (`uvm_report_catcher.svh`). A regression script can require that number to equal the planned injections, from outside the simulation, where no catcher can reach.
+- **Demote, never swallow.** A demoted report is still in the log, with its ID, at its time; a caught one is gone.
+
+### Coverage: reset × state and error × response
+
+A test that resets once, at one moment, proves the bench handles *that* reset. The verification plan (vplan) asks where in the protocol a reset can land and which error meets which response, and coverage records which of those cells the regression reached:
+
+| Vplan item | Cross | Cells | How to close it |
+|---|---|---|---|
+| Reset meets every transfer state | what reset cut off (nothing pending, a write pending, a read pending) × whether a request was on the bus at the reset edge | 3 × 2 = 6 | randomize the virtual sequence's `rst_edge`; add back-to-back resets |
+| Every error meets its correct response | request kind (read, write) × parity (good, bad) × DUT response (`err` 0 or 1), with the four "wrong response" cells (good parity flagged, bad parity not flagged, for reads and for writes) ignored, because those are DUT bugs the scoreboard reports | 4 | error sequences on reads and writes; the override or callback for density |
+
+```systemverilog
+// snippet: covergroups for the two vplan items (in a subscriber or in mem_sb)
+typedef enum {RST_IDLE, RST_WR_PENDING, RST_RD_PENDING} mem_rst_ctx_e;
+
+covergroup rst_cg with function sample(mem_rst_ctx_e ctx, bit req_on_bus);
+  cp_ctx: coverpoint ctx;                  // what the reset cut off
+  cp_req: coverpoint req_on_bus;           // a request on the bus at the reset edge
+  ctx_x_req: cross cp_ctx, cp_req;         // 6 cells
+endgroup
+
+covergroup err_cg with function sample(bit we, bit bad_par, logic err);
+  cp_we:  coverpoint we      { bins rd = {1'b0}; bins wr = {1'b1}; }
+  cp_par: coverpoint bad_par { bins good = {1'b0}; bins bad = {1'b1}; }
+  cp_err: coverpoint err     { bins none = {1'b0}; bins flagged = {1'b1}; }
+  we_x_par_x_err: cross cp_we, cp_par, cp_err {
+    // A wrong response is a bug for the scoreboard to report, not a goal.
+    ignore_bins wrong_rsp = (binsof(cp_par.good) && binsof(cp_err.flagged)) ||
+                            (binsof(cp_par.bad)  && binsof(cp_err.none));
+  }
+endgroup
+```
+
+`with function sample(...)` gives each covergroup its own sampling arguments (IEEE 1800-2023 §19.8.1); embedded covergroups are constructed in the class's `new()`. The monitor would sample `rst_cg` in its reset branch, at the first reset edge and before it clears `pending`:
+
+```systemverilog
+// snippet: in mem_mon::run_phase, inside if (!in_reset), before pending = null
+rst_cg.sample(pending == null ? RST_IDLE : (pending.we ? RST_WR_PENDING : RST_RD_PENDING),
+              vif.mon_cb.valid === 1'b1);
+```
+
+The scoreboard would sample `err_cg` for every request it checks. In this lesson's run, the reset lands with a read pending and a request on the bus, which is 1 of the 6 reset cells.
+
+### Debugging: symptom, cause, fix
+
+| Symptom in the log | Cause | Fix |
+|---|---|---|
+| `SCB_MISMATCH` on the first reads after a mid-test reset, on a correct DUT | expectations survived the reset: the model was not cleared, or predictions were not deleted | flush on the monitor's reset event, to the specification's reset values |
+| `Get_next_item called twice without item_done or get in between` right after a reset | the driver dropped its item without `item_done()`, often through `disable fork` | release the item with `item_done()` when reset wins |
+| `UVM_FATAL [SQRBADITMDN] Item_done() called with no outstanding requests.` | `stop_sequences()` emptied the request FIFO before the driver released its item (uvm-core) | let the driver release first; stop at a later edge, or `kill()` the owned sequences |
+| `UVM_WARNING [SEQPRTZMB]` after a reset | the thread that called `start()` was killed (`disable fork`, a phase jump) while the sequence ran (uvm-core) | `kill()` the sequence before killing the thread |
+| `PH_TIMEOUT` after a reset | an objection raised inside a killed thread, or a sequence that waits for a response its killed partner will never send | raise objections in the test around the whole scenario |
+| `PH_TIMEOUT` after a reset, with a sequence blocked in `get_response()` | a pipelined driver dropped its outstanding items on reset without answering them | `put()` an aborted response for every outstanding item, or kill the waiting sequences before the restart |
+| A random error test never logs a parity error | a soft default in the base item beats a `dist` with another name | replace the base constraint by name, or disable it |
+| `ERR_ACCOUNT injected=2 demoted=1 ...` | the checker missed an injected error, or a reset aborted the injected request | check the monitor's parity check; keep injections away from resets, or count only accepted ones |
+| `UVM_ERROR : 0`, but the catcher summary demoted more errors than were injected | the catcher is too broad and has demoted a real failure | narrow it: one reporter, one ID, a count |
+
+### Recap
+
+- Reset is a bench-wide event. The driver releases its item with `item_done()` and waits for release; the monitor discards partial transfers and publishes reset; the scoreboard checks what completed, then flushes what reset destroyed.
+- Sample a synchronous reset through the clocking block; watch an asynchronous reset on the raw signal.
+- Prefer reset-aware `run_phase` components and a test-level restart. Phase jumping restarts only the run-time phases, kills sequences wherever they are and clears objections.
+- In the reset virtual sequence, let the driver release first, then `stop_sequences()` or `kill()`, then restart with new sequence objects; the test's objection spans it all.
+- Inject errors with an error sequence (directed), a factory override (density, randomized items only) or a driver callback (pin level), and check that they were injected. When the count is random, account against the injector's live count.
+- The scoreboard predicts error responses; the checker's reports are demoted by a catcher narrowed to one reporter, one ID and a count; the test compares the counts; a mutant DUT run proves real failures still fail.
+- Cover reset × state and error × response.
+
+## Make It Work
+
+### The extended bench, file by file
+
+The bench is I-UVM-3C's `mem` bench with reset and error injection added. There are five compile units: `mem_dut.sv`, `mem_if.sv`, the new `rst_if.sv`, `mem_pkg.sv` with its included files, and `tb_top.sv`. Two included files are **unchanged** from [I-UVM-3C](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index): `mem_cfg.svh` and `mem_cov.svh`. Every other file is shown whole below. The code has been checked by reading against IEEE 1800-2023 and uvm-core 2020.3.1; no simulator run is behind this page.
+
+```systemverilog
+// compile: mem_dut.sv (file 1 of 5; replaces I-UVM-3C's version)
+// 16 x 8-bit memory with a one-cycle request bus and a parity bit on every
+// request. rdata and err are registered: they appear in the cycle after the
+// edge that accepted the request.
+module mem_dut #(
+  parameter int BUG = 0           // 1: a bad-parity write is flagged but still written
+) (
+  input  logic       clk,
+  input  logic       rst_n,       // synchronous, active low
+  input  logic       valid,
+  input  logic       we,
+  input  logic [3:0] addr,
+  input  logic [7:0] wdata,
+  input  logic       par,         // even parity: must equal ^{we, addr, wdata}
+  output logic [7:0] rdata,
+  output logic       err          // 1: the request accepted last edge had bad parity
+);
+  timeunit 1ns; timeprecision 1ps;
+
+  logic [7:0] mem [16];
+  logic       par_ok;
+
+  assign par_ok = (par == ^{we, addr, wdata});
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      foreach (mem[i]) mem[i] <= '0;
+      rdata <= '0;
+      err   <= 1'b0;
+    end else begin
+      err <= valid && !par_ok;    // a bad request is answered with err ...
+      if (valid && we && (par_ok || BUG == 1)) mem[addr] <= wdata;  // ... and ignored
+      if (valid && !we && par_ok)              rdata <= mem[addr];
+    end
+  end
+endmodule
+```
+
+```systemverilog
+// compile: mem_if.sv (file 2 of 5; replaces I-UVM-3C's version)
+interface mem_if (input logic clk, input logic rst_n);
+  timeunit 1ns; timeprecision 1ps;
+
+  wire        valid;
+  wire        we;
+  wire  [3:0] addr;
+  wire  [7:0] wdata;
+  wire        par;                // new: even parity over we, addr, wdata
+  logic [7:0] rdata;
+  logic       err;                // new: driven by the DUT
+
+  // Drives land just after the edge (Re-NBA region); rst_n is sampled with
+  // #1step, the value the DUT's flip-flops use at the same edge.
+  clocking drv_cb @(posedge clk);
+    default input #1step output #0;
+    output valid, we, addr, wdata, par;
+    input  rst_n;
+  endclocking
+
+  clocking mon_cb @(posedge clk);
+    default input #1step;
+    input valid, we, addr, wdata, par, rdata, err, rst_n;
+  endclocking
+endinterface
+```
+
+```systemverilog
+// compile: rst_if.sv (file 3 of 5; new)
+// The bench's reset. tb_top applies the power-on reset; a test drives a
+// mid-test reset through cb, so it lands after an edge like every other drive.
+interface rst_if (input logic clk);
+  timeunit 1ns; timeprecision 1ps;
+
+  logic rst_n;                    // a variable: written by tb_top and through cb
+
+  clocking cb @(posedge clk);
+    output rst_n;                 // default output skew 0: updated in Re-NBA
+  endclocking
+endinterface
+```
+
+```systemverilog
+// compile: mem_pkg.sv (file 4 of 5; replaces I-UVM-3C's version)
+package mem_pkg;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  // What the monitor publishes on its reset port.
+  typedef enum bit {MEM_RST_ASSERTED, MEM_RST_RELEASED} mem_rst_e;
+  // Declares uvm_analysis_imp_rst, whose write() calls write_rst() on its owner.
+  `uvm_analysis_imp_decl(_rst)
+
+  `include "mem_item.svh"
+  `include "mem_cfg.svh"          // unchanged from I-UVM-3C
+  typedef uvm_sequencer #(mem_item) mem_sqr;
+  `include "mem_seqs.svh"
+  `include "mem_drv.svh"
+  `include "mem_mon.svh"
+  `include "mem_cov.svh"          // unchanged from I-UVM-3C
+  `include "mem_agent.svh"
+  `include "mem_sb.svh"
+  `include "mem_env.svh"
+  `include "mem_err_catcher.svh"
+  `include "mem_vseqs.svh"
+  `include "mem_tests.svh"
+endpackage
+```
+
+```systemverilog
+// compile: mem_item.svh (included by mem_pkg.sv)
+class mem_item extends uvm_sequence_item;
+  `uvm_object_utils(mem_item)
+
+  rand bit       we;
+  rand bit [3:0] addr;
+  rand bit [7:0] wdata;
+  rand bit       par_err;         // stimulus knob: 1 = send with bad parity
+  bit            par;             // the parity bit on the bus
+  logic    [7:0] rdata;           // response, filled in by the monitor
+  logic          err;             // response, filled in by the monitor
+
+  constraint c_par_ok { soft par_err == 0; }   // legal unless a test asks
+
+  function new(string name = "mem_item");
+    super.new(name);
+  endfunction
+
+  // The parity a correct requester sends: even parity over the request.
+  function bit good_par();
+    return ^{we, addr, wdata};
+  endfunction
+
+  function void post_randomize();
+    par = good_par() ^ par_err;
+  endfunction
+
+  virtual function string convert2string();
+    if (we) return $sformatf("WRITE addr=%h wdata=%h", addr, wdata);
+    return $sformatf("READ  addr=%h rdata=%h", addr, rdata);
+  endfunction
+endclass
+
+// For a factory override: about one request in eight gets bad parity. The
+// constraint reuses the base's name, so it replaces the soft default.
+class mem_err_item extends mem_item;
+  `uvm_object_utils(mem_err_item)
+
+  constraint c_par_ok { par_err dist {1'b1 := 1, 1'b0 := 7}; }
+
+  function new(string name = "mem_err_item");
+    super.new(name);
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_seqs.svh (included by mem_pkg.sv)
+// Directed: write every address with its own pattern, then read every one back.
+class mem_wr_rd_seq extends uvm_sequence #(mem_item);
+  `uvm_object_utils(mem_wr_rd_seq)
+
+  function new(string name = "mem_wr_rd_seq");
+    super.new(name);
+  endfunction
+
+  virtual task body();
+    for (int a = 0; a < 16; a++) send(1'b1, 4'(a), {4'(a), ~4'(a)}); // 0F ... F0
+    for (int a = 0; a < 16; a++) send(1'b0, 4'(a), 8'h00);
+  endtask
+
+  // One item; bad_par = 1 sends it with wrong parity on purpose.
+  protected task send(bit we, bit [3:0] addr, bit [7:0] wdata, bit bad_par = 1'b0);
+    mem_item it = mem_item::type_id::create("it");
+    start_item(it);
+    it.we      = we;
+    it.addr    = addr;
+    it.wdata   = wdata;
+    it.par_err = bad_par;
+    it.par     = it.good_par() ^ bad_par;
+    finish_item(it);
+  endtask
+endclass
+
+// Random: num_items random reads and writes (post_randomize sets par).
+class mem_rand_seq extends mem_wr_rd_seq;
+  `uvm_object_utils(mem_rand_seq)
+
+  int unsigned num_items = 40;
+
+  function new(string name = "mem_rand_seq");
+    super.new(name);
+  endfunction
+
+  virtual task body();
+    repeat (num_items) begin
+      mem_item it = mem_item::type_id::create("it");
+      start_item(it);
+      if (!it.randomize()) `uvm_fatal("RAND", "mem_item randomization failed")
+      finish_item(it);
+    end
+  endtask
+endclass
+
+// Error sequence: exactly two parity errors, and a read that proves the
+// rejected write changed nothing.
+class mem_par_err_seq extends mem_wr_rd_seq;
+  `uvm_object_utils(mem_par_err_seq)
+
+  function new(string name = "mem_par_err_seq");
+    super.new(name);
+  endfunction
+
+  virtual task body();
+    send(1'b1, 4'h2, 8'ha5, 1'b1);   // bad parity: the DUT must drop this write
+    send(1'b0, 4'h2, 8'h00);         // so address 2 still holds its reset value
+    send(1'b0, 4'h3, 8'h00, 1'b1);   // bad parity on a read
+  endtask
+endclass
+```
+
+```systemverilog
+// compile: mem_drv.svh (included by mem_pkg.sv)
+typedef class mem_drv;
+
+// The driver's hook for tests: called just before each request is driven.
+virtual class mem_drv_cb extends uvm_callback;
+  function new(string name = "mem_drv_cb");
+    super.new(name);
+  endfunction
+
+  virtual function void pre_drive(mem_drv drv, mem_item req);
+  endfunction
+endclass
+
+class mem_drv extends uvm_driver #(mem_item);
+  `uvm_component_utils(mem_drv)
+  `uvm_register_cb(mem_drv, mem_drv_cb)
+
+  mem_cfg      cfg;                    // handed over by mem_agent
+  int unsigned n_released;             // items given back because of a reset
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    virtual mem_if vif = cfg.vif;
+    vif.drv_cb.valid <= 1'b0;          // idle the bus from the first edge
+    wait_reset_released(vif);
+    forever begin
+      seq_item_port.get_next_item(req);
+      if (vif.drv_cb.rst_n !== 1'b1) begin         // reset came while we waited
+        release_item("before it was driven");
+        wait_reset_released(vif);
+        continue;
+      end
+      `uvm_do_callbacks(mem_drv, mem_drv_cb, pre_drive(this, req))
+      vif.drv_cb.valid <= 1'b1;
+      vif.drv_cb.we    <= req.we;
+      vif.drv_cb.addr  <= req.addr;
+      vif.drv_cb.wdata <= req.wdata;
+      vif.drv_cb.par   <= req.par;
+      @(vif.drv_cb);                               // the accept edge
+      vif.drv_cb.valid <= 1'b0;                    // overridden if another item follows
+      if (vif.drv_cb.rst_n !== 1'b1) begin         // reset won: not accepted
+        release_item("reset at its accept edge");
+        wait_reset_released(vif);
+      end else begin
+        seq_item_port.item_done();
+      end
+    end
+  endtask
+
+  // Wait for the first edge at which drv_cb samples rst_n as 1.
+  protected task wait_reset_released(virtual mem_if vif);
+    do @(vif.drv_cb); while (vif.drv_cb.rst_n !== 1'b1);
+  endtask
+
+  // Give the item back, so the sequencer is free; the test decides what
+  // happens to the sequence that sent it.
+  protected function void release_item(string why);
+    n_released++;
+    `uvm_info("DRV_RESET", $sformatf("released %s addr=%h: %s",
+                                     req.we ? "WRITE" : "READ ", req.addr, why), UVM_LOW)
+    seq_item_port.item_done();
+  endfunction
+endclass
+
+// Pin-level injection: corrupt the parity of every Nth request.
+class mem_par_flip_cb extends mem_drv_cb;
+  `uvm_object_utils(mem_par_flip_cb)
+
+  int unsigned every = 8;
+  int unsigned n_seen, n_injected;
+
+  function new(string name = "mem_par_flip_cb");
+    super.new(name);
+  endfunction
+
+  virtual function void pre_drive(mem_drv drv, mem_item req);
+    n_seen++;
+    if (n_seen % every == 0 && !req.par_err) begin
+      req.par_err = 1'b1;
+      req.par     = ~req.par;
+      n_injected++;
+    end
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_mon.svh (included by mem_pkg.sv)
+class mem_mon extends uvm_monitor;
+  `uvm_component_utils(mem_mon)
+
+  mem_cfg cfg;                             // handed over by mem_agent
+  uvm_analysis_port #(mem_item)  ap;       // one new item per completed transfer
+  uvm_analysis_port #(mem_rst_e) rst_ap;   // reset asserted, reset released
+  protected mem_item pending;              // accepted last edge; response not yet seen
+  int unsigned n_discarded;                // accepted transfers a reset cut off
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    ap     = new("ap", this);
+    rst_ap = new("rst_ap", this);
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    virtual mem_if vif = cfg.vif;
+    bit in_reset = 1;                      // the power-on reset is on at time 0
+    forever begin
+      @(vif.mon_cb);
+      if (vif.mon_cb.rst_n !== 1'b1) begin
+        if (!in_reset) begin               // the first edge of a new reset
+          in_reset = 1;
+          if (pending != null) begin
+            n_discarded++;
+            `uvm_info("MON_RESET", {"reset asserted: discarded ", describe(pending),
+                                    " (no response yet)"}, UVM_LOW)
+          end else begin
+            `uvm_info("MON_RESET", "reset asserted", UVM_LOW)
+          end
+          rst_ap.write(MEM_RST_ASSERTED);  // subscribers flush in this call
+        end
+        pending = null;                    // a partial transfer is not a transfer
+        continue;
+      end
+      if (in_reset) begin
+        in_reset = 0;
+        rst_ap.write(MEM_RST_RELEASED);
+      end
+      // The request accepted at the previous edge has its response now.
+      if (pending != null) begin
+        pending.rdata = vif.mon_cb.rdata;
+        pending.err   = vif.mon_cb.err;
+        ap.write(pending);
+        pending = null;
+      end
+      if (vif.mon_cb.valid === 1'b1) begin
+        mem_item t = mem_item::type_id::create("t");   // new object per transfer
+        if ($isunknown({vif.mon_cb.we, vif.mon_cb.addr,
+                        vif.mon_cb.wdata, vif.mon_cb.par}))
+          `uvm_error("MON_X", "valid is 1 but the request has X or Z bits")
+        t.we    = vif.mon_cb.we;
+        t.addr  = vif.mon_cb.addr;
+        t.wdata = vif.mon_cb.wdata;
+        t.par   = vif.mon_cb.par;
+        // Protocol check: every request carries even parity.
+        if (t.par != t.good_par())
+          `uvm_error("MEM_PARITY", $sformatf("bad parity on %s: par=%b, expected %b",
+                                             describe(t), t.par, t.good_par()))
+        pending = t;
+      end
+    end
+  endtask
+
+  protected function string describe(mem_item t);
+    return $sformatf("%s addr=%h", t.we ? "WRITE" : "READ ", t.addr);
+  endfunction
+
+  // A request still waiting for its response means the run ended an edge early.
+  virtual function void check_phase(uvm_phase phase);
+    super.check_phase(phase);
+    if (pending != null)
+      `uvm_error("MON_INFLIGHT", {describe(pending), " never got its response"})
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_agent.svh (included by mem_pkg.sv)
+class mem_agent extends uvm_agent;
+  `uvm_component_utils(mem_agent)
+
+  mem_cfg cfg;
+  mem_sqr sqr;
+  mem_drv drv;
+  mem_mon mon;
+  mem_cov cov;
+  uvm_analysis_port #(mem_item)  ap;       // the monitor's streams, at the boundary
+  uvm_analysis_port #(mem_rst_e) rst_ap;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (!uvm_config_db#(mem_cfg)::get(this, "", "cfg", cfg))
+      `uvm_fatal("NOCFG", {"no mem_cfg set for ", get_full_name()})
+    if (cfg.vif == null)
+      `uvm_fatal("NOVIF", {"mem_cfg.vif is null for ", get_full_name()})
+    is_active = cfg.is_active;
+    ap     = new("ap", this);
+    rst_ap = new("rst_ap", this);
+    mon = mem_mon::type_id::create("mon", this);
+    mon.cfg = cfg;
+    if (cfg.coverage_enable)
+      cov = mem_cov::type_id::create("cov", this);
+    if (get_is_active() == UVM_ACTIVE) begin
+      sqr = mem_sqr::type_id::create("sqr", this);
+      drv = mem_drv::type_id::create("drv", this);
+      drv.cfg = cfg;
+    end
+  endfunction
+
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    mon.ap.connect(ap);                    // promote both streams
+    mon.rst_ap.connect(rst_ap);
+    if (cov != null)
+      mon.ap.connect(cov.analysis_export);
+    if (get_is_active() == UVM_ACTIVE)
+      drv.seq_item_port.connect(sqr.seq_item_export);
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_sb.svh (included by mem_pkg.sv)
+class mem_sb extends uvm_scoreboard;
+  `uvm_component_utils(mem_sb)
+
+  uvm_analysis_export   #(mem_item)          item_export;  // agt.ap connects here
+  uvm_analysis_imp_rst  #(mem_rst_e, mem_sb) rst_imp;      // agt.rst_ap: write_rst()
+  uvm_tlm_analysis_fifo #(mem_item)          item_fifo;
+
+  protected bit [7:0] model [16];        // what each address holds, per the spec
+  int unsigned n_writes, n_reads, n_match, n_mismatch;
+  int unsigned n_resets;                 // resets seen
+  int unsigned n_err_expected;           // requests with bad parity
+  int unsigned n_err_seen;               // err responses from the DUT
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    item_export = new("item_export", this);
+    rst_imp     = new("rst_imp", this);
+    item_fifo   = new("item_fifo", this);
+  endfunction
+
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    item_export.connect(item_fifo.analysis_export);
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    mem_item t;
+    forever begin
+      item_fifo.get(t);
+      check_item(t);
+    end
+  endtask
+
+  // Called by the monitor (through agt.rst_ap) at the first edge of a reset.
+  virtual function void write_rst(mem_rst_e e);
+    if (e == MEM_RST_ASSERTED) flush_on_reset();
+  endfunction
+
+  protected function void flush_on_reset();
+    mem_item t;
+    while (item_fifo.try_get(t)) check_item(t); // completed before reset: still check
+    foreach (model[i]) model[i] = '0;           // then forget what reset destroyed
+    n_resets++;
+    `uvm_info("SCB_RESET", "reset: expectations flushed, model cleared to 00", UVM_LOW)
+  endfunction
+
+  protected function void check_item(mem_item t);
+    bit exp_err = (t.par != t.good_par());      // bad parity must be rejected
+    if (exp_err) n_err_expected++;
+    if (t.err === 1'b1) n_err_seen++;
+    if (t.err !== exp_err) begin
+      n_mismatch++;
+      `uvm_error("SCB_ERR_RSP", $sformatf("%s par=%b: err=%b, expected err=%b",
+                                          t.convert2string(), t.par, t.err, exp_err))
+    end
+    if (exp_err) return;                        // a rejected request changes nothing
+    if (t.we) begin
+      model[t.addr] = t.wdata;
+      n_writes++;
+      return;
+    end
+    n_reads++;
+    if (t.rdata !== model[t.addr]) begin
+      n_mismatch++;
+      `uvm_error("SCB_MISMATCH", $sformatf("%s, expected rdata=%h",
+                                           t.convert2string(), model[t.addr]))
+    end else begin
+      n_match++;
+      `uvm_info("SCB_MATCH", t.convert2string(), UVM_HIGH)
+    end
+  endfunction
+
+  virtual function void check_phase(uvm_phase phase);
+    super.check_phase(phase);
+    if (item_fifo.used() != 0)
+      `uvm_error("SCB_PENDING", $sformatf("%0d items were never checked",
+                                          item_fifo.used()))
+    if (n_reads == 0)
+      `uvm_error("SCB_NO_TRAFFIC", $sformatf(
+        "no read was checked (%0d writes seen): this run proves nothing", n_writes))
+  endfunction
+
+  virtual function void report_phase(uvm_phase phase);
+    super.report_phase(phase);
+    `uvm_info("SCB_SUMMARY",
+              $sformatf("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+                        n_match, n_mismatch, item_fifo.used()), UVM_NONE)
+    `uvm_info("SCB_ACCOUNT", $sformatf("resets=%0d err_expected=%0d err_seen=%0d",
+                                       n_resets, n_err_expected, n_err_seen), UVM_NONE)
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_env.svh (included by mem_pkg.sv)
+class mem_env extends uvm_env;
+  `uvm_component_utils(mem_env)
+
+  mem_agent agt;
+  mem_sb    sb;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    agt = mem_agent::type_id::create("agt", this);
+    sb  = mem_sb::type_id::create("sb", this);
+  endfunction
+
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    agt.ap.connect(sb.item_export);
+    agt.rst_ap.connect(sb.rst_imp);        // reset events reach the scoreboard
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_err_catcher.svh (included by mem_pkg.sv)
+// Demotes expected MEM_PARITY errors and nothing else: one ID, the reporter
+// the test attaches it to, and no more than the test has injected so far.
+class mem_err_catcher extends uvm_report_catcher;
+  `uvm_object_utils(mem_err_catcher)
+
+  string          catch_id = "MEM_PARITY";  // the one ID this catcher may touch
+  int unsigned    expected;     // a fixed plan: how many errors the test injects
+  mem_par_flip_cb injector;     // or a live plan: follow this injector's count
+  int unsigned    n_demoted;    // how many this catcher demoted
+
+  function new(string name = "mem_err_catcher");
+    super.new(name);
+  endfunction
+
+  // How many demotions the plan allows at this moment.
+  function int unsigned n_allowed();
+    return (injector != null) ? injector.n_injected : expected;
+  endfunction
+
+  virtual function action_e catch();
+    if (get_severity() != UVM_ERROR || get_id() != catch_id)
+      return THROW;                        // not ours: pass it on untouched
+    if (n_demoted >= n_allowed())
+      return THROW;                        // more than injected: a real failure
+    n_demoted++;
+    set_severity(UVM_INFO);                // printed, not counted as an error
+    set_message($sformatf("[expected %0d of %0d] %s", n_demoted, n_allowed(),
+                          get_message()));
+    return THROW;
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: mem_vseqs.svh (included by mem_pkg.sv)
+// Traffic, a reset in the middle of a transfer, then injected errors and a
+// full pass. Runs on no sequencer: start(null).
+class mem_reset_err_vseq extends uvm_sequence #(uvm_sequence_item);
+  `uvm_object_utils(mem_reset_err_vseq)
+
+  mem_sqr        sqr;                      // set by the test before start()
+  virtual rst_if rst_vif;                  // set by the test before start()
+  int unsigned   rst_edge = 24;            // drive reset at the 24th edge (235 ns)
+
+  function new(string name = "mem_reset_err_vseq");
+    super.new(name);
+  endfunction
+
+  virtual task body();
+    mem_wr_rd_seq   traffic = mem_wr_rd_seq::type_id::create("traffic");
+    mem_par_err_seq errs    = mem_par_err_seq::type_id::create("errs");
+    mem_wr_rd_seq   again   = mem_wr_rd_seq::type_id::create("again");
+
+    // 1. Traffic, cut by a reset in the middle of a transfer.
+    fork
+      traffic.start(sqr, this);            // a child of this sequence
+    join_none
+    repeat (rst_edge) @(rst_vif.cb);
+    rst_vif.cb.rst_n <= 1'b0;              // sampled 0 from the next edge
+    repeat (2) @(rst_vif.cb);              // the driver releases its item at the first
+    sqr.stop_sequences();                  // now safe: nothing is held
+    @(rst_vif.cb);
+    rst_vif.cb.rst_n <= 1'b1;              // three edges in reset
+
+    // 2. After reset: injected errors, then a full write and read pass.
+    errs.start(sqr, this);
+    again.start(sqr, this);
+  endtask
+endclass
+```
+
+```systemverilog
+// compile: mem_tests.svh (included by mem_pkg.sv)
+// mem_smoke_test and mem_rand_test are I-UVM-3C's, unchanged.
+class mem_smoke_test extends uvm_test;
+  `uvm_component_utils(mem_smoke_test)
+
+  mem_env env;
+  mem_cfg cfg;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    cfg = mem_cfg::type_id::create("cfg");
+    if (!uvm_config_db#(virtual mem_if)::get(this, "", "vif", cfg.vif))
+      `uvm_fatal("NOVIF",
+                 "virtual mem_if 'vif' not found: set it in tb_top before run_test()")
+    uvm_config_db#(mem_cfg)::set(this, "env.agt", "cfg", cfg);
+    env = mem_env::type_id::create("env", this);
+    uvm_root::get().set_timeout(1ms);
+  endfunction
+
+  virtual function void end_of_elaboration_phase(uvm_phase phase);
+    uvm_root::get().print_topology();
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    mem_wr_rd_seq seq = mem_wr_rd_seq::type_id::create("seq");
+    phase.raise_objection(this, "mem sequence running");
+    phase.get_objection().set_drain_time(this, 20ns);
+    `uvm_info("TEST", {"starting ", seq.get_type_name()}, UVM_LOW)
+    seq.start(env.agt.sqr);
+    phase.drop_objection(this, "mem sequence done");
+  endtask
+endclass
+
+class mem_rand_test extends mem_smoke_test;
+  `uvm_component_utils(mem_rand_test)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    mem_wr_rd_seq::type_id::set_type_override(mem_rand_seq::get_type());
+    super.build_phase(phase);
+  endfunction
+endclass
+
+// Mid-test reset plus two injected errors, with expected-error accounting.
+class mem_reset_err_test extends mem_smoke_test;
+  `uvm_component_utils(mem_reset_err_test)
+
+  localparam int unsigned N_INJECT = 2;    // mem_par_err_seq injects two
+
+  virtual rst_if  rst_vif;
+  mem_err_catcher catcher;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (!uvm_config_db#(virtual rst_if)::get(this, "", "rst_vif", rst_vif))
+      `uvm_fatal("NORSTVIF", "virtual rst_if 'rst_vif' not found: set it in tb_top")
+  endfunction
+
+  // After build: the catcher goes on the one reporter allowed to raise the
+  // expected error.
+  virtual function void start_of_simulation_phase(uvm_phase phase);
+    super.start_of_simulation_phase(phase);
+    catcher = mem_err_catcher::type_id::create("catcher");
+    catcher.expected = N_INJECT;
+    uvm_report_cb::add(env.agt.mon, catcher);
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    mem_reset_err_vseq vseq = mem_reset_err_vseq::type_id::create("vseq");
+    vseq.sqr     = env.agt.sqr;
+    vseq.rst_vif = rst_vif;
+    phase.raise_objection(this, "reset and error scenario");  // spans the reset
+    phase.get_objection().set_drain_time(this, 20ns);
+    `uvm_info("TEST", {"starting ", vseq.get_type_name()}, UVM_LOW)
+    vseq.start(null);
+    phase.drop_objection(this, "scenario done");
+  endtask
+
+  // Expected errors are accounted for, not just tolerated.
+  virtual function void check_phase(uvm_phase phase);
+    string counts;
+    super.check_phase(phase);
+    counts = $sformatf("injected=%0d demoted=%0d predicted=%0d flagged=%0d",
+                       N_INJECT, catcher.n_demoted, env.sb.n_err_expected,
+                       env.sb.n_err_seen);
+    if (catcher.n_demoted != N_INJECT || env.sb.n_err_expected != N_INJECT ||
+        env.sb.n_err_seen != N_INJECT)
+      `uvm_error("ERR_ACCOUNT", counts)
+    else
+      `uvm_info("ERR_ACCOUNT", counts, UVM_LOW)
+  endfunction
+endclass
+
+// Random error density: mem_rand_test's 40 random items, with the driver
+// callback corrupting every 8th one. The number of injected errors is known
+// only as the run goes, so the catcher's limit follows the callback's count.
+class mem_par_density_test extends mem_rand_test;
+  `uvm_component_utils(mem_par_density_test)
+
+  mem_par_flip_cb flip;
+  mem_err_catcher catcher;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void start_of_simulation_phase(uvm_phase phase);
+    super.start_of_simulation_phase(phase);
+    flip = mem_par_flip_cb::type_id::create("flip");
+    flip.every = 8;
+    uvm_callbacks#(mem_drv, mem_drv_cb)::add(env.agt.drv, flip);
+    catcher = mem_err_catcher::type_id::create("catcher");
+    catcher.injector = flip;               // pre_drive() counts before the accept edge
+    uvm_report_cb::add(env.agt.mon, catcher);
+  endfunction
+
+  virtual function void check_phase(uvm_phase phase);
+    string counts;
+    super.check_phase(phase);
+    counts = $sformatf("injected=%0d demoted=%0d predicted=%0d flagged=%0d",
+                       flip.n_injected, catcher.n_demoted, env.sb.n_err_expected,
+                       env.sb.n_err_seen);
+    if (flip.n_injected == 0 || catcher.n_demoted != flip.n_injected ||
+        env.sb.n_err_expected != flip.n_injected || env.sb.n_err_seen != flip.n_injected)
+      `uvm_error("ERR_ACCOUNT", counts)
+    else
+      `uvm_info("ERR_ACCOUNT", counts, UVM_LOW)
+  endfunction
+endclass
+```
+
+```systemverilog
+// compile: tb_top.sv (file 5 of 5; replaces I-UVM-3C's version)
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+  import mem_pkg::*;
+
+  logic clk;
+
+  rst_if  rst_if0 (.clk(clk));
+  mem_if  mem_if0 (.clk(clk), .rst_n(rst_if0.rst_n));
+  mem_dut #(.BUG(0)) dut (.clk(clk), .rst_n(rst_if0.rst_n), .valid(mem_if0.valid),
+                          .we(mem_if0.we), .addr(mem_if0.addr),
+                          .wdata(mem_if0.wdata), .par(mem_if0.par),
+                          .rdata(mem_if0.rdata), .err(mem_if0.err));
+
+  initial begin
+    clk = 1'b0;
+    forever #5 clk = ~clk;              // rising edges at 5, 15, 25 ns ...
+  end
+
+  // Power-on reset; mid-test resets come from the test through rst_if0.cb.
+  initial begin
+    rst_if0.rst_n = 1'b0;
+    repeat (2) @(posedge clk);
+    rst_if0.rst_n <= 1'b1;              // the flops at 15 ns still see 0
+  end
+
+  initial begin
+    $timeformat(-9, 0, " ns", 0);
+    uvm_config_db#(virtual mem_if)::set(null, "uvm_test_top", "vif", mem_if0);
+    uvm_config_db#(virtual rst_if)::set(null, "uvm_test_top", "rst_vif", rst_if0);
+    run_test("mem_reset_err_test");     // +UVM_TESTNAME=<test> overrides this
+  end
+endmodule
+```
+
+### Run it
+
+1. Set up uvm-core 2020.3.1 and one time unit everywhere (1 ns / 1 ps) exactly as in I-UVM-3C's "Run it"; the switches are tool-dependent.
+2. Compile in order, with the bench's directory on the include path: `mem_dut.sv`, `mem_if.sv`, `rst_if.sv`, `mem_pkg.sv`, `tb_top.sv`. Elaborate `tb_top`.
+3. Run `mem_reset_err_test` (the default), `mem_par_density_test` for random error density, and `mem_smoke_test` to confirm the original behaviour is intact:
+
+```bash
+# Generic shape; <sim> stands for your simulator's run command.
+<sim> ... +UVM_TESTNAME=mem_reset_err_test
+<sim> ... +UVM_TESTNAME=mem_par_density_test
+<sim> ... +UVM_TESTNAME=mem_smoke_test
+```
+
+This version of `mem_pkg` no longer suits I-UVM-3C's passive bench unchanged: `mem_traffic_gen` drives no `par`, so the monitor would report `MON_X` on its first request. Whether an open-source simulator runs this bench is tool-dependent, and this page does not claim it.
+
+### Expected output
+
+This is a hand trace of `mem_reset_err_test`, not a simulator log (abridged: banner and topology shortened, file and line fields removed). The message format and the order of the summaries follow uvm-core 2020.3.1; spacing differs between tools. Lines with the same time from *different* components (`DRV_RESET` and `MON_RESET`) may appear in the other order on your simulator.
+
+```text
+UVM_INFO @ 0 ns: reporter [UVM/RELNOTES] (release-notes banner)
+UVM_INFO @ 0 ns: reporter [RNTST] Running test mem_reset_err_test...
+UVM_INFO @ 0 ns: reporter [UVMTOP] UVM testbench topology:
+  (table abridged: uvm_test_top, env, agt with cov, drv, mon, sqr; sb with item_fifo)
+UVM_INFO @ 0 ns: uvm_test_top [TEST] starting mem_reset_err_vseq
+UVM_INFO @ 245 ns: uvm_test_top.env.agt.drv [DRV_RESET] released READ  addr=5: reset at its accept edge
+UVM_INFO @ 245 ns: uvm_test_top.env.agt.mon [MON_RESET] reset asserted: discarded READ  addr=4 (no response yet)
+UVM_INFO @ 245 ns: uvm_test_top.env.sb [SCB_RESET] reset: expectations flushed, model cleared to 00
+UVM_INFO @ 285 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 1 of 2] bad parity on WRITE addr=2: par=1, expected 0
+UVM_INFO @ 305 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 2 of 2] bad parity on READ  addr=3: par=1, expected 0
+UVM_INFO @ 645 ns: uvm_test_top [ERR_ACCOUNT] injected=2 demoted=2 predicted=2 flagged=2
+UVM_INFO @ 645 ns: uvm_test_top.env.agt.cov [COV_SUMMARY] we x addr coverage = 100.0%
+UVM_INFO @ 645 ns: uvm_test_top.env.sb [SCB_SUMMARY] SCB_SUMMARY matches=21 mismatches=0 pending=0
+UVM_INFO @ 645 ns: uvm_test_top.env.sb [SCB_ACCOUNT] resets=1 err_expected=2 err_seen=2
+UVM_INFO @ 645 ns: reporter [UVM/REPORT/CATCHER]
+--- UVM Report catcher Summary ---
+
+
+Number of demoted UVM_FATAL reports  :    0
+Number of demoted UVM_ERROR reports  :    2
+Number of demoted UVM_WARNING reports:    0
+Number of caught UVM_FATAL reports   :    0
+Number of caught UVM_ERROR reports   :    0
+Number of caught UVM_WARNING reports :    0
+
+UVM_INFO @ 645 ns: reporter [UVM/REPORT/SERVER]
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :   14
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+** Report counts by id
+[COV_SUMMARY]     1
+[DRV_RESET]     1
+[ERR_ACCOUNT]     1
+[MEM_PARITY]     2
+[MON_RESET]     1
+[RNTST]     1
+[SCB_ACCOUNT]     1
+[SCB_RESET]     1
+[SCB_SUMMARY]     1
+[TEST]     1
+[UVM/RELNOTES]     1
+[UVM/REPORT/CATCHER]     1
+[UVMTOP]     1
+```
+
+How to read it:
+- **The verdict:** `UVM_ERROR :    0`, `UVM_FATAL :    0`, `SCB_SUMMARY` with `matches=21`, and `ERR_ACCOUNT` with four equal counts. The catcher summary agrees: 2 demoted, 0 caught.
+- **The matches:** 4 reads before reset (addresses 0 to 3), the read of address 2 after reset (`00`, which proves the rejected write changed nothing), and 16 reads of the full pass. The read of address 4 was aborted and the read of address 5 never accepted.
+- **The times:** the first 21 requests are accepted from 35 to 235 ns; reset is sampled at 245, 255 and 265 ns; the three requests of `errs` are accepted at 285, 295 and 305 ns; the 32 requests of `again` at 315 to 625 ns. The test drops its objection at 625 ns, the last read's data is published at 635 ns, and the 20 ns drain ends `run_phase` at 645 ns.
+- **The 14 INFO reports** include the two demoted `MEM_PARITY` reports, still listed under their ID, and the catcher summary itself, which uvm-core issues (and counts) just before it composes the report summary.
+
+### Expected output: the density test
+
+`mem_par_density_test` injects through the driver callback, so the count is not written anywhere in the test. Its 40 items are accepted back to back from 35 to 425 ns, and the callback corrupts items 8, 16, 24, 32 and 40, so the monitor reports `MEM_PARITY` at 105, 185, 265, 345 and 425 ns. Each `pre_drive()` call raises `flip.n_injected` one edge before the monitor's report, so the catcher's limit is always one ahead of its demotions. This is an abridged hand trace; the random fields of each request, and the number of matches, change with the seed:
+
+```text
+UVM_INFO @ 105 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 1 of 1] bad parity on ...
+UVM_INFO @ 185 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 2 of 2] bad parity on ...
+UVM_INFO @ 265 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 3 of 3] bad parity on ...
+UVM_INFO @ 345 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 4 of 4] bad parity on ...
+UVM_INFO @ 425 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 5 of 5] bad parity on ...
+UVM_INFO @ 445 ns: uvm_test_top [ERR_ACCOUNT] injected=5 demoted=5 predicted=5 flagged=5
+UVM_INFO @ 445 ns: uvm_test_top.env.sb [SCB_SUMMARY] SCB_SUMMARY matches=<n> mismatches=0 pending=0
+UVM_INFO @ 445 ns: uvm_test_top.env.sb [SCB_ACCOUNT] resets=0 err_expected=5 err_seen=5
+...
+Number of demoted UVM_ERROR reports  :    5
+...
+UVM_ERROR :    0
+```
+
+The four counts agree, and they come from four independent places: the injector, the catcher, the scoreboard's prediction and the DUT's `err` responses. With a fixed `expected = 4` instead of the live count, the fifth report would be passed on as `UVM_ERROR` and `ERR_ACCOUNT` would fail a correct DUT. The same scheme serves the factory override: there the injections are only known when the items reach the driver, so a callback that only counts items with `par_err` set plays the role of `flip`.
+
+### Prove it can fail
+
+Set `.BUG(1)` on the DUT in `tb_top`: a write with bad parity is still flagged with `err`, but its data is written. Rerun `mem_reset_err_test`. **Predict** the `UVM_ERROR` count and the line that causes it, then compare:
+
+```text
+UVM_INFO @ 285 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 1 of 2] bad parity on WRITE addr=2: par=1, expected 0
+UVM_INFO @ 305 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 2 of 2] bad parity on READ  addr=3: par=1, expected 0
+UVM_ERROR @ 305 ns: uvm_test_top.env.sb [SCB_MISMATCH] READ  addr=2 rdata=a5, expected rdata=00
+UVM_INFO @ 645 ns: uvm_test_top [ERR_ACCOUNT] injected=2 demoted=2 predicted=2 flagged=2
+UVM_INFO @ 645 ns: uvm_test_top.env.sb [SCB_SUMMARY] SCB_SUMMARY matches=20 mismatches=1 pending=0
+...
+Number of demoted UVM_ERROR reports  :    2
+...
+UVM_ERROR :    1
+UVM_FATAL :    0
+```
+
+The error accounting is still perfect (the DUT *did* flag both errors), but the read of address 2 returns `a5`. `SCB_MISMATCH` is not `MEM_PARITY`, so the catcher passes it on untouched and the run fails. At 305 ns the monitor's report comes first: the scoreboard's thread checks the read only after the monitor's thread has moved on. Set `.BUG(0)` again before you go on.
+
+### How to make your own bench reset-aware and injection-ready
+
+1. **Write the reset rule into the protocol table:** which edges accept nothing, what the DUT's state becomes, and which responses an assertion aborts.
+2. **Driver:** idle the bus, wait for release; after every accept edge, check the sampled reset; on reset, `item_done()` the held item, log it, wait for release.
+3. **Monitor:** on the first reset edge, discard partial transfers and publish a reset event on a second analysis port; publish nothing during reset; for an asynchronous reset, watch the raw signal.
+4. **Scoreboard:** add a `write_rst()` through `` `uvm_analysis_imp_decl(_rst) ``; check completed observations, then reset the model to the specification's values and delete pending predictions, counting them.
+5. **Reset scenario:** a virtual sequence that applies reset, lets the driver release, then `stop_sequences()` or `kill()`, releases reset and starts *new* sequence objects; the test's objection spans it.
+6. **Injection knob:** a `rand` error field with a soft default of "no error"; override that constraint *by name* in an error subclass.
+7. **Predict error responses** in the scoreboard from what was observed, and count expected and seen errors.
+8. **Catcher:** one ID, one reporter (`uvm_report_cb::add(component, catcher)`), a count, demote with `THROW`; attach it in `start_of_simulation_phase`.
+9. **Account:** in the test's `check_phase`, compare planned, demoted, predicted and flagged. For random injection, the plan is the injector's live count, and the catcher's limit follows it.
+10. **Negative control:** a DUT mutant that the test must fail on; and require the catcher summary to match the plan.
+
+**Checklist before moving on:**
+- [ ] The driver calls `item_done()` for an item that reset prevents from being accepted, and drives nothing until reset is released.
+- [ ] The monitor discards a transfer whose response edge sees reset, and publishes reset to its subscribers.
+- [ ] The scoreboard checks completed transfers, then resets its model to the specification's reset values on every reset.
+- [ ] The reset virtual sequence stops sequences only after the driver has released its item, and restarts with new sequence objects.
+- [ ] The test's objection spans the whole scenario, reset included; no objection is raised inside a sequence that may be killed.
+- [ ] The log proves errors were injected (two `MEM_PARITY` reports), and the scoreboard predicted and saw both.
+- [ ] The catcher is attached to one reporter, matches one ID and severity, and demotes at most the planned count.
+- [ ] `ERR_ACCOUNT` compares the planned, demoted, predicted and flagged counts.
+- [ ] In `mem_par_density_test`, the catcher's limit follows `flip.n_injected`, and `ERR_ACCOUNT` shows five equal non-zero counts.
+- [ ] The run fails with `BUG = 1`, and passes with `BUG = 0`.
+- [ ] You can explain why this bench does not use phase jumping for reset.
+
+## Push Further
+
+### Expert: what `kill()` and `stop_sequences()` do in uvm-core 2020.3.1
+
+- **`stop_sequences()`** (IEEE 1800.2-2020 §15.3.2.14). In `uvm_sequencer_base.svh` it calls `kill_sequence()` for every sequence registered on the sequencer. `uvm_sequencer` (`uvm_sequencer.svh`) then clears its `get_next_item` bookkeeping and empties its request FIFO, logging "Sequences stopped. Removing request from sequencer fifo" if an item was there. A driver that later calls `item_done()` for that item gets `UVM_FATAL [SQRBADITMDN] Item_done() called with no outstanding requests.`
+- **`kill()`** (§14.2.5.11). It removes the sequence's requests and locks from its default sequencer, calls `do_kill()` (§14.2.5.12, the user hook for cleanup), kills every child in `children_array`, then kills the process running `body()`. It does **not** empty the request FIFO, so a driver holding the sequence's item can still call `item_done()` safely afterwards.
+- **`post_body()` and `post_start()`: standard versus implementation.** §14.2.5.11 says they "are executed" after a kill. In uvm-core 2020.3.1 they run inside the process that `kill()` terminates, and the source comment on `kill()` says they "will not be executed". Put cleanup in `do_kill()`, which both call.
+- **Objections.** Both the standard (§14.2.4.4) and uvm-core drop a sequence's *automatic* phase objection when it is killed with `kill()`. uvm-core's `stop_sequences()` kills through `kill_sequence()` and `m_kill()`, which do not drop a top-level sequence's automatic objection (only children killed through `kill()` drop theirs), so the phase can hang: `kill()` such sequences, or keep objections in the test as this bench does. A `raise_objection()` written by hand in a killed thread is never dropped.
+- **Process guards (uvm-core only).** If the process that called `start()` is killed while the sequence runs (by `disable fork` or a phase jump), `uvm_sequence_base.svh` reports `UVM_WARNING [SEQPRTZMB]` and calls `kill()` itself; if the process `start()` forked is killed, it reports `[SEQBDYZMB]`. Kill the sequence first, then the thread.
+
+**Interview angle (try it first):** "Your reset test dies with `SQRBADITMDN` on one simulator and passes on another. Why?"
+
+<details>
+<summary>Model answer</summary>
+
+A same-edge race between the driver's `item_done()` and `stop_sequences()`: the order of processes woken by one event is up to the simulator. Make the driver release first, by design.
+
+</details>
+
+### Expert: phase jumping as a reset strategy, in detail
+
+- **What a jump does.** `uvm_phase::jump()` (§9.3.1.9.1) sets the target and the "end prematurely" flag; uvm-core says it "does not directly alter flow of control". The phaser then moves the phase to `UVM_PHASE_JUMPING`, in which "all processes related to phase are being killed" (Annex F.2.5.2), clears its objection, and schedules the target (`uvm_phase_hopper.svh`). `uvm_domain::jump()` (§9.4.2.4) jumps every active phase of a domain.
+- **Errors you can meet (uvm-core).** A jump from a phase that is not running reports `JMPPHIDL`; a target that is neither a predecessor nor a successor reports `UVM_FATAL [PH_BADJUMP]` (`uvm_phase.svh`). The jump itself is logged as `PH_JUMP` at `UVM_MEDIUM`.
+- **Re-entry.** After a backward jump, `reset_phase`, `configure_phase` and `main_phase` run again in every component of the domain. Each must recreate its sequences (a sequence object still running cannot be started again: uvm-core reports `SEQ_NOT_DONE`) and must not assume it runs once; `get_run_count()` (§9.3.1.4.2) tells a phase how many times it has executed.
+- **What it does not touch.** `run_phase` (§9.8.1.5), and therefore every driver and monitor written the usual way, and every scoreboard flush. A jump-based bench still needs everything on this page, plus the jump.
+- **When it fits.** A closed bench whose components were all designed for re-entry, where the run-time phases map onto real DUT stages (reset, configuration, traffic) and a reset should replay them. Even then, a power domain that resets alone is better modelled as its own domain ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)) or with the power-aware techniques of [E-PWR-1](/curriculum/T4_Expert/E-PWR-1_Power_Aware_Verification/index).
+
+**Interview angle (try it first):** "Name two things a phase jump to `reset_phase` does *not* do for you."
+
+<details>
+<summary>Model answer</summary>
+
+It does not reset `run_phase` drivers and monitors, and it does not flush scoreboards; it also kills sequences at an arbitrary point.
+
+</details>
+
+### Expert: report catcher internals
+
+- **Order and scope.** Catchers are callbacks (§6.6, §10.7). They run in registration order, `UVM_APPEND` by default (§10.7.2.3.1); a catcher added with `null` runs for every report object, one added to a component only for that component's reports. `callback_mode(0)` (§10.7.1.2.2) turns one off without removing it.
+- **What they see.** Only reports issued through UVM. `$error` from a component, and the default action block of a failing SystemVerilog assertion, never reach the report server ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)); to make those catchable, report them with `` `uvm_error `` in the assertion's action block.
+- **Changing severity changes the action (uvm-core).** After each `catch()`, `process_all_report_catchers()` in `uvm_report_catcher.svh` replaces the action with the new severity's default if the severity changed, the action was still the old severity's default, and `set_action()` was not called. A demoted error therefore loses `UVM_COUNT` without any extra code; a catcher that promotes an `UVM_INFO` to `UVM_ERROR` gains it.
+- **Reports from inside a catcher.** The catcher's own `uvm_report_error()` and friends "bypass any message catching callbacks" (§6.6.6.2), so a catcher cannot catch itself. `issue()` (§6.6.6.6) prints the current message immediately, even when the catcher then returns `CAUGHT`.
+- **Counting.** uvm-core keeps static counts of demoted and caught fatals, errors and warnings, and prints them before the report summary once any catcher has been constructed (`uvm_report_catcher::summarize()`). `uvm_report_catcher::print_catcher()` and `debug_report_catcher()` are uvm-core extensions, not in IEEE 1800.2-2020.
+- **Cost at scale (tool-dependent).** Every report passes every applicable catcher. Thousands of `UVM_HIGH` messages suppressed by verbosity never reach the server, but enabled messages do: keep catchers few and their tests cheap, string comparisons last.
+
+**Interview angle (try it first):** "Why should an expected-error catcher return `THROW` after demoting, not `CAUGHT`?"
+
+<details>
+<summary>Model answer</summary>
+
+A demoted report stays in the log with its ID and time, so a reviewer, the ID counts and a script can see what was excused; `CAUGHT` makes it vanish.
+
+</details>
+
+### Expert: reset at system scale (tool-dependent)
+
+- **Several resets.** A chip has reset domains: a block can reset while its neighbours keep running. Each agent should watch the reset of the interface it sits on, not a global one, and scoreboards that span domains must flush only the expectations the resetting side owed. Reset-domain crossing analysis is [E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index)'s topic.
+- **Power-on X.** A 4-state variable starts at X (IEEE 1800-2023 §6.8). Until reset is applied, X on DUT outputs is legal; monitors that check for X must be gated by reset, as `mem_mon` is. Whether simulation starts registers at X, at 0 or at random values is a tool option (tool-dependent), and gate-level runs behave differently again.
+- **Reset in the middle of an injected error.** If the reset aborts an injected request, the checker never fires and the scoreboard never predicts it: `ERR_ACCOUNT` then fails on a correct bench. Either keep injections away from resets, or count injections at the scoreboard (accepted requests only) rather than at the stimulus.
+
+**Interview angle (try it first):** "Your reset test passes on RTL and fails at gate level with X on `rdata` right after reset. Where do you look?"
+
+<details>
+<summary>Model answer</summary>
+
+Reset values and X-propagation of registers without reset at gate level; a monitor or scoreboard reading outputs the specification leaves undefined after reset.
+
+</details>
+
+### Interview angles
+
+Attempt each question before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: an error test that passes too easily"
+  question="A colleague's error-injection test demotes every UVM_ERROR during the test 'because the injected errors are expected'. The regression is green. What do you ask for?"
+  options={[
+    { text: "Nothing: the injected errors are expected, so demoting every error during the test is the purpose of the test.", correct: false, feedback: "Demoting every error also demotes a real DUT bug that appears during the test, and the test's own accounting errors. The run can pass with a broken DUT." },
+    { text: "A catcher narrowed to one ID, one reporter and the planned count, plus a mutant-DUT run that must fail.", correct: true, feedback: "Right. Narrow scope, a count tied to the plan, and a negative control: together they prove the test can still fail for a reason other than the injection." },
+    { text: "Turn the protocol checker off during the injection test instead, so that no error is reported in the first place.", correct: false, feedback: "That hides accidental protocol violations too, and removes the evidence that the injected error was ever seen on the bus." },
+    { text: "Raise the injected errors to UVM_FATAL, so that the test stops at once and nothing has to be demoted.", correct: false, feedback: "Then the test fails on the first expected error and never checks how the DUT handled it." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: false mismatches after reset"
+  question="After a mid-test reset, a correct DUT gets three SCB_MISMATCH errors on its first reads, then everything matches. What is the most likely cause, and the fix?"
+  options={[
+    { text: "Stale expectations: flush the scoreboard's model to the reset values on the monitor's reset event.", correct: true, feedback: "Right. The first reads after reset compare the DUT's reset values with pre-reset expectations; once new writes overwrite the model, the mismatches stop." },
+    { text: "The monitor samples rdata too early after the reset; add a drain time to the test's objection.", correct: false, feedback: "A drain time affects only the end of the test. The mismatches follow reset, not the end of the run." },
+    { text: "Demote SCB_MISMATCH with a report catcher for the first few cycles after every reset.", correct: false, feedback: "That would hide a real reset bug in the same window, which is exactly where reset bugs show up." },
+    { text: "Jump back to reset_phase on reset, so that the scoreboard restarts together with the run-time phases.", correct: false, feedback: "A jump does not touch a scoreboard's model; the flush is still needed, and the jump adds new hazards." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "At 245 ns rst_n is sampled 0. The read of address 5 is on the bus (driven at 235 ns), and the read of address 4, accepted at 235 ns, has its data 4b on rdata. What does the bench do with the two reads?",
+      answers: [
+        { text: "The monitor publishes the read of 4 with rdata = 4b, since its data was already on the bus, and the driver releases the read of 5", correct: false, feedback: "The read of 4's response edge sees reset, so by the protocol's rule the transfer is aborted; publishing it would compare 4b against a memory the DUT has just cleared." },
+        { text: "The driver keeps the read of 5 and drives it again as soon as reset is released, so that no stimulus is lost", correct: false, feedback: "The driver does not own the scenario: it gives the item back, and the test decides what runs after reset." },
+        { text: "The driver releases the read of 5 with item_done(); the monitor discards the read of 4; the scoreboard flushes", correct: true, feedback: "Right. Neither read is a completed transfer, so neither reaches the scoreboard, and the scoreboard's expectations are flushed in the same time slot." },
+        { text: "The driver drops the read of 5 without calling item_done(), since the sequence that sent it will be killed anyway", correct: false, feedback: "Without item_done() the sequencer still thinks the driver holds the item: the next get_next_item() reports 'Get_next_item called twice' and returns the stale item." }
+      ],
+      explanation: "A request is accepted only at an edge with rst_n = 1, and a transfer completes only at its response edge. At 245 ns the read of 5 is not accepted, so the driver releases it; the read of 4 loses its response edge, so the monitor discards it. The scoreboard checks what completed earlier and clears its model.",
+      objective: 1
+    },
+    {
+      question: "A correct DUT passes every test, except that after a mid-test reset the log shows: SCB_MISMATCH READ  addr=2 rdata=00, expected rdata=2d. What is wrong?",
+      answers: [
+        { text: "The scoreboard: its model kept address 2's pre-reset value because it was not flushed", correct: true, feedback: "Right. Pending expectations do not survive reset. The model must be reset to the specification's reset values when the monitor reports reset." },
+        { text: "The DUT: reset should leave memory contents alone and clear only the control registers", correct: false, feedback: "The specification says reset clears every location to 00; the DUT is right to return 00." },
+        { text: "The monitor: it sampled rdata one edge too early, before the DUT had driven the read data", correct: false, feedback: "The monitor captured 00, the correct post-reset value; the expectation of 2d is the stale part." },
+        { text: "Nothing: mismatches right after a reset are expected, so the catcher should demote them", correct: false, feedback: "Demoting SCB_MISMATCH hides real reset bugs in exactly the window where they appear. Fix the flush instead." }
+      ],
+      explanation: "The read returned the DUT's reset value, and the scoreboard expected the value written before the reset: its expectation survived the reset. flush_on_reset() resets the model to 00 when the monitor publishes MEM_RST_ASSERTED.",
+      objective: 1
+    },
+    {
+      question: "A DUT has an asynchronous reset, and its clock is gated off while reset is held. The monitor detects reset only by checking vif.mon_cb.rst_n after each @(vif.mon_cb). What happens when reset is asserted between two edges?",
+      answers: [
+        { text: "Nothing goes wrong: a clocking block samples its inputs continuously, so rst_n is seen at once", correct: false, feedback: "A clocking block samples its inputs only at its clocking event (IEEE 1800-2023 §14.13)." },
+        { text: "The monitor sees the reset at the next clock edge, so it reacts one cycle late but correctly", correct: false, feedback: "With the clock gated there is no next edge until reset is released; the monitor may never see the reset at all, and then publishes the aborted transfer." },
+        { text: "The simulator reports an error, because rst_n changed between two edges of the clocking event", correct: false, feedback: "Signals may change at any time; a clocking block simply does not sample them then." },
+        { text: "It sees the reset late or never; watch assertion on the raw signal with @(negedge vif.rst_n)", correct: true, feedback: "Right. An asynchronous reset acts at once, so the TB must watch the signal itself, outside the clocking block; the release can still be sampled through it." }
+      ],
+      explanation: "Clocking-block inputs are sampled at the clocking event only. For an asynchronous reset, fork the clocked collection loop against @(negedge vif.rst_n), disable the loop on reset, discard partial transfers and publish the reset. A driver does the same around its drive.",
+      objective: 1
+    },
+    {
+      question: "A team lead proposes: 'From now on, every test handles a mid-test reset with phase.jump(uvm_reset_phase::get()) from main_phase; that is the standard UVM reset technique.' What is the best answer?",
+      answers: [
+        { text: "Agree: the jump restarts every component, so drivers, monitors and scoreboards are reset automatically", correct: false, feedback: "Drivers and monitors run in run_phase, which runs in parallel to the run-time phases (§9.8.1.5) and is not touched by the jump; scoreboards are not flushed either." },
+        { text: "Disagree: a jump leaves run_phase drivers and monitors untouched and kills sequences mid-item", correct: true, feedback: "Right. Phase jumping is in the standard but is not how a bench becomes reset-aware: make components reset-aware in run_phase and restart stimulus from the test. Use jumping only in a bench whose components were all designed to re-run the run-time phases." },
+        { text: "Disagree: phase.jump() is a uvm-core extension and is not part of the IEEE 1800.2 standard", correct: false, feedback: "It is in the standard (§9.3.1.9.1, and uvm_domain::jump in §9.4.2.4). The problem is what it does and does not do." },
+        { text: "Agree, provided every sequence raises its own objection, so that the jump can drop each one cleanly", correct: false, feedback: "The jump clears the phase's objections; it does not drop them one by one, and objections inside killed sequences are a hang risk, not a fix." }
+      ],
+      explanation: "Phase jumping restarts the run-time schedule only. The pin-level work happens in run_phase threads, which must be reset-aware anyway; a jump adds an arbitrary kill point, cleared objections and re-entry requirements on every component, including third-party VIP.",
+      objective: 2
+    },
+    {
+      question: "A virtual sequence drives rst_n low at 235 ns, waits one edge (245 ns, the first edge with reset sampled 0) and calls sqr.stop_sequences(). On some simulators the run dies with UVM_FATAL [SQRBADITMDN] Item_done() called with no outstanding requests. Why?",
+      answers: [
+        { text: "stop_sequences() may only be called from a test, never from a virtual sequence started on null", correct: false, feedback: "Any code with a handle to the sequencer may call it; the problem is the order relative to the driver." },
+        { text: "The driver must not call item_done() after a reset; it should simply wait for the release", correct: false, feedback: "Without item_done() the sequencer believes the item is still held; 'Get_next_item called twice' follows." },
+        { text: "Same-edge race: if stop_sequences() runs first, it has already emptied the request FIFO", correct: true, feedback: "Right. The driver's item_done() and stop_sequences() wake at the same edge in a simulator-chosen order. Wait one more edge, or kill() the owned sequences, which leaves the request FIFO alone." },
+        { text: "traffic was started without a parent, so stop_sequences() could not find it on the sequencer", correct: false, feedback: "stop_sequences() finds every sequence registered on the sequencer, parent or not; and a missed sequence would not cause this fatal." }
+      ],
+      explanation: "In uvm-core 2020.3.1, uvm_sequencer::stop_sequences() flushes the request FIFO, which still holds the item the driver took. The driver's item_done() then finds nothing to remove. Order the reset reaction so that the driver releases first.",
+      objective: 2
+    },
+    {
+      question: "mem_err_item adds constraint c_inject { par_err dist {1 := 1, 0 := 7}; } and the test overrides mem_item with it. The base mem_item has constraint c_par_ok { soft par_err == 0; }. How many parity errors does a 40-item random run inject?",
+      answers: [
+        { text: "None: the soft constraint never conflicts with the dist, so par_err is always 0", correct: true, feedback: "Right. Weights do not change the solution space (IEEE 1800-2023 §18.5.3), and a soft constraint is discarded only on a conflict (§18.5.13). Give the error constraint the base's name, c_par_ok, so that it replaces the soft default (§18.5.2)." },
+        { text: "About 5, one in eight items, because the dist weights decide the value of par_err", correct: false, feedback: "Distribution weights shape the probabilities only among the values the other constraints allow, and the soft constraint allows only 0." },
+        { text: "All 40, because a derived class's constraint always overrides the base class's one", correct: false, feedback: "A differently named constraint is added to the base's, not substituted for it." },
+        { text: "Randomization fails, because the soft constraint and the dist contradict each other", correct: false, feedback: "They do not contradict: par_err == 0 is inside the distribution's set, so the solver succeeds with par_err = 0." }
+      ],
+      explanation: "A soft default plus a separately named dist yields the soft value every time. Override the base constraint by name, or switch it off with constraint_mode(0), and confirm from the log that errors were injected.",
+      objective: 3
+    },
+    {
+      question: "mem_par_density_test injects with the driver callback (every 8th of 40 random items, so 5 errors). A colleague replaces catcher.injector = flip with catcher.expected = 4. What does a run on the correct DUT report?",
+      answers: [
+        { text: "UVM_ERROR : 0: the catcher still demotes every MEM_PARITY report from the monitor", correct: false, feedback: "The catcher demotes at most n_allowed() reports, now a fixed 4; the fifth is passed on as an error." },
+        { text: "UVM_ERROR : 0, and ERR_ACCOUNT passes, because the scoreboard's two counts agree", correct: false, feedback: "ERR_ACCOUNT also compares the catcher's count (4) with the injector's (5), so it fails." },
+        { text: "UVM_ERROR : 5: once the limit is reached, every report is passed on as an error", correct: false, feedback: "Four reports were demoted before the limit was reached; only the fifth MEM_PARITY report counts." },
+        { text: "UVM_ERROR : 2: the fifth MEM_PARITY report, and ERR_ACCOUNT with demoted=4", correct: true, feedback: "Right. A fixed number cannot account for a count the test does not choose. The limit must follow the injector's live count, as injector.n_injected does." }
+      ],
+      explanation: "With a fixed limit of 4, the catcher demotes four reports and throws the fifth as UVM_ERROR; check_phase then finds demoted=4 against injected=5 and reports ERR_ACCOUNT. The correct DUT fails twice. Following flip.n_injected, which pre_drive() raises one edge before each report, keeps the limit equal to what was really injected.",
+      objective: 3
+    },
+    {
+      question: "Which catcher setup is safe for mem_reset_err_test, which injects two bad-parity requests?",
+      answers: [
+        { text: "uvm_report_cb::add(null, c), with catch() demoting every UVM_ERROR while the injection test runs", correct: false, feedback: "This is the 'demote all errors during injection' mistake: a real SCB_MISMATCH, and even the test's own ERR_ACCOUNT error, would be demoted and the run would pass." },
+        { text: "uvm_report_cb::add(env.agt.mon, c), demoting MEM_PARITY errors at most twice, with THROW", correct: true, feedback: "Right. One reporter, one severity and ID, a count tied to the plan, and the demoted reports stay in the log." },
+        { text: "A catcher added to every component that returns CAUGHT for MEM_PARITY, so the log stays clean", correct: false, feedback: "CAUGHT makes the reports vanish from the log and the counts, has no limit, and would also swallow a parity error from another agent." },
+        { text: "+uvm_set_action=uvm_test_top.env.*,MEM_PARITY,UVM_ERROR,UVM_NO_ACTION on the command line", correct: false, feedback: "UVM_NO_ACTION removes every MEM_PARITY error below env before it is counted or printed, with no limit: an unplanned parity error would disappear too." }
+      ],
+      explanation: "Narrow by reporter (attach to the monitor), by severity and ID, and by count; demote and THROW so the evidence stays. Then compare the catcher's count with the plan in check_phase.",
+      objective: 4
+    },
+    {
+      question: "mem_reset_err_test is rerun on a DUT with BUG = 1: a bad-parity write is flagged with err but still written. With the narrow mem_err_catcher, what does the report summary show?",
+      answers: [
+        { text: "UVM_ERROR : 0, because the injection test's catcher demotes the errors of this test", correct: false, feedback: "The catcher demotes only MEM_PARITY from the monitor. The real failure is an SCB_MISMATCH from the scoreboard, which it passes on untouched." },
+        { text: "UVM_ERROR : 3: the two injected parity errors plus the one scoreboard mismatch", correct: false, feedback: "Both parity errors were planned and demoted; only the mismatch counts." },
+        { text: "UVM_ERROR : 1, from SCB_MISMATCH on the read of address 2 (a5, expected 00)", correct: true, feedback: "Right. The read of address 2 after the rejected write proves the write was not dropped. The narrow catcher leaves it as an error, so the run fails." },
+        { text: "UVM_ERROR : 2: the scoreboard mismatch plus an ERR_ACCOUNT error from the test", correct: false, feedback: "The accounting is clean: the DUT flagged both errors, the scoreboard predicted both, the catcher demoted both." }
+      ],
+      explanation: "A negative control proves the injection test can still fail. The mutant DUT writes a5 to address 2; the next read returns a5 against an expected 00, and SCB_MISMATCH is counted because the catcher is narrowed to MEM_PARITY from the monitor.",
+      objective: 4
+    },
+    {
+      question: "Your reset test passes in every regression. Which evidence shows that the bench was tested with a reset landing while a read was waiting for its data?",
+      answers: [
+        { text: "A hit in rst_cg's 'read pending' cross bin, sampled by the monitor at the reset edge", correct: true, feedback: "Right. Coverage of reset context × bus activity records where in the protocol each reset landed." },
+        { text: "UVM_ERROR : 0 in every run of the reset test, across all the seeds of the regression", correct: false, feedback: "A clean summary shows nothing failed, not which situations were exercised." },
+        { text: "Code coverage showing that the DUT's reset branch executed during the regression", correct: false, feedback: "The reset branch executes for any reset, including the power-on reset with an idle bus." },
+        { text: "The scoreboard's resets counter being greater than 0 at the end of every run of the test", correct: false, feedback: "It counts resets, not the protocol state each one met." }
+      ],
+      explanation: "Plan coverage of reset × state: sample what the reset cut off (nothing, a write pending, a read pending) and whether a request was on the bus at the reset edge; randomize the reset point until the cross closes. The error × response cross does the same for injected errors.",
+      objective: 5
+    }
+  ]}
+/>
+
+### Kata (debug): two hidden mutants
+
+**Setup.** Two colleagues each changed one thing in their copy of this lesson's `mem_pkg` (the mutants are hidden; the rest of the bench is as on this page). Each ran `mem_reset_err_test` twice: with `BUG = 0` (the correct DUT) and with `BUG = 1` (the planted DUT bug). Here are the lines that differ from this page's expected output.
+
+**Bench P**
+```text
+BUG = 0:
+UVM_INFO  @ 305 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 2 of 2] bad parity on READ  addr=3: par=1, expected 0
+UVM_ERROR @ 305 ns: uvm_test_top.env.sb [SCB_MISMATCH] READ  addr=2 rdata=00, expected rdata=2d
+UVM_INFO  @ 645 ns: uvm_test_top.env.sb [SCB_SUMMARY] SCB_SUMMARY matches=20 mismatches=1 pending=0
+UVM_ERROR :    1
+BUG = 1:
+UVM_ERROR @ 305 ns: uvm_test_top.env.sb [SCB_MISMATCH] READ  addr=2 rdata=a5, expected rdata=2d
+UVM_ERROR :    1
+```
+
+**Bench Q**
+```text
+BUG = 0: passes. The only lines that differ from this page's expected output are the two
+MEM_PARITY lines, which have no "[expected k of 2]" prefix.
+BUG = 1:
+UVM_INFO  @ 285 ns: uvm_test_top.env.agt.mon [MEM_PARITY] bad parity on WRITE addr=2: par=1, expected 0
+UVM_INFO  @ 305 ns: uvm_test_top.env.agt.mon [MEM_PARITY] bad parity on READ  addr=3: par=1, expected 0
+UVM_INFO  @ 305 ns: uvm_test_top.env.sb [SCB_MISMATCH] READ  addr=2 rdata=a5, expected rdata=00
+UVM_INFO  @ 645 ns: uvm_test_top [ERR_ACCOUNT] injected=2 demoted=3 predicted=2 flagged=2
+Number of demoted UVM_ERROR reports  :    4
+UVM_ERROR :    0
+```
+
+**Your tasks.**
+1. For each of the four runs, is the verdict right? Name each wrong one a false failure or a false pass.
+2. Name the mutated component and the change in each bench.
+3. Write the fix.
+4. For bench Q: why does the `ERR_ACCOUNT` line say `demoted=3` while the catcher summary says 4, and why did `ERR_ACCOUNT` not fail the run?
+5. Which regression rule would have made bench Q fail automatically?
+
+<details>
+<summary>Hint</summary>
+
+Bench P expects `2d` at address 2 after the reset: where did that value come from, and when should it have been forgotten? In bench Q, look at the severity of the `SCB_MISMATCH` line, and at what is missing from the `MEM_PARITY` lines.
+
+</details>
+
+<details>
+<summary>Worked solution</summary>
+
+1. **Verdicts.** Bench P, `BUG = 0`: **false failure** (the DUT is correct). Bench P, `BUG = 1`: right verdict (fail), wrong reason (it blames a stale `2d`, not the written `a5`). Bench Q, `BUG = 0`: right (pass). Bench Q, `BUG = 1`: **false pass**, a real bug and `UVM_ERROR : 0`.
+2. **Mutants.**
+   - **Bench P: the scoreboard is not flushed.** `flush_on_reset()` no longer clears `model` (for example, the `foreach (model[i]) model[i] = '0;` line was deleted), so the value written to address 2 before the reset (`{2, ~2}` = `2d`) survives. The read after reset returns the DUT's reset value `00` and mismatches. Pending expectations do not survive reset.
+   - **Bench Q: the catcher is too broad.** Its `catch()` demotes every `UVM_ERROR` (no ID check and no limit; it still counts `n_demoted`), it is attached with `uvm_report_cb::add(null, catcher)`, and it no longer rewrites the message (no `[expected k of 2]` prefix). With the correct DUT only the two planned errors exist, so it looks fine; with the bug it demotes the real `SCB_MISMATCH`.
+3. **Fixes.**
+
+```systemverilog
+// snippet: bench P, inside mem_sb::flush_on_reset()
+foreach (model[i]) model[i] = '0;      // reset the model to the specification's values
+```
+
+```systemverilog
+// snippet: bench Q, the narrow catch() and its registration
+virtual function action_e catch();
+  if (get_severity() != UVM_ERROR || get_id() != catch_id) return THROW;
+  if (n_demoted >= n_allowed()) return THROW;
+  n_demoted++;
+  set_severity(UVM_INFO);
+  set_message($sformatf("[expected %0d of %0d] %s", n_demoted, n_allowed(), get_message()));
+  return THROW;
+endfunction
+// in the test's start_of_simulation_phase:
+uvm_report_cb::add(env.agt.mon, catcher);   // the monitor only, not null
+```
+
+4. **Why 3 and 4.** In `check_phase` the test compared the counts when the catcher had demoted 3 reports (two `MEM_PARITY` and the `SCB_MISMATCH`), so it raised `ERR_ACCOUNT` as an error. That error went through the same over-broad catcher, which demoted it as well: the fourth demotion in uvm-core's catcher summary. A catcher with no reporter or ID limit can silence the very check meant to catch it.
+5. **The regression rule.** Two rules, both outside the catcher's reach. The negative control: the `BUG = 1` run must end with a non-zero `UVM_ERROR` count. And the catcher summary: "Number of demoted UVM_ERROR reports" must equal the planned injections (2), checked by the regression script on the log. Either one fails bench Q.
+
+</details>
+
+Runnable lab for this module: planned. The flashcards below drill the reset reactions, the virtual-sequence order, the injection mechanisms and the catcher rules.
+
+## References & Next Topics
+
+**Primary sources:**
+- IEEE 1800.2-2020: §6.5.1.2.14 report processing order (catchers, then `UVM_NO_ACTION`); §6.6 `uvm_report_catcher` (§6.6.3.1 `get_client`, §6.6.3.2 `get_severity`, §6.6.3.5 `get_id`, §6.6.4.1 `set_severity`, §6.6.4.4 `set_message`, §6.6.4.5 `set_action`, §6.6.5 `catch`, `THROW`, `CAUGHT`, §6.6.6.2 reports from a catcher, §6.6.6.6 `issue`); §8.2.4.2.5 `set_type_override`; §9.3.1.4.2 `get_run_count`; §9.3.1.9 jumping (§9.3.1.9.1 `jump`); §9.4.2.4 `uvm_domain::jump`; §9.8.1.5 `uvm_run_phase` (runs in parallel to the run-time phases); §9.8.2 run-time phases; §10.7.1.2.2 `callback_mode`; §10.7.2.3.1 `uvm_callbacks::add`; §12.2.8.2.6 `flush`; §12.2.8.3 `uvm_tlm_analysis_fifo`; §14.2.4.4 `set_automatic_phase_objection` (dropped on `kill`); §14.2.5.11 `kill`; §14.2.5.12 `do_kill`; §15.3.2.14 `stop_sequences`; Annex B.4.1 `` `uvm_register_cb ``, B.4.3 `` `uvm_do_callbacks ``; Annex B.5.22 `` `uvm_analysis_imp_decl ``; Annex D.4.3 `uvm_report_cb`; Annex F.2.5.2 phase states (`UVM_PHASE_JUMPING`).
+- IEEE 1800-2023: §6.8 variable declarations (initial X); §9.4.2 event control; §9.6.3 `disable fork`; §14.13 input sampling; §14.16 synchronous drives (only continuous or procedural continuous assignment to a clockvar is illegal; the target signal may also be written procedurally; a drive takes effect at a clocking event); §16.5 and §16.12 disable conditions use current values; §18.5.2 constraint inheritance (same name replaces); §18.5.3 distributions; §18.5.13 soft constraints; §19.8.1 covergroup `sample` with arguments.
+- uvm-core 2020.3.1 (implementation behaviour named on this page): `src/seq/uvm_sequencer.svh` (`stop_sequences` empties the request FIFO; `SQRBADITMDN`; `Get_next_item called twice`); `src/seq/uvm_sequencer_base.svh` (`stop_sequences`, `kill_sequence`); `src/seq/uvm_sequence_base.svh` (`kill`, `m_kill` killing children, `post_body` not run after a kill, `SEQPRTZMB`, `SEQBDYZMB`, `SEQ_NOT_DONE`); `src/base/uvm_phase.svh` (`jump`, `JMPPHIDL`, `PH_BADJUMP`); `src/base/uvm_phase_hopper.svh` (`PH_JUMP`, processes killed and objections cleared on a jump); `src/base/uvm_runtime_phases.svh` (run-time schedule concurrent with `run_phase`); `src/base/uvm_report_catcher.svh` (action re-derived on a severity change; catcher summary; `print_catcher`, `debug_report_catcher`); `src/base/uvm_report_server.svh` (catcher summary printed before the report summary).
+
+**Prerequisites:** [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index), [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index), [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) and [A-UVM-8: Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index).
+
+**Related:**
+- [I-UVM-3C: Your First Complete UVM Testbench](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index): the `mem` bench this lesson extends.
+- [I-UVM-1C: UVM Phasing and Synchronization](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): run-time phases, domains and phase jumps.
+- [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index): type and instance overrides.
+- [I-UVM-3B: Advanced Sequencing and Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index): virtual sequences, `kill()` and sequencer control.
+- [I-SV-2B: Advanced Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index): soft constraints and distributions.
+- [I-SV-3B: Advanced Functional Coverage](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/index): crosses, `ignore_bins` and the vplan.
+- [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): report catchers for debug and triage.
+- [E-PWR-1: Power-Aware UVM Verification Strategy](/curriculum/T4_Expert/E-PWR-1_Power_Aware_Verification/index): resets caused by power events.
+- [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): reset domains and system-level reset strategy.
+
+<NextLesson />

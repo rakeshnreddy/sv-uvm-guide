@@ -2,6 +2,76 @@
   {
     "id": "auvm9-1",
     "question": "What must a scoreboard do when reset is asserted in the middle of a test?",
-    "answer": "Flush the expected items still queued for the transactions the reset aborted, and stop comparing until the DUT leaves reset. Otherwise it later reports mismatches or missing items that are not DUT bugs, and a real failure is hidden in the noise."
+    "answer": "Check the transfers that completed before the reset, then flush the expectations the reset destroyed: delete queued predictions, or reset a model to the specification's reset values (`mem_sb` clears `model` to `00`). Pending expectations do not survive reset; keeping them gives false mismatches or MISSING reports on a correct DUT, and nothing is published while reset is asserted."
+  },
+  {
+    "id": "auvm9-2",
+    "question": "What does a reset-aware driver do when reset is sampled at the accept edge of the item it is driving?",
+    "answer": "It stops driving (`valid <= 0`), gives the item back with `item_done()` because the DUT did not accept it, and waits for reset to be released before the next `get_next_item()`. Without that `item_done()` the sequencer still believes the driver holds the item, so the next `get_next_item()` reports `Get_next_item called twice without item_done or get in between` and returns the stale item (uvm-core 2020.3.1). The test, not the driver, decides what happens to the sequence."
+  },
+  {
+    "id": "auvm9-4",
+    "question": "What does a reset-aware monitor do with a partial transaction, and how does it tell the scoreboard about reset?",
+    "answer": "A transfer whose response edge sees reset is not a completed transfer, so the monitor discards it instead of publishing it, and publishes nothing during reset. It reports reset as an event on a second analysis port (here `rst_ap`, `MEM_RST_ASSERTED` and `MEM_RST_RELEASED`), so subscribers never touch pins."
+  },
+  {
+    "id": "auvm9-5",
+    "question": "Why is an asynchronous reset watched outside the clocking block?",
+    "answer": "A clocking block samples only at its clocking event (IEEE 1800-2023 §14.13), but an asynchronous reset acts at once and the clock may stop during reset, so a clocking-block-only monitor or driver can miss the reset completely. Detect assertion with `@(negedge vif.rst_n)` on the raw signal, forked against the collect or drive loop and followed by `disable fork`; the driver then calls `item_done()` and idles the bus. The release can still be sampled through the clocking block."
+  },
+  {
+    "id": "auvm9-6",
+    "question": "In a mid-test reset virtual sequence, why does `stop_sequences()` wait until the driver has released its item?",
+    "answer": "In uvm-core 2020.3.1, `uvm_sequencer::stop_sequences()` also empties the request FIFO, which still holds the driver's item. A later `item_done()` then fails with `UVM_FATAL [SQRBADITMDN] Item_done() called with no outstanding requests.` Let the driver release first (one edge later), or `kill()` the owned sequences, which leaves the FIFO alone."
+  },
+  {
+    "id": "auvm9-7",
+    "question": "`kill()` or `stop_sequences()`: which do you use on reset?",
+    "answer": "`kill()` (IEEE 1800.2-2020 §14.2.5.11) stops one sequence and its children, removing their requests and locks; use it on the sequences the scenario owns. `stop_sequences()` (§15.3.2.14) kills every sequence on a sequencer and returns it to idle; use it when anything may be running there. Restart with new sequence objects."
+  },
+  {
+    "id": "auvm9-8",
+    "question": "Is run-time phase jumping the standard way to handle a mid-test reset?",
+    "answer": "No. `phase.jump(uvm_reset_phase::get())` (§9.3.1.9.1) restarts only the run-time phases; drivers and monitors in `run_phase` (which runs in parallel, §9.8.1.5) still need their own reset handling, scoreboards still need a flush, sequences are killed wherever they are, and objections are cleared. Prefer reset-aware `run_phase` components and a test-level restart."
+  },
+  {
+    "id": "auvm9-9",
+    "question": "How do you keep the run alive across a mid-test reset?",
+    "answer": "Raise the objection in the test (or the top virtual sequence) before the scenario and drop it when the whole scenario, reset and restart included, has returned. Never raise objections by hand inside sequences you may kill: `kill()` drops only the automatic objection (§14.2.4.4), and a manual one in a killed thread hangs the run until the timeout."
+  },
+  {
+    "id": "auvm9-10",
+    "question": "Name three ways to inject errors in UVM and when each fits.",
+    "answer": "An error sequence (directed: exactly these errors, with checks around them); a factory override of the item with an error-capable subclass (random error density in existing tests, no sequence edits); a driver callback (pin-level corruption, every Nth request or one agent instance only)."
+  },
+  {
+    "id": "auvm9-11",
+    "question": "An error item adds `constraint c_inject { par_err dist {1 := 1, 0 := 7}; }`, but the base item has `constraint c_par_ok { soft par_err == 0; }`. Why are no errors ever injected?",
+    "answer": "Distribution weights do not change the solution space (IEEE 1800-2023 §18.5.3), so the soft constraint never conflicts and is never discarded (§18.5.13): `par_err` stays 0. Name the error constraint `c_par_ok` so it replaces the base one (§18.5.2), or disable the soft constraint."
+  },
+  {
+    "id": "auvm9-12",
+    "question": "What does expected-error accounting compare at the end of an injection test?",
+    "answer": "The errors the test injected, the reports the catcher demoted, and the bad-parity requests the scoreboard predicted and saw the DUT flag; all must agree, or the test reports `ERR_ACCOUNT`. With a fixed plan the injected number is a constant; with random injection (a callback or an override) it is the injector's live count, which the catcher's limit must follow, as in `mem_par_density_test`. A mismatch means a checker missed one, a reset aborted one, or the catcher demoted too many."
+  },
+  {
+    "id": "auvm9-13",
+    "question": "What makes a report catcher for expected errors narrow enough, and why is demoting all errors during injection wrong?",
+    "answer": "Attach it to the one reporter (`uvm_report_cb::add(env.agt.mon, c)`, not `null`), match one severity and ID, and demote at most the planned count. Demoting every error also demotes a real DUT bug, and even the test's own accounting error, so the run passes with a broken DUT."
+  },
+  {
+    "id": "auvm9-14",
+    "question": "Demote, `CAUGHT` or `UVM_NO_ACTION`: which do you use for an expected error, and why?",
+    "answer": "Demote with `set_severity(UVM_INFO)` and return `THROW`: the report stays in the log with its ID and time, and uvm-core switches it to the INFO action (displayed, not counted as an error). `CAUGHT` and `UVM_NO_ACTION` make the report vanish before it is counted or printed, with no trace for review."
+  },
+  {
+    "id": "auvm9-15",
+    "question": "How do you prove that an error-injection test can still fail on a real bug?",
+    "answer": "Run it as a negative control on a DUT with a planted bug (here `BUG = 1`, which writes a rejected write anyway) and require `UVM_ERROR` greater than 0. Also check from outside the simulation that the catcher summary's demoted count equals the planned injections; no catcher can hide that."
+  },
+  {
+    "id": "auvm9-16",
+    "question": "Which coverage shows that reset and error injection were really exercised?",
+    "answer": "Reset × state: what the reset cut off (nothing, a write pending, a read pending) crossed with whether a request was on the bus at the reset edge. Error × response: request kind × parity × DUT response, ignoring the wrong-response cells the scoreboard reports as bugs. Randomize the reset point and the error placement until the crosses close."
   }
 ]
