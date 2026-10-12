@@ -23,6 +23,7 @@ export const METHODOLOGY_PHASE_ASSUMPTIONS = [
   "Model of uvm_phase::add() in uvm-core 2020.3.1 (IEEE 1800.2-2020 §9.3.1.6.1): anchors are looked up with find(..., stay_in_scope=1).",
   "The common domain holds build … final; the uvm domain holds one schedule, uvm_sched, with the 12 runtime phases, and runs beside run_phase.",
   "All components are in the default uvm domain. Phase jumps and user-defined domains are not modelled.",
+  "uvm_domain::get_common_domain() and get_uvm_schedule() are uvm-core implementation calls: IEEE 1800.2-2020 §9.4.2 standardizes only new, get_domains, add_uvm_phases and jump.",
   "Derived from reading the library source, not from a simulator run.",
 ];
 

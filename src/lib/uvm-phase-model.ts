@@ -825,7 +825,8 @@ export function customPhaseSource(spec: CustomPhaseInsert, envClass = "soc_env")
   return [
     `class ${cls} extends uvm_task_phase;`,
     `  local static ${cls} m_inst;`,
-    `  function new(string name = "${spec.name}");`,
+    `  // protected: the only instance comes from get()`,
+    `  protected function new(string name = "${spec.name}");`,
     `    super.new(name);`,
     `  endfunction`,
     `  static function ${cls} get();`,
@@ -836,6 +837,7 @@ export function customPhaseSource(spec: CustomPhaseInsert, envClass = "soc_env")
     `endclass`,
     ``,
     `// base_test::build_phase (before run-time phases start)`,
+    `// ${spec.target === "common" ? "get_common_domain" : "get_uvm_schedule"}() is a uvm-core call, not in IEEE 1800.2-2020 9.4.2`,
     `${getter}.add(${cls}::get(),`,
     `  ${args.join(",\n  ") || "/* no anchor: added last */"});`,
   ].join("\n");
