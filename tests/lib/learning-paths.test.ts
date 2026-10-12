@@ -97,7 +97,7 @@ describe('learning routes against the manifest', () => {
             { id: 'F1B_The_Verification_Mindset' },
             { id: 'F2D_Reusable_Code_and_Parallelism', lessons: ['ipc', 'tasks-functions', 'no-such-lesson'] },
           ],
-          practice: [{ kind: 'lab', labId: 'simple-dut-1' }],
+          practice: [{ kind: 'lab', labId: 'dma-1' }],
           milestones: ['M7'],
         },
       ],
@@ -108,7 +108,7 @@ describe('learning routes against the manifest', () => {
         expect.stringContaining('F1B_The_Verification_Mindset needs F1A_The_Cost_of_Bugs'),
         expect.stringContaining('lesson F2D_Reusable_Code_and_Parallelism/tasks-functions is out of manifest order'),
         expect.stringContaining('lesson F2D_Reusable_Code_and_Parallelism/no-such-lesson is not in the manifest'),
-        expect.stringContaining('lab simple-dut-1 is coming_soon'),
+        expect.stringContaining('lab dma-1 is coming_soon'),
         expect.stringContaining('milestone M7 is not fed'),
       ]),
     );

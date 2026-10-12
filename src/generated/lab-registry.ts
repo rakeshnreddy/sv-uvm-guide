@@ -1470,30 +1470,97 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "simple-dut-1",
-    "version": "1",
-    "title": "Simple DUT Verification",
-    "description": "Create a basic UVM testbench for a simple DUT.",
-    "owningModule": "F4C",
+    "version": "2",
+    "title": "Your First Self-Checking Testbench",
+    "description": "Milestone M0, without UVM: build a directed testbench for a registered saturating adder that drives race-free, predicts every result from the specification, checks it with !==, ends every run with one PASS/FAIL line and a watchdog, and is proven to fail on planted bugs.",
+    "owningModule": "F2E",
     "routeSlug": "simple-dut-1",
-    "status": "coming_soon",
+    "status": "available",
+    "graderId": "sv-selfcheck-v1",
     "labPrerequisites": [],
-    "modulePrerequisites": [],
-    "steps": [],
+    "modulePrerequisites": [
+      "F2B",
+      "F2D"
+    ],
+    "steps": [
+      {
+        "id": "run-starter",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 1: Read the specification and run the starter",
+        "instructions": "Read the sat_adder_reg specification in the README (rules R1 to R4). Compile work/sat_adder_reg.sv with work/tb_top.sv and run it with no plusargs. It prints three TEST lines at 0 ns and PASS=0 FAIL=0. Before you open the README's answer, explain why that line is not a pass.",
+        "starterCode": ""
+      },
+      {
+        "id": "clock-reset",
+        "version": "1",
+        "completion": "graded",
+        "title": "Step 2: Clock and reset",
+        "instructions": "In work/tb_top.sv, give clk an initial value (logic clk = 1'b0;) and generate a 10 ns clock with always #5 clk = ~clk;. Fill in reset_dut: drive rst_n, in_valid, a and b to known values with <=, wait cycles rising edges, then release reset with rst_n <= 1'b1;. The check reads your code's structure only.",
+        "starterCode": ""
+      },
+      {
+        "id": "drive-predict",
+        "version": "1",
+        "completion": "graded",
+        "title": "Step 3: Reference model and drive tasks",
+        "instructions": "Write model_sat_add from the specification, not from the RTL: widen both operands, add, and return MAX_SUM[W-1:0] when the sum is larger than MAX_SUM. Fill in send: wait for @(posedge clk), drive in_valid, a and b with <=, and push exp_t'{a: a_val, b: b_val, sum: model_sat_add(a_val, b_val)} onto exp_q. Fill in idle: for n rising edges, drive in_valid <= 1'b0.",
+        "starterCode": ""
+      },
+      {
+        "id": "checker",
+        "version": "1",
+        "completion": "graded",
+        "title": "Step 4: The checker",
+        "instructions": "Fill in check_result: fail with $error if exp_q is empty, pop the oldest expectation, compare with !==, and count pass_cnt or fail_cnt. Add the checker process: always @(posedge clk) that does nothing while rst_n is low, fails if $isunknown(out_valid), and calls check_result(sum) when out_valid is 1. Then answer the README's question on why always @(sum) is not a checker.",
+        "starterCode": ""
+      },
+      {
+        "id": "directed-tests",
+        "version": "1",
+        "completion": "graded",
+        "title": "Step 5: Directed tests from the plan",
+        "instructions": "Write test_corners and test_gaps from the README's plan table. test_corners must include a pair whose sum is exactly 255, a pair whose sum is exactly 256 and a pair that saturates by far, such as 255 + 255. test_gaps needs idle cycles between valid inputs and two send calls in a row. End every test with idle(1).",
+        "starterCode": ""
+      },
+      {
+        "id": "verdict",
+        "version": "1",
+        "completion": "graded",
+        "title": "Step 6: Verdict, drain and watchdog",
+        "instructions": "In report, add the leftover expectations to fail_cnt and count a failure when nothing was checked, before the PASS=%0d FAIL=%0d line. Fill in drain: wait edge by edge, at most max_cycles, until exp_q is empty, then two more edges. In main, run the test in one branch of a fork and a watchdog (#(TIMEOUT), fail_cnt++, report(), $fatal) in another; join with join_any, then disable fork, report() and $finish. Run with no plusargs and expect PASS=14 FAIL=0.",
+        "starterCode": ""
+      },
+      {
+        "id": "prove-it-fails",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 7: Break the DUT and watch the bench catch it",
+        "instructions": "Set .BUG(1) (sums wrap instead of saturating) and run +TEST=smoke, then +TEST=corners: predict which one fails first. Set .BUG(2) (a result every cycle) and run +TEST=smoke. Then plant your own bug in work/sat_adder_reg.sv, bit 7 of sum stuck at 0, and name the test that catches it. Compare each summary line with the README's table, then put the DUT back to .BUG(0) and rerun: PASS=14 FAIL=0.",
+        "starterCode": ""
+      }
+    ],
     "assets": [
       {
-        "path": "lab1_first_tb/README.md",
+        "path": "README.md",
         "role": "guide",
         "language": "markdown",
         "editable": false
       },
       {
-        "path": "lab1_first_tb/solution/tb_and_gate.sv",
+        "path": "solution/tb_top.sv",
         "role": "solution",
         "language": "systemverilog",
         "editable": false
       },
       {
-        "path": "lab1_first_tb/work/tb_and_gate.sv",
+        "path": "work/sat_adder_reg.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "work/tb_top.sv",
         "role": "starter",
         "language": "systemverilog",
         "editable": true

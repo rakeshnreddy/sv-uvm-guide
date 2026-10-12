@@ -6,7 +6,7 @@ import { z } from "zod";
 const repositoryRoot = process.cwd();
 const labsRoot = path.join(repositoryRoot, "content", "curriculum", "labs");
 const outputPath = path.join(repositoryRoot, "src", "generated", "lab-registry.ts");
-const knownGraders = new Set(["sv-basics-v1", "sv-basics-v2"]);
+const knownGraders = new Set(["sv-basics-v1", "sv-basics-v2", "sv-selfcheck-v1"]);
 
 const assetSchema = z.object({
   path: z.string().min(1),

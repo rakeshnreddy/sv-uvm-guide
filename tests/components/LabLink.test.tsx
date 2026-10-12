@@ -50,8 +50,8 @@ describe('LabLink in a lesson', () => {
   });
 
   it('renders a coming-soon lab as a "Coming soon" chip with no link to the lab (G30-PRAC-09)', () => {
-    expect(getLabById('simple-dut-1')?.status).toBe('coming_soon');
-    render(<LabLink labId="simple-dut-1" />);
+    expect(getLabById('dma-1')?.status).toBe('coming_soon');
+    render(<LabLink labId="dma-1" />);
     expect(screen.getByText('Coming soon')).toBeInTheDocument();
     expect(screen.getByText('This lab is planned and cannot be opened yet.')).toBeInTheDocument();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();

@@ -129,7 +129,10 @@ describe('route chooser', () => {
     const rungs = within(ladder).getAllByRole('listitem');
     expect(rungs).toHaveLength(9);
     expect(rungs[0]).toHaveTextContent('M0');
-    expect(rungs[0]).toHaveTextContent('Lab coming soon');
+    expect(within(rungs[0]).getByRole('link')).toHaveAttribute('href', '/practice/lab/simple-dut-1');
+    expect(rungs[1]).toHaveTextContent('M1');
+    expect(rungs[1]).toHaveTextContent('Lab coming soon');
+    expect(within(rungs[1]).queryByRole('link')).not.toBeInTheDocument();
     expect(within(rungs[3]).getByRole('link')).toHaveAttribute('href', '/practice/lab/scoreboard-reference-model');
   });
 });
