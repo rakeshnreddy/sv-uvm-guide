@@ -2,7 +2,7 @@
 
 *Last updated: 2025-09-23*
 
-This lab builds on Tier 1 (`F4C: Clocking Blocks`, until the planned F2E "First Self-Checking Testbench" lesson exists) and walks you through crafting a minimal, self-checking SystemVerilog bench without UVM. You will:
+This lab builds on [F2E: Your First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) and walks you through crafting a minimal, self-checking SystemVerilog bench without UVM. You will:
 
 1. Instantiate a simple DUT (the provided `and_gate`).
 2. Drive stimulus by wrapping transactions in reusable tasks.
