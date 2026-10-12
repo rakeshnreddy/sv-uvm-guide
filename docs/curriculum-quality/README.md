@@ -39,11 +39,11 @@ Verify every normative claim against a primary source. Write "unverified" rather
 
 | Topic | Source | Where |
 |---|---|---|
-| SystemVerilog language | IEEE 1800-2023 | Extracted text, one huge line: `/private/tmp/claude-502/-Users-Rakesh-Projects-sv-uvm-guide/6113778b-4d4d-4d58-846e-6705366b1234/scratchpad/audit/t1_lrm_clean.txt`. Search with Python: `t=open(p,encoding='latin-1').read(); i=t.find('16.14.2 '); print(t[i:i+3000])` |
-| UVM | IEEE 1800.2-2020 and the uvm-core 2020.3.1 reference implementation | `github.com/accellera-official/uvm-core` (WebFetch the `.svh` source when unsure) |
-| AXI, ACE | Arm IHI0022E | `.../scratchpad/audit/axi.txt` |
-| AHB | Arm IHI0033B.b | `.../scratchpad/audit/ahb5.txt` |
-| APB, CHI, PSS, UPF, other | Arm IHI0024, Arm IHI0050, Accellera PSS 2.x/3.0, IEEE 1801 | Web (Arm developer, Accellera); cite the section only if verified |
+| SystemVerilog language | IEEE 1800-2023 | Extracted text, one huge line: `/Users/Rakesh/.claude/projects/-Users-Rakesh-Projects-sv-uvm-guide/sources/t1_lrm_clean.txt`. Search with Python: `t=open(p,encoding='latin-1').read(); i=t.find('16.14.2 '); print(t[i:i+3000])` |
+| UVM | IEEE 1800.2-2020 and the uvm-core 2020.3.1 reference implementation | `/Users/Rakesh/.claude/projects/-Users-Rakesh-Projects-sv-uvm-guide/sources/uvm_lrm.txt`; `github.com/accellera-official/uvm-core` (WebFetch the `.svh` source when unsure) |
+| AXI, ACE | Arm IHI0022E | `/Users/Rakesh/.claude/projects/-Users-Rakesh-Projects-sv-uvm-guide/sources/arm_axi.txt` (AXI-Stream IHI0051A: `arm_axis.txt`) |
+| AHB | Arm IHI0033C (and B.b) | `/Users/Rakesh/.claude/projects/-Users-Rakesh-Projects-sv-uvm-guide/sources/ahb5.txt` (IHI0033C), `arm_ahb.txt` (B.b) |
+| APB, CHI, PSS, UPF, other | Arm IHI0024 (`/Users/Rakesh/.claude/projects/-Users-Rakesh-Projects-sv-uvm-guide/sources/arm_apb.txt`), Arm IHI0050, Accellera PSS 2.x/3.0, IEEE 1801 | Web (Arm developer, Accellera); cite the section only if verified |
 
 Prior evidence, which may already be fixed, so re-check the current file:
 
