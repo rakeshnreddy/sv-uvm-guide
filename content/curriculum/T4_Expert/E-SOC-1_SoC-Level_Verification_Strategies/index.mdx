@@ -1,151 +1,1544 @@
 ---
 title: "E-SOC-1: SoC-Level Verification Strategies"
-description: "Scale block-level infrastructure to SoC: plan reuse, configure virtual platforms, and coordinate cross-team stimulus." 
+description: "Plan and defend a subsystem or SoC verification strategy: reuse block environments, make firmware and the testbench co-operate, check the interconnect, and set regression and sign-off gates."
 flashcards: "E-SOC-1_SoC_Verification"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (§6.6, §10.1.1.2.2, §10.1.1.2.4, §10.1.1.2.5, §10.4.1.2.3, §10.6, §13.3, §13.4.2.2, §13.9, §18.1.2.3, §18.2.3.5, §18.2.5.2, §18.4.4.1, §18.4.4.3, §18.4.4.11, §19.3, §19.3.2.3, Annexes F.7.3.1, F.7.4.2, G.2.1, G.2.3, G.2.6, G.2.8)"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog (§6.5, §8.4, §14.16, §16.12.2, §16.12.13, §19.4, §19.6.2, §19.8.1, §21.4, §21.6, §26.4)"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "Accellera uvm-core reference implementation (src/comps/uvm_agent.svh, src/seq/uvm_sequence_base.svh, src/reg/uvm_reg_predictor.svh, src/reg/uvm_reg.svh, src/reg/uvm_reg_field.svh, src/base/uvm_report_server.svh)"
+    type: "implementation"
+    identifier: "uvm-core 2020.3.1"
+  - title: "AMBA AXI and ACE Protocol Specification (§A3.2.1, §A3.3.1, §A3.4.4, §A4.7, §A5.3.5)"
+    type: "standard"
+    identifier: "Arm IHI0022E"
 ---
 
 ## Quick Take
-- **What it is:** The architectural patterns for reusing block-level Verification IP (VIP), integrating processor firmware, and orchestrating massive monolithic SoC testbenches.
-- **Why it matters:** SoC programs stumble when VIP isn’t built for reuse, forcing the SoC team to rewrite components or deal with driving conflicts against embedded cores.
-- **The Analogy:** Treat SoC verification like a city grid—shared infrastructure (power/reset networks, interconnect checkers, register hubs) keeps traffic flowing securely between isolated neighborhoods (blocks). 
 
-> **Signal:** If every IP team delivers a bespoke environment that the SoC bench throws away and rewrites, your reuse strategy has failed.
+- **What it is:** **SoC-level verification** checks what only exists once separately verified blocks are joined into a system on chip (SoC): address decode, interrupt routing, resets that cross blocks, power states, firmware-driven flows, interconnect ordering and security. It is a **strategy** (who checks what, at which level, with which evidence) plus a **testbench** that reuses the block teams' verification components instead of rewriting them.
+- **Why it matters:** Every block can pass its own regression while the chip still fails: an interrupt wired to the wrong core, a DMA write that the interconnect sends to the wrong memory, a reset that leaves one block mid-transfer. Those bugs belong to no block team, so unless the SoC strategy names an owner and a check for them, nobody looks.
+- **The Analogy:** A city grid. Each neighbourhood (block) was inspected on its own; the city plan (SoC strategy) covers what joins them: roads (the interconnect), the power grid (power and reset), traffic lights (arbitration) and the emergency services (interrupts and error responses). *Where it breaks:* real neighbourhoods are independent, but SoC blocks are not; a shared clock, reset or bus couples them, so a fault in one "neighbourhood" can appear as a symptom in another. And unlike a city, the SoC plan must also decide which old inspectors (block checks) still have a job.
+
+**You will be able to:**
+1. Write a staff-level SoC verification strategy: scope split, test layers, reuse plan, checkers, coverage goals traced from features, regression tiers, sign-off gates and a risk register.
+2. Configure reused block environments for the SoC (an environment of environments; passive where an on-chip master drives an interface, active where the bench still drives it) and adapt their checks so they still prove something.
+3. Plan firmware and testbench co-operation: mailbox handshakes turned into events, image loading, and a SoC register model with explicit prediction on every bus (auto-predict cannot see firmware).
+4. Plan system-level reset, error, power, concurrency and CDC/RDC scenarios, with the liveness properties and coverage that prove them.
+5. Define regression tiers, the triage flow and the closure gates that must pass before sign-off.
+
+This module has two pages: this one (the strategy, the bench and the capstone) and [Portable Stimulus in an SoC Strategy](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/pss), a short bridge to the Portable Test and Stimulus Standard.
+
+<BeforeYouStart />
+
+This lesson also leans on [A-UVM-7 VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) (agent modes and configuration), [A-UVM-6 Scoreboards](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index), [A-UVM-9 Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index), [E-INT-1 Formal Integration](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index) and [E-PWR-1 Power-Aware Verification](/curriculum/T4_Expert/E-PWR-1_Power_Aware_Verification/index). Each is linked again where it is needed.
 
 ## Build Your Mental Model
 
-### Active vs. Passive VIP Reuse
+**How to read this lesson.** The core path is: what changes from block to SoC, the verification plan, reusing environments, active and passive agents, keeping block checks useful, and firmware with the testbench. Practitioner depth follows: the SoC register model, the interconnect and liveness, system scenarios (including CDC/RDC), coverage closure, regression and sign-off, and debugging. Make It Work builds a small SoC bench you can compile, and Push Further holds the expert layer.
 
-At the block level, your UVM Agent is **Active**: its Sequencer and Driver are generating transactions and wiggling DUT pins. 
+**Words this lesson uses.** Each is defined here in one line, with the lesson that teaches it in full.
+- **Design under test (DUT):** the hardware being verified. At SoC level the DUT is the whole chip, or a **subsystem** (a group of blocks that work together, such as a DMA engine, its interconnect and a memory controller).
+- **Interconnect:** the on-chip network of buses and switches that routes each request from a **master** (a component that starts transfers, such as a CPU or DMA engine) to a **slave** (a component that answers them, such as a memory or a peripheral's registers). This lesson uses the master/slave terms of Arm IHI0022E; later Arm issues say manager/subordinate.
+- **AXI and APB:** two of Arm's AMBA bus protocols. AXI is the high-performance bus with separate address, data and response channels and a transaction **ID** on each transfer; APB is the simple register bus ([B-AXI-1](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index)). **DECERR** is the AXI "decode error" response an interconnect returns for an address that no slave owns.
+- **Firmware:** the software the SoC's own processor runs during the test, compiled into an **image** (a memory file) that is loaded before the processor starts.
+- **Verification IP (VIP):** a reusable package of verification components for one interface or protocol, usually an **agent** plus its configuration ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)).
+- **Agent:** a UVM component that bundles a **sequencer** (queues items from sequences), a **driver** (turns items into pin activity) and a **monitor** (turns pin activity back into transactions) for one interface ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)). An **active** agent (`UVM_ACTIVE`) builds all three; a **passive** agent (`UVM_PASSIVE`) builds only the monitor side.
+- **Scoreboard and analysis port:** a scoreboard compares what the DUT did with what it should have done; it receives transactions from monitors through **analysis ports**, which broadcast each transaction to every connected subscriber's `write()` ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
+- **Virtual sequence:** a sequence that sends no items itself but starts child sequences on several agents' sequencers, usually through a **virtual sequencer** that holds their handles ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences)).
+- **Environment (env):** a `uvm_env` that holds agents, scoreboards and other checkers for one block or system ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)).
+- **Phase:** one of the named steps UVM runs every component through, in order: `build_phase` creates children, `connect_phase` wires them, `run_phase` consumes simulation time, then the check and report phases ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+- **Objection and `uvm_event`:** an objection is the vote that keeps a time-consuming phase alive until it is dropped; a `uvm_event` is a UVM object one process triggers and others wait on ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index), [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index)).
+- **Clocking block and assertion:** a clocking block samples and drives interface signals at a defined clock edge ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)); a concurrent assertion checks a property on every clock edge and reports when it fails ([I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)).
+- **Plusarg:** a `+name` or `+name=value` argument on the simulator command line that the bench can read at run time.
+- **Configuration database:** the UVM store a parent uses to pass settings to a child by its instance path, used here as `uvm_config_db` ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
+- **Register model (RAL), mirrored value, predictor:** the register model is a class model of the DUT's registers; its **mirrored value** is what it believes each register holds; a **register predictor** (`uvm_reg_predictor`) updates the mirror from bus transfers a monitor saw, using an **adapter** that turns bus items into register operations and back; a **frontdoor** access reaches a register through real bus transfers, and a **backdoor** access reads or writes its storage directly through its HDL path, with no bus cycle ([A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index), [A-UVM-4B](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit)).
+- **Liveness:** the promise that something good *eventually* happens (every accepted request gets a response); its opposite, **safety**, promises that something bad *never* happens ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)).
+- **CDC / RDC:** a **clock-domain crossing** is a signal that leaves logic clocked by one clock and is captured by logic on an unrelated clock; a **reset-domain crossing** is the same idea for logic reset by different resets.
+- **Verification plan (vplan):** the document that lists features and, for each one, the scenarios, checks and coverage that prove it. Each row carries a priority; this lesson uses the common project convention **P0** (must work for the chip to ship) and **P1** (should work; a gap needs an agreed waiver) ([F1B](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index)).
+- **Regression and sign-off:** a regression is the automated run of many tests and random seeds; **sign-off** is the decision, backed by agreed evidence, that verification is complete enough to build the chip.
 
-At the SoC level, an embedded processor (running C firmware) generally takes over the driving responsibilities. If your VIP stays active, the UVM driver and the embedded core both drive the same bus: contention, which shows up as `X` values or as a multiple-driver error, depending on how the interface is wired.
+### What changes from block to SoC
 
-Instead of rewriting the VIP, you reuse it in **Passive** mode. Predict which parts of the agent exist after `build_phase` in passive mode, then switch between block and SoC level and try breaking the agent.
+A block team verifies one block through its own ports. Its bench drives every input, models every neighbour and checks every output. At SoC level most of those neighbours are now real: a CPU running firmware drives the block's register port, a real interconnect carries its memory traffic, and a real interrupt controller receives its interrupt. The bugs that remain are the ones that only exist **between** blocks.
+
+**Bugs that only exist after integration:**
+- **Connectivity:** an interrupt line, clock enable, reset or pin-multiplexer output wired to the wrong place. Each block is correct; the wiring between them is not.
+- **Address map and decode:** a master reaches the wrong slave, or an unmapped address hangs instead of returning an error.
+- **System flows:** boot, firmware configuration, DMA descriptor chains, interrupt handling end to end.
+- **Shared resources:** arbitration between masters, ordering through the interconnect, quality of service (QoS: which traffic class gets bandwidth first).
+- **Resets, power and clocks:** one block reset while another is mid-transfer, a power domain switched off while traffic is in flight, a signal crossing clock domains without a synchronizer.
+- **Security:** a non-secure master reaching protected registers.
+
+**Test layers.** No single bench catches all of this, so the strategy assigns each class of bug to the cheapest layer that can see it. Before you read the caption, predict: which layer is the *first* that can see a wrong interrupt wire between two blocks?
+
+<ArchitectureDiagram
+  title="Test layers from block to silicon, and what each one reuses"
+  className="mx-auto max-w-sm"
+  cellWidth={240}
+  gapY={56}
+  caption="Read from top to bottom. Each layer reuses what the layer above built, and adds only what it alone can see. The wrong interrupt wire is first visible at the subsystem or SoC layer, because no block bench contains both ends of the wire. Emulation and silicon run the same firmware tests faster, but with far less visibility, so they confirm rather than debug."
+  nodes={[
+    { id: "blk", label: "Block TB", sublabel: "one block, all neighbours modelled", kind: "env", col: 0, row: 0 },
+    { id: "sub", label: "Subsystem TB", sublabel: "block envs nested; real interconnect", kind: "env", col: 0, row: 1 },
+    { id: "soc", label: "SoC TB", sublabel: "CPU + firmware; block VIP mostly passive", kind: "env", col: 0, row: 2 },
+    { id: "emu", label: "Emulation / FPGA", sublabel: "same firmware tests, long runs", kind: "generic", col: 0, row: 3 },
+    { id: "si", label: "Silicon validation", sublabel: "same firmware tests on the chip", kind: "generic", col: 0, row: 4 }
+  ]}
+  edges={[
+    { from: "blk", to: "sub", style: "causal", label: "reuse envs, monitors, scoreboards" },
+    { from: "sub", to: "soc", style: "causal", label: "reuse envs, virtual sequences" },
+    { from: "soc", to: "emu", style: "causal", label: "reuse firmware tests" },
+    { from: "emu", to: "si", style: "causal", label: "reuse firmware tests" }
+  ]}
+/>
+
+**What the SoC layer adds.** The processor model, firmware, the interconnect checks, system scenarios and system coverage. What it does *not* do is re-verify each block's internals: the block layer already did that more cheaply and with more control. That leads to the first classic mistake.
+
+> **Misconception: "SoC closure is the union of block coverage."** Merging every block's 100% coverage proves each block was exercised *by its own bench*. It says nothing about whether the CPU ever reached the crypto block, or whether a DMA error response ever reached firmware. SoC closure needs system goals collected at SoC level. "SoC coverage and closure" below shows the difference in a picture.
+
+**Connectivity checking.** Top-level wiring is usually checked apart from functional tests: by a formal connectivity check that proves each listed connection (source pin to destination pin, under a condition such as a pin-multiplexer setting) from a spreadsheet of intended connections, or by simulation tests that toggle each source and watch each destination. Which tool does this, and how the spreadsheet is written, is tool-dependent. The strategy only has to say who owns the connection list and how it is proven.
+
+**Choosing the processor model.** The firmware needs something to run on.
+
+| CPU model | Speed | Fidelity | Firmware debug | Use it for |
+|---|---|---|---|---|
+| RTL core | slowest | exact: real pipeline, caches, bus timing | waveforms, plus a trace of executed instructions if the core provides one | final SoC regressions, boot, timing-sensitive flows |
+| Instruction-set simulator (ISS) | fast | executes the right instructions, but bus timing is approximate | software debugger | firmware bring-up, long flows |
+| Bus-functional model (BFM) | fastest | issues the bus cycles a test lists; no instructions at all | none needed | early integration, interconnect tests, this lesson's example |
+
+Many projects use all three over time. The strategy states which model each test layer uses and what each one cannot prove (a BFM never finds a bug in the core's own bus interface).
+
+### From features to checks: the verification plan
+
+A strategy is only reviewable if every promise in it can be traced. The **verification plan** does that: each **feature** from the specification becomes one or more **scenarios** (what the tests make happen), each scenario has a **check** (what decides pass or fail) and **coverage** (the evidence that the scenario really happened), and each of those is linked to regression results. This chain is called **traceability**.
+
+<ArchitectureDiagram
+  title="Traceability: from a feature to the regression result that proves it"
+  cellWidth={150}
+  gapX={100}
+  caption="Read left to right for one vplan row. A hit coverage bin with no linked check proves only that the scenario happened, not that the design behaved correctly; a check with no coverage may never have run. Both links must exist before the row can count as closed."
+  nodes={[
+    { id: "f", label: "Feature", sublabel: "spec section", kind: "generic", col: 0, row: 0 },
+    { id: "s", label: "Scenario", sublabel: "test or vseq", kind: "sequence", col: 1, row: 0 },
+    { id: "c", label: "Check", sublabel: "scoreboard, assertion", kind: "scoreboard", col: 2, row: 0 },
+    { id: "v", label: "Coverage", sublabel: "bin or cover", kind: "subscriber", col: 1, row: 1 },
+    { id: "r", label: "Result", sublabel: "regression status", kind: "generic", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "f", to: "s", style: "causal", label: "exercised by" },
+    { from: "s", to: "c", style: "causal", label: "judged by" },
+    { from: "s", to: "v", style: "causal", label: "evidenced by" },
+    { from: "c", to: "r", style: "data", label: "pass/fail" },
+    { from: "v", to: "r", style: "data", label: "hit/miss" }
+  ]}
+/>
+
+Two rows of a vplan for the small SoC in Make It Work:
+
+| Feature (spec) | Scenario | Check | Coverage | Owner |
+|---|---|---|---|---|
+| Firmware can enable the SPI block (CTRL register) | boot firmware writes CTRL, reads it back | `spi_reg_scb` compares the read data with the last observed write; firmware reports FW_PASS or FW_FAIL | bin: CTRL written then read, per value class | SoC DV |
+| Unmapped addresses return an error | each master reads an address in a hole | interconnect scoreboard expects DECERR (IHI0022E §A3.4.4) | cross: master × hole × response | SoC DV |
+
+At block level, [Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage) shows how bins are annotated with plan items; at SoC level the same discipline is what lets a reviewer ask "which check proves this feature?" and get an answer.
+
+### Reusing environments: an environment of environments
+
+IEEE 1800.2-2020 §13.3 says a `uvm_env` "can be reused as a sub-environment in even larger system-level environments". That is the core reuse move at SoC level: the block team's whole environment (agent, scoreboard, coverage) becomes a child of the SoC environment, unchanged, and only its configuration differs. Engineers call the result an **environment of environments** (env of envs). [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) teaches the nesting mechanics (configuration objects one level deeper, virtual sequencers of virtual sequencers); this lesson applies them at SoC scale.
+
+Here is the SoC environment built in Make It Work. The SPI block's own environment, `spi_blk_env`, sits inside `soc_env` next to a SoC-only component, the mailbox decoder. Before you read the caption, predict: which part of the block environment did the SoC test switch off, and why?
+
+<ArchitectureDiagram
+  title="soc_env: the reused SPI block environment plus a SoC-only mailbox decoder"
+  cellWidth={140}
+  gapX={80}
+  gapY={50}
+  caption="Each dashed box is a component that contains the ones inside it, labelled instance name : class name (spi_agent is an spi_apb_agent; the outer box is the env created by soc_test). The test made spi_agent passive, so its only child is the monitor; the sequencer and driver were never built, because in the SoC the CPU's firmware drives the APB register port. The monitor's analysis port (ap) feeds two subscribers; each arrow is one write(t) call per observed transfer, into the subscriber's analysis_export (the filled circle): the block team's register scoreboard (scb) and the SoC-only mailbox decoder (mbx_dec), which sits beside spi_env, not inside it. The full instance path of the agent is uvm_test_top.env.spi_env.spi_agent."
+  nodes={[
+    { id: "env", label: "uvm_test_top.env : soc_env", kind: "env", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "spienv", label: "spi_env : spi_blk_env", kind: "env", col: 0, row: 1, colSpan: 2, container: true },
+    { id: "agt", label: "spi_agent", kind: "agent", col: 0, row: 1, container: true, badge: "passive" },
+    { id: "mon", label: "monitor", sublabel: "apb_monitor", kind: "monitor", col: 0, row: 1 },
+    { id: "scb", label: "scb", sublabel: "spi_reg_scb", kind: "scoreboard", col: 1, row: 1 },
+    { id: "mbx", label: "mbx_dec", sublabel: "mbx_decoder", kind: "subscriber", col: 1, row: 0 }
+  ]}
+  ports={[
+    { id: "mon.ap", node: "mon", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "scb.imp", node: "scb", side: "left", kind: "analysis_imp" },
+    { id: "mbx.imp", node: "mbx", side: "left", kind: "analysis_imp" }
+  ]}
+  edges={[
+    { from: "mon.ap", to: "scb.imp", style: "data" },
+    { from: "mon.ap", to: "mbx.imp", style: "data", via: [[0.5, 1], [0.5, 0]] }
+  ]}
+/>
+
+**What changes, and what does not.**
+- **The block environment's code is reused, not rewritten.** `spi_blk_env` and its agent come from the block team's package; the settings they receive from above differ. Where a reused check must change, the change is a recorded decision: Make It Work adapts one scoreboard line, and "Keeping block checks useful at SoC" explains why.
+- **Every configuration path gets one level deeper.** At block level the agent was `env.spi_agent`; nested, it is `env.spi_env.spi_agent`. A block environment that used absolute paths (`"uvm_test_top.env.spi_agent"`) breaks here, which is why paths must be relative to `this`.
+- **Block virtual sequences become children,** started on the block's virtual sequencer from a SoC virtual sequence, exactly as in [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index). A block sequence that targets an agent that is now passive can no longer run: its sequencer handle is null.
+- **SoC-only components are added beside the reused ones,** never inside them: here the mailbox decoder; in a real SoC also interconnect scoreboards, interrupt checkers and system coverage.
+
+### Active and passive reuse
+
+At block level the SPI block team's agent is **active**: its sequencer and driver play the CPU, writing the block's registers over its APB register port. (APB is Arm's simple register bus: each transfer has a **setup** cycle with `psel = 1`, then an **access** cycle with `psel = 1` and `penable = 1`; it is taught in the AMBA track.) In the SoC the real CPU drives that port. If the agent stays active and a block sequence runs, two masters drive one bus.
+
+What that looks like depends on how the interface signals are declared (IEEE 1800-2023 §6.5):
+- **Nets** (`wire`) resolve multiple drivers: where the CPU and the driver disagree, the signal becomes `X`. That is visible, so this lesson's interface uses nets and an assertion that fails on `X`.
+- **Variables** (`logic` written procedurally) take the **last write**: no `X`, no error, just silently corrupted transfers. This is the dangerous case.
+- Mixing a continuous assignment and procedural writes on one variable is illegal, so that case fails at compile or elaboration time.
+
+The fix is to reuse the agent **passive**. The visual below shows the SPI agent at block level and at SoC level. Predict which parts of the agent exist after `build_phase` in passive mode, then switch levels and try breaking the agent.
 
 <VIPReuseVisualizer />
 
-**Implementation mechanism:**
-- The agent builds its sequencer and driver only when `get_is_active() == UVM_ACTIVE`. In passive mode they are never constructed: the handles stay null, so `connect_phase` must use the same guard, and no virtual sequence may start a sequence on that agent.
-- `uvm_agent::build_phase` reads an `"is_active"` config_db entry into `is_active` (uvm-core `uvm_agent.svh`). A derived agent that forgets `super.build_phase(phase)` ignores the setting and stays active. A VIP that keeps the mode in its own config object (A-UVM-7) is switched through that object instead.
-- The `monitor` remains alive—it snoops the bus, parses the firmware's traffic into UVM Sequence Items, and feeds them to your existing coverage collectors and scoreboards.
+**What the visual showed.**
+- **Passive means never built, not built-but-idle.** The agent's `build_phase` creates the sequencer and driver only inside `if (get_is_active() == UVM_ACTIVE)`. In passive mode those handles stay null, so there is nothing to "switch off".
+- **Break 1: no `super.build_phase(phase)`.** The base class `uvm_agent` reads the `"is_active"` setting in its own `build_phase` (uvm-core 2020.3.1 `uvm_agent.svh`). A derived agent that skips `super.build_phase` never reads it, stays at the default `UVM_ACTIVE`, and fights the CPU.
+- **Break 2: an unguarded `connect_phase`.** `driver.seq_item_port.connect(...)` reads a member of a null handle. IEEE 1800-2023 §8.4 makes that access illegal, and simulators stop with a null-object-access error during `connect_phase`, at time 0 (the visual calls this stopping at elaboration). The connect must repeat the same `get_is_active()` guard.
+- **Names.** The visual's path is `"env.spi_agent"` and its class is `spi_agent`. In Make It Work the agent is one level deeper (`"env.spi_env.spi_agent"`) and its class is `spi_apb_agent`, because it is the SPI block's agent for its APB register port. The visual's "pins" are, in this lesson's bench, the APB register-port signals that the CPU drives.
+
+**How the mode reaches the agent.** `uvm_agent` itself builds no children. It only reads `is_active`; *your* agent's `build_phase` must contain the guard, and its `connect_phase` must repeat it. IEEE 1800.2-2020 §13.4.2.2 says the parameter is set as a `uvm_active_passive_enum` and also accepts a string, so the command line can override it (Annex G.2.8):
 
 ```systemverilog
-class spi_soc_test extends uvm_test;
-  `uvm_component_utils(spi_soc_test)
-  soc_env env;
-
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    
-    // Switch the block-level VIP to passive mode
-    // Now firmware drives, but our UVM monitors still check protocols.
-    // spi_agent's build_phase calls super.build_phase(), where uvm_agent reads this entry.
-    uvm_config_db#(uvm_active_passive_enum)::set(this, "*.spi_agent", "is_active", UVM_PASSIVE);
-
-    env = soc_env::type_id::create("env", this);
-  endfunction
-endclass
+// snippet: soc_test::build_phase, an exact path relative to the test
+uvm_config_db#(uvm_active_passive_enum)::set(this, "env.spi_env.spi_agent",
+                                             "is_active", UVM_PASSIVE);
 ```
 
-### Firmware & UVM Handshakes
+```bash
+# the same setting from the command line (component path, field, value)
++uvm_set_config_string=uvm_test_top.env.spi_env.spi_agent,is_active,UVM_PASSIVE
+```
 
-When C firmware runs on the SoC's embedded core, it needs to coordinate with the UVM environment. For example, UVM shouldn't start checking data until firmware has finished booting and configuring the peripherals.
+A VIP that keeps the mode in its own configuration object ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)) is switched through that object instead; it should still copy the mode into `is_active` so `get_is_active()` stays the one answer.
 
-1. **Shared Memory Mailboxes:** Firmware writes specific "magic numbers" to an unused memory region. A UVM monitor snoops that address and broadcasts an event or transaction when it sees the magic number.
-2. **Interrupts:** Firmware triggers a software interrupt; UVM catches the IRQ pin wiggling.
-3. **Register Mirrors:** Firmware writes to a scratchpad register. Only an **explicit** `uvm_reg_predictor` connected to the bus monitor sees that write and updates the mirror; auto-predict (`set_auto_predict(1)`) tracks only the RAL's own `read()`/`write()` calls, so it never sees firmware traffic. Note that `get()` returns the *desired* value; poll `get_mirrored_value()` from a loop that waits on a clock or a monitor event, or have the monitor trigger a `uvm_event` when it sees the magic value.
+**Prove the build, do not assume it.** Call `uvm_root::get().print_topology()` (Annex F.7.4.2) in `end_of_elaboration_phase`: a passive agent shows a monitor and no driver or sequencer. Better still, make the check automatic: the Make It Work test fails with `UVM_FATAL [MODE]` if `get_is_active()` is not `UVM_PASSIVE`.
 
-### Interconnect & System Observability
+**Active where the bench still drives.** Passive is not the SoC default; it is the answer to "who drives this interface here?". An agent goes passive where an on-chip master now drives the interface. It stays **active** where the bench still plays the other side, typically for devices outside the chip.
 
-Block-level focuses on endpoints. SoC-level focuses on the network connecting them.
+| Interface in the SoC | Who drives it in the SoC test | Agent mode | Why |
+|---|---|---|---|
+| SPI block's APB register port | the CPU (firmware) | passive | the CPU is a real master now |
+| SPI pins to an off-chip flash | the SPI block drives the clock and commands; the flash answers | active (a responder playing the flash) | no on-chip model of the flash exists, so the bench must answer |
+| UART pins to a terminal | the chip transmits; the terminal transmits back | active on receive, monitor on transmit | the bench plays the terminal |
+| DMA engine's AXI master port | the DMA engine | passive | the DUT is the master |
+| PCIe link | the chip and an off-chip link partner | active (the bench plays the link partner) | the partner is off chip |
 
-- **Ingress/Egress Monitors:** Deploy protocol monitors at every port entering or leaving the Network-on-Chip (NoC).
-- **Latency Tracking:** Tag transactions with timestamps at ingress and compare them at egress to catch Quality of Service (QoS) violations.
-- **Coherency Checkers:** Passive VIP attached to cache interfaces to ensure multi-core snooping logic holds up.
+`is_active` is set per instance path, so each agent gets the mode its interface needs, and the same VIP class can even be passive on one instance and active on another:
 
-### Staff-Level Strategy Artifact
+```systemverilog
+// snippet: soc_test::build_phase, two agents, two modes
+// the CPU drives the APB port, so the register-port agent only watches
+uvm_config_db#(uvm_active_passive_enum)::set(this, "env.spi_env.spi_agent",
+                                             "is_active", UVM_PASSIVE);
+// no on-chip flash model exists, so the bench plays the flash on the SPI pins
+uvm_config_db#(uvm_active_passive_enum)::set(this, "env.flash_env.flash_agent",
+                                             "is_active", UVM_ACTIVE);
+```
 
-A staff-level SoC plan is a reviewable engineering artifact, not a list of tests. It must make ownership, observability, and signoff evidence explicit enough that block teams, firmware, formal, and SoC DV can execute without interpreting intent differently.
+This is also why a wildcard such as `set(this, "*.spi_agent", ...)` is risky: it would make every instance called `spi_agent` passive, including one that must stay active.
+
+**Pitfall: a block sequence on a passive agent.** A SoC virtual sequence copied from a block test may still run `spi_seq.start(p_sequencer.spi_sqr)`. With the agent passive, that handle is null. `start(null)` itself is legal; uvm-core 2020.3.1 reports `UVM_FATAL [SEQ]` "neither the item's sequencer nor dedicated sequencer has been supplied to start item" at the sequence's first `start_item()` (`uvm_sequence_base.svh`). With a parent sequence the symptom can instead be a silent hang; [A-UVM-8's debugging table](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) lists every case.
+
+### Keeping block checks useful at SoC
+
+> **Misconception: "block scoreboards transfer to SoC unchanged."** A block scoreboard was written for a world where the bench drove every input and knew every expected value. At SoC level some of those assumptions are false, and a scoreboard that silently checks the wrong thing is worse than none.
+
+What changes, check by check:
+- **Where expected values come from.** At block level a scoreboard often took its expectation from the sequence that sent the item. At SoC the firmware sends it, so the expectation must come from what a **monitor observed** at the block's input. Make It Work's `spi_reg_scb` is written that way: it builds its shadow of the registers from observed writes, so it works whether a sequence or firmware drove the bus.
+- **What traffic the monitor sees.** A monitor on a shared bus also sees other blocks' traffic. Make It Work's scoreboard needs one adapted line: it ignores addresses outside the SPI block's window, because the same bus carries the mailbox.
+- **IDs change through the interconnect.** An AXI interconnect appends bits identifying the master port to `ARID`, `AWID` and `WID`, so "the ID identifier at a slave interface is wider" than at the master (IHI0022E §A5.3.5). A block scoreboard that matches a slave-side response against a master-side request by raw ID reports every response as unmatched. Correlate at the master side, or strip the port bits before matching.
+- **Unmapped addresses get an error, not silence.** "If the interconnect cannot successfully decode a slave access, it must return the DECERR response" (§A3.4.4), usually from a default slave. A block scoreboard never saw DECERR; a SoC scoreboard must expect it for every hole in the address map.
+- **Other masters change ordering and contents.** Memory a block wrote can be overwritten by another master before the block reads it back. A memory scoreboard at SoC must know which master owns which region, or check per master.
+- **Security attributes start to matter.** `AxPROT` carries the access permissions (§A4.7); a security controller may refuse a transfer the block bench always allowed.
+
+**The decision per scoreboard.** For every reused check, the strategy records one of three decisions and an owner: **keep** (still valid as is, often as an internal checker that localizes failures), **adapt** (new expectation source, address filter or ID mapping) or **disable** (the check now duplicates a better SoC check, or its assumptions no longer hold). A check that is kept must prove it ran: the bench counts what each enabled monitor saw and compares the count with what the test expected. That count is project-specific code, distinct from `uvm_heartbeat` (IEEE 1800.2-2020 §10.6), which checks that components keep raising an objection within a time window.
+
+**Interrupts need their own check.** Firmware *uses* interrupts; the bench must *check* them. An interrupt monitor records each interrupt line's rising edge, an expected-interrupt model in the scoreboard predicts which source should fire for each event (a DMA completion, an error response), and the check compares the two and cross-checks the status register firmware reads. "The firmware handled an interrupt" is not evidence that the *right* interrupt reached the *right* core.
+
+Here is the interconnect picture these checks live in. Predict before you read the caption: which component catches an AXI response routed back to the wrong master?
+
+<ArchitectureDiagram
+  title="Watching the interconnect: ingress and egress monitors feed a routing scoreboard"
+  cellWidth={128}
+  gapX={56}
+  caption="Monitors tap every master port (ingress) and every slave port (egress); to keep the drawing readable, only one tap per side is drawn (on dma and on the default slave). None of the monitors drives anything. The routing scoreboard joins the two views: it expects each request at the slave the address map selects, with the ID widened by the master-port bits (IHI0022E §A5.3.5), and each response back at the master that sent the request. An unmapped address must come back as DECERR from the default slave (§A3.4.4). A response delivered to the wrong master is caught here, at the scoreboard, because only it sees both ends."
+  nodes={[
+    { id: "cpu", label: "cpu", sublabel: "AXI master", kind: "dut", col: 0, row: 0 },
+    { id: "dma", label: "dma", sublabel: "AXI master", kind: "dut", col: 1, row: 0 },
+    { id: "imon", label: "ingress monitors", sublabel: "one per master port", kind: "monitor", col: 2, row: 0 },
+    { id: "noc", label: "interconnect", sublabel: "DUT: decode, route, arbitrate", kind: "dut", col: 0, row: 1, colSpan: 2 },
+    { id: "rscb", label: "route_scb", sublabel: "routing scoreboard", kind: "scoreboard", col: 2, row: 1 },
+    { id: "ddr", label: "ddr", sublabel: "AXI slave", kind: "dut", col: 0, row: 2 },
+    { id: "dflt", label: "default slave", sublabel: "answers DECERR", kind: "dut", col: 1, row: 2 },
+    { id: "emon", label: "egress monitors", sublabel: "one per slave port", kind: "monitor", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "cpu", to: "noc", style: "data", label: "AWID 0x3" },
+    { from: "dma", to: "noc", style: "data", label: "AWID 0x3" },
+    { from: "noc", to: "ddr", style: "data", label: "wider ID" },
+    { from: "noc", to: "dflt", style: "data", label: "hole" },
+    { from: "imon", to: "dma", style: "structural", label: "taps" },
+    { from: "emon", to: "dflt", style: "structural", label: "taps" },
+    { from: "imon", to: "rscb", style: "data", label: "requests" },
+    { from: "emon", to: "rscb", style: "data", label: "slave side" }
+  ]}
+/>
+
+Both masters used ID `0x3`; the interconnect keeps them apart by the added port bits. [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) covers per-ID matching in a scoreboard, and [B-AXI-3](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index) the ordering rules it must respect. Latency and QoS checks hang off the same monitors: stamp each transaction with the time it entered and left the interconnect, and check the difference against the traffic class's budget.
+
+### Firmware and the testbench
+
+In a SoC test two programs run at once: the firmware on the CPU and the UVM testbench. Neither can call the other, so they co-operate through the hardware, under a written **firmware–testbench contract**.
+
+**Loading the image.** The firmware image is loaded into the memory the CPU boots from before reset is released, usually with `$readmemh` (IEEE 1800-2023 §21.4) on the memory model's array, or with a register-model backdoor write to a `uvm_mem`. Log the image's file name and a hash of it, so a failure can be tied to the exact firmware build. Choosing the image at run time with a plusarg read by `$value$plusargs` (§21.6) avoids recompiling the bench for each firmware test.
+
+**The mailbox.** Firmware reports progress by writing agreed codes to an agreed address, the **mailbox** (a spare register or a reserved word of memory). A bus monitor sees the write, and a decoder turns each code into an event the test can wait on. The contract fixes:
+- the mailbox address and every code (BOOT_DONE, FW_PASS, FW_FAIL with a reason, PRINT for log messages);
+- who writes and who reads each code;
+- what the test waits for, and its timeout;
+- what the scoreboards do during boot (usually: nothing is checked until BOOT_DONE).
+
+Keep the addresses and codes in one package that both the firmware build and the testbench use, so the two sides cannot drift apart. Make It Work's `soc_map_pkg` plays that role.
+
+**Events, and the race in waiting for them.** The decoder triggers a `uvm_event` taken from the global event pool with `uvm_event_pool::get_global("fw_boot_done")` (IEEE 1800.2-2020 §10.4.1.2.3); any component that asks for the same name gets the same event. The test must not miss it:
+- `wait_trigger()` (§10.1.1.2.4) waits for the **next** trigger. If the trigger already happened, it "does not return until the next trigger, which may never occur".
+- `wait_on()` (§10.1.1.2.2) waits for the event to be **on**: "If the event has already been triggered, this task returns immediately." For a one-time milestone such as BOOT_DONE, use `wait_on()`.
+
+Follow the boot handshake in Make It Work's bench, in the order it happens there. The note marks where the race would be.
+
+<SequenceDiagram
+  title="The boot handshake between firmware and the testbench"
+  caption="Firmware never calls the testbench: the monitor sees its bus write, and the decoder turns it into an event. In this bench the test reaches wait_on() at 0 ns, long before the trigger at 45 ns, and blocks until the event turns on. Because it uses wait_on(), arriving after the trigger would have been safe too; with wait_trigger() a late test would wait for a trigger that never comes."
+  participants={[
+    { id: "cpu", label: "cpu", sublabel: "mini_soc firmware", kind: "dut" },
+    { id: "mon", label: "monitor", sublabel: "apb_monitor", kind: "monitor" },
+    { id: "mbx", label: "mbx_dec", sublabel: "mbx_decoder", kind: "subscriber" },
+    { id: "ev", label: "fw_boot_done", sublabel: "uvm_event", kind: "generic" },
+    { id: "test", label: "soc_test", sublabel: "run_phase", kind: "test" }
+  ]}
+  messages={[
+    { from: "test", to: "ev", label: "wait_on() at 0 ns: the event is off, so the test blocks" },
+    { kind: "divider", label: "rst_n released at 22 ns" },
+    { kind: "async", from: "cpu", to: "mon", label: "APB write MAILBOX = BOOT_DONE (completes at 45 ns)" },
+    { from: "mon", to: "mbx", label: "ap.write(t)" },
+    { from: "mbx", to: "ev", label: "trigger() at 45 ns" },
+    { kind: "return", from: "ev", to: "test", label: "wait_on() returns at 45 ns: the event is on" },
+    { kind: "note", from: "ev", to: "test", label: "had the test arrived after the trigger, wait_on() would still return at once; wait_trigger() would hang" },
+    { kind: "async", from: "cpu", to: "mon", label: "CTRL write, CTRL read-back, TXDATA write" },
+    { kind: "async", from: "cpu", to: "mon", label: "APB write MAILBOX = FW_PASS (165 ns)" },
+    { from: "mon", to: "mbx", label: "ap.write(t): triggers fw_pass" }
+  ]}
+/>
+
+**Interrupts and other channels.** Firmware can also print through the mailbox (a PRINT code followed by characters, which the decoder turns into `` `uvm_info `` lines), and it can request an end of test. Interrupts travel the other way: the bench may raise an external interrupt line to make firmware run a handler, and then check the handler's effect.
+
+### The SoC register model and its prediction limits
+
+At block level a test often reads and writes registers through the register model, and the model keeps its **mirror** up to date by **auto-prediction**: `set_auto_predict(1)` on a map makes the model call `predict()` after each `uvm_reg::write()` or `uvm_reg::read()` it starts through that map (IEEE 1800.2-2020 §18.2.5.2). At SoC level most register traffic comes from firmware, which never calls the model.
+
+> **Misconception: "auto-predict keeps the mirror right when firmware writes."** Auto-prediction only sees accesses the register model itself started. A firmware write to CTRL leaves the mirror at its old value. Only an **explicit** `uvm_reg_predictor` connected to a monitor on that bus (§19.3) sees it.
+
+Three more facts trip people up:
+- `get()` returns the **desired** value (what the model wants to write next, §18.4.4.1), not the DUT's value; `get_mirrored_value()` returns the mirror (§18.4.4.3). Polling `get()` for a firmware write never sees it.
+- One predictor holds one map (`map`, §19.3.2.3) and one adapter, and finds registers by offset in that map (uvm-core 2020.3.1 `uvm_reg_predictor.svh`). Every bus that can write registers needs its own monitor, adapter and predictor: the CPU's bus, a debug port, a second processor.
+- "Memories can be large, so their accesses are not predicted" (§19.3): a `uvm_mem` has no mirror to update.
+
+Predict before the caption: the debug port writes CTRL, and a test sequence also writes it with `ctrl.write()` through the model, with auto-predict on and both predictors connected. Which paths update the mirror, and how many times is the sequence's write predicted?
+
+<ArchitectureDiagram
+  title="SoC register prediction: one predictor per bus, one register model"
+  cellWidth={150}
+  cellHeight={76}
+  gapX={80}
+  caption="Each bus that can write registers has a monitor and a predictor bound to that bus's map. The debug-port write reaches the mirror once, through dbg_predictor. The sequence's ctrl.write() is predicted twice: once by auto-predict (the dashed path, which covers only write() and read() calls made through the model) and once more by cpu_predictor, because its frontdoor access (the dotted arrow) crosses the CPU bus that cpu_bus_mon watches. For most fields the second prediction repeats the first, but a field with a write side effect, such as toggle-on-write, ends up wrong. That is why the snippet below turns auto-predict off once explicit predictors exist. Firmware writes reach the mirror only through cpu_predictor. Memories (uvm_mem) are not predicted."
+  nodes={[
+    { id: "cmon", label: "cpu_bus_mon", sublabel: "CPU bus monitor", kind: "monitor", col: 0, row: 0 },
+    { id: "seq", label: "reg sequence", sublabel: "ctrl.write('h5)", kind: "sequence", col: 1, row: 0 },
+    { id: "dmon", label: "dbg_apb_mon", sublabel: "debug APB monitor", kind: "monitor", col: 2, row: 0 },
+    { id: "cpred", label: "cpu_predictor", sublabel: "map: cpu_map", kind: "predictor", col: 0, row: 1 },
+    { id: "dpred", label: "dbg_predictor", sublabel: "map: dbg_map", kind: "predictor", col: 2, row: 1 },
+    { id: "rm", label: "soc_rm", sublabel: "register model: mirror", kind: "reg", col: 0, row: 2, colSpan: 3 }
+  ]}
+  ports={[
+    { id: "cmon.ap", node: "cmon", side: "bottom", kind: "analysis_port", label: "ap" },
+    { id: "cpred.in", node: "cpred", side: "top", kind: "analysis_imp", label: "bus_in" },
+    { id: "dmon.ap", node: "dmon", side: "bottom", kind: "analysis_port", label: "ap" },
+    { id: "dpred.in", node: "dpred", side: "top", kind: "analysis_imp", label: "bus_in" }
+  ]}
+  edges={[
+    { from: "seq", to: "cmon", style: "control", label: "frontdoor" },
+    { from: "cmon.ap", to: "cpred.in", style: "data", label: "write(t)" },
+    { from: "dmon.ap", to: "dpred.in", style: "data", label: "write(t)" },
+    { from: "cpred", to: "rm", style: "data", label: "predict()" },
+    { from: "dpred", to: "rm", style: "data", label: "predict()" },
+    { from: "seq", to: "rm", style: "causal", label: "auto-predict" }
+  ]}
+/>
+
+**Composing the SoC model.** The SoC register model reuses each block's model as a sub-block and places its map at the block's base address with `add_submap` (§18.2.3.5):
+
+```systemverilog
+// snippet: inside soc_reg_block::build(), reusing the SPI block's model
+spi_rm = spi_reg_block::type_id::create("spi_rm");
+spi_rm.configure(this);                   // parent is the SoC block
+spi_rm.build();
+cpu_map = create_map("cpu_map", 'h0, 4, UVM_LITTLE_ENDIAN);   // §18.1.2.3
+cpu_map.add_submap(spi_rm.default_map, 'h4000_0000);          // §18.2.3.5
+```
+
+```systemverilog
+// snippet: soc_env::connect_phase, explicit prediction on the CPU bus
+cpu_predictor.map     = soc_rm.cpu_map;   // one map per predictor
+cpu_predictor.adapter = axi_adapter;      // turns bus items into register operations
+cpu_bus_mon.ap.connect(cpu_predictor.bus_in);
+soc_rm.cpu_map.set_auto_predict(0);       // explicit only: each access predicted once
+```
+
+**A traced example.** CTRL is a read-write register with reset value 0. Three accesses happen in order. The table gives the mirrored value (`get_mirrored_value()`) after each one, for two bench set-ups: A has auto-predict on and no predictors; B has `cpu_predictor` and `dbg_predictor` connected and auto-predict off, as in the snippet above.
+
+| Access, in order | DUT's CTRL after it | A: what predicts it | A: mirror | B: what predicts it | B: mirror |
+|---|---|---|---|---|---|
+| 1. Firmware writes `'h9` on the CPU bus | `'h9` | nothing | `'h0` (stale) | `cpu_predictor` | `'h9` |
+| 2. The debug port writes `'h3` | `'h3` | nothing | `'h0` (stale) | `dbg_predictor` | `'h3` |
+| 3. A sequence calls `ctrl.write('h5)`; the frontdoor access crosses the CPU bus | `'h5` | auto-predict | `'h5` | `cpu_predictor` | `'h5` |
+
+Set-up A looks right after access 3, which is why it survives block-level tests: there, every write came from the model. At SoC level it is wrong for two of the three writers. Set-up B tracks the DUT after every access, and predicts each access exactly once.
+
+The [RAL predictor visual in A-UVM-4B](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit) lets you replay rows 1 and 3 of this table yourself; the debug challenge in Practice & Reinforce gives the exact settings.
+
+### Liveness: failures that should not wait for a timeout
+
+A lost response at SoC level often shows up only as a test that hangs until the global timeout, hours later, with no clue where. A **liveness property** names the promise (every accepted write gets a response) so a failure points at the broken promise instead. In the strategy, each property gets four things: its **trigger** (when the obligation starts), its **obligation**, its **failure meaning** (what bug a failure indicates) and its **owner**.
+
+Typical SoC liveness properties:
+- every accepted request eventually receives data, a completion or an error response;
+- no legal backpressure state makes two channels wait on each other for ever (a channel-dependency cycle; see [B-AXI-5](/curriculum/T3_Advanced/B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index));
+- a reset asserted during traffic eventually returns the fabric to idle;
+- an enabled interrupt eventually reaches its target or its status register;
+- a denied access never causes a side effect in the protected slave (a safety property, listed here because it is reviewed with the others).
+
+**Weak, strong and bounded.** In an `assert property`, a sequence written without `strong` is evaluated as **weak** (IEEE 1800-2023 §16.12.2). A weak sequence fails only when a finite stretch of the trace proves it cannot match, and `##[1:$]` can always still match later, so this assertion can **never fail** in simulation, however long the response is missing:
+
+```systemverilog
+// snippet: AXI write channel, one write outstanding at a time
+// Weak: never fails in a finite simulation (§16.12.2)
+a_bresp_weak: assert property (@(posedge aclk) disable iff (!aresetn)
+  (wvalid && wready && wlast) |-> ##[1:$] bvalid);
+
+// Bounded: a safety check that simulation can fail; 8 is a project budget
+a_bresp_bounded: assert property (@(posedge aclk) disable iff (!aresetn)
+  (wvalid && wready && wlast) |-> ##[1:8] bvalid)
+  else `uvm_error("LIVE_B", "no BVALID within 8 cycles of the last W beat")
+
+// Strong: true liveness, for formal (§16.12.13); see Push Further
+a_bresp_live: assert property (@(posedge aclk) disable iff (!aresetn)
+  (wvalid && wready && wlast) |-> s_eventually bvalid);
+```
+
+The trigger is the **last write-data beat**, not the address: an AXI slave "must wait for both WVALID and WREADY to be asserted before asserting BVALID" and also for `WLAST` (IHI0022E §A3.3.1). Measuring from the address would blame the slave for a missing data beat, which is a master or bench bug. Count the edges in the waveform before you read the caption.
+
+<TimingDiagram
+  title="A lost write response: the bounded check fails, the weak check never does"
+  caption="Values are sampled at each rising edge; the markers above the clock are labelled AW, W and fail. The address handshake is at edge 2 and the last (only) data beat at edge 3, so the obligation starts at edge 3 and ##[1:8] covers edges 4 to 11. BVALID never rises, so a_bresp_bounded fails at edge 11. a_bresp_weak is still waiting at the end of any finite run, and reports nothing."
+  edges={13}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "AWREADY", kind: "bit", values: [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "WVALID", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "WREADY", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "WLAST", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "BREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1] }
+  ]}
+  markers={[
+    { edge: 2, tone: "info", short: "AW", label: "edge 2: AW handshake, the address is accepted" },
+    { edge: 3, tone: "info", short: "W", label: "edge 3: W handshake with WLAST, the obligation starts" },
+    { edge: 11, tone: "fail", short: "fail", label: "edge 11: no BVALID in edges 4 to 11, a_bresp_bounded fails" }
+  ]}
+  highlights={[{ from: 4, to: 11, tone: "attempt", label: "##[1:8] window" }]}
+/>
+
+With several writes outstanding, a later response could satisfy an earlier obligation; real properties track IDs or count outstanding transfers. Simulation runs the bounded form; formal proves the strong form. [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index) shows how the two flows share properties, and Push Further explains how a pending strong obligation is reported.
+
+### System scenarios: reset, errors, power, concurrency and CDC/RDC
+
+These are the scenarios no block bench can run, because they span blocks. The strategy lists each with its stimulus, its check and the coverage that proves it ran.
+
+| Scenario | Stimulus | Check | Coverage evidence | Where it is taught |
+|---|---|---|---|---|
+| Reset during traffic | each reset source (power-on, warm, per-block) asserted while each traffic class is in flight | outstanding transfers drain, cancel or return an error; the bench's own reset handling flushes expectations; liveness "returns to idle" | cross: reset source × traffic class × phase of the transfer | [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) (bench mechanics) |
+| Error responses | slave errors, decode errors, memory ECC (error-correcting code) errors, injected by responders or by firmware touching holes | the right master gets the right error; the error interrupt and status register agree; nothing else is corrupted | cross: error type × master × response | A-UVM-9 (injection and accounting) |
+| Expected-error tests | tests that *should* produce errors | each expected error is demoted and counted by a report catcher (IEEE 1800.2-2020 §6.6); the test fails if the count is wrong | count of expected errors per test | A-UVM-9, [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) |
+| Power transitions | firmware powers a domain down and up with traffic pending | isolation and retention behave; no transfer to an off domain hangs | cross: power state × traffic class | [E-PWR-1](/curriculum/T4_Expert/E-PWR-1_Power_Aware_Verification/index) |
+| Concurrency | all masters at once; interrupt storms; back-to-back DMA descriptors | scoreboards per master; ordering rules; liveness | cross: master pairs × target; interrupt sources pending together | [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) |
+| Connectivity | each listed connection toggled or proven | formal connectivity check or a toggle test | every listed connection proven | this lesson |
+| Clock and reset crossings | not closed by functional tests | structural CDC/RDC analysis | the analysis report, with waivers reviewed | below |
+
+**CDC and RDC awareness.** Clock- and reset-domain crossings are signed off mainly by **structural analysis**, not by functional coverage. A CDC tool reads the RTL, finds every signal that crosses from one clock domain to another, and checks that each crossing has an approved **synchronizer**. A flip-flop that samples an input changing too close to its clock edge can go **metastable**: its output hovers between 0 and 1 for a while before settling. A synchronizer gives it time to settle: for a single bit, typically two flip-flops in the receiving domain; for a bus, a handshake or a FIFO whose pointers are Gray-coded (they change one bit at a time). An RDC check does the same for flip-flops whose asynchronous reset can change their output while a flip-flop in another reset domain, which is not being reset, captures it.
+
+<ArchitectureDiagram
+  title="A safe and an unsafe clock-domain crossing"
+  cellWidth={130}
+  caption="a_ff is clocked by clk_a; everything on the right is clocked by clk_b. The top path passes through two synchronizer flip-flops, which give a metastable value time to settle. The bottom path feeds b_ff directly: a structural CDC tool flags it. RTL simulation of either path shows clean 0s and 1s, because a simulator does not model metastability unless a tool-specific injection feature is turned on."
+  nodes={[
+    { id: "a", label: "a_ff", sublabel: "clk_a, reset rst_a", kind: "generic", col: 0, row: 0, rowSpan: 2 },
+    { id: "s1", label: "sync_ff1", sublabel: "clk_b", kind: "generic", col: 1, row: 0 },
+    { id: "s2", label: "sync_ff2", sublabel: "clk_b", kind: "generic", col: 2, row: 0, state: "ok" },
+    { id: "b", label: "b_ff", sublabel: "clk_b, no synchronizer", kind: "generic", col: 1, row: 1, colSpan: 2, state: "error" }
+  ]}
+  edges={[
+    { from: "a", to: "s1", style: "data", label: "crossing" },
+    { from: "s1", to: "s2", style: "data" },
+    { from: "a", to: "b", style: "data", label: "unsafe crossing" }
+  ]}
+/>
+
+What the SoC strategy needs from you is awareness, not the tool flow:
+- Functional tests with random clock ratios exercise crossing logic, but an RTL simulation **shows no metastability** unless the tool injects it (tool-dependent), so passing tests prove nothing about a missing synchronizer.
+- The CDC/RDC report, its waivers and their reviewer are sign-off items in the strategy, owned by the design or a CDC specialist.
+- IP from other teams can come with abstract CDC/RDC models so the SoC run does not re-analyse every block; Accellera approved a standard for such abstractions in 2026 (see References).
+- [B-AMBA-F1](/curriculum/T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index) shows a bridge that crosses clock domains, which is where many SoC crossings live.
+
+### SoC coverage and closure
+
+**Coverage closure** means every planned coverage goal is hit, or **waived** (excluded on purpose) with a written reason, and every hole has been analysed ([I-SV-3B closure workflow](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow)). At SoC level the goals are system goals:
+- master × slave × response (including decode errors and security denials);
+- interrupt source × target core × priority;
+- reset source × traffic class;
+- power state × traffic class;
+- master × privilege × region × response for security;
+- traffic profile × latency bucket for QoS.
+
+Look at the picture. Every block reached 100% in its own regression, yet the system cross still has holes.
+
+<figure className="not-prose my-6">
+  <div style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem", alignItems: "flex-start" }}>
+  <svg viewBox="0 0 300 160" role="img" aria-label="Block coverage from each block's own bench: four bars, SPI, DMA, UART and DDR controller, all at 100 percent." style={{ flex: "1 1 260px", maxWidth: 380, height: "auto" }}>
+    <text x="6" y="20" fontSize="15" fill="currentColor" fontWeight="bold">Block coverage (own benches)</text>
+    <text x="6" y="50" fontSize="14" fill="currentColor">SPI</text>
+    <rect x="80" y="36" width="150" height="18" fill="currentColor" fillOpacity="0.35" stroke="currentColor" />
+    <text x="238" y="50" fontSize="14" fill="currentColor">100%</text>
+    <text x="6" y="80" fontSize="14" fill="currentColor">DMA</text>
+    <rect x="80" y="66" width="150" height="18" fill="currentColor" fillOpacity="0.35" stroke="currentColor" />
+    <text x="238" y="80" fontSize="14" fill="currentColor">100%</text>
+    <text x="6" y="110" fontSize="14" fill="currentColor">UART</text>
+    <rect x="80" y="96" width="150" height="18" fill="currentColor" fillOpacity="0.35" stroke="currentColor" />
+    <text x="238" y="110" fontSize="14" fill="currentColor">100%</text>
+    <text x="6" y="140" fontSize="14" fill="currentColor">DDR ctl</text>
+    <rect x="80" y="126" width="150" height="18" fill="currentColor" fillOpacity="0.35" stroke="currentColor" />
+    <text x="238" y="140" fontSize="14" fill="currentColor">100%</text>
+  </svg>
+  <svg viewBox="0 0 320 200" role="img" aria-label="SoC cross of three masters (CPU, DMA, DBG) by four targets (DDR, SRAM, SPI, unmapped hole). Seven cells are hit, three are holes (CPU to hole, DMA to SRAM, DBG to SPI) and two are waived (DMA to SPI, DBG to hole)." style={{ flex: "1 1 280px", maxWidth: 400, height: "auto" }}>
+    <text x="6" y="20" fontSize="15" fill="currentColor" fontWeight="bold">SoC cross: master × target</text>
+    <text x="92" y="50" fontSize="13" fill="currentColor" textAnchor="middle">DDR</text>
+    <text x="156" y="50" fontSize="13" fill="currentColor" textAnchor="middle">SRAM</text>
+    <text x="220" y="50" fontSize="13" fill="currentColor" textAnchor="middle">SPI</text>
+    <text x="284" y="50" fontSize="13" fill="currentColor" textAnchor="middle">hole</text>
+    <text x="6" y="83" fontSize="13" fill="currentColor">CPU</text>
+    <text x="6" y="127" fontSize="13" fill="currentColor">DMA</text>
+    <text x="6" y="171" fontSize="13" fill="currentColor">DBG</text>
+    <rect x="62" y="58" width="60" height="40" fill="currentColor" fillOpacity="0.3" stroke="currentColor" />
+    <text x="92" y="83" fontSize="13" fill="currentColor" textAnchor="middle">hit</text>
+    <rect x="126" y="58" width="60" height="40" fill="currentColor" fillOpacity="0.3" stroke="currentColor" />
+    <text x="156" y="83" fontSize="13" fill="currentColor" textAnchor="middle">hit</text>
+    <rect x="190" y="58" width="60" height="40" fill="currentColor" fillOpacity="0.3" stroke="currentColor" />
+    <text x="220" y="83" fontSize="13" fill="currentColor" textAnchor="middle">hit</text>
+    <rect x="254" y="58" width="60" height="40" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="4 3" />
+    <text x="284" y="83" fontSize="13" fill="currentColor" textAnchor="middle" fontWeight="bold">HOLE</text>
+    <rect x="62" y="102" width="60" height="40" fill="currentColor" fillOpacity="0.3" stroke="currentColor" />
+    <text x="92" y="127" fontSize="13" fill="currentColor" textAnchor="middle">hit</text>
+    <rect x="126" y="102" width="60" height="40" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="4 3" />
+    <text x="156" y="127" fontSize="13" fill="currentColor" textAnchor="middle" fontWeight="bold">HOLE</text>
+    <rect x="190" y="102" width="60" height="40" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeDasharray="1 2" />
+    <text x="220" y="127" fontSize="13" fill="currentColor" textAnchor="middle">waived</text>
+    <rect x="254" y="102" width="60" height="40" fill="currentColor" fillOpacity="0.3" stroke="currentColor" />
+    <text x="284" y="127" fontSize="13" fill="currentColor" textAnchor="middle">hit</text>
+    <rect x="62" y="146" width="60" height="40" fill="currentColor" fillOpacity="0.3" stroke="currentColor" />
+    <text x="92" y="171" fontSize="13" fill="currentColor" textAnchor="middle">hit</text>
+    <rect x="126" y="146" width="60" height="40" fill="currentColor" fillOpacity="0.3" stroke="currentColor" />
+    <text x="156" y="171" fontSize="13" fill="currentColor" textAnchor="middle">hit</text>
+    <rect x="190" y="146" width="60" height="40" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="4 3" />
+    <text x="220" y="171" fontSize="13" fill="currentColor" textAnchor="middle" fontWeight="bold">HOLE</text>
+    <rect x="254" y="146" width="60" height="40" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeDasharray="1 2" />
+    <text x="284" y="171" fontSize="13" fill="currentColor" textAnchor="middle">waived</text>
+  </svg>
+  </div>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Merged block coverage is 100%, but the system cross has three holes (dashed, bold HOLE): the CPU never touched an unmapped address (so DECERR handling is unproven), the DMA never wrote SRAM, and the debug port never reached SPI. None of these appears in any block's report. The two dotted cells are waived, each with a written reason and a reviewer: the address map gives the DMA no route to SPI, and the debug decoder cannot produce an unmapped address.</figcaption>
+</figure>
+
+The same data as a table: CPU reached DDR, SRAM and SPI but never a hole; DMA reached DDR and a hole but never SRAM (SPI waived); DBG reached DDR and SRAM but never SPI (hole waived).
+
+**From goal to code.** A system goal becomes a covergroup in the SoC-only checker that sees the outcome, here the routing scoreboard `route_scb`, sampled once per completed response. Each waiver becomes an `ignore_bins` with its reason beside it, so the review of the waiver and the code stay together. [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) teaches the covergroup syntax.
+
+```systemverilog
+// snippet: inside class route_scb (IEEE 1800-2023 §19.4, §19.6.2, §19.8.1)
+typedef enum {CPU, DMA, DBG}        master_e;
+typedef enum {DDR, SRAM, SPI, HOLE} target_e;
+
+covergroup cg_route with function sample(master_e m, target_e t);
+  cp_master: coverpoint m;                // one automatic bin per enum value
+  cp_target: coverpoint t;
+  x_route:   cross cp_master, cp_target {
+    // waived: the address map gives the DMA no route to SPI (reviewer: SoC lead)
+    ignore_bins dma_spi  = binsof(cp_master) intersect {DMA} &&
+                           binsof(cp_target) intersect {SPI};
+    // waived: the debug decoder cannot produce an unmapped address
+    ignore_bins dbg_hole = binsof(cp_master) intersect {DBG} &&
+                           binsof(cp_target) intersect {HOLE};
+  }
+endgroup
+
+function new(string name, uvm_component parent);
+  super.new(name, parent);
+  cg_route = new();                       // only new() may assign it (§19.4)
+endfunction
+
+// in the response check, once per completed response:
+//   cg_route.sample(master_of(rsp), target_of(rsp));
+```
+
+A response coverpoint (OKAY, SLVERR, DECERR) crossed with these two gives the full master × target × response goal from the list above.
+
+**Practitioner rules.**
+- Close block coverage in block regressions. At SoC, collect only the goals that need the SoC.
+- Every waiver states why the cell is unreachable or irrelevant, and someone other than the author approves it.
+- Code coverage (statement, branch, toggle) at SoC level is mostly used for **toggle coverage of top-level connections**, which overlaps the connectivity check.
+- Do not chase block-internal states that the system cannot reach from firmware: that spends regression time on holes that will be waived anyway.
+
+### Regression, triage and sign-off gates
+
+A SoC simulation can take hours, so not every test can run on every change. The strategy defines **tiers**; the run times below are illustrative project policy, not industry figures.
+
+| Tier | When | Content | Gate (example policy) |
+|---|---|---|---|
+| Smoke | every change (pull request) | boot to BOOT_DONE, one transfer per master, every passive monitor sees traffic | no error or fatal; every enabled monitor active |
+| Nightly | every night | randomized firmware tests, resets, interrupts, errors, many seeds | no new P0/P1 failure; coverage does not drop |
+| Weekly stress | every week | heavy backpressure, long random runs, concurrency | no deadlock, no unexplained timeout |
+| Sign-off | at the milestone | the whole vplan, formal proofs, power and reset scenarios | all closure gates below met |
+
+**Triage by first divergence.** When a test fails, the first question is *where did reality first differ from expectation*, not "which block is broken". A scoreboard mismatch is a symptom; its cause can be the RTL, the reference model, the test's intent, the firmware, the UVM infrastructure or the tool. Each failure therefore carries an **evidence package**: random seed, RTL version hash, firmware image hash, testbench version hash, plusargs, the failing transaction and a window of bus traffic around it, and a waveform trigger. From that package a script or a person sorts the failure into an **owner bucket**. [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) teaches the regression loop and honest pass/fail verdicts in depth.
+
+<ArchitectureDiagram
+  title="From a commit to an owner: tiers, evidence and triage buckets"
+  cellWidth={130}
+  gapX={30}
+  caption="A change runs the smoke tier, then joins nightly and weekly runs. A failure in any tier produces the same evidence package (FW in the owner bucket means firmware), and triage starts from the first divergence to pick the owner bucket. Only the bucket decides who fixes it; a mismatch does not mean an RTL bug until the evidence says so."
+  nodes={[
+    { id: "commit", label: "change", sublabel: "RTL, firmware or TB", kind: "generic", col: 0, row: 0 },
+    { id: "smoke", label: "smoke", sublabel: "every change", kind: "generic", col: 1, row: 0 },
+    { id: "night", label: "nightly", sublabel: "many seeds", kind: "generic", col: 2, row: 0 },
+    { id: "week", label: "weekly stress", sublabel: "long runs", kind: "generic", col: 3, row: 0 },
+    { id: "ev", label: "evidence package", sublabel: "seed, hashes, plusargs, window", kind: "generic", col: 1, row: 1, colSpan: 2 },
+    { id: "tri", label: "first divergence", sublabel: "where did it first go wrong?", kind: "generic", col: 1, row: 2, colSpan: 2 },
+    { id: "own", label: "owner bucket", sublabel: "RTL·model·test·FW·TB·tool", kind: "generic", col: 3, row: 2 }
+  ]}
+  edges={[
+    { from: "commit", to: "smoke", style: "causal" },
+    { from: "smoke", to: "night", style: "causal" },
+    { from: "night", to: "week", style: "causal" },
+    { from: "smoke", to: "ev", style: "data", label: "fail" },
+    { from: "night", to: "ev", style: "data", label: "fail" },
+    { from: "week", to: "ev", style: "data", label: "fail" },
+    { from: "ev", to: "tri", style: "data" },
+    { from: "tri", to: "own", style: "data" }
+  ]}
+/>
+
+**Closure gates** are the conditions that must all hold before sign-off. The numbers are project policy that the strategy states and the review agrees; there is no universal threshold. A typical set:
+- every P0 and P1 vplan row closed: check linked, coverage hit or waived with an approved reason;
+- no open P0/P1 failures, and every known failure bucketed with an owner;
+- every liveness and security property proven in formal or covered by an agreed bounded check, with counterexamples closed;
+- the CDC/RDC report clean or waived by its reviewer;
+- the last N nightly regressions (N set by policy) without a new failure or coverage drop;
+- the risk register reviewed, each open risk accepted by a named owner.
+
+### The staff-level strategy artifact
+
+A staff-level SoC plan is a reviewable engineering document, not a list of tests. It must make ownership, observability and sign-off evidence explicit enough that block teams, firmware, formal and SoC verification can execute it without interpreting it differently.
 
 | Strategy area | Staff-level question | Evidence expected at review |
-| --- | --- | --- |
-| Scope split | Which bugs remain block-owned, and which only appear at SoC scope? | Block/subsystem/SoC responsibility matrix |
-| VIP reuse | Which agents are active, passive, or disabled under firmware control? | Build log audit, monitor heartbeat coverage, config DB map |
-| Coverage model | Which scenarios prove system behavior instead of repeating block coverage? | Master x slave x response, interrupt routing, security, reset, QoS, and coherency crosses |
-| Formal/liveness | Which failures should never wait for a 12-hour simulation timeout? | Request eventual-response, no channel-dependency cycle, reset convergence, interrupt delivery, security isolation properties |
-| Debug ownership | What evidence determines whether a failure belongs to firmware, UVM, RTL, or test intent? | Seed, firmware hash, RTL hash, plusargs, failing transaction window, waveform trigger, and owner bucket |
-| Signoff risks | Which risks can still invalidate the schedule after the tests are green? | Risk register with owner, mitigation, and exit criteria |
+|---|---|---|
+| Scope split and test layers | Which bugs remain block-owned, and which only appear at subsystem or SoC scope? | Block/subsystem/SoC responsibility matrix; processor model per layer |
+| Traceability | Can every feature be followed to a check and to coverage? | vplan with feature, scenario, check, coverage and owner per row |
+| Reuse plan | Which environments are nested, and which agents are active, passive or disabled? | Per-interface mode table, build audit (`print_topology()` or an automatic mode check), monitor activity counts |
+| Checkers | Which block scoreboards are kept, adapted or disabled, and what is new at SoC? | Per-scoreboard decision and owner; interconnect, interrupt and security checks |
+| Firmware contract | How do firmware and the bench synchronize, and how is the mirror kept right? | Mailbox map and codes, events and timeouts, one predictor per bus |
+| Coverage model | Which scenarios prove system behaviour instead of repeating block coverage? | Master × slave × response, interrupt routing, security, reset, power and QoS crosses |
+| Formal and liveness | Which failures should never wait for a regression timeout? | Liveness and safety properties with trigger, obligation, failure meaning and owner |
+| Regression and triage | What runs when, and how does a failure reach its owner? | Tiers, evidence package, buckets |
+| Sign-off | What exactly must be true to stop? | Closure gates with owners |
+| Risks | What can still invalidate the schedule after the tests are green? | Risk register with owner, mitigation and exit criteria |
 
-## Make It Work: SoC Operations
-
-SoC verification isn't just bigger UVM; it's a completely different operational workflow.
-
-### 1. Coverage Closure Sub-systems
-
-*Note: This formally incorporates concepts from the legacy `coverage-closure` module.*
-
-[Coverage closure](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) means all planned coverage points have been hit and analyzed. At the SoC level, do not attempt to reach 100% on every block-level coverpoint. 
-- **Focus:** System-level interactions (interrupt concurrency, multi-master arbitration, clock-domain crossing).
-- **Workflow:** Review reports nightly against the V-Plan. Automate report parsing to highlight structural gaps (e.g., "CPU0 never talked to Crypto block").
-- **Trap:** Chasing 100% on trivially unreachble block-states at the top level wastes compute.
-
-### 2. Regression & Triage Strategies
-
-*Note: This formally incorporates concepts from the legacy `regression-triage` module.*
-
-A massive SoC simulation might take 12 hours. You cannot run every test on every commit.
-
-- **Smoke Suite:** A 15-minute subset run on every pull request to catch catastrophic breakage (reset failure, boot hang).
-- **Nightly Regression:** The heavy lifting.
-- **Triage Automation:** When a test fails, scripts must categorize it:
-  - *Firmware compilation error*
-  - *UVM Fatal (e.g., Configuration missing)*
-  - *Scoreboard mismatch (Actual DUT bug)*
-- **Reproduction:** Always log the exact random seed, firmware commit hash, and UVM plusargs in the CI artifact. 
-
-### 3. IP Onboarding
-
-Define strict deliverables before accepting an IP block into the SoC repo:
-- VIP must support passive/active personalities via config DB.
-- RAL models must be clean and compiled without warnings.
-- "No raw `$display` statements"—everything must use `uvm_report` for central filtering.
-
-### 4. Formal and Liveness Review
-
-Simulation is necessary, but it is a poor way to discover rare liveness bugs. Every SoC strategy should name which properties belong in formal or assertion-based verification:
-
-- **Accepted request eventual response:** any accepted interconnect request must eventually receive data, completion, or an error response.
-- **No channel-dependency cycle:** no legal backpressure state may require two independent channels to wait on each other forever.
-- **Reset convergence:** reset asserted during outstanding traffic must drain, cancel, or invalidate in-flight work and return the fabric to a known idle state.
-- **Interrupt eventual delivery:** an enabled interrupt source must eventually be visible at the configured target or a masked-status register.
-- **Security isolation:** denied accesses must not produce protected-slave side effects.
-
-For review, list each property with its trigger, obligation, failure meaning, owner, and proof boundary. A property without a failure meaning is not ready for staff review.
-
-### 5. Signoff Risk Register
-
-Before signoff, maintain a small risk table that is reviewed weekly:
+**The risk register,** reviewed weekly before sign-off:
 
 | Risk | Mitigation | Exit criteria |
-| --- | --- | --- |
-| Passive VIP is connected but not observing traffic | Monitor heartbeat coverpoints and build-log audit | Every enabled passive monitor observes smoke-suite traffic |
-| Firmware boot instability hides RTL failures | Firmware phase markers and separate firmware-owned bucket | Boot failures are reproducible and isolated from RTL checks |
-| NoC deadlock only appears under rare backpressure | Formal liveness plus weekly backpressure stress | No open liveness counterexamples or stress timeouts |
-| Coverage chases unreachable block states | System-level coverage review and waiver policy | Every waived bin has reachability rationale |
-| Failure artifacts do not identify an owner | Mandatory CI artifact schema | P0/P1 failures can be bucketed without rerun |
+|---|---|---|
+| Passive VIP is connected but not observing traffic | per-monitor activity counts checked in `check_phase`; build audit | every enabled passive monitor sees the expected smoke-tier traffic |
+| Firmware boot instability hides RTL failures | firmware phase codes in the mailbox; a separate firmware bucket | boot failures reproduce and are separated from RTL checks |
+| Interconnect deadlock appears only under rare backpressure | formal liveness plus weekly backpressure stress | no open liveness counterexample or stress timeout |
+| Coverage chases unreachable block states | system-level coverage review and waiver policy | every waived bin has a reachability reason and a reviewer |
+| Failure artifacts do not identify an owner | mandatory evidence-package schema in CI | P0/P1 failures are bucketed without a rerun |
+
+### Pitfalls and misconceptions
+
+- *"SoC closure is the union of block coverage."* Block coverage shows each block was exercised by its own bench, not that the system flows happened. Close system goals at SoC.
+- *"Block scoreboards transfer unchanged."* Expectation sources, visible traffic, IDs and error responses all change at SoC. Decide keep, adapt or disable per scoreboard.
+- *"Auto-predict keeps the mirror right when firmware writes."* It only sees accesses the model started. Put an explicit predictor on every bus that writes registers.
+- *"Every agent becomes passive at SoC."* Only where an on-chip master now drives. Off-chip devices still need active responders.
+- *"A passive monitor that reports nothing means nothing happened."* It may be connected to the wrong interface. Count what it saw and compare with what the test expected.
+- *"A liveness assertion with `##[1:$]` will catch a lost response."* In `assert property` it is weak and never fails in simulation.
+- *"Random clock ratios prove CDC."* RTL simulation shows no metastability; CDC is signed off structurally.
+
+### Debugging at SoC: symptom, cause, fix
+
+| Symptom in the log | Likely cause | Fix |
+|---|---|---|
+| `print_topology()` shows a driver and sequencer under a reused agent, or `UVM_FATAL [MODE]` | the `is_active` setting never reached the agent: wrong path, a wildcard that missed, or the agent skips `super.build_phase` | use the exact relative path; check with `+UVM_CONFIG_DB_TRACE` (uvm-core 2020.3.1 plusarg, not in 1800.2); restore `super.build_phase` |
+| `X` on bus control signals; a protocol assertion fails from the first transfer | an agent left active drives the same nets as the CPU | make the agent passive; remove the block sequence from the SoC test |
+| `UVM_FATAL [SEQ]` "neither the item's sequencer nor dedicated sequencer has been supplied" | a block sequence started on a passive agent's null sequencer | do not start it, or null-check handles at the top of the virtual sequence |
+| A monitor count of 0, or a count lower than the firmware contract | the monitor's virtual interface points at the wrong instance, or the monitor sits on a bus this test does not use | check where `tb_top` set `"vif"` and the path it used; compare counts with the contract |
+| The register mirror never changes after firmware writes | no predictor on the bus firmware used; only auto-predict is on | add a monitor, adapter and predictor for that bus |
+| Every response unmatched in a reused AXI scoreboard | slave-side IDs carry the interconnect's port bits (IHI0022E §A5.3.5) | correlate at the master side or strip the port bits |
+| The test hangs after boot, or a firmware watchdog error | a missed trigger (`wait_trigger()` after the trigger), or firmware never booted (image not loaded, wrong path) | use `wait_on()`; check the image hash and the mailbox codes in the log |
+| An error-injection test fails on its own expected errors | expected errors are not demoted and counted | a report catcher that demotes only the expected IDs and counts them ([A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index)) |
+
+### Recap
+
+- SoC verification targets bugs between blocks; each layer reuses the one below and adds only what it alone can see.
+- A vplan traces every feature to scenarios, checks and coverage; a hit bin without a check proves nothing.
+- Block environments are nested unchanged; only their configuration changes. Agents are passive where an on-chip master drives, active where the bench still drives.
+- Reused checks are kept, adapted or disabled by decision, and every kept monitor proves it saw traffic.
+- Firmware and the bench meet through a mailbox contract and events; use `wait_on()` for milestones.
+- Only explicit predictors see firmware register traffic: one per bus.
+- Liveness needs strong properties in formal and bounded checks in simulation; CDC/RDC needs structural analysis.
+- Closure is system coverage plus gates stated as project policy, not merged block coverage.
+
+## Make It Work
+
+### The complete example
+
+One file holds a tiny SoC and its testbench. The SoC (`mini_soc`) has a CPU model that runs a short "firmware" as APB bus cycles (a bus-functional model, as in "Choosing the processor model"), the SPI block's register port (`spi_regs`) and a mailbox register. The testbench reuses the SPI block team's environment unchanged inside `soc_env`, makes its agent passive, adds a SoC-only mailbox decoder, waits on firmware milestones with `wait_on()`, audits the build and checks that the passive monitor saw exactly the traffic the firmware contract promises. The names match the `soc_env` diagram above.
+
+```systemverilog
+// compile: soc_spi_tb.sv: the firmware contract, the bus, the mini SoC, the TB
+`timescale 1ns/1ps
+`include "uvm_macros.svh"
+
+// =============================================== the firmware-testbench contract
+// One package for addresses and codes, shared by the firmware build and the bench.
+package soc_map_pkg;
+  localparam logic [11:0] SPI_CTRL   = 12'h000;
+  localparam logic [11:0] SPI_TXDATA = 12'h004;
+  localparam logic [11:0] MAILBOX    = 12'h100;
+  localparam logic [31:0] BOOT_DONE  = 32'h0000_0001;
+  localparam logic [31:0] FW_PASS    = 32'h0000_0002;
+  localparam logic [31:0] FW_FAIL    = 32'h0000_00FF;
+  localparam int unsigned FW_APB_TRANSFERS = 5;   // the boot firmware's bus transfers
+endpackage
+
+// ======================================================================= the bus
+// Nets, not variables: two drivers that disagree resolve to X, which an assertion
+// can see. A clocking output that is never written stays 'z (IEEE 1800-2023 §14.16),
+// so a passive agent cannot disturb the bus.
+interface apb_if (input logic clk, input logic rst_n);
+  wire        psel, penable, pwrite, pready;
+  wire [11:0] paddr;
+  wire [31:0] pwdata, prdata;
+  clocking drv_cb @(posedge clk);                 // used only when the agent is active
+    default input #1step output #1;
+    output psel, penable, pwrite, paddr, pwdata;
+    input  pready, prdata;
+  endclocking
+  clocking mon_cb @(posedge clk);
+    default input #1step;
+    input psel, penable, pwrite, paddr, pwdata, pready, prdata;
+  endclocking
+endinterface
+
+// =================================================================== the mini SoC
+// The SPI block's register port: CTRL and TXDATA, no wait states.
+module spi_regs
+  import soc_map_pkg::*;
+(
+  input  logic        clk,
+  input  logic        rst_n,
+  input  logic        psel,
+  input  logic        penable,
+  input  logic        pwrite,
+  input  logic [11:0] paddr,
+  input  logic [31:0] pwdata,
+  output logic [31:0] prdata
+);
+  logic [31:0] ctrl, txdata;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      ctrl   <= '0;
+      txdata <= '0;
+    end else if (psel && penable && pwrite) begin
+      if (paddr == SPI_CTRL)   ctrl   <= pwdata;
+      if (paddr == SPI_TXDATA) txdata <= pwdata;
+    end
+  end
+  always_comb prdata = (paddr == SPI_CTRL)   ? ctrl   :
+                       (paddr == SPI_TXDATA) ? txdata : '0;
+endmodule
+
+// The SoC: a CPU bus-functional model running the boot "firmware", the SPI block
+// and a mailbox register at 0x100. The bus is inside the SoC; the interface port
+// is the point where the testbench watches it.
+module mini_soc
+  import soc_map_pkg::*;
+(
+  apb_if bus
+);
+  logic        cpu_psel, cpu_penable, cpu_pwrite;
+  logic [11:0] cpu_paddr;
+  logic [31:0] cpu_pwdata, spi_rdata, mailbox_q;
+
+  assign bus.psel    = cpu_psel;                  // the CPU is the only master
+  assign bus.penable = cpu_penable;
+  assign bus.pwrite  = cpu_pwrite;
+  assign bus.paddr   = cpu_paddr;
+  assign bus.pwdata  = cpu_pwdata;
+  assign bus.pready  = 1'b1;                      // no wait states
+  assign bus.prdata  = bus.paddr[8] ? mailbox_q : spi_rdata;
+
+  spi_regs u_spi (
+    .clk    (bus.clk),
+    .rst_n  (bus.rst_n),
+    .psel   (bus.psel && !bus.paddr[8]),          // 0x000-0x0FF is the SPI block
+    .penable(bus.penable),
+    .pwrite (bus.pwrite),
+    .paddr  (bus.paddr),
+    .pwdata (bus.pwdata),
+    .prdata (spi_rdata)
+  );
+
+  always_ff @(posedge bus.clk or negedge bus.rst_n) begin
+    if (!bus.rst_n) mailbox_q <= '0;
+    else if (bus.psel && bus.penable && bus.pwrite && bus.paddr == MAILBOX)
+      mailbox_q <= bus.pwdata;
+  end
+
+  // One APB write: a setup cycle (psel = 1), then an access cycle (penable = 1).
+  task automatic apb_write(input logic [11:0] addr, input logic [31:0] data);
+    @(posedge bus.clk);
+    cpu_psel <= 1'b1;  cpu_penable <= 1'b0;  cpu_pwrite <= 1'b1;
+    cpu_paddr <= addr; cpu_pwdata <= data;
+    @(posedge bus.clk);
+    cpu_penable <= 1'b1;
+    @(posedge bus.clk);                           // pready = 1: completes at this edge
+    cpu_psel <= 1'b0;  cpu_penable <= 1'b0;
+  endtask
+
+  task automatic apb_read(input logic [11:0] addr, output logic [31:0] data);
+    @(posedge bus.clk);
+    cpu_psel <= 1'b1;  cpu_penable <= 1'b0;  cpu_pwrite <= 1'b0;
+    cpu_paddr <= addr;
+    @(posedge bus.clk);
+    cpu_penable <= 1'b1;
+    @(posedge bus.clk);
+    data = bus.prdata;                            // stable: no write is in progress
+    cpu_psel <= 1'b0;  cpu_penable <= 1'b0;
+  endtask
+
+  // The boot firmware, reduced to the bus transfers it makes (5 of them).
+  initial begin : firmware
+    logic [31:0] rd;
+    cpu_psel = 1'b0;  cpu_penable = 1'b0;  cpu_pwrite = 1'b0;
+    cpu_paddr = '0;   cpu_pwdata = '0;
+    @(posedge bus.rst_n);
+    apb_write(MAILBOX, BOOT_DONE);                // 1: boot code finished
+    apb_write(SPI_CTRL, 32'h9);                   // 2: enable the SPI block
+    apb_read (SPI_CTRL, rd);                      // 3: firmware's own read-back
+    apb_write(SPI_TXDATA, 32'hA5);                // 4: first byte to send
+    apb_write(MAILBOX, (rd == 32'h9) ? FW_PASS : FW_FAIL);   // 5: verdict
+  end
+endmodule
+
+// ============================================================= the UVM testbench
+package soc_spi_pkg;
+  import uvm_pkg::*;
+  import soc_map_pkg::*;
+  `include "uvm_macros.svh"
+
+  // ------- the SPI block team's VIP and environment (reused; one SoC adaptation marked)
+  class apb_item extends uvm_sequence_item;
+    rand bit        write;
+    rand bit [11:0] addr;
+    rand bit [31:0] data;
+    `uvm_object_utils_begin(apb_item)
+      `uvm_field_int(write, UVM_ALL_ON)
+      `uvm_field_int(addr,  UVM_ALL_ON)
+      `uvm_field_int(data,  UVM_ALL_ON)
+    `uvm_object_utils_end
+    function new(string name = "apb_item");
+      super.new(name);
+    endfunction
+    function string convert2string();
+      return $sformatf("%s addr=0x%03h data=0x%08h", write ? "WR" : "RD", addr, data);
+    endfunction
+  endclass
+
+  typedef uvm_sequencer #(apb_item) apb_sequencer;
+
+  class apb_driver extends uvm_driver #(apb_item);
+    `uvm_component_utils(apb_driver)
+    virtual apb_if vif;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(virtual apb_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NO_VIF", "apb_driver: no virtual interface")
+    endfunction
+    task run_phase(uvm_phase phase);
+      forever begin
+        seq_item_port.get_next_item(req);
+        @(vif.drv_cb);
+        vif.drv_cb.psel    <= 1'b1;               // setup cycle
+        vif.drv_cb.penable <= 1'b0;
+        vif.drv_cb.pwrite  <= req.write;
+        vif.drv_cb.paddr   <= req.addr;
+        vif.drv_cb.pwdata  <= req.data;
+        @(vif.drv_cb);
+        vif.drv_cb.penable <= 1'b1;               // access cycle
+        @(vif.drv_cb);
+        while (!vif.drv_cb.pready) @(vif.drv_cb);
+        if (!req.write) req.data = vif.drv_cb.prdata;
+        vif.drv_cb.psel    <= 1'b0;
+        vif.drv_cb.penable <= 1'b0;
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  class apb_monitor extends uvm_monitor;
+    `uvm_component_utils(apb_monitor)
+    virtual apb_if vif;
+    uvm_analysis_port #(apb_item) ap;
+    int unsigned n_seen;                          // activity evidence for the SoC
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      ap = new("ap", this);
+      if (!uvm_config_db#(virtual apb_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NO_VIF", "apb_monitor: no virtual interface")
+    endfunction
+    task run_phase(uvm_phase phase);
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.psel && vif.mon_cb.penable && vif.mon_cb.pready) begin
+          apb_item t = apb_item::type_id::create("t");   // a new object per transfer
+          t.write = vif.mon_cb.pwrite;
+          t.addr  = vif.mon_cb.paddr;
+          t.data  = vif.mon_cb.pwrite ? vif.mon_cb.pwdata : vif.mon_cb.prdata;
+          n_seen++;
+          `uvm_info("APB_MON", t.convert2string(), UVM_MEDIUM)
+          ap.write(t);
+        end
+      end
+    endtask
+  endclass
+
+  // The SPI block's agent for its APB register port.
+  class spi_apb_agent extends uvm_agent;
+    `uvm_component_utils(spi_apb_agent)
+    apb_monitor   monitor;
+    apb_sequencer sequencer;
+    apb_driver    driver;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);                   // uvm_agent reads "is_active" here
+      monitor = apb_monitor::type_id::create("monitor", this);
+      if (get_is_active() == UVM_ACTIVE) begin    // passive: never built at all
+        sequencer = apb_sequencer::type_id::create("sequencer", this);
+        driver    = apb_driver::type_id::create("driver", this);
+      end
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      super.connect_phase(phase);
+      if (get_is_active() == UVM_ACTIVE)          // the same guard as build_phase
+        driver.seq_item_port.connect(sequencer.seq_item_export);
+    endfunction
+  endclass
+
+  // Predicts from what the monitor saw, not from what a sequence meant to send,
+  // so it works whether a sequence or firmware drives the port.
+  class spi_reg_scb extends uvm_subscriber #(apb_item);
+    `uvm_component_utils(spi_reg_scb)
+    bit [31:0]   shadow [bit [11:0]];
+    int unsigned n_match, n_mismatch;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void write(apb_item t);
+      if (t.addr[8]) return;                      // adapted for SoC: not SPI's window
+      if (t.write) shadow[t.addr] = t.data;
+      else begin
+        bit [31:0] exp = shadow.exists(t.addr) ? shadow[t.addr] : '0;  // reset 0
+        if (t.data == exp) n_match++;
+        else begin
+          n_mismatch++;
+          `uvm_error("SPI_SCB", $sformatf("read 0x%03h: got 0x%08h, expected 0x%08h",
+                                          t.addr, t.data, exp))
+        end
+      end
+    endfunction
+    function void report_phase(uvm_phase phase);
+      `uvm_info("SCB_SUMMARY", $sformatf("matches=%0d mismatches=%0d pending=0",
+                                         n_match, n_mismatch), UVM_LOW)
+    endfunction
+  endclass
+
+  class spi_blk_env extends uvm_env;
+    `uvm_component_utils(spi_blk_env)
+    spi_apb_agent spi_agent;
+    spi_reg_scb   scb;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      spi_agent = spi_apb_agent::type_id::create("spi_agent", this);
+      scb       = spi_reg_scb::type_id::create("scb", this);
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      spi_agent.monitor.ap.connect(scb.analysis_export);
+    endfunction
+  endclass
+
+  // ----------------------------------------------------------- SoC-only code
+  // Turns firmware mailbox writes into events the test can wait on.
+  class mbx_decoder extends uvm_subscriber #(apb_item);
+    `uvm_component_utils(mbx_decoder)
+    uvm_event boot_done_ev, fw_pass_ev;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      boot_done_ev = uvm_event_pool::get_global("fw_boot_done");
+      fw_pass_ev   = uvm_event_pool::get_global("fw_pass");
+    endfunction
+    function void write(apb_item t);
+      if (!(t.write && t.addr == MAILBOX)) return;
+      case (t.data)
+        BOOT_DONE: begin
+          `uvm_info("MBX", "firmware reports BOOT_DONE", UVM_LOW)
+          boot_done_ev.trigger();
+        end
+        FW_PASS: begin
+          `uvm_info("MBX", "firmware reports FW_PASS", UVM_LOW)
+          fw_pass_ev.trigger();
+        end
+        default: `uvm_error("MBX", $sformatf("firmware reports code 0x%08h", t.data))
+      endcase
+    endfunction
+  endclass
+
+  class soc_env extends uvm_env;
+    `uvm_component_utils(soc_env)
+    spi_blk_env spi_env;                          // the block env, reused whole
+    mbx_decoder mbx_dec;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      spi_env = spi_blk_env::type_id::create("spi_env", this);
+      mbx_dec = mbx_decoder::type_id::create("mbx_dec", this);
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      spi_env.spi_agent.monitor.ap.connect(mbx_dec.analysis_export);
+    endfunction
+    // Evidence that the passive monitor is really connected to the busy bus.
+    function void check_phase(uvm_phase phase);
+      int unsigned n = spi_env.spi_agent.monitor.n_seen;
+      `uvm_info("SOC_ENV", $sformatf("spi_agent monitor saw %0d transfers", n), UVM_LOW)
+      if (n != FW_APB_TRANSFERS)
+        `uvm_error("TRAFFIC_COUNT", $sformatf("expected %0d transfers from firmware",
+                                              FW_APB_TRANSFERS))
+    endfunction
+  endclass
+
+  class soc_test extends uvm_test;
+    `uvm_component_utils(soc_test)
+    soc_env env;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      // The CPU drives this port in the SoC, so the reused agent only watches.
+      // Exact path: a wildcard could also catch an agent that must stay active.
+      uvm_config_db#(uvm_active_passive_enum)::set(this, "env.spi_env.spi_agent",
+                                                   "is_active", UVM_PASSIVE);
+      env = soc_env::type_id::create("env", this);
+    endfunction
+    function void end_of_elaboration_phase(uvm_phase phase);
+      uvm_root::get().print_topology();           // build audit (Annex F.7.4.2)
+      if (env.spi_env.spi_agent.get_is_active() != UVM_PASSIVE)
+        `uvm_fatal("MODE", "spi_agent is not passive: does its build_phase call super?")
+    endfunction
+    task run_phase(uvm_phase phase);
+      uvm_event boot_done = uvm_event_pool::get_global("fw_boot_done");
+      uvm_event fw_pass   = uvm_event_pool::get_global("fw_pass");
+      phase.raise_objection(this);
+      fork
+        begin
+          boot_done.wait_on();                    // returns at once if already on
+          `uvm_info("TEST", "boot complete: system checks enabled", UVM_LOW)
+          fw_pass.wait_on();
+          `uvm_info("TEST", "firmware test finished", UVM_LOW)
+        end
+        begin                                     // a watchdog, not synchronization
+          #10us;
+          `uvm_error("FW_TIMEOUT", "no BOOT_DONE and FW_PASS within 10 us")
+        end
+      join_any
+      disable fork;
+      phase.drop_objection(this);
+    endtask
+  endclass
+endpackage
+
+// ========================================================================= tb_top
+module tb_top;
+  import uvm_pkg::*;
+  import soc_spi_pkg::*;
+
+  logic clk   = 1'b0;
+  logic rst_n = 1'b0;
+  always #5 clk = ~clk;                           // rising edges at 5, 15, 25 ns, ...
+  initial #22 rst_n = 1'b1;                       // released between two edges
+
+  apb_if   apb_bus (clk, rst_n);
+  mini_soc u_soc   (.bus(apb_bus));
+
+  // An SoC-level protocol check that reports through UVM, so it fails the test.
+  a_apb_known: assert property (@(posedge clk) disable iff (!rst_n)
+    !$isunknown({apb_bus.psel, apb_bus.penable}) &&
+    (!apb_bus.psel || !$isunknown({apb_bus.pwrite, apb_bus.paddr})))
+    else `uvm_error("APB_X", "X on APB control: is a second master driving the bus?")
+
+  initial begin
+    // Only the reused agent's components need this interface.
+    uvm_config_db#(virtual apb_if)::set(null, "uvm_test_top.env.spi_env.spi_agent.*",
+                                        "vif", apb_bus);
+    run_test("soc_test");                         // +UVM_TESTNAME overrides this
+  end
+endmodule
+```
+
+**Trace of the firmware.** Reset is released at 22 ns. Each write takes a setup edge and an access edge, and the access completes at the third rising edge after the call, so the five transfers complete at 45 ns (MAILBOX = BOOT_DONE), 75 ns (CTRL = 0x9), 105 ns (read CTRL, 0x9), 135 ns (TXDATA = 0xA5) and 165 ns (MAILBOX = FW_PASS). The monitor samples each on the same edge, so `n_seen` ends at 5, matching `FW_APB_TRANSFERS`. The scoreboard ignores the two mailbox writes, records CTRL and TXDATA, and checks the one read: 1 match.
+
+### Expected output
+
+Illustrative: traced by hand from the code and the uvm-core 2020.3.1 sources, not captured from a simulator run. File names, line numbers and times are omitted. The topology table is abridged (the exact columns depend on the printer), and so is the report summary: uvm-core also prints a `UVM_INFO` count, which includes the library's own messages, and a count per message ID.
+
+```text
+UVM_INFO ... reporter [RNTST] Running test soc_test...
+UVM_INFO ... reporter [UVMTOP] UVM testbench topology:
+  uvm_test_top          soc_test
+    env                 soc_env
+      mbx_dec           mbx_decoder
+      spi_env           spi_blk_env
+        scb             spi_reg_scb
+        spi_agent       spi_apb_agent
+          monitor       apb_monitor
+UVM_INFO ... uvm_test_top.env.spi_env.spi_agent.monitor [APB_MON] WR addr=0x100 data=0x00000001
+UVM_INFO ... uvm_test_top.env.mbx_dec [MBX] firmware reports BOOT_DONE
+UVM_INFO ... uvm_test_top [TEST] boot complete: system checks enabled
+UVM_INFO ... uvm_test_top.env.spi_env.spi_agent.monitor [APB_MON] WR addr=0x000 data=0x00000009
+UVM_INFO ... uvm_test_top.env.spi_env.spi_agent.monitor [APB_MON] RD addr=0x000 data=0x00000009
+UVM_INFO ... uvm_test_top.env.spi_env.spi_agent.monitor [APB_MON] WR addr=0x004 data=0x000000a5
+UVM_INFO ... uvm_test_top.env.spi_env.spi_agent.monitor [APB_MON] WR addr=0x100 data=0x00000002
+UVM_INFO ... uvm_test_top.env.mbx_dec [MBX] firmware reports FW_PASS
+UVM_INFO ... uvm_test_top [TEST] firmware test finished
+UVM_INFO ... uvm_test_top.env [SOC_ENV] spi_agent monitor saw 5 transfers
+UVM_INFO ... uvm_test_top.env.spi_env.scb [SCB_SUMMARY] matches=1 mismatches=0 pending=0
+
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+Notice what is missing from the topology: no `sequencer` and no `driver` under `spi_agent`. That absence, plus the transfer count, is the evidence a strategy review asks for.
+
+**Prove it can fail.** Three one-line changes, each with the signature it should produce:
+- Delete the `uvm_config_db::set` in `soc_test`: the topology printed just before the end shows a `sequencer` and `driver` under `spi_agent`, then `UVM_FATAL [MODE]` stops the run.
+- In `tb_top`, set `"vif"` at `"uvm_test_top.env.spi_agent.*"` (the block-level path): `UVM_FATAL [NO_VIF]` from the monitor, because the path is one level too shallow.
+- Change `FW_APB_TRANSFERS` to 6: `UVM_ERROR [TRAFFIC_COUNT]`, which is the message a silently disconnected monitor would produce.
+
+### Run it
+
+Compile uvm-core 2020.3.1 and this one file with any simulator that supports IEEE 1800.2, then run the test:
+
+```bash
+# tool-neutral outline; the exact switches differ per simulator
+<compile> +incdir+$UVM_HOME/src $UVM_HOME/src/uvm_pkg.sv soc_spi_tb.sv
+<simulate> tb_top +UVM_TESTNAME=soc_test
+```
+
+`+UVM_TESTNAME` (Annex G.2.1) wins over the argument of `run_test()` (Annex F.7.3.1). Open-source Verilator's support for UVM and for clocking blocks is still limited; check its release notes before relying on it for this bench.
+
+### How to bring a block environment into the SoC
+
+1. **List every interface of the SoC DUT** and, for each, who drives it in the SoC test. That answer is each agent's mode: passive where an on-chip master drives, active where the bench plays an off-chip device.
+2. **Nest the block environments unchanged** inside the SoC environment, and set each agent's mode with an exact path relative to the test (or through the block's configuration object).
+3. **Audit the build** in `end_of_elaboration_phase`: an automatic mode check plus `print_topology()`.
+4. **Decide keep, adapt or disable for every reused check**, with an owner, and adapt expectation sources to come from monitors.
+5. **Write the firmware contract** in one shared package: mailbox address, codes, events, timeouts, and what is checked during boot.
+6. **Decode the mailbox into events** and wait on milestones with `wait_on()`, inside a watchdog.
+7. **Add one register predictor per bus** that can write registers, and turn auto-predict off where explicit predictors exist.
+8. **Add SoC-only checks:** interconnect routing, interrupts, security and the liveness properties, each with an owner.
+9. **Prove every monitor saw the traffic the test promised** in `check_phase`.
+10. **Write the mutants** (agent left active, wrong `vif` path, wrong transfer count) and prove each one fails with a named message.
+
+### Worked strategy: one page for the DMA subsystem
+
+The planned M8 code capstone verifies a DMA subsystem: a DMA engine with an APB register port and an AXI master port, an AXI interconnect with an AXI-to-APB bridge in front of that register port, an SRAM and a DDR controller model, and a completion interrupt to the CPU. At subsystem level the CPU is a bus-functional model with its own AXI master port into the interconnect, running firmware-style bus scripts. Through the interconnect it reaches both the DMA's registers (via the bridge) and the SRAM. A one-page strategy for it, in the shape of the artifact table:
+
+| Area | Decision |
+|---|---|
+| Scope | Block team owns DMA descriptor parsing and AXI protocol corner cases. Subsystem owns routing, ordering through the interconnect, completion interrupts, resets during transfers and error responses. |
+| Test layers | Block TB (DMA alone, AXI slave responder); subsystem TB (this one: DMA plus interconnect plus memory models, with a CPU BFM on its own AXI master port); SoC TB later with the RTL CPU running driver firmware. |
+| Reuse | `dma_blk_env` nested unchanged. Its APB agent goes passive, because the CPU BFM now drives the register port through the bridge (at block level the agent played the CPU). Its AXI responder is disabled, because real memory models answer. Its AXI monitor stays on the DMA's master port. The interrupt line gets a monitor only. |
+| Checkers | Keep the descriptor scoreboard, adapted to build its expectations from monitored traffic (the APB register writes and the CPU's descriptor writes to SRAM) instead of from block sequences; add a memory scoreboard per region, a routing scoreboard on the interconnect, and an interrupt checker. |
+| Register prediction | One predictor on the APB monitor; auto-predict off. Descriptor memory is a `uvm_mem`, so it is checked by backdoor reads, not prediction. |
+| Liveness | Every accepted AXI request gets a response (bounded in simulation, strong in formal); every enabled completion raises the interrupt within a budget. |
+| Scenarios | Reset during a burst; DECERR on a descriptor pointing into a hole; back-to-back descriptors; two channels competing for DDR. |
+| Coverage | Descriptor type × target region × response; reset × transfer phase; interrupt × channel. |
+| Regression and gates | Smoke: one transfer per channel; nightly: random descriptors over many seeds; sign-off: all P0/P1 rows closed, liveness proven, no open failure. |
+| Risks | The interconnect model lags the RTL; descriptor-memory backdoor paths change with the netlist. |
+
+The firmware contract row is left out on purpose: you write it in the kata in Practice & Reinforce.
+
+**Checklist before moving on:**
+- [ ] For every interface in your SoC, you can say who drives it in the SoC test and therefore which mode its agent needs, including at least one that stays active.
+- [ ] Your bench fails with a named message if a reused agent is not in the mode you set, and its topology shows no driver under a passive agent.
+- [ ] Every reused scoreboard has a recorded keep, adapt or disable decision, and every kept monitor's transfer count is checked against what the test promised.
+- [ ] Your test waits on firmware milestones with `wait_on()` inside a watchdog, and the mailbox addresses and codes live in one shared package.
+- [ ] Every bus that can write registers has its own predictor, and you can explain why auto-predict alone leaves the mirror stale after firmware writes.
+- [ ] Your strategy lists liveness properties with trigger, obligation, failure meaning and owner, and says which are bounded in simulation and which are proven in formal.
+- [ ] Your strategy states tiers, the evidence package, the triage buckets and closure gates as project policy, and names the CDC/RDC sign-off owner.
+
+## Push Further
+
+### Expert: liveness in simulation versus formal
+
+In `assert property` an unqualified sequence is weak (IEEE 1800-2023 §16.12.2), so `req |-> ##[1:$] resp` can never fail on a finite trace. `strong(...)` and `s_eventually` (§16.12.13) make the obligation strong: in formal, a counterexample is an infinite path (a loop) on which the response never comes, which is exactly the deadlock you want to find. In simulation, a strong obligation still pending when the run ends is reported in a tool-dependent way: some simulators report it as a failure at the end of simulation, some only in a coverage or "incomplete" report. Do not rely on that report for sign-off. The working pattern is a pair: the strong property for formal, and a bounded `##[1:MAX]` safety version for simulation, where `MAX` is a budget the architecture can justify. A bounded property that is too tight fails on legal congestion; one that is too loose detects nothing within the test length. Formal liveness proofs also need **fairness** assumptions (for example, that every slave behind the interconnect eventually asserts its `READY` signals), or the tool finds trivial counterexamples where the environment simply stalls; [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index) covers writing those assumptions.
+
+### Expert: SoC register models and prediction at scale
+
+- **One predictor, one map.** `uvm_reg_predictor` holds one `map` and one `adapter` and looks registers up by offset in that map (IEEE 1800.2-2020 §19.3.2.3; uvm-core 2020.3.1 `uvm_reg_predictor.svh`). A register reachable from three buses needs three predictors, each bound to the map that describes that bus's addresses.
+- **Bridges translate addresses.** If a monitor sits behind a bridge that remaps addresses, its predictor must use a map with the remapped offsets, or prediction silently finds no register.
+- **Memories.** "Memories can be large, so their accesses are not predicted" (§19.3). Firmware-visible memory is checked by a memory scoreboard or by backdoor reads, never by the mirror.
+- **Backdoor writes and the mirror.** IEEE 1800.2-2020 §18.4.4.11 says `poke()` "is affected by the auto-prediction configuration", but uvm-core 2020.3.1 (`uvm_reg.svh`) calls `do_predict` after every `poke()` regardless. Write code that does not depend on the difference: after a backdoor load, call `predict()` or `mirror()` explicitly.
+- **The two defaults of §18.2.5.2.** The clause says both that "the default value of on shall be 1" and that "when on is False (the default)" bus traffic does not update the mirror. uvm-core resolves it: the *argument* of `set_auto_predict()` defaults to 1, and the *map's mode* starts at 0. Calling `set_auto_predict()` with no argument turns it on.
+- **Volatile and side-effect registers.** Clear-on-read and hardware-updated status fields cannot be predicted from bus traffic alone; mark them volatile and check them with a scoreboard that knows the hardware events.
+
+### Expert: firmware and testbench synchronization races
+
+- `uvm_event::wait_trigger()` misses a trigger that happened earlier in time, and §10.1.1.2.4 notes a race even within one time slot (the "same delta"). `wait_ptrigger()` (§10.1.1.2.5) avoids the same-slot race but still needs the trigger to be in the current time slot. For milestones, `wait_on()` (§10.1.1.2.2) is the robust choice; call `reset()` on the event only if the milestone can legitimately happen twice (for example, a warm reboot), and then only from a point where no waiter can miss the next trigger.
+- Event pool keys are plain strings: a typo (`"fw_boot_dn"`) silently creates a second event that nobody triggers. Keep the keys in the shared contract package.
+- Firmware time is long: a test should log firmware milestones with their simulation time and the image hash, so a slow boot can be told apart from a hang.
+- If the bench must *drive* firmware decisions (inject an interrupt "when firmware reaches state X"), synchronize on the mailbox code for state X, never on a fixed delay that a firmware change will break.
+
+### Expert: what block checks need at the interconnect
+
+- **ID widening.** The interconnect appends master-port bits to `ARID`, `AWID` and `WID`, so slave-side IDs are wider (IHI0022E §A5.3.5). A routing scoreboard needs the interconnect's port numbering, or it correlates by address and order at each master instead.
+- **DECERR from a default slave.** The specification recommends routing undecodable accesses to a default slave that answers DECERR, and requires all data transfers of the transaction to complete even so (§A3.4.4). A scoreboard must expect the full data phase of a failed burst, not an early stop.
+- **Security.** `AxPROT` carries privileged, secure and instruction attributes (§A4.7). A security policy scoreboard predicts allow or deny per master × privilege × region, and the security liveness property becomes a safety property: a denied access never reaches the protected slave.
+- **Ownership.** Each reused check gets one owner who signs the keep, adapt or disable decision. Duplicated checks with different expectations produce two contradictory error streams for one bug, which slows triage more than a missing check.
+
+### Expert: CDC and RDC sign-off (tool-dependent)
+
+Structural CDC tools classify crossings (single-bit control, multi-bit data, handshakes, FIFOs), check synchronizer structures and **reconvergence** (two separately synchronized signals that recombine and can arrive one cycle apart), and report glitch-prone combinational logic before a synchronizer. RDC analysis finds asynchronous resets that can corrupt a capture in another reset domain. Formal tools can then prove protocol rules on handshakes. Metastability-injection simulation, where the tool randomly delays a synchronizer's output by a cycle, is a vendor feature; its name, switches and coverage differ per tool. For integration, Accellera's Standard for IP Abstraction for Clock and Reset Domain Crossing Integration 1.0 (approved in 2026) defines how an IP provider describes its crossings so the SoC analysis need not re-read the IP's RTL. The strategy's job is to name the owner of the CDC/RDC report, the waiver reviewer, and the gate.
+
+### Expert: the cost of one SoC simulation (tool-dependent)
+
+A single SoC test can spend most of its time booting. Common tactics, all tool-dependent in how they are switched on:
+- **Checkpoint and restore:** save the simulation state after boot and restore it for each test, so boot runs once per regression rather than once per test.
+- **Swap firmware without recompiling:** pass the image name as a plusarg, read it with `$value$plusargs` (IEEE 1800-2023 §21.6) and load it with `$readmemh` (§21.4).
+- **Separate compilation and partitioning:** compile stable IP once and reuse the compiled library across bench changes.
+- **Log volume:** a SoC log with every monitor at full verbosity is too large to read; set verbosity per component from the command line (`+uvm_set_verbosity`, IEEE 1800.2-2020 Annex G.2.3) and keep transfer-level prints at `UVM_HIGH`.
+- **Faster CPU models** for long firmware flows (an ISS or BFM, with the RTL core reserved for the tests that need it).
+
+### Expert: scaling out to emulation and portable tests (methodology)
+
+Tests that run for millions of cycles (operating-system boot, performance runs) move to emulation or FPGA prototypes. The bench must change for that. It splits into two tops: everything timed (the clock and reset generators, and the pin-level parts of drivers and monitors, rewritten as BFMs) moves into the HDL-side top, which is compiled into the emulator with the DUT. The host-side (HVL) testbench of classes (sequences, driver and monitor proxies, scoreboards, coverage) becomes untimed: no `#` delays, no clock waits and no polling of DUT signals, because each one is a synchronization point between the host and the emulator. The two sides talk in whole transactions, and checks must tolerate reduced visibility inside the emulator; [E-EMU-1](/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index) covers the split and its coding rules. Writing one scenario once and running it in simulation, on the emulator and on silicon is what the Portable Test and Stimulus Standard is for; [the PSS bridge page](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/pss) shows where it fits in this strategy and [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index) teaches the language.
+
+### Expert: regression economics and closure gates (methodology)
+
+- **Flaky tests** (pass or fail on the same seed and hashes) destroy trust in every gate. Quarantine them with an owner and a deadline instead of rerunning until green.
+- **Seeds and reproducibility:** a failure is only actionable if its seed, hashes and plusargs reproduce it; random stability rules are in [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods).
+- **First-failure signatures:** bucket failures by the first error message and its component, so 200 failures from one bug count as one bucket ([E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index)).
+- **Coverage per hour:** rank tests by the new coverage they add per CPU hour and retire those that add nothing, but keep a fixed set of directed tests that guard known bugs.
+- **Gates are policy.** Numbers such as "N clean nightlies" are agreed by the project and written in the strategy; there is no standard threshold, and claims of one should be treated as unverified.
+
+### Expert: interview angles
+
+Try each one before you open the options.
+
+<InterviewQuestionPlayground
+  title="Interview: all block scoreboards are green, silicon loses an interrupt"
+  question="Every block regression passed, and the SoC regression passed too. On silicon, the DMA completion interrupt sometimes never reaches CPU1. What did the strategy most likely miss?"
+  options={[
+    { text: "The DMA block's coverage was below 100%, so its interrupt logic was not fully exercised.", isCorrect: false, feedback: "Possible, but the question says the block regressions passed. The interrupt path between blocks is not in any block's coverage." },
+    { text: "A system check and system coverage for interrupt routing: an interrupt checker that predicts source to target, and a cross of interrupt source × target core × concurrent traffic.", isCorrect: true, feedback: "Right. Firmware handling an interrupt in some tests is not a check that every source reaches every configured target under load. The strategy needed an owner, a checker and a cross for interrupt delivery, plus a liveness property (enabled interrupt eventually visible at its target)." },
+    { text: "The SoC tests used a BFM instead of the RTL CPU, so interrupts could not be tested.", isCorrect: false, feedback: "A BFM can still observe an interrupt line. The gap is the missing check and coverage, not the CPU model." },
+    { text: "The interrupt controller's block scoreboard should have been re-run at SoC unchanged.", isCorrect: false, feedback: "That is the 'block scoreboards transfer unchanged' misconception: the block scoreboard checks the controller, not the routing between blocks and cores." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: three writers, one register file"
+  question="Firmware on the CPU, the DMA engine and a debug port can all write the same register file. Your register model's mirror is wrong in about 1% of tests. How do you make it trustworthy?"
+  options={[
+    { text: "Turn on set_auto_predict(1) on the default map so every access is predicted.", isCorrect: false, feedback: "Auto-predict only sees accesses the register model starts. None of the three writers goes through the model." },
+    { text: "Read every register with mirror() before each check, so the mirror is always fresh.", isCorrect: false, feedback: "That hides the problem and costs bus time; it also cannot work for clear-on-read registers, and it changes the traffic you are verifying." },
+    { text: "Add one monitor, adapter and uvm_reg_predictor per bus that can write, each bound to that bus's map; turn auto-predict off; mark hardware-updated fields volatile.", isCorrect: true, feedback: "Right. A predictor holds one map, so each bus needs its own. With explicit prediction on every writer, the mirror follows all traffic once, and volatile fields stop producing false mismatches." },
+    { text: "Use only backdoor reads for checking, and stop using the mirror.", isCorrect: false, feedback: "Backdoor reads are useful for spot checks, but they bypass the bus you are verifying and lose the model's field policies." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: prove a passive VIP is not silently disconnected"
+  question="A reused passive AXI monitor reports no errors in any SoC test. A reviewer asks you to prove it is actually watching the right bus. What evidence do you show?"
+  options={[
+    { text: "Per-test transfer counts from the monitor, compared in check_phase with the counts the test or firmware contract promises, plus a coverage point on the monitor's transactions.", isCorrect: true, feedback: "Right. A count that matches an independent expectation proves the monitor sees the traffic; a coverage point shows which kinds of traffic it saw across the regression." },
+    { text: "The log shows no UVM_ERROR from that monitor in any test.", isCorrect: false, feedback: "A monitor connected to an idle or wrong interface also reports no errors. Silence is not evidence." },
+    { text: "The topology print shows the monitor exists under the agent.", isCorrect: false, feedback: "It proves the monitor was built, not that its virtual interface points at the busy bus." },
+    { text: "A uvm_heartbeat on the monitor.", isCorrect: false, feedback: "uvm_heartbeat checks that components raise an objection within a window (IEEE 1800.2-2020 §10.6). A monitor does not raise objections per transfer, so it proves nothing about bus activity." }
+  ]}
+/>
 
 ## Practice & Reinforce
 
+### Quiz
+
+<Quiz questions={[
+  {
+    question: "A vplan row reads: feature 'DMA completion interrupt reaches CPU1'; scenario 'DMA transfer with interrupt enabled'; coverage bin 'irq_dma_to_cpu1' (hit every night); check: none linked. What does the hit bin prove?",
+    objective: 1,
+    answers: [
+      { text: "The feature is verified: the bin is hit in every nightly regression", correct: false, feedback: "A hit bin shows the scenario happened. Without a linked check, nothing decided whether the interrupt arrived correctly." },
+      { text: "Only that the scenario occurred; the row stays open until a check (for example an interrupt checker) is linked to it", correct: true, feedback: "Right. Traceability needs both links: coverage proves the scenario ran, the check proves the behaviour was right." },
+      { text: "Nothing at all, because coverage bins are irrelevant at SoC level", correct: false, feedback: "System coverage is essential at SoC; it is block-internal coverage that is not chased there." },
+      { text: "The feature is verified if the firmware test also passed", correct: false, feedback: "A firmware test passing is a check only if it actually tests the interrupt's target and timing; then it should be linked in the row." }
+    ],
+    explanation: "Each vplan row needs a scenario, a check and coverage. A bin without a check is evidence that the stimulus happened, not that the design behaved. The distractors treat coverage as a verdict, or dismiss system coverage."
+  },
+  {
+    question: "spi_agent is passive in the SoC test. A SoC virtual sequence copied from the block test still runs spi_cfg_seq.start(p_sequencer.spi_sqr); with no parent argument. What happens (uvm-core 2020.3.1)?",
+    objective: 2,
+    answers: [
+      { text: "The sequence runs, but the passive agent's driver ignores its items", correct: false, feedback: "Passive means never built: there is no driver and no sequencer, so the handle is null." },
+      { text: "The agent switches itself to active so the sequence can run", correct: false, feedback: "The mode is read once, in build_phase. Nothing changes it later." },
+      { text: "The items go to the monitor, which forwards them to the scoreboard", correct: false, feedback: "A monitor only reports what it observes on the bus; it never accepts items from sequences." },
+      { text: "UVM_FATAL [SEQ] at the sequence's first start_item(): no sequencer was supplied", correct: true, feedback: "Right. start(null) is legal; the failure comes at the first start_item(), when there is no sequencer to arbitrate." }
+    ],
+    explanation: "A passive agent has no sequencer, so the virtual sequencer's handle to it is null. Without a parent sequence, uvm-core reports UVM_FATAL [SEQ] at the first start_item(). The first distractor is the built-but-idle misconception the visual also targets."
+  },
+  {
+    question: "A block-level AXI scoreboard is reused on the slave side of the SoC interconnect, matching responses to requests captured at the master side by ID. Every response is reported as unmatched. What is the most likely cause?",
+    objective: 2,
+    answers: [
+      { text: "The monitor at the slave side is disabled", correct: false, feedback: "A disabled monitor produces no transactions at all, not unmatched ones." },
+      { text: "AXI forbids reordering, so the interconnect broke the protocol", correct: false, feedback: "AXI allows responses with different IDs to return out of order; this is not the cause of every response failing to match." },
+      { text: "The interconnect appended master-port bits to the IDs, so slave-side IDs are wider than master-side IDs", correct: true, feedback: "Right (IHI0022E §A5.3.5). Strip the port bits or correlate at the master side." },
+      { text: "The scoreboard must be made active to see responses", correct: false, feedback: "Scoreboards have no active or passive mode; agents do." }
+    ],
+    explanation: "This is the misconception that block scoreboards transfer unchanged. The interconnect widens IDs with master-port bits, so a raw ID comparison across the interconnect never matches. A disabled monitor, a reordering claim or an 'active scoreboard' do not explain a total mismatch."
+  },
+  {
+    question: "In the SoC, the CPU drives the SPI controller's APB register port, and the SPI controller's pins connect to an off-chip flash that has no on-chip model. The same SPI VIP package has an APB agent and a pin-side agent. Which modes do you set?",
+    objective: 2,
+    answers: [
+      { text: "APB agent passive (the CPU drives it); pin-side agent active as a responder that plays the flash", correct: true, feedback: "Right. Passive where an on-chip master now drives; active where the bench still plays the other side." },
+      { text: "Both passive: at SoC level every agent becomes passive", correct: false, feedback: "Then nobody plays the flash: the SPI controller's read commands get no answer and firmware hangs." },
+      { text: "APB agent active so the bench can configure the SPI block faster; pin-side agent passive", correct: false, feedback: "An active APB agent would drive the same bus as the CPU: contention, X on nets or silent corruption on variables." },
+      { text: "Both active, with the APB driver idle when firmware runs", correct: false, feedback: "Relying on an idle driver is fragile: any sequence started on it collides with the CPU. Make it passive." }
+    ],
+    explanation: "The mode follows from 'who drives this interface here?'. The CPU drives the APB port, so its agent is passive; the off-chip flash exists only in the bench, so the pin-side agent stays active as a responder. 'Everything passive at SoC' is a common overgeneralization."
+  },
+  {
+    question: "The SoC register map has set_auto_predict(1) and no predictor. Boot firmware writes 'h9 to CTRL (reset value 0). The test then calls rm.spi_rm.ctrl.get_mirrored_value(). What does it return?",
+    objective: 3,
+    answers: [
+      { text: "'h9: auto-predict updates the mirror for every bus write", correct: false, feedback: "Auto-predict only covers write() and read() calls the register model itself starts (IEEE 1800.2-2020 §18.2.5.2). Firmware never calls the model." },
+      { text: "0: the mirror still holds the reset value, because nothing predicted the firmware write", correct: true, feedback: "Right. Only an explicit uvm_reg_predictor on a monitor of that bus would have updated it." },
+      { text: "'h9, but only if you call get() instead", correct: false, feedback: "get() returns the desired value (§18.4.4.1), which the firmware write does not change either." },
+      { text: "X: the mirror is invalidated when the DUT changes", correct: false, feedback: "The model does not know the DUT changed. The mirror is stale, not invalidated." }
+    ],
+    explanation: "Auto-prediction runs only for accesses the model starts, so a firmware write leaves the mirror at 0. get() returns the desired value, not the DUT's. The fix is an explicit predictor per bus that can write registers."
+  },
+  {
+    question: "Firmware writes BOOT_DONE once, at 2 us, and mbx_dec triggers fw_boot_done. A long configuration step means the test reaches fw_boot_done.wait_trigger() at 5 us. No further trigger of fw_boot_done ever happens. What does the test do?",
+    objective: 3,
+    answers: [
+      { text: "It returns at once, because the event is already on", correct: false, feedback: "That is wait_on() (§10.1.1.2.2). wait_trigger() waits for the next trigger." },
+      { text: "UVM_FATAL immediately, because waiting on an old event is illegal", correct: false, feedback: "Waiting is legal; it simply never ends here." },
+      { text: "It returns when firmware writes FW_PASS to the mailbox", correct: false, feedback: "FW_PASS triggers a different event (fw_pass), not fw_boot_done." },
+      { text: "It waits until its watchdog (or the UVM timeout) fires, because wait_trigger() waits for a trigger that never comes", correct: true, feedback: "Right (IEEE 1800.2-2020 §10.1.1.2.4). Use wait_on() for one-time milestones." }
+    ],
+    explanation: "wait_trigger() misses a trigger that already happened and waits for the next one, which never comes, so only a watchdog or the global timeout ends the test. wait_on() returns at once when the event is already on."
+  },
+  {
+    question: "assert property (@(posedge aclk) (wvalid && wready && wlast) |-> ##[1:$] bvalid); runs in a 2 ms simulation, and one write response is lost. Does the assertion fail?",
+    objective: 4,
+    answers: [
+      { text: "Yes, at the end of the simulation, when the response is still missing", correct: false, feedback: "That describes a strong obligation, and even then end-of-simulation reporting is tool-dependent. This sequence is weak." },
+      { text: "Yes, one cycle after the last write beat", correct: false, feedback: "##[1:$] allows any later cycle, so one cycle without BVALID is not a failure." },
+      { text: "No: in assert property the sequence is weak (IEEE 1800-2023 §16.12.2), so it can never fail on a finite run", correct: true, feedback: "Right. Use a bounded ##[1:MAX] check in simulation and s_eventually (strong) in formal." },
+      { text: "No, because the property passes vacuously", correct: false, feedback: "The antecedent matched, so the attempt is not vacuous; it is pending for ever." }
+    ],
+    explanation: "An unqualified sequence in assert property is weak, and an unbounded range can always still match later, so no finite trace fails it. Simulation needs a bounded safety check; formal proves the strong form."
+  },
+  {
+    question: "A design has a single-bit signal crossing from clk_a to clk_b with no synchronizer. Nightly regressions use random clock ratios and pass on every seed. What do the passing tests tell you about this crossing?",
+    objective: 4,
+    answers: [
+      { text: "Nothing: RTL simulation does not model metastability, so the missing synchronizer must be found by structural CDC analysis", correct: true, feedback: "Right. CDC is signed off structurally; the report and its waivers are strategy items." },
+      { text: "The crossing is safe: random clock ratios exercised every phase relationship", correct: false, feedback: "RTL simulation never produces a metastable value unless a tool injects it, so every phase looks safe." },
+      { text: "The crossing is safe if functional coverage of the crossing signal is 100%", correct: false, feedback: "Coverage shows the signal toggled, not that it was captured safely." },
+      { text: "The crossing is unsafe only if a scoreboard mismatch appears", correct: false, feedback: "A missing synchronizer may never cause a mismatch in RTL simulation; it fails on silicon." }
+    ],
+    explanation: "Random clocks exercise crossing logic, but RTL simulation shows only clean values. A missing synchronizer is found by structural CDC analysis, and metastability injection (where available) is a tool-dependent supplement."
+  },
+  {
+    question: "Every block team reports 100% functional coverage in its own regressions, and the merged database shows 100%. What does that prove about SoC closure?",
+    objective: 5,
+    answers: [
+      { text: "SoC coverage is closed: the merged database is complete", correct: false, feedback: "Merged block coverage proves each block was exercised by its own bench, not that any system flow happened." },
+      { text: "SoC closure is reached once every block coverpoint is also hit again in SoC tests", correct: false, feedback: "Re-closing block coverpoints at SoC wastes regression time on states firmware may not reach; it is not the goal." },
+      { text: "Nothing about integration: SoC closure needs system goals (such as master × slave × response) collected at SoC level", correct: true, feedback: "Right. Block coverage is supporting evidence; system closure has its own goals and gates." },
+      { text: "Only code coverage matters for SoC closure", correct: false, feedback: "Code coverage at SoC mostly checks top-level toggles; it says little about system flows." }
+    ],
+    explanation: "This is the misconception that SoC closure is the union of block coverage. System goals such as routing, error responses, interrupts and resets under traffic exist only at SoC level and must be collected there."
+  },
+  {
+    question: "A nightly SoC test fails with a scoreboard mismatch on a DMA write. What is the right first step?",
+    objective: 5,
+    answers: [
+      { text: "File an RTL bug against the DMA block, because a mismatch means the DUT is wrong", correct: false, feedback: "A mismatch is a symptom. The cause can be the reference model, the test's intent, firmware, the testbench or the tool." },
+      { text: "Rerun with a new seed to see whether it happens again", correct: false, feedback: "A new seed loses the failing case. Reproduce with the same seed and hashes first." },
+      { text: "Waive the related coverage bin until the DMA team has time", correct: false, feedback: "A waiver is for unreachable goals, never for an unexplained failure." },
+      { text: "Capture the evidence package (seed, hashes, plusargs, transaction window) and find the first divergence, then assign the owner bucket", correct: true, feedback: "Right. Triage by first divergence decides who owns the fix." }
+    ],
+    explanation: "Triage starts from evidence and the first point where reality diverged from expectation. Filing an RTL bug immediately, rerunning with a new seed or waiving coverage all skip that step."
+  },
+  {
+    question: "An error-injection test makes a slave return SLVERR on 3 chosen transfers. The checks flag exactly those 3 responses, as designed, yet the test is reported as failed with 3 UVM_ERRORs. What does the bench lack?",
+    objective: 4,
+    answers: [
+      { text: "A higher quit count (+UVM_MAX_QUIT_COUNT), so the run does not stop early", correct: false, feedback: "The quit count (IEEE 1800.2-2020 Annex G.2.6) only decides when the run stops. The 3 errors are still counted, so the test still fails." },
+      { text: "A report catcher (IEEE 1800.2-2020 §6.6) that demotes only the expected error IDs from the injected transfers, counts them, and fails the test if the count is not 3", correct: true, feedback: "Right. Expected errors are demoted and accounted for; an unexpected error, or a missing expected one, still fails the test." },
+      { text: "Disable the scoreboard for the whole test", correct: false, feedback: "Then a real bug on any other transfer goes unseen, and nothing proves the 3 injected errors were detected." },
+      { text: "Change the scoreboard's error messages to UVM_WARNING in every test", correct: false, feedback: "That hides real errors in every other test. Only the expected errors of this test may be demoted." }
+    ],
+    explanation: "An expected-error test needs accounting, not silence: a report catcher demotes exactly the expected messages and counts them, and the test fails if the count differs. Raising the quit count, disabling checks or demoting errors everywhere all lose the evidence."
+  },
+  {
+    question: "The DMA's completion interrupt is wired to the wrong input of the interrupt controller. Which test layer is the first that can see this bug?",
+    objective: 1,
+    answers: [
+      { text: "The subsystem or SoC layer: the first bench that contains both the DMA and the interrupt controller, and so the wire between them", correct: true, feedback: "Right. The strategy assigns it there, to an interrupt checker or to the connectivity check that proves each listed connection." },
+      { text: "The DMA block bench, because its interrupt checker watches the interrupt output", correct: false, feedback: "The block bench sees the DMA's output pin. Where that pin is wired does not exist in a block bench." },
+      { text: "The interrupt controller's block bench, because it checks every input", correct: false, feedback: "That bench drives the controller's inputs itself, so the DMA and the wrong wire are not in it." },
+      { text: "Only silicon validation, because the wiring is final only on the chip", correct: false, feedback: "The wiring exists in the integrated RTL, so subsystem and SoC tests, or a connectivity check, see it long before silicon." }
+    ],
+    explanation: "Each class of bug goes to the cheapest layer that can see it. Wiring between blocks exists only from the subsystem or SoC layer upwards, so neither block bench can catch it, and waiting for silicon is far too late."
+  }
+]} />
+
+### Flashcards
+
+The deck for this lesson, "E-SOC-1 SoC Verification", appears below under "Reinforce the essentials". Its 18 cards cover the bugs only integration exposes, environments of environments, the per-interface mode rule, passive builds and their pitfalls, firmware co-operation and its event race, SoC register prediction (including why auto-predict goes off), interconnect IDs and DECERR, weak and bounded liveness, CDC/RDC sign-off, expected-error accounting, system closure and its covergroups, traceability, regression tiers and triage.
+
+### Kata: write the firmware–testbench contract for the DMA subsystem
+
+The worked strategy above left one row empty. Write it. For the DMA subsystem (a CPU BFM with its own AXI master port, a DMA engine whose APB register port sits behind the interconnect's AXI-to-APB bridge, SRAM and DDR models, and one completion interrupt), fill in:
+1. the mailbox address and every code, with who writes and who reads each;
+2. the events the bench raises, their pool keys, and how and with what timeout the test waits on each;
+3. what the scoreboards check before and after boot completes;
+4. which buses need a register predictor, and with which map;
+5. how the interrupt is checked, not just used.
+
+<details>
+<summary>Worked solution (open after you have written yours)</summary>
+
+| Item | Contract |
+|---|---|
+| Mailbox | One 32-bit word at a reserved SRAM address, which the CPU BFM reaches through the interconnect; defined in `dma_map_pkg` with all codes. A monitor on the SRAM's slave port (or on the CPU's master port) sees each mailbox write. BOOT_DONE (firmware, read by bench); CFG_DONE after descriptors are written (firmware); FW_PASS and FW_FAIL with a reason code in the upper bits (firmware); PRINT followed by one character per write (firmware, decoded into `` `uvm_info `` lines). The bench never writes the mailbox. |
+| Events | `uvm_event_pool::get_global` keys `"fw_boot_done"`, `"fw_cfg_done"`, `"fw_pass"`, with the keys in `dma_map_pkg` so a typo cannot create a second event. The test waits with `wait_on()` inside a watchdog sized from the firmware's own worst-case boot time (a project number), and reports `FW_TIMEOUT` naming the missing milestone. |
+| Checks during boot | Protocol checks and liveness assertions are always on. The descriptor and memory scoreboards ignore traffic before `"fw_cfg_done"`, because boot code writes memory the scoreboards have no expectation for. |
+| Register prediction | One `uvm_reg_predictor` on the APB monitor behind the bridge, with the DMA's register map; auto-predict off. Every register write passes that monitor, because the bridge is the only way into the register port at subsystem level. At SoC level, add one predictor per extra writer (debug port, second CPU). Descriptor memory is a `uvm_mem`: checked by the memory scoreboard and backdoor reads, not by prediction. |
+| Interrupt | An interrupt monitor on the completion line; the scoreboard predicts one interrupt per completed descriptor with the interrupt-enable bit set, checks the status register value the firmware reads, and a bounded assertion requires the interrupt within the agreed number of cycles after the last write response of the transfer. Coverage: channel × descriptor type × interrupt enabled. |
+
+Check your answer against three questions: could the test hang without saying why (no watchdog, or `wait_trigger()`)? Could the mirror go stale (a writer without a predictor)? Could the interrupt be wrong and every test still pass (no interrupt check)?
+
+</details>
+
+### Debug challenge: the mirror never updates
+
+Open the [RAL predictor visual in A-UVM-4B](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit) and choose these settings:
+1. **Mode:** Experiment. **Auto-predict:** 1. **Predictor:** none. **Access:** "firmware writes CTRL = 'h9". Predict the mirrored value of CTRL before you run it, then run it.
+2. Change **Predictor** to connected and **Auto-predict** to 0. Predict again, then run it.
+3. Explain, in one sentence each, why the first mirror was stale and why the second was not.
+4. Then switch **Mode** to "Debug: the mirror never updates" and find the broken line in the environment's `connect_phase`.
+
+### Labs
+
 <LabLink labId="soc-vip-reuse" />
+
+In **Block to SoC: VIP Modes** you start from this lesson's bench with the agent left active and a block sequence still running, watch the `X` and the failed firmware, then fix it step by step: the `UVM_FATAL [SEQ]` you meet on the way, the transfer-count evidence, and an automatic mode audit.
 
 <LabLink labId="soc-strategy-capstone" />
 
-**Checklist before moving on:**
-- [ ] You understand why leaving block VIP in Active mode breaks SoC bring-up.
-- [ ] You can explain how UVM tracks firmware progress via memory mailboxes.
-- [ ] You know how to categorize pull-request smoke tests vs nightly regressions.
-- [ ] You can defend a staff-level SoC strategy using coverage, liveness, debug, regression, and risk evidence.
+In the **Staff-Level SoC Verification Strategy Review** you write and review a full strategy for an application SoC, against a rubric and a model answer.
+
+**Planned: the M8 code capstone.** A DMA subsystem bench (resets in the middle of transfers, error injection, concurrency and closure) is planned as the milestone M8 code lab. It is not available yet; the strategy capstone above is its planning step.
 
 ## References & Next Topics
-- **IEEE 1800.2-2020 Clause 4.1.1** — UVM Component lifecycle and configuration setup for topology modification.
-- **Accellera UVM User Guide**, Section 4.5.1 — Active vs Passive Agent configurations.
-- **Next:** Continue with Tier-4 performance/throughput optimization modules, or review [E-CUST-1: UVM Methodology Customization](/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization/index) for the governance backing SoC reuse.
+
+**Primary sources**
+- IEEE 1800.2-2020: §6.6 `uvm_report_catcher`; §10.1.1.2.2 `wait_on`; §10.1.1.2.4 `wait_trigger`; §10.1.1.2.5 `wait_ptrigger`; §10.4.1.2.3 `uvm_event_pool::get_global`; §10.6 `uvm_heartbeat`; §13.3 `uvm_env` (reuse as a sub-environment); §13.4.2.2 `get_is_active` and the `is_active` parameter; §13.9 `uvm_subscriber`; §18.1.2.3 `create_map`; §18.2.3.5 `add_submap`; §18.2.5.2 `set_auto_predict`; §18.4.4.1 `get`; §18.4.4.3 `get_mirrored_value`; §18.4.4.11 `poke`; §19.3 `uvm_reg_predictor` (§19.3.2.3 `map`); Annex F.7.3.1 `run_test`; Annex F.7.4.2 `print_topology`; Annex G.2.1 `+UVM_TESTNAME`; Annex G.2.3 `+uvm_set_verbosity`; Annex G.2.6 `+UVM_MAX_QUIT_COUNT`; Annex G.2.8 `+uvm_set_config_string`.
+- IEEE 1800-2023: §6.5 nets and variables (multiple drivers); §8.4 objects (access through a null handle is illegal); §14.16 synchronous drives (a clocking output to a net starts at `'z`); §16.12.2 sequence property (weak in `assert property`); §16.12.13 eventually properties (`s_eventually`); §19.4 covergroups in classes; §19.6.2 excluding cross products (`ignore_bins`); §19.8.1 overriding the built-in `sample` method; §21.4 `$readmemh`; §21.6 command-line input (`$value$plusargs`); §26.4 package import in module headers.
+- uvm-core 2020.3.1 (Accellera reference implementation): `src/comps/uvm_agent.svh` (`build_phase` reads `is_active`); `src/seq/uvm_sequence_base.svh` (the `SEQ` fatal at `start_item()`); `src/reg/uvm_reg_predictor.svh` (one map, one adapter); `src/reg/uvm_reg.svh` (`poke()` predicts unconditionally; auto-predict calls `do_predict` after `write()`); `src/reg/uvm_reg_field.svh` (field prediction rules, such as W1T toggling); `src/base/uvm_report_server.svh` (the report summary); `+UVM_CONFIG_DB_TRACE` (implementation plusarg).
+- Arm IHI0022E, AMBA AXI and ACE Protocol Specification: §A3.2.1 handshake process; §A3.3.1 dependencies between channel handshake signals (BVALID after the last W beat); §A3.4.4 read and write response structure (DECERR); §A4.7 access permissions (`AxPROT`); §A5.3.5 interconnect use of transaction identifiers.
+- Accellera, Standard for IP Abstraction for Clock and Reset Domain Crossing Integration 1.0 (approved 2026).
+
+**Prerequisites:** [A-UVM-8 Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index), [A-UVM-4B Advanced RAL Techniques](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index) and [E-DBG-1 Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index).
+
+**Related**
+- [A-UVM-7 VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): building agents whose mode and configuration make reuse possible.
+- [A-UVM-6 Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): predictors, per-ID matching and end-of-test accounting.
+- [A-UVM-9 Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index): the bench mechanics behind the reset and error rows of the scenario matrix.
+- [Explicit vs Implicit Prediction](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit): the predictor wiring this lesson scales to several buses.
+- [B-AXI-3 Ordering and IDs](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index) and [B-AXI-5 Interconnect Deadlocks](/curriculum/T3_Advanced/B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index): the interconnect behaviour SoC checks rely on.
+- [B-AMBA-F1 Bridges and System Integration](/curriculum/T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index): bridges, address translation and clock-domain crossings.
+- [E-INT-1 Formal Integration](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index): proving the liveness properties.
+- [E-PWR-1 Power-Aware Verification](/curriculum/T4_Expert/E-PWR-1_Power_Aware_Verification/index): the power rows of the scenario matrix.
+- [E-EMU-1 Emulation-Aware Verification](/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index) and [E-PSS-1 Portable Stimulus](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index): scaling SoC tests beyond simulation.
+- [Coverage Closure Workflow](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) and [Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage): closure and traceability at block level.
+- [E-CUST-1 UVM Methodology Customization](/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization/index): the methodology governance that makes reuse across teams possible.
+
+<NextLesson />

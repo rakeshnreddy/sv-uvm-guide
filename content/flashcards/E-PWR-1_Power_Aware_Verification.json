@@ -1,42 +1,77 @@
 [
   {
-    "id": "e_pwr_1_1",
-    "front": "What is UPF and why is it critical for power-aware verification?",
-    "back": "UPF (Unified Power Format) is a standard (IEEE 1801) used to describe power intent (power domains, retention strategies, isolation cells, level shifters) separately from RTL. It allows verification tools to simulate power states (power up, power down, retention) and verify that the design behaves correctly across power transitions without embedding power logic directly in the RTL."
-  },
-  {
-    "id": "e_pwr_1_2",
-    "front": "Explain the role of Isolation Cells in power-aware verification.",
-    "back": "Isolation cells are placed at the boundary of a power domain that can be powered down, driving signals to a known safe state (0 or 1) into active domains. In verification, missing isolation or incorrect clamp values will cause 'X' propagation or illegal states in the active domain when the source domain is powered down."
-  },
-  {
     "id": "e_pwr_1_3",
-    "front": "What are Retention Registers, and how are they verified?",
-    "back": "Retention registers save state when a power domain is shut down and restore it upon wake-up, using an always-on power supply. Verification involves checking that the 'save' signal is asserted before power-down, state is correctly maintained during shutdown, and 'restore' is asserted correctly upon wake-up before regular clocks resume."
-  },
-  {
-    "id": "e_pwr_1_4",
-    "front": "What is the purpose of Level Shifters in a multi-voltage domain design?",
-    "back": "Level shifters translate voltage levels between domains operating at different voltages (e.g., 0.8V to 1.2V). Without them, timing and functional failures occur. In UPF simulations, missing level shifters are flagged as errors, ensuring signals crossing voltage boundaries are properly translated."
+    "question": "What is a retention register, and when must its save and restore happen?",
+    "answer": "A register with a shadow element on the always-on supply. Save it while the domain is still powered, before power-down; restore it after power is back and after the domain reset has finished, and before isolation is released. Non-retained registers come back only through the reset."
   },
   {
     "id": "e_pwr_1_5",
-    "front": "How do you verify the power sequencing of an SoC?",
-    "back": "Power sequencing is verified by driving power control signals (from a Power Management Unit) and asserting that domains transition states in the correct order. Checkers verify that resets are applied before power down, isolation is enabled before power down, and clocks are stopped/started safely to prevent glitches."
+    "question": "What are the safe power-down and wake-up orders used by power_cycle_vseq?",
+    "answer": "Power-down: CLK_OFF, ISO_ON, SAVE, PWR_OFF (wait for the switch acknowledge). Wake-up: PWR_ON (wait for the acknowledge), RST, RESTORE, CLK_ON, ISO_OFF. Isolation is released last, and traffic resumes only after the release."
   },
   {
     "id": "e_pwr_1_6",
-    "front": "What is Power-Aware Coverage?",
-    "back": "Power-aware coverage ensures that all defined power states (e.g., ON, OFF, SLEEP, RETENTION) and legal state transitions have been exercised during simulation. It also tracks whether isolation, level-shifting, and retention conditions have been crossed with functional coverage models."
+    "question": "Why is power-sequence coverage built from transition bins sampled once per power event, rather than from a cross sampled every clock?",
+    "answer": "Order is a property of consecutive samples, so only transition bins such as `(PWR_ON => RST => RESTORE => CLK_ON => ISO_OFF)` record it, and `illegal_bins` turn a forbidden order into a run-time error. Sampling every clock counts idle cycles, and crossing traffic with every power state makes traffic to an off domain a goal."
   },
   {
     "id": "e_pwr_1_7",
-    "front": "Describe the impact of 'X' propagation in power-aware simulation.",
-    "back": "When a domain powers down, its outputs naturally go to 'X' (unknown) in simulation. If isolation cells are missing or configured incorrectly, these 'X's propagate to active domains, causing functional failures or corrupting state machines. Debugging this requires tracing 'X's back to the boundary of the powered-down domain."
+    "question": "In a power-aware simulation, what happens to a 4-state register and to a 2-state variable inside a domain that loses power?",
+    "answer": "The 4-state register is corrupted to X, which makes the problem visible. A 2-state variable cannot hold X and is typically corrupted to 0, which looks valid and hides the bug (tool-dependent). Keep power-boundary signals 4-state (`logic`)."
   },
   {
-    "id": "e_pwr_1_8",
-    "front": "What is the difference between dynamic power and leakage power, and how does UPF address them?",
-    "back": "Dynamic power is consumed during switching (active operation), addressed by clock gating. Leakage power is consumed continuously even when idle, addressed by power gating (shutting off VDD) and retention. UPF defines the infrastructure (switches, isolation, retention) required to implement and verify these power gating strategies safely."
+    "id": "e_pwr_1_9",
+    "question": "Can a driver callback abort the sequence whose item the driver is holding?",
+    "answer": "No. `uvm_do_callbacks` calls each callback's method and returns to the driver; the sequence stays in `finish_item()` until the driver calls `item_done()`. Only `kill()`, `stop_sequences()` or a cooperative flag the sequence checks can end it."
+  },
+  {
+    "id": "e_pwr_1_11",
+    "question": "Why must a power-aware bus driver call item_done() even when it aborts a transfer, and when must it not?",
+    "answer": "The sequence that sent the item is blocked in `finish_item()`, which returns only on `item_done()`; without it the sequence, the virtual sequence and any objection held around them never finish, and the next `get_next_item()` reports 'Get_next_item called twice without item_done'. The one exception: after `stop_sequences()` has flushed the request FIFO, `item_done()` for the held item is `UVM_FATAL [SQRBADITMDN]`, so the code that stops the sequences sets a flag and the driver skips it (`kill()` does not flush the FIFO, so it needs no flag)."
+  },
+  {
+    "id": "e_pwr_1_12",
+    "question": "What does a power-aware scoreboard do at isolation-on and at the release?",
+    "answer": "At isolation-on it pauses comparing, flushes the expectations that can no longer complete and counts them in `dropped_by_power`, and remembers the retained value. At the release it expects the specification's values (retained registers: the saved value; others: the reset value) and resumes; `check_phase` still fails on pending items and on zero checks."
+  },
+  {
+    "id": "e_pwr_1_13",
+    "question": "True or false: the outputs of a powered-down domain read 0.",
+    "answer": "False. Only isolated outputs read their clamp value (usually 0, so a valid line reads 'idle'; UPF also allows 1, Z or a latched value). An unisolated 4-state output reads X, which is exactly what isolation exists to stop; a 2-state one may read 0 and hide the missing isolation."
+  },
+  {
+    "id": "e_pwr_1_14",
+    "question": "A sequence in main_phase holds an objection and hangs on a dead domain. Does the PH_TIMEOUT watchdog catch it?",
+    "answer": "Yes. The run phase starts the global timeout (IEEE 1800.2-2020 §9.8.1.5) and cannot end before post_shutdown, because they share extract as successor (§9.6). The default in uvm-core 2020.3.1 is 9200 s, so set a short timeout per test with `set_timeout()`."
+  },
+  {
+    "id": "e_pwr_1_15",
+    "question": "Name the two isolation assertions and the release assertion every power-aware checker needs.",
+    "answer": "`$fell(cpu_pwr_en) |-> $past(cpu_iso_en)` (isolate before power-down); `!(cpu_pwr_en && cpu_pwr_ack) |-> cpu_iso_en` (isolation held until fully powered); and `$fell(cpu_iso_en) |-> cpu_pwr_ack && cpu_clk_en && cpu_rst_n && reset_seen && restored` (release only after power, reset and restore). Clock them on the always-on clock and write `assert property`."
+  },
+  {
+    "id": "e_pwr_1_16",
+    "question": "Symptom: after a power cycle the non-retained register reads X and the retained one is correct. What went wrong?",
+    "answer": "The wake-up skipped the domain reset (or traffic resumed before the reset finished). Power returning restores nothing, so non-retained state stays X; the restore fixed only the retained register. Add RST after the power acknowledge and before RESTORE."
+  },
+  {
+    "id": "e_pwr_1_17",
+    "question": "Symptom: after wake-up a retained register reads its reset value instead of the saved one. What went wrong?",
+    "answer": "The domain reset came after, or together with, the restore and wiped the restored value. Finish the reset first, then restore, in separate cycles. A save after power-off would give X instead, not the reset value."
+  },
+  {
+    "id": "e_pwr_1_18",
+    "question": "Why does the bus driver wait on the power event with wait_on() rather than wait_trigger()?",
+    "answer": "`wait_trigger()` misses a trigger that happened earlier in the same time slot and can wait for ever (IEEE 1800.2-2020 §10.1.1.2.4). If the event stays on while the domain is off (`trigger()` at isolation, `reset()` at the release), `wait_on()` returns at once when it is already on (§10.1.1.2.2)."
+  },
+  {
+    "id": "e_pwr_1_19",
+    "question": "In uvm-core 2020.3.1, which of kill() and stop_sequences() drops a sequence's automatic phase objection, and does either run post_body()?",
+    "answer": "`kill()` drops the automatic objection; `stop_sequences()` does not, so the phase runs to the timeout. Neither runs `post_body()`/`post_start()`, although IEEE 1800.2-2020 §14.2.5.11 says they run. Let the test own the objection."
+  },
+  {
+    "id": "e_pwr_1_20",
+    "question": "A wake-up skips the domain reset. Why does power-state coverage still close, and what does notice?",
+    "answer": "The power states (RUN, PARKED, OFF) are derived from isolation and power events only, so a missing RST leaves the state stream, and the full RUN-PARKED-OFF-PARKED-RUN transition, unchanged. Only the transition bin on the order of the PMU actions (`PWR_ON => RST => RESTORE => CLK_ON => ISO_OFF`) stays empty, and `a_release_after_wake` fails at the release. State coverage says where the domain went; order coverage and assertions say how it got there."
   }
 ]

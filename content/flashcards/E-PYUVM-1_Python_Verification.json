@@ -1,42 +1,82 @@
 [
   {
-    "front": "What is cocotb and how does it enable Python-based verification?",
-    "back": "cocotb is a Python framework that controls RTL simulation using coroutines. It connects to simulators via VPI/VHPI/FLI, allowing Python test code to drive signals and check DUT behavior."
+    "id": "e-pyuvm-1-1",
+    "question": "Where does a cocotb test's Python code run, and where is the DUT simulated?",
+    "answer": "The DUT is simulated by the HDL simulator as usual. cocotb's Python runs in an interpreter embedded in that same simulator process, resumed through VPI, VHPI or FLI callbacks; simulated time stops while Python runs."
   },
   {
-    "front": "What is pyUVM and how does it differ from cocotb?",
-    "back": "pyUVM implements UVM class semantics (phases, components, sequences, factory) in Python on top of cocotb. It brings UVM methodology structure to Python-based verification."
+    "id": "e-pyuvm-1-2",
+    "question": "What is pyuvm, and how does it relate to cocotb and IEEE 1800.2?",
+    "answer": "pyuvm is UVM written in Python on top of cocotb. It implements the most-used parts of IEEE 1800.2 (components, common phases, factory, ConfigDB, TLM, sequences); code is ported idea by idea, not copied from SV UVM."
   },
   {
-    "front": "What are the advantages of Python-based verification over SystemVerilog?",
-    "back": "Faster iteration (no recompile), direct access to ML frameworks (PyTorch, scikit-learn), rich ecosystem (pytest, data analysis tools), and lower barrier to entry for software engineers."
+    "id": "e-pyuvm-1-3",
+    "question": "Which cocotb and pyuvm versions does the lesson use, and why does it matter?",
+    "answer": "cocotb 2.1.0 and pyuvm 5.0.0 (which requires `cocotb>=1.6.0,<3.0`), on Python 3.9+. cocotb 2.0 removed or renamed many 1.x APIs, so most older examples need changes."
   },
   {
-    "front": "What are the limitations of Python-based verification?",
-    "back": "Slower execution than native SV (Python overhead per signal access), limited EDA tool support, no constrained randomization engine, and less mature debug tool integration."
+    "id": "e-pyuvm-1-4",
+    "question": "After `await RisingEdge(dut.clk)`, what does reading a flip-flop output return?",
+    "answer": "On event-driven simulators, the value from before the edge: no HDL reacting to the edge has run yet. On Verilator, edge triggers act as if followed by `await ReadWrite()`, so you see the new value."
   },
   {
-    "front": "How does cocotb's coroutine model work?",
-    "back": "Tests are `async def` coroutines that `await` triggers (clock edges, timer expirations, signal changes). cocotb schedules coroutines in sync with simulator time advancement."
+    "id": "e-pyuvm-1-5",
+    "question": "With default settings, when does `dut.push.value = 1`, written right after `await RisingEdge(dut.clk)`, reach the DUT?",
+    "answer": "cocotb queues the write and applies it at the next ReadWrite callback, after the flops clocked by this edge have sampled. The DUT sees it at the next rising edge, like a nonblocking drive."
   },
   {
-    "front": "What is a cocotb trigger?",
-    "back": "An awaitable object that resumes the coroutine at a specific simulation event: `RisingEdge(clk)`, `Timer(10, units='ns')`, `FallingEdge(signal)`, or `ClockCycles(clk, N)`."
+    "id": "e-pyuvm-1-6",
+    "question": "Which VPI callback reason does cocotb register for `Timer`, `RisingEdge`, `ReadWrite` and `ReadOnly`?",
+    "answer": "`cbAfterDelay` (Pre-Active), `cbValueChange` (no Table 4-1 row: fires on the change), `cbReadWriteSynch` (Pre-NBA or Post-NBA) and `cbReadOnlySynch` (Postponed), per cocotb 2.1 `VpiCbHdl.cpp` and IEEE 1800-2023 Table 4-1."
   },
   {
-    "front": "How do you access DUT signals in cocotb?",
-    "back": "Via the `dut` handle: `dut.signal_name.value` to read, `dut.signal_name.value = X` to drive. The `.value` property returns an `BinaryValue` object supporting integer conversion."
+    "id": "e-pyuvm-1-7",
+    "question": "What is a portable point for a cocotb monitor to sample a clocked interface?",
+    "answer": "`await FallingEdge(dut.clk)` then `await ReadOnly()`: inputs written after the last rising edge and the DUT's outputs are settled, on event-driven simulators and Verilator alike. Registered outputs such as `dout` appear one cycle after the operation."
   },
   {
-    "front": "How does pyUVM implement UVM phases?",
-    "back": "pyUVM defines phase methods (`build_phase`, `connect_phase`, `run_phase`, etc.) on Python component classes. The pyUVM runtime calls them in the standard UVM order."
+    "id": "e-pyuvm-1-8",
+    "question": "What is the valid/ready transfer rule, and what goes wrong if a master holds AWVALID until BVALID?",
+    "answer": "A transfer happens at every rising edge where VALID and READY are both HIGH, and VALID must stay HIGH only until its handshake (IHI0022E §A3.2.1). Holding AWVALID longer lets a slave that is ready again accept the address a second time: a duplicate write."
   },
   {
-    "front": "Can cocotb/pyUVM run alongside a SystemVerilog UVM testbench?",
-    "back": "Yes, via SystemVerilog DPI-C. Python test code can call SV functions and vice versa, enabling gradual migration or Python-driven controllability of an existing SV UVM environment."
+    "id": "e-pyuvm-1-9",
+    "question": "Map `fork ... join_none`, `fork ... join` and `disable fork` to cocotb 2.1.",
+    "answer": "`cocotb.start_soon(coro)` starts a Task; `await gather(a(), b())` waits for all (2.1); `task.cancel()` stops a Task. Tasks still running when the test returns are cancelled."
   },
   {
-    "front": "What is the recommended approach for constrained randomization in Python verification?",
-    "back": "Use Python constraint libraries (e.g., `constraint` package), numpy random distributions, or call the SV constraint solver via DPI for complex constraints that need a formal solver."
+    "id": "e-pyuvm-1-10",
+    "question": "How do you create a component through the factory in pyuvm 5.0?",
+    "answer": "`FifoDriver.create(\"driver\", self)`: `create` is a class method. There is no `type_id` and no registration macro; every class derived from `uvm_void` registers itself."
+  },
+  {
+    "id": "e-pyuvm-1-11",
+    "question": "What happens in pyuvm when `ConfigDB().get(self, \"\", \"DUT\")` finds no entry?",
+    "answer": "It raises `UVMConfigItemNotFound`, unless you passed a default value. SV's `uvm_config_db::get` returns 0 instead."
+  },
+  {
+    "id": "e-pyuvm-1-12",
+    "question": "Name four SV UVM features that pyuvm 5.0 does not provide.",
+    "answer": "Run-time phases (reset to shutdown) and phase arguments; sequencer arbitration modes, `lock` and `grab` (the sequencer is a FIFO); field macros (use `__eq__`, `__str__`); a built-in constraint solver (use `random`, pyvsc or cocotb-coverage)."
+  },
+  {
+    "id": "e-pyuvm-1-13",
+    "question": "Does `self.logger.error(...)` fail a pyuvm test? How do you fail one?",
+    "answer": "No: cocotb fails a test only on an exception, and pyuvm's default reporting is Python logging. Use `assert` (for example in `check_phase`), or pyuvm 5.0's opt-in SV-UVM-style report server and its final status."
+  },
+  {
+    "id": "e-pyuvm-1-14",
+    "question": "Which cocotb 1.x idioms break under 2.x, and which only warn?",
+    "answer": "Break: `cocotb.result.TestFailure`, `cocotb.fork`, `BinaryValue`, generator coroutines. Warn: `units=` (now `unit=`), `.value.integer` (use `to_unsigned()`), `MODULE`/`TOPLEVEL` (now `COCOTB_TEST_MODULES`/`COCOTB_TOPLEVEL`), `cocotb.start`, `Join`."
+  },
+  {
+    "id": "e-pyuvm-1-15",
+    "question": "How can an SV UVM bench use a Python reference model, and is pyuvm involved?",
+    "answer": "Through DPI-C: an imported C function embeds a Python interpreter and calls the model (for example via PyHDL-IF). pyuvm is not involved; cocotb shares a simulation with SV only through signals."
+  },
+  {
+    "id": "e-pyuvm-1-16",
+    "question": "What drives the simulation cost of a cocotb bench, and how do you reduce it?",
+    "answer": "Python wake-ups per simulated cycle times the work per wake-up, plus GPI signal accesses; there is no fixed slowdown factor. Wait only for needed events, read fewer signals, use `Clock(..., impl=\"gpi\")`, move cycle-level BFMs into HDL, and measure."
   }
 ]

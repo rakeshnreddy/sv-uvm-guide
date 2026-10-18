@@ -1145,27 +1145,62 @@ export const GENERATED_LAB_MANIFESTS = [
     "id": "power-aware-retention",
     "version": "1",
     "title": "Retention Bug and Isolation Sequencing",
-    "description": "Identify and fix a critical bug in a Power Management Unit wake-up sequence.",
+    "description": "Diagnose and fix a broken power-domain wake-up with sequencing assertions and data checks: release isolation last, reset before restoring, and catch an early release at the moment it happens.",
     "owningModule": "E-PWR-1",
     "routeSlug": "power-aware-retention",
     "status": "available",
     "labPrerequisites": [],
-    "modulePrerequisites": [],
+    "modulePrerequisites": [
+      "I-SV-8",
+      "I-SV-4A"
+    ],
     "steps": [
       {
         "id": "1",
         "version": "1",
         "completion": "self_attested",
-        "title": "Step 1: Understand the Bug",
-        "instructions": "Analyze the failing test sequence in `buggy_tb.sv` where isolation is released before power is strictly stable.",
+        "title": "Step 1: Run the Starter and Read the Failures",
+        "instructions": "Predict first: with the wake-up order ISO_OFF, PWR_ON, RESTORE, CLK_ON in `buggy_tb.sv`, which assertions fail, from which time, and which read returns the wrong value? Then compile `buggy_tb.sv` alone with `tb_top` as the top module and run it unchanged. Record the first failure of each assertion and the summary. Expected (hand trace): `a_iso_unless_on` and `a_no_x_into_top` fail from 355 ns, `READ SCRATCH: expected 0x00 observed 0xxx` at 485 ns, and `PASS=4 FAIL=15`. Explain why CTX still reads 0xA5.",
         "starterCode": ""
       },
       {
         "id": "2",
         "version": "1",
         "completion": "self_attested",
-        "title": "Step 2: Reorder Sequence",
-        "instructions": "Fix the sequence so isolation remains asserted until after power is completely restored and context is reloaded.",
+        "title": "Step 2: Reorder the Wake-Up",
+        "instructions": "Move `pmu(ISO_OFF)` to the end of the `[WAKE]` block (PWR_ON, RESTORE, CLK_ON, ISO_OFF) and run again. Expected: the X leak during the wake-up is gone, but SCRATCH still reads X at 485 ns, and the summary is `PASS=4 FAIL=2`. Name the step that is still missing before you go on.",
+        "starterCode": ""
+      },
+      {
+        "id": "3",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 3: Write a_release_after_wake",
+        "instructions": "Replace the TODO in `pwr_seq_checker` with `a_release_after_wake`: when `cpu_iso_en` falls, `cpu_pwr_ack`, `cpu_clk_en`, `cpu_rst_n`, `reset_seen` and `restored` must all be 1. Report with `fail(\"a_release_after_wake\", ...)`. Rerun the Step 2 order: the new assertion fails at 435 ns, at the release and before any traffic, and the summary is `PASS=4 FAIL=3`.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 4: Add the Domain Reset",
+        "instructions": "Make the wake-up PWR_ON, RST, RESTORE, CLK_ON, ISO_OFF. Run it: CTX reads 0xa5 at 485 ns, SCRATCH reads 0x00 at 515 ns, no assertion fails, and the last line is `PASS=5 FAIL=0`. Compare your file with `solution_tb.sv`.",
+        "starterCode": ""
+      },
+      {
+        "id": "5",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: Break It and Predict",
+        "instructions": "Predict each result before you run it (README, Step 5): (a) restore before reset gives `a_release_after_wake` at 465 ns, `READ CTX: expected 0xa5 observed 0x00` at 485 ns and `PASS=4 FAIL=2`; (b) power off before isolation on the sleep path: which assertion fails first, and why does CTX still come back as 0xA5? (c) save after power-off: which assertion names the mistake, and what does CTX read after the wake-up? Write down your predictions for (b) and (c), run them, and compare with the README's \"Check your predictions\" block, which gives the expected failures and summaries.",
+        "starterCode": ""
+      },
+      {
+        "id": "6",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 6 (Optional): Move the Order into UVM",
+        "instructions": "Write your fixed sleep and wake-up orders as the body of `power_cycle_vseq` from E-PWR-1 Make It Work: two `run_pmu({...})` calls, with `HOLD` as the last action of the power-down call, as in `power_cycle_vseq`, after the bus traffic has finished. Explain in one sentence why quiescing the bus is free when the bus sequences run in series.",
         "starterCode": ""
       }
     ],
@@ -1693,37 +1728,58 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "soc-vip-reuse",
-    "version": "1",
+    "version": "2",
     "title": "Block to SoC: VIP Modes",
-    "description": "Configure a block-level SPI agent into passive mode so it monitors traffic driven by an embedded processor without causing bus collisions.",
+    "description": "Reuse the SPI block's APB register-port agent in passive mode so it monitors traffic driven by the SoC's processor without bus contention, and prove from the log that it is watching the right bus.",
     "owningModule": "E-SOC-1",
     "routeSlug": "soc-vip-reuse",
     "status": "available",
-    "labPrerequisites": [],
-    "modulePrerequisites": [],
+    "labPrerequisites": [
+      "uvm-mini-capstone"
+    ],
+    "modulePrerequisites": [
+      "A-UVM-7",
+      "A-UVM-8"
+    ],
     "steps": [
       {
         "id": "1",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
         "title": "Step 1: Observe the Active Agent Failure",
-        "instructions": "Run `testbench.sv` without changes. Observe the `BUS_COLLISION` fatal error caused by the UVM Driver and Firmware driving simultaneously.",
+        "instructions": "Run `testbench.sv` unchanged. In the topology, find the `driver` and `sequencer` under `uvm_test_top.env.spi_env.spi_agent`. Then find the `UVM_ERROR [APB_X]` messages (the driver and the CPU both drive the APB nets, which resolve to X), the missing BOOT_DONE line, `[FW_TIMEOUT]` and `[TRAFFIC_COUNT]`.",
         "starterCode": ""
       },
       {
         "id": "2",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
         "title": "Step 2: Flip to Passive Mode",
-        "instructions": "In `soc_test::build_phase`, use the `uvm_config_db` to set `is_active` to `UVM_PASSIVE` for the `\"env.spi_agt\"` path.",
+        "instructions": "In `soc_test::build_phase`, set `is_active` to `UVM_PASSIVE` with `uvm_config_db#(uvm_active_passive_enum)::set` at the exact path `\"env.spi_env.spi_agent\"`. Rerun: the topology shows only the monitor, and the run stops with `UVM_FATAL [SEQ]` at the first `start_item()`, because the copied block sequence is started on a null sequencer handle.",
         "starterCode": ""
       },
       {
         "id": "3",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 3: Give the Bus to Firmware and Audit the Build",
+        "instructions": "Remove the block bring-up sequence from `soc_test::run_phase`, and add a `UVM_FATAL [MODE]` check in `end_of_elaboration_phase` unless the agent is passive. Rerun: expect BOOT_DONE and FW_PASS from the mailbox decoder, `spi_agent monitor saw 5 transfers`, `SCB_SUMMARY matches=1 mismatches=0 pending=0`, and zero errors and fatals.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
         "version": "1",
         "completion": "self_attested",
-        "title": "Step 3: Verify Monitor Behavior",
-        "instructions": "Rerun the simulation. Verify the driver is disabled but the `[SPI_MON]` continues to log firmware traffic.",
+        "title": "Step 4: Prove the Evidence Check Works",
+        "instructions": "In `tb_top`, temporarily publish `spare_bus` instead of `apb_bus` as the agent's `vif`. Rerun and confirm that `[TRAFFIC_COUNT]` names the disconnected monitor (0 transfers instead of 5). Restore `apb_bus`.",
+        "starterCode": ""
+      },
+      {
+        "id": "5",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: Drill the Forgotten super.build_phase",
+        "instructions": "Temporarily comment out `super.build_phase(phase);` in `spi_apb_agent::build_phase`. Rerun: the topology shows the driver and sequencer again and your audit stops the run with `UVM_FATAL [MODE]`, because `uvm_agent` reads `is_active` only in its own `build_phase`. Restore the line.",
         "starterCode": ""
       }
     ],
@@ -1751,7 +1807,7 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "soc-strategy-capstone",
-    "version": "1",
+    "version": "2",
     "title": "Staff-Level SoC Verification Strategy Review",
     "description": "Create and review a staff-level SoC verification strategy covering VIP reuse, coverage, formal/liveness, debug triage, regression gates, and signoff risks.",
     "owningModule": "E-SOC-1",
@@ -1765,34 +1821,34 @@ export const GENERATED_LAB_MANIFESTS = [
     "steps": [
       {
         "id": "1",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
         "title": "Step 1: Define Strategy Boundaries",
-        "instructions": "Open `strategy_template.md` and split responsibilities across block, subsystem, SoC, firmware, and formal owners.",
+        "instructions": "Open `strategy_template.md` and fill sections 1 to 3: split responsibilities across block, subsystem, SoC, firmware and formal owners and test layers; justify every agent's mode by who drives its interface; and write the firmware–testbench contract with one register predictor per writing bus.",
         "starterCode": ""
       },
       {
         "id": "2",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
         "title": "Step 2: Build the Coverage and Liveness Plan",
-        "instructions": "Fill in measurable system coverage goals plus formal/liveness properties with trigger, obligation, failure meaning, and owner.",
+        "instructions": "Fill sections 4 to 6: measurable system coverage goals traced from features to checks; formal/liveness properties with trigger, obligation, failure meaning, owner, and whether each is an unbounded liveness proof or a bounded safety check; and the system scenarios (reset, errors, power, concurrency, connectivity, CDC/RDC).",
         "starterCode": ""
       },
       {
         "id": "3",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
         "title": "Step 3: Add Debug, Regression, and Risks",
-        "instructions": "Define the failure evidence package, bucketing workflow, smoke/nightly/stress/signoff suites, and risk register.",
+        "instructions": "Fill sections 7 to 9: the failure evidence package, first-divergence triage and bucketing, the smoke/nightly/stress/signoff suites with numeric closure gates and owners, and the risk register.",
         "starterCode": ""
       },
       {
         "id": "4",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
         "title": "Step 4: Peer Review Against the Rubric",
-        "instructions": "Score the plan with the rubric, then compare against `model_solution.md` to identify missing staff-level reasoning.",
+        "instructions": "Score your plan with the rubric in section 10, writing the evidence for every row, before you open `model_solution.md`. Then compare with the model answer to identify missing staff-level reasoning.",
         "starterCode": ""
       }
     ],

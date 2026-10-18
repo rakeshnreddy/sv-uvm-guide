@@ -1,64 +1,576 @@
 ---
-title: "Portable Stimulus (PSS)"
-description: "Intent-based test description that runs across simulation, emulation, and silicon with minimal adaptation."
+title: "Portable Stimulus in an SoC Strategy"
+description: "Place portable stimulus in an SoC verification plan: decide which use cases to write once in Accellera PSS, plan how each one runs from subsystem simulation to silicon, and state what stays hand-written and how it is checked on every platform."
+flashcards: "E-SOC-1_PSS_Bridge"
+sources:
+  - title: "Portable Test and Stimulus Standard (§1.1, §1.3, §1.4, §5.2.2, §8.7.1, §9, §12.3.4, §14.2, Clauses 18 and 19, §20.2, §21.1, §22.1.1, §22.5, §22.5.1, §22.5.3, §22.7.14, §22.8, §24.6, §24.7, §24.8, §24.11)"
+    type: "standard"
+    identifier: "Accellera PSS 3.0 (August 2024)"
+    version: "3.0"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (§13.3)"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
 ---
 
 ## Quick Take
 
-Portable Stimulus Standard (PSS) is an Accellera standard (PSS 2.0, IEEE P2851) that describes verification **scenarios as intent** rather than implementation. Tools compile PSS models into executable test content for simulation, emulation, FPGA prototyping, and post-silicon validation — all from the same specification.
+- **What it is:** At SoC level, **portable stimulus** means writing the chip's system **use cases** (boot, a DMA copy under memory load, low-power entry) once, as a model in the **Portable Test and Stimulus Standard (PSS)**, and letting a PSS tool generate the test for every platform the use case must run on: subsystem simulation, SoC simulation with firmware, emulation and the finished chip. This page places PSS in the SoC strategy; [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index) teaches the language.
+- **Why it matters:** In the [test layers of an SoC plan](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index), the same use case is usually written several times: as a UVM virtual sequence for the subsystem bench, as a firmware C test for SoC simulation, and again for the lab bench on silicon. Each copy drifts. PSS removes the copies of the *scenario*, but it adds a tool, a model and a realization layer someone must own, so the strategy has to say where it pays and where it does not.
+- **The Analogy:** A PSS model is a musical score, and each platform is a different ensemble: a full studio orchestra (simulation, where every signal is visible), a touring band (emulation) and a street quartet (silicon). The score is written once; an arranger writes each ensemble's parts once (the realization layer); the conductor (the PSS tool) decides who plays what, and when. *Where it breaks:* a score never says whether the performance was right, so every platform needs its own plan for checking. And the smallest ensemble cannot play every part: silicon has no scoreboard, no backdoor access and no waveform, so some use cases are only partly portable.
 
-> **Signal:** If your team maintains separate test suites for simulation and emulation, PSS can collapse them into one reusable model.
+**You will be able to:**
+1. Explain which layer of an SoC test a PSS tool generates (the scenario layer) and which layers stay hand-written: the UVM environment and its sequences, the firmware driver and hardware-abstraction layer, and the checks.
+2. Plan how one SoC use case runs on subsystem simulation, SoC simulation, emulation and silicon: the realization each platform needs, what executes each action, and which checks still exist on each.
+3. Decide whether PSS earns its cost for an SoC program, or for one category of scenarios, and justify the decision from platforms × scenarios, concurrency and realization ownership.
+4. Write the portable-stimulus entry of an SoC strategy correctly: the standard and version (Accellera PSS 3.0, no IEEE number), the version your tool accepts, the owners, and how PSS coverage feeds SoC closure evidence without replacing it.
 
-## How PSS Relates to UVM and Formal
+<BeforeYouStart />
 
-| Concept | UVM Equivalent | Formal Equivalent | PSS Role |
+This page also assumes [E-PSS-1: Portable Stimulus Standard](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index), which comes before this module on the core path. If you skipped it, read its first section, ["Intent versus realization"](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index#intent-versus-realization-what-the-tool-writes-and-what-you-write), before you continue.
+
+## Build Your Mental Model
+
+**How to read this page.** The core path is the first three sections: the problem PSS solves at SoC level, the picture of one scenario library with a realization per platform, and how the model grows from block to SoC. Practitioner depth follows: what each platform runs and where checking lives, and which SoC scenarios belong in PSS. Make It Work shows one complete SoC scenario model and its generated output, and Push Further holds the expert layer.
+
+**Words this page uses.** Each is taught in full in [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index); here is one line each.
+- **Use case:** a system-level behaviour the chip must support end to end, such as "copy a buffer by DMA and interrupt the CPU when done".
+- **PSS model:** a description of *what* a scenario must do, independent of the platform it runs on. Its **actions** are test operations (an **atomic** action does one thing; a **compound** action contains an **activity**, the ordered set of actions it runs). A **resource** is hardware an action holds for its whole execution, such as a DMA channel; resources live in a **pool** sized to the number the hardware has, and `bind` makes a pool available to a component's actions. An action **claims** a resource with `lock` (exclusive) or `share`, and each resource in a pool has a built-in number, `instance_id` (§5.2.2). In an activity, `parallel` starts its branches together; `schedule` lets the tool choose any legal order or overlap.
+- **PSS tool:** the program that reads the model, picks legal values and a legal schedule (it **solves** the scenario) and **generates** test code for a **target**: SystemVerilog for a UVM bench, C for a processor.
+- **Realization layer:** the hand-written code that performs each action on each platform: the `exec` **templates** of each action (code text the tool pastes into the generated test), plus the UVM sequences or C functions they call. In a portable model, each platform family's templates sit in their own **package** (a named group of definitions, §21.1) that adds them to existing actions with `extend action` (§20.2). This is the one piece of syntax on this page that E-PSS-1 does not show.
+- **Hardware-abstraction layer (HAL) and driver:** the C functions firmware uses to program a block, such as `dma_copy()`. At SoC level they are usually the product's own driver code.
+- **Bare metal:** C code that runs directly on the chip's processor with no operating system. **Post-silicon** (or silicon validation) means tests run on the manufactured chip in the lab.
+- **Executor:** in PSS 3.0, the agent that actually executes an action's code at run time: a processor core, or a bus-functional model or testbench agent that the tool can drive (§24.6). It is the main PSS idea this page adds to E-PSS-1, because it only matters once a scenario spans a whole chip (Push Further also introduces address spaces and registers).
+
+Section numbers below (§) are from **Accellera PSS 3.0** (August 2024) unless they name another standard.
+
+### The problem: one use case, rewritten at every layer
+
+Follow one use case up the test layers of the [SoC strategy](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): "DMA channel copies a block from SRAM to DDR while other traffic loads DDR; the completion interrupt reaches the CPU; the copy is checked." Without PSS, it is written like this:
+
+| Test layer | Who drives the DMA's registers | How the use case is written by hand | What checks it |
 |---|---|---|---|
-| Stimulus | Sequences + constraints | Free inputs + assumptions | Intent actions + constraints |
-| Ordering | [Virtual sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) | Not applicable | Activity graphs (DAGs) |
-| Coverage | Covergroups + bins | `cover` properties | Coverage goals in the model |
-| Checking | Scoreboards | `assert` properties | Assertions referenced or embedded |
-| Portability | Simulation only | Formal-tool specific | All platforms from one model |
+| Subsystem simulation | the bench: an **active** APB agent plays the CPU | a UVM virtual sequence ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences)) | scoreboards, an interrupt checker, assertions |
+| SoC simulation | the real CPU running firmware; the APB agent is now **passive** | a firmware C test compiled into the boot image | the C test itself (reported through the mailbox), plus the passive bench's monitors and scoreboards |
+| Emulation or FPGA prototype | the real CPU | the same firmware test, often extended for longer runs | the C test, plus whatever the platform can observe |
+| Silicon | the real CPU | a bare-metal C test on the lab bench | the C test only |
 
-### Key differences from UVM sequences
+Two things go wrong. The **scenario** (which channel, which addresses, what runs at the same time) is written at least twice, in SystemVerilog and in C, and the two copies drift apart. And the interesting combinations, such as both channels busy while DDR is loaded, are written by hand, so only the few a person thought of are ever run. PSS attacks both: one scenario model, and a tool that generates many legal combinations of it. The standard states this purpose directly: one representation of a scenario, usable "across different levels of integration", from which implementations for simulation, emulation, FPGA prototyping and post-silicon are generated (§1.1).
 
-1. **Declarative, not procedural:** PSS describes *what* should happen, not *how*. Tools resolve ordering and resource contention.
-2. **Multi-platform:** The same PSS scenario can generate a constrained-random UVM sequence, an emulation boot script, or a bare-metal C test.
-3. **Resource modeling:** PSS explicitly models shared resources (buses, memories, locks), enabling tools to schedule concurrent activities without deadlock.
+### The picture: one scenario library, a realization per platform
 
-## PSS Workflow Sketch
+Before you read the caption, predict: in the picture below, which boxes does the SoC team **write by hand**, and which does the tool **generate**? And which box is reused unchanged on three platforms?
 
+<ArchitectureDiagram
+  title="One SoC scenario library, generated for four platforms"
+  cellWidth={150}
+  gapX={28}
+  legend={false}
+  caption="Generated: only the row of platform tests (the virtual sequence and the C test). Hand-written: the model at the top and the whole realization row at the bottom, including the template packages dma_real_sv.pss and dma_real_c.pss and the subsystem env with its active APB agent. The C driver and HAL (dma_driver.h) is reused unchanged on SoC simulation, emulation and silicon, because the same compiled C test (the same image) runs on the same CPU. Dashed arrows: generation and image flow; dotted arrows: calls into the realization. Names match the Make It Work model."
+  nodes={[
+    { id: "pss", label: "dma_soc.pss", sublabel: "hand-written scenario library: dma_under_load_a and others", kind: "generic", col: 0, row: 0, colSpan: 4 },
+    { id: "tool", label: "PSS tool", sublabel: "solves values and schedule, emits each target", kind: "generic", col: 0, row: 1, colSpan: 4 },
+    { id: "sv", label: "Subsystem sim", sublabel: "generated UVM virtual sequence", kind: "sequence", col: 0, row: 2 },
+    { id: "socc", label: "SoC sim", sublabel: "generated C, boot image", kind: "generic", col: 1, row: 2 },
+    { id: "emu", label: "Emulation / FPGA", sublabel: "the same C test", kind: "generic", col: 2, row: 2 },
+    { id: "si", label: "Silicon", sublabel: "the same C test, bare metal", kind: "generic", col: 3, row: 2 },
+    { id: "seqs", label: "UVM sequences", sublabel: "dma_copy_seq, axi_burst_seq", kind: "sequence", col: 0, row: 3 },
+    { id: "hal", label: "dma_driver.h", sublabel: "hand-written C driver and HAL: dma_copy(), dma_wait_irq(), mem_equal(), ddr_stress()", kind: "generic", col: 1, row: 3, colSpan: 3 }
+  ]}
+  edges={[
+    { from: "pss", to: "tool", style: "causal", label: "read" },
+    { from: "tool", to: "sv", style: "causal", label: "emit SV" },
+    { from: "tool", to: "socc", style: "causal", label: "emit C" },
+    { from: "socc", to: "emu", style: "causal" },
+    { from: "emu", to: "si", style: "causal" },
+    { from: "sv", to: "seqs", style: "control", label: "start()" },
+    { from: "socc", to: "hal", style: "control", label: "call" }
+  ]}
+/>
+
+**What the picture shows.** The tool writes only the middle row: the scenario layer, which says which action runs when, on which channel, with which values. Everything that touches hardware stays hand-written and is written **once per platform family**, not once per test: one set of UVM sequences for the simulation bench, one C driver for everything that runs on the CPU. That is the whole economic argument. A scenario library of 200 use cases needs 200 scenario actions in the model, but only two realizations of `dma_copy_a`. (The emulation row assumes the processor runs the test; a bench made acceleration-ready, as in [E-EMU-1](/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index), could run the SystemVerilog target there instead.)
+
+**The two mistakes everyone makes here.**
+- *"PSS replaces our UVM environment."* The generated SystemVerilog is a sequence that starts your sequences on your agents. Agents, monitors, scoreboards, the register model and coverage are all still yours, and at SoC level they matter more, not less.
+- *"Portable means it runs everywhere for free."* Portable means the *scenario* is shared. Each platform still needs its realization and its own checking, and a use case that depends on simulation-only abilities (backdoor memory loads, forcing an internal signal) is not portable to silicon at all.
+
+### From block to SoC: the model grows like the environment does
+
+A SoC bench is built as an **environment of environments**: block environments are reused as sub-environments of the subsystem and SoC environments (IEEE 1800.2-2020 §13.3; the [SoC lesson](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index) shows how). A PSS model grows the same way. PSS **components** are the reusable pieces of a model (§1.3, Clause 9):
+- the DMA block team writes a `dma_subsys_c` component with its actions (`dma_copy_a`) and its resources (`pool [2] dma_chan_r chan_p;`, because the engine has two channels);
+- the SoC team instantiates that component, and the components of the other blocks, under its own root component, and writes **compound** actions whose activities combine actions from several blocks: copy by DMA *while* the CPU loads DDR *while* the UART receives.
+
+The two hierarchies have the same shape; the SoC lesson draws the UVM side in full in [an environment of environments](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#reusing-environments-an-environment-of-environments). Notice where the block team's code sits on each side, and what the SoC team adds next to it.
+
+<ArchitectureDiagram
+  title="The same reuse shape: block env inside soc_env, block component inside pss_top"
+  cellWidth={150}
+  caption="Left: the UVM side, as in the SoC lesson. The block team's dma_blk_env is nested unchanged inside soc_env, next to a SoC-only mailbox decoder. Right: the PSS side of Make It Work. The block team's dma_subsys_c is instantiated as dma inside the root component pss_top, and the SoC team adds the compound action dma_under_load_a, which traverses the block's dma_copy_a actions. The pool [2] badge on dma is the channel count: an SoC fact the integration must confirm."
+  legend={false}
+  nodes={[
+    { id: "socenv", label: "soc_env", sublabel: "SoC team", kind: "env", col: 0, row: 0, rowSpan: 2, container: true },
+    { id: "mbx", label: "mbx_dec", sublabel: "SoC-only component", kind: "subscriber", col: 0, row: 0 },
+    { id: "dmaenv", label: "dma_env", sublabel: "dma_blk_env (block team)", kind: "env", col: 0, row: 1, badge: "reused" },
+    { id: "top", label: "pss_top", sublabel: "SoC root component", kind: "generic", col: 1, row: 0, rowSpan: 2, container: true },
+    { id: "ula", label: "dma_under_load_a", sublabel: "SoC team: compound action", kind: "generic", col: 1, row: 0 },
+    { id: "dma", label: "dma", sublabel: "dma_subsys_c (block team)", kind: "generic", col: 1, row: 1, badge: "pool [2]" }
+  ]}
+  edges={[
+    { from: "ula", to: "dma", style: "control", label: "do dma_copy_a" }
+  ]}
+/>
+
+**Resources are where block models meet SoC facts.** A pool's size is the number of real instances (the default is 1, §5.2.2). When the SoC integrates a DMA engine configured with four channels, or shares one DDR controller among five masters, the model's pool sizes and claims must say so, or the tool will schedule concurrency the chip cannot have, or miss concurrency it does have. Treat pool sizes like the address map: SoC facts with an owner, reviewed when the integration changes.
+
+**What does not grow.** The realization layer is per platform, not per level. The block team's SystemVerilog templates call the block bench's sequences; at SoC level the C templates call the product driver. A block-level PSS model therefore reaches SoC with its *scenarios* intact but needs C realizations it may never have had. Budget for that when a block team says "we already have PSS".
+
+### What each platform runs, and where checking lives
+
+The scenario is shared; the evidence is not. The table is the practitioner's version of the picture, for the DMA use case:
+
+| Platform | Target the tool emits | What executes the actions | Checks that exist here | What you lose |
+|---|---|---|---|---|
+| Subsystem simulation | SystemVerilog: a virtual sequence | the bench's active APB agent (playing the CPU) and AXI traffic agent | scoreboards, interrupt checker, protocol assertions, functional coverage | nothing; but the real CPU and firmware are absent |
+| SoC simulation | C, compiled into the boot image | the RTL CPU running the generated test and the product driver | the C test's own checks (in the SoC build, `test_fail()` writes FW_FAIL to the mailbox), plus the **passive** bench's monitors, scoreboards and assertions | speed: every cycle of the CPU is simulated |
+| Emulation / FPGA | the same C | the CPU in the emulated or prototyped design | the C checks, plus whatever the platform can capture | most internal visibility; scoreboards only if the bench was made acceleration-ready |
+| Silicon | the same C | the manufactured CPU | the C checks only | everything except what software can read |
+
+Three consequences for the plan:
+- **The C self-check is the only check that survives to silicon.** Write it in the C realization of every action that must be checked on silicon (the `mem_equal()` in Make It Work), and make the simulation scoreboards check the same rule, so a pass means the same thing on every platform. In simulation the scoreboards add what software cannot see: protocol, routing, ordering and interrupt timing.
+- **The SystemVerilog target needs active agents.** It starts sequences on the bench's sequencers. At SoC level the APB agent is passive (the CPU drives that port), so its sequencer was never built: run the C target there, not the SystemVerilog one. The [active and passive rule](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#active-and-passive-reuse) decides which target each layer can use.
+- **The passive bench must not assume it started the traffic.** When the generated C test drives the DMA, the scoreboards take their expected values from what the monitors observe, not from a bench sequence ([keeping block checks useful](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#keeping-block-checks-useful-at-soc)). The register model's mirror follows the firmware's writes only through an explicit predictor on the passive APB monitor; auto-prediction sees only the register model's own accesses ([prediction limits](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#the-soc-register-model-and-its-prediction-limits)).
+
+Follow one generated C test through SoC simulation. Notice that the bench never drives the DMA: it only watches, and it learns the verdict through the mailbox.
+
+<SequenceDiagram
+  title="A generated C test in SoC simulation: the CPU drives, the bench watches"
+  columnWidth={150}
+  caption="The generated test and the product driver run on the RTL CPU. The passive APB monitor sees every register write, and the scoreboards check the AXI traffic on their own. The C test checks the copy itself and reports through the mailbox; the decoder turns FW_PASS into an event the test waits on. Names follow the SoC lesson's bench (apb_monitor, mbx_decoder, soc_test)."
+  participants={[
+    { id: "cpu", label: "cpu", sublabel: "generated C + dma_driver", kind: "dut" },
+    { id: "dma", label: "dma", sublabel: "DMA engine (DUT)", kind: "dut" },
+    { id: "mon", label: "apb_mon", sublabel: "passive apb_monitor", kind: "monitor" },
+    { id: "mbx", label: "mbx_dec", sublabel: "mbx_decoder", kind: "subscriber" },
+    { id: "test", label: "soc_test", sublabel: "run_phase", kind: "test" }
+  ]}
+  messages={[
+    { kind: "divider", label: "boot image (generated test + driver) loaded; reset released" },
+    { kind: "async", from: "cpu", to: "dma", label: "dma_copy(0, ...): APB writes SRC, DST, LEN, then START" },
+    { kind: "note", from: "dma", to: "mon", label: "apb_mon sees each write; the register predictor updates the mirror" },
+    { kind: "self", from: "dma", label: "AXI reads SRAM, writes DDR (scoreboards check)" },
+    { kind: "async", from: "dma", to: "cpu", label: "completion interrupt" },
+    { kind: "self", from: "cpu", label: "dma_wait_irq() returns; mem_equal() checks the copy" },
+    { kind: "async", from: "cpu", to: "mon", label: "APB write MAILBOX = FW_PASS" },
+    { from: "mon", to: "mbx", label: "ap.write(t)" },
+    { from: "mbx", to: "test", label: "fw_pass event: the test may end" }
+  ]}
+/>
+
+### Which SoC scenarios belong in PSS
+
+PSS is a cost: a tool licence, a model, a realization someone owns, and debugging through generated code. It pays when the *scenario layer* is the expensive part; [E-PSS-1's decision table](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index#when-pss-adds-value-and-when-it-does-not) lists the general signals. Inside one SoC program the answer differs by scenario category, so the strategy decides it per category, not once for the whole chip:
+
+| Scenario category | Usually best written as | Why |
+|---|---|---|
+| Use cases that must run in simulation, emulation and silicon (DMA under load, boot then peripheral bring-up, low-power entry and exit with traffic) | **PSS** | many platforms × many scenarios; the C realization is the product driver, which exists anyway |
+| Concurrency among shared resources (channels, cores, memory regions) | **PSS** | the tool generates legal combinations from resource claims, instead of a few hand-written `fork … join` blocks |
+| Block protocol corner cases (AXI ordering per ID, APB wait states) | UVM sequences in the block or subsystem bench | one platform; needs pin-level control and checking |
+| Register access tests (reset values, read and write of every field) | the UVM built-in register sequences ([A-UVM-4B](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index)) | generated from the register model already |
+| Top-level connectivity (interrupt lines, pin multiplexing) | a formal connectivity check or toggle tests (tool-dependent) | a proof over a connection list, not a scenario |
+| Reset in the middle of a transfer, error injection by forcing signals | UVM in simulation ([A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index)) | depends on simulation-only control; not portable to silicon |
+
+**Two worked decisions.** Before you read each answer, decide it yourself from the table: how many platforms, how much of the cost is the scenario layer, and who would own the realizations?
+- *A peripheral subsystem whose tests run only in simulation, with an existing UVM bench and twenty directed-random scenarios.* No PSS. With one platform the multiplier is 1, and the tool, model and training are pure cost.
+- *An application SoC whose use-case library (boot, DMA under load, low-power entry) must run in SoC simulation, on the emulator and on first silicon, owned by one system-validation team.* PSS for the use-case and concurrency categories only. The block teams keep UVM; the system team owns the model, the C realization is the product driver, and the subsystem team owns the SystemVerilog realization of each action it contributes.
+
+### Pitfalls and misconceptions
+
+- **"PSS is an IEEE standard (IEEE 2401, or P2851)."** PSS is published by **Accellera** and has no IEEE number. IEEE 2401-2019 is a chip-package-board design data format, and IEEE 2851-2023 is a functional-safety data format. A strategy cites "Accellera PSS 3.0 (August 2024)", plus the version its tool accepts.
+- **"PSS replaces UVM."** It generates the scenario layer that runs on your environment; the environment, the checks and coverage stay.
+- **"The generated test checks itself."** Only if a template, or your scoreboard, checks. A template that only stimulates proves nothing on silicon.
+- **"PSS coverage closes the SoC."** PSS coverage (data coverage, Clause 18; behavioral coverage, Clause 19) shows which scenarios were generated or executed. It does not show that the design behaved correctly; that takes checks and DUT functional coverage linked to the verification plan. Merging block coverage, or PSS coverage, is not SoC closure ([SoC coverage and closure](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#soc-coverage-and-closure)).
+- **"Resources are passed between actions as inputs."** Data flows between actions; resources such as DMA channels are claimed with `lock` or `share` (§14.2). At SoC level, a missing claim lets the tool schedule two copies on one channel.
+- **"Put the C and SV templates side by side in each action."** In one scope, exec blocks of the same kind merge into one block, which maps to at most one language (§22.1.1). The standard puts each language's templates in its own package, never used in the same test (§22.5.1). A tool may accept the side-by-side form, but that is tool behaviour.
+- **Running the SystemVerilog target at SoC level.** Its sequences need sequencers that passive agents never built. It does not fail cleanly: a sequence started on a null sequencer runs on its parent's sequencer instead (uvm-core 2020.3.1, `uvm_sequence_item::set_item_context`), here the virtual sequencer. A child sequence that declares `p_sequencer` then stops with `UVM_FATAL [DCLPSQ]`; one that does not waits forever in `start_item()`, because no driver pulls from the virtual sequencer, until the phase timeout.
+
+### Recap
+
+- At SoC level PSS writes the scenario layer once; the realization layer is written once per platform family, and the checks are planned per platform.
+- The C self-check is the only check that reaches silicon; simulation scoreboards add what software cannot see.
+- Models grow from block to SoC through components, like environments of environments; pool sizes are SoC facts with an owner.
+- Decide per scenario category: PSS for multi-platform use cases and resource-constrained concurrency, UVM or formal for the rest.
+- Cite PSS as Accellera PSS 3.0. It has no IEEE number.
+
+## Make It Work
+
+### A complete scenario model for the DMA subsystem
+
+The subsystem: a DMA engine with two channels, an APB register port and an AXI master port; SRAM and DDR behind an interconnect; a completion interrupt to the CPU. The use case: two DMA copies run at the same time while other traffic loads DDR. The model is three files: the scenario library, which the system-validation team owns, and one realization file per platform family. **Predict before you read the model:** can both copies use the same channel? Can they write the same DDR addresses?
+
+The scenario library holds the actions, the SoC facts and the use case. It contains no target code:
+
+```pss
+// compile (Accellera PSS 3.0; checked against the standard by reading, not by a tool)
+// file dma_soc.pss: the scenario library, the same for every platform
+resource dma_chan_r { }                  // one DMA channel; instance_id 0 or 1
+
+component dma_subsys_c {
+  pool [2] dma_chan_r chan_p;            // the engine has two channels (an SoC fact)
+  bind chan_p *;
+
+  action dma_copy_a {
+    lock dma_chan_r chan;                // a channel serves one copy at a time
+    rand bit[32] src;
+    rand bit[32] dst;
+    rand bit[16] len;                    // bytes
+    constraint {
+      src in [0x20000000..0x2000F000];   // SRAM
+      len in [64..4096];
+      src % 64 == 0;
+      dst % 64 == 0;
+      len % 64 == 0;
+      src + len <= 0x20010000;           // cannot wrap: src has an upper bound
+      // each channel owns a 1 MB DDR window. Bound dst itself: a 32-bit
+      // dst + len could wrap past 0xFFFFFFFF and still pass an upper bound.
+      dst >= 0x80000000 + 0x100000 * chan.instance_id;
+      dst <= 0x80100000 + 0x100000 * chan.instance_id - len;
+    }
+  }
+
+  action ddr_traffic_a {                 // background DDR load, outside the windows
+    rand bit[8] bursts;
+    constraint bursts in [4..32];
+  }
+}
+
+component pss_top {
+  dma_subsys_c dma;
+
+  action dma_under_load_a {
+    activity {
+      parallel {
+        c0: do dma_subsys_c::dma_copy_a;
+        c1: do dma_subsys_c::dma_copy_a;
+        do dma_subsys_c::ddr_traffic_a;
+      }
+    }
+  }
+}
 ```
-PSS Model (.pss)
-    ├── Compile for simulation → UVM sequence + test
-    ├── Compile for emulation  → Transaction-level API calls
-    └── Compile for silicon    → Bare-metal C driver + checker
+
+The C realization is a package that extends the two atomic actions. It calls the product driver, and the check lives here because silicon has no scoreboard:
+
+```pss
+// compile (together with dma_soc.pss; not in the same test as dma_real_sv.pss)
+// file dma_real_c.pss: owned by the firmware team; SoC sim, emulation, silicon
+package dma_real_c {
+  extend action dma_subsys_c::dma_copy_a {
+    exec header C = """ #include "dma_driver.h" """;
+    exec body C = """
+      dma_copy({{chan.instance_id}}, {{src}}, {{dst}}, {{len}});
+      if (!dma_wait_irq({{chan.instance_id}}, DMA_TIMEOUT_US))
+        test_fail("dma completion interrupt missing");
+      if (!mem_equal({{src}}, {{dst}}, {{len}}))
+        test_fail("dma copy mismatch");
+    """;
+  }
+  extend action dma_subsys_c::ddr_traffic_a {
+    exec header C = """ #include "dma_driver.h" """;  // include guard: repeat is fine
+    exec body C = """ ddr_stress(DDR_SCRATCH_BASE, {{bursts}}); """;
+  }
+}
 ```
 
-Each target platform gets a native test from the same specification. Coverage goals are also portable — the PSS model tracks which scenarios have been explored regardless of platform.
+The SystemVerilog realization extends the same actions for the subsystem bench, where the APB agent is active. Its templates run inside the generated virtual sequence; the handles `p_sequencer.apb_sqr` and `p_sequencer.axi_sqr` assume a virtual sequencer with those fields, and how a tool sets up that context is tool-dependent:
 
-## When PSS Adds Value
+```pss
+// compile (together with dma_soc.pss; not in the same test as dma_real_c.pss)
+// file dma_real_sv.pss: owned by the subsystem team; subsystem simulation only
+package dma_real_sv {
+  extend action dma_subsys_c::dma_copy_a {
+    // dma_copy_seq programs the channel over APB and waits for the interrupt;
+    // the bench's scoreboards check the copy.
+    exec body SV = """
+      begin
+        dma_copy_seq cp = dma_copy_seq::type_id::create("cp");
+        cp.chan = {{chan.instance_id}};
+        cp.src  = {{src}};
+        cp.dst  = {{dst}};
+        cp.len  = {{len}};
+        cp.start(p_sequencer.apb_sqr, this);
+      end
+    """;
+  }
+  extend action dma_subsys_c::ddr_traffic_a {
+    exec body SV = """
+      begin
+        axi_burst_seq ld = axi_burst_seq::type_id::create("ld");
+        ld.base   = 32'h8100_0000;   // the scratch window, as DDR_SCRATCH_BASE
+        ld.bursts = {{bursts}};
+        ld.start(p_sequencer.axi_sqr, this);
+      end
+    """;
+  }
+}
+```
 
-- **Block-to-SoC reuse:** SoC-level integration tests that must run on multiple platforms.
-- **Firmware-HW co-verification:** Scenarios involving both hardware transactions and firmware flows.
-- **Multi-master arbitration:** Complex resource-sharing scenarios where hand-written sequences become fragile.
-- **Regression portability:** One regression plan that tools can retarget as the DUT moves from simulation to emulation to silicon.
+What each piece guarantees, and why it matters at SoC level:
+- **The locks force two channels.** `c0` and `c1` start together under `parallel` (§12.3.4), and each locks a channel for its whole execution (§14.2), so the tool must give them different instances. With `pool [1]`, which is what an SoC with a one-channel DMA configuration would need, the tool reports that no legal scenario exists, at generation time.
+- **The DDR windows follow the channel.** Tying `dst` to `chan.instance_id` keeps parallel copies from overwriting each other, so each copy's check is meaningful. The background traffic uses a separate scratch window for the same reason. The window bounds `dst` itself, not `dst + len`: PSS gives a sum the width of its widest operand (§8.7.1), so a 32-bit `dst + len` can wrap past 0xFFFFFFFF, and a solver could then legally place both channels at the top of the address space. The right-hand side `0x80100000 + 0x100000 * chan.instance_id - len` stays above 0x800FF000, so nothing in it wraps.
+- **One realization package per test.** PSS merges exec blocks of the same kind in one scope into a single block, and a single exec block maps to at most one foreign language (§22.1.1 b and e). The standard's way to give one action a C and a SystemVerilog implementation is target templates in different packages that are not used for the same test (§22.5.1). How you choose the packages that are active for a test is tool-dependent (§21.1). If your tool also accepts C and SV bodies side by side in one action, that is tool behaviour, not the standard; the packages also give each realization its own file and owner, which is what the strategy needs anyway.
+- **The two realizations do the same thing.** Both program the same channel with the same values. Only the C one checks in code; in simulation the scoreboards check. That split is a decision recorded in the strategy, not an accident.
+- **Almost nothing here is SoC-only syntax.** Everything except the realization packages (`package`, `extend action`) is taught in [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index). What makes it an SoC model is the content: SoC address windows, SoC instance counts and a realization that is the product driver.
 
-## Practical Adoption Considerations
+**Run it** (tool-dependent: no vendor switches are shown, and no open-source PSS tool was verified for this page):
+1. **Generate the C test.** Give the tool `dma_soc.pss` and `dma_real_c.pss`, the root action `pss_top::dma_under_load_a` and a seed.
+2. **Build and run it on the CPU.** Compile the generated C with `dma_driver` into the boot image. Run SoC simulation, or load the same image on the emulator or the lab board.
+3. **Generate the SystemVerilog test.** Give the tool `dma_soc.pss` and `dma_real_sv.pss`, the same root action and the same seed. Whether that seed solves to the same schedule as step 1 is tool-dependent, so compare the two solved schedules. Compile the generated virtual sequence into the subsystem bench's test package, and run it.
+4. **Archive** the seed, the tool version, the model revision, the solved schedule and the image hash with every result (Push Further: reproducibility).
 
-1. **Tool dependency:** PSS compilation requires vendor-specific tools (Synopsys TestComposer, Cadence Perspec, Breker TrekSoC, etc.). Evaluate tooling before committing.
-2. **Learning curve:** Teams accustomed to procedural UVM sequences need to shift to intent-based modeling. Plan for training investment.
-3. **Integration with existing flows:** PSS does not replace UVM — it generates UVM code. Your existing agents, monitors, and scoreboards remain.
-4. **Maturity:** PSS is still evolving. Start with well-bounded use cases (e.g., SoC boot sequences) before attempting full regression migration.
+**Expected output** (illustrative: a solved schedule as a PSS tool might report it, and the C the tool would paste for `c1` from `dma_real_c.pss`. Report format and chosen values are tool-dependent; template values are printed in decimal, §22.5.3.2):
 
-## Connection to Formal Verification
+```text
+Scenario dma_under_load_a   seed 17
+  parallel
+    c0  dma_subsys_c::dma_copy_a     chan_p[1]  src=0x20003C40  dst=0x80100000  len=1024
+    c1  dma_subsys_c::dma_copy_a     chan_p[0]  src=0x20000000  dst=0x80000400  len=256
+    --  dma_subsys_c::ddr_traffic_a  bursts=12
 
-PSS constraints and formal assumptions share a conceptual foundation: both describe **legal behavior without specifying implementation**. Teams using both PSS and formal can:
-- Extract formal assumptions from PSS resource constraints.
-- Use formal analysis to prove that PSS-generated tests cover critical corner cases.
-- Cross-reference PSS coverage goals with formal `cover` property results.
+Generated C for c1 (from exec body C):
+  dma_copy(0, 536870912, 2147484672, 256);
+  if (!dma_wait_irq(0, DMA_TIMEOUT_US))
+    test_fail("dma completion interrupt missing");
+  if (!mem_equal(536870912, 2147484672, 256))
+    test_fail("dma copy mismatch");
+```
 
-## References
+Check the solution against the model: `c1` holds channel 0, so its `dst` (0x80000400) lies in its window, 0x80000000 to 0x800FFFFF, and its copy writes 0x80000400 to 0x800004FF; `c0` holds channel 1 and writes 0x80100000 to 0x801003FF. In SoC simulation this test passes when the mailbox decoder reports FW_PASS and the bench ends with `UVM_ERROR :    0` and `UVM_FATAL :    0`; on silicon it passes when the test returns without calling `test_fail()`, reported however the lab harness reports it.
 
-- Accellera Portable Stimulus Standard (PSS 2.0): [accellera.org/downloads/standards/portable-stimulus](https://accellera.org/downloads/standards/portable-stimulus)
-- IEEE P2851 Working Group — standardization effort for PSS.
-- Return to [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index) for the core formal/simulation integration workflow.
+### How to bring a use case into the SoC strategy
+
+1. **Name the use case and its platforms.** Write down where it must run (subsystem simulation, SoC simulation, emulation, silicon). If the answer is "simulation only", stop: write a UVM virtual sequence.
+2. **Find the actions and the shared hardware.** Each operation firmware or the bench performs becomes an action; each shared piece of hardware (channel, core, memory region) becomes a resource with a pool sized to the SoC's real count.
+3. **Decide the realization per platform family**, and name its owner: a SystemVerilog package whose templates call the subsystem bench's sequences; a C package whose templates call the product driver.
+4. **Decide where checking lives on each platform.** Put the check that must survive to silicon in the C realization; make the simulation scoreboards check the same rule; list what only simulation checks.
+5. **Write the model** (syntax in [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index)) and read the solved schedule before the first run: channels, windows, inferred actions.
+6. **Run it bottom-up**: subsystem simulation first (best visibility), then SoC simulation, then emulation and silicon. Keep the seed, the solved schedule and the firmware image identity with every failure.
+7. **Record it in the strategy**: the standard and tool version, the scenario categories in PSS, the owners of each realization, and how PSS coverage is reported next to the closure evidence.
+
+**Example: the PSS entry of the DMA subsystem's strategy.** It adds one row group to the [worked one-page strategy](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#worked-strategy-one-page-for-the-dma-subsystem):
+
+| Field | Entry |
+|---|---|
+| Standard | Accellera Portable Test and Stimulus Standard 3.0 (August 2024); no IEEE number |
+| Tool | the chosen tool and its version, and the PSS version it accepts; behavioral coverage needs 3.0 |
+| In PSS | use cases that run on two or more platforms (`dma_under_load_a`, boot, low-power entry and exit) and channel concurrency. Not in PSS: AXI protocol corners, register tests, forced resets and error injection |
+| Model and SoC facts | `dma_soc.pss`, owned by system validation; pool sizes and DDR windows reviewed with every integration change |
+| Realizations | `dma_real_c.pss`, firmware team (calls the product driver); `dma_real_sv.pss`, subsystem team (starts `dma_copy_seq`, `axi_burst_seq`); one package per generated test |
+| Checks | C self-checks (`dma_wait_irq()`, `mem_equal()`) on every platform; the simulation scoreboards check the same copy rule |
+| Coverage | PSS behavioral coverage reported per platform, next to the closure evidence and never merged into it |
+| Reproducibility | seed, tool version, model revision, solved schedule and image hash archived with every failure |
+
+### Debugging portable SoC tests
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| The subsystem run passes, but the same solved scenario fails in SoC simulation with "dma copy mismatch", while the scoreboards saw correct data on the bus | The C realization differs from the SystemVerilog one (for example the driver takes a length in words, the template passes bytes) | Review each action in `dma_real_c.pss` and `dma_real_sv.pss` side by side; a model bug, not an RTL bug |
+| The SystemVerilog target in the SoC bench stops with `UVM_FATAL [DCLPSQ]` (a cast error on `p_sequencer`), or hangs in `start_item()` until `UVM_FATAL [PH_TIMEOUT]` | It was run where the APB agent is passive, so `p_sequencer.apb_sqr` is null, and `cp.start(null, this)` quietly runs `dma_copy_seq` on the parent's sequencer, the virtual sequencer, which has no driver | Run the C target at SoC level; keep the SystemVerilog target for benches whose agents are active. A template can also guard with `if (p_sequencer.apb_sqr == null)` and report a `` `uvm_fatal `` that names the cause |
+| The tool reports no legal scenario after the SoC integration changed | A pool size or address window no longer matches the SoC (one DMA channel, a smaller SRAM) | Update the SoC facts in the model; review them with every integration change |
+| The generated C test hangs on a one-core silicon or emulation setup, but passes where it had more executors | Parallel actions were assigned to one executor. §24.6.2 makes the tool responsible for running them concurrently, for example by cooperative multitasking, but a C realization that busy-waits (polls a register in a loop without yielding) never lets the other action run. PSS 3.0 provides a `yield;` statement for procedural exec code (exec blocks written as PSS statements rather than template text): it lets other exec code running in parallel on the same executor run before the next statement (§22.7.14). Inside a C target-template body, how the code yields (for example a driver wait that calls the tool's scheduler) is tool-dependent | Use `yield;` in procedural exec code, or write blocking waits in the template in the form your tool can interleave, or assign the actions to separate cores, or change `parallel` to `schedule` for that platform's test set |
+| Passes in simulation, fails on silicon only | A real silicon issue, or a template that relies on simulation behaviour (memory that starts as zero, a backdoor-loaded buffer) | Rerun the same seed and image on emulation for visibility; remove simulation-only assumptions from C realizations |
+
+**Checklist before moving on:**
+- [ ] For a given SoC use case, I can say which platforms it must run on and whether that justifies PSS.
+- [ ] I can point to what the tool generated and what the SoC team hand-writes, per platform.
+- [ ] I can say which check survives to silicon and which checks exist only in simulation, and make them check the same rule.
+- [ ] I can explain why the SystemVerilog target is not used where agents are passive.
+- [ ] I keep each platform family's templates in its own package, and I know each test is generated with only one of them.
+- [ ] I can find the SoC facts in a model (pool sizes, address windows) and name who owns them.
+- [ ] I can write the PSS line of a strategy: Accellera PSS 3.0, the tool's version, owners, coverage reporting.
+
+## Push Further
+
+### Expert: executors, one scenario across cores and testbench agents
+
+A real SoC test is rarely one program. Firmware on two CPU clusters, a testbench agent on an external port and a traffic generator on the interconnect may all take part in one use case. PSS 3.0 models this with **executors** (§24.6): an executor may be "an embedded processor core or HW thread in a bare-metal environment", "a BFM instantiated as a master on an interconnect of the DUT", or "a transactor, or testbench agent, connected to an I/O interface". Executors are grouped (`executor_group_c`), and an action claims one through an executor claim, an `executor_claim_s` field, optionally constrained by traits such as the CPU cluster (§24.6.1, §24.6.2.1). Executor and executor-group components are "strictly a test-realization artifact" (§24.6.1): they change where an action runs, not what the scenario means.
+
+Two consequences for SoC strategy. First, without explicit claims, "PSS tools are free to determine the execution context" (§24.6.2), so a portable test can land on a different core on each platform; claim executors explicitly for use cases where the core matters (interrupt affinity, cache coherence). Second, executors do not limit concurrency: when parallel actions share one executor, "the PSS tool is responsible for employing the means to enable concurrent execution", such as cooperative multitasking (§24.6.2); procedural exec code can hand over control explicitly with the `yield;` statement that PSS 3.0 added (§22.7.14). How a tool coordinates C on the CPU with UVM sequences on the bench in one simulation, typically through a shared memory or mailbox channel, is **tool-dependent**; ask for it before you design mixed scenarios.
+
+### Expert: address spaces and registers, and the second register model
+
+PSS 3.0's core library can model SoC memory as **address spaces** made of regions with traits such as DRAM or SRAM (§24.7), let actions **claim** allocations inside them (§24.8), and describe **registers** by name with `reg_c` and register groups whose read and write functions are called from realization code (§24.11). For SoC scenarios this replaces hand-computed windows like the ones in Make It Work: the tool allocates buffers so that parallel actions cannot overlap.
+
+The trade-off is a second description of the memory map and the registers next to the UVM register model ([A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index)) and the firmware headers. Three hand-maintained copies of one map drift. Methodology, not standard: generate all of them from one register and memory-map source, and treat a mismatch between the PSS map and the UVM register model as a build error. Which formats a PSS tool imports is **tool-dependent**.
+
+### Expert: coverage and closure evidence across platforms
+
+PSS 3.0 has **data coverage** (covergroups on model fields, Clause 18) and, new in 3.0, **behavioral coverage** (`cover` statements and monitors over the order of executed actions, Clause 19); [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index#expert-coverage-in-pss) shows both. At SoC level they answer "which use-case combinations did we run, and on which platform?", which is exactly what system-validation reviews ask. They do not answer "did the DUT behave?": that is the checks plus the DUT's functional coverage, traced to the verification plan.
+
+Report them side by side, never merged into one number. Whether a tool can merge PSS coverage across simulation, emulation and silicon runs, and how it obtains run-time results from silicon, is **tool-dependent**; the standard provides for sampling run-time values back into the model (§1.4), not for a particular database. A closure gate that reads "100% PSS behavioral coverage" without the linked checks repeats the "union of coverage" mistake at a higher level.
+
+### Expert: reproducibility and regression economics
+
+A failure in generated code is only debuggable if you can regenerate it. Archive, with every failing run: the model revision, the tool version, the seed, the solved schedule and, for C targets, the firmware image identity (a hash). PSS names three realization flows: no target-code generation (the tool drives existing environment APIs directly), code generated once per model, and code generated per test (§22.8, Table 25; [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index#expert-realization-flows-and-exec-kinds)). A per-test flow bakes the solved values into the test as constants, so the same image reproduces exactly on every platform. Flows that make choices while the test runs give more variety, but reproduce only with the same seed, model and tool version, and whether a tool can solve on the silicon target at all is tool-dependent. Choose per platform and write it into the regression plan.
+
+Economics (methodology, illustrative): PSS saves effort roughly in proportion to scenarios × platforms and adds a fixed cost of tool, model and realization ownership. Plan regression tiers accordingly: a small set of portable use cases in every simulation smoke run, so that a realization break is found the day it happens rather than on first silicon.
+
+### Expert: interview angles
+
+Try each before you look anything up; the sections above hold the answers.
+- "Your SoC team wants to rewrite all block tests in PSS. What do you say?" (Which categories, which platforms, who owns the realizations.)
+- "A PSS test passes in simulation and fails on silicon. Walk me through the first hour." (Same seed and image on emulation; compare realizations; look for simulation-only assumptions.)
+- "Where does checking live when the same scenario runs on simulation and silicon, and how do you keep the two consistent?"
+- "What is an executor in PSS, and why does it matter for a multi-cluster SoC?"
+- "A tool datasheet says it implements IEEE P2851. What do you ask the vendor?"
+
+## Practice & Reinforce
+
+### Quiz
+
+<Quiz questions={[
+  {
+    question: "An SoC team adopts PSS for its use-case library. Which part of the SoC test does the PSS tool generate?",
+    objective: 1,
+    answers: [
+      { text: "The scenario layer: a UVM virtual sequence or a C test that runs the solved actions in order, with their values", correct: true, feedback: "Right. The tool writes which action runs when, where and with which values; everything that touches hardware is hand-written." },
+      { text: "The UVM environment: agents, monitors and scoreboards, because PSS replaces UVM", correct: false, feedback: "This is the classic misconception. The generated SystemVerilog starts your sequences on your agents; the environment and its checks stay yours." },
+      { text: "The firmware driver and HAL that program each block, generated from the actions' exec templates so that every platform calls the same code", correct: false, feedback: "The C templates call the driver; the driver is hand-written product code, reused on every C platform." },
+      { text: "The register model, generated from the PSS model's resources and pools so that the mirror matches the scenario on every platform", correct: false, feedback: "Resources model shared hardware such as channels. The UVM register model comes from your register description, not from PSS resources." }
+    ],
+    explanation: "PSS generates only the scenario layer. The realization layer (templates, UVM sequences, the C driver) and the checks are hand-written once per platform family, which is why the economics depend on scenarios × platforms."
+  },
+  {
+    question: "An SoC strategy draft says: 'Stimulus: IEEE 2851 portable stimulus, tool TBD.' What is the correct entry?",
+    objective: 4,
+    answers: [
+      { text: "Accellera Portable Test and Stimulus Standard 3.0 (August 2024), plus the PSS version the chosen tool accepts", correct: true, feedback: "Right. PSS is an Accellera standard with no IEEE number, and tools differ in the versions they accept." },
+      { text: "IEEE P2851, because the IEEE number is still a draft", correct: false, feedback: "IEEE 2851-2023 is a functional-safety data format, unrelated to PSS. PSS has no IEEE number." },
+      { text: "IEEE 1800.2-2020, because PSS is part of UVM", correct: false, feedback: "IEEE 1800.2 is UVM. PSS is a separate Accellera standard whose SystemVerilog target happens to produce UVM sequences." },
+      { text: "IEEE 2401-2019, the IEEE portable stimulus standard", correct: false, feedback: "IEEE 2401-2019 is a chip-package-board design data format, also unrelated to PSS." }
+    ],
+    explanation: "Cite PSS as Accellera PSS 3.0 (August 2024); 2.1 was approved in October 2023. Wrong IEEE numbers are common in slides and datasheets. A strategy also records the tool's supported version, because features such as behavioral coverage need 3.0."
+  },
+  {
+    question: "The Make It Work scenario dma_under_load_a runs on first silicon. Which of these checks still runs?",
+    objective: 2,
+    answers: [
+      { text: "The AXI scoreboard comparing every DMA write with its expected data", correct: false, feedback: "Scoreboards live in the simulation bench. There is no bench on silicon." },
+      { text: "The mem_equal() and dma_wait_irq() checks in the C realization, which call test_fail() on a mismatch", correct: true, feedback: "Right. The C self-check is the only check that survives to silicon, which is why it belongs in the C template of every action that must be checked there." },
+      { text: "The interrupt-latency assertion from the subsystem bench", correct: false, feedback: "That assertion is checked on RTL signals in simulation, formal or emulation; it is not part of the manufactured chip." },
+      { text: "PSS behavioral coverage, which fails the test if the copy is wrong", correct: false, feedback: "Coverage records which scenarios ran; it never decides whether data was right." }
+    ],
+    explanation: "Each platform keeps only the checks it can run. On silicon that is the software's own checks; in simulation the scoreboards and assertions add protocol, routing and timing checks. Plan both to check the same rule."
+  },
+  {
+    question: "With the same seed and solved values, dma_under_load_a passes in subsystem simulation (SystemVerilog target) but fails in SoC simulation (C target) with 'dma copy mismatch'. The passive bench's scoreboards saw the DMA write exactly the bytes it read. What is the most likely cause?",
+    objective: 2,
+    answers: [
+      { text: "An RTL bug in the DMA engine; file it against the DMA team", correct: false, feedback: "The scoreboards saw a correct copy on the bus, so the DMA did what it was told. Suspect what told it." },
+      { text: "The PSS tool solved different values for the C target", correct: false, feedback: "The stem says the solved values are the same. One solve feeds both targets." },
+      { text: "The two realizations of dma_copy_a differ, for example the C driver takes a length in words while the template passes bytes", correct: true, feedback: "Right. The scenario is shared but the realizations are not. Review each action's C and SV templates side by side; this is a model bug, not a design bug." },
+      { text: "The APB agent is passive, so the copy never started", correct: false, feedback: "At SoC level the CPU drives APB, and the scoreboards saw the copy. A passive agent only breaks the SystemVerilog target." }
+    ],
+    explanation: "When one platform passes and another fails on the same solved scenario, and the hardware's observable behaviour was correct, the difference lies in the per-platform realization. Keeping the C and SV templates of each action reviewed together prevents it."
+  },
+  {
+    question: "Which SoC program should adopt PSS, and for what?",
+    objective: 3,
+    answers: [
+      { text: "Every program, for every test including block protocol corners, because one model is always cheaper to maintain than many UVM sequences", correct: false, feedback: "PSS adds a tool, a model and realization ownership. With one platform the saving is multiplied by 1." },
+      { text: "A program whose boot, DMA-under-load and low-power use cases must run in SoC simulation, emulation and first silicon, for those use cases and their resource concurrency", correct: true, feedback: "Right. Many platforms × many scenarios, a C realization that is the product driver, and concurrency the tool can generate from resource claims." },
+      { text: "A simulation-only peripheral subsystem with twenty scenarios and an existing UVM bench, for all its tests", correct: false, feedback: "One platform and a working bench: virtual sequences are cheaper." },
+      { text: "None: generated tests cannot run on silicon, so PSS only duplicates what UVM virtual sequences already do in simulation", correct: false, feedback: "Running the same scenario on silicon through a C target is PSS's main purpose (§1.1)." }
+    ],
+    explanation: "Decide per scenario category: PSS for multi-platform use cases and resource-constrained concurrency; UVM for block protocol corners and simulation-only control; formal for connectivity."
+  },
+  {
+    question: "A sign-off review shows 100% PSS behavioral coverage of the use-case library across simulation and emulation, and every block reports 100% functional coverage. Can SoC closure be declared?",
+    objective: 4,
+    answers: [
+      { text: "Yes: PSS coverage shows every use case ran on every platform, and block coverage shows every block was exercised, so together they are the union of all evidence", correct: false, feedback: "This is the 'SoC closure is the union of block coverage' mistake, with PSS coverage added. Neither shows that the SoC behaved correctly." },
+      { text: "Yes, because PSS 3.0 behavioral coverage checks the design's results", correct: false, feedback: "Behavioral coverage records which action orders were executed (Clause 19). It checks nothing about results." },
+      { text: "No, because PSS has no coverage constructs, so the 100% figure must come from the tool's own report and cannot be trusted", correct: false, feedback: "PSS 3.0 has data coverage (Clause 18) and behavioral coverage (Clause 19)." },
+      { text: "No: it shows which scenarios ran, not that the system behaved. Closure also needs the checks and the system-level coverage goals traced to the verification plan", correct: true, feedback: "Right. Report PSS coverage next to the closure evidence; never let it stand in for checks or system coverage." }
+    ],
+    explanation: "Scenario coverage answers 'what did we run'; checks and DUT functional coverage answer 'did it work, and did we exercise the system's features'. A closure gate needs both, traced to the plan."
+  },
+  {
+    question: "Predict: a derivative SoC configures its DMA engine with one channel, so the owner of the SoC facts changes the Make It Work model to pool [1] dma_chan_r chan_p. Nothing else changes. What happens when the tool processes dma_under_load_a?",
+    objective: 2,
+    answers: [
+      { text: "The tool runs c0 and c1 one after the other on channel 0, because the lock serializes them", correct: false, feedback: "A lock does create a scheduling dependency, but parallel rules out dependencies between its branches (§12.3.4). The tool may not quietly turn parallel into sequence." },
+      { text: "Both copies run on channel 0 at the same time and overwrite each other's DDR window", correct: false, feedback: "Two actions that overlap in time may not hold the same instance when one locks it (§14.2). The tool never generates that schedule." },
+      { text: "The tool reports, at generation time, that no legal scenario exists; the use case must change for this SoC (for example schedule instead of parallel, or one copy)", correct: true, feedback: "Right. Two parallel locks need two instances. The failure appears before any platform runs, which is why pool sizes are reviewed with every integration change." },
+      { text: "The generated test runs, and the C test fails on silicon with 'dma completion interrupt missing'", correct: false, feedback: "That would happen if the model still said pool [2] on a one-channel chip: the tool would program a channel that does not exist. With pool [1] the tool catches the conflict first." }
+    ],
+    explanation: "Pool sizes are SoC facts. With pool [1], parallel plus lock has no legal schedule, and the tool says so before any run. The opposite mistake, a model that still says [2] on a one-channel chip, generates tests that fail on the platform instead."
+  },
+  {
+    question: "The DMA model's first draft declares exec body C and exec body SV side by side inside dma_copy_a, and one vendor tool accepts it. The strategy says the model must be portable between PSS tools. What does the standard say to do?",
+    objective: 2,
+    answers: [
+      { text: "Nothing: an action may hold any number of exec body blocks, one per language, and the tool picks the one for the target", correct: false, feedback: "Same-kind exec blocks in one scope are merged into a single block (§22.1.1 e), and a single exec block maps to at most one foreign language (§22.1.1 b). Picking one per target is tool behaviour." },
+      { text: "Move each language's templates into its own package that extends dma_copy_a, and generate each test with only one of those packages", correct: true, feedback: "Right. §22.5.1 allows target templates in different languages under different packages, given that those packages are not used for the same test. It also gives each realization its own file and owner." },
+      { text: "Write two actions, dma_copy_c_a and dma_copy_sv_a, and two versions of every compound action that uses them", correct: false, feedback: "That duplicates the scenario layer, which is exactly what PSS is meant to remove. Extend the one action per realization package instead." },
+      { text: "Keep only the C body, because the SystemVerilog target cannot be generated from a model that also targets C", correct: false, feedback: "A model can target both; each generated test just uses one realization package. The SV target is still the right one for the subsystem bench." }
+    ],
+    explanation: "Portability between tools rests on the standard, not on one tool's extensions. Realization packages keep the scenario in one place and each platform family's code in its own file (§20.2, §21.1, §22.5.1); which packages are active for a test is chosen by tool means."
+  }
+]} />
+
+### Flashcards
+
+The deck for this page, "E-SOC-1 PSS Bridge", appears below under "Reinforce the essentials". Its cards cover the scenario and realization layers, one realization package per test, address windows that cannot wrap, which check survives to silicon, the per-category decision, pool sizes as SoC facts, the target to use where agents are passive, what the passive bench and the register mirror need, executors, coverage as evidence, the standard's name, and reproducibility.
+
+### Kata: plan a portable error scenario
+
+The DMA subsystem's strategy needs one more use case: "a descriptor points into an address hole; the interconnect answers with a decode error (DECERR); the DMA raises its error interrupt; the firmware handler clears the error and retries the copy at a good address." Before you open the solution, write down:
+1. the actions and the resource(s) the model needs;
+2. which platforms the use case can run on, and any platform where it should not;
+3. the realization per platform and its owner;
+4. the checks on each platform;
+5. your decision: PSS, a UVM sequence, a firmware test, or a combination, with one sentence of justification;
+6. the rows of the strategy's PSS entry (the table at the end of "How to bring a use case into the SoC strategy") that this use case adds or changes.
+
+<details>
+<summary>Worked solution (open after you have written yours)</summary>
+
+| Item | Plan |
+|---|---|
+| Actions and resources | `dma_copy_a` (reused), a new `dma_copy_bad_a` whose `dst` is constrained into a hole of the address map, and a compound `dma_error_retry_a` whose activity runs the bad copy, then a good copy on the **same** channel. Both claim `dma_chan_r` with `lock`; the compound action constrains them to one channel (`bad.chan.instance_id == good.chan.instance_id`) so the retry proves the channel recovered. |
+| Platforms | Subsystem and SoC simulation: yes. Emulation: yes. Silicon: only if the hole is a real decode hole that answers DECERR on that chip, and the lab agrees the error interrupt cannot hang the bench; otherwise exclude it from the silicon test set and say so in the strategy. |
+| Realization | C: the product driver's error handler path (`dma_copy`, `dma_wait_irq` returning an error status, `dma_clear_error`), owned by the firmware team. SystemVerilog: `dma_copy_seq` plus an error-status check sequence on the active APB agent, owned by the subsystem team. |
+| Checks | Everywhere: the C code checks that the error status is set, that it clears, and that the retry's data matches. Simulation adds: the AXI monitor sees DECERR on the B channel (IHI0022E §A3.4.4), the error interrupt arrives within budget, and no write landed in the hole. |
+| Decision | PSS, because the scenario must run on three or four platforms and the concurrency variant (an error on one channel while the other copies) comes free from the resource model. The forced-signal variants (an error injected inside the interconnect) stay UVM-only, as in [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index). |
+| Strategy entry | *In PSS:* add `dma_error_retry_a` to the use-case category. *Realizations:* the firmware team adds the error path to `dma_real_c.pss`; the subsystem team adds the error-status sequence to `dma_real_sv.pss`. *Platforms:* the silicon run is excluded unless the lab confirms a real decode hole, recorded with an owner and a reason. *Coverage:* behavioral coverage of "bad copy, then good copy on the same channel", reported next to the error-response rows of the closure evidence. |
+
+Check your plan against three questions: does the retry run on the same channel, so it proves recovery? Is there a check that survives on every platform you listed? Did you exclude the silicon run explicitly if it is unsafe there, instead of letting it fail?
+
+</details>
+
+### Lab
+
+<LabLink labId="pss-portable-intent" />
+
+The E-PSS-1 lab, **Memory Read/Write Portable Intent**, has you write a small read-after-write model and compare its generated UVM and C targets. Do it with this page's question in mind: which of the two targets would you run at each test layer of your SoC?
+
+## References & Next Topics
+
+**Primary sources**
+- **Accellera Portable Test and Stimulus Standard 3.0** (August 2024), the current release; 2.1 was approved in October 2023. PSS has no IEEE number. Sections cited (3.0 numbering): §1.1 purpose; §1.3 modeling basics; §1.4 test realization; §5.2.2 resource pools (`instance_id`, default size 1); §8.7.1 expression bit sizes; Clause 9 components; §12.3.4 `parallel`; §14.2 claiming resource objects; Clause 18 data coverage; Clause 19 behavioral coverage; §20.2 type extension; §21.1 packages (which packages are active for a test is left to tools); §22.1.1 exec block rules (b: one foreign language per exec block; e: same-kind blocks in one scope merge); §22.5 target-template exec blocks (§22.5.1 target language: different languages in different packages, not used for the same test; §22.5.3 mustache references, §22.5.3.2 formatting); §22.7.14 `yield`; §22.8 comparison between mapping mechanisms; §24.6 executors (§24.6.1 representation, §24.6.2 assignment); §24.7 address spaces; §24.8 allocation within address spaces; §24.11 registers.
+- **IEEE 1800.2-2020**: §13.3 `uvm_env` (reuse as a sub-environment in larger system-level environments).
+- **Arm IHI0022E**, AMBA AXI and ACE Protocol Specification: §A3.4.4 read and write response structure (DECERR), used in the kata.
+- **Accellera PSS Working Group**: [accellera.org/activities/working-groups/portable-stimulus](https://accellera.org/activities/working-groups/portable-stimulus), for the specification and the status of later versions.
+
+**Prerequisites:** [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index) (the page before this one) and [E-PSS-1: Portable Stimulus Standard](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index).
+
+**If this is the last page of your core path:** finish at the M8 gate, E-SOC-1's capstone. The [Labs section of the SoC lesson](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#labs) holds the strategy review, `soc-strategy-capstone`; the `dma-1` code capstone is planned.
+
+**Related**
+- [E-PSS-1: Portable Stimulus Standard](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index): the language, the tool landscape and the general decision table.
+- [I-UVM-3B: Virtual Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences): the shape of the generated SystemVerilog target.
+- [E-EMU-1: Emulation-Aware Verification](/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index): making a bench acceleration-ready, the other way to reuse tests on an emulator.
+- [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index): the simulation-only error scenarios that stay in UVM.
+- [A-UVM-4A: RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index): the register model a PSS register description must agree with.
+- [E-PWR-1: Power-Aware Verification](/curriculum/T4_Expert/E-PWR-1_Power_Aware_Verification/index): low-power entry and exit, a typical portable use case.
+
+<NextLesson />

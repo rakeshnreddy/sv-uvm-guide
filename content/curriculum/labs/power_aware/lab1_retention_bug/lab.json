@@ -2,27 +2,62 @@
   "id": "power-aware-retention",
   "version": "1",
   "title": "Retention Bug and Isolation Sequencing",
-  "description": "Identify and fix a critical bug in a Power Management Unit wake-up sequence.",
+  "description": "Diagnose and fix a broken power-domain wake-up with sequencing assertions and data checks: release isolation last, reset before restoring, and catch an early release at the moment it happens.",
   "owningModule": "E-PWR-1",
   "routeSlug": "power-aware-retention",
   "status": "available",
   "labPrerequisites": [],
-  "modulePrerequisites": [],
+  "modulePrerequisites": [
+    "I-SV-8",
+    "I-SV-4A"
+  ],
   "steps": [
     {
       "id": "1",
       "version": "1",
       "completion": "self_attested",
-      "title": "Step 1: Understand the Bug",
-      "instructions": "Analyze the failing test sequence in `buggy_tb.sv` where isolation is released before power is strictly stable.",
+      "title": "Step 1: Run the Starter and Read the Failures",
+      "instructions": "Predict first: with the wake-up order ISO_OFF, PWR_ON, RESTORE, CLK_ON in `buggy_tb.sv`, which assertions fail, from which time, and which read returns the wrong value? Then compile `buggy_tb.sv` alone with `tb_top` as the top module and run it unchanged. Record the first failure of each assertion and the summary. Expected (hand trace): `a_iso_unless_on` and `a_no_x_into_top` fail from 355 ns, `READ SCRATCH: expected 0x00 observed 0xxx` at 485 ns, and `PASS=4 FAIL=15`. Explain why CTX still reads 0xA5.",
       "starterCode": ""
     },
     {
       "id": "2",
       "version": "1",
       "completion": "self_attested",
-      "title": "Step 2: Reorder Sequence",
-      "instructions": "Fix the sequence so isolation remains asserted until after power is completely restored and context is reloaded.",
+      "title": "Step 2: Reorder the Wake-Up",
+      "instructions": "Move `pmu(ISO_OFF)` to the end of the `[WAKE]` block (PWR_ON, RESTORE, CLK_ON, ISO_OFF) and run again. Expected: the X leak during the wake-up is gone, but SCRATCH still reads X at 485 ns, and the summary is `PASS=4 FAIL=2`. Name the step that is still missing before you go on.",
+      "starterCode": ""
+    },
+    {
+      "id": "3",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 3: Write a_release_after_wake",
+      "instructions": "Replace the TODO in `pwr_seq_checker` with `a_release_after_wake`: when `cpu_iso_en` falls, `cpu_pwr_ack`, `cpu_clk_en`, `cpu_rst_n`, `reset_seen` and `restored` must all be 1. Report with `fail(\"a_release_after_wake\", ...)`. Rerun the Step 2 order: the new assertion fails at 435 ns, at the release and before any traffic, and the summary is `PASS=4 FAIL=3`.",
+      "starterCode": ""
+    },
+    {
+      "id": "4",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 4: Add the Domain Reset",
+      "instructions": "Make the wake-up PWR_ON, RST, RESTORE, CLK_ON, ISO_OFF. Run it: CTX reads 0xa5 at 485 ns, SCRATCH reads 0x00 at 515 ns, no assertion fails, and the last line is `PASS=5 FAIL=0`. Compare your file with `solution_tb.sv`.",
+      "starterCode": ""
+    },
+    {
+      "id": "5",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 5: Break It and Predict",
+      "instructions": "Predict each result before you run it (README, Step 5): (a) restore before reset gives `a_release_after_wake` at 465 ns, `READ CTX: expected 0xa5 observed 0x00` at 485 ns and `PASS=4 FAIL=2`; (b) power off before isolation on the sleep path: which assertion fails first, and why does CTX still come back as 0xA5? (c) save after power-off: which assertion names the mistake, and what does CTX read after the wake-up? Write down your predictions for (b) and (c), run them, and compare with the README's \"Check your predictions\" block, which gives the expected failures and summaries.",
+      "starterCode": ""
+    },
+    {
+      "id": "6",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 6 (Optional): Move the Order into UVM",
+      "instructions": "Write your fixed sleep and wake-up orders as the body of `power_cycle_vseq` from E-PWR-1 Make It Work: two `run_pmu({...})` calls, with `HOLD` as the last action of the power-down call, as in `power_cycle_vseq`, after the bus traffic has finished. Explain in one sentence why quiescing the bus is free when the bus sequences run in series.",
       "starterCode": ""
     }
   ],

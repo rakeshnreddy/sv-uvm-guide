@@ -1975,7 +1975,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - Diagnose power bugs from symptoms: X leakage, lost retention, wake-up before reset completes.
 - **Must cover:**
   - objections and phases across power events;
-  - stopping stimulus safely (`stop_sequences`/`kill` §14.2.5.11, or flags; callbacks do not abort sequences).
+  - stopping stimulus safely (`uvm_sequencer_base::stop_sequences` §15.3.2.14 or `uvm_sequence_base::kill` §14.2.5.11, or flags; callbacks do not abort sequences).
 - **Out of scope here (covered in):** UPF syntax (I-SV-8); reset strategy basics (A-UVM-9).
 - **Prerequisites:** I-SV-8, A-UVM-8, I-SV-4A.
 - **Feeds milestone:** M8.

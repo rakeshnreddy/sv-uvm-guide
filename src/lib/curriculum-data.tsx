@@ -1538,7 +1538,7 @@ export const curriculumData: Module[] = [
           {
             "title": "Power-Aware UVM Verification Strategy",
             "slug": "index",
-            "description": "Expert guide on verifying power intent, corruption semantics, PMU handshakes, and shutdown/wake-up sequences within a UVM environment."
+            "description": "Verify a power-managed design in UVM: drive power cycles from a virtual sequence, keep drivers, monitors and scoreboards correct across power-down and wake-up, check the sequencing with SVA and coverage, and diagnose power bugs from their symptoms."
           }
         ],
         "track": "core",
@@ -1558,12 +1558,12 @@ export const curriculumData: Module[] = [
           {
             "title": "E-SOC-1: SoC-Level Verification Strategies",
             "slug": "index",
-            "description": "Scale block-level infrastructure to SoC: plan reuse, configure virtual platforms, and coordinate cross-team stimulus."
+            "description": "Plan and defend a subsystem or SoC verification strategy: reuse block environments, make firmware and the testbench co-operate, check the interconnect, and set regression and sign-off gates."
           },
           {
-            "title": "Portable Stimulus (PSS)",
+            "title": "Portable Stimulus in an SoC Strategy",
             "slug": "pss",
-            "description": "Intent-based test description that runs across simulation, emulation, and silicon with minimal adaptation."
+            "description": "Place portable stimulus in an SoC verification plan: decide which use cases to write once in Accellera PSS, plan how each one runs from subsystem simulation to silicon, and state what stays hand-written and how it is checked on every platform."
           }
         ],
         "track": "core",
@@ -1603,7 +1603,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-PYUVM-1: Python-Based Verification",
             "slug": "index",
-            "description": "Leverage Python's ecosystem for hardware verification using cocotb and pyUVM — from coroutine-based testbenches to full UVM environments in Python."
+            "description": "Write cocotb 2.1 tests and pyuvm 5.0 environments in Python, explain how they run inside the simulator, and decide when Python beats SystemVerilog UVM."
           }
         ],
         "track": "elective",
@@ -1642,7 +1642,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-RISCV-1: RISC-V Verification Methodology",
             "slug": "index",
-            "description": "Master the specialized verification methodology for RISC-V processors — from constrained-random instruction generation with RISCV-DV to ISA compliance checking and formal verification."
+            "description": "Verify a RISC-V core with constrained-random instruction programs, ISA coverage, a trace compare and a lock-step compare against an instruction set simulator, and RVFI-based formal checks."
           }
         ],
         "track": "elective",
@@ -1662,7 +1662,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-AI-1: AI-Driven Verification",
             "slug": "index",
-            "description": "Explore how machine learning and large language models are transforming hardware verification — from intelligent stimulus generation to automated coverage closure and assertion writing."
+            "description": "Evaluate machine-learning and LLM techniques for stimulus, coverage closure, regression triage and assertion writing, and review AI-generated verification code as rigorously as human-written code."
           }
         ],
         "track": "elective",
