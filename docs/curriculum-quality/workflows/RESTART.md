@@ -110,3 +110,9 @@ Each file is a few very long lines, so search it with Python. Every path in the 
 Still waiting on the user:
 - switching the Cloudflare build branch;
 - approving a Verilator install, so that code and labs can be compiled.
+
+## Run log
+
+- 2026-10-18: started the W5 review-only pass (run `wf_e047c557-093`, 15 groups) and the G29 bank review pass
+  (run `wf_31252013-f8d`, `reviewOnly`). The W6 half (6 groups) starts after W5 finishes. If a run is cut off,
+  resume it with `resumeFromRunId` and the same script; do not start a second run over the same groups.
