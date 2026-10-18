@@ -17,8 +17,8 @@ The reference that every analyst, verifier and author in the [curriculum quality
 
 **Conventions.**
 - **nav #k** is the lesson's position in today's generated navigation (`src/lib/curriculum-data.tsx`). It is alphabetical within each tier, because `scripts/generate-curriculum-data.ts` sorts folder names.
-- **after / before** in a card give the **intended** order (the spine order, §3.4). Where they differ from nav, the card says so. Proposed new modules (§4.2) are noted in brackets but are not counted as neighbours.
-- **manifest #k** (the T4 cards and the I-SV-8 card, updated 2026-10-18) is the module's position in [`curriculum.manifest.json`](../../content/curriculum/curriculum.manifest.json), which now drives the generated navigation (§3.4). Each module there is `core` or `elective`: from a core lesson, Prev/Next skip elective modules; from an elective, every lesson is visited in order. The other cards still show the 2026-10-03 alphabetical nav # and "today" notes.
+- **after / before** in a card give the **intended** order (the spine order, §3.4). Where they differ from nav, the card says so. The five modules added in the quality program (F2E, I-UVM-1D, I-UVM-3C, A-UVM-9, B-APB-1; cards in §4.2) are in the manifest and count as neighbours.
+- **manifest #k** (the T4 cards, the I-SV-8 card and the §4.2 cards, updated 2026-10-18) is the module's position in [`curriculum.manifest.json`](../../content/curriculum/curriculum.manifest.json), which now drives the generated navigation (§3.4). Each module there is `core` or `elective`: from a core lesson, Prev/Next skip elective modules; from an elective, every lesson is visited in order. The other cards still show the 2026-10-03 alphabetical nav # and "today" notes.
 - Every IEEE 1800-2023, IEEE 1800.2-2020, IHI0022E and IHI0033B.b number in this file was checked against the primary text. The index is in Appendix A.
 - A bare **§** number means IEEE 1800-2023 in T1, T2-SV and AMBA cards, and IEEE 1800.2-2020 in UVM cards (I-UVM-*, A-UVM-*, the UVM parts of E-*). Annexes B–G are 1800.2; Annexes H–I are 1800-2023. Where a card mixes the two (for example A-UVM-7's §25.8), the SystemVerilog construct makes the source clear.
 - **"Verify"** marks a claim the analyst must check before relying on it.
@@ -46,7 +46,7 @@ The reference that every analyst, verifier and author in the [curriculum quality
 
 Milestones M0–M8 are defined in [`tb-mastery-progression.md`](../audit/2026-10-03-learning-outcomes/tb-mastery-progression.md).
 
-### T1 Foundational (13 modules; proposed F2E)
+### T1 Foundational (14 modules; F2E was added in the quality program)
 
 - **Entry skills:**
   - digital logic (gates, flops, clocks, reset, FSMs);
@@ -59,11 +59,11 @@ Milestones M0–M8 are defined in [`tb-mastery-progression.md`](../audit/2026-10
   4. Predict what happens inside one time slot, and find and fix races (F3A–F3C).
   5. Structure a bench with modules, packages, interfaces, modports and clocking blocks, and drive and sample a DUT race-free (F4A–F4C).
 - **Milestones prepared:**
-  - **M0**, a self-checking directed TB: F1B, F2A–F2D, proposed F2E.
+  - **M0**, a self-checking directed TB: F1B, F2A–F2D, F2E (lab `simple-dut-1`).
   - **M1**, a race-aware interface TB with clocking blocks: F3A–F3C, F4A–F4C.
 - **Hands to T2:** *a race-free, self-checking, interface-and-clocking-block directed testbench for a small clocked DUT, where the learner can explain every printed value in terms of the scheduler.*
 
-### T2 Intermediate (24 modules; proposed I-UVM-1D and I-UVM-3C)
+### T2 Intermediate (26 modules; I-UVM-1D and I-UVM-3C were added in the quality program)
 
 - **Entry skills:** T1 exit (M0 and M1 demonstrated).
 - **Exit competencies, SystemVerilog half (I-SV-1 … I-SV-9).** Build a **class-based layered testbench** with:
@@ -86,13 +86,13 @@ Milestones M0–M8 are defined in [`tb-mastery-progression.md`](../audit/2026-10
   - Groundwork for **M3** (TLM, `compare`) and **M5** (virtual sequences in I-UVM-3B).
 - **Hands to T3:** *a runnable single-agent UVM environment that the learner can modify, rerun with a different test and a factory override from the command line, and debug from its log.*
 
-### T3 Advanced (20 modules; proposed A-UVM-9 and B-APB-1)
+### T3 Advanced (22 modules; A-UVM-9 and B-APB-1 were added in the quality program)
 
 - **Entry skills:** T2 exit (first runnable UVM env).
 - **Exit competencies:**
   1. **M3:** a reference-model scoreboard, in order and keyed out of order, with end-of-test accounting (A-UVM-6).
   2. **M2 complete:** a reusable VIP agent with a config object, reused active and passive (A-UVM-7).
-  3. Extend VIP behaviour with callbacks (A-UVM-5); handle mid-test reset and deliberate error injection with expected-error accounting (proposed A-UVM-9).
+  3. Extend VIP behaviour with callbacks (A-UVM-5); handle mid-test reset and deliberate error injection with expected-error accounting (A-UVM-9).
   4. **M5:** a multi-agent environment with virtual sequences and cross-agent synchronization (A-UVM-8).
   5. **M7:** a RAL-integrated environment with explicit prediction (A-UVM-4A/4B).
   6. **M6:** AMBA protocol knowledge (APB, AHB, AXI) turned into protocol checkers, coverage and an ID-aware out-of-order scoreboard (B-* track).
@@ -169,7 +169,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Feeds milestone:** M0 (a self-checking bench that fails loudly); M4 framing.
 - **Hands-on that should exist:**
   - the "First Bug Hunt" interactive (e2e-pinned test id `first-bug-hunt-game`);
-  - a kata: a test plan for a 4-bit counter, reused by M0 (proposed F2E).
+  - a kata: a test plan for a 4-bit counter, reused by M0 (F2E).
 - **Assessment focus:** classify scenarios by best method; judge "100% code coverage" claims; spot a checker that can never fail. Misconceptions:
   1. 100% code coverage means verified;
   2. random testing replaces directed tests and formal;
@@ -317,7 +317,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   Order index → flow-control is correct.
 
 ### F2D_Reusable_Code_and_Parallelism — F2D: System Tasks and File I/O
-- **Tier / position:** T1 · after F2C · before F3A (proposed F2E between) · nav #7
+- **Tier / position:** T1 · after F2C · before F2E · nav #7
 - **Purpose (one sentence):** Package reusable bench behavior into tasks and functions, and use system tasks to observe, report, end and feed a simulation.
 - **Objectives (learner will be able to):**
   - Write tasks and functions with the right lifetime: module subroutines are static unless `automatic` (§13.3.1). Use argument directions including `ref`/`const ref` (§13.5.2), defaults (§13.5.3) and named binding (§13.5.4), and explain why a function cannot consume time.
@@ -336,9 +336,9 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - `$error` continues and `$fatal` ends;
   - `$urandom/$urandom_range` basics (§18.13);
   - no initializers on static procedural variables (audit X-06).
-- **Out of scope here (covered in):** class `$cast` (I-SV-1; enum casting is F2A's). Today the index shows `BaseClass`/`DerivedClass` downcasting before OOP; remove it. Also out of scope: IPC (I-SV-5); constrained randomization (I-SV-2A); UVM reporting (proposed I-UVM-1D).
+- **Out of scope here (covered in):** class `$cast` (I-SV-1; enum casting is F2A's). Today the index shows `BaseClass`/`DerivedClass` downcasting before OOP; remove it. Also out of scope: IPC (I-SV-5); constrained randomization (I-SV-2A); UVM reporting (I-UVM-1D).
 - **Prerequisites:** F2C.
-- **Feeds milestone:** M0. If proposed F2E is rejected, the M0 bench assembly lands in this module's Make It Work.
+- **Feeds milestone:** M0 (F2E assembles the M0 bench).
 - **Hands-on that should exist:**
   - Lab `basics-1` fits `tasks-functions.mdx`: refactor a counter TB into `task automatic drive_sequence`. Its grader matches the tokens `int myVar ;` and must be replaced (D-13, LAB-M0).
   - a kata: a plusarg-selected, file-driven test with an expected-value check.
@@ -352,7 +352,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - `ipc.mdx`: a labelled foundation-level first look at events, semaphores and mailboxes that links forward to I-SV-5 for depth (lead decision, plan.md §1 topic ownership; this supersedes the earlier "merge into I-SV-5 and redirect" proposal). Keep its e2e pins: the "Interprocess Communication" heading, one default-mode `<MailboxSemaphoreGame />` region, and the link from the index.
 
 ### F3A_Simulation_Semantics — F3A: Simulation Semantics
-- **Tier / position:** T1 · after F2D (proposed F2E between) · before F3B · nav #8
+- **Tier / position:** T1 · after F2E · before F3B · nav #8
 - **Purpose (one sentence):** Explain how an event-driven simulator advances time, how time units and precision shape delays, and why zero-time iterations exist.
 - **Objectives (learner will be able to):**
   - Explain event-driven simulation: what wakes a process, and that time advances only when no events remain in the current time slot.
@@ -731,7 +731,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - assertions in modules and interfaces vs procedural code (§16.14.6);
   - a bare sequence used as a property must match from each attempt;
   - SvaSequenceWaveformVisualizer and TemporalLogicExplorer.
-- **Out of scope here (covered in):** repetition, `throughout/within/intersect/first_match`, local variables, multiclock, `until/s_eventually`, strong/weak (I-SV-4B); checkers and bind (I-SV-4C); formal (E-INT-1); routing SVA into UVM reports (A-UVM-7, proposed I-UVM-1D).
+- **Out of scope here (covered in):** repetition, `throughout/within/intersect/first_match`, local variables, multiclock, `until/s_eventually`, strong/weak (I-SV-4B); checkers and bind (I-SV-4C); formal (E-INT-1); routing SVA into UVM reports (A-UVM-7, I-UVM-1D).
 - **Prerequisites:** F3B, F4C.
 - **Feeds milestone:** M6 (protocol checks); M1 and M2 (interface and VIP assertions).
 - **Hands-on that should exist:** kata P5 (audit appendix B §4): a valid/ready SVA with `disable iff`, `$stable` payload, bounded `##[1:N]` and a cover, then debug 4 failing traces. Lab `assertions-1` (coming soon) fits I-SV-4B.
@@ -865,7 +865,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file).
 
 ### I-SV-7_DPI_and_Foreign_Language_Interfaces — I-SV-7: DPI & Foreign Language Interfaces
-- **Tier / position:** T2 · after I-SV-6 · before I-SV-9 (I-SV-8 sits between in nav; see its card) · nav #24
+- **Tier / position:** T2 · after I-SV-6 · before I-SV-9 (I-SV-8 is an elective at manifest #40, after I-UVM-6; see its card) · nav #24
 - **Purpose (one sentence):** Connect SystemVerilog to C/C++ models through DPI with correct type mapping, memory ownership and time semantics.
 - **Objectives (learner will be able to):**
   - Write `import "DPI-C"` and `export "DPI-C"` functions and tasks with correct SV↔C type mappings, including 4-state `svLogicVecVal` and open arrays (§35.5, §35.7, Annex H).
@@ -914,10 +914,10 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   1. UPF changes the RTL source;
   2. powered-down outputs read as 0;
   3. isolation and retention are interchangeable.
-- **Sub-lessons:** — (single file). Today it has no frontmatter `flashcards`, a `#` H1, no template H2s, a stray `order: 8`, and no Next link.
+- **Sub-lessons:** — (single file). It now has frontmatter `flashcards` (`I-SV-8_Power_Intent_and_UPF`), no body H1, the six template H2s, no `order`, and `<NextLesson />` (Next: A-UVM-6).
 
 ### I-SV-9_Why_UVM — Why UVM? The Bridge from SystemVerilog to Verification Methodology
-- **Tier / position:** T2 · after I-SV-7 (I-SV-8 between in nav) · before I-UVM-1A · nav #26
+- **Tier / position:** T2 · after I-SV-7 (I-SV-8 no longer sits between: it is an elective at manifest #40, and core Prev/Next skip it) · before I-UVM-1A · nav #26
 - **Purpose (one sentence):** Map a layered class-based SystemVerilog testbench onto UVM and explain which scaling and reuse problems each UVM mechanism removes.
 - **Objectives (learner will be able to):**
   - Draw a layered class-based bench (transaction, generator, driver, monitor, scoreboard, coverage, environment, test) with each layer's responsibility and interface.
@@ -934,7 +934,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - the layered bench and its limits: hard-coded construction, ad-hoc config, ad-hoc end-of-test, copy-paste reuse;
   - UVM history (verify dates): OVM/VMM → Accellera UVM 1.x → IEEE 1800.2-2017 → IEEE 1800.2-2020 (approved 4 June 2020) plus the uvm-core reference implementation;
   - a readiness check: handles, virtual interfaces, randomization, mailboxes and threads, coverage.
-- **Out of scope here (covered in):** UVM APIs (I-UVM-1A onward); running a test (proposed I-UVM-1D, I-UVM-3C).
+- **Out of scope here (covered in):** UVM APIs (I-UVM-1A onward); running a test (I-UVM-1D, I-UVM-3C).
 - **Prerequisites:** I-SV-1, I-SV-2A, I-SV-3A, I-SV-5, F4C.
 - **Feeds milestone:** M2 (bridge).
 - **Hands-on that should exist:** the **bridge capstone** (kata P8): a class-based layered SV bench for a FIFO with 0 mismatches over 1k random transactions, coverage ≥90%, and bound assertions. Re-scope lab `fifo-1` (coming soon) for it. Add a readiness self-check quiz.
@@ -942,7 +942,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   1. UVM is a language or a simulator feature;
   2. UVM makes simulation faster;
   3. every bench needs UVM.
-- **Sub-lessons:** — (single file). It promises "a fully functioning UVM testbench by the end of T2"; point that promise at proposed I-UVM-3C and LAB-T2-ENV. Today it has no flashcards.
+- **Sub-lessons:** — (single file). It promises "a fully functioning UVM testbench by the end of T2"; point that promise at I-UVM-3C and LAB-T2-ENV (`uvm-mini-capstone`). Its deck is `I-SV-9_Why_UVM`.
 
 ### I-UVM-1A_Components — I-UVM-1A: UVM Objects and Components
 - **Tier / position:** T2 · after I-SV-9 · before I-UVM-1B · nav #27
@@ -963,7 +963,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - components can be created only during build (uvm-core reports a fatal ILLCRT for later creation; verify);
   - build and connect phases introduced at preview depth (owner I-UVM-1C);
   - UVMTreeExplorer.
-- **Out of scope here (covered in):** overrides (I-UVM-1B); phasing and objections (I-UVM-1C); reporting (proposed I-UVM-1D); policy customization (I-UVM-4); sequences (I-UVM-3A).
+- **Out of scope here (covered in):** overrides (I-UVM-1B); phasing and objections (I-UVM-1C); reporting (I-UVM-1D); policy customization (I-UVM-4); sequences (I-UVM-3A).
 - **Prerequisites:** I-SV-9, I-SV-1.
 - **Feeds milestone:** M2.
 - **Hands-on that should exist:**
@@ -999,22 +999,22 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - parameterized-class registration (`uvm_component_param_utils`) and name vs type lookup;
   - `uvm_coreservice_t` access;
   - FactoryOverrideVisualizer/Explorer (one tested resolver).
-- **Out of scope here (covered in):** `config_db` (I-UVM-2C); callbacks vs factory (A-UVM-5); error-injection strategy (proposed A-UVM-9).
+- **Out of scope here (covered in):** `config_db` (I-UVM-2C); callbacks vs factory (A-UVM-5); error-injection strategy (A-UVM-9).
 - **Prerequisites:** I-UVM-1A.
 - **Feeds milestone:** M2; M8 (error-injection overrides).
 - **Hands-on that should exist:**
   - "Predict the factory" items;
   - a kata: override one agent's driver with an error-injecting subclass by instance path.
-  - The `uvm-mini-capstone` LabLink belongs to proposed I-UVM-3C.
+  - The `uvm-mini-capstone` LabLink belongs to I-UVM-3C, which now owns the lab.
 - **Assessment focus:** misconceptions:
   1. type overrides beat instance overrides;
   2. an override changes objects already created;
   3. `new()` honours overrides;
   4. instance paths are always relative to the test.
-- **Sub-lessons:** — (single file). Its "uvm_root and uvm_report_server Interplay" section belongs to proposed I-UVM-1D.
+- **Sub-lessons:** — (single file). Its "uvm_root and uvm_report_server Interplay" section belongs to I-UVM-1D.
 
 ### I-UVM-1C_UVM_Phasing — I-UVM-1C: UVM Phasing and Synchronization
-- **Tier / position:** T2 · after I-UVM-1B · before I-UVM-2A (proposed I-UVM-1D between) · nav #29
+- **Tier / position:** T2 · after I-UVM-1B · before I-UVM-1D · nav #29
 - **Purpose (one sentence):** Predict the order and concurrency of UVM phases and end a test deliberately with objections, drain time and timeouts.
 - **Objectives (learner will be able to):**
   - Order the common phases (§9.8.1) and classify each:
@@ -1032,8 +1032,8 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - `+UVM_PHASE_TRACE` (uvm-core impl.);
   - UvmPhaseTimelineVisualizer.
 - **Out of scope here (covered in):**
-  - reporting and pass/fail (proposed I-UVM-1D). Today 1B and 1C carry fragments.
-  - custom phases (E-CUST-1); reset strategy (proposed A-UVM-9); sequence-level objections (I-UVM-3A).
+  - reporting and pass/fail (I-UVM-1D). Today 1B and 1C carry fragments.
+  - custom phases (E-CUST-1); reset strategy (A-UVM-9); sequence-level objections (I-UVM-3A).
 - **Prerequisites:** I-UVM-1A.
 - **Feeds milestone:** M2; M3 (end-of-test).
 - **Hands-on that should exist:**
@@ -1048,7 +1048,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). Today it has no `Make It Work` H2.
 
 ### I-UVM-2A_Component_Roles — I-UVM-2A: Component Roles and the Testbench Hierarchy
-- **Tier / position:** T2 · after I-UVM-1C (proposed I-UVM-1D between) · before I-UVM-2B · nav #30
+- **Tier / position:** T2 · after I-UVM-1D · before I-UVM-2B · nav #30
 - **Purpose (one sentence):** Assign bench responsibilities to the standard UVM roles and write the agent, driver, monitor and environment skeletons that implement them.
 - **Objectives (learner will be able to):**
   - Assign each responsibility (stimulus, pin driving, observation, checking, coverage, configuration, orchestration) to sequence, sequencer, driver, monitor, agent, scoreboard, subscriber, env or test.
@@ -1067,7 +1067,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Hands-on that should exist:**
   - `/exercises/uvm-agent-builder`;
   - a kata: active and passive instances of one agent, with `print_topology` compared.
-  - Lab `arbiter-1` (coming soon) fits as the independent variant of proposed I-UVM-3C.
+  - Lab `arbiter-1` (coming soon) fits as the independent variant of I-UVM-3C.
 - **Assessment focus:** misconceptions:
   1. a passive agent still needs a sequencer, or has an idle driver;
   2. a monitor may reuse one object for every sample;
@@ -1139,7 +1139,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). Today it has no quiz questions and no `Push Further`.
 
 ### I-UVM-3A_Fundamentals — I-UVM-3A: Basic UVM Sequences and Items
-- **Tier / position:** T2 · after I-UVM-2C · before I-UVM-3B (proposed I-UVM-3C between) · nav #33
+- **Tier / position:** T2 · after I-UVM-2C · before I-UVM-3C · nav #33
 - **Purpose (one sentence):** Write sequence items and sequences, run them from a test, and implement the driver side of the sequence–sequencer–driver handshake including responses.
 - **Objectives (learner will be able to):**
   - Write a `uvm_sequence_item` with `rand` fields, constraints and `do_copy/do_compare/convert2string` (§14.1).
@@ -1161,7 +1161,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Hands-on that should exist:**
   - a kata: a sequence of N randomized items with response checking;
   - a handshake-visual debug (missing `item_done`).
-  - Move the `uvm-mini-capstone` LabLink to proposed I-UVM-3C.
+  - The `uvm-mini-capstone` LabLink has moved to I-UVM-3C, which now owns the lab.
 - **Assessment focus:** misconceptions:
   1. `finish_item` returns when the item is queued (it returns after `item_done`);
   2. `start_item` randomizes the item;
@@ -1170,7 +1170,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file).
 
 ### I-UVM-3B_Advanced_Sequencing_and_Layering — I-UVM-3B: Advanced Sequencing and Layering
-- **Tier / position:** T2 · after I-UVM-3A (proposed I-UVM-3C between) · before I-UVM-4 · nav #34
+- **Tier / position:** T2 · after I-UVM-3C · before I-UVM-4 · nav #34
 - **Purpose (one sentence):** Coordinate stimulus across sequencers and agents (virtual sequences, arbitration, locking, layering, libraries, interrupts), and debug the hangs and starvation they cause.
 - **Objectives (learner will be able to):**
   - Write a virtual sequence that starts sub-sequences on several agents and enforces an ordering rule (config before data). Provide the handles either through a virtual sequencer (`p_sequencer`, `` `uvm_declare_p_sequencer ``) or from the test.
@@ -1190,7 +1190,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - library selection modes;
   - VirtualSequencerExplorer and SequencerArbitrationSandbox (`SEQ_ARB_WEIGHTED` is not strict priority).
 - **Out of scope here (covered in):** multi-agent environment architecture and cross-agent checking (A-UVM-8); the basic handshake (I-UVM-3A); PSS (E-PSS-1).
-- **Prerequisites:** I-UVM-3A (and proposed I-UVM-3C).
+- **Prerequisites:** I-UVM-3A. I-UVM-3C (#35, just before it) is related reading, not a manifest prerequisite.
 - **Feeds milestone:** M5.
 - **Hands-on that should exist:**
   - `coordinated-attack-lab.mdx` as the guided M5 pre-lab; make it self-checking;
@@ -1285,7 +1285,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 ### Tier 3: Advanced
 
 ### A-UVM-4A_RAL_Fundamentals — A-UVM-4A: RAL Fundamentals
-- **Tier / position:** T3 · after A-UVM-8 (proposed A-UVM-9 between) · before A-UVM-4B · nav #38. Today it is the first T3 module; move it after the env-building block (§3.4).
+- **Tier / position:** T3 · after A-UVM-9 · before A-UVM-4B · nav #38. Today it is the first T3 module; move it after the env-building block (§3.4).
 - **Purpose (one sentence):** Build a register model, connect it to a bus agent through an adapter, and reason about desired, mirrored and DUT values.
 - **Objectives (learner will be able to):**
   - Write a register model for a small spec with RW, RO, W1C and reserved fields, reset values and one memory, using `uvm_reg_field::configure`, `uvm_reg`, `uvm_reg_block`, `uvm_reg_map` and `lock_model` (§18.1–§18.6, §18.1.2.6).
@@ -1374,7 +1374,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - passing data by `ref`;
   - register after build (`connect_phase` or `end_of_elaboration_phase`);
   - CallbackTimingVisualizer.
-- **Out of scope here (covered in):** factory mechanics (I-UVM-1B); `uvm_reg_cbs` (A-UVM-4B); error-injection strategy and expected-error accounting (proposed A-UVM-9).
+- **Out of scope here (covered in):** factory mechanics (I-UVM-1B); `uvm_reg_cbs` (A-UVM-4B); error-injection strategy and expected-error accounting (A-UVM-9).
 - **Prerequisites:** I-UVM-1B, I-UVM-2A, A-UVM-7.
 - **Feeds milestone:** M8 (error injection).
 - **Hands-on that should exist:**
@@ -1404,10 +1404,10 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - summary statistics, with the M3 log signature `SCB_SUMMARY matches=N mismatches=0 pending=0`;
   - DUT reordering vs protocol reordering (link B-AXI-6);
   - ScoreboardMatchingVisualizer (in-order, per-ID, end-of-test).
-- **Out of scope here (covered in):** AXI per-ID application (B-AXI-6); coverage (I-SV-3A/3B); register prediction (A-UVM-4B); expected-error strategy (proposed A-UVM-9; only the basic version here).
-- **Prerequisites:** I-UVM-2B, I-UVM-4, I-UVM-3A (and proposed I-UVM-3C).
+- **Out of scope here (covered in):** AXI per-ID application (B-AXI-6); coverage (I-SV-3A/3B); register prediction (A-UVM-4B); expected-error strategy (A-UVM-9; only the basic version here).
+- **Prerequisites:** I-UVM-2B, I-UVM-4, I-UVM-3A. I-UVM-3C is review reading, not a manifest prerequisite.
 - **Feeds milestone:** M3 (gate).
-- **Hands-on that should exist:** Lab `scoreboard-reference-model` (owned; fix the accounting, LAB-S1) with the M3 mutants: dropped output, wrong opcode, extra output, zero-transaction run. `axi-scoreboard-lab` is linked as the out-of-order application. Move `uvm-mini-capstone` to proposed I-UVM-3C.
+- **Hands-on that should exist:** Lab `scoreboard-reference-model` (owned; fix the accounting, LAB-S1) with the M3 mutants: dropped output, wrong opcode, extra output, zero-transaction run. `axi-scoreboard-lab` is linked as the out-of-order application. `uvm-mini-capstone` is now owned by I-UVM-3C; this page links it as review.
 - **Assessment focus:** misconceptions:
   1. `==` on handles compares transactions;
   2. zero mismatches means pass (it ignores zero transactions and leftovers);
@@ -1431,7 +1431,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - responder (slave) agents and reactive sequences (P1 gap);
   - VIP self-tests; versioning; documentation;
   - passive reuse at SoC level.
-- **Out of scope here (covered in):** multi-agent coordination (A-UVM-8); callbacks (A-UVM-5); reset and error-injection strategy (proposed A-UVM-9); SoC reuse strategy (E-SOC-1).
+- **Out of scope here (covered in):** multi-agent coordination (A-UVM-8); callbacks (A-UVM-5); reset and error-injection strategy (A-UVM-9); SoC reuse strategy (E-SOC-1).
 - **Prerequisites:** I-UVM-2A, I-UVM-2C, I-UVM-3A, A-UVM-6, F4C, I-SV-4A.
 - **Feeds milestone:** M2 (gate: reusable active and passive agent).
 - **Hands-on that should exist:**
@@ -1445,7 +1445,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). E2E pins its H1 title text.
 
 ### A-UVM-8_Multi_Agent_Topologies — A-UVM-8: Multi-Agent Topologies
-- **Tier / position:** T3 · after A-UVM-5 · before A-UVM-4A (proposed A-UVM-9 between) · nav #43 (today followed by B-AHB-1)
+- **Tier / position:** T3 · after A-UVM-5 · before A-UVM-9 · nav #43 (today followed by B-AHB-1)
 - **Purpose (one sentence):** Architect environments with several agents and sub-environments, and coordinate their stimulus and checking with virtual sequences and synchronization objects without hangs.
 - **Objectives (learner will be able to):**
   - Design a multi-agent env (env of envs, per-agent config objects, virtual-sequencer handles) for a DUT with configuration and data interfaces.
@@ -1461,7 +1461,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - block → subsystem reuse;
   - `grab`/`lock` in multi-agent stimulus;
   - MultiAgentCoordinationVisualizer (including reset modes).
-- **Out of scope here (covered in):** virtual-sequence mechanics (I-UVM-3B owns them; link instead of re-teaching); VIP construction (A-UVM-7); SoC strategy (E-SOC-1); reset strategy (proposed A-UVM-9).
+- **Out of scope here (covered in):** virtual-sequence mechanics (I-UVM-3B owns them; link instead of re-teaching); VIP construction (A-UVM-7); SoC strategy (E-SOC-1); reset strategy (A-UVM-9).
 - **Prerequisites:** I-UVM-3B, A-UVM-7, I-SV-5.
 - **Feeds milestone:** M5 (gate).
 - **Hands-on that should exist:** **LAB-M5** (not built): config agent plus data agent, with an ordering assertion and a hidden mutant virtual sequence. `I-UVM-3B/coordinated-attack-lab` is the pre-lab.
@@ -1472,7 +1472,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). E2E pins its H1 title text.
 
 ### B-AHB-1_AHB_Design_Timing_Mechanics — AHB Protocol Design & Timing
-- **Tier / position:** T3 · after B-AMBA-2 (proposed B-APB-1 between) · before B-AHB-2 · nav #44 (today right after A-UVM-8, before the AMBA intro)
+- **Tier / position:** T3 · after B-APB-1 · before B-AHB-2 · nav #44 (today right after A-UVM-8, before the AMBA intro)
 - **Purpose (one sentence):** Read and predict AHB transfers: pipelined address and data phases, wait states, transfer types and bursts.
 - **Objectives (learner will be able to):**
   - Predict the address and data phases of back-to-back transfers and the effect of `HREADY` low on both (IHI0033B.b §3.1, §3.6).
@@ -1555,7 +1555,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - AXI4-Stream and APB (cite documents; mark section numbers unverified);
   - terminology: master/slave as in the cited issues (§5.1);
   - AMBA family explorer (e2e test id `amba-family-explorer`).
-- **Out of scope here (covered in):** protocol details (proposed B-APB-1, B-AHB-*, B-AXI-*); coherency (B-AMBA-F2).
+- **Out of scope here (covered in):** protocol details (B-APB-1, B-AHB-*, B-AXI-*); coherency (B-AMBA-F2).
 - **Prerequisites:** I-UVM-2A (T2 complete).
 - **Feeds milestone:** M6 (context).
 - **Hands-on that should exist:** a protocol-selection exercise (5 IP descriptions).
@@ -1566,7 +1566,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). Today it has no `## Quick Take` H2 and no template H2s.
 
 ### B-AMBA-2_Protocol_Intuition_and_Memory_Hooks — AMBA Protocol Intuition & Memory Hooks
-- **Tier / position:** T3 · after B-AMBA-1 · before B-AHB-1 (proposed B-APB-1 between) · nav #48 (today followed by B-AMBA-F1). Frontmatter `order: 2`.
+- **Tier / position:** T3 · after B-AMBA-1 · before B-APB-1 · nav #48 (today followed by B-AMBA-F1). Frontmatter `order: 2`.
 - **Purpose (one sentence):** Build durable intuition for AMBA channel roles and the VALID/READY handshake with analogies whose limits are stated.
 - **Objectives (learner will be able to):**
   - Explain shared-bus (AHB) vs point-to-point channels (AXI) with an analogy, and state where each analogy breaks.
@@ -1838,7 +1838,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   1. a custom phase runs without `exec_task`/`exec_func`;
   2. custom phases are the standard way to add reset or configuration steps;
   3. forking uvm-core is acceptable for team conventions.
-- **Sub-lessons:** — (single file). Today it has no quiz.
+- **Sub-lessons:** — (single file). It has an 11-question quiz.
 
 ### E-DBG-1_Advanced_UVM_Debug_Methodologies — E-DBG-1: Advanced UVM Debug Methodologies
 - **Tier / position:** T4 · after B-AMBA-F3 · before E-CUST-1 · manifest #63 (core). The **first T4 module**.
@@ -1866,10 +1866,10 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   2. a catcher that demotes every error is a fix;
   3. the same seed reproduces a failure after a rebuild with changed code.
 - **Sub-lessons:**
-  - `effective-debug.mdx`: a 43-line stub (first failure, visibility, reproduce/compare/shrink). Fold it into the index or expand it.
-  - `hang-lab.mdx`: guided hang triage.
+  - `effective-debug.mdx`, "Systematic Debug: Reproduce, Isolate, Hypothesize, Confirm": first failure, signatures and bucketing, exact reproduction, isolation, shrink and lock-in;
+  - `hang-lab.mdx`, "Hang Triage: Objections, Timeouts and Heartbeats": hang families, timeouts and `uvm_heartbeat`.
 
-  Both lack frontmatter and the template.
+  Both now use YAML frontmatter, the six template H2s, their own decks (`E-DBG-1_Effective_Debug`, `E-DBG-1_Hang_Lab`) and a quiz.
 
 ### E-EMU-1_Emulation_Aware_Verification — E-EMU-1: Emulation-Aware Verification
 - **Tier / position:** T4 · after E-SOC-1 · before E-PYUVM-1 · manifest #70 (elective; the first of the five T4 electives, after the core path). Its prerequisite E-PERF-1 (#65) is on the core path before it.
@@ -1918,7 +1918,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   1. every counterexample is a design bug;
   2. a proof under over-constrained assumptions proves the design;
   3. constraints and assumptions are interchangeable.
-- **Sub-lessons:** — (single file). Today it has no quiz.
+- **Sub-lessons:** — (single file). It has a 10-question quiz.
 
 ### E-PERF-1_UVM_Performance — E-PERF-1: UVM Performance
 - **Tier / position:** T4 · after E-CUST-1 · before E-INT-1 · manifest #65 (core)
@@ -1929,15 +1929,15 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - Plan regression throughput: selection, parallelism, licence and queue limits.
   - Explain which scheduler behaviours cost time (polling vs event waits, `#0`, excess iterations) without re-teaching scheduling.
 - **Must cover:** measurement discipline; an illustrative-data label on every number.
-- **Out of scope here (covered in):** scheduling semantics (F3B/F3C). Today its "Clause 4: The Event Scheduler" section re-teaches them with false claims; link instead. Also out of scope: emulation (E-EMU-1).
+- **Out of scope here (covered in):** scheduling semantics (F3B/F3C; the page links them and teaches only what scheduling costs); emulation (E-EMU-1).
 - **Prerequisites:** I-UVM-1C, A-UVM-6, I-UVM-1D.
 - **Feeds milestone:** M8.
-- **Hands-on that should exist:** Lab `uvm-performance-1` (coming soon; owned); a kata: a profile-guided fix of a verbose monitor.
+- **Hands-on that should exist:** Lab `uvm-performance-1` (available; owned; module prerequisites I-UVM-1C and A-UVM-6); a kata: a profile-guided fix of a verbose monitor.
 - **Assessment focus:** misconceptions:
   1. mixing `=` and `<=` causes infinite delta loops;
   2. TLM FIFOs add parallelism;
   3. a direct `uvm_report_info(…, $sformatf(…))` is as cheap as the guarded macro when filtered.
-- **Sub-lessons:** — (single file). Today it has no quiz and its Next has no link.
+- **Sub-lessons:** — (single file). It has a 13-question quiz, and `<NextLesson />` gives its Next.
 
 ### E-PSS-1_Portable_Stimulus_Standard — E-PSS-1: Portable Stimulus Standard
 - **Tier / position:** T4 · after E-INT-1 · before E-PWR-1 · manifest #67 (core). The E-PSS-1 → E-PWR-1 adjacency is e2e-pinned by `learner-flow.spec.ts`.
@@ -1961,7 +1961,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   3. PSS replaces UVM.
 
   **Keep the release-tested quiz question, the LabLink and the H1 title.**
-- **Sub-lessons:** — (single file). E-SOC-1/`pss.mdx` duplicates it (§3.2).
+- **Sub-lessons:** — (single file). E-SOC-1/`pss.mdx` is a short SoC-planning bridge that links here (§3.2).
 
 ### E-PWR-1_Power_Aware_Verification — Power-Aware UVM Verification Strategy
 - **Tier / position:** T4 · after E-PSS-1 · before E-SOC-1 · manifest #68 (core). Must keep both a Previous and a Next link (release test).
@@ -1974,7 +1974,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Must cover:**
   - objections and phases across power events;
   - stopping stimulus safely (`stop_sequences`/`kill` §14.2.5.11, or flags; callbacks do not abort sequences).
-- **Out of scope here (covered in):** UPF syntax (I-SV-8); reset strategy basics (proposed A-UVM-9).
+- **Out of scope here (covered in):** UPF syntax (I-SV-8); reset strategy basics (A-UVM-9).
 - **Prerequisites:** I-SV-8, A-UVM-8, I-SV-4A.
 - **Feeds milestone:** M8.
 - **Hands-on that should exist:** Lab `power-aware-retention` (owned). Keep its title and its `/practice/lab/` LabLink (release test).
@@ -1982,7 +1982,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   1. callbacks can abort a running sequence;
   2. powered-down outputs read as 0;
   3. scoreboards keep comparing through a power cycle.
-- **Sub-lessons:** — (single file). Today it has a `#` H1, no `## Quick Take`, no quiz, and a stray `order: 2`. **Do not change the title** "Power-Aware UVM Verification Strategy".
+- **Sub-lessons:** — (single file). It now has no body H1, the six template H2s, an 11-question quiz and no `order`. **Do not change the title** "Power-Aware UVM Verification Strategy".
 
 ### E-PYUVM-1_Python_Based_Verification — E-PYUVM-1: Python-Based Verification
 - **Tier / position:** T4 · after E-EMU-1 · before E-UVM-ML-1 · manifest #71 (elective)
@@ -2036,8 +2036,8 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - interconnect monitors and liveness properties;
   - CDC/RDC awareness (P2);
   - the M8 capstone link.
-- **Out of scope here (covered in):** PSS language (E-PSS-1); emulation (E-EMU-1); power details (E-PWR-1); reset and error mechanics (proposed A-UVM-9).
-- **Prerequisites:** A-UVM-8, A-UVM-4B, E-DBG-1 (and proposed A-UVM-9).
+- **Out of scope here (covered in):** PSS language (E-PSS-1); emulation (E-EMU-1); power details (E-PWR-1); reset and error mechanics (A-UVM-9).
+- **Prerequisites:** A-UVM-8, A-UVM-4B, E-DBG-1. A-UVM-9 is recommended reading (the page leans on it for the reset and error rows of its scenario matrix), not a manifest prerequisite.
 - **Feeds milestone:** M8 (gate).
 - **Hands-on that should exist:**
   - Labs `soc-vip-reuse` and `soc-strategy-capstone` (owned; `soc-vip-reuse` lists lab prerequisite `uvm-mini-capstone`);
@@ -2046,7 +2046,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   1. auto-predict keeps the mirror right when firmware writes;
   2. block scoreboards transfer to SoC unchanged;
   3. SoC closure is the union of block coverage.
-- **Sub-lessons:** `pss.mdx` duplicates E-PSS-1 and cites a wrong standard number; merge it into E-PSS-1 and redirect (P2). Today the index has no quiz.
+- **Sub-lessons:** `pss.mdx`, "Portable Stimulus in an SoC Strategy": a short bridge on placing PSS in an SoC plan; it assumes E-PSS-1 and corrects the IEEE-number myth. The index has a 12-question quiz.
 
 ### E-UVM-ML-1_Multi_Language_Verification — E-UVM-ML-1: Multi-Language Verification
 - **Tier / position:** T4 · after E-PYUVM-1 · before E-RISCV-1 · manifest #72 (elective)
@@ -2085,14 +2085,14 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 | I-SV-1 nav order (copying-and-cloning before polymorphism-pitfalls) | virtual dispatch and `$cast` used by `clone()` | polymorphism-pitfalls | Reorder |
 | I-SV-3B nav order (closure → apis → linking) | plan linkage, query APIs | linking-coverage, coverage-apis | Reverse |
 | I-UVM-1A/1B (`build_phase`, `connect_phase`) | phase semantics | I-UVM-1C | 1A introduces both at preview depth; 1C owns them |
-| I-UVM-2A (agent and monitor code) | analysis ports; `config_db` get | I-UVM-2B; I-UVM-2C | Labelled previews; assembled in proposed I-UVM-3C |
+| I-UVM-2A (agent and monitor code) | analysis ports; `config_db` get | I-UVM-2B; I-UVM-2C | Labelled previews; assembled in I-UVM-3C |
 | I-UVM-3A (field macros, `do_copy/do_compare`) | object methods and policies | I-UVM-4 (after 3B) | I-UVM-1A owns object-method basics |
-| All T2 UVM lessons (`uvm_info/uvm_error`, `run_test`, log reading) | reporting and run control | E-DBG-1 (T4) only | Proposed I-UVM-1D (P0) |
-| T2 links to `uvm-mini-capstone` as a "Capstone Checkpoint" (I-UVM-1B, 2A, 2B, 3A) | full env including scoreboard; the lab is owned by A-UVM-6 with T3 lab prerequisites | A-UVM-6 | Re-own under proposed I-UVM-3C and drop the T3 prerequisites |
+| All T2 UVM lessons (`uvm_info/uvm_error`, `run_test`, log reading) | reporting and run control | E-DBG-1 (T4) only | I-UVM-1D (P0; added in the quality program) |
+| T2 links to `uvm-mini-capstone` as a "Capstone Checkpoint" (I-UVM-1B, 2A, 2B, 3A) | full env including scoreboard; the lab is owned by A-UVM-6 with T3 lab prerequisites | A-UVM-6 | Done: I-UVM-3C owns it; its only lab prerequisite is `scoreboard-decoupling` (T2) |
 | I-UVM-3B nav order (lab first, handshake sixth) | handshake, virtual sequences | sub-lessons 1–2 | Authored order (I-UVM-3B card) |
-| I-SV-9 ("a fully functioning UVM testbench by the end of T2") | complete env | none in T2 | Proposed I-UVM-3C |
+| I-SV-9 ("a fully functioning UVM testbench by the end of T2") | complete env | none in T2 | I-UVM-3C (added in the quality program) |
 | A-UVM-4A/4B as the first T3 modules | scoreboard-style prediction; callbacks (`uvm_reg_cbs`) | A-UVM-6, A-UVM-5 | Move RAL after A-UVM-8 |
-| A-UVM-7, A-UVM-8 (and I-UVM-2A) use APB examples | APB protocol | none | Proposed B-APB-1, or define the APB subset inline |
+| A-UVM-7, A-UVM-8 (and I-UVM-2A) use APB examples | APB protocol | none | B-APB-1 (added in the quality program), or define the APB subset inline |
 | B-AHB-1..3 before B-AMBA-1/2; B-AMBA-F1/F2/F3 before any B-AXI | family intro; AXI | B-AMBA-1/2; B-AXI-* | Honour frontmatter `order` (PLAT-2) |
 | E-AI-1 (nav first in T4) requires E-PYUVM-1; E-EMU-1 (nav before E-PERF-1) says to optimize simulation first | — | — | Intended T4 order (§3.4) |
 | Six available UVM labs list `simple-dut-1` (coming soon; owner "F4", not a module id; README is a non-UVM first TB) as a lab prerequisite | — | — | Done: `simple-dut-1` is F2E's M0 lab (available, owner F2E); no available lab lists it any more, only `arbiter-1` (coming soon) does (Appendix B) |
@@ -2119,14 +2119,14 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 | RAL prediction | A-UVM-4B index, explicit-vs-implicit | explicit-vs-implicit | Index summarizes |
 | 4KB boundary | B-AXI-2, B-AXI-5, B-AMBA-F1, B-AMBA-F3 | B-AXI-2 | Others link and apply |
 | VALID/READY handshake | B-AMBA-2, B-AXI-1 | B-AXI-1 (normative) | B-AMBA-2 intuition only |
-| PSS | E-PSS-1, E-SOC-1/pss | E-PSS-1 | Merge and redirect |
+| PSS | E-PSS-1, E-SOC-1/pss | E-PSS-1 | E-SOC-1/pss is a short SoC-planning bridge that links E-PSS-1 |
 | UPF | I-SV-8, E-PWR-1 | I-SV-8 (language); E-PWR-1 (verification) | — |
 | `uvm_event`/`uvm_barrier` | I-SV-5/events, I-UVM-1C, I-UVM-5, A-UVM-8 | I-UVM-1C (semantics) | I-UVM-5 owns pools; A-UVM-8 applies |
-| Debug switches and hang triage | I-UVM-1C, I-UVM-3B handshake, E-DBG-1 | proposed I-UVM-1D (basics); I-UVM-1C (objections, timeouts); E-DBG-1 (methodology) | — |
+| Debug switches and hang triage | I-UVM-1C, I-UVM-3B handshake, E-DBG-1 | I-UVM-1D (basics); I-UVM-1C (objections, timeouts); E-DBG-1 (methodology) | — |
 | Recording | I-UVM-6, I-UVM-4, E-DBG-1 | I-UVM-6 | I-UVM-4 covers `uvm_recorder` as a policy |
 | Seeds and reproducibility | I-SV-2B/randomization-methods, E-DBG-1, E-SOC-1 | I-SV-2B (semantics); E-DBG-1 (workflow) | E-SOC-1 strategy |
 | Coverage closure | I-SV-3B, E-AI-1, E-SOC-1 | I-SV-3B | Others apply |
-| Error injection | I-UVM-1B, A-UVM-5, A-UVM-7 | proposed A-UVM-9 (strategy) | 1B and A-UVM-5 own the mechanisms |
+| Error injection | I-UVM-1B, A-UVM-5, A-UVM-7 | A-UVM-9 (strategy) | 1B and A-UVM-5 own the mechanisms |
 
 ### 3.3 Navigation-order and "Next"-link problems
 
@@ -2135,40 +2135,40 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
    - **T4:** alphabetical, so E-AI-1 comes first.
    - **T3:** RAL first.
    - **Sub-lessons:** I-UVM-3B, F2D, I-SV-1, I-SV-3B and A-UVM-4B are in the wrong order (cards above).
-2. **Stray or ignored `order` values:** I-SV-8 `order: 8`, E-PWR-1 `order: 2`.
+2. **Stray or ignored `order` values:** I-SV-8 `order: 8`, E-PWR-1 `order: 2`. Both are now removed.
 3. **Authored "Next" links that skip or leave the path:**
    - I-UVM-6 → E-DBG-1 (skips all of T3);
    - A-UVM-4B → "Move to Tier-4…" (no link);
    - A-UVM-8 → E-SOC-1 (skips AMBA);
    - E-SOC-1 and E-PERF-1 have vague or no links;
-   - I-SV-8 has no Next;
+   - I-SV-8 had no Next (now `<NextLesson />`, Next A-UVM-6);
    - B-AMBA-2's text says "next module… AHB" while nav goes to F1;
    - AMBA-F1/F2/F3 and AHB-1/2/3 have no References & Next Topics section;
    - prerequisite claims in E-AI-1 (E-PYUVM-1) and E-EMU-1 (E-PERF-1) contradict today's nav.
 4. **Three link styles coexist:** relative `../X/`, absolute `/curriculum/T…/…/index`, and lowercase pretty slugs (`/curriculum/t2-intermediate/…`). Standardize per §5.9.
 5. **Frontmatter defects:**
    - I-UVM-6 uses `flashcardId`;
-   - I-SV-8 and I-SV-9 have no deck;
+   - I-SV-8 and I-SV-9 had no deck (both have one now);
    - 30 of the 36 sub-lessons use `export const metadata` (titles carry " | Series" suffixes) and an `<InfoPage>` that renders a second H1; 33 sub-lessons have no deck;
    - B-AXI-1/2/3 and B-AMBA-F2 `sources:` cite IHI0022H while the verified text is IHI0022E.
-6. **I-SV-8 placement.** It stays in T2 as an elective and hard prerequisite of E-PWR-1; fix its Next link to I-SV-9. Moving the folder into T4 before E-PWR-1 (P2) would need a redirect and would break the `learner-flow` E-PSS-1 → E-PWR-1 adjacency unless placed elsewhere.
+6. **I-SV-8 placement.** It stays in T2 as an elective and hard prerequisite of E-PWR-1. The manifest places it at #40, after I-UVM-6: its Prev is I-UVM-6 and its Next (`<NextLesson />`) is A-UVM-6, while core lessons skip it, so I-SV-7 → I-SV-9 and I-UVM-6 → A-UVM-6. Moving the folder into T4 before E-PWR-1 (P2) would need a redirect and would break the `learner-flow` E-PSS-1 → E-PWR-1 adjacency unless placed elsewhere.
 
 ### 3.4 Intended order (spine order)
 
-Proposed modules are in *italics*. "nav #" is the 2026-10-03 alphabetical position. The "#" column is the order in `content/curriculum/curriculum.manifest.json`, which now drives navigation.
+"nav #" is the 2026-10-03 alphabetical position ("—" for the five modules added in the quality program). The "#" column is the order in `content/curriculum/curriculum.manifest.json`, which now drives navigation.
 
 | # | Module | nav # | Note |
 |---|---|---|---|
 | **T1** | | | |
 | 1–7 | F1A, F1B, F1C, F2A, F2B, F2C, F2D | 1–7 | unchanged |
-| 8 | *F2E First Self-Checking Testbench* | — | proposed (M0 gate) |
+| 8 | F2E First Self-Checking Testbench | — | added in the quality program (M0 gate) |
 | 9–14 | F3A, F3B, F3C, F4A, F4B, F4C | 8–13 | unchanged |
 | **T2** | | | |
 | 15–25 | I-SV-1, I-SV-2A, I-SV-2B, I-SV-3A, I-SV-3B, I-SV-4A, I-SV-4B, I-SV-4C, I-SV-5, I-SV-6, I-SV-7 | 14–24 | unchanged |
 | 26–29 | I-SV-9, I-UVM-1A, I-UVM-1B, I-UVM-1C | 26–29 | unchanged |
-| 30 | *I-UVM-1D Reporting, Run Control and Pass/Fail* | — | proposed |
+| 30 | I-UVM-1D Reporting, Run Control and Pass/Fail | — | added in the quality program |
 | 31–34 | I-UVM-2A, I-UVM-2B, I-UVM-2C, I-UVM-3A | 30–33 | unchanged |
-| 35 | *I-UVM-3C First Complete Testbench* | — | proposed (M2 gate for T2); folder sorts after 3B if PLAT-2 is not done |
+| 35 | I-UVM-3C First Complete Testbench | — | added in the quality program (M2 gate for T2) |
 | 36–39 | I-UVM-3B, I-UVM-4, I-UVM-5, I-UVM-6 | 34–37 | unchanged |
 | 40 | I-SV-8 | 25 | elective, after the T2 core path (manifest); prerequisite of E-PWR-1 |
 | **T3** | | | |
@@ -2176,10 +2176,10 @@ Proposed modules are in *italics*. "nav #" is the 2026-10-03 alphabetical positi
 | 42 | A-UVM-7 | 42 | |
 | 43 | A-UVM-5 | 40 | after VIP |
 | 44 | A-UVM-8 | 43 | |
-| 45 | *A-UVM-9 Reset Handling and Error Injection* | — | proposed |
+| 45 | A-UVM-9 Reset Handling and Error Injection | — | added in the quality program |
 | 46–47 | A-UVM-4A, A-UVM-4B | 38–39 | RAL after the env block |
 | 48–49 | B-AMBA-1, B-AMBA-2 | 47–48 | authored `order` 1–2 |
-| 50 | *B-APB-1 APB Protocol & Verification* | — | proposed |
+| 50 | B-APB-1 APB Protocol & Verification | — | added in the quality program |
 | 51–53 | B-AHB-1, B-AHB-2, B-AHB-3 | 44–46 | |
 | 54–59 | B-AXI-1 … B-AXI-6 | 52–57 | |
 | 60–62 | B-AMBA-F1, B-AMBA-F2, B-AMBA-F3 | 49–51 | authored `order` 12–14 |
@@ -2251,14 +2251,14 @@ Priority definitions:
 | G12 | Routing SVA failures into UVM reporting; `$assertoff` control from tests | A-UVM-7 (VIP interfaces); pointer from I-UVM-1D | P1 | False passes (audit F-VIP-01) |
 | G13 | Regression management, seed-based reproduction, failure bucketing, CI gates | E-DBG-1 (workflow) + I-SV-2B/randomization-methods (random stability) | P1 | Coverage-matrix row "seeds, regression, triage, CI" is explain-only |
 | G14 | Verification planning (features → scenarios → checks → coverage, traceability) | F1B (intro) + I-SV-3B/linking-coverage + E-SOC-1 | P1 | Practitioners plan before coding; today it is scattered |
-| G15 | Compile and run recipes and tool portability (SV and UVM; open-source options and their limits) | Proposed F2E (SV) and I-UVM-1D (UVM) + the "Run it" standard (§5.2) | P1 | Audit: "no compile/run instructions"; tool portability is never taught |
+| G15 | Compile and run recipes and tool portability (SV and UVM; open-source options and their limits) | F2E (SV) and I-UVM-1D (UVM) + the "Run it" standard (§5.2) | P1 | Audit: "no compile/run instructions"; tool portability is never taught |
 | G16 | UVM object API basics (`copy/clone/compare/print/convert2string`, `do_*`, field macros) before sequences | I-UVM-1A | P1 | Used from I-UVM-3A; policy depth arrives only in I-UVM-4 |
 | G17 | Code coverage types (statement, branch, condition, toggle, FSM), exclusions and merging | F1B (types) + I-SV-3B/closure-workflow | P2 | Sign-off uses both; 0 occurrences of the types |
 | G18 | `uvm_heartbeat` (§10.6) | E-DBG-1 | P2 | Hang detection; 0 occurrences |
 | G19 | UVM TLM-2 (generic payload, `b_transport`/`nb_transport`, sockets; §12.3) | E-UVM-ML-1 (+ I-UVM-2B Push Further) | P2 | SystemC model integration; 0 occurrences of payload or sockets |
 | G20 | RAL coverage (`build_coverage`/`UVM_CVR_*`), user frontdoor (§19.4.2), `uvm_reg_cbs` (§18.11) | A-UVM-4B | P2 | 0 occurrences |
 | G21 | `use_response_handler` and response-queue depth (§14.2.7.1) | I-UVM-3B/sequencer-driver-handshake | P2 | Out-of-order responses |
-| G22 | `uvm_cmdline_processor` and custom plusargs in UVM (G.1); `+uvm_set_default_sequence` (G.2.9) | Proposed I-UVM-1D; I-UVM-3A Push Further | P2 | 0 occurrences |
+| G22 | `uvm_cmdline_processor` and custom plusargs in UVM (G.1); `+uvm_set_default_sequence` (G.2.9) | I-UVM-1D; I-UVM-3A Push Further | P2 | 0 occurrences |
 | G23 | SVA `first_match` (§16.9.8), `until`/`s_eventually`/strong-weak (§16.12.12–13), `expect` (§16.17), abort properties | I-SV-4B | P2 | `first_match` and `expect` occur in no lesson |
 | G24 | Constraint features: `unique` (§18.5.4), functions in constraints (§18.5.11), `randomize(null)`/inline control (§18.11), static constraints | I-SV-2B | P2 | `unique` and `randomize(null)` occur in no lesson |
 | G25 | Parameterized interfaces and virtual-interface typedefs for VIP (§25.8) | A-UVM-7 (+ F4B awareness) | P2 | 0 occurrences |
@@ -2267,10 +2267,12 @@ Priority definitions:
 | G28 | IEEE 1800-2023 additions (triple-quoted strings §5.9, weak references §8.30, `:initial/:extends/:final` §8.20, array `map()` §7.12.5) | F1C overview + owning modules | P2 | Currency with the 2023 revision |
 | G29 | Gate-level simulation and X-propagation in GLS | F2A Push Further + E-PWR-1 | P2 | Practitioner awareness |
 
-### 4.2 Intent cards for proposed modules
+### 4.2 Intent cards for modules added in the quality program
 
-### F2E_First_Self_Checking_Testbench (proposed) — F2E: Your First Self-Checking Testbench
-- **Tier / position:** T1 · after F2D · before F3A
+These five modules began as proposals and are now in the manifest. The cards keep their original intent.
+
+### F2E_First_Self_Checking_Testbench (added in the quality program) — F2E: Your First Self-Checking Testbench
+- **Tier / position:** T1 · after F2D · before F3A · manifest #8 (core)
 - **Purpose (one sentence):** Assemble a complete directed, self-checking testbench for a small clocked DUT that prints `PASS=<n> FAIL=<m>` and fails loudly when the DUT is wrong.
 - **Objectives (learner will be able to):**
   - Write a top module with timescale, clock and reset generation, and a DUT instance.
@@ -2290,15 +2292,15 @@ Priority definitions:
 - **Out of scope here (covered in):** interfaces and clocking blocks (F4B/F4C); classes (I-SV-1); randomization (I-SV-2A).
 - **Prerequisites:** F1B, F2A, F2B, F2C, F2D.
 - **Feeds milestone:** M0 (gate).
-- **Hands-on that should exist:** Lab `simple-dut-1` re-scoped to M0, runner-graded with a stuck-bit mutant (LAB-M0).
+- **Hands-on that should exist:** Lab `simple-dut-1` re-scoped to M0, runner-graded with a stuck-bit mutant (LAB-M0). Done: `simple-dut-1` is available and owned by F2E.
 - **Assessment focus:** misconceptions:
   1. a bench that prints PASS is correct;
   2. `$error` ends the test;
   3. `if (actual != expected)` catches X outputs (it evaluates to x, so the branch is not taken).
 - **Sub-lessons:** —
 
-### I-UVM-1D_Reporting_and_Run_Control (proposed) — I-UVM-1D: Reporting, Run Control and Pass/Fail
-- **Tier / position:** T2 · after I-UVM-1C · before I-UVM-2A
+### I-UVM-1D_Reporting_and_Run_Control (added in the quality program) — I-UVM-1D: Reporting, Run Control and Pass/Fail
+- **Tier / position:** T2 · after I-UVM-1C · before I-UVM-2A · manifest #30 (core)
 - **Purpose (one sentence):** Run a UVM test from the command line and decide from its log whether it passed, controlling message severity, verbosity and actions.
 - **Objectives (learner will be able to):**
   - Write `` `uvm_info/warning/error/fatal `` with IDs (B.1), and predict which INFO messages print at a verbosity (`uvm_report_enabled`, §6.3.3.2).
@@ -2324,8 +2326,8 @@ Priority definitions:
   4. `run_test("x")` wins over `+UVM_TESTNAME`.
 - **Sub-lessons:** —
 
-### I-UVM-3C_First_Complete_Testbench (proposed) — I-UVM-3C: Your First Complete UVM Testbench
-- **Tier / position:** T2 · after I-UVM-3A · before I-UVM-3B (needs PLAT-2; without it the folder sorts after I-UVM-3B, an acceptable fallback)
+### I-UVM-3C_First_Complete_Testbench (added in the quality program) — I-UVM-3C: Your First Complete UVM Testbench
+- **Tier / position:** T2 · after I-UVM-3A · before I-UVM-3B · manifest #35 (core)
 - **Purpose (one sentence):** Assemble, compile, run and debug a complete single-agent UVM testbench for a small DUT, ending with an analysis-FIFO scoreboard and a clean report.
 - **Objectives (learner will be able to):**
   - Write the top module: clock and reset, DUT, interface with clocking blocks, a `uvm_config_db` vif set, and `run_test()`.
@@ -2340,17 +2342,17 @@ Priority definitions:
   - scoreboard summary;
   - an optional coverage subscriber.
 - **Out of scope here (covered in):** virtual sequences (I-UVM-3B); reference models and out-of-order matching (A-UVM-6); VIP packaging (A-UVM-7).
-- **Prerequisites:** I-UVM-2A, I-UVM-2B, I-UVM-2C, I-UVM-3A, proposed I-UVM-1D.
+- **Prerequisites:** I-UVM-2A, I-UVM-2B, I-UVM-2C, I-UVM-3A, I-UVM-1D.
 - **Feeds milestone:** M2 (T2 gate); M3 seed.
-- **Hands-on that should exist:** **LAB-T2-ENV**: re-own `uvm-mini-capstone` (fix the LAB-C1/C2 monitor sampling, drop the T3 lab prerequisites, gate the solution). Independent variant: `arbiter-1` built from spec without TODOs.
+- **Hands-on that should exist:** **LAB-T2-ENV**: re-own `uvm-mini-capstone` (fix the LAB-C1/C2 monitor sampling, drop the T3 lab prerequisites, gate the solution). Independent variant: `arbiter-1` built from spec without TODOs. Done: `uvm-mini-capstone` is available and owned by I-UVM-3C, with the monitor-sampling fix.
 - **Assessment focus:** misconceptions:
   1. the run ends when the sequence ends, without objections;
   2. a scoreboard that saw zero transactions passed;
   3. setting the vif from the test by hierarchical reference is equivalent to setting it in the top module.
 - **Sub-lessons:** —
 
-### A-UVM-9_Reset_and_Error_Injection (proposed) — A-UVM-9: Reset Handling and Error Injection
-- **Tier / position:** T3 · after A-UVM-8 · before A-UVM-4A
+### A-UVM-9_Reset_and_Error_Injection (added in the quality program) — A-UVM-9: Reset Handling and Error Injection
+- **Tier / position:** T3 · after A-UVM-8 · before A-UVM-4A · manifest #45 (core)
 - **Purpose (one sentence):** Make agents, scoreboards and tests behave correctly when reset is asserted mid-traffic and when errors are injected on purpose, while real failures are still caught.
 - **Objectives (learner will be able to):**
   - Write reset-aware drivers (stop, release the current item safely, wait for deassertion) and monitors (discard partial transactions), and flush scoreboard expectations on reset.
@@ -2363,7 +2365,7 @@ Priority definitions:
   - objections across reset;
   - MultiAgentCoordinationVisualizer reset modes (none, flush, restart).
 - **Out of scope here (covered in):** callback mechanics (A-UVM-5); power sequencing (E-PWR-1); SoC reset strategy (E-SOC-1).
-- **Prerequisites:** A-UVM-5, A-UVM-6, A-UVM-8, proposed I-UVM-1D.
+- **Prerequisites:** A-UVM-5, A-UVM-6, A-UVM-8, I-UVM-1D.
 - **Feeds milestone:** M8.
 - **Hands-on that should exist:** a lab: reset mid-transfer plus error injection on the T2 env, with hidden mutants (scoreboard not flushed; catcher too broad).
 - **Assessment focus:** misconceptions:
@@ -2372,8 +2374,8 @@ Priority definitions:
   3. phase jumping is the standard reset technique.
 - **Sub-lessons:** —
 
-### B-APB-1_APB_Protocol_and_Verification (proposed) — APB Protocol & Verification
-- **Tier / position:** T3 · after B-AMBA-2 · before B-AHB-1 (AMBA `order: 3`; shift AHB onward by one)
+### B-APB-1_APB_Protocol_and_Verification (added in the quality program) — APB Protocol & Verification
+- **Tier / position:** T3 · after B-AMBA-2 · before B-AHB-1 · manifest #50 (core)
 - **Purpose (one sentence):** Read, drive and check APB transfers and build the simplest complete protocol agent, the canonical RAL bus.
 - **Objectives (learner will be able to):**
   - Predict the setup and access phases (`PSEL`, `PENABLE`, `PREADY` wait states) and the error response (`PSLVERR`) on a waveform.
@@ -2746,11 +2748,11 @@ The 2026-10-18 additions are the clauses that the wave-6 author logs (`reviews/L
 | `assertions-1` | coming soon | I-SV-4A | I-SV-4B | Pipeline data integrity needs local variables |
 | `randomization-advanced-1` | available | I-SV-2B | I-SV-2B | Premise to fix |
 | `coverage-advanced-1` | available | I-SV-3B | I-SV-3B | Cannot close as written |
-| `ipc-deadlock` | available | I-SV-5 | I-SV-5 | `modulePrerequisites: ['systemverilog-basics']` is not a module id |
+| `ipc-deadlock` | available | I-SV-5 | I-SV-5 | `modulePrerequisites` F2C, I-SV-1 (valid ids); four steps |
 | `scoreboard-decoupling` | available | I-UVM-2B | I-UVM-2B | Starter already solved; false premise |
 | `config-debug` | available | I-UVM-2C | I-UVM-2C | Bug labelled in the starter |
-| `arbiter-1` | coming soon | I-UVM-2A | proposed I-UVM-3C (independent variant) | |
-| `uvm-mini-capstone` | available | A-UVM-6 | proposed I-UVM-3C (LAB-T2-ENV) | Fix the monitor sampling (LAB-C1/C2); drop the T3 prerequisites |
+| `arbiter-1` | coming soon | I-UVM-2A | I-UVM-3C (independent variant) | Lab prerequisite `simple-dut-1` |
+| `uvm-mini-capstone` | available | I-UVM-3C | I-UVM-3C (LAB-T2-ENV) | LAB-T2-ENV: monitor sampling fixed (LAB-C1/C2); lab prerequisite `scoreboard-decoupling` only, no T3 prerequisites; four steps |
 | `dma-1` | coming soon | I-UVM-3B | E-SOC-1 (LAB-M8) | M8 DMA capstone |
 | `scoreboard-reference-model` | available | A-UVM-6 | A-UVM-6 (M3) | Accounting fix (LAB-S1) |
 | `callbacks-driver-behavior` | available | A-UVM-5 | A-UVM-5 | Null-handle registration in the solution |
@@ -2760,12 +2762,12 @@ The 2026-10-18 additions are the clauses that the wave-6 author logs (`reviews/L
 | `axi-scoreboard-lab` | available | B-AXI-6 | B-AXI-6 (M6) | Starter does not compile |
 | `ahb-axi-bridge-debug` | available | B-AMBA-F1 | B-AMBA-F1 | False 4KB premise; `modulePrerequisites` lists lab ids |
 | `formal-harness` | available | E-INT-1 | E-INT-1 | |
-| `methodology-custom-phase` | available | E-CUST-1 | E-CUST-1 | Needs `exec_task` |
+| `methodology-custom-phase` | available | E-CUST-1 | E-CUST-1 | Solution implements `exec_task`; `modulePrerequisites` I-UVM-1C; five steps |
 | `debug-waveform-trigger` | available | E-DBG-1 | E-DBG-1 | |
-| `uvm-performance-1` | coming soon | E-PERF-1 | E-PERF-1 | |
+| `uvm-performance-1` | available | E-PERF-1 | E-PERF-1 | `modulePrerequisites` I-UVM-1C, A-UVM-6; five steps (rebuilt in wave 6) |
 | `pss-portable-intent` | available | E-PSS-1 | E-PSS-1 | Release-tested flow |
 | `power-aware-retention` | available | E-PWR-1 | E-PWR-1 | Release-tested LabLink |
 | `soc-vip-reuse` | available | E-SOC-1 | E-SOC-1 | Lab prerequisite `uvm-mini-capstone` (no longer `simple-dut-1`) |
 | `soc-strategy-capstone` | available | E-SOC-1 | E-SOC-1 | Document capstone; M8 code capstone is `dma-1` |
 
-Milestone labs that do not exist yet: LAB-M1 (`constructs-1`), LAB-T2-ENV, LAB-M2, LAB-M3 mutants, LAB-M5, LAB-M6 extension, LAB-M7 (Build-a-RAL), LAB-M8. See [`improvement-plan.md`](../audit/2026-10-03-learning-outcomes/improvement-plan.md).
+Milestone labs that do not exist yet: LAB-M1 (`constructs-1`), LAB-M2, LAB-M3 mutants, LAB-M5, LAB-M6 extension, LAB-M7 (Build-a-RAL), LAB-M8. See [`improvement-plan.md`](../audit/2026-10-03-learning-outcomes/improvement-plan.md).
