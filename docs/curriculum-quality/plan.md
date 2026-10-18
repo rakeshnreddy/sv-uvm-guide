@@ -233,12 +233,43 @@ Waves overlap when usage allows. A group whose verifier could not run still proc
 8. `check-mdx` reports 0 errors and 0 template warnings. Flashcards validate. Pinned elements are intact.
 9. All three reviewers pass.
 
-## 5. Closure (phase 6)
+## 5. Closure (phase 6) and what comes next
 
-After all waves:
-- **Curriculum-wide completeness critic and accuracy sweep**, in rounds, until two consecutive rounds find nothing new.
-- **Junior, practitioner and expert route walk-throughs** (agents follow each route and report gaps).
-- **Full build, the 390 px and contrast sweeps, the e2e suite** (including the flags-off project and the next-chain walk), the bundle check, and a final review of the PROJECT_GUIDE §3 table, generated from the manifest.
+Status, 2026-10-18: every wave is integrated and deployed. The owner set the order of the remaining work:
+
+1. **No-login mode (in progress).** Owner decision: "do not block anything for login; we can eventually implement it and
+   guard it as required; the initial site should work completely."
+   - Every visible feature works for an anonymous visitor. That includes labs, flashcard review, progress and dashboard,
+     notebook and settings.
+   - Learner data lives in the browser through one typed, versioned store. Auth and database checks become switchable
+     seams for runbook phase 3.
+   - Features that need multi-user data or a secret stay hidden rather than broken.
+   - Design workflow `wf_00e2acf0-bcb`, then an implement-and-review workflow.
+2. **Phase 6a: visual enrichment (next; owner request, 2026-10-18).** "Lessons have a lot of text; add more visual
+   elements that make the content more visual and interactive, keep the learner's attention longer, and make it easier
+   to understand and remember. Do not remove content."
+   - Runs per lesson, with workflow `docs/curriculum-quality/workflows/visual-enrichment.js`.
+   - **Catalog:** inventory every visual and interactive component and where it is used.
+   - **Audit (per lesson):** find text-heavy stretches and concepts with no picture.
+   - **Author:** link and embed existing visualizers first, then add kit diagrams, tables, step reveals, predict-then-check
+     prompts and a summary visual, without removing content.
+   - **Review:** two lenses (accuracy of the visuals; pedagogy, accessibility and 390 px), with up to 2 fix rounds.
+   - **Output:** a list of new interactive components that lessons need, which feeds a component-build workflow.
+   - Run it in batches with args, for example `{ "tiers": ["T1_Foundational"] }`, then T2, T3 and T4. Integrate each batch
+     in a clean worktree and deploy at each checkpoint.
+3. **Phase 6b: closure sweep (paused by the owner; resume after 6a, so it also reviews the new visuals).**
+   - Curriculum-wide accuracy, completeness and consistency critics, in rounds, until two consecutive rounds find nothing
+     new. Each serious finding is checked by three skeptics.
+   - Script: `docs/curriculum-quality/workflows/phase6-closure-sweep.js`. The paused run is `wf_010d0167-550`; resume steps
+     are in RESTART.md.
+4. **Closure checks.**
+   - Junior, practitioner and expert route walk-throughs, where agents follow each route and report gaps.
+   - The full build, the 390 px and contrast sweeps, and the e2e suite, including the flags-off project and the
+     next-chain walk.
+   - The bundle check, and a final review of the PROJECT_GUIDE §3 table, generated from the manifest.
+   - Update TASKS.md and SESSION_HANDOFF.
+
+Never run 6a and 6b at the same time: both edit lesson files.
 
 ## 6. Risks and open questions
 

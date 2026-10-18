@@ -165,3 +165,13 @@ and the working tree was clean.
 - If it is stopped again after some agents have finished, resume it in the same session with `resumeFromRunId`. In a new
   session, rerun the script: its loop deduplicates findings per round, so a rerun re-reviews from the current, partly fixed
   content. First commit, or back up, any fixes already checked.
+
+## Next phases, in order (owner, 2026-10-18)
+
+1. **No-login mode:** finish design → implement → review, then push, deploy and fast-forward `main` (see plan §5 item 1).
+2. **Phase 6a: visual enrichment.** Run `docs/curriculum-quality/workflows/visual-enrichment.js` with the Workflow tool's
+   `scriptPath`, one tier per run: `args: {"tiers": ["T1_Foundational"]}`, then T2_Intermediate, T3_Advanced and
+   T4_Expert. Integrate each batch in a clean worktree (prep: none; the diagram known-issues list must stay empty) and
+   deploy at the checkpoint. Its `newComponentRequests` output seeds a component-build workflow.
+3. **Phase 6b:** resume the paused closure sweep (section above), so that it reviews the enriched lessons too.
+4. **Closure checks:** plan §5 item 4.
