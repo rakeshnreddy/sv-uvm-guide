@@ -18,6 +18,7 @@ The reference that every analyst, verifier and author in the [curriculum quality
 **Conventions.**
 - **nav #k** is the lesson's position in today's generated navigation (`src/lib/curriculum-data.tsx`). It is alphabetical within each tier, because `scripts/generate-curriculum-data.ts` sorts folder names.
 - **after / before** in a card give the **intended** order (the spine order, §3.4). Where they differ from nav, the card says so. Proposed new modules (§4.2) are noted in brackets but are not counted as neighbours.
+- **manifest #k** (the T4 cards and the I-SV-8 card, updated 2026-10-18) is the module's position in [`curriculum.manifest.json`](../../content/curriculum/curriculum.manifest.json), which now drives the generated navigation (§3.4). Each module there is `core` or `elective`: from a core lesson, Prev/Next skip elective modules; from an elective, every lesson is visited in order. The other cards still show the 2026-10-03 alphabetical nav # and "today" notes.
 - Every IEEE 1800-2023, IEEE 1800.2-2020, IHI0022E and IHI0033B.b number in this file was checked against the primary text. The index is in Appendix A.
 - A bare **§** number means IEEE 1800-2023 in T1, T2-SV and AMBA cards, and IEEE 1800.2-2020 in UVM cards (I-UVM-*, A-UVM-*, the UVM parts of E-*). Annexes B–G are 1800.2; Annexes H–I are 1800-2023. Where a card mixes the two (for example A-UVM-7's §25.8), the SystemVerilog construct makes the source clear.
 - **"Verify"** marks a claim the analyst must check before relying on it.
@@ -891,7 +892,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file).
 
 ### I-SV-8_Power_Intent_and_UPF — Power Intent and UPF Fundamentals
-- **Tier / position:** T2 · after I-SV-7 · before I-SV-9 · nav #25. Elective in T2 and a **hard prerequisite of E-PWR-1**. Keeping the folder in T2 avoids URL churn; moving it into T4 before E-PWR-1 is an optional P2 (§3.3).
+- **Tier / position:** T2 · after I-UVM-6 · before A-UVM-6 · manifest #40 (elective; the last T2 module). The core path I-UVM-6 → A-UVM-6 skips it; its own Next is A-UVM-6. A **hard prerequisite of E-PWR-1**. Keeping the folder in T2 avoids URL churn; moving it into T4 before E-PWR-1 is an optional P2 (§3.3).
 - **Purpose (one sentence):** Read and write basic IEEE 1801 (UPF) power intent and predict how a simulator corrupts and isolates powered-down logic.
 - **Objectives (learner will be able to):**
   - Explain why power intent lives in a UPF side file applied to the RTL in simulation and implementation.
@@ -1340,7 +1341,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Prerequisites:** A-UVM-4A.
 - **Feeds milestone:** M7 (gate).
 - **Hands-on that should exist:**
-  - Lab `ral-mirror-bug` (owned). The bug and its fix are printed in comments; remove them. It lists `simple-dut-1` as a lab prerequisite.
+  - Lab `ral-mirror-bug` (owned). The bug and its fix are printed in comments; remove them. Its only prerequisite is module A-UVM-4A (no lab prerequisite).
   - a kata: an explicit predictor plus a W1C test.
 - **Assessment focus:** misconceptions:
   1. "explicit prediction" means calling `predict()` by hand; the implicit/explicit terms are inverted today;
@@ -1377,7 +1378,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Prerequisites:** I-UVM-1B, I-UVM-2A, A-UVM-7.
 - **Feeds milestone:** M8 (error injection).
 - **Hands-on that should exist:**
-  - Lab `callbacks-driver-behavior` (owned). Its solution registers on a null handle; fix it. It lists `simple-dut-1` as a prerequisite.
+  - Lab `callbacks-driver-behavior` (owned). Its solution registers on a null handle; fix it. Its prerequisites are modules I-UVM-2A, A-UVM-7 and A-UVM-5 (no lab prerequisite).
   - a kata: stack delay and corrupt callbacks and toggle them at run time.
 - **Assessment focus:** misconceptions:
   1. `add(env.agent.drv, cb)` in the test's `build_phase` attaches to that driver (the handle is null, so it becomes type-wide);
@@ -1794,7 +1795,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 ### Tier 4: Expert
 
 ### E-AI-1_AI_Driven_Verification — E-AI-1: AI-Driven Verification
-- **Tier / position:** T4 · after E-UVM-ML-1 · before E-RISCV-1 · nav #58 (today the first T4 module, although it lists E-PYUVM-1 as a prerequisite)
+- **Tier / position:** T4 · after E-RISCV-1 · before — (last module in the outline) · manifest #74 (elective). Its prerequisite E-PYUVM-1 (#71) now comes before it.
 - **Purpose (one sentence):** Evaluate machine-learning and LLM techniques for stimulus, coverage closure and assertion writing, and review AI output with the rigor applied to human-written verification code.
 - **Objectives (learner will be able to):**
   - Explain why constrained-random coverage curves flatten, and how ML-guided approaches (RL, evolutionary search, learned test selection) target the remaining holes.
@@ -1815,7 +1816,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). E2E pins its H1 title text.
 
 ### E-CUST-1_UVM_Methodology_Customization — E-CUST-1: UVM Methodology Customization
-- **Tier / position:** T4 · after E-DBG-1 · before E-PERF-1 · nav #59 (today after E-AI-1, before E-DBG-1)
+- **Tier / position:** T4 · after E-DBG-1 · before E-PERF-1 · manifest #64 (core)
 - **Purpose (one sentence):** Extend UVM for a team (base classes, conventions, custom phases when justified, governance) without forking the methodology.
 - **Objectives (learner will be able to):**
   - Design a project base-class layer (component, object and sequence bases, reporting conventions, config helpers) and justify each addition.
@@ -1831,7 +1832,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Prerequisites:** I-UVM-1C, I-UVM-1B, A-UVM-5.
 - **Feeds milestone:** M8.
 - **Hands-on that should exist:**
-  - Lab `methodology-custom-phase` (owned). It must include `exec_task`. It lists `simple-dut-1` as a prerequisite.
+  - Lab `methodology-custom-phase` (owned). It must include `exec_task`. Its only prerequisite is module I-UVM-1C (no lab prerequisite).
   - a kata: a base driver with reset hooks.
 - **Assessment focus:** misconceptions:
   1. a custom phase runs without `exec_task`/`exec_func`;
@@ -1840,7 +1841,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). Today it has no quiz.
 
 ### E-DBG-1_Advanced_UVM_Debug_Methodologies — E-DBG-1: Advanced UVM Debug Methodologies
-- **Tier / position:** T4 · after B-AMBA-F3 · before E-CUST-1 · nav #60. Intended **first T4 module**.
+- **Tier / position:** T4 · after B-AMBA-F3 · before E-CUST-1 · manifest #63 (core). The **first T4 module**.
 - **Purpose (one sentence):** Debug large UVM environments systematically: honest pass/fail, report control and catchers, tracing, recording, selective waveforms, seed reproduction and regression triage.
 - **Objectives (learner will be able to):**
   - Decide whether a verdict is honest. Check report actions (`UVM_COUNT`), catchers, `$error` outside UVM, and zero-activity runs.
@@ -1853,8 +1854,8 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - first-failure discipline;
   - the debug event-bus pattern;
   - DebuggingSimulator hang scenarios (scenario-accurate; audit D-20).
-- **Out of scope here (covered in):** reporting basics (proposed I-UVM-1D); recording basics (I-UVM-6); seed semantics (I-SV-2B).
-- **Prerequisites:** I-UVM-6, I-UVM-1C, A-UVM-6 (and proposed I-UVM-1D).
+- **Out of scope here (covered in):** reporting basics (I-UVM-1D); recording basics (I-UVM-6); seed semantics (I-SV-2B).
+- **Prerequisites:** I-UVM-6, I-UVM-1C, A-UVM-6, I-UVM-1D.
 - **Feeds milestone:** M8.
 - **Hands-on that should exist:**
   - Lab `debug-waveform-trigger` (owned);
@@ -1871,14 +1872,17 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   Both lack frontmatter and the template.
 
 ### E-EMU-1_Emulation_Aware_Verification — E-EMU-1: Emulation-Aware Verification
-- **Tier / position:** T4 · after E-INT-1 · before E-PSS-1 · nav #61 (today after E-DBG-1, before E-INT-1)
+- **Tier / position:** T4 · after E-SOC-1 · before E-PYUVM-1 · manifest #70 (elective; the first of the five T4 electives, after the core path). Its prerequisite E-PERF-1 (#65) is on the core path before it.
 - **Purpose (one sentence):** Adapt UVM benches for hardware emulation by splitting them into synthesizable HDL-side transactors and HVL-side transaction-level code, and judge the speed and visibility trade-offs.
 - **Objectives (learner will be able to):**
   - Explain why pin-level TB/DUT synchronization limits emulation speed, and how transaction-level transactors remove it: split HVL/HDL BFMs and SCE-MI-style interfaces.
   - Partition an agent into an HDL BFM (synthesizable, in the interface) and an HVL proxy class communicating by function and task calls.
   - List emulation-safe coding rules and debug-visibility options (probes, triggers, in-emulation assertions) and their costs.
   - Compare simulation, emulation and FPGA prototyping for a goal, with vendor claims sourced.
-- **Must cover:** Accellera SCE-MI (awareness); vendor platform architectures verified (the audit found ZeBu and Veloce swapped).
+- **Must cover:**
+  - Accellera SCE-MI (awareness);
+  - vendor platform architectures verified (the audit found ZeBu and Veloce swapped);
+  - **code-style exception to §5.2 rule 5:** co-emulation examples use two tops, `hdl_top` (DUT, clock and reset generators, BFM interfaces) and `hvl_top` (UVM test and env, `run_test()`), with the virtual-interface handles set in `hvl_top` before `run_test()`.
 - **Out of scope here (covered in):** simulation performance (E-PERF-1); PSS (E-PSS-1).
 - **Prerequisites:** A-UVM-8, I-SV-7, E-PERF-1.
 - **Feeds milestone:** M8 (awareness).
@@ -1890,7 +1894,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). E2E pins its H1 title text.
 
 ### E-INT-1_Integrating_UVM_with_Formal_Verification — E-INT-1: Integrating UVM with Formal Verification
-- **Tier / position:** T4 · after E-PERF-1 · before E-EMU-1 · nav #62
+- **Tier / position:** T4 · after E-PERF-1 · before E-PSS-1 · manifest #66 (core)
 - **Purpose (one sentence):** Combine formal and simulation by sharing assertions, aligning assumptions with stimulus constraints, and replaying counterexamples.
 - **Objectives (learner will be able to):**
   - Build a formal harness around a block that reuses the env's interface assertions (bound checkers), with `assume` on inputs and `assert`/`cover` on outputs.
@@ -1902,6 +1906,9 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - covers to detect vacuity;
   - bounded vs full proofs;
   - formal apps (awareness);
+  - expert: where simulation and formal disagree (§16.2: cycle-based tools may evaluate differently from event-based simulation; X values, initial state, delays);
+  - expert: discharging assumptions (prove each one as an assertion on the block that drives the signal, or check it in simulation regressions) and the circular assume-guarantee trap;
+  - expert: liveness with fairness assumptions, and bounded-response properties as the practical alternative (§16.12.13);
   - FormalVsSimulationVisualizer.
 - **Out of scope here (covered in):** SVA syntax (I-SV-4A/4B); checkers and bind (I-SV-4C).
 - **Prerequisites:** I-SV-4B, I-SV-4C, A-UVM-6.
@@ -1914,7 +1921,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). Today it has no quiz.
 
 ### E-PERF-1_UVM_Performance — E-PERF-1: UVM Performance
-- **Tier / position:** T4 · after E-CUST-1 · before E-INT-1 · nav #63
+- **Tier / position:** T4 · after E-CUST-1 · before E-INT-1 · manifest #65 (core)
 - **Purpose (one sentence):** Measure and improve simulation and regression throughput of UVM environments using profiles, not folklore.
 - **Objectives (learner will be able to):**
   - Read a profile and attribute time to TB vs DUT and to UVM hotspots: `config_db` lookups in loops, message construction outside the `` `uvm_info `` guard, objection churn per item, recording, creation in loops, coverage sampling.
@@ -1923,7 +1930,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - Explain which scheduler behaviours cost time (polling vs event waits, `#0`, excess iterations) without re-teaching scheduling.
 - **Must cover:** measurement discipline; an illustrative-data label on every number.
 - **Out of scope here (covered in):** scheduling semantics (F3B/F3C). Today its "Clause 4: The Event Scheduler" section re-teaches them with false claims; link instead. Also out of scope: emulation (E-EMU-1).
-- **Prerequisites:** I-UVM-1C, A-UVM-6 (and proposed I-UVM-1D).
+- **Prerequisites:** I-UVM-1C, A-UVM-6, I-UVM-1D.
 - **Feeds milestone:** M8.
 - **Hands-on that should exist:** Lab `uvm-performance-1` (coming soon; owned); a kata: a profile-guided fix of a verbose monitor.
 - **Assessment focus:** misconceptions:
@@ -1933,7 +1940,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). Today it has no quiz and its Next has no link.
 
 ### E-PSS-1_Portable_Stimulus_Standard — E-PSS-1: Portable Stimulus Standard
-- **Tier / position:** T4 · after E-EMU-1 · before E-PWR-1 · nav #64. The E-PSS-1 → E-PWR-1 adjacency is e2e-pinned by `learner-flow.spec.ts`.
+- **Tier / position:** T4 · after E-INT-1 · before E-PWR-1 · manifest #67 (core). The E-PSS-1 → E-PWR-1 adjacency is e2e-pinned by `learner-flow.spec.ts`.
 - **Purpose (one sentence):** Write portable test intent in Accellera PSS and explain how tools map it to UVM sequences and bare-metal C.
 - **Objectives (learner will be able to):**
   - Model a scenario with components, actions, activities (sequence, parallel, select, repeat) and data constraints.
@@ -1947,7 +1954,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Out of scope here (covered in):** virtual sequences (I-UVM-3B); SoC strategy (E-SOC-1).
 - **Prerequisites:** A-UVM-8, I-UVM-3B.
 - **Feeds milestone:** M8 (awareness).
-- **Hands-on that should exist:** Lab `pss-portable-intent` (owned; its route, LabLink and step flow are e2e-pinned).
+- **Hands-on that should exist:** Lab `pss-portable-intent` (owned; module prerequisites I-UVM-3A and I-UVM-3B; its route, LabLink and step flow are e2e-pinned).
 - **Assessment focus:** misconceptions:
   1. PSS has an IEEE number such as 2401 or P2851;
   2. resources are passed as action inputs;
@@ -1957,7 +1964,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). E-SOC-1/`pss.mdx` duplicates it (§3.2).
 
 ### E-PWR-1_Power_Aware_Verification — Power-Aware UVM Verification Strategy
-- **Tier / position:** T4 · after E-PSS-1 · before E-PYUVM-1 · nav #65. Must keep both a Previous and a Next link (release test).
+- **Tier / position:** T4 · after E-PSS-1 · before E-SOC-1 · manifest #68 (core). Must keep both a Previous and a Next link (release test).
 - **Purpose (one sentence):** Verify designs under power intent (corruption and isolation, PMU handshakes, shutdown and wake-up sequences, power-aware assertions, power-state coverage) inside a UVM environment.
 - **Objectives (learner will be able to):**
   - Predict TB-visible behaviour during power transitions (corruption, clamps, retention restore), and adapt monitors and scoreboards: pause checks, flush, expect reset values.
@@ -1978,7 +1985,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). Today it has a `#` H1, no `## Quick Take`, no quiz, and a stray `order: 2`. **Do not change the title** "Power-Aware UVM Verification Strategy".
 
 ### E-PYUVM-1_Python_Based_Verification — E-PYUVM-1: Python-Based Verification
-- **Tier / position:** T4 · after E-PWR-1 · before E-UVM-ML-1 · nav #66
+- **Tier / position:** T4 · after E-EMU-1 · before E-UVM-ML-1 · manifest #71 (elective)
 - **Purpose (one sentence):** Build testbenches in Python with cocotb and pyuvm, map them to SV/UVM concepts, and decide when Python is the better tool.
 - **Objectives (learner will be able to):**
   - Write a cocotb test with coroutines and triggers (`await RisingEdge(…)`, `Timer`), a clock, and a protocol-correct driver and monitor. VALID drops after its handshake.
@@ -1997,7 +2004,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). E2E pins its H1 title text.
 
 ### E-RISCV-1_RISC_V_Verification_Methodology — E-RISCV-1: RISC-V Verification Methodology
-- **Tier / position:** T4 · after E-AI-1 · before E-SOC-1 · nav #67
+- **Tier / position:** T4 · after E-UVM-ML-1 · before E-AI-1 · manifest #73 (elective)
 - **Purpose (one sentence):** Verify a RISC-V core with random instruction generation, ISA coverage, step-and-compare against an ISS and formal ISA checks.
 - **Objectives (learner will be able to):**
   - Explain what makes processor verification differ from peripheral verification: architectural state, privilege, exceptions and interrupts, nondeterminism.
@@ -2016,7 +2023,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** — (single file). E2E pins its H1 title text.
 
 ### E-SOC-1_SoC-Level_Verification_Strategies — E-SOC-1: SoC-Level Verification Strategies
-- **Tier / position:** T4 · after E-RISCV-1 · before — (course end; capstone) · nav #68
+- **Tier / position:** T4 · after E-PWR-1 · before — (end of the core path; capstone) · manifest #69 (core). The five T4 electives (#70–74) follow it in the outline, off the core path.
 - **Purpose (one sentence):** Plan and run subsystem/SoC verification (VIP reuse, firmware-driven tests, interconnect observability, resets, errors, power, closure, regression and sign-off) and deliver the capstone.
 - **Objectives (learner will be able to):**
   - Write a staff-level SoC strategy: scope, reuse plan, test layers, checkers, coverage, regression, sign-off criteria and risk register.
@@ -2033,7 +2040,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Prerequisites:** A-UVM-8, A-UVM-4B, E-DBG-1 (and proposed A-UVM-9).
 - **Feeds milestone:** M8 (gate).
 - **Hands-on that should exist:**
-  - Labs `soc-vip-reuse` and `soc-strategy-capstone` (owned; `soc-vip-reuse` lists `simple-dut-1`);
+  - Labs `soc-vip-reuse` and `soc-strategy-capstone` (owned; `soc-vip-reuse` lists lab prerequisite `uvm-mini-capstone`);
   - **LAB-M8**, the DMA code capstone: re-own `dma-1` (coming soon) here.
 - **Assessment focus:** misconceptions:
   1. auto-predict keeps the mirror right when firmware writes;
@@ -2042,7 +2049,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** `pss.mdx` duplicates E-PSS-1 and cites a wrong standard number; merge it into E-PSS-1 and redirect (P2). Today the index has no quiz.
 
 ### E-UVM-ML-1_Multi_Language_Verification — E-UVM-ML-1: Multi-Language Verification
-- **Tier / position:** T4 · after E-PYUVM-1 · before E-AI-1 · nav #69 (today last)
+- **Tier / position:** T4 · after E-PYUVM-1 · before E-RISCV-1 · manifest #72 (elective)
 - **Purpose (one sentence):** Connect SystemVerilog UVM with SystemC/C++ models at transaction level, and choose among DPI, multi-language frameworks and other bridges.
 - **Objectives (learner will be able to):**
   - Choose DPI, a TLM-level multi-language bridge, or co-simulation for integrating a C++/SystemC reference model.
@@ -2088,7 +2095,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 | A-UVM-7, A-UVM-8 (and I-UVM-2A) use APB examples | APB protocol | none | Proposed B-APB-1, or define the APB subset inline |
 | B-AHB-1..3 before B-AMBA-1/2; B-AMBA-F1/F2/F3 before any B-AXI | family intro; AXI | B-AMBA-1/2; B-AXI-* | Honour frontmatter `order` (PLAT-2) |
 | E-AI-1 (nav first in T4) requires E-PYUVM-1; E-EMU-1 (nav before E-PERF-1) says to optimize simulation first | — | — | Intended T4 order (§3.4) |
-| Six available UVM labs list `simple-dut-1` (coming soon; owner "F4", not a module id; README is a non-UVM first TB) as a lab prerequisite | — | — | Lead: re-scope `simple-dut-1` as the M0 lab under proposed F2E; UVM labs depend on the T2 first-env lab instead (Appendix B) |
+| Six available UVM labs list `simple-dut-1` (coming soon; owner "F4", not a module id; README is a non-UVM first TB) as a lab prerequisite | — | — | Done: `simple-dut-1` is F2E's M0 lab (available, owner F2E); no available lab lists it any more, only `arbiter-1` (coming soon) does (Appendix B) |
 
 ### 3.2 Duplicated coverage and owners
 
@@ -2148,7 +2155,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 
 ### 3.4 Intended order (spine order)
 
-Proposed modules are in *italics*. "nav #" is today's position.
+Proposed modules are in *italics*. "nav #" is the 2026-10-03 alphabetical position. The "#" column is the order in `content/curriculum/curriculum.manifest.json`, which now drives navigation.
 
 | # | Module | nav # | Note |
 |---|---|---|---|
@@ -2158,12 +2165,12 @@ Proposed modules are in *italics*. "nav #" is today's position.
 | 9–14 | F3A, F3B, F3C, F4A, F4B, F4C | 8–13 | unchanged |
 | **T2** | | | |
 | 15–25 | I-SV-1, I-SV-2A, I-SV-2B, I-SV-3A, I-SV-3B, I-SV-4A, I-SV-4B, I-SV-4C, I-SV-5, I-SV-6, I-SV-7 | 14–24 | unchanged |
-| 26 | I-SV-8 | 25 | elective; prerequisite of E-PWR-1 |
-| 27–30 | I-SV-9, I-UVM-1A, I-UVM-1B, I-UVM-1C | 26–29 | unchanged |
-| 31 | *I-UVM-1D Reporting, Run Control and Pass/Fail* | — | proposed |
-| 32–35 | I-UVM-2A, I-UVM-2B, I-UVM-2C, I-UVM-3A | 30–33 | unchanged |
-| 36 | *I-UVM-3C First Complete Testbench* | — | proposed (M2 gate for T2); folder sorts after 3B if PLAT-2 is not done |
-| 37–40 | I-UVM-3B, I-UVM-4, I-UVM-5, I-UVM-6 | 34–37 | unchanged |
+| 26–29 | I-SV-9, I-UVM-1A, I-UVM-1B, I-UVM-1C | 26–29 | unchanged |
+| 30 | *I-UVM-1D Reporting, Run Control and Pass/Fail* | — | proposed |
+| 31–34 | I-UVM-2A, I-UVM-2B, I-UVM-2C, I-UVM-3A | 30–33 | unchanged |
+| 35 | *I-UVM-3C First Complete Testbench* | — | proposed (M2 gate for T2); folder sorts after 3B if PLAT-2 is not done |
+| 36–39 | I-UVM-3B, I-UVM-4, I-UVM-5, I-UVM-6 | 34–37 | unchanged |
+| 40 | I-SV-8 | 25 | elective, after the T2 core path (manifest); prerequisite of E-PWR-1 |
 | **T3** | | | |
 | 41 | A-UVM-6 | 41 | moved first |
 | 42 | A-UVM-7 | 42 | |
@@ -2181,16 +2188,16 @@ Proposed modules are in *italics*. "nav #" is today's position.
 | 64 | E-CUST-1 | 59 | |
 | 65 | E-PERF-1 | 63 | |
 | 66 | E-INT-1 | 62 | |
-| 67 | E-EMU-1 | 61 | |
-| 68 | E-PSS-1 | 64 | keeps the e2e-pinned E-PSS-1 → E-PWR-1 adjacency |
-| 69 | E-PWR-1 | 65 | |
-| 70 | E-PYUVM-1 | 66 | |
-| 71 | E-UVM-ML-1 | 69 | |
-| 72 | E-AI-1 | 58 | needs E-PYUVM-1 |
-| 73 | E-RISCV-1 | 67 | |
-| 74 | E-SOC-1 | 68 | capstone (M8) |
+| 67 | E-PSS-1 | 64 | keeps the e2e-pinned E-PSS-1 → E-PWR-1 adjacency |
+| 68 | E-PWR-1 | 65 | |
+| 69 | E-SOC-1 | 68 | capstone (M8); end of the core path |
+| 70 | E-EMU-1 | 61 | elective; needs E-PERF-1 |
+| 71 | E-PYUVM-1 | 66 | elective |
+| 72 | E-UVM-ML-1 | 69 | elective |
+| 73 | E-RISCV-1 | 67 | elective; needs E-INT-1 |
+| 74 | E-AI-1 | 58 | elective; needs E-PYUVM-1 |
 
-Implementation is the lead's (PLAT-2): give every index an `order`, give sub-lessons an `order`, and make the generator honour it.
+Implemented (PLAT-2): the manifest gives module and lesson order, tracks and prerequisites, and the generator follows it. It differs from the first spine order in two places, adopted here: I-SV-8 is an elective after the T2 core path (#40), and T4 runs its seven core modules (#63–69) before its five electives (#70–74). From a core lesson, Prev/Next skip electives.
 
 ### 3.5 E2E- and QA-pinned lesson content
 
@@ -2210,6 +2217,7 @@ Authors must preserve these elements, or ask the lead to update the named spec i
 | F3B, B-AHB-1, B-AHB-2, B-AXI-1, B-AXI-2, B-AXI-3, B-AMBA-F2 | `sources:` frontmatter with a `standard` entry | `tests/qa/sourceMetadataAudit` |
 | I-UVM-3B | arbitration → libraries Next adjacency; `virtual-sequences` has a Monaco editor; `uvm-virtual-sequencer.mdx` contains `<VirtualSequencerExplorer />`; `coordinated-attack-lab` route exists | `navigation`, `module5`, `theming`, `tests/qa/iuvm3SplitMergeAudit` |
 | A-UVM-6/7/8, E-AI-1, E-EMU-1, E-PSS-1, E-PYUVM-1, E-RISCV-1, E-UVM-ML-1 | H1 contains the current title | `t3_t4_new_modules` |
+| all 12 T4 modules (E-*) | index frontmatter `flashcards` names a registered deck with at least 5 cards, each with a question and an answer | `expert-flashcards` |
 | AMBA (14) | H1 contains the frontmatter title; "Reinforce the essentials" deck section; per-module visualizer test ids; bridge scenario and analogy-explorer steps | `amba-curriculum` |
 | B-AXI-4 | flashcard section; quiz Q1 "If a master wants to poll a hardware status register…" with answer "4'b0000 (Non-bufferable, Non-cacheable) to ensure strict ordering" as the first question | `regression-gates` |
 | E-PSS-1 | H1; "Launch Lab" → `pss-portable-intent`; flashcards; quiz; Next → E-PWR-1 | `learner-flow` |
@@ -2424,6 +2432,7 @@ These are enforceable rules. Every analyst scores R3, R4, R6 and R8 against them
 | transaction, transfer or beat, burst (AXI) | "packet" | |
 | 4KB, 1KB | 4 KB, 4k | As in the cited specifications |
 | IEEE 1800-2023; IEEE 1800.2-2020; uvm-core 2020.3.1 | "the LRM" without a number on first use; "UVM 1.2" except for legacy | |
+| transaction-based acceleration (TBA), also co-emulation / co-modeling | TLA | E-EMU-1 use mode: the untimed UVM side runs on the host, the DUT and BFMs in the emulator, and calls carry whole transactions |
 
 ### 5.2 Snippet code style
 
@@ -2445,6 +2454,7 @@ Consistent with the [README](README.md#the-target-lesson):
    - The top module is `tb_top`.
    - UVM files show `import uvm_pkg::*;` and `` `include "uvm_macros.svh" ``.
    - The vif is set in `tb_top` before `run_test()`.
+   - Exception: co-emulation benches (E-EMU-1) use two tops, `hdl_top` and `hvl_top`, and set the vif handles in `hvl_top` before `run_test()`.
 6. **Driving the DUT.** From F4C onward, drive DUT inputs only through a clocking block. Before F4C, drive with `<=` (or on the opposite edge) and say why in a comment. Never use a blocking assignment to a DUT input at the active edge.
 7. **Subroutines.** Module and interface subroutines are `automatic`. No initializers on static procedural variables.
 8. **Randomization.** Check the result: `` if (!req.randomize() with {…}) `uvm_fatal("RAND", "…") `` (or `$fatal` outside UVM). Never `assert(x.randomize())`.
@@ -2612,48 +2622,50 @@ Inside `## Quick Take`, after the analogy:
 
 Checked against the IEEE 1800-2023 text, the IEEE 1800.2-2020 PDF (`uvm_lrm.pdf`), uvm-core 2020.3.1 sources (GitHub), IHI0022E and IHI0033B.b.
 
+The 2026-10-18 additions are the clauses that the wave-6 author logs (`reviews/L41a`–`L46b`) and `reviews/L32a.author.md` say were checked against the text. They add IHI0022G, IHI0022H.c, IHI0024C, IHI0024E, IHI0033C, IHI0050E.b, IHI0051A, Accellera SCE-MI 2.4, Accellera PSS 3.0 and IEEE 1801 (table of contents only; see its note).
+
 **IEEE 1800-2023:**
 
 | Area | Verified clauses |
 |---|---|
-| Scheduling | 3.14 time units/precision · 4.4 stratified scheduler · 4.4.1 region sets · 4.4.2.1–4.4.2.9 Preponed…Postponed · 4.4.3 PLI regions · 4.5 reference algorithm · 4.6 determinism · 4.7 nondeterminism · 4.8 race conditions · 4.9 scheduling implication of assignments |
+| Scheduling | 3.14 time units/precision (3.14.2.2 `timeunit`/`timeprecision`; 3.14.2.3 precedence: an error if some design elements have a time unit and precision and others do not) · 4.4 stratified scheduler · 4.4.1 region sets · 4.4.2.1–4.4.2.9 Preponed…Postponed · 4.4.3 PLI regions · 4.5 reference algorithm · 4.6 determinism · 4.7 nondeterminism · 4.8 race conditions · 4.9 scheduling implication of assignments |
 | Literals | 5.7 numbers · 5.7.1 integer literal constants · 5.8 time literals · 5.9 string literals (incl. triple-quoted) |
-| Data types | 6.5 nets and variables · 6.6 net types · 6.7 net declarations · 6.8 variable declarations · 6.11 integer types · 6.16 string · 6.17 event · 6.18 user-defined types · 6.19 enumerations · 6.20 constants (6.20.2 value, 6.20.3 type, 6.20.4 local parameters, 6.20.6 const) · 6.21 scope and lifetime · 6.22 type compatibility · 6.23 type operator · 6.24 casting (6.24.1 cast operator, 6.24.2 `$cast`, 6.24.3 bit-stream casting) |
-| Aggregates | 7.2 structures · 7.3 unions · 7.4 packed/unpacked (7.4.1, 7.4.2, 7.4.6) · 7.5 dynamic arrays · 7.6 array assignments · 7.7 arrays as arguments · 7.8 associative arrays (7.8.6 invalid index → warning + default) · 7.9 associative array methods · 7.10 queues (7.10.1–7.10.5, bounded: excess discarded with warning) · 7.11 array querying · 7.12 methods (7.12.1 locator, 7.12.2 ordering, 7.12.3 reduction returns element type, 7.12.4 iterator index, 7.12.5 `map`) |
-| Classes | 8.7 constructors · 8.9 static properties · 8.10 static methods · 8.11 this · 8.12 assignment/copying · 8.13 inheritance · 8.14 overridden members · 8.15 super · 8.16 casting · 8.17 chaining constructors · 8.18 data hiding · 8.19 constant properties · 8.20 virtual methods (incl. `:initial/:extends/:final`) · 8.21 abstract/pure virtual · 8.22 polymorphism · 8.23 class scope `::` · 8.24 out-of-block · 8.25 parameterized classes · 8.26 interface classes · 8.27 typedef class · 8.28 classes vs structures · 8.29 memory management · 8.30 weak references |
-| Processes | 9.2 structured procedures (9.2.1 initial, 9.2.2 always, 9.2.3 final) · 9.3 blocks (9.3.2 fork/join) · 9.4 timing controls (9.4.2 event control, 9.4.3 wait) · 9.6 process control (9.6.1 wait fork, 9.6.2 disable, 9.6.3 disable fork) · 9.7 fine-grain process control |
+| Data types | 6.5 nets and variables · 6.6 net types · 6.7 net declarations · 6.8 variable declarations · Table 6-7 default variable initial values · 6.11 integer types · 6.16 string · 6.17 event · 6.18 user-defined types · 6.19 enumerations (6.19.5.3 `next()` wraps) · 6.20 constants (6.20.2 value, 6.20.3 type, 6.20.4 local parameters, 6.20.6 const) · 6.21 scope and lifetime · 6.22 type compatibility · 6.23 type operator · 6.24 casting (6.24.1 cast operator, 6.24.2 `$cast`, 6.24.3 bit-stream casting) |
+| Aggregates | 7.2 structures (7.2.1 packed: the first member is the most significant) · 7.3 unions · 7.4 packed/unpacked (7.4.1, 7.4.2, 7.4.6) · 7.5 dynamic arrays · 7.6 array assignments · 7.7 arrays as arguments · 7.8 associative arrays (7.8.6 invalid index → warning + default) · 7.9 associative array methods · 7.10 queues (7.10.1–7.10.5, bounded: excess discarded with warning) · 7.11 array querying · 7.12 methods (7.12.1 locator, 7.12.2 ordering, 7.12.3 reduction returns element type, 7.12.4 iterator index, 7.12.5 `map`) |
+| Classes | 8.7 constructors · 8.9 static properties · 8.10 static methods · 8.11 this · 8.12 assignment/copying · 8.13 inheritance · 8.14 overridden members · 8.15 super · 8.16 casting · 8.17 chaining constructors · 8.18 data hiding · 8.19 constant properties · 8.20 virtual methods (incl. `:initial/:extends/:final`) · 8.21 abstract/pure virtual · 8.22 polymorphism · 8.23 class scope `::` · 8.24 out-of-block · 8.25 parameterized classes · 8.26 interface classes (8.26.5) · 8.27 typedef class · 8.28 classes vs structures · 8.29 memory management · 8.30 weak references · Annex A.1.9 class items (`local_parameter_declaration` is a legal class item) |
+| Processes | 9.2 structured procedures (9.2.1 initial, 9.2.2 always, 9.2.2.3 `always_latch`, 9.2.3 final) · 9.3 blocks (9.3.2 fork/join) · 9.4 timing controls (9.4.2 event control, 9.4.3 wait) · 9.6 process control (9.6.1 wait fork, 9.6.2 disable, 9.6.3 disable fork) · 9.7 fine-grain process control |
 | Assignments | 10.3 continuous · 10.4 procedural (10.4.1 blocking, 10.4.2 nonblocking) · 10.6 procedural continuous (10.6.2 force/release) |
-| Operators | 11.4.5 equality · 11.4.6 wildcard equality · 11.4.9 reduction · 11.4.10 shift · 11.4.11 conditional · 11.4.12 concatenation (11.4.12.1 replication) · 11.4.13 set membership · 11.4.14 streaming · 11.5.1 bit/part select · 11.6 expression bit lengths (11.6.1 rules) · 11.7 signed expressions · 11.8 evaluation rules · 11.12 let |
+| Operators | 11.2.2 aggregate expressions (equality) · 11.4.5 equality · 11.4.6 wildcard equality · 11.4.9 reduction · 11.4.10 shift · 11.4.11 conditional · 11.4.12 concatenation (11.4.12.1 replication) · 11.4.13 set membership · 11.4.14 streaming · 11.5.1 bit/part select · 11.6 expression bit lengths (11.6.1 rules) · 11.7 signed expressions · 11.8 evaluation rules · 11.12 let |
 | Statements | 12.4 if (12.4.2 unique/unique0/priority-if) · 12.5 case (12.5.3 unique/priority-case, 12.5.4 case inside) · 12.7 loops · 12.8 jumps |
 | Subroutines | 13.3 tasks (13.3.1 static/automatic) · 13.4 functions (13.4.1 return/void) · 13.5 argument passing (13.5.2 ref, 13.5.3 defaults, 13.5.4 by name) |
 | Clocking | 14.3 declaration · 14.4 skews · 14.5 hierarchical expressions · 14.6–14.8 multiple blocks · 14.9 interfaces · 14.10 clocking-block events · 14.11 cycle delay · 14.12 default clocking · 14.13 input sampling · 14.14 global clocking · 14.16 synchronous drives |
 | IPC | 15.3 semaphores · 15.4 mailboxes (15.4.9 parameterized) · 15.5 named events (15.5.1 trigger incl. `->>` NBA-region update, 15.5.2 waiting, 15.5.3 triggered persists through the time step, 15.5.4 wait_order) |
-| Assertions | 16.3 immediate · 16.4 deferred (16.4.1 reporting) · 16.5 concurrent overview (disable conditions and clocking events are not sampled) · 16.5.1 sampling · 16.6 booleans · 16.7 sequences · 16.8 declaring sequences · 16.9 sequence operations (16.9.2 repetition, 16.9.3 sampled-value functions, 16.9.4 global-clocking past/future, 16.9.5 and, 16.9.6 intersect, 16.9.7 or, 16.9.8 first_match, 16.9.9 throughout, 16.9.10 within, 16.9.11 composing) · 16.10 local variables · 16.11 subroutines on match · 16.12 properties (16.12.2 sequence property, 16.12.6 if-else, 16.12.7 implication, 16.12.8 implies/iff, 16.12.11 always, 16.12.12 until, 16.12.13 eventually, 16.12.14 abort) · 16.13 multiclock · 16.14 concurrent assertions (16.14.1 assert, 16.14.2 assume, 16.14.3 cover, 16.14.4 restrict, 16.14.5 outside procedural code, 16.14.6 in procedural code) · 16.15 disable iff resolution · 16.16 clock resolution · 16.17 expect · 16.18 clocking blocks and assertions |
-| Checkers | 17.1 overview · 17.2 declaration · 17.3 instantiation · 17.7 checker variables |
-| Randomization | 18.3 concepts · 18.4 random variables (18.4.1 rand, 18.4.2 randc) · 18.5 constraint blocks (18.5.1 external, 18.5.2 inheritance, 18.5.3 dist, 18.5.4 unique, 18.5.5 implication, 18.5.6 if-else, 18.5.7 iterative, 18.5.8 global, 18.5.9 variable ordering, 18.5.10 static, 18.5.11 functions, 18.5.12 guards, 18.5.13 soft) · 18.6 methods (18.6.1 randomize, 18.6.2 pre/post, 18.6.3 behavior) · 18.7 inline · 18.8 rand_mode · 18.9 constraint_mode · 18.10 dynamic modification · 18.11 inline random-variable control · 18.12 scope randomize · 18.13 random number functions · 18.14 random stability · 18.15 manual seeding · 18.16 randcase · 18.17 randsequence |
+| Assertions | 16.2 overview (cycle-based tools may evaluate differently from event-based simulation) · 16.3 immediate · 16.4 deferred (16.4.1 reporting) · 16.5 concurrent overview (disable conditions and clocking events are not sampled) · 16.5.1 sampling · 16.6 booleans · 16.7 sequences · 16.8 declaring sequences · 16.9 sequence operations (16.9.2 repetition, 16.9.3 sampled-value functions, 16.9.4 global-clocking past/future, 16.9.5 and, 16.9.6 intersect, 16.9.7 or, 16.9.8 first_match, 16.9.9 throughout, 16.9.10 within, 16.9.11 composing) · 16.10 local variables · 16.11 subroutines on match · 16.12 properties (16.12.2 sequence property, 16.12.6 if-else, 16.12.7 implication, 16.12.8 implies/iff, 16.12.11 always, 16.12.12 until, 16.12.13 eventually, 16.12.14 abort) · 16.13 multiclock · 16.14 concurrent assertions (16.14.1 assert, 16.14.2 assume, 16.14.3 cover, 16.14.4 restrict, 16.14.5 outside procedural code, 16.14.6 in procedural code, 16.14.8 nonvacuous evaluations) · 16.15 disable iff resolution · 16.16 clock resolution · 16.17 expect · 16.18 clocking blocks and assertions |
+| Checkers | 17.1 overview · 17.2 declaration · 17.3 instantiation · 17.7 checker variables (17.7.2) |
+| Randomization | 18.3 concepts · 18.4 random variables (18.4.1 rand, 18.4.2 randc) · 18.5 constraint blocks (18.5.1 external, 18.5.2 inheritance, 18.5.3 dist, 18.5.4 unique, 18.5.5 implication, 18.5.6 if-else, 18.5.7 iterative, 18.5.8 global, 18.5.9 variable ordering, 18.5.10 static, 18.5.11 functions, 18.5.12 guards, 18.5.13 soft) · 18.6 methods (18.6.1 randomize, 18.6.2 pre/post, 18.6.3 behavior) · 18.7 inline · 18.8 rand_mode · 18.9 constraint_mode · 18.10 dynamic modification · 18.11 inline random-variable control · 18.12 scope randomize · 18.13 random number functions · 18.14 random stability (18.14.1) · 18.15 manual seeding · 18.16 randcase · 18.17 randsequence |
 | Coverage | 19.3 covergroup · 19.4 in classes · 19.5 coverpoints (19.5.1 value bins, 19.5.2 transitions, 19.5.3 automatic, 19.5.4 wildcard, 19.5.5 ignore, 19.5.6 illegal, 19.5.7 value resolution) · 19.6 cross (19.6.1 cross bins) · 19.7 options (19.7.1 type options) · 19.8 methods (19.8.1 overriding sample) · 19.9 coverage system tasks · 19.10 option/type_option · 19.11 computation |
 | System tasks | 20.2 simulation control · 20.3 time functions · 20.4 timescale tasks (20.4.1 retrieval, 20.4.2 `$printtimescale`) · 20.5 conversion · 20.6 data query (20.6.1 `$typename`, 20.6.2 `$bits`) · 20.8 math · 20.9 bit-vector functions · 20.10 severity tasks · 20.11 assertion control (Table 20-6: applies to concurrent, simple immediate, deferred, expect, unique, priority) · 20.12 sampled-value system functions · 20.13 coverage functions · 20.14 probabilistic distribution · 20.15 stochastic analysis |
-| I/O tasks | 21.2 display (21.2.1 display/write) · 21.3 file I/O (21.3.1 open/close) · 21.4 `$readmem` · 21.6 command-line input · 21.7 VCD |
+| I/O tasks | 21.2 display (21.2.1 display/write, 21.2.2 `$strobe`) · 21.3 file I/O (21.3.1 open/close) · 21.4 `$readmem` · 21.6 command-line input · 21.7 VCD (21.7.1.1–21.7.1.6) |
 | Directives | 22.2 overview · 22.3 `` `resetall `` · 22.4 `` `include `` · 22.5 `` `define/`undef/`undefineall `` (22.5.1 `` `define ``) · 22.6 `` `ifdef `` family · 22.7 `` `timescale `` · 22.8 `` `default_nettype `` · 22.14 `` `begin_keywords `` |
 | Modules | 23.2 module definitions (23.2.2 ports, 23.2.2.3 port kind/type/direction rules) · 23.3 instances (23.3.2 syntax, 23.3.2.2 by name, 23.3.2.3 `.name`, 23.3.2.4 `.*`) · 23.6 hierarchical names · 23.9 scope rules · 23.10 parameter overrides · 23.11 bind |
-| Programs, interfaces, packages, generate | 24.3 program construct · 24.4 eliminating TB races · 25.3 syntax · 25.4 ports · 25.5 modports (25.5.4 expressions, 25.5.5 clocking blocks) · 25.7 tasks/functions · 25.8 parameterized · 25.9 virtual interfaces (25.9.1 with clocking blocks) · 25.10 access · 26.2 package declarations · 26.3 referencing · 26.4 in module headers · 26.5 search order · 26.6 export · 26.7 std package · 27.3 generate syntax · 27.4 loop generate · 27.5 conditional generate |
-| DPI | 35.4 name space · 35.5 imported tasks/functions (35.5.2 pure, 35.5.3 context, 35.5.4 import declarations) · 35.6 calling imports · 35.7 exported functions · Annex H DPI C layer · Annex I svdpi.h |
+| Programs, interfaces, packages, generate | 24.3 program construct · 24.4 eliminating TB races · 25.3 syntax · 25.4 ports · 25.5 modports (25.5.4 expressions, 25.5.5 clocking blocks) · 25.7 tasks/functions · 25.8 parameterized · 25.9 virtual interfaces (25.9.1 with clocking blocks; an interface with interface-typed ports, or that references objects outside itself, cannot be used in a virtual-interface declaration) · 25.10 access · 26.2 package declarations · 26.3 referencing · 26.4 in module headers · 26.5 search order · 26.6 export · 26.7 std package · 27.3 generate syntax · 27.4 loop generate · 27.5 conditional generate |
+| DPI | 35.4 name space · 35.5 imported tasks/functions (35.5.1.1–35.5.1.6 required properties of imports, 35.5.2 pure, 35.5.3 context: call chains are simulator-defined, 35.5.4 import declarations) · 35.6 calling imports · 35.7 exported functions · Annex H DPI C layer (H.7.4 Table H.1: a packed struct is passed as a 1-D packed array; H.7.7 canonical representation; H.8.4; H.11.3 packed-struct example) · Annex I svdpi.h |
 
 **IEEE 1800.2-2020:**
 
 | Area | Verified clauses |
 |---|---|
-| Base | 5.3 uvm_object (5.3.5 creation, 5.3.6 printing, 5.3.6.4 convert2string, 5.3.7 recording, 5.3.8 copying, 5.3.9 comparing, 5.3.10 packing, 5.3.11 unpacking, 5.3.13 field operations) · 5.4 uvm_transaction · 5.7 uvm_field_op |
-| Reporting | 6.2 uvm_report_message · 6.3 uvm_report_object (6.3.3.2 uvm_report_enabled, 6.3.4.3 set_report_verbosity_level, 6.3.5.2 set_report_*_action, 6.3.7 severity overrides) · 6.4 handler · 6.5 server (6.5.1.2.3 set_max_quit_count, 6.5.1.2.6 get_severity_count) · 6.6 uvm_report_catcher (6.6.5 CAUGHT/THROW) |
-| Recording, factory | 7.1 uvm_tr_database · 7.2 uvm_tr_stream · 7.3 links · 8.2 wrappers (8.2.2 type_id, 8.2.3 component registry) · 8.3 factory (8.3.1 uvm_factory, 8.3.1.4.1 set_inst_override_by_type, 8.3.1.4.2 set_type_override_by_type, 8.3.2 object wrapper) |
-| Phasing | 9.3 phasing definition classes · 9.4 uvm_domain · 9.5–9.7 bottom-up/task/top-down phase classes · 9.8 predefined phases (9.8.1 common: build top-down, connect, end_of_elaboration, start_of_simulation, extract, check, report bottom-up, run task, final top-down; 9.8.2 run-time phases) |
-| Synchronization | 10.1 events (10.1.1 uvm_event_base, 10.1.2 uvm_event) · 10.3 uvm_barrier · 10.4 pools (10.4.1 uvm_event_pool) · 10.5 objections (10.5.1 uvm_objection, 10.5.1.3.7 set_drain_time) · 10.6 uvm_heartbeat · 10.7 callbacks (10.7.1 uvm_callback, 10.7.2 uvm_callbacks) |
-| Containers, TLM | 11.2 uvm_pool · 11.3 uvm_queue · 12.2 TLM 1 (12.2.4 uvm_tlm_if_base, 12.2.8.2 uvm_tlm_fifo, 12.2.8.3 uvm_tlm_analysis_fifo, 12.2.10 analysis ports: 12.2.10.1 port, 12.2.10.2 imp) · 12.3 TLM 2 (12.3.4.2 generic payload, 12.3.5 sockets) |
-| Components | 13.1 uvm_component (13.1.4 phasing interface, 13.1.4.1.1 build_phase calls `apply_config_settings` when automatic configuration is on, 13.1.4.3.2 phase_ready_to_end, 13.1.5 configuration interface: 13.1.5.1 apply_config_settings, 13.1.5.2 use_automatic_config) · 13.2 test · 13.3 env · 13.4 agent (13.4.2.2 get_is_active) · 13.5 monitor · 13.6 scoreboard · 13.7 driver · 13.8 push driver · 13.9 subscriber |
-| Sequences | 14.1 uvm_sequence_item (14.1.2.4 set_id_info) · 14.2 uvm_sequence_base (14.2.3 execution, 14.2.4 run-time phasing: 14.2.4.1 get_starting_phase, 14.2.4.4 set_automatic_phase_objection; 14.2.5 control: 14.2.5.3 is_relevant, 14.2.5.5 lock, 14.2.5.6 grab, 14.2.5.11 kill, 14.2.5.12 do_kill; 14.2.6 item execution; 14.2.7.1 use_response_handler) · 14.3 uvm_sequence · 14.4 uvm_sequence_library |
-| Sequencers, policies | 15.2.1 uvm_sqr_if_base · 15.2.2.1 seq_item_pull_port · 15.3 uvm_sequencer_base (15.3.2.19 set_arbitration) · 15.4 common API · 15.5 uvm_sequencer · 16.1 uvm_policy · 16.2 printer · 16.3 comparer · 16.4 recorder · 16.5 packer · 16.6 copier |
+| Base | 1.4.6 (random stability of UVM calls) · 5.3 uvm_object (5.3.5 creation, 5.3.6 printing, 5.3.6.4 convert2string, 5.3.7 recording, 5.3.8 copying (5.3.8.1 copy, 5.3.8.2 do_copy), 5.3.9 comparing (5.3.9.1 compare, 5.3.9.2 do_compare), 5.3.10 packing, 5.3.11 unpacking, 5.3.13 field operations) · 5.4 uvm_transaction · 5.5 uvm_port_base (5.5.2.9 get_connected_to, 5.5.2.10 get_provided_to, 5.5.2.11 is_port, 5.5.2.12 size) · 5.6 uvm_time (5.6.1, 5.6.2.1 new, 5.6.2.2, 5.6.2.6 incr, 5.6.2.8 get_abstime) · 5.7 uvm_field_op |
+| Reporting | 6.2 uvm_report_message (6.2.2.2 new_report_message preserves the caller's random state) · 6.3 uvm_report_object (6.3.3.2 uvm_report_enabled, 6.3.4.3 set_report_verbosity_level, 6.3.5.2 set_report_*_action, 6.3.7 severity overrides) · 6.4 handler · 6.5 server (6.5.1.1 uvm_report_server, 6.5.1.2.3 set_max_quit_count, 6.5.1.2.6 get_severity_count, 6.5.1.2.14 process_report_message, 6.5.1.2.15 compose_report_message, 6.5.1.2.19 set_server; 6.5.2 uvm_default_report_server) · 6.6 uvm_report_catcher (6.6.3–6.6.6.6: 6.6.3 get_* queries such as 6.6.3.2 get_severity and 6.6.3.5 get_id, 6.6.4 set_* methods, 6.6.5 catch and CAUGHT/THROW, 6.6.6) |
+| Recording, factory | 7.1 uvm_tr_database (7.1.5 establish_link) · 7.2 uvm_tr_stream · 7.3 links (7.3.4) · 8.2 wrappers (8.2.2 type_id, 8.2.3 component registry) · 8.3 factory (8.3.1 uvm_factory, 8.3.1.2.1 get, 8.3.1.4.1 set_inst_override_by_type, 8.3.1.4.2 set_type_override_by_type, 8.3.1.7.1 find_override_by_type/_by_name, 8.3.1.7.5 print, 8.3.2 object wrapper) |
+| Phasing | 9.2 (9.2.1) · 9.3 phasing definition classes (9.3.1.1.1; 9.3.1.3.5 set_default_max_ready_to_end_iterations; 9.3.1.4.4 find; 9.3.1.5.1 exec_func, 9.3.1.5.2 exec_task; 9.3.1.6.1 add, 9.3.1.6.2 get_parent, 9.3.1.6.3 get_full_name, 9.3.1.6.4 get_schedule; 9.3.1.7.1 get_objection, 9.3.1.7.2 raise_objection; 9.3.1.8.1 sync, 9.3.1.8.2 unsync; 9.3.1.9.1 jump) · 9.4 uvm_domain (9.4.1–9.4.2.4: new, get_domains, add_uvm_phases, jump) · 9.5–9.7 bottom-up/task/top-down phase classes (9.6: a phase waits for its siblings; a task phase shall not share a successor with a function phase; 9.6.2.2 traverse, 9.6.2.3 execute) · 9.8 predefined phases (9.8.1 common: build top-down, connect, end_of_elaboration, start_of_simulation, extract, check, report bottom-up, run task, final top-down; 9.8.1.5 uvm_run_phase; 9.8.2 run-time phases: "users and implementations may add run-time phases") |
+| Synchronization | 10.1 events (10.1.1 uvm_event_base, 10.1.2 uvm_event) · 10.3 uvm_barrier · 10.4 pools (10.4.1 uvm_event_pool, 10.4.1.2.3 get_global) · 10.5 objections (10.5.1 uvm_objection, 10.5.1.3.7 set_drain_time, 10.5.1.5.1 get_objectors, 10.5.1.5.3 get_objection_count) · 10.6 uvm_heartbeat (10.6.2.1–10.6.2.7, new to stop; modes, default `UVM_NO_HB_MODE`; `set_heartbeat` starts monitoring at once) · 10.7 callbacks (10.7.1 uvm_callback, 10.7.1.2.2 callback_mode, 10.7.2 uvm_callbacks, 10.7.2.3.1 add) |
+| Containers, TLM | 11.2 uvm_pool · 11.3 uvm_queue · 12.2 TLM 1 (12.2.4 uvm_tlm_if_base, 12.2.8.2 uvm_tlm_fifo (12.2.8.2.3 used), 12.2.8.3 uvm_tlm_analysis_fifo (unbounded), 12.2.10 analysis ports: 12.2.10.1 port, 12.2.10.2 imp) · 12.3 TLM 2 (12.3.1; 12.3.2 interfaces: 12.3.2.2.1 nb_transport_fw, 12.3.2.2.2 nb_transport_bw, 12.3.2.2.3 b_transport; 12.3.3.1–12.3.3.2 phases; 12.3.4.1.1–12.3.4.1.2; 12.3.4.2 generic payload with members 12.3.4.2.1–12.3.4.2.46, incl. 12.3.4.2.4 do_pack and 12.3.4.2.34 set_dmi_allowed; 12.3.4.5; 12.3.5 sockets: 12.3.5.1–12.3.5.3, incl. 12.3.5.1.3 new and 12.3.5.1.4 connect; 12.3.6 ports) · Introduction: UVM TLM is "not an exact replication or re-implementation of the SystemC TLM library" |
+| Components | 13.1 uvm_component (13.1.4 phasing interface, 13.1.4.1.1 build_phase calls `apply_config_settings` when automatic configuration is on, 13.1.4.3.1 phase_started, 13.1.4.3.2 phase_ready_to_end, 13.1.4.3.3 phase_ended, 13.1.4.4.1 set_domain, 13.1.4.4.2 get_domain, 13.1.4.4.3 define_domain, 13.1.5 configuration interface: 13.1.5.1 apply_config_settings, 13.1.5.2 use_automatic_config, 13.1.7.13) · 13.2 test · 13.3 env · 13.4 agent (13.4.2.2 get_is_active) · 13.5 monitor · 13.6 scoreboard · 13.7 driver (13.7.2.1) · 13.8 push driver · 13.9 subscriber |
+| Sequences | 14.1 uvm_sequence_item (14.1.2.4 set_id_info, 14.1.3) · 14.2 uvm_sequence_base (14.2.3 execution, 14.2.4 run-time phasing: 14.2.4.1 get_starting_phase, 14.2.4.2 set_starting_phase, 14.2.4.3 get_automatic_phase_objection, 14.2.4.4 set_automatic_phase_objection (its NOTE: with a `forever` body the objection is never dropped); 14.2.5 control: 14.2.5.3 is_relevant, 14.2.5.5 lock, 14.2.5.6 grab, 14.2.5.7 unlock, 14.2.5.8 ungrab, 14.2.5.9 is_blocked, 14.2.5.10 has_lock, 14.2.5.11 kill, 14.2.5.12 do_kill; 14.2.6 item execution; 14.2.7.1 use_response_handler) · 14.3 uvm_sequence · 14.4 uvm_sequence_library |
+| Sequencers, policies | 15.2.1 uvm_sqr_if_base (15.2.1.2.10 disable_auto_item_recording) · 15.2.2.1 seq_item_pull_port · 15.3 uvm_sequencer_base (15.3.2.15 is_grabbed, 15.3.2.16 current_grabber, 15.3.2.19 set_arbitration, 15.3.5) · 15.4 common API (15.4.1) · 15.5 uvm_sequencer · 16.1 uvm_policy · 16.2 printer · 16.3 comparer · 16.4 recorder · 16.5 packer · 16.6 copier (16.6.4.1 copy_object: the field operation runs before `do_copy`) |
 | Register layer | 18.1 uvm_reg_block (18.1.2.6 lock_model, 18.1.5.5 update, 18.1.5.6 mirror, 18.1.6.5 add_hdl_path) · 18.2 uvm_reg_map (18.2.5.2 set_auto_predict) · 18.3 reg file · 18.4 uvm_reg (18.4.4.3 get_mirrored_value, 18.4.4.11 poke and 18.4.4.12 peek: LRM says "affected by the auto-prediction configuration", while uvm-core 2020.3.1 calls `do_predict` unconditionally; 18.4.4.15 predict) · 18.5 field · 18.6 uvm_mem · 18.11 uvm_reg_cbs · 18.12 uvm_mem_mam · 19.1 operation descriptors · 19.2.1 uvm_reg_adapter (19.2.1.2.2 supports_byte_enable, 19.2.1.2.3 provides_responses) · 19.3 uvm_reg_predictor · 19.4.1 uvm_reg_sequence · 19.4.2 uvm_reg_frontdoor · 19.5 uvm_reg_backdoor |
-| Annexes | B.1 report macros · B.2 utility/field macros · B.3 sequence macros · B.4 callback macros · B.5 TLM imp declaration macros · C.3 resource db · C.4 config db (C.4.2 uvm_config_db) · D.1 uvm_callback_iter · E.1 uvm_reg_hw_reset_seq · E.2 bit-bash · E.3 register access · E.5 memory access · E.6 memory walk · F.2.1.7 uvm_active_passive_enum · F.4 core service · F.7 uvm_root (F.7.3.1 run_test: `+UVM_TESTNAME` wins over the argument, F.7.3.3 set_timeout, F.7.4.2 print_topology) · G.1 command-line processing · G.2.1 +UVM_TESTNAME · G.2.2 +UVM_VERBOSITY · G.2.3 +uvm_set_verbosity · G.2.4 +uvm_set_action · G.2.5 +uvm_set_severity · G.2.6 +UVM_MAX_QUIT_COUNT · G.2.7 +uvm_set_inst_override / +uvm_set_type_override · G.2.8 +uvm_set_config_int/_string · G.2.9 +uvm_set_default_sequence |
+| Annexes | B.1 report macros · B.2 utility/field macros (B.2.1.3 the `uvm_component_*utils` family, incl. the param and abstract forms; B.2.2 NOTE on the efficiency of field macros) · B.3 sequence macros · B.4 callback macros · B.5 TLM imp declaration macros · B.7.1–B.7.3 version defines (B.7.2 `UVM_VERSION_STRING`, value implementation-defined) · C.3 resource db · C.4 config db (C.4.2 uvm_config_db) · D.1 uvm_callback_iter · D.2.3 set_recording_enabled_hier · D.4.3 · E.1 uvm_reg_hw_reset_seq · E.2 bit-bash · E.3 register access · E.5 memory access · E.6 memory walk · F.2.1.7 uvm_active_passive_enum · F.3.3.1 uvm_is_match · F.4 core service (F.4.1.4.26 set_uvm_seeding, name-based seeding) · F.7 uvm_root (F.7.3.1 run_test: `+UVM_TESTNAME` wins over the argument, F.7.3.3 set_timeout, F.7.4.1, F.7.4.2 print_topology) · G.1 command-line processing · G.2.1 +UVM_TESTNAME · G.2.2 +UVM_VERBOSITY · G.2.3 +uvm_set_verbosity · G.2.4 +uvm_set_action · G.2.5 +uvm_set_severity · G.2.6 +UVM_MAX_QUIT_COUNT · G.2.7 +uvm_set_inst_override / +uvm_set_type_override · G.2.8 +uvm_set_config_int/_string · G.2.9 +uvm_set_default_sequence |
 | RAL test exclusions | bit resources `NO_REG_TESTS`, `NO_REG_HW_RESET_TEST` in the `REG::` namespace |
 
 **Not in 1800.2-2020 (uvm-core 2020.3.1 implementation, verified in the source):**
@@ -2663,26 +2675,62 @@ Checked against the IEEE 1800-2023 text, the IEEE 1800.2-2020 PDF (`uvm_lrm.pdf`
 - `+UVM_CONFIG_DB_TRACE` (`uvm_config_db`);
 - `+UVM_DUMP_CMDLINE_ARGS`;
 - `uvm_component::check_config_usage`, `print_config`, `recording_detail`;
-- `uvm_comparer` defaults `show_max = 1`, `sev = UVM_INFO`, `verbosity = UVM_LOW` (counts all miscompares; limits printing).
+- `uvm_comparer` defaults `show_max = 1`, `sev = UVM_INFO`, `verbosity = UVM_LOW` (counts all miscompares; limits printing);
+- `uvm_domain::get_common_domain()`, `get_uvm_domain()`, `get_uvm_schedule()` (`uvm_domain.svh`, no `@uvm-ieee` tag; the standard route is §9.4.2);
+- `uvm_objection::display_objections()`, `uvm_port_base::debug_connected_to()`, `uvm_root::set_enable_print_topology()`;
+- `uvm_heartbeat` `HBFAIL` reports, and the first trigger only opens a window (`uvm_heartbeat.svh`).
 
 **Arm:**
 - **IHI0022E:**
+  - A1.3 (A1.3.2 the three interconnect topologies; A1.3.3); A1.4.2 terminology;
   - A3.1 clock and reset;
   - A3.2.1 handshake process; A3.2.2 channel signaling requirements;
-  - A3.3 channel relationships; A3.3.1 dependencies between channel handshake signals;
-  - A3.4.1 address structure (4KB); A3.4.3 data read/write structure; A3.4.4 responses;
-  - A4.3 AXI4 memory-attribute changes; A4.7 access permissions (AxPROT);
-  - A5.1–A5.3 IDs and ordering (A5.3.1 read ordering); A6.1 ordering model;
+  - A3.3 channel relationships; A3.3.1 dependencies between channel handshake signals ("To prevent a deadlock situation"); A3.3.2;
+  - A3.4.1 address structure (4KB); A3.4.3 data read/write structure; A3.4.4 responses (DECERR from a default slave);
+  - A4.3 AXI4 memory-attribute changes (A4.3.1); A4.4 (with A4.3.1: Non-modifiable, Non-bufferable); A4.7 access permissions (AxPROT);
+  - A5.1–A5.3 IDs and ordering (A5.3.1 read ordering; A5.3.4–A5.3.6); A5.4 (A5.4.1, A5.4.2); A6.1 ordering model;
   - A7.2 exclusive accesses; A7.3 locked accesses;
-  - A8.1 QoS;
-  - B1.1 AXI4-Lite.
+  - A8.1 QoS (A8.1.1 AxQOS, recommended for use as a priority); A8.2.1;
+  - B1.1 AXI4-Lite (B1.1.1–B1.1.4, Table B1-1); B1.2 (B1.2.1, B1.2.2); B1.3.1;
+  - C1.3.1 ACE additions to the AR/AW signals and RRESP[3:2]; C1.3.2 AC, CR and CD channels; C1.3.3 RACK and WACK;
+  - C11.1 ACE-Lite (AXI4 plus the AR/AW signals only); C11.2 ACE-Lite transactions (Shareable, Non-shareable).
+- **IHI0022G:** change history (issue F AXI5 interfaces); C1.1 (Table C1-1; Table C1-2 AWATOP); E1.1, E1.1.1, E1.1.4 (atomics: one ID for the request, the write response and the read data).
+- **IHI0022H.c:** change history (issue H.b introduces manager/subordinate).
 - **IHI0033B.b:**
+  - 1.1 (1.1.3 multi-master through an arbitrating interconnect); 1.2; 1.3 ("a slave cannot request that the address phase is extended"); Table 2-2;
   - 2.1 global signals;
   - 3.1 basic transfers; 3.2 transfer types; 3.3 locked transfers; 3.4 transfer size; 3.5 burst operation ("must not … cross a 1KB address boundary"); 3.6 waited transfers;
   - 4.1 interconnect;
   - 5.1 slave transfer responses;
   - 6.1 data buses;
   - 7.1 clock and reset requirements.
+- **IHI0033C:** change history (2021 features; manager/subordinate).
+- **IHI0024C (APB2–APB4):** 1.1; 1.2; 2.1.1; 3.4 error response (PSLVERR); 4.1.
+- **IHI0024E (APB5):** Preface "APB Revisions" (issues D and E); 1.1 (Requester/Completer).
+- **IHI0051A (AXI4-Stream):** 1.1; 1.1.2 (a packet is similar to an AXI4 burst); 2.2.1 handshake; 2.5 TLAST; 3.1.1 (TVALID required, TREADY and the other signals optional); 4.2 ordering; Table 2-1 (TDEST routing).
+- **IHI0050E.b (CHI):** 1.1.2 (Table 1-1); 1.3; 1.6; 2.1 (Table 2-1 channels REQ, WDAT, SRSP, CRSP, RDAT, SNP).
+
+**Accellera SCE-MI 2.4:**
+- 4.4.4 (hardware time is frozen while the host side runs);
+- 4.7.3 (HDL transactors call imports and implement exports); 4.7.4; 4.7.9 (4.7.9.2.1, 4.7.9.3.1);
+- 4.8.1, 4.8.8 pipes (deferred and immediate visibility, flush);
+- 4.9.6, 4.9.8;
+- 4.11 backdoor DMI and register APIs;
+- 5.6.1.3 Table 5.3 data-type subset (5.6.1.3.1 2-state coercion; 5.6.1.3.2; 5.6.1.3.3 packing order);
+- 5.6.2.1 (all DPI calls are zero-time); 5.6.2.2; 5.6.2.3 (two-level nesting);
+- 5.6.3.1.1, 5.6.3.1.3, 5.6.3.1.4.
+
+**Accellera PSS 3.0:**
+- 1.2 (DSL-only input format); 4.4 (Table 3); 5.3.2; 7.2.1 (`bit[32]` form); 7.5; 8.5.9; 9.4.1 (b: the default root component is `pss_top`);
+- 10 activities; 12.3.1, 12.3.3–12.3.7 (12.3.4 `parallel`, 12.3.5 `schedule`, 12.3.6 join specifiers); 12.4.1; 12.4.4; 12.9; 12.10 hierarchical binding;
+- 13.1–13.4 flow objects (13.1.1 buffer, 13.2.1 stream, 13.3.1 state rules); 14.1–14.2 resources (`lock`, `share`); 15 (15.1, 15.3.1);
+- 16.1.10 `default`, 16.1.11 `dist`; 16.4.9 (lookahead); 16.4.10; 16.4.13 (no backtracking; body blocks and sampling external data); 17.1 inference;
+- Clauses 18 and 19 coverage; 21.1.3.1; 22.1.2; 22.4 imported functions; 22.5 target-template exec blocks (22.5.1, 22.5.3, 22.5.3.2 values are printed in decimal); 22.8 (Tables 25, 26);
+- BNF productions `activity_stmt`, `select`, `repeat`, `bind`, `flow_ref_field_declaration`, `resource_ref_field_declaration`, `pool`, `constraint_body_item` (`default`, `default disable`, `dist`), `exec_kind`, `target_code_exec_block`, `string_literal`.
+
+**IEEE 1801 (UPF).** Checked against the table of contents only, so these are numbers and headings, not behaviour (only the body of §1.3 was read). Attribute behaviour to a checked secondary source or label it tool-dependent.
+- **IEEE 1801-2018** (UPF 3.1, as IEC 61523-4:2023): 1.3 key characteristics of UPF (text read); 4.7 supply states and power states; 4.8 simstates; 4.9 power intent specification; 6.4 `add_port_state` (legacy); 6.5 `add_power_state`; 6.6 `add_pst_state` (legacy); 6.7 `add_state_transition`; 6.10 `associate_supply_set`; 6.14 `connect_supply_net`; 6.20 `create_power_domain`; 6.22 `create_power_switch`; 6.23 `create_pst` (legacy); 6.24 `create_supply_net`; 6.25 `create_supply_port`; 6.26 `create_supply_set`; 6.33 `load_upf`; 6.42 `set_design_top`; 6.43 `set_domain_supply_net` (legacy); 6.45 `set_isolation`; 6.46 `set_level_shifter`; 6.50 `set_retention`; 6.52 `set_scope`; 6.55 `sim_assertion_control`; 6.56 `sim_corruption_control`; 6.57 `sim_replay_control`; 6.58 `upf_version`; 9.3–9.9 simulation semantics; 11.2 HDL interface; Annex D deprecated and legacy commands.
+- **IEEE 1801-2013** (UPF 2.1, IEC 61523-4:2015 table of contents, as recorded by the L45 verifier): 6.19 `create_pst` (legacy); 6.39 `set_domain_supply_net` (legacy); 6.42 `set_isolation_control` (deprecated); 6.50 `set_retention_control` (deprecated).
 
 ---
 
@@ -2691,7 +2739,7 @@ Checked against the IEEE 1800-2023 text, the IEEE 1800.2-2020 PDF (`uvm_lrm.pdf`
 | Lab id | Status | Manifest owner | Recommended owner | Notes |
 |---|---|---|---|---|
 | `basics-1` | available | F2D | F2D/tasks-functions | Steps and grader do not match the README (token match); LAB-M0 |
-| `simple-dut-1` | coming soon | "F4" (not a module) | proposed F2E (M0) | README is a non-UVM first TB; manifest says UVM; it is a prerequisite of 6 UVM labs (re-point them to LAB-T2-ENV) |
+| `simple-dut-1` | available | F2E | F2E (M0) | Milestone M0's lab: a non-UVM directed self-checking bench (registered saturating adder) with a grader; module prerequisites F2B, F2D; no available lab lists it, only `arbiter-1` (coming soon) |
 | `common-1` | coming soon | F2C | F2A | structs, enums, arrays |
 | `constructs-1` | coming soon | F2B | F4C (LAB-M1) | Contains `lab1_race_condition` |
 | `fifo-1` | coming soon | I-SV-1 | I-SV-9 (bridge capstone P8) | Layered class-based SV TB |
@@ -2717,7 +2765,7 @@ Checked against the IEEE 1800-2023 text, the IEEE 1800.2-2020 PDF (`uvm_lrm.pdf`
 | `uvm-performance-1` | coming soon | E-PERF-1 | E-PERF-1 | |
 | `pss-portable-intent` | available | E-PSS-1 | E-PSS-1 | Release-tested flow |
 | `power-aware-retention` | available | E-PWR-1 | E-PWR-1 | Release-tested LabLink |
-| `soc-vip-reuse` | available | E-SOC-1 | E-SOC-1 | Prerequisite `simple-dut-1` |
+| `soc-vip-reuse` | available | E-SOC-1 | E-SOC-1 | Lab prerequisite `uvm-mini-capstone` (no longer `simple-dut-1`) |
 | `soc-strategy-capstone` | available | E-SOC-1 | E-SOC-1 | Document capstone; M8 code capstone is `dma-1` |
 
 Milestone labs that do not exist yet: LAB-M1 (`constructs-1`), LAB-T2-ENV, LAB-M2, LAB-M3 mutants, LAB-M5, LAB-M6 extension, LAB-M7 (Build-a-RAL), LAB-M8. See [`improvement-plan.md`](../audit/2026-10-03-learning-outcomes/improvement-plan.md).
