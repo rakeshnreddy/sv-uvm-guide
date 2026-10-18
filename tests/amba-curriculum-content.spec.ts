@@ -26,6 +26,8 @@ const expectedVisualizerTags: Record<string, string> = {
   'B-AMBA-1_Protocol_Families_and_Tradeoffs': '<AmbaFamilyExplorer />',
   'B-AMBA-2_Protocol_Intuition_and_Memory_Hooks': '<ProtocolAnalogyExplorer />',
   'B-AHB-1_AHB_Design_Timing_Mechanics': '<AhbPipelineBurstVisualizer />',
+  'B-AHB-2_AHB_Pitfalls_and_Deadlocks': '<AhbPipelineBurstVisualizer />',
+  'B-AHB-3_AHB_Verification': '<AhbPipelineBurstVisualizer />',
   'B-AXI-1_AXI_Channel_Architecture': '<AxiChannelHandshakeVisualizer />',
   'B-AXI-2_AXI_Burst_Math': '<AxiMemoryMathVisualizer />',
   'B-AXI-3_AXI_Ordering_and_IDs': '<AxiIdOrderingVisualizer />',

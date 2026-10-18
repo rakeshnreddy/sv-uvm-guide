@@ -1,6 +1,6 @@
 // Starter: complete the protocol assertions below.
-// Pin-level checks can detect symptoms, but cannot prove an internal signal dependency.
-// READY latency bounds are optional environment policy, never a generic AXI requirement.
+// Pin-level checks see symptoms; they cannot see a dependency inside the master.
+// READY latency bounds are an optional integration contract, never an AXI rule.
 module axi_deadlock_checker #(
   parameter int MAX_WAIT = 32,
   parameter bit ENABLE_SERVICE_BOUNDS = 1'b0
@@ -29,24 +29,30 @@ module axi_deadlock_checker #(
   input logic RLAST
 );
 
-  // Required protocol rules:
-  // 1. Once a source asserts VALID, VALID and its payload stay stable until handshake.
-  // 2. BVALID follows completed AW and final-W handshakes.
-  // TODO: implement separate AW, W, AR, B, and R stability properties and
-  // track the two write-channel handshakes needed to validate BVALID.
+  // Required protocol rules (IHI0022E):
+  // 1. A3.2.1: once a source asserts VALID, VALID and its payload stay stable
+  //    until the handshake.
+  // 2. A3.3.1 (AXI4): BVALID only after both the AW and the WLAST handshakes.
+  // TODO: implement separate AW, W, AR, B, and R stability properties.
+  // TODO: count AW, WLAST and B handshakes and check
+  //       BVALID |-> aw_cnt > b_cnt && wlast_cnt > b_cnt
+  //       (counters stay correct with several writes in flight; set/clear flags
+  //       lose a handshake that lands on the same edge as a B handshake).
   // Example:
   // property p_wvalid_stable;
   //   @(posedge ACLK) disable iff (!ARESETn)
   //     WVALID && !WREADY |=> WVALID && $stable({WDATA, WSTRB, WLAST});
   // endproperty
   // assert property (p_wvalid_stable)
-  //   else $error("W channel payload changed while stalled");
+  //   else $error("[Protocol A3.2.1] W channel payload changed while stalled");
 
-  // Optional integration/QoS policy. Gate bounded AW/W/AR READY watchdogs here.
-  // This must not be labeled as a base AXI protocol assertion.
+  // Optional integration contract. Gate bounded AW/W/AR READY checks here and
+  // label their messages "[Integration contract]", not as AXI protocol rules.
+  // Hint: start one attempt per stall with $rose(VALID && !READY), so a long
+  // stall reports once instead of on every cycle.
   generate
     if (ENABLE_SERVICE_BOUNDS) begin : g_service_bounds
-      // TODO: add *_service_bound properties for locally configured latency limits.
+      // TODO: add AW, W and AR service-bound properties using MAX_WAIT.
     end
   endgenerate
 endmodule

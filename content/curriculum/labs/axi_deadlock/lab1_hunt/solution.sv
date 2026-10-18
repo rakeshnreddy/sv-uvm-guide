@@ -1,5 +1,7 @@
-// Complete protocol-correct AXI channel checker.
-// READY service bounds are optional environment policy, not base AXI rules.
+// Reference solution: a protocol-correct AXI channel checker.
+// Compile it instead of axi_deadlock_checker.sv (same module name and ports).
+// [Protocol] checks are IHI0022E rules. The service bounds are an optional
+// [Integration contract]: AXI itself permits unbounded backpressure.
 module axi_deadlock_checker #(
   parameter int MAX_WAIT = 32,
   parameter bit ENABLE_SERVICE_BOUNDS = 1'b0
@@ -28,89 +30,85 @@ module axi_deadlock_checker #(
   input logic RLAST
 );
 
-  logic aw_complete;
-  logic final_w_complete;
+  // Handshake counters. Sampled at an edge, they hold the handshakes of earlier
+  // edges, which is what "BVALID after the AW and WLAST handshakes" needs.
+  // Counters (not set/clear flags) stay correct with several writes in flight
+  // and when an AW or WLAST handshake lands on the same edge as a B handshake.
+  int unsigned aw_cnt, wlast_cnt, b_cnt;
 
   always_ff @(posedge ACLK or negedge ARESETn) begin
     if (!ARESETn) begin
-      aw_complete      <= 1'b0;
-      final_w_complete <= 1'b0;
+      aw_cnt    <= 0;
+      wlast_cnt <= 0;
+      b_cnt     <= 0;
     end else begin
-      if (AWVALID && AWREADY) aw_complete <= 1'b1;
-      if (WVALID && WREADY && WLAST) final_w_complete <= 1'b1;
-      if (BVALID && BREADY) begin
-        aw_complete      <= 1'b0;
-        final_w_complete <= 1'b0;
-      end
+      if (AWVALID && AWREADY)        aw_cnt    <= aw_cnt + 1;
+      if (WVALID && WREADY && WLAST) wlast_cnt <= wlast_cnt + 1;
+      if (BVALID && BREADY)          b_cnt     <= b_cnt + 1;
     end
   end
 
+  // [Protocol A3.2.1] VALID stays HIGH and the information stays stable while
+  // the destination stalls.
   property p_awvalid_stable;
     @(posedge ACLK) disable iff (!ARESETn)
       AWVALID && !AWREADY |=> AWVALID && $stable({AWID, AWADDR, AWLEN});
   endproperty
   assert property (p_awvalid_stable)
-    else $error("AW VALID or payload changed while stalled");
+    else $error("[Protocol A3.2.1] AW VALID or payload changed while stalled");
 
   property p_wvalid_stable;
     @(posedge ACLK) disable iff (!ARESETn)
       WVALID && !WREADY |=> WVALID && $stable({WDATA, WSTRB, WLAST});
   endproperty
   assert property (p_wvalid_stable)
-    else $error("W channel payload changed while stalled");
+    else $error("[Protocol A3.2.1] W VALID or payload changed while stalled");
 
   property p_arvalid_stable;
     @(posedge ACLK) disable iff (!ARESETn)
       ARVALID && !ARREADY |=> ARVALID && $stable({ARID, ARADDR, ARLEN});
   endproperty
   assert property (p_arvalid_stable)
-    else $error("AR VALID or payload changed while stalled");
+    else $error("[Protocol A3.2.1] AR VALID or payload changed while stalled");
 
   property p_bvalid_stable;
     @(posedge ACLK) disable iff (!ARESETn)
       BVALID && !BREADY |=> BVALID && $stable({BID, BRESP});
   endproperty
   assert property (p_bvalid_stable)
-    else $error("B VALID or payload changed while stalled");
+    else $error("[Protocol A3.2.1] B VALID or payload changed while stalled");
 
   property p_rvalid_stable;
     @(posedge ACLK) disable iff (!ARESETn)
       RVALID && !RREADY |=> RVALID && $stable({RID, RDATA, RRESP, RLAST});
   endproperty
   assert property (p_rvalid_stable)
-    else $error("R VALID or payload changed while stalled");
+    else $error("[Protocol A3.2.1] R VALID or payload changed while stalled");
 
+  // [Protocol A3.3.1, AXI4 write response dependency]
   property p_bvalid_after_write_completion;
     @(posedge ACLK) disable iff (!ARESETn)
-      BVALID |-> aw_complete && final_w_complete;
+      BVALID |-> aw_cnt > b_cnt && wlast_cnt > b_cnt;
   endproperty
   assert property (p_bvalid_after_write_completion)
-    else $error("BVALID asserted before AW and final-W handshakes completed");
+    else $error("[Protocol A3.3.1] BVALID before its AW and WLAST handshakes");
 
-  // These bounded checks are an optional integration/QoS contract. AXI itself
-  // permits unbounded backpressure and does not require READY within MAX_WAIT.
+  // [Integration contract] Each stall must end within MAX_WAIT edges. AXI does
+  // not require this. $rose(VALID && !READY) is true only on the first stalled
+  // edge, so one long stall reports once instead of on every later cycle.
   generate
     if (ENABLE_SERVICE_BOUNDS) begin : g_service_bounds
-      property p_aw_service_bound;
+      property p_service_bound(valid, ready);
         @(posedge ACLK) disable iff (!ARESETn)
-          AWVALID |-> ##[0:MAX_WAIT] AWREADY;
+          $rose(valid && !ready) |-> ##[1:MAX_WAIT] ready;
       endproperty
-      assert property (p_aw_service_bound)
-        else $error("AW channel exceeded configured service bound");
 
-      property p_w_service_bound;
-        @(posedge ACLK) disable iff (!ARESETn)
-          WVALID |-> ##[0:MAX_WAIT] WREADY;
-      endproperty
-      assert property (p_w_service_bound)
-        else $error("W channel exceeded configured service bound");
-
-      property p_ar_service_bound;
-        @(posedge ACLK) disable iff (!ARESETn)
-          ARVALID |-> ##[0:MAX_WAIT] ARREADY;
-      endproperty
-      assert property (p_ar_service_bound)
-        else $error("AR channel exceeded configured service bound");
+      assert property (p_service_bound(AWVALID, AWREADY))
+        else $error("[Integration contract] AW stalled more than %0d edges", MAX_WAIT);
+      assert property (p_service_bound(WVALID, WREADY))
+        else $error("[Integration contract] W stalled more than %0d edges", MAX_WAIT);
+      assert property (p_service_bound(ARVALID, ARREADY))
+        else $error("[Integration contract] AR stalled more than %0d edges", MAX_WAIT);
     end
   endgenerate
 

@@ -13,7 +13,7 @@ import {
   type SearchIndexData,
 } from '@/components/search/search-engine';
 import { curriculumData, normalizeSlug } from '@/lib/curriculum-data';
-import { headingSlug } from '@/lib/heading-slug';
+import { createSlugger, headingSlug } from '@/lib/heading-slug';
 
 const data = index as unknown as SearchIndexData;
 const docs = prepareSearchDocuments(data);
@@ -95,13 +95,20 @@ describe('generated search index', () => {
   });
 
   it('gives a repeated heading the numbered anchor the shared slugger assigns', () => {
-    const deadlocks = data.tiers
-      .flatMap((tier) => tier.modules)
-      .find((mod) => mod.id === 'B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks');
-    const anchors = deadlocks?.lessons[0].headings
-      .filter(([text]) => text === 'The Pitfall')
-      .map(headingAnchor);
-    expect(anchors).toEqual(['the-pitfall', 'the-pitfall-1']);
+    const slug = createSlugger();
+    expect([slug('The Pitfall'), slug('The Pitfall')]).toEqual(['the-pitfall', 'the-pitfall-1']);
+    // In the generated index a numbered anchor is stored explicitly and extends the text's own slug.
+    for (const tier of data.tiers) {
+      for (const mod of tier.modules) {
+        for (const lesson of mod.lessons) {
+          for (const heading of lesson.headings) {
+            const explicit = heading[2];
+            const numbered = explicit ? /^(.*)-(\d+)$/.exec(explicit) : null;
+            if (numbered && numbered[1] === headingSlug(heading[0])) expect(headingAnchor(heading)).toBe(explicit);
+          }
+        }
+      }
+    }
   });
 
   it('holds no lesson body text', () => {
@@ -176,10 +183,12 @@ describe('searchCurriculum ranking (G30-SRCH acceptance)', () => {
 
 describe('search result deep links', () => {
   it('links sections to the canonical lesson URL plus the heading anchor', () => {
-    const results = searchCurriculum(docs, 'WSTRB write strobe');
-    const section = results.find((result) => result.doc.kind === 'section');
-    expect(section?.doc.href).toBe('/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index#3-wstrb--write-strobe-generation');
-    expect(section?.doc.href).toBe(`${section?.doc.lessonHref}#${headingSlug('3. WSTRB — Write Strobe Generation')}`);
+    const heading = 'WSTRB: any subset of the active lanes';
+    const section = searchCurriculum(docs, 'WSTRB active lanes').find(
+      (result) => result.doc.kind === 'section' && result.doc.href.includes('#'),
+    );
+    expect(section?.doc.lessonHref).toBe('/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index');
+    expect(section?.doc.href).toBe(`/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index#${headingSlug(heading)}`);
   });
 
   it('resolves every result to a real lesson', () => {

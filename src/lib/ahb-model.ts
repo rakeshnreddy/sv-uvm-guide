@@ -1150,7 +1150,7 @@ export function buildPrediction(presetId: AhbPresetId, config: AhbConfig, trace:
         options: [
           {
             id: "naive",
-            label: "Only p_error_first_then_second (the lesson's original check)",
+            label: "Only p_error_first_then_second",
             correct: answer === "naive",
             feedback: answer === "naive" ? `${naiveNote} ${fixedNote}` : `The original check is the one that stays silent. ${naiveNote} ${fixedNote}`,
           },

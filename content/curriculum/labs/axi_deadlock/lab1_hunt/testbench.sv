@@ -1,7 +1,9 @@
-// testbench.sv — AXI Deadlock Hunt Lab
-// This testbench simulates a realistic channel-dependency deadlock scenario.
-// An illegal master WVALID → AWREADY dependency combines with a legal but
-// risky slave AWREADY → WVALID policy to deadlock write transactions.
+// testbench.sv: AXI Deadlock Hunt Lab (reference bench, read-only).
+// An illegal master dependency (WVALID waits for AWREADY) meets a legal but
+// strict slave policy (AWREADY waits for WVALID): the write deadlocks, and a
+// read queued behind it in the slave hangs too.
+// Run with no plusarg for the buggy master; run with +FIX_MASTER for the fixed
+// master, which must complete the write and the read with zero checker failures.
 
 `timescale 1ns/1ps
 
@@ -12,15 +14,18 @@ module top;
   //------------------------------------------------------------------
   bit ACLK;
   bit ARESETn;
+  bit fix_master;
 
   always #5 ACLK = ~ACLK;
 
   initial begin
+    fix_master = $test$plusargs("FIX_MASTER");
     ARESETn = 0;
-    $display("# Time %4t: RESET asserted", $time);
+    $display("# %0d ns: RESET asserted (%s master)", $time,
+             fix_master ? "fixed" : "buggy");
     repeat (10) @(posedge ACLK);
-    ARESETn = 1;
-    $display("# Time %4t: RESET deasserted", $time);
+    ARESETn <= 1;  // released on a clock edge (IHI0022E A3.1.2)
+    $display("# %0d ns: RESET deasserted", $time);
   end
 
   //------------------------------------------------------------------
@@ -63,23 +68,21 @@ module top;
   initial begin
     AWVALID = 0; AWADDR = 0; AWID = 0; AWLEN = 0;
     WVALID  = 0; WDATA  = 0; WSTRB = 0; WLAST = 0;
-    BREADY  = 1;
+    BREADY  = 1;  // this master can always take a response (A3.2.2)
     ARVALID = 0; ARADDR = 0; ARID = 0; ARLEN = 0;
     RREADY  = 1;
   end
 
   //------------------------------------------------------------------
-  // Dependency-constrained Slave (legal AXI READY policy, risky integration)
+  // Strict slave (legal AXI READY policy, risky in integration)
   //------------------------------------------------------------------
-  // This slave waits for WVALID before asserting AWREADY. A destination may
-  // wait for VALID before asserting READY; the policy is legal but risky when
-  // combined with the deliberately illegal master behavior below.
-  //
-  // Additionally, the slave's internal FSM blocks ARREADY while a write
-  // is "in progress" (i.e., waiting for the AW handshake that never completes),
-  // causing a cascade that blocks read transactions too.
+  // AWREADY waits until the slave has registered WVALID, and WREADY waits until
+  // it has registered AWVALID (it enters WRITE_WAIT only on AWVALID). Both are
+  // legal destination policies (A3.3.1), implemented through registers because
+  // A3.1.1 forbids combinational input-to-output paths. The slave also serves
+  // one transaction at a time, so a read waits behind a pending write.
   //------------------------------------------------------------------
-  buggy_slave u_slave (
+  strict_slave u_slave (
     .ACLK    (ACLK),
     .ARESETn (ARESETn),
     // AW
@@ -102,71 +105,102 @@ module top;
   //------------------------------------------------------------------
   // Protocol Checker (your assertions go here)
   //------------------------------------------------------------------
-  // Service bounds are enabled as this lab's explicit integration policy. They
-  // diagnose the stalled handshakes; they are not base AXI protocol rules.
+  // Service bounds are enabled as this lab's explicit integration contract.
+  // They diagnose the stalled handshakes; they are not base AXI protocol rules.
   axi_deadlock_checker #(.MAX_WAIT(32), .ENABLE_SERVICE_BOUNDS(1'b1)) u_checker (
     .ACLK    (ACLK),
     .ARESETn (ARESETn),
-    .AWVALID (AWVALID), .AWREADY (AWREADY), .AWID (AWID), .AWADDR (AWADDR), .AWLEN (AWLEN),
-    .WVALID  (WVALID),  .WREADY  (WREADY), .WDATA (WDATA), .WSTRB (WSTRB), .WLAST (WLAST),
+    .AWVALID (AWVALID), .AWREADY (AWREADY), .AWID (AWID), .AWADDR (AWADDR),
+    .AWLEN   (AWLEN),
+    .WVALID  (WVALID),  .WREADY  (WREADY), .WDATA (WDATA), .WSTRB (WSTRB),
+    .WLAST   (WLAST),
     .BVALID  (BVALID),  .BREADY  (BREADY), .BID (BID), .BRESP (BRESP),
-    .ARVALID (ARVALID), .ARREADY (ARREADY), .ARID (ARID), .ARADDR (ARADDR), .ARLEN (ARLEN),
-    .RVALID  (RVALID),  .RREADY  (RREADY), .RID (RID), .RDATA (RDATA), .RRESP (RRESP), .RLAST (RLAST)
+    .ARVALID (ARVALID), .ARREADY (ARREADY), .ARID (ARID), .ARADDR (ARADDR),
+    .ARLEN   (ARLEN),
+    .RVALID  (RVALID),  .RREADY  (RREADY), .RID (RID), .RDATA (RDATA),
+    .RRESP   (RRESP),   .RLAST   (RLAST)
   );
 
   //------------------------------------------------------------------
-  // Master Stimulus — drives two writes and one read
+  // Master Stimulus: one write (ID=1) and one read (ID=3)
   //------------------------------------------------------------------
-  // The master waits for AWREADY before asserting WVALID. This is the
-  // deliberate protocol bug: source VALID must not depend on destination READY.
+  // Each wait below is clocked: "do @(posedge ACLK); while (!(VALID && READY));"
+  // returns just after the edge at which the handshake happened.
   //------------------------------------------------------------------
   initial begin
     wait (ARESETn === 1);
     repeat (2) @(posedge ACLK);
 
-    // ---------- Write Transaction 1 (ID=1) ----------
-    $display("# Time %4t: Master: Driving AWVALID for Write ID=1, ADDR=0x1000", $time);
+    $display("# %0d ns: Master: AWVALID for write ID=1, ADDR=0x1000", $time);
     AWVALID <= 1;
     AWID    <= 4'd1;
     AWADDR  <= 32'h0000_1000;
-    AWLEN   <= 8'd0;  // single beat
+    AWLEN   <= 8'd0;  // single transfer
+    if (fix_master) begin
+      // FIXED: WVALID is raised with AWVALID; it never waits for a READY.
+      WVALID <= 1;
+      WDATA  <= 32'hDEAD_BEEF;
+      WSTRB  <= 4'hF;
+      WLAST  <= 1;
+    end
 
-    // Also start a read to show the cascade effect
-    @(posedge ACLK);
-    $display("# Time %4t: Master: Driving ARVALID for Read ID=3, ADDR=0x3000", $time);
-    ARVALID <= 1;
-    ARID    <= 4'd3;
-    ARADDR  <= 32'h0000_3000;
-    ARLEN   <= 8'd0;
-
-    // Deliberate bug: WVALID is incorrectly made dependent on AWREADY.
     fork
-      begin : aw_wait
-        wait (AWREADY === 1);
-        @(posedge ACLK);
-        AWVALID <= 0;
-        // Now send write data
-        $display("# Time %4t: Master: AW accepted, now sending WVALID", $time);
-        WVALID <= 1;
-        WDATA  <= 32'hDEAD_BEEF;
-        WSTRB  <= 4'hF;
-        WLAST  <= 1;
-        @(posedge ACLK);
-        wait (WREADY === 1);
-        @(posedge ACLK);
-        WVALID <= 0;
-        WLAST  <= 0;
+      begin : aw_and_w
+        if (fix_master) begin
+          fork
+            begin : aw_ch
+              do @(posedge ACLK); while (!(AWVALID && AWREADY));
+              AWVALID <= 0;
+            end
+            begin : w_ch
+              do @(posedge ACLK); while (!(WVALID && WREADY));
+              WVALID <= 0;
+              WLAST  <= 0;
+            end
+          join
+        end else begin
+          // BUG (A3.3.1): WVALID waits for AWREADY. Against this slave, which
+          // waits for WVALID before AWREADY, neither ever rises.
+          do @(posedge ACLK); while (!(AWVALID && AWREADY));
+          AWVALID <= 0;
+          $display("# %0d ns: Master: AW accepted, now sending WVALID", $time);
+          WVALID <= 1;
+          WDATA  <= 32'hDEAD_BEEF;
+          WSTRB  <= 4'hF;
+          WLAST  <= 1;
+          do @(posedge ACLK); while (!(WVALID && WREADY));
+          WVALID <= 0;
+          WLAST  <= 0;
+        end
       end
 
-      begin : ar_wait
-        wait (ARREADY === 1);
+      begin : b_ch
+        do @(posedge ACLK); while (!(BVALID && BREADY));
+        $display("# %0d ns: Master: B received, BID=%0d BRESP=%0d", $time, BID, BRESP);
+      end
+
+      begin : ar_ch
+        // The read starts one edge after the write.
         @(posedge ACLK);
+        $display("# %0d ns: Master: ARVALID for read ID=3, ADDR=0x3000", $time);
+        ARVALID <= 1;
+        ARID    <= 4'd3;
+        ARADDR  <= 32'h0000_3000;
+        ARLEN   <= 8'd0;
+        do @(posedge ACLK); while (!(ARVALID && ARREADY));
         ARVALID <= 0;
       end
-    join_any
 
-    // Wait a bit for any response
-    repeat (5) @(posedge ACLK);
+      begin : r_ch
+        do @(posedge ACLK); while (!(RVALID && RREADY && RLAST));
+        $display("# %0d ns: Master: R received, RID=%0d RDATA=0x%08h", $time,
+                 RID, RDATA);
+      end
+    join
+
+    repeat (2) @(posedge ACLK);
+    $display("# %0d ns: DONE: write and read completed", $time);
+    $finish;
   end
 
   //------------------------------------------------------------------
@@ -174,19 +208,21 @@ module top;
   //------------------------------------------------------------------
   initial begin
     #2000;
-    $display("# Time %4t: TIMEOUT — integration watchdog stopped unresolved channel waits", $time);
+    $display("# %0d ns: TIMEOUT: integration watchdog stopped unresolved channel waits",
+             $time);
     $finish;
   end
 
   //------------------------------------------------------------------
-  // Waveform Logger (prints key signal state every 10 cycles)
+  // Signal Logger (prints the handshake signals every 10 cycles)
   //------------------------------------------------------------------
   initial begin
     wait (ARESETn === 1);
     forever begin
       repeat (10) @(posedge ACLK);
-      $display("# Time %4t: AWVALID=%b AWREADY=%b | WVALID=%b WREADY=%b | ARVALID=%b ARREADY=%b",
-        $time, AWVALID, AWREADY, WVALID, WREADY, ARVALID, ARREADY);
+      $write("# %0d ns: AWVALID=%b AWREADY=%b | WVALID=%b WREADY=%b",
+             $time, AWVALID, AWREADY, WVALID, WREADY);
+      $display(" | ARVALID=%b ARREADY=%b", ARVALID, ARREADY);
     end
   end
 
@@ -194,10 +230,10 @@ endmodule
 
 
 //======================================================================
-// Integration-constrained Slave Module
-// Contains a legal destination policy that participates in the wait cycle.
+// Strict Slave Module
+// A legal destination policy that closes the wait cycle with a buggy master.
 //======================================================================
-module buggy_slave (
+module strict_slave (
   input  logic        ACLK,
   input  logic        ARESETn,
   // AW Channel
@@ -234,14 +270,17 @@ module buggy_slave (
 
   typedef enum logic [2:0] {
     IDLE        = 3'd0,
-    WRITE_WAIT  = 3'd1,  // Waiting for AW + W
+    WRITE_WAIT  = 3'd1,  // Waiting for the AW and W handshakes
     WRITE_RESP  = 3'd2,  // Sending B response
     READ_RESP   = 3'd3   // Sending R data
   } state_t;
 
-  state_t state;
+  state_t      state;
   logic [31:0] saved_addr;
   logic [3:0]  saved_id;
+  logic        aw_ready_q;  // registered AWREADY
+  logic        aw_done;     // AW handshake taken for the current write
+  logic        w_done;      // WLAST handshake taken for the current write
 
   always_ff @(posedge ACLK or negedge ARESETn) begin
     if (!ARESETn) begin
@@ -256,31 +295,47 @@ module buggy_slave (
       RLAST      <= 0;
       saved_addr <= 0;
       saved_id   <= 0;
+      aw_ready_q <= 0;
+      aw_done    <= 0;
+      w_done     <= 0;
     end else begin
       case (state)
         IDLE: begin
-          BVALID <= 0;
-          RVALID <= 0;
-          RLAST  <= 0;
-
-          if (AWVALID) begin
-            // Enter write-wait state (but DON'T accept AW yet!)
-            state <= WRITE_WAIT;
-            saved_addr <= AWADDR;
-            saved_id   <= AWID;
-          end else if (ARVALID) begin
+          BVALID     <= 0;
+          RVALID     <= 0;
+          RLAST      <= 0;
+          aw_ready_q <= 0;
+          aw_done    <= 0;
+          w_done     <= 0;
+          // ARREADY is HIGH in IDLE, so ARVALID here IS an AR handshake. Serve
+          // it first; otherwise the accepted read would never get its R
+          // transfer (A3.3.1, A3.4.4).
+          if (ARVALID) begin
             state      <= READ_RESP;
             saved_addr <= ARADDR;
             saved_id   <= ARID;
+          end else if (AWVALID) begin
+            // Note the write, but do not accept AW yet.
+            state      <= WRITE_WAIT;
+            saved_addr <= AWADDR;
+            saved_id   <= AWID;
           end
         end
 
         WRITE_WAIT: begin
-          // BUG: Wait for WVALID (and WLAST) before completing write
-          // The AW handshake won't happen until AWREADY is asserted,
-          // but AWREADY depends on WVALID — creating the deadlock.
-          if (WVALID && WLAST) begin
-            state  <= WRITE_RESP;
+          // POLICY (legal, A3.3.1): AWREADY waits until WVALID has been seen.
+          // It is raised one edge later, from a register (A3.1.1).
+          if (AWVALID && AWREADY) begin
+            aw_ready_q <= 0;
+            aw_done    <= 1;
+          end else if ((WVALID || w_done) && !aw_done) begin
+            aw_ready_q <= 1;
+          end
+          if (WVALID && WREADY && WLAST) w_done <= 1;
+          // AXI4 (A3.3.1): respond only after both the AW and WLAST handshakes.
+          if ((aw_done || (AWVALID && AWREADY)) &&
+              (w_done  || (WVALID && WREADY && WLAST))) begin
+            state <= WRITE_RESP;
           end
         end
 
@@ -313,24 +368,14 @@ module buggy_slave (
   end
 
   //------------------------------------------------------------------
-  // AWREADY and WREADY Logic — LEGAL BUT RISKY READY POLICY
+  // READY outputs: functions of registers only (A3.1.1)
   //------------------------------------------------------------------
-  // AXI permits a destination to wait for VALID before asserting READY. This
-  // cross-channel policy is therefore not the protocol violation. It becomes
-  // part of a deadlock cycle only because the master illegally waits for
-  // AWREADY before asserting its source-owned WVALID.
-  //------------------------------------------------------------------
-  assign AWREADY = (state == WRITE_WAIT) && WVALID;  // legal READY policy; risky dependency
-
-  // WREADY is fine — slave accepts data when in WRITE_WAIT
-  assign WREADY = (state == WRITE_WAIT);
-
-  //------------------------------------------------------------------
-  // ARREADY Logic — CASCADING BUG
-  //------------------------------------------------------------------
-  // The slave blocks read acceptance while a write is "in progress".
-  // Since the write is stuck forever (deadlocked), reads also hang.
-  //------------------------------------------------------------------
+  assign AWREADY = aw_ready_q;
+  // WREADY waits for AWVALID: the slave enters WRITE_WAIT only on AWVALID.
+  assign WREADY  = (state == WRITE_WAIT) && !w_done;
+  // POLICY (legal): reads are accepted only in IDLE, so a read waits behind a
+  // pending write. With the buggy master, the write never completes and the
+  // read hangs with it.
   assign ARREADY = (state == IDLE);
 
 endmodule

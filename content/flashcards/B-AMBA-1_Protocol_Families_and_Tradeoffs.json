@@ -1,27 +1,77 @@
 [
   {
     "id": "b-amba-1-1",
-    "question": "When is AHB a better fit than AXI?",
-    "answer": "Use AHB for simpler, mostly in-order subsystems where a single shared pipeline and lower logic cost matter more than many outstanding transactions."
+    "question": "When is AHB-Lite a better fit than AXI4?",
+    "answer": "For a single-master subsystem such as a microcontroller with memories, where a pipelined bus with bursts is enough and transfers are strictly in order (no IDs). Low-bandwidth registers usually go further down, to APB."
   },
   {
     "id": "b-amba-1-2",
-    "question": "Why does AXI split reads, writes, addresses, data, and responses into independent channels?",
-    "answer": "Independent channels let the interconnect overlap work, apply backpressure per direction, and support multiple outstanding transactions."
+    "question": "Why does AXI split reads, writes, addresses, data and responses into five independent channels?",
+    "answer": "Independent channels (AW, W, B, AR, R), each with its own VALID/READY handshake, let addresses run ahead of data, many transactions be outstanding, and transactions complete out of order across IDs (IHI0022E §A1.3)."
   },
   {
     "id": "b-amba-1-3",
-    "question": "What is the main role of APB in an AMBA system?",
-    "answer": "APB is the low-complexity peripheral bus used for control/status registers and slow devices that do not need pipelined throughput."
+    "question": "What is APB for, and what does every APB transfer cost?",
+    "answer": "APB is the low-cost bus for programmable control registers of low-bandwidth peripherals, usually behind a bridge. It is not pipelined, and every transfer takes at least two cycles: SETUP, then ACCESS until PREADY (IHI0024C §1.1, §4.1)."
   },
   {
     "id": "b-amba-1-4",
-    "question": "What tradeoff does AXI make compared with AHB?",
-    "answer": "AXI buys higher concurrency and better throughput with more channels, more ordering rules, more buffering, and more verification complexity."
+    "question": "What does AXI4 buy over AHB-Lite, and what does it cost?",
+    "answer": "AXI4 buys concurrency: many outstanding transactions tagged by ID, independent read and write channels, and one address per burst. It costs more wires, ID tracking and buffering, and a harder testbench: per-channel driver threads and a per-ID scoreboard."
   },
   {
     "id": "b-amba-1-5",
     "question": "Why are bridges common in AMBA-based SoCs?",
-    "answer": "Bridges let blocks with different protocol costs coexist, such as an AXI fabric feeding an AHB peripheral island or an APB register bank."
+    "answer": "They let blocks with different interface costs coexist: an AXI fabric reaches an AHB-Lite memory island or APB peripherals through an AXI-to-AHB or AXI-to-APB bridge. A bridge must translate timing and responses, not just wires, and it adds latency."
+  },
+  {
+    "id": "b-amba-1-6",
+    "question": "Misconception check: does AHB move reads and writes on one multiplexed data channel?",
+    "answer": "No. AHB requires separate buses: HWDATA from the master and HRDATA back through the multiplexor (IHI0033B.b §6.1). The multiplexor chooses which slave's read data returns."
+  },
+  {
+    "id": "b-amba-1-7",
+    "question": "How many address phases does an AHB INCR4 burst have, and how many address handshakes does a 4-beat AXI burst have?",
+    "answer": "AHB: four, one per beat (NONSEQ, then SEQ, IHI0033B.b Table 3-1). AXI: one AR or AW handshake; the slave computes the later addresses (IHI0022E §A3.4.1)."
+  },
+  {
+    "id": "b-amba-1-8",
+    "question": "What does AXI4-Lite remove from AXI4, and what does it keep?",
+    "answer": "Removes: bursts (length 1 only), IDs, exclusive accesses and EXOKAY, and AxCACHE (fixed Non-modifiable, Non-bufferable). Keeps: all five channels, AxPROT, WSTRB and multiple outstanding transactions, completed in order (IHI0022E §B1.1–§B1.1.4)."
+  },
+  {
+    "id": "b-amba-1-9",
+    "question": "Misconception check: does AXI4-Stream carry addresses?",
+    "answer": "No. It has one channel (only TVALID is mandatory; TREADY, TDATA, TSTRB, TKEEP, TLAST, TID, TDEST and TUSER are optional), no address, no read/write and no response. TLAST marks packets; TDEST is routing information, not a memory address (IHI0051A Table 2-1, §2.5, §3.1)."
+  },
+  {
+    "id": "b-amba-1-10",
+    "question": "What are the jobs of an AMBA interconnect?",
+    "answer": "Decode each address to select a slave, arbitrate between masters, route responses back (on AXI by widening IDs with the master port number, §A5.3.5), return DECERR for unmapped addresses (§A3.4.4), and bridge to other protocols. Its inside is a design choice, not always a crossbar: shared buses, a shared address bus with several data buses, or multilayer (IHI0022E §A1.3.2)."
+  },
+  {
+    "id": "b-amba-1-11",
+    "question": "Name the four AXI responses, and who returns DECERR.",
+    "answer": "OKAY, EXOKAY, SLVERR (the access reached a slave that reports an error) and DECERR (no slave at the address). The interconnect returns DECERR, ideally from a default slave, and every beat must still complete (IHI0022E §A3.4.4)."
+  },
+  {
+    "id": "b-amba-1-12",
+    "question": "ACE versus ACE-Lite: what does each add to AXI4?",
+    "answer": "ACE: extra AR/AW signals and RRESP[3:2], the snoop channels AC (into the master), CR and CD, and RACK/WACK (§C1.3.1–§C1.3.3). ACE-Lite: the extra AR/AW signals only, for masters with no coherent cache (IHI0022E §C11.1)."
+  },
+  {
+    "id": "b-amba-1-13",
+    "question": "Where does CHI fit, and what changes for verification?",
+    "answer": "CHI is AMBA 5's layered coherent protocol for large systems: protocol, network and link layers, with flits, link-layer credits and node IDs (IHI0050E.b §1.1.2). Verification moves to flit-level VIP and checking at home nodes."
+  },
+  {
+    "id": "b-amba-1-14",
+    "question": "Master and slave, or manager and subordinate?",
+    "answer": "IHI0022E and IHI0033B.b say master and slave; later issues (IHI0022H.b, IHI0033C) say manager and subordinate, and APB's IHI0024E says requester and completer. This track uses master and slave."
+  },
+  {
+    "id": "b-amba-1-15",
+    "question": "Define transaction, burst and beat (IHI0022E §A1.4.2).",
+    "answer": "A transaction is the complete set of bus operations for one master request. Its payload data is the burst. A burst is made of one or more data transfers, called beats."
   }
 ]

@@ -33,6 +33,8 @@ const visualizerTestIds: Record<string, string> = {
   'B-AMBA-1_Protocol_Families_and_Tradeoffs': 'amba-family-explorer',
   'B-AMBA-2_Protocol_Intuition_and_Memory_Hooks': 'protocol-analogy-explorer',
   'B-AHB-1_AHB_Design_Timing_Mechanics': 'ahb-pipeline-burst-visualizer',
+  'B-AHB-2_AHB_Pitfalls_and_Deadlocks': 'ahb-pipeline-burst-visualizer',
+  'B-AHB-3_AHB_Verification': 'ahb-pipeline-burst-visualizer',
   'B-AXI-1_AXI_Channel_Architecture': 'axi-channel-handshake-visualizer',
   'B-AXI-2_AXI_Burst_Math': 'axi-memory-math-visualizer',
   'B-AXI-3_AXI_Ordering_and_IDs': 'axi-id-ordering-visualizer',
@@ -80,7 +82,7 @@ test.describe('AMBA curriculum coverage', () => {
       await test.step(route.sectionSlug, async () => {
         await expectLesson(page, route);
         await expect(page.getByRole('heading', { name: 'Reinforce the essentials' })).toBeVisible();
-        // Deck sizes vary per lesson (B-AHB-1 has 10 cards); assert the deck opened on card 1.
+        // Deck sizes vary per lesson (B-AHB-1 has 15 cards); assert the deck opened on card 1.
         await expect(page.getByText(/^Card 1 of \d+$/)).toBeVisible();
       });
     }

@@ -144,7 +144,7 @@ export function runExclusive(ops: ExclusiveOp[], policy: MonitorPolicy, initialM
           why = `EXOKAY: ${key(op.addr)} is still monitored for ID ${op.id}, so nothing wrote it since the exclusive read. Memory is updated, and the write ends every other monitor on this location (A7.2.3).`;
         } else {
           resp = "OKAY";
-          why = `OKAY, write not performed: ${key(op.addr)} is no longer monitored for ID ${op.id}. Either the location was written, or the monitor moved. The master must retry the whole read-modify-write (A7.2.2, A7.2.3).`;
+          why = `OKAY, write not performed: ${key(op.addr)} is no longer monitored for ID ${op.id}. Either the location was written, or the monitor moved. Software may retry the whole read-modify-write; the retry is not a protocol rule (A7.2.2, A7.2.3).`;
         }
         lastExRead.delete(op.id);
       }

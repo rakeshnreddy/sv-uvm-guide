@@ -67,29 +67,29 @@ describe("server-authoritative lab progress", () => {
   });
 
   it("records self-attestation evidence and only completes after every step", async () => {
+    const stepIds = lab.steps.map((step) => step.id);
+    const last = stepIds[stepIds.length - 1];
+    const earlier = stepIds.slice(0, -1);
     mocks.findFirst.mockResolvedValueOnce({
       id: "attempt-1",
-      currentStepId: "3",
-      completedSteps: ["1", "2"],
+      currentStepId: last,
+      completedSteps: earlier,
       workspace: {},
-      stepEvidence: {
-        "1": { kind: "self_attested" },
-        "2": { kind: "self_attested" },
-      },
+      stepEvidence: Object.fromEntries(earlier.map((id) => [id, { kind: "self_attested" }])),
     });
     mocks.update.mockImplementationOnce(({ data }) => Promise.resolve({
       ...data,
       workspace: {},
     }));
 
-    const progress = await completeLabStep("user-1", lab, "3", { kind: "self_attested" });
+    const progress = await completeLabStep("user-1", lab, last, { kind: "self_attested" });
 
-    expect(progress.completedSteps).toEqual(["1", "2", "3"]);
+    expect(progress.completedSteps).toEqual(stepIds);
     expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         status: "COMPLETED",
         stepEvidence: expect.objectContaining({
-          "3": expect.objectContaining({ kind: "self_attested", stepVersion: "1" }),
+          [last]: expect.objectContaining({ kind: "self_attested", stepVersion: "1" }),
         }),
       }),
     }));

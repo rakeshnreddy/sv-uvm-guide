@@ -1,27 +1,87 @@
 [
   {
     "id": "b-amba-f3-1",
-    "question": "How should you answer 'design an AXI interconnect for 4 masters and 2 slaves'?",
-    "answer": "Start with decode, arbitration, routing, buffering, ID expansion, response return paths, deadlock avoidance, and a verification plan."
+    "question": "What blocks does a strong answer to 'design an AXI interconnect for 4 masters and 2 slaves' name?",
+    "answer": "Address decode with a default slave for DECERR (IHI0022E §A3.4.4), per-slave AW and AR arbitration, ID extension with master-port bits used to route B and R (§A5.3.5), W routing in AW order per slave (§A5.3.2), same-ID ordering across slaves (§A5.3.1), sized outstanding tables, and a deadlock argument."
   },
   {
     "id": "b-amba-f3-2",
-    "question": "What is the fastest way to triage an AXI waveform hang?",
-    "answer": "Find which channel stopped handshaking, check VALID stability, READY backpressure, outstanding counters, LAST alignment, and response return routing."
+    "question": "In what order do you triage an AMBA waveform?",
+    "answer": "Handshakes (VALID held, never waiting for READY, §A3.2.1), then phases (the AHB address/data pipeline), then cross-channel dependencies (§A3.3.1), then payload and LAST, then ID ordering. Only then name the bug owner: master, slave, interconnect or checker."
   },
   {
     "id": "b-amba-f3-3",
-    "question": "What should an AMBA interview test plan always cover?",
-    "answer": "Protocol legality, burst math, ordering, backpressure, errors, reset, boundary addresses, coverage goals, and scoreboard strategy."
+    "question": "What four columns does every row of a verification plan need?",
+    "answer": "The feature (with its clause), the stimulus that exercises it including the corner a naive design gets wrong, the check (assertion or scoreboard rule, with its clause), and the coverage that proves the stimulus happened."
   },
   {
     "id": "b-amba-f3-4",
-    "question": "What is the trick in 'Can VALID wait for READY?'",
-    "answer": "No. A source may assert VALID without READY and must hold VALID/payload stable until handshake."
+    "question": "Can an AXI VALID wait for READY?",
+    "answer": "No. A source must not wait for READY before asserting VALID, and once asserted, VALID and its information stay until the handshake (IHI0022E §A3.2.1). READY, by contrast, may wait for VALID."
   },
   {
     "id": "b-amba-f3-5",
-    "question": "What distinguishes a strong debug answer from a signal dump?",
-    "answer": "A strong answer states the protocol rule, identifies the broken transaction boundary, explains the likely root cause, and proposes a targeted check."
+    "question": "What four parts make a strong interview or debug answer, and how do you score it?",
+    "answer": "Rule with its clause, the risk if it is broken, the smallest proof (a named check or test), and edge cases volunteered. Score each 0 to 3; 10 or more out of 12 is strong."
+  },
+  {
+    "id": "b-amba-f3-6",
+    "question": "May an AXI master hold WVALID low until it sees AWREADY?",
+    "answer": "No (IHI0022E §A3.3.1). A slave may wait for WVALID before asserting AWREADY, so such a master can deadlock a legal slave. Write data may even arrive before its address (§A3.3)."
+  },
+  {
+    "id": "b-amba-f3-7",
+    "question": "What does AWLEN = 0 mean, and when may an AXI4 slave assert BVALID?",
+    "answer": "AWLEN = 0 is one beat: burst length is AxLEN + 1 (§A3.4.1). BVALID only after both the AW handshake and the handshake of the WLAST beat (§A3.3.1)."
+  },
+  {
+    "id": "b-amba-f3-8",
+    "question": "Which AXI bursts need the 4KB arithmetic, and what is it?",
+    "answer": "Only INCR: aligned start offset (address & 0xFFF, aligned to AxSIZE) + (AxLEN + 1) × 2^AxSIZE must be at most 4096 (§A3.4.1). A WRAP stays inside its aligned wrap window and FIXED repeats one address."
+  },
+  {
+    "id": "b-amba-f3-9",
+    "question": "What may an AHB master change while a transfer is waited (HREADY low)?",
+    "answer": "A waited NONSEQ or SEQ holds its address and control. A waited IDLE may become NONSEQ, and a waited BUSY may become SEQ (in an undefined-length INCR also IDLE or NONSEQ, which end the burst). After the first ERROR cycle the master may cancel by driving IDLE with a new address (IHI0033B.b §3.6.1, §3.6.2, §3.5.2)."
+  },
+  {
+    "id": "b-amba-f3-10",
+    "question": "A scoreboard fails because RID 2 returned before RID 1. DUT bug or checker bug?",
+    "answer": "Usually a checker bug: different IDs may complete in any order and interleave read data (§A5.3.1). Keep one ordered queue per ID; only same-ID reordering is a DUT bug."
+  },
+  {
+    "id": "b-amba-f3-11",
+    "question": "Where does an AHB-to-AXI bridge split bursts, and where does it not?",
+    "answer": "Never at 4KB, because a legal AHB incrementing burst never crosses 1KB (IHI0033B.b §3.5). It splits for three reasons: the 256-beat AXI4 INCR limit (only narrow undefined-length INCRs exceed it), width conversion, and, unless it buffers the whole burst, an undefined-length INCR whose length it does not know when it must drive AWLEN (bounded bursts or singles, a design choice). The AXI-to-AHB direction must split at 1KB."
+  },
+  {
+    "id": "b-amba-f3-12",
+    "question": "How many reads must a master keep outstanding to issue one every 4 cycles with a 120-cycle AR-to-RLAST latency?",
+    "answer": "30: outstanding = issue rate × latency = 1/4 × 120 (Little's law, a queueing result, not an AMBA rule). Size the master tracker, interconnect tables and slave queues for it."
+  },
+  {
+    "id": "b-amba-f3-13",
+    "question": "What must an interconnect do with same-ID reads to different slaves, and with write data from several masters to one slave?",
+    "answer": "Return same-ARID read data to the master in issue order, by stalling or by a reorder buffer (§A5.3.1). Forward merged write data to a slave in the order of the addresses it forwarded (§A5.3.2)."
+  },
+  {
+    "id": "b-amba-f3-14",
+    "question": "Why is 'count W beats after the AW handshake' a wrong WLAST checker, and what replaces it?",
+    "answer": "W may arrive before its AW (§A3.3), so the checker misses early beats and false-fails or hangs. Count W bursts on their own and pair the n-th W burst with the n-th AW, which AXI4's in-order write data allows (§A5.4.1)."
+  },
+  {
+    "id": "b-amba-f3-15",
+    "question": "After AXI reset, when may a master first have ARVALID, AWVALID or WVALID sampled high?",
+    "answer": "Not at the first rising edge where ARESETn is sampled high: the master may begin driving VALID high only at a rising ACLK edge after ARESETn is high, so the earliest is the next edge (IHI0022E §A3.1.2). During reset only the VALIDs are constrained; READY may take any value."
+  },
+  {
+    "id": "b-amba-f3-16",
+    "question": "An AXI exclusive write returns OKAY. What happened to memory?",
+    "answer": "It was not an exclusive success (success is EXOKAY, IHI0022E §A3.4.4). On a slave that supports exclusives, the write failed and memory was not updated: since the exclusive read, the location was written or another same-ID exclusive read reset the monitor (§A7.2.2, §A7.2.3). On a slave without exclusive support, whose exclusive read also returned OKAY, the write was performed and memory was updated (§A7.2.5)."
+  },
+  {
+    "id": "b-amba-f3-17",
+    "question": "Why does a scoreboard that stores expected[id] = item fail a correct AXI DUT?",
+    "answer": "It keeps one slot per ID, so a second outstanding request with the same ID overwrites the first prediction, and later compares use the wrong item. One ordered queue per ID fixes it; one queue for all IDs fails legal cross-ID reordering (§A5.3.1), and 'claim any match' lets a same-ID swap escape."
   }
 ]

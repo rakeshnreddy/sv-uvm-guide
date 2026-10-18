@@ -12,6 +12,7 @@ const SOURCE_CRITICAL_PAGES = [
   'T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index.mdx',
   'T3_Advanced/B-AXI-2_AXI_Burst_Math/index.mdx',
   'T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index.mdx',
+  'T3_Advanced/B-AXI-6_AXI_Verification_Performance/index.mdx',
   'T3_Advanced/B-AMBA-F2_Future_Protocols_ACE_CHI/index.mdx',
   'T1_Foundational/F3B_Scheduling_Regions/index.mdx',
 ];

@@ -2,26 +2,76 @@
   {
     "id": "b-axi-3-1",
     "question": "What does an AXI ID represent?",
-    "answer": "An AXI ID tags a transaction stream so responses can be matched to requests while allowing multiple outstanding transactions."
+    "answer": "An ordering stream. AWID or ARID tags a request, the slave reflects it on BID or RID, and one physical port acts as several logical ports, each handling its own transactions in order (IHI0022E A5.1)."
   },
   {
     "id": "b-axi-3-2",
-    "question": "What ordering rule applies to responses with the same AXI ID?",
-    "answer": "Responses for transactions with the same ID must return in issue order for that ID."
+    "question": "What ordering rule applies to transactions with the same AXI ID?",
+    "answer": "In the same direction, they complete in issue order: same-ARID read data returns in AR order and same-AWID writes complete in AW order (A5.3, A5.3.1). A read and a write with the same ID value are not ordered (A5.3.4)."
   },
   {
     "id": "b-axi-3-3",
     "question": "Can responses with different AXI IDs be reordered?",
-    "answer": "Yes. Different IDs are independent ordering streams unless the system imposes additional ordering constraints."
+    "answer": "Yes. Transactions with different IDs, reads or writes, may complete in any order, and read data with different ARIDs may also interleave beat by beat (A5.3, A5.3.1). A checker must accept every such order."
   },
   {
     "id": "b-axi-3-4",
-    "question": "How should a scoreboard model out-of-order AXI reads?",
-    "answer": "Track expected read bursts by ID and transaction order within each ID, then match R beats and RLAST against that per-ID queue."
+    "question": "How does a per-ID expected-queue model check AXI read ordering?",
+    "answer": "It keeps one queue of outstanding reads per ARID in issue order: a queue, not one slot, because several same-ID reads can be outstanding at once. It compares each R beat with the oldest read of that RID, checks RLAST against ARLEN + 1, then pops that read. Unknown RIDs and reads still outstanding at end of test are errors."
   },
   {
     "id": "b-axi-3-5",
-    "question": "What AXI4 simplification removed a major write-data ordering hazard?",
-    "answer": "AXI4 removed write-data interleaving, so W beats must follow the accepted write-address order instead of carrying WID."
+    "question": "What did AXI4 change about write data ordering?",
+    "answer": "AXI4 removed write-data interleaving and WID. Each write's beats are consecutive and follow the order of the write addresses, whatever the AWIDs and even across masters (A5.4, A5.3.2)."
+  },
+  {
+    "id": "b-axi-3-6",
+    "question": "A master needs a read to see an earlier write. What must it do, and when is each transaction complete?",
+    "answer": "Issue the read only after the write has completed, even if ARID equals AWID (A5.3.4, A6.1). A write is complete when its B response arrives (sending all W data does not count); a read is complete when its last read beat arrives."
+  },
+  {
+    "id": "b-axi-3-7",
+    "question": "Why must an AXI monitor collect R beats per RID?",
+    "answer": "Read data of different ARIDs may interleave beat by beat (A5.3.1), so a burst need not arrive in one piece. RLAST ends the burst for its RID only, and every beat with a given RID belongs to the oldest outstanding read with that ID."
+  },
+  {
+    "id": "b-axi-3-8",
+    "question": "How does an interconnect keep IDs from different masters apart and route responses back?",
+    "answer": "It appends master-port bits to AWID and ARID, so IDs are unique and wider at the slave. It routes each B or R by those extra bits and strips them before the response reaches the master (A5.3.5)."
+  },
+  {
+    "id": "b-axi-3-9",
+    "question": "A master sends two reads with one ARID to two different slaves. Who keeps them in order?",
+    "answer": "The interconnect: the master must receive the data in issue order (A5.3.1). It may stall the second read or buffer its data, but any ID remapping must preserve the original ordering (A6.3)."
+  },
+  {
+    "id": "b-axi-3-10",
+    "question": "What is a slave's read data reordering depth, and can a master find it out?",
+    "answer": "The number of pending addresses whose read data the slave can reorder; an in-order slave has depth 1. It is static, set by the slave's designer, and no mechanism lets a master discover it (A5.3.1)."
+  },
+  {
+    "id": "b-axi-3-11",
+    "question": "What must a slave guarantee once it has responded to a write?",
+    "answer": "Any subsequent read or write must observe that write, regardless of the transaction IDs (A6.4). By issuing a write response, the slave takes responsibility for hazard checking the write against all subsequent transactions (A3.3.1 Note)."
+  },
+  {
+    "id": "b-axi-3-12",
+    "question": "For same-ID transactions in one direction, when must they also arrive at the slave in issue order?",
+    "answer": "Always for Device memory (AxCACHE 0b0000 or 0b0001) going to one slave, whatever the addresses; for Normal memory only when the addresses are the same or overlap (A6.2). Responses at the master are in issue order in every case."
+  },
+  {
+    "id": "b-axi-3-13",
+    "question": "Which ordering checks belong in SVA, and which in the scoreboard?",
+    "answer": "SVA: every RID or BID matches an outstanding request, and R or B only after their address handshakes. The model or scoreboard: same-ID order by data, RLAST position, accepted cross-ID reordering and the read-after-write policy."
+  },
+  {
+    "id": "b-axi-3-14",
+    "question": "Who sets the outstanding-transaction depth in AXI, and what does it mean for verification?",
+    "answer": "IHI0022E sets no maximum: it is a design parameter of each master (how many it issues) and slave (how many it accepts, using AxREADY backpressure). Ordering bugs appear at high depth, so tests and coverage must reach the DUT's maximum."
+  },
+  {
+    "id": "b-axi-3-15",
+    "question": "Your AXI4 monitor sees W beats before the matching AW handshake. Is that legal, and what should the monitor do?",
+    "answer": "Legal: write data can appear at an interface before its write address (A3.3). The monitor queues complete W bursts and pairs them with AW handshakes in order, because W always follows the AW order (A5.4)."
   }
 ]

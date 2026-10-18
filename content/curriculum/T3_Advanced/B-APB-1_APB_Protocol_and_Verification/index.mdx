@@ -1,9 +1,1510 @@
 ---
 title: "B-APB-1: APB Protocol & Verification"
-description: "Read, drive and check APB transfers and build the simplest complete protocol agent, with PREADY wait states and PSLVERR errors."
+description: "Read, drive and check APB transfers (setup and access phases, PREADY wait states, PSLVERR errors, APB4 strobes and protection), and build the simplest complete protocol agent: driver, monitor, sequences, protocol assertions and the register-model adapter."
 flashcards: "B-APB-1_APB_Protocol_and_Verification"
+sources:
+  - title: "AMBA APB Protocol Specification"
+    type: "standard"
+    identifier: "Arm IHI 0024E"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
 
-This lesson is being written.
+- **What it is:** **APB** (Advanced Peripheral Bus) is the simplest bus in Arm's AMBA family. One **requester**, usually a bridge from an AXI or AHB bus, reads or writes one register of one peripheral at a time. Every **transfer** (one read or one write of one address) has a **setup phase** that lasts exactly one clock cycle and an **access phase** that the peripheral can stretch with **wait states** (it holds `PREADY` low) and can end with an **error response** (`PSLVERR` high). This lesson follows the current specification, Arm IHI 0024E (APB2 to APB5).
+- **Why it matters:** Most configuration registers in a chip sit behind an APB bridge, so an APB agent is usually the bus your register model drives (milestone M7) and the configuration agent of a block testbench (M5). APB is also small enough to check completely: every rule fits in a few concurrent assertions. That makes it the cleanest first *complete* protocol agent: driver, monitor, sequences, assertions and a register adapter.
+- **The Analogy:** Handing a form across a service counter. First you lay the form on the counter so the clerk can read it (setup: address, direction and data are valid); one moment later you ring the bell, which means "act on it now" (access: `PENABLE`). The clerk may raise a hand, "wait", for as long as needed (`PREADY` low), and while the hand is up you must not touch the form. When the clerk stamps it the visit is over, and the stamp may say "rejected" (`PSLVERR`). *Where it breaks:* at a real counter a rejected form usually means nothing happened, but an APB write that ends with an error may still have changed the register (IHI 0024E §3.4). And a counter has one clerk, while one APB requester has a separate select line (`PSELx`) for each peripheral.
+
+**You will be able to:**
+1. **Predict**, on a waveform, the setup and access phases of an APB transfer (`PSEL`, `PENABLE`), its wait states (`PREADY` low), the edge where it completes, and its error response (`PSLVERR`).
+2. **Write** an APB requester driver, a monitor and the protocol assertions that keep address and control stable from setup to completion, and **debug** a failing transfer from the assertion that fires.
+3. **Explain** what APB3, APB4 and APB5 add (`PREADY` and `PSLVERR`; `PPROT` and `PSTRB`; wake-up, user, parity and RME signals) and **decide** which signals a given interface may carry.
+4. **Connect** the agent to a register model as its bus: write the adapter (`PSTRB` from byte enables, `PSLVERR` to status) and feed an explicit register predictor from the monitor.
+
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+**How to read this lesson.** The core path is the first seven subsections: the words, the signals, the three states, one write and one read edge by edge, the error response, and why APB has no bursts. Practitioner depth follows: APB4 and APB5 signals, the validity rules, the agent and its assertions, the register adapter, and debugging. [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) used a subset of APB3 to teach how to package a VIP (configuration object, responder, self-test); this lesson owns the protocol itself, adds APB4, and connects the agent to a register model as in [A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index).
+
+### Words you need first
+
+Terms from earlier lessons are linked; the new ones are defined here.
+
+- **Requester and completer:** the requester starts transfers (on APB, almost always a **bridge**: a block that turns AXI or AHB transfers into APB transfers). The completer is the peripheral that answers. IHI 0024E uses these words (§1.1). Older issues, and A-UVM-7, say master and slave; later AXI and AHB issues say manager and subordinate. They name the same two roles.
+- **Transfer:** one read or one write of one address. APB has no other kind.
+- **Rising edge, sampled value:** every APB signal is timed against the rising edge of the clock `PCLK` (Table 2-1). In this lesson's waveforms, the value shown at edge *k* is the value **sampled at that edge**: what the completer's flip-flops and a clocking block read there ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)).
+- **Wait state:** an extra access cycle the completer adds by holding `PREADY` low.
+- **Byte lane:** one 8-bit slice of a data bus. Lane *n* of a 32-bit bus is bits `[8n+7:8n]`.
+- **Agent, driver, monitor, sequencer, sequence:** the UVM pieces that drive and observe one interface ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)). The driver drives pins through the interface's clocking block; the monitor only samples and publishes one transaction per transfer on an analysis port.
+- **Concurrent assertion:** a property checked at every clock edge, written in SystemVerilog Assertions (SVA): `|->` checks the consequent at the same edge, `|=>` at the next one; `$stable`, `$rose` and `$past` compare sampled values across edges (IEEE 1800-2023 §16.9.3); `disable iff` turns a property off, here during reset ([I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)).
+- **Register model terms:** the register model (RAL) holds a **mirrored value** per register, its best knowledge of what the design under test (DUT) contains. An **adapter** translates between the model's generic bus operation and your bus's sequence item, and a **register predictor** updates the mirror from transfers a monitor saw ([A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index), [A-UVM-4B](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index)).
+
+### Where APB sits, and who drives what
+
+APB "is not pipelined and is a simple, synchronous protocol. Every transfer takes at least two cycles to complete" (IHI 0024E §1.1). It is designed for the programmable control registers of peripherals, which usually reach the main bus through an APB bridge. The bridge is the requester; each peripheral is a completer with its own select line.
+
+These are the signals of an APB3 or APB4 interface (Table 2-1; the "Since" column is from Table B-1):
+
+| Signal | Driven by | Meaning | Since |
+|---|---|---|---|
+| `PCLK` | clock source | every signal is timed against its rising edge | APB2 |
+| `PRESETn` | system reset | reset, active low | APB2 |
+| `PSELx` | requester | one per completer: "you are selected, a transfer is required" | APB2 |
+| `PENABLE` | requester | marks the second and later cycles of a transfer | APB2 |
+| `PWRITE` | requester | 1 for a write, 0 for a read | APB2 |
+| `PADDR` | requester | byte address, at most 32 bits wide | APB2 |
+| `PWDATA` | requester | write data, 8, 16 or 32 bits | APB2 |
+| `PRDATA` | completer | read data, the same width as `PWDATA` | APB2 |
+| `PREADY` | completer | extends a transfer while low | APB3 (optional) |
+| `PSLVERR` | completer | error at the end of a transfer | APB3 (optional) |
+| `PPROT` | requester | protection type: privileged, non-secure, instruction | APB4 (optional) |
+| `PSTRB` | requester | write strobes, one per byte lane | APB4 (optional) |
+
+Two facts from §2.1 shape everything that follows. APB has separate read and write data buses, but transfers cannot overlap, because the data buses "do not have their own individual handshake signals" (§2.1.2). And an unaligned `PADDR` is permitted, but the result is UNPREDICTABLE: the completer may use the unaligned address, the aligned one, or answer with an error (§2.1.1). This lesson's sequence items therefore constrain addresses to word alignment.
+
+### Three states: IDLE, SETUP, ACCESS
+
+IHI 0024E §4.1 describes an APB interface as a state machine with three states. Before you read the diagram, **predict**: once a transfer completes, must the bus pass through IDLE before the next one starts?
+
+<ArchitectureDiagram
+  title="APB operating states (IHI 0024E Figure 4-1)"
+  caption="IDLE is the default. A transfer moves the bus to SETUP, which lasts exactly one cycle and always moves to ACCESS at the next rising edge. ACCESS repeats while the completer holds PREADY low. With PREADY high the transfer completes: the bus returns to IDLE, or goes straight to SETUP when another transfer follows."
+  nodes={[
+    { id: "idle", label: "IDLE", sublabel: "PSEL 0", kind: "generic", col: 0, row: 1 },
+    { id: "setup", label: "SETUP", sublabel: "PSEL 1, PENABLE 0", kind: "generic", col: 1, row: 0 },
+    { id: "access", label: "ACCESS", sublabel: "PSEL 1, PENABLE 1; stays while PREADY 0", kind: "generic", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "idle", to: "setup", style: "control", label: "transfer required" },
+    { from: "setup", to: "access", style: "control", label: "always, next edge" },
+    { from: "access", to: "setup", style: "control", label: "PREADY 1, next transfer", via: [[2, 0]] },
+    { from: "access", to: "idle", style: "control", label: "PREADY 1, no transfer" }
+  ]}
+/>
+
+**Debrief.** No: from ACCESS with `PREADY` high, the bus "moves directly to the SETUP state if another transfer follows" (§4.1). `PSEL` then stays high, and `PENABLE` drops for the one SETUP cycle. Three rules come straight from the state machine:
+
+- **SETUP is exactly one cycle, with `PENABLE` low.** The interface "only remains in the SETUP state for one clock cycle and always moves to the ACCESS state on the next rising edge of the clock" (§4.1).
+- **`PENABLE` is high only in ACCESS.** It "indicates the second and subsequent cycles of an APB transfer" (Table 2-1).
+- **Only the completer ends ACCESS**, by driving `PREADY` high. While `PREADY` is low the interface stays in ACCESS.
+
+**Misconception: "`PENABLE` is asserted in the first cycle."** It is not. The first cycle of every transfer is SETUP, with `PENABLE` low. A requester that raises `PSEL` and `PENABLE` together has skipped SETUP; the waveform later in this lesson shows what that does to a monitor.
+
+### One write and one read, edge by edge
+
+Here are the first two transfers of this lesson's worked example (Make It Work), traced from its code. The requester writes `'hA5` to the register at address `0x0`; this completer always adds one wait state to a write. Then the requester reads address `0x10`, where nothing is mapped, so the completer answers with an error and no wait state.
+
+**Predict** before you read the markers: at which edge does the write complete, and how many wait states does it have? At which edge does the read complete, and does the `PRDATA` value there mean anything?
+
+<TimingDiagram
+  title="An APB write with one wait state, then a read that ends with PSLVERR"
+  caption="Edge k is the rising edge of PCLK at 25 + 10k ns; each column shows the value sampled at that edge. Bus values are hexadecimal. The write's SETUP is sampled at edge 1 (35 ns), its wait state at edge 2 and its completion at edge 3 (55 ns). Edge 4 is IDLE: this lesson's driver idles one cycle between transfers. The read's SETUP is at edge 5 and its completion, with PSLVERR 1, at edge 6 (85 ns)."
+  edges={8}
+  signals={[
+    { name: "PCLK", kind: "clock" },
+    { name: "PSEL", kind: "bit", values: [0, 1, 1, 1, 0, 1, 1, 0] },
+    { name: "PENABLE", kind: "bit", values: [0, 0, 1, 1, 0, 0, 1, 0] },
+    { name: "PWRITE", kind: "bit", values: [0, 1, 1, 1, 1, 0, 0, 0] },
+    { name: "PADDR", kind: "bus", values: ["0", "0", "0", "0", "0", "10", "10", "10"] },
+    { name: "PWDATA", kind: "bus", values: ["0", "A5", "A5", "A5", "A5", "A5", "A5", "A5"] },
+    { name: "PSTRB", kind: "bus", values: ["0", "F", "F", "F", "0", "0", "0", "0"] },
+    { name: "PREADY", kind: "bit", values: [1, 0, 0, 1, 0, 1, 1, 1] },
+    { name: "PRDATA", kind: "bus", values: ["0", "0", "0", "0", "0", "0", "0", "0"] },
+    { name: "PSLVERR", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", label: "35 ns, SETUP of the write: PSEL 1, PENABLE 0; PADDR, PWRITE, PWDATA and PSTRB are valid" },
+    { edge: 2, tone: "pending", label: "45 ns, ACCESS with PREADY 0: a wait state; the requester holds every request signal" },
+    { edge: 3, tone: "pass", label: "55 ns, the write completes: PSEL, PENABLE and PREADY all 1, PSLVERR 0; the register becomes A5" },
+    { edge: 4, tone: "info", label: "65 ns, IDLE: PSEL 0; PADDR, PWRITE and PWDATA keep their old values, which mean nothing now" },
+    { edge: 5, tone: "info", label: "75 ns, SETUP of the read of 0x10; PSTRB is 0 for a read" },
+    { edge: 6, tone: "fail", label: "85 ns, the read completes with PSLVERR 1 and no wait state; PRDATA 0 is not valid data" }
+  ]}
+/>
+
+**Debrief.**
+- **The write completes at edge 3** (55 ns), the first edge where `PSEL`, `PENABLE` and `PREADY` are all 1. It has **one** wait state, edge 2. Edge 1 is SETUP, not a wait state, so the write takes three cycles and the read two.
+- **Everything is frozen during the wait state.** While `PREADY` is low in a write's ACCESS state, `PADDR`, `PWRITE`, `PSEL`, `PENABLE`, `PWDATA`, `PSTRB`, `PPROT` and the APB5 signals `PAUSER` and `PWUSER` "remain unchanged" (§3.1.2). For a read the list is `PADDR`, `PWRITE`, `PSEL`, `PENABLE`, `PPROT` and `PAUSER` (§3.3.2). The same request signals must not change between SETUP and ACCESS either (§4.1).
+- **`PREADY` outside ACCESS means nothing.** It "can take any value when `PENABLE` is LOW" (§3.1.2), which is why a completer with a fixed two-cycle access can tie it high. Here it is 1 at edges 0 and 5 and 0 at edge 4, and none of those values matter.
+- **The read completes at edge 6** with `PSLVERR` 1. The completer "must provide the data before the end of the read transfer" (§3.3.1), but after an error the data may be invalid (§3.4): the 0 on `PRDATA` is not a value read from anywhere.
+- **Any number of wait states is legal**, "from zero upwards" (§3.3.2). The protocol has no timeout; a bound is something your testbench chooses (see the assertions below).
+
+**Misconception: "a transfer completes when `PENABLE` rises."** `PENABLE` rising starts ACCESS (edge 2 here); completion needs `PREADY` as well (edge 3). A monitor that publishes at the first `PENABLE` edge reports writes that have not happened yet and reads with data that is not valid yet.
+
+### The error response: `PSLVERR`
+
+`PSLVERR` lets a completer report that a read or a write failed (§3.4). Its rules are short and often misremembered:
+
+- **It counts only at completion.** `PSLVERR` "is only considered valid during the last cycle of an APB transfer, when `PSEL`, `PENABLE`, and `PREADY` are all HIGH" (§3.4). A 1 in a wait state means nothing.
+- **It is recommended, not required, to be low elsewhere.** This lesson's completer drives it low whenever it is not sampled.
+- **An error does not mean "nothing happened".** A transfer that receives an error "might or might not have changed the state of the peripheral"; for a write, the register may have been updated anyway (§3.4). A read with an error can return invalid data, and the requester may still use it.
+- **It is optional.** A completer without `PSLVERR` has the requester's input tied low (§3.4); Table B-1 gives its default as 0.
+- **Bridges pass it up.** An AXI-to-APB bridge maps an APB error to `RRESP` for reads and `BRESP` for writes; an AHB-to-APB bridge maps it to `HRESP` (§3.4.3).
+
+Typical reasons for an error are an unmapped address, a write to a read-only register, or an access the completer's protection rules forbid. Which of these produce `PSLVERR` is defined by each completer's own specification, not by APB. This lesson's completer errors on unmapped addresses and on writes to its read-only `ID` register.
+
+### No bursts, no overlap, but back-to-back transfers
+
+**Misconception: "APB supports bursts."** It does not. APB has no burst signals, no transfer IDs and no pipelining: every transfer is one SETUP plus at least one ACCESS cycle (§1.1, §4.1), and two transfers never overlap (§2.1.2). Copying 16 words to an APB peripheral takes 16 separate transfers, so at least 32 cycles.
+
+What APB does allow is **back-to-back** transfers: when another transfer follows, the bus goes from ACCESS straight to SETUP, with `PSEL` staying high and `PENABLE` low for one cycle (§3.1.1, §4.1). That saves only the idle cycle between transfers; each transfer still needs its two cycles. This lesson's driver always idles one cycle, which keeps it simple; the expert section shows a driver that does not.
+
+### APB4: write strobes and protection
+
+APB4 (issue C of the specification) added two optional requester signals (Preface).
+
+**`PSTRB`, write strobes (§3.2).** One bit per byte lane: `PSTRB[n]` is high when byte lane *n* of `PWDATA` holds data to write. A write with `PSTRB = 4'b0011` on a 32-bit bus changes only bits `[15:0]` of the register; this is a **sparse write**. Two rules matter for every agent:
+- "For read transfers, the Requester must drive all bits of `PSTRB` LOW" (§3.2).
+- `PSTRB` is optional on both sides. A completer without it simply does not support sparse writes; a requester without it connected to a completer with it has the completer's `PSTRB` inputs tied to `PWRITE`, so every write is full width (Table 3-1).
+
+**`PPROT`, protection type (§3.5).** Three bits that let the completer or the interconnect refuse illegal accesses:
+
+| Bit | LOW means | HIGH means |
+|---|---|---|
+| `PPROT[0]` | normal access | privileged access |
+| `PPROT[1]` | secure access | non-secure access |
+| `PPROT[2]` | data access | instruction access (a hint, not always accurate) |
+
+"The primary use of `PPROT` is as an identifier for Secure or Non-secure transactions" (§3.5). A requester without `PPROT` can be connected to a completer that has it only if fixed protection attributes are functionally correct (Table 3-3). This lesson's sequence items default to `3'b000` (normal, secure, data); the expert section shows how a register access chooses another value.
+
+### APB5: wake-up, user signals, parity and RME (awareness)
+
+APB5 (issue D, 2021) added optional features that a VIP for a modern SoC must at least recognise; issue E (2023) added RME support and "remains APB5" (Preface). Each feature exists only when an interface **property** (a configuration parameter of the interface, such as `Wakeup_Signal` or `Check_Type`) enables it, and each can only be added to APB5 interfaces:
+
+- **Wake-up signalling (§3.7):** `PWAKEUP`, from the requester, tells a clock or power controller that the interface is about to be used. It must be glitch-free, may rise before, during or after `PSELx`, and must stay high until `PREADY` if it was high together with `PSELx`. A completer may wait for `PWAKEUP` before it raises `PREADY`, so a requester that never asserts it can deadlock the interface.
+- **User signalling (§3.8):** `PAUSER` and `PWUSER` (requester) and `PRUSER` and `PBUSER` (completer) carry user-defined attributes. APB does not define their meaning, and the specification recommends not using them.
+- **Parity protection (chapter 5):** with `Check_Type` set to `Odd_Parity_Byte_All`, odd-parity check signals such as `PADDRCHK`, `PCTRLCHK` and `PWDATACHK` cover the interface signals for safety-critical designs (§5.2, §5.5).
+- **RME support (§3.6):** `PNSE`, with `PPROT[1]`, selects one of four physical address spaces (Secure, Non-secure, Root, Realm) for Arm's Realm Management Extension.
+
+Which signal can appear on which revision (Table B-1, abridged; "optional" also covers Arm's conditional entries, which depend on a property):
+
+| Signal | APB2 | APB3 | APB4 | APB5 |
+|---|---|---|---|---|
+| `PCLK`, `PRESETn`, `PADDR`, `PSELx`, `PENABLE`, `PWRITE`, `PWDATA`, `PRDATA` | yes | yes | yes | yes |
+| `PREADY` (default 1), `PSLVERR` (default 0) | no | optional | optional | optional |
+| `PPROT` (default `0b000`), `PSTRB` | no | no | optional | optional |
+| `PWAKEUP`, `PAUSER`, `PWUSER`, `PRUSER`, `PBUSER`, `PNSE`, check signals | no | no | no | optional |
+
+### When each signal must be valid
+
+Appendix A of IHI 0024E lists when each signal must be valid, that is, driven to a known, meaningful value. It is exactly what a protocol checker may rely on:
+
+| Must be valid | Signals |
+|---|---|
+| always | `PSEL`, `PWAKEUP` |
+| when `PSEL` is high | `PADDR`, `PPROT`, `PNSE`, `PENABLE`, `PWRITE`, `PAUSER`, `PSTRB`, `PWDATA` (enabled write lanes only), `PWUSER` (writes only) |
+| when `PSEL` and `PENABLE` are high | `PREADY` |
+| when `PSEL`, `PENABLE` and `PREADY` are high | `PRDATA` (reads only), `PSLVERR`, `PRUSER` (reads only), `PBUSER` |
+
+"It is recommended that signals which are not required to be valid are driven to zero" (Appendix A). A recommendation is not a rule: a checker must not fail a design because `PADDR` holds an old value in IDLE, as in edge 4 of the waveform above.
+
+### The agent: what each part does
+
+The worked example builds this environment. **Predict** before you read the caption: if you made the agent passive, as it would be at chip level where a real bridge drives the bus, which boxes would disappear, and would the register model's mirror still follow the bus?
+
+<ArchitectureDiagram
+  title="The APB4 agent connected to a register model"
+  caption="Names match the code in Make It Work. apb_demo_test starts seq (an apb_rw_seq) on env.agt.sqr and calls register methods on env.regs; the map in regs sends its bus items through adapter to the same sqr. drv pulls items through seq_item_port and drives the bus through vif.drv_cb; mon samples through vif.mon_cb and publishes each completed transfer on ap, which agt promotes to its own ap and env connects to predictor.bus_in. predictor converts each item with adapter.bus2reg and updates the mirror in regs. The interface bus also holds the protocol assertions; dut is the completer apb_regs."
+  cellWidth={150}
+  nodes={[
+    { id: "test", label: "uvm_test_top", sublabel: "apb_demo_test", kind: "test", col: 0, row: 0, colSpan: 4, rowSpan: 3, container: true },
+    { id: "seq", label: "seq", sublabel: "apb_rw_seq (object)", kind: "sequence", col: 0, row: 0 },
+    { id: "env", label: "env", sublabel: "apb_demo_env", kind: "env", col: 1, row: 0, colSpan: 3, rowSpan: 3, container: true },
+    { id: "regs", label: "regs", sublabel: "demo_reg_block: default_map", kind: "reg", col: 1, row: 0 },
+    { id: "adapter", label: "adapter", sublabel: "apb_reg_adapter (object)", kind: "generic", col: 2, row: 0 },
+    { id: "pred", label: "predictor", sublabel: "uvm_reg_predictor #(apb_item): updates the mirror in regs", kind: "predictor", col: 3, row: 0 },
+    { id: "agt", label: "agt", sublabel: "apb_agent", kind: "agent", col: 1, row: 1, colSpan: 2, rowSpan: 2, container: true, badge: "active" },
+    { id: "sqr", label: "sqr", sublabel: "apb_sequencer", kind: "sequencer", col: 1, row: 1 },
+    { id: "drv", label: "drv", sublabel: "apb_driver", kind: "driver", col: 1, row: 2 },
+    { id: "mon", label: "mon", sublabel: "apb_monitor", kind: "monitor", col: 2, row: 2 },
+    { id: "tb", label: "tb_top", sublabel: "module", kind: "generic", col: 0, row: 3, colSpan: 4, container: true },
+    { id: "init", label: "initial block", sublabel: "set vif, run_test()", kind: "generic", col: 0, row: 3 },
+    { id: "bus", label: "bus", sublabel: "apb_if: drv_cb, mon_cb, assertions", kind: "interface", col: 1, row: 3, colSpan: 2 },
+    { id: "dut", label: "dut", sublabel: "apb_regs (completer)", kind: "dut", col: 3, row: 3 }
+  ]}
+  ports={[
+    { id: "sqr.imp", node: "sqr", side: "bottom", kind: "imp", label: "seq_item_export" },
+    { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
+    { id: "mon.ap", node: "mon", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "agt.ap", node: "agt", side: "right", at: 0.75, kind: "analysis_port", label: "ap" },
+    { id: "pred.in", node: "pred", side: "bottom", kind: "analysis_imp", label: "bus_in" }
+  ]}
+  edges={[
+    { from: "seq", to: "sqr", style: "causal", label: "seq.start(env.agt.sqr)", via: [[0, 1]] },
+    { from: "regs", to: "sqr", style: "causal", label: "set_sequencer(agt.sqr, adapter)" },
+    { from: "regs", to: "adapter", style: "control", label: "reg2bus / bus2reg" },
+    { from: "pred", to: "adapter", style: "control", label: "bus2reg" },
+    { from: "drv.port", to: "sqr.imp", style: "control", label: "get_next_item / item_done" },
+    { from: "mon.ap", to: "agt.ap", style: "data" },
+    { from: "agt.ap", to: "pred.in", style: "data", label: "write(tr)", via: [[3, 1.75]] },
+    { from: "drv", to: "bus", style: "structural", label: "vif.drv_cb" },
+    { from: "bus", to: "mon", style: "structural", label: "vif.mon_cb" },
+    { from: "bus", to: "dut", style: "structural", label: "pins" }
+  ]}
+/>
+
+**Debrief.** A passive agent builds no `sqr` and no `drv` (`get_is_active()` returns `UVM_PASSIVE`, IEEE 1800.2-2020 §13.4.2.2), so `seq` and the map's frontdoor accesses have nowhere to go. Everything on the observing side stays: `mon`, the assertions in `bus`, and `predictor`. The mirror therefore still follows the bus, because it is updated from what `mon` saw, not from what the test asked for. That is the reason to use **explicit prediction** (a predictor fed by the monitor) on any bus another master can also drive.
+
+The parts, one line each:
+- **`apb_if`** holds the signals, two clocking blocks (`drv_cb` drives the request and samples the response; `mon_cb` only samples) and the protocol assertions.
+- **`apb_item`** is the sequence item: the request fields (`write`, `addr`, `wdata`, `pstrb`, `pprot`) and the response fields the driver or the monitor fills in (`rdata`, `slverr`, `wait_cycles`).
+- **`apb_driver`** turns one item into one transfer. **`apb_monitor`** turns one transfer into one new item. **`apb_sequencer`** is a plain `uvm_sequencer #(apb_item)`.
+- **`apb_agent`** builds the monitor always, and the sequencer and driver only when active.
+- **`apb_rw_seq`** runs one transfer with the fields the caller chooses. **`apb_reg_adapter`** connects the register model.
+
+### The driver: phases become clocking-block drives
+
+A clocking block with the default output skew drives a signal just after the clocking event in which the drive executes (IEEE 1800-2023 §14.16), so a value driven at edge *k* is sampled at edge *k*+1. The driver uses that to place each phase:
+
+| Time | `apb_driver` | What the next edge samples |
+|---|---|---|
+| 25 ns (an edge, reset released) | drives SETUP: `PSEL` 1, `PENABLE` 0, `PWRITE` 1, `PADDR` 0, `PSTRB` `1111`, `PWDATA` `A5` | 35 ns: SETUP |
+| 35 ns (the SETUP edge) | drives `PENABLE` 1 | 45 ns: ACCESS |
+| 45 ns (first ACCESS edge) | reads `PREADY` 0: counts a wait state, drives nothing | 55 ns: ACCESS again |
+| 55 ns (completion edge) | reads `PREADY` 1 and `PSLVERR` 0; drives `PSEL` 0, `PENABLE` 0, `PSTRB` 0; calls `item_done()` | 65 ns: IDLE |
+
+Two details make it correct. First, the driver **starts a transfer only just after an edge**. An item can arrive in the middle of a cycle; a synchronous drive made then still takes effect at the *next* clocking event (§14.16), and the `PENABLE` drive made at that event would take effect at the same time, skipping SETUP. That is why `run_phase` waits for an edge, and for reset to be released, after `get_next_item()`. Second, **it drives `PSTRB` to 0 for reads** whatever the item says (§3.2).
+
+Here is the bug the first detail prevents. A driver variant raises `PSEL` and `PENABLE` together for a write to this lesson's completer. **Predict** which assertion fires, at which edge, and what the monitor publishes.
+
+<TimingDiagram
+  title="A requester that skips SETUP: PSEL and PENABLE rise together"
+  caption="Edge k is a rising edge of PCLK; each column is the value sampled there. At edge 1 PSEL and PENABLE are both 1 although the previous edge was IDLE. The completer treats edge 1 as an ACCESS cycle (PREADY 0 because every write gets one wait state) and completes the write at edge 2. No edge ever shows PSEL 1 with PENABLE 0."
+  edges={4}
+  signals={[
+    { name: "PCLK", kind: "clock" },
+    { name: "PSEL", kind: "bit", values: [0, 1, 1, 0] },
+    { name: "PENABLE", kind: "bit", values: [0, 1, 1, 0] },
+    { name: "PWRITE", kind: "bit", values: [0, 1, 1, 1] },
+    { name: "PADDR", kind: "bus", values: ["0", "4", "4", "4"] },
+    { name: "PREADY", kind: "bit", values: [1, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "fail", label: "edge 1: a_access_from_setup fails, PSEL and PENABLE rose without a SETUP cycle; one UVM_ERROR [APB_SVA]" },
+    { edge: 2, tone: "info", label: "edge 2: the completer finishes the write, but apb_monitor publishes nothing: it never saw a SETUP edge" }
+  ]}
+/>
+
+**Debrief.** `a_access_from_setup` (below) fails at edge 1: `$rose(psel && penable)` is true there, but at edge 0 the bus was not in SETUP. The register *is* written at edge 2, yet the monitor, which starts collecting only at a SETUP edge, publishes nothing, so the predictor never updates the mirror, and a later mirror check of that register can fail with a confusing mismatch. When a monitor "misses" transfers that the DUT clearly performed, look for an assertion about SETUP first.
+
+### The monitor: one new item per completed transfer
+
+`apb_monitor` follows the state machine from the outside:
+1. At every edge, look for SETUP (`PSEL` 1, `PENABLE` 0, reset released) and copy the request from `mon_cb`.
+2. At each following edge, give up if reset is asserted or the bus left ACCESS (the assertions report why); count a wait state while `PREADY` is 0.
+3. At the completion edge, copy `PRDATA` (reads only) and `PSLVERR`, and publish the item on `ap`.
+
+It creates a **new object for every transfer**, because subscribers such as the predictor or a scoreboard may keep the handle. Because it returns at the completion edge and looks again at the very next edge, it also catches back-to-back transfers, whose SETUP edge immediately follows a completion edge. A monitor that waits for `PSEL` to fall before it looks for the next SETUP would miss them.
+
+### Protocol assertions
+
+Rules about signal timing live in the interface as concurrent assertions, so they check every transfer whether the agent is active or passive. Each one in `apb_if` maps to a rule above:
+
+| Assertion | Checks | IHI 0024E |
+|---|---|---|
+| `a_setup_to_access` | SETUP is followed by ACCESS, with `PADDR`, `PWRITE`, `PPROT`, `PSTRB` and (writes) `PWDATA` unchanged | §4.1 |
+| `a_access_from_setup` | ACCESS is entered only from SETUP | §4.1, Table 2-1 |
+| `a_wait_hold` | while `PREADY` is 0, `PSEL`, `PENABLE` and the request stay unchanged | §3.1.2, §3.3.2 |
+| `a_enable_falls` | `PENABLE` is low after a completion | §3.1.1 |
+| `a_pstrb_read` | `PSTRB` is `0000` during reads | §3.2 |
+| `a_psel_known`, `a_req_known`, `a_wdata_known`, `a_pready_known`, `a_resp_known` | each signal is known whenever Appendix A says it must be valid | Appendix A |
+| `a_wait_bound` | the transfer completes within `MAX_WAIT` wait states | **not an APB rule**: testbench policy |
+
+Points to notice in the code:
+- **`a_wait_bound` is a policy.** APB allows any number of wait states (§3.3.2). The bound comes from the completer's own specification or from the test, and exists to turn a hang into an error message. Label such checks so nobody mistakes them for the protocol.
+- **`a_wdata_known` checks only enabled lanes.** It masks `pwdata` with the strobes, because an X AND 0 is 0 (IEEE 1800-2023 §11.4.8), matching Appendix A's "active write data lanes only".
+- **The cover properties** (`c_no_wait`, `c_one_wait`, `c_error`, `c_back_to_back`; §16.14.3) tell you whether a run exercised what the assertions check. An assertion that never had a wait state to look at proves nothing about wait states.
+- **They report through UVM.** Each `else` branch calls `` `uvm_error ``, so a failure counts in the UVM report summary; with a bare `$error` it would not ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) explains why). `checks_enable` lets an error-injection test turn them off for one interface instance.
+
+### The agent as the register model's bus
+
+The register map calls the adapter to turn each register access into an `apb_item` and back (IEEE 1800.2-2020 §19.2.1). The generic side is `uvm_reg_bus_op` (§19.1.2):
+
+| `uvm_reg_bus_op` | `apb_item` | APB signal |
+|---|---|---|
+| `kind` (`UVM_WRITE` or `UVM_READ`) | `write` | `PWRITE` |
+| `addr` | `addr` | `PADDR` |
+| `data` | `wdata` (writes), `rdata` (reads) | `PWDATA`, `PRDATA` |
+| `byte_en` | `pstrb` (writes only) | `PSTRB` |
+| `status` | `slverr`, plus an X test on `rdata` | `PSLVERR` |
+
+Three decisions in `apb_reg_adapter`, each with a reason:
+1. **`reg2bus()` copies `byte_en` to `PSTRB` for writes only.** The uvm-core 2020.3.1 map (`uvm_reg_map.svh`) fills `byte_en` for reads too, so an adapter that copies it unconditionally drives `PSTRB` high during reads, which §3.2 forbids and `a_pstrb_read` reports.
+2. **`bus2reg()` sets `byte_en` from `PSTRB` for writes.** The predictor passes `byte_en` to the register's prediction, so a sparse write updates only the fields in the written byte lanes. Leave it out, and the predictor's default (all lanes, uvm-core `uvm_reg_predictor.svh`) predicts the whole register.
+3. **`PSLVERR` becomes `UVM_NOT_OK`.** The frontdoor access returns that status to the test, and the register prediction is skipped (expert section).
+
+`supports_byte_enable = 1` declares that the bus can carry byte enables (§19.2.1.2.2), and `provides_responses = 0` says the driver writes the response into the request item, which is what `bus2reg()` then reads (§19.2.1.2.3).
+
+**Explicit prediction.** `env` turns auto-prediction off (`set_auto_predict(0)`, §18.2.5.2) and connects the agent's analysis port to `uvm_reg_predictor #(apb_item)` (§19.3), whose `map` and `adapter` it sets in `connect_phase`. Here is what one register write does. **Predict** first: which component updates the mirror, and is it the same thread that returns `status` to the test?
+
+<SequenceDiagram
+  title="CTRL.write() through the adapter, the agent and the predictor"
+  caption="Real method names in their real order for the first transfer of the worked example. The frontdoor path (steps 1 to 9) returns status to the test; the mirror is updated on the monitor's path (steps 10 to 12), in the same 55 ns time slot but in another thread."
+  participants={[
+    { id: "test", label: "test", sublabel: "apb_demo_test", kind: "test" },
+    { id: "map", label: "map", sublabel: "regs.default_map", kind: "reg" },
+    { id: "adapter", label: "adapter", kind: "generic" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" },
+    { id: "mon", label: "mon", kind: "monitor" },
+    { id: "pred", label: "predictor", kind: "predictor" }
+  ]}
+  messages={[
+    { from: "test", to: "map", label: "CTRL.write(status, 'hA5)" },
+    { from: "map", to: "adapter", label: "reg2bus(rw): byte_en 1111" },
+    { kind: "return", from: "adapter", to: "map", label: "apb_item: WR addr=0 pstrb=1111" },
+    { from: "map", to: "sqr", label: "start_item / finish_item" },
+    { kind: "return", from: "sqr", to: "drv", label: "get_next_item(req) returns req" },
+    { kind: "self", from: "drv", label: "SETUP edge 35 ns, wait 45 ns, completion 55 ns" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { from: "map", to: "adapter", label: "bus2reg(req, rw): UVM_IS_OK" },
+    { kind: "return", from: "map", to: "test", label: "write returns, status UVM_IS_OK" },
+    { kind: "divider", label: "the same 55 ns time slot, in the monitor's thread" },
+    { kind: "async", from: "mon", to: "pred", label: "ap.write(tr) through agt.ap" },
+    { from: "pred", to: "adapter", label: "bus2reg(tr, rw): byte_en = PSTRB" },
+    { kind: "self", from: "pred", label: "CTRL.do_predict(): mirror = 'hA5" }
+  ]}
+/>
+
+**Debrief.** The predictor updates the mirror, from the monitor's item, in a different thread from the one that returns `status`. The map uses the adapter on the way out (`reg2bus`) and on the way back (`bus2reg`, for the status and read data), and the predictor uses the same adapter on what the monitor saw. One adapter object can serve both, because `reg2bus()` and `bus2reg()` are functions that keep nothing between calls (the map sets the item that `get_item()` returns only around its own `reg2bus()` call). The register model itself, maps and access policies belong to [A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index); prediction strategy to [A-UVM-4B](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index).
+
+### Debugging: symptom, cause, fix
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `[APB_SVA] ... ACCESS without a SETUP cycle` on every transfer; the monitor publishes nothing; mirror checks fail | the driver raises `PENABLE` with `PSEL`, or drives SETUP in the middle of a cycle | start each transfer just after a clocking-block edge; drive `PENABLE` only after the SETUP edge |
+| `[APB_SVA] ... request changed during a wait state`, only on some transfers | the driver changes a request signal inside its wait loop; transfers with no wait state hide it | drive the request once, in SETUP, and hold it to completion |
+| `[APB_SVA] ... PSTRB active during a read` on register reads | the adapter copies `byte_en` to `PSTRB` for reads | drive `PSTRB` 0 for reads in `reg2bus()` and in the driver |
+| `RegModel` mismatch after a sparse write: the mirror shows bytes that were not written | `bus2reg()` does not set `byte_en` from `PSTRB`, or a field spans written and unwritten lanes | set `rw.byte_en`; give byte-lane fields their own `uvm_reg_field` |
+| `UVM_WARNING ... [PREDICT_NOK]` after an access, and a mirror that no longer matches | the access ended with `PSLVERR`, so prediction was skipped | expected; decide from the completer's specification whether the register changed, and mirror-read it if in doubt |
+| the run hangs, or `a_wait_bound` fires | the completer never raises `PREADY` (on APB5, possibly because it waits for a `PWAKEUP` that never comes, §3.7.2) | fix the completer or the requester; the bound only makes the hang visible |
+| `read()` returns `UVM_HAS_X`, or `a_resp_known` fires | `PRDATA` has X at completion: an undriven bit or a missing default in the completer's read mux | drive every `PRDATA` bit at completion |
+
+### Recap
+
+- A transfer is SETUP (exactly one cycle, `PENABLE` low) plus ACCESS (until `PREADY` is high); it completes at the edge where `PSEL`, `PENABLE` and `PREADY` are all 1.
+- While `PREADY` is low, everything the requester drives stays frozen. `PSLVERR` counts only at completion, and an errored write may still have changed the register.
+- No bursts, no overlap; back-to-back transfers go from ACCESS straight to SETUP.
+- APB3 added `PREADY` and `PSLVERR`; APB4 `PPROT` and `PSTRB` (low on reads); APB5 wake-up, user, parity and RME signals.
+- The agent's driver starts transfers just after an edge; the monitor publishes a new item at each completion; the interface's assertions check every rule, and label the wait bound as policy.
+- The adapter maps `byte_en` to `PSTRB` for writes only and back again in `bus2reg()`, and `PSLVERR` to `UVM_NOT_OK`; an explicit predictor fed by the monitor keeps the mirror right.
+
+## Make It Work
+
+### The worked example, file by file
+
+Five files, compiled in this order. The interface comes first because the agent's package refers to it through the virtual-interface type `apb_vif_t`.
+
+**File 1: the interface, with its clocking blocks and protocol assertions.** The rule numbers in the comments are sections of IHI 0024E.
+
+```systemverilog
+// compile: apb_if.sv (file 1 of 5); compile uvm-core 2020.3.1 (uvm_pkg) first
+`timescale 1ns/1ps
+`include "uvm_macros.svh"
+
+interface apb_if #(int unsigned MAX_WAIT = 16) (input logic pclk, input logic presetn);
+  import uvm_pkg::*;  // the assertions report through UVM, so they count
+
+  logic        psel, penable, pwrite;
+  logic [31:0] paddr, pwdata, prdata;
+  logic [2:0]  pprot;
+  logic [3:0]  pstrb;
+  logic        pready, pslverr;
+
+  bit checks_enable = 1'b1;  // an error-injection test may clear it
+
+  clocking drv_cb @(posedge pclk);   // the requester driver
+    output psel, penable, pwrite, paddr, pprot, pstrb, pwdata;
+    input  pready, prdata, pslverr, presetn;
+  endclocking
+
+  clocking mon_cb @(posedge pclk);   // the monitor drives nothing
+    input psel, penable, pwrite, paddr, pprot, pstrb, pwdata;
+    input pready, prdata, pslverr, presetn;
+  endclocking
+
+  // Protocol rules from Arm IHI 0024E. Every property samples at the rising
+  // edge of PCLK, like the completer's flip-flops.
+
+  // R1 (4.1): SETUP lasts one cycle and is followed by ACCESS with the same request.
+  a_setup_to_access: assert property (@(posedge pclk)
+    disable iff (!presetn || !checks_enable)
+    (psel && !penable) |=> (psel && penable && $stable(paddr) && $stable(pwrite)
+                            && $stable(pprot) && $stable(pstrb)
+                            && (!pwrite || $stable(pwdata))))
+    else `uvm_error("APB_SVA", $sformatf("%m: SETUP not followed by a stable ACCESS"))
+
+  // R2 (4.1): ACCESS is entered only from SETUP.
+  a_access_from_setup: assert property (@(posedge pclk)
+    disable iff (!presetn || !checks_enable)
+    $rose(psel && penable) |-> $past(psel && !penable))
+    else `uvm_error("APB_SVA", $sformatf("%m: ACCESS without a SETUP cycle"))
+
+  // R3 (3.1.2, 3.3.2): while PREADY is low the whole transfer is frozen.
+  a_wait_hold: assert property (@(posedge pclk)
+    disable iff (!presetn || !checks_enable)
+    (psel && penable && !pready) |=> (psel && penable && $stable(paddr)
+                                      && $stable(pwrite) && $stable(pprot)
+                                      && $stable(pstrb)
+                                      && (!pwrite || $stable(pwdata))))
+    else `uvm_error("APB_SVA", $sformatf("%m: request changed during a wait state"))
+
+  // R4 (3.1.1): PENABLE is deasserted at the end of a transfer.
+  a_enable_falls: assert property (@(posedge pclk)
+    disable iff (!presetn || !checks_enable)
+    (psel && penable && pready) |=> !penable)
+    else `uvm_error("APB_SVA", $sformatf("%m: PENABLE still high after completion"))
+
+  // R5 (3.2): PSTRB is all LOW during a read.
+  a_pstrb_read: assert property (@(posedge pclk)
+    disable iff (!presetn || !checks_enable)
+    (psel && !pwrite) |-> (pstrb == 4'b0000))
+    else `uvm_error("APB_SVA", $sformatf("%m: PSTRB active during a read"))
+
+  // R6 (Appendix A): each signal is known whenever it must be valid.
+  a_psel_known: assert property (@(posedge pclk)
+    disable iff (!presetn || !checks_enable)
+    !$isunknown(psel))
+    else `uvm_error("APB_SVA", $sformatf("%m: PSEL is X or Z"))
+
+  a_req_known: assert property (@(posedge pclk)
+    disable iff (!presetn || !checks_enable)
+    psel |-> !$isunknown({penable, pwrite, paddr, pprot, pstrb}))
+    else `uvm_error("APB_SVA", $sformatf("%m: request has X or Z while PSEL is 1"))
+
+  // Only the byte lanes PSTRB enables must be valid: X & 0 is 0.
+  a_wdata_known: assert property (@(posedge pclk)
+    disable iff (!presetn || !checks_enable)
+    (psel && pwrite) |-> !$isunknown(pwdata & {{8{pstrb[3]}}, {8{pstrb[2]}},
+                                                {8{pstrb[1]}}, {8{pstrb[0]}}}))
+    else `uvm_error("APB_SVA", $sformatf("%m: enabled PWDATA lane is X or Z"))
+
+  a_pready_known: assert property (@(posedge pclk)
+    disable iff (!presetn || !checks_enable)
+    (psel && penable) |-> !$isunknown(pready))
+    else `uvm_error("APB_SVA", $sformatf("%m: PREADY is X or Z in ACCESS"))
+
+  a_resp_known: assert property (@(posedge pclk)
+    disable iff (!presetn || !checks_enable)
+    (psel && penable && pready) |-> !$isunknown(pslverr)
+                                    && (pwrite || !$isunknown(prdata)))
+    else `uvm_error("APB_SVA", $sformatf("%m: response has X or Z at completion"))
+
+  // P1: testbench policy, not an APB rule (any number of wait states is legal).
+  a_wait_bound: assert property (@(posedge pclk)
+    disable iff (!presetn || !checks_enable)
+    (psel && !penable) |-> ##[1:MAX_WAIT+1] (psel && penable && pready))
+    else `uvm_error("APB_SVA", $sformatf("%m: no completion within %0d wait states",
+                                         MAX_WAIT))
+
+  // Did the run exercise what the rules talk about?
+  c_no_wait:  cover property (@(posedge pclk) disable iff (!presetn)
+    (psel && !penable) ##1 (psel && penable && pready));
+  c_one_wait: cover property (@(posedge pclk) disable iff (!presetn)
+    (psel && !penable) ##1 (psel && penable && !pready) ##1 (psel && penable && pready));
+  c_error:    cover property (@(posedge pclk) disable iff (!presetn)
+    psel && penable && pready && pslverr);
+  c_back_to_back: cover property (@(posedge pclk) disable iff (!presetn)
+    (psel && penable && pready) ##1 (psel && !penable));
+endinterface
+```
+
+**File 2: the DUT,** a completer with three registers: `CTRL` at `0x0` and `DATA` at `0x4` (both read-write, and both honour `PSTRB`) and the read-only `ID` at `0x8`. Every write takes one wait state; every read takes none. Unmapped addresses and writes to `ID` end with `PSLVERR`.
+
+```systemverilog
+// compile: apb_regs.sv (file 2 of 5): the DUT, an APB completer
+`timescale 1ns/1ps
+
+// A completer with three registers. A write takes one wait state, a read none.
+module apb_regs (
+  input  logic        pclk, presetn,
+  input  logic        psel, penable, pwrite,
+  input  logic [31:0] paddr, pwdata,
+  input  logic [2:0]  pprot,     // accepted; this completer ignores it
+  input  logic [3:0]  pstrb,
+  output logic        pready, pslverr,
+  output logic [31:0] prdata
+);
+  localparam logic [31:0] ID_VALUE = 32'h4150_4231;  // "APB1" in ASCII
+
+  logic [31:0] ctrl_q, data_q;
+  logic        wait_q;  // 1 in the cycle after a write's first ACCESS edge
+  logic        bad;
+
+  // Unmapped addresses, and writes to the read-only ID, get an error.
+  assign bad     = !(paddr inside {32'h0, 32'h4, 32'h8}) || (pwrite && paddr == 32'h8);
+  assign pready  = !pwrite || wait_q;
+  assign pslverr = psel && penable && pready && bad;  // LOW whenever it is not sampled
+
+  always_comb begin
+    prdata = '0;
+    if (psel && !pwrite)
+      case (paddr)
+        32'h0:   prdata = ctrl_q;
+        32'h4:   prdata = data_q;
+        32'h8:   prdata = ID_VALUE;
+        default: prdata = '0;
+      endcase
+  end
+
+  always_ff @(posedge pclk or negedge presetn) begin
+    if (!presetn) begin
+      ctrl_q <= '0;
+      data_q <= '0;
+      wait_q <= 1'b0;
+    end else begin
+      wait_q <= psel && penable && !pready;
+      if (psel && penable && pready && pwrite && !bad)
+        for (int n = 0; n < 4; n++)
+          if (pstrb[n]) begin       // only the enabled byte lanes change
+            if (paddr == 32'h0) ctrl_q[8*n +: 8] <= pwdata[8*n +: 8];
+            else                data_q[8*n +: 8] <= pwdata[8*n +: 8];
+          end
+    end
+  end
+endmodule
+```
+
+**File 3: the agent's package:** the item, the driver, the monitor, the agent, a one-transfer sequence and the register adapter. It knows nothing about this particular DUT, so it can be reused on any APB4 interface.
+
+```systemverilog
+// compile: apb_pkg.sv (file 3 of 5): the APB4 agent and its register adapter
+`timescale 1ns/1ps
+`include "uvm_macros.svh"
+
+package apb_pkg;
+  import uvm_pkg::*;
+
+  typedef virtual apb_if apb_vif_t;
+
+  class apb_item extends uvm_sequence_item;
+    `uvm_object_utils(apb_item)
+    // Request: chosen by a sequence, driven by the requester.
+    rand bit        write;
+    rand bit [31:0] addr;
+    rand bit [31:0] wdata;
+    rand bit [3:0]  pstrb;
+    rand bit [2:0]  pprot;
+    // Response: filled in by the driver (and by the monitor on its own copy).
+    logic [31:0]    rdata;        // 4-state, so an X on PRDATA stays visible
+    bit             slverr;
+    int unsigned    wait_cycles;
+
+    constraint c_align { addr[1:0] == 2'b00; }   // unaligned: UNPREDICTABLE (2.1.1)
+    constraint c_strb  { !write -> pstrb == 4'b0000;          // 3.2
+                         write -> { soft pstrb == 4'b1111; } }
+    constraint c_prot  { soft pprot == 3'b000; }  // normal, secure, data (3.5)
+
+    function new(string name = "apb_item");
+      super.new(name);
+    endfunction
+
+    virtual function string convert2string();
+      return $sformatf("%s addr=%0h %s=%0h strb=%b prot=%b waits=%0d slverr=%0b",
+                       write ? "WR" : "RD", addr, write ? "wdata" : "rdata",
+                       write ? wdata : rdata, pstrb, pprot, wait_cycles, slverr);
+    endfunction
+  endclass
+
+  typedef uvm_sequencer #(apb_item) apb_sequencer;
+
+  class apb_driver extends uvm_driver #(apb_item);
+    `uvm_component_utils(apb_driver)
+    apb_vif_t vif;  // set by apb_agent
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      // IDLE, with the other request signals at zero (IHI 0024E Appendix A).
+      vif.drv_cb.psel    <= 1'b0;
+      vif.drv_cb.penable <= 1'b0;
+      vif.drv_cb.pwrite  <= 1'b0;
+      vif.drv_cb.paddr   <= '0;
+      vif.drv_cb.pprot   <= '0;
+      vif.drv_cb.pstrb   <= '0;
+      vif.drv_cb.pwdata  <= '0;
+      forever begin
+        seq_item_port.get_next_item(req);
+        // Start just after a clock edge, never in the middle of a cycle or in reset.
+        do @(vif.drv_cb); while (vif.drv_cb.presetn !== 1'b1);
+        drive_transfer(req);
+        seq_item_port.item_done();
+      end
+    endtask
+
+    protected task drive_transfer(apb_item it);
+      // SETUP: these drives land just after this edge; the next edge samples them.
+      vif.drv_cb.psel    <= 1'b1;
+      vif.drv_cb.penable <= 1'b0;
+      vif.drv_cb.pwrite  <= it.write;
+      vif.drv_cb.paddr   <= it.addr;
+      vif.drv_cb.pprot   <= it.pprot;
+      vif.drv_cb.pstrb   <= it.write ? it.pstrb : 4'b0000;  // LOW for reads (3.2)
+      if (it.write) vif.drv_cb.pwdata <= it.wdata;
+      @(vif.drv_cb);                        // the SETUP edge
+      vif.drv_cb.penable <= 1'b1;           // ACCESS from the next edge on
+      it.wait_cycles = 0;
+      @(vif.drv_cb);                        // the first ACCESS edge
+      while (vif.drv_cb.pready !== 1'b1) begin
+        it.wait_cycles++;                   // PREADY low: a wait state
+        @(vif.drv_cb);
+      end
+      // Completion edge: PSEL, PENABLE and PREADY are all 1.
+      if (!it.write) it.rdata = vif.drv_cb.prdata;
+      it.slverr = vif.drv_cb.pslverr;
+      vif.drv_cb.psel    <= 1'b0;           // back to IDLE; PADDR, PWRITE and
+      vif.drv_cb.penable <= 1'b0;           // PWDATA keep their values
+      vif.drv_cb.pstrb   <= 4'b0000;
+    endtask
+  endclass
+
+  class apb_monitor extends uvm_monitor;
+    `uvm_component_utils(apb_monitor)
+    apb_vif_t                     vif;  // set by apb_agent
+    uvm_analysis_port #(apb_item) ap;   // one new item per completed transfer
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      ap = new("ap", this);
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.presetn === 1'b1 && vif.mon_cb.psel === 1'b1
+            && vif.mon_cb.penable === 1'b0)
+          collect();                        // this edge is a SETUP edge
+      end
+    endtask
+
+    protected task collect();
+      apb_item tr;
+      tr = apb_item::type_id::create("tr");  // a new object for every transfer
+      tr.write = vif.mon_cb.pwrite;
+      tr.addr  = vif.mon_cb.paddr;
+      tr.wdata = vif.mon_cb.pwdata;
+      tr.pstrb = vif.mon_cb.pstrb;
+      tr.pprot = vif.mon_cb.pprot;
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.presetn !== 1'b1) return;               // reset: discard
+        if (vif.mon_cb.psel !== 1'b1 || vif.mon_cb.penable !== 1'b1) return;
+        if (vif.mon_cb.pready === 1'b1) break;                 // completion edge
+        tr.wait_cycles++;
+      end
+      if (!tr.write) tr.rdata = vif.mon_cb.prdata;
+      tr.slverr = vif.mon_cb.pslverr;
+      `uvm_info("APB_MON", tr.convert2string(), UVM_MEDIUM)
+      ap.write(tr);
+    endtask
+  endclass
+
+  class apb_agent extends uvm_agent;
+    `uvm_component_utils(apb_agent)
+    apb_vif_t                     vif;
+    apb_sequencer                 sqr;
+    apb_driver                    drv;
+    apb_monitor                   mon;
+    uvm_analysis_port #(apb_item) ap;   // the agent's output: the monitor's items
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);         // reads is_active from the configuration
+      if (!uvm_config_db #(apb_vif_t)::get(this, "", "vif", vif))
+        `uvm_fatal("NO_VIF", {"no apb_if for ", get_full_name()})
+      ap  = new("ap", this);
+      mon = apb_monitor::type_id::create("mon", this);
+      mon.vif = vif;
+      if (get_is_active() == UVM_ACTIVE) begin
+        sqr = apb_sequencer::type_id::create("sqr", this);
+        drv = apb_driver::type_id::create("drv", this);
+        drv.vif = vif;
+      end
+    endfunction
+
+    virtual function void connect_phase(uvm_phase phase);
+      super.connect_phase(phase);
+      mon.ap.connect(ap);
+      if (get_is_active() == UVM_ACTIVE)
+        drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  // One transfer with fields the caller chooses; the finished item comes back.
+  class apb_rw_seq extends uvm_sequence #(apb_item);
+    `uvm_object_utils(apb_rw_seq)
+    bit        write;
+    bit [31:0] addr;
+    bit [31:0] wdata;
+    bit [3:0]  pstrb = 4'b1111;
+    apb_item   done;   // after start(): rdata, slverr and wait_cycles filled in
+
+    function new(string name = "apb_rw_seq");
+      super.new(name);
+    endfunction
+
+    virtual task body();
+      apb_item it;
+      it = apb_item::type_id::create("it");
+      start_item(it);
+      if (!it.randomize() with { write == local::write; addr == local::addr;
+                                 write -> (wdata == local::wdata
+                                           && pstrb == local::pstrb); })
+        `uvm_fatal("RAND", "apb_rw_seq: randomization failed")
+      finish_item(it);
+      done = it;
+    endtask
+  endclass
+
+  // The register-model side: uvm_reg_bus_op <-> apb_item.
+  class apb_reg_adapter extends uvm_reg_adapter;
+    `uvm_object_utils(apb_reg_adapter)
+
+    function new(string name = "apb_reg_adapter");
+      super.new(name);
+      supports_byte_enable = 1;  // APB4 has PSTRB
+      provides_responses   = 0;  // the driver fills in the request item
+    endfunction
+
+    virtual function uvm_sequence_item reg2bus(const ref uvm_reg_bus_op rw);
+      apb_item it;
+      it = apb_item::type_id::create("it");
+      it.write = (rw.kind == UVM_WRITE);
+      it.addr  = rw.addr;
+      it.wdata = it.write ? rw.data : '0;
+      // The map fills byte_en for reads too; PSTRB must stay LOW on reads (3.2).
+      it.pstrb = it.write ? rw.byte_en[3:0] : 4'b0000;
+      it.pprot = 3'b000;
+      return it;
+    endfunction
+
+    virtual function void bus2reg(uvm_sequence_item bus_item, ref uvm_reg_bus_op rw);
+      apb_item it;
+      if (!$cast(it, bus_item)) begin
+        `uvm_fatal("NOT_APB", "bus2reg: the item is not an apb_item")
+        return;
+      end
+      rw.kind    = it.write ? UVM_WRITE : UVM_READ;
+      rw.addr    = it.addr;
+      rw.data    = it.write ? it.wdata : it.rdata;  // X and Z bits become 0
+      rw.byte_en = '1;                             // reads: every lane
+      if (it.write) rw.byte_en = it.pstrb;         // writes: the lanes PSTRB enabled
+      if (it.slverr)
+        rw.status = UVM_NOT_OK;                    // PSLVERR
+      else if (!it.write && $isunknown(it.rdata))
+        rw.status = UVM_HAS_X;
+      else
+        rw.status = UVM_IS_OK;
+    endfunction
+  endclass
+endpackage
+```
+
+**File 4: the test's package:** a register model of `apb_regs`, the environment with its explicit predictor, and the test. `DATA` is modelled as two 16-bit fields, `LO` and `HI`, so that a sparse write to two byte lanes can be predicted field by field.
+
+```systemverilog
+// compile: apb_demo_pkg.sv (file 4 of 5): register model, environment, test
+`timescale 1ns/1ps
+`include "uvm_macros.svh"
+
+package apb_demo_pkg;
+  import uvm_pkg::*;
+  import apb_pkg::*;
+
+  // A three-register model of apb_regs.
+  class ctrl_reg extends uvm_reg;
+    `uvm_object_utils(ctrl_reg)
+    rand uvm_reg_field VAL;
+
+    function new(string name = "ctrl_reg");
+      super.new(name, 32, UVM_NO_COVERAGE);
+    endfunction
+
+    virtual function void build();
+      VAL = uvm_reg_field::type_id::create("VAL");
+      VAL.configure(this, 32, 0, "RW", 0, 32'h0, 1, 1, 0);
+    endfunction
+  endclass
+
+  class data_reg extends uvm_reg;
+    `uvm_object_utils(data_reg)
+    rand uvm_reg_field LO;   // byte lanes 0 and 1
+    rand uvm_reg_field HI;   // byte lanes 2 and 3
+
+    function new(string name = "data_reg");
+      super.new(name, 32, UVM_NO_COVERAGE);
+    endfunction
+
+    virtual function void build();
+      LO = uvm_reg_field::type_id::create("LO");
+      LO.configure(this, 16, 0, "RW", 0, 16'h0, 1, 1, 0);
+      HI = uvm_reg_field::type_id::create("HI");
+      HI.configure(this, 16, 16, "RW", 0, 16'h0, 1, 1, 0);
+    endfunction
+  endclass
+
+  class id_reg extends uvm_reg;
+    `uvm_object_utils(id_reg)
+    uvm_reg_field ID;
+
+    function new(string name = "id_reg");
+      super.new(name, 32, UVM_NO_COVERAGE);
+    endfunction
+
+    virtual function void build();
+      ID = uvm_reg_field::type_id::create("ID");
+      ID.configure(this, 32, 0, "RO", 0, 32'h4150_4231, 1, 0, 0);
+    endfunction
+  endclass
+
+  class demo_reg_block extends uvm_reg_block;
+    `uvm_object_utils(demo_reg_block)
+    rand ctrl_reg CTRL;
+    rand data_reg DATA;
+    id_reg        ID;
+
+    function new(string name = "demo_reg_block");
+      super.new(name, UVM_NO_COVERAGE);
+    endfunction
+
+    virtual function void build();
+      CTRL = ctrl_reg::type_id::create("CTRL");
+      CTRL.configure(this);
+      CTRL.build();
+      DATA = data_reg::type_id::create("DATA");
+      DATA.configure(this);
+      DATA.build();
+      ID = id_reg::type_id::create("ID");
+      ID.configure(this);
+      ID.build();
+      default_map = create_map("default_map", 'h0, 4, UVM_LITTLE_ENDIAN);
+      default_map.add_reg(CTRL, 'h0, "RW");
+      default_map.add_reg(DATA, 'h4, "RW");
+      default_map.add_reg(ID,   'h8, "RO");
+      lock_model();
+    endfunction
+  endclass
+
+  class apb_demo_env extends uvm_env;
+    `uvm_component_utils(apb_demo_env)
+    apb_agent                     agt;
+    demo_reg_block                regs;
+    apb_reg_adapter               adapter;
+    uvm_reg_predictor #(apb_item) predictor;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      agt  = apb_agent::type_id::create("agt", this);
+      regs = demo_reg_block::type_id::create("regs");
+      regs.configure(null, "");
+      regs.build();
+      regs.reset();                     // mirror = reset values
+      adapter   = apb_reg_adapter::type_id::create("adapter");
+      predictor = uvm_reg_predictor #(apb_item)::type_id::create("predictor", this);
+    endfunction
+
+    virtual function void connect_phase(uvm_phase phase);
+      super.connect_phase(phase);
+      regs.default_map.set_sequencer(agt.sqr, adapter);
+      regs.default_map.set_auto_predict(0);  // explicit prediction, from the monitor
+      predictor.map     = regs.default_map;
+      predictor.adapter = adapter;
+      agt.ap.connect(predictor.bus_in);
+    endfunction
+  endclass
+
+  class apb_demo_test extends uvm_test;
+    `uvm_component_utils(apb_demo_test)
+    apb_demo_env env;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env = apb_demo_env::type_id::create("env", this);
+    endfunction
+
+    function void check_ok(uvm_status_e status, string what);
+      if (status != UVM_IS_OK)
+        `uvm_error("TEST", $sformatf("%s returned %s", what, status.name()))
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      uvm_status_e   status;
+      uvm_reg_data_t value;
+      apb_rw_seq     seq;
+      phase.raise_objection(this);
+
+      // 1. A register write: PSTRB 1111 from the map's byte enables; one wait state.
+      env.regs.CTRL.write(status, 32'h0000_00A5);
+      check_ok(status, "CTRL.write");
+
+      // 2. A direct read of an unmapped address: no wait state, PSLVERR.
+      seq = apb_rw_seq::type_id::create("seq");
+      seq.write = 0;
+      seq.addr  = 32'h10;
+      seq.start(env.agt.sqr);
+      if (seq.done.slverr)
+        `uvm_info("TEST", "read of 'h10 ended with PSLVERR, as expected", UVM_LOW)
+      else
+        `uvm_error("TEST", "read of 'h10 should have ended with PSLVERR")
+
+      // 3. A full write, then a sparse write that changes byte lanes 0 and 1 only.
+      env.regs.DATA.write(status, 32'h1234_5678);
+      check_ok(status, "DATA.write");
+      seq = apb_rw_seq::type_id::create("seq");
+      seq.write = 1;
+      seq.addr  = 32'h4;
+      seq.wdata = 32'hAAAA_BBBB;
+      seq.pstrb = 4'b0011;
+      seq.start(env.agt.sqr);
+
+      // 4. Read back and compare with the mirror that the predictor kept.
+      env.regs.DATA.mirror(status, UVM_CHECK);
+      check_ok(status, "DATA.mirror");
+      env.regs.ID.mirror(status, UVM_CHECK);
+      check_ok(status, "ID.mirror");
+      env.regs.DATA.read(status, value);
+      check_ok(status, "DATA.read");
+      `uvm_info("TEST", $sformatf("DATA = 'h%0h, mirror = 'h%0h", value,
+                                  env.regs.DATA.get_mirrored_value()), UVM_LOW)
+      phase.drop_objection(this);
+    endtask
+  endclass
+endpackage
+```
+
+**File 5: `tb_top`,** which makes the clock and the reset, connects the DUT to the interface, and hands the virtual interface to the agent before `run_test()`.
+
+```systemverilog
+// compile: tb_top.sv (file 5 of 5)
+`timescale 1ns/1ps
+
+module tb_top;
+  import uvm_pkg::*;
+  import apb_pkg::*;
+  import apb_demo_pkg::*;  // the usual way to pull the test package into the build
+
+  logic pclk    = 1'b0;
+  logic presetn = 1'b0;
+  always #5 pclk = ~pclk;      // rising edges at 5, 15, 25 ... ns
+  initial #22 presetn = 1'b1;  // released between two edges
+
+  apb_if bus (.pclk(pclk), .presetn(presetn));
+
+  apb_regs dut (
+    .pclk(pclk), .presetn(presetn),
+    .psel(bus.psel), .penable(bus.penable), .pwrite(bus.pwrite),
+    .paddr(bus.paddr), .pwdata(bus.pwdata), .pprot(bus.pprot), .pstrb(bus.pstrb),
+    .pready(bus.pready), .pslverr(bus.pslverr), .prdata(bus.prdata));
+
+  initial begin
+    $timeformat(-9, 0, " ns", 0);
+    uvm_config_db #(apb_vif_t)::set(null, "uvm_test_top.env.agt", "vif", bus);
+    run_test("apb_demo_test");
+  end
+endmodule
+```
+
+### Run it
+
+1. Compile uvm-core 2020.3.1, then the five files in order: `apb_if.sv`, `apb_regs.sv`, `apb_pkg.sv`, `apb_demo_pkg.sv`, `tb_top.sv`, with one time unit everywhere (1 ns / 1 ps). Elaborate `tb_top`.
+2. Run the default test, `apb_demo_test`:
+
+```bash
+# Generic shape; <sim> stands for your simulator's compile-and-run command.
+<sim> ... apb_if.sv apb_regs.sv apb_pkg.sv apb_demo_pkg.sv tb_top.sv \
+      +UVM_TESTNAME=apb_demo_test
+```
+
+The switches that select uvm-core and enable assertions and coverage are tool-dependent. Whether an open-source simulator runs this bench is also tool-dependent, and this page does not claim it.
+
+### Expected output
+
+This is a hand trace of `apb_demo_test`, not a simulator log: the banner is shortened and file and line fields are removed; spacing differs between tools. Lines at the same time from different components (`APB_MON` and `TEST` at 85 ns and at 255 ns) may appear in the other order on your simulator.
+
+```text
+UVM_INFO @ 0 ns: reporter [UVM/RELNOTES] (release-notes banner)
+UVM_INFO @ 0 ns: reporter [RNTST] Running test apb_demo_test...
+UVM_INFO @ 55 ns: uvm_test_top.env.agt.mon [APB_MON] WR addr=0 wdata=a5 strb=1111 prot=000 waits=1 slverr=0
+UVM_INFO @ 85 ns: uvm_test_top.env.agt.mon [APB_MON] RD addr=10 rdata=0 strb=0000 prot=000 waits=0 slverr=1
+UVM_INFO @ 85 ns: uvm_test_top [TEST] read of 'h10 ended with PSLVERR, as expected
+UVM_INFO @ 125 ns: uvm_test_top.env.agt.mon [APB_MON] WR addr=4 wdata=12345678 strb=1111 prot=000 waits=1 slverr=0
+UVM_INFO @ 165 ns: uvm_test_top.env.agt.mon [APB_MON] WR addr=4 wdata=aaaabbbb strb=0011 prot=000 waits=1 slverr=0
+UVM_INFO @ 195 ns: uvm_test_top.env.agt.mon [APB_MON] RD addr=4 rdata=1234bbbb strb=0000 prot=000 waits=0 slverr=0
+UVM_INFO @ 225 ns: uvm_test_top.env.agt.mon [APB_MON] RD addr=8 rdata=41504231 strb=0000 prot=000 waits=0 slverr=0
+UVM_INFO @ 255 ns: uvm_test_top.env.agt.mon [APB_MON] RD addr=4 rdata=1234bbbb strb=0000 prot=000 waits=0 slverr=0
+UVM_INFO @ 255 ns: uvm_test_top [TEST] DATA = 'h1234bbbb, mirror = 'h1234bbbb
+
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :   11
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+** Report counts by id
+[APB_MON]     7
+[RNTST]     1
+[TEST]     2
+[UVM/RELNOTES]     1
+```
+
+How to read it:
+- **The verdict:** `UVM_ERROR :    0` and `UVM_FATAL :    0`. No assertion fired (each failure would be a `UVM_ERROR [APB_SVA]`), and both `mirror(status, UVM_CHECK)` calls matched; a mismatch would print `UVM_ERROR ... [RegModel] Register ... does not match mirrored value`.
+- **The timing:** the driver starts the first transfer at the first edge after reset is released (25 ns), so its SETUP edge is 35 ns and, with one wait state, it completes at 55 ns. Each later transfer starts at the completion edge of the one before, so it completes 30 ns later if it is a read (IDLE, SETUP, ACCESS) and 40 ns later if it is a write (one more cycle for the wait state): 55, 85, 125, 165, 195, 225 and 255 ns.
+- **The sparse write:** `DATA` held `12345678`; the write of `aaaabbbb` with `strb=0011` changed only lanes 0 and 1, so the DUT holds `1234bbbb`. The predictor received `byte_en = 0011` from `bus2reg()`, updated only the `LO` field, and the mirror agrees.
+- **The error:** the read of `0x10` completed with `slverr=1` and no wait state. The predictor found no register at `0x10` and ignored it.
+- **What is missing on purpose:** no `REG_PREDICT` lines (they are at `UVM_HIGH`), and no cover-property report, whose format is tool-dependent. In this run `c_no_wait`, `c_one_wait` and `c_error` are hit; `c_back_to_back` is not, because this driver always idles one cycle.
+
+### How to build an APB agent, step by step
+
+1. **List the signals** your interface has, from the completer's and the bridge's specifications (APB3, APB4 or APB5; which optional signals exist), and the wait-state bound the test may assume.
+2. **Write the interface:** the signals, a clocking block for the driver (outputs: the request; inputs: the response and reset) and one for the monitor (inputs only), and one concurrent assertion per rule, reporting through `` `uvm_error `` and guarded by `disable iff (!presetn || !checks_enable)`. Add cover properties for 0, 1 and many wait states, errors and back-to-back transfers.
+3. **Write the item** with request fields, response fields and the protocol's constraints (aligned address, `PSTRB` 0 on reads).
+4. **Write the driver:** after `get_next_item()`, wait for a clock edge with reset released; drive SETUP, then `PENABLE` at the SETUP edge; wait for `PREADY`; capture `PRDATA` and `PSLVERR` at the completion edge; return to IDLE (or go straight to the next SETUP); call `item_done()`.
+5. **Write the monitor:** find the SETUP edge, count wait states, publish a new item at the completion edge, and discard a transfer cut short by reset.
+6. **Write the agent:** always the monitor; the sequencer and driver only when `get_is_active()` is `UVM_ACTIVE`; promote the monitor's analysis port.
+7. **Write the adapter:** `reg2bus()` with `PSTRB` from `byte_en` for writes only; `bus2reg()` with `byte_en` from `PSTRB`, `PSLVERR` to `UVM_NOT_OK`, and X detection on reads.
+8. **Connect it in the environment:** `set_sequencer(agt.sqr, adapter)`, `set_auto_predict(0)`, a `uvm_reg_predictor` whose `map` and `adapter` you set, fed from the agent's analysis port.
+9. **Prove it:** run directed transfers with known waits and errors, then random traffic against a completer with random waits (the kata), and check the cover properties.
+
+**Checklist before moving on:**
+- [ ] I can point to SETUP, each wait state and the completion edge on an APB waveform, and say how many cycles a transfer took.
+- [ ] I can list what the requester must hold while `PREADY` is low, for a write and for a read.
+- [ ] I can say when `PSLVERR` counts, and what an error means for a write's register.
+- [ ] I can explain why APB has no bursts and what back-to-back transfers save.
+- [ ] I can name the signals each of APB3, APB4 and APB5 added.
+- [ ] My driver starts transfers just after a clock edge and drives `PSTRB` 0 for reads.
+- [ ] My monitor publishes a new item only at the completion edge.
+- [ ] My interface assertions cover every rule above, and my wait bound is labelled as policy.
+- [ ] My adapter maps `byte_en` to `PSTRB` for writes only, sets `byte_en` back in `bus2reg()`, and returns `UVM_NOT_OK` on `PSLVERR`.
+
+## Push Further
+
+### Expert: back-to-back transfers and a zero-idle driver
+
+The specification lets the bus go from ACCESS straight to SETUP when another transfer follows (IHI 0024E §4.1, §3.1.1). `apb_driver` never does: after `get_next_item()` it always waits for an edge, so there is at least one IDLE cycle between transfers, and `c_back_to_back` is never hit. That is legal, but a bridge does issue back-to-back transfers, and a completer bug that shows only then (for example, wait-state logic that does not reset between transfers) needs a driver that can produce them:
+
+```systemverilog
+// snippet: apb_driver::run_phase for back-to-back transfers. drive_transfer()
+// must not drive PSEL 0 at completion; drive_idle() drives PSEL 0, PENABLE 0, PSTRB 0.
+drive_idle();
+do @(vif.drv_cb); while (vif.drv_cb.presetn !== 1'b1);  // now just after an edge
+forever begin
+  seq_item_port.try_next_item(req);    // zero time: still in this edge's time slot
+  if (req == null) begin
+    drive_idle();                      // IDLE from the next edge
+    seq_item_port.get_next_item(req);  // may return between two edges
+    @(vif.drv_cb);                     // so realign before driving SETUP
+  end
+  drive_transfer(req);                 // returns in the completion edge's time slot
+  seq_item_port.item_done();
+end
+```
+
+- **Why it works.** `try_next_item()` "returns immediately" with an item or `null` (IEEE 1800.2-2020 §15.5.2.4). Called in the completion edge's time slot, a SETUP drive made after it takes effect just after that edge (IEEE 1800-2023 §14.16), so the next edge samples SETUP: ACCESS, then SETUP, with `PSEL` never low.
+- **When it does not.** In uvm-core 2020.3.1 (`seq/uvm_sequencer.svh`), `try_next_item()` waits for the nonblocking-assignment region once (the default `wait_for_sequences_count`) for a sequence to request, and once more for it to supply its item. A sequence that does anything time-consuming between items, or a layered sequencer, misses that window, and the driver falls back to an idle cycle. Back-to-back traffic is therefore something to *measure* with `c_back_to_back`, not to assume.
+- **No glitches.** If two synchronous drives to one clocking output mature in the same Re-NBA region, only the last value is driven (§14.16.2). Driving `PSEL` 0 at completion and 1 again for the next SETUP in *different* iterations of the scheduling loop could glitch it, which is why `drive_transfer()` leaves `PSEL` alone at completion and only `drive_idle()` lowers it.
+
+Interview angle: "How many cycles do 16 APB writes to a zero-wait completer take?" At least 32 back-to-back, about 48 with this lesson's one-idle driver, plus any wait states.
+
+### Expert: what `PSLVERR` means for the register mirror
+
+IHI 0024E §3.4 allows a write that ends with an error to have changed the register or not, and a read with an error to return invalid data. The register layer has to pick one behaviour:
+- In uvm-core 2020.3.1, `uvm_reg::do_predict()` (`reg/uvm_reg.svh`) predicts only when the status is `UVM_IS_OK`; otherwise it warns `PREDICT_NOK` ("status UVM_NOT_OK; skip prediction."). With this lesson's adapter, an errored write therefore leaves the mirror at its old value, and an errored read does not update it either.
+- The frontdoor `write()` returns `UVM_NOT_OK` to the caller (IEEE 1800.2-2020 §18.4.4.9). Tests must check `status`; `apb_demo_test` does it with `check_ok()`.
+- If the completer's specification says erroring writes *do* take effect (some peripherals report a protection error after updating), the mirror is now wrong. Either mirror-read the register after the error, or add a `uvm_reg_cbs::post_predict()` callback (§18.11.2.6) or a predictor `pre_predict()` override (§19.3.3.2) that encodes the completer's documented behaviour. Never encode it in the adapter, which is shared by every register on the bus.
+- At SoC level the error travels on: an AXI-to-APB bridge returns it as `RRESP` or `BRESP`, an AHB-to-APB bridge as `HRESP` (§3.4.3), so the same register access shows a different error encoding on each side of the bridge. Bridge checking is [B-AMBA-F1](/curriculum/T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index)'s topic.
+
+### Expert: byte enables in uvm-core register prediction
+
+Three uvm-core 2020.3.1 details decide whether sparse writes are predicted correctly:
+- **The predictor's default is "all lanes".** `uvm_reg_predictor::write()` (`reg/uvm_reg_predictor.svh`) sets `rw.byte_en = -1` before it calls `bus2reg()`, "in case they forget to set byte_en". An adapter that does not set it makes every observed sparse write look like a full write.
+- **Prediction is per field, by the field's lowest byte lane.** `uvm_reg::do_predict()` passes each field the enables shifted down to the field's lowest byte, and `uvm_reg_field::do_predict()` (`reg/uvm_reg_field.svh`) skips the field only when the enable of its lowest byte is 0 ("Assume that the entire field is enabled"). A 32-bit field written with `PSTRB = 0011` is predicted *as a whole*. Model registers whose software uses sparse writes with byte-lane-aligned fields, as `DATA` does with `LO` and `HI`.
+- **`supports_byte_enable` gates field-level frontdoor access.** `uvm_reg_field::is_indv_accessible()` refuses individual field access when the adapter does not support byte enables; it also requires the field to be configured as individually accessible and to be alone in its bus-width word. With 32-bit registers on a 32-bit APB that last condition rarely holds, so `field.write()` usually writes the whole register.
+
+### Expert: choosing `PPROT` per register access
+
+The adapter cannot see the test, but it can see the register access that produced the bus operation: `get_item()` returns the `uvm_reg_item` being translated, only inside `reg2bus()` (IEEE 1800.2-2020 §19.2.1.2.7), and that item carries the `extension` object the caller passed to `write()`, `read()`, `mirror()` or `update()` (§19.1.1.2.12, §18.4.4.9):
+
+```systemverilog
+// snippet: a protection attribute carried by a register access
+class apb_prot_ext extends uvm_object;
+  `uvm_object_utils(apb_prot_ext)
+  bit [2:0] pprot;
+  function new(string name = "apb_prot_ext");
+    super.new(name);
+  endfunction
+endclass
+
+// apb_reg_adapter::reg2bus(), extended
+virtual function uvm_sequence_item reg2bus(const ref uvm_reg_bus_op rw);
+  apb_item     it;
+  uvm_reg_item ri;
+  apb_prot_ext ext;
+  it = apb_item::type_id::create("it");
+  it.write = (rw.kind == UVM_WRITE);
+  it.addr  = rw.addr;
+  it.wdata = it.write ? rw.data : '0;
+  it.pstrb = it.write ? rw.byte_en[3:0] : 4'b0000;
+  it.pprot = 3'b000;                         // default: normal, secure, data
+  ri = get_item();                           // valid only inside reg2bus()
+  if (ri != null && ri.get_extension() != null && $cast(ext, ri.get_extension()))
+    it.pprot = ext.pprot;
+  return it;
+endfunction
+
+// In a test: a privileged, non-secure write
+//   ext = apb_prot_ext::type_id::create("ext");
+//   ext.pprot = 3'b011;
+//   env.regs.CTRL.write(status, 'h1, .extension(ext));
+```
+
+The null test before `$cast` matters: IEEE 1800-2023 §8.16 lists the literal `null` as a source that always casts, but not a handle that merely evaluates to null, so test for null first. On the completer side, `PPROT` compatibility is a connection decision (Table 3-3): a completer with `PPROT` connected to a requester without it is compatible only if the fixed protection attributes are functionally correct.
+
+### Expert: APB5 in a VIP
+
+What a VIP must add for an APB5 interface, each feature gated by the interface property that enables it (Table B-3):
+- **`PWAKEUP` (§3.7.2):** an assertion that `PWAKEUP` stays high until `PREADY` once it was high with `PSELx`; a check that `PWAKEUP` itself is never X (Appendix A: always valid); and a completer model option that waits for `PWAKEUP` before raising `PREADY`, which is permitted and is how a requester bug becomes a deadlock. The recommendation to assert it at least one cycle before `PSELx` is a coverage item, not an error.
+- **User signals (§3.8):** `PAUSER` and `PWUSER` are request signals, so they join the stability checks (same value in SETUP and every ACCESS cycle); `PRUSER` and `PBUSER` are checked only at completion. Their widths are properties, so the interface is parameterized by them, which changes the virtual-interface type ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) shows the consequences).
+- **Parity (chapter 5):** odd parity over at most 8 payload bits per check bit; each check signal must be correct in every cycle its Check Enable term is true (Table 5-1: for example, `PADDRCHK` whenever `PSEL` is high, `PRDATACHK` only at a read's completion). A VIP checks parity on what it receives and, for error-injection tests, can corrupt what it drives; what the receiver then does is not prescribed (§5.4).
+- **RME (§3.6):** `PNSE` must be valid with `PSEL` and needs `PPROT`; with `PPROT[1]` it selects Secure, Non-secure, Root or Realm (Table 3-5). A requester with `RME_Support` cannot be connected to a completer without it (Table 3-6).
+
+### Expert: recommendations are not rules
+
+Several APB statements are recommendations, and they have changed between issues. IHI 0024C (APB4, 2010) recommended that "the address and write signals are not changed immediately after a transfer, but remain stable until another access occurs" to save power (§3.1.2, Note); IHI 0024E recommends that signals not required to be valid are driven to zero (Appendix A). `PSLVERR` low outside completion is recommended in both. A checker that turns a recommendation into an error will fail correct designs built to the other issue. Keep the rule assertions strict, express recommendations as cover properties or warnings, and state in the VIP's documentation which issue it checks. The same discipline applies to `a_wait_bound`: it is the test's contract with one completer, so make the bound a parameter and put it in the test plan.
+
+### Interview angles
+
+<InterviewQuestionPlayground
+  title="Interview angle: a VIP that passed everything"
+  question="Your APB requester VIP passed every block-level test against a completer with no wait states. In the SoC, where the same registers sit behind a completer with wait states, a firmware write lands in the wrong register. What did your verification miss, and what do you add?"
+  options={[
+    { text: "Nothing at block level: wait states are the SoC completer's business.", correct: false, feedback: "The requester must hold PADDR and PWDATA while PREADY is low (IHI 0024E §3.1.2). That is the requester's obligation, and a zero-wait completer never exercises it." },
+    { text: "A completer with random wait states, an interface assertion that the request is frozen while PREADY is low, and coverage that 0, 1 and many wait states actually occurred.", correct: true, feedback: "Right. The bug is a hold violation that only exists during wait states. Random waits create them, a_wait_hold catches the change, and coverage proves the waits happened." },
+    { text: "A longer test with more register writes.", correct: false, feedback: "More traffic against the same zero-wait completer still never produces a wait state, so the hold bug stays hidden." },
+    { text: "A scoreboard on PRDATA.", correct: false, feedback: "A read-data scoreboard might notice the consequence later, but it does not point at the cause, and it would miss a misdirected write to a register nobody reads back." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: PSLVERR and the register model"
+  question="A register write through the register model returns UVM_NOT_OK because the completer raised PSLVERR. Your colleague wants the adapter to return UVM_IS_OK instead, so that the mirror is updated and the test stops warning. What do you say?"
+  options={[
+    { text: "Agree: the warning is noise, and the write probably took effect anyway.", correct: false, feedback: "Hiding the error loses the only evidence the access failed, and IHI 0024E §3.4 says the register might or might not have changed: 'probably' is not a model." },
+    { text: "Disagree: keep UVM_NOT_OK so the test sees the failure; model the completer's documented error behaviour in a pre_predict or post_predict hook, or mirror-read the register after an error.", correct: true, feedback: "Right. The status reports what the bus said; what the register does after an error is a property of this completer, so it belongs in a register-specific hook or an explicit re-read, not in the shared adapter." },
+    { text: "Disagree: PSLVERR guarantees the register did not change, so skipping the prediction is always right.", correct: false, feedback: "APB gives no such guarantee (§3.4). Skipping the prediction is a safe default only when the completer's specification says erroring writes are ignored." },
+    { text: "Turn on auto-prediction instead of the explicit predictor.", correct: false, feedback: "Auto-prediction uses the same status and skips the same prediction; it also stops the mirror from following traffic other masters drive." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "On an APB waveform (values sampled at rising edges), edge 2 shows PSEL 1, PENABLE 0. Edges 3, 4 and 5 show PSEL 1, PENABLE 1, with PREADY 0, 0 and 1. Where does the transfer complete, and how many wait states did it have?",
+    objective: 1,
+    answers: [
+      { text: "At edge 3, when PENABLE is first high: no wait states.", correct: false, feedback: "PENABLE high starts ACCESS; completion also needs PREADY high. At edge 3 PREADY is 0, so edge 3 is a wait state." },
+      { text: "At edge 5: two wait states (edges 3 and 4).", correct: true, feedback: "Right. Edge 5 is the first edge where PSEL, PENABLE and PREADY are all 1; edges 3 and 4 are ACCESS cycles with PREADY low." },
+      { text: "At edge 5: three wait states, counting the SETUP cycle.", correct: false, feedback: "SETUP is a required phase of every transfer, not a wait state. Only ACCESS cycles with PREADY low are wait states." },
+      { text: "At edge 2, when PSEL rises; the rest is the completer's internal latency.", correct: false, feedback: "Edge 2 is SETUP. No transfer completes in SETUP; the completer has not even seen PENABLE yet." }
+    ],
+    explanation: "A transfer completes at the first ACCESS edge with PREADY high (IHI 0024E §4.1). SETUP (edge 2) is one cycle; edges 3 and 4 are wait states; edge 5 completes it. The PENABLE-rise answer is the classic misconception, and counting SETUP as a wait state is the off-by-one that follows from it."
+  },
+  {
+    question: "A colleague's requester drives PSEL and PENABLE high in the same cycle 'to save a cycle' when the completer has PREADY tied high. Which statement is right?",
+    objective: 1,
+    answers: [
+      { text: "Legal: with PREADY tied high there are no wait states, so SETUP is not needed.", correct: false, feedback: "PREADY tied high removes wait states, not SETUP. Every transfer starts with exactly one SETUP cycle (§4.1)." },
+      { text: "Illegal: every transfer starts with exactly one SETUP cycle with PENABLE low; PENABLE marks the second and later cycles.", correct: true, feedback: "Right. IDLE goes to SETUP, never straight to ACCESS (§4.1, Table 2-1)." },
+      { text: "Legal for reads only, because a read has no write data to set up.", correct: false, feedback: "Reads use the same SETUP and ACCESS timing as writes (§3.3.1)." },
+      { text: "Legal in APB4 and later, which allow single-cycle transfers.", correct: false, feedback: "No APB revision has single-cycle transfers: 'every transfer takes at least two cycles' (§1.1)." }
+    ],
+    explanation: "PENABLE is not asserted in the first cycle: SETUP always comes first and lasts one cycle, whatever PREADY does. The distractors confuse SETUP with a wait state, or invent revision- or direction-specific exceptions."
+  },
+  {
+    question: "During a read's ACCESS state, PSLVERR is sampled 1 at an edge where PREADY is 0. At the next edge PREADY is 1 and PSLVERR is 0. What is the read's response?",
+    objective: 1,
+    answers: [
+      { text: "An error: PSLVERR was asserted during the transfer.", correct: false, feedback: "PSLVERR is only considered valid in the last cycle, when PSEL, PENABLE and PREADY are all high (§3.4)." },
+      { text: "No error: PSLVERR counts only at the completion edge, where it is 0.", correct: true, feedback: "Right. Its value during a wait state means nothing; the completer is only recommended to keep it low there." },
+      { text: "A protocol violation: PSLVERR must never be 1 while PREADY is 0.", correct: false, feedback: "Keeping PSLVERR low outside completion is a recommendation, not a rule (§3.4), so a checker must not fail on it." },
+      { text: "An error, and the transfer is aborted at that edge.", correct: false, feedback: "APB has no abort; only PREADY ends ACCESS." }
+    ],
+    explanation: "PSLVERR is sampled only at completion (§3.4). A 1 in a wait state is not a response, and being low there is only recommended, so neither an error nor a violation follows."
+  },
+  {
+    question: "A DMA engine must copy 16 words into an APB peripheral as fast as possible. Which statement is right?",
+    objective: 3,
+    answers: [
+      { text: "Use one APB burst of 16 beats; PSTRB marks each beat.", correct: false, feedback: "APB has no bursts. PSTRB selects byte lanes within one transfer, not beats." },
+      { text: "It takes 16 separate transfers of at least two cycles each; back-to-back transfers save only the idle cycles between them.", correct: true, feedback: "Right. Each transfer has its own SETUP and ACCESS (§4.1); ACCESS can go straight to the next SETUP, but transfers never overlap (§2.1.2)." },
+      { text: "APB5 added bursts for this case.", correct: false, feedback: "APB5 added wake-up, user, parity and RME signals, not bursts." },
+      { text: "Use the separate read and write data buses to move two words per cycle.", correct: false, feedback: "The data buses have no handshakes of their own, so transfers cannot happen concurrently (§2.1.2)." }
+    ],
+    explanation: "APB is not pipelined and every transfer takes at least two cycles (§1.1); there are no bursts and no overlap. Sixteen words cost at least 32 cycles even back-to-back. A block that needs bursts belongs on AHB or AXI."
+  },
+  {
+    question: "A completer's port list has PSTRB, PPROT, PREADY, PSLVERR and PWAKEUP. What is the earliest APB revision it can implement?",
+    objective: 3,
+    answers: [
+      { text: "APB3, because of PREADY and PSLVERR.", correct: false, feedback: "APB3 has PREADY and PSLVERR but not PSTRB, PPROT or PWAKEUP (Table B-1)." },
+      { text: "APB4, because of PSTRB and PPROT.", correct: false, feedback: "APB4 has PSTRB and PPROT, but PWAKEUP must not be present on an APB4 interface (Table B-1)." },
+      { text: "APB5, because PWAKEUP exists only on APB5 interfaces.", correct: true, feedback: "Right. 'Wake-up signaling can only be added to APB5 protocol interfaces' (§3.7.1)." },
+      { text: "APB2: every APB revision allows every signal.", correct: false, feedback: "APB2 has none of these five signals (Table B-1)." }
+    ],
+    explanation: "Each revision adds signals: APB3 PREADY and PSLVERR, APB4 PPROT and PSTRB, APB5 wake-up, user, parity and RME signals. The newest signal present decides the revision."
+  },
+  {
+    question: "After a driver change, a_access_from_setup fires on every transfer, the monitor publishes nothing, but the DUT's registers do change. What is the most likely cause?",
+    objective: 2,
+    answers: [
+      { text: "The driver now raises PENABLE in the same cycle as PSEL, for example by driving SETUP in the middle of a cycle.", correct: true, feedback: "Right. Without a SETUP edge, ACCESS has no SETUP before it, and a monitor that starts at SETUP never collects the transfer, although the completer still completes it." },
+      { text: "The completer ties PREADY high, so every transfer has zero wait states.", correct: false, feedback: "Zero wait states are legal and do not affect SETUP; this lesson's reads have none and pass." },
+      { text: "The monitor's clocking block samples too late.", correct: false, feedback: "The assertion samples the pins itself and fires independently of the monitor; the problem is on the bus." },
+      { text: "The predictor is not connected.", correct: false, feedback: "A missing predictor leaves the mirror stale but produces no assertion failure." }
+    ],
+    explanation: "a_access_from_setup checks that ACCESS starts only after SETUP (§4.1). The pattern 'assertion on every transfer, monitor silent, DUT updated' is a requester that skips SETUP. Start each transfer just after a clock edge and drive PENABLE only at the SETUP edge."
+  },
+  {
+    question: "With a completer that inserts random wait states (0 to 7), a_wait_hold fires on most transfers but never on transfers that had no wait state. Which driver bug fits?",
+    objective: 2,
+    answers: [
+      { text: "The driver drives PSTRB high during reads.", correct: false, feedback: "That fires a_pstrb_read on every read, whatever the wait states." },
+      { text: "The driver updates PADDR or PWDATA inside its wait loop.", correct: true, feedback: "Right. The loop body runs only when PREADY is low, so zero-wait transfers never execute it; a_wait_hold sees the change at the edge after the first wait state." },
+      { text: "The completer raises PREADY one cycle too early.", correct: false, feedback: "An early PREADY shortens the transfer; it does not make the requester change its request." },
+      { text: "The assertion is too strict: the request may change once PREADY has been low for a cycle.", correct: false, feedback: "The request must remain unchanged for as long as PREADY stays low (§3.1.2, §3.3.2)." }
+    ],
+    explanation: "A hold violation exists only during wait states, which is exactly why a test against a zero-wait completer cannot find it. Random PREADY waits create the condition, and a_wait_hold reports it."
+  },
+  {
+    question: "After DATA.write('h12345678) and a direct APB write of 'hAAAABBBB with PSTRB 0011 to DATA, DATA.mirror(status, UVM_CHECK) reports: value read from DUT (0x1234bbbb) does not match mirrored value (0xaaaabbbb). DATA has fields LO[15:0] and HI[31:16]. What is wrong?",
+    objective: 4,
+    answers: [
+      { text: "The DUT ignores PSTRB.", correct: false, feedback: "The DUT holds 1234bbbb: it wrote lanes 0 and 1 only, exactly as PSTRB asked. The mirror is what is wrong." },
+      { text: "bus2reg() does not set rw.byte_en from PSTRB, so the predictor updated both fields.", correct: true, feedback: "Right. The predictor starts with byte_en = all lanes; only bus2reg() can tell it that lanes 2 and 3 were not written." },
+      { text: "Auto-prediction should be on.", correct: false, feedback: "The direct write never goes through the map, so auto-prediction would not see it at all; the mirror would stay at 12345678 and still mismatch." },
+      { text: "reg2bus() should copy byte_en to PSTRB for reads as well.", correct: false, feedback: "That would break §3.2 (PSTRB low on reads) and has nothing to do with predicting a write." }
+    ],
+    explanation: "The mirror shows aaaa in HI, so the predictor treated the sparse write as a full write. uvm-core's predictor defaults byte_en to all ones before calling bus2reg(); the adapter must set byte_en = PSTRB for writes. The fix also needs byte-lane-aligned fields, which DATA has."
+  },
+  {
+    question: "A register write through the model ends with PSLVERR. With this lesson's adapter, what happens, and what does APB say about the register?",
+    objective: 4,
+    answers: [
+      { text: "write() returns UVM_NOT_OK, the predictor skips the prediction with a PREDICT_NOK warning, and the register might or might not have changed.", correct: true, feedback: "Right. bus2reg() maps PSLVERR to UVM_NOT_OK, uvm-core's do_predict() predicts only on UVM_IS_OK, and IHI 0024E §3.4 allows either register state." },
+      { text: "write() returns UVM_IS_OK and the mirror is updated, because the transfer completed.", correct: false, feedback: "Completion with PSLVERR is an error response; the adapter turns it into UVM_NOT_OK." },
+      { text: "The mirror keeps its value because APB guarantees an errored write changed nothing.", correct: false, feedback: "APB gives no such guarantee: 'When a write transaction receives an error, this does not mean that the register within the peripheral has not been updated' (§3.4)." },
+      { text: "The register layer raises UVM_FATAL and stops the test.", correct: false, feedback: "A failed access is a status, not a fatal; the test must check it." }
+    ],
+    explanation: "The adapter reports the bus error as UVM_NOT_OK; uvm-core skips the prediction; APB leaves the register state peripheral-specific. A test that cares checks status and either mirror-reads the register or models the completer's documented behaviour."
+  }
+]} />
+
+### Kata: random `PREADY` waits, checked by assertions
+
+**Goal.** Prove that this lesson's agent holds every request signal through any number of wait states, with evidence that the waits really happened, then watch the assertions catch two planted problems.
+
+**Tasks.**
+1. **Write a completer with random wait states:** a module `apb_rand_completer #(int unsigned MAX_WAIT = 7)` with the same ports as `apb_regs`. It holds four words at `0x0` to `0xC` (honouring `PSTRB`), answers `PSLVERR` above `0xC`, and, for every transfer, draws a number of wait states from 0 to `MAX_WAIT` at the SETUP edge with `$urandom_range` (IEEE 1800-2023 §18.13.2).
+2. **Write the stimulus and the evidence:** `apb_random_seq`, 200 transfers with random direction, data and word-aligned addresses from `0x0` to `0x14`; and `apb_wait_stats`, a `uvm_subscriber #(apb_item)` on the agent's analysis port that counts transfers by wait states and errors, and reports a `UVM_ERROR` in `report_phase` unless it saw 0, 1 and at least one larger number of wait states.
+3. **Run it** (`tb_top` with `apb_rand_completer` as `dut`, test `apb_kata_test`) and **predict** before you look: which assertions fire, and which cover properties are hit?
+4. **Mutant A:** in `apb_driver::drive_transfer()`, add `vif.drv_cb.paddr <= it.addr + 4;` inside the wait loop. Predict which assertion fires, at which edge relative to the first wait state, and on which transfers it never fires.
+5. **Mutant B:** restore the driver and set the completer's `MAX_WAIT` to 20 (the interface's `MAX_WAIT` stays 16). Predict what fires, and decide whether it is a protocol bug.
+
+<details>
+<summary>Worked solution</summary>
+
+**1. The completer.** `pready` is combinational from two counters, so it can be high in the very first ACCESS cycle (zero wait states):
+
+```systemverilog
+// compile: apb_rand_completer.sv (replaces apb_regs as dut in tb_top for the kata)
+`timescale 1ns/1ps
+
+module apb_rand_completer #(int unsigned MAX_WAIT = 7) (
+  input  logic        pclk, presetn,
+  input  logic        psel, penable, pwrite,
+  input  logic [31:0] paddr, pwdata,
+  input  logic [2:0]  pprot,
+  input  logic [3:0]  pstrb,
+  output logic        pready, pslverr,
+  output logic [31:0] prdata
+);
+  logic [31:0] mem [4];      // words at 'h0, 'h4, 'h8, 'hC
+  int unsigned target;       // wait states drawn for this transfer
+  int unsigned count;        // wait states served so far
+  logic        bad;
+
+  assign bad     = (paddr > 32'hC);
+  assign pready  = psel && penable && (count == target);
+  assign pslverr = pready && bad;
+  assign prdata  = (psel && !pwrite && !bad) ? mem[paddr[3:2]] : '0;
+
+  always_ff @(posedge pclk or negedge presetn) begin
+    if (!presetn) begin
+      target <= 0;
+      count  <= 0;
+      foreach (mem[i]) mem[i] <= '0;
+    end else if (psel && !penable) begin        // SETUP edge: draw the waits
+      target <= $urandom_range(MAX_WAIT, 0);
+      count  <= 0;
+    end else if (psel && penable && !pready) begin
+      count <= count + 1;                       // one more wait state served
+    end else if (pready && pwrite && !bad) begin
+      for (int n = 0; n < 4; n++)               // completion of a write
+        if (pstrb[n]) mem[paddr[3:2]][8*n +: 8] <= pwdata[8*n +: 8];
+    end
+  end
+endmodule
+```
+
+At the SETUP edge it draws `target`; at each ACCESS edge `pready` is 1 only when `count == target`, so a transfer with `target = w` completes at the (*w*+1)th ACCESS edge. `PREADY` is 0 outside ACCESS, which §3.1.2 allows.
+
+**2. The stimulus, the evidence and the test** (add to `apb_demo_pkg`, or to a kata package that imports `apb_pkg`):
+
+```systemverilog
+// snippet: classes for apb_demo_pkg; tb_top instantiates apb_rand_completer as dut
+class apb_random_seq extends uvm_sequence #(apb_item);
+  `uvm_object_utils(apb_random_seq)
+  int unsigned n_items = 200;
+
+  function new(string name = "apb_random_seq");
+    super.new(name);
+  endfunction
+
+  virtual task body();
+    repeat (n_items) begin
+      apb_item it;
+      it = apb_item::type_id::create("it");
+      start_item(it);
+      if (!it.randomize() with { addr <= 32'h14; })
+        `uvm_fatal("RAND", "apb_random_seq: randomization failed")
+      finish_item(it);
+    end
+  endtask
+endclass
+
+class apb_wait_stats extends uvm_subscriber #(apb_item);
+  `uvm_component_utils(apb_wait_stats)
+  int unsigned n_by_waits[int unsigned];   // wait states -> number of transfers
+  int unsigned n_err;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void write(apb_item t);
+    if (!n_by_waits.exists(t.wait_cycles)) n_by_waits[t.wait_cycles] = 0;
+    n_by_waits[t.wait_cycles]++;
+    if (t.slverr) n_err++;
+  endfunction
+
+  virtual function void report_phase(uvm_phase phase);
+    string s;
+    foreach (n_by_waits[w]) s = {s, $sformatf(" %0d:%0d", w, n_by_waits[w])};
+    `uvm_info("WAIT_STATS", $sformatf("waits:transfers%s errors=%0d", s, n_err),
+              UVM_LOW)
+    if (!n_by_waits.exists(0) || !n_by_waits.exists(1) || n_by_waits.size() < 3)
+      `uvm_error("WAIT_STATS", "goal not met: need 0, 1 and more wait states")
+  endfunction
+endclass
+
+class apb_kata_env extends uvm_env;
+  `uvm_component_utils(apb_kata_env)
+  apb_agent      agt;
+  apb_wait_stats stats;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    agt   = apb_agent::type_id::create("agt", this);
+    stats = apb_wait_stats::type_id::create("stats", this);
+  endfunction
+
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    agt.ap.connect(stats.analysis_export);
+  endfunction
+endclass
+
+class apb_kata_test extends uvm_test;
+  `uvm_component_utils(apb_kata_test)
+  apb_kata_env env;   // named env, so tb_top's vif path uvm_test_top.env.agt still works
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    env = apb_kata_env::type_id::create("env", this);
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    apb_random_seq seq;
+    phase.raise_objection(this);
+    seq = apb_random_seq::type_id::create("seq");
+    seq.start(env.agt.sqr);
+    phase.drop_objection(this);
+  endtask
+endclass
+```
+
+In `tb_top`, replace `apb_regs dut (...)` with `apb_rand_completer #(.MAX_WAIT(7)) dut (...)` (same connections) and run with `+UVM_TESTNAME=apb_kata_test`.
+
+**3. What you should see.** No `APB_SVA` error: the driver drives the request once, in SETUP, and the wait loop drives nothing. `WAIT_STATS` reports eight wait counts, 0 to 7, each on roughly an eighth of the 200 transfers, and `errors=` on roughly a third (addresses `0x10` and `0x14` are two of the six word addresses the sequence can draw); the exact numbers depend on the seed, which is tool-dependent. `c_no_wait`, `c_one_wait` and `c_error` are hit. `c_back_to_back` is not: `apb_driver` always idles one cycle, which the expert section's driver changes. The evidence matters as much as the silence: an assertion that never saw a wait state proves nothing about wait states.
+
+**4. Mutant A.** `a_wait_hold` fails. Its antecedent holds at the first wait-state edge; the driver's drive made there lands just after that edge, so at the next edge `$stable(paddr)` is false: the failure is reported one edge after the first wait state, once per transfer that had at least one wait state. Transfers with zero wait states never execute the loop body, so they never fail, which is about one transfer in eight here and *every* transfer against a zero-wait completer. That is the reason for random waits. Note also what the completer did: it completed the transfer at `addr + 4`, while the monitor's item says `addr`, so a scoreboard would have reported a mysterious data mismatch somewhere else.
+
+**5. Mutant B.** `a_wait_bound` fires on transfers with 17 or more wait states, and nothing else does. This is **not** a protocol bug: APB allows any number of wait states (§3.3.2). It is a mismatch between the testbench's policy (16) and this completer. Raise the interface's `MAX_WAIT` to match the completer's specification, or, if that specification promises at most 16, report the completer.
+
+</details>
+
+The flashcards below drill the phases, the hold and validity rules, the revisions, and the adapter's byte-enable and error rules.
+
+## References & Next Topics
+
+**Primary sources:**
+- Arm IHI 0024E, *AMBA APB Protocol Specification* (issue E, 2023; APB2 to APB5): Preface "APB Revisions"; §1.1 about the APB protocol (not pipelined, at least two cycles, requester and completer); §2.1 signals and Table 2-1, §2.1.1 address bus (unaligned is UNPREDICTABLE), §2.1.2 data buses (no concurrent transfers); §3.1 write transfers (§3.1.1 no wait states, §3.1.2 wait states and the signals that stay unchanged); §3.2 write strobes and Table 3-1; §3.3 read transfers (§3.3.1, §3.3.2); §3.4 error response (§3.4.3 mapping of `PSLVERR` by bridges); §3.5 protection unit support, Tables 3-2 and 3-3; §3.6 RME, Tables 3-4 to 3-6; §3.7 wake-up signalling; §3.8 user signalling; §4.1 operating states; chapter 5 interface parity protection (§5.2 to §5.5, Table 5-1); Appendix A signal validity; Appendix B signal list (Tables B-1 to B-3).
+- Arm IHI 0024C, *AMBA APB Protocol Specification v2.0* (APB4): §3.1.2 Note (keeping address and write signals stable after a transfer), cited only to contrast with IHI 0024E.
+- IEEE 1800.2-2020: §13.4.2.2 `get_is_active`; §15.5.2.3 `get_next_item`, §15.5.2.4 `try_next_item`, §15.5.2.5 `item_done`; §18.2.3.6 `set_sequencer`; §18.2.5.2 `set_auto_predict`; §18.4.4.9 `write`, §18.4.4.10 `read`, §18.4.4.14 `mirror`; §18.5.3.2 `uvm_reg_field::configure`; §19.1.1.2.12 extension; §19.1.2 `uvm_reg_bus_op`; §19.2.1 `uvm_reg_adapter` (§19.2.1.2.2 `supports_byte_enable`, §19.2.1.2.3 `provides_responses`, §19.2.1.2.5 `reg2bus`, §19.2.1.2.6 `bus2reg`, §19.2.1.2.7 `get_item`); §18.11.2.6 `uvm_reg_cbs::post_predict`; §19.3 `uvm_reg_predictor` (§19.3.2.1 `bus_in`, §19.3.3.2 `pre_predict`).
+- IEEE 1800-2023: §8.16 casting (`$cast`); §11.4.8 bitwise operators; §14.13 input sampling; §14.16 synchronous drives, §14.16.2 driving clocking output signals; §16.9.3 sampled value functions; §16.12 declaring properties (`disable iff`); §16.14.1 assert, §16.14.3 cover; §18.13.2 `$urandom_range`; §20.9 bit vector system functions (`$isunknown`).
+- uvm-core 2020.3.1 (implementation behaviour named on this page): `src/reg/uvm_reg_map.svh` (byte enables computed for reads and writes; `default_parent_seq`); `src/reg/uvm_reg_predictor.svh` (`byte_en` defaults to all lanes before `bus2reg()`); `src/reg/uvm_reg.svh` (`do_predict` skips on status other than `UVM_IS_OK`, `PREDICT_NOK`; `mirror` captures the expected value before reading); `src/reg/uvm_reg_field.svh` (`do_predict` by lowest byte lane; `is_indv_accessible`); `src/seq/uvm_sequencer.svh` (`try_next_item` waits one nonblocking-assignment region).
+
+**Prerequisites:** [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) and [B-AMBA-2: AMBA Protocol Intuition & Memory Hooks](/curriculum/T3_Advanced/B-AMBA-2_Protocol_Intuition_and_Memory_Hooks/index).
+
+**Related:**
+- [B-AMBA-1: AMBA Protocol Families & Tradeoffs](/curriculum/T3_Advanced/B-AMBA-1_Protocol_Families_and_Tradeoffs/index): where APB sits in the AMBA family, and when to choose it.
+- [A-UVM-4A: RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index): register models, maps and the adapter on a minimal APB agent.
+- [A-UVM-4B: Advanced RAL Techniques](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index): prediction strategies and the explicit predictor in depth.
+- [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index): making a driver and monitor reset-aware, and injecting errors such as `PSLVERR` on purpose.
+- [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): implication, sampled value functions and `disable iff`.
+- [F4C: Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): input sampling and synchronous drives.
+- [B-AHB-1: AHB Protocol Design & Timing](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index): the pipelined bus that APB bridges usually hang from.
+- [B-AMBA-F1: Bridges and System Integration](/curriculum/T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index): bridges, including how `PSLVERR` becomes `HRESP`, `RRESP` or `BRESP`.
+
+<NextLesson />

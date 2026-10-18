@@ -1,345 +1,1067 @@
 ---
 title: "AMBA Coherency Protocols: ACE and CHI"
-description: "Master coherent AMBA protocols in production today: ACE cache coherency extensions for AXI and AMBA 5 CHI packetized interconnects for scalable multi-core SoCs."
-order: 13
-tier: "T3_Advanced"
+description: "Explain why coherent interconnects exist, trace ACE reads and stores through cache-line states and snoops, compare CHI with ACE, and outline a coherency checker that sees every port."
 flashcards: "B-AMBA-F2_Future_Protocols_ACE_CHI"
 sources:
-  - title: "Arm AMBA AXI and ACE Protocol Specification"
+  - title: "Arm AMBA AXI and ACE Protocol Specification (Part C: ACE and ACE-Lite)"
     type: "standard"
-    identifier: "IHI0022H"
-    version: "H"
+    identifier: "IHI0022E"
+    version: "E"
   - title: "Arm AMBA 5 CHI Architecture Specification"
     type: "standard"
-    identifier: "IHI0050F"
-    version: "F"
+    identifier: "IHI0050E.b"
+    version: "E.b"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+    version: "2023"
 ---
 
-# AMBA Coherency Protocols: ACE and CHI
+## Quick Take
 
-AXI4 is the protocol most verification engineers meet first, but high-end SoCs need more than fast reads and writes. Multi-core CPUs, GPUs, coherent accelerators, and cache-rich subsystems need a way to answer a harder question: **who owns the latest copy of this cache line?**
+- **What it is:** **ACE** (AXI Coherency Extensions, AMBA 4) adds hardware cache coherency to AXI: extra signals on the AXI read and write channels, plus three snoop channels into every master that has a cache (Arm IHI0022E Part C). **CHI** (Coherent Hub Interface, AMBA 5) does the same job as a layered, packet-based protocol built for large interconnects such as rings and meshes (Arm IHI0050E.b).
+- **Why it matters:** When several caches can hold copies of the same memory, the question is no longer only "is this interface legal?" but "do all the caches together still agree on the newest value?". No checker that looks at one interface can answer that. Coherency changes what your scoreboard models, what your assertions see and how you debug.
+- **The Analogy:** A team shares one design document stored on a file server. Anyone may keep a read-only printout (a **Shared** copy). Only one person at a time may hold the editable copy (a **Unique** copy). Whoever has edited it and not yet uploaded owes the server an upload (a **Dirty** copy). A **snoop** is the coordinator saying "hand me your latest edits" or "shred your printout". *Where it breaks:* the unit is a cache line (a block of bytes, 64 bytes in CHI), not a document; copies are destroyed or downgraded, never updated in place; and a "clean" printout can still differ from the server when someone else owes the upload.
 
-ACE and CHI are not future or emerging protocols — they are in production today across Arm Cortex-A and Neoverse platforms, server-class SoCs, and datacenter accelerators. **ACE** extends AXI with cache coherency channels. **CHI** goes further: it turns coherency into a packetized network protocol designed for large ring, mesh, and network-on-chip fabrics.
+The folder name of this lesson says "Future Protocols". That is historical: ACE was first released in the AMBA AXI and ACE specification Issue D on 28 October 2011, and CHI Issue A on 12 June 2014, with the first public CHI issue (B) on 4 August 2017 (IHI0022H.c and IHI0050E.b change histories). Both are current AMBA protocols.
 
-<QuickTake>
-- **ACE** (AMBA 4) extends AXI with snoop channels so caches can stay coherent without software flushing every shared buffer. It is in production in Cortex-A class SoCs.
-- **Coherency state** tracks whether a cache line is clean, dirty, shared, unique, or invalid, and determines who may supply data.
-- **CHI** (AMBA 5) replaces AXI-style signal bundles with packetized request, response, data, and snoop channels that scale across distributed interconnects. It powers Arm Neoverse and many datacenter SoCs.
-- **Verification difficulty** shifts from "did this burst obey the handshake?" to "did every cache line transition preserve single-writer, multi-reader correctness?"
-</QuickTake>
+**You will be able to:**
+1. Explain the coherency problem (a stale copy and a dirty copy of the same line) and how snoops through the interconnect solve it.
+2. Trace a ReadShared and a store (CleanUnique, then WriteBack) through two caches' ACE states, naming the snoop, the CRRESP and RRESP[3:2] bits, the acknowledge, and who must update memory.
+3. Compare CHI with ACE: node types, the four channels, credit-based (L-Credit) flow control and Direct Cache Transfer.
+4. Design the outline of a coherency checker that sees every coherent port and enforces the global rules: a Unique copy is the only copy, at most one copy is Dirty, and read data matches a golden value.
 
----
+<BeforeYouStart />
 
-## 1. Why AXI4 Is Not Enough
+## Build Your Mental Model
 
-AXI4 is excellent for high-throughput memory traffic, but it is not inherently cache coherent. A CPU cache, GPU cache, and DMA engine can all interact with the same physical memory. Without a coherency protocol, one agent may read stale data while another agent holds a dirty modified copy.
+**How to read this lesson.** The core path is: the words, why AXI alone is not enough, the five ACE states, what ACE adds to an AXI port, one traced read and one traced store, CHI in one picture, and how coherency changes the checker. Each has a picture. The scope is the *concept* level: the encodings and the corner cases are there for reference, and the expert layer is in Push Further. Building a full coherency VIP is out of scope.
 
-Consider this failure:
+### Words you need first
 
-1. CPU0 reads address `0x8000` and caches the line.
-2. CPU1 writes a new value to the same address, but the write stays dirty in CPU1's cache.
-3. A DMA engine reads memory at `0x8000`.
-4. The DMA sees the old memory value because CPU1 has not written back the dirty line.
+- **Cache, cache line.** A cache is a small fast memory next to a processor that keeps copies of recently used memory. It stores data in fixed-size blocks called **cache lines** (often 64 bytes). Coherency is tracked per line, never per byte.
+- **Load, store, hit, miss.** A processor *loads* (reads) and *stores* (writes). A **hit** means the line is already in the cache; a **miss** means it must be fetched.
+- **Write-back cache.** A store updates only the cached copy; main memory is updated later, when the line is written back or evicted (removed to make room). Until then the cache holds the only up-to-date copy. This is why stale memory exists at all.
+- **Master, interconnect, slave.** The master starts a transaction, the interconnect routes it and the slave answers. IHI0022E, the issue this track cites, uses master and slave. Later Arm issues (IHI0022H.b onwards) say *manager* and *subordinate*, and CHI says *Requester*, *Completer* and *Subordinate* for the same roles.
+- **Shareable.** A memory location that the caches of several masters may hold. Only Shareable accesses need coherency.
+- **Coherent.** "Regions of memory are coherent if writes to the same memory location by two components are observable in the same order by all components" (IHI0022E §C1.1; the same sentence opens IHI0050E.b §1.5). Hardware coherency removes the need for software to flush and invalidate caches by hand (**software cache maintenance**).
+- **Snoop.** A request from the interconnect to a cached master asking it to look up a line in its cache and supply it, downgrade it or remove it.
+- **Snoop filter.** An optional table in the interconnect that records which masters may hold each line, so it can skip snoops to masters that cannot have it.
+- **Point of coherence (PoC).** "A point at which all agents that can access memory are guaranteed to see the same copy of a memory location"; in a typical CHI system it is the Home Node, defined below (IHI0050E.b §1.3). IHI0022E does not use the term; in an ACE system the coherent interconnect, which issues the snoops, plays that role.
+- **DVM (Distributed Virtual Memory) messages.** Messages that keep address-translation caches (TLBs) in step across masters. This lesson only names them.
 
-AXI can move the data, but it does not automatically know that CPU1 owns the latest copy. A coherent protocol adds the machinery to find, invalidate, clean, or transfer ownership of cached lines.
+### Why AXI alone is not enough
 
----
+Here is the classic failure. Read it, then predict before you look at the first picture.
 
-## 2. ACE: AXI Coherency Extensions (AMBA 4)
+1. CPU0 reads address `0x8000`; the line holding it is now in CPU0's cache.
+2. CPU1 writes a new value, M1, to `0x8000`. Its write-back cache keeps M1; memory still holds the old value, M0.
+3. A DMA engine (a master without a cache that copies buffers) reads `0x8000` through a plain AXI4 interconnect.
 
-ACE keeps the AXI mental model but adds coherency semantics. It still has the familiar AXI read and write channels, but coherent masters also participate in snoop traffic. ACE is defined in Part D of the AMBA AXI and ACE Protocol Specification (Arm IHI0022H) and is the coherency foundation for Arm CCI, CCN, and early CMN interconnects.
+**Predict:** what value does the DMA read, and could the AXI4 interconnect have done anything about it?
 
-### ACE Channel Additions
+<SequenceDiagram
+  title="Plain AXI4: the DMA reads a stale value"
+  caption="Nothing in AXI4 lets the interconnect ask CPU1's cache for the line, so the read goes straight to memory and returns M0."
+  participants={[
+    { id: "dma", label: "DMA", sublabel: "no cache" },
+    { id: "ic", label: "AXI4 interconnect" },
+    { id: "cpu1", label: "CPU1 cache", sublabel: "dirty copy M1" },
+    { id: "mem", label: "Memory", sublabel: "holds M0" }
+  ]}
+  messages={[
+    { from: "dma", to: "ic", label: "AR: read 0x8000" },
+    { from: "ic", to: "mem", label: "AR: read 0x8000" },
+    { kind: "return", from: "mem", to: "ic", label: "R: M0" },
+    { kind: "return", from: "ic", to: "dma", label: "R: M0 (stale)", tone: "error" },
+    { kind: "note", from: "cpu1", to: "mem", label: "M1 is never asked for; CPU0's copy (not drawn) is stale too" }
+  ]}
+/>
 
-| Channel | Direction | Purpose |
-|---------|-----------|---------|
-| `AC` Snoop Address | Interconnect → master | Ask a cache to check or change a line's state |
-| `CR` Snoop Response | Master → interconnect | Report whether the cache has the line, whether it is dirty, and what happened |
-| `CD` Snoop Data | Master → interconnect | Return dirty data when the cache must supply the latest copy |
-| AXI `AR/AW` attributes | Master → interconnect | Declare transaction intent: `ReadShared`, `ReadUnique`, `CleanInvalid`, `MakeUnique`, etc. |
+**Debrief.** The DMA reads M0. The interconnect only routes addresses to slaves; it has no channel into CPU1's cache, so it cannot know that CPU1 holds a newer value. AXI ordering does not help either: ordering decides which of two transactions happens first, not whether a cache holds a newer copy. Without coherency, software must clean CPU1's cache (force the write-back) before starting the DMA.
 
-ACE is best understood as AXI plus a side conversation between the interconnect and caches. A normal AXI read asks memory for data. A coherent ACE read may first ask other caches whether they already hold a newer copy.
+Now the same system with ACE. Two things change. First, CPU1's store did not happen silently: CPU1 had to make its copy **Unique** (the only copy) first, which removed CPU0's copy, so CPU1 now holds the line **UD** (UniqueDirty: the only copy, and modified) and CPU0 holds nothing (**I**, Invalid). The next section defines these states, and you will trace this store later. Second, the DMA uses **ACE-Lite**, a version of the interface for masters without a coherent cache, and issues a **ReadOnce**: a coherent read of a snapshot it will not cache (IHI0022E §C1.4.2, §C11.1).
 
-### ACE Transaction Types
+The interconnect sends its snoop to CPU1 on a new channel, **AC** (snoop address). CPU1 answers on **CR** (snoop response) with yes-or-no bits such as **DataTransfer** (the line follows) and **IsShared** (CPU1 keeps a copy), and sends the line itself on **CD** (snoop data). The section "What ACE adds to an AXI port" below defines all of them.
 
-ACE extends the AXI `AxDOMAIN` and `AxSNOOP` fields to encode coherent transaction types. The key ones verification engineers must know:
+<SequenceDiagram
+  title="ACE: the interconnect snoops CPU1 and returns M1"
+  caption="The DMA's ReadOnce is snooped. CPU1 returns its dirty line on CD and the interconnect forwards it on R. After a ReadOnce snoop CPU1 may keep the line UniqueDirty, so it still owes memory the update."
+  participants={[
+    { id: "dma", label: "DMA", sublabel: "ACE-Lite" },
+    { id: "ic", label: "Interconnect" },
+    { id: "cpu1", label: "CPU1 cache", sublabel: "UD, holds M1" },
+    { id: "mem", label: "Memory", sublabel: "holds M0" }
+  ]}
+  messages={[
+    { kind: "note", from: "dma", to: "cpu1", label: "Earlier: CPU1's store removed CPU0's copy, so CPU0 is I" },
+    { from: "dma", to: "ic", label: "AR: ReadOnce 0x8000" },
+    { from: "ic", to: "cpu1", label: "AC: ReadOnce snoop" },
+    { kind: "return", from: "cpu1", to: "ic", label: "CR: DataTransfer=1, IsShared=1" },
+    { kind: "async", from: "cpu1", to: "ic", label: "CD: line M1" },
+    { kind: "return", from: "ic", to: "dma", label: "R: M1 (newest)", tone: "active" },
+    { kind: "note", from: "cpu1", to: "mem", label: "CPU1 stays UD; memory still M0 until CPU1 writes back" }
+  ]}
+/>
 
-| Transaction | Purpose | Snoop behavior |
-|-------------|---------|----------------|
-| `ReadShared` | Read a line that may be shared | Interconnect may snoop other caches |
-| `ReadUnique` | Read a line with exclusive write intent | Interconnect invalidates other copies |
-| `CleanShared` | Clean a dirty line to memory, keep shared copy | No invalidation |
-| `CleanInvalid` | Clean a dirty line to memory, invalidate local copy | |
-| `MakeInvalid` | Invalidate other caches' copies without reading data | Used before writing |
-| `MakeUnique` | Obtain exclusive write permission without data fetch | Assumes local copy is valid |
+That is the whole idea of hardware coherency: before answering a Shareable access, the interconnect asks the caches that might hold the line. Everything else in this lesson is about *which* question it asks, *what* each cache must answer, and *who* owes memory the update.
 
-### Coherency States (MOESI Model)
+**Pitfalls.**
+- "The interconnect orders the write before the read, so the DMA sees M1." Ordering is not coherence: CPU1's store never left its cache.
+- "Writes go straight to memory." Not in a write-back cache; that is the whole problem.
+- "Coherency means memory is always up to date." Neither ACE nor CHI requires that. CHI says main memory "is only required to be updated before a copy of the memory location is no longer held in any cache" (IHI0050E.b §1.5.1).
 
-ACE implements a variant of the MOESI coherency model. Verification engineers do not need to memorize every encoding on day one, but they must understand the intent:
+### The five ACE cache states
 
-| State | Meaning | Verification concern |
-|-------|---------|----------------------|
-| **Invalid (I)** | Cache does not own a valid copy | Must not supply data |
-| **Shared Clean (SC)** | Multiple caches may read the same clean line | Any cache may drop it silently |
-| **Unique Clean (UC)** | One cache has the only clean copy | Can become dirty on write without external data fetch |
-| **Unique Dirty (UD)** | One cache has the only modified copy | Must be written back or supplied on snoop |
-| **Shared Dirty (SD)** | Cache holds a modified copy while others share clean copies | Response/data ordering becomes critical; this cache is responsible for writeback |
+ACE describes every cached copy with three yes-or-no characteristics (IHI0022E §C1.2.3):
 
-The critical invariant: **at most one cache may hold a line in a Dirty state at any time**. If two nodes believe they both have `UNIQUE_DIRTY`, the protocol is broken even if the next read happens to return the right value.
+- **Valid or Invalid:** is the line present in this cache?
+- **Unique or Shared:** Unique means the line exists *only* in this cache. Shared means it *might* exist in other caches, "but this is not guaranteed".
+- **Clean or Dirty:** Clean means "the cache does not have responsibility for updating main memory". Dirty means the line has been modified with respect to memory and *this* cache must make sure memory is eventually updated.
 
-### ACE Snoop Flow Example
+They combine into five states (Table C1-2):
 
-When CPU0 performs `ReadShared` on a line held by CPU1 in Modified state:
+| State | Name | Present only here? | Owes memory the update? | May store without telling anyone? |
+|---|---|---|---|---|
+| I | Invalid | not present | no | no (must first obtain the line) |
+| UC | UniqueClean | yes | no | yes, and the line becomes UD |
+| UD | UniqueDirty | yes | **yes** | yes |
+| SC | SharedClean | maybe not | no | no: must notify other caches first |
+| SD | SharedDirty | maybe not | **yes** | no: must notify other caches first |
 
-1. **CPU0 → Interconnect**: `ReadShared` on `AR` channel with coherent domain attributes.
-2. **Interconnect → CPU1**: Snoop request on `AC` channel (e.g., `ReadOnce` snoop).
-3. **CPU1 → Interconnect**: `CR` response indicating data transfer and dirty status.
-4. **CPU1 → Interconnect**: Dirty cache-line data on `CD` channel.
-5. **Interconnect → CPU0**: Data returned on `R` channel. CPU0 caches in Shared Clean state.
-6. **CPU1**: Transitions from Modified to Invalid (if `MakeInvalid`) or Shared Clean (if `CleanShared`).
-7. **Interconnect → Memory**: Optionally writes dirty data to memory (write-back policy).
+<ArchitectureDiagram
+  title="The five ACE states and the transitions traced in this lesson"
+  caption="I on the left; then the Unique column and the Shared column; Dirty on top, Clean below. Each arrow is one step you will trace. I → UC: a load (ReadShared answered with RRESP 00). UC → UD: a store, with no transaction. UD → SD: snooped by a ReadShared, the cache keeps the dirty copy. SC → UC: a CleanUnique before a store. UD → I: a WriteBack."
+  cellWidth={120}
+  gapX={100}
+  legend={false}
+  nodes={[
+    { id: "I", label: "I", sublabel: "Invalid", col: 0, row: 0, rowSpan: 2 },
+    { id: "UD", label: "UD", sublabel: "Unique, Dirty", col: 1, row: 0 },
+    { id: "SD", label: "SD", sublabel: "Shared, Dirty", col: 2, row: 0 },
+    { id: "UC", label: "UC", sublabel: "Unique, Clean", col: 1, row: 1 },
+    { id: "SC", label: "SC", sublabel: "Shared, Clean", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "I", to: "UC", label: "load: ReadShared" },
+    { from: "UC", to: "UD", label: "store, no transaction" },
+    { from: "UD", to: "SD", label: "snooped" },
+    { from: "SC", to: "UC", label: "CleanUnique" },
+    { from: "UD", to: "I", label: "WriteBack" }
+  ]}
+/>
 
-### ACE Verification Checklist
+The **cache state rules** that every coherent system must obey (§C1.2.3) give the two invariants your checker will enforce:
 
-| Scenario | What to prove |
-|----------|---------------|
-| Read shared after another cache writes | The reader gets the dirty producer's latest data |
-| Make unique before write | Other shared copies are invalidated or downgraded |
-| Clean operation | Dirty data reaches the point of coherency |
-| Evict dirty line | Writeback occurs before ownership is lost |
-| Simultaneous snoop and local request | Arbitration preserves legal state transitions |
-| Back-to-back snoops on same line | State machine handles rapid transitions correctly |
-| Barrier/fence operations | All preceding transactions complete before barrier passes |
+1. "A line in a Unique state must only be in one cache." So if any cache holds UC or UD, every other cache holds I. **(single writer)**
+2. "A line that has been updated, relative to main memory, and is in more than one cache, must be in a Dirty state in only one cache." So at most one cache holds UD or SD. **(single owner)**
 
-The scoreboard for ACE is no longer just an address/data comparator. It is a **cache-line ownership model**.
+The other rules: a line in several caches is Shared in every one of them; a cache that obtains a new copy must make other holders treat the line as Shared; and a cache that discards its copy has no duty to inform the *other caches* that hold the line, so "Shared" may in fact mean "the only copy left". Discarding still has rules: a Dirty copy must first be written back or passed on, and in a system with a snoop filter a clean line is dropped with an Evict (see the eviction rules below).
 
----
+**Pitfalls and misconceptions.**
+- **"Clean means equal to memory."** No. SC means only that *this* cache does not owe the update; Table C1-2 says of SC "it is not known if the cache line is modified with respect to main memory". If another cache holds the line SD, the SC copy is newer than memory. A checker that compares SC data with memory fails falsely.
+- **"SD means others hold copies."** SD *might* be shared. Shared is a permission ("tell others before you store"), not a head count.
+- **"ACE is MOESI."** It is close: UD, UC, SD, SC and I correspond roughly to the textbook Modified, Exclusive, Owned, Shared and Invalid. But IHI0022E defines its own five states and says ACE can connect components that use MESI, ESI, MEI and MOESI (§C1.1.2). Use the ACE names when you talk about ACE.
 
-## 3. CHI: Coherent Hub Interface (AMBA 5)
+### What ACE adds to an AXI port
 
-AMBA 5 CHI was designed for larger coherent systems where a single centralized coherent interconnect becomes too expensive or too slow. CHI uses packets, nodes, and credit-based flow control rather than AXI-style signal bundles. CHI is specified in the Arm AMBA 5 CHI Architecture Specification (IHI0050F) and powers the Arm CMN-600, CMN-700, and Neoverse interconnect family.
+ACE keeps the five AXI channels (AR, AW, W, R, B) and adds signals and channels (IHI0022E §C1.3, Tables C1-3 to C1-5):
 
-### CHI Node Roles
+| Where | Added | Direction | What it says |
+|---|---|---|---|
+| AR | ARSNOOP[3:0], ARDOMAIN[1:0], ARBAR[1:0] | master → interconnect | the coherent read type (for example ReadShared), the shareability domain, and whether it is a barrier |
+| AW | AWSNOOP[2:0], AWDOMAIN[1:0], AWBAR[1:0], AWUNIQUE (required only by masters that support WriteEvict) | master → interconnect | the coherent write type (for example WriteBack), domain, barrier |
+| R | RRESP[3:2]: PassDirty (bit 2), IsShared (bit 3) | interconnect → master | the state the reader must take, and whether it now owes memory the update |
+| W, B | nothing new | — | — |
+| AC (snoop address) | ACVALID, ACREADY, ACADDR, ACSNOOP[3:0], ACPROT[2:0] | interconnect → cached master | the snoop: address and type |
+| CR (snoop response) | CRVALID, CRREADY, CRRESP[4:0] | cached master → interconnect | one response per snoop |
+| CD (snoop data, optional) | CDVALID, CDREADY, CDDATA, CDLAST | cached master → interconnect | the cache line, when the response says data follows |
+| acknowledges | RACK, WACK | master → interconnect | "I have finished this read" and "this write" |
 
-| Node | Full Name | Role | Typical block |
-|------|-----------|------|---------------|
-| **RN-F** | Request Node – Fully coherent | Initiates coherent requests, participates in snoops | CPU cluster, GPU with coherency |
-| **RN-I** | Request Node – I/O coherent | Initiates requests but does not cache | DMA engine, non-coherent accelerator |
-| **RN-D** | Request Node – DVM only | Handles Distributed Virtual Memory messages | SMMU/IOMMU |
-| **HN-F** | Home Node – Fully coherent | Owns ordering and coherency decisions for an address region; maintains directory/snoop filter | Coherent directory agent |
-| **HN-I** | Home Node – I/O | Services non-coherent/device address regions | Peripheral interconnect endpoint |
-| **SN-F** | Subordinate Node – memory | Services memory read/write requests | DDR controller |
-| **SN-I** | Subordinate Node – device | Services peripheral/device access | IO bridge |
+**CRRESP bits** (Table C3-22): [0] DataTransfer (a line follows on CD), [1] Error, [2] PassDirty (the line was Dirty and the responsibility for writing it back is being handed over), [3] IsShared (the snooped cache keeps a copy), [4] WasUnique (the line was Unique before the snoop).
 
-The most important change from ACE: the "interconnect" is no longer just a wire-level arbiter. It acts more like a distributed protocol router.
+**Shareability domains** (§C1.6.1, Table C3-2) say *which* masters might hold a copy: AxDOMAIN `0b00` Non-shareable, `0b01` Inner Shareable, `0b10` Outer Shareable, `0b11` System. The interconnect snoops only the masters inside the domain.
 
-### CHI Channel Families
+**ACE-Lite** (§C11.1) is for masters "that do not have hardware coherent caches", such as the DMA. It is AXI4 plus the AR and AW signals only: no AC, CR or CD channels, no RACK or WACK, and no extra RRESP bits. An ACE-Lite master can issue ReadOnce, WriteUnique and WriteLineUnique (snooped accesses that it does not cache), barriers and the cache maintenance transactions CleanShared, CleanInvalid and MakeInvalid (Tables C11-1, C11-2), but it is never snooped.
 
-CHI defines five logical channel families, each carrying structured packets (called flits):
+<ArchitectureDiagram
+  title="An ACE system: two cached clusters, one ACE-Lite DMA"
+  caption="Only the cached masters have snoop channels. An ACE port is the five AXI channels plus AC, CR, CD, RACK and WACK. The DMA's ACE-Lite port adds only the AR and AW signals and is never snooped. The memory controller is an ordinary AXI4 slave."
+  legend={false}
+  nodes={[
+    { id: "cpu0", label: "CPU0 cluster", sublabel: "ACE, has a cache", col: 0, row: 0 },
+    { id: "cpu1", label: "CPU1 cluster", sublabel: "ACE, has a cache", col: 1, row: 0 },
+    { id: "dma", label: "DMA", sublabel: "ACE-Lite, no cache", col: 2, row: 0 },
+    { id: "ic", label: "Coherent interconnect", sublabel: "issues snoops; snoop filter optional", col: 0, row: 1, colSpan: 3 },
+    { id: "mem", label: "Memory controller", sublabel: "AXI4 slave", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "cpu0", to: "ic", style: "structural", label: "ACE port" },
+    { from: "cpu1", to: "ic", style: "structural", label: "ACE port" },
+    { from: "dma", to: "ic", style: "structural", label: "ACE-Lite port" },
+    { from: "ic", to: "mem", style: "structural", label: "AXI4" }
+  ]}
+/>
 
-| Channel | Abbreviation | Carries | Example use |
-|---------|-------------|---------|-------------|
-| Request | REQ | Commands and addresses | Read, write, make unique, clean, evict |
-| Response | RSP | Acknowledgments and state outcomes | Completion, retry, snoop response summary |
-| Data | DAT | Cache-line payloads (typically 64 bytes) | Read data, write data, dirty data transfer |
-| Snoop | SNP | Coherency probes from HN to RN | Ask another node to invalidate, clean, or supply a line |
-| Misc | — | Protocol credits, DVM messages | Link credit flow, cache maintenance |
+### Transactions and the snoops they cause
 
-### CHI Credit-Based Flow Control
+ACE names each coherent access by its purpose (§C1.4). You need the groups, not the encodings, at this level:
 
-Unlike AXI's `VALID`/`READY` per-channel handshake, CHI uses **link-level credits**. A receiver advertises how many flits it can accept per channel. A sender consumes a credit for each flit sent. If credits run out, the sender must wait.
+| Group | Transactions | Use |
+|---|---|---|
+| Non-snooping | ReadNoSnoop, WriteNoSnoop | Non-shareable or Device accesses (Device memory types are in [B-AXI-4](/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index)); no snoops |
+| Coherent loads | ReadClean, ReadNotSharedDirty, ReadShared | fetch a line to cache; other holders may keep their copy (the three differ in the end states the reader accepts, below) |
+| Coherent stores | ReadUnique, CleanUnique, MakeUnique | get a Unique line so the master may store |
+| No cached copy kept | ReadOnce, WriteUnique, WriteLineUnique | snapshot reads and writes by masters that do not cache the line (ACE-Lite) |
+| Memory update | WriteBack, WriteClean, WriteEvict, Evict | write a dirty line back (WriteBack, WriteClean), push a clean line to a lower-level cache (WriteEvict), or announce an eviction (Evict); *not snooped* |
+| Cache maintenance | CleanShared, CleanInvalid, MakeInvalid | software-requested clean or invalidate of *other* caches |
+| Barrier, DVM | barrier transactions; DVM messages | ordering guarantees; virtual-memory maintenance |
 
-This decoupling means:
-- No combinatorial dependency between sender and receiver.
-- Deadlock analysis shifts from "who blocks READY?" to "who consumes credits without returning them?"
-- Credit leaks are a first-class verification target.
+The three **load** transactions differ in what the reader can accept (§C4.5.3 to §C4.5.5):
 
-### CHI Transaction Flow Example
+- **ReadClean:** only a Clean line (UC or SC). It is "guaranteed not to pass responsibility for updating main memory to the initiating master", for example a master with a write-through cache (one that sends every store on to memory, so it never holds a dirty line).
+- **ReadNotSharedDirty:** any state except SD.
+- **ReadShared:** any state. This is the usual load of a write-back cache.
 
-A ReadShared by RN-F₀ to an address owned by RN-F₁ in Modified state:
+The three **store** transactions differ in what the master already has (§C1.4.2, §C1.3.4):
 
-1. **RN-F₀ → HN-F**: `ReadShared` request flit on REQ channel.
-2. **HN-F**: Checks directory — RN-F₁ has the line Modified.
-3. **HN-F → RN-F₁**: `SnpCleanInvalid` snoop flit on SNP channel.
-4. **RN-F₁ → HN-F**: `SnpResp` flit on RSP channel (state = dirty, will transfer data).
-5. **RN-F₁ → RN-F₀**: `CompData` flit on DAT channel (direct data transfer, bypassing memory).
-6. **HN-F → RN-F₀**: `Comp` response flit confirming completion.
-7. **HN-F**: Updates directory: RN-F₀ = Shared Clean, RN-F₁ = Invalid.
-8. **HN-F → SN-F**: Optionally writes the dirty data to memory.
+- **ReadUnique:** a partial-line store and the master holds no copy. It fetches the data and removes every other copy.
+- **CleanUnique:** a partial-line store and the master already holds a copy (SC or SD). It fetches nothing; it removes every other copy, and any Dirty copy elsewhere is written to memory.
+- **MakeUnique:** a *full*-line store. It fetches nothing and removes every other copy, because every byte is about to be overwritten. It "must only be used by an initiating master that is carrying out a full cache line store operation" (§C4.7.1).
 
-Note how data can flow directly between request nodes (peer-to-peer), bypassing the home node for latency. This is a key CHI optimization absent in ACE.
+The interconnect turns each request into a snoop. The recommended mapping (Table C5-1) is mostly one-to-one (ReadShared → ReadShared snoop, ReadOnce → ReadOnce snoop), with four you must remember: **CleanUnique → CleanInvalid snoop**, **MakeUnique → MakeInvalid snoop**, **WriteUnique → CleanInvalid snoop** and **WriteLineUnique → MakeInvalid snoop**. Only eight coherency snoop types may appear on AC: ReadOnce, ReadClean, ReadNotSharedDirty, ReadShared, ReadUnique, CleanInvalid, MakeInvalid and CleanShared (§C5.1.1). The only other ACSNOOP encodings are DVM Message and DVM Complete (Table C3-20).
 
-### Why CHI Scales Better
+What a snooped cache must do (Table C5-3):
 
-| Dimension | ACE | CHI |
-|-----------|-----|-----|
-| Transport style | AXI-like channels plus snoop channels | Packetized coherent network (flits) |
-| Topology | Coherent interconnect, often centralized | Ring, mesh, or distributed NoC |
-| Flow control | VALID/READY-style channel flow | Credit-based packet flow |
-| Coherency tracking | Interconnect-driven snooping | Home-node/directory-oriented protocol decisions |
-| Data routing | All data through interconnect | Peer-to-peer data transfer supported |
-| Best fit | Smaller coherent clusters (2–8 cores) | Many-core, multi-cluster, cache-rich SoCs |
+| Snoop | Must transfer the line if Dirty | End state must be |
+|---|---|---|
+| ReadOnce | yes | any (no change required) |
+| ReadClean, ReadNotSharedDirty, ReadShared | yes | Shared or Invalid |
+| ReadUnique, CleanInvalid | yes | Invalid |
+| CleanShared | yes | Clean or Invalid |
+| MakeInvalid | **no** | Invalid |
 
-CHI is harder to verify because ordering is distributed. A legal response may return from a different path than the original request, and snoop data may arrive independently of final completion.
+**Pitfall: MakeInvalid discards dirty data.** A MakeInvalid snoop removes the copy "but it is not required to provide any data, even if the cache line is dirty" (§C1.4.4). That is correct only when the whole line is about to be overwritten. Software that uses MakeInvalid on a buffer it still needs loses the newest data, and the protocol does not stop it.
 
----
+### Trace a read: ReadShared finds a dirty copy
 
-## 4. Verification Strategy Shift
+Cache A holds the line UD with value M1; memory still holds M0. Cache B misses and issues ReadShared. **Predict before the picture:** which snoop does the interconnect send, what may A answer, and in which state does B end up?
 
-AXI verification asks:
+<SequenceDiagram
+  title="ACE ReadShared to a line held UniqueDirty"
+  caption="One legal outcome: A keeps the dirty copy (SD) and B takes a clean shared copy (SC). Memory is still stale, and that is correct, because A still owes the update."
+  participants={[
+    { id: "b", label: "Cache B", sublabel: "requester, I" },
+    { id: "ic", label: "Interconnect" },
+    { id: "a", label: "Cache A", sublabel: "UD, holds M1" },
+    { id: "mem", label: "Memory", sublabel: "holds M0" }
+  ]}
+  messages={[
+    { from: "b", to: "ic", label: "AR: ReadShared (ARSNOOP 0b0001, Inner)" },
+    { from: "ic", to: "a", label: "AC: ReadShared snoop" },
+    { kind: "return", from: "a", to: "ic", label: "CR: DataTransfer=1, PassDirty=0, IsShared=1" },
+    { kind: "async", from: "a", to: "ic", label: "CD: line M1" },
+    { kind: "note", from: "a", label: "A: UD → SD (still owes memory)" },
+    { kind: "return", from: "ic", to: "b", label: "R: M1, RRESP[3:2] = IsShared 1, PassDirty 0" },
+    { kind: "note", from: "b", label: "B: I → SC" },
+    { kind: "async", from: "b", to: "ic", label: "RACK" },
+    { kind: "note", from: "mem", label: "still M0: nobody has written back yet" }
+  ]}
+/>
 
-- Did `VALID` stay stable until `READY`?
-- Did the burst avoid crossing 4KB?
-- Did reads and writes complete in legal ID order?
+**Debrief.** The interconnect sends a ReadShared snoop, the recommended mapping (Table C5-1). A has a dirty line, so it must transfer it (Table C5-3). A then has three legal answers (Table C5-8), and B's state follows the RRESP[3:2] bits the interconnect gives it (Table C4-9; RRESP[3] is IsShared, RRESP[2] is PassDirty):
 
-ACE and CHI verification adds:
+| A answers (CRRESP) | A ends | B gets RRESP[3:2] | B ends | Who owes memory |
+|---|---|---|---|---|
+| PassDirty=0, IsShared=1 | SD | 10 | SC | A |
+| PassDirty=1, IsShared=1 | SC | 11 | SD | B |
+| PassDirty=1, IsShared=0 | I | 01 | UD | B |
 
-- Is there exactly one writer for a cache line at any instant?
-- Did every reader observe the newest committed data?
-- Did dirty data reach the correct owner before invalidation?
-- Did retry, credit, and response ordering rules avoid deadlock?
-- Did the directory state match the real cache contents?
-- Did barrier operations enforce ordering across all preceding transactions?
+Rows 2 and 3 assume the interconnect passes the dirty line on to B. It may instead write the line to memory itself and give B PassDirty=0, so B ends SC or UC and memory becomes current. The interconnect must pass PassDirty on to the requester when a snoop response asserted it "and the interconnect has not generated a write transaction to update main memory" (§C6.4, Table C6-2). A checker must therefore take B's state from B's own RRESP, never predict it from A's CRRESP alone.
 
-### Coherency Scoreboard Model
+If dirty responsibility was handed over (PassDirty=1) but the requester cannot take it (ReadClean, for example), "the interconnect is responsible for writing back the dirty line to main memory" (§C1.4.2, §C3.7). Responsibility never disappears: one cache, or the interconnect, always owns it.
 
-A coherent protocol scoreboard usually tracks each cache line:
+The read ends with **RACK**: B asserts it for one cycle, no earlier than the cycle after the last R handshake (the one with RLAST), and must not delay it to wait for another transaction (§C3.3). RACK tells the interconnect that the read has completed at B: after giving B a response for a line, the interconnect must not snoop B for that line until the RACK (or, for a write, the WACK) arrives (§C6.2).
+
+### Trace a store: CleanUnique, then WriteBack
+
+Continue the story: A holds SD (value M1), B holds SC and wants to store 4 bytes (a partial line), which makes the newest value M2. B already has a copy, so it issues **CleanUnique**. **Predict:** what happens to A's dirty data?
+
+<SequenceDiagram
+  title="ACE store: CleanUnique while another cache holds the line SharedDirty, then a WriteBack"
+  caption="CleanUnique removes A's copy and makes sure A's dirty data reaches memory before B becomes Unique. Later, B's WriteBack hands its own dirty data to memory."
+  participants={[
+    { id: "b", label: "Cache B", sublabel: "SC" },
+    { id: "ic", label: "Interconnect" },
+    { id: "a", label: "Cache A", sublabel: "SD, holds M1" },
+    { id: "mem", label: "Memory", sublabel: "holds M0" }
+  ]}
+  messages={[
+    { from: "b", to: "ic", label: "AR: CleanUnique" },
+    { from: "ic", to: "a", label: "AC: CleanInvalid snoop" },
+    { kind: "return", from: "a", to: "ic", label: "CR: DataTransfer=1, PassDirty=1, IsShared=0" },
+    { kind: "async", from: "a", to: "ic", label: "CD: dirty line M1" },
+    { kind: "note", from: "a", label: "A: SD → I" },
+    { from: "ic", to: "mem", label: "AW/W: write M1" },
+    { kind: "note", from: "ic", to: "a", label: "this update is ordered before B is given permission to store" },
+    { kind: "return", from: "ic", to: "b", label: "R: one transfer, RRESP[3:2]=00, no data" },
+    { kind: "self", from: "b", label: "SC → UC → UD (store M2)" },
+    { kind: "async", from: "b", to: "ic", label: "RACK" },
+    { kind: "divider", label: "later: B evicts the line" },
+    { from: "b", to: "ic", label: "AW/W: WriteBack (not snooped)" },
+    { kind: "return", from: "ic", to: "b", label: "B: OKAY" },
+    { kind: "async", from: "b", to: "ic", label: "WACK" },
+    { kind: "note", from: "b", label: "B: UD → I; memory holds M2" }
+  ]}
+/>
+
+**Debrief.**
+- CleanUnique is snooped as **CleanInvalid** (Table C5-1). A dirty snooped copy must be supplied and the copy removed (§C1.4.4, Table C5-3); moving Dirty to Invalid requires PassDirty=1 (§C5.2, the rules after Table C5-4). The interconnect then "constructs the transaction to write the dirty cache line back to main memory" (§C1.3.4).
+- The interconnect may give B permission to store only once earlier updates to memory are ordered (§C6.5.3); otherwise B's later WriteBack could overtake M1 and memory would end with the older value.
+- B's response is a single R transfer with RRESP[3:2] = 00 and no valid data (§C3.2, §C4.6.1); B moves SC → UC (Table C4-13), and after the store a master "must be in the UniqueDirty state" (§C4.3.2).
+- **WriteBack** is not snooped (§C1.4.3). B ends Invalid (Table C4-24) and acknowledges the write response with **WACK**, again one cycle, no earlier than the cycle after the B handshake (§C3.5).
+- A clean line can be dropped with an **Evict** transaction (which carries no data and helps a snoop filter, §C1.4.3) or, if no snoop filter is used, silently.
+
+**Pitfall: a partial store with no copy.** If B held nothing, CleanUnique would leave it Unique *without data*, and only a full-line store would be legal (§C4.6.1). For a partial store without a copy, use ReadUnique. For a full-line store, MakeUnique (snooped as MakeInvalid) skips the useless data fetch.
+
+### CHI: the same job as a network protocol
+
+CHI keeps the coherency ideas (the same Valid/Unique/Clean characteristics, the same snoop-then-respond pattern) but changes how messages travel. It splits the protocol into three **layers** (IHI0050E.b §1.1.2, Table 1-1): the **Protocol** layer (transactions, cache states), the **Network** layer (packets with source and target node IDs for routing) and the **Link** layer (flits and flow control between neighbours). A **flit** (flow control unit) is the smallest unit the link layer moves; in CHI every packet is exactly one flit (§1.3). A data message is 1 to 4 packets, because a 64-byte line needs 1, 2 or 4 flits on a 512-, 256- or 128-bit data channel (§1.3, §13.9.4).
+
+**Nodes.** Components are classified by node type (§1.6):
+
+| Node | Role |
+|---|---|
+| RN-F | Fully coherent Request Node: has a hardware-coherent cache and supports all snoops (a CPU cluster) |
+| RN-D | IO coherent Request Node *with DVM support*: no coherent cache, receives DVM messages |
+| RN-I | IO coherent Request Node: no coherent cache, no snoops (a DMA engine; the CHI counterpart of ACE-Lite) |
+| HN-F | Fully coherent Home Node: the **Point of Coherence** (PoC) for its addresses, snoops the RN-Fs and is expected to be the **Point of Serialization** (PoS) that orders requests to the same address; *might* include a directory or snoop filter |
+| HN-I | Non-coherent Home Node for IO addresses |
+| MN | Miscellaneous Node: receives DVM operations and broadcasts them as snoops |
+| SN-F, SN-I | Subordinate Nodes: SN-F for Normal memory, SN-I for peripherals or Normal memory |
+
+**Channels.** There are four, each carrying one kind of flit (§13.4, Table 13-1): **REQ** (requests), **RSP** (responses without data, including snoop responses and CompAck), **SNP** (snoop requests, including DVM snoops) and **DAT** (anything with data). There is no fifth "misc" channel: link credits are signals, a DVM operation is a request on REQ (with its payload on DAT) that the MN broadcasts as a snoop on SNP (§8.1.1), and cache maintenance is an ordinary dataless request on REQ (Table 4-24).
+
+<ArchitectureDiagram
+  title="CHI nodes and the channels between them"
+  caption="Request Nodes on the left talk to the Home Nodes inside the interconnect (ICN); Subordinate Nodes on the right have no SNP channel. Only the fully coherent RN-Fs receive coherency snoops; the arrow from the MN to the RN-D is its DVM snoop, SnpDVMOp on SNP (the MN sends it to the RN-Fs too; not drawn). Each line is a set of credited channels, not a VALID/READY bus."
+  cellWidth={130}
+  gapX={100}
+  legend={false}
+  nodes={[
+    { id: "rnf0", label: "RN-F0", sublabel: "CPU cluster, cache", col: 0, row: 0 },
+    { id: "rnf1", label: "RN-F1", sublabel: "CPU cluster, cache", col: 0, row: 1 },
+    { id: "rni", label: "RN-I", sublabel: "DMA, no cache", col: 0, row: 2 },
+    { id: "rnd", label: "RN-D", sublabel: "IO coherent + DVM", col: 0, row: 3 },
+    { id: "icn", label: "ICN: ring, mesh or crossbar", col: 1, row: 0, rowSpan: 4, container: true },
+    { id: "hnf", label: "HN-F", sublabel: "PoC and PoS", col: 1, row: 0, rowSpan: 2 },
+    { id: "hni", label: "HN-I", sublabel: "IO addresses", col: 1, row: 2 },
+    { id: "mn", label: "MN", sublabel: "DVM", col: 1, row: 3 },
+    { id: "snf", label: "SN-F", sublabel: "memory", col: 2, row: 0, rowSpan: 2 },
+    { id: "sni", label: "SN-I", sublabel: "peripherals", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "rnf0", to: "hnf", style: "structural", label: "REQ RSP DAT SNP" },
+    { from: "rnf1", to: "hnf", style: "structural", label: "REQ RSP DAT SNP" },
+    { from: "rni", to: "hni", style: "structural", label: "no SNP" },
+    { from: "mn", to: "rnd", style: "data", label: "SnpDVMOp" },
+    { from: "hnf", to: "snf", style: "structural", label: "REQ RSP DAT" },
+    { from: "hni", to: "sni", style: "structural", label: "REQ RSP DAT" }
+  ]}
+/>
+
+An RN-I also sends its subset of snoopable requests to an HN-F (§1.3, "IO Coherent node"); that edge is left out to keep the picture readable.
+
+**Credit-based flow control.** AXI and ACE move every beat with a VALID/READY handshake: the receiver can stall the sender in the same cycle. CHI's link layer uses **L-Credits** instead (§14.2.1). The receiver gives the transmitter one credit by pulsing that channel's **LCRDV** signal for one cycle; each flit the transmitter sends (FLITV high) consumes one credit; a receiver may hand out between 1 and 15 credits per channel and "must guarantee that it can accept all the flits for which it has issued L-Credits". A credit "cannot be used in the cycle it is received". There is no READY: a transmitter with no credit simply waits.
+
+**Predict before you look at the waveform.** The transmitter starts with no credit, and the receiver pulses LCRDV once at each of edges 1, 2 and 5. At which edges may the transmitter send a request flit, and would a flit at edge 5 be legal? Write your answer down, then check it against the picture.
+
+<TimingDiagram
+  title="CHI L-Credit flow control on one REQ channel"
+  caption="LCRDV is the credit pulse from the receiver (the transmitter's TXREQLCRDV input) and FLITV marks a flit sent (TXREQFLITV). Values are sampled at each rising edge. 'credits' is the number the transmitter holds when the edge samples, so a credit counts from the edge after it arrives, and each flit uses one. Illustrative timing."
+  edges={8}
+  signals={[
+    { name: "CLK", kind: "clock" },
+    { name: "LCRDV", kind: "bit", values: [0, 1, 1, 0, 0, 1, 0, 0] },
+    { name: "FLITV", kind: "bit", values: [0, 0, 1, 1, 0, 0, 1, 0] },
+    { name: "credits", kind: "bus", values: ["0", "0", "1", "1", "0", "0", "1", "0"] }
+  ]}
+  markers={[
+    { edge: 2, tone: "pass", label: "flit uses the credit received at edge 1" },
+    { edge: 3, tone: "pass", label: "flit uses the credit received at edge 2" },
+    { edge: 4, tone: "info", label: "no credit held: the transmitter must wait" },
+    { edge: 5, tone: "info", label: "a flit here would be illegal: the credit arriving at edge 5 cannot be used in the cycle it arrives" },
+    { edge: 6, tone: "pass", label: "flit uses the credit received at edge 5" }
+  ]}
+/>
+
+<details>
+<summary>Check your prediction</summary>
+
+Edges 2, 3 and 6. Each credit can be used from the edge after it arrives: the credits from edges 1 and 2 carry the flits at edges 2 and 3, and the credit from edge 5 carries the flit at edge 6. A flit at edge 5 would be illegal, because at that edge the transmitter holds no usable credit: the credit arriving at edge 5 "cannot be used in the cycle it is received" (§14.2.1).
+
+</details>
+
+**Debrief.** The transmitter never waits for a same-cycle answer, which suits long, pipelined links across a mesh. Note what credits do *not* do: they guarantee that a flit is accepted by the next hop, not that the request can be processed. Protocol-level back-pressure is a separate mechanism, **Request Retry** (Push Further), and protocol deadlock is prevented by forward-progress rules between channels (§13.4.1).
+
+**CHI states.** CHI uses the ACE five plus two partial forms: UCE (Unique Clean Empty: Unique, but no valid bytes) and UDP (Unique Dirty Partial: some bytes modified) (§1.5.2, §4.1).
+
+**Direct Cache Transfer (DCT).** In ACE, snoop data always goes to the interconnect on CD and then to the requester on R. In CHI the Home may send a *forwarding* snoop, and the snooped RN-F then sends the data **straight to the requester**, removing a hop (§1.7). Here is the specification's ReadShared example with a dirty line (§5.1.3, Figure 5-4). RN-F0 (Invalid) issues ReadShared; RN-F1 holds the line UD.
+
+**Predict before the picture:** which node sends the data to RN-F0, and who is responsible for the dirty line afterwards?
+
+<SequenceDiagram
+  title="CHI ReadShared with Direct Cache Transfer (dirty line)"
+  caption="RN-F1 forwards CompData to the requester and sends a snoop response with a copy of the data to the Home. The requester finishes with CompAck. Steps 3 and 4 may happen in either order."
+  participants={[
+    { id: "rn0", label: "RN-F0", sublabel: "requester, I" },
+    { id: "hn", label: "HN-F", sublabel: "Home" },
+    { id: "rn1", label: "RN-F1", sublabel: "UD" }
+  ]}
+  messages={[
+    { from: "rn0", to: "hn", label: "REQ: ReadShared" },
+    { from: "hn", to: "rn1", label: "SNP: SnpSharedFwd (forward to RN-F0)" },
+    { kind: "async", from: "rn1", to: "rn0", label: "DAT: CompData_SC" },
+    { kind: "async", from: "rn1", to: "hn", label: "DAT: SnpRespData_SC_PD_Fwded_SC" },
+    { kind: "note", from: "rn1", label: "RN-F1: UD → SC" },
+    { kind: "note", from: "rn0", label: "RN-F0: I → SC" },
+    { kind: "async", from: "rn0", to: "hn", label: "RSP: CompAck" },
+    { kind: "note", from: "hn", to: "rn1", label: "HN-F now owns the dirty data (PD): it must update memory or keep it in an ICN cache" }
+  ]}
+/>
+
+**Debrief.** The expected snoop for ReadShared is SnpSharedFwd (Table 4-24); the Home may also use SnpShared, SnpClean, SnpNotSharedDirty or their Fwd forms, but not an invalidating snoop such as SnpCleanInvalid, and a non-forwarding snoop cannot produce forwarded data (§4.4). There is no separate Comp from the Home for this read: a read completes with CompData (or the RespSepData plus DataSepResp pair) (§4.5.1), and ReadShared also needs the requester's CompAck. So the answer to the prediction: RN-F1 sends the data straight to RN-F0, and the Home, not RN-F0, takes the duty to update memory, because RN-F1 passed it the dirty line (PD).
+
+**Reading CHI message names.** CHI puts the states into the message names (§4.5.1, §4.5.3):
+
+- **`CompData_X`:** read data that completes the request; the requester ends in state X. A `_PD` suffix (Pass Dirty) would mean the duty to update memory passes to the requester.
+- **`SnpResp_X`** and **`SnpRespData_X`:** the snooped node's state *after* it responds is X. `Data` means it also sends the line to the Home, and `_PD` means it passes on the duty to update memory.
+- **`..._Fwded_Y`:** the snooped node also forwarded the data to the requester, giving it state Y.
+- **CompAck:** the requester's last message, "sent by the Requester on receipt of the completion response" (§4.5.4). Like RACK in ACE, it closes the transaction at the requester.
+
+So `SnpRespData_SC_PD_Fwded_SC` reads: "I am now SC, here is the line, I pass you the dirty duty, and I forwarded an SC copy to the requester".
+
+**ACE and CHI side by side.**
+
+| | ACE (IHI0022E Part C) | CHI (IHI0050E.b) |
+|---|---|---|
+| Transport | AXI channels plus AC, CR, CD | four channels (REQ, RSP, SNP, DAT) of single-flit packets, in three layers |
+| Flow control | VALID/READY on each channel | L-Credits per channel at the link layer; Request Retry with Protocol Credits at the protocol layer |
+| Who decides coherency | the interconnect, per transaction | the Home Node (HN-F) for its address range |
+| Path of snoop data | snooped master → interconnect (CD) → requester (R) | can go directly to the requester (DCT) |
+| Cache states | 5 | 7 (adds UCE and UDP) |
+| Cache line size | chosen at design time: at least max(16 bytes, bus width), at most min(2048 bytes, 16 beats) (§C3.1.5) | always 64 bytes (§1.5.1) |
+| Topology | not specified | topology-independent; crossbar, ring and mesh are examples (§1.2) |
+
+**Misconception: "CHI is AXI with more signals."** It is not. CHI has no AXI channels, no READY signal and no per-channel handshake; it has layers, nodes, routed packets and credits.
+
+### How coherency changes verification
+
+An AXI checker asks local questions: is VALID stable until READY, does the burst stay inside 4KB, do responses with the same ID come back in order? Every one can be answered by watching one interface.
+
+The coherency rules are **global**: "a Unique line is in only one cache" is a statement about *all* caches at once. A port checker on cache A sees A move to UD and finds nothing wrong; a port checker on cache B sees B move to SC and finds nothing wrong. Only a component that sees both ports can see that UD next to SC breaks the single-writer rule. That is the third misconception on this page: **coherency cannot be checked per interface.**
+
+So a coherency checker has three parts:
+
+1. **Passive monitors** on every coherent port, including ACE-Lite ports, and on the interconnect's memory port. Each reports only what it saw: requests, snoops, CRRESP and RRESP[3:2], RACK and WACK, memory writes, and the data. The model, not the monitor, decides what the responses mean.
+2. **One line model** shared by all ports. For each line address it keeps the state of every cache (or, where the tables allow several end states, the set of legal ones), the newest value written (the **golden** value), what memory holds, and an "interconnect owes memory" flag. The flag is set when a snoop response passes a dirty line (PassDirty=1) and cleared when the requester takes the duty (its RRESP has PassDirty=1) or the memory write is seen.
+3. **Global checks after every update:**
+   - *safety* (nothing illegal ever happens): a Unique holder is the only valid copy; at most one Dirty holder; when no cache is Dirty and the interconnect owes nothing, memory equals the golden value; every read returns the golden value;
+   - *liveness* (what must happen does happen): every AC snoop gets exactly one CR response, and every R or B response to an ACE master gets its RACK or WACK, within a time bound you choose as a policy;
+   - *snoop filter, if there is one:* every cache that holds a valid copy is recorded in it. A missed holder is a stale read waiting to happen.
+
+Where does the golden value come from? Not from the ACE port: a store to a Unique line causes no transaction at all (§C4.3.2). It must come from the master side, the CPU stimulus or a model of the cache. A checker that sees only the ports can check only data that leaves a cache, on CD, on R or in a write.
+
+<ArchitectureDiagram
+  title="Where the coherency checker sits"
+  caption="Each port monitor publishes through its analysis port (ap); the checker has one analysis imp per port and, after every update, runs the global checks in the line model. The monitor on the interconnect's memory port, which tells the model when memory is written, is left out. A per-port checker cannot see UD in one cache next to SC in another."
+  cellWidth={200}
+  cellHeight={80}
+  nodes={[
+    { id: "env", label: "coherency checking", kind: "env", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "mon0", label: "mon0", sublabel: "CPU0 ACE port", kind: "monitor", col: 0, row: 0 },
+    { id: "mon1", label: "mon1", sublabel: "CPU1 ACE port", kind: "monitor", col: 0, row: 1 },
+    { id: "mon2", label: "mon2", sublabel: "DMA ACE-Lite port", kind: "monitor", col: 0, row: 2 },
+    { id: "chk", label: "coh_checker", kind: "scoreboard", col: 1, row: 1 },
+    { id: "mdl", label: "coh_line_model", sublabel: "states + golden + memory", kind: "model", col: 1, row: 2 }
+  ]}
+  ports={[
+    { id: "mon0.ap", node: "mon0", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "mon1.ap", node: "mon1", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "mon2.ap", node: "mon2", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "chk.p0", node: "chk", side: "left", at: 0.35, kind: "analysis_imp", label: "port0_imp" },
+    { id: "chk.p1", node: "chk", side: "left", at: 0.6, kind: "analysis_imp", label: "port1_imp" },
+    { id: "chk.p2", node: "chk", side: "left", at: 0.85, kind: "analysis_imp", label: "port2_imp" }
+  ]}
+  edges={[
+    { from: "mon0.ap", to: "chk.p0", style: "data", label: "write(t)" },
+    { from: "mon1.ap", to: "chk.p1", style: "data" },
+    { from: "mon2.ap", to: "chk.p2", style: "data", label: "write(t)" },
+    { from: "chk", to: "mdl", style: "control", label: "update, check_line()" }
+  ]}
+/>
+
+**Why not one big concurrent assertion?** A class-based scoreboard cannot hold concurrent assertions: they may appear only in always or initial procedures, modules, interfaces, programs, generate blocks and checkers (IEEE 1800-2023 §16.14), and their expressions "shall not reference non-static class properties or methods" (§16.6). Put the global check in a procedural function called after every observed change, and report with `` `uvm_error ``. Concurrent SVA (or formal) can express the same invariant over module-level state arrays, for example in a formal harness of a few caches and one line.
+
+### Debugging coherency failures
+
+| Symptom | Likely cause | Look first at |
+|---|---|---|
+| A CPU reads stale data after a DMA or a peer's write | a missing clean or invalidate, a non-snooped access (wrong AxDOMAIN), or ownership passed wrongly | the line's ownership timeline; the AxDOMAIN of the write |
+| The checker reports "Unique copy coexists with another copy" | the interconnect chose a snoop that does not downgrade (for example ReadOnce for ReadShared), or a master ignored a snoop | the AC snoop type against Table C5-2, and the CRRESP |
+| Memory holds an old value after all caches are Invalid | dirty data lost: PassDirty dropped, a MakeInvalid on a dirty line, or a write-back that the interconnect never issued | CRRESP.PassDirty on the last snoop; the interconnect's write-back |
+| Hang under coherent stress | a snoop blocked behind the master's own reads, or a credit or retry that never returns | snoop channel stalls (ACE); LCRDV and PCrdGrant counts (CHI) |
+| Directory or snoop filter disagrees with the caches | a lost Evict or snoop response | the snoop filter's view against the line model |
+
+**The method:** do not start from a signal waveform. Print one **ownership timeline** per suspect line, one row per state change with the cause, for example `COH line=0x8000 t=1250ns cache=1 UD->SD snoop=ReadShared CRRESP=DT,IS`, find the first row that breaks a rule, and only then open the waveform for that transaction.
+
+### Recap
+
+- Coherency means all caches observe writes to a location in one order; without it, a write-back cache hides newer data from other masters (objective 1).
+- ACE describes copies with Unique/Shared and Clean/Dirty; a Unique copy is the only copy, and at most one copy is Dirty. Clean does not mean "equal to memory".
+- ACE adds AR/AW coherency signals, RRESP[3:2], the AC/CR/CD snoop channels and RACK/WACK to an AXI port; ACE-Lite adds only the AR/AW signals.
+- Reads are snooped so the newest data comes back and the states follow CRRESP and RRESP[3:2]; stores first make the line Unique (ReadUnique, CleanUnique or MakeUnique), and dirty data always has exactly one owner, a cache or the interconnect (objective 2).
+- CHI does the same job with layers, nodes (RN, HN, SN, MN), four credited channels and Direct Cache Transfer (objective 3).
+- The checker is global: monitors on every port feed one line model that checks single writer, single owner and golden data (objective 4).
+
+## Make It Work
+
+### A runnable line model and checker
+
+The example below is the heart of a coherency checker, stripped to one line and two caches so you can read it in one sitting. `coh_line_model` holds each cache's state, the golden value, what memory holds and the "interconnect owes memory" flag; `check_line()` is the global check. `tb_top` replays the two traces above as one story (every step legal; the values M0, M1 and M2 are `'hA0`, `'hA1` and `'hA2`), then one mutant in which the interconnect answered a ReadShared with a ReadOnce snoop, so A kept UD while B took SC. The checker must accept every legal step and reject the mutant.
 
 ```systemverilog
-typedef enum {
-  LINE_INVALID,
-  LINE_SHARED_CLEAN,
-  LINE_UNIQUE_CLEAN,
-  LINE_UNIQUE_DIRTY,
-  LINE_SHARED_DIRTY
-} line_state_e;
+// compile
+// One cache line, NCACHE caches: the global ACE rules of IHI0022E C1.2.3.
+package coh_pkg;
 
-typedef struct {
-  line_state_e state_by_node[int]; // indexed by node ID
-  bit [511:0]  latest_data;
-  int          owner_node;         // node responsible for writeback
-  int          sharer_count;       // number of sharers
-} coherent_line_model_s;
+  typedef enum logic [2:0] {ACE_I, ACE_UC, ACE_UD, ACE_SC, ACE_SD} ace_state_e;
+
+  class coh_line_model #(int NCACHE = 2);
+    ace_state_e  st[NCACHE];  // state of the line in each cache
+    logic [31:0] golden;      // newest value written (one word stands in for the line)
+    logic [31:0] memory;      // what main memory holds
+    bit          ic_owes;     // a snoop passed dirty data that is not yet in memory
+                              // or with a requester (updated from the monitors)
+
+    function new(logic [31:0] init);
+      foreach (st[n]) st[n] = ACE_I;
+      golden  = init;
+      memory  = init;
+      ic_owes = 0;
+    endfunction
+
+    // Call after every observed state change. Returns 1 when the line is legal.
+    function bit check_line(output string why);
+      int unsigned valid_n = 0, unique_n = 0, dirty_n = 0;
+      foreach (st[n]) begin
+        if (st[n] != ACE_I)                valid_n++;
+        if (st[n] inside {ACE_UC, ACE_UD}) unique_n++;
+        if (st[n] inside {ACE_UD, ACE_SD}) dirty_n++;
+      end
+      why = "";
+      // Single writer: a Unique copy must be the only valid copy.
+      if (unique_n > 1 || (unique_n == 1 && valid_n > 1))
+        why = "a Unique copy coexists with another copy (C1.2.3)";
+      // Single owner: at most one cache owes memory the update.
+      else if (dirty_n > 1)
+        why = "more than one Dirty copy (C1.2.3)";
+      // Nobody owes the update, so memory must already hold the newest value.
+      else if (dirty_n == 0 && !ic_owes && memory != golden)
+        why = "no cache is Dirty but memory is stale";
+      return (why == "");
+    endfunction
+
+    // Every read, from any port, must return the newest value.
+    function bit read_ok(logic [31:0] data);
+      return (data == golden);
+    endfunction
+  endclass
+
+endpackage
+
+module tb_top;
+  import coh_pkg::*;
+
+  coh_line_model #(.NCACHE(2)) m;
+  int pass_n = 0;
+  int fail_n = 0;
+
+  // Apply what the port monitors observed after one step, then run the global check.
+  // expect_ok = 0 marks a step the checker must reject.
+  function automatic void observe(string step, ace_state_e a, ace_state_e b,
+                                  logic [31:0] mem, logic [31:0] newest, bit expect_ok);
+    string why;
+    string verdict;
+    bit    ok;
+    m.st[0] = a;
+    m.st[1] = b;
+    m.memory = mem;
+    m.golden = newest;
+    ok = m.check_line(why);
+    if (ok) verdict = "ok";
+    else    verdict = {"VIOLATION: ", why};
+    if (ok == expect_ok) pass_n++;
+    else                 fail_n++;
+    $display("CHK %s | A=%s B=%s mem=%h newest=%h | %s",
+             step, a.name(), b.name(), mem, newest, verdict);
+  endfunction
+
+  initial begin
+    m = new(32'h0000_00A0);
+    observe("0 start",                   ACE_I,  ACE_I,  32'hA0, 32'hA0, 1);
+    observe("1 A ReadShared",            ACE_UC, ACE_I,  32'hA0, 32'hA0, 1);
+    observe("2 A stores M1",             ACE_UD, ACE_I,  32'hA0, 32'hA1, 1);
+    observe("3 B ReadShared",            ACE_SD, ACE_SC, 32'hA0, 32'hA1, 1);
+    observe("4 B CleanUnique, store M2", ACE_I,  ACE_UD, 32'hA1, 32'hA2, 1);
+    observe("5 B WriteBack",             ACE_I,  ACE_I,  32'hA2, 32'hA2, 1);
+    // Any port reading the line now must see M2, the newest value.
+    if (m.read_ok(32'hA2)) pass_n++;
+    else                   fail_n++;
+    // Mutant of step 3: a ReadOnce snoop leaves A UniqueDirty while B takes SC.
+    observe("M ReadOnce snoop",          ACE_UD, ACE_SC, 32'hA0, 32'hA1, 0);
+    $display("PASS=%0d FAIL=%0d", pass_n, fail_n);
+    $finish;
+  end
+
+endmodule
 ```
 
-The scoreboard checks both data and ownership. If two nodes believe they both have `UNIQUE_DIRTY`, the protocol is broken even if the next read happens to return the right value.
+Each `observe()` call applies one whole step, so `ic_owes` stays 0 here; a real monitor sets it between a snoop response and the requester's RRESP or the memory write. Each call counts as a pass when the checker's verdict matches the expectation, so the rejected mutant also counts as a pass; the `read_ok()` call after step 5 checks a read of the newest value.
 
-### Assertions Become Global
+**Run it.** Compile `coh_pkg` and `tb_top` together, with `tb_top` as the top module, in any simulator that supports IEEE 1800-2023 packages and classes. The example needs no UVM library, no plusargs and no delays, and it ends at `$finish`. It has not been run on an open-source simulator (tool-dependent).
 
-Simple AXI assertions bind to one interface. Coherency assertions often need a global view:
+**Expected output** (illustrative, written from the code by hand; no simulator run):
+
+```text
+CHK 0 start | A=ACE_I B=ACE_I mem=000000a0 newest=000000a0 | ok
+CHK 1 A ReadShared | A=ACE_UC B=ACE_I mem=000000a0 newest=000000a0 | ok
+CHK 2 A stores M1 | A=ACE_UD B=ACE_I mem=000000a0 newest=000000a1 | ok
+CHK 3 B ReadShared | A=ACE_SD B=ACE_SC mem=000000a0 newest=000000a1 | ok
+CHK 4 B CleanUnique, store M2 | A=ACE_I B=ACE_UD mem=000000a1 newest=000000a2 | ok
+CHK 5 B WriteBack | A=ACE_I B=ACE_I mem=000000a2 newest=000000a2 | ok
+CHK M ReadOnce snoop | A=ACE_UD B=ACE_SC mem=000000a0 newest=000000a1 | VIOLATION: a Unique copy coexists with another copy (C1.2.3)
+PASS=8 FAIL=0
+```
+
+### Where it lives in a UVM environment
+
+In a real testbench, each port monitor publishes one transaction per observed request or snoop, carrying the responses it saw: RRESP[3:2] for the master's own reads, CRRESP for snoops. The checker turns them into each cache's new state using the tables (Table C4-9 for RRESP, Table C5-8 for CRRESP). Where a table allows more than one end state, for example RRESP 00 to a ReadShared without a snoop filter (I, UC or SC, Table C4-9), the model keeps the expected state for the system's configured snoop-filter policy, or the set of legal states (see "Snoop filters change what is legal" in Push Further). The `` `uvm_analysis_imp_decl `` macro creates one imp class per suffix, so one component can receive from several ports (IEEE 1800.2-2020 Annex B.5.22). `ace_obs_item` stands for your monitor's transaction class, with fields such as `addr`, `op` (a string naming the transaction), `is_read`, `end_state` (the state the model expects after the observed response) and `data`. A real checker keeps one model per line address, for example in an associative array keyed by address.
 
 ```systemverilog
-// Property: at most one node may hold a dirty unique copy (IHI0022H §D3).
-property p_single_dirty_owner(line_addr_t line);
-  @(posedge clk) disable iff (!reset_n)
-    count_nodes_with_unique_dirty(line) <= 1;
-endproperty
+// snippet: placement of the line model in a UVM scoreboard (uvm-core 2020.3.1)
+`uvm_analysis_imp_decl(_port0)
+`uvm_analysis_imp_decl(_port1)
+`uvm_analysis_imp_decl(_port2)
 
-// Property: shared dirty requires all other sharers to be clean (IHI0022H §D3).
-property p_shared_dirty_others_clean(line_addr_t line, int node_id);
-  @(posedge clk) disable iff (!reset_n)
-    (state_by_node[node_id] == LINE_SHARED_DIRTY) |->
-      (count_nodes_with_dirty(line) == 1);
-endproperty
+class coh_checker extends uvm_scoreboard;
+  `uvm_component_utils(coh_checker)
+
+  uvm_analysis_imp_port0 #(ace_obs_item, coh_checker) port0_imp;  // CPU0 ACE port
+  uvm_analysis_imp_port1 #(ace_obs_item, coh_checker) port1_imp;  // CPU1 ACE port
+  uvm_analysis_imp_port2 #(ace_obs_item, coh_checker) port2_imp;  // DMA ACE-Lite port
+  coh_line_model #(.NCACHE(2)) lines[logic [63:0]];               // one model per line
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    port0_imp = new("port0_imp", this);
+    port1_imp = new("port1_imp", this);
+    port2_imp = new("port2_imp", this);
+  endfunction
+
+  function void write_port0(ace_obs_item t); update_cache(0, t); endfunction
+  function void write_port1(ace_obs_item t); update_cache(1, t); endfunction
+
+  // The DMA has no cache: only its read data is checked.
+  function void write_port2(ace_obs_item t);
+    if (t.is_read && lines.exists(t.addr) && !lines[t.addr].read_ok(t.data))
+      `uvm_error("COH", $sformatf("DMA read of line 0x%0h returned stale data", t.addr))
+  endfunction
+
+  function void update_cache(int cache, ace_obs_item t);
+    string why;
+    if (!lines.exists(t.addr)) lines[t.addr] = new(t.data);
+    lines[t.addr].st[cache] = t.end_state;
+    if (!lines[t.addr].check_line(why))
+      `uvm_error("COH", $sformatf("line 0x%0h after %s on cache %0d: %s",
+                                  t.addr, t.op, cache, why))
+  endfunction
+endclass
 ```
 
-This is why coherent verification environments often combine protocol VIP, reference models, formal checks, and long randomized stress tests.
+The snippet leaves out the golden-value, memory and `ic_owes` updates to stay short. The golden value comes from the master side (the CPU stimulus or a cache model), because a store to a Unique line is silent on the port; memory writes come from the memory-side monitor.
 
-### CHI-Specific Verification Targets
+### How to build a coherency checker
 
-| Target | What to verify |
-|--------|---------------|
-| Credit flow | Credits are consumed, returned, and never leaked |
-| Retry protocol | RetryAck → PCrdGrant → retry sequence completes correctly |
-| Exclusive access | LDREX/STREX atomicity across nodes |
-| DVM operations | TLB invalidate broadcast reaches all affected nodes |
-| Ordering | Ordered/Endpoint-order transactions complete in legal sequence |
-| Peer-to-peer data | Direct RN-to-RN data transfer is correct and ordered |
+1. List every port that can access Shareable memory, including ACE-Lite and non-coherent masters that share buffers with coherent ones, plus the interconnect's memory port.
+2. Put a passive monitor on each and publish every request, snoop, CRRESP, RRESP[3:2], RACK, WACK and data beat, with a time stamp.
+3. Keep one line model per line address: the state (or the set of legal states) in every cache, the golden value, the memory value and the "interconnect owes memory" flag.
+4. Update the model from each observation, using the requester's RRESP[3:2] (Table C4-9) and the snoopee's CRRESP (Table C5-8), and take the golden value from the master side.
+5. After every update, check single writer, single owner and "memory is current when nobody, cache or interconnect, owes it"; check every read against the golden value. Add the liveness checks (one CR per snoop; a RACK or WACK for every response, within your bound) and, if the system has a snoop filter, check that every valid holder is in it.
+6. Cover start state × snoop type × response: every row of the tables you rely on, both RRESP outcomes, PassDirty set and clear.
+7. Log an ownership timeline per line so a failure points to the first illegal step.
 
----
+**Checklist before moving on:**
+- [ ] I can explain why a plain AXI4 DMA read returns stale data, and what ACE-Lite ReadOnce changes.
+- [ ] I can say what Clean means in ACE, and why an SC copy may differ from memory.
+- [ ] I can predict the end states of a ReadShared to a UD line for all three legal snoop responses, and say who owes memory each time.
+- [ ] I can name the snoop that CleanUnique and MakeUnique cause, and when each store transaction is used.
+- [ ] I can name CHI's four channels and its node types, and explain an L-Credit.
+- [ ] I can explain why per-port checkers miss UD next to SC, and where a global checker sits.
+- [ ] I can list the global checker's safety and liveness checks, and say where its golden value comes from.
 
-## 5. Debug Patterns
+## Push Further
 
-| Symptom | Likely root cause | First signal/model to inspect |
-|---------|-------------------|-------------------------------|
-| CPU reads stale data after DMA or peer CPU write | Missing clean/invalidate or wrong ownership transfer | Cache-line state model |
-| Snoop returns clean when line is dirty | Incorrect cache state transition | `CR`/snoop response path or SNP response |
-| System hangs under coherent stress | Credit leak, retry loop, or cyclic dependency | CHI request/response credits; ACE channel stalls |
-| Rare data mismatch after eviction | Dirty writeback lost or reordered | Data channel and home-node completion log |
-| One cluster starves another | QoS or virtual-channel arbitration issue | Interconnect routing and credit counters |
-| Directory state disagrees with cache | Snoop response lost or state transition bug | Directory dump vs. cache probe |
+### Expert: snoop channel dependencies
 
-The practical rule: when debugging coherent protocols, do not start with a waveform at signal level. Start with a timeline of **line ownership events**, then drill into the channel waveforms that implement the suspicious transition.
+The snoop channels have their own handshake dependencies (IHI0022E §C3.9, Figure C3-1). The interconnect must not wait for ACREADY before asserting ACVALID. The master must see the AC handshake (ACVALID and ACREADY) before asserting CRVALID or CDVALID, but must **not** wait for CRREADY or CDREADY before asserting CRVALID, or CDVALID when data is required. The interconnect may wait for CRVALID and CDVALID before raising either READY. A snoop port that waits for CRREADY first is a deadlock waiting to happen; an assertion bound to the snoop interface catches it locally, a coherency rule that a per-port checker *can* own.
 
----
+### Expert: RACK, WACK and the snoop window
 
-## 6. Industry Context
+RACK and WACK are single-cycle pulses that the interconnect must accept in that cycle, asserted no earlier than the cycle after the last R handshake (RLAST) or the B handshake, and never delayed to wait for another transaction (§C3.3, §C3.5, §C6.2.1). They exist because a register or clock-domain crossing may sit between the interconnect and the master: the interconnect cannot assume the master has *applied* a response until the acknowledge arrives, and it "must use write acknowledge to ensure that a transaction to a master's snoop port is not issued until any preceding transaction from that master to the same address has completed" (§C3.5). The interconnect must not send a master a snoop to a line after giving it a response for that line until the RACK or WACK arrives, and must not give a response for a line while its snoop to that master for the same line awaits CRRESP (§C6.2). In a testbench, a snoop to line X issued to master M between M's response for X and M's acknowledge is an interconnect bug worth an assertion.
 
-ACE and CHI are not experimental or future protocols. They represent the current production standard for coherent SoC interconnects:
+### Expert: a snoop that crosses a WriteBack
 
-- **ACE** is used in Arm CCI-400, CCI-500, and CCN-502/504 interconnects, powering mobile SoCs (Cortex-A class) across Qualcomm, Samsung, MediaTek, and others.
-- **CHI** is used in Arm CMN-600, CMN-700, and CMN-S3 interconnects, powering server-class Neoverse platforms, datacenter accelerators, and high-performance computing SoCs.
-- Both protocols are actively used in production silicon shipping today.
+A master may be writing a dirty line back (WriteBack or WriteClean) when a snoop for that line arrives. Only one component may update memory at a time, so the snooped master must either answer with PassDirty deasserted and IsShared asserted (it passes neither the permission to store nor the duty to update memory), or delay the response until its write-back completes (§C5.2.3). When the response would pass the permission to store, all its memory-update writes must complete before the cycle of the CR response. This race (snoop arriving during a write-back) is a top coverage item for any coherent master, and a scoreboard that applies the snoop before the WriteBack predicts the wrong memory value. Apply the WriteBack's state change first, then the snoop's (the rule stated with Table C5-4).
 
-Understanding ACE/CHI at a staff-level depth is essential for engineers working on CPU subsystem verification, cache hierarchy validation, interconnect design verification, or SoC-level coherency signoff.
+### Expert: forward progress
 
----
+ACE prevents deadlock with non-blocking rules (§C5.2.5). A master must complete any snoop, to any address, before any of its own AR-channel transactions (and its WriteUnique or WriteLineUnique) can be guaranteed to complete. It may make a snoop wait for its own WriteNoSnoop, WriteBack, WriteClean, WriteEvict or Evict; and if the snoop response could lead to a memory write or give another master permission to store, it must first complete any WriteBack, WriteClean or WriteEvict in progress for that line. The interconnect has matching rules (§C6.6.1). CHI states the same idea per channel: an RN-F must answer snoops "without creating any Protocol layer dependency on completion of outstanding requests" (§4.11.1), must make progress on inbound SNP without needing progress on outbound REQ, and must always sink inbound RSP and DAT (§13.4.1). In stress tests, a hang whose last activity is a snoop stuck behind the master's own read is the classic violation.
 
-## Summary
+### Expert: overlapping stores and the CleanUnique race
 
-ACE and CHI are the coherency protocols that make modern multi-core SoCs work:
+When two masters try to store to the same Shareable line at the same time, the interconnect picks an order (§C1.3.4, "Overlapping store operations"). The loser sees the winner's snoop first and loses its copy. If the loser had issued CleanUnique for a partial store, its CleanUnique then completes with *no copy*: it may perform only a full-line store, or it must issue a new transaction to fetch the data, or write the partial line to memory without caching it (§C1.3.4; §C4.6.1: "If the cache line was in the Invalid state before the store operation, then the store must be a full cache line size"). A master that performs a partial store into a line it no longer holds corrupts data. Exclusive sequences add one more rule: a snooped line that is part of an exclusive sequence must remain valid in the snooped master for the read-type snoops of Table C5-8 (§C5.3), and CleanUnique may be used for exclusive accesses (§C4.6.1, Chapter C9). See [B-AXI-4](/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index) for exclusives on plain AXI.
 
-1. **AXI4** moves data quickly but does not solve cache coherency.
-2. **ACE** (AMBA 4) extends AXI with snoop channels (AC/CR/CD) so coherent caches can share, clean, invalidate, and transfer dirty lines. It uses MOESI-style state tracking.
-3. **CHI** (AMBA 5) packetizes coherency for large distributed fabrics, using request, response, data, and snoop channel families with credit-based flow control across rings or meshes.
-4. Verification moves from transaction checking to global ownership modeling, with scoreboards that track per-node cache-line state and assertions that enforce single-writer invariants.
-5. Both protocols are in production today across mobile, server, and datacenter SoCs.
+### Expert: snoop filters change what is legal
 
-If AXI teaches you how high-performance transfers work, ACE and CHI teach you how high-performance systems stay correct when many agents cache the same memory.
+A **snoop filter** tracks which lines each master holds, so the interconnect can skip useless snoops. Support is optional, and a master must state in its data sheet whether it supports one (§C4.2). The legal end states differ: for example, after a ReadShared with RRESP 00 the expected state is UC, legal states are UC or SC with a snoop filter, and I, UC or SC without one, because without a filter a clean line may be dropped silently (§C4.3, Table C4-9). A checker must be configured for the system's snoop-filter policy, or it will either miss lost-Evict bugs or flag legal silent evictions. CHI permits but does not require a snoop filter or directory, and lets the interconnect send snoops spontaneously, for example a SnpUnique or SnpCleanInvalid as "a backward invalidation from a snoop filter or interconnect cache" when a filter entry is evicted (IHI0050E.b §4.4). Snoop-filter capacity and the back-invalidation traffic it causes are a classic performance-verification topic (tool-dependent: measured with your interconnect's performance counters).
 
-<Quiz>
-  <QuizQuestion
-    question="What problem does ACE solve that plain AXI4 does not solve by itself?"
-    options={[
-      "It removes the VALID/READY handshake from AXI.",
-      "It adds cache coherency mechanisms so masters can discover, invalidate, clean, or obtain dirty cache lines.",
-      "It allows AXI bursts to cross 4KB boundaries.",
-      "It turns all AXI traffic into unidirectional streams."
-    ]}
-    correctAnswer="It adds cache coherency mechanisms so masters can discover, invalidate, clean, or obtain dirty cache lines."
-    explanation="Plain AXI4 moves read/write transactions but does not track cache-line ownership. ACE adds snoop and coherency semantics so caches can remain consistent."
-  />
-  <QuizQuestion
-    question="In a CHI-style coherent system, what is the role of a Home Node?"
-    options={[
-      "It is the only CPU allowed to issue requests.",
-      "It owns ordering and coherency decisions for an address region.",
-      "It converts AXI4-Lite control traffic into APB.",
-      "It disables snoops for all shared cache lines."
-    ]}
-    correctAnswer="It owns ordering and coherency decisions for an address region."
-    explanation="The Home Node tracks or consults directory/coherency state for an address region and coordinates requests, snoops, data movement, and completion."
-  />
-  <QuizQuestion
-    question="Why is a simple address/data scoreboard insufficient for ACE or CHI?"
-    options={[
-      "Coherent protocols never transfer data.",
-      "The scoreboard must also model cache-line ownership and legal state transitions, not just final data values.",
-      "All coherent traffic completes strictly in FIFO order.",
-      "ACE and CHI only use single-beat transactions."
-    ]}
-    correctAnswer="The scoreboard must also model cache-line ownership and legal state transitions, not just final data values."
-    explanation="A coherent system can return the right data once while still violating ownership rules. The reference model must track which node owns, shares, dirties, invalidates, or supplies each cache line."
-  />
-  <QuizQuestion
-    question="How does CHI's flow control differ from AXI's VALID/READY?"
-    options={[
-      "CHI has no flow control and drops packets freely.",
-      "CHI uses credit-based flow control where a receiver advertises capacity and the sender consumes credits per flit.",
-      "CHI uses the same VALID/READY handshake as AXI.",
-      "CHI requires all transactions to complete before new ones can start."
-    ]}
-    correctAnswer="CHI uses credit-based flow control where a receiver advertises capacity and the sender consumes credits per flit."
-    explanation="Credit-based flow eliminates combinatorial dependencies between sender and receiver. Deadlock analysis focuses on credit consumption and return rather than READY signal blocking."
-  />
-</Quiz>
+### Expert: CHI Request Retry and Protocol Credits
+
+L-Credits only guarantee that the next hop accepts a flit. A Completer (a Home or a Subordinate) may still lack resources to take a request, so CHI adds **Request Retry** (§2.11). The first attempt is sent with AllowRetry asserted. A Completer that cannot accept it answers **RetryAck** with a **PCrdType**, records the requester, and later sends **PCrdGrant** (a Protocol Credit) when resources free up. The requester resends with AllowRetry deasserted and the granted PCrdType, and that attempt "is guaranteed to be accepted". Because responses can be reordered, a PCrdGrant may arrive **before** its RetryAck; the requester must remember the credit until the RetryAck arrives (§2.11). Up to 16 credit types let a Completer manage different resources separately. Snoops are not part of this mechanism: the snoop flit has no AllowRetry field (§13.9.3, Table 13-8). Verification targets: credit-type matching, retry storms, fairness between requesters, and every credit granted eventually used or returned.
+
+### Expert: line size, partial and empty lines
+
+ACE line size is a design-time choice per master: at least the larger of 16 bytes and the data-bus width, at most the smaller of 2048 bytes and 16 beats of the bus (§C3.1.5, Table C3-10), and most coherent transactions must be exactly one line (§C3.1.6). A coherency model must therefore be parameterized by line size, and the interconnect must agree with every master on it. CHI fixes the line at 64 bytes, aligned (§1.5.1), and adds two partial states: **UCE** (Unique, no valid bytes; must not supply data on a snoop) and **UDP** (Unique, some bytes dirty; must be merged with memory on eviction and must not be forwarded directly to a requester) (§4.1). A CHI model that tracks only the five ACE states cannot predict that a UDP line is never forwarded by DCT.
+
+### Expert: methodology trade-offs
+
+These are methodology choices, not protocol rules (tool-dependent where noted):
+- **Commercial coherency VIP or in-house line model.** VIP brings the full transaction tables and protocol checks; an in-house model, like the one above, is small enough to understand and extend for your system's snoop-filter policy and caches. One option is to use VIP for port compliance and an in-house global model for the system rules.
+- **Formal on a small abstraction.** A small model (a few caches, one line and a nondeterministic interconnect) lets a formal tool prove single writer and single owner exhaustively *for that abstraction* (see [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)). Use at least three caches, so that a requester plus two sharers is reachable: a bug such as an interconnect that, on CleanUnique, snoops only one of two sharers needs three. Argue symmetry before you claim the result for N caches; simulation then covers scale and performance.
+- **What the protocol does not cover.** ACE and CHI guarantee coherence per location. Memory-ordering litmus tests (for example, whether two writes to different addresses are seen in order) belong to the processor architecture and the barrier rules, and are usually run as software tests on the full system (see [E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index)).
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: two port checkers pass, the CPU reads stale data"
+  question="Your ACE system has protocol checkers on both CPU ports and they never fire, yet a regression shows CPU0 reading a value older than CPU1's last store. What is the most likely class of bug, and what check finds it?"
+  options={[
+    { text: "A VALID/READY violation on CPU0's R channel; strengthen that port's checker.", isCorrect: false, feedback: "That would fire the port checker. Stale data with clean port checks points to a global state error." },
+    { text: "A global state error, such as CPU1 Unique while CPU0 holds a copy; add a checker fed by every port.", isCorrect: true, feedback: "Right. Each port's state sequence looks legal on its own; only the combination breaks IHI0022E C1.2.3 (a Unique copy next to another copy, or two Dirty copies). The checker enforces single writer and single owner and compares every read with a golden value. Print the line's ownership timeline to find the first illegal step." },
+    { text: "Memory was never written back, which is always a bug; add a check on every single memory write.", isCorrect: false, feedback: "Memory may legally stay stale while a cache owns the line Dirty. The bug is about who holds which copy." },
+    { text: "It cannot happen in ACE, because the interconnect guarantees coherency; so it must be a software bug.", isCorrect: false, feedback: "The interconnect and the masters implement the rules; verification exists because they can get them wrong." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: why CHI uses credits instead of READY"
+  question="An interviewer asks why CHI replaced VALID/READY with link credits, and whether credits alone prevent deadlock. What is the strongest answer?"
+  options={[
+    { text: "Credits are faster because they remove the clock entirely, and they prevent every deadlock.", isCorrect: false, feedback: "CHI is still synchronous. Credits guarantee acceptance at the next hop only." },
+    { text: "Long links need no same-cycle READY; but credits cover only the next hop, not deadlock.", isCorrect: true, feedback: "Right. With credits a transmitter never needs a same-cycle answer from the receiver, which suits long pipelined links across a mesh. Credits only guarantee that the next hop accepts a flit; protocol deadlock is prevented by the channel forward-progress rules and by Request Retry with Protocol Credits (IHI0050E.b §14.2.1, §13.4.1, §2.11). Name both layers." },
+    { text: "CHI has no handshakes at all: flits may be dropped and are simply sent again.", isCorrect: false, feedback: "A receiver must accept every flit it has credited; nothing is dropped." },
+    { text: "Credits exist only for DVM messages, which travel on a separate misc channel.", isCorrect: false, feedback: "There are four channels (REQ, RSP, SNP, DAT), each with its own LCRDV." }
+  ]}
+/>
+
+Staff-level follow-ups. Answer each aloud before you open the model answers:
+
+1. How would you size the line model's memory for a 4-cluster system with millions of lines touched?
+2. What changes in your checker when the interconnect has a system cache?
+3. How do you cover the race between a snoop and a WriteBack?
+
+<details>
+<summary>Model answers</summary>
+
+1. Store only the lines that have been touched, in an associative array, and retire lines that are Invalid everywhere and match memory.
+2. Memory is no longer the only place a clean line lives, so the "memory is current" check moves to the point of coherence (the interconnect cache plus memory).
+3. Directed timing plus coverage on "snoop arrives while WriteBack outstanding", crossed with the line state.
+
+</details>
+
+## Practice & Reinforce
+
+The flashcard deck for this lesson is at the end of this section, under "Reinforce the essentials". It covers the states, the snoop channels, the store transactions, the acknowledges, CHI nodes, channels and credits, DCT and the global checker.
+
+### Retrieval quiz
+
+Each question names the objective it checks.
+
+<Quiz
+  questions={[
+    {
+      question: "CPU1's write-back cache holds a newer value of a line than memory does. A DMA reads that line through a plain AXI4 interconnect. What does the DMA read?",
+      answers: [
+        { text: "The new value, because the interconnect orders CPU1's earlier write before the read.", correct: false, feedback: "Ordering is not coherence: CPU1's store never left its cache, so there is no write to order." },
+        { text: "The old value from memory, because AXI4 cannot ask CPU1's cache for the line.", correct: true, feedback: "Right. Only a coherent protocol (here an ACE-Lite ReadOnce that the interconnect snoops) can fetch CPU1's copy." },
+        { text: "The new value, because a store always goes straight to memory as well.", correct: false, feedback: "A write-back cache updates memory only when the line is written back or evicted." },
+        { text: "A DECERR response, because the line is currently cached elsewhere.", correct: false, feedback: "AXI4 does not know the line is cached; it simply reads memory." }
+      ],
+      explanation: "AXI4 routes the read to memory, which still holds the old value. With ACE, the DMA would use ACE-Lite ReadOnce and the interconnect would snoop CPU1, returning the dirty data (IHI0022E C1.3.4, C1.4.2, C11.1).",
+      objective: 1
+    },
+    {
+      question: "Which statement about ACE and CHI is accurate?",
+      answers: [
+        { text: "They are proposals for a future AMBA release and are not yet used in real silicon.", correct: false, feedback: "ACE was first released in 2011 (IHI0022 Issue D) and CHI in 2014 (Issue A); both are current." },
+        { text: "Both are current AMBA protocols, first released in 2011 (ACE) and 2014 (CHI).", correct: true, feedback: "Right: ACE in IHI0022 Issue D (28 October 2011), CHI in IHI0050 Issue A (12 June 2014), with the first public issue, B, in 2017. The lesson folder name says 'Future' for historical reasons only." },
+        { text: "ACE is current, but CHI is still an unreleased draft specification.", correct: false, feedback: "CHI has had public issues since B (4 August 2017); IHI0050E.b dates from August 2021." },
+        { text: "CHI replaced AXI in AMBA 5, so ACE and AXI are both obsolete today.", correct: false, feedback: "AXI and ACE continue in later issues of IHI0022; CHI is for larger coherent systems." }
+      ],
+      explanation: "The IHI0022H.c change history lists Issue D (28 October 2011) as the first release of the AXI and ACE specification; the IHI0050E.b change history lists Issue A (12 June 2014) and the first public Issue B (4 August 2017).",
+      objective: 1
+    },
+    {
+      question: "Predict. Cache A holds a line UniqueClean: it loaded the line and never stored to it. Cache B issues ReadShared; the interconnect snoops A with ReadShared, and A answers PassDirty=0, IsShared=1. What are the end states, and who owes memory?",
+      answers: [
+        { text: "A: SD, B: SC; A owes memory, because it held the line Unique.", correct: false, feedback: "A was Clean, so there is no update to owe; Table C5-8 has no UC → SD row. Unique is about copies, not about who owes memory." },
+        { text: "A: UC, B: SC; a clean line needs no state change on a snoop.", correct: false, feedback: "A ReadShared snoop requires the snooped copy to end Shared or Invalid (Table C5-3), and UC next to SC breaks the single-writer rule." },
+        { text: "A: SC, B: SC; nobody owes memory, which is still current.", correct: true, feedback: "Right. Table C5-8 lists UC → SC with PassDirty=0, IsShared=1; B gets RRESP[3:2] = 10 and ends SC (Table C4-9). No copy was ever Dirty, so memory is current." },
+        { text: "A: I, B: UC; the reader always takes over the Unique copy.", correct: false, feedback: "IsShared=1 says A keeps a copy. A would end I only with IsShared=0, and then B could take UC." }
+      ],
+      explanation: "This is not one of the traced cases, so work it from the tables: a UC line snooped by ReadShared may end SC (IsShared=1) or I (IsShared=0) (Table C5-8). With IsShared=1 the interconnect must give B IsShared=1 (C6.4), so B takes SC (Table C4-9). Neither copy is Dirty and memory is current (C1.2.3).",
+      objective: 2
+    },
+    {
+      question: "Cache B holds a line SharedClean and must store 4 bytes into it. Which transaction should it issue, and what happens to the other copies?",
+      answers: [
+        { text: "MakeUnique, because B already holds the data and needs no fetch.", correct: false, feedback: "MakeUnique is only for a full-line store (C4.7.1); a 4-byte store is partial." },
+        { text: "None: B may store into an SC line and notify the other caches only afterwards.", correct: false, feedback: "A Shared line requires notifying other caches before a store (Table C1-2)." },
+        { text: "CleanUnique: the other copies are removed, and a Dirty one is written back.", correct: true, feedback: "Right. It is snooped as CleanInvalid (Table C5-1); B goes SC → UC (Table C4-13), then UD after the store (C4.3.2)." },
+        { text: "CleanShared: it cleans the other copies so that B may then write.", correct: false, feedback: "CleanShared leaves other caches holding copies; B would still not be Unique." }
+      ],
+      explanation: "CleanUnique is the partial-store transaction for a master that already holds a copy. It is snooped as CleanInvalid, so all other copies end Invalid and dirty data is written back; B's response is a single R transfer with RRESP 00 and B becomes UC, then UD after the store (IHI0022E C1.3.4, C4.6.1).",
+      objective: 2
+    },
+    {
+      question: "Cache A holds a line UniqueDirty. Cache B issues ReadClean; A answers with PassDirty=1 and IsShared=1. Who must now write the dirty data to memory?",
+      answers: [
+        { text: "Cache A, because it still holds a copy of the line.", correct: false, feedback: "PassDirty=1 means A has handed the responsibility over; A ends SC (Table C5-8)." },
+        { text: "Cache B, because it received the data on R.", correct: false, feedback: "ReadClean accepts only a Clean line: it is guaranteed never to pass the duty to update memory to the requester (C4.5.3)." },
+        { text: "Nobody: memory may stay stale while any cache holds the line.", correct: false, feedback: "Once no cache is Dirty, memory must be updated; the responsibility never disappears." },
+        { text: "The interconnect.", correct: true, feedback: "Right (C1.4.2, C3.7): for ReadClean the dirty line must be written back by the interconnect." }
+      ],
+      explanation: "A ReadClean requester accepts only a Clean line (C4.5.3). If a snooped cache passes a dirty line that the requester cannot accept, 'the interconnect is responsible for writing back the dirty line to main memory' (IHI0022E C1.4.2; C3.7 lists ReadClean as such a case).",
+      objective: 2
+    },
+    {
+      question: "Cache B holds a line UniqueDirty and evicts it with a WriteBack. What happens?",
+      answers: [
+        { text: "The interconnect first snoops the other caches, since the line is in Shareable memory.", correct: false, feedback: "WriteBack is never snooped (C1.4.3; Table C5-1). B holds the only copy, and other caches need not know that memory was updated." },
+        { text: "B may drop the line silently, just as it may drop a Clean line.", correct: false, feedback: "B is Dirty, so it owes memory the update. Only a Clean line may be dropped without a write: with an Evict, or silently if no snoop filter is used (C1.4.3, Table C4-9)." },
+        { text: "The write is not snooped; B ends Invalid and pulses WACK after the B response.", correct: true, feedback: "Right (C1.4.3, Table C4-24, C3.5)." },
+        { text: "B must wait for a RACK from the interconnect before it may reuse the line.", correct: false, feedback: "RACK and WACK go the other way: the master sends them to the interconnect. A write ends with WACK, not RACK." }
+      ],
+      explanation: "WriteBack writes a dirty line back without snooping anyone (C1.4.3); the expected end state is Invalid (Table C4-24). The master then acknowledges the write response with WACK, a one-cycle pulse no earlier than the cycle after the B handshake (C3.5).",
+      objective: 2
+    },
+    {
+      question: "A master issues a coherent read with ARDOMAIN = Inner Shareable. Which masters may the interconnect need to snoop?",
+      answers: [
+        { text: "Every cached master in the system, whatever the ARDOMAIN value says.", correct: false, feedback: "That is the System domain. The domain exists so the interconnect can limit the snoops to the masters that might hold a copy (C1.6.1)." },
+        { text: "Only the cached masters inside the requester's Inner Shareable domain.", correct: true, feedback: "Right. The interconnect uses the domain to decide which masters must be snooped (C1.6.1); ACE-Lite masters have no cache and are never snooped." },
+        { text: "None of them: only an access in the System domain is ever snooped.", correct: false, feedback: "Inner and Outer Shareable accesses are snooped within their domain; only a Non-shareable access, whose domain is a single master, snoops nobody." },
+        { text: "Only the master that last wrote the line, which the interconnect always tracks.", correct: false, feedback: "Tracking holders needs a snoop filter, which is optional (C4.2); without one the interconnect snoops every cached master in the domain." }
+      ],
+      explanation: "A shareability domain is the set of masters that might hold a copy (IHI0022E C1.6.1; AxDOMAIN encodings in Table C3-2). A Non-shareable access (0b00) has a domain of one master, so nobody else is snooped: marking a shared buffer Non-shareable is a classic stale-data bug (see the debugging table).",
+      objective: 2
+    },
+    {
+      question: "How does a CHI transmitter know it may send a flit on the REQ channel?",
+      answers: [
+        { text: "It asserts VALID and waits for the receiver's READY, as in AXI.", correct: false, feedback: "This is the 'CHI is AXI with more signals' misconception: CHI has no READY." },
+        { text: "It must hold an L-Credit from an earlier LCRDV pulse; each flit uses one.", correct: true, feedback: "Right (IHI0050E.b §14.2.1). A credit cannot be used in the cycle it arrives." },
+        { text: "It asks a fifth 'misc' channel, which carries the credits and DVM.", correct: false, feedback: "CHI has four channels: REQ, RSP, SNP and DAT. Credits are LCRDV signals." },
+        { text: "It sends at will; the receiver drops what it cannot hold, and the sender retries.", correct: false, feedback: "A receiver must accept every flit it has credited; protocol-level Retry is a separate mechanism." }
+      ],
+      explanation: "CHI's link layer uses per-channel L-Credits: the receiver returns one credit per LCRDV pulse (1 to 15 credits), must accept every credited flit, and a credit cannot be used in the cycle it is received (IHI0050E.b §14.2.1).",
+      objective: 3
+    },
+    {
+      question: "In a CHI ReadShared that uses Direct Cache Transfer, which messages complete the transaction?",
+      answers: [
+        { text: "CompData from the snooped RN-F to the requester, a snoop response to the Home, then CompAck.", correct: true, feedback: "Right (IHI0050E.b §5.1.3)." },
+        { text: "The snooped RN-F returns the data to the Home only, and the Home then sends CompData to the requester.", correct: false, feedback: "That is the path without DCT: the snooped data goes to the Home, which then sends CompData to the requester. With DCT the data goes straight to the requester." },
+        { text: "The Home sends SnpCleanInvalid; the snooped RN-F forwards the line and becomes Invalid.", correct: false, feedback: "SnpCleanInvalid is not permitted for ReadShared and is non-forwarding (§4.4)." },
+        { text: "The requester waits for a separate Comp from the Home after the data; no CompAck is needed.", correct: false, feedback: "A read completes with CompData (or RespSepData plus DataSepResp, §4.5.1); ReadShared needs CompAck." }
+      ],
+      explanation: "With SnpSharedFwd, RN-F1 sends CompData_SC to RN-F0 and SnpResp_SC_Fwded_SC (or SnpRespData_SC_PD_Fwded_SC with a dirty line) to HN-F; RN-F0 finishes with CompAck (IHI0050E.b §5.1.3).",
+      objective: 3
+    },
+    {
+      question: "Which CHI node receives DVM operations from Request Nodes and broadcasts them as snoops?",
+      answers: [
+        { text: "RN-D", correct: false, feedback: "RN-D is an IO coherent Request Node that receives DVM snoops; it does not handle requests from others." },
+        { text: "HN-I", correct: false, feedback: "HN-I is the non-coherent Home for IO addresses." },
+        { text: "MN", correct: true, feedback: "Right: the Miscellaneous Node (§1.6, §8.1.1)." },
+        { text: "SN-F", correct: false, feedback: "SN-F is the Subordinate Node for Normal memory." }
+      ],
+      explanation: "The MN 'receives a DVM transaction from a Request Node, completes the required action, and returns a response' (IHI0050E.b §1.6); it broadcasts SnpDVMOp to the RN-Fs and RN-Ds (§8.1.1).",
+      objective: 3
+    },
+    {
+      question: "Debug: protocol checkers on both CPU ports pass, yet CPU0 later reads data older than CPU1's last store. Which missing check would have caught it first?",
+      answers: [
+        { text: "An assertion that VALID stays stable until READY on every channel of each port.", correct: false, feedback: "A handshake error would have fired the port checkers." },
+        { text: "A global check, fed by every port, that a Unique copy is the only copy.", correct: true, feedback: "Right: coherency cannot be checked per interface (C1.2.3). The same checker compares every read with the golden value." },
+        { text: "A check, on every port, that no burst crosses a 4KB boundary.", correct: false, feedback: "The 4KB rule is a per-port AXI check; it says nothing about another cache's copy." },
+        { text: "A check that reads with the same ID on CPU0 return in order.", correct: false, feedback: "Ordering on one port says nothing about another cache's copy." }
+      ],
+      explanation: "Each port's state history can be legal on its own while the combination (for example CPU1 UD with CPU0 SC) breaks the single-writer rule. Only a model that sees every port can detect it.",
+      objective: 4
+    },
+    {
+      question: "Your global checker sees these states for one line in two caches. Which pair must it flag?",
+      answers: [
+        { text: "SD and SC", correct: false, feedback: "Legal: one Dirty owner, and both are Shared." },
+        { text: "SC and SC", correct: false, feedback: "Legal: any number of clean shared copies." },
+        { text: "UD and I", correct: false, feedback: "Legal: the Unique copy is the only copy." },
+        { text: "UD and SC", correct: true, feedback: "Right: a Unique line must be in only one cache (C1.2.3)." }
+      ],
+      explanation: "IHI0022E C1.2.3: 'A line in a Unique state must only be in one cache', and at most one cache may hold it Dirty. UD next to SC breaks the first rule even though only one copy is Dirty, so a check that counts only Dirty copies misses it.",
+      objective: 4
+    }
+  ]}
+/>
+
+### Kata: two caches, one line
+
+Fill in each table before you open its solution. For each step give the transaction, the snoop (if any) and its response with RRESP[3:2], both end states, the memory value and who owes memory the update. Use the tables in this lesson, not your memory of the traces.
+
+**Run 1** replays the two traces above as one story, so use it to check your method. Start: caches A and B Invalid, memory holds M0.
+
+1. A loads the line.
+2. A stores M1 into it.
+3. B loads the line (A keeps the dirty copy).
+4. B stores 4 bytes (M2).
+5. B evicts the line.
+
+| Step | Transaction | Snoop and response | A | B | Memory | Owes memory |
+|---|---|---|---|---|---|---|
+| 1 |  |  |  |  |  |  |
+| 2 |  |  |  |  |  |  |
+| 3 |  |  |  |  |  |  |
+| 4 |  |  |  |  |  |  |
+| 5 |  |  |  |  |  |  |
+
+<details>
+<summary>Worked solution, run 1</summary>
+
+| Step | Transaction | Snoop and response | A | B | Memory | Owes memory |
+|---|---|---|---|---|---|---|
+| 1 | A: ReadShared | B snooped (or filtered), B has nothing; memory read; A gets RRESP 00 | UC | I | M0 | nobody (memory is current) |
+| 2 | none: a store to UC needs no transaction | — | UD | I | M0 | A |
+| 3 | B: ReadShared | ReadShared snoop to A; CRRESP DataTransfer=1, PassDirty=0, IsShared=1; B gets RRESP 10, then RACK | SD | SC | M0 | A |
+| 4 | B: CleanUnique, then the store | CleanInvalid snoop to A; CRRESP DataTransfer=1, PassDirty=1, IsShared=0; interconnect writes M1; B gets one R transfer with RRESP 00, stores, RACK | I | UD | M1 | B |
+| 5 | B: WriteBack, then WACK | not snooped | I | I | M2 | nobody |
+
+Sources: Table C4-9 (step 1), Table C1-2 and §C4.3.2 (step 2), Tables C5-1, C5-3, C5-8, C4-9 and §C3.3 (step 3), §C1.3.4, Tables C5-1, C4-13 and §C6.5.3 (step 4), §C1.4.3 and Table C4-24 (step 5).
+
+</details>
+
+**Run 2** starts somewhere the lesson has not traced. Start: A holds the line UC (it loaded the line and never stored to it), B is Invalid, memory holds M0.
+
+1. B loads the line, and A keeps a copy.
+2. A overwrites the whole line with M1.
+3. B stores 4 bytes (M2); B holds no copy at this point.
+
+| Step | Transaction | Snoop and response | A | B | Memory | Owes memory |
+|---|---|---|---|---|---|---|
+| 1 |  |  |  |  |  |  |
+| 2 |  |  |  |  |  |  |
+| 3 |  |  |  |  |  |  |
+
+<details>
+<summary>Worked solution, run 2</summary>
+
+| Step | Transaction | Snoop and response | A | B | Memory | Owes memory |
+|---|---|---|---|---|---|---|
+| 1 | B: ReadShared | ReadShared snoop to A; A is Clean, so it need not send the data (the specification recommends it); CRRESP PassDirty=0, IsShared=1; B gets RRESP 10, then RACK | SC | SC | M0 | nobody (memory is current) |
+| 2 | A: MakeUnique, then the full-line store | MakeInvalid snoop to B, which drops its copy and sends no data; A gets RRESP 00 with no data, stores M1, RACK | UD | I | M0 | A |
+| 3 | B: ReadUnique, then the store | ReadUnique snoop to A; CRRESP DataTransfer=1, PassDirty=1, IsShared=0; B gets M1 with RRESP 01, merges its 4 bytes (M2), RACK | I | UD | M0 | B |
+
+Sources: Table C5-8, §C6.4 and Table C4-9 (step 1); §C4.7.1, Tables C5-1, C5-3 and C4-17 (step 2); Tables C5-9 and C4-11 (step 3).
+
+- **Step 2:** CleanUnique would also be legal, because A holds a copy, but MakeUnique is the transaction meant for a full-line store: it fetches nothing because every byte is about to be overwritten.
+- **Step 3:** this is one legal outcome. The interconnect may instead write M1 to memory itself and give B RRESP 00; B then takes UC, stores and ends UD, and memory holds M1 (§C6.4, Table C4-11). Either way exactly one party owes memory M2's update: B.
+
+</details>
+
+**Debug variant (run 1, step 3).** A buggy interconnect sends a **ReadOnce** snoop instead of ReadShared, and A answers IsShared=1. What state is each cache in, which rule is broken, and which line of the Make It Work checker reports it?
+
+<details>
+<summary>Answer</summary>
+
+A ReadOnce snoop requires no state change, so A may stay **UD** (§C1.4.2, Table C5-2), while B is told IsShared=1 and takes **SC**. A Unique line is now in two caches, which breaks "A line in a Unique state must only be in one cache" (§C1.2.3); it is also an illegal snoop choice, because a ReadShared request may be snooped only as ReadClean, ReadNotSharedDirty, ReadShared, ReadUnique or CleanInvalid (Table C5-2). In the checker, `unique_n == 1 && valid_n > 1` is true, so `check_line()` returns "a Unique copy coexists with another copy". The symptom in a real system comes later: A stores again silently (it believes it is Unique) and B keeps reading its stale SC copy.
+
+</details>
+
+### Design exercise: take the checker to CHI
+
+Adapt `coh_line_model` to a CHI system with two RN-Fs and one RN-I behind one HN-F. Write a short answer to each question before you open the solution.
+
+1. Which links do you monitor?
+2. Where does each node's new state come from?
+3. Why must the read-data check not assume that the data comes from the Home?
+4. What must the state enum and the rules add?
+
+<details>
+<summary>Worked answer</summary>
+
+1. **Every Request Node's link** (both RN-Fs and the RN-I, with their REQ, RSP, SNP and DAT channels), plus the HN-F's link to the SN-F, so the model sees memory writes. The RN-I is never snooped, but its writes change the golden value and its reads must return it.
+2. **From the response names.** The requester takes the state in the Resp field of its CompData (or of RespSepData and DataSepResp): CompData_SC means SC, and a `_PD` suffix means it now owes memory (§4.5.1). A snooped RN-F reports its state *after* the response: SnpResp_SC_Fwded_SC means it keeps SC and forwarded an SC copy (§4.5.3).
+3. **Because of DCT.** The snooped RN-F may send CompData straight to the requester (§1.7, §5.1.3); when it answers the Home with SnpRespFwded, which carries no data, the Home never sees the line. Check read data where it arrives, on the requester's DAT channel, whichever node sent it.
+4. **UCE and UDP** (§4.1). Both are Unique, so the single-writer rule counts them; UDP is Dirty, so the single-owner rule counts it. UCE holds no valid bytes and UDP only some, so the golden-value check needs a valid flag per byte. A UCE or UDP holder must never forward data directly to the requester, so a forwarded CompData from one is a bug.
+
+</details>
+
+### Debug challenge: the vanishing write
+
+A test runs a buffer through three steps: CPU0 writes the buffer (its lines end UD), then the DMA driver issues **MakeInvalid** on the buffer through the DMA's ACE-Lite port "to make sure the DMA sees fresh data", and the DMA reads it with ReadOnce. The DMA gets the values from before CPU0's writes, and the Make It Work checker reports "no cache is Dirty but memory is stale". Is the interconnect broken? What should the test or the software do instead?
+
+<details>
+<summary>Answer</summary>
+
+The interconnect is behaving legally. A MakeInvalid snoop removes the copy "but it is not required to provide any data, even if the cache line is dirty" (§C1.4.4), so CPU0's dirty data is discarded and memory keeps the old values. The checker is right to flag it: after the MakeInvalid no cache owes the update, yet memory differs from the golden value. The software bug is using an invalidate where a clean was needed: use **CleanInvalid** (dirty data is written back, then the copies are removed) or **CleanShared** (written back, copies kept), or simply let the DMA's ReadOnce be snooped. If a test really intends to discard data with MakeInvalid, it must update the golden value to say so.
+
+</details>
+
+### Interview practice
+
+Try [the ACE snoop-flow question in the interview bank](/interview-prep#q-amba-ace-snoop-flow) aloud, then continue with the clinic in [B-AMBA-F3](/curriculum/T3_Advanced/B-AMBA-F3_Interview_Debug_Clinic/index).
+
+## References & Next Topics
+
+**Primary sources**
+- Arm IHI0022E, AMBA AXI and ACE Protocol Specification, Part C (ACE and ACE-Lite): §C1.1 coherency overview (§C1.1.2 usage cases); §C1.2.3 cache state model, cache state rules and Table C1-2; §C1.3.1 to §C1.3.4 signals, channels, acknowledges and channel usage examples (Tables C1-3 to C1-5); §C1.4.2 to §C1.4.7 transaction groups; §C1.6.1 domains; §C3.1 (Table C3-2 domains, Table C3-7 read encodings, §C3.1.5 line size, Table C3-10); §C3.2 read response (Tables C3-15, C3-16); §C3.3 RACK; §C3.5 WACK; §C3.6 snoop address channel (Table C3-20 ACSNOOP encodings); §C3.7 snoop response (Table C3-22); §C3.9 snoop channel dependencies; §C4.2 snoop filtering; §C4.3 state changes (§C4.3.2 coherent store); §C4.5.3 to §C4.5.6 ReadClean, ReadNotSharedDirty, ReadShared and ReadUnique (Tables C4-9 and C4-11); Tables C4-13, C4-17 and C4-24; §C4.6.1 CleanUnique; §C4.7.1 MakeUnique; §C5.1 (Table C5-1 mapping, §C5.1.1 permitted snoops, Table C5-2 alternatives); §C5.2 (Tables C5-3, C5-4, C5-6; §C5.2.3 memory update in progress; §C5.2.5 non-blocking requirements); §C5.3 (Tables C5-8 and C5-9); §C6.2.1 read and write acknowledge; §C6.4 interconnect responses (Table C6-2); §C6.5.3 permission to update main memory; §C6.6.1 interconnect non-blocking requirements; §C11.1 ACE-Lite.
+- Arm IHI0022H.c (2021) moves ACE to Part D (Chapter D1 "About ACE", with the cache state model in §D1.2.3) and, from H.b, uses Manager and Subordinate; its change history dates Issue D (the first AXI and ACE release) to 28 October 2011. Section numbers on this page are Issue E numbers.
+- Arm IHI0050E.b, AMBA 5 CHI Architecture Specification (2021): change history; §1.1.2 layers (Table 1-1); §1.2 topology; §1.3 terminology; §1.5 and §1.5.1 coherence and the 64-byte line; §1.5.2 cache state model; §1.6 node types; §1.7 DMT, DCT, DWT; §2.11 Request Retry; §4.1 cache line states; §4.4 snoop selection (Table 4-24); §4.5.1 completion response; §4.5.3 snoop response; §4.5.4 miscellaneous responses (CompAck); §4.11.1 snoop handling at an RN-F; §5.1.3 read with DCT (Figure 5-4); §8.1.1 DVM flow; §13.4 channels (Table 13-1) and §13.4.1 channel dependencies; §13.9.3 snoop flit (Table 13-8); §13.9.4 data flit; §14.2.1 L-Credit flow control.
+- IEEE 1800-2023, SystemVerilog: §16.6 Boolean expressions in concurrent assertions; §16.14 where concurrent assertions may appear; §8 classes; §7.8 associative arrays.
+- IEEE 1800.2-2020, UVM: Annex B.5.22 `` `uvm_analysis_imp_decl ``.
+
+**Prerequisites:** [B-AXI-3: AXI Transaction Ordering & IDs](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index) and [B-AXI-6: AXI Verification & Performance](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index).
+
+**Related**
+- [B-AXI-1 AXI4 Channel Architecture](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index): a useful refresher on the five channels and the VALID/READY handshake that ACE extends.
+- [B-AXI-4 AXI Expert Features: Cache, Prot, QoS and Atomics](/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index): AxCACHE memory types and exclusive accesses.
+- [B-AMBA-1 Protocol Families and Tradeoffs](/curriculum/T3_Advanced/B-AMBA-1_Protocol_Families_and_Tradeoffs/index): where ACE and CHI sit in the AMBA family.
+- [A-UVM-6 Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): the scoreboard and predictor patterns behind the coherency checker.
+- [I-UVM-2B TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index): analysis ports and imps, including `` `uvm_analysis_imp_decl ``.
+- [E-INT-1 Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index): proving the coherency invariants on a small abstraction.
+- [E-SOC-1 SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): coherency in a full SoC plan.
+- [B-AMBA-F3 AMBA Interview and Debug Clinic](/curriculum/T3_Advanced/B-AMBA-F3_Interview_Debug_Clinic/index): practise these ideas under interview conditions.
+
+<NextLesson />

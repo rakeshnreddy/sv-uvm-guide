@@ -4,9 +4,9 @@ import type { LabManifest } from "@/lib/lab-manifest";
 export const GENERATED_LAB_MANIFESTS = [
   {
     "id": "ahb-axi-bridge-debug",
-    "version": "1",
+    "version": "2",
     "title": "AHB-to-AXI Bridge Debug",
-    "description": "Debug burst translation in a buggy AHB-to-AXI bridge: split long AHB INCR bursts at the AXI4 256-transfer limit, check WLAST per AXI burst, and flag AHB stimulus that crosses 1KB.",
+    "description": "Debug burst translation in a buggy AHB-to-AXI bridge: split long AHB INCR bursts at the AXI4 256-transfer limit, check WLAST per AXI burst when W can arrive before AW, keep split addresses contiguous, and flag AHB stimulus that crosses 1KB.",
     "owningModule": "B-AMBA-F1",
     "routeSlug": "ahb-axi-bridge-debug",
     "status": "available",
@@ -18,26 +18,34 @@ export const GENERATED_LAB_MANIFESTS = [
     "steps": [
       {
         "id": "1",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
         "title": "Step 1: Reproduce the Split Bug",
-        "instructions": "Run `testbench.sv` and inspect the AXI AW log for the `long_incr_bytes` request. The bridge sends a 300-transfer AHB INCR as one AXI burst: AWLEN wraps to 43, but WLAST arrives on transfer 300.",
+        "instructions": "Compile `bridge_split_checker.sv` and `testbench.sv` together (top module `tb_top`) and run. Inspect the AXI AW log for the `long_incr_bytes` request: the bridge sends a 300-transfer AHB INCR as one AXI burst, AWLEN wraps to 43, but WLAST arrives on transfer 300. With the checker still unwritten, the run ends in `LAB INCOMPLETE`.",
         "starterCode": ""
       },
       {
         "id": "2",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
         "title": "Step 2: Complete the Checker",
-        "instructions": "Open `bridge_split_checker.sv` and implement the AHB 1KB input check, per-burst WLAST accounting, the first split length, and total W transfer accounting.",
+        "instructions": "Open `bridge_split_checker.sv` and implement the five TODOs: the AHB 1KB input check, per-burst WLAST accounting with in-order queues (W may arrive before its AW), the first split length, total W accounting, and AXI address continuity. Rerun: the long requests must fail, and you must be able to say why the total count does not.",
         "starterCode": ""
       },
       {
         "id": "3",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
         "title": "Step 3: Fix the Split Function",
-        "instructions": "Replace the body of `choose_buggy_burst_beats()` with the 256-transfer cap from `solution.sv`, then rerun the lab.",
+        "instructions": "Replace the body of `choose_buggy_burst_beats()` with the 256-transfer cap shown under \"Expected Fix\" in the README, then rerun. Every request must now end in `LAB PASS`, and `+define+ILLEGAL_AHB_INPUT` must fail only on the illegal-stimulus check.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 4: Stress the Handshakes",
+        "instructions": "Rerun the fixed bridge with `+define+AXI_SLAVE_WAITS_FOR_W`, where the AXI slave raises AWREADY only after it has seen WVALID and stalls WREADY at random. The run must still pass. Then answer the README's debug question on why the bridge's W channel must not wait for AWREADY.",
         "starterCode": ""
       }
     ],
@@ -73,7 +81,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "id": "ahb-checker-lab",
     "version": "1",
     "title": "Building an AHB-Lite Protocol Monitor & Checker",
-    "description": "Build a passive pipelined AHB-Lite monitor and separate protocol checks from environment watchdog policy.",
+    "description": "Build a passive pipelined AHB-Lite monitor and a protocol checker, separate protocol rules from a testbench watchdog, triage a pre-broken slave, and prove the checks on fully pipelined traffic with a master mutant.",
     "owningModule": "B-AHB-3",
     "routeSlug": "ahb-checker-lab",
     "moduleHref": "/curriculum/T3_Advanced/B-AHB-3_AHB_Verification/index",
@@ -81,7 +89,8 @@ export const GENERATED_LAB_MANIFESTS = [
     "labPrerequisites": [],
     "modulePrerequisites": [
       "B-AHB-1",
-      "B-AHB-2"
+      "B-AHB-2",
+      "I-SV-4A"
     ],
     "steps": [
       {
@@ -89,7 +98,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Reconstruct pipelined transfers",
-        "instructions": "Complete `ahb_monitor.sv` so address/control and data phases remain correctly paired across wait states.",
+        "instructions": "Complete `ahb_monitor.sv` so each accepted address phase (HREADY high, NONSEQ or SEQ) is paired with the data phase that completes at a later edge with HREADY high, counting wait states. Then uncomment the monitor instance in `tb_top` (testbench.sv).",
         "starterCode": ""
       },
       {
@@ -97,7 +106,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Add protocol assertions",
-        "instructions": "Complete `ahb_checker.sv` with stability and two-cycle ERROR checks; keep the HREADY timeout labeled as an environment watchdog.",
+        "instructions": "Complete `ahb_checker.sv`: the hold rules with their wait-state and cancel-after-ERROR exceptions, both directions of the two-cycle ERROR, the OKAY-during-waits rule, the HREADY watchdog labelled as testbench policy, and cover properties on the antecedents. Then uncomment the bind directive in `tb_top`.",
         "starterCode": ""
       },
       {
@@ -105,7 +114,15 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Triage the broken scenario",
-        "instructions": "Run `testbench.sv` in broken mode and identify each failure without treating bounded slave latency as a protocol rule.",
+        "instructions": "Set `BROKEN_MODE` to 1 at the top of `testbench.sv` and rerun. Name the check that fires for each injected slave bug and the time it fires, without treating bounded slave latency as a protocol rule.",
+        "starterCode": ""
+      },
+      {
+        "id": "pipelined",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Prove the checks on pipelined traffic",
+        "instructions": "Set `PIPELINED` to 1 (BROKEN_MODE back to 0) and confirm that every cover property is hit and nothing fails. Then set `MASTER_BUG` to 1 as well and find the assertion that names the master's illegal address change.",
         "starterCode": ""
       }
     ],
@@ -130,9 +147,9 @@ export const GENERATED_LAB_MANIFESTS = [
       },
       {
         "path": "testbench.sv",
-        "role": "reference",
+        "role": "starter",
         "language": "systemverilog",
-        "editable": false
+        "editable": true
       },
       {
         "path": "solution.sv",
@@ -271,9 +288,10 @@ export const GENERATED_LAB_MANIFESTS = [
     "id": "axi-deadlock-hunt-lab",
     "version": "1",
     "title": "AXI Deadlock Hunt: Channel Dependency Analysis",
-    "description": "Analyze a waveform to identify a subtle cyclic channel-dependency deadlock between an AXI master and slave, then write SVA protocol assertions to catch and prevent it.",
+    "description": "Trace a channel-dependency deadlock from a signal log, classify each wait as a protocol violation or a legal policy, write protocol checks plus labelled service watchdogs, then prove the fixed master completes.",
     "owningModule": "B-AXI-5",
     "routeSlug": "axi-deadlock-hunt-lab",
+    "moduleHref": "/curriculum/T3_Advanced/B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index",
     "status": "available",
     "labPrerequisites": [],
     "modulePrerequisites": [],
@@ -283,7 +301,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 1: Run and Observe",
-        "instructions": "Run testbench.sv. The simulation hangs after the master asserts AWVALID. Examine which signals are high/low when the deadlock occurs.",
+        "instructions": "Compile testbench.sv with axi_deadlock_checker.sv in a local SystemVerilog simulator and run it with no plusarg. The write and the read never complete; the run stops at the 2000 ns TIMEOUT watchdog. Record which VALID and READY signals are HIGH and LOW in the signal log while it is stuck.",
         "starterCode": ""
       },
       {
@@ -291,7 +309,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 2: Analyze the Dependency",
-        "instructions": "Identify what the master waits for (AWREADY) and what the slave waits for (WVALID). Trace the circular dependency and explain why the read also hangs.",
+        "instructions": "Read the master stimulus and the strict_slave in testbench.sv. Draw the wait-for graph: what the master's WVALID waits for, what the slave's AWREADY waits for, and why the read hangs too. Classify each wait as a protocol violation or a legal policy, and explain why the slave's AWREADY is driven from a register.",
         "starterCode": ""
       },
       {
@@ -299,7 +317,15 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 3: Complete Protocol Checks and Service Watchdogs",
-        "instructions": "Edit axi_deadlock_checker.sv. Add separate AW, W, AR, B, and R VALID/payload stability properties, check that BVALID follows completed address and final-data handshakes, then add the explicitly optional AW/W/AR service-bound watchdogs used by this lab.",
+        "instructions": "Edit axi_deadlock_checker.sv. Add separate AW, W, AR, B, and R VALID/payload stability properties, count AW, WLAST and B handshakes to check that BVALID follows both the AW and the WLAST handshake, then add the gated AW/W/AR service-bound checks, labelled as an integration contract and reporting once per stall.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 4: Fix the Master and Prove Progress",
+        "instructions": "Read the +FIX_MASTER branch of the master stimulus, predict the edge of every handshake, then rerun with +FIX_MASTER. The write and the read must both complete against the same strict slave, with zero failures from your checker while the service bounds stay enabled.",
         "starterCode": ""
       }
     ],
@@ -333,41 +359,61 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "axi-scoreboard-lab",
-    "version": "1",
+    "version": "2",
     "title": "Building an AXI Out-of-Order Scoreboard",
-    "description": "Build an AXI monitor and scoreboard that handle out-of-order responses and multiple outstanding same-ID bursts.",
+    "description": "Build an ID-aware AXI read monitor and per-ID scoreboard, prove them against a reordering, interleaving, stalling responder with error injection and four mutants, then pair AXI4 write data with its addresses.",
     "owningModule": "B-AXI-6",
     "routeSlug": "axi-scoreboard-lab",
     "moduleHref": "/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index",
     "status": "available",
-    "labPrerequisites": [],
+    "labPrerequisites": [
+      "scoreboard-reference-model"
+    ],
     "modulePrerequisites": [
       "B-AXI-1",
-      "B-AXI-3"
+      "B-AXI-3",
+      "A-UVM-6",
+      "A-UVM-7"
     ],
     "steps": [
       {
         "id": "monitor",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Reconstruct read bursts",
-        "instructions": "Complete `axi_monitor.sv` so it queues requests per ID and captures every accepted response beat through RLAST.",
+        "title": "Rebuild reads with one queue per ID",
+        "instructions": "Complete `on_ar()` and `on_r_beat()` in `axi_monitor.sv`: push each AR into `open_q[ARID]`, publish a separate copy on `req_ap`, append every R beat to the oldest open read of its RID, check RLAST on beat ARLEN + 1, and publish on RLAST. Report `UNEXPECTED_R` for an RID with nothing open; never flag SLVERR or DECERR.",
         "starterCode": ""
       },
       {
         "id": "scoreboard",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Match responses by ID",
-        "instructions": "Complete `axi_scoreboard.sv` so different IDs may finish out of order while each individual ID remains ordered.",
+        "title": "Match by ID and account at the end",
+        "instructions": "Complete `write_act()` and `check_phase()` in `axi_scoreboard.sv`: pop the oldest expected read for the ID, compare with `diff()`, count matches and mismatches, and report every read still expected in `check_phase`.",
         "starterCode": ""
       },
       {
         "id": "simulate",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Run clean across seeds",
+        "instructions": "Compile `testbench.sv` with top `tb_top` and run with no plusargs on several seeds. Each run must end with `SCB_SUMMARY matches=40 mismatches=0 pending=0` and `UVM_ERROR :    0`, although the responder reorders, interleaves, stalls and returns SLVERR.",
+        "starterCode": ""
+      },
+      {
+        "id": "mutants",
         "version": "1",
         "completion": "self_attested",
-        "title": "Exercise reordering",
-        "instructions": "Run `testbench.sv` and confirm ID 2 may finish before ID 1 without hiding beat-count, response-code, or RLAST failures.",
+        "title": "Prove the checks with four mutants",
+        "instructions": "Run with `+MUTANT=SAME_ID_SWAP`, `+MUTANT=DROP_RLAST`, `+MUTANT=EXTRA_BEAT` and `+MUTANT=WRONG_RID`. Each run must end with at least one UVM_ERROR from the component the README's mutant table names.",
+        "starterCode": ""
+      },
+      {
+        "id": "write-path",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Stretch: pair AXI4 write data with its addresses",
+        "instructions": "Complete `axi_wr_pairer` in `write_pairing.sv` (W bursts pair with AWs in order, W may arrive first, WLAST is checked at pairing, B pops the oldest write per AWID), then run `write_pairing_tb.sv` with top `tb_wr_pairing` and expect `PASS=4 FAIL=0`.",
         "starterCode": ""
       }
     ],
@@ -391,13 +437,31 @@ export const GENERATED_LAB_MANIFESTS = [
         "editable": true
       },
       {
+        "path": "write_pairing.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
         "path": "testbench.sv",
         "role": "reference",
         "language": "systemverilog",
         "editable": false
       },
       {
+        "path": "write_pairing_tb.sv",
+        "role": "reference",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
         "path": "solution.sv",
+        "role": "solution",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "write_pairing_solution.sv",
         "role": "solution",
         "language": "systemverilog",
         "editable": false

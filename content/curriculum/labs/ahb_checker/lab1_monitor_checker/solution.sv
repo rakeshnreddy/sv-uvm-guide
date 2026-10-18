@@ -2,12 +2,16 @@
 // AHB-Lite Monitor & Checker — SOLUTION
 // ============================================================================
 
-// Pull in the lab-owned interface, transaction, DUT/BFM, and starter module
-// declarations so this reference is a compileable smoke-test translation unit.
+// Pull in the lab-owned interface, DUT, BFM and tb_top, so this reference is
+// one compilable translation unit. The bind directives at the end of this
+// file hook the _solution modules into tb_top and into the slave, so running
+// this file prints [MON] lines and evaluates every property.
+// The starter files ahb_monitor.sv and ahb_checker.sv are deliberately NOT
+// included: their modules are never instantiated here, so they would become
+// extra top-level modules, and ahb_monitor's interface port would be left
+// unconnected, which IEEE 1800-2023 23.3.3.4 forbids.
+// Set the switches at the top of testbench.sv (or pass +define+NAME=1).
 `include "testbench.sv"
-`include "ahb_monitor.sv"
-`include "ahb_checker.sv"
-// This file contains the completed monitor and checker implementations.
 // ============================================================================
 
 // ─────────────────────────────────────────────────────────────
@@ -90,12 +94,6 @@ module ahb_checker_solution (
   localparam logic [1:0] IDLE = 2'b00, BUSY = 2'b01, NONSEQ = 2'b10, SEQ = 2'b11;
   localparam logic [2:0] INCR = 3'b001;
 
-  // 0 at the first edge after reset, so $past() never looks inside reset.
-  logic past_ok;
-  always_ff @(posedge HCLK or negedge HRESETn)
-    if (!HRESETn) past_ok <= 1'b0;
-    else          past_ok <= 1'b1;
-
   // ── Protocol: wait states ──────────────────────────────────
 
   // 1. [3.6.2, 3.5.2] A waited NONSEQ/SEQ holds its address. A waited IDLE
@@ -146,10 +144,12 @@ module ahb_checker_solution (
 
   // 5. [5.1.3, Table 5-2] An ERROR completion needs its first cycle. This is
   //    the property that catches a one-cycle ERROR (Bug B): property 4 never
-  //    starts on it, because its antecedent needs HREADY low.
+  //    starts on it, because its antecedent needs HREADY low. No reset guard
+  //    is needed: slaves hold HREADYOUT high during reset (7.1.2), so the edge
+  //    before the first edge after reset is never a first ERROR cycle.
   property p_error_needs_first_cycle;
     @(posedge HCLK) disable iff (!HRESETn)
-      (past_ok && HRESP && HREADY) |-> $past(HRESP && !HREADY);
+      (HRESP && HREADY) |-> $past(HRESP && !HREADY);
   endproperty
   a_error_needs_first_cycle: assert property (p_error_needs_first_cycle)
     else $error("[AHB-CHK] One-cycle ERROR: no first cycle with HREADY low at time %0t", $time);
@@ -177,4 +177,40 @@ module ahb_checker_solution (
   a_hready_timeout: assert property (p_hready_timeout)
     else $warning("[AHB-WDOG] HREADY low for more than %0d cycles at time %0t (testbench budget, not a protocol rule)", MAX_WAIT, $time);
 
+  // ── Coverage: did the properties above actually start? (16.14.3) ──
+  // With PIPELINED=0 the first two are never hit: properties 1 to 3 then
+  // pass vacuously. With PIPELINED=1 all three are hit.
+  c_waited_nonseq_seq: cover property (@(posedge HCLK) disable iff (!HRESETn)
+    !HREADY && HTRANS inside {NONSEQ, SEQ});
+  c_waited_busy: cover property (@(posedge HCLK) disable iff (!HRESETn)
+    !HREADY && HTRANS == BUSY);
+  c_error_cancel: cover property (@(posedge HCLK) disable iff (!HRESETn)
+    (HRESP && !HREADY && HTRANS inside {NONSEQ, SEQ}) ##1
+    (HRESP && HREADY && HTRANS == IDLE));
+
 endmodule
+
+
+// ─────────────────────────────────────────────────────────────
+// SOLUTION hookups: the monitor in tb_top, the checker inside the slave
+// ─────────────────────────────────────────────────────────────
+// Port expressions in a bind are resolved inside the target module
+// (IEEE 1800-2023 23.11), so bus, HCLK and HRESETn below are tb_top's and
+// the slave's own names.
+bind tb_top ahb_monitor_solution u_monitor_solution (
+  .bus    (bus),
+  .HCLK   (HCLK),
+  .HRESETn(HRESETn)
+);
+
+bind ahb_sram_slave ahb_checker_solution u_checker_solution (
+  .HCLK   (HCLK),
+  .HRESETn(HRESETn),
+  .HADDR  (bus.HADDR),
+  .HTRANS (bus.HTRANS),
+  .HWRITE (bus.HWRITE),
+  .HSIZE  (bus.HSIZE),
+  .HBURST (bus.HBURST),
+  .HREADY (bus.HREADY),
+  .HRESP  (bus.HRESP)
+);

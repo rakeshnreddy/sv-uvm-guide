@@ -1,25 +1,43 @@
 // ============================================================================
-// AHB-Lite Protocol Monitor & Checker Lab — Testbench
+// AHB-Lite Protocol Monitor & Checker Lab - Testbench
 // ============================================================================
 // This file provides the complete AHB-Lite testbench infrastructure:
-//   - AHB interface definition
-//   - A simple SRAM slave (with optional BROKEN_MODE)
-//   - A master BFM that drives test sequences and checks read-back data
-//   - A write-count check (white-box scoreboard) that reports at $finish
-//   - A stub environment where you will wire in your monitor and checker
+//   - the AHB interface, with a clocking block for the master BFM
+//   - a simple SRAM slave (with optional injected bugs)
+//   - a master BFM that runs a traffic plan and checks read-back data
+//   - a write-count check (white-box scoreboard) that reports at the end
+//   - the place in tb_top where you hook up your monitor and checker
 //
-// Your tasks are in ahb_monitor.sv and ahb_checker.sv.
+// Your tasks are in ahb_monitor.sv and ahb_checker.sv. You may edit this file
+// to change the lab switches below and to add the hookups in tb_top.
+//
+// Section numbers refer to Arm IHI0033B.b (AMBA 5 AHB, AHB5 and AHB-Lite).
+// Single-slave simplification: there is no decoder and no HSEL, and the slave's
+// HREADYOUT drives HREADY directly. A real AHB-Lite slave also samples HSELx,
+// only when HREADY is high (4.2).
 // ============================================================================
 
+// ----------------------------------------------------------------------------
+// Lab switches. Change a 0 to 1 here in the editor, or pass +define+NAME=1.
+//   BROKEN_MODE  the slave has two injected bugs (Part 3)
+//   PIPELINED    back-to-back traffic with a BUSY, waits and a cancel (Part 4)
+//   MASTER_BUG   with PIPELINED=1: the master moves HADDR during a wait (Part 4)
+// ----------------------------------------------------------------------------
 `ifndef BROKEN_MODE
   `define BROKEN_MODE 0
+`endif
+`ifndef PIPELINED
+  `define PIPELINED 0
+`endif
+`ifndef MASTER_BUG
+  `define MASTER_BUG 0
 `endif
 
 `timescale 1ns/1ps
 
-// ─────────────────────────────────────────────────────────────
-// AHB-Lite Interface
-// ─────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------------
+// AHB-Lite interface
+// ----------------------------------------------------------------------------
 interface ahb_if (input logic HCLK, input logic HRESETn);
   logic [31:0] HADDR;
   logic        HWRITE;
@@ -31,16 +49,21 @@ interface ahb_if (input logic HCLK, input logic HRESETn);
   logic        HREADY;
   logic        HRESP;
 
-  // Transfer type encodings
+  // Transfer type encodings (Table 3-1)
   localparam IDLE   = 2'b00;
   localparam BUSY   = 2'b01;
   localparam NONSEQ = 2'b10;
   localparam SEQ    = 2'b11;
 
-  modport master (
-    output HADDR, HWRITE, HTRANS, HSIZE, HBURST, HWDATA,
-    input  HRDATA, HREADY, HRESP
-  );
+  // The master BFM samples just before each rising edge and drives just after
+  // it, so it never races the slave's flip-flops.
+  clocking mst_cb @(posedge HCLK);
+    default input #1step output #0;
+    output HADDR, HWRITE, HTRANS, HSIZE, HBURST, HWDATA;
+    input  HRDATA, HREADY, HRESP, HRESETn;
+  endclocking
+
+  modport master (clocking mst_cb);
 
   modport slave (
     input  HADDR, HWRITE, HTRANS, HSIZE, HBURST, HWDATA,
@@ -54,30 +77,10 @@ interface ahb_if (input logic HCLK, input logic HRESETn);
 endinterface
 
 
-// ─────────────────────────────────────────────────────────────
-// AHB Transaction Class
-// ─────────────────────────────────────────────────────────────
-class ahb_transaction;
-  bit [31:0] addr;
-  bit        write;
-  bit [2:0]  size;
-  bit [2:0]  burst;
-  bit [1:0]  trans;
-  bit [31:0] data;
-  bit        resp;
-  int unsigned wait_cycles;
-
-  function string to_string();
-    return $sformatf("%s addr=0x%08h data=0x%08h size=%0d waits=%0d resp=%s",
-      write ? "WR" : "RD", addr, data, size, wait_cycles,
-      resp ? "ERROR" : "OKAY");
-  endfunction
-endclass
-
-
-// ─────────────────────────────────────────────────────────────
-// Simple SRAM Slave (with optional bugs for Part 3)
-// ─────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------------
+// Simple SRAM slave (with optional bugs for Part 3)
+// ----------------------------------------------------------------------------
+// Word accesses only: the slave writes and reads whole 32-bit words.
 module ahb_sram_slave #(
   parameter DEPTH = 256,
   parameter BROKEN = `BROKEN_MODE
@@ -111,13 +114,12 @@ module ahb_sram_slave #(
                            (bus.HADDR >= (DEPTH * 4));
   wire addr_out_of_range = (addr_reg >= (DEPTH * 4));
 
-  // Simulate occasional wait states
+  // One OKAY wait state on every 4th accepted transfer
   always_ff @(posedge HCLK or negedge HRESETn) begin
     if (!HRESETn) begin
       wait_counter   <= '0;
       inserting_wait <= 1'b0;
     end else if (bus.HTRANS inside {2'b10, 2'b11} && bus.HREADY) begin
-      // Insert 1 wait state for every 4th transfer
       if (wait_counter == 3) begin
         inserting_wait <= 1'b1;
         wait_counter   <= '0;
@@ -126,11 +128,11 @@ module ahb_sram_slave #(
         wait_counter   <= wait_counter + 1;
       end
     end else if (inserting_wait) begin
-      inserting_wait <= 1'b0;  // Release after one cycle
+      inserting_wait <= 1'b0;  // release after one cycle
     end
   end
 
-  // Address phase capture
+  // Address phase capture: only at an edge with HREADY high (4.2)
   always_ff @(posedge HCLK or negedge HRESETn) begin
     if (!HRESETn) begin
       addr_reg   <= '0;
@@ -145,7 +147,7 @@ module ahb_sram_slave #(
     end
   end
 
-  // Data phase — write to memory. An out-of-range write gets ERROR and must
+  // Data phase: write to memory. An out-of-range write gets ERROR and must
   // not touch memory (addr_reg[9:2] would alias it onto a real location).
   generate
     if (BROKEN) begin : broken_write
@@ -172,7 +174,7 @@ module ahb_sram_slave #(
     end
   endgenerate
 
-  // Data phase — read from memory
+  // Data phase: read from memory
   assign bus.HRDATA = mem[addr_reg[9:2]];
 
   // Error response for out-of-range addresses
@@ -193,39 +195,46 @@ module ahb_sram_slave #(
       // Two-cycle ERROR (IHI0033B.b 5.1.3, Table 5-2): HRESP high with HREADY
       // low, then HRESP high with HREADY high. The decision is made at the
       // edge that accepts the address phase, so the ERROR belongs to that
-      // transfer's data phase and not to the IDLE that follows it.
+      // transfer's data phase and not to the transfer that follows it.
       always_ff @(posedge HCLK or negedge HRESETn) begin
         if (!HRESETn) begin
           resp_state <= S_OKAY;
           bus.HRESP  <= 1'b0;
-        end else case (resp_state)
-          S_OKAY: begin
-            if (addr_phase_err) begin
-              resp_state <= S_ERR1;
-              bus.HRESP  <= 1'b1;
-            end else begin
-              bus.HRESP <= 1'b0;
+        end else begin
+          case (resp_state)
+            S_OKAY: begin
+              if (addr_phase_err) begin
+                resp_state <= S_ERR1;
+                bus.HRESP  <= 1'b1;
+              end else begin
+                bus.HRESP <= 1'b0;
+              end
             end
-          end
-          S_ERR1: begin
-            resp_state <= S_ERR2;
-            bus.HRESP  <= 1'b1;
-          end
-          S_ERR2: begin
-            // A transfer accepted at the edge that completes this ERROR may
-            // itself be out of range.
-            resp_state <= addr_phase_err ? S_ERR1 : S_OKAY;
-            bus.HRESP  <= addr_phase_err;
-          end
-          default: begin
-            resp_state <= S_OKAY;
-            bus.HRESP  <= 1'b0;
-          end
-        endcase
+            S_ERR1: begin
+              resp_state <= S_ERR2;
+              bus.HRESP  <= 1'b1;
+            end
+            S_ERR2: begin
+              // A transfer accepted at the edge that completes this ERROR may
+              // itself be out of range.
+              if (addr_phase_err) begin
+                resp_state <= S_ERR1;
+                bus.HRESP  <= 1'b1;
+              end else begin
+                resp_state <= S_OKAY;
+                bus.HRESP  <= 1'b0;
+              end
+            end
+            default: begin
+              resp_state <= S_OKAY;
+              bus.HRESP  <= 1'b0;
+            end
+          endcase
+        end
       end
 
       // HREADY: low during an inserted wait state (with OKAY) and in the
-      // first ERROR cycle
+      // first ERROR cycle; high during reset (7.1.2)
       assign bus.HREADY = !inserting_wait && (resp_state != S_ERR1);
     end
   endgenerate
@@ -233,114 +242,164 @@ module ahb_sram_slave #(
 endmodule
 
 
-// ─────────────────────────────────────────────────────────────
-// Master BFM — drives test sequences
-// ─────────────────────────────────────────────────────────────
-module ahb_master_bfm (
+// ----------------------------------------------------------------------------
+// Master BFM: runs a traffic plan through the clocking block mst_cb
+// ----------------------------------------------------------------------------
+module ahb_master_bfm #(
+  parameter bit PIPELINED  = `PIPELINED,
+  parameter bit MASTER_BUG = `MASTER_BUG
+)(
   ahb_if.master bus,
   input logic   HCLK,
   input logic   HRESETn
 );
+  localparam logic [1:0] IDLE = 2'b00, BUSY = 2'b01, NONSEQ = 2'b10, SEQ = 2'b11;
+  localparam logic [2:0] SINGLE = 3'b000, INCR4 = 3'b011;
+  localparam logic [2:0] WORD = 3'b010;
 
-  task automatic single_write(input logic [31:0] addr, input logic [31:0] data);
-    @(posedge HCLK);
-    wait (bus.HREADY);
-    bus.HADDR  <= addr;
-    bus.HWRITE <= 1'b1;
-    bus.HTRANS <= 2'b10;  // NONSEQ
-    bus.HSIZE  <= 3'b010; // 32-bit
-    bus.HBURST <= 3'b000; // SINGLE
-    @(posedge HCLK);
-    wait (bus.HREADY);
-    bus.HWDATA <= data;
-    bus.HTRANS <= 2'b00;  // IDLE
-    @(posedge HCLK);
-    wait (bus.HREADY);
+  // One step of the plan: an address phase (or IDLE/BUSY) and its data.
+  // data is the write data for a write, and the expected read data for a read.
+  typedef struct {
+    logic [1:0]  trans;
+    logic [31:0] addr;
+    logic        write;
+    logic [2:0]  burst;
+    logic [31:0] data;
+  } step_t;
+  step_t plan[$];
+
+  int unsigned read_fails;
+
+  function automatic void add(logic [1:0] trans, logic [31:0] addr, logic write,
+                              logic [2:0] burst, logic [31:0] data = '0);
+    plan.push_back('{trans, addr, write, burst, data});
+  endfunction
+
+  task automatic drive_addr(step_t s);
+    bus.mst_cb.HTRANS <= s.trans;
+    bus.mst_cb.HADDR  <= s.addr;
+    bus.mst_cb.HWRITE <= s.write;
+    bus.mst_cb.HSIZE  <= WORD;
+    bus.mst_cb.HBURST <= s.burst;
   endtask
 
-  task automatic single_read(input logic [31:0] addr, output logic [31:0] data);
-    @(posedge HCLK);
-    wait (bus.HREADY);
-    bus.HADDR  <= addr;
-    bus.HWRITE <= 1'b0;
-    bus.HTRANS <= 2'b10;  // NONSEQ
-    bus.HSIZE  <= 3'b010; // 32-bit
-    bus.HBURST <= 3'b000; // SINGLE
-    @(posedge HCLK);
-    wait (bus.HREADY);
-    bus.HTRANS <= 2'b00;  // IDLE
-    @(posedge HCLK);
-    wait (bus.HREADY);
-    data = bus.HRDATA;
+  // Called at every edge with HREADY high: the data phase of plan[dp] ends here
+  task automatic complete(int dp);
+    if (dp < 0 || plan[dp].write) return;
+    if (bus.mst_cb.HRESP === 1'b1) begin
+      $display("  RD addr=0x%08h ERROR (no read data)", plan[dp].addr);
+    end else if (bus.mst_cb.HRDATA === plan[dp].data) begin
+      $display("  RD addr=0x%08h data=0x%08h PASS", plan[dp].addr, bus.mst_cb.HRDATA);
+    end else begin
+      read_fails++;
+      $error("  RD addr=0x%08h data=0x%08h FAIL (expected 0x%08h)",
+             plan[dp].addr, bus.mst_cb.HRDATA, plan[dp].data);
+    end
   endtask
 
-  // Test sequence
+  // Runs the plan. The next address phase is driven while the current data
+  // phase is still in progress (3.1); with IDLE steps in the plan this gives
+  // the simple non-overlapping traffic of Parts 1 to 3.
+  task automatic run_plan();
+    int unsigned i  = 0;    // plan[i] is on the address bus
+    int          dp = -1;   // plan[dp] is in its data phase (-1: none)
+    drive_addr(plan[0]);
+    while (i < plan.size()) begin
+      @(bus.mst_cb);
+      if (bus.mst_cb.HREADY === 1'b1) begin
+        complete(dp);
+        // plan[i] is accepted at this edge
+        dp = (plan[i].trans inside {NONSEQ, SEQ}) ? int'(i) : -1;
+        if (dp >= 0 && plan[i].write) bus.mst_cb.HWDATA <= plan[i].data;
+        i++;
+        if (i < plan.size()) drive_addr(plan[i]);
+        else                 bus.mst_cb.HTRANS <= IDLE;
+      end else if (bus.mst_cb.HRESP === 1'b1) begin
+        // First ERROR cycle: cancel what waits on the address bus by driving
+        // IDLE in the second ERROR cycle (3.5.2), and drop the rest of a burst.
+        bus.mst_cb.HTRANS <= IDLE;
+        while (i < plan.size() && plan[i].trans != NONSEQ) i++;
+        do @(bus.mst_cb); while (bus.mst_cb.HREADY !== 1'b1);
+        complete(dp);       // the ERROR transfer ends here
+        dp = -1;            // the IDLE accepted here starts no data phase
+        if (i < plan.size()) drive_addr(plan[i]);   // re-issue: this BFM's policy
+      end else if (MASTER_BUG && plan[i].trans inside {NONSEQ, SEQ}) begin
+        // MASTER BUG: changes the address of a waited NONSEQ/SEQ (breaks 3.6.2)
+        bus.mst_cb.HADDR <= plan[i].addr + 32'h100;
+      end
+      // otherwise an OKAY wait state: hold address, control and HWDATA (3.6, 6.1.1)
+    end
+    do @(bus.mst_cb); while (bus.mst_cb.HREADY !== 1'b1);   // the last data phase
+    complete(dp);
+  endtask
+
   initial begin
-    bus.HTRANS <= 2'b00;
-    bus.HADDR  <= '0;
-    bus.HWRITE <= 1'b0;
-    bus.HWDATA <= '0;
-    bus.HSIZE  <= 3'b010;
-    bus.HBURST <= 3'b000;
+    bus.mst_cb.HTRANS <= IDLE;          // IDLE during reset (7.1.2)
+    bus.mst_cb.HADDR  <= '0;
+    bus.mst_cb.HWRITE <= 1'b0;
+    bus.mst_cb.HWDATA <= '0;
+    bus.mst_cb.HSIZE  <= WORD;
+    bus.mst_cb.HBURST <= SINGLE;
 
-    wait (HRESETn);
-    repeat (3) @(posedge HCLK);
-
-    // ── Write 8 locations ──
-    $display("\n═══ Writing 8 locations ═══");
-    for (int i = 0; i < 8; i++) begin
-      single_write(i * 4, 32'hA000_0000 + i);
-      $display("  WR addr=0x%08h data=0x%08h", i*4, 32'hA000_0000 + i);
+    if (!PIPELINED) begin
+      // Parts 1 to 3: single transfers, each followed by an IDLE, so no
+      // address phase overlaps a data phase.
+      for (int k = 0; k < 8; k++) begin
+        add(NONSEQ, k * 4, 1'b1, SINGLE, 32'hA000_0000 + k);
+        add(IDLE,   k * 4, 1'b0, SINGLE);
+      end
+      for (int k = 0; k < 8; k++) begin
+        add(NONSEQ, k * 4, 1'b0, SINGLE, 32'hA000_0000 + k);
+        add(IDLE,   k * 4, 1'b0, SINGLE);
+      end
+      add(NONSEQ, 32'h0000_1000, 1'b1, SINGLE, 32'hDEAD_BEEF);   // out of range: ERROR
+      add(IDLE,   32'h0000_1000, 1'b0, SINGLE);
+      // 0x1000 would alias onto location 0 if the slave wrote it anyway
+      add(NONSEQ, 32'h0000_0000, 1'b0, SINGLE, 32'hA000_0000);
+      add(IDLE,   32'h0000_0000, 1'b0, SINGLE);
+    end else begin
+      // Part 4: back to back, an INCR4 write with a BUSY cycle, an INCR4 read,
+      // an ERROR write, and a read that the master cancels and re-issues.
+      add(NONSEQ, 32'h000, 1'b1, SINGLE, 32'hA000_0000);
+      add(NONSEQ, 32'h010, 1'b1, INCR4,  32'hB000_0010);
+      add(SEQ,    32'h014, 1'b1, INCR4,  32'hB000_0014);
+      add(SEQ,    32'h018, 1'b1, INCR4,  32'hB000_0018);
+      add(BUSY,   32'h01C, 1'b1, INCR4);              // BUSY carries the next address
+      add(SEQ,    32'h01C, 1'b1, INCR4,  32'hB000_001C);
+      add(NONSEQ, 32'h010, 1'b0, INCR4,  32'hB000_0010);
+      add(SEQ,    32'h014, 1'b0, INCR4,  32'hB000_0014);
+      add(SEQ,    32'h018, 1'b0, INCR4,  32'hB000_0018);
+      add(SEQ,    32'h01C, 1'b0, INCR4,  32'hB000_001C);
+      add(NONSEQ, 32'h0000_1000, 1'b1, SINGLE, 32'hDEAD_BEEF);   // out of range: ERROR
+      add(NONSEQ, 32'h000, 1'b0, SINGLE, 32'hA000_0000);  // cancelled, then re-issued
     end
 
-    // ── Read back and verify ──
-    $display("\n═══ Reading back 8 locations ═══");
-    for (int i = 0; i < 8; i++) begin
-      logic [31:0] rdata;
-      single_read(i * 4, rdata);
-      if (rdata === (32'hA000_0000 + i))
-        $display("  RD addr=0x%08h data=0x%08h ✓ PASS", i*4, rdata);
-      else
-        $error("  RD addr=0x%08h data=0x%08h ✗ FAIL (expected 0x%08h)", i*4, rdata, 32'hA000_0000 + i);
-    end
-
-    // ── Trigger out-of-range access (should get ERROR) ──
-    $display("\n═══ Out-of-range access (expect ERROR) ═══");
-    single_write(32'h0000_1000, 32'hDEAD_BEEF);
-
-    // ── The failed write must not have changed memory ──
-    // 0x1000 would alias onto location 0 if the slave wrote it anyway.
-    begin : readback_after_error
-      logic [31:0] rdata0;
-      single_read(32'h0000_0000, rdata0);
-      if (rdata0 === 32'hA000_0000)
-        $display("  RD addr=0x00000000 data=0x%08h ✓ PASS (the ERROR write changed nothing)", rdata0);
-      else
-        $error("  RD addr=0x00000000 data=0x%08h ✗ FAIL (expected 0xa0000000)", rdata0);
-    end
-
-    repeat (5) @(posedge HCLK);
-    $display("\n═══ Test complete ═══\n");
+    do @(bus.mst_cb); while (bus.mst_cb.HRESETn !== 1'b1);
+    $display("\n=== Running the %s traffic plan (%0d steps) ===",
+             PIPELINED ? "pipelined" : "single-transfer", plan.size());
+    run_plan();
+    $display("\n=== Test complete: %0d read check(s) failed ===\n", read_fails);
+    repeat (5) @(bus.mst_cb);
     $finish;
   end
 endmodule
 
 
-// ─────────────────────────────────────────────────────────────
-// Top-level Testbench
-// ─────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------------
+// Top-level testbench
+// ----------------------------------------------------------------------------
 module tb_top;
-  logic HCLK, HRESETn;
+  logic HCLK    = 1'b0;
+  logic HRESETn = 1'b0;
 
-  // Clock generation: 10ns period
-  initial HCLK = 0;
+  // Clock generation: 10 ns period, rising edges at 5, 15, 25, ... ns
   always #5 HCLK = ~HCLK;
 
-  // Reset
+  // Reset: released with a nonblocking assignment just after a rising edge,
+  // so no flip-flop sees it change at that edge (7.1.2)
   initial begin
-    HRESETn = 0;
     repeat (4) @(posedge HCLK);
-    HRESETn = 1;
+    HRESETn <= 1'b1;
   end
 
   // AHB interface
@@ -348,29 +407,30 @@ module tb_top;
 
   // DUT: SRAM slave
   ahb_sram_slave #(.DEPTH(256)) u_sram (
-    .bus     (bus),
+    .bus    (bus),
     .HCLK   (HCLK),
     .HRESETn(HRESETn)
   );
 
   // Master BFM
   ahb_master_bfm u_master (
-    .bus     (bus),
+    .bus    (bus),
     .HCLK   (HCLK),
     .HRESETn(HRESETn)
   );
 
-  // ──────────────────────────────────────────
+  // ------------------------------------------
   // TODO: Instantiate your ahb_monitor here
   //   ahb_monitor u_monitor (
-  //     .bus     (bus),
+  //     .bus    (bus),
   //     .HCLK   (HCLK),
   //     .HRESETn(HRESETn)
   //   );
-  // ──────────────────────────────────────────
+  // ------------------------------------------
 
-  // ──────────────────────────────────────────
-  // TODO: Bind your ahb_checker to the DUT
+  // ------------------------------------------
+  // TODO: Bind your ahb_checker to the DUT. A bind directive may sit inside
+  // a module; the port expressions are resolved inside ahb_sram_slave.
   //   bind ahb_sram_slave ahb_checker u_checker (
   //     .HCLK   (HCLK),
   //     .HRESETn(HRESETn),
@@ -382,15 +442,15 @@ module tb_top;
   //     .HREADY (bus.HREADY),
   //     .HRESP  (bus.HRESP)
   //   );
-  // ──────────────────────────────────────────
+  // ------------------------------------------
 
-  // ──────────────────────────────────────────
+  // ------------------------------------------
   // Write-count check (white-box scoreboard)
-  // ──────────────────────────────────────────
+  // ------------------------------------------
   // Each write transfer that completes with OKAY must cause exactly one
   // memory write. A slave that also writes during wait states (Bug A) is
-  // invisible to pin-level assertions, and the read-back above passes too:
-  // the master holds HWDATA valid through the wait states (IHI0033B.b 6.1.1),
+  // invisible to pin-level assertions, and the read-back passes too: the
+  // master holds HWDATA valid through the wait states (IHI0033B.b 6.1.1),
   // so the extra write stores the same value. It only shows up as extra
   // memory writes, which would corrupt a FIFO or a write-1-to-clear register.
   int unsigned okay_writes;   // write data phases that completed with OKAY

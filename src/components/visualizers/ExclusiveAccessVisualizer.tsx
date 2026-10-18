@@ -179,7 +179,7 @@ export default function ExclusiveAccessVisualizer() {
             {activePolicy === "single" ? (
               <p className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-sm text-foreground">
                 Implementation choice: a single shared monitor can fail an exclusive write that nobody interfered with. That is why A7.2.3 recommends one monitor per
-                ID, and why software must always be ready to retry.
+                ID, and why lock software usually retries.
               </p>
             ) : null}
           </div>

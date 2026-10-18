@@ -1,27 +1,82 @@
 [
   {
     "id": "b-ahb-2-1",
-    "question": "What is a classic AHB wait-state deadlock?",
-    "answer": "A slave holds HREADYOUT low while waiting for address/control to change, but the master is required to hold those signals stable until the global HREADY returns high."
-  },
-  {
-    "id": "b-ahb-2-2",
-    "question": "Why is combinational HREADY fanout risky?",
-    "answer": "Large HREADY paths can create timing closure problems and subtle loops through decode, muxing, and slave ready generation."
+    "question": "How can one AHB slave hang the bus?",
+    "answer": "It holds HREADYOUT low with no bound, so HREADY stays low and no transfer on that bus completes. In general every slave must have a predetermined maximum number of wait states (IHI0033B.b §5.1.2 Note); a timeout watchdog is integration policy, not a protocol rule."
   },
   {
     "id": "b-ahb-2-3",
-    "question": "What goes wrong when a slave treats BUSY as a real transfer?",
-    "answer": "The slave may incorrectly update state or consume data during a cycle that only preserves burst ownership without transferring data."
+    "question": "What goes wrong when a slave treats BUSY or IDLE as a real transfer?",
+    "answer": "It updates state or consumes data for a cycle it must ignore; a BUSY already carries the next beat's address, so the beat can be written twice. Slaves must give IDLE and BUSY a zero-wait OKAY and ignore them (IHI0033B.b §3.2, Table 3-1)."
   },
   {
     "id": "b-ahb-2-4",
-    "question": "Why are narrow or misaligned transfers a common AHB bug source?",
-    "answer": "Incorrect byte-lane enable generation can corrupt neighboring bytes, especially when HSIZE is smaller than the data bus width."
+    "question": "Which AHB transfers must be aligned, and how do you check it?",
+    "answer": "Every transfer in a burst, not just the first, must be aligned to its HSIZE (§3.5): words need HADDR[1:0] = 0, halfwords HADDR[0] = 0. Check every NONSEQ and SEQ with `(HADDR & ((1 << HSIZE) - 1)) == 0`; WRAP beats pass because each is aligned."
   },
   {
     "id": "b-ahb-2-5",
-    "question": "What should a robust AHB design do after an ERROR response?",
-    "answer": "It should complete the protocol response timing cleanly, avoid consuming the failed transfer as successful data, and recover to a legal next transfer."
+    "question": "What may a master do in the second cycle of an ERROR response, and what may a monitor do with the read data?",
+    "answer": "Cancel by driving HTRANS = IDLE, or continue; it need not rebuild a cancelled burst (§3.5.2). ERROR responses need no valid HRDATA (§6.1.2), so a monitor or scoreboard must not record it as read data."
+  },
+  {
+    "id": "b-ahb-2-6",
+    "question": "Why does `(HRESP && !HREADY) |=> (HRESP && HREADY)` miss a one-cycle ERROR?",
+    "answer": "A one-cycle ERROR never has HREADY low, so the antecedent never matches and every attempt succeeds vacuously (IEEE 1800-2023 §16.14.8). The assertion stays silent."
+  },
+  {
+    "id": "b-ahb-2-7",
+    "question": "Which property catches a one-cycle ERROR, and where does it fail?",
+    "answer": "`(HRESP && HREADY) |-> $past(HRESP && !HREADY)`: every ERROR completion must follow a first ERROR cycle (§5.1.3). It fails at the edge where the one-cycle ERROR completes."
+  },
+  {
+    "id": "b-ahb-2-8",
+    "question": "Which changes may a master make while HREADY is low?",
+    "answer": "IDLE to NONSEQ and IDLE address changes; BUSY to SEQ in a fixed-length burst; BUSY to any type in an undefined-length INCR; IDLE to cancel after an ERROR first cycle (§3.6.1, §3.6.2, §3.5.2). Otherwise a waited NONSEQ or SEQ holds."
+  },
+  {
+    "id": "b-ahb-2-9",
+    "question": "Is an HREADY timeout a protocol rule?",
+    "answer": "No. The specification asks each slave for a predetermined maximum number of wait states (§5.1.2 Note); the number you check against is your integration budget. Report it as a warning tagged [Integration policy]."
+  },
+  {
+    "id": "b-ahb-2-10",
+    "question": "Why does the 1KB check run on every beat, and why are WRAP bursts exempt?",
+    "answer": "Per beat covers an undefined-length INCR, whose length is unknown at its NONSEQ. The rule applies to incrementing bursts only (§3.5); a WRAP burst stays inside its beats × size block."
+  },
+  {
+    "id": "b-ahb-2-11",
+    "question": "What must masters and slaves drive during reset, and when should a checker start checking?",
+    "answer": "Masters: HTRANS = IDLE with address and control at valid levels; slaves: HREADYOUT high (§7.1.2). Start after the component's minimum reset length, and check each slave's HREADYOUT as well as the multiplexed HREADY."
+  },
+  {
+    "id": "b-ahb-2-12",
+    "question": "Why is a lock never revoked, and why is a lock-length check policy?",
+    "answer": "A locked sequence is indivisible and must be processed before any other transfers (§3.3), so breaking it breaks atomicity. How long a lock may last is a budget your system chooses: report it as [Integration policy]."
+  },
+  {
+    "id": "b-ahb-2-13",
+    "question": "A regression shows zero ERROR-check failures. What proves the checks actually ran?",
+    "answer": "Cover both antecedents: `cover property (HRESP && !HREADY)` and `cover property (HRESP && HREADY)`. Zero hits means the checks only passed vacuously (IEEE 1800-2023 §16.14.3, §16.14.8)."
+  },
+  {
+    "id": "b-ahb-2-14",
+    "question": "Why print `$sampled(HADDR)` rather than `HADDR` in an assertion's failure message?",
+    "answer": "Action blocks run in the Reactive region, after that time step's nonblocking updates, so HADDR may already hold the next value. `$sampled` (or `$past`) returns the value the assertion checked (IEEE 1800-2023 §16.9.3)."
+  },
+  {
+    "id": "b-ahb-2-15",
+    "question": "Why can a FIFO slave push one write three times?",
+    "answer": "It acts on every data-phase edge, not only where HREADY is high, so two wait states give three pushes. Gate side effects with HREADY (IHI0033B.b §4.2); the bus stays legal, so a scoreboard catches it, not a protocol assertion."
+  },
+  {
+    "id": "b-ahb-2-16",
+    "question": "Why must a lock-length counter keep counting after HMASTLOCK falls?",
+    "answer": "HMASTLOCK is an address-phase signal, but the bus stays locked until a cycle with HMASTLOCK low and HREADY high (IHI0033C §3.3). The wait states of the last locked data phase still hold other masters out, so a counter driven by HMASTLOCK alone under-counts."
+  },
+  {
+    "id": "b-ahb-2-17",
+    "question": "A slave holds HREADY low for one cycle after an accepted IDLE. Which check fires, and why is it a protocol bug?",
+    "answer": "`(HREADY && HTRANS inside {IDLE, BUSY}) |=> (HREADY && !HRESP)` fails at that edge. IDLE and BUSY must get a zero wait state OKAY (IHI0033B.b §3.2, Table 3-1), so the stall is illegal although nobody is transferring."
   }
 ]

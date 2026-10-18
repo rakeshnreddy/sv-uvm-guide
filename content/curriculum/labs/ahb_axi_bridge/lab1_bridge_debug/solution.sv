@@ -2,8 +2,8 @@
 //
 // This file contains:
 // 1. A completed bridge_split_checker. It defines the same module name as the
-//    starter, so compile it in place of bridge_split_checker.sv (copy it over
-//    the starter, or point the `include in testbench.sv at this file).
+//    starter, so compile it in place of bridge_split_checker.sv:
+//      <simulator> solution.sv testbench.sv        (top module tb_top)
 // 2. The corrected split helper for the bridge DUT.
 //
 // Tags: [AHB protocol] Arm IHI0033B.b, [AXI protocol] Arm IHI0022E,
@@ -38,11 +38,15 @@ module bridge_split_checker #(
   localparam int AXI4_MAX_INCR_BEATS = 256;
 
   int unsigned failures;
+  int unsigned w_bursts_checked;
   logic [2:0]  active_plan_size;
-  logic [8:0]  aw_transfers;      // AWLEN + 1 of the burst being written
-  int          w_in_burst;        // W transfers seen so far in that burst
+
+  int unsigned aw_len_q[$];       // AWLEN+1 of each announced burst, in order
+  int unsigned w_len_q[$];        // W transfers of each finished W burst, in order
+  int unsigned w_count;           // W transfers so far in the current W burst
   int          expected_w_beats;  // transfers in the AHB request
   int          observed_w_beats;  // W transfers sent for it
+  logic [31:0] next_aw_addr;      // where the next AXI burst must start
 
   function automatic int beat_bytes(input logic [2:0] size);
     return 1 << size;
@@ -135,40 +139,58 @@ module bridge_split_checker #(
              plan_beats, plan_addr);
     end
 
-  // TODO 2 [AXI protocol, A3.4.1 and A3.2.2] Each burst carries AWLEN+1
-  // transfers and WLAST marks the last one.
+  // TODO 2 [AXI protocol, A3.4.1, A3.2.2 and A3.3] Each burst carries AWLEN+1
+  // transfers and WLAST marks the last one. W may come before, with or after
+  // its AW, so the lengths are matched through two in-order queues.
+  always @(posedge ACLK or negedge ARESETn) begin
+    if (!ARESETn) begin
+      aw_len_q.delete();
+      w_len_q.delete();
+      w_count = 0;
+    end else begin
+      if (AWVALID && AWREADY) aw_len_q.push_back(int'(AWLEN) + 1);
+
+      if (WVALID && WREADY) begin
+        w_count++;
+        if (WLAST) begin
+          w_len_q.push_back(w_count);
+          w_count = 0;
+        end else if (aw_len_q.size() > w_len_q.size() &&
+                     w_count == aw_len_q[w_len_q.size()]) begin
+          // aw_len_q[w_len_q.size()] is the AW of the W burst in progress: the
+          // finished W bursts still waiting in w_len_q pair with the entries before it.
+          failures++;
+          $error("AXI W: transfer %0d is the last of a %0d-transfer burst, but WLAST is low",
+                 w_count, aw_len_q[w_len_q.size()]);
+        end
+      end
+
+      while (aw_len_q.size() != 0 && w_len_q.size() != 0) begin
+        int unsigned announced;
+        int unsigned sent;
+        announced = aw_len_q.pop_front();
+        sent      = w_len_q.pop_front();
+        w_bursts_checked++;
+        if (sent != announced) begin
+          failures++;
+          $error("AXI W: WLAST on transfer %0d, but AW announced %0d transfers (AWLEN=%0d)",
+                 sent, announced, announced - 1);
+        end
+      end
+    end
+  end
+
   // TODO 4 [Bridge design] Total W transfers per request = AHB transfers.
   always @(posedge ACLK or negedge ARESETn) begin
     if (!ARESETn) begin
-      aw_transfers     <= '0;
-      w_in_burst       <= 0;
-      expected_w_beats <= 0;
-      observed_w_beats <= 0;
+      expected_w_beats = 0;
+      observed_w_beats = 0;
     end else begin
-      if (AWVALID && AWREADY) begin
-        aw_transfers <= 9'(AWLEN) + 9'd1;
-        w_in_burst   <= 0;
-      end
-
-      if (WVALID && WREADY) begin
-        if (WLAST && (w_in_burst + 1 != aw_transfers)) begin
-          failures++;
-          $error("AXI W: WLAST on transfer %0d, but AW announced %0d transfers (AWLEN=%0d)",
-                 w_in_burst + 1, aw_transfers, aw_transfers - 1);
-        end
-        if (!WLAST && (w_in_burst + 1 == aw_transfers)) begin
-          failures++;
-          $error("AXI W: transfer %0d is the last of a %0d-transfer burst, but WLAST is low",
-                 w_in_burst + 1, aw_transfers);
-        end
-        w_in_burst <= WLAST ? 0 : w_in_burst + 1;
-      end
-
       if (plan_valid) begin
-        expected_w_beats <= plan_beats;
-        observed_w_beats <= 0;
+        expected_w_beats = plan_beats;
+        observed_w_beats = 0;
       end else if (WVALID && WREADY) begin
-        observed_w_beats <= observed_w_beats + 1;
+        observed_w_beats++;
       end
 
       if (bridge_done && (observed_w_beats != expected_w_beats)) begin
@@ -179,18 +201,38 @@ module bridge_split_checker #(
     end
   end
 
+  // TODO 5 [Bridge design] Each AXI burst starts where the previous one ended.
+  always @(posedge ACLK or negedge ARESETn) begin
+    if (!ARESETn) begin
+      next_aw_addr = '0;
+    end else begin
+      if (plan_valid) next_aw_addr = plan_addr;
+      if (AWVALID && AWREADY) begin
+        if (AWADDR != next_aw_addr) begin
+          failures++;
+          $error("AXI AW at 0x%08h, but the previous burst ended before 0x%08h",
+                 AWADDR, next_aw_addr);
+        end
+        next_aw_addr = AWADDR + ((32'(AWLEN) + 32'd1) << AWSIZE);
+      end
+    end
+  end
+
   final begin
-    if (failures == 0)
-      $display("LAB PASS: every AXI burst carried AWLEN+1 transfers and no request lost a transfer");
-    else
+    if (failures != 0)
       $display("LAB FAIL: %0d checker failure(s)", failures);
+    else if (w_bursts_checked == 0)
+      $display("LAB INCOMPLETE: TODO 2 compared no AXI burst, so nothing was checked");
+    else
+      $display("LAB PASS: %0d AXI bursts carried AWLEN+1 transfers and no request lost a transfer",
+               w_bursts_checked);
   end
 
 endmodule
 
-// Corrected split helper. Replace choose_buggy_burst_beats() in the bridge
-// with this body (same argument), then leave the rest of the bridge FSM
-// unchanged.
+// Corrected split helper. Replace the body of choose_buggy_burst_beats() in
+// the bridge with this body (same argument); both the AW and the W channel
+// call it, and the rest of the bridge stays unchanged.
 //
 // An AXI4 INCR burst carries at most 256 transfers (IHI0022E A3.4.1). No 4KB
 // term is needed: a legal AHB incrementing burst never crosses 1KB

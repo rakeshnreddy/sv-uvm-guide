@@ -1133,7 +1133,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AMBA Protocol Families & Tradeoffs",
             "slug": "index",
-            "description": "An overview of the AMBA protocol landscape, comparing AHB, AXI, and their derivatives to understand when and why each is used."
+            "description": "Choose an AMBA interface for a block by comparing APB, AHB-Lite, AXI4, AXI4-Lite, AXI4-Stream, ACE and CHI on topology, channels, bursts, outstanding transactions, ordering and verification cost."
           }
         ],
         "track": "core",
@@ -1151,7 +1151,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AMBA Protocol Intuition & Memory Hooks",
             "slug": "index",
-            "description": "Build a permanent mental model of AMBA protocols using intuitive analogies, ensuring you never forget channel directions or handshake rules."
+            "description": "Explain AHB's pipelined bus and AXI's five channels with analogies whose limits you can state, and predict whether a VALID/READY handshake is legal."
           }
         ],
         "track": "core",
@@ -1169,7 +1169,7 @@ export const curriculumData: Module[] = [
           {
             "title": "B-APB-1: APB Protocol & Verification",
             "slug": "index",
-            "description": "Read, drive and check APB transfers and build the simplest complete protocol agent, with PREADY wait states and PSLVERR errors."
+            "description": "Read, drive and check APB transfers (setup and access phases, PREADY wait states, PSLVERR errors, APB4 strobes and protection), and build the simplest complete protocol agent: driver, monitor, sequences, protocol assertions and the register-model adapter."
           }
         ],
         "track": "core",
@@ -1189,7 +1189,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AHB Protocol Design & Timing",
             "slug": "index",
-            "description": "Master the timing mechanics of AHB, including address/data pipelining, wait states, and burst types."
+            "description": "Predict AHB address and data phases, wait states, transfer types, burst addresses and the two-cycle ERROR response cycle by cycle."
           }
         ],
         "track": "core",
@@ -1209,7 +1209,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AHB Pitfalls & Real-World Failures",
             "slug": "index",
-            "description": "Learn the most common AHB protocol violations—HREADY mishandling, two-cycle ERROR responses, arbitration deadlocks, and 1 KB boundary crossing failures—and the verification strategies that catch them."
+            "description": "Diagnose AHB slave, master and integration failures from a waveform, and write SystemVerilog checks that catch them without flagging legal traffic."
           }
         ],
         "track": "core",
@@ -1228,7 +1228,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AHB Verification Methodology",
             "slug": "index",
-            "description": "Build a complete AHB verification environment: transaction modeling, monitor/checker architecture, protocol assertions, functional coverage, debug strategies, and interview-ready knowledge."
+            "description": "Build and debug an AHB verification environment (pipelined monitor, tagged protocol checker, coverage model, byte-lane scoreboard, and stimulus with random wait states and error injection) that accepts every legal transfer and flags illegal ones."
           }
         ],
         "track": "core",
@@ -1248,7 +1248,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AXI4 Channel Architecture & Handshake Protocol",
             "slug": "index",
-            "description": "Master the five-channel AXI4 architecture: Write Address, Write Data, Write Response, Read Address, and Read Data channels, with the VALID/READY handshake contract and combinatorial loop prevention."
+            "description": "Predict AXI4 transfers, cross-channel dependencies, backpressure and reset behaviour from VALID/READY waveforms, and check them with SystemVerilog assertions."
           }
         ],
         "track": "core",
@@ -1266,7 +1266,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AXI Burst Math & Address Calculation",
             "slug": "index",
-            "description": "Master AXI burst address computation: AWLEN/ARLEN, AWSIZE/ARSIZE, AWBURST/ARBURST, wrap boundary math, WSTRB generation, and the critical 4 KB boundary rule."
+            "description": "Calculate the address, byte lanes and legal WSTRB of every transfer in an AXI FIXED, INCR or WRAP burst, decide whether a burst is legal, and check and split bursts at 4KB boundaries."
           }
         ],
         "track": "core",
@@ -1284,7 +1284,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AXI Transaction Ordering & IDs",
             "slug": "index",
-            "description": "Understand AXI outstanding transactions, ID-based routing, same-ID ordering guarantees, out-of-order completion, and interconnect reordering rules."
+            "description": "Predict which response orders AXI ID rules allow, and design ID-aware checks for reads, writes and read-after-write traffic."
           }
         ],
         "track": "core",
@@ -1303,7 +1303,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AXI Expert Features: Cache, Prot, QoS & Atomics",
             "slug": "index",
-            "description": "Master advanced AXI sideband signals: AxCACHE memory types, AxPROT privilege levels, AxQOS routing, and Exclusive Accesses (LDREX/STREX) for atomic operations."
+            "description": "Decode AxCACHE, AxPROT and AxQOS, predict the response and memory effect of every step of an exclusive access, plan the checks and coverage for these attributes, and tell an exclusive pair from an AXI5 atomic transaction."
           }
         ],
         "track": "core",
@@ -1321,7 +1321,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AXI Pitfalls & Interconnect Deadlocks",
             "slug": "index",
-            "description": "Learn how subtle design flaws in AXI channel handling lead to catastrophic system deadlocks, including circular channel dependencies and cyclic interconnect routing deadlocks."
+            "description": "Diagnose AXI channel-dependency and interconnect deadlocks, 4KB and WSTRB bugs, and tell protocol violations from legal but risky design policy."
           }
         ],
         "track": "core",
@@ -1340,7 +1340,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AXI Verification & Performance",
             "slug": "index",
-            "description": "Master the architecture of an AXI Verification IP (VIP), from channel-level monitors to per-ID scoreboards, protocol assertions, and transaction latency measurement."
+            "description": "Build an ID-aware AXI verification environment (monitor, predictor, per-ID scoreboard, protocol checks, coverage, a reordering responder and performance measurement) that accepts every legal reordering and rejects illegal behaviour."
           }
         ],
         "track": "core",
@@ -1361,7 +1361,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AHB↔AXI Bridges & System Integration",
             "slug": "index",
-            "description": "Master the design and verification of protocol bridge IPs, including AHB-to-AXI burst translation, AXI-to-AHB 1KB burst splitting, width conversion, reset domain crossings, and formal verification strategies for bridge correctness."
+            "description": "Derive when an AHB↔AXI bridge must split or reshape a burst, map responses and errors between the two protocols, choose a write-posting policy, and plan the checks, CDC scenarios and formal properties that verify a bridge."
           }
         ],
         "track": "core",
@@ -1381,7 +1381,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AMBA Coherency Protocols: ACE and CHI",
             "slug": "index",
-            "description": "Master coherent AMBA protocols in production today: ACE cache coherency extensions for AXI and AMBA 5 CHI packetized interconnects for scalable multi-core SoCs."
+            "description": "Explain why coherent interconnects exist, trace ACE reads and stores through cache-line states and snoops, compare CHI with ACE, and outline a coherency checker that sees every port."
           }
         ],
         "track": "core",
@@ -1400,7 +1400,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AMBA Interview & Debug Clinic",
             "slug": "index",
-            "description": "Practice AMBA whiteboard design, waveform triage, verification test planning, and common AHB/AXI trick questions used in senior verification interviews."
+            "description": "Triage AMBA waveforms, write verification plans for interconnects, bridges and coherent subsystems, size outstanding resources and answer trick questions, citing the specification rule every time."
           }
         ],
         "track": "core",

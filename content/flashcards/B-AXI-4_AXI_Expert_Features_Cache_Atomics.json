@@ -1,27 +1,82 @@
 [
   {
     "id": "b-axi-4-1",
-    "question": "What does AxCACHE describe?",
-    "answer": "AxCACHE describes cacheability, bufferability, allocation, and modifiability attributes used by interconnects and memory systems."
+    "question": "What does AxCACHE describe, and why is it not just about caches?",
+    "answer": "AxCACHE gives the transaction's memory type: whether it may be answered early (Bufferable), changed by merging or splitting (Modifiable), and whether it must be looked up in a cache. It controls write buffers and bridges as well as system caches (IHI0022E §A4.1, §A4.4)."
   },
   {
     "id": "b-axi-4-2",
-    "question": "What does AxPROT communicate?",
-    "answer": "AxPROT carries protection attributes such as privileged versus unprivileged, secure versus non-secure, and instruction versus data access."
+    "question": "What do the three AxPROT bits mean, and which polarity catches people out?",
+    "answer": "AxPROT[0] = 1 privileged, AxPROT[1] = 1 Non-secure (0 is Secure), AxPROT[2] = 1 instruction (a hint). So a Secure, privileged data access is `3'b001`, and no interconnect may change AxPROT (Table A4-6, §A4.3.1)."
   },
   {
     "id": "b-axi-4-3",
-    "question": "What is the purpose of AxQOS?",
-    "answer": "AxQOS gives the interconnect a priority hint for arbitration when multiple transactions compete for shared resources."
+    "question": "What does AxQOS guarantee?",
+    "answer": "Nothing about latency. It is a recommended priority hint whose use the system defines; `4'b0000` means not taking part in any QoS scheme, interconnects may replace the values, and the AXI ordering rules take precedence (§A8.1.1 to §A8.1.3)."
   },
   {
     "id": "b-axi-4-4",
-    "question": "How does an AXI exclusive access succeed?",
-    "answer": "The exclusive write succeeds only if no conflicting write to the monitored address occurred after the matching exclusive read."
+    "question": "When does an exclusive write succeed on a slave that supports exclusives?",
+    "answer": "When it matches the exclusive read's address, ID, size, length and control signals, and the location is still monitored for that ID: nobody wrote it and no newer same-ID exclusive read moved the monitor. Then the slave writes memory and answers EXOKAY; otherwise it answers OKAY and does not write (§A7.2.3, §A7.2.4)."
   },
   {
     "id": "b-axi-4-5",
-    "question": "Why are AXI atomic operations harder to verify than normal writes?",
-    "answer": "They combine read-modify-write behavior, ordering constraints, response status, and interconnect routing into one indivisible semantic operation."
+    "question": "How does an AXI4 exclusive pair differ from an AXI5 atomic transaction?",
+    "answer": "An exclusive pair is two transactions, a read and a later write, checked by a monitor; the write can fail with OKAY and software retries (IHI0022E §A7.2). An AXI5 atomic is one AW/W transaction marked by AWATOP whose operation the target performs, returning the old value on R for Load, Swap and Compare, with no contention failure (IHI0022L §A6.4)."
+  },
+  {
+    "id": "b-axi-4-6",
+    "question": "What does an OKAY response to an exclusive read mean?",
+    "answer": "The slave does not support exclusive accesses. The master may treat it as an error, and the specification recommends it does not perform the write part (§A7.2.2)."
+  },
+  {
+    "id": "b-axi-4-7",
+    "question": "What happens to an exclusive write sent to a slave without exclusive support?",
+    "answer": "The slave ignores AxLOCK, always updates memory and answers OKAY. So OKAY on an exclusive write means 'failed, not written' only on a supporting slave (§A7.2.3, §A7.2.5)."
+  },
+  {
+    "id": "b-axi-4-8",
+    "question": "Is an exclusive write with no earlier exclusive read on its ID a protocol violation?",
+    "answer": "No. It is legal: nothing is monitored for that ID, so on a supporting slave it fails with OKAY and memory is unchanged (IHI0022E §A7.2.3). Issue L names this case explicitly as a failure (IHI0022L §A6.3.4). Check it in the scoreboard, not with an assertion."
+  },
+  {
+    "id": "b-axi-4-9",
+    "question": "What are the exclusive access restrictions, and what happens if one is broken?",
+    "answer": "Same address, ID, size, length and control for the read and the write; a power-of-two total of at most 128 bytes, aligned to that total; at most 16 transfers in AXI4; and AxCACHE that lets the monitoring slave see the access (not cacheable). Breaking one makes the behaviour UNPREDICTABLE (§A7.2.4)."
+  },
+  {
+    "id": "b-axi-4-10",
+    "question": "What does Non-modifiable (AxCACHE[1] = 0) forbid, and what ordering does it add?",
+    "answer": "No split or merge, and address, size, length, burst type, lock and protection are fixed, with listed exceptions (bursts over 16 beats may be split; exclusives may resize with the same total bytes). Non-modifiable transactions with the same ID to the same slave stay ordered, but a read and a write only once the earlier one has its response (§A4.3.1, §A4.3.2)."
+  },
+  {
+    "id": "b-axi-4-11",
+    "question": "What do the AXI4 Allocate and Other Allocate bits mean, and what is the lookup rule?",
+    "answer": "ARCACHE[2] and AWCACHE[3] are Allocate; ARCACHE[3] and AWCACHE[2] are Other Allocate (the location may have been allocated by the other direction or another master). If AxCACHE[3:2] is not `2'b00` the transaction must be looked up in a cache (§A4.3.3, Tables A4-3 and A4-4)."
+  },
+  {
+    "id": "b-axi-4-12",
+    "question": "Which AxCACHE values are legal in AXI4?",
+    "answer": "The Table A4-5 encodings, which are exactly the values with AxCACHE[1] = 1 or AxCACHE[3:2] = `2'b00`. The six values with an allocate bit but no Modifiable bit (`0100`, `0101`, `1000`, `1001`, `1100`, `1101`) are reserved (§A4.4)."
+  },
+  {
+    "id": "b-axi-4-13",
+    "question": "Why should peripheral registers use a Device memory type?",
+    "answer": "Device memory reads come from the final destination, are never prefetched or merged, and keep their shape, so a read with side effects (a FIFO pop, a clear-on-read flag) happens exactly once. Normal memory is Modifiable and may merge, widen or cache reads (§A4.3.1, §A4.4.1)."
+  },
+  {
+    "id": "b-axi-4-14",
+    "question": "How can a master know that its Device Bufferable writes have reached the peripheral?",
+    "answer": "Follow them with a Device Non-bufferable write with the same ID to the same slave. Ordering forces the earlier writes to arrive first, and that write's response comes from the peripheral, so it proves all of them are visible (§A4.9.1)."
+  },
+  {
+    "id": "b-axi-4-15",
+    "question": "What happened to locked transfers in AXI4?",
+    "answer": "AXI4 removed them, because they complicate the interconnect and undermine QoS guarantees; AxLOCK became one bit (normal or exclusive). An AXI3 locked access (`2'b10`) entering an AXI4 system is converted to a normal access (§A7.3, §A7.4.1)."
+  },
+  {
+    "id": "b-axi-4-16",
+    "question": "Which exclusive-access checks are pin-level assertions, and which belong in the scoreboard?",
+    "answer": "Assertions check what one interface shows: legal AxCACHE values, the exclusive shape on AR and AW, and that the write starts only after its read completes (§A7.2.2, §A7.2.4). The scoreboard checks each exclusive's response and memory effect, using a reference model of the slave's monitor, because they depend on every master's traffic."
   }
 ]

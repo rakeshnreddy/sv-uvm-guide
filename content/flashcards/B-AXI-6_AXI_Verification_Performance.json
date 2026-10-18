@@ -1,27 +1,77 @@
 [
   {
     "id": "b-axi-6-1",
-    "question": "What should an AXI performance monitor measure?",
-    "answer": "Measure latency, throughput, stall cycles per channel, outstanding depth, burst efficiency, and arbitration fairness."
+    "question": "What should an AXI performance monitor measure, and in what unit?",
+    "answer": "Slave latency (AR handshake to first RVALID), master stall cycles (RVALID HIGH, RREADY LOW) counted separately, bandwidth over a stated window, and outstanding depth. Count ACLK cycles, not `$time`, which is scaled to the caller's time unit (IEEE 1800-2023 §20.3.1)."
   },
   {
     "id": "b-axi-6-2",
-    "question": "What assertions form the AXI handshake baseline?",
-    "answer": "VALID must remain asserted with stable payload until handshake, READY behavior must not create protocol loops, and LAST must align with burst length."
+    "question": "Which pin-level rules belong in an AXI protocol checker?",
+    "answer": "VALID and payload held until the handshake (IHI0022E §A3.2.1); VALIDs LOW in reset (§A3.1.2); RVALID only after its AR handshake and, in AXI4, BVALID only after the AW and WLAST handshakes (§A3.3.1); WRAP length 2, 4, 8 or 16 and size not wider than the bus (§A3.4.1). X checks are testbench policy."
   },
   {
     "id": "b-axi-6-3",
-    "question": "What coverage crosses are useful for AXI verification?",
-    "answer": "Cross burst type, size, length, ID count, outstanding depth, response type, backpressure pattern, and boundary-adjacent addresses."
+    "question": "Which coverage items matter most for an AXI read path?",
+    "answer": "Burst length, same-ID reads already open at the AR (ID reuse), total reads open (outstanding depth), error responses and stalls, with targeted crosses such as length × ID reuse. Record depth and reuse at the AR handshake, not at completion."
   },
   {
     "id": "b-axi-6-4",
-    "question": "How do you test interconnect fairness?",
-    "answer": "Run multiple masters with sustained traffic, constrained QoS values, and randomized slave stalls, then check starvation bounds and bandwidth share."
+    "question": "Does AXI define fairness or starvation bounds that a testbench can check?",
+    "answer": "No. AxQOS is a 4-bit hint whose exact use the protocol does not specify (§A8.1.1). Starvation bounds and bandwidth shares come from the product or integration spec and are checked as labelled contracts."
   },
   {
     "id": "b-axi-6-5",
-    "question": "What is a useful AXI smoke test for every regression?",
-    "answer": "Run single-beat reads/writes, multi-beat bursts, boundary-near bursts, back-to-back IDs, randomized READY stalls, and basic error responses."
+    "question": "How do you prove an AXI read scoreboard actually works?",
+    "answer": "A clean run with a reordering, interleaving, stalling responder ends with `SCB_SUMMARY matches=N mismatches=0 pending=0` and `UVM_ERROR : 0` on several seeds, and each mutant (same-ID swap, missing RLAST, extra beat, wrong RID) produces at least one named error."
+  },
+  {
+    "id": "b-axi-6-6",
+    "question": "How many pending entries per ID does an AXI monitor need?",
+    "answer": "A queue. Several transactions with one ID may be outstanding and complete in issue order (§A5.3), so push at the AR (or, for a write, when its W burst pairs with its AW), append R beats to the front entry of the RID's queue, and pop at RLAST or at B. One slot per ID overwrites the older transaction."
+  },
+  {
+    "id": "b-axi-6-7",
+    "question": "How does an AXI4 monitor pair W data with its AW?",
+    "answer": "By order: the n-th complete W burst belongs to the n-th AW, because AXI4 W has no ID (§A5.4.1). W may arrive before its AW (§A3.3), so hold complete bursts until an AW arrives, and check WLAST against AWLEN only at pairing."
+  },
+  {
+    "id": "b-axi-6-8",
+    "question": "Should a monitor raise uvm_error on SLVERR or DECERR?",
+    "answer": "No. Both are legal responses (§A3.4.4). The monitor records them, the predictor predicts them, the scoreboard compares; the checker flags only protocol misuse, such as a burst cut short after an error."
+  },
+  {
+    "id": "b-axi-6-9",
+    "question": "Checker or scoreboard: where does each AXI check go?",
+    "answer": "Checker: handshake holds, cross-channel dependencies, burst legality, X on strobed W lanes. Monitor: RLAST/WLAST position, IDs with nothing outstanding, X on active R lanes. Scoreboard: data and responses versus the prediction, same-ID order (end to end for writes), end-of-test leftovers."
+  },
+  {
+    "id": "b-axi-6-10",
+    "question": "Why does a single FIFO scoreboard fail on a correct AXI slave?",
+    "answer": "Reads with different IDs may complete in any order and their beats may interleave (§A5.3, §A5.3.1). Key the scoreboard by ID, with one ordered queue per ID, and pop the oldest prediction for each completed read."
+  },
+  {
+    "id": "b-axi-6-11",
+    "question": "What must a reordering AXI read responder do, and never do?",
+    "answer": "Answer only the oldest read of each ID, but any ID next; it may interleave IDs beat by beat, randomize ARREADY (even dropping it before ARVALID, §A3.2.1) and inject SLVERR. It must never drop RVALID before the handshake or cut a burst short (§A3.4.4)."
+  },
+  {
+    "id": "b-axi-6-12",
+    "question": "Why is an X check on WDATA gated by WSTRB?",
+    "answer": "Only byte lanes whose WSTRB bit is 1 carry valid data (§A3.4.3); the others may hold anything. Check `WVALID && WSTRB[i] |-> !$isunknown(WDATA[8*i +: 8])` per lane, and label it a testbench policy: IHI0022E has no X rule."
+  },
+  {
+    "id": "b-axi-6-13",
+    "question": "In what order should a monitor process the handshakes seen at one clock edge?",
+    "answer": "Response channels (R, B) before request channels (AR, AW). A beat at edge k can only belong to a transaction whose address handshake came at an earlier edge (§A3.3.1)."
+  },
+  {
+    "id": "b-axi-6-14",
+    "question": "When does the predictor build an expected AXI read, and why?",
+    "answer": "At the AR handshake, from the reference model. A read that never returns is then still expected, and `check_phase` reports it as pending instead of the test passing silently."
+  },
+  {
+    "id": "b-axi-6-15",
+    "question": "A slave answers read S (ARID 1) with RID 9. What does a per-ID monitor do when the next ARID 1 read T returns?",
+    "answer": "It reports UNEXPECTED_R for each beat with RID 9, but S stays at the head of open_q[1], because no beat was appended to it. T's beats then go to S, so S is published with T's data: SCB_MISMATCH, with RLAST errors when the lengths differ, and the misattribution can carry on to later ID 1 reads. If no later read uses the ID, S just stays open and check_phase reports SCB_PENDING. Debug the first error."
   }
 ]

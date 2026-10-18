@@ -1,27 +1,82 @@
 [
   {
     "id": "b-ahb-3-1",
-    "question": "What is the most important AHB monitor alignment rule?",
-    "answer": "Record address/control when a transfer is accepted, then pair it with the data/response phase that completes one accepted cycle later."
+    "question": "What is the AHB monitor's pairing rule?",
+    "answer": "Accept address and control at an edge where HREADY is high and HTRANS is NONSEQ or SEQ. Pair them with HWDATA or HRDATA and HRESP at the next edge where HREADY is high, after any wait states (IHI0033B.b §3.1). The address and data of one transfer are never sampled at the same edge."
   },
   {
     "id": "b-ahb-3-2",
-    "question": "Which AHB assertion catches many wait-state bugs?",
-    "answer": "While HREADY is low, the master holds the address and control of the pending transfer and the write data of the current transfer stable — with the spec's exceptions: during an ERROR response the master may cancel and drive IDLE, and transfer-type changes such as IDLE→NONSEQ or BUSY→SEQ are allowed during waited transfers (AMBA 5 AHB §3.6). A stability assertion without those exceptions fires on legal traffic."
+    "question": "What may change in a wait state, and what must a hold assertion therefore allow?",
+    "answer": "A waited NONSEQ or SEQ is held, except that a master cancelling after the first ERROR cycle drives IDLE and may change the address (§3.5.2, §3.6.2). A waited IDLE may become NONSEQ, and a waited BUSY may become SEQ, or in an undefined-length INCR also IDLE or NONSEQ (§3.6.1). A check of `$stable(HTRANS)` in every wait state fires on this legal traffic."
   },
   {
     "id": "b-ahb-3-3",
-    "question": "What should AHB functional coverage include?",
-    "answer": "Cover transfer type, burst type, size, wait-state depth, response type, read/write direction, and interesting crosses such as burst-by-wait-depth."
+    "question": "What should an AHB functional coverage model contain?",
+    "answer": "Transfer type, burst, size, wait-state depth, response and direction, crossed (burst × size, waits × burst, response × burst × beat), plus BUSY before a beat and distance to the next 1KB boundary, and `cover property` on each assertion's antecedent. Every item maps to a verification-plan line."
   },
   {
     "id": "b-ahb-3-4",
-    "question": "How should an AHB scoreboard handle wait states?",
-    "answer": "It should compare only completed transfers, not every clock cycle where address/control remain visible during stalls."
+    "question": "How should an AHB scoreboard treat wait states?",
+    "answer": "It compares only completed transfers, never every clock edge on which the address and control are still visible during a stall. The monitor publishes one item per transfer, at the edge where HREADY is high."
   },
   {
     "id": "b-ahb-3-5",
-    "question": "What negative tests are valuable for an AHB slave?",
-    "answer": "Drive illegal alignment, unexpected BUSY/IDLE patterns, ERROR responses, extended wait states, reset during transfer, and back-to-back bursts."
+    "question": "For a slave DUT, what stimulus should the testbench's master side produce?",
+    "answer": "Back-to-back pipelined transfers, BUSY inside bursts, IDLE→NONSEQ and BUSY→SEQ during waits, accesses that must get ERROR (unmapped or read-only), cancel and continue after ERROR, and reset in the middle of a transfer. Wait states and ERROR responses come from the slave DUT; the testbench checks them."
+  },
+  {
+    "id": "b-ahb-3-6",
+    "question": "Which ERROR assertion catches a slave that drives ERROR for one cycle with HREADY high?",
+    "answer": "The backward one: `(HRESP && HREADY) |-> $past(HRESP && !HREADY)`. The forward one, `(HRESP && !HREADY) |=> (HRESP && HREADY)`, never starts on that bug, because its antecedent needs HREADY low (§5.1.3, Table 5-2)."
+  },
+  {
+    "id": "b-ahb-3-7",
+    "question": "What does `$past(HADDR, 1, beat_accepted)` return in a SEQ check?",
+    "answer": "HADDR at the most recent earlier edge where `beat_accepted` was true (IEEE 1800-2023 §16.9.3): the previous beat's address, even if BUSY cycles or wait states came between."
+  },
+  {
+    "id": "b-ahb-3-8",
+    "question": "What is the difference between a [Protocol] and an [Integration policy] check? Give one of each.",
+    "answer": "A protocol check names a rule in IHI0033B.b that a master or slave broke, for example the two-cycle ERROR (§5.1.3). A policy check names a budget your system chose, for example at most 16 wait states, which the specification only recommends (§5.1.2 Note); report it as a warning."
+  },
+  {
+    "id": "b-ahb-3-9",
+    "question": "Which byte lane carries the byte at address 0x1001 on a 32-bit little-endian AHB bus, and why does the scoreboard store bytes?",
+    "answer": "Lane 1, HWDATA/HRDATA[15:8]: the lane is the address modulo the bus bytes (§6.2.1). IHI0033B.b has no write strobes, so a byte write and a later word read overlap only byte by byte; a byte-address model checks them correctly."
+  },
+  {
+    "id": "b-ahb-3-10",
+    "question": "Why can a UVM summary say UVM_ERROR : 0 while the log is full of AHB assertion failures?",
+    "answer": "The assertions' action blocks use `$error`, which reports through the simulator, not the UVM report server; a report catcher cannot see them either. Report with `` `uvm_error `` (the checker imports `uvm_pkg`), or make the regression also fail on assertion failures."
+  },
+  {
+    "id": "b-ahb-3-11",
+    "question": "An assertion never failed in the whole regression. Why is that not enough, and what do you add?",
+    "answer": "If its antecedent never occurred, every attempt succeeded vacuously and nothing was checked (IEEE 1800-2023 §16.14.8). Add a `cover property` on the antecedent, for example `!HREADY && HTRANS == BUSY` for the waited-BUSY rule, and read the cover report."
+  },
+  {
+    "id": "b-ahb-3-12",
+    "question": "Who owns what: checker, scoreboard and coverage?",
+    "answer": "The checker owns pin-level protocol legality, including multi-cycle rules, and never data. The scoreboard owns data correctness, routing and ordering across an interconnect. Coverage owns which planned situations happened. No rule has two owners."
+  },
+  {
+    "id": "b-ahb-3-13",
+    "question": "Why must an AHB monitor flush its pending transfer during reset?",
+    "answer": "Slaves drive HREADYOUT high during reset (§7.1.2), so a monitor without a flush 'completes' the cut-off transfer at a reset edge where HREADY is high (the first one, for an asynchronously reset slave) with reset-time data, and the scoreboard reports a false mismatch or stores garbage."
+  },
+  {
+    "id": "b-ahb-3-14",
+    "question": "The bus is stuck with HREADY low. How do you find the slave responsible?",
+    "answer": "HREADY is the multiplexor's choice among the slaves' HREADYOUT, selected by the decoder's selection retimed to the data phase (§2.4 Note, §4.3). Find the last edge with HREADY high where a NONSEQ or SEQ was accepted: the slave selected there owns the data phase and is holding HREADYOUT low."
+  },
+  {
+    "id": "b-ahb-3-15",
+    "question": "When must a slave responder drive the first ERROR cycle for a transfer accepted at edge k?",
+    "answer": "In the time step of edge k itself, so the cycle sampled at edge k+1 has HREADYOUT low with HRESP high. A driver that first looks at the address at edge k+1 is too late: the transfer has already completed with OKAY there."
+  },
+  {
+    "id": "b-ahb-3-16",
+    "question": "In a multi-master system, how do you measure a master's latency for a starvation budget, and why not stop at acceptance?",
+    "answer": "At the master port, count the cycles from the edge where the transfer's NONSEQ is first on the port to the edge where the transfer completes there. A NONSEQ after an IDLE is always accepted at once (an IDLE's data phase is a zero-wait OKAY, Table 3-1), so the interconnect's wait shows up in the data phase. Compare the worst case with a per-master budget tagged [Integration policy]; no AHB rule bounds it."
   }
 ]

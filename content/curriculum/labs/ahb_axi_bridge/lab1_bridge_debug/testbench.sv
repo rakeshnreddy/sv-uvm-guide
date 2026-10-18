@@ -1,5 +1,10 @@
 // testbench.sv — AHB-to-AXI Bridge Debug Lab
-// Self-contained directed test for the bridge's AXI burst-split logic.
+// Directed test for the burst-split logic of an AHB-to-AXI bridge.
+//
+// Compile it together with the checker, with tb_top as the top module:
+//   <simulator> bridge_split_checker.sv testbench.sv
+// (use solution.sv in place of bridge_split_checker.sv to run the reference
+// checker).
 //
 // Premise (Arm IHI0033B.b 3.5 and Arm IHI0022E A3.4.1):
 //   A legal AHB incrementing burst never crosses a 1KB boundary. Every 4KB
@@ -11,20 +16,29 @@
 //   stay inside one 1KB region. (Width conversion is the other reason to
 //   reshape a burst; this lab uses a 32-bit bus on both sides.)
 //
+// Abstraction: a real AHB INCR carries no length (IHI0033B.b Table 3-3), so a
+// real bridge learns it only when the burst ends. This lab hands the bridge
+// the length up front (req_beats), as a bridge that buffers the whole write
+// would know it.
+//
 // The DUT intentionally contains a split bug:
 //   choose_buggy_burst_beats() has no 256-transfer cap. A 300-transfer INCR
 //   goes out as one AXI burst, AWLEN wraps to 43 (44 transfers), and the
 //   bridge still sends 300 W transfers with WLAST only on the last one.
 //
-// Negative test: compile with +define+ILLEGAL_AHB_INPUT to add an AHB INCR8
-// that crosses 1KB. That is illegal AHB stimulus, so the AHB-side input
-// check must fire. The bridge is not at fault.
+// Defines:
+//   +define+ILLEGAL_AHB_INPUT     add an AHB INCR8 that crosses 1KB. That is
+//                                 illegal AHB stimulus, so the AHB-side input
+//                                 check must fire. The bridge is not at fault.
+//   +define+AXI_SLAVE_WAITS_FOR_W make the AXI slave raise AWREADY only after
+//                                 it has seen WVALID, and stall WREADY at
+//                                 random. Both are legal (IHI0022E A3.3.1). A
+//                                 bridge whose WVALID waited for AWREADY would
+//                                 deadlock here; this one does not.
 
 `timescale 1ns/1ps
 
-`include "bridge_split_checker.sv"
-
-module top;
+module tb_top;
 
   bit ACLK;
   logic ARESETn;
@@ -62,9 +76,32 @@ module top;
 
   logic        bridge_done;
 
-  // The AXI slave never stalls in this lab.
+`ifdef AXI_SLAVE_WAITS_FOR_W
+  // A legal AXI slave that waits for WVALID before it raises AWREADY, and
+  // accepts W on about three cycles in four (IHI0022E A3.3.1). Both READYs are
+  // registered: an AXI interface has no combinatorial path from its inputs to
+  // its outputs (IHI0022E A3.1.1).
+  logic aw_gate;
+  logic wready_q;
+
+  always_ff @(posedge ACLK or negedge ARESETn) begin
+    if (!ARESETn)                aw_gate <= 1'b0;
+    else if (AWVALID && AWREADY) aw_gate <= 1'b0;   // wait again for the next AW
+    else if (WVALID)             aw_gate <= 1'b1;
+  end
+
+  always_ff @(posedge ACLK or negedge ARESETn) begin
+    if (!ARESETn) wready_q <= 1'b0;
+    else          wready_q <= ($urandom_range(3) != 0);
+  end
+
+  assign AWREADY = aw_gate;
+  assign WREADY  = wready_q;
+`else
+  // The default AXI slave never stalls.
   assign AWREADY = 1'b1;
   assign WREADY  = 1'b1;
+`endif
 
   buggy_ahb_axi_bridge u_bridge (
     .ACLK        (ACLK),
@@ -121,7 +158,7 @@ module top;
     plan_size = '0;
 
     repeat (5) @(posedge ACLK);
-    ARESETn = 1;
+    ARESETn <= 1;   // released on a clock edge, as AXI requires (IHI0022E A3.1.2)
     $display("# Time %4t: RESET deasserted", $time);
   end
 
@@ -134,7 +171,7 @@ module top;
     int bytes_per_beat;
     bytes_per_beat = 1 << size;
 
-    $display("\n# AHB request %-18s addr=0x%08h transfers=%0d size=%0d bytes last_byte=0x%08h",
+    $display("\n# AHB request %s addr=0x%08h transfers=%0d size=%0d bytes last_byte=0x%08h",
              name, addr, beats, bytes_per_beat, addr + beats * bytes_per_beat - 1);
 
     @(posedge ACLK);
@@ -162,24 +199,33 @@ module top;
     wait (ARESETn === 1'b1);
     repeat (2) @(posedge ACLK);
 
-    // All three are legal AHB incrementing bursts: none crosses 1KB.
-    issue_ahb_write("safe_incr4",      32'h0000_2000, 11'd4,   3'd2);  // one AXI burst of 4
-    issue_ahb_write("ends_at_1kb",     32'h0000_03C0, 11'd16,  3'd2);  // one AXI burst, last byte 0x03FF
-    issue_ahb_write("long_incr_bytes", 32'h0000_0400, 11'd300, 3'd0);  // 256 at 0x0400, then 44 at 0x0500
+    // All four are legal AHB incrementing bursts: none crosses 1KB.
+    issue_ahb_write("safe_incr4",          32'h0000_2000, 11'd4,   3'd2);  // one AXI burst of 4
+    issue_ahb_write("ends_at_1kb",         32'h0000_03C0, 11'd16,  3'd2);  // one burst, last byte 0x03FF
+    issue_ahb_write("long_incr_bytes",     32'h0000_0400, 11'd300, 3'd0);  // 256 at 0x0400, 44 at 0x0500
+    issue_ahb_write("long_incr_halfwords", 32'h0000_0400, 11'd300, 3'd1);  // 256 at 0x0400, 44 at 0x0600
 
 `ifdef ILLEGAL_AHB_INPUT
     // Negative test: an AHB INCR8 of words at 0x03F0 ends at 0x040F, across
     // the 1KB boundary at 0x0400. No legal AHB master issues it.
-    issue_ahb_write("illegal_ahb_1kb", 32'h0000_03F0, 11'd8,   3'd2);
+    issue_ahb_write("illegal_ahb_1kb",     32'h0000_03F0, 11'd8,   3'd2);
 `endif
 
     repeat (10) @(posedge ACLK);
-    $display("\nLAB NOTE: If your checker is complete, long_incr_bytes fails before this line with the buggy bridge.");
+    $display("\nLAB NOTE: with a complete checker and the buggy bridge, the long requests fail above.");
+    $finish;
+  end
+
+  // Watchdog: a handshake deadlock must fail the run, not hang it.
+  initial begin
+    repeat (20000) @(posedge ACLK);
+    $display("WATCHDOG: no progress after 20000 cycles; the AXI handshakes are stuck");
+    u_checker.failures++;
     $finish;
   end
 
   // Log each AW handshake, and each burst's WLAST.
-  int w_seen;  // W transfers seen in the current AXI burst
+  int w_seen;  // W transfers seen so far in the current W burst
 
   always_ff @(posedge ACLK) begin
     if (ARESETn && AWVALID && AWREADY) begin
@@ -234,22 +280,28 @@ module buggy_ahb_axi_bridge (
   // AXI4 INCR bursts carry 1 to 256 transfers (IHI0022E A3.4.1).
   localparam int AXI4_MAX_INCR_BEATS = 256;
 
-  typedef enum logic [1:0] {
-    IDLE     = 2'd0,
-    ISSUE_AW = 2'd1,
-    SEND_W   = 2'd2
-  } state_t;
+  logic        busy;           // a request is being translated
+  logic [2:0]  size_q;         // its transfer size (HSIZE)
 
-  state_t state;
+  // AW side: announces each AXI burst.
+  logic [31:0] aw_addr;        // start address of the next AXI burst
+  logic [10:0] aw_remaining;   // transfers not yet announced on AW
+  int          aw_beats;       // transfers in the next AXI burst
 
-  logic [31:0] current_addr;     // start address of the next AXI burst
-  logic [10:0] remaining_beats;  // AHB transfers not yet sent on AXI
-  logic [10:0] burst_beats;      // transfers in the AXI burst being sent
-  logic [10:0] beat_index;       // W transfer now on the bus
-  logic [2:0]  size_q;
-  int          next_beats;       // transfers in the next AXI burst
+  // W side: works out the same split by itself, so that WVALID never waits
+  // for AWREADY. "A master must not wait for AWREADY to be asserted before
+  // driving WVALID" (IHI0022E A3.3.1): a slave may wait for WVALID first.
+  logic [31:0] w_addr;         // address of the W transfer on the bus
+  logic [10:0] w_remaining;    // transfers not yet sent on W
+  logic [10:0] w_burst_beats;  // length of the W burst in progress (from its first transfer)
+  logic [10:0] beat_index;     // transfer number within that burst
+  int          w_beats_new;    // length of a W burst that starts now
+  logic [10:0] w_len;          // length of the current W burst
 
-  assign req_ready = (state == IDLE);
+  logic        aw_fire, w_fire;
+  logic [10:0] aw_left_next, w_left_next;
+
+  assign req_ready = !busy;
 
   // Byte lanes of an aligned transfer of 2**size bytes on a 32-bit bus
   // (IHI0022E A3.4.3). AHB transfers are always aligned (IHI0033B.b 3.5).
@@ -266,7 +318,7 @@ module buggy_ahb_axi_bridge (
     return mask << addr[1:0];
   endfunction
 
-  // How many transfers the next AXI burst carries.
+  // How many transfers the next AXI burst carries. Both channels use it.
   // No 4KB term is needed: a legal AHB incrementing burst stays inside one
   // 1KB region (IHI0033B.b 3.5), so it stays inside one 4KB page as well.
   function automatic int choose_buggy_burst_beats(input int remaining);
@@ -276,72 +328,74 @@ module buggy_ahb_axi_bridge (
     return remaining;
   endfunction
 
-  always_comb next_beats = choose_buggy_burst_beats(int'(remaining_beats));
+  always_comb begin
+    aw_beats     = choose_buggy_burst_beats(int'(aw_remaining));
+    w_beats_new  = choose_buggy_burst_beats(int'(w_remaining));
+    w_len        = (beat_index == 11'd0) ? 11'(w_beats_new) : w_burst_beats;
+    aw_fire      = AWVALID && AWREADY;
+    w_fire       = WVALID && WREADY;
+    aw_left_next = aw_fire ? aw_remaining - 11'(aw_beats) : aw_remaining;
+    w_left_next  = w_fire  ? w_remaining - 11'd1          : w_remaining;
+  end
 
-  // AW channel. The outputs come from registered state only, so VALID never
-  // depends on READY (IHI0022E A3.3.1).
-  assign AWVALID = (state == ISSUE_AW);
-  assign AWADDR  = current_addr;
-  assign AWLEN   = 8'(next_beats - 1);   // AxLEN = transfers - 1
+  // AW channel: outputs come from registers only. AWVALID does not wait for
+  // WREADY, and nothing on an output depends combinatorially on an input
+  // (IHI0022E A3.1.1).
+  assign AWVALID = busy && (aw_remaining != 11'd0);
+  assign AWADDR  = aw_addr;
+  assign AWLEN   = 8'(aw_beats - 1);     // AxLEN = transfers - 1
   assign AWSIZE  = size_q;
   assign AWBURST = 2'b01;                // INCR
 
-  // W channel: transfer beat_index of the burst that started at current_addr.
-  assign WVALID = (state == SEND_W);
+  // W channel: transfer beat_index of the current burst, at w_addr.
+  assign WVALID = busy && (w_remaining != 11'd0);
   assign WDATA  = {21'h0, beat_index};
-  assign WSTRB  = lane_strobe(current_addr + (32'(beat_index) << size_q), size_q);
-  assign WLAST  = (state == SEND_W) && (beat_index == burst_beats - 11'd1);
+  assign WSTRB  = lane_strobe(w_addr, size_q);
+  assign WLAST  = WVALID && (beat_index == w_len - 11'd1);
 
   always_ff @(posedge ACLK or negedge ARESETn) begin
     if (!ARESETn) begin
-      state           <= IDLE;
-      current_addr    <= '0;
-      remaining_beats <= '0;
-      burst_beats     <= '0;
-      beat_index      <= '0;
-      size_q          <= '0;
-      bridge_done     <= 1'b0;
+      busy          <= 1'b0;
+      size_q        <= '0;
+      aw_addr       <= '0;
+      aw_remaining  <= '0;
+      w_addr        <= '0;
+      w_remaining   <= '0;
+      w_burst_beats <= '0;
+      beat_index    <= '0;
+      bridge_done   <= 1'b0;
     end else begin
       bridge_done <= 1'b0;
 
-      case (state)
-        IDLE: begin
-          if (req_valid && req_write) begin
-            current_addr    <= req_addr;
-            remaining_beats <= req_beats;
-            size_q          <= req_size;
-            state           <= ISSUE_AW;
-          end
+      if (!busy) begin
+        if (req_valid && req_write) begin
+          busy         <= 1'b1;
+          size_q       <= req_size;
+          aw_addr      <= req_addr;
+          aw_remaining <= req_beats;
+          w_addr       <= req_addr;
+          w_remaining  <= req_beats;
+          beat_index   <= '0;
+        end
+      end else begin
+        if (aw_fire) begin
+          aw_addr      <= aw_addr + (32'(aw_beats) << size_q);
+          aw_remaining <= aw_left_next;
         end
 
-        ISSUE_AW: begin
-          if (AWREADY) begin                 // AW handshake: AWVALID is high in this state
-            burst_beats <= 11'(next_beats);
-            beat_index  <= '0;
-            state       <= SEND_W;
-          end
+        if (w_fire) begin
+          if (beat_index == 11'd0) w_burst_beats <= 11'(w_beats_new);
+          w_addr      <= w_addr + (32'd1 << size_q);
+          w_remaining <= w_left_next;
+          beat_index  <= WLAST ? 11'd0 : beat_index + 11'd1;
         end
 
-        SEND_W: begin
-          if (WREADY) begin                  // W handshake: WVALID is high in this state
-            if (WLAST) begin
-              current_addr    <= current_addr + (32'(burst_beats) << size_q);
-              remaining_beats <= remaining_beats - burst_beats;
-
-              if (remaining_beats == burst_beats) begin
-                bridge_done <= 1'b1;
-                state       <= IDLE;
-              end else begin
-                state <= ISSUE_AW;
-              end
-            end else begin
-              beat_index <= beat_index + 11'd1;
-            end
-          end
+        // The request is done when both channels have sent everything.
+        if (aw_left_next == 11'd0 && w_left_next == 11'd0) begin
+          busy        <= 1'b0;
+          bridge_done <= 1'b1;
         end
-
-        default: state <= IDLE;
-      endcase
+      end
     end
   end
 
