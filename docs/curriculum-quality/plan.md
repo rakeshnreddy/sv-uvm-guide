@@ -213,7 +213,7 @@ Each wave runs the implementation workflow:
 | W3 | L25 (I-UVM-4/5/6), N03 (I-UVM-1D), N04 (I-UVM-3C) | L25 verified; the lead adds N03/N04 placeholders | integrated (f817f3e3, fd561ca8) |
 | W4 | L26–L31 (RAL, callbacks, scoreboards, VIP, multi-agent); N05 (A-UVM-9) later | L26–L31 verified | integrated (a848ca73); N05 A-UVM-9 integrated (d71d8e21) |
 | W5 | L32–L40 (AMBA), N06 (B-APB-1) | L32–L40 verified | integrated (f8784b67): all 15 groups clean after the 2026-10-18 review-only pass |
-| W6 | L41–L48 (expert tier), G29 bank fixes | L41–L48 analysed and verified | 10 groups integrated (1f15a3f0); G29 banks integrated (3f53f5a8); L45b, L47a–c, L48a/b in the review-only pass (wf_7ee1b1aa) |
+| W6 | L41–L48 (expert tier), G29 bank fixes | L41–L48 analysed and verified | integrated: 10 groups (1f15a3f0), G29 banks (3f53f5a8), the last 6 groups (53c0b6fc) |
 
 Waves overlap when usage allows. A group whose verifier could not run still proceeds; its accuracy reviewer then also re-checks the analyst's S1/S2 claims.
 

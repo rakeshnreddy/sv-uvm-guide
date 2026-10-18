@@ -65,10 +65,12 @@ Each file is a few very long lines, so search it with Python. Every path in the 
    and runs the full test suite and tsc.
    - Run `npx next lint` and `npx next build` in the worktree before committing: every push deploys to Cloudflare.
    - Commit explicit paths only, with `--no-verify`.
-   - **Checkpoint deploy (user request, 2026-10-18):** Cloudflare Workers Builds still watches `deploy/cloudflare`, so after a
-     green integration run `git push origin curriculum-quality-program:deploy/cloudflare` (a fast-forward) and poll
-     https://sv-uvm-guide.rakesh-n99.workers.dev for a page only the new build has. If the user switches the build branch,
-     plain pushes deploy instead.
+   - **Checkpoint deploy (user request, 2026-10-18):** after a green integration, with a clean main tree and no agents
+     editing it, deploy from this machine (wrangler is logged in):
+     `PATH=$HOME/.nvm/versions/node/v22.23.3/bin:$PATH APP_URL=https://sv-uvm-guide.rakesh-n99.workers.dev NEXTAUTH_SECRET=local-build-only npm run cf:deploy`,
+     then curl https://sv-uvm-guide.rakesh-n99.workers.dev for a page only the new build has, and delete `.open-next/`.
+     Cloudflare Workers Builds (watching `deploy/cloudflare`) fails instantly as of 2026-10-18; the user must check its log
+     in the dashboard before pushes can deploy by themselves.
    - Load-related timeouts in `feature-gating`, `expert-index` and `tests/qa/*` pass when the file is run alone.
 6. **Escalated groups:** read the `open` findings and fix them yourself or with a targeted agent, then integrate.
    `author-args-w5-w6.json` has the full author briefs, for any group that must be re-authored.
@@ -135,3 +137,7 @@ Still waiting on the user:
   (B-APB-1 now live). W6 review-only pass started (run `wf_7ee1b1aa-4df`, 6 groups). Two follow-up agents running:
   diagram kit (phone width, label geometry checks, legend, role=img) and AMBA models/spine (AW payload SVA,
   WaveDrom edge numbers, same-ID RAW preset, APB citation, quiz-objective sentence, spine B-AHB-3/B-AXI-4/App. A/B).
+- 2026-10-18: W6 review-only pass: all 6 groups clean; a verified fix pass cleared 9 diagram findings and E-SOC-1's
+  inverted co-emulation rule; integrated as 53c0b6fc. **Every lesson has now been reviewed.** Diagram fixes for 131
+  findings (7424a5bc), kit and AMBA follow-ups (a14d0d07). Deployed 53c0b6fc to the live site (version 28c5eec5).
+  Next: phase 6 closure (plan section 5).
