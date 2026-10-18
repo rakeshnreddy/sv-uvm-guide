@@ -141,3 +141,9 @@ Still waiting on the user:
   inverted co-emulation rule; integrated as 53c0b6fc. **Every lesson has now been reviewed.** Diagram fixes for 131
   findings (7424a5bc), kit and AMBA follow-ups (a14d0d07). Deployed 53c0b6fc to the live site (version 28c5eec5).
   Next: phase 6 closure (plan section 5).
+- 2026-10-18: phase 6 closure sweep started: run `wf_010d0167-550` (script saved as
+  `docs/curriculum-quality/workflows/phase6-closure-sweep.js`). Each round has 19 lesson groups × (accuracy,
+  completeness/coherence) plus a curriculum-wide consistency critic. Every S1/S2 finding goes to 3 skeptics
+  (source, misread, impact) and is kept only if at least 2 uphold it. One fixer per file, then an independent check.
+  It loops until two dry rounds (cap 5). Files are edited in the main tree, so integrate its result in a clean worktree.
+  If it is cut off, resume with `resumeFromRunId` and the same script path; do not start a second sweep.
