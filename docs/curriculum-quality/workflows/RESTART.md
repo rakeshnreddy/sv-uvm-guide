@@ -116,3 +116,14 @@ Still waiting on the user:
 - 2026-10-18: started the W5 review-only pass (run `wf_e047c557-093`, 15 groups) and the G29 bank review pass
   (run `wf_31252013-f8d`, `reviewOnly`). The W6 half (6 groups) starts after W5 finishes. If a run is cut off,
   resume it with `resumeFromRunId` and the same script; do not start a second run over the same groups.
+- 2026-10-18: G29 banks integrated (3f53f5a8): all six passed review; `/interview-prep` now renders bold, lists and
+  tables. Lead fixes integrated (94dfc853): PowerDomain UPF, Telemetry Demote code, PSS generator, hang-model label,
+  status note; `tests/curriculum/mdx-render-smoke.test.tsx` and `check-mdx --render` added; lesson `sources:` may
+  carry `url`. UVM misconception lint added (00e55c4e). Spine update agent running.
+- **Check when integrating L40a (B-AMBA-F2):** the AMBA bank reviewer found that `index.mdx` (~l.158) says a cache may
+  drop a Shared copy silently. Only a clean line may be dropped silently, and only by a master without an external
+  snoop filter (IHI0022E C1.2.3, C4.2, C4.3, C4.9.1 Evict); SharedDirty must be written back or passed on. The
+  coherency checker (~l.437, 532-533) must treat dirty responsibility in transit as an owner. Optional: PrefetchTgt
+  is never retried (IHI0050E.b 2.11).
+- Still open: the E-RISCV-1 interview question (no bank has one; SoC bank suggested); follow-up answers field;
+  `debug`/`predict-output` categories in `bank-schema.test.ts`; a `visual` field linking visualizers.
