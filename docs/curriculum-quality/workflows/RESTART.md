@@ -65,6 +65,10 @@ Each file is a few very long lines, so search it with Python. Every path in the 
    and runs the full test suite and tsc.
    - Run `npx next lint` and `npx next build` in the worktree before committing: every push deploys to Cloudflare.
    - Commit explicit paths only, with `--no-verify`.
+   - **Checkpoint deploy (user request, 2026-10-18):** Cloudflare Workers Builds still watches `deploy/cloudflare`, so after a
+     green integration run `git push origin curriculum-quality-program:deploy/cloudflare` (a fast-forward) and poll
+     https://sv-uvm-guide.rakesh-n99.workers.dev for a page only the new build has. If the user switches the build branch,
+     plain pushes deploy instead.
    - Load-related timeouts in `feature-gating`, `expert-index` and `tests/qa/*` pass when the file is run alone.
 6. **Escalated groups:** read the `open` findings and fix them yourself or with a targeted agent, then integrate.
    `author-args-w5-w6.json` has the full author briefs, for any group that must be re-authored.
