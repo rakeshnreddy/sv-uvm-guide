@@ -1,0 +1,1332 @@
+[
+ {
+  "area": "Labs: /practice/lab/[labId], lab progress/asset/grading APIs, graders, simulation jobs, and the lab entry points (LabLink, Practice Hub, home, lesson practice, overview). I ran the 15 lab-related vitest files; all 73 tests pass. Cross-cutting findings: (1) Today an anonymous visitor cannot open any of the 23 available labs. Every lab link ends at a NextAuth sign-in page whose only provider always refuses. (2) Removing the auth gate is not enough on the Worker. The page is force-dynamic and reads content/curriculum/labs/** with node:fs at request time, and those files are not in the Worker bundle (OpenNext's own load-manifest patch notes that readFileSync is unsupported in workerd and inlines manifests instead). The content has to move to build time; check this with cf:preview. (3) Graders are pure TypeScript with zero imports, so they can run in the browser. Simulation can't: it needs a sandbox, a database row and a secret queue token. (4) No test covers the anonymous lessons-only behaviour. playwright.config.ts forces every flag on and every lab spec signs in with AUTH_TEST_MODE and DATABASE_URL. tests/e2e/labs.spec.ts is stale: it expects the old basics-1 v1 title and hint. Nothing unit-tests LabClientPage.",
+  "features": [
+   {
+    "feature": "Lab page route and its access gate (/practice/lab/[labId])",
+    "entryPoints": [
+     "src/app/(learning)/practice/lab/[labId]/page.tsx",
+     "src/app/(learning)/practice/lab/[labId]/LabClientPage.tsx",
+     "src/lib/lab-registry.ts (getLabById, toLearnerLabDto)",
+     "src/server/labs.ts (labAccessService.resolve, getLabProgress)",
+     "src/lib/lab-assets.ts (getLearnerLabAssets)",
+     "src/lib/auth.ts (requireSession, AuthenticationError)"
+    ],
+    "dependsOn": [
+     "NextAuth session via getServerSession(authOptions) in requireSession()",
+     "env NEXTAUTH_SECRET or SESSION_SECRET (src/lib/auth.ts throws on import without it, so the route would 500)",
+     "Prisma: User.upsert inside requireSession, plus LabAttempt.findFirst twice (access and progress)",
+     "node:fs reads of process.cwd()/content/curriculum/labs/<assetLocation> at request time",
+     "export const dynamic = 'force-dynamic'",
+     "redirect target /api/auth/signin (src/app/api/auth/[...nextauth]/route.ts)"
+    ],
+    "todayAnonymous": "Unknown ids and the 6 coming_soon labs (arbiter-1, assertions-1, common-1, constructs-1, dma-1, fifo-1) get notFound(), a 404, before any auth check. For each of the 23 available labs, requireSession() finds no session and throws AuthenticationError before any Prisma call. The catch then calls redirect(), a 307 to /api/auth/signin?callbackUrl=%2Fpractice%2Flab%2F<id>. That is NextAuth's built-in page with one button, 'Sign in with Placeholder', whose authorize() always returns null. Pressing it comes back with error=CredentialsSignin ('Sign in failed'). It is a dead end: the steps, files and editor never render. generateMetadata still runs. Every attempt is a dynamic Worker request, which the runbook puts at 100–500 ms of CPU. Even with the gate removed, getLearnerLabAssets() fs.stat()s repo files that are not in the Worker bundle, so the page would most likely 500 on Cloudflare.",
+    "dataShape": "Reads the LabManifest (static), LabAttempt {currentStepId, completedSteps[], workspace Json} for (userId, labId, labVersion), and asset summaries {path, fileName, role, language, editable}. Writes nothing.",
+    "noLoginPlan": "1. Remove requireSession, labAccessService and getLabProgress from page.tsx, so the lab chunk no longer imports src/lib/auth.ts or Prisma. 2. Make the route static: generateStaticParams() returns the ids of available labs, set dynamicParams = false (unknown and coming_soon ids still 404), and drop force-dynamic. Prerendered lab pages are then served from Worker static assets, the same way as lessons. 3. Read the guide, starter and reference asset contents with fs at build time in the server component and pass them as props. Keep the 256 KB per file and 1 MB per lab caps as build errors; today's largest lab is 45 KB without solutions. 4. LabClientPage loads progress after mount (useEffect, to avoid a hydration mismatch) from a LabProgressStore interface {load, saveWorkspace, completeStep, reset}. browserLabProgressStore (localStorage) is used now. accountLabProgressStore, which wraps the existing /api/me/labs routes, is added later and selected when featureFlags.accountUI is on and a session exists. That is the seam where auth comes back. 5. Visible: a 'Saved in this browser' status line, plus 'Reset lab' and 'Download files' buttons.",
+    "tests": [
+     "tests/e2e/labs.spec.ts (authenticated; stale: expects title 'SV Basics: Variables and Assignment' and hint 'Declare myVar…', but basics-1 is now v2 'Refactor Repeated Stimulus into a Task' and step 1 is self_attested, so no 'Check solution' button appears on load)",
+     "tests/e2e/learner-flow.spec.ts (authenticated: Launch Lab → pss-portable-intent → mark 3 steps → reload → solution visible)",
+     "tests/e2e/regression-gates.spec.ts ('LabLink validation' expects status < 400; today it passes only because the redirect lands on the sign-in page with a 200)",
+     "tests/e2e/practice-linkage.spec.ts ('the mock lab page is gone' expects 404)",
+     "tests/components/LabLink.test.tsx ('labRequiresSignIn' test reads page.tsx and asserts it contains requireSession(); must be inverted)",
+     "tests/fixtures/site-routes.ts (an available lab counts as a valid route)",
+     "Missing: an anonymous Playwright project with default flags and no sign-in; no unit test renders LabClientPage"
+    ],
+    "risk": "High. This route is the single blocker for every lab. Risks in the fix: Worker fs access (move all reads to build time and check with cf:preview); hydration mismatch if localStorage is read during render; lab version bumps orphaning saved work; the prerendered page size grows by up to about 45 KB of embedded file text per lab."
+   },
+   {
+    "feature": "Lab files: listing and loading starter, guide and reference content",
+    "entryPoints": [
+     "src/lib/lab-assets.ts (getLearnerLabAssets, readLabAsset, resolveDeclaredAsset)",
+     "src/app/api/me/labs/[labId]/assets/[...assetPath]/route.ts (GET)",
+     "LabClientPage.tsx assetUrl(), the asset-fetch useEffect, loadMissingEditableFiles()",
+     "LabClientPage 'Lab files' button list and Monaco editor (@monaco-editor/react, loaded from its default CDN)"
+    ],
+    "dependsOn": [
+     "requireSession (API route)",
+     "Prisma LabAttempt via labAccessService.resolve (decides solution visibility)",
+     "node:fs/promises and path on process.cwd()/content/curriculum/labs at request time",
+     "manifest assetLocation and assets[] from src/generated/lab-registry.ts"
+    ],
+    "todayAnonymous": "The visitor never gets here because the page redirects first. A direct GET returns 401 {\"error\":\"UNAUTHORIZED\"}. On the Worker, a signed-in request would also most likely fail: fs cannot see the repo files, so it would answer 503 LAB_ASSET_UNAVAILABLE.",
+    "dataShape": "Read-only. Declared assets only, with path, role (guide/starter/reference/solution), language and editable. Content is a UTF-8 string, capped at 256 KB per file and 1 MB per lab. Measured: 23 available labs carry 9–45 KB each without solutions and 2–21 KB of solutions; all 29 labs total 727 KB. Each lab has 1–3 editable starter files.",
+    "noLoginPlan": "Embed guide, starter and reference content in the prerendered page props, so no request is needed at all. For solution files, emit static files at build time. Option one: extend scripts/generate-lab-registry.mjs, or add a generate:lab-files step wired into prebuild, to copy only the manifest-declared assets to public/lab-files/<labId>/<path> (git-ignored). The Worker serves those as plain static assets with no server CPU. Option two: a force-static route handler with generateStaticParams; check that OpenNext serves it from cache. Keep the declared-path and traversal checks in the generator. The client fetches solution files only when they are revealed. Leave /api/me/labs/.../assets in place for the account era or remove it.",
+    "tests": [
+     "tests/lib/lab-assets.test.ts (solutions excluded from the payload, reveal policy, declared paths only)",
+     "tests/qa/labsPlatformAudit.spec.ts (every asset location exists)",
+     "Missing: a test that the build output holds every declared asset and nothing undeclared, with solutions kept separate"
+    ],
+    "risk": "Medium. Solution files become publicly fetchable static files. They are already in the repo, but this should be a deliberate decision. Build-time copying must stay in sync with lab.json (wire it into prebuild, or add a --check mode like generate-lab-registry.mjs)."
+   },
+   {
+    "feature": "Workspace autosave and resume (editor buffers and current step)",
+    "entryPoints": [
+     "LabClientPage.tsx useEffect that PATCHes about 600 ms after fileBuffers or currentStep change",
+     "src/app/api/me/labs/[labId]/progress/route.ts (GET, PATCH)",
+     "src/server/labs.ts saveLabWorkspace(), getLabProgress(), toProgress()"
+    ],
+    "dependsOn": [
+     "requireSession",
+     "Prisma LabAttempt (workspace Json, currentStepId, keyed by userId, labId, labVersion)",
+     "zod progressSchema: at most 24 files, 256 KB each, 1 MB total; editable paths only; known step ids; labVersion must match or 409"
+    ],
+    "todayAnonymous": "The visitor never gets here (the page redirects). The API answers 401 UNAUTHORIZED. If the client page were ever rendered without a session, every edit, and the first mount after 600 ms, would PATCH and get a 401. The console area would then show 'Progress could not be saved. Your current editor remains intact.' Nothing would survive a reload.",
+    "dataShape": "Writes {labVersion, currentStepId, fileBuffers: Record<editablePath, string>}. Reads LabProgressDto {currentStepId, completedSteps[], fileBuffers}. Per lab that is 1–3 editable files of at most about 45 KB in total. The free-form step snippet (stepCode, used when no asset is selected) is never persisted.",
+    "noLoginPlan": "Use the localStorage key `sv-uvm-guide:lab:<labId>@<labVersion>`, matching the `sv-uvm-guide:` prefix that src/hooks/useExerciseProgress.ts already uses. Store JSON {schema: 1, labId, labVersion, currentStepId, completedSteps[], stepEvidence{}, fileBuffers{}, status: 'in_progress' or 'completed', startedAt, updatedAt, completedAt?}. Debounce writes to 600 ms as today. Wrap every access in try/catch and read only inside useEffect, so SSR is safe. On read, validate with the same rules as the route (drop unknown paths and step ids, ignore oversized buffers). If storage is full or blocked (private mode), show 'Can't save in this browser — download your files to keep them'. Optionally use the storage event for cross-tab sync. 'Reset lab' removes the key. When labVersion changes, keep the old key and offer to download the old files. Seam for later: on first sign-in, POST the local record to an import endpoint that re-validates it, and re-grades graded steps, before writing LabAttempt.",
+    "tests": [
+     "tests/api/lab-progress.test.ts (rejects a browser-supplied completedSteps list)",
+     "tests/server/labs.test.ts ('does not let workspace autosave mutate completion state')",
+     "Missing: vitest for the browser store (round trip, corrupted JSON, setItem throwing QuotaExceededError, version mismatch, path filtering) and a LabClientPage test that restores state after a remount"
+    ],
+    "risk": "Low to medium. localStorage is about 5 MB per origin and is shared with the curriculum, exercise and flashcard progress. 23 labs at about 45 KB each is around 1 MB, which fits. Data is per browser and per device, and is lost if site data is cleared."
+   },
+   {
+    "feature": "Self-attested step completion and step ordering ('Mark step complete & continue', 'Mark lab complete')",
+    "entryPoints": [
+     "LabClientPage.tsx completeSelfAttestedStep() and the step list (a step button stays disabled until the previous step is complete)",
+     "src/app/api/me/labs/[labId]/progress/route.ts POST (completionSchema)",
+     "src/server/labs.ts completeLabStep(), LabStepCompletionError (LAB_STEP_NOT_FOUND, LAB_COMPLETION_POLICY_MISMATCH, LAB_PREVIOUS_STEP_INCOMPLETE)"
+    ],
+    "dependsOn": [
+     "requireSession",
+     "Prisma LabAttempt (completedSteps, stepEvidence, status IN_PROGRESS or COMPLETED, completedAt)"
+    ],
+    "todayAnonymous": "The visitor never gets here (the page redirects). The API answers 401. This blocks 21 of the 23 available labs completely, because all of their steps are self_attested; only basics-1 and simple-dut-1 have graded steps.",
+    "dataShape": "Request {labVersion, stepId, stepVersion, completion: 'self_attested'}. Writes completedSteps in manifest order, stepEvidence[stepId] = {kind, stepVersion, recordedAt}, currentStepId = next step, status COMPLETED with completedAt once every step is done.",
+    "noLoginPlan": "Pull the policy out of completeLabStep into a pure module, for example src/lib/lab-progress-policy.ts: applyStepCompletion(lab, progress, stepId, evidence) returns either the new progress or an error code. It checks that the step exists, that the completion kind matches the manifest, and that the previous step is complete, then orders steps canonically and completes the lab once all steps are done. src/server/labs.ts keeps the Prisma persistence around it, and the browser store applies the same function to localStorage. The UI copy stays as it is: 'Step completed. Continue when ready.' and 'Lab completed.'",
+    "tests": [
+     "tests/api/lab-progress.test.ts (records a self-attested step; the manual endpoint cannot complete a graded step)",
+     "tests/server/labs.test.ts (requires earlier steps first; completes only after every step)",
+     "tests/e2e/learner-flow.spec.ts (pss-portable-intent: three self-attested steps)",
+     "Missing: pure policy tests run against both stores"
+    ],
+    "risk": "Low. Completion is honour-system already. Keep a single shared policy so browser and server never disagree when progress is imported later."
+   },
+   {
+    "feature": "Automated structural grading ('Check solution')",
+    "entryPoints": [
+     "LabClientPage.tsx checkSolution() (shown when the step is graded and lab.graderId is set)",
+     "src/app/api/labs/run/route.ts POST",
+     "src/lib/lab-graders.ts graderRegistry (sv-basics-v1, sv-basics-v2, sv-selfcheck-v1; all requiresSandbox: false)",
+     "scripts/generate-lab-registry.mjs knownGraders"
+    ],
+    "dependsOn": [
+     "requireSession",
+     "Prisma via completeLabStep (records graded evidence)",
+     "no env vars; graders are pure functions with no imports"
+    ],
+    "todayAnonymous": "The visitor never gets here (the page redirects). The API answers 401 UNAUTHORIZED. Only two labs show the button: basics-1 (steps write-task, call-task, self-check) and simple-dut-1 (steps clock-reset, drive-predict, checker, directed-tests, verdict).",
+    "dataShape": "Request {labId, labVersion, stepId, stepVersion, files[{path, content}]}: at most 24 files, editable paths only, 1 MB total. Response GraderResult {success, hint, diagnostics[{code, message, file?, line?}]} plus progress on success. Writes stepEvidence {kind: 'graded', graderId, graderVersion, stepVersion, recordedAt}.",
+    "noLoginPlan": "Run the graders in the browser. Import graderRegistry into the client (about 450 lines, no imports, no node APIs) and call grade(submission) directly. Apply the same pre-checks the route applies: step version, step kind is graded, editable paths only, requiresSandbox is false. On success, record graded evidence through the shared policy module. If a future grader has requiresSandbox: true, show 'This check needs the simulator service' instead of running it. Label the button's result honestly: 'Structural check in your browser: it does not compile or simulate'. Keep /api/labs/run so a future account import can re-grade on the server; the graders are deterministic and versioned.",
+    "tests": [
+     "tests/lib/lab-graders.test.ts (14 tests: sv-basics-v2 and sv-selfcheck-v1, including starter rejection and reference acceptance)",
+     "tests/api/labs-run.test.ts (authenticated grading, comment-hidden syntax, 401 without a session)",
+     "tests/e2e/labs.spec.ts (stale; see the lab page feature)",
+     "Missing: a LabClientPage test that grades in-browser and advances the step"
+    ],
+    "risk": "Low. The client bundle grows by about 15 KB on lab pages only. Evidence produced in the browser can be forged, which is acceptable without accounts. Mitigate it later by re-grading on import."
+   },
+   {
+    "feature": "Solution reveal after the lab is completed",
+    "entryPoints": [
+     "src/server/labs.ts labAccessService.resolve (canRevealSolution = a COMPLETED LabAttempt for this labVersion)",
+     "src/lib/lab-assets.ts canAccessRole()",
+     "LabClientPage.tsx 'Lab files' list (solution assets are absent until revealed)"
+    ],
+    "dependsOn": [
+     "requireSession",
+     "Prisma LabAttempt.status"
+    ],
+    "todayAnonymous": "Never shown. The lab page redirects, and the asset route answers 401.",
+    "dataShape": "Read-only. Solution assets per lab, for example pss-portable-intent has 3 and most labs have 1, at 2–21 KB each.",
+    "noLoginPlan": "Apply the same rule on the client: once the local record's status is completed, add the solution assets to 'Lab files' and fetch their content from the static build output (see the lab files feature). Optionally add 'Show solution early' behind a confirmation. Document that this is a learning nudge, not access control: the files are static and in the repo. When accounts return, accountLabProgressStore can switch the rule back to the server-side check.",
+    "tests": [
+     "tests/lib/lab-assets.test.ts ('enforces the solution reveal policy during content retrieval')",
+     "tests/e2e/learner-flow.spec.ts (after a reload, solution/generated_uvm_sequence.sv is listed and selectable)",
+     "Missing: a unit test that the client reveals solutions only after local completion"
+    ],
+    "risk": "Low. Solutions become reachable by URL. That needs the owner's sign-off, since the content is already public in the repo."
+   },
+   {
+    "feature": "Simulation panel ('Run workspace', Icarus or Verilator) and the job queue",
+    "entryPoints": [
+     "src/components/ui/CodeExecutionEnvironment.tsx (rendered by LabClientPage when the lab has editable systemverilog assets: 21 of 23 available labs; not pss-portable-intent [pss] or soc-strategy-capstone [markdown])",
+     "src/app/api/simulate/route.ts POST",
+     "src/app/api/simulate/[jobId]/route.ts GET (the client polls once a second, up to 60 times)",
+     "src/server/simulation/index.ts (simulationRequestSchema, simulationJobs.enqueue and getForUser, processQueuedSimulationJob)",
+     "src/server/simulation/worker.ts, docker-sandbox.ts, types.ts",
+     "simulation-runner/ (runner images)"
+    ],
+    "dependsOn": [
+     "requireSession",
+     "Prisma SimulationJob (and User)",
+     "env SIMULATION_QUEUE_URL, SIMULATION_QUEUE_TOKEN (secret bearer), SIMULATION_LOCAL_DOCKER, SIMULATION_ICARUS_IMAGE, SIMULATION_VERILATOR_IMAGE",
+     "node:child_process docker, node:fs, node:os (local sandbox)"
+    ],
+    "todayAnonymous": "The visitor never gets here (the page redirects). POST /api/simulate and GET /api/simulate/<id> answer 401 UNAUTHORIZED; a GET on the POST route answers 405. If the panel were shown on this deploy, 'Run workspace' would print 'UNAUTHORIZED' for an anonymous visitor, or 'SIMULATION_EXECUTION_NOT_CONFIGURED' (503) for a signed-in one, because no queue env is set. The button would be visibly broken.",
+    "dataShape": "Request {backend: 'icarus' or 'verilator', files[{path, content}]}: at most 16 files, 128 KB each, 512 KB total. The server creates a SimulationJob per user {id, status, result {passed, coverage, waveformKey, diagnostics[]}, errorCode}. Nothing is stored in the browser.",
+    "noLoginPlan": "This cannot work in the browser. It needs an isolated simulator (a Docker or queue worker), a secret queue token and a job row, and the schema deliberately rejects 'wasm'. It must stay server-side and guarded, because running untrusted code needs identity and rate limits. Visible behaviour: have the server pass a simulationAvailable prop, true only when SIMULATION_QUEUE_URL is set and accounts are enabled. On the lessons-only deploy, don't render CodeExecutionEnvironment. Render a 'Run it on your simulator' panel instead, with 'Download workspace' (a client-side Blob or zip of the current editable buffers plus the read-only starter and reference files) and the README's run command (for example `make run SIM=<tool>`). This keeps self-attested steps such as 'Run the starter and record the counts' doable. Later, show the real panel to signed-in users once the queue exists. If anonymous runs are ever wanted, use a separate rate-limited, Turnstile-protected endpoint.",
+    "tests": [
+     "tests/api/simulate.test.ts (401 without a session, 202 enqueue, rejects untrusted backends)",
+     "tests/components/CodeExecutionEnvironment.test.tsx",
+     "tests/server/simulation.test.ts (schema: allowlisted backend, traversal and duplicates rejected)",
+     "tests/server/runSimulation.test.ts (trusted harness result, resource policy, fails closed)",
+     "tests/server/simulation-job-worker.test.ts (no dispatcher means no zombie job; claim-once)",
+     "Missing: a LabClientPage test that hides the panel when simulationAvailable is false and shows the download panel"
+    ],
+    "risk": "Medium. If the panel is left visible it is a broken control on 21 labs. Exposing the endpoint without a guard would be a cost and abuse risk."
+   },
+   {
+    "feature": "Lesson lab callout (MDX <LabLink labId=…/>)",
+    "entryPoints": [
+     "src/components/mdx/LabLink.tsx",
+     "src/generated/mdx-component-registry.tsx (registers LabLink)",
+     "32 MDX files under content/curriculum that use <LabLink>",
+     "src/lib/lab-registry.ts labRequiresSignIn()"
+    ],
+    "dependsOn": [
+     "none at runtime (prerendered with the lesson); labRequiresSignIn() returns true for every available lab"
+    ],
+    "todayAnonymous": "The card shows 'Practice Lab: <title>' and its description, plus a 'Launch Lab' button (href /practice/lab/<id>) described by 'Sign in required: the lab saves your progress to your account.' Clicking it leads to the dead-end sign-in page. A coming-soon lab shows a chip and no link. An unknown id shows a red author error box.",
+    "dataShape": "none",
+    "noLoginPlan": "Replace labRequiresSignIn() with a progress-location descriptor, for example labProgressNote(lab) returning 'Your progress is saved in this browser.' Keep the aria-describedby wiring and the e2e-pinned 'Launch Lab' link name. When accounts return, the note can switch on the flag. Optionally add a small client island that shows the local status ('In progress' or 'Completed').",
+    "tests": [
+     "tests/components/LabLink.test.tsx (SIGN_IN_NOTE constant and the labRequiresSignIn test both need rewriting)",
+     "tests/e2e/navigation-entry-points.spec.ts:122 (expects the description /Sign in required/)",
+     "tests/e2e/learner-flow.spec.ts ('Launch Lab' click)",
+     "tests/e2e/regression-gates.spec.ts ('LabLink validation')",
+     "tests/qa/labsPlatformAudit.spec.ts (LabLink ids registered; every available lab is linked from MDX)",
+     "tests/curriculum/mdx-render-smoke.test.tsx"
+    ],
+    "risk": "Low. The changes are copy and test updates. The e2e link name must stay 'Launch Lab'."
+   },
+   {
+    "feature": "Practice Hub lab cards and other lab entry points and copy",
+    "entryPoints": [
+     "src/components/practice/PracticeHub.tsx (labNotes(): 'Auto-graded steps. Sign in to open.' or 'Self-checked steps: you mark each one complete. Sign in to open.'; section intro 'Labs open after you sign in.')",
+     "src/app/(learning)/practice/page.tsx",
+     "src/lib/practice-links.ts toLabPracticeItem(), getPracticeLabItems(), getPracticeForModule()",
+     "src/components/home/InteractiveFeaturesSection.tsx ('Guided Labs … Sign in to open a lab.')",
+     "src/components/curriculum/LessonPractice.tsx ('Sign in to run labs.' under each lab in the lesson's Hands-on practice block)",
+     "src/components/curriculum/ModuleCard.tsx with src/lib/curriculum-overview.ts (Lab: links on /curriculum)",
+     "src/lib/learning-paths.ts resolveLab() (path lab links)",
+     "navbar 'Labs' → LABS_HREF '/practice#labs' (src/lib/site-links.ts)"
+    ],
+    "dependsOn": [
+     "none (prerendered, static data from the lab registry)"
+    ],
+    "todayAnonymous": "Everything renders. Available labs are linked and coming-soon labs are listed without links. The copy tells the visitor to sign in, which is impossible on this deploy, and every lab link (hub card, lesson practice block, module card, learning path) ends at the dead-end sign-in page.",
+    "dataShape": "none today. Optional later: read local lab status from the same localStorage keys.",
+    "noLoginPlan": "Change the copy. 'Sign in to open' and 'Labs open after you sign in' become 'Your progress is saved in this browser'. 'Auto-graded steps' becomes 'Auto-checked steps (structural, in your browser)'. In LessonPractice and the home card, drop the sign-in line. Optionally add a client island on hub cards that reads browserLabProgressStore and shows 'In progress · step 3 of 5' or 'Completed', so the hub stays prerendered. No server work is needed.",
+    "tests": [
+     "tests/components/PracticeHub.test.tsx:58 (expects 'Sign in to open.')",
+     "tests/components/LessonMdxPipeline.test.tsx:97 (expects 'Sign in to run labs.')",
+     "tests/e2e/practice-linkage.spec.ts",
+     "tests/e2e/navigation-entry-points.spec.ts (Labs nav lands on /practice#labs)",
+     "tests/components/CurriculumOverview.test.tsx",
+     "tests/components/LearningPathsSection.test.tsx",
+     "tests/lib/practice-links.test.ts",
+     "tests/lib/curriculum-overview.test.ts",
+     "tests/lib/learning-paths.test.ts"
+    ],
+    "risk": "Low. These are copy-only changes, but four pinned assertions must change in the same commit as the copy."
+   },
+   {
+    "feature": "Lab orientation: back link, teaching lessons, prerequisites and 'Do this lab after'",
+    "entryPoints": [
+     "src/app/(learning)/practice/lab/[labId]/LabNavigation.tsx (LabBackLink, LabLessonContext)",
+     "src/components/practice/LearnInLesson.tsx (LabPrerequisiteList, LessonLinkList)",
+     "src/lib/practice-links.ts getLabBackLink(), getLabLessons(), getLabPrerequisites()"
+    ],
+    "dependsOn": [
+     "none (pure, uses curriculum-data and the lab registry; no fs, no session)"
+    ],
+    "todayAnonymous": "Never seen, because the lab page redirects before rendering. The same prerequisite data does appear in LabLink ('Do this lab after') and on Practice Hub cards, and works there.",
+    "dataShape": "none",
+    "noLoginPlan": "Works as it is once the page renders statically. Optionally mark prerequisite labs that are completed in the local store.",
+    "tests": [
+     "tests/components/LabNavigation.test.tsx (6 tests)",
+     "tests/components/LearnInLesson.test.tsx",
+     "tests/lib/practice-links.test.ts",
+     "tests/e2e/learner-flow.spec.ts ('Back to module')"
+    ],
+    "risk": "Low."
+   },
+   {
+    "feature": "Lab catalogue: manifests, generated registry and validation",
+    "entryPoints": [
+     "content/curriculum/labs/**/lab.json (29 manifests: 23 available, 6 coming_soon)",
+     "scripts/generate-lab-registry.mjs (npm run generate:labs; --check from scripts/validate-content-manifests.mjs)",
+     "src/generated/lab-registry.ts (checked in; not regenerated by prebuild, which runs only generate:curriculum)",
+     "src/lib/lab-manifest.ts (zod schemas)",
+     "src/lib/lab-registry.ts (getAllLabs, getLabById, toLearnerLabDto, labRequiresSignIn)"
+    ],
+    "dependsOn": [
+     "none at runtime"
+    ],
+    "todayAnonymous": "Works. It drives the hub, LabLink, the module cards and the 404 decision for unknown and coming-soon labs.",
+    "dataShape": "Static manifest {id, version, title, description, owningModule, routeSlug, moduleHref?, status, graderId?, labPrerequisites, modulePrerequisites, steps[{id, version, completion, title, instructions, starterCode}], assets[{path, role, language, editable}], assetLocation}.",
+    "noLoginPlan": "No change for anonymous use. Extend the generator, or add a sibling script, to emit the static lab files that the lab files feature needs, and give it a --check mode. Because generate:labs is not in prebuild, either commit the emitted output or add the step to prebuild so Workers Builds produce it. Retire labRequiresSignIn() as described in the LabLink feature.",
+    "tests": [
+     "tests/lib/lab-registry.test.ts",
+     "tests/qa/labsPlatformAudit.spec.ts",
+     "tests/fixtures/site-routes.ts",
+     "scripts/validate-content-manifests.mjs (generate-lab-registry --check)"
+    ],
+    "risk": "Low. Watch for drift between lab.json and any newly emitted static files."
+   }
+  ]
+ },
+ {
+  "area": "Flashcards, spaced repetition and reviews",
+  "features": [
+   {
+    "feature": "Lesson flashcard deck widget (\"Reinforce the essentials\" on every lesson)",
+    "entryPoints": [
+     "src/app/(learning)/curriculum/[...slug]/page.tsx (line 63: deckId = frontmatter.flashcards ?? frontmatter.flashcardId; lines 74-88: LESSON_PRACTICE_SLOT renders LessonPractice)",
+     "src/components/curriculum/LessonPractice.tsx (server component; renders <FlashcardWidget deckId={deckId} /> under FLASHCARDS_SECTION)",
+     "src/components/widgets/FlashcardWidget.tsx ('use client'; flip, Previous, Next, Restart, progress bar)",
+     "src/lib/curriculum/lesson-mdx.ts (FLASHCARDS_SECTION id reinforce-the-essentials, e2e-pinned text)",
+     "src/lib/curriculum/remark-practice-slot.ts",
+     "src/lib/curriculum/lesson-frontmatter.ts (flashcards / flashcardId fields)",
+     "content/flashcards/*.json (113 files, 1675 cards; all 112 lesson MDX files declare a deck)"
+    ],
+    "dependsOn": [
+     "none: no session, no Prisma, no API route, no env var, no feature flag",
+     "static deck JSON bundled through src/lib/flashcard-decks.ts"
+    ],
+    "todayAnonymous": "Works the same signed in or out. The prerendered HTML shows the placeholder \"No flashcards available or component loading...\" (FlashcardWidget line 62, the isMounted gate). After hydration the learner sees \"Card 1 of N\" and can flip the card (role=button, aria-pressed), use Previous/Next, and Restart. There is NO rating control on a lesson. 'Again/Hard/Good/Easy' exists only on the 404'd memory hub, so a learner cannot rate a card from a lesson. Nothing is saved: onProgressUpdate is not passed by LessonPractice, and line 51 only has the comment \"Potential: Load last viewed index from localStorage\". A reload, or coming back to the lesson, starts again at card 1 with no memory of which cards were seen or known. Nothing links the deck to any review queue.",
+    "dataShape": "Reads only static content: RawFlashcard {id?, question|front, answer|back}, 5-15 cards per deck. Writes nothing; currentIndex and isFlipped live only in React state.",
+    "noLoginPlan": "Fully doable in the browser. (1) Add a rating row that appears after the card is flipped: Again=0, Hard=3, Good=4, Easy=5. Hard is currently 2, which SM-2 treats as a failure that resets the card. Rating calls a local review store (see the scheduling feature) and moves to the next card. Show \"Next review in N days\", plus a \"N due\" chip that links to the review page. Keep the flip/Previous/Next controls so a learner can still browse without rating. (2) Store the last-viewed index per deck in localStorage (sv-uvm-guide:flashcards:position:<deckId>), reusing the try/catch pattern of src/hooks/useExerciseProgress.ts. (3) Server-render the first card: LessonPractice looks up the deck on the server and passes plain cards as props, and the isMounted placeholder goes, so crawlers and no-JS readers see a real card instead of \"No flashcards available\". (4) Keep the e2e-pinned strings and attributes: \"Reinforce the essentials\", [role=button] with aria-pressed, aria-label \"Next card\", and \"Card N of M\". Seam for later: the widget talks only to a FlashcardReviewStore interface, never to storage or server actions directly.",
+    "tests": [
+     "tests/e2e/amba-curriculum.spec.ts (anonymous: heading 'Reinforce the essentials' + 'Card 1 of N' on all AMBA lessons)",
+     "tests/e2e/lesson-orientation.spec.ts (anonymous: flashcards section sits before References; TOC link #reinforce-the-essentials)",
+     "tests/e2e/regression-gates.spec.ts (flip aria-pressed true/false, Next -> 'Card 2 of N'; runs SIGNED IN via authenticateTestLearner)",
+     "tests/e2e/learner-flow.spec.ts (flip; signed in)",
+     "tests/components/LessonMdxPipeline.test.tsx (slot placement / heading id)",
+     "tests/lib/remark-practice-slot.test.ts",
+     "tests/curriculum/mdx-render-smoke.test.tsx (hasFlashcards wiring)",
+     "GAP: no unit/component test for FlashcardWidget itself; no anonymous e2e for flip/next; nothing tests persistence or rating (none exists)"
+    ],
+    "risk": "Low today because nothing is saved and nothing breaks. The gap is learning value: there is no spaced repetition on lessons, which is the only place a learner meets flashcards. When the rating row is added, keep the pinned e2e selectors stable. Do not store state by card index (see the deck-registry feature). The isMounted gate means SEO and no-JS readers see a misleading \"No flashcards available\" line on all 112 lessons. The LessonPractice component on the same page also prints \"Sign in to run labs.\" for lab entries (line 54); that belongs to the labs area, but it contradicts the no-login decision on the same lesson page."
+   },
+   {
+    "feature": "Deck registry and how a lesson's deck reaches the browser",
+    "entryPoints": [
+     "src/lib/flashcard-decks.ts (static imports of ~120 deck JSON files; deckAliases for split I-UVM-1A/1B/1C)",
+     "src/components/widgets/FlashcardWidget.tsx (imports the whole registry client-side; card id fallback `${deckId}-${index}`)",
+     "scripts/validate-flashcards.cjs, scripts/check-mdx.mjs, scripts/validate-content-manifests.mjs"
+    ],
+    "dependsOn": [
+     "none at runtime (no session/DB/flag/env)"
+    ],
+    "todayAnonymous": "Works, but every lesson page downloads the full registry. In the current .next build, chunk 8115-d119d76ce60f23df.js (624 KB raw, about 204 KB gzip) holds every deck, and app-build-manifest lists only /curriculum/[...slug] and /dashboard/memory-hub as using it. The learner sees one deck but pays for all 1675 cards.",
+    "dataShape": "Static content only: Record<deckId, RawFlashcard[]> typed as any[]. 1645 cards have stable ids such as 'auvm4a-1'. The 30 cards in A-UVM-1_Advanced_Sequencing, A-UVM-2_The_UVM_Factory and A-UVM-3_Advanced_UVM_Techniques have no id and get index-based ids. Ids are unique across all decks. Alias decks share the same card objects, so they share ids.",
+    "noLoginPlan": "Nothing here needs a server. (1) Give the 30 id-less cards explicit ids before any learner state is stored against them, and make scripts/validate-flashcards.cjs require an explicit id. Otherwise inserting or reordering a card moves saved review state onto the wrong card. (2) Resolve decks on the server, in LessonPractice or a server-only lookup module, and pass only that lesson's cards to the client widget, so the 624 KB registry chunk leaves lesson pages. The review page can load decks on demand with dynamic import per deck. (3) Generate a deckId-to-lesson-href map in generate:curriculum or from lesson-loader, so review cards can link back to their lesson (G30-PRAC-08).",
+    "tests": [
+     "tests/lib/flashcard-registry.test.ts (every lesson frontmatter deck resolves to a non-empty deck; every JSON file registered)",
+     "tests/amba-flashcards.spec.ts (AMBA decks >=5 cards, question/answer present, frontmatter points at matching deck)",
+     "tests/expert-flashcards.spec.ts (T4 decks)",
+     "scripts/validate-flashcards.cjs (duplicate ids incl. fallback ids)",
+     "GAP: no test that every card has an explicit stable id; no bundle-budget check on the lesson route for the deck chunk"
+    ],
+    "risk": "Medium once spaced repetition is stored locally. Index-based ids for 30 cards would silently attach a learner's history to the wrong card after a content edit. Shipping every deck to every lesson costs about 204 KB gzip on each lesson page, and parsing it adds Worker and browser cost the Cloudflare runbook already flags as tight."
+   },
+   {
+    "feature": "Spaced-repetition scheduling and review (SM-2 server actions)",
+    "entryPoints": [
+     "src/app/actions/srs.ts: reviewFlashcard(flashcardId, quality) line 30, getDueFlashcards() line 84 ('use server')",
+     "Registered as 3 server-action endpoints under app/(learning)/dashboard/memory-hub/page (.next/server/server-reference-manifest.json); the only client caller is MemoryHubPageClient.tsx"
+    ],
+    "dependsOn": [
+     "requireSession() from src/lib/auth.ts (getServerSession + prisma.user.upsert)",
+     "Prisma model Flashcard (prisma/schema.prisma lines 35-52: userId, topicId, front, back, interval, easinessFactor, repetitions, nextReviewAt, lastReviewedAt; @@unique([userId, topicId, front]))",
+     "DATABASE_URL (unset on the lessons-only deploy)",
+     "NEXTAUTH_SECRET (src/lib/auth.ts throws on import without it; set as Worker secret)",
+     "next/cache revalidatePath('/dashboard/memory-hub')"
+    ],
+    "todayAnonymous": "Not reachable from any visible UI. A hand-crafted POST with the Next-Action header fails closed: requireSession throws AuthenticationError before any Prisma call, so the action returns a server error. A signed-in user would fail at Prisma, because DATABASE_URL is unset.",
+    "dataShape": "Reads Flashcard rows where userId = session user and nextReviewAt <= now, ordered by nextReviewAt. reviewFlashcard writes {interval, repetitions, easinessFactor, nextReviewAt, lastReviewedAt}. Quality must be an integer 0-5. If quality >= 3: interval goes 1, then 6, then round(interval * EF), and repetitions++. Otherwise repetitions = 0 and interval = 1. EF += 0.1 - (5-q)(0.08 + (5-q)0.02), with a floor of 1.3. nextReviewAt = now + interval days. Each user row is about 100 bytes plus the card text.",
+    "noLoginPlan": "Move the algorithm into a pure, client-safe module, for example src/lib/srs/scheduler.ts: scheduleReview(state, quality, now). Both the browser store and the existing server action call it. Add a browser FlashcardReviewStore at localStorage key sv-uvm-guide:srs:v1 holding { v: 1, cards: { [cardId]: { deckId, interval, repetitions, ease, dueAt (epoch ms), lastReviewedAt, lapses } } }. All 1675 cards fit in about 200 KB, well under quota. Wrap every read and write in try/catch: corrupt JSON gives an empty store, and quota or blocked storage falls back to memory for the session. Keep it SSR-safe with useSyncExternalStore plus the 'storage' event so open tabs stay in sync. Count a card as due by the learner's local calendar day, not UTC. Add Export/Import JSON in the review page, because browser storage is per device. Later seam: keep srs.ts behind requireSession as the server implementation of the same interface, keyed by cardId. Add a Prisma cardKey column with @@unique([userId, cardKey]), and make front/back optional for content-backed cards. On first sign-in, a sync action merges the local states, keeping the newest lastReviewedAt for each card.",
+    "tests": [
+     "tests/srs.spec.ts (mocks prisma + requireSession: create, review q=4 from reps 0 -> interval 1 and +24h with withFrozenTime, getDueFlashcards query shape)",
+     "GAP: no test for the fail branch, the EF floor, the 6-day second interval or quality validation; no test that an anonymous call throws AuthenticationError; no tests for a local store (none exists)"
+    ],
+    "risk": "Low today because nothing visible calls these actions, and they fail closed. Several things to fix when this is revived. 'Hard' is wired to quality 2, so it resets the card exactly like 'Again'. Due-ness uses server time (UTC on Workers), not the learner's day. The Prisma model stores card text per user rather than referencing content cards, so a content edit leaves stale copies. The server actions stay reachable as endpoints from the memory-hub page bundle even while the page answers 404."
+   },
+   {
+    "feature": "Memory Hub review queue (/dashboard/memory-hub)",
+    "entryPoints": [
+     "src/app/(learning)/dashboard/memory-hub/page.tsx (notFound() unless isFeatureEnabled('personalization'))",
+     "src/app/(learning)/dashboard/memory-hub/MemoryHubPageClient.tsx (useAuth -> getDueFlashcards; Again/Hard/Good/Easy buttons lines 52-55)",
+     "No inbound links anywhere in src (G30-PATH-11). Related dead ends: the dashboard 'Review flashcards' prompt tile (src/app/(learning)/dashboard/DashboardPageClient.tsx line 240, not a link; /dashboard itself is 404 under the off 'tracking' flag) and the placeholder SRS copy on /learning-strategies (in the sitemap)"
+    ],
+    "dependsOn": [
+     "feature flag personalization (NEXT_PUBLIC_FEATURE_FLAG_PERSONALIZATION / FEATURE_FLAGS_FORCE_ON), off by default and inlined at build",
+     "useAuth() -> next-auth useSession (SessionProvider in src/components/providers/ClientProviders.tsx)",
+     "server actions getDueFlashcards / reviewFlashcard -> requireSession -> Prisma Flashcard -> DATABASE_URL"
+    ],
+    "todayAnonymous": "404. The current build prerenders /dashboard/memory-hub with status 404 (.next/server/app/dashboard/memory-hub.meta), showing the site's CurriculumNotFound page (\"Error 404 ... This page could not be found.\") inside the learning layout. Nothing links to it. If the flag were turned on, an anonymous visitor would get user == null: no fetch happens and the page says \"No due cards for today!\", which is a misleading, silent no-op. A signed-in user would hit Prisma with no DATABASE_URL. Latent bugs on that path: (a) useAuth() builds a new user object on every render and the effect depends on [user], so getDueFlashcards is called again after every setDueCards, an endless refetch loop. (b) The rating buttons always rate dueCards[0], even when FlashcardWidget's own Next button shows another card, so the wrong card gets rated. (c) After a rating removes a card, FlashcardWidget keeps its old currentIndex. If the learner had moved to the last card, loadedCards[currentIndex] is undefined and the render throws on currentCard.front.",
+    "dataShape": "Reads due cards {id, front, back, plus the schedule fields} for the session user. Writes one review per click through reviewFlashcard. There is no card creation path, so even with a database the queue would always be empty.",
+    "noLoginPlan": "Make the page work entirely from the local review store and remove the flag gate, because nothing here needs a login. Better still, move it to a top-level /review route (G30 suggests a 'Review' navigation link) and keep /dashboard/memory-hub as a redirect, since /dashboard stays 404. Build the queue from local state: cards with dueAt <= end of the local day, oldest first. Add an optional 'new cards' lane drawn from decks of lessons the learner has visited (useCurriculumProgress, localStorage 'curriculumProgress'), with a daily cap. Show one card at a time and rate that exact card, not dueCards[0]. Reset or clamp the widget index when the list changes. Link each card to its lesson (deck-to-lesson map). The empty state for a first-time visitor should explain the feature: \"Rate cards in any lesson's 'Reinforce the essentials' section to build your review queue\", not \"No due cards for today!\". Add Export/Import backup. Drop useAuth from this page. Later seam: the same page reads a server-backed store when a session exists, behind the FlashcardReviewStore interface.",
+    "tests": [
+     "NONE for the page or MemoryHubPageClient (no unit, component or e2e test)",
+     "tests/e2e/feature-flags.spec.ts asserts /dashboard and /community 404 with flags off but not /dashboard/memory-hub",
+     "To add: component test (due cards from a seeded local store, rating the displayed card, no crash after rating the last card, first-visit empty state); anonymous e2e (rate in a lesson, reload, open /review, card listed after page.clock advance); update feature-flags.spec when the route becomes public"
+    ],
+    "risk": "Medium. Turning the current page on as written would show anonymous visitors a misleading empty state, run an endless server-action loop for signed-in users, rate the wrong card, and can crash after a rating. It should be rebuilt on the local store rather than just un-flagged. Also, its client chunk includes the full 624 KB deck registry."
+   },
+   {
+    "feature": "Flashcard creation (createFlashcard placeholder action)",
+    "entryPoints": [
+     "src/app/actions/srs.ts createFlashcard(topicId) line 8 (no caller in src; exposed as a server action through the memory-hub page bundle)"
+    ],
+    "dependsOn": [
+     "requireSession()",
+     "Prisma Flashcard.create",
+     "DATABASE_URL",
+     "revalidatePath"
+    ],
+    "todayAnonymous": "Invisible; nothing calls it. A forged action call fails closed with AuthenticationError.",
+    "dataShape": "Would write one Flashcard row with placeholder text: front \"What is the main concept of topic <id>?\" and back \"This is a detailed explanation of the main concept of topic <id>.\"",
+    "noLoginPlan": "Do not ship this. The curriculum already provides 1675 authored cards, so 'creation' should mean enrolling a lesson's deck in the local review queue, which happens implicitly the first time a card is rated or explicitly with an 'Add this deck to my reviews' button. That writes only local schedule entries keyed by card id. If learner-authored cards are wanted later, keep them in the same local store ({front, back, deckId: 'mine'}) and sync them once auth exists. Delete or replace createFlashcard with a sync/import action at that point.",
+    "tests": [
+     "tests/srs.spec.ts 'should create a flashcard' (asserts the placeholder text, so it pins dead behaviour)"
+    ],
+    "risk": "Low. It is dead code (confirmed in docs/audit/2026-10-03-learning-outcomes/appendices/I-platform-reverification.md), but if it were wired up it would store meaningless placeholder cards. Remove the test along with the code."
+   },
+   {
+    "feature": "Commit peer-review API (/api/reviews) and CodeReviewAssistant: not flashcard reviews",
+    "entryPoints": [
+     "src/app/api/reviews/route.ts (GET list by repository+commitSha with cursor pagination; POST comment/approval; force-dynamic)",
+     "src/server/reviews.ts (authorizeRepositoryAccess via REVIEW_REPOSITORY_ALLOWLIST; reviewRepository over prisma.review)",
+     "src/components/ui/CodeReviewAssistant.tsx (only caller; not imported by any page, MDX file or the generated MDX registry)"
+    ],
+    "dependsOn": [
+     "requireSession() / AuthenticationError (src/lib/auth.ts; NEXTAUTH_SECRET required at import)",
+     "Prisma model Review (prisma/schema.prisma lines 198-211) + DATABASE_URL",
+     "env REVIEW_REPOSITORY_ALLOWLIST (.env.example: local/sv-uvm-guide). In production an empty allowlist rejects every repository with 403",
+     "env NEXT_PUBLIC_REVIEW_REPOSITORY (component default 'local/sv-uvm-guide')"
+    ],
+    "todayAnonymous": "No visible surface: the component is rendered nowhere. Direct requests return 401 {\"error\":\"UNAUTHORIZED\"} for GET and POST, because requireSession runs before validation and before any Prisma call. That matches docs/deploy/cloudflare.md. A signed-in user in production would get 403 REPOSITORY_ACCESS_DENIED, because the allowlist is unset; with an allowlist, they would get 503 from Prisma with no database.",
+    "dataShape": "Review {userId, repository, commitSha (7-40 hex), comment (<=4000 chars) | approved boolean}, listed newest first with limit 1-100.",
+    "noLoginPlan": "Leave it alone. It is a developer or peer-review tool for git commits, unrelated to learning. The assistant's 'automated checks' are hard-coded timers that always pass, and shared reviews only make sense with a server and identity. Nothing visible depends on it, so nothing is blocked. Keep the route failing closed (401) as the guarded seam, and do not add it to any learner page. If the team wants it, gate the component behind a dev-only flag. Otherwise delete the component, route, server module and Review model together.",
+    "tests": [
+     "tests/api/reviews.test.ts (POST authenticated 201, 400 on missing repository/commitSha)",
+     "tests/reviews.spec.ts (GET cursor pagination scoped to the session user)",
+     "tests/components/CodeReviewAssistant.test.tsx (fetch mocked: comment/approve payloads, validation and server errors)",
+     "GAP: no test of the anonymous 401 path, or of the production empty-allowlist 403"
+    ],
+    "risk": "Low. It is orphaned and fails closed. The main risk is confusion: the scope calls it 'reviews', but it has nothing to do with flashcard reviews, so it should not be treated as the SRS backend. If CodeReviewAssistant is ever surfaced, its fake always-pass checks would mislead users."
+   },
+   {
+    "feature": "Legacy TopicPage template with Firestore flashcard progress",
+    "entryPoints": [
+     "src/components/templates/TopicPage.tsx (useAuth + firebase/firestore getDoc/setDoc on users/{uid}/topics/{topicId}; 'Mark as Complete' uses alert())",
+     "src/lib/firebase.ts (initialises Firebase, with a mock config when NEXT_PUBLIC_FIREBASE_* are unset)",
+     "No route imports TopicPage (only tests/components/TopicPage.test.tsx)"
+    ],
+    "dependsOn": [
+     "useAuth() (next-auth session)",
+     "Firebase Firestore + NEXT_PUBLIC_FIREBASE_* env vars (unset; mock config fallback)"
+    ],
+    "todayAnonymous": "Not rendered anywhere. If it were used, an anonymous visitor would get no saved card position (a silent no-op), and 'Mark as Complete' would pop an alert claiming the lesson was marked complete when nothing was stored.",
+    "dataShape": "Firestore doc {flashcardProgress: {lastViewedCardIndex: number}, completed: boolean} per user and topic.",
+    "noLoginPlan": "Do not revive Firestore. The live lesson page is curriculum/[...slug] with LessonPractice. Last-viewed index and completion belong in localStorage: the per-deck position key above, and completeLesson() in src/hooks/useCurriculumProgress.ts. Delete TopicPage and its test, or rewrite it on the local store if a template is still needed.",
+    "tests": [
+     "tests/components/TopicPage.test.tsx (mocked Firestore: saves and restores lastViewedCardIndex)"
+    ],
+    "risk": "Low. It is dead code, but it is a second, contradictory persistence path (Firebase rather than Prisma or local storage) that a later agent might copy. Its test gives false confidence that flashcard progress is saved."
+   }
+  ]
+ },
+ {
+  "area": "Progress, dashboard, coverage, history, goals, assessments, placement quiz, projects",
+  "features": [
+   {
+    "feature": "Learner dashboard (/dashboard) and its entry points",
+    "entryPoints": [
+     "src/app/(learning)/dashboard/page.tsx",
+     "src/app/(learning)/dashboard/DashboardPageClient.tsx",
+     "src/components/Navbar.tsx (navLinks line 39; account menu item line 186)",
+     "src/components/search/shortcuts.ts (Alt+3 'go-dashboard', route gate line 128, help row line 155)",
+     "src/components/assessment/PlacementQuiz.tsx ('Go to dashboard' link, showDashboardLink prop)",
+     "src/app/(learning)/quiz/placement/page.tsx (passes showDashboardLink={tracking})",
+     "src/lib/notifications.ts (derived notifications href '/dashboard')",
+     "src/app/robots.ts (disallows /dashboard)"
+    ],
+    "dependsOn": [
+     "feature flag 'tracking' (isFeatureEnabled in the server page; featureFlags.tracking in Navbar and shortcuts, inlined at build from NEXT_PUBLIC_FEATURE_FLAG_TRACKING / FEATURE_FLAGS_FORCE_ON)",
+     "src/lib/curriculum-status.ts (static editorial data, pulls curriculum-data.tsx into the client bundle)",
+     "no session, no Prisma, no API route"
+    ],
+    "todayAnonymous": "404 'This page could not be found' (notFound() runs at prerender; the e2e test expects 404). Every way in is hidden: Navbar 'Dashboard', account-menu 'Dashboard', Alt+3 and its help row, and the placement result's 'Go to dashboard'. Flipping the flag would not help: the page is 100% made-up text. It says 'Welcome back, verification lead' and shows overall progress 65%, module bars 80/50/70/60, '5 badges earned', 'Community rank #12, Top 10%', made-up recent activity and 'Regression-ready in 3 days', plus a 'Generate new plan' button that does nothing. Its one real card ('Coverage snapshot') shows editorial migration status, not learner data. It reads no learner data.",
+    "dataShape": "Reads/writes nothing today. Should read the existing localStorage keys: 'curriculumProgress' ({[moduleId]: {completedLessons: string[], lastVisitedAt?: number, lastVisitedLesson?: string}}), 'svuvm.learningRoute' ('junior'|'practitioner'|'expert'), 'sv-uvm-guide:exercise:<id>' ({bestScore, attempts, lastPlayed}). Plus the new local placement result, lesson quiz results, adaptive-test attempts, goals and activity log described in the other features. A few KB in total.",
+    "noLoginPlan": "Make /dashboard a static shell. Remove the notFound()/tracking gate; 'tracking' should later mean 'sync to server'. The server page computes static counts (lessons per module/tier from curriculumData) and passes them as props, and a client island reads a new client-safe learner store (e.g. src/lib/learner-store.ts). The store keeps versioned JSON per key with schema validation and uses useSyncExternalStore with a 'storage'-event subscription, an in-memory fallback, and getServerSnapshot = empty; copy the pattern in src/lib/learning-route-state.ts. Cards: 'Continue' / next on the chosen route (reuse Recommendations + nextOnRoute); lessons completed per tier/module; last placement result and its route; lesson-quiz averages with lessons under 75%; exercise best scores; streak and 7-day activity (reuse calculateDailyStreak/deriveActivityChart once they are moved out of the Prisma-importing engagement.ts); local goals. Delete every made-up number, the badges, the community rank and 'Generate new plan'. Add an honest empty state ('Nothing recorded in this browser yet', with Find your level / Begin the Junior route), a 'Stored only in this browser' note, and Export JSON / Import JSON / Reset. The export is also the input for merging into an account later. Remove the editorial coverage card. Show the Navbar link, account-menu item, Alt+3 shortcut and placement 'Go to dashboard' unconditionally, or behind a new default-on 'localProgress' flag. Keep the robots disallow. Seam: a ProgressRepository interface. LocalProgressRepository ships now; a ServerProgressRepository later posts to /api/me/* when useSession() is 'authenticated', with a one-time local-to-account merge on first sign-in.",
+    "tests": [
+     "tests/app/dashboard-page.spec.tsx (asserts the made-up 'Welcome back, verification lead' copy and the coverage card; must be rewritten)",
+     "tests/app/feature-gating.spec.tsx ('dashboard throws notFound when tracking flag is disabled' / 'renders content when enabled')",
+     "tests/e2e/feature-flags.spec.ts ('dashboard route returns 404 when tracking flag is off')",
+     "tests/components/PlacementQuiz.test.tsx ('links the dashboard only when tracking is on')",
+     "tests/placement-links.spec.ts ('links neither the dashboard nor the disabled assessment center when tracking is off')",
+     "tests/search/shortcuts.test.ts ('only routes to flagged sections when their flag is on', 'hides shortcuts to sections that are switched off')",
+     "tests/components/KeyboardShortcuts.test.tsx (~line 300: no 'Go to your dashboard' row)"
+    ],
+    "risk": "High risk of misleading learners if someone just flips 'tracking': every stat is made up. Ungating changes at least 7 tests that encode 404/hidden behaviour. Reading storage during render will cause hydration mismatches, so render the server/empty snapshot first. Bundle size: DashboardPageClient imports curriculum-status → curriculum-data.tsx on the client. Progress lives per browser, so clearing site data or switching device loses it; export/import reduces the impact."
+   },
+   {
+    "feature": "Curriculum coverage dashboard (/dashboard/coverage)",
+    "entryPoints": [
+     "src/app/(learning)/dashboard/coverage/page.tsx",
+     "src/app/(learning)/dashboard/coverage/CoveragePageClient.tsx",
+     "src/lib/curriculum-status.ts (buildCurriculumStatus, summarizeByTier)",
+     "linked only from DashboardPageClient 'Open dashboard'"
+    ],
+    "dependsOn": [
+     "feature flag 'tracking'",
+     "no session, Prisma, API or env"
+    ],
+    "todayAnonymous": "404 (notFound()). Not linked anywhere reachable.",
+    "dataShape": "None; static editorial metadata (tierDefaults with owner 'Content Ops'/'Advanced Curriculum', lastUpdated dates in 2025, per-path overrides, notes).",
+    "noLoginPlan": "This is not a learner feature. It is a content-ops migration tracker whose statuses are hand-written and stale: tier defaults are T1 'in-review', T3/T4 'draft', all dated 2025, which contradicts the current fully integrated curriculum. It already works without login (static data), but it should not be shown to learners. Keep it 404, delete it, or move it to a dev-only route generated from the curriculum manifest. Remove the 'Coverage snapshot' card and link from the learner dashboard.",
+    "tests": [
+     "no direct test of CoveragePageClient",
+     "tests/app/dashboard-page.spec.tsx mocks buildCurriculumStatus for the snapshot card"
+    ],
+    "risk": "Low while hidden. If shown, it tells learners that most lessons are 'Draft' awaiting 'SME review'."
+   },
+   {
+    "feature": "Lesson visit tracking and 'Pick up where you left off' / route position / 'Visited' badges on /curriculum",
+    "entryPoints": [
+     "src/components/curriculum/LessonVisitTracker.tsx (mounted in src/app/(learning)/curriculum/[...slug]/page.tsx)",
+     "src/hooks/useCurriculumProgress.ts",
+     "src/lib/learning-route-state.ts (recentVisits, lastVisit, nextOnRoute, read/writeSelectedRoute)",
+     "src/components/curriculum/CurriculumOverview.tsx",
+     "src/components/curriculum/Recommendations.tsx",
+     "src/components/curriculum/RouteChooser.tsx ('You are here', 'Next lesson')",
+     "src/components/curriculum/ModuleCard.tsx ('Visited' badge) via CurriculumBrowser.tsx"
+    ],
+    "dependsOn": [
+     "localStorage only ('curriculumProgress', 'svuvm.learningRoute')",
+     "no session, flag, Prisma or API"
+    ],
+    "todayAnonymous": "Works. Each lesson page records {lastVisitedAt, lastVisitedLesson} for its module. /curriculum shows 'Pick up where you left off' (labelled 'Based on the lessons you opened in this browser'), the next lesson on the followed route, 'You are here' on the route step, and 'Visited' on module cards. Without storage (private mode) the route choice falls back to memory, and visits are lost with a console.error.",
+    "dataShape": "'curriculumProgress': {[moduleId (section slug)]: {completedLessons: string[] (always empty today), lastVisitedAt?: epoch ms, lastVisitedLesson?: slug}}. Only the LAST lesson per module is kept. 'svuvm.learningRoute': RouteId string.",
+    "noLoginPlan": "Already login-free; keep it and harden it. (1) Move the progress hook onto the shared external store (useSyncExternalStore + 'storage' event) instead of per-instance useState. Today every useCurriculumProgress instance writes its whole snapshot on change, so two instances on one page (e.g. the visit tracker plus a future 'Mark complete' button) overwrite each other's writes. (2) Add an additive per-lesson field (e.g. visitedLessons: {[slug]: epoch}) so the route position and dashboard do not depend on 'last lesson per module'. (3) Validate/version the parsed JSON: today JSON.parse output is trusted and a malformed entry would throw in getModuleProgress. (4) Feed the local activity log (lesson_viewed). The server sync seam stays the same ProgressRepository.",
+    "tests": [
+     "tests/hooks/useCurriculumProgress.test.ts",
+     "tests/unit/useCurriculumProgress.spec.ts",
+     "tests/components/CurriculumOverview.test.tsx ('pick up where you left off' block, route chooser)",
+     "tests/e2e/curriculum-overview.spec.ts (seedVisit; '\"Continue\" follows the last lesson opened', 'following a route ... survives a reload')",
+     "tests/app/curriculum-overview-pages.spec.tsx"
+    ],
+    "risk": "Low today (one hook instance per page). Hardening must keep the 'curriculumProgress' key and shape backward compatible: e2e tests seed it directly and real visitors already have data."
+   },
+   {
+    "feature": "Lesson completion ('Mark complete') and progress marks in the outline, breadcrumbs and module cards",
+    "entryPoints": [
+     "src/hooks/useCurriculumProgress.ts (completeLesson, getModuleProgress, getTierProgress: defined, never called by UI)",
+     "src/components/curriculum/LessonPager.tsx / LessonOrientation.tsx (lesson footer/header: no completion UI)",
+     "src/components/layout/Breadcrumbs.tsx (comment: 'No progress icons: there is no learner progress data to show yet')",
+     "src/components/layout/Sidebar.tsx (course outline: no marks)",
+     "src/components/templates/TopicPage.tsx (dead legacy template with a 'Mark as Complete' button; imported nowhere)"
+    ],
+    "dependsOn": [
+     "none in the live path",
+     "TopicPage.tsx: useAuth (next-auth), Firebase Firestore via src/lib/firebase (mock config)"
+    ],
+    "todayAnonymous": "There is no way to mark a lesson complete. completedLessons stays [], so nothing can show module/tier completion. The dead TopicPage template calls alert('Topic ... marked as complete') without saving anything for anonymous users, but no route renders it.",
+    "dataShape": "Would write completedLessons[] (already in the 'curriculumProgress' shape) plus a completedAt timestamp per lesson; under 20 KB for about 160 lessons.",
+    "noLoginPlan": "Add a client-island 'Mark lesson complete' toggle to LessonPager (the lesson footer) that writes completedLessons (plus completedAt) through the shared store. Optionally offer it automatically when the lesson Quiz is passed. Show checkmarks in the Sidebar outline and the Breadcrumbs 'Jump to' list, 'n/m complete' on ModuleCard, and tier percentages via getModuleProgress/getTierProgress. Lesson pages stay prerendered; only the island reads storage after mount. Delete TopicPage.tsx and its Firebase path. Later the server repository upserts LessonProgress (userId, lessonSlug, completedAt), which buildEngagementResponse already counts.",
+    "tests": [
+     "tests/hooks/useCurriculumProgress.test.ts ('marks lessons complete and persists the snapshot')",
+     "tests/unit/useCurriculumProgress.spec.ts ('tracks lesson completion without duplicates and reports module progress')",
+     "tests/components/TopicPage.test.tsx (covers the dead template's flashcard progress only)"
+    ],
+    "risk": "Medium: the toggle must use the shared store (see the overwrite hazard in the visit-tracking feature). The Sidebar is on every page, so read storage after hydration only. Keep moduleId = section slug (the same key as visits)."
+   },
+   {
+    "feature": "Lesson quiz results (<Quiz> in 112 lessons)",
+    "entryPoints": [
+     "src/components/ui/Quiz.tsx",
+     "src/generated/mdx-component-registry.tsx (Quiz wrapper; getMdxComponents injects lessonSlug only into BeforeYouStart/NextLesson)",
+     "src/app/(learning)/curriculum/[...slug]/page.tsx (getMdxComponents(..., { lessonSlug }))",
+     "content/curriculum/**/index.mdx (112 lessons; I-SV-9_Why_UVM has 2 quizzes)"
+    ],
+    "dependsOn": [
+     "none"
+    ],
+    "todayAnonymous": "The quiz works with per-answer feedback and 'You answered x of y correctly', but the score lives only in component state. It is lost on navigation or reload and recorded nowhere. Quiz receives no lesson identity.",
+    "dataShape": "Proposed 'svuvm.quiz.v1': {[lessonPath + '#' + quizKey]: {total, last, best, attempts, lastAt, objectivesMissed?: number[]}}. quizKey is a short hash of the question texts, because one lesson has two quizzes. About 100 bytes per quiz.",
+    "noLoginPlan": "In getMdxComponents, wrap Quiz with lessonSlug the way BeforeYouStart/NextLesson are wrapped. The registry is hand-maintained; scripts/check-mdx.mjs only reads it. Pass a stable quizId (lesson path + hash of the question texts) to Quiz. On completion, write the result to the local store and append a 'quiz_completed' activity event. On mount, show 'Last attempt 4/5 · best 5/5' after hydration. Feed the dashboard (weak lessons/objectives) and the skill matrix. Later sync can POST to a new /api/me/quiz-results or reuse the assessment attempt model.",
+    "tests": [
+     "no test covers Quiz persistence; Quiz rendering is covered indirectly by lesson component tests (e.g. tests/components/F1Lesson.spec.tsx)"
+    ],
+    "risk": "Low. Changing the question wording changes the hash and orphans old results, which is acceptable (it is effectively a new quiz). Lessons are prerendered, so read storage only after mount."
+   },
+   {
+    "feature": "Placement quiz (/quiz/placement, 'Find your level')",
+    "entryPoints": [
+     "src/app/(learning)/quiz/placement/page.tsx",
+     "src/components/assessment/PlacementQuiz.tsx",
+     "src/components/assessment/placementQuizData.ts (calculatePlacementResults, versions placement-v2 / placement-scoring-v2)",
+     "src/lib/learning-paths.ts (resolvePlacementPlan; route CTA)",
+     "linked from src/components/home/HeroSection.tsx, src/components/home/LearningPathsSection.tsx, src/components/curriculum/RouteChooser.tsx, src/lib/site-links.ts PLACEMENT_QUIZ_HREF"
+    ],
+    "dependsOn": [
+     "POST /api/me/assessments (fire-and-forget; needs session + Prisma)",
+     "feature flag 'tracking' (only hides the dashboard and assessment-center links)"
+    ],
+    "todayAnonymous": "Works: 10 questions graded client-side, weighted results, a recommended tier, a 'Start at <lesson>' link, skim list and per-area resources. When the quiz finishes it silently POSTs /api/me/assessments. That costs a dynamic Worker invocation running getServerSession and returns 401, which the .catch swallows; it shows in the network panel. The result is not kept: a reload or a return visit goes back to the intro. The 'Go to dashboard' and 'assessment center' links are hidden. The result does not set the followed route.",
+    "dataShape": "Answers: [{questionId, optionId}] x10. Results: recommendedTier, overallPercent, categoryScores {foundations|methodology|debug: {correct,total}}, plus versions. Proposed 'svuvm.placement.v1' = {assessmentVersion, scoringVersion, answers, completedAt}, under 1 KB.",
+    "noLoginPlan": "Store the answers plus versions and completedAt in localStorage, and recompute the results with calculatePlacementResults when the versions match; on a version change say 'The quiz changed, retake it'. The intro shows 'Your last result (date): Start in Tier N' with Resume / Retake. Add 'Follow the <route> route' to the result, calling writeSelectedRoute(plan.routeId) so /curriculum and the dashboard pick it up. Send the POST only when a session exists (useSession().status === 'authenticated', or a sync flag) instead of always. Show 'Go to dashboard' once the dashboard is local. Add /quiz/placement to PUBLIC_PAGES in src/app/sitemap.ts (it is public but missing).",
+    "tests": [
+     "tests/components/PlacementQuiz.test.tsx (incl. expects fetch('/api/me/assessments', POST))",
+     "tests/placementQuizLogic.spec.ts",
+     "tests/placement-links.spec.ts",
+     "tests/e2e/curriculum-overview.spec.ts ('placement quiz ends with a starting lesson that loads')",
+     "tests/components/LearningPathsSection.test.tsx",
+     "tests/e2e/navigation-entry-points.spec.ts (home route cards)"
+    ],
+    "risk": "Low. The server and client scores disagree: the server's gradeAssessmentSubmission stores an unweighted correct/total, while the UI shows a difficulty-weighted percent, so a later sync would store a number the learner never saw. The PlacementQuiz test asserts the unconditional POST and will need updating."
+   },
+   {
+    "feature": "Assessment center shell and Adaptive Test (/assessment)",
+    "entryPoints": [
+     "src/app/(learning)/assessment/page.tsx",
+     "src/components/assessment/ComprehensiveAssessmentSystem.tsx (6 tabs)",
+     "src/components/assessment/AdaptiveTestEngine.tsx (adaptiveTestReducer, 6-question bank, versions adaptive-v2 / adaptive-scoring-v1)",
+     "linked only from src/app/(learning)/quiz/placement/page.tsx when tracking is on"
+    ],
+    "dependsOn": [
+     "feature flag 'tracking'",
+     "POST /api/me/assessments (session + Prisma) from AdaptiveTestEngine on completion"
+    ],
+    "todayAnonymous": "Static InfoPage 'Assessment Center' with 'The assessment center is currently disabled while we focus on the core learning path.' Not linked; reachable only by typing the URL. If enabled, the Adaptive Test works in memory (fixed seed 0x5eed, so the question order is identical every run). Completion POSTs and gets 401, and the score is lost.",
+    "dataShape": "AdaptiveAnswer[] {questionId, optionIndex, correct} x6. Proposed 'svuvm.assessments.v1': [{assessmentId:'adaptive-test', versions, answers, score, completedAt}], capped at about 20 attempts.",
+    "noLoginPlan": "Ungate /assessment (drop the tracking check), or fold the Adaptive Test into the dashboard/practice area. Store attempts locally, show attempt history and best score, and seed each attempt randomly (store the seed so a run can be replayed). Gate the POST on the session like the placement quiz. The other tabs are handled in the next feature; do not ship them as they are. Once enabled, show the 'assessment center' link on the placement page. Six questions is thin, so consider pooling questions from the lesson quizzes.",
+    "tests": [
+     "tests/components/AdaptiveTestEngine.reducer.test.ts",
+     "tests/server/assessment-question-bank.test.ts (bank alignment)",
+     "tests/placement-links.spec.ts ('links the assessment center when tracking is on')",
+     "no test for the /assessment page itself or the disabled InfoPage"
+    ],
+    "risk": "Medium: ungating the shell also exposes the made-up tabs unless they are removed or replaced in the same change."
+   },
+   {
+    "feature": "Assessment center mock panels: Project-Based Evaluator, Skill Matrix, Progress Analytics, Competency Certification",
+    "entryPoints": [
+     "src/components/assessment/ProjectBasedEvaluator.tsx",
+     "src/components/assessment/SkillMatrixVisualizer.tsx",
+     "src/components/assessment/ProgressAnalytics.tsx",
+     "src/components/assessment/CompetencyCertification.tsx"
+    ],
+    "dependsOn": [
+     "feature flag 'tracking' (via /assessment)",
+     "d3 (client only); no session/API"
+    ],
+    "todayAnonymous": "Not reachable (the /assessment placeholder). If enabled: the Project Evaluator 'evaluates' pasted code by waiting 2 s and returning Math.random() scores with canned feedback. The Skill Matrix draws a hardcoded radar (SV Syntax 85, UVM Basics 70, ...). Progress Analytics shows hardcoded '12h 45m', '4 / 7 modules', '88%', '5 days' and charts dated Feb 2023. Certification lists 'SystemVerilog Associate: Completed' and 'UVM Professional 65%' for everyone, with dead buttons.",
+    "dataShape": "None real; all mock constants.",
+    "noLoginPlan": "Project Evaluator: remove it. Random grading cannot be made honest. Replace it with a self-check rubric (checklist the learner ticks, stored locally) or the structural checks in src/lib/lab-graders.ts, clearly labelled as structural/self-attested. There is no simulator. Skill Matrix: derive axes from local data (placement categoryScores, lesson-quiz results grouped by tier/module, exercise best scores), label it 'from your answers in this browser', and show an empty state when there is no data. Progress Analytics: derive from the local activity log and quiz results (lessons completed, quiz average, streak, 7-day chart). Drop 'time spent' unless it is actually measured. Certification: remove it. A credential cannot be issued without identity and proctoring. At most show self-attested milestone ticks (M0–M8) worded as 'not a certificate'.",
+    "tests": [
+     "none"
+    ],
+    "risk": "High if enabled as is: it shows made-up grades and certifications. No tests guard their removal."
+   },
+   {
+    "feature": "Assessment attempt persistence API (POST /api/me/assessments)",
+    "entryPoints": [
+     "src/app/api/me/assessments/route.ts",
+     "src/server/assessment-question-bank.ts (gradeAssessmentSubmission)",
+     "callers: src/components/assessment/PlacementQuiz.tsx, src/components/assessment/AdaptiveTestEngine.tsx"
+    ],
+    "dependsOn": [
+     "requireSession (src/lib/auth.ts; NEXTAUTH_SECRET required at import)",
+     "Prisma AssessmentAttempt + AssessmentResponse (DATABASE_URL, not set on the deploy)"
+    ],
+    "todayAnonymous": "401 {error:'UNAUTHORIZED'} (requireSession throws before any Prisma call). Callers swallow it, so nothing is visible except a failed request in devtools. Each call is a dynamic Worker invocation (100–500 ms CPU cold).",
+    "dataShape": "Request: {assessmentId:'adaptive-test'|'placement', assessmentVersion, scoringVersion, responses:[{questionId, optionId}] (1..100, unique)}. The server re-grades and stores the attempt with per-response isCorrect and score.",
+    "noLoginPlan": "Inherently server-side; keep it as the future sync target. Clients should not call it unless authenticated (check useSession() or a sync flag), so anonymous visitors make no wasted request. When auth arrives, the ServerProgressRepository can replay local attempts from 'svuvm.assessments.v1' / 'svuvm.placement.v1' (the server re-grades, so local data cannot forge correctness). Decide whether the placement score should be weighted, to match the UI.",
+    "tests": [
+     "tests/api/assessments.test.ts ('stores server-calculated correctness and score', 'rejects browser-authored correctness booleans'); no 401 test",
+     "tests/server/assessment-question-bank.test.ts"
+    ],
+    "risk": "Low; just remove the unconditional anonymous calls. There is no rate limiting, which matters once it is live."
+   },
+   {
+    "feature": "Engagement metrics (GET /api/me/engagement, src/lib/engagement.ts)",
+    "entryPoints": [
+     "src/app/api/me/engagement/route.ts",
+     "src/lib/engagement.ts (buildEngagementResponse, calculateDailyStreak, derivePatterns, deriveActivityChart)",
+     "consumer: src/app/(learning)/notifications/page.tsx (accountUI flag); no client fetches /api/me/engagement"
+    ],
+    "dependsOn": [
+     "requireSession",
+     "Prisma Activity, LessonProgress, Goal, User.preferences/timeZone",
+     "engagement.ts imports prisma at module top, so it cannot be imported by client code"
+    ],
+    "todayAnonymous": "401 UNAUTHORIZED; nothing in the UI calls it, so nothing is visible. Even with a DB and a session it would always report zeros: nothing writes LessonProgress, and the only Activity writer is src/server/ai/rate-limit.ts (AI_REQUEST, which engagement excludes).",
+    "dataShape": "EngagementResponse: metrics {dailyStreak, weeklyActiveDays, lessonsCompleted, challengesAttempted, timeSpentMinutes}, activityHistory[], goals[], activityChart (7 days), patterns {mostActiveDay, preferredTopic, learningStyle}, motivationalProfile, mentorMessage.",
+    "noLoginPlan": "Move the pure functions (safeTimeZone, zonedDateKey, previousDateKey, calculateDailyStreak, derivePatterns, deriveActivityChart) into a Prisma-free module (e.g. src/lib/engagement-core.ts) used by both the server builder and a client buildLocalEngagement(). Keep a local activity log 'svuvm.activity.v1': [{type: lesson_viewed|lesson_completed|quiz_completed|challenge_attempted|assessment_completed, subjectId, at, meta}], capped at about 500 events / 90 days. It is written by the visit tracker, mark-complete, Quiz, the exercises and the placement/adaptive tests. Use the browser's Intl timeZone. Omit time spent unless a visibility-based timer is added; never estimate it. The server route stays for later sync; LESSON_VIEWED exists in the enum but is missing from activityTypeMap, so decide whether views count.",
+    "tests": [
+     "no test for engagement.ts or the route (calculateDailyStreak is untested)",
+     "tests/app/feature-gating.spec.tsx and tests/lib/notifications.test.ts only mock/consume the EngagementResponse type"
+    ],
+    "risk": "Low: the extraction is mechanical. Add unit tests for the streak, timezone and day-boundary logic when it moves."
+   },
+   {
+    "feature": "Learning goals (POST /api/me/goals)",
+    "entryPoints": [
+     "src/app/api/me/goals/route.ts",
+     "Goal model in prisma/schema.prisma",
+     "read by buildEngagementResponse (src/lib/engagement.ts)"
+    ],
+    "dependsOn": [
+     "requireSession",
+     "Prisma Goal"
+    ],
+    "todayAnonymous": "No UI exists anywhere. POST returns 401 and GET returns 405. Nothing ever updates Goal.progress.",
+    "dataShape": "{description (1–200 chars), target (int 1–100000), unit (1–40 chars), dueAt? ISO}; server adds progress, status ACTIVE|COMPLETED|ARCHIVED.",
+    "noLoginPlan": "Add a goals card on the local dashboard that stores 'svuvm.goals.v1': [{id, description, target, unit, dueAt?, createdAt, status, manualProgress?}], validated with the same zod limits (export goalSchema from a shared module). For known units (lessons, quizzes, exercises), compute progress from the local activity log since createdAt; custom units use a manual +1. Mark a goal complete when it reaches the target. Later sync needs GET/PATCH/DELETE on the route, which only has POST today.",
+    "tests": [
+     "none"
+    ],
+    "risk": "Low; it is a new feature. The server API is incomplete for sync."
+   },
+   {
+    "feature": "History page (/history)",
+    "entryPoints": [
+     "src/app/(learning)/history/page.tsx",
+     "src/components/charts/HistoryTimelineChart.tsx (static data)",
+     "not linked from anywhere; not in src/app/sitemap.ts"
+    ],
+    "dependsOn": [
+     "feature flag 'tracking'",
+     "requireSession + prisma.user.preferences.shareTelemetry (only when tracking is on)",
+     "export const dynamic = 'force-dynamic'; imports src/lib/auth (needs NEXTAUTH_SECRET)"
+    ],
+    "todayAnonymous": "Rendered on the server for every request (dynamic Worker CPU). It shows an InfoPage that says 'The history module is paused until we have real learner tracking data to justify the heavy visualizations.' With tracking on but no session or DB, requireSession throws, the catch falls back, and the same message appears.",
+    "dataShape": "None. It is static content; the gate reads User.preferences.shareTelemetry, which is unrelated to the content.",
+    "noLoginPlan": "No learner data is needed. Remove the tracking, session, Prisma and shareTelemetry gating and force-dynamic, so the page prerenders like the other static pages; the timeline chart is client-only static data. However, every prose section is '[Placeholder: ... from blueprint]'. Until real copy is written, either render only the timeline plus a short real intro, or return notFound(). Do not keep the misleading 'paused until tracking' message. Add it to the sitemap once it has real content.",
+    "tests": [
+     "none for /history"
+    ],
+    "risk": "Low technically. Publishing it as is would expose placeholder text."
+   },
+   {
+    "feature": "Projects page (/projects)",
+    "entryPoints": [
+     "src/app/(learning)/projects/page.tsx",
+     "not linked from anywhere; not in the sitemap"
+    ],
+    "dependsOn": [
+     "feature flag 'personalization'",
+     "no session, Prisma or API"
+    ],
+    "todayAnonymous": "Static InfoPage: 'Project workspaces will re-open once personalization features are prioritized. Until then, lean on the core curriculum and labs to build mastery.' With the flag on, it shows only '[Placeholder: ...]' project ideas and a sample directory tree.",
+    "dataShape": "None today. Proposed 'svuvm.projects.v1': {[projectId]: {steps: {[stepId]: boolean}, builtAt?}}, self-attested.",
+    "noLoginPlan": "Projects need no login. Build static project briefs from the milestone ladder (M0–M8 in src/lib/learning-paths.ts, already shown by RouteChooser's MilestoneLadder), each linking its lab and lessons. Add an optional local self-attested checklist ('I built this') that feeds the dashboard, with no grading claims. Until the briefs exist, change the copy (drop 'personalization'), or redirect to /curriculum#routes, where the milestone ladder lives.",
+    "tests": [
+     "tests/app/feature-gating.spec.tsx ('projects page returns placeholder content when personalization flag is disabled')",
+     "tests/e2e/feature-flags.spec.ts ('projects route surfaces placeholder guidance by default')"
+    ],
+    "risk": "Low. Both tests assert the current placeholder sentence and will need updating."
+   },
+   {
+    "feature": "Memory hub (/dashboard/memory-hub, spaced-repetition flashcards)",
+    "entryPoints": [
+     "src/app/(learning)/dashboard/memory-hub/page.tsx",
+     "src/app/(learning)/dashboard/memory-hub/MemoryHubPageClient.tsx",
+     "src/app/actions/srs.ts (getDueFlashcards, reviewFlashcard, createFlashcard: no caller)",
+     "src/components/widgets/FlashcardWidget.tsx",
+     "src/lib/flashcard-decks.ts + content/flashcards/*.json (static decks used by LessonPractice)"
+    ],
+    "dependsOn": [
+     "feature flag 'personalization'",
+     "useAuth (next-auth useSession)",
+     "server actions requireSession + Prisma Flashcard (SM-2 fields interval, repetitions, easinessFactor, nextReviewAt)"
+    ],
+    "todayAnonymous": "404 (personalization off). With the flag on and no session, user is null, so the page never fetches and always shows 'No due cards for today!'. Nothing creates Flashcard rows. The lesson flashcard decks (LessonPractice) work but keep no review state.",
+    "dataShape": "Per card: {interval, repetitions, easinessFactor, nextReviewAt, lastReviewedAt}. Proposed 'svuvm.srs.v1': {[deckId:cardId]: state}, about 60 bytes per card.",
+    "noLoginPlan": "SM-2 is pure arithmetic: move it out of the server action into a shared function and run it client-side over the static decks. Add an 'Add this deck to my reviews' action in LessonPractice, a due-count card on the dashboard, and Again/Hard/Good/Easy buttons that update local state. Ungate the page. Keep the server actions as the future sync target behind the session.",
+    "tests": [
+     "tests/srs.spec.ts (server actions with mocked Prisma)"
+    ],
+    "risk": "Medium: the page currently renders a bare 'Loading...' / 'No due cards' with no layout or copy. Card ids in the JSON decks must be stable."
+   },
+   {
+    "feature": "Notebook (/dashboard/notebook, Feynman self-explanation with AI feedback)",
+    "entryPoints": [
+     "src/app/(learning)/dashboard/notebook/page.tsx",
+     "src/app/(learning)/dashboard/notebook/NotebookPageClient.tsx",
+     "src/app/actions/notebook.ts (createNotebookEntry: no caller)",
+     "POST /api/ai/feynman-feedback"
+    ],
+    "dependsOn": [
+     "feature flag 'personalization'",
+     "/api/ai/feynman-feedback needs a session and an AI provider key (GEMINI_API_KEY)"
+    ],
+    "todayAnonymous": "404. With the flag on, it shows two hardcoded mock entries ('UVM Phases', 'TLM FIFO'), edits are not saved, and 'Submit for AI Feedback' gets 401. The code then sets feedback to the error JSON, so the panel shows 'AI Feedback (Score: )' with empty text.",
+    "dataShape": "Entries {id, title, content, topicId?, updatedAt}. Proposed 'svuvm.notebook.v1', a few KB.",
+    "noLoginPlan": "Store entries in localStorage (create from a lesson's FeynmanPromptWidget, edit, delete, export). AI feedback needs a server secret, so hide or disable the button with 'AI feedback needs sign-in' until auth and the AI service are live. Offer the local self-check prompts instead. Handle a non-OK response instead of rendering error JSON as feedback.",
+    "tests": [
+     "tests/api/feynman-feedback.test.ts (route only); no page test"
+    ],
+    "risk": "Medium: mock data and the broken error handling would be visible if the page were ungated as is."
+   },
+   {
+    "feature": "Exercise progress (best score / attempts in the /exercises/* interactives)",
+    "entryPoints": [
+     "src/hooks/useExerciseProgress.ts",
+     "src/components/exercises/UvmPhaseSorterExercise.tsx, ScoreboardConnectorExercise.tsx, UvmAgentBuilderExercise.tsx, SequencerArbitrationSandbox.tsx",
+     "src/lib/analytics.ts"
+    ],
+    "dependsOn": [
+     "localStorage only"
+    ],
+    "todayAnonymous": "Works: 'Best score: n% · Attempts: k', an optional average/interactions line, and Reset, saved per browser.",
+    "dataShape": "'sv-uvm-guide:exercise:<id>' {bestScore, attempts, lastPlayed ISO}; 'sv-uvm-guide:exercise-analytics:<id>' AnalyticsEvent[] {type:'assessment'|'interaction', value, timestamp}, unbounded.",
+    "noLoginPlan": "Already login-free. Read it into the dashboard and the activity log, keeping the keys for compatibility. Fix two issues. (1) The useState initializers read localStorage during the first client render, while the prerendered HTML has 0, so returning visitors hit a hydration mismatch; read after mount or use useSyncExternalStore. (2) The analytics history grows without limit, because each interaction appends; cap it (e.g. the last 200 events).",
+    "tests": [
+     "tests/hooks/useExerciseProgress.test.ts",
+     "tests/lib/analytics.test.ts"
+    ],
+    "risk": "Low; the hydration mismatch and unbounded growth exist today."
+   }
+  ]
+ },
+ {
+  "area": "Account UI: settings, preferences, notifications, notebook, auth context and navbar (plus every sign-in prompt in src/components)",
+  "features": [
+   {
+    "feature": "Identity layer: NextAuth config, SessionProvider and useAuth (AuthContext)",
+    "entryPoints": [
+     "src/lib/auth.ts (authOptions, requireSession, AuthenticationError, placeholder provider, top-level secret check)",
+     "src/app/api/auth/[...nextauth]/route.ts",
+     "src/contexts/AuthContext.tsx (AuthProvider is a pass-through; useAuth calls next-auth useSession)",
+     "src/components/providers/ClientProviders.tsx and src/components/providers/SessionProvider.tsx (mounted by src/app/(learning)/layout.tsx only; the (public) layout for home and legal pages does not mount it)",
+     "useAuth consumers: Navbar UserMenu, src/components/widgets/AIAssistantDialog.tsx (display-name label only), src/app/(learning)/dashboard/memory-hub/MemoryHubPageClient.tsx, src/app/(learning)/community/CommunityPageClient.tsx, src/app/(learning)/community/post/[postId]/PostClientPage.tsx, src/components/templates/TopicPage.tsx (unused)"
+    ],
+    "dependsOn": [
+     "env NEXTAUTH_SECRET or SESSION_SECRET: auth.ts throws on import without one, so the build fails and any route importing auth.ts returns 500",
+     "env GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET: absent, so the placeholder credentials provider is used and authorize() always returns null",
+     "env AUTH_TEST_MODE + AUTH_TEST_TOKEN (outside production only, for Playwright)",
+     "env NEXTAUTH_URL (wrangler.jsonc var)",
+     "next-auth 4.24.13 SessionProvider, which calls GET /api/auth/session",
+     "requireSession then prisma.user.upsert (needs DATABASE_URL), which runs only after the session check"
+    ],
+    "todayAnonymous": "Every (learning) page (all lessons, /curriculum, /practice) mounts next-auth's SessionProvider. It requests GET /api/auth/session on mount and again each time the tab becomes visible (refetchOnWindowFocus defaults to true). The answer is {}, so status is 'unauthenticated' and useAuth().user is always null. Each of those requests is a dynamic Worker call; the runbook measures 100-500 ms CPU when cold. The site has no sign-in button anywhere. requireSession() throws AuthenticationError before touching Prisma. Visiting /api/auth/signin shows NextAuth's default page with a single 'Sign in with Placeholder' button, and it always fails with a CredentialsSignin error.",
+    "dataShape": "Reads only the session JWT: {user:{id (token.sub), name, email}}. Once a session exists, requireSession upserts a User row {id, email, name}. Nothing is stored in the browser.",
+    "noLoginPlan": "Make the identity mode explicit. (1) Add a build-time authEnabled value (NEXT_PUBLIC_AUTH_ENABLED, false on the lessons-only deploy) in src/tools/featureFlags.ts or a new src/lib/auth-mode.ts. (2) Turn AuthProvider into a real context. With auth off it is a LocalIdentityProvider giving {mode:'local', user:null, learnerId: a UUID kept in localStorage 'svuvm.learnerId', loading:false, signOut: no-op}. With auth on it wraps SessionProvider and maps the session to {mode:'account', user}. (3) useAuth must read this context, not call useSession directly: outside production next-auth throws '`useSession` must be wrapped in a <SessionProvider />' once the provider is gone. (4) Mount SessionProvider only when authEnabled, which removes the /api/auth/session traffic from the lessons-only deploy. (5) Keep requireSession() and AuthenticationError as the server seam. Later add getOptionalSession() for routes that should serve both modes. (6) Add a LearnerStore interface in src/lib/learner-store with a browser implementation now and a server one later, chosen by mode. Every feature below uses it. When sign-in arrives, a one-time 'import this browser's data' step moves the registered localStorage keys into the account.",
+    "tests": [
+     "tests/security-config.test.ts: secret required; test-credentials only outside production. One case fails on this branch, reproducibly even when run alone: 'throws an error if both secrets are missing in production' resolves instead of rejecting.",
+     "tests/components/Navbar.test.tsx, tests/components/AIAssistantWidget.test.tsx and tests/components/TopicPage.test.tsx all mock @/contexts/AuthContext",
+     "tests/fixtures/auth.ts: Playwright sign-in via test-credentials; needs AUTH_TEST_MODE and a disposable DATABASE_URL",
+     "No test covers useAuth/AuthContext itself or SessionProvider's network behaviour"
+    ],
+    "risk": "Medium. If SessionProvider is removed before useAuth changes, dev and test builds crash with the next-auth throw, and production silently gets an undefined context. The import-time secret check means every page that becomes local-only should drop its auth.ts and prisma imports, so it can prerender and no longer needs NEXTAUTH_SECRET at runtime. The AuthUser type's 'isAnonymous: false' literal must widen. A failing security-config test already exists on the branch."
+   },
+   {
+    "feature": "Navbar account controls: notification bell and account menu",
+    "entryPoints": [
+     "src/components/Navbar.tsx: UserMenu (lines 152-215), NotificationCenter (217-328), the gate `featureFlags.accountUI && (<NotificationCenter/><UserMenu/>)` (463-468)",
+     "src/components/Navbar.tsx MobileMenuPanel (330-382): links only, no account, settings or theme entries",
+     "ThemeSwitcher sits in the same `hidden md:flex` group (line 450)"
+    ],
+    "dependsOn": [
+     "featureFlags.accountUI (NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI, inlined at build). FEATURE_FLAGS_FORCE_ON is not NEXT_PUBLIC, so the client bundle never sees it.",
+     "featureFlags.tracking (Dashboard link in the menu)",
+     "useAuth (user, signOut)",
+     "GET /api/me/notifications?limit=4 (requireSession + Prisma)",
+     "src/lib/notifications.ts formatTimestamp and NOTIFICATION_CATEGORY_META"
+    ],
+    "todayAnonymous": "With the flag off, neither the bell nor the Account button renders and no fetch is made. From md up the visitor sees search, the links, and the theme select with its light/dark toggle. Below 768 px the theme controls are hidden as well, because they share the hidden md:flex group, and the phone menu has only links. Phone visitors can change theme only with Alt+T. If accountUI were switched on today without login: the bell fetches /api/me/notifications on page load (not on click), gets 401, and its panel shows 'Error: Unable to load notifications'. The account menu shows 'Not signed in', a Settings link whose saves all fail, and no Sign in entry.",
+    "dataShape": "Reads NotificationItem[] {id, title, description, category, timestamp, href?, unread, priority}, at most 4, plus user.displayName. Writes nothing; mark-as-read does not exist.",
+    "noLoginPlan": "Decouple both controls from accountUI. Always render a small 'You' menu (or a gear) with Settings, Notebook and Export/Clear data, all local. Show Sign in/Sign out only when authEnabled. Drive the bell from a useLocalNotifications() hook that derives items in the browser (see the Notifications feature) and keeps read ids in localStorage 'svuvm.notifications.read.v1' (string[]). Call /api/me/notifications only in account mode. Add Settings, Notebook and the theme controls to the phone menu. In client components, gate on build-time NEXT_PUBLIC values or on flags passed down from the server layout, so FEATURE_FLAGS_FORCE_ON cannot cause an SSR/CSR mismatch.",
+    "tests": [
+     "tests/components/Navbar.test.tsx, 'account-only UI (G30-SIDE-V07)', 4 cases: hidden with no fetch when off; account menu click/Escape/Enter; Sign out only for a signed-in learner; empty feed with the 'View all' link to /notifications",
+     "tests/e2e/account-preferences.spec.ts 'navbar feed reflects preference categories': skipped unless the account flag is forced on. If enabled it would time out: it waits for a URL containing '/api/notifications', which never matches '/api/me/notifications', and it waits after the click although the fetch fires on mount.",
+     "tests/components/ThemeSwitcher.test.tsx",
+     "tests/e2e/mobile-navigation.spec.ts"
+    ],
+    "risk": "Low to medium. Requirement G30-SIDE-V07 and the Navbar unit test pin today's hidden state, so the requirement must change deliberately. FEATURE_FLAGS_FORCE_ON makes the server render the flagged controls while the client hides them, which is a hydration mismatch."
+   },
+   {
+    "feature": "Settings page preferences (appearance, notification preferences, privacy/telemetry) and /api/me/preferences",
+    "entryPoints": [
+     "src/app/(learning)/settings/page.tsx (server: flag gate, requireSession, prisma, force-dynamic)",
+     "src/app/(learning)/settings/SettingsPageClient.tsx",
+     "src/app/api/me/preferences/route.ts (GET/PATCH with a strict zod updatesSchema)",
+     "src/lib/user-preferences.ts (DEFAULT_USER_PREFERENCES, mergeUserPreferences, normalizeUserPreferences)",
+     "src/lib/notifications.ts (DEFAULT_NOTIFICATION_PREFERENCES, NOTIFICATION_CATEGORY_META)",
+     "Readers of stored preferences: src/app/(learning)/notifications/page.tsx, src/app/api/me/notifications/route.ts, src/app/(learning)/history/page.tsx (shareTelemetry gates the timeline, behind the tracking flag), src/lib/engagement.ts (motivationalProfile)",
+     "Links in: Navbar UserMenu 'Settings' and the notifications page's 'Adjust preferences' (both flagged); src/app/robots.ts disallows /settings"
+    ],
+    "dependsOn": [
+     "featureFlags.accountUI: notFound() when off",
+     "requireSession (session + prisma.user.upsert)",
+     "prisma.user.findUnique/update on User.preferences (Json); needs DATABASE_URL",
+     "NEXTAUTH_SECRET at import time",
+     "PATCH /api/me/preferences from the client on every toggle"
+    ],
+    "todayAnonymous": "/settings returns 404 because accountUI is off. It is still a dynamic Worker render that imports auth.ts. Nothing links to it while the flag is off. GET and PATCH /api/me/preferences return 401 {error:'UNAUTHORIZED'}. If the flag were on without login: the server catches AuthenticationError and renders the defaults. Each toggle flips at once, then the PATCH gets 401 and the pill reads 'Unable to save preferences right now. Please retry.' The flipped value stays on screen (it is not reverted) and is gone after a reload. Even for a signed-in user, 'Enable dark interface' only writes `theme` to the database; nothing reads it. The applied theme comes from next-themes (localStorage 'theme', values such as 'default-dark').",
+    "dataShape": "UserPreferences {theme: 'dark'|'light', shareTelemetry: boolean, motivationalProfile: {style, rewardPreference}|null, notifications: {categories: {progress, practice, review, community, mentor: boolean}, channels: {inApp, email: boolean}, digest: 'daily'|'weekly', quietHours?: {start:'HH:MM', end:'HH:MM'}}}. Under 1 KB of JSON. The server stores it in User.preferences and forces channels.inApp = true.",
+    "noLoginPlan": "Make /settings a static client page with no server imports: drop requireSession, prisma and force-dynamic from page.tsx, and remove the accountUI gate. Add src/lib/learner-store/preferences.ts with loadPreferences()/savePreferences(partial), backed by localStorage 'svuvm.preferences.v1' holding a PartialUserPreferences. Read it through normalizeUserPreferences and write it through mergeUserPreferences. Move the zod updatesSchema into src/lib and use it to validate what is read back. Expose it through useSyncExternalStore plus a 'storage' listener, the pattern in src/lib/learning-route-state.ts, so open tabs stay in sync. SettingsPageClient takes a store: the browser store now, a fetch('/api/me/preferences') store when mode is 'account'. The status label becomes 'Saved in this browser'. Appearance: replace the dark toggle with next-themes setTheme, keeping the palette and mode scheme ThemeSwitcher uses, so it actually applies; this also gives phone users a theme control. Hide the email channel, digest cadence and quiet hours until account mode, because they need a server mailer. Keep the in-app categories, which filter the local feed. shareTelemetry: nothing is sent anywhere today (src/lib/analytics.ts is local only), so hide it or relabel it 'Use my activity in this browser for recommendations'. Also move persistPreferences out of the setPreferences updater: it starts the fetch inside the updater, and StrictMode calls updaters twice, sending a duplicate PATCH.",
+    "tests": [
+     "tests/app/settings-page-client.spec.tsx, 2 cases with mocked fetch: 'Preferences saved' after an ok PATCH; 'Unable to save preferences' on failure",
+     "tests/app/feature-gating.spec.tsx: settings throws notFound when accountUI is off and renders when it is on",
+     "tests/api/preferences.test.ts, 3 cases: GET normalized; PATCH merges and forces inApp; 401 when unauthenticated",
+     "tests/lib/user-preferences.test.ts: 4 merge/normalize cases",
+     "tests/e2e/account-preferences.spec.ts 'settings toggles update preferences': skipped unless the flag is on; asserts a PATCH to /api/me/preferences",
+     "No test checks that the theme toggle changes the applied theme"
+    ],
+    "risk": "Medium. feature-gating.spec pins /settings to 404 with accountUI off, and the e2e expects a network PATCH; both change under the plan. The public privacy policy tells visitors to export or delete data 'via Settings', which is a 404 today. Storing preferences locally is low risk because they contain no personal data."
+   },
+   {
+    "feature": "Settings account controls (Export progress, Request data deletion, Deactivate account) and the legal copy that refers to them",
+    "entryPoints": [
+     "src/app/(learning)/settings/SettingsPageClient.tsx 'Account Controls' article: three <Button>s with no onClick",
+     "src/app/(public)/privacy-policy/page.tsx ('You may export or request deletion of your personal data at any time via Settings', 'Session cookies keep you signed in')",
+     "src/app/(public)/terms-of-service/page.tsx (account deletion and purge copy)",
+     "src/components/Footer.tsx links to both legal pages"
+    ],
+    "dependsOn": [
+     "featureFlags.accountUI (the page is 404 when off)",
+     "No API for export, deletion or deactivation exists. The copy says these actions 'currently open support tickets'; they open nothing."
+    ],
+    "todayAnonymous": "Unreachable, because /settings returns 404. If it were shown: three buttons that do nothing, under a false 'open support tickets' note. The public privacy policy, linked from every footer, sends visitors to Settings for export and deletion, which is a dead end.",
+    "dataShape": "Would cover all learner data in the browser: 'curriculumProgress' (useCurriculumProgress), the 'sv-uvm-guide:exercise:*' and analytics keys (useExerciseProgress), 'svuvm.learningRoute', FlashcardWidget keys, the shell-store collapsed key, next-themes 'theme', and the new preferences, notebook, notification-read and lab-progress keys.",
+    "noLoginPlan": "Fully client-side. Keep a central LEARNER_STORAGE_KEYS registry (exact keys and prefixes) in src/lib/learner-store, and have every area register its keys there. 'Export my data' collects the registered keys into JSON, plus a CSV of lesson completions, and downloads them through a Blob object URL. An optional 'Import data' validates and writes the same format back; it is also the format the future account migration will use. 'Clear data stored in this browser' asks for confirmation, then removes the registered keys (theme only if the visitor asks). Hide 'Deactivate account' outside account mode. The owner should update the privacy policy and terms for the lessons-only deploy, along the lines of: 'no account; progress stays in your browser; clear it in Settings'.",
+    "tests": [
+     "None: no test renders the Account Controls block or checks the legal pages' claims"
+    ],
+    "risk": "Low technically. The legal wording is the owner's decision, so flag it rather than rewrite it unilaterally. Clearing must go through the registry, or it will miss keys that other areas add."
+   },
+   {
+    "feature": "Notifications page (/notifications) and /api/me/notifications",
+    "entryPoints": [
+     "src/app/(learning)/notifications/page.tsx (renderPlaceholder, NotificationsEmptyState, NotificationCard; force-dynamic)",
+     "src/app/api/me/notifications/route.ts",
+     "src/lib/notifications.ts (deriveNotificationsFromEngagement, streak/goal/mentor builders, formatTimestamp)",
+     "src/lib/engagement.ts buildEngagementResponse (Prisma activity and goals) and the pure calculateDailyStreak",
+     "Linked only from the Navbar bell's 'View all' (flagged)"
+    ],
+    "dependsOn": [
+     "featureFlags.accountUI (placeholder when off)",
+     "requireSession",
+     "prisma.user (preferences, timeZone); buildEngagementResponse reads Prisma activity and goal tables; needs DATABASE_URL",
+     "NEXTAUTH_SECRET at import time"
+    ],
+    "todayAnonymous": "/notifications returns 200 with the placeholder 'Notifications will launch once account preferences are wired up. For now, focus on the core curriculum—there are no alerts you might miss.' It has no onward link. Nothing links to the page and it is not in the sitemap, but robots.txt does not disallow it. Every hit is a dynamic render. With accountUI on and no login, requireSession throws, the error is caught, and the same placeholder shows. /api/me/notifications returns 401. The flag-on page also has stale copy: 'seeded from the prototype profile... once persistence ships'.",
+    "dataShape": "Reads an EngagementResponse {metrics.dailyStreak, activityHistory[{id, type, timestamp, details}], goals[{id, description, target, progress, unit}], mentorMessage} plus the notification preferences, and emits NotificationItem[]. Read state is never stored: every item is always unread:true.",
+    "noLoginPlan": "The derivation is already pure (deriveNotificationsFromEngagement, calculateDailyStreak). Add a client buildLocalEngagement() that shapes browser data into an EngagementResponse: lesson completions and lastVisited from 'curriculumProgress', exercise attempts from 'sv-uvm-guide:exercise:*', and lab progress from the labs area's local store. With goals [] and mentorMessage '' (no server), the existing builders produce 'Lesson complete', 'Challenge attempt logged' and streak items. Disable the community, review and mentor categories in local mode. Render /notifications as a static client page from this data, with read state in localStorage. Hide the delivery schedule, digest, quiet hours and email copy until account mode. If the owner would rather not ship a feed yet: hide the bell and make /notifications notFound() (matching /settings) or redirect it to /curriculum. Either way, do not leave a reachable 'will launch' page.",
+    "tests": [
+     "tests/app/feature-gating.spec.tsx: placeholder when accountUI is off; full feed when on, with session, prisma and engagement mocked",
+     "tests/lib/notifications.test.ts, 3 cases: derived from activity, category filter, limit",
+     "tests/e2e/feature-flags.spec.ts 'notifications route falls back to placeholder copy'",
+     "tests/e2e/account-preferences.spec.ts (flag-on only)",
+     "No test for the /api/me/notifications route itself"
+    ],
+    "risk": "Low to medium. Unit and e2e tests pin the placeholder copy. A locally derived streak needs per-event timestamps, but 'curriculumProgress' keeps completedLessons without timestamps (only lastVisitedAt). The shared learner store needs a timestamped activity log that other areas write to."
+   },
+   {
+    "feature": "Notebook (/dashboard/notebook) and the createNotebookEntry server action",
+    "entryPoints": [
+     "src/app/(learning)/dashboard/notebook/page.tsx",
+     "src/app/(learning)/dashboard/notebook/NotebookPageClient.tsx (mockNotebookEntries, 'Submit for AI Feedback')",
+     "src/app/actions/notebook.ts createNotebookEntry: no callers anywhere in src",
+     "POST /api/ai/feynman-feedback"
+    ],
+    "dependsOn": [
+     "featureFlags.personalization (notFound when off; the same flag gates the Prisma SRS memory hub)",
+     "/api/ai/feynman-feedback: requireSession, enforceAiRateLimit (prisma.activity, keyed by user id), GEMINI_API_KEY/GEMINI_MODEL",
+     "Server action: requireSession",
+     "The Prisma schema has no notebook model"
+    ],
+    "todayAnonymous": "/dashboard/notebook returns 404 because personalization is off. Nothing links to it and robots.txt disallows /dashboard. With the flag on: two hard-coded entries ('UVM Phases', 'TLM FIFO'). Edits live only in component state and are lost when switching entries or reloading. 'Submit for AI Feedback' gets 401 {error:'UNAUTHORIZED'}; the client never checks res.ok and stores that object as the feedback, so it renders 'AI Feedback (Score: )' with an empty body and no error. createNotebookEntry would throw AuthenticationError into the error boundary, but nothing calls it.",
+    "dataShape": "Today: mock {id, title, content}. Proposed: NotebookEntry {id, title, topicId?, lessonHref?, content (plain text or markdown, about 20 KB cap), createdAt, updatedAt}. AI result: {score: number, feedback: string}.",
+    "noLoginPlan": "A browser notebook. Keep entries in localStorage 'svuvm.notebook.v1' (a versioned array, about 1 MB total cap; IndexedDB later if needed) through the learner store. Do the CRUD in the client: new, rename, delete with confirmation, debounced autosave, with try/catch around storage. Replace createNotebookEntry with a client helper addNotebookEntry({topicId, title, lessonHref}) followed by router.push; keep the server action as the account-mode implementation of the same interface. Take it off the personalization flag (give it none, or its own), and consider moving it to /notebook, since /dashboard belongs to the tracking area and is robots-disallowed. AI feedback inherently needs the server secret (GEMINI_API_KEY) and abuse control. In local mode, hide the button or say 'AI feedback isn't available on this site yet'. When AI is enabled, check res.ok and reuse AIAssistantDialog's publicErrorMessages. Link it with 'Teach it back' through a 'Save to notebook' action.",
+    "tests": [
+     "None: no unit or e2e test imports the notebook page, client or action",
+     "tests/api/feynman-feedback.test.ts covers only the API (structured evaluation; short content rejected)"
+    ],
+    "risk": "Low: unreleased, so there is no data to migrate. localStorage quota errors and private-mode failures must be caught, as useCurriculumProgress does."
+   },
+   {
+    "feature": "Lesson 'Teach it back' AI feedback (FeynmanPromptWidget)",
+    "entryPoints": [
+     "src/components/widgets/FeynmanPromptWidget.tsx",
+     "Rendered in every lesson by src/components/curriculum/LessonPractice.tsx (TEACH_BACK_SECTION), and by the unused TopicPage",
+     "POST /api/ai/feynman-feedback"
+    ],
+    "dependsOn": [
+     "/api/ai/feynman-feedback: requireSession; enforceAiRateLimit (prisma.activity count/create keyed by user id); aiTutor (GEMINI_API_KEY)"
+    ],
+    "todayAnonymous": "Visible on every lesson, and it fails silently. The visitor writes an explanation and clicks 'Submit Explanation'. The button shows 'Getting Feedback...', the API returns 401 {error:'UNAUTHORIZED'}, and the widget sets the feedback to data.feedback, which is undefined. Nothing appears, no error shows, and the explanation is not saved.",
+    "dataShape": "Sends {content: 'Topic: <title>\\n\\nExplanation: <text>'} and expects {score, feedback}. Stores nothing locally.",
+    "noLoginPlan": "Make it useful offline. Save the explanation per lesson in localStorage ('svuvm.teachback.v1', keyed by lesson slug) or as a notebook entry. In place of AI scoring, show a self-check, such as the lesson's key terms or a 'compare with the Quick Take' link. Show the AI submit only when the deploy declares AI available (a build-time NEXT_PUBLIC_AI_ENABLED or a static capability file); otherwise the button reads 'Save explanation'. In every mode, check res.ok and show the error, reusing AIAssistantDialog's publicErrorMessages.",
+    "tests": [
+     "tests/api/feynman-feedback.test.ts (route only)",
+     "tests/components/LessonMdxPipeline.test.tsx renders LessonPractice",
+     "No widget test covers the 401 / empty-feedback path"
+    ],
+    "risk": "Low. The lessons or AI area may map this too, so coordinate so only one change lands. It is the most visible broken account-dependent control on the lessons-only deploy."
+   },
+   {
+    "feature": "Floating AI tutor widget and its 'Sign in to use the AI tutor.' reply",
+    "entryPoints": [
+     "src/components/widgets/AIAssistantWidget.tsx (mounted on every learning page by src/app/(learning)/layout.tsx)",
+     "src/components/widgets/AIAssistantDialog.tsx (publicErrorMessages.UNAUTHORIZED = 'Sign in to use the AI tutor.')",
+     "POST /api/ai/chat"
+    ],
+    "dependsOn": [
+     "requireSession, which runs before the AI configuration check",
+     "enforceAiRateLimit (Prisma activity, per user id)",
+     "GEMINI_API_KEY / GEMINI_MODEL",
+     "useAuth (display-name label only)"
+    ],
+    "todayAnonymous": "The 'Open AI assistant' button shows on every lesson. A visitor who opens it and asks a question gets the assistant reply 'Sign in to use the AI tutor.', and the site offers no way to sign in. Because auth is checked before the AI configuration, visitors never see 'not configured'.",
+    "dataShape": "Sends {userQuestion (up to 2000 chars), pageContext {title, route, selectedText}}. The conversation lives only in component state.",
+    "noLoginPlan": "It inherently needs a server secret and a rate limiter. Without login, hide the floating button unless the deploy declares AI available (build-time flag), so no visible control fails. If AI is later opened to anonymous visitors, replace the per-user Prisma rate limit with a per-IP or Turnstile-gated limit, or a Durable Object or KV counter, and let the route accept anonymous requests; keep requireSession for account-only quotas. Never show 'Sign in' copy while authEnabled is false.",
+    "tests": [
+     "tests/components/AIAssistantWidget.test.tsx (the request includes page context; AuthContext mocked)",
+     "tests/api/ai-chat.test.ts, 3 cases: validated payload, client system prompt rejected, size limits",
+     "tests/e2e/ai-assistant-animation.spec.ts"
+    ],
+    "risk": "Low to medium, shared with the AI area. Hiding the widget changes the widget test and ai-assistant-animation.spec."
+   },
+   {
+    "feature": "Lab 'sign in' prompts across the site and the redirect to NextAuth's sign-in page",
+    "entryPoints": [
+     "src/lib/lab-registry.ts labRequiresSignIn (true for every available lab)",
+     "src/components/mdx/LabLink.tsx: 'Sign in required: the lab saves your progress to your account.', used as the aria-describedby of 'Launch Lab'",
+     "src/components/curriculum/LessonPractice.tsx: 'Sign in to run labs.'",
+     "src/components/curriculum/ModuleCard.tsx: '(sign-in required)' on /curriculum",
+     "src/lib/learning-paths.ts note 'sign-in required', rendered by src/components/curriculum/RouteChooser.tsx (/curriculum#routes)",
+     "src/components/practice/PracticeHub.tsx: labNotes '... Sign in to open.' and the Labs intro 'Labs open after you sign in.'",
+     "src/components/home/InteractiveFeaturesSection.tsx: 'Sign in to open a lab.' on the home page",
+     "src/app/(learning)/practice/lab/[labId]/page.tsx: redirect(`/api/auth/signin?callbackUrl=...`)",
+     "src/app/(learning)/community/CommunityPageClient.tsx: 'Sign in to join the conversation' (behind the community flag; 404 today)",
+     "src/app/sitemap.ts leaves lab pages out because they need a session"
+    ],
+    "dependsOn": [
+     "Lab status from GENERATED_LAB_MANIFESTS",
+     "Lab page: requireSession, labAccessService.resolve and getLabProgress (Prisma)",
+     "NextAuth's default sign-in page with the placeholder provider"
+    ],
+    "todayAnonymous": "Copy on the home page, /curriculum, the route chooser, /practice and every lesson that has a lab tells visitors to sign in, and the site has no sign-in. 'Launch Lab', or any lab card, returns a 307 to /api/auth/signin, which shows NextAuth's default page with one 'Sign in with Placeholder' button. It always fails with CredentialsSignin, so every available lab is a dead end.",
+    "dataShape": "None in this layer (copy and links only). Lab progress belongs to the labs area.",
+    "noLoginPlan": "When the labs area serves labs anonymously with browser-stored progress, change one seam: replace labRequiresSignIn(lab) with labAccessNote(lab, mode), which in local mode returns null or 'Progress is saved in this browser.' Route every surface through it in place of the hard-coded strings: LabLink, LessonPractice, ModuleCard, the learning-paths note, PracticeHub labNotes and intro, and InteractiveFeaturesSection. In local mode the lab page must never redirect to /api/auth/signin; it renders with local progress. Add lab pages to the sitemap's public set. In account mode the helper can say 'Sign in to sync progress': sign-in stays optional, never a gate.",
+    "tests": [
+     "tests/components/LabLink.test.tsx (SIGN_IN_NOTE pinned, G30-PRAC-10)",
+     "tests/components/LessonMdxPipeline.test.tsx ('Sign in to run labs.')",
+     "tests/components/PracticeHub.test.tsx ('Sign in to open.')",
+     "tests/lib/learning-paths.test.ts (note 'sign-in required')",
+     "tests/lib/curriculum-overview.test.ts ('lists only available labs from the registry, with sign-in routes')",
+     "tests/app/sitemap.test.ts (lab pages excluded)",
+     "tests/e2e/navigation-entry-points.spec.ts ('the lesson lab callout says the lab needs sign-in (G30-PRAC-10)')",
+     "tests/e2e/labs.spec.ts and tests/e2e/learner-flow.spec.ts (signed in through tests/fixtures/auth.ts)"
+    ],
+    "risk": "Medium. Requirement G30-PRAC-10 pins the sign-in copy in unit and e2e tests, so the copy has to change in lockstep with the labs area removing the gate. Changing the copy before labs work anonymously would mislead visitors the other way."
+   },
+   {
+    "feature": "Legacy TopicPage template (Firestore flashcard progress and 'Mark as Complete')",
+    "entryPoints": [
+     "src/components/templates/TopicPage.tsx: no route imports it; only tests/components/TopicPage.test.tsx does",
+     "src/lib/firebase.ts"
+    ],
+    "dependsOn": [
+     "useAuth (Firebase-style uid)",
+     "Firestore users/{uid}/topics/{topicId}",
+     "NEXT_PUBLIC_FIREBASE_* (falls back to a mock config)"
+    ],
+    "todayAnonymous": "Not rendered anywhere in production. If it were used: with user null there are no Firestore reads or writes, and 'Mark as Complete' shows an alert and saves nothing.",
+    "dataShape": "Per topic: {flashcardProgress: {lastViewedCardIndex}, completed: boolean}.",
+    "noLoginPlan": "Delete it, together with its Firebase path, or port it to the shared learner store; 'curriculumProgress' already records completion. Visitors never see it.",
+    "tests": [
+     "tests/components/TopicPage.test.tsx (saves and restores progress with mocked Firestore and a signed-in user)"
+    ],
+    "risk": "Low. It keeps alive a second identity and storage path (the Firebase uid) that conflicts with the planned learner-store seam."
+   }
+  ]
+ },
+ {
+  "area": "Community, comments and AI tutor (repo root /Users/Rakesh/Projects/sv-uvm-guide; all paths below are relative to it). Summary: two features are visible to anonymous visitors on the lessons-only deploy, and both are dead ends. (1) The floating AI assistant on every (learning) page answers every question with \"Sign in to use the AI tutor.\", and no sign-in exists. (2) \"Teach it back\" (FeynmanPromptWidget) on every lesson gets a 401 back, shows nothing, and does not keep the learner's text. Everything else (the community feed, post and comments, the test page, the notebook, TopicPage, CodeReviewAssistant, InteractiveCode collaboration) is either 404 or not mounted. The community code is built on Firebase with a mock config, so it would not work even with its flag turned on. The fakeComments flag has no code that reads it. A real AI tutor needs a server-side secret (GEMINI_API_KEY), so the browser cannot supply it. What can work with no login: Teach-it-back as a self-explanation exercise saved in localStorage, and an offline \"Ask the guide\" helper built on the existing client-side search index. Verified: 14 vitest files in this area pass (53 tests).",
+  "features": [
+   {
+    "feature": "AI tutor chat widget (floating 'Open AI assistant' button and dialog)",
+    "entryPoints": [
+     "src/app/(learning)/layout.tsx:12 (mounts the widget on every (learning) route: all lessons, /curriculum, /practice, ...)",
+     "src/components/widgets/AIAssistantWidget.tsx",
+     "src/components/widgets/AIAssistantDialog.tsx (fetch /api/ai/chat at :121, publicErrorMessages at :37-42)",
+     "src/app/api/ai/chat/route.ts",
+     "src/server/ai/index.ts (aiTutor.answer, CHAT_POLICY, Gemini provider)",
+     "src/server/ai/rate-limit.ts",
+     "src/lib/ai-validation.ts"
+    ],
+    "dependsOn": [
+     "Session: useAuth() -> next-auth useSession (client, used only for displayName); requireSession() in the route -> getServerSession(authOptions), which needs NEXTAUTH_SECRET/SESSION_SECRET (src/lib/auth.ts throws on import without it)",
+     "Prisma: requireSession upserts User for signed-in callers; enforceAiRateLimit counts and creates Activity{type: AI_REQUEST} (needs DATABASE_URL)",
+     "API route: POST /api/ai/chat",
+     "Env: GEMINI_API_KEY (else AiConfigurationError -> 503 AI_NOT_CONFIGURED), GEMINI_MODEL (default gemini-2.5-flash)",
+     "Package: @google/generative-ai",
+     "No feature flag: always mounted"
+    ],
+    "todayAnonymous": "A round 'Open AI assistant' button sits fixed at the bottom-right of every learning page, including every lesson. Clicking it opens a dialog that greets the visitor with \"Hello! I'm your SystemVerilog and UVM tutor...\". Every question POSTs to /api/ai/chat. requireSession() finds no session and throws AuthenticationError before any Prisma call, so the route returns 401 {error:'UNAUTHORIZED'}. The dialog then appends \"Sign in to use the AI tutor.\" There is no sign-in link, and the placeholder credentials provider refuses every sign-in, so the dead end repeats on every message. A signed-in user would also fail: without DATABASE_URL the rate limiter throws (503, generic 'unavailable' copy), and without GEMINI_API_KEY the route returns 503 AI_NOT_CONFIGURED. Closing the dialog unmounts it, which loses the transcript. Each send also transmits document.title, the pathname and the visitor's current text selection.",
+    "dataShape": "Request {userQuestion: string 1..2000, pageContext?: {title<=200, route<=500, selectedText<=2000}}, response {reply: string}. The transcript is React state only: Message{id, text, sender: 'user'|'assistant', timestamp}. Nothing is persisted on the client. On the server, signed-in calls write one Activity row per request.",
+    "noLoginPlan": "A real AI tutor needs a server-side secret, and the key must never become NEXT_PUBLIC. (1) Availability seam: add GET /api/ai/status (dynamic, no auth) returning {chat: boolean, feynman: boolean} from an isAiAvailable() helper (GEMINI_API_KEY present AND AI_TUTOR_ENABLED==='true'). Alternatively, use a build-time NEXT_PUBLIC_FEATURE_FLAG_AI_TUTOR, because lessons are prerendered. (2) Default behavior today: either hide the floating button, or, preferably, turn the dialog into an honest offline 'Ask the guide' helper. It would run the question through the existing client-side search (loadSearchDocuments + searchCurriculum in src/components/search/), reply with the top lesson and section links and their descriptions, and say 'Search-based help: the AI tutor is not enabled on this site.' The last conversation can optionally be kept per tab in sessionStorage (key svuvm.assistant.v1, every access wrapped in try/catch), and the dialog no longer needs useSession. (3) To enable AI later without login: replace requireSession() with resolveAiPrincipal(), which returns {kind:'user', id} or {kind:'anonymous', key: hash(CF-Connecting-IP)}. Move rate limiting behind an AiRateLimiter interface, with a Prisma implementation for signed-in users and a Cloudflare Workers Rate Limiting binding or Durable Object for anonymous visitors, plus Turnstile. Never touch Prisma when DATABASE_URL is unset. Replace the 'Sign in' error copy with copy driven by availability.",
+    "tests": [
+     "tests/api/ai-chat.test.ts (valid request with a mocked session, rejects systemPrompt, rejects missing or oversized questions)",
+     "tests/components/AIAssistantWidget.test.tsx (pageContext sent; mocks a signed-in user and a 200 response)",
+     "tests/e2e/ai-assistant-animation.spec.ts (mocks /api/ai/chat 200 on /curriculum; spinner, then reply)",
+     "tests/lib/ai-validation.test.ts",
+     "GAP: no test of the anonymous 401 or 503 paths or their error copy; nothing tests src/server/ai/index.ts or rate-limit.ts"
+    ],
+    "risk": "High visibility: this is the most prominent interactive control on every lesson, and it leads anonymous visitors to a dead end while calling itself 'your tutor'. The e2e test mocks a 200 response, so CI never sees the real behavior. SessionProvider on every learning page also calls the dynamic /api/auth/session route (100-500 ms of Worker CPU), partly so this dialog can show a displayName. Once AI is enabled, the privacy policy must say that the question, route and selected text go to Google Gemini. The rate limiter's count-then-create is not atomic."
+   },
+   {
+    "feature": "Teach it back (Feynman self-explanation) on every lesson",
+    "entryPoints": [
+     "src/app/(learning)/curriculum/[...slug]/page.tsx:74-82 (LESSON_PRACTICE_SLOT renders LessonPractice with conceptTitle=topic.title)",
+     "src/lib/curriculum/lesson-mdx.ts:22-30 (TEACH_BACK_SECTION is always added to the slot and to 'On this page')",
+     "src/lib/curriculum/remark-practice-slot.ts",
+     "src/components/curriculum/LessonPractice.tsx:101-111",
+     "src/components/widgets/FeynmanPromptWidget.tsx",
+     "src/app/api/ai/feynman-feedback/route.ts",
+     "src/server/ai/index.ts (evaluateFeynmanExplanation, FEYNMAN_POLICY, structured JSON schema)",
+     "src/server/ai/rate-limit.ts"
+    ],
+    "dependsOn": [
+     "Session: requireSession() (NEXTAUTH_SECRET and a session cookie)",
+     "Prisma: Activity AI_REQUEST rate limit; User upsert (DATABASE_URL)",
+     "API route: POST /api/ai/feynman-feedback",
+     "Env: GEMINI_API_KEY, GEMINI_MODEL",
+     "No feature flag"
+    ],
+    "todayAnonymous": "Every curriculum lesson shows a 'Teach it back' section, also listed in 'On this page', with \"Challenge your understanding.\", a textarea and 'Submit Explanation'. Submitting POSTs {content: 'Topic: <title>\\n\\nExplanation: <text>'}, and the route returns 401 {error:'UNAUTHORIZED'}. The widget never checks response.ok and runs setFeedback(data.feedback), which is undefined, so nothing renders. The button goes from 'Getting Feedback...' back to 'Submit Explanation' with no message: a silent no-op. The explanation is not saved anywhere, so reloading or navigating away loses it. Side note: the server's 20-character minimum is measured on the wrapped 'Topic: ...' string, so a one-word explanation passes validation. The unused onSubmit prop is declared but never called.",
+    "dataShape": "Today: sends {content <= 8000 chars}. The server returns {score 0..100, feedback, missingConcepts[] <= 10}, but the widget reads only feedback. Nothing is persisted. Proposed: one localStorage record per lesson, {text <= 4000 chars, savedAt: ISO string, checks: Record<rubricId, boolean>}. That is at most about 0.5 MB across about 112 lessons, well within quota.",
+    "noLoginPlan": "Make it fully work offline as an honest self-explanation exercise. Add src/lib/teach-back-store.ts: get, save, list and remove over localStorage, key 'svuvm.teachBack.v1:<tier>/<module>/<lesson>', SSR-safe, every access in try/catch, following src/hooks/useExerciseProgress.ts. The widget autosaves the draft (debounced) and offers 'Save my explanation'. After saving it reveals 'Compare with the lesson': the lesson summary (the page already computes `summary` from the frontmatter description), a link to the lesson's Quick Take anchor, and a self-check rubric whose ticks are stored ('said what it is / why it exists / when to use it / gave a concrete example / defined every term'). Copy: 'Saved in this browser only. No AI grading on this site.' Thread lessonId={normalizedSlug.join('/')} and summary from page.tsx through LessonPractice to the widget. An 'Get AI feedback' button appears only when /api/ai/status reports feynman:true. When it does: check response.ok, show visible messages for 400/401/429/503/504, enforce the minimum length on the explanation itself, and render score and missingConcepts. Later login seam: a sync adapter merges the local store into /api/me/teach-back by savedAt once a session exists.",
+    "tests": [
+     "tests/api/feynman-feedback.test.ts (structured result with a mocked session; short content returns 400)",
+     "tests/lib/remark-practice-slot.test.ts (slot placement in every lesson)",
+     "tests/components/LessonMdxPipeline.test.tsx:71-94 (teach-it-back anchor order in the table of contents)",
+     "tests/e2e/lesson-orientation.spec.ts:108-112 ('Teach it back' heading appears before References)",
+     "tests/qa/curriculumCoverageAudit.spec.ts:336 (teach-it-back anchor exists)",
+     "GAP: no component test for FeynmanPromptWidget; no test of the anonymous, error or persistence behavior"
+    ],
+    "risk": "High: it appears on every lesson and silently discards the learner's work. An offline version is cheap and fully honest. Related, though in another area: /learning-strategies is in the sitemap and still shows '[Placeholder: ...]' copy about Feynman prompts."
+   },
+   {
+    "feature": "Community feed (/community): list posts and create a post",
+    "entryPoints": [
+     "src/app/(learning)/community/page.tsx (calls notFound() when the flag is off)",
+     "src/app/(learning)/community/CommunityPageClient.tsx",
+     "src/components/Navbar.tsx:40 (nav link only when featureFlags.community)",
+     "src/components/search/shortcuts.ts:52,59,129,156 (Alt+C go-community, gated)",
+     "src/components/search/ShortcutsHelpDialog.tsx:59",
+     "src/lib/notifications.ts:172-179 (forum_post notification links to /community)",
+     "src/app/sitemap.ts (excluded on purpose)"
+    ],
+    "dependsOn": [
+     "Flag: community (isFeatureEnabled on the server; featureFlags.community on the client; NEXT_PUBLIC_FEATURE_FLAG_COMMUNITY or FEATURE_FLAGS_FORCE_ON, inlined at build)",
+     "Firebase client SDK: firebase/firestore collection 'posts' (onSnapshot, addDoc, serverTimestamp) through src/lib/firebase.ts",
+     "Env: NEXT_PUBLIC_FIREBASE_API_KEY, _AUTH_DOMAIN, _PROJECT_ID, _STORAGE_BUCKET, _MESSAGING_SENDER_ID, _APP_ID (otherwise the mock config with project 'mock-project-id' is used)",
+     "Session: useAuth() -> useSession -> /api/auth/session",
+     "firestore.rules (allows only users/{uid}/**, so the 'posts' collection is denied)",
+     "No Prisma"
+    ],
+    "todayAnonymous": "The flag is off at build, so page.tsx calls notFound() and /community is a 404 ('This page could not be found.'). There is no Navbar link, Alt+C is not routed or listed in shortcuts help, and the page is not in the sitemap. If the flag were turned on, the page would show the hero and \"Sign in to join the conversation...\" (no sign-in exists) and an empty 'No community threads yet' list. The Firestore onSnapshot call against the mock project fails with no error callback, so it only logs to the console. Even a signed-in user could not post: the rules deny 'posts', the author is a NextAuth id rather than a Firebase Auth uid, and handleCreatePost has no validation (an empty title is accepted) and no error handling.",
+    "dataShape": "Firestore posts {id, title, content, author: uid, createdAt: Timestamp}, read through a live snapshot and written with addDoc. Nothing is stored locally.",
+    "noLoginPlan": "A shared forum inherently needs a server store, identity and moderation. Browser storage cannot make one visitor's post visible to anyone else, so it should not be faked. Options: (a) keep /community as a hidden 404 (the honest status quo); or (b) replace it with a static 'Discuss' page that links to an external venue the visitor can read anonymously, such as GitHub Discussions for the repo or a giscus embed (posting would then use the visitor's GitHub account, not our login; this is an owner decision with privacy-policy impact). Either way, remove the Firebase code. Seam for later: a CommunityRepository interface in src/server/community.ts (listPosts, getPost, createPost, listComments, addComment) implemented with Prisma, requireSession for writes, moderation and rate limits. Reads should render anonymously, and the write form should say 'Sign in to post' only once a real provider exists. Keep the route behind the community flag until then. Fix the legal copy that promises forums: the privacy-policy 'discussion forums' item and the terms-of-service 'community channel'.",
+    "tests": [
+     "tests/app/feature-gating.spec.tsx (community page: notFound when the flag is off, renders when on)",
+     "tests/e2e/feature-flags.spec.ts:31 ('community route returns 404'). In practice it always skips under the default playwright.config.ts, which forces every flag on for the dev server, and the spec skips when /api/feature-flags reports any flag on.",
+     "tests/search/shortcuts.test.ts (go-community gated by the flag)",
+     "tests/components/Navbar.test.tsx, tests/components/KeyboardShortcuts.test.tsx (flags mocked off)",
+     "tests/tools/featureFlags.spec.ts (defaults)",
+     "GAP: no behavioral test of CommunityPageClient"
+    ],
+    "risk": "Low today because the page is unreachable. High if anyone sets NEXT_PUBLIC_FEATURE_FLAG_COMMUNITY: the page ships broken (mock Firebase, permission denied, a sign-in dead end) and pulls in the Firebase SDK. Playwright runs with the flag forced on, so e2e runs exercise the mock Firebase. The legal pages already describe forums that do not exist."
+   },
+   {
+    "feature": "Community post detail and comments (/community/post/[postId])",
+    "entryPoints": [
+     "src/app/(learning)/community/post/[postId]/page.tsx (server component; reads Firestore with getDoc on the server)",
+     "src/app/(learning)/community/post/[postId]/PostClientPage.tsx (comments via onSnapshot and addDoc)"
+    ],
+    "dependsOn": [
+     "Flag: community",
+     "Firebase Firestore: posts/{postId} and posts/{postId}/comments (the client SDK also runs on the server/Worker)",
+     "NEXT_PUBLIC_FIREBASE_* env vars (otherwise the mock config)",
+     "Session: useAuth()/useSession for the comment form"
+    ],
+    "todayAnonymous": "Flag off: notFound() runs before Firebase is imported, so every /community/post/<id> is a 404 (a dynamic route; the runbook confirms 404). With the flag on, the server getDoc call against the mock project would reject with no handling and render a 500 error page. Anonymous visitors would never see the comment form (it is gated on `user &&`) and get no sign-in hint. Comments show only their text, with no author or time.",
+    "dataShape": "Reads posts/{postId} {title, content, author, createdAt} and comments {text, author uid, createdAt}; writes comments with addDoc.",
+    "noLoginPlan": "This is inherently multi-user, so the same decision as /community applies: keep the 404, or move to an external discussion venue. The honest browser-only equivalent of 'comments' is private per-lesson notes. Reuse the teach-back store pattern (localStorage) rather than imitating a public thread. For later, add a Prisma Comment model behind requireSession for writes, anonymous reads, moderation, and rate limiting through the same limiter seam as AI.",
+    "tests": [
+     "None (feature-gating.spec covers only /community/page)"
+    ],
+    "risk": "Low today. If the flag is turned on, every post URL returns a 500."
+   },
+   {
+    "feature": "Community component test page (/community/test-page)",
+    "entryPoints": [
+     "src/app/(learning)/community/test-page/page.tsx",
+     "src/app/(learning)/community/test-page/TestPageClient.tsx"
+    ],
+    "dependsOn": [
+     "Flag: community",
+     "InteractiveCode (Monaco) loaded through dynamic import"
+    ],
+    "todayAnonymous": "404 (the flag is off).",
+    "dataShape": "None.",
+    "noLoginPlan": "It needs no server, but it is a developer scaffold ('Component Test Page') served under a learner URL. Delete it, or move it to a test fixture or Storybook-style dev-only route. It is not a learner feature.",
+    "tests": [
+     "None"
+    ],
+    "risk": "Low. It would publish a junk page if the community flag were turned on."
+   },
+   {
+    "feature": "fakeComments feature flag",
+    "entryPoints": [
+     "src/tools/featureFlags.ts:5,33,54",
+     "playwright.config.ts:18 (forced 'true')",
+     "scripts/run-e2e-tests.cjs:9 (forced 'true')"
+    ],
+    "dependsOn": [
+     "Env: NEXT_PUBLIC_FEATURE_FLAG_FAKE_COMMENTS, FEATURE_FLAGS_FORCE_ON"
+    ],
+    "todayAnonymous": "Nothing. No component, route or library reads this flag, so on or off has no effect anywhere.",
+    "dataShape": "None.",
+    "noLoginPlan": "Remove the flag from featureFlags.ts, playwright.config.ts, scripts/run-e2e-tests.cjs and the test fixtures (Navbar.test, KeyboardShortcuts.test, feature-gating.spec, featureFlags.spec). Fabricated comments should never be shown to learners. If example discussion is ever wanted, it must be labeled as example content, not presented as real community activity.",
+    "tests": [
+     "tests/tools/featureFlags.spec.ts:25 (default false)",
+     "Mocked in tests/components/Navbar.test.tsx:11, tests/components/KeyboardShortcuts.test.tsx:26, tests/app/feature-gating.spec.tsx:5"
+    ],
+    "risk": "No functional risk. The name implies fake social proof, and the dead flag misleads anyone auditing which features exist."
+   },
+   {
+    "feature": "AI server core: provider, access policy and rate limiting (shared by chat and Feynman)",
+    "entryPoints": [
+     "src/server/ai/index.ts (getProvider, getModel, aiTutor.answer, aiTutor.evaluateFeynmanExplanation, feynmanResultSchema)",
+     "src/server/ai/rate-limit.ts (enforceAiRateLimit: 20 requests per 60 s per userId)",
+     "src/lib/ai-validation.ts (normalizeAIText)",
+     "src/lib/auth.ts:108-137 (requireSession, AuthenticationError)",
+     "prisma/schema.prisma (ActivityType.AI_REQUEST, Activity model)"
+    ],
+    "dependsOn": [
+     "Env: GEMINI_API_KEY, GEMINI_MODEL, DATABASE_URL, NEXTAUTH_SECRET/SESSION_SECRET",
+     "Prisma: Activity count and create; User upsert",
+     "Session"
+    ],
+    "todayAnonymous": "Never reached by anonymous visitors: both AI routes return 401 before the provider or Prisma is touched. The deploy runbook (docs/deploy/cloudflare.md:137) says not to set GEMINI_API_KEY or DATABASE_URL in phase 1.",
+    "dataShape": "Writes Activity {userId, type: AI_REQUEST, occurredAt, algorithmVersion: 'ai-rate-limit-v1'} per signed-in request. Sends normalized learner text to Google Gemini.",
+    "noLoginPlan": "This inherently needs a server and a secret, and cannot move to the browser. Add the seams the UI needs: (1) isAiAvailable() plus GET /api/ai/status so clients can choose the offline mode; (2) resolveAiPrincipal(), which yields a user id or an anonymous hashed-IP key, replacing requireSession() in the two AI routes; (3) an AiRateLimiter interface with a Prisma implementation (signed-in) and a Cloudflare rate-limiting binding or Durable Object implementation (anonymous), so the Worker never needs Postgres just to rate-limit; (4) optional Turnstile verification for anonymous use. Until AI_TUTOR_ENABLED is set with a key, all UI shows the offline versions.",
+    "tests": [
+     "tests/api/ai-chat.test.ts and tests/api/feynman-feedback.test.ts (mock auth, the server/ai module and the rate limiter entirely)",
+     "tests/lib/ai-validation.test.ts",
+     "GAP: no unit tests for enforceAiRateLimit, getModel, or the JSON parse/validation failure path of evaluateFeynmanExplanation"
+    ],
+    "risk": "Medium for later enablement: count-then-create is a race, and rate limits keyed on Postgres fail with 503 on the database-less Worker. Anonymous AI without per-IP limits and Turnstile would be an open, billable endpoint."
+   },
+   {
+    "feature": "Notebook AI feedback (/dashboard/notebook) [owned by the personalization area; consumes the Feynman API]",
+    "entryPoints": [
+     "src/app/(learning)/dashboard/notebook/page.tsx",
+     "src/app/(learning)/dashboard/notebook/NotebookPageClient.tsx",
+     "src/app/actions/notebook.ts (createNotebookEntry: requireSession then redirect; not called anywhere)"
+    ],
+    "dependsOn": [
+     "Flag: personalization",
+     "API route: POST /api/ai/feynman-feedback (session, Prisma, GEMINI_API_KEY)",
+     "Server action requireSession"
+    ],
+    "todayAnonymous": "404 (personalization flag off). With the flag on: two hard-coded mock entries ('UVM Phases', 'TLM FIFO') that look like the learner's own notebook. Edits are not saved. 'Submit for AI Feedback' gets a 401, and setFeedback(data) renders 'AI Feedback (Score: )' with an empty body. A network failure leaves the button stuck on 'Getting Feedback...', because nothing resets isLoading in a finally block.",
+    "dataShape": "In-memory mock entries {id, title, content}; sends {content}; expects {score, feedback}.",
+    "noLoginPlan": "Make the notebook the index of the teach-back store: list every lesson with a saved explanation from localStorage (title, savedAt, link to <lesson>#teach-it-back), with edit, delete and 'Export JSON'. Remove the mock entries and the unused server action. Show the AI feedback button only when /api/ai/status allows it, with proper error handling. It could then be shown without the flag.",
+    "tests": [
+     "None (feature-gating.spec covers /dashboard, not /dashboard/notebook)"
+    ],
+    "risk": "Medium if the flag is flipped: mock data would be presented as the learner's notebook, and feedback renders broken."
+   },
+   {
+    "feature": "Legacy TopicPage template (Firestore flashcard progress, Mark as Complete, Feynman)",
+    "entryPoints": [
+     "src/components/templates/TopicPage.tsx (no route imports it; only a comment in src/app/(learning)/learning-strategies/page.tsx:27 mentions it)"
+    ],
+    "dependsOn": [
+     "Firebase Firestore users/{uid}/topics/{topicId} keyed by the NextAuth uid",
+     "useAuth()/session",
+     "FeynmanPromptWidget, FlashcardWidget"
+    ],
+    "todayAnonymous": "Not reachable on any route.",
+    "dataShape": "Firestore {flashcardProgress: {lastViewedCardIndex}, completed: true} per user and topic.",
+    "noLoginPlan": "Delete it together with its test. The lesson route, LessonPractice and useCurriculumProgress (localStorage) already replace it. If it is kept, swap Firestore for a localStorage store.",
+    "tests": [
+     "tests/components/TopicPage.test.tsx (mocks firebase/firestore and a signed-in user)"
+    ],
+    "risk": "Low. Dead code that keeps the Firebase dependency and a misleading 'Mark as Complete' (alert()) pattern alive."
+   },
+   {
+    "feature": "Firebase client layer",
+    "entryPoints": [
+     "src/lib/firebase.ts",
+     "src/lib/firebaseConfig.mock.ts",
+     "firestore.rules",
+     "package.json dependency firebase ^12.0.0"
+    ],
+    "dependsOn": [
+     "Env: NEXT_PUBLIC_FIREBASE_API_KEY, _AUTH_DOMAIN, _PROJECT_ID, _STORAGE_BUCKET, _MESSAGING_SENDER_ID, _APP_ID, _MEASUREMENT_ID"
+    ],
+    "todayAnonymous": "Never loaded on the deploy: its only importers are the flag-gated community routes and the unused TopicPage. When loaded it logs 'Using MOCK Firebase configuration' and also initializes Firebase Auth (getAuth), a second identity system next to NextAuth.",
+    "dataShape": "None locally.",
+    "noLoginPlan": "Remove Firebase entirely: the module, the mock config, firestore.rules and the dependency. NextAuth plus Prisma is the chosen backend. Future community or comments use Prisma models behind the session, and private learner data uses browser storage.",
+    "tests": [
+     "tests/firebase.test.ts",
+     "tests/components/TopicPage.test.tsx"
+    ],
+    "risk": "Low today. It confuses future work (two identity systems; rules that do not match the collections in use) and is a large client SDK if it is ever bundled."
+   },
+   {
+    "feature": "Code Review Assistant peer-review comments and /api/reviews",
+    "entryPoints": [
+     "src/components/ui/CodeReviewAssistant.tsx (not mounted on any route and not in the MDX registry)",
+     "src/app/api/reviews/route.ts",
+     "src/server/reviews.ts"
+    ],
+    "dependsOn": [
+     "Session: requireSession",
+     "Prisma: Review model",
+     "Env: REVIEW_REPOSITORY_ALLOWLIST (required in production), NEXT_PUBLIC_REVIEW_REPOSITORY"
+    ],
+    "todayAnonymous": "Invisible: no page renders it. A direct GET or POST to /api/reviews returns 401.",
+    "dataShape": "Review {repository, commitSha, comment <= 4000, approved, userId}; the client keeps a comments string[] in state.",
+    "noLoginPlan": "Keep it unmounted. Its 'automated checks' are hard-coded passes on timers ('No CVEs detected', 'Coverage at 85%', 'ESLint checks passed') and must not reach learners. If review notes are wanted for labs, keep them per lab in localStorage and show real structural grader output from src/lib/lab-graders.ts. Server-side peer review waits for login.",
+    "tests": [
+     "tests/components/CodeReviewAssistant.test.tsx",
+     "tests/api/reviews.test.ts",
+     "tests/reviews.spec.ts"
+    ],
+    "risk": "Low today. Fake check results would be presented as real if anyone mounts it."
+   },
+   {
+    "feature": "InteractiveCode live collaboration (WebSocket collabUrl and Review Log)",
+    "entryPoints": [
+     "src/components/ui/InteractiveCode.tsx:352-392 (socket), :548-560 (broadcast on edit), :660-668 (Review Log)",
+     "src/lib/collaboration.ts",
+     "src/components/mdx/LazyMdxInteractive.tsx:33 (InteractiveCode used by about 5 lessons)"
+    ],
+    "dependsOn": [
+     "A collabUrl prop pointing at a WebSocket server (no lesson passes one); userId defaults to 'local'"
+    ],
+    "todayAnonymous": "No effect. No socket opens, the editor works locally (read-only unless isEditable), and the Review Log never appears.",
+    "dataShape": "None persisted. Would broadcast {type: 'edit', edit: {user, content, timestamp}}.",
+    "noLoginPlan": "Real-time collaboration needs a server (for example, Durable Objects), and browser storage cannot provide it. Leave it dormant or remove the collabUrl and userId props and src/lib/collaboration.ts. If editable snippets should survive a reload, persist each block's edits in localStorage instead.",
+    "tests": [
+     "tests/unit/interactive-code.ssr.spec.ts (connectCollaboration returns null without WebSocket)"
+    ],
+    "risk": "Low. Dormant code."
+   }
+  ]
+ }
+]

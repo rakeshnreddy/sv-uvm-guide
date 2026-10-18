@@ -1,0 +1,635 @@
+{
+ "summary": "This is the no-login design. An anonymous visitor can use everything the site shows. Learner data lives in one typed, versioned browser store (src/lib/learner-store), with one repository per feature. Account features stay behind one build-time switch, ACCOUNTS_ENABLED, which is the existing accountUI flag, plus a server gate that requires the switch, DATABASE_URL, a real sign-in provider and a session.\n\nWhat I checked in the code:\n- Every one of the 23 available labs redirects to the placeholder sign-in page.\n- The \"Teach it back\" widget on every lesson and the floating AI assistant on every learning page both call auth-guarded AI routes, so for anonymous visitors their controls fail silently or show \"Sign in to use the AI tutor.\"\n- SessionProvider calls /api/auth/session on every page mount and every tab focus. That is a dynamic Worker request each time.\n- Lessons already read content with fs at build time and are served prerendered. Labs can use the same pattern.\n\nLabs:\n- Lab pages become static pages built at build time, with all declared file contents passed in as props.\n- Steps, editing, autosave, self-attestation, browser-side structural grading (the graders import nothing) and revealing solutions after completion all run against the local store.\n- Simulation stays server-only. On this deploy it is replaced by \"Run it on your simulator\" with a zip download.\n\nFlashcards and review:\n- Cards gain Again/Hard/Good/Easy ratings using one shared SM-2 scheduler.\n- A local review queue lives at /dashboard/review. The 624 KB deck registry is resolved on the server and no longer ships to lesson pages.\n\nOther learner pages:\n- Dashboard: rebuilt from real local data.\n- Notebook: fed by Teach-it-back.\n- Settings: theme plus export, import and reset of local data.\n- Placement quiz: saves its result locally.\n\nPages that need several users' data, a secret or real content stay hidden:\n- Community, the notifications page, the AI tutor and simulation (they need several users' data or a secret).\n- Assessment center (mostly mock content).\n- Projects and history (placeholder content).\n- Coverage (an editorial tracker): its route is deleted.\n\nThe work is split into a shared foundation and seven packages with no file in common. They can run in parallel once the foundation lands.",
+ "architecture": "1. THE ONE SWITCH (where server persistence is decided)\n- src/lib/persistence/accounts.ts (client-safe, no server imports) exports `ACCOUNTS_ENABLED = featureFlags.accountUI`. It is inlined at build time from NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI, or turned on by FEATURE_FLAGS_FORCE_ON.\n- src/server/persistence-gate.ts (server only; uses no `server-only` package because none is installed):\n  - `isServerPersistenceConfigured(env = process.env)` is true only when ACCOUNTS_ENABLED, env.DATABASE_URL, a real provider (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or NODE_ENV!=='production' && AUTH_TEST_MODE==='true') and NEXTAUTH_SECRET or SESSION_SECRET are all present.\n  - `resolveServerPersistence()` returns `{mode:'local'}` without importing '@/lib/auth' when not configured. Otherwise it dynamically imports auth, calls getServerSession, and returns `{mode:'server', userId}` or `{mode:'local'}`.\n- src/lib/persistence/target.ts ('use client') exports `usePersistenceTarget(): {target:'local'|'server'; ready:boolean}`.\n  - The branch is chosen on the build-time constant: `ACCOUNTS_ENABLED ? useSessionTarget : () => ({target:'local', ready:true})`.\n  - With accounts off it never calls useSession.\n  - With accounts on: authenticated means 'server', unauthenticated means 'local', loading means ready:false.\n- src/lib/site-features.ts exports frozen `SITE_FEATURES`:\n  - dashboard, review, notebook, settings: true\n  - accounts: ACCOUNTS_ENABLED\n  - community: featureFlags.community\n  - aiTutor: featureFlags.aiTutor && ACCOUNTS_ENABLED\n  - simulation: featureFlags.simulation && ACCOUNTS_ENABLED\n  - Two new flags, aiTutor and simulation, default off. Their environment variables are NEXT_PUBLIC_FEATURE_FLAG_AI_TUTOR and NEXT_PUBLIC_FEATURE_FLAG_SIMULATION.\n  - tracking and personalization lose their learner-page gating. They stay defined for future server sync and for previewing draft pages.\n- Behaviour with accounts off:\n  - ClientProviders does not mount SessionProvider, which removes the /api/auth/session fetch on every page and every focus.\n  - useAuth() returns the constant {user:null, loading:false, signOut: no-op}. It stays the only entry point to identity; components never call useSession directly.\n  - /api/auth/[...nextauth] answers 404 {error:'ACCOUNTS_DISABLED'} for every method. NextAuth and authOptions are imported lazily inside the handler, so the placeholder sign-in page disappears.\n  - No page calls requireSession or Prisma.\n  - The /api/me/*, /api/labs/run, /api/simulate, /api/ai/* and /api/reviews routes stay as they are and keep failing closed with 401. They are the backends for when accounts return.\n\n2. THE CLIENT STORE: src/lib/learner-store/ (one module, barrel index.ts, no zod in client code, hand-written validators)\n- storage.ts, `safeStorage`:\n  - Methods: get, set, remove, keys(prefix).\n  - On first use it probes localStorage. SecurityError or TypeError gives status 'unavailable' with an in-memory Map fallback.\n  - QuotaExceededError (names QuotaExceededError and NS_ERROR_DOM_QUOTA_REACHED, codes 22 and 1014) gives status 'full'. The value is kept in a memory overlay for the session.\n  - Exposes `getStorageStatus()`, `subscribeStorageStatus()` and `estimateBytes(prefixes)`.\n- record.ts:\n  - `defineRecord<T>({key, version, empty, parse(data): T|null, migrations?: {[fromV]: (data)=>unknown}, legacyRaw?: boolean})` returns `{key, version, empty, read(): T, write(v): 'saved'|'memory-only'|'blocked-newer-version', update(fn), clear(), subscribe(cb)}`.\n  - `defineKeyedRecord<T>({prefix, version, parse})` returns `{get(id), set(id,v), remove(id), list(): {id,value}[], subscribe(cb)}`.\n  - Envelope `{\"v\":<int>,\"data\":<T>}`. Legacy keys use legacyRaw and are stored bare.\n  - Unparseable JSON or a failed parse reads as `empty`. It is logged once and the stored value is not overwritten until the next explicit write.\n  - v < version runs the migrations in order and writes back. v > version reads as empty, writes are refused, and the newer data is never overwritten.\n  - Snapshots are cached per raw string, so useSyncExternalStore gets the same object when nothing changed.\n  - A change event in the same tab, plus window 'storage' events from other tabs (key null means every record), notify subscribers.\n- react.ts: `useRecord(record)`, `useKeyedRecord(record,id)`, `useKeyedRecordList(record)` and `useStorageStatus()`, all built on useSyncExternalStore.\n  - getServerSnapshot returns empty, null, [] or 'available', so the server render and first hydration always show the empty state and storage is never read during render.\n- time.ts: `localDayKey(ms)` gives 'YYYY-MM-DD' in the learner's local zone, plus `endOfLocalDay(ms)` and `addDays`.\n- keys.ts, KEY_PREFIX = 'sv-uvm-guide:'. New keys are all versioned (envelope v=1):\n  - `sv-uvm-guide:meta` {schemaVersion:1, createdAt}\n  - `sv-uvm-guide:lab:<labId>@<labVersion>` (keyed)\n  - `sv-uvm-guide:flashcards`\n  - `sv-uvm-guide:notebook`\n  - `sv-uvm-guide:assessments`\n  - `sv-uvm-guide:lessons`\n  - `sv-uvm-guide:activity`\n  - Legacy keys stay owned by their existing code and are included in export, import and reset: `curriculumProgress`, `svuvm.learningRoute` (ROUTE_STORAGE_KEY), `sv-uvm-guide:exercise:<id>` and `sv-uvm-guide:exercise-analytics:<id>`.\n  - Excluded from backup: `sv-uvm:outline-collapsed` (UI convenience) and next-themes' `theme`.\n- repositories/ (data contracts only; feature behaviour lives in the feature packages):\n  - labs.ts `labProgressRecords`: LabProgressRecord {labId, labVersion, currentStepId, completedSteps[], stepEvidence{[stepId]: {kind:'graded', graderId, graderVersion, stepVersion, recordedAt, origin:'browser'|'server'} | {kind:'self_attested', stepVersion, recordedAt}}, fileBuffers{path:content}, status:'in_progress'|'completed', startedAt, updatedAt, completedAt?}. Helpers: `labRecordId(id,version)` and `listLabRecords(labId?)`.\n  - flashcards.ts `flashcardRecord`: {cards{[cardId]: SrsCardState{deckId, interval, repetitions, ease, dueAt, lastReviewedAt, lapses, reviews}}, decks{[deckId]: {lessonHref, lessonTitle, cardIds[], firstSeenAt}}, positions{[deckId]: index}}. Helpers: `isCardDue(state, now)` (dueAt <= endOfLocalDay(now)) and `countDueCards(data, now)`.\n  - notebook.ts `notebookRecord`: {entries: NotebookEntry{id, kind:'teach-back'|'note', lessonPath?, lessonTitle?, title, body (≤8000 chars), createdAt, updatedAt}[]}, capped at 500 entries. Helpers: `upsertTeachBack` and `removeEntry`.\n  - assessments.ts `assessmentRecord`: {placement: PlacementAttempt{assessmentVersion, scoringVersion, responses[{questionId, optionId}], tier, routeId, percent, categories[{id, percent}], completedAt}[] (newest first, max 10), quizzes{[lessonPath]: {best, last, total, attempts, lastAt}}}.\n  - lessons.ts: `lessonLogRecord` {lessons{[lessonPath]: {firstVisitedAt, lastVisitedAt, visits}}}, plus `curriculumProgressRecord` (legacyRaw key 'curriculumProgress', type CurriculumProgressData = the current ProgressData shape).\n  - activity.ts `activityRecord`: {days{[dayKey]: Partial<Record<'lesson'|'lab-step'|'lab-complete'|'review'|'quiz'|'placement'|'note', number>>}}, keeping the last 400 days. Helper: `recordActivity(kind, now?)`.\n  - legacy.ts: read-only `readExerciseProgress()` and `readSelectedRouteRaw()` for the dashboard and backup.\n- backup.ts:\n  - `exportLearnerData()` returns LearnerDataBundle {format:'sv-uvm-guide/learner-data', schemaVersion:1, exportedAt, entries{[key]: parsed JSON}}.\n  - `importLearnerData(bundle, 'replace'|'merge')` validates each entry with its record's parse, ignores unknown keys and reports counts.\n  - `resetLearnerData()` removes only the known keys.\n  - The bundle is also the payload for the future account import.\n- Budget: labs at most about 1 MB in total, flashcards about 200 KB, notebook at most about 4 MB worst case and normally far less, everything else a few KB. localStorage is enough and IndexedDB is not needed. StorageStatusNote warns at more than 3.5 MB.\n- Shared UI, src/components/learner/:\n  - StorageStatusNote: aria-live. \"Saved in this browser\", or \"This browser isn't saving your progress (storage blocked or full). Download a backup to keep it.\"\n  - LearnerDataControls: Export JSON, Import with a preview and then Replace or Merge, Reset with a two-step inline confirm.\n  - LearnerSectionNav: nav \"Your learning\" linking Dashboard, Review, Notebook, Settings, with aria-current.\n  - src/lib/download.ts: downloadBlob and downloadText.\n\n3. FEATURE SEAMS: each feature defines an interface with a local implementation now and a server implementation selected by usePersistenceTarget().target==='server'\n- Labs: LabProgressStore {load, saveWorkspace, completeSelfAttestedStep, checkGradedStep, reset}.\n  - createBrowserLabProgressStore uses labProgressRecords, the pure policy and the in-browser graders.\n  - createAccountLabProgressStore wraps the existing GET, PATCH and POST /api/me/labs/:id/progress and POST /api/labs/run, so server-graded evidence is used when accounts are on.\n- Flashcards: FlashcardReviewStore {rate(cardId, quality), enrollDeck, dueQueue, ...}. Local now. The server version later reuses src/app/actions/srs.ts behind requireSession, which by then shares the same pure scheduler.\n- Placement: always saved locally; it also POSTs /api/me/assessments when the target is 'server'.\n- Notebook, lesson log, activity and quiz results: local only for now. A server version can be added later behind the same records.\n- Later migration: a new POST /api/me/import receives the export bundle on first sign-in. It re-validates every entry and re-grades graded lab steps marked origin:'browser' with the versioned graders. It merges SRS by newest lastReviewedAt per card and notebook entries by id with newest updatedAt.\n\n4. LABS PIPELINE\n- page.tsx:\n  - generateStaticParams lists the available lab ids.\n  - `dynamicParams = false`, so unknown and coming_soon ids 404.\n  - force-dynamic is removed. Optionally add `dynamic = 'error'` to keep the page static.\n  - No auth or Prisma imports.\n- readLabFilesForBuild(lab) in src/lib/lab-assets.ts reads the declared guide, starter and reference files plus solutions at build time with the existing traversal checks. The 256 KB per-file and 1 MB per-lab caps fail the build.\n- The props carry files[] and solutions[] (at most about 55 KB per lab today). This is the same fs-at-build pattern lesson-loader uses, and OpenNext already serves lessons from static assets this way.\n- The client restores progress in an effect behind a `loaded` flag. Autosave (600 ms debounce) and the action buttons are disabled until loading finishes.\n- A shared pure policy, src/lib/lab-progress-policy.ts, is used by src/server/labs.ts, /api/labs/run and the browser store, so browser and server can never disagree.\n\n5. NAVIGATION AND STATIC PAGES\n- Navbar, the course outline and the Alt+3 shortcut always link the Dashboard.\n- The Review, Notebook and Settings pages are reached through LearnerSectionNav and the flashcard \"N due\" chip.\n- /dashboard, /dashboard/review, /dashboard/notebook and /settings are static server shells with client islands. robots.txt already disallows /dashboard and /settings.\n- Available labs are added to the sitemap.\n- With their switches off these pages call notFound(): /notifications (accountUI); /assessment (tracking); /projects and /history (personalization, placeholder content); /community (community, unchanged).\n\n6. TURNING GUARDS BACK ON LATER\n1. Set the NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI build flag, DATABASE_URL, the Google keys and NEXTAUTH_SECRET.\n2. Results:\n   - SessionProvider mounts, the account menu and notifications appear, and /api/auth works.\n   - usePersistenceTarget switches signed-in learners to the server stores, while signed-out learners keep the local store.\n3. To bring back the AI tutor, set the aiTutor flag and GEMINI_API_KEY.\n4. To bring back simulation, set the simulation flag and the queue env.\n5. Add /api/me/import for the first-sign-in merge.\n\n7. TEST INFRASTRUCTURE\n- playwright.config.ts and scripts/run-e2e-tests.cjs default to anonymous mode: default flags, AUTH_TEST_MODE=false, no DATABASE_URL, a dummy SESSION_SECRET.\n- E2E_ACCOUNTS=true restores today's mode (all flags forced on plus test auth and a disposable DB).\n- tests/fixtures/auth.ts exports `ACCOUNTS_E2E` and `requireAccountsMode(test)`, which skips account-only specs.",
+ "featureDecisions": [
+  {
+   "feature": "Lab page /practice/lab/[labId] and its access gate",
+   "decision": "works-locally",
+   "details": "requireSession, labAccessService and getLabProgress are removed. The page is prerendered with generateStaticParams for the 23 available labs and dynamicParams=false; unknown and coming_soon ids still 404, and there is no redirect to sign-in. It is served from Worker static assets like lessons."
+  },
+  {
+   "feature": "Lab files (guide, starter, reference)",
+   "decision": "works-locally",
+   "details": "Contents are read at build time with the existing declared-path and traversal checks. The 256 KB per-file and 1 MB per-lab caps fail the build. Contents reach the client as props, and the client no longer fetches /api/me/labs/.../assets. That route stays for the account era and fails closed."
+  },
+  {
+   "feature": "Lab workspace autosave and resume",
+   "decision": "works-locally",
+   "details": "Stored under localStorage key sv-uvm-guide:lab:<labId>@<version> (envelope v1) through LabProgressStore, with a 600 ms debounce after load. On restore, unknown paths, unknown steps and oversized buffers are dropped. When storage is blocked or full, a warning and 'Download files' appear. A record saved under an older lab version is detected and offered as a download."
+  },
+  {
+   "feature": "Self-attested lab steps and step ordering",
+   "decision": "works-locally",
+   "details": "A pure applyStepCompletion in src/lib/lab-progress-policy.ts checks that the step exists, that its completion kind matches and that the previous step is done. It orders steps canonically and completes the lab when every step is done. The browser store and src/server/labs.ts both use it, and the existing UI copy stays."
+  },
+  {
+   "feature": "Automated structural grading ('Check solution')",
+   "decision": "works-locally",
+   "details": "graderRegistry has no imports and runs in the browser, after the same prechecks as /api/labs/run (shared checkGradedSubmission). Evidence is recorded as graded with origin:'browser'. A grader that sets requiresSandbox shows 'This check needs the simulator service'. The result is labelled 'Structural check in your browser: it does not compile or simulate.'"
+  },
+  {
+   "feature": "Lab solution reveal",
+   "decision": "works-locally",
+   "details": "Solution contents ship in the page props. They are listed under 'Lab files' only once the local record's status is completed; an optional 'Show solution early' sits behind an inline confirm. This is documented as a learning nudge, not access control, and the owner should sign off."
+  },
+  {
+   "feature": "Lab simulation panel and job queue",
+   "decision": "works-with-fallback",
+   "details": "CodeExecutionEnvironment renders only when SITE_FEATURES.simulation is on (simulation flag plus accounts). Otherwise a 'Run it on your simulator' panel offers 'Download workspace (.zip)' (current editable buffers, read-only files, and solutions once revealed) and points to the lab guide's run command. /api/simulate stays guarded."
+  },
+  {
+   "feature": "Lesson lab callout <LabLink>",
+   "decision": "works-locally",
+   "details": "labRequiresSignIn() is replaced by labProgressNote(): 'Your progress is saved in this browser.' The link keeps aria-describedby and the pinned 'Launch Lab' name. A client-only LabProgressBadge shows 'In progress · step X of N' or 'Completed'."
+  },
+  {
+   "feature": "Practice Hub, lesson practice block, module cards, learning paths and the home card",
+   "decision": "works-locally",
+   "details": "Every 'Sign in to open' line is removed or rewritten: 'Labs open after you sign in', '(sign-in required)', 'Sign in to run labs.', the home card's 'Sign in to open a lab.' and the learning-path note 'sign-in required'. 'Auto-graded steps' becomes 'Auto-checked steps (structural, in your browser)'. Hub cards get the progress badge."
+  },
+  {
+   "feature": "Lab orientation (back link, lessons, prerequisites)",
+   "decision": "unchanged",
+   "details": "These are pure and need no session. They work as soon as the page renders statically."
+  },
+  {
+   "feature": "Lab catalogue and generator",
+   "decision": "unchanged",
+   "details": "No generator change is needed, because contents are read by the page at build time. labRequiresSignIn is retired."
+  },
+  {
+   "feature": "Lesson flashcards ('Reinforce the essentials')",
+   "decision": "works-locally",
+   "details": "LessonPractice resolves the deck on the server and passes plain cards, so the first card is server-rendered and the 'No flashcards available' placeholder goes. After a flip, an Again/Hard/Good/Easy group appears (quality 0/3/4/5) and saves through FlashcardReviewStore. The last-viewed position is saved per deck. An 'N due for review' chip links /dashboard/review. Pinned selectors stay: role=button with aria-pressed, 'Next card', 'Card N of M'."
+  },
+  {
+   "feature": "Deck registry and deck delivery",
+   "decision": "works-locally",
+   "details": "The 624 KB registry chunk leaves lesson pages: the server resolves decks and the review page loads them per deck with dynamic import. The 30 cards without ids (A-UVM-1, A-UVM-2, A-UVM-3) get explicit ids, and validate-flashcards.cjs plus the registry test now require explicit ids."
+  },
+  {
+   "feature": "Spaced-repetition scheduling (SM-2)",
+   "decision": "works-locally",
+   "details": "A pure src/lib/srs/scheduler.ts scheduleReview(state, quality, now) is shared by the local store and the server action reviewFlashcard, which stays behind requireSession. 'Hard' now passes (quality 3) instead of resetting the card. Due-ness uses the learner's local day."
+  },
+  {
+   "feature": "Memory Hub review queue",
+   "decision": "works-locally",
+   "details": "It is rebuilt as /dashboard/review on the local store, and the 404'd memory-hub route and client are deleted. The queue shows due cards oldest first, plus a lane of new cards from decks seen in lessons (10 a day). The learner rates exactly the card shown, and the list clamps after each rating. Each card links back to its lesson. The empty state explains how to build the queue."
+  },
+  {
+   "feature": "Flashcard creation (createFlashcard placeholder action)",
+   "decision": "hidden-until-server",
+   "details": "Removed together with its test. In local mode, a deck is 'created' by enrolling it from a lesson. Cards written by learners could come back later with accounts."
+  },
+  {
+   "feature": "Commit peer-review API and CodeReviewAssistant",
+   "decision": "unchanged",
+   "details": "Orphaned developer tool, not flashcard review. It still fails closed with 401 and is not added to any learner page."
+  },
+  {
+   "feature": "Legacy TopicPage template with Firestore progress",
+   "decision": "hidden-until-server",
+   "details": "Dead code, deleted together with tests/components/TopicPage.test.tsx. Lesson position and completion live in the local store instead."
+  },
+  {
+   "feature": "Learner dashboard /dashboard",
+   "decision": "works-locally",
+   "details": "The tracking notFound gate and every made-up number go (the 'verification lead' greeting, 65%, badges, community rank, 'Generate new plan'). It shows real local data: continue on the chosen route, lessons opened or done per tier and module, labs in progress or done, cards due, notebook count, the last placement result, lesson quizzes under 75%, exercise best scores, streak and the last 7 days. It has an honest empty state, the note 'Stored only in this browser', and a link to Settings for backup."
+  },
+  {
+   "feature": "Curriculum coverage dashboard /dashboard/coverage",
+   "decision": "hidden-until-server",
+   "details": "This is an editorial migration tracker with stale statuses, not a learner feature. The route, CoveragePageClient and src/lib/curriculum-status.ts are deleted. Learner-facing 'coverage' becomes the per-tier and per-module progress on the dashboard."
+  },
+  {
+   "feature": "Lesson visit tracking, 'Pick up where you left off', route position and Visited badges",
+   "decision": "works-locally",
+   "details": "Already free of login. useCurriculumProgress moves onto curriculumProgressRecord, an external store, so instances stay in sync and no stale snapshot overwrites another. LessonVisitTracker also records a per-lesson visit log and 'lesson' activity. A new 'Mark this lesson as done' toggle uses completeLesson and uncompleteLesson."
+  },
+  {
+   "feature": "Lesson retrieval quizzes (<Quiz>)",
+   "decision": "works-locally",
+   "details": "When a quiz finishes, best, last, total and attempts are recorded for the lesson path from usePathname, along with 'quiz' activity. The quiz UI does not change."
+  },
+  {
+   "feature": "Placement quiz /quiz/placement",
+   "decision": "works-locally",
+   "details": "The attempt is saved locally (assessments record) and 'placement' activity is logged. On a revisit the page shows 'Your last result'. A 'Follow the <Route> route' button calls writeSelectedRoute. 'Go to dashboard' is always shown. The /api/me/assessments POST happens only when the target is 'server', and the tracking-gated assessment center link is removed."
+  },
+  {
+   "feature": "Assessment center /assessment",
+   "decision": "hidden-until-server",
+   "details": "Mostly mock content (random project scores, mock skills and certifications). It returns notFound() while 'tracking' is off instead of showing a 'disabled' page, and nothing links to it."
+  },
+  {
+   "feature": "Projects page /projects",
+   "decision": "hidden-until-server",
+   "details": "Its body is '[Placeholder: …]' text. It returns notFound() unless 'personalization' is on (a draft preview) and is not linked anywhere."
+  },
+  {
+   "feature": "History page /history (History of SystemVerilog and UVM)",
+   "decision": "hidden-until-server",
+   "details": "Its prose is placeholder text. The requireSession, Prisma and force-dynamic code goes, and it returns notFound() unless 'personalization' is on. Learner activity history is on the dashboard instead (recent activity from the local log)."
+  },
+  {
+   "feature": "Notifications page and navbar feed",
+   "decision": "hidden-until-server",
+   "details": "They need account events and preferences. The page returns notFound() when accountUI is off instead of an empty placeholder, and the navbar feed is already hidden behind accountUI."
+  },
+  {
+   "feature": "Settings /settings",
+   "decision": "works-locally",
+   "details": "The notFound gate and requireSession go, and the page becomes a static shell. It holds Appearance (ThemeSwitcher, next-themes) and 'Your learning data' (storage status, usage, export, import, reset). The notification, digest, quiet-hours and telemetry panel moves to AccountPreferencesPanel, which renders only when the target is 'server' and loads with GET /api/me/preferences."
+  },
+  {
+   "feature": "Notebook /dashboard/notebook",
+   "decision": "works-locally",
+   "details": "The personalization gate and mock entries go. Entries come from local Teach-it-back saves and free notes, and the page supports list, search, edit with autosave, delete with an inline confirm, and 'Download as Markdown'. The AI feedback button appears only when SITE_FEATURES.aiTutor is on. The dead createNotebookEntry action is deleted."
+  },
+  {
+   "feature": "'Teach it back' on every lesson (FeynmanPromptWidget)",
+   "decision": "works-with-fallback",
+   "details": "Today it POSTs to the auth-guarded AI route and fails silently. Now 'Save to notebook' upserts a local teach-back entry for the lesson, and a static four-question self-check guides the explanation. AI feedback appears only when SITE_FEATURES.aiTutor is on. The pinned heading id teach-it-back stays."
+  },
+  {
+   "feature": "Floating AI assistant (AIAssistantWidget on every learning page)",
+   "decision": "hidden-until-server",
+   "details": "It needs GEMINI_API_KEY and a per-user rate limit in Prisma. The widget renders only when SITE_FEATURES.aiTutor is on (aiTutor flag plus accounts), and /api/ai/* stay guarded."
+  },
+  {
+   "feature": "Community pages and post pages",
+   "decision": "hidden-until-server",
+   "details": "They need data from several users. They stay 404 behind the community flag, with no change."
+  },
+  {
+   "feature": "Account menu, sign-in UI and SessionProvider",
+   "decision": "hidden-until-server",
+   "details": "The account menu and notification bell are already hidden behind accountUI. In addition, SessionProvider is not mounted and useAuth returns a constant anonymous value when accounts are off. /api/auth/* answers 404, so the placeholder 'Sign in with Placeholder' page is gone."
+  },
+  {
+   "feature": "Keyboard shortcut Alt+3 (dashboard) and its help row",
+   "decision": "works-locally",
+   "details": "ShortcutFlags becomes {dashboard, community}. The dashboard shortcut is always available, and Alt+C stays tied to the community flag."
+  },
+  {
+   "feature": "Goals and engagement APIs",
+   "decision": "unchanged",
+   "details": "There is no UI for them. They stay as account-era endpoints that fail closed. The dashboard computes streak and activity from local data with pure helpers in src/lib/learner-stats.ts."
+  },
+  {
+   "feature": "Exercise best scores (useExerciseProgress)",
+   "decision": "unchanged",
+   "details": "Already stored in the browser. The keys join export, import and reset, and the dashboard reads them."
+  },
+  {
+   "feature": "Sitemap",
+   "decision": "works-locally",
+   "details": "Available lab pages are added, since they are now public static pages. The learner pages stay out of the sitemap and stay disallowed in robots.txt."
+  }
+ ],
+ "workPackages": [
+  {
+   "id": "WP0",
+   "title": "Foundation: learner store, persistence switch, auth seam, shared learner UI, e2e mode",
+   "dependsOn": [],
+   "files": [
+    "src/lib/learner-store/index.ts",
+    "src/lib/learner-store/storage.ts",
+    "src/lib/learner-store/record.ts",
+    "src/lib/learner-store/react.ts",
+    "src/lib/learner-store/keys.ts",
+    "src/lib/learner-store/time.ts",
+    "src/lib/learner-store/backup.ts",
+    "src/lib/learner-store/repositories/labs.ts",
+    "src/lib/learner-store/repositories/flashcards.ts",
+    "src/lib/learner-store/repositories/notebook.ts",
+    "src/lib/learner-store/repositories/assessments.ts",
+    "src/lib/learner-store/repositories/lessons.ts",
+    "src/lib/learner-store/repositories/activity.ts",
+    "src/lib/learner-store/repositories/legacy.ts",
+    "src/lib/persistence/accounts.ts",
+    "src/lib/persistence/target.ts",
+    "src/lib/site-features.ts",
+    "src/lib/download.ts",
+    "src/server/persistence-gate.ts",
+    "src/tools/featureFlags.ts",
+    "src/contexts/AuthContext.tsx",
+    "src/components/providers/ClientProviders.tsx",
+    "src/app/api/auth/[...nextauth]/route.ts",
+    "src/components/learner/StorageStatusNote.tsx",
+    "src/components/learner/LearnerDataControls.tsx",
+    "src/components/learner/LearnerSectionNav.tsx",
+    "playwright.config.ts",
+    "scripts/run-e2e-tests.cjs",
+    "tests/fixtures/auth.ts",
+    "tests/lib/learner-store/storage.test.ts",
+    "tests/lib/learner-store/record.test.ts",
+    "tests/lib/learner-store/react.test.tsx",
+    "tests/lib/learner-store/repositories.test.ts",
+    "tests/lib/learner-store/backup.test.ts",
+    "tests/lib/persistence/target.test.tsx",
+    "tests/server/persistence-gate.test.ts",
+    "tests/contexts/AuthContext.test.tsx",
+    "tests/components/ClientProviders.test.tsx",
+    "tests/api/nextauth-route.test.ts",
+    "tests/components/learner/StorageStatusNote.test.tsx",
+    "tests/components/learner/LearnerDataControls.test.tsx",
+    "tests/components/learner/LearnerSectionNav.test.tsx",
+    "tests/tools/featureFlags.spec.ts"
+   ],
+   "tasks": [
+    "storage.ts: safeStorage (get, set, remove, keys(prefix)). The probe catches SecurityError and TypeError and falls back to an in-memory Map with status 'unavailable'. On QuotaExceededError (match the names QuotaExceededError and NS_ERROR_DOM_QUOTA_REACHED and the codes 22 and 1014) it keeps the value in a memory overlay with status 'full'. Export getStorageStatus, subscribeStorageStatus and estimateBytes(prefixes). It is SSR-safe: with no window it uses memory and stays silent.",
+    "record.ts: defineRecord and defineKeyedRecord as specified in the architecture. Envelope {v, data}; legacyRaw for bare legacy keys. Corrupt data reads as empty and is not overwritten until an explicit write. Older versions migrate and are written back. A newer version reads as empty and writes return 'blocked-newer-version'. Snapshot cache per raw string. Notify subscribers through an in-module event bus plus the window 'storage' event (key null means every record).",
+    "react.ts: useRecord, useKeyedRecord, useKeyedRecordList and useStorageStatus via useSyncExternalStore. getServerSnapshot returns the record's empty value, null, [] or 'available'.",
+    "keys.ts and time.ts: every key and prefix from the architecture, including the legacy strings ('curriculumProgress', ROUTE_STORAGE_KEY imported from src/lib/learning-route-state.ts, 'sv-uvm-guide:exercise:', 'sv-uvm-guide:exercise-analytics:'). Add localDayKey, endOfLocalDay and addDays.",
+    "repositories/*: the typed records, hand-written validators and small pure helpers named in the architecture (labRecordId, listLabRecords, isCardDue, countDueCards, upsertTeachBack, removeEntry, addPlacementAttempt, recordQuizResult, recordLessonVisit, recordActivity with 400-day pruning). Add curriculumProgressRecord (legacyRaw) exporting the type CurriculumProgressData, and the read-only legacy readers. No zod: these modules ship to the client.",
+    "backup.ts: exportLearnerData, importLearnerData(bundle, 'replace'|'merge') with per-entry validation and a count report, resetLearnerData (known keys only; leaves theme and the outline-collapsed key alone), estimateLearnerDataBytes.",
+    "persistence: accounts.ts exports ACCOUNTS_ENABLED. target.ts exports usePersistenceTarget, branching on the constant. persistence-gate.ts exports isServerPersistenceConfigured(env) and resolveServerPersistence() with a lazy import of '@/lib/auth'.",
+    "featureFlags.ts: add aiTutor and simulation (default false; NEXT_PUBLIC_FEATURE_FLAG_AI_TUTOR, NEXT_PUBLIC_FEATURE_FLAG_SIMULATION). site-features.ts: SITE_FEATURES as specified.",
+    "AuthContext.tsx: export useAuth = ACCOUNTS_ENABLED ? useSessionAuth : useAnonymousAuth, where useAnonymousAuth returns a stable module-level constant. AuthProvider is unchanged. ClientProviders.tsx: wrap in SessionProvider only when ACCOUNTS_ENABLED.",
+    "api/auth/[...nextauth]/route.ts: one handler for GET and POST. When !isServerPersistenceConfigured(), return NextResponse.json({error:'ACCOUNTS_DISABLED'}, {status:404}). Otherwise import next-auth and authOptions dynamically and delegate.",
+    "download.ts: downloadBlob and downloadText through an object URL and a temporary anchor, with revocation and SSR guards.",
+    "StorageStatusNote (aria-live polite; props savedLabel?, className): shows 'Saved in this browser', or a warning when status is 'unavailable' or 'full' or usage is over 3.5 MB. LearnerDataControls: Export (file sv-uvm-guide-learning-data-YYYY-MM-DD.json); Import (input type=file accept application/json, then a preview of counts, then Replace or Merge buttons, then a result status); Reset (two-step inline confirm, button 'Delete all learning data in this browser'). Every button is labelled, statuses use role=status, and nothing uses window.confirm. LearnerSectionNav({current}): nav aria-label 'Your learning' linking /dashboard, /dashboard/review, /dashboard/notebook and /settings, with aria-current='page'.",
+    "playwright.config.ts and scripts/run-e2e-tests.cjs: the default is anonymous (no flag variables, AUTH_TEST_MODE=false, DATABASE_URL empty, SESSION_SECRET defaulting to a dummy 32-character value). E2E_ACCOUNTS=true restores today's environment (all flags forced on plus test auth). tests/fixtures/auth.ts: export ACCOUNTS_E2E and requireAccountsMode(test), which calls test.skip with a reason when not in accounts mode, and keep authenticateTestLearner."
+   ],
+   "tests": [
+    "storage.test.ts: available round trip; getItem throws SecurityError, giving memory fallback and status 'unavailable'; setItem throws QuotaExceededError, giving status 'full' while the value is still readable this session; subscribers notified",
+    "record.test.ts: round trip; corrupt JSON reads as empty and the raw value is untouched until a write; v0 to v1 migration writes back; a newer version is refused and preserved; the same snapshot object comes back for unchanged raw; a 'storage' event from another tab notifies; keyed list and remove",
+    "react.test.tsx: renderToString gives the empty server snapshot; after hydration the stored value renders; no hydration warning",
+    "repositories.test.ts: each validator drops malformed fields; recordActivity uses the local day and prunes beyond 400 days; countDueCards uses the end of the local day; notebook caps (500 entries, 8000 characters)",
+    "backup.test.ts: export includes the new and legacy keys (written through useExerciseProgress and writeSelectedRoute) and excludes theme and outline-collapsed; import rejects a wrong format or schemaVersion; merge versus replace; reset removes only known keys",
+    "target.test.tsx: accounts off returns {target:'local', ready:true} with no SessionProvider (no throw); accounts on (module mock) maps authenticated, unauthenticated and loading",
+    "persistence-gate.test.ts: environment combinations; '@/lib/auth' is not imported when not configured",
+    "AuthContext.test.tsx: useAuth without a provider returns a null user and a stable identity across renders",
+    "ClientProviders.test.tsx: fetch is never called for /api/auth/session with flags off",
+    "nextauth-route.test.ts: GET and POST answer 404 ACCOUNTS_DISABLED when not configured; delegates when configured (mock next-auth)",
+    "StorageStatusNote, LearnerDataControls and LearnerSectionNav tests: copy, aria-live, export Blob contents, import preview then merge, the two-step reset, aria-current",
+    "featureFlags.spec.ts: aiTutor and simulation default false and respect their environment variables and FEATURE_FLAGS_FORCE_ON"
+   ],
+   "acceptance": [
+    "npx vitest --run on all WP0 tests passes, and the full npx vitest --run has no new failures",
+    "npm run type-check and npm run lint pass",
+    "No module under src/lib/learner-store imports zod, next-auth, @prisma/client or node:*",
+    "With default flags, a learning page makes no request to /api/auth/*, and /api/auth/signin returns 404",
+    "Every export named in the architecture section exists, so WP1–WP7 can import it unchanged"
+   ]
+  },
+  {
+   "id": "WP1",
+   "title": "Labs: static lab pages, local progress, in-browser grading, solution reveal, simulator fallback",
+   "dependsOn": [
+    "WP0"
+   ],
+   "files": [
+    "src/app/(learning)/practice/lab/[labId]/page.tsx",
+    "src/app/(learning)/practice/lab/[labId]/LabClientPage.tsx",
+    "src/app/(learning)/practice/lab/[labId]/LabRunLocally.tsx",
+    "src/app/(learning)/practice/lab/[labId]/useLabWorkspace.ts",
+    "src/lib/lab-progress-policy.ts",
+    "src/lib/lab-progress-store.ts",
+    "src/lib/zip-store.ts",
+    "src/lib/lab-assets.ts",
+    "src/server/labs.ts",
+    "src/app/api/labs/run/route.ts",
+    "src/types/lab.ts",
+    "tests/lib/lab-progress-policy.test.ts",
+    "tests/lib/lab-progress-store.test.ts",
+    "tests/lib/zip-store.test.ts",
+    "tests/app/lab-page.test.tsx",
+    "tests/components/LabClientPage.test.tsx",
+    "tests/lib/lab-assets.test.ts",
+    "tests/server/labs.test.ts",
+    "tests/api/labs-run.test.ts",
+    "tests/e2e/labs.spec.ts",
+    "tests/e2e/learner-flow.spec.ts",
+    "tests/e2e/regression-gates.spec.ts"
+   ],
+   "tasks": [
+    "lab-progress-policy.ts (pure; imports graders and types only): applyStepCompletion(lab, progress, stepId, evidence, now) returns {ok, progress} or {ok:false, code}, with codes LAB_STEP_NOT_FOUND, LAB_COMPLETION_POLICY_MISMATCH and LAB_PREVIOUS_STEP_INCOMPLETE. checkGradedSubmission(lab, submission) uses the same codes as /api/labs/run: LAB_VERSION_MISMATCH, LAB_STEP_VERSION_MISMATCH, LAB_STEP_IS_SELF_ATTESTED, INVALID_SUBMISSION_FILE, GRADER_NOT_CONFIGURED, GRADER_NOT_FOUND, GRADING_QUEUE_UNAVAILABLE. Also sanitizeWorkspace(lab, buffers) (editable paths, ≤24 files, ≤256 KB each, ≤1 MB total) and canRevealSolutions(progress).",
+    "src/server/labs.ts: completeLabStep delegates ordering and evidence to applyStepCompletion; Prisma persistence and the LabStepCompletionError codes are unchanged. /api/labs/run uses checkGradedSubmission. Server behaviour is otherwise identical.",
+    "src/types/lab.ts: add LabFileDto {path, fileName, role, language, editable, content} and LabProgressState {currentStepId, completedSteps, stepEvidence, fileBuffers, status, completedAt?}.",
+    "lab-assets.ts: add readLabFilesForBuild(lab) returning {files: LabFileDto[] (guide, starter, reference), solutions: LabFileDto[]}. It reuses resolveDeclaredAsset and the size caps and throws LAB_ASSET_PAYLOAD_TOO_LARGE. Keep getLearnerLabAssets and readLabAsset for the API route.",
+    "page.tsx: drop requireSession, labAccessService, getLabProgress, redirect and force-dynamic. Add generateStaticParams over getAllLabs() with status 'available', and dynamicParams = false; keep generateMetadata and the notFound guard. Read files at build time. Pass lab DTO, files, solutions, backLink, lessons, prerequisites and simulationAvailable={SITE_FEATURES.simulation}.",
+    "lab-progress-store.ts: the LabProgressStore interface. createBrowserLabProgressStore() uses labProgressRecords: load validates against the manifest; saveWorkspace returns 'saved'|'memory-only'; completeSelfAttestedStep and checkGradedStep run the policy and graders in the browser, with origin 'browser' and recordActivity('lab-step', or 'lab-complete' on completion); reset removes the record; olderVersions(labId) helps the version-bump notice. createAccountLabProgressStore(fetch) wraps the existing /api/me/labs/:id/progress GET, PATCH and POST and /api/labs/run.",
+    "useLabWorkspace.ts: pick the store from usePersistenceTarget(). Load in an effect and set loaded=true. Debounce saves (600 ms) only after loaded. Subscribe to cross-tab changes. Expose the storage outcome.",
+    "LabClientPage.tsx: no fetches in local mode. Editable buffers start from the starter contents in props; read-only buffers come from props. 'Check solution' calls store.checkGradedStep with a pending state, using the existing hint and diagnostic output, and shows the 'Structural check in your browser: it does not compile or simulate.' note. Keep the existing strings: 'Check solution', 'Mark step complete & continue', 'Mark lab complete', 'Step completed. Continue when ready.', 'Lab completed.'. The completed-step line becomes 'This step is complete. Your progress and workspace edits are saved in this browser.' Solutions join 'Lab files' once status is completed, with an aria-live 'Solutions unlocked' note. Add StorageStatusNote, 'Download files' and 'Reset lab' (two-step inline confirm). Show the older-version notice with a download. Disable step and action buttons until loaded.",
+    "LabRunLocally.tsx: shown when !simulationAvailable and the lab has editable systemverilog assets. Heading 'Run it on your simulator', short guidance pointing to the lab guide's run command, and a 'Download workspace (.zip)' button. Render CodeExecutionEnvironment only when simulationAvailable.",
+    "zip-store.ts: a pure store-only (no compression) ZIP writer with CRC32, the UTF-8 name flag, local headers, the central directory and the end-of-central-directory record. Returns a Uint8Array. The file is named <labId>-v<version>-workspace.zip.",
+    "e2e: labs.spec.ts runs anonymously on basics-1 v2 ('Refactor Repeated Stimulus into a Task'): step 1 is self-attested ('Mark step complete & continue'); the graded step shows 'Check solution'; reload restores progress; no request to /api/auth or /api/me. learner-flow.spec.ts runs anonymously (Launch Lab, pss-portable-intent, mark 3 steps, reload, solution listed); keep the flashcard flip assertions on the WP3 pinned selectors. regression-gates.spec.ts removes authenticateTestLearner; the LabLink validation expects status 200 with the lab title visible."
+   ],
+   "tests": [
+    "lab-progress-policy.test.ts: ordering, policy mismatch, canonical order, completion after all steps, every checkGradedSubmission code, sanitizeWorkspace limits",
+    "lab-progress-store.test.ts: round trip; corrupt record; setItem throwing QuotaExceededError gives 'memory-only'; a version mismatch is listed as an older version; unknown paths, unknown steps and oversized buffers dropped; reset; graded evidence carries origin 'browser'",
+    "zip-store.test.ts: signatures, entry count, CRC32 of known content, UTF-8 names",
+    "lab-page.test.tsx: generateStaticParams equals the 23 available ids; dynamicParams === false; page.tsx source has no requireSession, @/lib/auth or @/server/labs import and no force-dynamic; files and solutions are passed with contents",
+    "LabClientPage.test.tsx (mock Monaco through next/dynamic as a textarea; spy on fetch): renders steps and files with fetch never called; self-attested completion advances and survives a remount; basics-1 graded step fails on the starter and passes on the reference content in the browser; solutions hidden until completion; simulation panel hidden and download panel shown when simulationAvailable is false; storage-blocked warning",
+    "lab-assets.test.ts: readLabFilesForBuild separates solutions, only declared paths, caps throw",
+    "Existing tests/server/labs.test.ts, tests/api/labs-run.test.ts and tests/api/lab-progress.test.ts stay green"
+   ],
+   "acceptance": [
+    "In next dev with default flags, /practice/lab/basics-1 renders the lab with no redirect and no /api/* request; coming_soon ids and unknown ids 404",
+    "next build lists /practice/lab/[labId] as SSG with 23 paths",
+    "Progress, files and completion survive a reload; all 21 self-attested-only labs can be completed",
+    "The tests above and the full npx vitest --run pass, as do type-check and lint",
+    "If disk allows (check df first, since a build needs about 1.5 GB): npm run cf:preview serves /practice/lab/basics-1 and an RSC navigation to it with no Worker exception"
+   ]
+  },
+  {
+   "id": "WP2",
+   "title": "Lab entry points: remove sign-in copy and add local progress badges",
+   "dependsOn": [
+    "WP0"
+   ],
+   "files": [
+    "src/lib/lab-registry.ts",
+    "src/components/mdx/LabLink.tsx",
+    "src/components/practice/PracticeHub.tsx",
+    "src/components/practice/LabProgressBadge.tsx",
+    "src/components/curriculum/ModuleCard.tsx",
+    "src/lib/learning-paths.ts",
+    "src/components/home/InteractiveFeaturesSection.tsx",
+    "tests/components/LabLink.test.tsx",
+    "tests/components/PracticeHub.test.tsx",
+    "tests/components/LabProgressBadge.test.tsx",
+    "tests/lib/learning-paths.test.ts",
+    "tests/lib/lab-registry.test.ts",
+    "tests/e2e/navigation-entry-points.spec.ts"
+   ],
+   "tasks": [
+    "lab-registry.ts: remove labRequiresSignIn and its G30-PRAC-10 comment. Add labProgressNote(lab) ('Your progress is saved in this browser.' for available labs, null otherwise) and labCheckSummary(lab) ('Auto-checked steps (structural, in your browser)' when graderId is set and a step is graded, else 'Self-checked steps: you mark each one complete').",
+    "LabLink.tsx: aria-describedby points to the labProgressNote paragraph. Keep the 'Launch Lab' name, the chips and the author error box. Render <LabProgressBadge labId version /> next to the link.",
+    "PracticeHub.tsx: labNotes gives `${labCheckSummary(lab)}. Progress is saved in this browser.` The section intro becomes 'Guided labs with starter code, step-by-step instructions and reference solutions. Your progress is saved in this browser.' Add the badge to available lab cards.",
+    "LabProgressBadge.tsx ('use client'): reads labProgressRecords for labRecordId(id, version) with useKeyedRecord. It renders nothing during SSR and when no record exists, 'In progress · step X of N' while in progress, and 'Completed' when done. Plain text, not a link; it may carry a visually hidden lab title.",
+    "ModuleCard.tsx: remove '(sign-in required)'. learning-paths.ts: available labs get no note ({href} only); unavailable labs keep 'coming soon'. InteractiveFeaturesSection.tsx: the Guided Labs description ends 'Your progress is saved in this browser.'",
+    "Rewrite the pinned tests in the same commit as the copy."
+   ],
+   "tests": [
+    "LabLink.test.tsx: the SIGN_IN_NOTE constant becomes the new note; the describe block for labRequiresSignIn (which read page.tsx) is replaced by labProgressNote and labCheckSummary unit cases; coming-soon labs have no note",
+    "PracticeHub.test.tsx:58 expects 'Progress is saved in this browser.' and 'Auto-checked steps (structural, in your browser)' for basics-1 and simple-dut-1",
+    "LabProgressBadge.test.tsx: renders nothing without a record and nothing in renderToString; in progress, completed; reacts to a store write",
+    "learning-paths.test.ts:192: available labs have an href and no note",
+    "navigation-entry-points.spec.ts:126: the description matches /saved in this browser/",
+    "grep check: no 'Sign in'/'sign-in' copy remains in src/components/mdx, src/components/practice, src/components/home, ModuleCard or learning-paths"
+   ],
+   "acceptance": [
+    "These tests plus tests/components/CurriculumOverview.test.tsx, tests/components/LearningPathsSection.test.tsx, tests/lib/practice-links.test.ts, tests/lib/curriculum-overview.test.ts and tests/qa/labsPlatformAudit.spec.ts pass",
+    "No hydration warnings from LabProgressBadge on lesson or hub pages",
+    "The 'Launch Lab' link name and the /practice#labs anchor are unchanged"
+   ]
+  },
+  {
+   "id": "WP3",
+   "title": "Flashcards: ratings in lessons, shared SM-2 scheduler, local review queue, decks resolved on the server",
+   "dependsOn": [
+    "WP0"
+   ],
+   "files": [
+    "src/lib/srs/scheduler.ts",
+    "src/lib/srs/review-queue.ts",
+    "src/lib/srs/review-store.ts",
+    "src/lib/flashcard-deck-files.ts",
+    "src/lib/flashcard-deck-loaders.ts",
+    "src/lib/flashcard-decks.ts",
+    "src/components/widgets/FlashcardWidget.tsx",
+    "src/components/curriculum/LessonPractice.tsx",
+    "src/app/(learning)/dashboard/review/page.tsx",
+    "src/app/(learning)/dashboard/review/ReviewPageClient.tsx",
+    "src/app/(learning)/dashboard/memory-hub/page.tsx",
+    "src/app/(learning)/dashboard/memory-hub/MemoryHubPageClient.tsx",
+    "src/app/actions/srs.ts",
+    "content/flashcards/A-UVM-1_Advanced_Sequencing.json",
+    "content/flashcards/A-UVM-2_The_UVM_Factory.json",
+    "content/flashcards/A-UVM-3_Advanced_UVM_Techniques.json",
+    "scripts/validate-flashcards.cjs",
+    "tests/lib/srs-scheduler.test.ts",
+    "tests/lib/srs-review-queue.test.ts",
+    "tests/lib/srs-review-store.test.ts",
+    "tests/components/FlashcardWidget.test.tsx",
+    "tests/app/review-page.test.tsx",
+    "tests/srs.spec.ts",
+    "tests/lib/flashcard-registry.test.ts",
+    "tests/components/LessonMdxPipeline.test.tsx",
+    "tests/e2e/flashcard-review.spec.ts"
+   ],
+   "tasks": [
+    "scheduler.ts (pure): scheduleReview(state|undefined, quality 0..5 integer, now) returns SrsCardState. SM-2: q≥3 sets interval 1, then 6, then round(interval × EF) and increments repetitions; otherwise repetitions=0, interval=1 and lapses+1. EF += 0.1 − (5−q)(0.08 + (5−q)·0.02), floor 1.3. dueAt = now + interval days. Throws on invalid quality. RATINGS = [{label:'Again', q:0}, {label:'Hard', q:3}, {label:'Good', q:4}, {label:'Easy', q:5}], with previewInterval(state, q) for button hints.",
+    "review-queue.ts (pure): dueQueue(data, now) returns due cards oldest first (isCardDue from WP0). newCardLane(data, now, cap = 10 a day) draws unreviewed cards from enrolled decks in firstSeenAt order.",
+    "review-store.ts: the FlashcardReviewStore interface and a local implementation over flashcardRecord: enrollDeck(deckId, lessonHref, lessonTitle, cardIds), rate(cardId, deckId, q) (also calls recordActivity('review')), setPosition and getPosition.",
+    "flashcard-deck-files.ts: deckAliases, moved here from flashcard-decks.ts, plus deckFileName(deckId). flashcard-decks.ts: keep the default export (scripts and tests use it) and add server-side getDeckCards(deckId) returning {id, front, back}[] (question|front, answer|back). flashcard-deck-loaders.ts: loadDeck(deckId) through a dynamic import(`../../content/flashcards/${file}.json`) for the review page only.",
+    "Content: give the 30 cards without ids explicit stable ids (for example auvm1-1…10, auvm2-1…10, auvm3-1…10). validate-flashcards.cjs fails on any card without an explicit id.",
+    "LessonPractice.tsx (server): resolve cards = getDeckCards(deckId) and pass {deckId, cards, conceptTitle} to FlashcardWidget. Remove the 'Sign in to run labs.' line from HandsOnItem. Leave FeynmanPromptWidget's import and usage as they are; WP4 changes it in place.",
+    "FlashcardWidget.tsx: it no longer imports the registry, and the isMounted placeholder is gone, so the first card is SSR'd. After mount it restores the position for the deck and enrolls the deck (lessonHref from usePathname, lessonTitle from the prop). After a flip, a role=group labelled 'How well did you recall this card?' shows Again/Hard/Good/Easy with interval hints. Rating saves, announces 'Next review in N days' (aria-live) and moves to the next card. Previous, Next and Restart stay. An 'N due for review' link goes to /dashboard/review. Keep the pinned selectors and strings: role=button with aria-pressed, the aria-label 'Next card', 'Card N of M', Restart. No single-key rating shortcuts, because they would clash with the global T, [, ] and ? shortcuts.",
+    "/dashboard/review: a static page.tsx (metadata 'Flashcard review') rendering LearnerSectionNav current='review' and ReviewPageClient. The client builds the queue from useRecord(flashcardRecord), loads the needed decks lazily, and shows one card at a time with flip and rating of exactly that card. It clamps the index after each rating, shows 'From lesson: <title>' linking to the lesson, the new-cards lane, and 'All caught up — next review <date>'. First-visit empty state: 'Rate cards in any lesson's “Reinforce the essentials” section to build your review queue.' with a link to /curriculum. Delete the memory-hub directory.",
+    "srs.ts: delete createFlashcard; reviewFlashcard uses scheduleReview; it stays behind requireSession and is no longer imported by any client component."
+   ],
+   "tests": [
+    "srs-scheduler.test.ts: pass path 1, then 6, then round(i×EF); fail resets and counts a lapse; EF floor 1.3; Hard (3) passes; quality validation; dueAt and the local-day boundary",
+    "srs-review-queue.test.ts and srs-review-store.test.ts: due ordering, daily cap, enrollment, a rating persists across a remount, a corrupt store recovers",
+    "FlashcardWidget.test.tsx: renderToString includes the first question and not 'No flashcards available'; flip toggles aria-pressed; the rating group appears only after a flip; rating moves to the next card and writes state; position restored; the due link appears when cards are due",
+    "review-page.test.tsx: a seeded store lists due cards; rating the shown card (not dueCards[0]) after pressing Next; no crash after rating the last card; first-visit empty state",
+    "srs.spec.ts: remove the createFlashcard case; keep q=4 from 0 repetitions giving interval 1 and +24h; add the fail branch and that an anonymous call (requireSession rejecting) throws AuthenticationError",
+    "flashcard-registry.test.ts: every card in every deck has an explicit, globally unique id (aliases share ids); getDeckCards matches the registry",
+    "LessonMdxPipeline.test.tsx: the 'Sign in to run labs.' expectation becomes a not.toContain('Sign in'); the flashcards section HTML contains the first card text",
+    "e2e flashcard-review.spec.ts (anonymous): on an AMBA lesson, flip, rate Good, reload (position kept), page.clock jumps 2 days, /dashboard/review lists the card"
+   ],
+   "acceptance": [
+    "Lesson pages no longer load the deck-registry chunk (check .next/app-build-manifest.json after a build if disk allows; the lesson-route bundle budget can only shrink)",
+    "/dashboard/review returns 200 statically with default flags; /dashboard/memory-hub returns 404",
+    "tests/e2e/amba-curriculum.spec.ts and tests/e2e/lesson-orientation.spec.ts still pass ('Reinforce the essentials', 'Card 1 of N')",
+    "npm run validate:flashcards, npx vitest --run, type-check and lint pass"
+   ]
+  },
+  {
+   "id": "WP4",
+   "title": "Teach it back, notebook, AI tutor gating, real study-strategies copy",
+   "dependsOn": [
+    "WP0"
+   ],
+   "files": [
+    "src/components/widgets/FeynmanPromptWidget.tsx",
+    "src/app/(learning)/dashboard/notebook/page.tsx",
+    "src/app/(learning)/dashboard/notebook/NotebookPageClient.tsx",
+    "src/app/actions/notebook.ts",
+    "src/components/widgets/AIAssistantWidget.tsx",
+    "src/components/templates/TopicPage.tsx",
+    "src/app/(learning)/learning-strategies/page.tsx",
+    "src/lib/notebook-export.ts",
+    "tests/components/TopicPage.test.tsx",
+    "tests/components/FeynmanPromptWidget.test.tsx",
+    "tests/app/notebook-page.test.tsx",
+    "tests/lib/notebook-export.test.ts",
+    "tests/components/AIAssistantWidget.test.tsx",
+    "tests/e2e/ai-assistant-animation.spec.ts",
+    "tests/e2e/teach-back-notebook.spec.ts"
+   ],
+   "tasks": [
+    "FeynmanPromptWidget.tsx (same default export and props, plus an optional lessonPath): a labelled textarea pre-filled after mount from the lesson's teach-back entry (lessonPath from usePathname). A static self-check list: 'Define it in one sentence', 'Give a concrete SV/UVM example', 'Say when it goes wrong', 'Avoid words you couldn't define'. 'Save to notebook' upserts through upsertTeachBack and calls recordActivity('note'). The status 'Saved in this browser · Open notebook' (link /dashboard/notebook) is aria-live. 'Get AI feedback' renders only when SITE_FEATURES.aiTutor is on and maps error codes to messages. No fetch otherwise. Safe under renderToStaticMarkup.",
+    "Notebook: page.tsx drops the personalization notFound and renders LearnerSectionNav current='notebook' plus the client. NotebookPageClient: useRecord(notebookRecord); list newest first with the lesson title; search; 'New note'; edit title and body with debounced autosave; delete with a two-step inline confirm; 'Download as Markdown' (notebook-export.ts plus downloadText); StorageStatusNote; the AI feedback panel only when aiTutor is on. Empty state: 'Explanations you save in a lesson's “Teach it back” section appear here.' with a link to /curriculum. Delete src/app/actions/notebook.ts.",
+    "AIAssistantWidget.tsx: return null unless SITE_FEATURES.aiTutor. The dialog is unchanged.",
+    "Delete TopicPage.tsx and its test (dead Firestore path).",
+    "learning-strategies/page.tsx: replace every '[Placeholder: …]' with a short real guide to the three study tools that work locally: spaced review (lesson flashcards and /dashboard/review), Teach it back (and the notebook) and retrieval quizzes. Add links and drop the stale TopicPage comment."
+   ],
+   "tests": [
+    "FeynmanPromptWidget.test.tsx: saves and restores a teach-back entry per lesson; no fetch when aiTutor is off; the AI button is shown and the error is mapped when on (mock site-features); renderToStaticMarkup does not throw",
+    "notebook-page.test.tsx: empty state; a seeded list; edit autosave persists; the delete confirm; Markdown download content; no AI button when off",
+    "notebook-export.test.ts: Markdown structure, escaping, lesson links",
+    "AIAssistantWidget.test.tsx: renders nothing with flags off; with aiTutor and accounts mocked on, the existing request-context test passes",
+    "ai-assistant-animation.spec.ts: test.skip unless the aiTutor flag is set; teach-back-notebook.spec.ts (anonymous): save on a lesson, open /dashboard/notebook, entry visible after a reload",
+    "tests/components/LessonMdxPipeline.test.tsx (owned by WP3) still passes with the new widget (heading id teach-it-back is unchanged)"
+   ],
+   "acceptance": [
+    "No lesson or learning page sends requests to /api/ai/* with default flags, and the floating AI button is absent",
+    "/dashboard/notebook returns 200 statically with default flags; /learning-strategies contains no '[Placeholder' text",
+    "npx vitest --run, type-check and lint pass"
+   ]
+  },
+  {
+   "id": "WP5",
+   "title": "Dashboard on real local data, curriculum progress hardening, lesson completion and quiz results",
+   "dependsOn": [
+    "WP0"
+   ],
+   "files": [
+    "src/app/(learning)/dashboard/page.tsx",
+    "src/app/(learning)/dashboard/DashboardPageClient.tsx",
+    "src/app/(learning)/dashboard/coverage/page.tsx",
+    "src/app/(learning)/dashboard/coverage/CoveragePageClient.tsx",
+    "src/lib/curriculum-status.ts",
+    "src/lib/learner-stats.ts",
+    "src/hooks/useCurriculumProgress.ts",
+    "src/components/curriculum/LessonVisitTracker.tsx",
+    "src/components/curriculum/LessonCompletionToggle.tsx",
+    "src/app/(learning)/curriculum/[...slug]/page.tsx",
+    "src/components/ui/Quiz.tsx",
+    "tests/app/dashboard-page.spec.tsx",
+    "tests/lib/learner-stats.test.ts",
+    "tests/hooks/useCurriculumProgress.test.ts",
+    "tests/unit/useCurriculumProgress.spec.ts",
+    "tests/components/LessonCompletionToggle.test.tsx",
+    "tests/quiz.spec.tsx",
+    "tests/e2e/learner-dashboard.spec.ts"
+   ],
+   "tasks": [
+    "useCurriculumProgress.ts: back it with curriculumProgressRecord through useRecord, so every instance and tab shares one snapshot and the save-on-every-change effect goes. Keep the public API (progress, isLoaded, getModuleProgress, getTierProgress, isTierUnlocked, isModuleLocked, recordLessonVisit, completeLesson, _resetProgress), add uncompleteLesson, and re-export the type ProgressData = CurriculumProgressData.",
+    "LessonVisitTracker.tsx: also call recordLessonVisit on lessonLogRecord (lesson path) and recordActivity('lesson'), at most once per mount.",
+    "LessonCompletionToggle.tsx ('use client'): an aria-pressed button 'Mark this lesson as done' / 'Done ✓ (saved in this browser)' that uses completeLesson and uncompleteLesson. Render it in [...slug]/page.tsx between the article and LessonPager. It renders in a neutral state on the server.",
+    "Quiz.tsx: when finished, recordQuizResult(lessonPath from usePathname, score, total) and recordActivity('quiz'); skip when the pathname is null. No visual change.",
+    "learner-stats.ts (pure): dailyStreak(days, now) by local day, last7Days, tierAndModuleProgress(staticTotals, curriculumProgress, lessonLog), weakQuizLessons(threshold 0.75), labSummaries(records, labsMeta).",
+    "Dashboard: page.tsx is a static server shell with no notFound. It builds static props: per-tier and per-module lesson totals from curriculumData; route sequences via resolveRoutes for the 'Continue' card, as CurriculumOverview does; and available-lab metadata {id, version, title, stepCount}. DashboardPageClient rewrite: h1 'Your learning', LearnerSectionNav current='dashboard', and StorageStatusNote 'Stored only in this browser'. Cards: Continue (last visit plus the next lesson on the chosen route), Lessons (opened and done per tier and module), Labs (in progress and done, with links), Review (cards due today, link), Notebook (count and latest), Placement (last result, route link or 'Find your level'), Quizzes (lessons under 75%), Exercises (best scores), Streak and the last 7 days, and 'Back up or reset your data' linking /settings#data. Empty state: 'Nothing recorded in this browser yet', with 'Find your level' (/quiz/placement) and 'Begin the Junior route'. Remove every made-up number, the badges, the community rank, 'Generate new plan' and the coverage card.",
+    "Delete the /dashboard/coverage route, CoveragePageClient and src/lib/curriculum-status.ts (its only users)."
+   ],
+   "tests": [
+    "dashboard-page.spec.tsx: rewritten. The page module renders with every flag false and never calls notFound; empty state; a seeded store (lesson visits, lab record, SRS due card, placement attempt, quiz result, activity) shows the matching real counts; no 'verification lead', 'Community rank', 'badges earned' or '/dashboard/coverage' text",
+    "learner-stats.test.ts: streak across local midnight and DST, gaps, last 7 days, module and tier percentages, weak quizzes",
+    "useCurriculumProgress tests: the existing cases pass unchanged; new tests cover two hook instances staying in sync, a write in another tab, and uncompleteLesson",
+    "LessonCompletionToggle.test.tsx: toggling persists, aria-pressed, SSR markup",
+    "quiz.spec.tsx: finishing a quiz records a result for the mocked pathname; no record when the pathname is null",
+    "e2e learner-dashboard.spec.ts (anonymous): /dashboard returns 200 with the empty state; open a lesson and mark it done; the dashboard then shows 1 done and the Continue link"
+   ],
+   "acceptance": [
+    "With default flags /dashboard renders statically (no notFound, no request-time data) and /dashboard/coverage returns 404",
+    "CurriculumOverview behaviour (Pick up where you left off, You are here, Visited) is unchanged; tests/components/CurriculumOverview.test.tsx passes",
+    "npx vitest --run, type-check and lint pass"
+   ]
+  },
+  {
+   "id": "WP6",
+   "title": "Site surfaces: navigation, shortcuts, settings, gated placeholder pages, sitemap, deploy runbook",
+   "dependsOn": [
+    "WP0"
+   ],
+   "files": [
+    "src/components/Navbar.tsx",
+    "src/components/layout/Sidebar.tsx",
+    "src/components/search/shortcuts.ts",
+    "src/components/search/ShortcutsHelpDialog.tsx",
+    "src/components/layout/KeyboardShortcuts.tsx",
+    "src/app/(learning)/settings/page.tsx",
+    "src/app/(learning)/settings/SettingsPageClient.tsx",
+    "src/app/(learning)/settings/AccountPreferencesPanel.tsx",
+    "src/app/(learning)/notifications/page.tsx",
+    "src/app/(learning)/projects/page.tsx",
+    "src/app/(learning)/history/page.tsx",
+    "src/app/(learning)/assessment/page.tsx",
+    "src/app/sitemap.ts",
+    "docs/deploy/cloudflare.md",
+    "tests/app/feature-gating.spec.tsx",
+    "tests/e2e/feature-flags.spec.ts",
+    "tests/e2e/account-preferences.spec.ts",
+    "tests/components/Navbar.test.tsx",
+    "tests/components/Sidebar.test.tsx",
+    "tests/search/shortcuts.test.ts",
+    "tests/components/KeyboardShortcuts.test.tsx",
+    "tests/app/settings-page-client.spec.tsx",
+    "tests/app/sitemap.test.ts"
+   ],
+   "tasks": [
+    "Navbar.tsx: navLinks always include {label:'Dashboard', href:'/dashboard', wideOnly:true} (the phone menu and the 'More' disclosure pick it up); Community stays behind its flag. The account-menu Dashboard item is unconditional, though the menu itself stays behind accountUI. Sidebar OUTLINE_QUICK_LINKS adds 'Dashboard'.",
+    "shortcuts.ts: ShortcutFlags becomes {dashboard:boolean; community:boolean}. shortcutRoute and shortcutHelp use flags.dashboard. KeyboardShortcuts and ShortcutsHelpDialog pass {dashboard: SITE_FEATURES.dashboard, community: SITE_FEATURES.community}.",
+    "Settings: page.tsx is static (no notFound, requireSession, Prisma or force-dynamic) and renders SettingsPageClient. SettingsPageClient: h1 'Settings', LearnerSectionNav current='settings'; Appearance (embed ThemeSwitcher, the explanation, and a note that reduced motion follows the OS setting); a 'Your learning data' section with id='data' (StorageStatusNote, the usage estimate, LearnerDataControls); and AccountPreferencesPanel only when usePersistenceTarget().target==='server'. AccountPreferencesPanel holds the existing notification, digest, quiet-hours and telemetry UI and PATCH logic moved unchanged, and loads initial preferences with GET /api/me/preferences.",
+    "notifications/page.tsx: notFound() when !isFeatureEnabled('accountUI'); the account branch is unchanged. assessment/page.tsx: notFound() when !isFeatureEnabled('tracking'). projects/page.tsx and history/page.tsx: notFound() unless isFeatureEnabled('personalization'); history drops requireSession, Prisma, preference loading and force-dynamic.",
+    "sitemap.ts: add labPaths() for available labs (/practice/lab/<id>); keep PUBLIC_PAGES and lessonPaths; update the header comment (labs no longer need a session).",
+    "docs/deploy/cloudflare.md, 'Behaviour without a database': labs prerendered with no redirect; /api/auth/* 404 while accounts are off; no session fetch; learner pages static with browser storage; how to switch accounts, AI tutor and simulation back on; NEXTAUTH_SECRET is still required at build because other API routes import auth at module load."
+   ],
+   "tests": [
+    "feature-gating.spec.tsx: remove the dashboard case (WP5 covers it). Settings renders with every flag off and calls neither notFound nor requireSession. Community still calls notFound when its flag is off. Notifications, assessment, projects and history call notFound when their flag is off; notifications with accountUI on keeps the existing full-feed test",
+    "e2e feature-flags.spec.ts (anonymous, default mode): /community, /notifications, /assessment, /projects and /history return 404; /settings returns 200 with 'Your learning data'",
+    "account-preferences.spec.ts: requireAccountsMode(test)",
+    "Navbar.test.tsx: the Dashboard link is present with every flag false; no profile, notifications or sign-out with accountUI off (existing)",
+    "Sidebar.test.tsx: quick links include Dashboard",
+    "shortcuts.test.ts and KeyboardShortcuts.test.tsx: Alt+3 routes to /dashboard and the help row 'Go to your dashboard' shows with community off; Alt+C hidden while community is off",
+    "settings-page-client.spec.tsx: the existing email-toggle and failure tests target AccountPreferencesPanel; new tests cover the local settings render (no fetch in local mode), the data section and the theme switcher",
+    "sitemap.test.ts: lab paths equal the available labs; PUBLIC_PAGES still pass the not-gated source check; /dashboard and /settings are absent"
+   ],
+   "acceptance": [
+    "With default flags no visible page shows sign-in copy, an empty placeholder or '[Placeholder' text; every navigation link answers 200",
+    "npx vitest --run, type-check and lint pass"
+   ]
+  },
+  {
+   "id": "WP7",
+   "title": "Placement quiz saves locally and feeds the dashboard",
+   "dependsOn": [
+    "WP0"
+   ],
+   "files": [
+    "src/components/assessment/PlacementQuiz.tsx",
+    "src/app/(learning)/quiz/placement/page.tsx",
+    "tests/components/PlacementQuiz.test.tsx",
+    "tests/placement-links.spec.ts",
+    "tests/e2e/placement-local.spec.ts"
+   ],
+   "tasks": [
+    "PlacementQuiz.tsx: on a complete result, call addPlacementAttempt (assessment and scoring versions, responses, recommended tier and route, percent, per-category percentages, completedAt) and recordActivity('placement'). POST /api/me/assessments only when usePersistenceTarget().target==='server', keeping the existing body. The intro stage shows 'Your last result: <Route> route, <percent>% · <date>' with 'See your plan' once mounted. On results, add a 'Follow the <Route> route' button calling writeSelectedRoute(plan.routeId), with an aria-live confirmation. 'Go to dashboard' is always rendered. Remove the showDashboardLink prop. Keep the focus management and the radio-group semantics.",
+    "quiz/placement/page.tsx: drop isFeatureEnabled and the tracking-only assessment-center sentence; render <PlacementQuiz plans={plans} />."
+   ],
+   "tests": [
+    "PlacementQuiz.test.tsx: replace 'links the dashboard only when tracking is on' with 'always links the dashboard'; a completed quiz saves one attempt and makes no fetch in local mode; the last result shows on a remount; 'Follow the route' writes svuvm.learningRoute; retake focus is unchanged",
+    "placement-links.spec.ts: links the dashboard and never the assessment center",
+    "e2e placement-local.spec.ts (anonymous): finish the quiz, reload, see 'Your last result', and /dashboard shows the placement card"
+   ],
+   "acceptance": [
+    "No request to /api/me/assessments with default flags",
+    "tests/placementQuizLogic.spec.ts and tests/server/assessment-question-bank.test.ts are unchanged and green",
+    "npx vitest --run, type-check and lint pass"
+   ]
+  }
+ ],
+ "risks": [
+  "Worker serving of lab pages: this relies on OpenNext cache interception serving the prerendered lab HTML and RSC exactly as it does lessons. The lesson loader already reads content with fs at build and is served this way. If any lab request falls through to a server render on workerd, the fs reads fail. Verify with npm run cf:preview, after checking df, since a build needs about 1.5 GB. The fallback is to emit the lab file contents into a generated module.",
+  "Solutions become publicly reachable in the lab page payload. They are already in the public repo and the reveal is a learning nudge, not access control. The owner should sign off.",
+  "Learner data is per browser and per device and is lost when site data is cleared. In private mode it lasts only in memory for the session. Mitigations: StorageStatusNote warnings, export, import and reset in Settings, and lab 'Download files'.",
+  "localStorage holds about 5 MB per origin, shared by every feature: labs at most about 1 MB, flashcards about 200 KB, the notebook up to 500 entries of 8000 characters. A quota error switches to memory-only with a visible warning. If notebook use grows, move the notebook to IndexedDB behind the same record API.",
+  "Graded evidence written in the browser can be forged. That is acceptable without accounts. Evidence carries origin:'browser', and the future /api/me/import must re-grade with the versioned graders before writing LabAttempt.",
+  "Hydration and overwrite hazards: reading storage during render causes mismatches, and autosaving before the restore finishes would overwrite saved work with the starter code. The store's server snapshot and the loaded gate in useLabWorkspace prevent both. Reviewers should check every new client island.",
+  "Lab version bumps orphan saved work under the old key. It is kept and offered as a download, never silently migrated, because step ids and files may have changed.",
+  "Pinned tests: about 15 vitest and e2e assertions encode today's 404, sign-in or placeholder behaviour (LabLink, PracticeHub, LessonMdxPipeline, learning-paths, navigation-entry-points, feature-gating, feature-flags e2e, dashboard-page, PlacementQuiz, placement-links, shortcuts, KeyboardShortcuts, srs.spec, AIAssistantWidget, settings-page-client). Each must change in the same commit as its copy or behaviour; the package lists name their owners.",
+  "Switching Playwright's default to anonymous mode changes which specs run. Specs that silently relied on FEATURE_FLAGS_FORCE_ON need requireAccountsMode or a rewrite. The e2e suite is still blocked locally by missing system dependencies (OPS-1), so run targeted specs where possible.",
+  "NEXTAUTH_SECRET is still needed at build and at runtime, because the /api/me/*, /api/ai/*, /api/labs/run, /api/simulate and /api/reviews routes import src/lib/auth.ts at module load. Only the nextauth route becomes lazy.",
+  "With SessionProvider not mounted, any future component that calls next-auth's useSession directly will throw in dev while accounts are off. useAuth and usePersistenceTarget must stay the only identity entry points; document this in AuthContext.",
+  "Flipping the legacy flags (tracking, personalization, community) still exposes mock or placeholder pages (assessment center, projects, history, community). Those flags now mean draft or preview only and must stay off in production.",
+  "Streaks and due dates use the learner's local clock. Changing time zones or the device clock can shift a day. This is accepted and documented in learner-stats and time.ts.",
+  "Several agents edit in parallel. Packages own disjoint files, but generated outputs (search index, .next) and the shared working tree can still collide. Follow the integration-hygiene practice: commit explicit paths, and run generators and builds in a clean worktree."
+ ]
+}
