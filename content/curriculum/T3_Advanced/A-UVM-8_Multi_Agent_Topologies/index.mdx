@@ -200,7 +200,7 @@ IEEE 1800.2-2020 §13.3 describes `uvm_env` as a container that "can be reused a
   title="Vertical reuse: two block environments inside a subsystem environment"
   cellWidth={128}
   gapX={40}
-  caption="The internal bus between A and B is now driven by block A, so block B's input agent is set passive through B's configuration object (it still monitors and still feeds b_scb). The top virtual sequencer holds the two block virtual sequencers; blk_b_env.v_sqr's handle to its input sequencer is now null."
+  caption="sub_env holds blk_a_env and blk_b_env, each with its own virtual sequencer, input agent, output agent and scoreboard. Block A's output now connects straight to block B's input, so A's out_agt and B's in_agt sit on the same internal bus (the line labelled bus). The top virtual sequencer holds the two block virtual sequencers."
   nodes={[
     { id: "sub", label: "sub_env", kind: "env", col: 0, row: 0, colSpan: 4, rowSpan: 4, container: true },
     { id: "top", label: "v_sqr", sublabel: "sub_vsqr", kind: "sequencer", col: 1, row: 0, colSpan: 2 },
@@ -208,18 +208,17 @@ IEEE 1800.2-2020 §13.3 describes `uvm_env` as a container that "can be reused a
     { id: "b", label: "blk_b_env", kind: "env", col: 2, row: 1, colSpan: 2, rowSpan: 3, container: true },
     { id: "avs", label: "v_sqr", sublabel: "blk_a_env.v_sqr", kind: "sequencer", col: 0, row: 1, colSpan: 2 },
     { id: "bvs", label: "v_sqr", sublabel: "blk_b_env.v_sqr", kind: "sequencer", col: 2, row: 1, colSpan: 2 },
-    { id: "ain", label: "in_agt", sublabel: "drives A's input", kind: "agent", col: 0, row: 2, badge: "active" },
-    { id: "aout", label: "out_agt", sublabel: "watches A to B bus", kind: "agent", col: 1, row: 2, badge: "passive" },
-    { id: "bin", label: "in_agt", sublabel: "watches A to B bus", kind: "agent", col: 2, row: 2, badge: "passive", state: "active" },
-    { id: "bout", label: "out_agt", sublabel: "watches B's output", kind: "agent", col: 3, row: 2, badge: "passive" },
+    { id: "ain", label: "in_agt", sublabel: "on A's input", kind: "agent", col: 0, row: 2 },
+    { id: "aout", label: "out_agt", sublabel: "on the A to B bus", kind: "agent", col: 1, row: 2 },
+    { id: "bin", label: "in_agt", sublabel: "on the A to B bus", kind: "agent", col: 2, row: 2 },
+    { id: "bout", label: "out_agt", sublabel: "on B's output", kind: "agent", col: 3, row: 2 },
     { id: "ascb", label: "a_scb", sublabel: "block A checks", kind: "scoreboard", col: 0, row: 3, colSpan: 2 },
     { id: "bscb", label: "b_scb", sublabel: "block B checks", kind: "scoreboard", col: 2, row: 3, colSpan: 2 }
   ]}
   edges={[
     { from: "top", to: "avs", style: "control", label: "a_vsqr" },
     { from: "top", to: "bvs", style: "control", label: "b_vsqr" },
-    { from: "avs", to: "ain", style: "control", label: "in_sqr" },
-    { from: "aout", to: "bin", style: "structural", label: "same bus" },
+    { from: "aout", to: "bin", style: "structural", label: "bus" },
     { from: "ain", to: "ascb", style: "data" },
     { from: "aout", to: "ascb", style: "data" },
     { from: "bin", to: "bscb", style: "data" },
@@ -227,8 +226,10 @@ IEEE 1800.2-2020 §13.3 describes `uvm_env` as a container that "can be reused a
   ]}
 />
 
+**Debrief.** Only B's `in_agt` changes mode: it becomes passive. At block level it drove B's input, but in the subsystem block A's output drives those wires, and a second driver on the same bus would fight it. As a passive agent it still monitors the bus and still feeds `b_scb`, and `blk_b_env.v_sqr`'s handle to its input sequencer is now null. A's `in_agt` stays active, because it still drives the subsystem's input, and both `out_agt`s were passive already.
+
 **What changes, and what does not.**
-- **Agents on internal interfaces become passive.** At block level, B's input agent drove B. Now block A drives that bus, so B's `in_agt` must only watch. Nothing in `blk_b_env` changes except its configuration object (`in_agt_cfg.is_active = UVM_PASSIVE`). This is why the active/passive choice belongs in configuration, not in code.
+- **Agents on internal interfaces become passive.** Nothing in `blk_b_env` changes except its configuration object (`in_agt_cfg.is_active = UVM_PASSIVE`). This is why the active/passive choice belongs in configuration, not in code.
 - **Configuration nests too.** `sub_env_cfg` holds `blk_a_cfg` and `blk_b_cfg` (each a block environment object); `sub_env` sets each one at `"blk_a_env"` and `"blk_b_env"`, and each block env distributes its own agents' objects exactly as before. Every configuration path gets one level deeper, which is why paths should be relative to `this`, never absolute strings such as `"uvm_test_top.env.data_agt"`.
 - **Block virtual sequences are reused as children.** A subsystem virtual sequence starts block A's virtual sequence on `p_sequencer.a_vsqr` with `this` as parent, so the block scenario runs unchanged. A block sequence that drives B's input can no longer run (its handle is null), which is the correct outcome.
 - **Block scoreboards stay as internal checkers.** They now check each block's behaviour on internal buses that the subsystem test cannot see from the outside, and they localize failures. An end-to-end scoreboard from A's input to B's output can be added on top; the [E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index) lesson covers that strategy at SoC scale.
@@ -539,7 +540,7 @@ A **cross-agent scoreboard** predicts one interface's traffic from what it sees 
 <ArchitectureDiagram
   title="Inside soc_scoreboard: the configuration feeds the predictor"
   cellWidth={136}
-  gapX={44}
+  gapX={72}
   caption="The predictor's state (en, mode) comes from apb_agt's monitor, never from the sequence. An input seen while en = 0 is reported as ORDER and not predicted, because the DUT drops it; otherwise the predicted output is pushed into expected[$], and each output pops and compares."
   nodes={[
     { id: "am", label: "apb_agt.mon", kind: "monitor", col: 0, row: 0 },
@@ -555,7 +556,7 @@ A **cross-agent scoreboard** predicts one interface's traffic from what it sees 
     { from: "am", to: "st", style: "data", label: "cfg_imp" },
     { from: "dm", to: "pr", style: "data", label: "in_imp" },
     { from: "om", to: "cmp", style: "data", label: "out_imp" },
-    { from: "st", to: "pr", style: "causal", label: "reads en, mode" },
+    { from: "st", to: "pr", style: "causal", label: "en, mode" },
     { from: "pr", to: "q", style: "data", label: "push_back" },
     { from: "q", to: "cmp", style: "data", label: "pop_front" }
   ]}
