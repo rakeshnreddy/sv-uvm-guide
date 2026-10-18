@@ -2,7 +2,13 @@
 /**
  * Per-file lesson checker for authors working in parallel.
  *
- *   node scripts/check-mdx.mjs <file-or-dir> [...]
+ *   node scripts/check-mdx.mjs [--render] <file-or-dir> [...]
+ *
+ * --render also compiles, evaluates and renders the named lessons through the
+ * lesson page's pipeline (tests/curriculum/mdx-render-smoke.test.tsx), which
+ * catches pages that parse but fail at request time (HTTP 500): undefined
+ * {expressions}, components missing from the page's map, frontmatter the
+ * loader rejects.
  *
  * Unlike validate-content-manifests.mjs (which parses every lesson at once),
  * this checks only the files you name, so one author's half-finished page
@@ -22,6 +28,7 @@
  *   Make It Work → Push Further → Practice & Reinforce → References & Next Topics)
  * - "Diagram data error" risks: kit components without a title or caption
  */
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -150,7 +157,9 @@ function collectFiles(args) {
   return out;
 }
 
-const files = collectFiles(process.argv.slice(2));
+const cliArgs = process.argv.slice(2);
+const render = cliArgs.includes("--render");
+const files = collectFiles(cliArgs.filter((arg) => arg !== "--render"));
 if (!files.length) {
   console.error("Usage: node scripts/check-mdx.mjs <file-or-dir> [...]");
   process.exit(2);
@@ -255,4 +264,18 @@ for (const file of files) {
 }
 
 console.log(`\nChecked ${files.length} file(s): ${errorCount} error(s), ${warnCount} warning(s).`);
-process.exit(errorCount ? 1 : 0);
+
+let renderFailed = false;
+if (render) {
+  console.log("\nRendering through the lesson page's pipeline (vitest)...");
+  const run = spawnSync("npx", ["vitest", "run", "tests/curriculum/mdx-render-smoke.test.tsx"], {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      MDX_RENDER_FILES: files.join("\n"),
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, "--require @prisma/client"].filter(Boolean).join(" "),
+    },
+  });
+  renderFailed = run.status !== 0;
+}
+process.exit(errorCount || renderFailed ? 1 : 0);

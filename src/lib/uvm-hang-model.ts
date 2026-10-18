@@ -526,7 +526,7 @@ export const hangScenarios: Record<HangScenarioId, HangScenario> = {
     ],
     fixes: [
       { id: "drop-all-paths", label: "Drop the objection on every path (drop before reporting the mismatch)", variant: "fixed", correct: true, review: "The run ends at 40 ns and reports the mismatch as a UVM_ERROR — a clean failure instead of a hang." },
-      { id: "drain", label: "Add phase.phase_done.set_drain_time(this, 100ns)", variant: "drain-time", correct: false, review: "Drain time only starts once the total reaches zero. The scoreboard's count never reaches zero, so the hang is unchanged." },
+      { id: "drain", label: "Add phase.get_objection().set_drain_time(this, 100ns)", variant: "drain-time", correct: false, review: "Drain time only starts once the total reaches zero. The scoreboard's count never reaches zero, so the hang is unchanged." },
       { id: "timeout", label: "Raise the timeout to 10 µs", variant: "longer-timeout", correct: false, review: "Same hang, later. The objection count does not change with time." },
     ],
     fixedCode: [

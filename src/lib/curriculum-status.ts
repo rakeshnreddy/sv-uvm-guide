@@ -139,10 +139,10 @@ const overrides: Record<string, Partial<StatusMetadata>> = {
   },
 
   'T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab': {
-    status: 'in-review',
+    status: 'complete',
     owner: 'Experiences',
-    lastUpdated: '2025-09-18',
-    notes: 'Interactive hang lab playable; document instrumentation.',
+    lastUpdated: '2026-10-18',
+    notes: 'Rewritten as a hang-triage lesson: objection tracing, uvm_heartbeat, a guided four-scenario drill and debrief.',
   },
 };
 

@@ -35,6 +35,10 @@ describe("TelemetryEventBusVisualizer (report pipeline explorer)", () => {
     expect(summary()).toContain("Number of demoted UVM_ERROR reports  :    2");
     expect(screen.getByText(/Test FAILS for exactly the right reason/)).toBeInTheDocument();
     expect(screen.getByText(/class crc_demoter extends uvm_report_catcher;/)).toBeInTheDocument();
+    const testCode = screen.getByText(/class crc_inject_test extends base_test;/).textContent ?? "";
+    expect(testCode).toContain("uvm_report_cb::add(env.agt.mon, catcher);");
+    expect(testCode).toContain("function void check_phase(uvm_phase phase);");
+    expect(testCode).not.toContain("uvm_report_cb::add(null");
   });
 
   it("the over-broad catcher makes the test pass while the real bug escapes", () => {

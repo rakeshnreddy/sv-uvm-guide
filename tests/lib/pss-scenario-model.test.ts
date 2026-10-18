@@ -74,9 +74,16 @@ describe("pss-scenario-model: source and target text", () => {
     const r = resolveScenario(PSS_SCENARIOS.raw);
     const c = generateTarget(r, "C").join("\n");
     const sv = generateTarget(r, "SV").join("\n");
-    expect(c).toMatch(/if \(mem_read32\(0x[0-9A-F]{8}\) != 0x[0-9A-F]{8}\) test_fail\(\);/);
-    expect(sv).not.toMatch(/uvm_error|!==|!=/);
-    expect(sv).toContain("read data is checked by the scoreboard");
+    // Solved bit values are printed as unsigned decimal, as a real tool does.
+    expect(c).toMatch(/if \(mem_read32\(\d+\) != \d+\)\n\s+test_fail\("read-after-write mismatch"\);/);
+    expect(c).not.toMatch(/0x|'h/);
+    expect(sv).not.toMatch(/uvm_error|!==|!=|0x|'h/);
+    expect(sv).toContain("the scoreboard checks the read data");
+    // Templates are pasted verbatim: each carries its own begin ... end, and children start on the virtual sequencer's handle.
+    expect(sv).not.toMatch(/begin\s*:/);
+    expect(sv.match(/^\s*begin\b/gm)?.length).toBe(sv.match(/^\s*end\b/gm)?.length);
+    expect(sv).toContain("rd.start(p_sequencer.mem_sqr, this);");
+    expect(sv).not.toContain("m_sequencer");
     expect(SCOREBOARD_LINES.join("\n")).toContain("ref_mem.exists(t.addr) && t.data !== ref_mem[t.addr]");
   });
 
@@ -85,6 +92,6 @@ describe("pss-scenario-model: source and target text", () => {
     const second = r.slots[r.slots.length - 1][1];
     const line = expandExec(second, "C")[0];
     expect(line.startsWith("dma_copy(1, ")).toBe(true);
-    expect(generateTarget(r, "SV").join("\n")).toMatch(/fork[\s\S]*dma_copy_a_3[\s\S]*dma_copy_a_4[\s\S]*join/);
+    expect(generateTarget(r, "SV").join("\n")).toMatch(/fork[\s\S]*dma_copy_a#3[\s\S]*dma_copy_a#4[\s\S]*join/);
   });
 });

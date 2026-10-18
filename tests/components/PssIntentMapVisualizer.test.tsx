@@ -38,10 +38,10 @@ describe("PssIntentMapVisualizer", () => {
   it("the C target checks inline while the UVM target leaves checking to the scoreboard", () => {
     render(<PssIntentMapVisualizer />);
     fireEvent.click(screen.getByRole("button", { name: /Reveal without predicting/ }));
-    expect(screen.getByTestId("generated-code").textContent).toMatch(/if \(mem_read32\(0x[0-9A-F]+\) != 0x[0-9A-F]+\) test_fail\(\);/);
+    expect(screen.getByTestId("generated-code").textContent).toMatch(/if \(mem_read32\(\d+\) != \d+\)\s+test_fail\("read-after-write mismatch"\);/);
     fireEvent.click(screen.getByRole("radio", { name: "SystemVerilog / UVM simulation" }));
     const sv = screen.getByTestId("generated-code").textContent ?? "";
-    expect(sv).toContain("s.start(m_sequencer);");
+    expect(sv).toContain("wr.start(p_sequencer.mem_sqr, this);");
     expect(sv).not.toMatch(/uvm_error|!=/);
     expect(screen.getByText(/Checking stays in the scoreboard/)).toBeInTheDocument();
   });

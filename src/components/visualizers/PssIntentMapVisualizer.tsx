@@ -25,10 +25,10 @@ import {
 } from "@/lib/pss-scenario-model";
 
 const ASSUMPTIONS = [
-  "Language: the Accellera Portable Test and Stimulus Standard (PSS 2.x). PSS is an Accellera standard, not an IEEE one.",
+  "Language: the Accellera Portable Test and Stimulus Standard (PSS 3.0, the version the lesson cites). PSS is an Accellera standard, not an IEEE one.",
   "Three rules are modelled: a buffer input binds to an output of an action that completes first; a missing producer is inferred; actions in parallel { } that lock a resource need distinct pool instances.",
   "Where a real tool may choose freely (which legal producer to infer, the random values), this model picks deterministically.",
-  "Generated code is illustrative: the exec body templates expanded in schedule order. Real tools add their own runtime glue and file layout.",
+  "Generated code is illustrative: the exec body templates pasted in schedule order, with solved values in unsigned decimal. Real tools add their own runtime glue and file layout.",
 ];
 
 type OptionId = PssOutcome | "unbound";

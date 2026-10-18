@@ -5,6 +5,7 @@ const lessonSourceSchema = z.object({
   type: z.string().trim().min(1),
   identifier: z.string().trim().min(1).optional(),
   version: z.union([z.string().trim().min(1), z.number()]).optional(),
+  url: z.string().trim().url().optional(),
 }).strict();
 
 export const lessonFrontmatterSchema = z.object({

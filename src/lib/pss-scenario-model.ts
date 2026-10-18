@@ -1,5 +1,5 @@
 /**
- * A small model of how a Portable Stimulus (Accellera PSS 2.x) tool turns a
+ * A small model of how a Portable Stimulus (Accellera PSS 3.0) tool turns a
  * partial scenario into a concrete one, and how one resolved scenario is
  * realised on two targets through `exec body` target templates.
  *
@@ -14,7 +14,9 @@
  *   needs its own instance; if the pool is too small the scenario has no
  *   legal solution and the tool reports it at solve time.
  * - `exec body <lang> = """..."""` target templates: `{{expr}}` is replaced by
- *   the solved value; the tool emits the bodies in schedule order.
+ *   the solved value, printed as unsigned decimal for a `bit` field; the tool
+ *   pastes the bodies verbatim in schedule order, so each SV template carries
+ *   its own `begin ... end` (one statement, legal inside a fork).
  *
  * Choices a real tool makes freely (which legal producer to infer, which
  * binding, the random values) are fixed here: shortest producer chain, most
@@ -55,9 +57,12 @@ export const ACTIONS: Record<ActionName, ActionDecl> = {
     exec: {
       C: ["mem_write32({{out_buf.addr}}, {{out_buf.data}});"],
       SV: [
-        'mem_wr_seq s = mem_wr_seq::type_id::create("s");',
-        "s.addr = {{out_buf.addr}}; s.data = {{out_buf.data}};",
-        "s.start(m_sequencer);",
+        "begin",
+        '  mem_wr_seq wr = mem_wr_seq::type_id::create("wr");',
+        "  wr.addr = {{out_buf.addr}};",
+        "  wr.data = {{out_buf.data}};",
+        "  wr.start(p_sequencer.mem_sqr, this);",
+        "end",
       ],
     },
   },
@@ -66,11 +71,13 @@ export const ACTIONS: Record<ActionName, ActionDecl> = {
     fields: [{ dir: "input", name: "in_buf" }],
     constraints: [],
     exec: {
-      C: ["if (mem_read32({{in_buf.addr}}) != {{in_buf.data}}) test_fail();"],
+      C: ["if (mem_read32({{in_buf.addr}}) != {{in_buf.data}})", '  test_fail("read-after-write mismatch");'],
       SV: [
-        'mem_rd_seq s = mem_rd_seq::type_id::create("s");',
-        "s.addr = {{in_buf.addr}};",
-        "s.start(m_sequencer);  // read data is checked by the scoreboard",
+        "begin  // the scoreboard checks the read data",
+        '  mem_rd_seq rd = mem_rd_seq::type_id::create("rd");',
+        "  rd.addr = {{in_buf.addr}};",
+        "  rd.start(p_sequencer.mem_sqr, this);",
+        "end",
       ],
     },
   },
@@ -85,9 +92,13 @@ export const ACTIONS: Record<ActionName, ActionDecl> = {
     exec: {
       C: ["dma_copy({{chan.instance_id}}, {{src.addr}}, {{dst.addr}});"],
       SV: [
-        'dma_seq s = dma_seq::type_id::create("s");',
-        "s.chan = {{chan.instance_id}}; s.src = {{src.addr}}; s.dst = {{dst.addr}};",
-        "s.start(m_sequencer);",
+        "begin",
+        '  dma_seq cp = dma_seq::type_id::create("cp");',
+        "  cp.chan = {{chan.instance_id}};",
+        "  cp.src  = {{src.addr}};",
+        "  cp.dst  = {{dst.addr}};",
+        "  cp.start(p_sequencer.dma_sqr, this);",
+        "end",
       ],
     },
   },
@@ -316,8 +327,8 @@ export function pssSourceLines(scenario: PssScenario): SourceLine[] {
   }
   return [
     { key: "buffer", text: `buffer ${BUFFER_TYPE} {` },
-    { key: "buffer", text: "  rand bit[31:0] addr;" },
-    { key: "buffer", text: "  rand bit[31:0] data;" },
+    { key: "buffer", text: "  rand bit[32] addr;" },
+    { key: "buffer", text: "  rand bit[32] data;" },
     { key: "buffer", text: `  constraint { addr in [0x${ADDR_LO.toString(16).toUpperCase()}..0x${ADDR_HI.toString(16).toUpperCase()}]; addr % 4 == 0; }` },
     { key: "buffer", text: "}" },
     { key: "resource", text: `resource ${RESOURCE_TYPE} { }` },
@@ -343,10 +354,8 @@ export function pssSourceLines(scenario: PssScenario): SourceLine[] {
   ];
 }
 
-const fmt = (lang: TargetLang, v: number) => {
-  const h = (v >>> 0).toString(16).toUpperCase().padStart(8, "0");
-  return lang === "C" ? `0x${h}` : `32'h${h.slice(0, 4)}_${h.slice(4)}`;
-};
+/** A solved `bit` value as a tool prints it into a template: unsigned decimal. */
+const fmt = (v: number) => String(v >>> 0);
 
 /** Expands one instance's exec template: `{{field.member}}` → solved value. */
 export function expandExec(inst: ActionInstance, lang: TargetLang): string[] {
@@ -355,7 +364,7 @@ export function expandExec(inst: ActionInstance, lang: TargetLang): string[] {
       if (member === "instance_id") return String(inst.chan ?? 0);
       const v = inst.values[field];
       if (!v) return "/* unbound */";
-      return fmt(lang, member === "addr" ? v.addr : v.data);
+      return fmt(member === "addr" ? v.addr : v.data);
     }),
   );
 }
@@ -381,10 +390,10 @@ export function generateTarget(res: PssResolution, lang: TargetLang): string[] {
     return out;
   }
   const out = ["// exec body SV templates, expanded in schedule order", "task body();"];
+  // Each template is pasted verbatim; its own begin ... end makes it one statement.
   const block = (inst: ActionInstance, indent: string) => {
-    out.push(`${indent}begin : ${inst.id.replace("#", "_")}${inst.inferred ? "  // inferred" : ""}`);
-    for (const l of expandExec(inst, "SV")) out.push(`${indent}  ${l}`);
-    out.push(`${indent}end`);
+    out.push(`${indent}// ${label(inst)}`);
+    for (const l of expandExec(inst, "SV")) out.push(`${indent}${l}`);
   };
   for (const slot of res.slots) {
     if (slot.length > 1) {
