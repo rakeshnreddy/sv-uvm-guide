@@ -253,45 +253,137 @@ export function getInterviewPracticeItems(banks: readonly InterviewBank[] = load
 }
 
 // ---------------------------------------------------------------------------
-// Rich text: the banks use `inline code` and ``` fenced blocks inside strings.
+// Rich text. Bank strings use a small Markdown subset: `inline code` (or
+// ``code with a ` inside``), **bold**, ``` fenced blocks, blank-line
+// paragraphs, "- " / "1. " list runs, and GFM pipe tables.
 // ---------------------------------------------------------------------------
 
-export type InlinePart = { code: boolean; text: string };
+export type InlinePart = { code: boolean; text: string; bold?: true };
 export type RichBlock =
   | { type: 'paragraph'; parts: InlinePart[] }
-  | { type: 'code'; language: string; code: string };
+  | { type: 'code'; language: string; code: string }
+  | { type: 'list'; ordered: boolean; items: InlinePart[][] }
+  | { type: 'table'; header: InlinePart[][]; rows: InlinePart[][][] };
 
-/** Splits text into `inline code` and plain parts. An unmatched backtick stays literal. */
+/**
+ * Splits text into `inline code`, **bold** and plain parts. A double-backtick
+ * span may contain a single backtick (for example a macro). Bold may wrap
+ * inline code. An unmatched backtick, or an unpaired last **, stays literal.
+ */
 export function splitInlineCode(text: string): InlinePart[] {
-  const parts: InlinePart[] = [];
-  const pattern = /`([^`]+)`/g;
+  const pieces: InlinePart[] = [];
+  const pattern = /``[^\S\n]?(.+?)[^\S\n]?``|`([^`]+)`/g;
   let last = 0;
   for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
-    if (match.index > last) parts.push({ code: false, text: text.slice(last, match.index) });
-    parts.push({ code: true, text: match[1] });
+    if (match.index > last) pieces.push({ code: false, text: text.slice(last, match.index) });
+    pieces.push({ code: true, text: match[1] ?? match[2] });
     last = match.index + match[0].length;
   }
-  if (last < text.length) parts.push({ code: false, text: text.slice(last) });
+  if (last < text.length) pieces.push({ code: false, text: text.slice(last) });
+
+  // ** markers live only in the plain pieces; pair them in order across the whole text.
+  const markers = pieces.reduce((count, piece) => count + (piece.code ? 0 : piece.text.split('**').length - 1), 0);
+  let usable = markers - (markers % 2);
+  let bold = false;
+  const parts: InlinePart[] = [];
+  const push = (part: InlinePart) => {
+    if (!part.text) return;
+    const previous = parts[parts.length - 1];
+    if (previous && !previous.code && !part.code && previous.bold === part.bold) previous.text += part.text;
+    else parts.push(part);
+  };
+  for (const piece of pieces) {
+    if (piece.code) {
+      push(bold ? { ...piece, bold: true } : piece);
+      continue;
+    }
+    piece.text.split('**').forEach((segment, index) => {
+      if (index > 0) {
+        if (usable > 0) {
+          usable -= 1;
+          bold = !bold;
+        } else {
+          segment = `**${segment}`;
+        }
+      }
+      push(bold ? { code: false, text: segment, bold: true } : { code: false, text: segment });
+    });
+  }
   return parts;
 }
 
-/** Splits text into paragraphs (blank-line separated) and ``` fenced code blocks. */
+const LIST_ITEM = /^\s*(?:([-*])|(\d+)[.)])\s+(.*)$/;
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+
+function tableCells(row: string): InlinePart[][] {
+  return row
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => splitInlineCode(cell.trim()));
+}
+
+/** Turns one blank-line-separated chunk into paragraph, list and table blocks, in order. */
+function chunkBlocks(chunk: string): RichBlock[] {
+  const blocks: RichBlock[] = [];
+  const lines = chunk.split('\n');
+  let text: string[] = [];
+  const flushText = () => {
+    const paragraph = text.join('\n').trim();
+    if (paragraph) blocks.push({ type: 'paragraph', parts: splitInlineCode(paragraph) });
+    text = [];
+  };
+  for (let i = 0; i < lines.length; ) {
+    if (TABLE_ROW.test(lines[i]) && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1])) {
+      flushText();
+      const header = tableCells(lines[i]);
+      const rows: InlinePart[][][] = [];
+      i += 2;
+      while (i < lines.length && TABLE_ROW.test(lines[i])) rows.push(tableCells(lines[i++]));
+      blocks.push({ type: 'table', header, rows });
+      continue;
+    }
+    const first = LIST_ITEM.exec(lines[i]);
+    if (first) {
+      flushText();
+      const ordered = first[2] !== undefined;
+      const items: string[] = [first[3]];
+      i += 1;
+      while (i < lines.length) {
+        const next = LIST_ITEM.exec(lines[i]);
+        if (next && (next[2] !== undefined) === ordered) items.push(next[3]);
+        else if (!next && /^\s+\S/.test(lines[i]) && !TABLE_ROW.test(lines[i])) items[items.length - 1] += ` ${lines[i].trim()}`;
+        else break;
+        i += 1;
+      }
+      blocks.push({ type: 'list', ordered, items: items.map((item) => splitInlineCode(item.trim())) });
+      continue;
+    }
+    text.push(lines[i]);
+    i += 1;
+  }
+  flushText();
+  return blocks;
+}
+
+/** Splits text into paragraphs, lists, tables (blank-line separated chunks) and ``` fenced code blocks. */
 export function toRichBlocks(text: string): RichBlock[] {
   const blocks: RichBlock[] = [];
   const fence = /```([\w+-]*)[^\S\n]*\n([\s\S]*?)\n?```/g;
-  const pushParagraphs = (chunk: string) => {
+  const pushChunks = (chunk: string) => {
     chunk
       .split(/\n\s*\n/)
-      .map((paragraph) => paragraph.trim())
-      .filter(Boolean)
-      .forEach((paragraph) => blocks.push({ type: 'paragraph', parts: splitInlineCode(paragraph) }));
+      .filter((part) => part.trim())
+      .forEach((part) => blocks.push(...chunkBlocks(part)));
   };
   let last = 0;
   for (let match = fence.exec(text); match; match = fence.exec(text)) {
-    pushParagraphs(text.slice(last, match.index));
+    pushChunks(text.slice(last, match.index));
     blocks.push({ type: 'code', language: match[1] || 'text', code: match[2].replace(/\s+$/, '') });
     last = match.index + match[0].length;
   }
-  pushParagraphs(text.slice(last));
+  pushChunks(text.slice(last));
   return blocks;
 }

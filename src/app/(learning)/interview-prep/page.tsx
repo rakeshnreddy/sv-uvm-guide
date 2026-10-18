@@ -41,10 +41,14 @@ function InlineText({ text = '', parts = splitInlineCode(text) }: { text?: strin
         part.code ? (
           <code
             key={index}
-            className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em] text-foreground [font-variant-ligatures:none]"
+            className={`rounded bg-muted px-1 py-0.5 font-mono text-[0.9em] text-foreground [font-variant-ligatures:none]${part.bold ? ' font-semibold' : ''}`}
           >
             {part.text}
           </code>
+        ) : part.bold ? (
+          <strong key={index} className="font-semibold">
+            {part.text}
+          </strong>
         ) : (
           <span key={index}>{part.text}</span>
         ),
@@ -68,6 +72,56 @@ function RichText({ text }: { text: string }) {
           >
             <code>{block.code}</code>
           </pre>
+        ) : block.type === 'list' ? (
+          block.ordered ? (
+            <ol key={index} className="list-decimal space-y-1 pl-5">
+              {block.items.map((item, itemIndex) => (
+                <li key={itemIndex}>
+                  <InlineText parts={item} />
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <ul key={index} className="list-disc space-y-1 pl-5">
+              {block.items.map((item, itemIndex) => (
+                <li key={itemIndex}>
+                  <InlineText parts={item} />
+                </li>
+              ))}
+            </ul>
+          )
+        ) : block.type === 'table' ? (
+          <div
+            key={index}
+            // Wide tables scroll inside this region, which must be reachable from the keyboard.
+            tabIndex={0}
+            role="region"
+            aria-label="Table"
+            className={`overflow-x-auto rounded-lg border border-border ${focusRing}`}
+          >
+            <table className="w-full min-w-[34rem] border-collapse text-left text-[13px] [overflow-wrap:normal] [&_code]:whitespace-nowrap">
+              <thead className="bg-muted/60">
+                <tr>
+                  {block.header.map((cell, cellIndex) => (
+                    <th key={cellIndex} scope="col" className="border-b border-border px-2.5 py-1.5 font-semibold">
+                      <InlineText parts={cell} />
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {block.rows.map((row, rowIndex) => (
+                  <tr key={rowIndex} className="border-b border-border last:border-b-0">
+                    {row.map((cell, cellIndex) => (
+                      <td key={cellIndex} className="px-2.5 py-1.5 align-top">
+                        <InlineText parts={cell} />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <p key={index}>
             <InlineText parts={block.parts} />

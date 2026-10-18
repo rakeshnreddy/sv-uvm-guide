@@ -234,6 +234,69 @@ describe('bank rich text', () => {
     expect(toRichBlocks('```\nx = 1;\n```')).toEqual([{ type: 'code', language: 'text', code: 'x = 1;' }]);
   });
 
+  it('splits **bold** runs and double-backtick spans', () => {
+    expect(splitInlineCode('A **strong** answer')).toEqual([
+      { code: false, text: 'A ' },
+      { code: false, text: 'strong', bold: true },
+      { code: false, text: ' answer' },
+    ]);
+    expect(splitInlineCode('the `` `uvm_info `` macro')).toEqual([
+      { code: false, text: 'the ' },
+      { code: true, text: '`uvm_info' },
+      { code: false, text: ' macro' },
+    ]);
+    expect(splitInlineCode('2 ** 3')).toEqual([{ code: false, text: '2 ** 3' }]);
+    expect(splitInlineCode('**Debug the `X` first.** Then')).toEqual([
+      { code: false, text: 'Debug the ', bold: true },
+      { code: true, text: 'X', bold: true },
+      { code: false, text: ' first.', bold: true },
+      { code: false, text: ' Then' },
+    ]);
+  });
+
+  it('turns list runs and pipe tables into list and table blocks', () => {
+    expect(toRichBlocks('Steps:\n1. reset\n2. drive `a`\n\n- one\n- **two**\n  continued')).toEqual([
+      { type: 'paragraph', parts: [{ code: false, text: 'Steps:' }] },
+      {
+        type: 'list',
+        ordered: true,
+        items: [[{ code: false, text: 'reset' }], [{ code: false, text: 'drive ' }, { code: true, text: 'a' }]],
+      },
+      {
+        type: 'list',
+        ordered: false,
+        items: [[{ code: false, text: 'one' }], [{ code: false, text: 'two', bold: true }, { code: false, text: ' continued' }]],
+      },
+    ]);
+    expect(toRichBlocks('| Signal | Edge |\n|---|:-:|\n| `HREADY` | 2 |\n| HRESP | 3 |')).toEqual([
+      {
+        type: 'table',
+        header: [[{ code: false, text: 'Signal' }], [{ code: false, text: 'Edge' }]],
+        rows: [
+          [[{ code: true, text: 'HREADY' }], [{ code: false, text: '2' }]],
+          [[{ code: false, text: 'HRESP' }], [{ code: false, text: '3' }]],
+        ],
+      },
+    ]);
+  });
+
+  it('leaves no list, table or bold markup unparsed in any bank text', () => {
+    for (const question of rawQuestions) {
+      for (const field of ['prompt', 'rubric', 'model_answer'] as const) {
+        const text = (question as Record<string, unknown>)[field];
+        if (typeof text !== 'string') continue;
+        for (const block of toRichBlocks(text)) {
+          if (block.type !== 'paragraph') continue;
+          // Rebuild the source line shape: a bold run such as **1. Step** is a heading, not a list item.
+          const shape = block.parts.map((part) => (part.code ? 'x' : part.bold ? `**${part.text}**` : part.text)).join('');
+          expect(shape, `${question.id}.${field}`).not.toMatch(/^\s*(?:[-*]|\d+[.)])\s|^\s*\|.*\|\s*$/m);
+          const plain = block.parts.filter((part) => !part.code && !part.bold).map((part) => part.text).join('');
+          expect(plain, `${question.id}.${field}`).not.toMatch(/\*\*\S[^*]*\*\*/);
+        }
+      }
+    }
+  });
+
   it('renders every fenced block in the banks as code', () => {
     for (const question of rawQuestions) {
       const fences = (question.model_answer.match(/```/g) ?? []).length / 2;

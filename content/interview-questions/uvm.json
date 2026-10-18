@@ -1,108 +1,904 @@
 {
   "id": "uvm-interview-bank",
   "title": "UVM Interview Question Bank",
-  "description": "Interview preparation covering UVM architecture, factory, phasing, TLM, sequences, config_db, and methodology.",
+  "description": "Interview questions on UVM from junior to senior staff: objects and components, the factory, phasing and objections, reporting, configuration, TLM and analysis, sequences and arbitration, the register layer, callbacks, scoreboards, reset and error injection, debug, performance, VIP design, emulation and multi-language benches.",
   "topic": "uvm",
   "questions": [
+    {
+      "id": "uvm-why-uvm",
+      "topic": "uvm",
+      "level": "junior",
+      "category": "concept",
+      "modules": [
+        "I-SV-9_Why_UVM/index"
+      ],
+      "prompt": "Why do teams build testbenches with UVM instead of a hand-written, class-based SystemVerilog testbench? When is UVM not worth its overhead?",
+      "model_answer": "UVM is a class library written in SystemVerilog. It is standardized as IEEE 1800.2-2020 (approved 4 June 2020), and Accellera's uvm-core package is the reference implementation. It is not a language feature or a simulator feature, and it does not make simulation faster: it adds code that runs alongside your bench.\n\nA hand-written layered bench (transaction, generator, driver, monitor, scoreboard, coverage, environment, test) works, but every team re-solves the same problems in its own way. UVM gives each problem one standard answer, so a VIP written by one team plugs into another team's environment:\n\n1. Changing what gets built without editing the environment: the factory (`type_id::create` plus type and instance overrides).\n\n2. Ordering construction, connection, running and checking: phasing (`build_phase`, `connect_phase`, `run_phase`, `check_phase` and so on).\n\n3. Passing settings and virtual interfaces down the hierarchy without hard-coded paths: `uvm_config_db`.\n\n4. Connecting components without them knowing each other's types: TLM ports, exports and analysis ports.\n\n5. Reusable, composable stimulus: sequences running on sequencers.\n\n6. Controlled messages and a consistent end-of-test summary: the reporting system (severity, verbosity, actions).\n\n7. Ending the test deliberately: objections.\n\nUVM is not worth it for a small block that a few directed tests or formal can close, for a throwaway bring-up bench, or for a team that will never reuse the components. A team that works in Python may prefer cocotb. The cost is real: a learning curve, more files per agent, and runtime overhead in config lookups, messages and objections.",
+      "rubric": "A strong answer says what UVM is (a SystemVerilog class library standardized as IEEE 1800.2, with uvm-core as the reference implementation), then maps several concrete problems to the mechanism that solves them: substitution to the factory, ordering to phasing, configuration to config_db, decoupling to TLM, reusable stimulus to sequences, pass/fail to reporting and objections. It names reuse across teams as the main payoff, and gives an honest case where UVM is overkill.\n\nA weak answer says UVM is a language or a tool feature, claims it speeds up simulation, or lists base-class names without saying what problem each one solves.",
+      "common_mistakes": [
+        "Calling UVM a language, a simulator feature or a verification tool. It is a class library you compile with your bench.",
+        "Claiming UVM makes simulation faster. It adds overhead; the gain is engineering reuse, not simulator speed.",
+        "Saying every bench needs UVM. A small block with formal or a few directed tests may not."
+      ],
+      "follow_ups": [
+        "Which UVM mechanism would you miss first if you had to go back to a plain class-based bench, and why?",
+        "Name two places where UVM adds runtime overhead.",
+        "Which base class would each layer of a hand-written bench map to?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 (front matter: approved 4 June 2020)",
+        "IEEE 1800.2-2020 §8.3 (factory), §9.8.1 (common phases), §10.5 (objections), §12.2 (TLM 1), §14 (sequences), §6.3 (reporting), Annex C.4 (config_db)"
+      ]
+    },
+    {
+      "id": "uvm-object-vs-component",
+      "topic": "uvm",
+      "level": "junior",
+      "category": "concept",
+      "modules": [
+        "I-UVM-1A_Components/index"
+      ],
+      "prompt": "What is the difference between a `uvm_object` and a `uvm_component`? Give one example of each from a testbench and show how each one is declared and constructed.",
+      "model_answer": "A uvm_component is a piece of testbench structure. It has a parent and a fixed place in the hierarchy (its full name, such as `uvm_test_top.env.agt.drv`), it takes part in phasing, and it lives for the whole simulation. Drivers, monitors, sequencers, agents, scoreboards, environments and tests are components.\n\nA uvm_object is data. It has a name but no parent, no phases and no place in the tree, and it lives only as long as some handle refers to it. Transactions (`uvm_sequence_item`), sequences, configuration objects and register-model classes are objects.\n\n```systemverilog\nclass bus_item extends uvm_sequence_item;          // data\n  `uvm_object_utils(bus_item)\n  rand bit [31:0] addr;\n  rand bit [31:0] data;\n  function new(string name = \"bus_item\");          // name only, with a default\n    super.new(name);\n  endfunction\nendclass\n\nclass bus_driver extends uvm_driver #(bus_item);   // structure\n  `uvm_component_utils(bus_driver)\n  function new(string name, uvm_component parent); // name AND parent, no defaults\n    super.new(name, parent);\n  endfunction\nendclass\n\n// In the agent's build_phase: a child component, named and parented\ndrv = bus_driver::type_id::create(\"drv\", this);   // full name: <agent path>.drv\n// In a sequence body: an object, created whenever it is needed\nreq = bus_item::type_id::create(\"req\");\n```\n\nConsequences of the difference:\n\n1. Components are built during `build_phase` only. uvm-core 2020.3.1 issues a fatal ILLCRT if you construct a component after the build phase has ended. Objects can be created at any time.\n\n2. The component name is not cosmetic: it forms the path that `uvm_config_db` lookups and factory instance overrides match against.\n\n3. Objects support `copy`, `clone`, `compare`, `print` and `convert2string`. Calling `clone()` on a component is an error in uvm-core (ILLCLN) and returns null.\n\n4. Both kinds register with the factory, through `uvm_object_utils` or `uvm_component_utils`, so both can be overridden.",
+      "rubric": "A strong answer separates structure from data: a component has a parent, a hierarchical name, phases and simulation lifetime; an object has none of these and is transient. It shows the two constructor signatures (`new(string name = ...)` versus `new(string name, uvm_component parent)`), creates both through `type_id::create`, and gives correct examples of each. Extra credit: components are created only during build, and the instance name matters for config and overrides.\n\nA weak answer says the only difference is the base class, puts sequences or transactions among the components, or builds components with `new()` in `run_phase`.",
+      "common_mistakes": [
+        "Treating sequences as components. A sequence is an object that runs on a sequencer component.",
+        "Giving a component constructor default arguments, or omitting `parent`. The parent places the component in the tree.",
+        "Thinking the name string is only for printing. Config and instance overrides match on the full hierarchical name.",
+        "Believing that skipping `super.build_phase(phase)` stops children from being built. It skips automatic configuration (`apply_config_settings`); your own `create` calls still build the children."
+      ],
+      "follow_ups": [
+        "Why can a component not be created in `run_phase`?",
+        "What does `print_topology()` show, and when is the earliest useful moment to call it?",
+        "Where in the class hierarchy do `uvm_report_object` and `uvm_sequence_item` sit?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §5.3 (uvm_object), §5.3.5.2 (clone), §13.1 (uvm_component), §14.1 (uvm_sequence_item)",
+        "IEEE 1800.2-2020 §8.2.2 (type_id), Annex B.2 (utility macros), §13.1.5.1 (apply_config_settings)",
+        "uvm-core 2020.3.1 (`uvm_component.svh`: ILLCRT after the build phase, ILLCLN on clone)"
+      ]
+    },
     {
       "id": "uvm-factory-purpose",
       "topic": "uvm",
       "level": "junior",
       "category": "concept",
-      "prompt": "What is the UVM factory and why is it important?",
-      "rubric": "Must explain that the factory decouples type creation from type identity, enabling type and instance overrides without modifying source code. Should mention type_id::create() vs new().",
-      "model_answer": "The UVM factory is a singleton registry that maps type names to constructors. Instead of calling new() directly, components call type_id::create(), allowing tests to substitute derived types via set_type_override_by_type() or set_inst_override_by_type() without modifying the original component code. This enables test-specific customization and reuse.",
-      "sources": ["IEEE 1800.2-2020 §3 (Factory)"]
+      "modules": [
+        "I-UVM-1B_The_UVM_Factory/index",
+        "I-UVM-1A_Components/index"
+      ],
+      "prompt": "What is the UVM factory, and why do UVM testbenches create objects with `type_id::create()` instead of `new()`?",
+      "model_answer": "The factory is a single registry that maps a requested type to the type that is actually built. A class joins it through the `uvm_object_utils` or `uvm_component_utils` macro, which declares a `type_id` proxy for the class. A call to `T::type_id::create(...)` asks the factory for a T. The factory looks for an override and returns either T or a registered subclass of T. A call to `new()` always builds exactly T, so no override can ever reach it.\n\nThe payoff: a test changes what the environment builds without editing the environment. Here one test swaps every bus driver, or just one, for an error-injecting subclass:\n\n```systemverilog\nclass err_test extends base_test;\n  `uvm_component_utils(err_test)\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n  endfunction\n  function void build_phase(uvm_phase phase);\n    // Overrides must exist before the targets are created.\n    // Type override: every bus_driver becomes an err_driver ...\n    bus_driver::type_id::set_type_override(err_driver::get_type());\n    // ... or an instance override: only this path (relative to the test, because parent = this)\n    // bus_driver::type_id::set_inst_override(err_driver::get_type(), \"env.agt0.drv\", this);\n    super.build_phase(phase);   // builds env; env and agents build the drivers later, top-down\n  endfunction\nendclass\n```\n\nRules that follow from how create() works:\n\n1. Overrides apply at creation time. An object created before the override was registered keeps its type.\n\n2. Instance overrides beat type overrides, and overrides chain: if B overrides A and C overrides B, a request for A builds C.\n\n3. The override type must extend the original. If it does not, the typed `create()` cannot cast the result and uvm-core reports a fatal FCTTYP.\n\n4. Only factory-created objects are affected. Debug with `uvm_factory::get().print()`, which lists registered types and active overrides.",
+      "rubric": "A strong answer explains register, override, create: the utils macro registers the type, the test registers overrides, and `type_id::create` consults them. It explains why `new()` bypasses the factory, shows a type or instance override set in the test before the target is built, and states the precedence (instance before type, overrides chain). Extra credit: debugging with `factory.print()`, the FCTTYP fatal for an incompatible override, and the command-line `+uvm_set_type_override`.\n\nA weak answer says the factory \"creates objects\" without explaining substitution, or sets overrides after the objects already exist.",
+      "common_mistakes": [
+        "Building a component with `new()` and then wondering why the override does nothing.",
+        "Registering the override after the target object was created. The factory does not change objects that already exist.",
+        "Believing type overrides win over instance overrides. Instance overrides are searched first.",
+        "Writing an absolute instance path when the call passes `this` as parent (or the reverse). With a parent the path is relative to it; without one it is absolute."
+      ],
+      "follow_ups": [
+        "Two overrides target the same instance: a type override and an instance override. Which one wins?",
+        "How would you apply an override from the command line without recompiling?",
+        "What does the factory print when you ask it to create, by name, a type that was never registered?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §8.3.1.4.1 (set_inst_override_by_type), §8.3.1.4.2 (set_type_override_by_type), §8.3.1.5 (creation: instance overrides before type overrides, recursive overrides), §8.3.1.7.5 (print)",
+        "IEEE 1800.2-2020 §8.2.3.2.5, §8.2.3.2.6 (`type_id::set_type_override`, `set_inst_override` and their path rules)",
+        "IEEE 1800.2-2020 Annex G.2.7 (+uvm_set_type_override, +uvm_set_inst_override)",
+        "uvm-core 2020.3.1 (`uvm_registry.svh`: FCTTYP)"
+      ]
+    },
+    {
+      "id": "uvm-phase-order",
+      "topic": "uvm",
+      "level": "junior",
+      "category": "concept",
+      "modules": [
+        "I-UVM-1C_UVM_Phasing/index",
+        "I-UVM-1A_Components/index"
+      ],
+      "prompt": "List the UVM common phases in order. Which ones consume simulation time? Why does `build_phase` run top-down while `connect_phase` runs bottom-up?",
+      "model_answer": "The common phases, in order:\n\n```text\nbuild_phase                function  top-down    create children, read config\nconnect_phase              function  bottom-up   connect ports and exports\nend_of_elaboration_phase   function  bottom-up   topology is final (print_topology)\nstart_of_simulation_phase  function  bottom-up   last setup before time advances\nrun_phase                  task      (parallel)  stimulus, driving, monitoring\nextract_phase              function  bottom-up   collect results\ncheck_phase                function  bottom-up   compare, check leftovers\nreport_phase               function  bottom-up   print summaries\nfinal_phase                function  top-down    close files\n```\n\nEvery phase before run_phase executes at simulation time 0. Only task phases can consume time: `run_phase` and the twelve run-time phases (`pre_reset_phase` through `post_shutdown_phase`), which run in parallel with `run_phase`. The other phases are functions, so a delay or event wait inside them does not compile.\n\nWhy build is top-down: a parent creates its children inside its own `build_phase`. A child does not exist until its parent's build has run, and the parent can place configuration in `uvm_config_db` before the child's build reads it.\n\nWhy connect is bottom-up: by connect time every component exists, so the order no longer matters for creation. Running children first means each sub-block finishes its internal wiring before its parent connects to the ports it exposes.\n\nFor a test with env, agent and driver, a message in each phase prints in this order:\n\n```text\nbuild_phase   : uvm_test_top, env, agt, drv   (parent first)\nconnect_phase : drv, agt, env, uvm_test_top   (children first)\n```",
+      "rubric": "A strong answer lists the nine common phases in order, marks run_phase as the only common task phase, says the run-time phases run in parallel with run_phase, and explains build top-down from the parent-creates-child relationship. It knows that end_of_elaboration, start_of_simulation, extract, check and report are bottom-up and final is top-down.\n\nA weak answer says connect runs top-down, puts check before run, or thinks function phases can wait on time.",
+      "common_mistakes": [
+        "Saying connect_phase runs top-down.",
+        "Saying the run-time phases (reset, configure, main, shutdown) run after run_phase. They run in parallel with it.",
+        "Calling `print_topology()` in build_phase, before the children exist.",
+        "Putting a `#delay` or `@(posedge clk)` in a function phase."
+      ],
+      "follow_ups": [
+        "In which phase would you check that a scoreboard has no leftover expected items, and why there?",
+        "If two sibling components both run build_phase, which goes first?",
+        "Why is `end_of_elaboration_phase` a good place to print the topology?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §9.8.1 (common phases, in execution order; all before run at time 0), §9.8.1.1–§9.8.1.9 (each phase and its top-down, bottom-up or task class)",
+        "IEEE 1800.2-2020 §9.8.2 (run-time phases)",
+        "uvm-core 2020.3.1 (`uvm_common_phases.svh`: build extends `uvm_topdown_phase`, connect extends `uvm_bottomup_phase`)"
+      ]
     },
     {
       "id": "uvm-objection-mechanism",
       "topic": "uvm",
       "level": "junior",
       "category": "concept",
-      "prompt": "How do objections work in UVM? What happens if you forget to drop one?",
-      "rubric": "Objections are cooperative counters that keep task-based phases alive. raise_objection increments, drop_objection decrements. Phase ends when count reaches zero. Forgetting to drop causes simulation hang.",
-      "model_answer": "Objections are reference counters on task-based phases (like run_phase). Each component calls phase.raise_objection() before work and phase.drop_objection() after. The phase ends only when the global count reaches zero. Forgetting to drop an objection causes an infinite hang. Use set_drain_time() as a safety net.",
-      "sources": ["IEEE 1800.2-2020 §9.4 (Objections)"]
+      "modules": [
+        "I-UVM-1C_UVM_Phasing/index",
+        "I-UVM-3A_Fundamentals/index"
+      ],
+      "prompt": "How do objections decide when `run_phase` ends? What happens if a test forgets to drop its objection, and what happens if it never raises one?",
+      "model_answer": "Each task phase owns an objection: a counter (`uvm_objection`) that says \"do not end this phase yet\". `raise_objection` adds to it, `drop_objection` subtracts, and the counts propagate up the hierarchy to the top. The usual place is the test, around the top-level sequence:\n\n```systemverilog\ntask run_phase(uvm_phase phase);\n  top_seq seq = top_seq::type_id::create(\"seq\");\n  phase.raise_objection(this, \"running top_seq\");   // at time 0, before any delay\n  seq.start(env.agt.sqr);\n  phase.drop_objection(this, \"top_seq finished\");\nendtask\n```\n\nWhen the total reaches zero, the phase waits for any drain time, gives components a chance to object again in `phase_ready_to_end`, and then ends. When a task phase ends, UVM kills the processes it started, which is why a driver's `forever` loop does not keep the test alive and should not raise objections.\n\nForgot to drop: the phase never ends by objection. Simulation time keeps advancing, so the run-phase watchdog eventually fires `uvm_fatal` with ID PH_TIMEOUT. The default limit is `UVM_DEFAULT_TIMEOUT`, 9200 s of simulated time; change it with `uvm_root::set_timeout()` or the uvm-core plusarg `+UVM_TIMEOUT`. It is not an infinite hang unless simulation time itself stops advancing.\n\nNever raised: after one NBA region with no objection, the phase ends immediately. `+UVM_PHASE_TRACE` shows \"No objections raised, skipping phase\". The test finishes at time 0, often with `UVM_ERROR : 0`, having checked nothing. An objection raised after a delay is too late for the same reason.\n\nDrain time (`set_drain_time`) is a delay that starts after the count reaches zero. It lets in-flight transactions reach the scoreboard. It cannot rescue a forgotten drop, because a forgotten drop never reaches zero.",
+      "rubric": "A strong answer describes the objection as a counter on the phase, says the phase ends when it reaches zero (then drain time, then `phase_ready_to_end`), and gives both failure modes correctly: a missing drop ends in a PH_TIMEOUT fatal at the run-phase timeout (default 9200 s) while time advances; a missing raise ends the phase at time 0 with nothing checked. It raises objections in the test or the top sequence, and describes drain time as a delay after the last drop.\n\nA weak answer says a missing drop hangs forever, calls drain time a safety net, or raises objections in every driver and monitor.",
+      "common_mistakes": [
+        "Saying a missing drop hangs the simulation forever. With time advancing, the run-phase watchdog fires PH_TIMEOUT.",
+        "Treating `set_drain_time` as a safety net for a forgotten drop. Drain time starts only after the count reaches zero.",
+        "Raising and dropping an objection per item in the driver. It is unnecessary, costs time, and is easy to get wrong.",
+        "Raising the objection after a `#delay` or clock wait. The phase has already ended."
+      ],
+      "follow_ups": [
+        "Your log ends at time 0 with `UVM_ERROR : 0` and no transactions. What happened, and how do you prove it?",
+        "Which plusarg shows every raise and drop with the component that made it?",
+        "On which object, and in which phase, would you set a drain time?",
+        "Why do the driver's `forever` loop and the monitor's `forever` loop not keep the test running?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §10.5.1 (uvm_objection), §10.5.1.3.7 (set_drain_time: applies once all objections are dropped)",
+        "IEEE 1800.2-2020 §9.3.1.7.1, §9.3.1.7.2 (phase get_objection, raise_objection), §13.1.4.3.2 (phase_ready_to_end), Annex F.7.3.3 (set_timeout)",
+        "uvm-core 2020.3.1 (`uvm_phase_hopper.svh`: PH_TIMEOUT watchdog, \"No objections raised, skipping phase\", phase processes killed at phase end)",
+        "uvm-core 2020.3.1 (`uvm_global_defines.svh`: UVM_DEFAULT_TIMEOUT 9200s; `uvm_root.svh`: +UVM_TIMEOUT)"
+      ]
     },
     {
-      "id": "uvm-config-db-vs-resource-db",
+      "id": "uvm-agent-active-passive",
       "topic": "uvm",
-      "level": "mid",
+      "level": "junior",
       "category": "concept",
-      "prompt": "What is the difference between uvm_config_db and uvm_resource_db?",
-      "rubric": "config_db is a convenience layer over resource_db with hierarchical path scoping. resource_db is global name/type lookup. config_db::set uses hierarchical context; resource_db::set uses a global scope string.",
-      "model_answer": "uvm_config_db is a typed, hierarchically-scoped configuration mechanism built on top of uvm_resource_db. config_db::set(context, inst_name, field_name, value) scopes the setting to a specific component subtree. resource_db::set(scope, name, value) uses a global string scope. config_db handles precedence: later sets at the same or higher hierarchy level override earlier ones. Always prefer config_db for component configuration.",
-      "sources": ["IEEE 1800.2-2020 §12 (Configuration)"]
+      "modules": [
+        "I-UVM-2A_Component_Roles/index",
+        "A-UVM-7_VIP_Construction/index"
+      ],
+      "prompt": "Sketch the standard UVM testbench hierarchy from the test down to the driver. What is the difference between an active and a passive agent, and how does the agent's code decide which one it is?",
+      "model_answer": "The usual hierarchy:\n\n```text\nuvm_test_top            (test: picks config and sequences)\n  env                   (uvm_env: agents plus checkers)\n    agt                 (uvm_agent: one interface)\n      sqr  -> drv  ---> DUT pins      (active only)\n      mon  <--- DUT pins\n            \\--ap--> scb (uvm_scoreboard, in env)\n             \\-ap--> cov (uvm_subscriber, in env)\n```\n\nThe agent bundles everything for one interface. The scoreboard sits in the env, not in the agent, because it usually compares traffic from more than one agent.\n\nAn active agent drives the interface: it builds a sequencer, a driver and a monitor. A passive agent only observes: it builds the monitor (plus any checks and coverage) and no driver or sequencer at all. You use passive mode when something else drives the interface, for example when the block's bus is driven by the real CPU at SoC level.\n\n```systemverilog\nclass bus_agent extends uvm_agent;\n  `uvm_component_utils(bus_agent)\n  bus_sequencer sqr;\n  bus_driver    drv;\n  bus_monitor   mon;\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n  endfunction\n  function void build_phase(uvm_phase phase);\n    super.build_phase(phase);   // uvm_agent reads the \"is_active\" setting here\n    mon = bus_monitor::type_id::create(\"mon\", this);\n    if (get_is_active() == UVM_ACTIVE) begin\n      sqr = bus_sequencer::type_id::create(\"sqr\", this);\n      drv = bus_driver::type_id::create(\"drv\", this);\n    end\n  endfunction\n  function void connect_phase(uvm_phase phase);\n    if (get_is_active() == UVM_ACTIVE)\n      drv.seq_item_port.connect(sqr.seq_item_export);\n  endfunction\nendclass\n\n// In the env or test: make one agent passive\nuvm_config_db#(uvm_active_passive_enum)::set(this, \"env.agt\", \"is_active\", UVM_PASSIVE);\n```\n\n`is_active` defaults to `UVM_ACTIVE`. In uvm-core 2020.3.1, `uvm_agent::build_phase` reads the `is_active` configuration, so a derived agent must call `super.build_phase(phase)` before it calls `get_is_active()`.",
+      "rubric": "A strong answer draws test, env, agent (sequencer, driver, monitor) and env-level scoreboard and coverage, and explains that an analysis port carries monitor output to them. It defines passive as \"monitor only, driver and sequencer never built\", gives a reason to use it (another master drives the interface), and shows the `get_is_active()` guard in both build and connect, with the config_db setting.\n\nA weak answer puts the scoreboard inside the agent, or describes a passive agent as an active one whose driver sits idle.",
+      "common_mistakes": [
+        "Describing a passive agent as one with an idle driver. Its driver and sequencer are never built.",
+        "Skipping `super.build_phase(phase)` in the agent, so the `is_active` setting is never read and the agent stays active.",
+        "Connecting `drv.seq_item_port` without the same `get_is_active()` guard, which dereferences a null driver in passive mode.",
+        "Putting the scoreboard inside the agent."
+      ],
+      "follow_ups": [
+        "At SoC level, which agents go passive and which stay active?",
+        "Why must the monitor never depend on the driver's internal state?",
+        "How would you prove from the log that an agent really is passive?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §13.3 (uvm_env), §13.4 (uvm_agent), §13.4.2.2 (get_is_active), Annex F.2.1.7 (uvm_active_passive_enum)",
+        "IEEE 1800.2-2020 §13.5 (uvm_monitor), §13.6 (uvm_scoreboard), §13.7 (uvm_driver)",
+        "uvm-core 2020.3.1 (`uvm_agent.svh`: `build_phase` reads the `is_active` resource)"
+      ]
+    },
+    {
+      "id": "uvm-reporting-verbosity",
+      "topic": "uvm",
+      "level": "junior",
+      "category": "concept",
+      "modules": [
+        "I-UVM-1D_Reporting_and_Run_Control/index",
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/index"
+      ],
+      "prompt": "A test runs with `+UVM_VERBOSITY=UVM_LOW` and executes the lines below. Which messages print? Does the simulation stop at the error? What decides whether the test passed?",
+      "code": "```systemverilog\n`uvm_info(\"CFG\",  \"config applied\", UVM_LOW)\n`uvm_info(\"DRV\",  $sformatf(\"item %s\", req.convert2string()), UVM_HIGH)\n`uvm_warning(\"SCB\", \"late response\")\n`uvm_error(\"SCB\", \"data mismatch at 0x40\")\n`uvm_info(\"DONE\", \"test body finished\", UVM_NONE)\n$error(\"raw SystemVerilog error\");\n```",
+      "model_answer": "An info message prints only if its verbosity is at or below the configured level. The order is UVM_NONE < UVM_LOW < UVM_MEDIUM < UVM_HIGH < UVM_FULL < UVM_DEBUG.\n\n1. CFG (UVM_LOW) prints.\n\n2. DRV (UVM_HIGH) does not print. The `uvm_info` macro checks the verbosity before it evaluates the message, so the `$sformatf` and `convert2string()` calls are never executed.\n\n3. The warning and the error print. Their macros use UVM_NONE, so verbosity cannot hide them; only an action or severity change can.\n\n4. DONE (UVM_NONE) prints.\n\n5. `$error` prints through the simulator, not through UVM. It is not counted in the UVM report summary.\n\nThe error does not stop the simulation. The default actions are `UVM_DISPLAY` for info and warning, `UVM_DISPLAY | UVM_COUNT` for error, and `UVM_DISPLAY | UVM_EXIT` for fatal. UVM_COUNT stops the run only when the quit count reaches the maximum set with `set_max_quit_count()` or `+UVM_MAX_QUIT_COUNT`. The default maximum is 0, which uvm-core treats as no limit.\n\nUVM has no built-in verdict. At the end it prints a report summary with the count of each severity, and the flow decides. A sound rule is: no UVM_FATAL, no UVM_ERROR, no simulator errors in the log (such as the `$error` above or SVA failures), and positive evidence that checks ran (for example, the scoreboard compared more than zero transactions).",
+      "rubric": "A strong answer applies the verbosity rule correctly (an info message prints when its verbosity is at most the threshold), says warnings and errors are not filtered by verbosity, knows the default actions (error counts but does not exit; fatal exits) and the quit count, and points out that `$error` bypasses UVM counts. It defines pass/fail as zero errors plus evidence that checking happened. Extra credit: the macro skips formatting a filtered message.\n\nA weak answer thinks verbosity filters errors, thinks the error stops the test, or treats `UVM_ERROR : 0` alone as proof of a pass.",
+      "common_mistakes": [
+        "Believing verbosity can hide warnings and errors.",
+        "Expecting `uvm_error` to end the simulation. It only counts, unless a quit count is set.",
+        "Treating a summary with `UVM_ERROR : 0` as a pass even when no transaction was checked.",
+        "Using `$display` or `$error` in components, which bypasses UVM's verbosity control and error counts."
+      ],
+      "follow_ups": [
+        "How do you raise the verbosity of only the driver, from the command line, without recompiling?",
+        "How would you make a known, expected error stop counting, without hiding unexpected ones?",
+        "Why is calling `uvm_report_info` directly with a `$sformatf` argument slower than using the macro?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §6.3 (report object: verbosity filter and default actions per severity), §6.3.3.2 (uvm_report_enabled), §6.5.1.2.3 (set_max_quit_count)",
+        "IEEE 1800.2-2020 Annex B.1.1.1 (`uvm_info`), Annex G.2.2 (+UVM_VERBOSITY), Annex G.2.6 (+UVM_MAX_QUIT_COUNT)",
+        "uvm-core 2020.3.1 (`uvm_message_defines.svh`: `uvm_report_begin` checks verbosity before the message is built; `uvm_report_server.svh`: quit count 0 means no limit)"
+      ]
     },
     {
       "id": "uvm-sequence-vs-sequence-item",
       "topic": "uvm",
       "level": "mid",
       "category": "concept",
-      "prompt": "Explain the relationship between uvm_sequence, uvm_sequence_item, and uvm_sequencer.",
-      "rubric": "Sequence items are individual transactions. Sequences are generators that create and send items via start_item/finish_item. Sequencer arbitrates between sequences and provides items to the driver via seq_item_port.",
-      "model_answer": "uvm_sequence_item is a single transaction (data packet). uvm_sequence is a generator that creates sequence_items and sends them to a sequencer via start_item()/finish_item(). The uvm_sequencer arbitrates between multiple sequences and provides items to the driver through the seq_item_port/seq_item_export handshake. Sequences can be nested — a parent sequence can start child sequences.",
-      "sources": ["IEEE 1800.2-2020 §5 (Sequences)"]
+      "modules": [
+        "I-UVM-3A_Fundamentals/index",
+        "I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake"
+      ],
+      "prompt": "Explain how `uvm_sequence_item`, `uvm_sequence`, `uvm_sequencer` and `uvm_driver` cooperate to put one transaction on the bus. When does `start_item()` return, and when does `finish_item()` return?",
+      "model_answer": "The roles: a sequence item is one transaction (an object). A sequence is an object whose `body()` creates items. The sequencer is a component that arbitrates between all sequences running on it and hands one item at a time to the driver. The driver is a component that pulls items and turns them into pin activity.\n\n```systemverilog\nclass wr_seq extends uvm_sequence #(bus_item);\n  `uvm_object_utils(wr_seq)\n  function new(string name = \"wr_seq\");\n    super.new(name);\n  endfunction\n  task body();\n    repeat (4) begin\n      bus_item req = bus_item::type_id::create(\"req\");\n      start_item(req);                              // wait for the sequencer's grant\n      if (!req.randomize() with { write == 1; })    // late randomization, after the grant\n        `uvm_error(\"RNDFAIL\", \"bus_item randomize failed\")\n      finish_item(req);                             // wait for the driver's item_done()\n    end\n  endtask\nendclass\n// test: seq.start(env.agt.sqr);\n```\n\n`start_item()` returns when the sequencer grants this sequence. Arbitration happens when the driver asks for an item, and the default policy, `UVM_SEQ_ARB_FIFO`, grants requests in arrival order. `start_item()` does not randomize anything.\n\n`finish_item()` sends the item to the driver and returns when the driver signals completion with `item_done()`. If the driver uses `get()` instead of `get_next_item()`, `get()` calls `item_done()` itself, so `finish_item()` returns as soon as the driver takes the item, before it is driven.\n\nRandomizing between the two calls lets the item depend on the state of the bench at the moment it is granted. Sequences nest: a parent's `body()` can start child sequences on the same or other sequencers, and every item still goes through the sequencer's arbitration one at a time.",
+      "rubric": "A strong answer assigns the four roles correctly (two objects, two components), shows `start_item`/randomize/`finish_item`, and states the blocking points: `start_item` returns at the arbitration grant, `finish_item` returns after `item_done`. It names the default arbitration (FIFO) and the `get()` shortcut that makes `finish_item` return early. Extra credit: late randomization and nested sequences.\n\nA weak answer says `finish_item` returns when the item is queued, thinks `start_item` randomizes the item, or calls the sequence a component.",
+      "common_mistakes": [
+        "Saying `finish_item()` returns when the item is queued. It returns after the driver's `item_done()`.",
+        "Expecting `start_item()` to randomize the item.",
+        "Randomizing before `start_item()` and then being surprised that state-dependent constraints use stale values.",
+        "Calling `start_item()` on a sequence instead of an item. uvm-core fatals with SEQNOTITM; sequences are started with `start()`."
+      ],
+      "follow_ups": [
+        "Two sequences run on one sequencer with the default arbitration. In what order do their items go out?",
+        "How does a sequence get read data back from the driver?",
+        "Why can the driver block `start_item()` even though the driver never calls it?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §14.1 (uvm_sequence_item), §14.2.3.1 (start), §14.2.6.2 (start_item), §14.2.6.3 (finish_item), §15.5 (uvm_sequencer)",
+        "IEEE 1800.2-2020 §15.2.1.2.1–§15.2.1.2.3 (get_next_item, try_next_item, item_done), Annex F.2.4.1 (UVM_SEQ_ARB_FIFO is the default)",
+        "uvm-core 2020.3.1 (`uvm_sequence_base.svh`: `finish_item` waits in `wait_for_item_done`; `uvm_sequencer.svh`: `get()` calls `item_done()`)"
+      ]
     },
     {
-      "id": "uvm-phase-concurrency-trap",
+      "id": "uvm-driver-sequencer-handshake",
       "topic": "uvm",
-      "level": "senior",
-      "category": "trick",
-      "prompt": "Does run_phase execute concurrently with the runtime sub-phases (reset_phase, main_phase, etc.)?",
-      "rubric": "YES — this is the senior trap. run_phase and the runtime sub-phases execute in parallel in separate domains. run_phase objections are independent of sub-phase objections. Both must complete for the run-time group to end.",
-      "model_answer": "Yes! run_phase and the runtime sub-phases (pre_reset through post_shutdown) execute concurrently in parallel domains. run_phase runs in the common domain while sub-phases run in the uvm_domain. Both sets of phases must complete (all objections dropped in both) before cleanup phases begin. A common trap: raising an objection only in run_phase but expecting it to keep main_phase alive — it won't, because they have independent objection counts. Similarly, if run_phase never drops its objection, the simulation hangs even if all sub-phases complete.",
-      "sources": ["IEEE 1800.2-2020 §9.2 (Phase scheduling)", "IEEE 1800.2-2020 §9.3 (Run-time phases)"]
+      "level": "mid",
+      "category": "coding",
+      "modules": [
+        "I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake",
+        "I-UVM-3A_Fundamentals/index"
+      ],
+      "prompt": "Write the `run_phase` of a driver that pulls items with `get_next_item()`/`item_done()` and returns read data to the sequence as a response. Then explain how `get()`/`put()` differ, and what happens if the driver forgets `item_done()` or calls it twice.",
+      "model_answer": "```systemverilog\nclass bus_driver extends uvm_driver #(bus_item);   // uvm_driver declares req, rsp, seq_item_port\n  `uvm_component_utils(bus_driver)\n  virtual bus_if vif;\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n  endfunction\n\n  task run_phase(uvm_phase phase);\n    forever begin\n      seq_item_port.get_next_item(req);   // blocks until a sequence's finish_item sends one\n      drive(req);                         // protocol-specific; consumes clocks; fills req.rdata on a read\n      if (!req.write) begin\n        rsp = bus_item::type_id::create(\"rsp\");\n        rsp.set_id_info(req);             // copy sequence id and transaction id for routing\n        rsp.rdata = req.rdata;\n        seq_item_port.item_done(rsp);     // unblock finish_item and queue the response\n      end\n      else begin\n        seq_item_port.item_done();\n      end\n    end\n  endtask\n\n  virtual task drive(bus_item t);\n    // pin-level protocol here (omitted)\n  endtask\nendclass\n\n// in the sequence, for a read:\nstart_item(req);  finish_item(req);\nget_response(rsp);                        // returns the response whose ids match\n```\n\nWhy each step matters:\n\n1. `get_next_item()` takes the next granted item and leaves the request open. Exactly one `item_done()` must follow. That call releases the sequence's `finish_item()`.\n\n2. `set_id_info()` copies the sequence id and transaction id from the request. Without it the sequencer cannot route the response to the right sequence.\n\n3. Each sequence buffers responses in a queue whose default depth is 8. A sequence that never calls `get_response()` overflows it, and uvm-core reports \"Response queue overflow, response was dropped\". Fix it with `use_response_handler(1)` and a `response_handler()` override, or with `set_response_queue_depth(-1)` (unbounded).\n\n`get()` takes the item and calls `item_done()` immediately, so the sequence continues while the driver is still driving. The driver later returns a response with `put(rsp)`. That style suits pipelined protocols, where several items are in flight at once.\n\nForgetting `item_done()`: the sequence waits forever in `finish_item()`, and the driver's next `get_next_item()` reports \"Get_next_item called twice without item_done or get in between\". Because the sequence never finishes, the test's objection is never dropped and the run ends with PH_TIMEOUT. Calling `item_done()` twice: the second call finds no outstanding request, and uvm-core ends the run at once with the fatal SQRBADITMDN.\n\nFor a simple blocking read you can skip the separate response: the driver writes the data into `req`, and the sequence reads it after `finish_item()` returns, because both hold the same handle. A separate `rsp` is needed when items are pipelined.",
+      "rubric": "A strong answer writes a `forever` loop with `get_next_item`, drive, and exactly one `item_done`, builds the response with `set_id_info`, and shows `get_response` on the sequence side. It contrasts `get`/`put` (`item_done` is implicit, so the sequence does not wait for the drive) and names both failure symptoms: a stuck `finish_item` with the \"called twice\" error, and the SQRBADITMDN fatal. Extra credit: response queue depth and the response handler.\n\nA weak answer omits `item_done`, forgets `set_id_info`, or thinks `get()` waits for the drive to finish.",
+      "common_mistakes": [
+        "Creating the response without `set_id_info()`, so `get_response()` never matches it.",
+        "Calling `item_done()` on every path, including after an early `continue`, so it runs twice.",
+        "Using `get()` and expecting `finish_item()` to mean the transfer is complete.",
+        "Never calling `get_response()` while the driver returns a response for every item, overflowing the 8-deep response queue."
+      ],
+      "follow_ups": [
+        "Your driver supports 4 outstanding reads. Which pull style do you use, and how do responses find their sequence?",
+        "When is `try_next_item()` the right call, and what must the loop do when it returns null?",
+        "How should the driver behave if reset asserts while it holds an item?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §15.2.1.2.1 (get_next_item), §15.2.1.2.2 (try_next_item), §15.2.1.2.3 (item_done), §14.1.2.4 (set_id_info), §13.7 (uvm_driver)",
+        "IEEE 1800.2-2020 §14.2.6.3 (finish_item), §14.2.7.1 (use_response_handler)",
+        "uvm-core 2020.3.1 (`uvm_sequencer.svh`: \"called twice\" error, SQRBADITMDN, `get()` calls `item_done()`; `uvm_sequence_base.svh`: `response_queue_depth = 8`, overflow error)"
+      ]
     },
     {
       "id": "uvm-tlm-analysis-port",
       "topic": "uvm",
       "level": "mid",
       "category": "concept",
-      "prompt": "What is an analysis port and how does it differ from a regular TLM port?",
-      "rubric": "Analysis port is one-to-many broadcast (write-only, non-blocking). Regular TLM port is one-to-one (put/get, can block). Analysis port calls write() on all connected subscribers.",
-      "model_answer": "uvm_analysis_port is a one-to-many broadcast port. When a monitor calls ap.write(txn), every connected subscriber's write() receives the same handle, not a copy, so a subscriber that must keep or change the item clones it first. It is non-blocking and cannot flow-control the sender. Regular TLM ports (uvm_blocking_put_port, uvm_blocking_get_port) are one-to-one and can block the caller. Use analysis ports for monitors broadcasting to scoreboards and coverage collectors.",
-      "sources": ["IEEE 1800.2-2020 §12.2.10 (uvm_analysis_port)"]
+      "modules": [
+        "I-UVM-2B_TLM_Connections/index",
+        "I-UVM-2A_Component_Roles/index"
+      ],
+      "prompt": "What is an analysis port, and how does it differ from a TLM put or get port? With the monitor below, every transaction stored in the scoreboard ends up with the same address and data. Why?",
+      "code": "```systemverilog\nclass bus_monitor extends uvm_monitor;\n  `uvm_component_utils(bus_monitor)\n  uvm_analysis_port #(bus_item) ap;\n  virtual bus_if vif;\n  bus_item tr;\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n    ap = new(\"ap\", this);\n  endfunction\n  task run_phase(uvm_phase phase);\n    tr = bus_item::type_id::create(\"tr\");    // created once, before the loop\n    forever begin\n      @(posedge vif.clk iff (vif.valid && vif.ready));\n      tr.addr = vif.addr;\n      tr.data = vif.data;\n      ap.write(tr);\n    end\n  endtask\nendclass\n```",
+      "model_answer": "An analysis port broadcasts. `ap.write(t)` loops over every connected subscriber and calls that subscriber's `write(t)`, passing the same handle to each one. Nobody gets a copy. `write` is a function, so it runs in the caller's thread in zero time and cannot block or push back on the monitor. Zero subscribers is legal, and any number can connect.\n\nA put or get port is point to point and can block. By default it must be connected exactly once, and an unconnected port is a \"Connection Error\" at the end of elaboration. Its blocking methods (`put`, `get`, `peek`) are tasks, so a full or empty FIFO stalls the caller: that is flow control. Analysis ports have none.\n\nThe bug: the monitor creates one `bus_item` and reuses it. Each `write(tr)` hands out the same handle, so every entry the scoreboard stored points at one object, which the monitor keeps overwriting. All entries show the latest values.\n\nThe fix is to create a new item for each observed transaction, inside the loop:\n\n```systemverilog\nforever begin\n  @(posedge vif.clk iff (vif.valid && vif.ready));\n  tr = bus_item::type_id::create(\"tr\");    // a fresh object per transaction\n  tr.addr = vif.addr;\n  tr.data = vif.data;\n  ap.write(tr);\nend\n```\n\nAs a second rule, a subscriber that stores an item or modifies it should store a clone, because other subscribers hold the same handle. When a subscriber needs to do time-consuming work, connect the port to a `uvm_tlm_analysis_fifo` (unbounded) and process items in a task.",
+      "rubric": "A strong answer says `write()` passes the same handle to every subscriber, is a non-blocking function, allows zero or many subscribers, and gives no flow control, while put and get ports are one-to-one and may block. It finds the reused-object bug, fixes it by creating a new item per transaction, and adds the clone-before-store rule for subscribers. Extra credit: an analysis FIFO for subscribers that need a thread.\n\nA weak answer says each subscriber receives a copy, or blames the scoreboard's storage instead of the monitor.",
+      "common_mistakes": [
+        "Saying each subscriber receives its own copy. All of them receive the same handle.",
+        "Thinking `write()` waits for the subscriber to finish its work. It is a function; any blocking work belongs in a FIFO-fed task.",
+        "Believing an analysis port needs exactly one subscriber.",
+        "Fixing the symptom by cloning in one subscriber while the monitor still reuses one object for every sample."
+      ],
+      "follow_ups": [
+        "A coverage collector and a scoreboard both subscribe. The scoreboard modifies `t.data` while predicting. What does the coverage collector see?",
+        "How would a scoreboard receive two different streams of the same item type?",
+        "Why can an analysis port never slow the monitor down?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §12.2.10.1.4 (analysis port write), §12.2.10.2 (uvm_analysis_imp), §12.2.8.3 (uvm_tlm_analysis_fifo: unbounded)",
+        "uvm-core 2020.3.1 (`uvm_analysis_port.svh`: `write` calls `tif.write(t)` with the same handle for each connection; minimum 0 connections)",
+        "uvm-core 2020.3.1 (`uvm_ports.svh`, `uvm_port_base.svh`: TLM ports default to 1 required connection; \"Connection Error\")"
+      ]
+    },
+    {
+      "id": "uvm-tlm1-ports-exports-imps",
+      "topic": "uvm",
+      "level": "mid",
+      "category": "coding",
+      "modules": [
+        "I-UVM-2B_TLM_Connections/index",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index"
+      ],
+      "prompt": "A scoreboard must receive two streams of the same transaction type: expected items from a predictor and actual items from an output monitor. Write it. Then explain ports, exports and imps, and when you would connect through a `uvm_tlm_analysis_fifo` instead of an imp.",
+      "model_answer": "A component can have only one `write()` method, so two analysis imps of the same type need different method names. The `uvm_analysis_imp_decl` macro defines a new imp class that calls `write<suffix>()`:\n\n```systemverilog\n`uvm_analysis_imp_decl(_exp)   // package scope: defines class uvm_analysis_imp_exp\n`uvm_analysis_imp_decl(_act)   // defines class uvm_analysis_imp_act\n\nclass bus_scoreboard extends uvm_scoreboard;\n  `uvm_component_utils(bus_scoreboard)\n  uvm_analysis_imp_exp #(bus_item, bus_scoreboard) exp_imp;\n  uvm_analysis_imp_act #(bus_item, bus_scoreboard) act_imp;\n  bus_item expected[$];\n\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n    exp_imp = new(\"exp_imp\", this);\n    act_imp = new(\"act_imp\", this);\n  endfunction\n\n  function void write_exp(bus_item t);\n    expected.push_back(t);\n  endfunction\n\n  function void write_act(bus_item t);\n    bus_item e;\n    if (expected.size() == 0) begin\n      `uvm_error(\"SCB/UNEXP\", {\"no expected item for \", t.convert2string()})\n      return;\n    end\n    e = expected.pop_front();\n    if (!t.compare(e))\n      `uvm_error(\"SCB/MISMATCH\", {\"exp \", e.convert2string(), \" act \", t.convert2string()})\n  endfunction\nendclass\n\n// env connect_phase: initiator port -> target imp\npredictor.ap.connect(scb.exp_imp);\nout_agt.mon.ap.connect(scb.act_imp);\n```\n\nThe three connection objects:\n\n1. A port is on the initiator. It requires an interface and calls methods through it, such as `put`, `get` or `write`.\n\n2. An imp is on the target. It ends the chain and calls the methods its owner implements.\n\n3. An export passes an interface from an inner component out through its parent, so a parent can offer its child's imp as its own.\n\n`connect()` is always called on the side closer to the initiator: port to export or imp, child port to parent port when going up, parent export to child export or imp when going down.\n\nImp versus FIFO: with an imp, `write_act()` runs inside the monitor's thread at the moment of the write, so it must not block. Connecting the monitor to a `uvm_tlm_analysis_fifo` instead (its `analysis_export`) buffers items. The scoreboard then pulls them in its own `run_phase` with a blocking `get()`, which suits comparisons that must wait, for example for a late expected item. The analysis FIFO is unbounded. A plain `uvm_tlm_fifo` defaults to size 1, so a `put()` into a full one blocks. A FIFO buffers; it adds no parallelism by itself.",
+      "rubric": "A strong answer uses `uvm_analysis_imp_decl` with two suffixes and `write_<suffix>` methods, connects initiator ports to the imps in `connect_phase`, compares with `compare()` and reports with `uvm_error`. It defines port, export and imp by role and connection direction, and contrasts the zero-time imp callback with a FIFO drained by a task, including the size defaults (analysis FIFO unbounded, `uvm_tlm_fifo` default 1).\n\nA weak answer declares two `uvm_analysis_imp`s and one `write()`, connects in the wrong direction, or compares handles with `==`.",
+      "common_mistakes": [
+        "Declaring two plain `uvm_analysis_imp`s of the same type: both would call the single `write()` and the streams cannot be told apart.",
+        "Placing the `uvm_analysis_imp_decl` macro inside the class body. It defines a class, so it belongs at package or file scope.",
+        "Comparing transactions with `==`, which compares handles, not contents.",
+        "Assuming `uvm_tlm_fifo` is unbounded. Its default size is 1; only the analysis FIFO is unbounded."
+      ],
+      "follow_ups": [
+        "When would you choose a FIFO and a `run_phase` loop over imps for this scoreboard?",
+        "What does uvm-core report if a blocking put port is left unconnected?",
+        "How would you check at the end of the test that nothing was left in `expected`?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 Annex B.5.22 (`uvm_analysis_imp_decl`), §12.2.10.2 (uvm_analysis_imp), §12.2.8.2 (uvm_tlm_fifo: size default 1, 0 means unbounded), §12.2.8.3 (uvm_tlm_analysis_fifo: unbounded)",
+        "IEEE 1800.2-2020 §5.3.9 (compare), §13.6 (uvm_scoreboard), §5.5 (uvm_port_base)",
+        "uvm-core 2020.3.1 (`uvm_tlm_defines.svh`: `uvm_analysis_imp_decl` expansion; `uvm_tlm_fifos.svh`)"
+      ]
+    },
+    {
+      "id": "uvm-config-db-vs-resource-db",
+      "topic": "uvm",
+      "level": "mid",
+      "category": "concept",
+      "modules": [
+        "I-UVM-2C_Configuration_and_Resources/index"
+      ],
+      "prompt": "Compare `uvm_config_db` and `uvm_resource_db`. If the test and the env both `set()` the same field for an agent, which value does the agent's `get()` return? List the usual reasons a `get()` fails.",
+      "code": "```systemverilog\n// uvm_test_top build_phase\nuvm_config_db#(int)::set(this, \"env.agt\", \"num_items\", 50);\n// env build_phase (runs after the test's build_phase)\nuvm_config_db#(int)::set(this, \"agt\", \"num_items\", 10);\n// agt build_phase\nif (!uvm_config_db#(int)::get(this, \"\", \"num_items\", num_items))\n  `uvm_fatal(\"CFG\", \"num_items not set\")\n```",
+      "model_answer": "Both write to the same resource pool. `uvm_resource_db` is the lower layer: it stores values under a scope string and a name, and knows nothing about the component tree. `uvm_config_db` is the component-oriented layer on top. `set(cntxt, inst_name, field_name, value)` stores the value with the scope `{cntxt.get_full_name(), \".\", inst_name}`; a null context means `uvm_top`, so `inst_name` is then the full path. `get(cntxt, inst_name, field_name, value)` looks up from the component's own full name. Use `uvm_config_db` for anything aimed at components, including virtual interfaces.\n\nPrecedence: during the build phase, a `set()` from higher in the hierarchy wins. The context's depth sets the precedence (uvm_top has the default precedence, and each level below it is one lower), and among sets from the same level the last one wins. Here the test's set comes from a shallower context than the env's, so the agent gets 50, even though the env's set happened later. That is what lets a test override an environment's defaults. After build, every set uses the default precedence, so the last set wins regardless of level.\n\nWhy a `get()` fails:\n\n1. Type mismatch: the type parameter must match exactly. `int` against `bit [31:0]`, or `virtual bus_if` against `virtual bus_if#(8)`, do not match. Use one shared typedef.\n\n2. Path mismatch: a missing `uvm_test_top.` prefix when the set comes from a module with a null context, a wrong relative path, or a wildcard that matches more or less than intended.\n\n3. Field-name typo.\n\n4. Timing: the get runs before the set, for example a set in the child's own build or in run_phase.\n\n`get()` only returns 0 on failure; it reports nothing. Check the return value and issue `uvm_fatal` for mandatory settings. Debug with the uvm-core plusarg `+UVM_CONFIG_DB_TRACE`, and with `print_config()` or `check_config_usage()` on a component.",
+      "rubric": "A strong answer places config_db on top of the resource pool, explains the context-plus-instance scope, and gets the precedence right: during build, the higher context wins and same-level sets are last-wins; after build, last wins everywhere. It predicts 50 for the code shown, and lists type mismatch, path or wildcard errors, name typos and set-after-get as failure causes, with checking the return value and `+UVM_CONFIG_DB_TRACE`.\n\nA weak answer says the last `set()` always wins, or that `get()` matches by name regardless of type.",
+      "common_mistakes": [
+        "Saying the last `set()` always wins. During build, the set from the higher context wins.",
+        "Setting with one type parameter and getting with another, such as a parameterized virtual interface specialized differently.",
+        "Ignoring `get()`'s return value. A failed get raises no error by itself.",
+        "Setting from `tb_top` with a null context and a path that omits `uvm_test_top`."
+      ],
+      "follow_ups": [
+        "The env sets a value in its `run_phase` after the test set it in build. Which value does a later `get()` see?",
+        "Why do many teams pass one configuration object per agent instead of many scalar fields?",
+        "How do you find a `set()` that nothing ever read?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 Annex C.4.2.2.1 (config_db set), Annex C.4.2.2.2 (get), Annex C.3.2 (uvm_resource_db)",
+        "uvm-core 2020.3.1 (`uvm_config_db.svh` set() documentation: build-time precedence by context depth; \"After build time, all settings use the default precedence and thus have a last wins semantic\"; +UVM_CONFIG_DB_TRACE)",
+        "uvm-core 2020.3.1 (`uvm_component.svh`: print_config, check_config_usage)"
+      ]
+    },
+    {
+      "id": "uvm-field-macros-vs-do-methods",
+      "topic": "uvm",
+      "level": "mid",
+      "category": "coding",
+      "modules": [
+        "I-UVM-4_UVM_Policy_Classes/index",
+        "I-UVM-1A_Components/index"
+      ],
+      "prompt": "Implement `do_copy`, `do_compare` and `convert2string` for a bus transaction whose `latency` field must not affect equality. Compare this with field macros, and explain the difference between handle assignment, `copy()` and `clone()`.",
+      "model_answer": "```systemverilog\nclass bus_item extends uvm_sequence_item;\n  `uvm_object_utils(bus_item)\n  rand bit [31:0] addr;\n  rand bit [31:0] data;\n  rand bit        write;\n  int unsigned    latency;     // bookkeeping: excluded from equality on purpose\n\n  function new(string name = \"bus_item\");\n    super.new(name);\n  endfunction\n\n  function void do_copy(uvm_object rhs);\n    bus_item r;\n    if (!$cast(r, rhs))\n      `uvm_fatal(\"BADCAST\", \"do_copy: rhs is not a bus_item\")\n    super.do_copy(rhs);\n    addr = r.addr;  data = r.data;  write = r.write;  latency = r.latency;\n  endfunction\n\n  function bit do_compare(uvm_object rhs, uvm_comparer comparer);\n    bus_item r;\n    if (!$cast(r, rhs)) return 0;\n    return super.do_compare(rhs, comparer) &&\n           addr == r.addr && write == r.write && data == r.data;\n  endfunction\n\n  function string convert2string();\n    return $sformatf(\"%s addr=0x%08h data=0x%08h lat=%0d\",\n                     write ? \"WR\" : \"RD\", addr, data, latency);\n  endfunction\nendclass\n```\n\nHandle assignment, `b2 = b1`, copies the handle: both names refer to one object. `b2.copy(b1)` copies the contents into an existing `b2`, through field automation and then your `do_copy()`. `clone()` creates a new object of the same type and copies into it. It returns a `uvm_object`, so you need `$cast(b2, b1.clone())`. How deep a copy goes for object-type fields is up to your `do_copy()` or the field-macro flags; `copy()` is not deep by default for everything.\n\n`compare()` only returns a bit. A miscompare does not raise `UVM_ERROR` by itself (uvm-core's default comparer reports miscompares at UVM_INFO), so the caller must check the result and report the error.\n\nField macros (`uvm_object_utils_begin`, `uvm_field_int(addr, UVM_ALL_ON)`, `uvm_field_int(latency, UVM_ALL_ON | UVM_NOCOMPARE)`, `uvm_object_utils_end`) generate print, copy, compare, pack and record from one list. They are less code, but the generic machinery runs on every call, which costs time in hot paths (the size of that cost depends on the implementation), and the flags are easy to get wrong. Hand-written `do_*` methods are explicit, fast and easy to debug, at the cost of more code. The two can coexist: `copy()` runs the field automation first, then calls `do_copy()`.",
+      "rubric": "A strong answer writes `do_copy` and `do_compare` that `$cast` the rhs, call `super`, and handle the excluded field deliberately, plus a one-line `convert2string`. It distinguishes handle assignment, `copy` and `clone` (including the `$cast` after `clone`), knows a miscompare is not an error until the caller reports one, and weighs field macros (brevity) against `do_*` methods (speed, clarity, control).\n\nA weak answer forgets `super.do_copy`, compares handles, or believes `clone()` returns the derived type directly.",
+      "common_mistakes": [
+        "Skipping the `$cast` and `super.do_copy()`/`super.do_compare()` calls, which silently drops base-class fields.",
+        "Assigning `clone()`'s result to a derived handle without `$cast`.",
+        "Expecting `compare()` to report a `UVM_ERROR` on mismatch.",
+        "Assuming `copy()` deep-copies every nested object."
+      ],
+      "follow_ups": [
+        "Your scoreboard stores items from an analysis port. Do you store the handle or a clone, and why?",
+        "How would you print only miscompares, with field names, when a comparison fails?",
+        "When would you still choose field macros in new code?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §5.3.5.2 (clone), §5.3.6.4 (convert2string), §5.3.8 (copy, do_copy), §5.3.9 (compare, do_compare), §16.3 (uvm_comparer), Annex B.2 (field macros)",
+        "uvm-core 2020.3.1 (`uvm_copier.svh`: field automation, then `do_copy`; `uvm_comparer.svh`: default severity UVM_INFO)",
+        "IEEE 1800-2023 §8.12 (assignment and shallow copy), §6.24.2 ($cast)"
+      ]
+    },
+    {
+      "id": "uvm-override-not-taking-effect",
+      "topic": "uvm",
+      "level": "mid",
+      "category": "trick",
+      "modules": [
+        "I-UVM-1B_The_UVM_Factory/index",
+        "A-UVM-9_Reset_and_Error_Injection/index"
+      ],
+      "prompt": "This test should replace every `bus_driver` with `err_driver`, but the log shows `bus_driver` is still built and the factory prints a warning. Find the bug. Is setting the override after `super.build_phase()` also a bug here? List the other ways an override silently fails.",
+      "code": "```systemverilog\nclass err_driver extends bus_driver;\n  // (no utils macro here)\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n  endfunction\n  virtual task drive(bus_item t);   // drive() is virtual in bus_driver\n    t.data = ~t.data;               // inject a data error\n    super.drive(t);\n  endtask\nendclass\n\nclass err_test extends base_test;\n  `uvm_component_utils(err_test)\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n  endfunction\n  function void build_phase(uvm_phase phase);\n    super.build_phase(phase);       // base_test creates env here\n    bus_driver::type_id::set_type_override(err_driver::get_type());\n  endfunction\nendclass\n```",
+      "model_answer": "The bug: `err_driver` has no `uvm_component_utils(err_driver)`. The macro is what declares `type_id` and the static `get_type()` in a class. Without it, `err_driver::get_type()` resolves to the function inherited from `bus_driver`, which returns `bus_driver`'s proxy. The test therefore asks the factory to override `bus_driver` with `bus_driver`. uvm-core warns TYPDUP (\"Original and override type arguments are identical: bus_driver\") and keeps building `bus_driver`. This follows from the macro expansion in uvm-core; the standard does not describe this case. Fix: add `uvm_component_utils(err_driver)`.\n\nThe ordering is not a bug in this case. Build runs top-down: `super.build_phase()` only creates the env object. The env builds the agent, and the agent builds the driver, in their own `build_phase`s, which run after the test's `build_phase` returns. The override is in place before the driver is created. The same ordering would break an override of the env type itself, which is why setting overrides before `super.build_phase()` is the safe habit.\n\nOther silent failures:\n\n1. The agent builds the driver with `new()` instead of `type_id::create()`.\n\n2. An instance-override path does not match: it is relative when `parent` is passed and absolute when it is not, and a wildcard can match the wrong instance.\n\n3. The method you rely on is not virtual, so the override is built but your new `drive()` is never called through a `bus_driver` handle.\n\n4. The override is registered after the object was created, for example in `connect_phase`.\n\nAn override whose type does not extend the original is not silent: the typed `create()` fatals with FCTTYP.\n\nDebug: call `uvm_factory::get().print()` to list overrides, and `uvm_top.print_topology()` in `end_of_elaboration_phase` to see the type actually built.",
+      "rubric": "A strong answer finds the missing utils macro, explains why `err_driver::get_type()` returns the parent's proxy and why that produces TYPDUP, and correctly argues that the late override still works for the driver because build is top-down, while noting it would fail for the env. It lists `new()` instead of create, path mismatch, non-virtual methods and too-late registration, and debugs with `factory.print()` and the topology print.\n\nA weak answer blames only the ordering, or does not know what the utils macro declares.",
+      "common_mistakes": [
+        "Claiming the override after `super.build_phase()` is the bug. The driver is created later, in the agent's build.",
+        "Assuming a derived class inherits its own factory registration from its parent.",
+        "Overriding a class whose key method is not virtual and expecting the new behaviour.",
+        "Writing an absolute path while passing `this` as the parent of `set_inst_override`."
+      ],
+      "follow_ups": [
+        "What would happen if the subclass were registered but did not extend `bus_driver`?",
+        "Rewrite the override as an instance override for `env.agt1.drv` only.",
+        "How would you apply this override from the command line for a quick experiment?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §8.2.3.2.5 (set_type_override), §8.2.3.2.6 (set_inst_override path rules), §8.3.1.5 (creation and override search), §9.8.1.1 (build is top-down)",
+        "uvm-core 2020.3.1 (`uvm_object_defines.svh`: `uvm_component_utils` declares `type_id` and `get_type()`; `uvm_factory.svh`: TYPDUP; `uvm_registry.svh`: FCTTYP)"
+      ]
+    },
+    {
+      "id": "uvm-event-barrier-pool",
+      "topic": "uvm",
+      "level": "mid",
+      "category": "concept",
+      "modules": [
+        "I-UVM-5_UVM_Container_Classes/index",
+        "I-UVM-1C_UVM_Phasing/index",
+        "A-UVM-8_Multi_Agent_Topologies/index"
+      ],
+      "prompt": "An interrupt monitor must wake a virtual sequence when the DUT raises an interrupt. Compare a `uvm_event` obtained from `uvm_event_pool` with a plain SystemVerilog `event` and with a `uvm_barrier`. What race does `wait_ptrigger()` avoid, and what side effect does `uvm_pool::get()` have?",
+      "model_answer": "```systemverilog\n// interrupt monitor (component)\nuvm_event irq_ev;\nfunction void build_phase(uvm_phase phase);\n  irq_ev = uvm_event_pool::get_global(\"dma_irq\");\nendfunction\ntask run_phase(uvm_phase phase);\n  forever begin\n    @(posedge vif.irq);\n    irq_ev.trigger();\n  end\nendtask\n\n// virtual sequence\nuvm_event irq_ev = uvm_event_pool::get_global(\"dma_irq\");\nstart_dma_transfer();\nirq_ev.wait_ptrigger();     // still returns if the trigger happened earlier in this time step\n```\n\nA `uvm_event` is a class wrapper around a SystemVerilog event. It adds optional data passed with `trigger(data)`, an on/off state (`wait_on`, `wait_off`, `reset`), a trigger count and time, and callbacks. Because it is an object, any component or sequence can share it. `uvm_event_pool::get_global(\"name\")` returns the same event for the same name anywhere in the bench, so the monitor and the sequence need no hierarchical path to each other.\n\nThe race: `wait_trigger()` is `@event` underneath. If the waiter starts waiting after the trigger in the same time step, it misses that trigger and may wait forever. `wait_ptrigger()` first checks the event's `triggered` state, which persists until the end of the time step, and returns at once. The plain SV equivalents are `@ev` and `wait(ev.triggered)`.\n\nA `uvm_barrier` is a rendezvous: each process calls `wait_for()`, and all are released together once the threshold count of waiters arrives. Use it for \"all agents finished reset\", not for one-to-one notification.\n\nThe side effect: `uvm_pool::get(key)` creates an entry if the key does not exist. For the object pools, which include `uvm_event_pool`, it constructs a new object under that name. A misspelled name therefore creates a second event that nobody triggers, and the waiter hangs. Define event names as constants, and use `exists()` when you only want to check.",
+      "rubric": "A strong answer shares the event through the global pool, explains the same-time-step race between `trigger` and `wait_trigger` and how `wait_ptrigger` avoids it, distinguishes an event (notify) from a barrier (rendezvous), and knows that `get()` creates missing entries, with the misspelled-name hang as the consequence. It keeps data transfer on analysis ports and synchronization on events.\n\nA weak answer passes event handles through `uvm_config_db` paths for no reason, or does not see the trigger-before-wait race.",
+      "common_mistakes": [
+        "Using `wait_trigger()` where the trigger can fire earlier in the same time step.",
+        "Misspelling a pool key, which silently creates a new event that is never triggered.",
+        "Using a barrier for a one-to-one notification.",
+        "Moving transaction data through events instead of analysis ports."
+      ],
+      "follow_ups": [
+        "The interrupt is level-sensitive and may already be high when the sequence starts waiting. How do you handle it?",
+        "When would `uvm_event` data be better than an analysis port?",
+        "Are `uvm_pool` and `uvm_queue` faster than native associative arrays and queues?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §10.1.2 (uvm_event), §10.1.1.2.4 (wait_trigger), §10.1.1.2.5 (wait_ptrigger), §10.3 (uvm_barrier), §10.4.1 (uvm_event_pool), §11.2 (uvm_pool)",
+        "IEEE 1800-2023 §15.5.3 (persistent `triggered` state of a named event)",
+        "uvm-core 2020.3.1 (`uvm_pool.svh`: `get()` creates a missing entry; `uvm_event.svh`: wait_trigger race note)"
+      ]
+    },
+    {
+      "id": "uvm-phase-concurrency-trap",
+      "topic": "uvm",
+      "level": "senior",
+      "category": "trick",
+      "modules": [
+        "I-UVM-1C_UVM_Phasing/index"
+      ],
+      "prompt": "Does `run_phase` execute concurrently with the run-time phases (`reset_phase`, `main_phase` and the rest)? In the test below, what stimulus reaches the DUT, and when does the test end?",
+      "code": "```systemverilog\nclass mixed_test extends base_test;\n  `uvm_component_utils(mixed_test)\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n  endfunction\n  task run_phase(uvm_phase phase);\n    phase.raise_objection(this);\n    #10us;\n    phase.drop_objection(this);\n  endtask\n  task main_phase(uvm_phase phase);\n    main_seq seq = main_seq::type_id::create(\"seq\");\n    seq.start(env.agt.sqr);        // no main_phase objection raised\n  endtask\nendclass\n```",
+      "model_answer": "Yes. The twelve run-time phases (`pre_reset_phase` through `post_shutdown_phase`) run in parallel with `run_phase`. In uvm-core, the uvm schedule is added to the common domain alongside run (`with_phase` run). Both start after `start_of_simulation_phase`, and `extract_phase` waits until both have ended.\n\nEach phase has its own objection. In this test nothing objects to `main_phase`, so after one NBA region at time 0 `main_phase` ends, and UVM kills the processes it started, including `seq`. At most an item the driver had already taken before the kill gets driven. The remaining run-time phases are skipped the same way, through `post_shutdown_phase`, at time 0. `run_phase` holds its own objection, so the test then idles until 10 us and ends, probably with `UVM_ERROR : 0`. The objection in `run_phase` does not keep `main_phase` alive.\n\nFix it in one of two ways: raise and drop the objection in `main_phase` around `seq.start()`, or move the stimulus into `run_phase`. Do not split one test's stimulus across both.\n\nIf `run_phase` never dropped its objection, the test would not hang forever. The run-phase watchdog would fire `uvm_fatal` PH_TIMEOUT at the timeout (default 9200 s, set with `set_timeout()` or `+UVM_TIMEOUT`). Because the run-time phases run beside `run_phase`, the same watchdog also catches a `main_phase` that never ends.",
+      "rubric": "A strong answer says yes, the run-time phases run in parallel with `run_phase` and both must finish before extract; objections are per phase; `main_phase` with no objection ends at time 0 and kills the sequence; and the test idles for 10 us and passes vacuously. It fixes the test, recommends one style per bench, and corrects \"hang\" to PH_TIMEOUT.\n\nA weak answer says the run-time phases are sub-phases that run inside or after `run_phase`, or expects the `run_phase` objection to keep `main_phase` alive.",
+      "common_mistakes": [
+        "Calling the run-time phases sub-phases of `run_phase`. They form a parallel schedule.",
+        "Expecting the `run_phase` objection to keep `main_phase` alive.",
+        "Saying a missing drop in `run_phase` hangs forever. PH_TIMEOUT fires while time advances.",
+        "Forgetting that phase processes are killed when their phase ends, so a sequence started in an ended phase dies."
+      ],
+      "follow_ups": [
+        "Why might a team still use `reset_phase` and `main_phase` instead of only `run_phase`?",
+        "How would `+UVM_PHASE_TRACE` reveal the bug in this test?",
+        "What happens to a driver whose `forever` loop lives in `main_phase` once `main_phase` ends?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §9.8.2 (run-time phases: start after start_of_simulation; extract waits until they end), §9.4 (uvm_domain), §10.5.1 (uvm_objection)",
+        "uvm-core 2020.3.1 (`uvm_domain.svh`: uvm schedule added to the common domain `with_phase` run; `uvm_phase_hopper.svh`: skip with no objection, kill phase processes, PH_TIMEOUT in the run-phase branch)"
+      ]
     },
     {
       "id": "uvm-virtual-sequencer",
       "topic": "uvm",
       "level": "senior",
       "category": "coding",
-      "prompt": "How do you coordinate stimulus across multiple protocol agents (e.g., AXI + APB) in a UVM environment?",
-      "rubric": "Use a virtual sequencer that holds handles to typed sub-sequencers. Virtual sequences run on the virtual sequencer and call child sequences on specific sub-sequencers. Must mention p_sequencer and casting.",
-      "model_answer": "Create a virtual_sequencer extending uvm_sequencer with handles to each protocol sequencer (axi_sqr, apb_sqr). In the env's connect_phase, assign these handles. Virtual sequences use `p_sequencer.axi_sqr` to target specific agents. The virtual sequence body() calls child sequences with child_seq.start(p_sequencer.axi_sqr). This coordinates cross-protocol traffic from a single control point.",
-      "sources": ["IEEE 1800.2-2020 §5.5 (Virtual sequences)"]
+      "modules": [
+        "I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences",
+        "I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer",
+        "A-UVM-8_Multi_Agent_Topologies/index"
+      ],
+      "prompt": "Write a virtual sequence that configures the DUT over APB and then runs two AXI streams in parallel, using a virtual sequencer and `p_sequencer`. Then describe the alternative that needs no virtual sequencer, and when you would choose it.",
+      "model_answer": "```systemverilog\nclass top_vsqr extends uvm_sequencer;       // a container of handles; arbitrates no items\n  `uvm_component_utils(top_vsqr)\n  apb_sequencer apb_sqr;\n  axi_sequencer axi_sqr;\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n  endfunction\nendclass\n\n// env connect_phase: point the handles at the agents' sequencers\nvsqr.apb_sqr = apb_agt.sqr;\nvsqr.axi_sqr = axi_agt.sqr;\n\nclass cfg_then_traffic_vseq extends uvm_sequence;\n  `uvm_object_utils(cfg_then_traffic_vseq)\n  `uvm_declare_p_sequencer(top_vsqr)       // declares p_sequencer and $casts m_sequencer into it\n\n  function new(string name = \"cfg_then_traffic_vseq\");\n    super.new(name);\n  endfunction\n\n  task body();\n    apb_cfg_seq   cfg = apb_cfg_seq::type_id::create(\"cfg\");\n    axi_burst_seq rd  = axi_burst_seq::type_id::create(\"rd\");\n    axi_burst_seq wr  = axi_burst_seq::type_id::create(\"wr\");\n    cfg.start(p_sequencer.apb_sqr, this);   // configure first; 'this' makes it a child\n    fork                                    // then two AXI streams in parallel\n      rd.start(p_sequencer.axi_sqr, this);\n      wr.start(p_sequencer.axi_sqr, this);\n    join                                    // body ends only when both finish\n  endtask\nendclass\n\n// test run_phase, inside the objection:\nvseq.start(env.vsqr);\n```\n\nWhat the pieces do:\n\n1. The virtual sequencer is just a component that holds handles to the real sequencers. No item ever goes through it.\n\n2. The order of operations lives in the virtual sequence's `body()`, not in the sequencer.\n\n3. `uvm_declare_p_sequencer(top_vsqr)` declares `p_sequencer` and `$cast`s `m_sequencer` into it when the sequence starts. Starting the sequence on the wrong sequencer type fatals with DCLPSQ.\n\n4. Passing `this` as the parent makes the child inherit the parent's priority and appear under it in the sequence hierarchy.\n\n5. `join`, not `join_none`, keeps `body()` (and so the test's objection) alive until both streams finish.\n\nThe alternative: the virtual sequence holds the sequencer handles itself (`apb_sequencer apb_sqr; axi_sequencer axi_sqr;`), the test assigns them from the env, and the test starts it with `vseq.start(null)`. There is no extra component and no `p_sequencer` cast, but the test must know the env's structure, and there is no sequencer on which to set a default sequence or take a lock. Choose it for small benches. Choose a virtual sequencer when several tests and sub-environments share the handle wiring, or when you nest virtual sequencers in a layered SoC environment.",
+      "rubric": "A strong answer shows a virtual sequencer with sequencer handles assigned in `connect_phase`, a virtual sequence using `uvm_declare_p_sequencer`, child sequences started on the real sequencers with `this` as parent, a correct fork/join for the parallel part, and the test starting the virtual sequence inside an objection. It knows DCLPSQ, explains that ordering is in the virtual sequence, and weighs the `start(null)` alternative.\n\nA weak answer has no code, sends items through the virtual sequencer, uses `join_none` so the sequence ends at once, or says the virtual sequencer decides the order.",
+      "common_mistakes": [
+        "Ending the parallel part with `join_none`, so `body()` returns and the objection drops while traffic is still running.",
+        "Leaving a handle null because the agent is passive (no sequencer) and then starting a child sequence on it.",
+        "Believing the virtual sequencer arbitrates or orders the sub-sequences.",
+        "Starting the virtual sequence on a sequencer of the wrong type, which fatals with DCLPSQ."
+      ],
+      "follow_ups": [
+        "How would you make the AXI streams wait until an interrupt says configuration is complete, instead of relying on order?",
+        "At SoC level the APB agent is passive. How does this virtual sequence change?",
+        "Why pass `this` as the parent sequence when starting children?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 Annex B.3.3 (`uvm_declare_p_sequencer`), §14.2.3.1 (start: parent sequence and priority), §15.5 (uvm_sequencer)",
+        "uvm-core 2020.3.1 (`uvm_sequence_defines.svh`: `m_set_p_sequencer` `$cast` and DCLPSQ fatal)"
+      ]
+    },
+    {
+      "id": "uvm-staff-debug-hanging-sim",
+      "topic": "uvm",
+      "level": "senior",
+      "category": "waveform-debug",
+      "modules": [
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab",
+        "I-UVM-1C_UVM_Phasing/index",
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/index"
+      ],
+      "prompt": "Two regressions \"hang\". In run A the log stops after `Running test` and simulation time never leaves 0. In run B, time advances for hours of simulated time and the run then dies. Using the trace below, explain what each symptom means, the likely causes, and how you would find the root cause.",
+      "code": "```text\nRun A\n  log      : UVM_INFO @ 0: reporter [RNTST] Running test dma_test...\n  after 10 min wall clock: simulation time = 0 ns, CPU at 100 %\n\nRun B  (sampled at each rising clk edge, 10 ns period)\n  time     : 0ns  10ns  20ns  30ns  40ns  50ns  ...  9200s\n  rst_n    : 0    0     1     1     1     1     ...  1\n  valid    : 0    0     0     1     1     1     ...  1\n  ready    : 0    0     0     0     0     0     ...  0\n  data     : x    x     x     A5    A5    A5    ...  A5\n  log      : UVM_FATAL ... [PH_TIMEOUT] Default timeout of <time> hit,\n             indicating a probable testbench issue\n```",
+      "model_answer": "Start by asking one question: is simulation time advancing? It splits the problem in two.\n\nRun A: time is stuck. Some process loops forever without ever waiting for time. Typical causes:\n\n1. A driver loop around `try_next_item()` that never waits for a clock when no item is ready. `try_next_item()` returns null within the same time step, so the loop spins without time advancing.\n\n2. A polling loop such as `while (!vif.ready);` with no event control inside.\n\n3. Two processes that keep re-triggering each other in zero time.\n\n4. A combinational loop in the RTL.\n\nUVM's watchdog cannot help: it is a `#timeout` delay, and time never reaches it. Nothing is buffered, either: UVM prints each message when it is issued, so a silent log means nothing was issued. To debug, stop the simulator and dump the active process stacks (the commands are tool-dependent), check `+UVM_PHASE_TRACE` for the last phase that started, and look for a loop with no time-consuming statement. The fix is to make every loop wait on a clock or an event.\n\nRun B: time advances, but the test never ends. Here `valid` is high from 30 ns while `ready` never rises, so the driver waits forever for the handshake. The sequence's `finish_item()` never returns, the test's objection is never dropped, and the run-phase watchdog fires PH_TIMEOUT at the default 9200 s. To find the culprit:\n\n1. `+UVM_OBJECTION_TRACE` shows which component raised without dropping.\n\n2. With `+UVM_PHASE_TRACE`, the watchdog also lists the phases that still have objections when it expires.\n\n3. On the waveform, ask why the DUT never asserts `ready`: still in reset, never configured, clock-gated, or a DUT bug.\n\nOther causes of run B: a blocking `get()` on a TLM FIFO that nothing feeds, a wait on a `uvm_event` that is never triggered, a missing `item_done()`, or a component that raises an objection in `phase_ready_to_end()` and never drops it. Set a realistic timeout with `set_timeout()` or `+UVM_TIMEOUT` so hangs fail in minutes, and add a protocol watchdog, such as an assertion that `valid` is not held without `ready` for more than N cycles, or a `uvm_heartbeat`.\n\nNot hangs at all: creating an unregistered type by name prints a BDTYP warning and returns null; a missing utils macro is usually a compile error at `type_id`; an unknown `+UVM_TESTNAME` is a fatal INVTST; a failed `uvm_config_db::get()` returns 0, and reports nothing unless your code checks it.",
+      "rubric": "A strong answer classifies by whether time advances. For time stuck at 0, it names zero-delay loops (including the `try_next_item` loop) and RTL combinational loops, explains why PH_TIMEOUT cannot fire, and uses process-stack dumps and phase trace. For run B, it reads the trace (valid held, ready never asserted), follows the chain driver, `finish_item`, objection, PH_TIMEOUT at 9200 s, and uses objection trace, phase trace and the waveform. It knows which UVM failures are not hangs (BDTYP, INVTST, a get() that returns 0).\n\nA weak answer applies one checklist to both runs, says the watchdog will eventually fire in run A, or claims UVM messages are buffered until build completes.",
+      "common_mistakes": [
+        "Waiting for the UVM timeout in run A. It is a time delay and can never fire while time is stuck.",
+        "Claiming UVM messages are held back until the build phase completes. They print when issued.",
+        "Calling a blocked `get()` on an empty FIFO a time-0 hang. Time keeps advancing, so it ends in PH_TIMEOUT.",
+        "Saying a missing utils macro makes `create()` return null. Creation by an unregistered name returns null with BDTYP; a missing macro is normally a compile error."
+      ],
+      "follow_ups": [
+        "How would you make run B fail within one minute of simulated time instead of 9200 s?",
+        "What does `uvm_heartbeat` monitor, and how would it have flagged run B earlier?",
+        "Run A only happens with one seed. What does that tell you about the loop?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §10.5.1 (uvm_objection), §10.6 (uvm_heartbeat), Annex F.7.3.3 (set_timeout)",
+        "uvm-core 2020.3.1 (`uvm_phase_hopper.svh`: PH_TIMEOUT watchdog implemented as `uvm_delay(top.phase_timeout)`; `uvm_global_defines.svh`: UVM_DEFAULT_TIMEOUT 9200s)",
+        "uvm-core 2020.3.1 (`uvm_objection.svh`: +UVM_OBJECTION_TRACE; `uvm_phase.svh`: +UVM_PHASE_TRACE; `uvm_root.svh`: RNTST, INVTST, +UVM_TIMEOUT; `uvm_factory.svh`: BDTYP)"
+      ]
+    },
+    {
+      "id": "uvm-ral-mirror-prediction",
+      "topic": "uvm",
+      "level": "senior",
+      "category": "concept",
+      "modules": [
+        "A-UVM-4A_RAL_Fundamentals/index",
+        "A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit",
+        "A-UVM-4B_Advanced_RAL_Techniques/frontdoor-vs-backdoor"
+      ],
+      "prompt": "In a UVM register model, what are the desired, mirrored and actual values? What do `set()`, `update()`, `write()`, `mirror()` and `predict()` each change? When do you use auto-prediction, and when an explicit `uvm_reg_predictor`?",
+      "model_answer": "Three values per register:\n\n1. Actual: what the DUT really holds.\n\n2. Mirrored: what the model believes the DUT holds (`get_mirrored_value()`).\n\n3. Desired: what the test wants the DUT to hold next (`get()`).\n\nWhat each call touches:\n\n1. `set(v)` changes the desired value only. Nothing happens on the bus.\n\n2. `update()` writes to the DUT every register whose desired value differs from its mirror.\n\n3. `write(status, v)` writes the DUT now. With prediction on, the mirror follows.\n\n4. `mirror(status, UVM_CHECK)` reads the DUT, reports an error if the value read differs from the mirror (volatile fields are not checked), then updates the mirror.\n\n5. `predict(v)` changes the mirror without any bus access. Use it for effects the bus does not show, such as hardware setting a status bit.\n\n```systemverilog\n// env connect_phase\nregmodel.default_map.set_sequencer(apb_agt.sqr, apb_adapter);\npredictor.map     = regmodel.default_map;\npredictor.adapter = apb_adapter;\napb_agt.mon.ap.connect(predictor.bus_in);    // explicit prediction from observed bus traffic\nregmodel.default_map.set_auto_predict(0);    // do not predict the same access twice\n\n// a test sequence\nregmodel.ctrl.enable.set(1);                 // desired only\nregmodel.update(status);                     // write registers whose desired != mirrored\nregmodel.stat.mirror(status, UVM_CHECK);     // read, compare with the mirror, then update it\n```\n\nAuto-prediction (`set_auto_predict(1)`; it is off by default) updates the mirror when the model's own `read()` or `write()` completes. It sees only accesses made through the register model.\n\nExplicit prediction uses a `uvm_reg_predictor` fed by the bus monitor. Through the adapter's `bus2reg()`, it updates the mirror for every transfer on the bus, whoever started it: firmware running on a CPU model, a sequence that drives the bus directly, or another master. Use it whenever anything other than the register model can access the registers, and turn auto-prediction off so no access is predicted twice.\n\nNeither mode sees the hardware changing a register by itself. For that, mark the field volatile (uvm-core then skips its mirror check), call `predict()` from a monitor or scoreboard when the event happens, or use field access policies that model the side effect of the access itself, such as W1C or RC.\n\nFrontdoor access goes through the map, the adapter and the sequencer, with real bus timing. Backdoor access (`peek`, `poke`, or `path = UVM_BACKDOOR`) uses HDL paths, in zero time, with no bus traffic. It is good for initialization and for checks that must not disturb the DUT.",
+      "rubric": "A strong answer defines all three values and maps each method to the values it changes, notably that `set()` does not touch the DUT. It explains auto versus explicit prediction by who can access the registers, wires the predictor (map, adapter, `bus_in`) with auto-predict off, and handles hardware-updated fields with volatile, `predict()` or access policies. Extra credit: frontdoor versus backdoor and `mirror` with `UVM_CHECK`.\n\nA weak answer thinks `set()` writes the DUT, thinks the mirror tracks the DUT by itself, or enables auto-predict and an explicit predictor together.",
+      "common_mistakes": [
+        "Saying `set()` writes the DUT. Only `write()` or `update()` does.",
+        "Expecting auto-prediction to see firmware or other masters' accesses.",
+        "Enabling auto-prediction and an explicit predictor on the same map, which predicts every model access twice.",
+        "Checking a hardware-updated status field with `mirror(UVM_CHECK)` without making it volatile or predicting it."
+      ],
+      "follow_ups": [
+        "A mirror check fails on a write-1-to-clear interrupt status bit. Walk through the possible causes.",
+        "When would you use a backdoor `poke()` instead of a frontdoor `write()`?",
+        "What must the adapter's `bus2reg()` get right for the predictor to work?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §18.2.5.2 (set_auto_predict: off by default; use a uvm_reg_predictor to capture all bus activity), §19.3 (uvm_reg_predictor), §19.2.1 (uvm_reg_adapter: reg2bus §19.2.1.2.5, bus2reg §19.2.1.2.6)",
+        "IEEE 1800.2-2020 §18.4.4.1 (get), §18.4.4.2 (set), §18.4.4.3 (get_mirrored_value), §18.4.4.9 (write), §18.4.4.13 (update), §18.4.4.14 (mirror), §18.4.4.15 (predict), §18.1.5.5 (block update)",
+        "uvm-core 2020.3.1 (`uvm_reg_field.svh`: a volatile field gets UVM_NO_CHECK; `uvm_reg_map.svh`: auto-predict defaults to 0)"
+      ]
+    },
+    {
+      "id": "uvm-sequence-arbitration-lock-grab",
+      "topic": "uvm",
+      "level": "senior",
+      "category": "concept",
+      "modules": [
+        "I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration",
+        "I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling"
+      ],
+      "prompt": "Three sequences share one sequencer: background traffic at priority 100, a burst at priority 500, and an interrupt-service sequence whose three items must go out back to back. With the default arbitration, does priority matter? How do you make it matter, and when do you use `lock()` and when `grab()`?",
+      "model_answer": "With the default policy, `UVM_SEQ_ARB_FIFO`, priority is ignored: requests are granted in arrival order. Arbitration is per item, not per sequence, so items from the three sequences interleave.\n\nPriority counts only in the priority-aware modes, set with `set_arbitration()`:\n\n1. `UVM_SEQ_ARB_WEIGHTED`: random choice, weighted by priority.\n\n2. `UVM_SEQ_ARB_STRICT_FIFO`: highest priority first, FIFO among equal priorities.\n\n3. `UVM_SEQ_ARB_STRICT_RANDOM`: highest priority first, random among equals.\n\n4. `UVM_SEQ_ARB_USER`: your `user_priority_arbitration()` decides.\n\nA root sequence's default priority is 100, and a child inherits its parent's. Set it with `start(sqr, parent, priority)`, per item with `start_item(item, priority)`, or with `set_priority()`. Strict modes can starve low-priority traffic for as long as high-priority requests keep arriving.\n\n```systemverilog\nenv.agt.sqr.set_arbitration(UVM_SEQ_ARB_STRICT_FIFO);\nfork\n  bg_seq.start(env.agt.sqr, null, 100);\n  burst_seq.start(env.agt.sqr, null, 500);\njoin_none\n\n// interrupt-service sequence\ntask body();\n  grab();                      // to the front of the queue; blocks other sequences once granted\n  repeat (3) begin\n    isr_item it = isr_item::type_id::create(\"it\");\n    start_item(it);\n    if (!it.randomize()) `uvm_error(\"RNDFAIL\", \"isr_item randomize failed\")\n    finish_item(it);\n  end\n  ungrab();\nendtask\n```\n\n`lock()` and `grab()` both give one sequence exclusive use of the sequencer, so its items go out back to back. The difference is when they take effect. A lock request is arbitrated like any other request and is granted after the earlier requests complete. A grab request goes to the front of the arbitration queue and is granted as soon as no other lock or grab blocks it. Use `grab()` for urgent work such as interrupt service, and `lock()` for an atomic sequence that may wait its turn. While a lock is held, only the holder and its child sequences are granted.\n\nPitfalls: a holder that waits for something only another sequence on the same sequencer can produce will deadlock. Always release with `unlock()` or `ungrab()`; uvm-core also removes a sequence's locks when it exits, but relying on that hides intent. Use `is_relevant()` with `wait_for_relevant()` to make a sequence temporarily ineligible without locking anyone out.",
+      "rubric": "A strong answer says FIFO ignores priority, names the modes that use it (WEIGHTED as random-weighted, the STRICT modes as highest-first), knows the default priority of 100 and how to set it, and distinguishes lock (arbitrated, granted in turn) from grab (front of the queue). It mentions starvation and deadlock risks and the need to release the lock.\n\nA weak answer thinks priority works under FIFO, calls WEIGHTED strict priority, or treats lock and grab as identical.",
+      "common_mistakes": [
+        "Assuming priority matters under the default `UVM_SEQ_ARB_FIFO`.",
+        "Treating `UVM_SEQ_ARB_WEIGHTED` as strict priority. It is random, weighted by priority.",
+        "Treating `lock()` and `grab()` as identical.",
+        "Holding a lock while waiting for another sequence on the same sequencer, which deadlocks."
+      ],
+      "follow_ups": [
+        "A child sequence of the lock holder calls `start_item()`. Is it blocked?",
+        "How would you guarantee the background traffic still gets some share under a strict mode?",
+        "What does `is_relevant()` let a sequence do that a lock cannot?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 Annex F.2.4.1 (uvm_sequencer_arb_mode; FIFO is the default), §15.3.2.19 (set_arbitration), §14.2.3.1 (start: priority, default 100 for a root sequence), §14.2.5.2 (set_priority)",
+        "IEEE 1800.2-2020 §14.2.5.5 (lock), §14.2.5.6 (grab), §14.2.5.8 (ungrab), §14.2.5.3 (is_relevant)",
+        "uvm-core 2020.3.1 (`uvm_sequencer_base.svh`: `is_blocked` lets children of the lock holder through; locks removed when a sequence exits)"
+      ]
+    },
+    {
+      "id": "uvm-callbacks-vs-factory",
+      "topic": "uvm",
+      "level": "senior",
+      "category": "concept",
+      "modules": [
+        "A-UVM-5_UVM_Callbacks/index",
+        "A-UVM-9_Reset_and_Error_Injection/index"
+      ],
+      "prompt": "When would you add a callback hook to a driver instead of relying on a factory override? Write the hook. Then explain why the env code below corrupts data on both agents' drivers instead of only `agt0`'s.",
+      "code": "```systemverilog\n// dual_env::build_phase\nagt0 = bus_agent::type_id::create(\"agt0\", this);\nagt1 = bus_agent::type_id::create(\"agt1\", this);\ncb   = corrupt_cb::type_id::create(\"cb\");\nuvm_callbacks#(bus_driver, bus_driver_cb)::add(agt0.drv, cb);   // meant for agt0 only\n```",
+      "model_answer": "```systemverilog\ntypedef class bus_driver;\n\nclass bus_driver_cb extends uvm_callback;          // the hook interface\n  `uvm_object_utils(bus_driver_cb)\n  function new(string name = \"bus_driver_cb\");\n    super.new(name);\n  endfunction\n  virtual function void pre_drive(bus_driver drv, bus_item t);\n  endfunction\nendclass\n\nclass bus_driver extends uvm_driver #(bus_item);\n  `uvm_component_utils(bus_driver)\n  `uvm_register_cb(bus_driver, bus_driver_cb)       // without it, add() warns CBUNREG\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n  endfunction\n  task run_phase(uvm_phase phase);\n    forever begin\n      seq_item_port.get_next_item(req);\n      `uvm_do_callbacks(bus_driver, bus_driver_cb, pre_drive(this, req))\n      drive(req);\n      seq_item_port.item_done();\n    end\n  endtask\n  virtual task drive(bus_item t);\n  endtask\nendclass\n\nclass corrupt_cb extends bus_driver_cb;\n  `uvm_object_utils(corrupt_cb)\n  function new(string name = \"corrupt_cb\");\n    super.new(name);\n  endfunction\n  function void pre_drive(bus_driver drv, bus_item t);\n    t.data[0] = ~t.data[0];                          // flip one bit\n  endfunction\nendclass\n```\n\nWhy both drivers are affected: build is top-down. When the env's `build_phase` runs, `agt0` exists but its `build_phase` has not run yet, so `agt0.drv` is still null. `add()` with a null object registers a type-wide callback, which applies to every `bus_driver`. Add callbacks once the target exists, for example in `connect_phase` or `end_of_elaboration_phase`.\n\nFactory override or callback?\n\nA factory override replaces the whole class. It is one choice per type or instance, fixed before the object is created, and the subclass can change anything, including protected internals. Two independent behaviours (corrupt data and add delay) need a combined subclass for every combination.\n\nA callback runs at a hook the component's author placed. Callbacks stack: several can be added, with `UVM_APPEND` or `UVM_PREPEND` order. They attach per instance or type-wide, and they can be added and removed at run time, for example to inject errors only during one window. The user's change is limited to what the hook exposes, and the author must plan the hooks.\n\nUse callbacks in VIP shipped to other teams (users cannot edit it, and you control what they may change), and for run-time-switchable error injection or extra checks. Use a factory override for structural replacement, or when no hook exists.",
+      "rubric": "A strong answer writes the callback class, `uvm_register_cb`, the `uvm_do_callbacks` call at the hook point, and a concrete callback, and explains the null-handle, type-wide registration caused by top-down build. It contrasts the mechanisms on granularity, stacking, run-time control and who designs the extension point, and gives a sensible rule for choosing.\n\nA weak answer says callbacks and overrides are interchangeable, forgets `uvm_register_cb`, or cannot explain why both drivers are affected.",
+      "common_mistakes": [
+        "Adding the callback in `build_phase` before the target component exists, which silently makes it type-wide.",
+        "Forgetting `uvm_register_cb`, so `add()` only warns CBUNREG and the callback never runs.",
+        "Building a subclass for every combination of behaviours instead of stacking callbacks.",
+        "Placing hooks after the item is already driven, so the callback cannot change what reaches the DUT."
+      ],
+      "follow_ups": [
+        "How would you turn the corruption on for only 100 items in the middle of the test?",
+        "What is the runtime cost of a hook when no callback is registered?",
+        "How should the scoreboard learn that an item was corrupted on purpose?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §10.7.1 (uvm_callback), §10.7.2.3.1 (uvm_callbacks add), Annex B.4.1 (`uvm_register_cb`), Annex B.4.3 (`uvm_do_callbacks`)",
+        "IEEE 1800.2-2020 §8.3 (factory), §9.8.1.1 (build is top-down)",
+        "uvm-core 2020.3.1 (`uvm_callback.svh`: a null object adds a type-wide callback; CBUNREG warning)"
+      ]
+    },
+    {
+      "id": "uvm-scoreboard-architecture",
+      "topic": "uvm",
+      "level": "senior",
+      "category": "verification-plan",
+      "modules": [
+        "A-UVM-6_Scoreboards_and_Reference_Models/index",
+        "I-UVM-2B_TLM_Connections/index"
+      ],
+      "prompt": "Plan the scoreboard for a DUT that takes packets on one interface and emits them on another. Packets with different IDs may come out in a different order. How do you structure prediction and comparison, and how do you make sure a run with zero mismatches really passed?",
+      "model_answer": "Split prediction from comparison. A predictor (the reference model) subscribes to the input monitor and turns each input into the expected output. A comparator subscribes to the predictor and to the output monitor. The split lets you reuse the comparator, swap in a C model through DPI, and test the model on its own.\n\nMatch on the ordering rule the DUT actually promises. Here, packets with the same ID stay in order, and packets with different IDs may not. So key the expectations by ID and keep a queue per ID. One slot per ID is wrong, because several packets with the same ID can be outstanding.\n\n```systemverilog\nbus_item     exp_by_id[int][$];     // per-ID queues keep same-ID order\nint unsigned n_match;\n\nfunction void write_exp(bus_item t);\n  if (!exp_by_id.exists(t.id)) exp_by_id[t.id] = {};\n  exp_by_id[t.id].push_back(t);\nendfunction\n\nfunction void write_act(bus_item t);\n  bus_item e;\n  if (!exp_by_id.exists(t.id) || exp_by_id[t.id].size() == 0) begin\n    `uvm_error(\"SCB/UNEXP\", {\"no expectation for \", t.convert2string()})\n    return;\n  end\n  e = exp_by_id[t.id].pop_front();\n  if (!t.compare(e))\n    `uvm_error(\"SCB/MISMATCH\", {\"exp \", e.convert2string(), \" act \", t.convert2string()})\n  else\n    n_match++;\nendfunction\n\nfunction void check_phase(uvm_phase phase);\n  foreach (exp_by_id[id])\n    if (exp_by_id[id].size() != 0)\n      `uvm_error(\"SCB/LEFTOVER\", $sformatf(\"%0d packets with id %0d never came out\",\n                                           exp_by_id[id].size(), id))\n  if (n_match == 0)\n    `uvm_error(\"SCB/NOCHECK\", \"no packet was compared\")\nendfunction\n```\n\nMaking zero mismatches mean something:\n\n1. Leftovers: at `check_phase`, every queue must be empty. A packet the DUT dropped never causes a mismatch, only a leftover.\n\n2. Activity: require a minimum number of compares. Zero compares with zero errors is a failure.\n\n3. Unexpected outputs (duplicates, or packets nobody sent) are errors, not ignored.\n\n4. End of test: let in-flight packets drain before checking, with an objection in `phase_ready_to_end()` until the queues are empty (with a bound), rather than a fixed `#100ns` guess.\n\n5. Reset: flush expectations when reset asserts mid-test, and count what was flushed.\n\n6. Injected errors: the predictor models the expected error response, so an intentional error does not show up as a mismatch.\n\nPracticalities: compare with `compare()`, never with `==` on handles; store clones or fresh monitor objects, never a reused handle; report with `convert2string()` so a mismatch is readable; and use keyed lookups, because a linear search over thousands of outstanding packets becomes the bench's hotspot.",
+      "rubric": "A strong answer separates predictor and comparator, keys out-of-order matching by ID with per-ID queues, and handles unexpected outputs. It makes the pass meaningful with leftover checks in `check_phase`, a minimum compare count, a drained end of test, and reset flushing, and it models intentional errors in the predictor. It compares contents, not handles.\n\nA weak answer uses one in-order queue for an out-of-order DUT, one slot per ID, `==` on handles, or treats zero mismatches as a pass without leftover and activity checks.",
+      "common_mistakes": [
+        "Treating zero mismatches as a pass when nothing was compared, or when expected packets were left over.",
+        "Keeping one expected slot per ID when the protocol allows several outstanding packets with the same ID.",
+        "Comparing transactions with `==`, which compares handles.",
+        "Ending the test after a fixed delay instead of waiting for outstanding expectations, with a bound."
+      ],
+      "follow_ups": [
+        "The DUT may legally drop packets when a FIFO overflows. How does the scoreboard tell a legal drop from a bug?",
+        "How would you find the first mismatch in a run with 10,000 of them?",
+        "Where does a C++ reference model plug into this structure?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §13.6 (uvm_scoreboard), §12.2.10.2 (uvm_analysis_imp), §12.2.8.3 (uvm_tlm_analysis_fifo), §5.3.9 (compare), §9.8.1.7 (check_phase), §13.1.4.3.2 (phase_ready_to_end)",
+        "IEEE 1800-2023 §7.8 (associative arrays), §7.10 (queues)"
+      ]
+    },
+    {
+      "id": "uvm-end-of-test-drain",
+      "topic": "uvm",
+      "level": "senior",
+      "category": "coding",
+      "modules": [
+        "I-UVM-1C_UVM_Phasing/index",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index",
+        "I-UVM-3A_Fundamentals/index"
+      ],
+      "prompt": "Your test ends while the last responses are still in flight, so the scoreboard reports leftovers. Show three correct tools for ending the test cleanly: an objection owned by the top sequence, drain time, and `phase_ready_to_end()`. Say what each one is for and in what order they act.",
+      "model_answer": "1. The objection belongs to whoever knows when stimulus is done: the top sequence.\n\n```systemverilog\nclass top_seq extends uvm_sequence #(bus_item);\n  `uvm_object_utils(top_seq)\n  function new(string name = \"top_seq\");\n    super.new(name);\n    set_automatic_phase_objection(1);  // raise before pre_start, drop after post_start\n  endfunction\n  task body();\n    // ... items ...\n  endtask\nendclass\n\n// test run_phase: a sequence started by hand needs its starting phase,\n// otherwise no objection is raised and run_phase ends at time 0\nseq.set_starting_phase(phase);\nseq.start(env.agt.sqr);\n```\n\nThe automatic objection is raised on the starting phase. With a null starting phase uvm-core raises nothing, silently. Do not use it for a sequence with a `forever` loop: the objection would never drop.\n\n2. Drain time covers a known, bounded pipeline latency after the last objection drops:\n\n```systemverilog\ntask run_phase(uvm_phase phase);      // in the test\n  phase.get_objection().set_drain_time(this, 2us);\n  // ...\nendtask\n```\n\nIt is a fixed delay that starts when this object's objection count reaches zero. It is simple, but it is a guess, and a guess that is too short fails intermittently.\n\n3. `phase_ready_to_end()` lets the component that knows what is still outstanding hold the phase open:\n\n```systemverilog\n// in the scoreboard; n_outstanding is updated by write_exp / write_act\nfunction void phase_ready_to_end(uvm_phase phase);\n  if (phase.get_name() != \"run\" || n_outstanding == 0) return;\n  phase.raise_objection(this, \"waiting for outstanding responses\");\n  fork\n    begin\n      fork\n        wait (n_outstanding == 0);\n        #50us `uvm_error(\"SCB/DRAIN\", $sformatf(\"%0d responses never arrived\", n_outstanding))\n      join_any\n      disable fork;\n      phase.drop_objection(this, \"drained\");\n    end\n  join_none\nendfunction\n```\n\nThe order at the end of the run phase: the last objection drops, the drain time elapses, then `phase_ready_to_end()` is called on the components. If any of them raised an objection, the phase waits for it to drop and calls `phase_ready_to_end()` again, up to a limit (20 iterations by default). Then the phase ends, its processes are killed, and `extract_phase` and `check_phase` run. Use the sequence objection for \"stimulus is done\" and `phase_ready_to_end()` for \"all responses are in\"; keep drain time small, for the tail of a pipeline.",
+      "rubric": "A strong answer puts the objection in the top sequence (with the starting phase set when started by hand), uses drain time as a bounded delay after the count reaches zero, and implements a bounded `phase_ready_to_end()` drain in the scoreboard that waits on a variable, not on a function call. It gives the correct order: drop, drain, ready-to-end iterations, phase end, check.\n\nA weak answer relies on one large drain time, raises objections per item in the driver, or forgets that the automatic objection needs a starting phase.",
+      "common_mistakes": [
+        "Calling `set_automatic_phase_objection(1)` on a sequence started by hand without `set_starting_phase()`. Nothing is raised, and the phase ends at time 0.",
+        "Choosing a large fixed drain time instead of waiting for the actual outstanding count.",
+        "Raising an objection in `phase_ready_to_end()` with no timeout, turning a missing response into a PH_TIMEOUT.",
+        "Using automatic objections on a sequence with a `forever` loop."
+      ],
+      "follow_ups": [
+        "Why does the example wait on a variable instead of `wait (pending() == 0)` with a function call?",
+        "Where is `set_drain_time` best called, and which object's count does it watch?",
+        "How would `+UVM_OBJECTION_TRACE` show these three mechanisms in action?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §14.2.4.4 (set_automatic_phase_objection, including the `forever` note), §14.2.4.1 (get_starting_phase), §10.5.1.3.7 (set_drain_time), §13.1.4.3.2 (phase_ready_to_end), §9.3.1.3.5 (max ready-to-end iterations), §9.3.1.7.1 (get_objection)",
+        "uvm-core 2020.3.1 (`uvm_sequence_base.svh`: no objection when the starting phase is null; `uvm_phase.svh`: default of 20 ready-to-end iterations)"
+      ]
+    },
+    {
+      "id": "uvm-mid-test-reset",
+      "topic": "uvm",
+      "level": "senior",
+      "category": "verification-plan",
+      "modules": [
+        "A-UVM-9_Reset_and_Error_Injection/index",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index"
+      ],
+      "prompt": "The DUT can be reset in the middle of traffic. What must the driver, monitor, scoreboard, register model and sequences each do? How do you inject protocol errors without hiding real failures?",
+      "model_answer": "The driver must abandon the current transfer when reset asserts, put the pins in their reset state, settle the item it holds, and wait for reset to deassert:\n\n```systemverilog\ntask run_phase(uvm_phase phase);\n  forever begin\n    wait (vif.rst_n === 1'b1);\n    fork\n      forever begin\n        seq_item_port.get_next_item(req);\n        busy = 1;\n        drive(req);\n        seq_item_port.item_done();\n        busy = 0;\n      end\n      @(negedge vif.rst_n);           // asynchronous reset, not through a clocking block\n    join_any\n    disable fork;                     // stop the drive thread mid-transfer\n    idle_pins();\n    if (busy) begin                   // option (a): the driver completes the held item\n      req.reset_seen = 1;\n      seq_item_port.item_done();\n      busy = 0;\n    end\n  end\nendtask\n```\n\nDecide who owns the held item, and do only one of these:\n\n1. Option (a): the driver calls `item_done()` for it, and sequences see the reset and stop or retry.\n\n2. Option (b): a reset virtual sequence calls `sqr.stop_sequences()`. That kills every sequence on the sequencer, and in uvm-core it also flushes the request the driver holds. The driver must then not call `item_done()`, or uvm-core fatals with SQRBADITMDN.\n\nMixing the two is a common fatal.\n\nMonitor: discard a partially observed transaction and do not publish it. Optionally publish a reset notification (an event or a reset item) so subscribers can react.\n\nScoreboard: expectations do not survive reset. Flush the queues on reset, count what was flushed, and resume. Otherwise the leftover check fails, or stale expectations match new traffic.\n\nRegister model: call `regmodel.reset()` so the mirror returns to reset values, then reconfigure.\n\nSequences and test: keep the test's objection across the reset, and drive the reset from a virtual sequence that asserts reset, stops or restarts stimulus, and reprograms the DUT. Prefer reset-aware `run_phase` threads to phase jumping, which restarts only the run-time phases and is hard to make safe.\n\nError injection: inject through a callback, a factory override or an error knob on the item, and teach the predictor to expect the resulting error response, so the scoreboard checks it instead of ignoring it. Expected error messages from VIP checkers can be demoted with a narrow `uvm_report_catcher`: match the exact ID (and message), count the catches, and require that count at the end of the test. Never demote all errors during an injection window: a real failure in that window would pass.\n\nCoverage: cross reset with the protocol state it interrupted, and error type with the DUT's response.",
+      "rubric": "A strong answer gives every component a reset behaviour: a driver that stops mid-transfer, idles the pins and settles the held item; a monitor that drops partial transactions; a scoreboard that flushes expectations; a register model that resets its mirror; and a virtual sequence that orchestrates reset. It chooses one owner for the held item and knows the `stop_sequences()` interaction. It injects errors with the predictor expecting them, and demotes only specific, counted messages.\n\nA weak answer lets expectations survive reset, ignores the item the driver holds, recommends phase jumping as the default, or demotes every error during injection.",
+      "common_mistakes": [
+        "Keeping pending expectations across reset.",
+        "Calling `item_done()` after `stop_sequences()` already flushed the request, which fatals with SQRBADITMDN in uvm-core.",
+        "Sampling an asynchronous reset only through a clocking block, so it is seen a cycle late.",
+        "Demoting all errors during an injection window, which hides real failures."
+      ],
+      "follow_ups": [
+        "Reset asserts while the DUT holds an outstanding read. What should the scoreboard expect afterwards?",
+        "How do you prove that your report catcher caught exactly the errors you injected?",
+        "When, if ever, would you use phase jumping for reset?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §15.3.2.14 (stop_sequences), §14.2.5.11 (kill), §6.6 (uvm_report_catcher; §6.6.5 catch, THROW or CAUGHT), §18.1.5.3 (block reset), §10.7 (callbacks)",
+        "uvm-core 2020.3.1 (`uvm_sequencer.svh`: `stop_sequences` flushes the request FIFO; `item_done` with no outstanding request is fatal SQRBADITMDN)"
+      ]
     },
     {
       "id": "uvm-staff-env-architecture",
       "topic": "uvm",
       "level": "staff",
       "category": "staff-system-design",
-      "prompt": "Design the UVM environment architecture for a DMA engine that bridges AXI master, APB slave config, and interrupt lines.",
-      "rubric": "Must include: AXI master agent, APB slave agent, interrupt agent, DMA register model (RAL), reference model/scoreboard, coverage model, virtual sequencer, and config objects. Should discuss scoreboard strategy for out-of-order DMA completion.",
-      "model_answer": "Environment contains: (1) AXI master UVC with driver/monitor/sequencer for DMA data path, (2) APB slave UVC for register configuration, (3) Interrupt agent for completion signaling, (4) RAL model for DMA registers with auto-prediction, (5) DMA reference model that predicts transfers from register writes, (6) Scoreboard with per-channel queues to handle out-of-order DMA completion, (7) Coverage: functional (channel configs, sizes, alignment), protocol (AXI burst types), and cross coverage, (8) Virtual sequencer coordinating config-then-transfer sequences. Key design decision: scoreboard uses channel ID as the ordering key since DMA channels complete independently.",
-      "sources": ["IEEE 1800.2-2020 §2 (Architecture)", "IEEE 1800.2-2020 §7 (RAL)"]
+      "modules": [
+        "A-UVM-8_Multi_Agent_Topologies/index",
+        "A-UVM-4A_RAL_Fundamentals/index",
+        "A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit",
+        "I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index"
+      ],
+      "prompt": "Design the UVM environment for a DMA engine. The DUT is programmed through an APB slave port, moves data as an AXI master, and signals completion and errors on interrupt lines. Give each agent's role, how the register model stays correct, how you check the data, and how the environment is reused at SoC level.",
+      "model_answer": "Get the roles right first. The DUT is the APB slave and the AXI master, so the testbench is the APB master and the AXI slave.\n\n```text\ndma_env\n  apb_agt  ACTIVE master  : drv -> APB -> DUT (APB slave port)\n                            mon --ap--> reg_predictor -> regmodel mirror\n                                \\-ap--> scoreboard (register writes, descriptors)\n  axi_agt  ACTIVE slave   : responder + memory model <- DUT (AXI master)\n           (responder)      knobs: READY delay, response latency, SLVERR/DECERR\n                            mon --ap--> scoreboard (observed reads and writes)\n  irq_mon  passive        : irq lines --> uvm_event \"dma_irq\" + scoreboard\n  regmodel                : APB map, adapter, explicit predictor\n  scoreboard              : reference model + memory-image compare\n  coverage                : descriptors x alignment x backpressure x errors\n  vsqr                    : handles to apb sqr and axi responder sqr\n```\n\nAgents:\n\n1. APB master agent (active). Register accesses go through the register model, its map and a `uvm_reg_adapter` (`reg2bus`/`bus2reg`) onto the APB sequencer.\n\n2. AXI slave responder agent (active). It holds a memory model the DMA reads from and writes to, and has knobs for READY back-pressure, response latency, out-of-order responses where IDs allow, and error responses (SLVERR, DECERR) to test the DMA's error path.\n\n3. Interrupt monitor (passive). It triggers a `uvm_event` for sequences and reports to the scoreboard.\n\nRegister model: use an explicit `uvm_reg_predictor` on the APB monitor, with auto-prediction off, so every APB access is predicted once. That includes accesses made outside the model, and it keeps working at SoC level, where a CPU drives the bus. Hardware updates fields by itself (status, done, error, current address and count), so mark those fields volatile or call `predict()` from the scoreboard on completion events, and model write-1-to-clear interrupt bits with the W1C access policy.\n\nData checking: when the DMA is kicked, the reference model reads the programmed descriptor (source, destination, length, mode) from the mirror or the observed APB writes, and computes the expected destination image from the memory model's source contents. The scoreboard checks:\n\n1. every AXI write lands inside the destination range, with the right data under WSTRB;\n\n2. reads come only from the source range;\n\n3. at the completion interrupt, the whole destination range matches and the status register reads back correctly (`mirror` with `UVM_CHECK` on non-volatile fields);\n\n4. an injected SLVERR produces the error status and interrupt the specification requires.\n\nKey the checks by address, not arrival order: channels and bursts interleave.\n\nStimulus: virtual sequences program descriptors through the register model, enable interrupts, kick the channel, wait on the interrupt event, read and clear status. Constrain-random descriptors cover length, alignment, overlap and multi-channel concurrency.\n\nCoverage: length × source and destination alignment within the bus width × burst types the DMA chose × back-pressure level × error response × interrupt mask, plus concurrent-channel crosses.\n\nEnd of test: every kicked descriptor completed or errored as predicted, nothing left in the scoreboard, no unexpected AXI accesses.\n\nSoC reuse: the APB agent becomes passive (the CPU drives), and the explicit predictor keeps the mirror correct from what it observes. The AXI responder is replaced by the real interconnect and memory, so the AXI agent goes passive and the scoreboard checks real memory through a backdoor or by observation.",
+      "rubric": "A strong answer gets the roles right (TB is the APB master and the AXI slave responder with a memory model), wires the register model with an adapter and an explicit predictor on the APB monitor with auto-predict off, and handles hardware-updated fields with volatile, `predict()` or W1C. It checks data by memory image and address, not arrival order, tests error responses, defines coverage and end-of-test accounting, and explains passive reuse at SoC level.\n\nA weak answer builds an AXI master agent and an APB slave agent (roles reversed), relies on auto-prediction alone, or compares DMA traffic in arrival order.",
+      "common_mistakes": [
+        "Reversing the roles: building an AXI master agent and an APB slave agent for a DUT that is the AXI master and the APB slave.",
+        "Relying on auto-prediction, which misses accesses made outside the register model and fails at SoC level.",
+        "Checking hardware-updated status fields against the mirror without volatile marking or prediction.",
+        "Comparing AXI writes in arrival order when channels and bursts interleave."
+      ],
+      "follow_ups": [
+        "The DMA supports scatter-gather descriptors in memory. What changes in the reference model and the AXI responder?",
+        "How would you verify that the DMA never writes outside the destination range, even under errors?",
+        "Which parts of this environment survive unchanged at SoC level?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §19.2.1 (uvm_reg_adapter), §19.3 (uvm_reg_predictor), §18.2.5.2 (set_auto_predict), §18.4.4.14 (mirror), §18.4.4.15 (predict), §13.4.2.2 (get_is_active)",
+        "uvm-core 2020.3.1 (`uvm_reg_field.svh`: volatile fields get UVM_NO_CHECK; W1C among the field access policies)",
+        "Arm IHI0022E §A3.4.4 (read and write responses: OKAY, EXOKAY, SLVERR, DECERR)"
+      ]
     },
     {
-      "id": "uvm-staff-debug-hanging-sim",
+      "id": "uvm-vip-architecture",
       "topic": "uvm",
       "level": "staff",
-      "category": "waveform-debug",
-      "prompt": "Your UVM simulation hangs at time 0 with no error messages. Walk through your debug methodology.",
-      "rubric": "Systematic approach: check objections (raise without drop), check for missing #delay in run_phase loops, check config_db failures, check factory registration, use +UVM_PHASE_TRACE, check for blocking TLM calls with no producer.",
-      "model_answer": "Debug steps: (1) Run with +UVM_PHASE_TRACE to see which phase is stuck. (2) Run with +UVM_OBJECTION_TRACE to see who raised without dropping. (3) If stuck in run_phase, check for infinite loops without time consumption (#delay or @event). (4) Check for blocking get() on an empty TLM FIFO (no monitor connected). (5) Check config_db — a failed get() with uvm_fatal may not appear if build_phase hasn't completed. (6) Check factory registration — missing `uvm_component_utils causes create() to return null. (7) Use simulator's thread debugger to see which process is blocked.",
-      "sources": ["IEEE 1800.2-2020 §9 (Phasing)", "Accellera UVM debug guide"]
+      "category": "staff-system-design",
+      "modules": [
+        "A-UVM-7_VIP_Construction/index",
+        "A-UVM-5_UVM_Callbacks/index",
+        "A-UVM-8_Multi_Agent_Topologies/index"
+      ],
+      "prompt": "You own a protocol VIP that ten block teams and the SoC team will reuse for years. What goes into it, how is it configured, and which design decisions keep it reusable?",
+      "model_answer": "Contents, delivered as one package plus one interface:\n\n1. The item, sequencer, driver, monitor and agent, and a library of base sequences.\n\n2. A coverage subscriber and protocol checks.\n\n3. An interface with clocking blocks and SVA protocol assertions. Route assertion failures into UVM, for example with `uvm_error` in the action block (the macros work at module scope). A plain `$error` does not reach the UVM report counts.\n\n4. A small example environment, tests, and documentation.\n\nConfiguration: one configuration object per agent instance, passed with a single `uvm_config_db` set, instead of many scalar fields. It holds `is_active`, the virtual interface, `has_coverage`, `has_checks`, the protocol mode or version, and timing knobs that can be randomized. Validate it in `build_phase` and fatal with a clear message if the virtual interface is missing or the settings contradict each other.\n\nActive and passive must both work. A passive agent builds only the monitor, checks and coverage, which is what the SoC team needs. The monitor must never depend on driver state.\n\nExtensibility without forking:\n\n1. Register every class with the factory and make the key methods virtual.\n\n2. Provide callbacks at the points users will want (before drive, after a transaction is observed), with `uvm_register_cb`.\n\n3. Publish analysis ports for transactions and protocol events.\n\n4. Hard-code no paths or instance names.\n\nPrefer maximum-width fields with a configured width over class parameters. Parameterized classes complicate factory overrides and `uvm_config_db` typing for every user.\n\nRobust behaviour: correct reset handling (abandon, flush, resume), X checks on control signals, a configurable stall watchdog, and stable message IDs with a prefix (for example `AXI_VIP/...`). Protocol violations are errors, not fatals, so a user can demote an expected one by ID with a catcher.\n\nPerformance: no `uvm_config_db` lookups or objections per item or per cycle, the `uvm_info` macros (not direct calls) in hot paths, and recording off by default.\n\nLife cycle: semantic versioning and a changelog, a deprecation period before removing anything, a pinned and tested uvm-core version, and a CI regression on the example environment across the supported simulators. Ship sample tests that every user can run on day one.",
+      "rubric": "A strong answer covers the package contents (including interface assertions routed into UVM), a single validated config object, true passive mode, extension through the factory, callbacks and analysis ports without forking, robustness (reset, X, watchdog, stable message IDs, errors rather than fatals), performance discipline, and versioning with CI. It justifies each decision by a reuse scenario.\n\nA weak answer lists components only, configures through dozens of scalar settings, or makes passive mode an idle driver.",
+      "common_mistakes": [
+        "Assuming a `$error` in an interface assertion increments the UVM error count.",
+        "Implementing passive mode as an active agent with an idle driver.",
+        "Configuring through many scalar `uvm_config_db` fields instead of one validated object.",
+        "Raising `uvm_fatal` for protocol violations, which users cannot selectively demote during error-injection tests."
+      ],
+      "follow_ups": [
+        "A user needs a protocol extension your VIP does not support. How do they add it without forking?",
+        "How do you change a sequence's behaviour without breaking the ten teams using it?",
+        "What would you measure to prove the VIP does not slow down users' regressions?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §13.4 (uvm_agent), §13.4.2.2 (get_is_active), §10.7 (callbacks), §8.3 (factory), §6.6 (uvm_report_catcher), Annex C.4.2 (uvm_config_db), Annex B.1 (report macros)",
+        "IEEE 1800-2023 §25.9 (virtual interfaces), §16.14 (concurrent assertions)"
+      ]
+    },
+    {
+      "id": "uvm-performance-hotspots",
+      "topic": "uvm",
+      "level": "staff",
+      "category": "staff-system-design",
+      "modules": [
+        "E-PERF-1_UVM_Performance/index",
+        "I-UVM-6_UVM_Recording_Classes/index"
+      ],
+      "prompt": "A block regression became several times slower after the testbench grew, and the profiler says most of the time is spent in the testbench, not the DUT. The monitor loop below is typical of the new code. Which UVM patterns do you look for first, and how do you prove that a fix helped?",
+      "code": "```systemverilog\ntask run_phase(uvm_phase phase);\n  forever begin\n    @(posedge vif.clk);\n    void'(uvm_config_db#(int)::get(this, \"\", \"verbose_mode\", verbose_mode));  // every cycle\n    uvm_report_info(\"MON\", $sformatf(\"sample %p\", vif.cb.data), UVM_DEBUG);   // built even when filtered\n    if (vif.cb.valid && vif.cb.ready) begin\n      phase.raise_objection(this);                                             // per transaction\n      tr = bus_item::type_id::create(\"tr\");\n      tr.data = vif.cb.data;\n      tr.print();                                                              // table print per item\n      ap.write(tr);\n      phase.drop_objection(this);\n    end\n  end\nendtask\n```",
+      "model_answer": "Measure before changing anything. Use the simulator's profiler (tool-dependent) to split DUT from testbench time and to find the top testbench call sites. Fix the seed and build options so the before and after runs do the same work. Any numbers you quote are specific to the design and the tool; record them as such.\n\nWhat to look for:\n\n1. `uvm_config_db::get()` in a loop. Each call searches the resource pool and matches scope strings, so the cost grows with the number of settings and wildcards (an implementation detail of uvm-core). Read configuration once in `build_phase` and cache it.\n\n2. Messages built and then filtered. A direct `uvm_report_info(..., $sformatf(...), UVM_DEBUG)` formats its string on every call even though the message is filtered. The `uvm_info` macro checks the verbosity first and skips the formatting. Also avoid `print()` and `sprint()` (table printers) on every item; use `convert2string()` under the macro.\n\n3. Objection churn. Raising and dropping per transaction propagates up the hierarchy each time (propagation is on by default). Raise once per test or top sequence; monitors should not object at all.\n\n4. Transaction recording left on in regressions (`recording_detail`, automatic item recording on sequencers). Enable it only for debug runs.\n\n5. Per-cycle work that could be per transaction: polling every clock in many components instead of waiting on an event or a clocking-block `iff` condition, and sampling coverage every cycle instead of once per transaction.\n\n6. Field-macro copy, compare and print in hot paths, where hand-written `do_*` methods are cheaper (the size of the gain depends on the implementation).\n\n7. Scoreboards with linear searches over large queues, and items that are never released (memory growth slows everything down).\n\n8. Full waveform dumping in regressions.\n\nProving it: A/B runs with the same seed and build options; compare wall time, peak memory and the results themselves (same transaction count, same coverage, same pass or fail); keep a small performance regression in CI with stored baselines so the next slowdown is caught in the change that caused it.",
+      "rubric": "A strong answer starts with measurement (profile, fixed seed, attribute DUT versus testbench), then names concrete UVM hotspots with the reason each one costs time: config_db lookups in loops, message construction outside the macro guard and table prints, objection churn with propagation, recording, per-cycle polling and sampling, field macros in hot paths and scoreboard data structures. It proves fixes with controlled A/B runs that also check the results did not change, and labels numbers as design- and tool-specific.\n\nA weak answer guesses without profiling, quotes universal speed-up figures, or blames blocking versus non-blocking assignments for testbench slowness.",
+      "common_mistakes": [
+        "Optimizing without a profile, or comparing runs with different seeds.",
+        "Believing a direct `uvm_report_info` call with `$sformatf` is as cheap as the macro when the message is filtered.",
+        "Thinking TLM FIFOs add parallelism. They buffer; the simulator still runs one process at a time.",
+        "Quoting speed-up percentages as if they held for every design and simulator."
+      ],
+      "follow_ups": [
+        "How would you find which component holds most of the memory at the end of a long test?",
+        "What regression-level changes (not testbench code) would you make for throughput?",
+        "When is transaction recording worth its cost?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 Annex B.1.1.1 (`uvm_info` calls `uvm_report_info` only if the verbosity passes), §10.5.1.3.2 (set_propagate_mode), §7.1 (uvm_tr_database)",
+        "uvm-core 2020.3.1 (`uvm_message_defines.svh`: `uvm_report_begin` guard; `uvm_objection.svh`: propagation on by default; `uvm_component.svh`: recording_detail defaults to UVM_NONE; `uvm_config_db.svh`)"
+      ]
+    },
+    {
+      "id": "uvm-phase-jumping-domains",
+      "topic": "uvm",
+      "level": "staff",
+      "category": "trick",
+      "modules": [
+        "I-UVM-1C_UVM_Phasing/index",
+        "A-UVM-9_Reset_and_Error_Injection/index",
+        "E-CUST-1_UVM_Methodology_Customization/index"
+      ],
+      "prompt": "A colleague proposes handling mid-test reset by calling `phase.jump(uvm_pre_reset_phase::get())` from `main_phase`, and putting the CPU subsystem in its own `uvm_domain` so it can be reset independently of the rest of the SoC. What actually happens, and would you approve the design?",
+      "model_answer": "What `jump()` does: it ends the current phase early and moves the schedule to the target phase. The target must be a predecessor or successor in the same schedule. `uvm_domain::jump()` jumps every active phase in a domain. Jumping from `main_phase` back to `pre_reset_phase` kills the processes started in the current run-time phase (any sequences running in `main_phase` die with them), then re-runs `pre_reset_phase` through `main_phase` for every component in that domain.\n\nWhat it does not do: `run_phase` is in the common domain, in parallel with the run-time schedule. A jump of the run-time phases does not restart `run_phase`. Drivers, monitors and scoreboards whose loops live in `run_phase` keep running with whatever state they had. A driver may still hold a half-driven item, and a scoreboard still holds pre-reset expectations. So every such component still needs its own reset handling. The jump has added a second mechanism, not replaced the first.\n\nDomains: `set_domain(dom, 1)` gives a component subtree its own copy of the run-time schedule, added to the common domain in parallel with `run_phase`. A new domain is not synchronized with the uvm domain unless you call `sync()`, so its `reset_phase` and `main_phase` run independently. All domains still meet before `extract_phase`. In uvm-core, `set_domain` recurses over the children that exist at the time of the call, so call it after the subtree is built.\n\nVerdict: I would approve independent domains only when the subsystems really have independent reset and clocking and the team accepts the complexity. I would not approve phase jumping as the reset strategy. The robust default is reset-aware components in `run_phase` (abandon, flush, resume) plus a reset virtual sequence. That works whether reset comes from a test, from a watchdog in the DUT, or from software. If jumping is used anyway, every component in the domain must be jump-safe: stimulus only in run-time phases, cleanup in `phase_started()` and `phase_ended()`, and objections that are re-raised on re-entry.",
+      "rubric": "A strong answer explains `jump()` (premature end, target in the same schedule, phase processes killed and phases re-run), sees that `run_phase` components are not reset by a run-time jump, explains user domains (own schedule, unsynchronized unless `sync()` is called, joined before extract) and gives a reasoned verdict that prefers reset-aware components, with the conditions under which domains or jumps are acceptable.\n\nA weak answer calls phase jumping the standard reset technique, or thinks it restarts the whole testbench.",
+      "common_mistakes": [
+        "Treating phase jumping as the standard reset technique.",
+        "Assuming a jump of the run-time phases restarts `run_phase` threads.",
+        "Assuming a new domain stays in lockstep with the default uvm domain.",
+        "Calling `set_domain(dom, 1)` before the subtree's children have been built."
+      ],
+      "follow_ups": [
+        "Which callbacks would a jump-safe driver use to clean up?",
+        "How would you keep two domains aligned at `main_phase` but independent during reset?",
+        "What happens to an objection raised in `main_phase` when the phase is jumped?"
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §9.3.1.9.1 (uvm_phase jump: target among predecessors or successors), §9.4.2.4 (uvm_domain jump), §9.3.1.8.1 (sync), §13.1.4.4.1 (set_domain: default domain is the uvm domain), §9.8.2 (run-time phases)",
+        "uvm-core 2020.3.1 (`uvm_component.svh`: `define_domain` adds a new domain to the common domain `with_phase` run, and `set_domain` recurses over existing children; `uvm_phase_hopper.svh`: phase processes killed at phase end)"
+      ]
     },
     {
       "id": "uvm-senior-staff-methodology",
       "topic": "uvm",
       "level": "senior-staff",
       "category": "staff-system-design",
-      "prompt": "How would you structure a UVM verification platform to support both simulation and emulation targets without maintaining separate environments?",
-      "rubric": "Must discuss: transaction-level acceleration (TLA) vs pin-level, abstract/concrete driver pattern, emulation-aware sequences, compile-time vs runtime configuration, and clock/reset abstraction.",
-      "model_answer": "Use a dual-mode architecture: (1) Abstract base driver with virtual drive_transaction() method — simulation subclass drives pin-level; emulation subclass uses TLA APIs. (2) Factory override selects the concrete driver based on a +UVM_TESTNAME or config_db setting. (3) Sequences remain unchanged — they generate transactions, not pin wiggles. (4) Monitors use a similar abstract/concrete pattern. (5) Remove $display and string formatting from synthesizable paths. (6) Use a clock generator abstraction that maps to real clock domains in simulation and to emulator-provided clocks in emulation. This lets 95% of the environment be shared.",
-      "sources": ["IEEE 1800.2-2020 §2", "Cadence Palladium TLA documentation (secondary)"]
+      "modules": [
+        "E-EMU-1_Emulation_Aware_Verification/index",
+        "E-PERF-1_UVM_Performance/index",
+        "A-UVM-7_VIP_Construction/index"
+      ],
+      "prompt": "How would you structure a UVM platform so that the same tests and sequences run in simulation and on a hardware emulator, without maintaining two environments?",
+      "model_answer": "Start from why a normal UVM bench is slow on an emulator. The DUT runs in hardware, but the class-based testbench runs on a host computer. A pin-level driver that waits on `@(posedge clk)` and wiggles signals every cycle forces the host and the emulator to synchronize every clock. Throughput is then limited by that communication, not by the DUT.\n\nThe standard answer is an HDL/HVL split of every agent:\n\n1. HDL side: a synthesizable transactor (bus functional model) in an interface or module, compiled onto the emulator. It holds all the clocked behaviour: it turns one transaction into many cycles of pin activity, and it packs many cycles of observed activity into one transaction.\n\n2. HVL side: untimed classes on the host, such as sequences, sequencer, a driver proxy, a monitor proxy, scoreboards and coverage. The driver proxy calls a task in the transactor through a virtual interface with transaction-level arguments (for example `vif.do_write(addr, data)`). The monitor transactor calls back to its proxy once per transaction.\n\n3. Communication: the Accellera SCE-MI standard describes this kind of transaction-level link (function calls and message pipes). Vendors implement their own variants, so check the platform's documentation.\n\nThe same split runs unchanged in a simulator, where the transactor is ordinary SystemVerilog. That is the point: one environment, two targets, and only the compile and run flow differs. Selecting a different driver class with a factory override is not the core technique; the split itself is what makes the bench portable.\n\nRules that keep it portable:\n\n1. HDL side: only the synthesizable subset the emulator compiler accepts (tool-dependent), with no class handles, no dynamic data structures, and no delays other than the clock and reset generation that the emulator provides.\n\n2. HVL side: no direct signal access and no per-cycle waits. Time passes only through transactor calls. Avoid fine-grained ping-pong between the sides, and batch transfers or use streaming pipes where possible.\n\n3. Sequences must not depend on per-cycle reactivity, such as polling a signal every clock. Use transactor-reported events instead.\n\n4. Reference models must keep up with the emulator; move heavy models to C through DPI if needed.\n\nWhat changes between targets: clock and reset generation, assertion support (some emulators synthesize a subset of SVA; tool-dependent), how coverage is collected (from transactions on the host, or by the emulator), and debug visibility (waveform capture and probes cost emulation speed, so plan triggers).\n\nStaff-level decisions: design new agents split from day one, because retrofitting is expensive; define and version each transactor's transaction API; measure the number of host-emulator synchronizations per test as a key metric; and run the same tests in simulation in CI so the two targets cannot drift apart.",
+      "rubric": "A strong answer explains why pin-level benches are slow on emulators (per-cycle host-emulator synchronization), proposes the HDL/HVL split with synthesizable transactors in interfaces and untimed proxies calling them through virtual interfaces, and names transaction-level communication (SCE-MI style, vendor-specific in practice). It lists portability rules for each side, what changes between targets, and staff-level governance, without unsourced percentages.\n\nA weak answer proposes swapping pin-level drivers with factory overrides or `+UVM_TESTNAME` as the main mechanism, quotes an unsourced share of reusable code, or ignores synchronization cost.",
+      "common_mistakes": [
+        "Expecting a standard pin-level UVM bench to run efficiently on an emulator unmodified.",
+        "Confusing test selection (`+UVM_TESTNAME`) with choosing the execution target.",
+        "Assuming emulation gives full waveform visibility at no cost.",
+        "Quoting a percentage of the environment that will be shared without data."
+      ],
+      "follow_ups": [
+        "How would you measure whether a transactor is synchronizing with the host too often?",
+        "Which UVM components can stay unchanged, and which must be split?",
+        "How do you debug a mismatch that appears only on the emulator?"
+      ],
+      "sources": [
+        {
+          "doc": "Accellera Standard Co-Emulation Modeling Interface (SCE-MI)",
+          "verified": false
+        },
+        "IEEE 1800-2023 §25.9 (virtual interfaces), §35 (DPI)",
+        "IEEE 1800.2-2020 §8.3 (factory), §13.7 (uvm_driver), §13.5 (uvm_monitor)"
+      ]
+    },
+    {
+      "id": "uvm-multi-language-strategy",
+      "topic": "uvm",
+      "level": "senior-staff",
+      "category": "staff-system-design",
+      "modules": [
+        "E-UVM-ML-1_Multi_Language_Verification/index",
+        "E-PYUVM-1_Python_Based_Verification/index",
+        "I-SV-7_DPI_and_Foreign_Language_Interfaces/index"
+      ],
+      "prompt": "Your organization has a C++/SystemC reference model, a software team that wants to write tests in Python with cocotb or pyuvm, and an established SystemVerilog UVM VIP library. How would you integrate them, and where would you draw the language boundaries?",
+      "model_answer": "Two principles. Cross language boundaries at transaction level, and as rarely as possible per simulated cycle. Keep one owner of time: the HDL simulator.\n\nC/C++ reference model: wrap it in a function-level API and call it from the UVM predictor through DPI-C (`import \"DPI-C\"`). DPI is part of IEEE 1800, so it works the same way on every compliant simulator. Pass simple types and open arrays, and keep the model stateless per call or explicitly reset it.\n\nSystemC TLM-2.0 model: if the model is already a TLM-2.0 component, it needs a bridge between SystemVerilog and SystemC. UVM defines TLM-2 classes (the generic payload, sockets, blocking and non-blocking transport) that mirror SystemC TLM-2.0. Multi-language frameworks such as UVM-ML Open Architecture and UVM Connect, or a vendor's own SystemC co-simulation, connect the two. Support for these differs between simulators and versions, so confirm it with each vendor before committing. If the model can be called as plain functions, DPI is simpler and more portable.\n\nPython: cocotb runs Python coroutines that drive and sample the DUT through the simulator's VPI, VHPI or FLI interface. The DUT still simulates in the HDL simulator. pyuvm implements UVM concepts (components, phases, a config database, TLM) in Python on top of cocotb. It is not source-compatible with SystemVerilog UVM, and SV VIP classes cannot be reused from it. Each Python callback per signal access is expensive, so keep Python at transaction level, with HDL-side BFMs doing the per-cycle work.\n\nA plan:\n\n1. SystemVerilog UVM remains the owner of subsystem and SoC environments, where the VIP library and its passive monitors matter.\n\n2. The C++ model serves both worlds: DPI for SystemVerilog, Python bindings for cocotb.\n\n3. cocotb or pyuvm is offered for block-level and software-owned tests where SV VIP reuse is not needed, with HDL BFMs shared where possible.\n\n4. Regression, coverage merging, seeds and results reporting are common across both, with one dashboard.\n\nRisks to manage: debugging across languages, reproducibility (each language has its own random generator and seeding), version drift of the open-source packages (pin versions; check release notes for API changes), simulator support, and two skill sets on one team.",
+      "rubric": "A strong answer keeps boundaries at transaction level with the simulator owning time, uses DPI for function-level C++ models, explains when a SystemC TLM-2 bridge is needed and that framework support varies by tool, describes cocotb and pyuvm accurately (Python drives the HDL simulator through VPI, VHPI or FLI; pyuvm is not SV-UVM-compatible), and lays out an ownership plan with shared models and regression infrastructure. It flags support claims as needing vendor confirmation.\n\nA weak answer thinks cocotb simulates the DUT in Python, claims pyuvm can reuse SV VIP directly, or asserts that every framework is supported identically on every simulator.",
+      "common_mistakes": [
+        "Saying cocotb runs the DUT in Python. The HDL simulator runs the DUT; Python drives it through the simulator's interface.",
+        "Assuming pyuvm is source-compatible with SystemVerilog UVM.",
+        "Assuming multi-language frameworks are supported identically by every simulator.",
+        "Calling into another language every clock cycle instead of once per transaction."
+      ],
+      "follow_ups": [
+        "How do you keep a failing seed reproducible when two languages each generate random values?",
+        "When is DPI not enough, so that a TLM-2 bridge is worth its cost?",
+        "How would the software team's Python tests reuse the SystemVerilog protocol checkers?"
+      ],
+      "sources": [
+        "IEEE 1800-2023 §35.4, §35.5 (DPI imported tasks and functions), Annex H (DPI C layer)",
+        "IEEE 1800.2-2020 §12.3 (TLM 2), §12.3.4.2 (uvm_tlm_generic_payload), §12.3.5 (sockets)",
+        {
+          "doc": "IEEE 1666 (SystemC, TLM-2.0)",
+          "verified": false
+        },
+        {
+          "doc": "cocotb documentation",
+          "verified": false
+        },
+        {
+          "doc": "pyuvm documentation",
+          "verified": false
+        },
+        {
+          "doc": "Accellera UVM-ML Open Architecture; UVM Connect",
+          "verified": false
+        }
+      ]
     }
   ]
 }

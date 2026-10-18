@@ -1,7 +1,7 @@
 {
   "id": "debug-interview-bank",
   "title": "Debug & Triage Interview Question Bank",
-  "description": "Interview preparation covering simulation debug methodology, waveform analysis, protocol triage, and systematic root-cause workflows.",
+  "description": "Interview preparation for simulation debug, from reading a failing log to staff-level regression triage: first failures and reproduction, UVM configuration, factory and phase traces, X-propagation, testbench races, assertion and protocol triage, hangs, honest verdicts, performance, gate-level debug, coverage closure and sign-off.",
   "topic": "debug",
   "questions": [
     {
@@ -9,60 +9,606 @@
       "topic": "debug",
       "level": "junior",
       "category": "concept",
-      "prompt": "Your UVM simulation fails with a scoreboard mismatch. What are your first five debug steps?",
-      "rubric": "Must include: read the error message, check simulation time, trace the failing transaction ID, examine driver vs monitor logs, compare expected vs actual data. Should mention checking for known bugs.",
-      "model_answer": "1) Read the full error message — note the simulation time, component path, and transaction details. 2) Search the log for the first error (not the last). 3) Trace the failing transaction from sequence → driver → DUT → monitor → scoreboard. 4) Compare the expected value (from reference model) to the actual value (from monitor). 5) Open the waveform at the failure time and correlate signal-level behavior with the transaction log.",
-      "sources": ["Verification methodology best practices (secondary)"]
+      "modules": [
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/effective-debug",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index",
+        "I-UVM-1D_Reporting_and_Run_Control/index"
+      ],
+      "prompt": "A UVM test fails with a scoreboard mismatch. Walk me through your first steps, in order, before you change any code.",
+      "rubric": "A strong answer gives an order and a reason for each step: (1) read how the run ended (summary with errors, a fatal or timeout, or no summary at all); (2) go to the first `UVM_ERROR` or `UVM_FATAL` in simulation time, not the last, and read the warnings just before it (configuration misses, X or protocol warnings); (3) look the failure up among known bugs and open failures; (4) reproduce exactly (same test, seed, build, simulator version and plusargs) and add visibility with plusargs rather than code edits; (5) trace the failing transaction from sequence to driver, DUT, monitor and scoreboard, and compare expected and actual at that time in the waveform; (6) classify the bug as DUT, testbench or test before fixing it. A weak answer starts from the last error or the timeout, adds `$display` calls and rebuilds before reproducing, or assumes the DUT is wrong.",
+      "model_answer": "**1. Classify how the run ended.** A report summary with `UVM_ERROR` above 0 means checks failed. A `PH_TIMEOUT` fatal means something held `run_phase`, or a run-time phase such as `main_phase`, open. No summary at all means a crash, a `$fatal` or a killed job. The ending decides where you look.\n\n**2. Find the first failure.** Debug the earliest `UVM_ERROR` or `UVM_FATAL` in simulation time. Later errors are usually a cascade: a scoreboard whose expected queue slipped by one item reports every following item as wrong. Read the few lines before the first error too. A `UVM_WARNING` about a missing configuration object, an X on a control signal or a protocol warning on the same transaction is often the real lead.\n\n**3. Check known failures.** Turn the first-failure line into a signature (severity, ID, component path, message with numbers removed) and look it up in the bug tracker or the regression's known-failure list. Someone may already own it.\n\n**4. Reproduce exactly.** Rerun the same test with the same seed, build, simulator version and plusargs. Add visibility without rebuilding: `+UVM_VERBOSITY=UVM_HIGH`, or `+uvm_set_verbosity` for one component and ID (IEEE 1800.2-2020 G.2.2, G.2.3), plus a waveform dump and transaction recording for the failing window (the switches are tool-dependent). Editing code and rebuilding can change the random draws (IEEE 1800-2023 §18.14), so the failure may vanish without being fixed.\n\n**5. Trace the transaction.** Find the failing item by its id or address in the monitor's log, follow it back to the driver and the sequence, and open the waveform at that time. Ask three questions: did the DUT produce the wrong value, did the monitor sample it at the wrong time, or did the reference model predict the wrong value?\n\n**6. Classify before fixing.** A DUT bug gets filed with the seed, the waveform and the signature. A testbench bug lives in the monitor, the model or the scoreboard. A test bug is stimulus outside the specification or a wrong configuration. Fix it, then rerun the same seed to prove the fix, and add the seed to the regression.",
+      "follow_ups": [
+        "Before the first error there is a `UVM_WARNING` at 0 ns saying the scoreboard's configuration object was not found. Does it matter?",
+        "Your rerun with one extra `$display` in the driver passes. What happened, and what do you do next?",
+        "How do you tell from the waveform whether the monitor or the DUT is wrong?"
+      ],
+      "common_mistakes": [
+        "Debugging the last error or the timeout instead of the first failure.",
+        "Adding prints and rebuilding before reproducing, which can change the stimulus for that seed.",
+        "Assuming every mismatch is a DUT bug: the reference model and the monitor are code too.",
+        "Skipping the known-bug check and spending a day on a bug that is already filed."
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 Annex G.2.2 (+UVM_VERBOSITY), G.2.3 (+uvm_set_verbosity)",
+        "IEEE 1800-2023 §18.14 (random stability)",
+        "uvm-core 2020.3.1 src/base/uvm_phase_hopper.svh (PH_TIMEOUT fatal)",
+        "Practice note (not normative): first-failure, signature and exact-reproduction workflow, as taught in E-DBG-1 \"Systematic Debug\""
+      ]
+    },
+    {
+      "id": "debug-read-first-failure-log",
+      "topic": "debug",
+      "level": "junior",
+      "category": "concept",
+      "modules": [
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/effective-debug",
+        "I-UVM-1D_Reporting_and_Run_Control/index"
+      ],
+      "prompt": "Here is the tail of a failing log (illustrative, in the uvm-core message format; file and line removed). Which line do you debug first, which lines are probably consequences, and what does the warning at 0 ns tell you?",
+      "code": "UVM_INFO @ 0 ns: reporter [RNTST] Running test fifo_rand_test...\nUVM_WARNING @ 0 ns: uvm_test_top.env.scb [CFG] scb_cfg not found in config_db; using defaults (in_order=0)\nUVM_INFO @ 120 ns: uvm_test_top.env.agt.mon [MON] push data=0x3c\nUVM_ERROR @ 845 ns: uvm_test_top.env.scb [MISMATCH] pop data wrong: exp=0x3c act=0x00 idx=4\nUVM_ERROR @ 855 ns: uvm_test_top.env.scb [MISMATCH] pop data wrong: exp=0x91 act=0x3c idx=5\nUVM_ERROR @ 865 ns: uvm_test_top.env.scb [MISMATCH] pop data wrong: exp=0x07 act=0x91 idx=6\nUVM_FATAL @ 1000000 ns: reporter [PH_TIMEOUT] Explicit timeout of 1000000 ns hit, indicating a probable testbench issue\n\n--- UVM Report Summary ---\n\n** Report counts by severity\nUVM_INFO :   57\nUVM_WARNING :    1\nUVM_ERROR :    3\nUVM_FATAL :    1",
+      "rubric": "A strong answer picks the 845 ns `MISMATCH` as the first failure, spots that each later `act` equals the previous `exp` (a one-item slip: one extra item in the actual stream) and so calls the 855 and 865 ns errors consequences, treats `PH_TIMEOUT` as a probable consequence to re-check after the fix, reads the 0 ns warning as a possible testbench configuration cause, and names the next evidence: the waveform at 845 ns and a `+UVM_CONFIG_DB_TRACE` rerun. A weak answer starts from the `UVM_FATAL` because it is the most severe line, or treats three mismatches as three bugs.",
+      "model_answer": "**Debug the 845 ns `MISMATCH` first.** It is the earliest `UVM_ERROR` in simulation time, so it is the first failure. In one log, time never goes backwards, so it is also the first error line in the file.\n\n**The 855 ns and 865 ns errors are a cascade.** Each `act` equals the previous line's `exp` (0x3c, then 0x91): the actual stream is one item behind the expected stream. One extra item in the actual stream at index 4 (or, seen the other way, one item missing from the expected stream) explains all three lines. Fix the first and these usually disappear.\n\n**`act=0x00` is the clue for the first failure.** Either the DUT returned a value it never stored (for example a pop from an empty FIFO, an underflow) or the monitor sampled the data before it was valid. Open the waveform at 845 ns: compare the pop handshake with the cycle the monitor reported.\n\n**The `PH_TIMEOUT` is a consequence until proved otherwise.** It says something still held an objection to `run_phase`, or to a run-time phase such as `main_phase`, at 1 ms: here, probably the scoreboard or the sequence waiting for items that will never match. If it is still there after the fix, triage it as a hang with `+UVM_OBJECTION_TRACE` (a uvm-core plusarg).\n\n**The 0 ns warning is a lead, not noise.** The scoreboard ran with its default configuration. If this test expected in-order checking, the scoreboard was configured wrongly and the \"DUT bug\" may be a testbench bug. A rerun with `+UVM_CONFIG_DB_TRACE` (uvm-core) shows the `CFGDB/SET` and `CFGDB/GET` lines, so you can compare the scope the test set with the scope the scoreboard read.\n\n**The summary** confirms the counts but is the least useful part of the log: `UVM_FATAL : 1` is the timeout, not the root cause.",
+      "follow_ups": [
+        "If the summary said `Quit count reached!` instead of ending in a timeout, would the last error still be meaningful?",
+        "Turn the 845 ns line into a failure signature you could use to bucket a regression.",
+        "Name two different root causes for `act=0x00` and the waveform cue that separates them."
+      ],
+      "common_mistakes": [
+        "Starting from the `UVM_FATAL` because it is the most severe line.",
+        "Treating each mismatch as a separate bug instead of recognising the one-item slip.",
+        "Ignoring warnings because the test failed on errors."
+      ],
+      "sources": [
+        "uvm-core 2020.3.1 src/base/uvm_report_server.svh (report summary layout)",
+        "uvm-core 2020.3.1 src/base/uvm_phase_hopper.svh (PH_TIMEOUT text)",
+        "IEEE 1800.2-2020 Annex F.7.3.3 (set_timeout), G.2.6 (+UVM_MAX_QUIT_COUNT)",
+        "uvm-core 2020.3.1 src/base/uvm_cmdline_processor.svh (+UVM_CONFIG_DB_TRACE, +UVM_OBJECTION_TRACE: Accellera-only)"
+      ]
+    },
+    {
+      "id": "debug-config-db-get-failure",
+      "topic": "debug",
+      "level": "junior",
+      "category": "coding",
+      "modules": [
+        "I-UVM-2C_Configuration_and_Resources/index",
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/index"
+      ],
+      "prompt": "The driver below always sends 4 items, although the test sets `num_items` to 20, and the log shows no error. Find every bug, fix the code, and say how you would have found it from the log alone.",
+      "code": "```systemverilog\n// snippet: test, env and driver build phases only\nclass my_test extends uvm_test;\n  `uvm_component_utils(my_test)\n  my_env env;\n  function new(string name, uvm_component parent); super.new(name, parent); endfunction\n  function void build_phase(uvm_phase phase);\n    super.build_phase(phase);\n    env = my_env::type_id::create(\"env\", this);\n    uvm_config_db#(int)::set(this, \"env.agent.drv\", \"num_items\", 20);       // (A)\n  endfunction\nendclass\n\nclass my_env extends uvm_env;\n  `uvm_component_utils(my_env)\n  my_agent agt;\n  function new(string name, uvm_component parent); super.new(name, parent); endfunction\n  function void build_phase(uvm_phase phase);\n    super.build_phase(phase);\n    agt = my_agent::type_id::create(\"agt\", this);                           // (B)\n  endfunction\nendclass\n\nclass my_driver extends uvm_driver #(my_item);\n  `uvm_component_utils(my_driver)\n  bit [15:0] num_items = 4;\n  function new(string name, uvm_component parent); super.new(name, parent); endfunction\n  function void build_phase(uvm_phase phase);\n    super.build_phase(phase);\n    void'(uvm_config_db#(bit [15:0])::get(this, \"\", \"num_items\", num_items)); // (C)\n  endfunction\nendclass\n```",
+      "rubric": "A strong answer finds all three bugs: the scope `env.agent.drv` does not match the instance name `agt` (A vs B); the `set` uses type `int` and the `get` uses `bit [15:0]`, which are different types, so the lookup fails even with the right path; and `void'()` throws away the return value, so the failure is silent. It also says the order in `build_phase` is not a bug (the driver's `build_phase` runs after the test's, top-down), and names `+UVM_CONFIG_DB_TRACE` and `print_topology()` as the way to see the mismatch. A weak answer finds only the path, or \"fixes\" the order of `create` and `set`.",
+      "model_answer": "**Bug 1, the scope.** `set(this, \"env.agent.drv\", ...)` from the test targets `uvm_test_top.env.agent.drv`, but the env creates the agent as `\"agt\"`. The driver's full name is `uvm_test_top.env.agt.drv`, so the scope never matches. The full scope of a `set` is `{cntxt, \".\", inst_name}` (IEEE 1800.2-2020 C.4.2.2.1).\n\n**Bug 2, the type.** `uvm_config_db#(T)` stores and looks up entries per type `T`. `int` and `bit [15:0]` are different types, so the `get` for `bit [15:0]` cannot see the `int` entry even when the scope is right. Use the same type on both sides; for integral fields many teams use `uvm_config_int`, a typedef of `uvm_config_db#(uvm_bitstream_t)` (C.4.2.3.1), on both sides.\n\n**Bug 3, the silent failure.** `get` returns a `bit` (C.4.2.2.2): 1 when a matching setting was found and 0 otherwise, leaving the variable unchanged (uvm-core). `void'()` throws that away, so the driver keeps its default of 4 and nothing is reported. Check the return value: fatal if the setting is required, a visible warning if a default is acceptable.\n\n**Not a bug: the order.** The `set` after `create(\"env\")` is fine. `create` only constructs the env; the env's and the driver's `build_phase` run later, because `build_phase` runs top-down, after the test's `build_phase` returns.\n\n```systemverilog\n// test\nuvm_config_db#(int)::set(this, \"env.agt.drv\", \"num_items\", 20);\n// driver: int num_items = 4;\nif (!uvm_config_db#(int)::get(this, \"\", \"num_items\", num_items))\n  `uvm_warning(\"CFG\", $sformatf(\"num_items not set; using default %0d\", num_items))\n```\n\n**Finding it from the log.** Rerun with `+UVM_CONFIG_DB_TRACE` (uvm-core only; it prints at `UVM_LOW`, so not with `+UVM_VERBOSITY=UVM_NONE`). The `CFGDB/SET` line shows scope `uvm_test_top.env.agent.drv` and the `CFGDB/GET` line shows `uvm_test_top.env.agt.drv` with a failed lookup. `uvm_root::get().print_topology()` in `end_of_elaboration_phase` (F.7.4.2) shows the real instance names to compare against.",
+      "follow_ups": [
+        "The env also sets `num_items` to 8 for the same driver in its own `build_phase`. Which value does the driver get, and why?",
+        "Why is it a bad idea to call `uvm_config_db::get` inside the driver's `run_phase` loop for every item?",
+        "How would you make a misspelled setting fail the regression instead of passing silently?"
+      ],
+      "common_mistakes": [
+        "Moving the `set` before `create`, as if creation order mattered here; it does not, because `build_phase` is top-down.",
+        "Assuming `int` and `bit [15:0]` are \"compatible enough\" for a lookup.",
+        "Ignoring the return value of `get` with `void'()`.",
+        "Debugging by adding prints instead of turning on the config trace."
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 C.4.2.2.1 (set: full scope, build-time precedence), C.4.2.2.2 (get), C.4.2.3.1 (uvm_config_int)",
+        "IEEE 1800.2-2020 Annex F.7.4.2 (print_topology)",
+        "uvm-core 2020.3.1 src/base/uvm_cmdline_processor.svh and uvm_config_db.svh (+UVM_CONFIG_DB_TRACE, Accellera-only)"
+      ]
+    },
+    {
+      "id": "debug-uvm-trace-switches",
+      "topic": "debug",
+      "level": "mid",
+      "category": "concept",
+      "modules": [
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/index",
+        "I-UVM-1D_Reporting_and_Run_Control/index",
+        "I-UVM-1B_The_UVM_Factory/index"
+      ],
+      "prompt": "For each symptom, name the first UVM debug aid you would use and whether it is in IEEE 1800.2 or only in the Accellera uvm-core library: (a) a driver's virtual interface handle is null; (b) your override class never seems to be built; (c) the test ends at 0 ns with no errors; (d) the test ends in `PH_TIMEOUT`; (e) you suspect a component is missing from the hierarchy; (f) one scoreboard's messages are too quiet to debug.",
+      "rubric": "A strong answer pairs each symptom with the aid that answers that question: (a) `+UVM_CONFIG_DB_TRACE`; (b) factory `print()` and `find_override_by_type`, or `print_topology()` to see the type built; (c) `+UVM_PHASE_TRACE`; (d) `+UVM_OBJECTION_TRACE` or `get_objectors`; (e) `print_topology()` after build; (f) `+uvm_set_verbosity` for one component and ID. It knows the `+UVM_*_TRACE` plusargs are uvm-core features while the factory print, `print_topology`, `get_objectors` and the `+uvm_set_*` plusargs are in the standard, and it stresses that plusargs need no rebuild, so the seed still reproduces. A weak answer turns on full verbosity everywhere, or adds prints and rebuilds.",
+      "model_answer": "**(a) Null virtual interface: `+UVM_CONFIG_DB_TRACE` (uvm-core).** Compare the `CFGDB/SET` scope from the top module with the `CFGDB/GET` scope of the driver; a failed lookup prints `null (failed lookup)`. It prints at `UVM_LOW`, so it disappears at `+UVM_VERBOSITY=UVM_NONE`.\n\n**(b) Override not built: the factory's own reports (standard).** `uvm_factory::get().print()` (§8.3.1.7.5) lists the type and instance overrides. `find_override_by_type(requested_type, full_inst_path)` (§8.3.1.7.1) returns the wrapper the factory would use at that path. uvm-core also has `debug_create_by_type`, which prints the search.\n\n**(c) Ends at 0 ns: `+UVM_PHASE_TRACE` (uvm-core).** Look for \"No objections raised, skipping phase\" for `run`.\n\n**(d) `PH_TIMEOUT`: `+UVM_OBJECTION_TRACE` (uvm-core).** Find the object with a `raised` line and no matching `dropped`. From code, `phase.get_objection().get_objectors(list)` (§9.3.1.7.1, §10.5.1.5.1) returns the objects still objecting. With `+UVM_PHASE_TRACE`, uvm-core also prints the outstanding objections when the timeout fires.\n\n**(e) Missing component: `print_topology()` (standard, F.7.4.2)**, called in `end_of_elaboration_phase`, after every `build_phase` has run. It shows names, types and nesting.\n\n**(f) Quiet scoreboard: `+uvm_set_verbosity` (standard, G.2.3)**, for example `+uvm_set_verbosity=uvm_test_top.env.scb,_ALL_,UVM_HIGH,build`, or the `time` form to raise verbosity only near the failure.\n\nAll of these are run-time switches or calls guarded by a plusarg, so the build does not change and the failing seed still reproduces. A base test can keep the standard prints behind a plusarg:\n\n```systemverilog\nfunction void end_of_elaboration_phase(uvm_phase phase);\n  super.end_of_elaboration_phase(phase);\n  if ($test$plusargs(\"TB_DEBUG\")) begin   // your own plusarg name\n    uvm_root::get().print_topology();\n    uvm_factory::get().print();\n  end\nendfunction\n```",
+      "follow_ups": [
+        "Your team moves to a UVM library other than uvm-core. Which of these aids might no longer exist?",
+        "Why must `print_topology()` not be called at the end of the test's own `build_phase`?",
+        "Which aid would you use to catch a component that stops making progress long before the global timeout?"
+      ],
+      "common_mistakes": [
+        "Claiming the `+UVM_*_TRACE` plusargs are defined by IEEE 1800.2; they are uvm-core features.",
+        "Turning on `UVM_FULL` for the whole environment, which buries the one line that matters.",
+        "Running the config trace at `UVM_NONE` and concluding nothing was set."
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §8.3.1.7.1 (find_override_by_type), §8.3.1.7.5 (factory print)",
+        "IEEE 1800.2-2020 §9.3.1.7.1 (get_objection), §10.5.1.5.1 (get_objectors), §10.6 (uvm_heartbeat)",
+        "IEEE 1800.2-2020 Annex F.7.4.2 (print_topology), G.2.3 (+uvm_set_verbosity)",
+        "uvm-core 2020.3.1 src/base/uvm_cmdline_processor.svh (+UVM_PHASE_TRACE, +UVM_OBJECTION_TRACE, +UVM_CONFIG_DB_TRACE: Accellera-only)",
+        "IEEE 1800-2023 §21.6 ($test$plusargs)"
+      ]
+    },
+    {
+      "id": "debug-override-not-taking-effect",
+      "topic": "debug",
+      "level": "mid",
+      "category": "coding",
+      "modules": [
+        "I-UVM-1B_The_UVM_Factory/index",
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/index"
+      ],
+      "prompt": "The error-injection test below should replace every `bus_driver` with `err_driver`, but the log shows no injected errors. Find the bugs and say what evidence the log or the factory gives you for each.",
+      "code": "```systemverilog\n// snippet\nclass err_driver extends bus_driver;           // injects CRC errors\n  function new(string name, uvm_component parent); super.new(name, parent); endfunction\n  // ... overridden drive task ...\nendclass                                        // note: no `uvm_component_utils(err_driver)\n\nclass err_test extends base_test;\n  `uvm_component_utils(err_test)\n  function new(string name, uvm_component parent); super.new(name, parent); endfunction\n  function void build_phase(uvm_phase phase);\n    super.build_phase(phase);                   // base_test creates env here\n    bus_driver::type_id::set_type_override(err_driver::get_type());\n  endfunction\nendclass\n\nclass bus_agent extends uvm_agent;\n  `uvm_component_utils(bus_agent)\n  bus_driver drv;  bus_sequencer sqr;\n  function new(string name, uvm_component parent); super.new(name, parent); endfunction\n  function void build_phase(uvm_phase phase);\n    super.build_phase(phase);\n    drv = new(\"drv\", this);                     // (!)\n    sqr = bus_sequencer::type_id::create(\"sqr\", this);\n  endfunction\nendclass\n```",
+      "rubric": "A strong answer finds both bugs and does not invent a third. (1) The agent builds the driver with `new()`, which bypasses the factory, so no override can ever apply to it. (2) `err_driver` lacks the `uvm_component_utils` macro, so `err_driver::get_type()` resolves to the inherited `bus_driver::get_type()`: the override maps `bus_driver` to itself (uvm-core warns `TYPDUP`). It explains that setting the override after `super.build_phase` is fine here because the driver is created later, in the agent's `build_phase`, and would only be too late for an object already created. It names the evidence: the factory print, `print_topology()` showing type `bus_driver`, and the `TYPDUP` warning. A weak answer blames the order of the override, or says the missing macro \"returns null\".",
+      "model_answer": "**Bug 1: `new()` bypasses the factory.** Only `T::type_id::create` (or the factory's `create_*` methods) asks the factory for an override. `drv = new(\"drv\", this)` always builds a `bus_driver`. Fix: `drv = bus_driver::type_id::create(\"drv\", this);`.\n\n**Bug 2: the override class is not registered.** Without the macro call `uvm_component_utils(err_driver)`, `err_driver` has no `type_id` or `get_type()` of its own; the call `err_driver::get_type()` finds the static method it inherits from `bus_driver`. The override therefore asks the factory to replace `bus_driver` with `bus_driver`. In uvm-core the factory warns `TYPDUP` (\"Original and override type arguments are identical\"), then still records a `bus_driver` to `bus_driver` override, which has no effect (by inspection of `uvm_factory.svh`; not compiled here). Fix: add the macro to every class you want to create or override through the factory.\n\n**Not a bug: the override after `super.build_phase`.** `base_test` creates the env, but the env's and the agent's `build_phase` run later (top-down), so the driver does not exist yet when the override is registered. An override is too late only for an object that has already been created, such as the env itself here.\n\n**Evidence.**\n- `uvm_factory::get().print()` (IEEE 1800.2-2020 §8.3.1.7.5): with bug 2, the type-override table shows `bus_driver` overridden by `bus_driver`, not by `err_driver`.\n- `find_override_by_type(bus_driver::get_type(), \"uvm_test_top.env.agt.drv\")` (§8.3.1.7.1) shows what a factory create would build at that path. Once bug 2 is fixed it returns `err_driver`, while `print_topology()` still shows a `bus_driver`: proof that bug 1 bypassed the factory.\n- `print_topology()` (F.7.4.2) shows the real type of `drv`.\n- The `TYPDUP` warning in the log (uvm-core) points straight at bug 2.",
+      "follow_ups": [
+        "You want the override only for the driver in `env.agt[2]`. Write it, and say what goes wrong if the path is relative to the wrong component.",
+        "How could you apply this override from the command line without recompiling?",
+        "What happens if the override type is not derived from the original type?"
+      ],
+      "common_mistakes": [
+        "Blaming the order of `set_type_override` relative to `super.build_phase` when the object is created later.",
+        "Thinking a missing `uvm_component_utils` macro makes `create` return null; for a derived class it silently resolves to the parent's registry.",
+        "Debugging with prints instead of the factory print and `print_topology()`."
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §8.2.3.2.5 (uvm_component_registry::set_type_override), §8.3.1.4.2 (set_type_override_by_type: original shall be a superclass of the override)",
+        "IEEE 1800.2-2020 §8.3.1.7.1 (find_override_by_type), §8.3.1.7.5 (print), Annex F.7.4.2 (print_topology), G.2.7 (+uvm_set_type_override)",
+        "uvm-core 2020.3.1 src/base/uvm_factory.svh:1113-1185 (TYPDUP warning, entry still recorded), 1785-1880 (lookup returns the requested type, no OVRDLOOP); by inspection, not compiled"
+      ]
+    },
+    {
+      "id": "debug-test-ends-at-time-zero",
+      "topic": "debug",
+      "level": "mid",
+      "category": "concept",
+      "modules": [
+        "I-UVM-1C_UVM_Phasing/index",
+        "I-UVM-3A_Fundamentals/index",
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab"
+      ],
+      "prompt": "A new test \"passes\": the log shows `UVM_ERROR : 0` and `UVM_FATAL : 0`, but simulation ended at 0 ns and the waveform shows no bus activity. Here is the test. What happened, how do you prove it, and what else can make a sequence never run?",
+      "code": "```systemverilog\nclass smoke_test extends base_test;\n  `uvm_component_utils(smoke_test)\n  function new(string name, uvm_component parent); super.new(name, parent); endfunction\n  task run_phase(uvm_phase phase);\n    smoke_seq seq = smoke_seq::type_id::create(\"seq\");\n    seq.start(env.agt.sqr);\n  endtask\nendclass\n```",
+      "rubric": "A strong answer says no objection was raised, so the run phase ended at the time it started and its processes, including `seq.start`, were killed; proves it with `+UVM_PHASE_TRACE` (\"No objections raised, skipping phase\", uvm-core); fixes it by raising and dropping an objection around the sequence or by `set_starting_phase` plus `set_automatic_phase_objection(1)`; and lists other \"never ran\" causes with the evidence each leaves: a null sequencer (`SEQ` fatal at `start_item`), an unconnected driver port (`DRVCONNECT` warning at end of elaboration, then a null-object error in the driver at its first `get_next_item`), and a driver that never calls `item_done` (the sequencer's \"called twice without item_done\" error). It also says a zero-activity run is not a pass and proposes a `check_phase` check on the compare count. A weak answer suspects the simulator or the DUT.",
+      "model_answer": "**What happened.** No component or sequence raised an objection in `run_phase`. UVM ends a task phase (`run_phase` or a run-time phase) when its objection count is zero, so `run_phase` ended at 0 ns and every process it started, including `seq.start(...)`, was killed. Nothing was driven, nothing was compared, so nothing could fail.\n\n**Proof.** Rerun the same seed with `+UVM_PHASE_TRACE` (a uvm-core plusarg). uvm-core prints \"No objections raised, skipping phase\" (ID `PH/TRC/SKIP`) for `run`. The scoreboard's own count line, if it has one, shows 0 compares.\n\n**Fix.** Raise the objection before any time-consuming statement:\n\n```systemverilog\ntask run_phase(uvm_phase phase);\n  smoke_seq seq = smoke_seq::type_id::create(\"seq\");\n  phase.raise_objection(this, \"smoke_seq running\");\n  seq.start(env.agt.sqr);\n  phase.drop_objection(this, \"smoke_seq done\");\nendtask\n```\n\nOr let the sequence object for itself: `seq.set_starting_phase(phase); seq.set_automatic_phase_objection(1);` before `start` (IEEE 1800.2-2020 §14.2.4.2, §14.2.4.4).\n\n**Other ways a sequence never runs, or stops after one item.**\n- Started on a null sequencer: when the body calls `start_item`, uvm-core issues a fatal (`SEQ`, \"neither the item's sequencer nor dedicated sequencer has been supplied\").\n- The driver's `seq_item_port` is not connected. The port's minimum connection count is 0, so elaboration reports no connection error; uvm-core only warns `DRVCONNECT` at end of elaboration. The port forwards `get_next_item` to an interface handle that is set only when the port has a connection, so the driver's first `get_next_item` calls a method through a null handle. That is illegal (IEEE 1800-2023 §8.4), and the run normally stops there with a null-object error in the driver (the message is tool-dependent) while the sequence is still waiting in `start_item` for a grant. The `DRVCONNECT` warning is the lead: search for it first.\n- The driver never calls `item_done()`: the sequence stays blocked in `finish_item` after the first item. The driver's next `get_next_item` makes uvm-core report a `UVM_ERROR` from the sequencer, \"Get_next_item called twice without item_done or get in between\" (`try_next_item` has its own version of the message), and hand back the same item again. That error, repeated on every loop with the same item driven again, is the evidence.\n\n**Make the verdict honest.** A run that checked nothing is not a pass. Have the scoreboard fail in `check_phase` when it compared zero items or still holds expected items.",
+      "follow_ups": [
+        "You move the `raise_objection` after a `#10ns` reset wait. What happens, and why?",
+        "Where should the objection live in a test that starts a virtual sequence: the test, the virtual sequence, or each leaf sequence?",
+        "Write the `check_phase` check that turns a zero-activity run into a failure."
+      ],
+      "common_mistakes": [
+        "Reading `UVM_ERROR : 0` as a pass without checking that anything ran.",
+        "Raising the objection after a delay, which is too late: the phase has already ended.",
+        "Forking the sequence with `join_none` and assuming the fork keeps the phase alive.",
+        "Expecting an unconnected `seq_item_port` to end in `PH_TIMEOUT`: it shows up as a `DRVCONNECT` warning and then a null-object error in the driver."
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §9.3.1.7.2 (raise_objection), §10.5.1.3.3 (uvm_objection::raise_objection), §14.2.3.1 (start), §14.2.4.2 (set_starting_phase), §14.2.4.4 (set_automatic_phase_objection)",
+        "IEEE 1800.2-2020 §13.1.4.1.7 (check_phase)",
+        "IEEE 1800.2-2020 §9.6 (uvm_task_phase), §9.8.1.5 (uvm_run_phase, a common phase that runs in parallel to the run-time phases), §9.8.2 (UVM run-time phases)",
+        "uvm-core 2020.3.1 src/base/uvm_phase_hopper.svh (\"No objections raised, skipping phase\", PH/TRC/SKIP)",
+        "uvm-core 2020.3.1 src/seq/uvm_sequence_base.svh:1062 (SEQ fatal), src/comps/uvm_driver.svh:99-102 (DRVCONNECT warning when seq_item_port.size < 1)",
+        "uvm-core 2020.3.1 src/tlm1/uvm_sqr_connections.svh:56-59 and src/tlm1/uvm_tlm_imps.svh:200-203 (uvm_seq_item_pull_port, min_size 0), src/macros/uvm_tlm_defines.svh:584-587 (get_next_item forwards to m_if), src/base/uvm_port_base.svh:455-461, 898-901 (m_if set only when size() > 0)",
+        "uvm-core 2020.3.1 src/seq/uvm_sequencer.svh:224-227 (get_next_item called twice error), 244-247 (try_next_item version), src/seq/uvm_sequencer_param_base.svh m_safe_select_item (peeks the same item again)",
+        "IEEE 1800-2023 §8.4 (accessing non-static members or virtual methods via a null object handle is illegal)"
+      ]
     },
     {
       "id": "debug-waveform-protocol-hang",
       "topic": "debug",
       "level": "mid",
       "category": "waveform-debug",
-      "prompt": "A simulation hangs at cycle 15000. The waveform shows clocks toggling but no bus activity. How do you triage?",
-      "rubric": "Check VALID/READY signals, look for stuck state machines, check objection counts, examine reset state, look for missing sequence completion, check for blocking TLM calls.",
-      "model_answer": "1) Check bus VALID signals — if all are low, no master is trying to transact; check sequence completion. 2) If VALID is high but READY is low, a slave or interconnect is stalled; identify which component owns READY. 3) Check for circular dependencies (one component waiting for another). 4) Examine the UVM objection count — if it's zero, the phase should have ended. 5) Look at internal state machine registers for stuck states. 6) Check if a blocking TLM get() is waiting on an empty FIFO.",
-      "sources": ["Verification methodology best practices (secondary)"]
+      "modules": [
+        "B-AXI-1_AXI_Channel_Architecture/index",
+        "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index",
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab"
+      ],
+      "prompt": "An AXI test ends in `PH_TIMEOUT` with the clock still toggling. Two seeds give the two waveform snapshots below (values sampled at each rising ACLK edge). Triage each one: what does it tell you, and what do you check next?",
+      "code": "Snapshot A, seed 11: the last rising edges before the timeout\nedge     | 14996 14997 14998 14999 15000\nARESETn  |   1     1     1     1     1\nARVALID  |   0     0     0     0     0\nAWVALID  |   0     0     0     0     0\nWVALID   |   0     0     0     0     0\nRVALID   |   0     0     0     0     0\nBVALID   |   0     0     0     0     0\n\nSnapshot B, seed 42: from edge 340 to the timeout nothing changes\nedge         | 340   341   342   ...   15000\nARVALID      |  1     1     1    ...     1\nARREADY      |  0     0     0    ...     0\nARADDR       | 0x40  0x40  0x40  ...   0x40\nRVALID       |  1     1     1    ...     1\nRREADY       |  0     0     0    ...     0\nRID          | 0x2   0x2   0x2   ...   0x2\nslave rd_out |  4     4     4    ...     4     (slave accepts at most 4 outstanding reads)",
+      "rubric": "For snapshot A, a strong answer says that all VALIDs low means no transfer is offered in these cycles, not that nothing is outstanding. It first counts handshakes in the monitor or protocol checker: AR against R beats with RLAST, per ID, and AW and W bursts (WLAST) against B, matching AW and B by ID. If a read or write is still outstanding, the stall is in that transaction: the slave or interconnect lost or is withholding the R or B response (a slave must not wait for RREADY or BREADY before asserting RVALID or BVALID, IHI0022E A3.3.1), or the master never sent the W data for an accepted AW. Only when nothing is outstanding does it look upstream: reset released and DUT clock not gated, then the stimulus side (no sequence running, the driver waiting in `get_next_item`) and who holds the objection (`+UVM_OBJECTION_TRACE`). For snapshot B it reads a circular wait: the slave is full (4 outstanding) and holds ARREADY low until its read data is accepted, while the master holds RREADY low, apparently waiting for its new AR to be accepted. It knows AXI defines no READY timeout and that \"masters always accept responses\" is a design rule, not a protocol requirement; it also checks the monitor for a VALID dropped before READY (a protocol violation). A weak answer only says \"look at VALID and READY\", calls snapshot A an idle bus without checking for outstanding transactions, or raises the timeout.",
+      "model_answer": "**Snapshot A: nothing is offered, but something may still be outstanding.** ARESETn is high and every VALID is low, so no transfer is being offered in these cycles. That does not mean nothing is pending: a read or write accepted earlier and never completed gives exactly this picture.\n\n**First, count handshakes.** In the monitor's outstanding-transaction table or the protocol checker (or, if the bench has neither, by counting handshakes in the waveform from the start of the test), compare:\n- AR handshakes against R handshakes with RLAST = 1, per ID (ARID against RID). An AR with no last R beat means the slave or interconnect accepted the read and never returned the data. RREADY does not excuse it: the slave must not wait for RREADY before asserting RVALID (IHI0022E A3.3.1), and read data must follow its address (A3.3).\n- AW handshakes and W bursts (WLAST) against B handshakes, matching AW and B by ID (AWID against BID). In AXI4 the W channel carries no ID; write data follows the order of the write addresses (A5.4.1). AW and all the W data accepted but no B means the response was lost or withheld; the slave must not wait for BREADY before asserting BVALID, and asserts BVALID only after the last W transfer (A3.3.1). An accepted AW with no W data means the master never sent the write data. W data with no AW is legal for a while, but an AXI4 slave must also see the AW handshake before it asserts BVALID (A3.3.1, AXI4 write response dependency). Either way no B can come until the master finishes the write.\n\n**If something is outstanding, the stall is in that transaction, not upstream.** Follow the missing response (or the missing W data) to its owner: the slave, the interconnect's routing and ID tracking, or the master. The objection holder is usually the victim here, for example a sequence or scoreboard waiting for that response.\n\n**Only if nothing is outstanding, look upstream.** Check, in order:\n- Reset and clock at the DUT, not only at the testbench: a DUT clock gated off or a reset synchronizer still holding the block in reset looks exactly like this.\n- The stimulus: is any sequence still running on the master agent's sequencer? A driver waiting in `get_next_item()` with no sequence produces an idle bus forever.\n- Who holds the run-phase objection: rerun the same seed with `+UVM_OBJECTION_TRACE` (uvm-core) and find the `raised` with no `dropped`. The holder is usually the victim, for example a scoreboard waiting for a response that a missing sequence never caused, so follow what it waits for.\n\n**Snapshot B: a circular wait between the R and AR channels.** The slave already has 4 reads outstanding, its limit, and keeps ARREADY low until it can retire one. It cannot retire one because its read data (RVALID = 1, RID 0x2) is not being accepted: RREADY is 0. If the master holds RREADY low until its new AR (0x40) is accepted, each side waits for the other, and nothing changes from edge 340 onward.\n- The AXI handshake rules say a source must keep VALID asserted until the handshake (IHI0022E A3.2.1) and that a master can wait for RVALID before asserting RREADY (A3.3.1). They do not set any READY timeout, and they do not force a master to accept responses; \"a master always accepts R and B\" is a design rule your system must state, and a liveness bound is a requirement you add to the checker.\n- Find the owner of RREADY (the DUT master or the testbench's master driver) and why it waits. In a testbench driver this is often one thread that drives AR and only then services R.\n- Check the monitor and protocol assertions for an earlier violation, such as RVALID or ARVALID dropped before READY, which can leave either side with a wrong outstanding count.\n\n**In both cases the timeout is a symptom.** Raising it changes nothing. Add a protocol watchdog (no handshake for N cycles while VALID is high) or a `uvm_heartbeat` (IEEE 1800.2-2020 §10.6), so the next stall fails close to where it starts.",
+      "follow_ups": [
+        "In snapshot B, ARVALID stays high for thousands of cycles. Is that itself a protocol violation?",
+        "Write an assertion that flags RVALID held high without RREADY for more than 64 cycles, and say why 64 is a design choice, not a protocol rule.",
+        "How would the objection trace differ between snapshot A and snapshot B?",
+        "In snapshot A, your monitor shows an AR with ID 0x3 accepted at edge 900 and no R beat for ID 0x3 since. Whose bug is it most likely to be, and what do you look at next?"
+      ],
+      "common_mistakes": [
+        "Raising the timeout, which only delays the same failure.",
+        "Debugging the component that holds the objection instead of following what it waits for.",
+        "Treating \"masters must always accept responses\" as an AXI rule rather than a system design rule.",
+        "Assuming that every VALID low means nothing is pending, and looking upstream (reset, stimulus, objections) before counting outstanding reads and writes.",
+        "Once nothing is outstanding, forgetting to check reset and the DUT clock at the DUT itself."
+      ],
+      "sources": [
+        "Arm IHI0022E A3.1.2 (reset: masters drive ARVALID, AWVALID, WVALID LOW)",
+        "Arm IHI0022E A3.2.1 (once VALID is asserted it must remain asserted until the handshake)",
+        "Arm IHI0022E A3.3 (relationships between the channels: read data must always follow the address it relates to; a write response must always follow the last write transfer)",
+        "Arm IHI0022E A3.3.1 (dependencies between channel handshake signals; read and write transaction dependencies: the slave must not wait for RREADY before asserting RVALID, or for BREADY before asserting BVALID, and must wait for the last write transfer, WLAST, before asserting BVALID)",
+        "Arm IHI0022E A5.4.1 (removal of WID: in AXI4 all write data must be in the same order as the associated write addresses)",
+        "IEEE 1800.2-2020 §10.5.1.5.1 (get_objectors), §10.6 (uvm_heartbeat)",
+        "uvm-core 2020.3.1 src/base/uvm_objection.svh (+UVM_OBJECTION_TRACE, OBJTN_TRC)"
+      ]
     },
     {
       "id": "debug-x-propagation",
       "topic": "debug",
       "level": "mid",
       "category": "waveform-debug",
-      "prompt": "You see X values propagating through your design after reset. What are common causes and how do you fix them?",
-      "rubric": "Uninitialized flip-flops, missing reset connections, reset domain crossing, conditional assignments with X control signals, array out-of-bounds, and division by zero.",
-      "model_answer": "Common causes: 1) Flip-flops not in the reset list of always_ff. 2) Reset signal not connected to a sub-module. 3) Conditional MUX with X on the select (e.g., uninitialized config register). 4) Reading uninitialized memory locations. 5) Combinational paths from unreset registers. Fix: ensure all state elements have explicit reset values, use X-prop simulation modes (Questa -xprop), add assertions to catch X on key control signals early.",
-      "sources": ["IEEE 1800-2023 §4.6 (X semantics)", "Simulation methodology (secondary)"]
+      "modules": [
+        "F2C_Procedural_Code_and_Flow_Control/flow-control",
+        "F2A_Core_Data_Types/index",
+        "A-UVM-9_Reset_and_Error_Injection/index"
+      ],
+      "prompt": "This test passes in RTL simulation but fails in gate-level simulation, where `y` is X for the first cycles after reset. Explain why RTL hid the problem, how you would have caught it in RTL, and list the common causes of X after reset.",
+      "code": "```systemverilog\nlogic       sel;                         // configuration flop: no reset\nlogic [7:0] y;\nalways_ff @(posedge clk) if (cfg_we) sel <= cfg_sel;\nalways_comb begin\n  if (sel) y = a;\n  else     y = b;\nend\n```\n\nValues sampled at each rising edge (a = 8'h5A, b = 8'hA5 throughout: they differ in every bit):\n\n```text\nedge        |  0    1    2    3    4    5\nrst_n       |  0    1    1    1    1    1\ncfg_we      |  0    0    0    0    1    0\nsel         |  x    x    x    x    x    1\ny (RTL)     | a5   a5   a5   a5   a5   5a\ny (gates)   | xx   xx   xx   xx   xx   5a\n```",
+      "rubric": "A strong answer explains X-optimism: an `if` whose condition is x takes the else branch (IEEE 1800-2023 §12.4), and a `case` whose expression is x matches only an item with the same x bits and otherwise falls to `default` (§12.5), so RTL produces a clean value where gates propagate X. It contrasts X-pessimism in gate models, shows a reset-gated `$isunknown` assertion on control signals with code, mentions the conditional operator as the X-preserving alternative (§11.4.11), labels X-propagation simulation modes as tool-dependent, and lists the common causes: flops without reset, a reset not reaching a sub-block, X select or address, uninitialized memory, and combinational paths from unreset state. A weak answer only says \"add resets\" or cites a vendor switch as if it were standard.",
+      "model_answer": "**Why RTL hid it: X-optimism.** `sel` is a 4-state flop with no reset, so it starts at x (the default for 4-state variables, IEEE 1800-2023 §6.8, Table 6-7) and stays x until `cfg_we` loads it at edge 4. In RTL, `if (sel)` with `sel` = x is false: §12.4 runs the first branch only for a known nonzero value, so the else branch runs and `y` shows a clean `a5`. A `case (sel)` would do the same thing: case items match bit for bit including x and z (§12.5), so an x selector falls to `default`. The netlist has no such rule. A mux cell with an X select outputs X on every bit where its data inputs differ (here all eight bits, since 8'h5A and 8'hA5 differ everywhere; cell-model behaviour, library-dependent), so the gate run shows what the hardware really does: an unknown value until the configuration is written.\n\n**X-pessimism is the opposite problem.** Gate models can produce X where real hardware is known (for example reconvergent logic such as `s & ~s` with `s` = X). That is a simulation artifact, so a gate-level X needs to be traced, not assumed real.\n\n**How to catch it in RTL.**\n- Assert that control signals are known once reset is released (`$isunknown`, §20.9). The disable condition turns the check off during reset:\n\n```systemverilog\na_sel_known: assert property (@(posedge clk) disable iff (!rst_n) !$isunknown(sel))\n  else $error(\"sel is X after reset\");\n```\n\n- Write muxes with the conditional operator where X matters: with an x condition, `sel ? a : b` combines the two inputs bit by bit and returns x where they differ (§11.4.11), so the X stays visible.\n- Use the simulator's X-propagation mode, which makes `if` and `case` less optimistic (tool-dependent; check your simulator's documentation), and confirm in gate-level simulation.\n\n**Common causes of X after reset.**\n- Flops left out of the reset branch, like `sel` here (a deliberate area choice that needs a \"written before use\" rule and a check).\n- A reset that never reaches a sub-block (unconnected port, wrong polarity, reset synchronizer not yet released).\n- An X on a select, enable or address, often from an unwritten configuration register.\n- Reads of uninitialized memory, or an array index out of range.\n- Combinational paths from any unreset state.\n\n**Fix here.** Either reset `sel` to a defined mode, or require (and assert) that the configuration is written before `y` is used.",
+      "follow_ups": [
+        "Would `if (sel === 1'b1)` in the RTL fix the problem, or hide it differently?",
+        "The `$isunknown` assertion fires at edges 1 to 4. Is that a DUT bug or a test bug, and who decides?",
+        "Give an example where the gate-level X is pessimism and the silicon would be fine. How do you prove it?"
+      ],
+      "common_mistakes": [
+        "Saying RTL \"propagates X correctly\"; `if` and `case` are optimistic by definition.",
+        "Waving away every gate-level X as pessimism without tracing it to its source.",
+        "Quoting a vendor X-propagation switch as if it were part of the language.",
+        "Writing the X check without `disable iff`, so it fires during reset when X is legal."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §6.3.1 (four-state values), §6.8 Table 6-7 (4-state default is x)",
+        "IEEE 1800-2023 §11.4.5 (equality with x), §11.4.11 (conditional operator with an ambiguous condition)",
+        "IEEE 1800-2023 §12.4 (if: x or z condition is false), §12.5 (case: exact 0/1/x/z match)",
+        "IEEE 1800-2023 §16.12 (disable iff), §20.9 ($isunknown)",
+        "Tool note: X-propagation simulation modes and gate-level cell X behaviour are simulator- and library-dependent"
+      ]
+    },
+    {
+      "id": "debug-tb-race-clock-edge",
+      "topic": "debug",
+      "level": "mid",
+      "category": "waveform-debug",
+      "modules": [
+        "F3C_Delta_Cycles_and_Race_Conditions/index",
+        "F4C_Clocking_Blocks/index"
+      ],
+      "prompt": "The test passes on simulator A and fails on simulator B. On B, `q` takes each new value one clock early. The waveform shows `din` changing at exactly the same time stamp as the clock edge. Here is the driver and what each simulator recorded. Explain the failure, how you would confirm it, and the fix.",
+      "code": "```systemverilog\n// DUT\nalways_ff @(posedge clk) q <= din;\n\n// testbench driver, no clocking block\ninitial begin\n  din = 8'h03;\n  @(posedge clk);   // edge 1, 10 ns\n  din = 8'h07;      // blocking write at the edge\n  @(posedge clk);   // edge 2, 20 ns\n  din = 8'h09;\nend\n```\n\nValues shown by the viewer at the end of each time step:\n\n```text\ntime (ns)         |  10    20    30\nclk edge          |  1     2     3\ndin               |  07    09    09     (changes at the edge time stamp)\nq, simulator A    |  03    07    09     expected\nq, simulator B    |  07    09    09     new din captured: one cycle early\n```",
+      "rubric": "A strong answer names a testbench-DUT race: on each edge the driver's blocking write and the flop's read of `din` both run in the Active region of the same time step, and their order is not defined (IEEE 1800-2023 §4.7; §4.8 gives a related example), so A and B are both legal. It says the waveform cannot show the order because both happen at one time stamp, and confirms the race by changing only process order or by an event-order view (tool-dependent). It fixes it with a clocking-block drive (lands in Re-NBA, §14.16) or a nonblocking write (§10.4.2), and applies the same reasoning to the monitor (clocking-block inputs, §14.13). A weak answer calls it a simulator bug or adds `#1` delays without explaining why.",
+      "model_answer": "**It is a race between the testbench and the DUT.** At each edge, two processes wake up in the Active region of the same time step: the DUT's `always_ff`, which reads `din`, and the testbench's `initial`, which writes `din` with a blocking assignment. The standard does not order them (IEEE 1800-2023 §4.7: Active events can be taken off in any order; §4.8 gives a related example of an order-dependent race). Simulator A ran the flop first and captured the old `din`; simulator B ran the driver first and captured the new one. Both are correct, so the test is wrong.\n\n**Why the waveform looks innocent.** The write and the read happen at the same time stamp. A viewer that shows one value per time stamp cannot show which happened first; `din` simply appears to change \"at\" the edge.\n\n**Confirm it.**\n- Change only the process order (for example the file or statement order) on one simulator: if the result flips, it is a race.\n- Use the simulator's delta-cycle or event-order view at 10 ns, if it has one (tool-dependent).\n- Code review rule: any blocking write to a DUT input right after `@(posedge clk)` is a race candidate.\n\n**Fix: make the testbench write after the DUT reads.**\n\n```systemverilog\nclocking drv_cb @(posedge clk);\n  default input #1step output #0;\n  output din;\n  input  q;\nendclocking\n\n@(drv_cb);\ndrv_cb.din <= 8'h07;   // clocking drive: applied in the Re-NBA region (§14.16)\n```\n\nA plain nonblocking write, `din <= 8'h07;`, also works for this case, because the update happens in the NBA region after every Active read (§10.4.2). Driving on the opposite edge works too, at the cost of half the timing budget in gate-level runs.\n\n**Check the monitor as well.** A monitor that reads `q` right after `@(posedge clk)` can see the old or the new value depending on how the DUT writes it. A clocking-block input with the default `#1step` skew returns the value from the end of the previous time step (§14.13), which is stable whatever the DUT code style.",
+      "follow_ups": [
+        "The DUT were written with `always @(posedge clk) q = din;` (blocking). Which testbench styles are still safe?",
+        "Why does a race like this often appear only after an unrelated code change or a simulator upgrade?",
+        "What does `default input #1step` sample, precisely, in terms of the previous time step?"
+      ],
+      "common_mistakes": [
+        "Calling it a simulator bug; both orders are legal.",
+        "Adding `#1` delays everywhere instead of fixing the drive style.",
+        "Fixing the driver but leaving the monitor sampling raw signals at the edge."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §4.7 (nondeterminism), §4.8 (race conditions: a related example, a continuous assignment interleaved with a $display)",
+        "IEEE 1800-2023 §10.4.2 (nonblocking procedural assignments)",
+        "IEEE 1800-2023 §14.13 (input sampling: 1step value from the preceding time step), §14.16 (synchronous drives)",
+        "Tool note: delta-cycle or event-order waveform views are simulator-dependent"
+      ]
+    },
+    {
+      "id": "debug-assertion-failure-triage",
+      "topic": "debug",
+      "level": "mid",
+      "category": "waveform-debug",
+      "modules": [
+        "I-SV-4A_SVA_Fundamentals/index",
+        "I-SV-4A_SVA_Fundamentals/immediate-vs-concurrent",
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/index"
+      ],
+      "prompt": "The assertion below fails at edge 5. The designer opens the waveform, sees `ack` go high at edge 5, and says the assertion is wrong. Who is right? Walk through how you triage an assertion failure in general.",
+      "code": "```systemverilog\na_req_ack: assert property (@(posedge clk) disable iff (!rst_n)\n                            $rose(req) |-> ##[1:3] ack)\n  else $error(\"ack did not follow req within 3 cycles\");\n// ack is a DUT flop: always_ff @(posedge clk) ack <= ack_next;\n```\n\nSampled values (what the assertion uses) at each rising edge:\n\n```text\nedge            |   1      2      3      4      5      6\nrst_n           |   1      1      1      1      1      1\nreq             |   0      1      1      0      0      0\nack             |   0      0      0      0      0      1\nattempt from 2  |   -    start   wait   wait   FAIL    -\n\nThe viewer draws ack rising at the edge-5 time stamp: the nonblocking write at edge 5 changed it just after the sample.\n```",
+      "rubric": "A strong answer says the assertion is right: concurrent assertions use sampled values, the value from before the edge (IEEE 1800-2023 §16.5.1), and `ack` was written by a nonblocking assignment at edge 5, so its sampled value at edge 5 is 0 and it is first seen as 1 at edge 6: four cycles after `$rose(req)` at edge 2. The question becomes whether the specification allows 4 cycles (fix the property) or not (DUT bug). It then gives a general triage: find the attempt start, read sampled values cycle by cycle, check `disable iff` (unsampled, §16.12), check vacuity with a cover (§16.14.8), and make sure the failure is counted in the verdict (`$error` is not a UVM error). A weak answer reads the waveform at the edge and agrees with the designer.",
+      "model_answer": "**The assertion is right.** A concurrent assertion evaluates each clock tick with sampled values, the values the signals had just before the edge (IEEE 1800-2023 §16.5.1; §16.9.3 for `$rose`). `ack` is a flop written with `<=` at edge 5, so it changes after edge 5's sample point: the sampled `ack` is 0 at edges 3, 4 and 5 and 1 only at edge 6. The attempt started at edge 2, where `$rose(req)` was true, and the window `##[1:3]` covers edges 3 to 5. Every sample in it is 0, so the attempt fails at edge 5. The viewer draws the new `ack` at the edge-5 time stamp, which is what misled the designer.\n\n**So the real question is the specification.** `ack` arrived 4 cycles after `req` rose. If the spec allows 4, widen the window to `##[1:4]`; if not, it is a DUT latency bug.\n\n**General triage for an assertion failure.**\n1. **Find the attempt.** The failure time is when the attempt failed, not when it started; for `##[1:3]` it started up to 3 cycles earlier. Many tools show the attempt start (tool-dependent).\n2. **Read sampled values, cycle by cycle**, as a table like the one above, never the values drawn at the edge.\n3. **Check the disable condition.** `disable iff` uses current, not sampled, values (§16.12). A reset glitch can disable attempts you expected to run, and a reset in the middle of an attempt disables it rather than failing it.\n4. **Check the property is not vacuous elsewhere.** An implication whose antecedent never matches succeeds vacuously (§16.14.8). Pair important assertions with a `cover property` of the antecedent, so \"never failed\" also means \"was exercised\".\n5. **Make the failure count.** An assertion with no `else` (or with `$error`) reports a simulator error, which the UVM report server never counts (§20.10). Either route the failure into UVM from the action block or make the regression parse simulator errors too.",
+      "follow_ups": [
+        "Rewrite the check so it also fails if `ack` stays high for more than one cycle.",
+        "In another run, reset is asserted (`rst_n` low) at edge 3, during the attempt that started at edge 2. Does the attempt fail, pass or neither?",
+        "How would you get the assertion failure counted as a `UVM_ERROR` without a direct dependence on UVM in the interface?"
+      ],
+      "common_mistakes": [
+        "Reading the signal value drawn at the edge instead of the sampled value before it.",
+        "Taking the failure time as the time the bad behaviour started.",
+        "Never checking for vacuous success, so an assertion that never fires is trusted.",
+        "Assuming `$error` from an assertion makes the UVM summary fail."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §16.5.1 (sampling), §16.9.3 (sampled value functions)",
+        "IEEE 1800-2023 §16.12 (disable iff: values not sampled), §16.12.7 (implication), §16.14.8 (nonvacuous evaluations)",
+        "IEEE 1800-2023 §20.10 (severity system tasks), §20.11 (assertion control)"
+      ]
+    },
+    {
+      "id": "debug-seed-reproduction",
+      "topic": "debug",
+      "level": "senior",
+      "category": "concept",
+      "modules": [
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/effective-debug",
+        "I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization"
+      ],
+      "prompt": "Two puzzles from one regression. (1) A failure on seed 12345 does not reproduce when you rerun that seed locally. (2) After you add a debug print to the scoreboard, a different seed that used to pass now fails, and the original failing seed passes. Explain both, and how you would make failures reproducible by design.",
+      "rubric": "A strong answer defines the reproduction recipe (test, seed, build, simulator version, plusargs, plus run-time inputs such as files and environment), explains random stability (each thread and object has its own RNG, seeded hierarchically from its parent at creation, IEEE 1800-2023 §18.14, §18.14.1, §18.14.3), and so explains puzzle 2 precisely. Under the IEEE 1800-2023 rule (plain SystemVerilog, and objects UVM does not reseed), an edit moves the stimulus only if it creates objects or threads, or draws random numbers, in a thread that later creates or seeds the stimulus. In a uvm-core bench that rule is mostly overridden: every component's phase process is reseeded from the phase and component names, components reseed in their constructor, and sequences and items reseed when started. So an edit inside the scoreboard's `build_phase` or `run_phase`, a fork included, cannot move another component's stimulus; only a constructor edit can shift objects or `$urandom` draws made later in the parent's `build_phase`. The candidate therefore compares the stimulus logs first and, when they match, looks for the rebuild, a race or the edit's own behaviour. For puzzle 1 it checks the recipe first, then suspects races, uninitialized state, reads of files or the environment, DPI code with its own unseeded random numbers, and infrastructure kills, and refuses to label it flaky. It closes with practices: log the full recipe, debug kits compiled into every build and switched by plusargs, new threads and objects added after existing ones. A weak answer says \"seeds are not reliable\" or \"mark it flaky\".",
+      "model_answer": "**The reproduction recipe.** A seed alone names nothing. A run is reproducible when the same test runs with the same seed, the same build (sources and compile options), the same simulator version, the same plusargs and the same run-time inputs (memory images, files, environment variables). Change any of them and the random streams, and so the stimulus, may change.\n\n**Random stability (IEEE 1800-2023 §18.14).** Each thread and each object has its own random number generator. A new thread is seeded with the next random value of its parent thread; an object created with `new` is seeded with the next random value of the thread that creates it (§18.14.1, §18.14.3). Streams therefore depend on the order in which threads and objects are created and random numbers drawn. The standard's own advice is to add new threads and objects after existing ones to keep earlier streams stable.\n\n**Puzzle 2 explained.** A `$display` by itself draws no random number. What else an edit can move depends on who seeds the stimulus.\n- **The IEEE 1800-2023 rule (plain SystemVerilog, and objects UVM does not reseed).** Each new object and each new thread takes the next value of the creating thread's generator (§18.14.1). So an edit that creates an object or a thread, or draws a random number, in a thread that later creates or seeds the stimulus changes the seeds of everything created after it in that thread. The stimulus of every seed changes: one bug hides and another appears. The failure did not go away; the test stopped reaching it.\n- **What uvm-core adds.** Before it calls each component's phase method (`build_phase`, `connect_phase`, `run_phase` and the rest), uvm-core reseeds that process from the phase type and the component's full name. It does this unconditionally, even with UVM seeding turned off. While UVM seeding is on (the default), components also reseed themselves in their constructor, and sequences and items reseed when they are started (`start`, `start_item`), from their type and full names (IEEE 1800.2-2020 §5.3.3.3; the standard leaves the seed values implementation-specific, F.4.1.4.20). So an edit inside the scoreboard's `build_phase` or `run_phase`, whether a clone, a `$urandom` or a forked thread, advances only the scoreboard's own streams and cannot move another component's stimulus. An extra component reseeds itself by name. Only an edit in the scoreboard's **constructor** can move anything else: the constructor runs inside the parent's `build_phase`, so an object it creates or a random number it draws shifts the objects created and `$urandom` draws made later in that call, for example a randomized configuration object.\n- **So, in a UVM bench, compare the stimulus logs of the two builds first.** Usually they match, and the cause is elsewhere: the rest of the recipe changed (it is a new build), a race whose order the rebuild changed (§4.7), or a behaviour change made by the edit itself, such as a clone that stops the scoreboard keeping a handle the monitor later overwrites. Only if the stimulus really differs, look for an edit in a constructor or in code that UVM does not reseed.\n\n**Puzzle 1: check the recipe, then suspect real non-determinism.**\n- Recipe drift: a different build (a newer commit or different compile options), simulator version, plusargs, or run-time file is the usual cause.\n- Races (§4.7): an order-dependent bug can move with the build, the tool version or simulator options.\n- Uninitialized state or out-of-range reads whose result the tool or options decide.\n- Inputs outside the simulator's control: wall-clock time, environment variables, files written by an earlier test, DPI C code calling its own unseeded `rand()`.\n- Infrastructure: a job killed by a time limit or a licence problem looks like a failure with no summary.\nA seeded simulation that does not reproduce is a bug in the test or the flow. Investigate it; never label it \"flaky\".\n\n**Make it reproducible by design.**\n- Print the full recipe (seed, build id, tool version, full command line) at the start of every log.\n- Compile debug kits (extra checks, dumps, verbose monitors) into every build and enable them with plusargs, so debugging never needs a rebuild.\n- Use `$urandom` and `randomize()`, which are covered by random stability; `$random` is outside it (§18.14, §20.14.1).\n- Set the seed through the simulator's seed option and record it (the option name is tool-dependent).\n- Add new objects and threads at the end of existing code blocks.",
+      "follow_ups": [
+        "Which debug edits keep the stimulus of a seed unchanged, and which do not? Give two of each.",
+        "The debug edit was a `new` of a helper object in the scoreboard's constructor. What can that move in a uvm-core bench, and what can it not?",
+        "Your simulator upgrade changes every seed's stimulus. Is that allowed? How do you keep old failures reproducible?",
+        "How does UVM's `reseed()` (with UVM seeding enabled) relate to random stability, and why might a team want it?"
+      ],
+      "common_mistakes": [
+        "Treating a seed as a complete description of a run.",
+        "Blaming every result change after a debug edit on random stability, without checking whether the stimulus actually changed.",
+        "Applying the plain-SystemVerilog creation-order rule to a UVM bench without allowing for uvm-core's reseeding of phase processes, components, sequences and items by name.",
+        "Labelling a non-reproducible failure \"flaky\" and moving on.",
+        "Rebuilding with instrumentation to debug, then trusting a pass on the new build.",
+        "Using `$random` and expecting the same stability as `$urandom`."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §18.14 (random stability), §18.14.1 (initialization, thread and object stability), §18.14.3 (object stability)",
+        "IEEE 1800-2023 §4.7 (nondeterminism), §20.14.1 ($random)",
+        "IEEE 1800.2-2020 §5.3.3.1 (get_uvm_seeding), §5.3.3.3 (reseed), F.4.1.4.20 (get_global_seed: the seed used to initialize the random number generators of objects and/or processes; its value is implementation specific)",
+        "Tool note: the seed command-line option and its default are simulator-dependent",
+        "uvm-core 2020.3.1 src/base/uvm_object.svh:76 (use_uvm_seeding = 1 by default), :813-819 (reseed acts only when get_uvm_seeding() is 1), src/base/uvm_component.svh:1780 (constructor calls reseed), src/seq/uvm_sequence_item.svh:143 set_item_context (reseed), called from start (:307) and start_item (:1066) in src/seq/uvm_sequence_base.svh",
+        "uvm-core 2020.3.1 src/base/uvm_topdown_phase.svh:125, src/base/uvm_bottomup_phase.svh:123, src/base/uvm_task_phase.svh:168 (each component's phase process is reseeded with uvm_create_random_seed(phase type name, component full name), unconditionally); src/base/uvm_misc.svh:189-219 (uvm_create_random_seed)"
+      ]
+    },
+    {
+      "id": "debug-hang-time-not-advancing",
+      "topic": "debug",
+      "level": "senior",
+      "category": "coding",
+      "modules": [
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab",
+        "I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake",
+        "I-UVM-1C_UVM_Phasing/index"
+      ],
+      "prompt": "A test hangs: the simulator's time display stays at 1250 ns, CPU usage is at 100%, and after an hour `PH_TIMEOUT` still has not fired. Here is the driver. What is wrong, why does the UVM timeout not help, and how would you have found it without reading this code?",
+      "code": "```systemverilog\ntask run_phase(uvm_phase phase);\n  forever begin\n    seq_item_port.try_next_item(req);\n    if (req == null) continue;     // nothing to send: poll again\n    drive_item(req);               // waits on clock edges\n    seq_item_port.item_done();\n  end\nendtask\n```",
+      "rubric": "A strong answer sees the zero-delay loop: when no item is ready, `try_next_item` returns null without advancing time (in uvm-core it waits only for an NBA region), so the loop spins forever at one time step. It explains that the `PH_TIMEOUT` watchdog is a time delay, so it cannot expire while time is stuck. It fixes the loop (wait a clock when idle, or use `get_next_item`) and separates the two hang families: time stuck (zero-delay loops in the testbench or combinational loops in RTL; found by interrupting the simulator and looking at the active process, tool-dependent) versus time advancing (an objection never dropped; `+UVM_OBJECTION_TRACE`, `PH_TIMEOUT`). It does not claim that a failed `get` or a missing macro causes a silent hang. A weak answer raises the timeout.",
+      "model_answer": "**The bug: a zero-delay loop.** When the sequence has no item ready (between items, or after it finished), `try_next_item` returns with `req` = null (IEEE 1800.2-2020 §15.2.1.2.2). In uvm-core it waits only for an NBA region (`uvm_wait_for_nba_region`) before giving up, which does not advance simulation time. The `continue` then calls it again at the same time step, forever. Simulation time freezes at 1250 ns while the CPU runs flat out.\n\n**Why `PH_TIMEOUT` never fires.** The run-phase watchdog is a delay: uvm-core waits for the phase timeout with a time delay and then issues the fatal (`uvm_phase_hopper.svh`; the timeout is set with `set_timeout`, IEEE 1800.2-2020 F.7.3.3, or uvm-core's `+UVM_TIMEOUT`, default 9200 s). A delay can only expire if time advances. A `uvm_heartbeat` (§10.6) does not help either: a window ends when its event is triggered, and that event is normally triggered periodically in time, which no longer passes.\n\n**Fix: consume time when idle.**\n\n```systemverilog\ntask run_phase(uvm_phase phase);\n  forever begin\n    seq_item_port.try_next_item(req);\n    if (req == null) begin\n      drive_idle();          // drive idle values\n      @(vif.drv_cb);         // and wait one clock\n      continue;\n    end\n    drive_item(req);\n    seq_item_port.item_done();\n  end\nendtask\n```\n\nOr use `get_next_item`, which blocks until an item is available, if the bus does not need idle cycles driven.\n\n**Finding it without the code: first ask \"is time advancing?\"**\n- **Time stuck** (this case): the cause is a zero-delay loop. Interrupt the simulator and look at the active process and its call stack, or run its profiler (tool-dependent): one process dominates. Other members of this family: a `forever` with no timing control, a `wait` on a condition that toggles at the same time, a zero-delay clock generator, a combinational loop in RTL. `+UVM_PHASE_TRACE` (uvm-core) shows the last phase that started. Tool note: some simulators stop a run that never leaves one time step with an iteration-limit error; whether they do, the limit and the message are tool-dependent, so a missing error proves nothing.\n- **Time advancing, test never ends:** an objection was never dropped. `PH_TIMEOUT` fires; rerun with `+UVM_OBJECTION_TRACE` (uvm-core), find the `raised` with no `dropped`, and follow what that holder waits for (a blocking `get` on an empty FIFO, a sequence stuck in `finish_item`, a DUT that stopped responding).\n- **Not silent hangs:** a failed `uvm_config_db::get` checked with the `uvm_fatal` macro ends the run with a message; an unknown `+UVM_TESTNAME` is a fatal (`INVTST`); messages print when they are issued.",
+      "follow_ups": [
+        "Why can a combinational loop in RTL freeze time in the same way, and how would the simulator's log differ?",
+        "A process blocked in `get()` on an empty `uvm_tlm_fifo`: which hang family is that, and what ends the run?",
+        "How would a protocol watchdog in the monitor have changed the time to detect this bug, and would it have fired?"
+      ],
+      "common_mistakes": [
+        "Raising the UVM timeout, which can never fire while time is stuck.",
+        "Treating every hang as an objection problem.",
+        "Claiming a missing `uvm_component_utils` macro or a failed config `get` causes a silent hang."
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §15.2.1.2.1 (get_next_item), §15.2.1.2.2 (try_next_item), Annex F.7.3.3 (set_timeout), §10.6 (uvm_heartbeat)",
+        "uvm-core 2020.3.1 src/base/uvm_phase_hopper.svh (run-phase watchdog delay, PH_TIMEOUT), src/macros/uvm_global_defines.svh (UVM_DEFAULT_TIMEOUT 9200s)",
+        "uvm-core 2020.3.1 src/seq/uvm_sequencer.svh (try_next_item) and src/base/uvm_globals.svh:506-523 (uvm_wait_for_nba_region: a nonblocking update and an event wait, no time delay)",
+        "Tool note: interrupting a run and inspecting active processes or call stacks, and any iteration limit on a time step that never advances, are simulator-dependent"
+      ]
+    },
+    {
+      "id": "debug-honest-verdict",
+      "topic": "debug",
+      "level": "senior",
+      "category": "concept",
+      "modules": [
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/index",
+        "I-UVM-1D_Reporting_and_Run_Control/index",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index"
+      ],
+      "prompt": "A block regression has been 100% green for a month, yet a bug in the CRC path escaped to the SoC team. Its tests all end with `UVM_ERROR : 0`. List the ways a UVM test can report zero errors without really checking, starting with the code below, and say how you would gate the regression so it cannot happen again.",
+      "code": "```systemverilog\nclass quiet_catcher extends uvm_report_catcher;\n  function new(string name = \"quiet_catcher\"); super.new(name); endfunction\n  virtual function action_e catch();\n    if (get_severity() == UVM_ERROR && get_id() == \"CRC\") return CAUGHT;  // \"expected\" CRC errors\n    return THROW;\n  endfunction\nendclass\n// in base_test::build_phase, for every test:\n//   quiet_catcher qc = new();  uvm_report_cb::add(null, qc);\n```",
+      "rubric": "A strong answer explains that this catcher, registered on every reporter in every test, swallows every CRC error, including real ones, and then lists the other mechanisms: `UVM_NO_ACTION` or severity demotion on the command line (`+uvm_set_action`, `+uvm_set_severity`); failures UVM never counts (`$error` from assertions, assertions switched off with `$assertoff`); zero activity (no objection, a sequence that never ran, a monitor not connected, a scoreboard that compared nothing or left items unchecked). For gating it proposes a verdict that needs the UVM summary, zero simulator errors, a positive compare count and an empty scoreboard in `check_phase`, plus linting of command lines and catcher code and counted, narrow catchers. A weak answer only says \"check the log for errors\".",
+      "model_answer": "**The catcher.** A report catcher runs before the report server counts the message; returning `CAUGHT` drops it (IEEE 1800.2-2020 §6.6, §6.6.5). Registered with `uvm_report_cb::add(null, ...)` in the base test, this one sees every reporter in every test and drops every `CRC` error, the injected ones and the real ones alike. A catcher for error injection must be narrow (one reporter, one ID, only in the error-injection test), and it must count what it caught so the test can check the count equals the number injected.\n\n**Four ways a verdict lies.**\n1. **Errors removed before counting:** a broad catcher, `+uvm_set_action=...,UVM_ERROR,UVM_NO_ACTION` (G.2.4), or `+uvm_set_severity` demoting errors to warnings (G.2.5). In uvm-core, the `uvm_error` macro checks the action before building the message, so a `UVM_NO_ACTION` error is never even created.\n2. **Failures UVM never sees:** `$error` is a SystemVerilog severity task; the simulator prints it and UVM never counts it (IEEE 1800-2023 §20.10). A failing assertion with no `else` calls `$error`. `$assertoff` or `$assertcontrol` (§20.11) can switch assertions off entirely.\n3. **Zero activity:** no objection raised, so `run_phase` ended at once; a sequence that never started; a monitor whose analysis port has no subscriber (zero connections are legal for an analysis port); a scoreboard that compared nothing.\n4. **Unchecked leftovers:** expected items still queued at the end because the scoreboard only reports mismatches it sees, never items that never arrived.\n\n**Gate the regression.**\n- A run passes only if the UVM summary is present with `UVM_ERROR : 0` and `UVM_FATAL : 0`, the log has no simulator-format errors, and the checker proves it compared something.\n- Scoreboards fail in `check_phase` when the compare count is 0 or expected items remain:\n\n```systemverilog\nfunction void check_phase(uvm_phase phase);\n  super.check_phase(phase);\n  if (n_compared == 0) `uvm_error(\"SCB\", \"no transactions were compared\")\n  if (exp_q.size() != 0) `uvm_error(\"SCB\", $sformatf(\"%0d expected items never arrived\", exp_q.size()))\nendfunction\n```\n\n- Lint the inputs: reject regression command lines with `UVM_NO_ACTION` or error demotion, review catcher code for broad `CAUGHT`, and flag `$assertoff` in tests.\n- Periodically prove the checkers can fail: a mutation or bug-injection run (break the DUT or the model on purpose) must turn the regression red.",
+      "follow_ups": [
+        "Where does a catcher sit relative to `+uvm_set_severity`: does it see the original or the overridden severity?",
+        "How would you prove the CRC checker can detect a real CRC error, independently of the regression being green?",
+        "An analysis port with no subscriber: why is it legal, and how do you detect it?"
+      ],
+      "common_mistakes": [
+        "Treating `UVM_ERROR : 0` as proof that the test checked something.",
+        "Registering a catcher with a null context in a base test used by every test.",
+        "Forgetting that assertion failures through `$error` never reach the UVM counts.",
+        "Checking the scoreboard only for mismatches and never for missing items."
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §6.6 (uvm_report_catcher), §6.6.5 (catch, CAUGHT and THROW), §6.5.1.2.14 (process_report_message), §6.5.1.2.6 (get_severity_count)",
+        "IEEE 1800.2-2020 Annex G.2.4 (+uvm_set_action), G.2.5 (+uvm_set_severity), §13.1.4.1.7 (check_phase)",
+        "IEEE 1800-2023 §20.10 (severity system tasks), §20.11 (assertion control)",
+        "uvm-core 2020.3.1 src/macros/uvm_message_defines.svh (action checked before the message is built)"
+      ]
+    },
+    {
+      "id": "debug-simulation-performance",
+      "topic": "debug",
+      "level": "senior",
+      "category": "concept",
+      "modules": [
+        "E-PERF-1_UVM_Performance/index",
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/index"
+      ],
+      "prompt": "The block regression now takes three times as long as last quarter with the same tests and seeds. How do you find where the time goes and fix it without changing what the tests check? Start with the monitor line below.",
+      "code": "```systemverilog\n// in a monitor, once per observed transaction\nuvm_report_info(\"MON\", $sformatf(\"saw %s\", tr.sprint()), UVM_HIGH);\n```",
+      "rubric": "A strong answer measures before changing anything (wall-clock time per test against a baseline on the same machine and tool version, then the simulator's profiler, which is tool-dependent), splits DUT time from testbench time, and recognises the common UVM hotspots: message strings built even when filtered (the line shown; the `uvm_info` macro checks verbosity first), `uvm_config_db::get` per item, objections raised and dropped per item, transaction recording or full waveform dumps left on, throwaway clones, coverage sampled every clock, O(N^2) scoreboard searches. It proves each fix with the profile and checks that the same seeds still produce the same results. A weak answer buys more machines or turns off checks and coverage.",
+      "model_answer": "**Measure first.** Compare wall-clock time per test with last quarter's numbers on the same machine class and simulator version: is every test slower, or a few? Then profile one slow test with the simulator's profiler (tool-dependent) and split the time into DUT, testbench and simulator overhead (waveform dumping, logging).\n\n**The line shown is hotspot number one.** `uvm_report_info` is a plain function call, so its arguments are evaluated first: `tr.sprint()` and `$sformatf` build the string for every transaction, and only then does the report object discard it, because regressions do not run at `UVM_HIGH`. The `uvm_info` macro checks the verbosity before evaluating the message (IEEE 1800.2-2020 B.1.1.1; in uvm-core the macro opens with the `uvm_report_begin` guard, which checks the verbosity and the action, through `get_report_verbosity_level` and `get_report_action`, before the message is evaluated), so a filtered message costs almost nothing:\n\n```systemverilog\n`uvm_info(\"MON\", $sformatf(\"saw %s\", tr.sprint()), UVM_HIGH)\n```\n\n**Other usual suspects (from profiles of UVM benches):**\n- `uvm_config_db::get` called per item: each lookup searches and matches scopes. Read configuration once in `build_phase`.\n- An objection raised and dropped per item: each one updates every ancestor. Raise once per test or top sequence.\n- Transaction recording (`set_recording_enabled`, §13.1.7.13) or a full-design waveform dump left on in regressions. Turn them on only for the rerun of a failing seed.\n- Throwaway objects: `clone()` or `sprint()` on every item when nothing stores the result.\n- Coverage sampled on every clock instead of every transaction.\n- Your own algorithms: a scoreboard that searches a queue for each item does N^2 work; key an associative array by the match field.\n- Many `forever @(posedge clk)` loops that wake every cycle to do nothing.\n\n**Prove each fix.** Profile again: the hot routine should drop out. Then rerun a set of seeds and check the results and coverage are unchanged; a speed-up that changes behaviour is a bug. Never buy speed by switching off checks or coverage the verification plan needs.",
+      "follow_ups": [
+        "The profile shows 70% of time in the DUT. What can verification still do?",
+        "Replacing `type_id::create` with `new` for every transaction would save factory lookups. Why is that usually a bad trade?",
+        "How do you keep the regression fast while still being able to debug a failing seed with full visibility?"
+      ],
+      "common_mistakes": [
+        "Optimising before measuring, or comparing runs on different machines or tool versions.",
+        "Assuming a filtered message is free whatever way it is written.",
+        "Disabling coverage or checkers to recover speed.",
+        "Leaving transaction recording or full waveform dumps on in every regression run."
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 Annex B.1.1.1 (uvm_info macro: calls uvm_report_info only if the verbosity is enabled)",
+        "IEEE 1800.2-2020 §13.1.7.13 (set_recording_enabled), C.4.2.2.2 (config_db get)",
+        "uvm-core 2020.3.1 src/macros/uvm_message_defines.svh:130-158 (uvm_report_begin guard: verbosity and action checked before uvm_report_info is called)",
+        "Tool note: profilers and their reports are simulator-dependent; hotspot list as taught in E-PERF-1 (practice, not a standard)"
+      ]
+    },
+    {
+      "id": "debug-gate-level-x-and-timing",
+      "topic": "debug",
+      "level": "senior",
+      "category": "concept",
+      "modules": [
+        "F2A_Core_Data_Types/index",
+        "F4C_Clocking_Blocks/index",
+        "A-UVM-9_Reset_and_Error_Injection/index"
+      ],
+      "prompt": "A reset test passes in RTL and fails in SDF-annotated gate-level simulation: `rdata` is X for several cycles after reset, and the log shows timing-check violations on some flops. How do you separate real bugs from gate-level simulation artifacts?",
+      "rubric": "A strong answer starts from the first X in time and traces it back through the netlist, then sorts causes: flops without reset that RTL X-optimism hid (real, needs a reset or a proof the value is never used); X-pessimism in cell models (artifact, but proved, not assumed); timing-check violations (`$setuphold` and friends, IEEE 1800-2023 §31.3, §31.4) whose notifier makes the cell model drive X (§31.6; library-dependent), checked against static timing analysis and against intended exceptions such as synchronizer first stages; SDF annotation problems; and testbench sampling or drive skews that no longer fit real delays (§14.13). It labels initialization switches as tool-dependent waivers that need review. A weak answer turns off timing checks or forces all flops to 0 and declares victory.",
+      "model_answer": "**Start from the first X in time.** Find the earliest time `rdata` (or anything feeding it) goes X, and trace it back through the netlist to the cell that first produced it (the tracing feature is tool-dependent). Note what else happened at that time: a reset edge, a timing violation, the first clock.\n\n**Then sort the cause.**\n- **Unreset state that RTL hid.** In RTL, `if` and `case` treat an x condition as false or fall to `default` (IEEE 1800-2023 §12.4, §12.5), so an unreset flop can look harmless. Gates propagate the X. If the X reaches an output the specification defines after reset, it is a real bug: add a reset or prove the value is never used.\n- **X-pessimism in cell models.** Some structures are known in hardware but X in simulation, for example reconvergent logic or a clock-gating cell with an X enable whose output is masked. Prove it (by analysis or by formal X-checking) before waiving it.\n- **Timing-check violations.** `$setuphold`, `$recovery`, `$removal` and the others (§31.3, §31.4) report violations and update a notifier (§31.6); the library's flop model typically uses the notifier to drive X (library-dependent). Check each violation against static timing analysis: a real setup or hold failure is a design or constraint bug. Violations on the first flop of a clock-domain synchronizer are expected by design, and flows usually disable timing checks or X-generation on those flops (a flow decision, documented and reviewed).\n- **SDF problems.** Annotation warnings (missing instances, unmatched timing arcs) leave cells with wrong or zero delays (Clause 32 covers SDF back-annotation). Read them before trusting any timing result.\n- **Testbench timing.** With real delays, outputs settle some time after the edge. A clocking block's input skew must leave the output time to settle before the sample point (§14.13), and a drive skew can give hold margin. A testbench written for zero-delay RTL can sample too early or drive too late.\n\n**Fixes and waivers.** Simulator options that initialize unreset flops (tool-dependent) can unblock a run, but they are waivers: list each flop, justify it, and review it at sign-off, because they can hide exactly the bug gate-level simulation exists to find.",
+      "follow_ups": [
+        "Why run gate-level simulation at all when equivalence checking and static timing analysis pass?",
+        "A zero-delay gate-level run fails where RTL passes, with no timing checks involved. Name a likely cause.",
+        "How do you make the same UVM agent work for RTL and SDF-annotated runs?"
+      ],
+      "common_mistakes": [
+        "Disabling all timing checks or forcing every flop to 0 to make the run pass.",
+        "Assuming every gate-level X is pessimism, or every one is a real bug, without tracing it.",
+        "Ignoring SDF annotation warnings at the top of the log.",
+        "Reusing zero-delay testbench sampling with real output delays."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §12.4, §12.5 (X-optimism in if and case)",
+        "IEEE 1800-2023 §31.3, §31.4 (timing checks), §31.6 (notifiers), Clause 32 (SDF back-annotation)",
+        "IEEE 1800-2023 §14.13 (clocking input sampling and skew)",
+        "Tool note: cell-model X behaviour, X tracing and initialization options are library- and simulator-dependent"
+      ]
     },
     {
       "id": "debug-coverage-hole-triage",
       "topic": "debug",
       "level": "senior",
       "category": "verification-plan",
-      "prompt": "Your functional coverage is stuck at 92%. How do you identify and close the remaining holes?",
-      "rubric": "Analyze coverage report to identify uncovered bins, classify as unreachable vs under-stimulated, write directed sequences for hard-to-reach states, consider constraint relaxation, check for illegal bin misclassification.",
-      "model_answer": "1) Export the coverage report and identify all uncovered bins. 2) Classify each: (a) unreachable by design — mark as exclude_bin with justification. (b) Requires specific sequence — write a directed sequence targeting that scenario. (c) Rare random event — increase iteration count or add constraint bias. 3) Check cross coverage — often specific bin combinations are the gap. 4) Look for illegal bins incorrectly marked as valid. 5) Consider if the coverage model is too fine-grained (e.g., full address range bins when only a few addresses are legal). 6) Track coverage closure rate per seed to ensure the random regressions are still making progress.",
-      "sources": ["IEEE 1800-2023 §19 (functional coverage)", "Verification planning methodology (secondary)"]
+      "modules": [
+        "I-SV-3B_Advanced_Functional_Coverage/closure-workflow",
+        "I-SV-3A_Functional_Coverage_Fundamentals/coverage-options"
+      ],
+      "prompt": "Functional coverage has been stuck at 92% for two weeks of random regressions. How do you find and close the remaining holes, and how do you exclude bins that cannot be hit?",
+      "code": "```systemverilog\n// snippet: kind_e has values READ, WRITE, ATOMIC, RSVD\ncovergroup cg_xfer with function sample(kind_e kind, int unsigned len);\n  cp_kind : coverpoint kind {\n    bins rd = {READ};  bins wr = {WRITE};  bins atomic = {ATOMIC};\n    illegal_bins rsvd = {RSVD};               // must never occur\n  }\n  cp_len : coverpoint len { bins single = {1}; bins burst[] = {[2:16]}; }\n  x_kind_len : cross cp_kind, cp_len {\n    ignore_bins atomic_burst = binsof(cp_len) intersect {[2:16]} && binsof(cp_kind.atomic);\n  }\nendgroup\n```",
+      "rubric": "A strong answer classifies each hole as unreachable by design, reachable but under-stimulated, or a coverage-model bug, and treats each differently: `ignore_bins` (including on crosses) for values that cannot occur, `illegal_bins` for values that must never occur (a hit is a run-time error), directed or biased stimulus for reachable holes, and fixing the model when bins are too fine or sampled wrongly. It notes that tool exclusion or waiver files are vendor-specific and need a review trail, checks whether constraints make holes unreachable, and tracks coverage growth per seed. A weak answer runs more seeds, or invents an exclusion keyword the language does not have (the bin keywords are `bins`, `ignore_bins` and `illegal_bins`).",
+      "model_answer": "**1. List and classify every hole.** Export the uncovered bins and crosses and, for each, decide which kind it is:\n- **Unreachable by design:** the specification forbids it (here, an atomic burst longer than one beat).\n- **Reachable but under-stimulated:** legal, but random stimulus rarely produces it.\n- **A coverage-model bug:** bins too fine, sampled at the wrong time or with the wrong values, or a crossing of values that can never coexist.\n\n**2. Unreachable: say so in the model.** `ignore_bins` removes values or cross products from coverage (IEEE 1800-2023 §19.5.5; for crosses, §19.6.2), so they no longer count against you. `illegal_bins` also removes them, and a hit is a run-time error (§19.5.6, §19.6.3): use it for values that must never occur, like `RSVD` above, so coverage doubles as a check. The language has no other exclusion keyword: a bin is declared with `bins`, `ignore_bins` or `illegal_bins` (§19.5, Syntax 19-2). Tool exclusion or waiver files are vendor-specific: keep each with a justification and a reviewer, because they hide holes outside the code.\n\n**3. Reachable: target it.** Look first for over-constraint: a constraint that makes a legal value impossible is a test bug. Then bias the random stimulus (`dist`, a dedicated constraint mode) or write a directed sequence for the scenario. Rare combinations usually hide in crosses.\n\n**4. Model bugs: fix the model.** Merge bins nobody needs separately (for example every address when only regions matter), sample per transaction rather than per clock, and check that the sampled values are the ones the plan means.\n\n**5. Watch the trend.** Track which seeds add new bins. If coverage has been flat for two weeks, more of the same seeds will not help; the remaining holes need a decision, not more cycles.\n\n**6. Close the loop with the plan.** Every exclusion and every new directed test traces to a verification-plan item, and the exclusions are reviewed with the designer at sign-off.",
+      "follow_ups": [
+        "What is the difference between an ignored value and an illegal value in how the coverage percentage is computed and in how the run behaves?",
+        "Coverage reaches 100% but a bug escapes in exactly that feature. What was wrong with the model?",
+        "How would you find holes that are unreachable because of your own constraints rather than the specification?"
+      ],
+      "common_mistakes": [
+        "Inventing an exclusion keyword the language does not have (the bin keywords are `bins`, `ignore_bins` and `illegal_bins`), or excluding holes in a tool file with no justification.",
+        "Marking a reachable but hard bin as ignored to reach the target.",
+        "Running more seeds of the same tests after coverage has saturated.",
+        "Using `illegal_bins` for values that are merely uninteresting, which turns them into run-time errors."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §19.5 (Syntax 19-2: bins_keyword is bins, illegal_bins or ignore_bins)",
+        "IEEE 1800-2023 §19.5.5 (ignore_bins), §19.5.6 (illegal_bins), §19.6.2 (excluding cross products), §19.6.3 (illegal cross products)",
+        "IEEE 1800-2023 §19.11 (coverage computation)",
+        "Tool note: coverage exclusion and waiver files are vendor-specific"
+      ]
     },
     {
       "id": "debug-staff-regression-triage",
       "topic": "debug",
       "level": "staff",
       "category": "staff-system-design",
-      "prompt": "50 of 200 regression tests fail after a major RTL change. Design your triage workflow.",
-      "rubric": "Must include: signature grouping, bisect to first failing commit, prioritize by failure type (timeout vs mismatch vs compile), check for common root causes, parallelize investigation, and communicate status.",
-      "model_answer": "1) Group failures by signature: compile errors, timeouts, assertion failures, scoreboard mismatches. 2) Fix compile errors first — they cascade. 3) For the largest group, bisect to the RTL commit that introduced them. 4) Check if one root cause explains multiple failures (e.g., a reset change breaking all tests). 5) Prioritize: timeout/hang bugs first (hardest to debug), then data mismatches. 6) Assign sub-groups to team members for parallel investigation. 7) Maintain a triage spreadsheet: test name, failure type, root cause, assigned engineer, status. 8) Daily triage meetings until the count is below threshold. 9) Mark non-reproducible failures as flaky and investigate seed sensitivity.",
-      "sources": ["Verification management methodology (secondary)"]
+      "modules": [
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/effective-debug",
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/index"
+      ],
+      "prompt": "50 of 200 regression tests fail after a major RTL change. Design your triage workflow, from the first red dashboard to a closed set of bugs.",
+      "rubric": "A strong answer automates signatures (the first `UVM_ERROR` or `UVM_FATAL`, its ID and normalized component path, message numbers stripped), buckets failures, and debugs one run per bucket; handles compile and elaboration failures separately; for runs with no report summary reads the log tail first, buckets a crash, a null-object error or a SystemVerilog `$fatal` as a real failure by that message, and treats only grid kills and licence or disk problems as infrastructure (rerun and counted separately); looks for one common cause (reset, clocking, a shared package); bisects across both RTL and testbench commits; reproduces exactly and treats any non-reproducing seeded failure as a bug to investigate, not \"flaky\"; prioritizes by impact; assigns owners with a tracked status; and locks in each fix with the failing seeds. A weak answer debugs tests one by one in name order, treats every run without a summary as infrastructure, or marks non-reproducible failures as flaky.",
+      "model_answer": "**1. Separate the failure kinds automatically.**\n- Build and elaboration failures: no test ran; fix these first, they mask everything else.\n- No report summary: read the log tail first. A simulator crash, a SystemVerilog `$fatal` (for example from an assertion action block) or a null-object error (which simulators typically treat as fatal) stops the run before UVM prints its summary, and it is a real failure: bucket it by that message (IEEE 1800-2023 §20.10: `$fatal` terminates the simulation; §8.4: access through a null handle is illegal). Only jobs killed by the grid (a time or memory limit) and licence or disk problems are infrastructure: rerun them and count them separately, outside the bug count.\n- Real failures with a summary: errors counted, or a fatal such as `PH_TIMEOUT`.\n\n**2. Bucket by signature.** For each real failure take the first `UVM_ERROR` or `UVM_FATAL` in time (for a run with no summary, the crash, null-object or `$fatal` message) and normalize it: keep severity, ID and component path (with array indices replaced), strip times, file names, hex values and numbers. Runs with the same signature share a bucket. 50 failures typically collapse into a handful of buckets; you debug one run per bucket, the shortest one.\n\n**3. Look for a common cause.** One bucket covering most tests after a major change often means one shared mechanism broke: reset sequencing, a clock or register default, a shared package or interface. Check that before splitting the work.\n\n**4. Bisect.** If the RTL change landed as several commits, bisect to the first failing one using a representative seed from each bucket. Bisect the testbench repository too: a \"RTL regression\" is sometimes a testbench change merged the same day. Keep the simulator version fixed while bisecting.\n\n**5. Reproduce exactly.** Same test, seed, build, simulator version and plusargs. A seeded run that does not reproduce points at a broken recipe, a race, uninitialized state, or inputs outside the simulator's control. Investigate it; never file it as \"flaky\" (random stability, IEEE 1800-2023 §18.14).\n\n**6. Prioritize and assign.** Order buckets by impact: hangs and fatals that stop other checks, then buckets that block many tests, then single-test failures. Each bucket gets an owner, a status and a bug id on a shared tracker; triage meets daily until the count is under an agreed threshold.\n\n**7. Close properly.** A fix is done when the bucket's seeds pass on the new build and the full regression shows the bucket gone. Add the failing seeds to the regression, and ask whether a cheaper check (an assertion, a protocol checker) would have caught it earlier.",
+      "follow_ups": [
+        "Two buckets have different signatures but you suspect the same root cause. How do you confirm it cheaply?",
+        "The bisect points at a commit that only reformats code. What do you suspect?",
+        "How would you make bucketing robust when components log errors with their full path as the message ID?"
+      ],
+      "common_mistakes": [
+        "Debugging failures one by one in test-name order instead of by signature.",
+        "Marking seeded failures that do not reproduce as flaky.",
+        "Bisecting only the RTL repository when the testbench changed too.",
+        "Mixing infrastructure failures into the bug count.",
+        "Treating every run with no UVM summary as infrastructure, so a `$fatal`, a null-object error or a crash is rerun instead of debugged."
+      ],
+      "sources": [
+        "IEEE 1800-2023 §18.14 (random stability)",
+        "IEEE 1800-2023 §20.10 ($fatal generates a run-time fatal error that terminates the simulation), §8.4 (accessing members through a null object handle is illegal; implementations may issue an error)",
+        "IEEE 1800.2-2020 §6.5.1.2.6 (get_severity_count), Annex G.2.6 (+UVM_MAX_QUIT_COUNT)",
+        "Practice note (not normative): signature, bucket and bisection workflow as taught in E-DBG-1 \"Systematic Debug\"",
+        "uvm-core 2020.3.1 src/base/uvm_report_server.svh:972-1010 (m_report_summarize builds the \"--- UVM Report Summary ---\" block); src/base/uvm_root.svh:179, 628 (report_summarize is called from die() on a UVM fatal and at the end of run_test, so a run stopped by $fatal or a crash prints none)"
+      ]
+    },
+    {
+      "id": "debug-staff-debug-infrastructure",
+      "topic": "debug",
+      "level": "staff",
+      "category": "staff-system-design",
+      "modules": [
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/index",
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab",
+        "E-PERF-1_UVM_Performance/index"
+      ],
+      "prompt": "You own the testbench for a large SoC. A typical failing test runs six hours before it fails, and engineers lose a day per bug to reruns. Design the debug infrastructure so an overnight failure can be debugged the next morning without another six-hour rerun with full visibility.",
+      "rubric": "A strong answer combines: plusarg-switched debug kits compiled into every build (so reruns keep the seed); the full reproduction recipe in every log; fail-fast mechanisms (first-failure stop with `+UVM_MAX_QUIT_COUNT`, protocol watchdogs, `uvm_heartbeat`, scoreboards that dump pending items on failure); time-windowed visibility (`+uvm_set_verbosity` time form, waveform dumps switched on near the failure, transaction recording for that window); automatic rerun of one seed per bucket with the debug kit overnight; and an honest cost model (storage, slowdown) with tool-dependent features such as save/restore labelled as such. A weak answer says \"dump all waveforms for every test\".",
+      "model_answer": "**Principle: the first run should leave enough evidence, and any rerun should be cheap and exact.**\n\n**1. Exact reruns.** Every log starts with the recipe: test, seed, build id, simulator version, full command line. Debug kits (extra checkers, verbose monitors, dumps) are compiled into every build and enabled by plusargs, so a debug rerun uses the same build and the same random streams.\n\n**2. Fail fast.** Six hours to fail usually means the bug happened much earlier.\n- Protocol watchdogs in monitors (no handshake for N cycles while VALID is high) and a `uvm_heartbeat` on agents (IEEE 1800.2-2020 §10.6) turn silent stalls into failures within one window.\n- Scoreboards report a missing response after a bounded latency, not only at the end of the test.\n- `+UVM_MAX_QUIT_COUNT=1,NO` (G.2.6) on reruns stops at the first failure.\n\n**3. Evidence in the first run, at regression cost.** Keep a compact, parseable per-agent transaction log at low verbosity (cheap compared with waveforms). On the first error, a report catcher or the scoreboard dumps its pending items and the last N transactions per agent (a ring buffer kept in memory).\n\n**4. Visibility only where it is needed.** On the rerun, open the window just before the failure:\n- `+uvm_set_verbosity=<comp>,_ALL_,UVM_FULL,time,<t>` (G.2.3) raises verbosity only from time t.\n- Waveforms switched on near the failure: `$dumpoff`/`$dumpon` for VCD (IEEE 1800-2023 §21.7.1.3) or the simulator's own dump controls for its native format (tool-dependent), triggered by a plusarg time or an event.\n- Transaction recording (`set_recording_enabled`, §13.1.7.13) on for the same window.\n- Simulator save and restore, where available, to restart from a checkpoint near the failure (tool-dependent; validate that restored runs match).\n\n**5. Automate the night shift.** The regression buckets failures by signature and, overnight, reruns the shortest seed of each new bucket with the debug kit on. Engineers arrive to a bucket list with waveforms and logs already attached.\n\n**6. Budget it.** Measure the slowdown of each kit (E-PERF-1 style), cap waveform and log storage, and expire artifacts. For tests that are long by nature (boot, software), move them to emulation or acceleration where the same transaction logs still apply.",
+      "follow_ups": [
+        "Your debug kit changes the random streams when enabled. How did that happen, and how do you prevent it?",
+        "How do you choose the heartbeat window for an agent whose traffic is legitimately bursty?",
+        "What would you not keep for every regression run, and why?"
+      ],
+      "common_mistakes": [
+        "Dumping full waveforms for every run, which slows the regression and fills storage.",
+        "Requiring a rebuild to turn on debug features, which changes the seed's stimulus.",
+        "Relying on the global timeout to detect stalls hours after they happen.",
+        "Presenting save/restore or dump controls as standard features rather than simulator features."
+      ],
+      "sources": [
+        "IEEE 1800.2-2020 §10.6 (uvm_heartbeat), §13.1.7.13 (set_recording_enabled), §6.6 (uvm_report_catcher)",
+        "IEEE 1800.2-2020 Annex G.2.3 (+uvm_set_verbosity time form), G.2.6 (+UVM_MAX_QUIT_COUNT)",
+        "IEEE 1800-2023 §21.7.1.3 ($dumpoff/$dumpon), §18.14 (random stability)",
+        "Tool note: native waveform formats, dump controls and save/restore are simulator-dependent"
+      ]
     },
     {
       "id": "debug-senior-staff-signoff",
       "topic": "debug",
       "level": "senior-staff",
       "category": "staff-system-design",
-      "prompt": "How do you decide when a design is ready to tape out from a verification perspective?",
-      "rubric": "Must discuss: functional coverage closure (not just line/toggle), assertion coverage, formal proof completeness, regression pass rate and stability, known-bug waivers, code coverage analysis, and sign-off metrics.",
-      "model_answer": "Tape-out readiness requires: 1) Functional coverage at target (typically 100% for critical features, 95%+ overall) with all holes justified. 2) Code coverage (line/branch/toggle/FSM) at 95%+ with uncovered code analyzed for dead code or missing tests. 3) All formal properties proven or bounded to agreed depth. 4) Zero open P0/P1 bugs; all waived bugs documented with risk assessment. 5) Regression pass rate 100% for full regression (no intermittent failures). 6) Coverage rate saturated — additional seeds don't increase coverage. 7) All verification plan items signed off by the verification lead. 8) Cross-domain review: reset/CDC/power-aware checks complete.",
-      "sources": ["Verification sign-off methodology (secondary)"]
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "I-SV-3B_Advanced_Functional_Coverage/linking-coverage",
+        "E-INT-1_Integrating_UVM_with_Formal_Verification/index",
+        "E-PWR-1_Power_Aware_Verification/index"
+      ],
+      "prompt": "How do you decide when a design is ready to tape out from a verification perspective? What evidence would you put in front of the sign-off review?",
+      "rubric": "A strong answer treats sign-off as evidence against a reviewed plan, not a single number: plan coverage and traceability, functional coverage with every exclusion justified, code coverage holes analysed, formal proofs or agreed bounds, a stable regression, a flattening bug-discovery trend, open bugs triaged with waivers and risk, and the other sign-off domains (gate-level simulation, CDC and RDC, low-power, DFT modes, performance, software or emulation bring-up), plus a plan for ECOs and escape analysis. It labels any numeric targets as project examples. A weak answer quotes \"100% coverage\" or fixed percentages as industry rules.",
+      "model_answer": "Sign-off is a judgement that the remaining risk is acceptable, backed by evidence against a plan that was itself reviewed. I would bring:\n\n**1. The plan and its traceability.** Every specification feature maps to plan items, and every plan item maps to tests, coverage or proofs with a status. The plan was reviewed with architects and designers, so the coverage model measures the right things.\n\n**2. Coverage, with every gap explained.** Functional coverage at the project's targets (a team might require 100% of critical features and a high overall figure; the numbers are project choices, not industry rules). Every exclusion and waiver is listed with its reason and reviewer. Code coverage holes (line, branch, toggle, FSM) are analysed: dead code, missing tests, or features out of scope.\n\n**3. Formal results.** Properties proven, or bounded to an agreed depth with the reason; constraints reviewed so that proofs are not over-constrained.\n\n**4. Regression health.** A full regression passing on the release build, with no unexplained non-reproducible failures; honest verdicts (no broad catchers or demotions).\n\n**5. Bug trends.** The discovery rate has flattened despite new stimulus; open bugs are triaged, and each waived bug has a risk assessment and an owner.\n\n**6. The other sign-off domains.**\n- Gate-level simulation of key tests (reset, boot, power modes) with timing.\n- CDC and RDC analysis clean or waived with review.\n- Low-power verification against the power intent (UPF), including power-aware simulation of each mode.\n- DFT modes and test-mode configurations simulated.\n- Performance requirements (latency, bandwidth) measured.\n- Software or emulation bring-up of real use cases where the project has it.\n\n**7. After the review.** A plan for ECO re-verification (what reruns for each kind of change), and an escape analysis process so that every post-silicon bug feeds back into the plan and the coverage model.",
+      "follow_ups": [
+        "Coverage is at target but the bug rate has not flattened. What do you recommend?",
+        "Which evidence would you accept for a block that is reused unchanged from a previous chip?",
+        "A late ECO changes one arbiter. Which verification do you rerun, and how do you decide?"
+      ],
+      "common_mistakes": [
+        "Presenting fixed coverage percentages as industry norms.",
+        "Equating 100% coverage with \"no bugs\" when the model itself was never reviewed.",
+        "Leaving out CDC, low-power, gate-level, DFT or performance sign-off.",
+        "Treating waivers as closure without risk assessment and review."
+      ],
+      "sources": [
+        "IEEE 1800-2023 Clause 19 (functional coverage), §19.5.5 (ignore_bins)",
+        {
+          "doc": "IEEE 1801 (UPF) power intent, edition chosen by the project; no section cited",
+          "verified": false
+        },
+        "Practice note (not normative): sign-off checklist as taught in E-SOC-1, E-INT-1 and E-PWR-1; numeric targets are project examples"
+      ]
     }
   ]
 }

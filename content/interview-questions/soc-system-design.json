@@ -1,78 +1,918 @@
 {
   "id": "soc-system-design-interview-bank",
   "title": "SoC & System-Design Interview Question Bank",
-  "description": "Staff and senior-staff level interview preparation covering SoC verification strategy, coherency, interconnect design, system-level debug, and verification signoff.",
+  "description": "Interview preparation from junior to senior staff: what changes at SoC level, address maps, interrupts, firmware and testbench co-operation, register prediction, liveness, reset and boot, CDC/RDC, interconnect IDs and ordering, coherency, DMA, power, security, performance and QoS, PSS, emulation, and sign-off.",
   "topic": "soc",
   "questions": [
+    {
+      "id": "soc-integration-only-bugs",
+      "topic": "soc",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "Every block in a new SoC passed its own block-level regression with 100% functional coverage. Name four kinds of bug that can still be in the chip, and explain why no block testbench could have found them.",
+      "rubric": "A strong answer names at least four classes of integration bug, each with a concrete example, and explains the common reason: the bug lives *between* blocks, where a block bench only has its own model of the neighbour. It also says that merged block coverage is not SoC coverage, because system goals (which master reached which slave, which interrupt reached which core) are collected only at SoC level.\n\nA weak answer says \"timing bugs\" or \"integration issues\" without examples, or claims the SoC level re-verifies each block's internals.",
+      "model_answer": "A block bench drives every input and models every neighbour with its own assumptions. The bugs that survive are the ones that exist only when the real neighbours are connected:\n\n- **Connectivity.** An interrupt line, reset, clock enable or pin-mux output is wired to the wrong place. Each block is correct; the wire between them is not, and no block bench contains both ends of the wire.\n- **Address map and decode.** A master reaches the wrong slave, a region is mapped at the wrong base, or an access to a hole hangs instead of returning an error response.\n- **System flows.** Boot, firmware configuring a block, a DMA descriptor chain followed by its completion interrupt: each step was tested in isolation, never end to end.\n- **Shared resources.** Arbitration between masters, ordering through the interconnect, quality of service (which traffic gets bandwidth first) only exist when several masters compete.\n- **Resets, power and clocks.** One block is reset while another is mid-transfer, a power domain switches off with traffic in flight, a signal crosses between clock domains without a synchronizer.\n- **Security.** A non-secure master reaches a register that should be secure-only, because the firewall setting and the master's attribute were each \"correct\" in their own bench.\n\n**Why block coverage does not help.** Merging every block's 100% shows that each block was exercised *by its own bench*. It says nothing about whether the CPU ever reached the crypto block, or whether a DMA error response ever reached firmware. SoC closure needs system goals, such as a cross of master × slave × response, collected at SoC level.",
+      "follow_ups": [
+        "Which test layer is the first one that can see a wrong interrupt wire between two blocks?",
+        "How would you prove top-level connectivity without writing one functional test per wire?",
+        "Why is it wasteful to rerun every block test at SoC level?"
+      ],
+      "common_mistakes": [
+        "Assuming merged block coverage means the SoC is covered.",
+        "Saying SoC verification should re-verify block internals; that is cheaper and more controllable at block level.",
+        "Listing vague categories (\"timing\", \"integration\") with no concrete example of a bug."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index"
+      ],
+      "sources": [
+        "Practice: industry methodology taught in the linked lessons, not a standard (E-SOC-1: what changes from block to SoC)"
+      ]
+    },
+    {
+      "id": "soc-agent-mode-reuse",
+      "topic": "soc",
+      "level": "junior",
+      "category": "trick",
+      "prompt": "A colleague says: \"At SoC level every block agent must be switched to passive.\" Is that right? Use the configuration below in your answer, and say what goes wrong if an agent that should be passive stays active.",
+      "code": "// snippet: soc_test::build_phase\nuvm_config_db#(uvm_active_passive_enum)::set(this, \"env.spi_env.apb_agent\",\n                                             \"is_active\", UVM_PASSIVE);\nuvm_config_db#(uvm_active_passive_enum)::set(this, \"env.flash_env.flash_agent\",\n                                             \"is_active\", UVM_ACTIVE);",
+      "rubric": "A strong answer rejects the blanket rule: an agent goes passive only where an on-chip master now drives the interface, and stays active where the bench still plays the other side (an off-chip device). It explains what passive means mechanically (by the usual VIP convention, the sequencer and driver are never built, guarded by `get_is_active()`), and what a second driver on one interface does: on a net, conflicting drivers resolve to X; a variable already driven by a port or continuous assignment cannot also be written procedurally, so the tool reports an error; only two procedural writers give a silent last write. Extra credit: proving the mode with `print_topology()` or an automatic check.\n\nA weak answer agrees with the colleague, or thinks passive means \"built but idle\".",
+      "model_answer": "**No.** The rule is \"who drives this interface in the SoC test?\":\n\n- `env.spi_env.apb_agent` is **passive**. The SPI block's APB register port is now driven by the CPU running firmware, so only this agent's monitor is built.\n- `env.flash_env.flash_agent` stays **active**. The SPI pins go to an off-chip flash, and no on-chip model of the flash exists, so this SPI-VIP instance must answer as the flash (a responder).\n\nMode is set per instance path, so one VIP class can be passive in one place and active in another. A broad wildcard such as `\"*agent*\"` sets every matching agent alike, which is the colleague's blanket rule again.\n\n**What passive means.** `get_is_active()` returns `UVM_ACTIVE` unless the configuration database sets `is_active` otherwise (IEEE 1800.2-2020 §13.4.2.2). The standard does not say what an agent builds. By the usual VIP convention (practice), an agent's `build_phase` creates its sequencer and driver only inside `if (get_is_active() == UVM_ACTIVE)`, and its `connect_phase` repeats the guard. Passive therefore means *never built*, not built-but-idle. In the Accellera reference implementation (uvm-core 2020.3.1), `uvm_agent::build_phase` is where the `is_active` setting is read from the configuration database, so a derived agent that skips `super.build_phase(phase)` stays at the default, `UVM_ACTIVE`.\n\n**If an agent that should be passive stays active**, its driver writes the interface while the on-chip master also drives it (many drivers drive idle values from `run_phase` even before a sequence starts). Here the CPU-side RTL drives the interface through a port connection or an `assign`, which is a continuous assignment. What happens depends on how the interface signals are declared (IEEE 1800-2023 §6.5):\n- **Nets** (`wire`): the drivers are resolved. Where they disagree the signal goes to X, which a protocol assertion catches.\n- **Variables** (`logic`): a variable can be written by procedural statements *or* by one continuous assignment or one port, not both. Adding the driver's procedural write to a variable the RTL already drives is an error the tool reports, not silent corruption.\n- Only when **both writers are procedural** (for example, two class-based drivers on one interface) does the variable silently take the last write, with no X and no error.\n\n**Prove the mode.** Call `print_topology()` in `end_of_elaboration_phase`: a passive agent shows a monitor and no driver or sequencer. Better, make the test fail with a fatal if `get_is_active()` is not what the test intended.",
+      "follow_ups": [
+        "A block virtual sequence copied into the SoC test calls `cfg_seq.start(p_sequencer.apb_sqr)` on the now-passive APB agent. What happens?",
+        "Which interfaces in a chip with a PCIe link and a UART would keep active agents, and why?",
+        "Why must a VIP that keeps its mode in its own config object still copy it into `is_active`?"
+      ],
+      "common_mistakes": [
+        "Making every agent passive, leaving off-chip interfaces with nobody to answer them.",
+        "Thinking a passive agent builds a driver that simply never runs.",
+        "Overriding `build_phase` in a derived agent without calling `super.build_phase(phase)`.",
+        "Claiming a `logic` signal driven by RTL through a port silently takes the bench's last write: mixing a continuous and a procedural writer on one variable is an error."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "I-UVM-2A_Component_Roles/index",
+        "A-UVM-7_VIP_Construction/index"
+      ],
+      "sources": [
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§13.4.2.2 get_is_active (returns UVM_ACTIVE unless set through the configuration database)",
+          "verified": true
+        },
+        {
+          "doc": "Accellera uvm-core 2020.3.1",
+          "section": "uvm_agent.svh, uvm_agent::build_phase reads is_active from the configuration database (implementation behaviour, not the standard)",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "Annex F.7.4.2 print_topology",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800-2023",
+          "section": "§6.5 Nets and variables (no mix of procedural and continuous writers on a variable)",
+          "verified": true
+        },
+        "Practice: building the sequencer and driver only for UVM_ACTIVE is the common VIP convention, not a requirement of IEEE 1800.2"
+      ]
+    },
+    {
+      "id": "soc-interrupt-basics",
+      "topic": "soc",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "A UART raises an interrupt while its receive FIFO holds data. Explain level-sensitive and edge (pulse) interrupts, what the status and enable (mask) registers do, and in what order the handler should clear the interrupt. What would you check in a testbench?",
+      "rubric": "A strong answer separates the raw status bit, the enable (mask) bit and the interrupt line; knows that a level interrupt stays asserted until the *cause* is removed and the status cleared, while a pulse can be missed or merged; and orders the handler correctly: remove the cause, then clear the status (often write-1-to-clear). The check list includes masked-but-pending, re-assertion when the cause persists, and that each event is counted once.\n\nA weak answer treats \"clear the status bit\" as enough, or counts a level interrupt once per clock.",
+      "model_answer": "**Three pieces of state.**\n- The **raw status** bit records that the cause happened (the FIFO is not empty).\n- The **enable** (mask) bit decides whether that status may drive the interrupt line.\n- The **interrupt line** is the OR of the enabled status bits.\n\n```systemverilog\n// snippet: a typical peripheral interrupt block\nassign irq = |(raw_status & irq_enable);\n```\n\n**Level-sensitive:** the line stays at 1 while an enabled status bit is set. Most SoC interrupts work this way. **Edge (pulse):** the line pulses once per event; nothing needs clearing at the source, but a pulse can be missed by a receiver in a slower clock domain, and two events close together can merge into one.\n\n**Clearing order.** Status bits are often **write-1-to-clear** (W1C: writing 1 clears that bit, writing 0 has no effect; UVM models this access policy as `\"W1C\"`, IEEE 1800.2-2020 §18.5.4.6). The handler first removes the cause (drains the FIFO), then clears the status. If it clears the status while the FIFO still holds data, a well-designed block sets the status again at once, and the interrupt fires again; a poorly designed one loses it.\n\n**What the testbench checks:**\n- the line rises when the cause occurs and the source is enabled;\n- with the source masked, the line stays low but the raw status still shows the event as pending, and unmasking it then raises the line;\n- a W1C write clears only the bits written as 1;\n- if the cause persists after the clear, the interrupt is raised again;\n- each event is counted once: a monitor reports a level interrupt on its rising edge, not on every clock while it is high.",
+      "follow_ups": [
+        "Your monitor reports four interrupts for one FIFO event. What is it doing wrong?",
+        "Why can a pulse interrupt from a fast clock domain be lost by an interrupt controller on a slow clock?",
+        "How would you model the W1C status register in a UVM register model so the mirror stays right?"
+      ],
+      "common_mistakes": [
+        "Clearing the status before removing the cause, then being surprised the interrupt fires again (or worse, expecting it not to).",
+        "Confusing the enable (mask) with the status: masking does not discard the pending event.",
+        "Sampling a level interrupt every clock and counting each clock as a new interrupt."
+      ],
+      "modules": [
+        "I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling",
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "A-UVM-4A_RAL_Fundamentals/index"
+      ],
+      "sources": [
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§18.5.4.6 set_access (predefined access policies, W1C)",
+          "verified": true
+        },
+        "Practice: industry methodology taught in the linked lessons, not a standard (interrupt status/enable structure and handler order are design conventions; check each IP's specification)"
+      ]
+    },
     {
       "id": "soc-address-map-decode",
       "topic": "soc",
       "level": "mid",
       "category": "concept",
-      "prompt": "What is an SoC address map and why is it critical for verification?",
-      "rubric": "Must explain that the address map defines which address ranges route to which slaves (DRAM, peripherals, config space). Verification must check that every master-slave path decodes correctly and that accesses to unmapped regions return DECERR.",
-      "model_answer": "An SoC address map is a table mapping address ranges to specific slaves: DRAM (e.g., 0x0000_0000–0x3FFF_FFFF), peripherals (0x4000_0000–0x400F_FFFF), config registers (0x5000_0000–0x5000_0FFF). The interconnect's address decoder routes transactions based on this map. Verification must check: 1) Every valid address routes to the correct slave. 2) Accesses to unmapped/hole regions return DECERR via a default slave. 3) Overlapping ranges are impossible. 4) Each master's view is correct (some masters may have restricted access via TrustZone or TZMA). This is typically the first thing verified at SoC integration.",
-      "sources": ["Arm IHI0022H §A4 (address decoding)", "SoC integration methodology (secondary)"]
+      "prompt": "Here is part of an SoC address map seen by the CPU's AXI port. What is an address map, which addresses would you test first, and what response do you expect at each? What else must the address-map verification cover?",
+      "code": "Region        Start          End            Slave\nDDR           0x0000_0000    0x3FFF_FFFF    DDR controller\n(hole)        0x4000_0000    0x4000_FFFF    -\nUART          0x4001_0000    0x4001_0FFF    UART registers\nSPI           0x4001_1000    0x4001_1FFF    SPI registers\n(hole)        0x4001_2000    0x4FFF_FFFF    -\nSEC_SRAM      0x5000_0000    0x5000_FFFF    secure-only SRAM",
+      "rubric": "A strong answer defines the map (address ranges to slaves, per master), picks boundary addresses (first and last byte of each region, the bytes on either side, and holes), and states the expected response: data from the right slave, or DECERR from a default slave for a hole, with every data transfer of the burst still completed. It adds the other dimensions: per-master views and aliases, security attributes, overlap and single-source generation of the map, and burst-boundary rules (AXI 4KB, AHB 1KB regions). Extra credit: the AHB default subordinate's ERROR vs OKAY behaviour, and formal proof that each address selects exactly one target.\n\nA weak answer only says \"check every address routes correctly\" without boundaries, holes or responses.",
+      "model_answer": "An **address map** says which slave owns each address range, as seen by each master. The interconnect's decoder implements it, the register model and firmware headers describe it, and verification checks that all three agree.\n\n**Test the boundaries first.** Bugs live at edges: an off-by-one in a comparator, a base address with one bit wrong.\n\n| Address | Why | Expected |\n|---|---|---|\n| `0x3FFF_FFFC` and `0x4000_0000` | last word of DDR, first byte of a hole | DDR data; then DECERR |\n| `0x4001_0000` and `0x4001_0FFC` | first and last word of UART | UART register data |\n| `0x4001_1000` | first SPI byte, one past UART | SPI, not UART |\n| `0x4001_1FFC` | last word of SPI | SPI register data |\n| `0x4001_2000` | first byte of the large hole | DECERR |\n| `0x5000_0000` non-secure | secure-only region | denied (response defined by the firewall's spec) |\n| `0x5000_FFFC` secure | last word of SEC_SRAM | SRAM data |\n| `0x5001_0000` | one past SEC_SRAM, unmapped | DECERR |\n\n**Holes.** \"If the interconnect cannot successfully decode a slave access, it must return the DECERR response\", and Arm recommends a default slave that returns it. The protocol also requires that \"all data transfers for a transaction are completed, even if an error condition occurs\" (IHI0022E §A3.4.4): a 4-beat read of a hole returns 4 beats, each with DECERR, and a write must still accept all its data. On AHB the default subordinate returns ERROR for NONSEQ or SEQ transfers to a nonexistent address, and a zero-wait OKAY for IDLE or BUSY (IHI0033C §4.2.1).\n\n**Region granularity.** AXI bursts must not cross a 4KB boundary, which \"prevents a burst from crossing a boundary between two slaves\" if regions are 4KB aligned (§A3.4.1). On AHB the minimum region for one subordinate is 1KB, aligned on a 1KB boundary (IHI0033C §4.2).\n\n**What else to cover:**\n- **Per-master views.** A debug port or DMA may see a different map, or be blocked from some regions.\n- **Aliases and remaps.** A boot ROM aliased at address 0 until firmware remaps it: test both states.\n- **CHI systems.** Each requester's System Address Map (SAM) must provide a complete decode (IHI0050E.b §3.1): every address maps to some target. A hole is therefore sent to an agent that returns an error response (recommended, §3.1), not left undecoded.\n- **Security.** A non-secure access (`AxPROT[1]` = 1, §A4.7) to a secure-only region must be denied without reaching the slave.\n- **No overlaps and one source.** Generate the decoder parameters, the register model and the firmware headers from one description, and check statically that no two regions overlap.\n- **Coverage:** master × region (including each hole) × response. A formal check can prove that the decoder selects exactly one target, or the default slave, for every address.",
+      "follow_ups": [
+        "A 4-beat INCR read to a hole returns one DECERR beat and stops. Is that legal?",
+        "Why do 4KB-aligned AXI regions mean a legal burst can never straddle two slaves?",
+        "How would you check that the register model's base addresses match the RTL decoder without running traffic?"
+      ],
+      "common_mistakes": [
+        "Testing only addresses in the middle of each region.",
+        "Expecting a hole to time out, or to return one error beat for a whole burst.",
+        "Forgetting per-master views, aliases and security attributes."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "B-AMBA-F1_Bridges_and_System_Integration/index",
+        "A-UVM-4A_RAL_Fundamentals/index",
+        "B-AHB-1_AHB_Design_Timing_Mechanics/index",
+        "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A3.4.4 Read and write response structure (DECERR, all transfers completed)",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A3.4.1 Address structure (4KB boundary)",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A4.7 Access permissions (AxPROT)",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0033C (AHB)",
+          "section": "§4.2 Address decoding; §4.2.1 Default Subordinate",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0050E.b (CHI)",
+          "section": "§3.1 System Address Map (\"The SAM must provide a complete decode of the entire address space\", and the recommendation that an address with no physical component goes to an agent that can give an error response; checked against the IHI0050E.b PDF text)",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "soc-firmware-tb-sync",
+      "topic": "soc",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "Firmware on the SoC's CPU writes BOOT_DONE to a mailbox address when it has booted. The code below passes most of the time, but after a firmware change that makes boot faster, some seeds hang until the global timeout. Find the bug and write the fix.",
+      "code": "// mbx_decoder::write(), called by the APB monitor's analysis port\nfunction void mbx_decoder::write(apb_item t);\n  uvm_event ev;\n  if (t.write && t.addr == soc_map_pkg::MAILBOX_ADDR &&\n      t.data == soc_map_pkg::BOOT_DONE) begin\n    ev = uvm_event_pool::get_global(\"fw_boot_done\");\n    ev.trigger();\n  end\nendfunction\n\n// soc_test::run_phase\ntask soc_test::run_phase(uvm_phase phase);\n  uvm_event boot_done = uvm_event_pool::get_global(\"fw_boot_done\");\n  phase.raise_objection(this);\n  load_firmware();           // backdoor load, then releases the CPU reset\n  configure_scoreboards();   // consumes time: three register reads\n  boot_done.wait_trigger();\n  run_traffic();\n  phase.drop_objection(this);\nendtask",
+      "rubric": "A strong answer identifies that `wait_trigger()` waits for the *next* trigger, so if firmware triggered the event while `configure_scoreboards()` was still running, the test waits for a trigger that never comes. The fix uses `wait_on()`, which returns at once if the event has already been triggered, and adds a watchdog so a real boot failure fails fast with a named message. Extra credit: string-key typos in the event pool, and keeping the mailbox address and codes in one package shared with the firmware build.\n\nA weak answer adds a delay, or blames the monitor.",
+      "model_answer": "**The bug.** `wait_trigger()` \"waits for the event to be triggered\"; if the wait starts after the trigger, it \"does not return until the next trigger\" (IEEE 1800.2-2020 §10.1.1.2.4). With faster firmware, BOOT_DONE arrives while `configure_scoreboards()` is still consuming time, so the test reaches `wait_trigger()` after the only trigger and waits for ever. Only the run-phase timeout ends the run, hours later, with no hint of the cause.\n\n**The fix.** For a one-time milestone use `wait_on()`: it waits for the event to be activated, and \"if the event has already been triggered, this task returns immediately\" (§10.1.1.2.2). Put it inside a watchdog so a genuine boot failure fails fast:\n\n```systemverilog\ntask soc_test::run_phase(uvm_phase phase);\n  uvm_event boot_done = uvm_event_pool::get_global(\"fw_boot_done\");\n  phase.raise_objection(this);\n  load_firmware();\n  configure_scoreboards();\n  fork begin : boot_wait          // isolates disable fork to this block\n    fork\n      boot_done.wait_on();\n      begin\n        #(cfg.boot_timeout);\n        `uvm_fatal(\"BOOT\", \"no BOOT_DONE from firmware: check the image hash and mailbox codes\")\n      end\n    join_any\n    disable fork;\n  end join\n  run_traffic();\n  phase.drop_objection(this);\nendtask\n```\n\n**Related traps:**\n- `uvm_event_pool::get_global()` (§10.4.1.2.3) looks the key up in the global pool, and the pool's `get()` creates a new event when the key does not exist (§10.4.1.2.4). A typo such as `\"fw_boot_dn\"` silently creates a second event that nobody triggers. Keep the keys, the mailbox address and the codes in one package used by both the bench and the firmware build.\n- If the milestone can legitimately happen twice (a warm reboot), `reset()` the event only at a point where no waiter can miss the next trigger.\n- Log each milestone with its simulation time and the firmware image hash, so a slow boot can be told apart from a hang.",
+      "follow_ups": [
+        "Why is the outer `fork begin ... end join` there around `disable fork`?",
+        "What does `wait_ptrigger()` fix, and why is it still wrong here?",
+        "How would the test inject an interrupt \"when firmware reaches state X\" without a fixed delay?"
+      ],
+      "common_mistakes": [
+        "Adding a delay before the wait, which moves the race instead of removing it.",
+        "Waiting with no watchdog, so a real boot failure costs a full global timeout.",
+        "Using `disable fork` without isolating it, killing other processes the test started."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "I-UVM-1C_UVM_Phasing/index",
+        "A-UVM-8_Multi_Agent_Topologies/index"
+      ],
+      "sources": [
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§10.1.1.2.2 wait_on; §10.1.1.2.4 wait_trigger",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§10.4.1.2.3 get_global; §10.4.1.2.4 get",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800-2023",
+          "section": "§9.6.3 disable fork",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "soc-ral-firmware-prediction",
+      "topic": "soc",
+      "level": "mid",
+      "category": "trick",
+      "prompt": "In a SoC test, firmware writes 0x1 to the SPI block's CTRL register. The test then calls `soc_rm.spi_rm.ctrl.get()` and sees 0x0. Auto-predict is on for the CPU map. Is this an RTL bug?",
+      "rubric": "A strong answer says no and names the single cause: nothing updated the register model when firmware wrote. Auto-prediction covers only bus operations the model itself starts through the map (`uvm_reg::write()`, `read()` and the calls built on them), never firmware traffic (§18.2.5.2), so CTRL still holds its old value. The fix is an explicit `uvm_reg_predictor` per bus that can write registers, bound to that bus's map, with auto-predict turned off. A strong answer also knows that switching the check to `get_mirrored_value()` changes nothing here: unless `set()` was called, the desired and mirrored values are identical, and prediction updates both. Extra credit: volatile fields, and memories not being mirrored.\n\nA weak answer accepts the RTL-bug diagnosis, blames `get()` for returning the desired value, or proposes calling `mirror()` everywhere.",
+      "model_answer": "**No.** The register model was never told about the firmware write.\n\n**The cause: nothing predicts firmware traffic.** With auto-predict on, the model calls `predict()` before each `uvm_reg::write()` or `read()` made *through that map* returns (IEEE 1800.2-2020 §18.2.5.2). Firmware runs on the CPU and never calls the model, so the model still holds CTRL's previous value, here 0x0. An RTL bug is not ruled out yet, but this result is no evidence of one.\n\n**Side note: `get()` versus `get_mirrored_value()`.** `get()` returns the desired value and `get_mirrored_value()` the mirrored value; neither reads the DUT (§18.4.4.1, §18.4.4.3). Unless `set()` was called, the two are identical (§18.4.4.1), and `predict()` updates both (§18.4.4.15). So switching to `get_mirrored_value()` alone would still read 0x0, and once a predictor is connected `get()` reads 0x1 as well. Prefer `get_mirrored_value()` for checks anyway, because a `set()` elsewhere in the test makes the two differ.\n\n**The fix:** observe the bus. Connect a monitor on the CPU's bus to a `uvm_reg_predictor` that \"update[s] the register model's mirror values based on transactions explicitly observed on a physical bus\" (§19.3):\n\n```systemverilog\n// snippet: soc_env::connect_phase\ncpu_predictor.map     = soc_rm.cpu_map;   // one map per predictor (§19.3.2.3)\ncpu_predictor.adapter = axi_adapter;\ncpu_bus_mon.ap.connect(cpu_predictor.bus_in);\nsoc_rm.cpu_map.set_auto_predict(0);       // explicit prediction only\n```\n\nThen check with `get_mirrored_value()`. The predictor captures every register access its monitor observes, \"including any not directly descendant from calls to uvm_reg::write\" (§18.2.5.2).\n\n**At SoC scale:**\n- Every bus that can write registers (the CPU, a debug port, a second processor) needs its own monitor, adapter and predictor, because a predictor holds one map.\n- Turn auto-predict off once explicit predictors exist, so a model-initiated access is not predicted twice.\n- Hardware-set bits (including the set side of clear-on-read status bits) and other hardware-updated fields cannot be predicted from bus traffic alone; mark them volatile and check them with a scoreboard that knows the hardware events. The clearing side is predictable: the predictor applies the field's access policy, such as \"RC\", to each observed read (§18.5.4.6, §19.3).\n- Memories are not mirrored (§18.6); check firmware-visible memory with a memory scoreboard or backdoor reads.",
+      "follow_ups": [
+        "A register is reachable from the CPU bus and from a debug APB port behind a bridge that remaps addresses. How many predictors, and which maps?",
+        "Why does calling `mirror()` before every check hide the problem rather than fix it?",
+        "After the predictor is connected, a test calls `ctrl.set(32'h5)` and never calls `update()`. What do `get()` and `get_mirrored_value()` return, and which should a scoreboard check?"
+      ],
+      "common_mistakes": [
+        "Reading `get()` as a read of the DUT: it returns the model's desired value and starts no bus access; `read()` or `peek()` does (§18.4.4.1).",
+        "Thinking `get_mirrored_value()` would have shown 0x1 without a predictor: desired and mirrored are equal unless `set()` was called, and prediction updates both.",
+        "Believing auto-predict sees all bus traffic.",
+        "Leaving auto-predict on alongside explicit predictors, so model-initiated accesses are predicted twice."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit"
+      ],
+      "sources": [
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§18.4.4.1 get (desired equals mirrored unless set() was called); §18.4.4.2 set; §18.4.4.3 get_mirrored_value",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§18.2.5.2 set_auto_predict",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§18.4.4.15 predict (updates the mirrored and desired value)",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§19.3 uvm_reg_predictor; §19.3.2.3 map",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§18.6 uvm_mem (memories are not mirrored)",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§18.5.4.6 set_access (predefined access policies, \"RC\": read clears all bits)",
+          "verified": true
+        },
+        {
+          "doc": "Accellera uvm-core 2020.3.1",
+          "section": "uvm_reg_field.svh, uvm_reg_field::do_predict sets m_mirrored and m_desired to the same value (implementation behaviour, not the standard)",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "soc-lost-response-liveness",
+      "topic": "soc",
+      "level": "mid",
+      "category": "waveform-debug",
+      "prompt": "A SoC test hangs until the global timeout. The trace below shows the last AXI write on the DMA's port. Values are sampled at each rising edge of ACLK. Which of the two assertions fails, at which edge, and why does the other one never report anything? What would you use in formal?",
+      "code": "edge      0  1  2  3  4  5  6  7  8  9  10 11\nAWVALID   0  1  1  0  0  0  0  0  0  0  0  0\nAWREADY   0  0  1  0  0  0  0  0  0  0  0  0\nWVALID    0  0  1  1  0  0  0  0  0  0  0  0\nWREADY    0  0  0  1  0  0  0  0  0  0  0  0\nWLAST     0  0  1  1  0  0  0  0  0  0  0  0\nBVALID    0  0  0  0  0  0  0  0  0  0  0  0\nBREADY    1  1  1  1  1  1  1  1  1  1  1  1\n\n// one write outstanding at a time on this port\na_b_weak:    assert property (@(posedge aclk) disable iff (!aresetn)\n               (wvalid && wready && wlast) |-> ##[1:$] bvalid);\na_b_bounded: assert property (@(posedge aclk) disable iff (!aresetn)\n               (wvalid && wready && wlast) |-> ##[1:8] bvalid);",
+      "rubric": "A strong answer reads the handshakes from the table (AW at edge 2, last W at edge 3), starts the obligation at the last W beat, counts the `##[1:8]` window as edges 4 to 11, and says `a_b_bounded` fails at edge 11. It explains that in `assert property` an unqualified sequence is weak, so `##[1:$]` can never be shown unable to match on a finite trace and never fails. It proposes the pair: a strong `s_eventually` property for formal, the bounded form for simulation.\n\nA weak answer says the weak assertion fails at the end of simulation, or measures the window from the address handshake.",
+      "model_answer": "**Read the handshakes.** A transfer happens on an edge where VALID and READY are both 1. The address is accepted at edge 2. The only data beat, with WLAST, is accepted at edge 3. That is where the slave's obligation starts: a write response depends on the address *and* the last data beat (IHI0022E §A3.3.1), so measuring from the address would blame the slave for a missing data beat.\n\n**`a_b_bounded` fails at edge 11.** The antecedent matches at edge 3; `##[1:8]` allows BVALID at edges 4 through 11. BVALID is 0 at all of them, so the property fails at edge 11, eight cycles after the obligation started, with a pointer to the broken promise.\n\n**`a_b_weak` never fails.** In an `assert property`, a sequence written without `strong` is evaluated as `weak(...)` (IEEE 1800-2023 §16.12.2). A weak sequence fails only when a finite prefix of the trace proves it cannot match, and `##[1:$]` can always still match later. So, however long the response is missing, a finite simulation reports nothing.\n\n**In formal**, write the true liveness property and let the tool search for an infinite path (a loop) on which BVALID never comes:\n\n```systemverilog\na_b_live: assert property (@(posedge aclk) disable iff (!aresetn)\n  (wvalid && wready && wlast) |-> s_eventually bvalid);   // §16.12.13\n```\n\nIt needs fairness assumptions on the **environment**, never on the design under proof: for example, that the downstream memory or slave model behind the interconnect eventually responds, and that the master eventually supplies every W beat it owes. Do not assume that the responder eventually answers; that is the property. BREADY does not belong in the assumption either: the slave must not wait for BREADY before asserting BVALID (IHI0022E §A3.3.1). Without environment fairness the tool finds trivial counterexamples in which a model simply stalls forever.\n\n**In practice:** run the bounded form in simulation and the strong form in formal. Choose the bound from the architecture: too tight fails on legal congestion, too loose detects nothing within the test. With several writes outstanding, a later BVALID could satisfy an earlier obligation, so real properties track IDs or count outstanding writes.",
+      "follow_ups": [
+        "How does a simulator report a strong obligation that is still pending at the end of the run, and why should sign-off not rely on it?",
+        "Rewrite the bounded check so it is correct with up to four writes outstanding.",
+        "Where else in a SoC would you put liveness properties instead of waiting for a timeout?"
+      ],
+      "common_mistakes": [
+        "Expecting `##[1:$]` in an `assert property` to fail at the end of simulation.",
+        "Starting the window at the address handshake instead of the last write-data beat.",
+        "Proving a liveness property in formal without fairness assumptions on the environment, or putting the fairness assumption on the design under proof."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "E-INT-1_Integrating_UVM_with_Formal_Verification/index",
+        "I-SV-4A_SVA_Fundamentals/index",
+        "I-SV-4B_Advanced_Temporal_Logic/index"
+      ],
+      "sources": [
+        {
+          "doc": "IEEE 1800-2023",
+          "section": "§16.12.2 Sequence property (weak by default in assert property)",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800-2023",
+          "section": "§16.12.13 Eventually property",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A3.3.1 Dependencies between channel handshake signals",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "soc-interrupt-verification-plan",
+      "topic": "soc",
+      "level": "mid",
+      "category": "verification-plan",
+      "prompt": "Write the verification plan for interrupt delivery in an SoC with 40 interrupt sources, an interrupt controller and two CPU cores. Firmware handles every interrupt in the tests. Why is \"firmware handled it\" not enough, and what checks and coverage do you add?",
+      "rubric": "A strong plan separates using interrupts from checking them: an interrupt monitor plus an expected-interrupt model predicted from DUT events, compared with what reached each core and with the status firmware reads. It covers routing to the configured target, masking and pending, priority among simultaneous interrupts (against the controller's specification), level vs edge configuration, clear and re-assertion, no lost or duplicated interrupts, latency budgets, interrupts across reset and power events, and connectivity of the 40 lines. Coverage crosses source × target × priority and concurrency.\n\nA weak plan relies on firmware tests passing.",
+      "model_answer": "**Why firmware passing is not evidence.** Firmware *uses* interrupts. A test can pass while the DMA's interrupt reached the wrong core and that core's handler happened to poll the right status register. The bench must *check* delivery independently.\n\n**Checker architecture:**\n- An **interrupt monitor** on each source line and on each controller output to a core, reporting rising edges for level interrupts (not every clock while high).\n- An **expected-interrupt model** that predicts which source should fire from DUT events the bench observes (a DMA completion, an error response, a UART receive), not from what firmware did.\n- A **scoreboard** that matches predicted to observed per source and target, and cross-checks the status register firmware reads.\n\n**Checks (rows in the plan):**\n- Routing: each source reaches the core its configuration selects, and only that core.\n- Masking: a masked source does not reach the core, but stays pending; unmasking delivers it.\n- Priority: with several pending, the controller presents them in the order its specification defines (priority and tie-break are controller-specific).\n- Trigger type: level and edge configurations behave as configured; an edge during a pending interrupt is handled as the controller specifies (counted or merged), never silently lost.\n- Clear and re-assertion: clearing the status while the cause persists raises the interrupt again.\n- No spurious interrupt: nothing fires without a predicted cause.\n- Latency: a bounded assertion from cause to core input, with the budget from the architecture; in formal, the liveness version \"an enabled interrupt eventually reaches its target\".\n- Reset and power: interrupts pending across a warm reset or a domain power-down behave as specified.\n- Connectivity: prove the 40 source wires with a formal connectivity check or a toggle test, not 40 functional tests.\n\n**Coverage:** source × target core × priority; pairs of sources pending together; interrupt arriving during a handler; masked-then-unmasked with a pending event; each source under concurrent bus traffic.",
+      "follow_ups": [
+        "On silicon, the DMA completion interrupt sometimes never reaches CPU1, although every regression passed. What did the plan miss?",
+        "How does the expected-interrupt model learn which core a source is routed to?",
+        "Two equal-priority sources assert in the same cycle. What does your expected-interrupt model predict, and how do you cover that case?"
+      ],
+      "common_mistakes": [
+        "Treating firmware's handler running as proof of correct routing.",
+        "Predicting expected interrupts from firmware actions instead of DUT events.",
+        "Writing one functional test per interrupt wire instead of a connectivity proof."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling",
+        "A-UVM-8_Multi_Agent_Topologies/index"
+      ],
+      "sources": [
+        "Practice: industry methodology taught in the linked lessons, not a standard (E-SOC-1: interrupts need their own check)",
+        {
+          "doc": "IEEE 1800-2023",
+          "section": "§16.12.13 Eventually property",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "soc-block-to-system",
       "topic": "soc",
       "level": "senior",
       "category": "verification-plan",
-      "prompt": "How does verification strategy change when moving from block-level to SoC-level?",
-      "rubric": "Must discuss: agent mode changes (active→passive), abstract vs pin-level stimulation, memory subsystem modeling, interrupt handling, boot sequence, software-driven tests, coverage model changes.",
-      "model_answer": "Key changes: 1) Block-level active agents become passive monitors at SoC level (firmware drives the DUT). 2) Stimulus shifts from sequence-driven to software-driven (C tests via embedded processor). 3) Coverage models shift from protocol-level to scenario-level (e.g., concurrent DMA + interrupt + cache flush). 4) Scoreboards need memory subsystem models for coherency checking. 5) Debug shifts from waveform-centric to log-centric (firmware printf + bus trace). 6) Performance verification becomes critical (latency, bandwidth under realistic traffic). 7) Reset and power-domain sequencing must be verified across the full SoC.",
-      "sources": ["IEEE 1800.2-2020 §2 (Architecture)", "SoC verification methodology (secondary)"]
+      "prompt": "How does the verification strategy change when a block environment moves from block level to subsystem and SoC level? Cover agents, checkers, register models, stimulus and coverage.",
+      "rubric": "A strong answer covers: nesting the block environment unchanged as a sub-environment, with configuration one level deeper; agents passive where an on-chip master now drives and active where the bench still plays an off-chip device; a keep, adapt or disable decision per scoreboard (expectations from monitors, ID widening, DECERR, other masters); reuse of block assertions with `bind`; the SoC register model built from block models with `add_submap` and explicit predictors for firmware traffic; firmware-driven stimulus with a mailbox contract to the UVM bench; system-level coverage instead of merged block coverage; and portable scenarios (PSS) and emulation for long flows.\n\nA weak answer says \"all agents become passive\" and \"use C tests\".",
+      "model_answer": "**Reuse the environment, change its configuration.** A `uvm_env` \"can be reused as a sub-environment in even larger system-level environments\" (IEEE 1800.2-2020 §13.3). The block team's env (agents, scoreboard, coverage) becomes a child of the subsystem env unchanged. Configuration paths get one level deeper, so block code that used absolute paths breaks; paths must be relative.\n\n**Agent modes follow who drives.** An agent becomes passive where an on-chip master now drives its interface (the CPU on a register port). It stays active where the bench still plays the other side, typically an off-chip device such as a flash, a UART terminal or a PCIe link partner. Block sequences that targeted a now-passive agent can no longer run.\n\n**Checkers: a decision per scoreboard.** Keep, adapt or disable, with an owner:\n- expected values must come from what a monitor observed, because firmware, not a sequence, now sends the stimulus;\n- an AXI interconnect widens IDs with master-port bits (IHI0022E §A5.3.5), so raw-ID matching across the fabric fails;\n- holes now return DECERR; other masters can overwrite memory a block wrote.\nBlock assertions travel with the RTL: attach them with `bind` (IEEE 1800-2023 §23.11) so they run unchanged inside the SoC.\n\n**Register model.** Build the SoC model from the block models and place each block's map at its base with `add_submap` (1800.2-2020 §18.2.3.5). Firmware writes are invisible to auto-prediction, so each bus that can write registers needs an explicit predictor (§19.3).\n\n**Stimulus.** Firmware on the CPU (RTL core, instruction-set simulator or bus-functional model) drives most traffic. The bench and firmware synchronize through a written contract: mailbox address and codes, events, timeouts. UVM virtual sequences still drive off-chip interfaces and inject errors.\n\n**Coverage and closure.** Close block coverage at block level. At SoC level collect system goals: master × slave × response, interrupt source × target, reset source × traffic, power state × traffic, security, QoS.\n\n**Scale.** Long flows (OS boot, performance) move to emulation, which needs a transaction-level bench split. Scenarios that must run in simulation, emulation and silicon are candidates for Accellera PSS.",
+      "follow_ups": [
+        "Which three assumptions of a block AXI scoreboard break first at SoC level?",
+        "Why are block assertions attached with `bind` rather than copied into the SoC bench?",
+        "What evidence proves a passive monitor is watching the right bus?"
+      ],
+      "common_mistakes": [
+        "Making every agent passive, including those for off-chip interfaces.",
+        "Reusing block scoreboards unchanged.",
+        "Relying on auto-prediction for firmware register traffic.",
+        "Counting merged block coverage as SoC closure."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "A-UVM-7_VIP_Construction/index",
+        "A-UVM-8_Multi_Agent_Topologies/index",
+        "I-SV-4C_Checkers/index",
+        "A-UVM-4B_Advanced_RAL_Techniques/index"
+      ],
+      "sources": [
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§13.3 uvm_env",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§18.2.3.5 add_submap; §19.3 uvm_reg_predictor",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800-2023",
+          "section": "§23.11 Binding auxiliary code to scopes or instances",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A5.3.5 Interconnect use of transaction identifiers",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "soc-reset-boot-sequencing",
+      "topic": "soc",
+      "level": "senior",
+      "category": "verification-plan",
+      "prompt": "Plan the verification of reset and boot for an SoC with a power-on reset, a warm reset from a watchdog, and per-block software resets. What scenarios, checks and coverage do you need, and what must the testbench itself do when a reset arrives mid-test?",
+      "rubric": "A strong plan lists the reset sources and their scope, release ordering and synchronous deassertion, interface rules during and after reset, reset during traffic (in-flight transfers, other domains), what each reset kind preserves, boot mode and image selection, ROM remap, and the PLL/clock readiness before release. It makes the bench reset-aware: drivers stop and idle the interface, monitors drop partial transactions, scoreboards flush expectations, the register model resets by kind. It names reset-domain crossings as a structural check. Coverage crosses reset source × traffic class × transfer phase and boot mode × image.\n\nA weak plan only tests power-on reset at time zero.",
+      "model_answer": "**Inventory the resets.** For each reset source (power-on, warm/watchdog, per-block software, debug), record what it resets, what it preserves (sticky status, retention state, boot-reason registers) and the order in which domains are released.\n\n**Interface rules to check.** On AXI, during reset a master drives ARVALID, AWVALID and WVALID low and a slave drives RVALID and BVALID low; reset may assert asynchronously but must deassert synchronously with ACLK, and a master may raise VALID no earlier than a rising edge after ARESETn is high (IHI0022E §A3.1.2). Write these as assertions on every interface.\n\n**Scenarios:**\n- Power-on reset with each boot mode (strap pins or fuses), each image location, and a corrupt or missing image.\n- Boot ROM remap: the alias at the boot address before and after firmware remaps it.\n- Release ordering: clocks stable (PLL locked) before reset release, and blocks released in the specified order.\n- **Reset during traffic:** each reset source asserted while each traffic class is in flight, at each phase of a transfer (address only, mid-burst, waiting for a response). Check that outstanding transfers drain, are cancelled or return an error, and that a block in another reset domain never receives a stale response.\n- Warm reset: preserved registers keep their values, everything else returns to its reset value; the boot-reason register reports the watchdog.\n- A per-block software reset while the rest of the chip keeps running.\n\n**The bench must be reset-aware** (practice, taught in A-UVM-9):\n- drivers stop the current item and idle the interface;\n- monitors discard partial transactions rather than publishing them;\n- scoreboards flush *expectations*, not observations already checked;\n- the register model returns to reset values for that reset kind: `reset()` takes a kind, `\"HARD\"` by default (IEEE 1800.2-2020 §18.4.4.5), so a warm reset can use a different kind.\n\n**Reset-domain crossings.** An asynchronous reset in one domain can corrupt a value being captured in a domain that is not being reset. That is found by structural RDC analysis, not by functional tests.\n\n**Coverage:** reset source × traffic class × transfer phase; boot mode × image; each preserved register checked after each reset kind.",
+      "follow_ups": [
+        "A slave in domain B returns BVALID one cycle after domain A's master was reset. Whose bug is it, and what should the interconnect do?",
+        "Why must a scoreboard flush expectations but not already-matched observations?",
+        "How do you decide between in-phase reset handling and UVM phase jumping for a mid-test reset?"
+      ],
+      "common_mistakes": [
+        "Testing only power-on reset at the start of simulation.",
+        "Letting the monitor publish half a transaction when reset hits mid-burst.",
+        "Expecting every register to return to its power-on value after a warm reset.",
+        "Trying to find reset-domain crossing bugs with functional simulation."
+      ],
+      "modules": [
+        "A-UVM-9_Reset_and_Error_Injection/index",
+        "E-SOC-1_SoC-Level_Verification_Strategies/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A3.1.2 Reset",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§18.4.4.5 reset (kind, default \"HARD\")",
+          "verified": true
+        },
+        "Practice: industry methodology taught in the linked lessons, not a standard (reset inventory, reset-aware bench components, RDC analysis)"
+      ]
+    },
+    {
+      "id": "soc-cdc-rdc-verification",
+      "topic": "soc",
+      "level": "senior",
+      "category": "concept",
+      "prompt": "Your SoC passes every simulation, including tests with random clock ratios. The design lead asks whether clock-domain crossings are therefore verified. What do you answer, and how are CDC and RDC actually signed off?",
+      "rubric": "A strong answer says simulation does not show metastability unless the tool injects it, so passing tests prove nothing about a missing synchronizer. It describes structural CDC analysis and the right synchronizer per crossing type (two flops for a single quasi-static bit, pulse or toggle synchronizers, handshake or Gray-coded asynchronous FIFO for multi-bit data), names reconvergence and glitches, adds formal or assertion checks on the handshake protocols and optional metastability injection (tool-dependent), and explains RDC. Sign-off is the reviewed report and waivers with an owner.\n\nA weak answer says \"random clock ratios cover it\" or proposes synchronizing a bus bit by bit.",
+      "model_answer": "**No.** A flip-flop that samples an input changing too close to its clock edge can go **metastable**: its output hovers before settling to 0 or 1. RTL simulation never shows that; it resolves every sample cleanly, unless a tool-specific metastability-injection feature is on. A crossing with no synchronizer therefore passes every functional test.\n\n**CDC is signed off structurally.** A CDC tool reads the RTL and the clock definitions, finds every signal that leaves one clock domain and is captured in another, and checks that each crossing has an approved structure:\n\n```systemverilog\n// a single control bit that stays stable for several destination cycles\nalways_ff @(posedge clk_b or negedge rst_b_n)\n  if (!rst_b_n) {sync_q2, sync_q1} <= '0;\n  else          {sync_q2, sync_q1} <= {sync_q1, req_a};\n```\n\n| Crossing | Approved structure |\n|---|---|\n| quasi-static single bit | two (or more) flops in the destination domain |\n| single-cycle pulse | toggle or pulse synchronizer; a raw pulse can be shorter than a destination cycle and vanish |\n| multi-bit data | request/acknowledge handshake with the data held stable, or an asynchronous FIFO whose pointers are Gray-coded |\n\n**Never synchronize a bus bit by bit:** each bit can resolve in a different cycle, so the destination can see a value that never existed. The tool also flags **reconvergence** (two separately synchronized signals recombined, which can arrive a cycle apart) and combinational logic in front of a synchronizer, which can glitch.\n\n**Where functional checks still help.** Assertions or formal on the protocols around the synchronizers: data stable while a request is pending, and Gray pointers changing at most one bit per clock:\n\n```systemverilog\na_gray: assert property (@(posedge clk_a) disable iff (!rst_a_n)\n  $onehot0(wr_ptr_gray ^ $past(wr_ptr_gray)));\n```\n\n**RDC.** A reset-domain crossing is a flop with an asynchronous reset in one domain feeding a flop that is not being reset at that moment: the reset can change the source mid-capture. RDC analysis finds them; fixes include reset ordering or gating the capture.\n\n**Sign-off** is the CDC/RDC report with every waiver reviewed by a named owner, plus abstract crossing models from IP providers so the SoC run does not re-analyse every block. The tool flow and its switches are tool-dependent.",
+      "follow_ups": [
+        "Why does a Gray-coded pointer make an asynchronous FIFO safe when a binary pointer is not?",
+        "A 2-flop synchronizer carries a one-cycle pulse from a 400 MHz domain into a 100 MHz domain. What happens?",
+        "What does reconvergence look like in a waveform, and how do you fix it?"
+      ],
+      "common_mistakes": [
+        "Believing random clock ratios in RTL simulation verify CDC.",
+        "Synchronizing each bit of a multi-bit bus separately.",
+        "Ignoring reset-domain crossings because all clocks are the same."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "B-AMBA-F1_Bridges_and_System_Integration/index"
+      ],
+      "sources": [
+        {
+          "doc": "IEEE 1800-2023",
+          "section": "§20.9 Bit vector system functions ($onehot0)",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800-2023",
+          "section": "§16.9.3 Sampled value functions ($past)",
+          "verified": true
+        },
+        "Practice: industry methodology taught in the linked lessons, not a standard (synchronizer structures and CDC/RDC sign-off; tool flows are tool-dependent)"
+      ]
+    },
+    {
+      "id": "soc-interconnect-id-mismatch",
+      "topic": "soc",
+      "level": "senior",
+      "category": "waveform-debug",
+      "prompt": "A block AXI scoreboard is reused at SoC level. It takes expected writes from the monitor on master port m1 and checks responses seen by the monitor on slave port s0. Every write is reported as \"UNMATCHED BID 0x13\". The trace (values at each rising edge of ACLK; write data omitted, all beats accepted) is below. What is happening, is the interconnect wrong, and how do you fix the check?",
+      "code": "edge          1    2    3    4    5    6    7    8\nm1.AWVALID    1    1    0    0    0    0    0    0\nm1.AWREADY    0    1    0    0    0    0    0    0\nm1.AWID     0x3  0x3    -    -    -    -    -    -\ns0.AWVALID    0    0    1    0    0    0    0    0\ns0.AWREADY    0    0    1    0    0    0    0    0\ns0.AWID       -    - 0x13    -    -    -    -    -\ns0.BVALID     0    0    0    0    0    1    0    0\ns0.BREADY     0    0    0    0    0    1    0    0\ns0.BID        -    -    -    -    - 0x13    -    -\nm1.BVALID     0    0    0    0    0    0    1    0\nm1.BREADY     1    1    1    1    1    1    1    1\nm1.BID        -    -    -    -    -    -  0x3    -\n\nUVM_ERROR @ edge 6: [SCB_S0] UNMATCHED BID 0x13: no outstanding write with AWID 0x13",
+      "rubric": "A strong answer reads that the interconnect forwarded the write to s0 with AWID 0x13 and returned BID 0x3 to m1, recognises the master-port bits the interconnect appends to IDs, and concludes the interconnect is behaving correctly and the scoreboard compares IDs from two sides of the fabric. Fixes: correlate on one side (master side), or strip the port bits using the interconnect's documented numbering; plus the ordering rules the routing scoreboard must respect. Extra credit: same-ID ordering across slaves and write-data ordering at a shared slave.\n\nA weak answer reports an interconnect ID bug.",
+      "model_answer": "**Reading the trace.** m1 issues AWID 0x3, accepted at edge 2. The interconnect forwards it to s0 at edge 3 with AWID **0x13**. s0 responds at edge 6 with BID 0x13, and the interconnect returns BID **0x3** to m1 at edge 7. Every handshake is legal and the response reached the right master with the right ID.\n\n**Why the IDs differ.** \"When a master is connected to an interconnect, the interconnect appends additional bits to the ARID, AWID and WID identifiers that are unique to that master port\" (IHI0022E §A5.3.5). The slave-side ID is wider; here this interconnect places the port number (1) above the master's 4-bit ID, and strips it again on the response path. Where the bits go is an implementation choice, so take it from the interconnect's specification.\n\n**The bug is in the check.** The scoreboard was written for a block bench where requester and responder saw the same ID. At SoC level it compares a master-side ID with a slave-side ID.\n\n**Fixes (pick one, and record the decision):**\n- Correlate at the master side: match m1's AW with m1's B. The response path is then checked end to end.\n- Build a routing scoreboard that knows the port numbering: expect m1's request at the slave the address map selects, with the ID widened by m1's port bits, and the response back at m1 with the bits stripped.\n\n**Ordering the routing scoreboard must respect:**\n- Same-ID reads to *different* slaves must still return to the master in issue order; the interconnect is responsible (§A5.3.1).\n- If the interconnect combines writes from several masters to one slave, it \"must ensure that it forwards the write data in address order\" (§A5.3.2).\n- Responses with different IDs may return in any order: a scoreboard that expects global order reports false failures.",
+      "follow_ups": [
+        "Two masters both use AWID 0x3 to the same slave. How does the interconnect keep their responses apart?",
+        "What must the interconnect do when a master issues two same-ID reads to two different slaves and the second slave answers first?",
+        "Why can a per-ID queue scoreboard at the master side miss a routing bug, and what catches it?"
+      ],
+      "common_mistakes": [
+        "Filing an RTL bug against the interconnect for widening the ID.",
+        "Hard-coding the port-bit position instead of taking it from the interconnect's specification.",
+        "Expecting responses with different IDs to return in request order."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "B-AXI-3_AXI_Ordering_and_IDs/index",
+        "A-UVM-6_Scoreboards_and_Reference_Models/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A5.3.5 Interconnect use of transaction identifiers",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A5.3.1 Read ordering; §A5.3.2 Normal write ordering",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "soc-coherency-verification",
       "topic": "soc",
       "level": "staff",
       "category": "staff-system-design",
-      "prompt": "How would you verify cache coherency in a quad-core system with ACE interconnect?",
-      "rubric": "Must mention: snoop transaction coverage, MOESI/MESI state transitions, coherency protocol checker, stress tests with shared data, ordering verification across cores.",
-      "model_answer": "Verification strategy: 1) Build a coherency reference model tracking line states per cache (MOESI). 2) Verify all state transitions: I→E (exclusive read), E→M (write), M→S (snoop clean), etc. 3) Protocol checker verifying ACE snoop request/response sequences per Arm IHI0022H. 4) Stress tests: all cores hammer the same cache line with read-modify-write sequences. 5) Ordering: verify that all cores observe writes in a consistent order (total store order or release consistency). 6) Coverage: cross(core_id, access_type, initial_state, final_state). 7) Formal: prove that the interconnect cannot create a state where two caches hold the same line in Modified state.",
-      "sources": ["Arm IHI0022H (ACE)", "Arm IHI0050F (CHI)"]
+      "prompt": "How would you verify cache coherency in a quad-core system with an ACE interconnect? Describe the checker, the invariants, the hard races, coverage and formal, and say what is out of scope for the coherency checker.",
+      "code": "// snippet: global invariants for one cache line. The checker calls this\n// after each snoop response and each coherent transaction completes.\n// golden: latest value in the line's write order, INCLUDING local stores\n//   to a Unique line (from cache-model probes or the core's store stream).\n// dirty_in_flight: write-back responsibility is in transit, e.g. a PassDirty\n//   read response whose R transfer has not completed at the initiator, or the\n//   write-back the interconnect owes after a ReadClean snoop with PassDirty.\ntypedef enum {I, UC, UD, SC, SD} ace_state_e;\n\nfunction void coh_checker::check_line(ace_state_e st[NUM_CACHES],\n                                      line_t data[NUM_CACHES],\n                                      line_t golden, line_t memory,\n                                      bit dirty_in_flight);\n  int valid = 0, uniq = 0, dirty = 0;\n  foreach (st[c]) begin\n    if (st[c] != I)            valid++;\n    if (st[c] inside {UC, UD}) uniq++;\n    if (st[c] inside {UD, SD}) dirty++;\n  end\n  if (uniq > 0 && valid > 1) `uvm_error(\"COH\", \"line Unique in one cache but valid in another\")\n  if (dirty > 1)             `uvm_error(\"COH\", \"more than one Dirty copy\")\n  foreach (st[c])\n    if (st[c] != I && data[c] != golden) `uvm_error(\"COH\", $sformatf(\"stale copy in cache %0d\", c))\n  // memory must be current only when NOBODY holds write-back responsibility:\n  // no Dirty cache and no in-flight transaction carrying that responsibility\n  if (dirty == 0 && !dirty_in_flight && memory != golden)\n    `uvm_error(\"COH\", \"no cache and no in-flight transaction holds dirty responsibility, but memory is stale\")\nendfunction",
+      "rubric": "A strong answer uses the five ACE states (UD, UC, SD, SC, I) and the cache state rules: a Unique line is in only one cache; a line in several caches is Shared in all; at most one Dirty copy; valid copies equal the latest written value; memory is current only when no cache and no in-flight transaction holds dirty responsibility (a PassDirty response still in transit, or the interconnect's write-back after a ReadClean snoop, counts as an owner). It checks permitted end states and snoop responses from the specification tables (not only the recommended behaviour), and names the hard races: a snoop crossing an in-flight WriteBack or WriteClean, overlapping stores from two masters (a CleanUnique that loses its line), snoop-filter accuracy, exclusive sequences. It keeps barriers and DVM as separate checks and leaves memory-consistency litmus tests to the processor team. Coverage crosses state × transaction × snoop response × race; formal proves the invariants on an abstracted line.\n\nA weak answer lists MOESI transitions, checks only \"no two Modified copies\", flags stale memory while dirty responsibility is still in transit, or mixes TSO into the coherence checker.",
+      "model_answer": "**The model.** ACE defines five cache states from three characteristics, valid/invalid, unique/shared and clean/dirty: UniqueDirty (UD), UniqueClean (UC), SharedDirty (SD), SharedClean (SC) and Invalid (I) (IHI0022E §C1.2.3). They map one-to-one onto MOESI (M, E, O, S, I), so MOESI names are fine if you are precise, but a checker should use the ACE terms the protocol tables use.\n\n**The invariants** come straight from the cache state rules (§C1.2.3):\n- \"A line in a Unique state must only be in one cache\": Unique plus *any* other valid copy is an error, not only two Dirty copies.\n- A line in more than one cache must be Shared in every cache that holds it. A Shared line may also be held by only one cache, because discarding a copy needs no notification: do not flag a lone SC.\n- A line updated relative to memory is Dirty in exactly one cache.\n- Data: every valid copy equals the latest value in the line's write order (the golden model). If no cache **and no in-flight transaction** holds dirty responsibility, memory holds that value.\n\n**The checker.** Per line, it tracks each master's state, inferred from coherent transactions and snoop responses (or from white-box probes of the cache models), plus a golden copy of the data. The code above checks the invariants after each snoop response and each completed transaction. Two details stop it from failing legal flows:\n- **Dirty responsibility in transit is an owner.** A PassDirty snoop response (CRRESP[2]) passes the write-back responsibility to the initiating master or to the interconnect (§C3.7). For ReadShared it can go to the initiating master, which learns it from the PassDirty bit of its own read response (RRESP[2], §C3.2.1) and is not SD or UD until its read data arrives; for ReadClean it goes to the interconnect, which writes the line back to memory (§C3.7, §C5.3.2). Between those points no cache is Dirty, yet memory is legally stale. Track that responsibility (`dirty_in_flight`), or check memory only when the line is quiescent.\n- **Local stores update the golden copy.** A master holding a line Unique stores to it without any bus transaction. A golden copy updated only from bus traffic falsely flags the UD owner's own data, so feed it from cache-model probes or the core's store stream. A purely bus-level checker can instead compare the data when it next appears on the bus (snoop data or a write-back).\n\n**Transitions: check what is permitted, not what is recommended.** For a ReadShared snoop to a line in UD, the snooped cache may end in I (PassDirty 1, IsShared 0), SC (PassDirty 1, IsShared 1) or SD (PassDirty 0, IsShared 1) (§C5.3.2, Table C5-8). The response bits must agree with the end state; which one a design chooses is its own business. The end state applies to the snooped cache; the initiator's state follows its own read response (§C4.3). The mapping from coherency operations to snoops in Table C5-1 is a recommendation, so check the required state change, not the snoop name.\n\n**The hard races to target:**\n- **Snoop versus memory update.** A snoop arrives while the snooped master's WriteBack or WriteClean is in flight. The master must either respond with PassDirty low and IsShared high, or delay its response until the update completes (§C5.2.3). Checkers that assume the line is simply \"Dirty\" or \"Invalid\" here produce false failures, or miss double ownership.\n- **Overlapping stores.** Two masters store to one line at about the same time; the interconnect orders them. A master whose CleanUnique is pending sees ReadUnique, CleanInvalid or MakeInvalid from the first master on its snoop port, must invalidate, and after its CleanUnique completes cannot store: it must obtain the line again, for example with ReadUnique (§C4.10.3).\n- **Snoop filter accuracy.** A filter that drops a holder causes a missed snoop and a stale copy. Masters that support one must broadcast allocations and evictions (§C4.2, Chapter C10); check the filter's view against the caches.\n- **Exclusive sequences.** A snooped line that is part of an exclusive sequence must remain valid in the snooped master (§C5.3.2).\n\n**Separate concerns.** Barriers (Chapter C8) and DVM messages (Chapter C12) get their own checks. ACE-Lite (Chapter C11) masters such as an IO-coherent DMA hold no cache but their reads and writes must snoop correctly. **Memory consistency** (whether cores observe writes in an order allowed by total store order or a weaker model) is a property of the processor architecture; litmus tests for it belong to the CPU team, not to the interconnect's coherence checker.\n\n**Stimulus and coverage.** Few lines and many masters (false sharing), small caches to force evictions, all transaction types, random snoop-response delays. Cover initial state × transaction × snoop response × end state per master, crossed with each race above.\n\n**Formal.** Abstract to one or two lines and two or three masters, model the caches as non-deterministic but protocol-legal, and prove the invariants; data independence lets one symbolic line stand for all.",
+      "follow_ups": [
+        "Why is \"no two caches hold the line in Modified\" a weaker property than the ACE Unique rule?",
+        "A ReadShared snoop to a line in UD is answered PassDirty 1, IsShared 1. For the next few cycles no cache holds the line Dirty and memory is stale. Is that a bug? What does your checker do?",
+        "A snoop to a line in UD arrives one cycle after the master issued a WriteBack of that line. List the legal outcomes.",
+        "How do you check a snoop filter that is allowed to be conservative (for example, it still lists a line whose Evict or WriteBack is in progress, or it always snoops a master that does not broadcast its evictions)?",
+        "Where do DVM Sync and barrier responses fit in your checker plan?"
+      ],
+      "common_mistakes": [
+        "Checking only for two Modified copies, missing Unique plus a Shared copy.",
+        "Flagging a lone SharedClean copy as an error.",
+        "Checking memory against the golden copy while dirty responsibility is in transit (a PassDirty read response not yet complete, or the interconnect's write-back after a ReadClean snoop).",
+        "Updating the golden copy only from bus traffic, so a UD owner's local stores look like corruption.",
+        "Encoding one recommended snoop behaviour as the only legal one.",
+        "Putting memory-consistency litmus tests into the interconnect's coherence checker."
+      ],
+      "modules": [
+        "B-AMBA-F2_Future_Protocols_ACE_CHI/index",
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "E-INT-1_Integrating_UVM_with_Formal_Verification/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§C1.2.3 Cache state model (cache state rules)",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§C3.2.1 Read response signaling (PassDirty, IsShared; Table C3-15)",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§C3.7 Snoop response channel signaling (CRRESP[2] PassDirty: write-back responsibility passed to the initiating master or the interconnect)",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§C4.3 State changes on different transactions",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§C5.3.2 ReadClean, ReadShared and ReadNotSharedDirty (ReadClean: PassDirty passes the write-back to the interconnect; ReadShared: to the initiating master); Table C5-8 permitted state changes",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§C5.2.3 Memory update in progress",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§C4.10 Handling overlapping write transactions; §C4.10.3 Overlapping CleanUnique",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§C4.2 About snoop filtering; Chapter C10 (§C10.3: in-progress transactions can require the filter to track additional lines); Chapter C8 Barriers; Chapter C11 ACE-Lite; Chapter C12 DVM",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "soc-staff-dma-system-design",
       "topic": "soc",
       "level": "staff",
-      "category": "staff-system-design",
-      "prompt": "Design the verification plan for a multi-channel DMA engine that supports scatter-gather and chained descriptors.",
-      "rubric": "Must cover: descriptor chain traversal, scatter-gather address list verification, channel priority/arbitration, error injection (invalid descriptors, bus errors), interrupt generation, and memory coherency.",
-      "model_answer": "Verification plan: 1) Descriptor chain: verify linear chains, circular chains, and chain termination. 2) Scatter-gather: verify non-contiguous source/dest address lists with varying chunk sizes. 3) Multi-channel: verify priority-based arbitration, channel independence, and simultaneous operation. 4) Error handling: inject invalid descriptor addresses, bus errors mid-transfer, and abort requests. 5) Interrupts: verify per-channel completion, error, and threshold interrupts. 6) Data integrity: scoreboard per channel comparing source memory to destination memory. 7) Coherency: ensure DMA-written data is visible to CPU after completion interrupt (cache maintenance). 8) Performance: measure per-channel bandwidth under contention.",
-      "sources": ["SoC verification methodology (secondary)", "IEEE 1800.2-2020 §7 (RAL)"]
-    },
-    {
-      "id": "soc-senior-staff-interconnect",
-      "topic": "soc",
-      "level": "senior-staff",
-      "category": "staff-system-design",
-      "prompt": "You are the verification lead for a new SoC interconnect supporting 8 masters and 4 slaves with QoS. Define your verification strategy and team structure.",
-      "rubric": "Must address: architecture understanding, protocol compliance (per-channel), routing correctness, arbitration fairness, QoS enforcement, deadlock freedom, performance, team allocation, and milestone planning.",
-      "model_answer": "Strategy: 1) Protocol compliance: reuse VIP for AXI/ACE per-port verification (1-2 engineers). 2) Routing: verify all master→slave paths, address decode, and default slave behavior (1 engineer). 3) Arbitration: verify fairness under uniform load, QoS priority enforcement, and starvation freedom (1 engineer). 4) Deadlock: formal verification of channel dependency freedom + simulation stress tests (1 senior engineer). 5) Performance: bandwidth/latency characterization under synthetic and realistic traffic profiles (1 engineer). 6) Integration: SoC-level tests with real IP behind the interconnect (shared with IP teams). Team: 5-6 verification engineers + 1 lead. Milestones: M1 (port-level VIP pass), M2 (routing + arbitration), M3 (deadlock formal + stress), M4 (performance + SoC integration), M5 (signoff).",
-      "sources": ["Arm IHI0022H", "Interconnect verification methodology (secondary)"]
+      "category": "verification-plan",
+      "prompt": "Design the verification plan for a multi-channel DMA engine with scatter-gather and chained descriptors. It has an APB register port, an AXI master port and an interrupt. Describe the environment and the scenarios, checks and coverage that a staff engineer would insist on.",
+      "rubric": "A strong plan gets the roles right (the bench plays the CPU on APB and the memory on AXI; the DUT is the AXI master), uses an explicit predictor for registers and backdoor access for descriptor memory, and covers: descriptor chains and ownership, descriptor and data coherency with CPU caches, unaligned addresses and byte lanes, 4KB splitting and burst limits, overlapping source and destination, abort/pause/resume and reconfiguration while active, out-of-order completion across channels, SLVERR/DECERR mid-transfer, arbitration and fairness, interrupts, reset during a transfer, and liveness. Coverage crosses descriptor type × alignment × length × response × channel concurrency.\n\nA weak plan lists \"chains, scatter-gather, errors, interrupts\" without the corner cases or gets the agent roles backwards.",
+      "model_answer": "**Environment (subsystem level).**\n- **APB master agent, active:** the bench plays the CPU, programming channels through the register model. An explicit `uvm_reg_predictor` on the APB monitor keeps the mirror right; auto-predict off.\n- **AXI slave responder, active, with a memory model:** the DUT is the AXI master, so the bench answers its reads and writes. The responder injects SLVERR, DECERR and backpressure.\n- **Descriptor memory** is a `uvm_mem` loaded by backdoor; memories are not mirrored (IEEE 1800.2-2020 §18.6), so descriptors and data are checked against the memory model.\n- **Interrupt monitor** and an expected-interrupt model.\n- **Scoreboard:** a reference model walks each channel's descriptor chain and predicts every write (address, data, strobes) and the final memory image, plus status write-backs and interrupts.\n\n**Scenarios and checks:**\n- **Descriptor chains:** single, linear, end-of-chain marker, circular with a stop condition, null or invalid next pointer, maximum chain length.\n- **Ownership and coherency:** the CPU writes descriptors and the DMA writes back status. With non-coherent DMA, firmware must clean caches before starting and invalidate before reading results; with IO-coherent DMA (ACE-Lite) the interconnect snoops. With non-coherent DMA, also test firmware omitting the cache clean: the DMA must read the stale descriptor that is in memory, and the bench must predict from memory, not from the CPU's intended value.\n- **Alignment and byte lanes:** every source/destination alignment against the bus width, lengths of 1 byte up to the maximum, partial first and last beats with the right WSTRB (IHI0022E §A3.4.3).\n- **Burst rules:** no burst crosses a 4KB boundary (§A3.4.1); the maximum burst length is respected when a long transfer is split.\n- **Overlapping source and destination:** defined by the DMA's specification (memmove semantics or illegal); test both directions of overlap.\n- **Control while active:** abort, pause and resume at every phase; writes to a running channel's registers (ignored, applied at a defined point, or error, per specification).\n- **Concurrency:** all channels at once, priority and round-robin arbitration, starvation freedom, completion order across channels (out of order is legal across different IDs).\n- **Errors mid-transfer:** a read gets SLVERR or DECERR on any beat, because read responses are per beat (RRESP). A write gets a single BRESP for the whole burst, after all its write data (§A3.4.4). The protocol still completes all data transfers of the burst. The DMA must stop or skip as specified, report the failing descriptor, raise the error interrupt, and write nothing beyond the defined point.\n- **Interrupts:** per-channel completion, error and threshold interrupts; coalescing; masked-then-unmasked.\n- **Reset and power** during a transfer.\n- **Liveness:** every started descriptor completes or reports an error within a budget (bounded in simulation, strong in formal).\n\n**Coverage:** descriptor type × source/destination alignment × length class × response × channel count active; read error at each beat position; write error response on each burst of a split transfer (first, middle, last); control action × transfer phase; interrupt × channel.\n\n**Formal** suits the register block, the arbiter (fairness) and the burst splitter (4KB and length rules).",
+      "follow_ups": [
+        "A read burst gets SLVERR on beat 2 of 4; a later 4-beat write burst gets BRESP = SLVERR. What must the DMA do on the bus in each case, and what can it report about which bytes failed?",
+        "How does your scoreboard predict writes when the DMA may legally split a transfer into different burst sizes?",
+        "What changes in this plan when the DMA moves into the SoC and firmware programs it?"
+      ],
+      "common_mistakes": [
+        "Reversing roles: building an AXI master agent to drive a DUT that is itself the AXI master.",
+        "Checking only the final memory image, missing strobes and writes outside the destination.",
+        "Ignoring descriptor coherency with CPU caches.",
+        "Expecting the DMA to stop a burst early after an error response.",
+        "Planning a per-beat write error: AXI signals one write response for the whole burst."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "A-UVM-8_Multi_Agent_Topologies/index",
+        "A-UVM-4A_RAL_Fundamentals/index",
+        "B-AXI-2_AXI_Burst_Math/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A3.4.1 Address structure (4KB boundary)",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A3.4.3 Data read and write structure (WSTRB)",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A3.4.4 Read and write response structure (one write response per burst; per-beat read responses)",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§18.6 uvm_mem; §19.3 uvm_reg_predictor",
+          "verified": true
+        }
+      ]
     },
     {
       "id": "soc-power-verification",
       "topic": "soc",
       "level": "staff",
       "category": "staff-system-design",
-      "prompt": "How do you verify power-domain crossings and retention across multiple voltage islands in an SoC?",
-      "rubric": "Must discuss: isolation cells, retention registers, power-up/down sequences, UPF/CPF, level shifters, and verification tools (Questa Power Aware, PrimePower).",
-      "model_answer": "1) Model power intent with UPF (Unified Power Format). 2) Verify isolation: when a domain powers down, all outputs from that domain must be isolated (clamped to a defined value). 3) Verify retention: after power-up, retained registers restore their saved state before the domain becomes active. 4) Verify sequencing: isolation → save → power-down → power-up → restore → de-isolate. Wrong ordering causes corruption. 5) Level shifters: verify correct voltage translation at domain boundaries. 6) Tools: Questa Power Aware or VCS-PA for automated UPF checking. 7) Functional verification: run a workload, power down a domain, power up, and verify the system resumes correctly.",
-      "sources": ["IEEE 1801-2015 (UPF)", "Power-aware verification methodology (secondary)"]
+      "prompt": "How do you verify power-domain switching, isolation and retention across several power domains in an SoC? Cover the power intent, what the simulator does, the testbench, assertions, coverage, and what static checks find that simulation cannot.",
+      "rubric": "A strong answer defines power states and legal transitions from the power intent (supply sets, `add_power_state`), states the simulation semantics (non-retained state corrupts to X in 4-state types; power-up restores nothing; isolated outputs read their clamp value, which can be 0 or 1), gives a typical control sequence (isolate, save, power off; power on, reset, restore, release isolation) while naming the invariants that hold in any design (isolate before power off; restore before releasing isolation), and makes the testbench power-aware (pause and flush scoreboards; stop stimulus safely, preferably with a quiesce flag, and if with `kill()` or `stop_sequences()` then with a driver that gives up its current item without a stray `item_done()`; handle in-flight traffic). It adds power-aware assertions, state and transition coverage including illegal transitions, and the split between static checks (missing or wrong isolation and level shifters) and dynamic simulation (sequencing). It names the UPF edition it uses.\n\nA weak answer says powered-down outputs read 0, or names vendor tools instead of methods.",
+      "model_answer": "**Power intent first.** The UPF file (IEEE 1801) describes domains, supply sets, switches, and isolation, retention and level-shifter strategies, separate from the RTL. Define **power states** with `add_power_state` and the legal **transitions** between them; each state and each arrow becomes a scenario, and illegal transitions become negative tests. (The curriculum's lessons use IEEE 1801-2018 (UPF 3.1) command names; IEEE 1801-2024 (UPF 4.0) is the current edition. State the edition and set `upf_version` accordingly.)\n\n**What the simulator does.** When a domain's supply goes to a state whose simstate is CORRUPT:\n- every register and every signal driven from the domain is corrupted: X for 4-state types. A 2-state `bit` cannot hold X and reads a default, typically 0, which hides a missing isolation cell;\n- power returning **restores nothing**: registers stay X until reset, retention restore or a clocked load;\n- isolated outputs read their **clamp** value while isolation is on; the clamp can be 0 or 1 (or other values the strategy allows). Unisolated outputs carry X into always-on logic.\n\n**A typical control sequence** (practice; the exact order is design- and retention-specific, so take it from the power-management specification), each step in a separate cycle:\n- power down: stop the domain clock, isolate, save, power off;\n- power up: power on (wait for the switch acknowledge), reset the domain, restore, restart the clock, release isolation.\n\nTwo invariants hold whatever the order: isolation is on before power drops, and isolation is released only after the restore has completed. The first and third assertions below check them; the second checks that the restore starts while the domain is powered and still isolated.\n\n**Power-aware assertions** (signal names from the PMU; an example, not a standard interface):\n\n```systemverilog\n// isolation must already be on in the cycle before power drops\na_iso_before_off: assert property (@(posedge pmu_clk) disable iff (!pmu_rst_n)\n  $fell(cpu_pwr_en) |-> $past(cpu_iso_en));\n// restore only while powered and still isolated\na_restore_window: assert property (@(posedge pmu_clk) disable iff (!pmu_rst_n)\n  $rose(cpu_restore) |-> cpu_pwr_en && cpu_iso_en);\n// isolation released only after the restore has completed\n// cpu_restore_done: PMU status, set when the restore completes (or, on a cold\n// power-up with nothing to restore, when the domain reset completes);\n// cleared when the domain powers off\na_iso_release_after_restore: assert property (@(posedge pmu_clk) disable iff (!pmu_rst_n)\n  $fell(cpu_iso_en) |-> cpu_restore_done);\n```\n\nWith the PMU reset asserted from time 0, the `disable iff` keeps the checks off until the PMU's outputs are defined, so the first tick's comparison against the default sampled value (X for an uninitialised `logic`) cannot fail them (IEEE 1800-2023 §16.5.1, §16.9.3).\n\n**The testbench across a power cycle:**\n- stimulus to the domain is quiesced first, preferably with a quiesce flag the sequence checks between items, so it ends itself at an item boundary. A callback does not stop a sequence by itself: it returns to the driver, and the sequence waits in `finish_item()` until `item_done()`;\n- for abrupt power loss, `kill()` on a sequence (it removes the sequence's locks, grabs and requests, IEEE 1800.2-2020 §14.2.5.11) and `stop_sequences()` on the sequencer (it kills every sequence there and removes all queued requests, locks and responses, §15.3.2.14) need the driver's co-operation: the item the driver holds must have exactly one owner. Either the driver finishes or aborts that item and calls `item_done()` before the sequences are stopped, or, after `stop_sequences()`, it abandons the item without calling `item_done()` and idles the interface, usually in a reset or power-down branch of its `run_phase`. In uvm-core 2020.3.1, `stop_sequences()` also flushes the held item from the request FIFO, so a later `item_done()` is fatal (`SQRBADITMDN`);\n- in-flight transactions are drained, or must complete with an error and never hang;\n- monitors and scoreboards pause checking for the off domain, flush expectations, and after wake-up expect reset values for non-retained state and the saved values for retained state;\n- objections keep the phase alive across the power event.\n\n**Coverage:** each power state, each legal transition, each illegal transition attempted (and refused), power event × traffic class in flight, retention with and without a domain reset.\n\n**Static versus dynamic.** Static checkers read the RTL or netlist with the UPF and no stimulus: they find missing or redundant isolation cells and level shifters, wrong supplies and crossings between incompatible states. Only power-aware simulation finds order and timing problems, such as the PMU dropping power one cycle before isolation. Run both; tool names and switches are tool-dependent.",
+      "follow_ups": [
+        "The PMU raises isolation and drops power on the same clock edge. Most runs pass. Is the assertion too strict?",
+        "A behavioural ROM in the switched domain reads X after wake-up although it was loaded with `$readmemh`. Why?",
+        "How do you stop a running sequence safely when its domain is about to power down?"
+      ],
+      "common_mistakes": [
+        "Assuming powered-down outputs read 0.",
+        "Declaring domain-boundary signals as 2-state `bit`, which hides corruption.",
+        "Releasing isolation before the retention restore has completed.",
+        "Calling `stop_sequences()` while the driver holds an item and letting the driver call `item_done()` afterwards: the request FIFO was flushed, so uvm-core reports `SQRBADITMDN`.",
+        "Expecting a callback to abort a running sequence; use a quiesce flag, `kill()` or `stop_sequences()`.",
+        "Relying on simulation alone, without static UPF checks (or the reverse).",
+        "Stating one power-down/power-up order as a rule instead of taking it from the design's power-management specification."
+      ],
+      "modules": [
+        "I-SV-8_Power_Intent_and_UPF/index",
+        "E-PWR-1_Power_Aware_Verification/index"
+      ],
+      "sources": [
+        {
+          "doc": "IEEE 1801-2018 (UPF 3.1)",
+          "section": "command names as used by the I-SV-8 lesson",
+          "verified": false
+        },
+        {
+          "doc": "IEEE 1801-2024 (UPF 4.0), current edition",
+          "verified": false
+        },
+        {
+          "doc": "IEEE 1800-2023",
+          "section": "§16.9.3 Sampled value functions ($past, $fell, $rose); §16.5.1 Sampling (default sampled value); §16.12 Declaring properties (disable iff)",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800.2-2020",
+          "section": "§14.2.5.11 kill; §15.3.2.14 stop_sequences (kills all sequences, removes queued requests, locks and responses)",
+          "verified": true
+        },
+        {
+          "doc": "Accellera uvm-core 2020.3.1",
+          "section": "uvm_sequencer.svh: stop_sequences flushes the request FIFO; item_done with an empty FIFO is fatal SQRBADITMDN (implementation behaviour, not the standard)",
+          "verified": true
+        },
+        "Practice: industry methodology taught in the linked lessons, not a standard (power-aware testbench structure, static vs dynamic checks)"
+      ]
+    },
+    {
+      "id": "soc-security-verification",
+      "topic": "soc",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "An SoC partitions masters, memory and peripherals into secure and non-secure worlds, with a firewall in the interconnect. Plan its verification: what is the security model, what must be proven, what negative tests matter most, and how do you get coverage and formal evidence?",
+      "rubric": "A strong answer models the policy as a function of master × security attribute × privilege × region × operation, knows where the attribute comes from on AXI (`AxPROT[1]`: 0 secure, 1 non-secure) and that each master must generate it correctly and unforgeably, and treats \"a denied access never reaches the protected slave and has no side effect\" as a safety property. It covers: denied responses as the firewall specifies, no data leakage, firewall configuration locking and reconfiguration during traffic, debug paths, attribute propagation through bridges, reset defaults, and interrupts. Coverage is the policy cross, dominated by negative cases; formal proves the policy over the decoder.\n\nA weak answer tests only that secure masters can reach secure memory.",
+      "model_answer": "**The security model.** Write the policy as a table: for each master, security attribute, privilege, region and operation, *allow* or *deny*, and for each deny, the response and side effects the firewall's specification defines. On AXI the attribute travels on `AxPROT`: bit 0 privileged/unprivileged, bit 1 secure (0) or non-secure (1), bit 2 instruction/data (IHI0022E §A4.7, Table A4-6).\n\n**Where the attribute comes from.** A CPU sets it from its execution state. A DMA or other master must take it from a configuration that only secure software can write; if non-secure software can make the DMA issue secure transactions, the firewall is bypassed without any firewall bug. Verify each master's attribute generation as a feature.\n\n**What must be proven:**\n- **Safety:** a denied access never reaches the protected slave (no request appears at its port) and changes no state.\n- **No leakage:** a denied read returns no secure data, not even stale data left in a buffer; a denied write leaves memory unchanged.\n- **Allowed accesses** pass unchanged, including attributes.\n- **Denial response** exactly as specified (often an error response; some designs read as zero and ignore writes). The protocol does not fix it; the firewall specification does.\n\n**Negative tests that matter most:**\n- non-secure masters, at every privilege, to every secure region boundary (first byte, last byte, one past);\n- reprogramming the firewall from non-secure software, and after its lock bit is set;\n- reconfiguration while traffic is in flight: an access accepted under the old policy versus the new one;\n- debug access paths, which are masters too;\n- bridges to lower-level buses: if the attribute is dropped, a downstream firewall cannot enforce anything;\n- reset: the firewall's reset state must be deny (or the specified default) before firmware configures it;\n- interrupts (practice): a secure peripheral's interrupt reaches only the secure world, and non-secure software cannot mask, clear or observe it, as the interrupt controller's security configuration defines.\n\n**Coverage:** master × security × privilege × region × operation × response. Most bins are denials; a plan dominated by allowed traffic is a red flag.\n\n**Formal.** Prove the policy over the decoder and firewall: for every address in a secure region, a non-secure request never asserts that slave's select or valid. Exhaustive proof beats random sampling for \"never\".",
+      "follow_ups": [
+        "Non-secure software programs the DMA to copy from secure SRAM. Which feature should stop it, and how do you test that?",
+        "How do you check that a denied read returns no stale secure data from a shared read buffer?",
+        "What is the risk if an AXI-to-APB bridge does not carry the security attribute?"
+      ],
+      "common_mistakes": [
+        "Testing mostly allowed accesses.",
+        "Assuming the denial response is fixed by AXI; it is defined by the firewall.",
+        "Forgetting that DMA and debug masters can be used to bypass the firewall.",
+        "Not testing the firewall's own configuration registers and lock.",
+        "Leaving interrupts out of the plan: a secure peripheral's interrupt that non-secure software can mask, clear or observe leaks information or blocks the secure world."
+      ],
+      "modules": [
+        "B-AXI-4_AXI_Expert_Features_Cache_Atomics/index",
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "E-INT-1_Integrating_UVM_with_Formal_Verification/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A4.7 Access permissions, Table A4-6 (AxPROT encoding)",
+          "verified": true
+        },
+        "Practice: industry methodology taught in the linked lessons, not a standard (security policy modelling, firewall verification; TrustZone details are Arm architecture, section unverified)"
+      ]
+    },
+    {
+      "id": "soc-performance-qos",
+      "topic": "soc",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "Plan the performance verification of an SoC interconnect and memory system: latency, bandwidth and quality of service (QoS). How do you measure, what traffic do you use, what do you check, and what can and cannot be concluded from RTL simulation?",
+      "code": "// snippet: inside an AXI read monitor; stamps each read and logs its latency\ntime ar_time[id_t][$];                     // per-ID queue: same-ID reads return in order\n\ntask automatic collect();\n  forever begin\n    @(vif.mon_cb);\n    if (vif.mon_cb.arvalid && vif.mon_cb.arready)\n      ar_time[vif.mon_cb.arid].push_back($time);\n    if (vif.mon_cb.rvalid && vif.mon_cb.rready && vif.mon_cb.rlast) begin\n      time t0 = ar_time[vif.mon_cb.rid].pop_front();\n      lat_ap.write(lat_item::make(vif.mon_cb.rid, $time - t0));  // make(): a static helper in lat_item\n    end\n  end\nendtask",
+      "rubric": "A strong answer defines each metric precisely (where latency starts and stops, bandwidth over which window), measures at the right points with monitors, uses traffic profiles per traffic class plus realistic traces, checks per-class budgets with percentiles rather than averages, and checks QoS from the interconnect's own specification because AXI leaves the meaning of AxQOS to the system. It covers starvation freedom, outstanding-transaction sizing, and the fidelity limits of the memory model. Extra credit: Little's law for sizing, warm-up, and tracking results across RTL versions.\n\nA weak answer says \"measure bandwidth\" or assumes a higher AxQOS always means lower latency.",
+      "model_answer": "**Define the metrics first.** Read latency from the AR handshake to the first or to the last R beat (say which); write latency from the last W beat to B; bandwidth as bytes transferred per window at a named port. Unstated definitions make every number arguable.\n\n**Measure with monitors.** Stamp each transaction at the master port and at the slave port (the code above is the master side). Same-ID reads return in issue order, so a per-ID queue is enough; for writes, key on AWID.\n\n**QoS semantics come from the system, not AXI.** AXI4 adds 4-bit `AWQOS` and `ARQOS`, but \"the protocol does not specify the exact use of the QoS identifier\"; Arm recommends using it as a priority, higher meaning higher priority, with `0b0000` meaning the interface does not take part in a QoS scheme (IHI0022E §A8.1.1). The checks must come from the interconnect's QoS specification: what a priority buys, when (only under contention), and any regulation of bandwidth.\n\n**Traffic.** Profiles per class: latency-sensitive CPU reads, real-time traffic with a deadline (display), bulk DMA, plus recorded traces from software running on a model. Sweep load from idle to saturation.\n\n**Checks:**\n- per-class latency budgets as distributions: 99th percentile and maximum, not just the mean; tail latency is what misses deadlines;\n- bandwidth meets the requirement at the specified load;\n- higher-priority traffic gets better latency under contention, and lower-priority traffic is not starved (every request served within a bound);\n- outstanding transactions never exceed what masters and slaves can hold.\n\n**Sizing rule of thumb (practice):** Little's law, average outstanding = throughput × average latency, tells you how many outstanding transactions a master needs to reach its bandwidth at a given latency.\n\n**What RTL simulation can conclude.** Interconnect arbitration and buffering behaviour is exact in RTL. End-to-end numbers are only as good as the slowest model: a DDR controller with an approximate timing model gives approximate latency. Exclude warm-up from measurements, run long enough for stable percentiles, and track results per RTL version so a regression in performance is caught like a functional one. Long realistic workloads belong on emulation.",
+      "follow_ups": [
+        "Display traffic at QoS 15 still underruns under heavy DMA load. Where do you look first?",
+        "How many outstanding 64-byte reads does a master need for 16 GB/s at 200 ns average latency?",
+        "Why can a performance assertion based on the mean pass while the product fails?"
+      ],
+      "common_mistakes": [
+        "Assuming AXI defines what AxQOS values mean.",
+        "Reporting averages and ignoring tail latency.",
+        "Trusting absolute latency numbers from an approximate memory model.",
+        "Measuring from the address phase for writes whose data arrived late."
+      ],
+      "modules": [
+        "B-AXI-6_AXI_Verification_Performance/index",
+        "B-AXI-4_AXI_Expert_Features_Cache_Atomics/index",
+        "E-SOC-1_SoC-Level_Verification_Strategies/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A8.1.1 QoS interface signals",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A5.3.1 Read ordering (same-ID reads in order)",
+          "verified": true
+        },
+        "Practice: industry methodology taught in the linked lessons, not a standard (metric definitions, percentiles, Little's law sizing)"
+      ]
+    },
+    {
+      "id": "soc-pss-hw-sw-coverification",
+      "topic": "soc",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "Your SoC team wants one library of use-case tests (boot, DMA under load, low-power entry) to run in UVM simulation, on an emulator and on first silicon. How do you structure hardware/software co-verification, and would you adopt the Portable Test and Stimulus Standard (PSS)?",
+      "rubric": "A strong answer structures co-verification in layers (bare-metal tests on the CPU with a firmware–testbench contract, drivers, then OS-level flows on faster platforms), explains what PSS models (actions, activities, flow objects, resources) and what a tool generates (tool-dependent; commonly UVM sequences and C) versus what remains hand-written (exec templates, HAL, sequences, scoreboards), states where checking lives, and gives a decision rule: PSS pays when several platforms run the same scenarios and concurrency is constrained by shared resources, not for one simulation target. It knows PSS is an Accellera standard (as of 2026, 3.0, August 2024, with no IEEE number), and plans for debugging through generated code.\n\nA weak answer says PSS replaces UVM, or adopts it for a single-platform block.",
+      "model_answer": "**Co-verification layers.**\n1. **Bare-metal tests** on the CPU model (RTL core, instruction-set simulator or bus-functional model), synchronized with the UVM bench through a mailbox contract: addresses, codes, events and timeouts in one shared package.\n2. **Driver-level tests** using the real device drivers once they exist, which find hardware/software interface bugs (register sequences, interrupt handling).\n3. **OS and application flows** on emulation or FPGA prototypes, where millions of cycles are affordable.\n\n**What PSS adds.** The Accellera Portable Test and Stimulus Standard (as of 2026, the current release is 3.0, August 2024, and it has no IEEE number) describes test *intent* once:\n- **actions** (DMA transfer, power-down), composed by **activities**: sequential, `parallel`, `select`, `repeat`, and `schedule` (the tool chooses a legal order) (PSS 3.0 §12.3.4, §12.3.5);\n- **flow objects**: buffers (§13.1), streams and states that one action produces and another consumes;\n- **resources** that actions `lock` or `share` (§14.2), so the tool generates only legal concurrency;\n- **inference**: the tool can add the producing actions a scenario needs (§17.1).\n\nA tool solves the scenario and generates code for each target platform. The output form is tool-dependent; a common pattern is a UVM sequence for simulation and bare-metal C for the embedded processor. What stays hand-written: the `exec` templates or imported functions per action and platform, the UVM sequences, agents and scoreboards they call, and the C hardware abstraction layer. §22.8 compares the mapping mechanisms.\n\n**Where checking lives.** On silicon there is no scoreboard, so platform-independent checks (data compare, status) live in the C realization; in simulation, keep the UVM scoreboard as well. Decide per environment so a read is not checked twice by different rules.\n\n**Decision rule.**\n- *Adopt PSS* when several platforms run the same scenarios, concurrency is constrained by shared resources (channels, memory regions, power states), and setup chains are long enough for inference to pay. Assign a named owner for each platform's realization.\n- *Stay with UVM virtual sequences* for one simulation target with a dozen scenarios: PSS would add a tool, a language and a layer without removing a platform.\n\n**Risks to plan for:** debugging through generated code (keep the tool's schedule report with every failing seed), tool support for the PSS version you write, and reproducibility (values solved at generation time versus on the target).",
+      "follow_ups": [
+        "Two parallel DMA actions both need channel 0. How does PSS prevent an illegal scenario, and what happens if the pool is too small?",
+        "What exactly would you hand-write for the emulator that you did not need in simulation?",
+        "A scenario fails on silicon but passes in simulation. What does your debug flow need from the PSS tool?"
+      ],
+      "common_mistakes": [
+        "Saying PSS replaces UVM; it generates scenario code that runs on the UVM environment.",
+        "Citing an IEEE number for PSS (none exists as of 2026).",
+        "Passing a resource as an action input instead of claiming it with lock or share.",
+        "Adopting PSS for a single-platform block bench."
+      ],
+      "modules": [
+        "E-PSS-1_Portable_Stimulus_Standard/index",
+        "E-SOC-1_SoC-Level_Verification_Strategies/index"
+      ],
+      "sources": [
+        {
+          "doc": "Accellera Portable Test and Stimulus Standard 3.0 (August 2024)",
+          "section": "§12.3.4 parallel; §12.3.5 schedule; §13.1 buffer objects; §14.2 claiming resource objects; §17.1 implicit binding and action inference; §22.8 comparison between mapping mechanisms",
+          "verified": true
+        },
+        "Practice: industry methodology taught in the linked lessons, not a standard (co-verification layers and adoption criteria)",
+        {
+          "doc": "accellera.org Portable Stimulus download page (WebFetch 2026-10-11)",
+          "section": "current release 3.0, 2024-08-28; no IEEE number listed",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "id": "soc-emulation-strategy",
+      "topic": "soc",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "Your SoC needs operating-system boot and long performance runs before tape-out. When do you use simulation, emulation and FPGA prototyping, and what must change in the UVM testbench for it to run fast on an emulator?",
+      "rubric": "A strong answer matches each platform to its job (simulation for debug and full visibility, emulation for long runs with moderate visibility and co-verification, prototypes for software development and real-world interfaces), explains why an unmodified UVM bench gains little speed (pin-level synchronization between the testbench and the hardware every cycle), and describes the split: synthesizable HDL-side transactors driven by transaction-level calls from an untimed HVL side, batching, no delays on the HVL side, checks that tolerate reduced visibility. It plans debug (triggers, probes, in-emulator assertions, replay into simulation) and treats vendor claims as vendor claims, without assuming that one emulation platform's flow or limits carry over to another.\n\nA weak answer assumes the existing bench runs unchanged and faster.",
+      "model_answer": "**Match the platform to the job.**\n\n| Platform | Strength | Weakness | Use it for |\n|---|---|---|---|\n| RTL simulation | full visibility, fast turnaround, any testbench code | slow for millions of cycles | block and SoC debug, most regressions |\n| Emulation | orders of magnitude faster on long runs, good debug features | capacity and cost; testbench must be split | OS boot, long firmware flows, performance runs, hardware/software co-verification |\n| FPGA prototype | fastest, can connect real interfaces | low visibility, long compile, needs a stable design | software development, system validation |\n\n**Why an unmodified UVM bench gains little.** The design runs in hardware, but a class-based driver that wiggles pins every clock forces the emulator to stop and synchronize with the simulator host every cycle. The speed of the run is then the speed of that communication, not of the hardware.\n\n**The split.**\n- **HDL side:** a synthesizable bus-functional model, typically tasks in the interface, that turns one transaction into pin activity on its own clock.\n- **HVL side:** the UVM components become untimed proxies that call those tasks or functions once per transaction, with no `#` delays and no per-cycle pin access.\n- **Communication** is by function and task calls across the boundary (Accellera SCE-MI defines standard interfaces for this; vendor flows add their own). Batch many small messages so each crossing carries more work.\n- **Monitors** collect whole transactions on the HDL side and send them up; scoreboards stay on the HVL side.\n- **Checks** tolerate reduced visibility: in-emulator assertions, transaction logs, and triggers that capture a waveform window only around a failure.\n\n**One bench for both.** Write the split once and run the same environment in simulation, so the emulator does not need a separate bench, and failures can be replayed in simulation with full visibility.\n\n**Debug strategy.** Plan triggers and probes up front, keep the firmware image hash and seed with every run, and decide which failures are reproduced in simulation. Capacity, compile time and speed figures differ by vendor and generation: treat them as vendor claims and measure on your own design.\n\n**Platforms are not interchangeable** (practice). Emulators are built on different architectures: some on custom silicon, others on commercial FPGAs. The architecture changes compile time, capacity and debug visibility, so do not assume that one platform's flow or limits transfer to another.",
+      "follow_ups": [
+        "Your co-emulation run is only five times faster than simulation. What do you profile first?",
+        "Which UVM components must change for emulation, and which can stay as they are?",
+        "When is an FPGA prototype the better choice than an emulator?"
+      ],
+      "common_mistakes": [
+        "Assuming a standard UVM bench runs unmodified and fast on an emulator.",
+        "Expecting full waveform visibility for free on long emulation runs.",
+        "Quoting vendor speed figures as facts about your design.",
+        "Assuming emulation platforms are interchangeable, so one platform's compile flow, capacity and debug limits carry over to another."
+      ],
+      "modules": [
+        "E-EMU-1_Emulation_Aware_Verification/index",
+        "E-SOC-1_SoC-Level_Verification_Strategies/index"
+      ],
+      "sources": [
+        {
+          "doc": "Accellera Standard Co-Emulation Modeling Interface (SCE-MI)",
+          "verified": false
+        },
+        "Practice: industry methodology taught in the linked lessons, not a standard (platform selection, testbench split; vendor figures are vendor claims)"
+      ]
+    },
+    {
+      "id": "soc-senior-staff-interconnect",
+      "topic": "soc",
+      "level": "senior-staff",
+      "category": "staff-system-design",
+      "prompt": "You are the verification lead for a new SoC interconnect with 8 AXI masters, 4 slaves and QoS. Define the verification strategy: what must be proven, by which technique, in what order, and how you organize the team.",
+      "rubric": "A strong strategy decomposes the problem into protocol compliance per port, routing and decode (including DECERR and the default slave), ID handling and the ordering rules the interconnect itself owns (same-ID order across slaves, write data order at a shared slave), arbitration and starvation freedom, QoS as the interconnect specifies it, exclusive access monitors, security attributes, width and clock conversion, deadlock freedom, reset during traffic, and performance. It assigns techniques (VIP plus assertions, scoreboards, formal for decode/arbitration/deadlock, stress), milestones with exit criteria, and owners; staffing numbers are presented as an example sized from the work, not a rule.\n\nA weak answer lists features without the interconnect-specific ordering and ID rules, or gives fixed headcounts as fact.",
+      "model_answer": "**What must be proven, and how.**\n\n| Area | What the interconnect owns | Technique |\n|---|---|---|\n| Protocol per port | handshakes, stability, dependencies on all 12 ports | protocol VIP and assertions on every port, formal for the handshake rules |\n| Routing and decode | each address to the right slave; holes to a default slave returning DECERR, with all data transfers still completed (IHI0022E §A3.4.4) | routing scoreboard; formal proof that each address selects exactly one target |\n| IDs | master-port bits appended to IDs and stripped on return (§A5.3.5) | routing scoreboard aware of the port numbering |\n| Ordering | same-ID reads to *different* slaves returned in issue order (§A5.3.1); write data forwarded in address order when writes from several masters go to one slave (§A5.3.2) | ordering checker per master; stress with multi-slave same-ID traffic |\n| Arbitration | fairness and no starvation | formal (bounded wait) plus long stress |\n| QoS | behaviour defined by the interconnect's own QoS specification; AXI does not define what AxQOS values mean (§A8.1.1) | latency and bandwidth checks per class under contention |\n| Exclusive access | exclusive monitors: the specification recommends that a slave supporting exclusive access has a monitor unit for each exclusive-capable master ID that can access it, and the interconnect may provide monitors on the slaves' behalf; EXOKAY only when no write to the location intervened (§A7.2.3) | directed and random exclusive pairs from several masters |\n| Security | `AxPROT` carried unchanged; firewall policy if present (§A4.7) | policy scoreboard, formal on the decoder |\n| Width and clock conversion | data packing, strobes, CDC in asynchronous bridges | scoreboards, structural CDC sign-off |\n| Deadlock freedom | no cycle of channel dependencies under legal backpressure | formal liveness with fairness assumptions; weekly backpressure stress |\n| Reset | traffic drained or errored on reset of any port | reset-during-traffic scenarios |\n| Performance | latency and bandwidth per class | measured with monitors, tracked per RTL version |\n\n**Order and milestones (example):**\n1. Per-port protocol compliance and routing on simple traffic; the routing scoreboard in place.\n2. IDs, ordering and arbitration under concurrency; formal decode and arbitration proofs.\n3. Exclusives, security, conversion bridges, reset during traffic.\n4. Deadlock proofs and backpressure stress; performance characterization.\n5. Sign-off: every vplan row closed, formal proofs complete or bounded with justification, performance within budgets.\n\nEach milestone has exit criteria (rows closed, proofs done, no open P0/P1 bugs), not a date alone.\n\n**Team (example only).** Size from the work, not from a rule. One way to split it: a protocol and VIP owner, a routing/ordering scoreboard owner, a formal owner (decode, arbitration, deadlock), a performance owner, and the lead owning the plan, risk register and integration with the SoC team. Real numbers depend on reuse, VIP maturity and schedule.",
+      "follow_ups": [
+        "A master issues two same-ID reads to two slaves; the second slave is faster. What must the interconnect do, and how do you test it?",
+        "How do you prove deadlock freedom without the formal tool finding trivial counterexamples where a slave never answers?",
+        "What changes if the masters are AXI3 and still use write data interleaving?",
+        "How would you argue for or against a separate formal owner?"
+      ],
+      "common_mistakes": [
+        "Treating ordering as only a slave's responsibility, missing the interconnect's own rules across slaves.",
+        "Assuming AxQOS has a protocol-defined meaning.",
+        "Presenting headcounts as industry fact.",
+        "Leaving exclusive monitors and security attributes out of an interconnect plan."
+      ],
+      "modules": [
+        "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index",
+        "B-AXI-3_AXI_Ordering_and_IDs/index",
+        "B-AXI-4_AXI_Expert_Features_Cache_Atomics/index",
+        "B-AXI-6_AXI_Verification_Performance/index",
+        "B-AMBA-F3_Interview_Debug_Clinic/index",
+        "E-SOC-1_SoC-Level_Verification_Strategies/index"
+      ],
+      "sources": [
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A3.4.4 Read and write response structure",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A5.3.1 Read ordering; §A5.3.2 Normal write ordering; §A5.3.5 Interconnect use of transaction identifiers",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A7.2.3 Exclusive access from the perspective of the slave",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A8.1.1 QoS interface signals",
+          "verified": true
+        },
+        {
+          "doc": "Arm IHI0022E (AXI and ACE)",
+          "section": "§A4.7 Access permissions",
+          "verified": true
+        },
+        "Practice: industry methodology taught in the linked lessons, not a standard (milestones and team split are an example)"
+      ]
     },
     {
       "id": "soc-signoff-strategy-review",
       "topic": "soc",
       "level": "senior-staff",
       "category": "staff-system-design",
-      "prompt": "A staff engineer presents an SoC verification strategy for signoff. The plan lists 500 tests but has no coverage matrix, no liveness plan, and no failure ownership workflow. How do you review it and what changes do you require before approval?",
-      "rubric": "Must reject test-count-only signoff, require measurable coverage goals, formal/liveness properties, debug artifact schema, risk register, regression gates, owners, and explicit waivers for unreachable goals.",
-      "model_answer": "I would not approve a test-count-only strategy. Required changes: 1) Add a V-plan matrix mapping features to coverage bins and checkers, such as master x slave x response, interrupt source x target, security privilege x region, reset source x active traffic, and QoS latency buckets. 2) Add liveness/formal properties for accepted-request eventual response, no channel-dependency deadlock, reset convergence, interrupt delivery, and security isolation. 3) Define a debug evidence package containing RTL hash, firmware hash, UVM hash, seed, plusargs, failing transaction window, firmware log window, and waveform trigger. 4) Define bucketing rules for firmware, UVM infrastructure, RTL, test intent, and tool/environment failures. 5) Split regression into smoke, nightly, stress, and signoff suites with entry/exit gates. 6) Maintain a risk register with owner, mitigation, and exit criteria. Approval requires measurable evidence and signed waivers, not a large test list.",
-      "sources": ["IEEE 1800.2-2020 §4 and §12", "IEEE 1800-2023 §16-17", "SoC verification methodology (secondary)"]
+      "prompt": "A staff engineer presents an SoC verification strategy for sign-off. The plan lists 500 tests but has no coverage matrix, no liveness plan and no failure ownership workflow. How do you review it, and what changes do you require before approval?",
+      "rubric": "A strong review rejects test-count sign-off and requires: a traceable vplan (feature → scenario → check → coverage → owner), system-level coverage crosses, liveness and safety properties with owners (bounded in simulation, strong in formal), connectivity and CDC/RDC sign-off items, an evidence package and triage buckets, regression tiers with gates, flaky-test policy, a risk register, and closure gates stated as project policy with reviewed waivers.\n\nA weak review asks for \"more tests\" or a coverage percentage without saying what is covered.",
+      "model_answer": "I would not approve a test-count strategy: 500 tests say how much was run, not what was proven. Required changes:\n\n1. **A traceable vplan.** Each feature maps to scenarios, a check (scoreboard or assertion) and coverage, with an owner. A hit bin with no linked check proves only that a scenario happened; a check with no coverage may never have run.\n2. **System coverage**, not merged block coverage: master × slave × response (including decode errors and security denials), interrupt source × target, security privilege × region, reset source × active traffic, power state × traffic, QoS latency buckets.\n3. **Liveness and safety properties**, each with trigger, obligation, failure meaning and owner: every accepted request gets a response, no channel-dependency deadlock, reset converges to idle, enabled interrupts are delivered, denied accesses have no effect. Bounded versions run in simulation; strong versions (`s_eventually`, IEEE 1800-2023 §16.12.13) are proven in formal, because a weak `##[1:$]` never fails in simulation (§16.12.2).\n4. **Structural sign-off items:** top-level connectivity proof, and the CDC/RDC report with reviewed waivers and an owner.\n5. **A debug evidence package** for every failure: RTL, firmware and testbench hashes, seed, plusargs, the failing transaction with a window of bus traffic, the firmware log window and a waveform trigger.\n6. **Triage buckets** by first divergence: RTL, reference model, test intent, firmware, testbench infrastructure, tool or environment.\n7. **Regression tiers with gates:** smoke on every change, nightly with many seeds, weekly stress, sign-off; flaky tests quarantined with an owner and deadline, never rerun until green.\n8. **A risk register** with owner, mitigation and exit criteria, reviewed weekly.\n9. **Closure gates as project policy:** P0/P1 vplan rows closed, no open P0/P1 failures, properties proven or bounded with justification, coverage holes closed or waived with a reason and an independent reviewer. There is no universal threshold; the strategy states its own and the review agrees it.\n\nApproval requires measurable evidence against these gates, not a larger test list.",
+      "follow_ups": [
+        "The team answers that 500 tests at 95% code coverage is industry standard. How do you respond?",
+        "Which three closure gates would you refuse to waive, and why?",
+        "How would you detect that a passive monitor has silently been watching the wrong bus for the whole project?"
+      ],
+      "common_mistakes": [
+        "Accepting a coverage percentage without knowing what the model covers.",
+        "Treating merged block coverage as SoC closure.",
+        "Writing liveness checks as `##[1:$]` assertions and counting them as evidence.",
+        "Gates with no named owner."
+      ],
+      "modules": [
+        "E-SOC-1_SoC-Level_Verification_Strategies/index",
+        "I-SV-3B_Advanced_Functional_Coverage/linking-coverage",
+        "I-SV-3B_Advanced_Functional_Coverage/closure-workflow",
+        "E-DBG-1_Advanced_UVM_Debug_Methodologies/index",
+        "I-SV-4B_Advanced_Temporal_Logic/index"
+      ],
+      "sources": [
+        {
+          "doc": "IEEE 1800-2023",
+          "section": "§16.12.2 Sequence property; §16.12.13 Eventually property",
+          "verified": true
+        },
+        {
+          "doc": "IEEE 1800-2023",
+          "section": "Clause 19 Functional coverage",
+          "verified": true
+        },
+        "Practice: industry methodology taught in the linked lessons, not a standard (vplan traceability, regression tiers, triage and closure gates are project policy)"
+      ]
     }
   ]
 }
