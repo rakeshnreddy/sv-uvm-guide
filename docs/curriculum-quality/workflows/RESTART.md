@@ -175,3 +175,13 @@ and the working tree was clean.
    deploy at the checkpoint. Its `newComponentRequests` output seeds a component-build workflow.
 3. **Phase 6b:** resume the paused closure sweep (section above), so that it reviews the enriched lessons too.
 4. **Closure checks:** plan §5 item 4.
+- 2026-10-18: no-login design done (`docs/no-login/`). Implementation running: run `wf_d9f39553-dd9`, script saved as
+  `docs/no-login/no-login-implement.js`. Its steps:
+  1. **Revise:** turn the design and both critiques into final packages with disjoint file ownership.
+  2. **Foundation:** build the shared pieces first.
+  3. **Packages:** build the rest in parallel, each with two-lens reviews and fix rounds.
+  4. **Integrate:** run the whole suite, tsc and lint, and fix cross-package breakage.
+  5. **Verify:** do an anonymous-visitor walkthrough.
+
+  It edits src/ and tests/ in the main tree; integrate its result in a clean worktree, test in the browser, deploy, then
+  fast-forward `main`. Do not run the visual enrichment or closure sweep while it runs.
