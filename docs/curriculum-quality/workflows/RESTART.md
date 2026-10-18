@@ -147,3 +147,21 @@ Still waiting on the user:
   (source, misread, impact) and is kept only if at least 2 uphold it. One fixer per file, then an independent check.
   It loops until two dry rounds (cap 5). Files are edited in the main tree, so integrate its result in a clean worktree.
   If it is cut off, resume with `resumeFromRunId` and the same script path; do not start a second sweep.
+
+## Phase 6 closure sweep: paused by the owner (2026-10-18)
+
+The owner paused the sweep (run `wf_010d0167-550`) to resume later. It was stopped while its first six round-1 critics
+(G01–G03, both lenses) were still reading. No agent had finished and no file had changed, so nothing is half-done
+and the working tree was clean.
+
+**To resume:**
+- **Same Claude session:** `Workflow({scriptPath: "<session>/workflows/scripts/phase6-closure-sweep-wf_010d0167-550.js",
+  resumeFromRunId: "wf_010d0167-550"})`. Finished agents replay from the cache. There were none, so it starts at round 1.
+- **New session:** resume ids do not carry across sessions. Run `docs/curriculum-quality/workflows/phase6-closure-sweep.js`
+  (identical to the paused script) with the Workflow tool's `scriptPath`, and no args. Because nothing had finished, this is the
+  same as continuing.
+- **Before starting:** let the sweep be the only thing editing lesson MDX, decks and lab files, since its fixers edit them
+  in the main tree. Integrate its fixes in a clean worktree. Deploy only from a clean tree.
+- If it is stopped again after some agents have finished, resume it in the same session with `resumeFromRunId`. In a new
+  session, rerun the script: its loop deduplicates findings per round, so a rerun re-reviews from the current, partly fixed
+  content. First commit, or back up, any fixes already checked.
