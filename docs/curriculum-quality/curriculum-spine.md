@@ -1527,14 +1527,14 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - Write a checker with correct assertions (ERROR pair, §3.6 stability exceptions, burst and boundary rules), each tagged protocol or policy.
   - Write a compiling coverage model over transfer type × burst × size × wait states × response, mapped to a plan.
   - Choose checker vs scoreboard responsibilities, and design the scoreboard for a slave or interconnect.
-  - Apply the debug patterns: HREADY trace, transaction-boundary finder, ERROR forensics, starvation detector.
+  - Apply the debug patterns: HREADY trace, transaction-boundary finder, ERROR forensics, and a latency budget at a master port, measured from first appearance to completion [Integration policy] (IHI0033B.b has no request or grant signals on a master, Table 2-2, so there is no grant to measure from).
 - **Must cover:**
   - master and slave driver awareness: random waits, BUSY insertion, two-cycle ERROR responder;
   - reset behaviour.
 - **Out of scope here (covered in):** AXI (B-AXI-*); bridges (B-AMBA-F1).
 - **Prerequisites:** B-AHB-2, A-UVM-6, I-SV-3A.
 - **Feeds milestone:** M6.
-- **Hands-on that should exist:** Lab `ahb-checker-lab` (owned). Its BROKEN_MODE success criterion cannot be met with the supplied assertions (audit X5); fix it.
+- **Hands-on that should exist:** Lab `ahb-checker-lab` (owned). The audit X5 `BROKEN_MODE` problem was reworked in wave 5: the README now gives the expected result of every mode (Appendix B). Not yet run in a simulator.
 - **Assessment focus:** misconceptions:
   1. the monitor can sample address and data on the same edge;
   2. `HTRANS` must be stable through every wait state;
@@ -1734,7 +1734,9 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - Explain QoS (§A8.1) as an arbitration hint, not a guarantee.
   - Plan coverage and sequences for these attributes.
 - **Must cover:**
-  - AXI5 atomics as awareness only (not in IHI0022E; P2 gap);
+  - AXI5 atomics as awareness only: not in IHI0022E, so the page cites IHI0022L (Issue L, 2025) §A6.4;
+  - AxREGION and AxUSER awareness (§A8.2, §A8.3);
+  - single-copy and multi-copy atomicity (§A7.1, §A7.1.1);
   - ExclusiveAccessVisualizer (e2e test id `exclusive-access-visualizer`).
 - **Out of scope here (covered in):** coherency (B-AMBA-F2); AXI5 atomics in depth (§4).
 - **Prerequisites:** B-AXI-3.
@@ -1746,7 +1748,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   3. QoS guarantees latency.
 
   **Keep quiz Q1 and its answer exactly** (release test, §3.5).
-- **Sub-lessons:** — (single file). Uses `<QuizQuestion>` children (§5.5).
+- **Sub-lessons:** — (single file). The quiz uses the canonical `questions` format (§5.5): 11 questions, each with an `objective`; Q1 is the release-tested question.
 
 ### B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks — AXI Pitfalls & Interconnect Deadlocks
 - **Tier / position:** T3 · after B-AXI-4 · before B-AXI-6 · nav #56. Frontmatter `order: 10`.
@@ -2549,7 +2551,7 @@ Inside `## Quick Take`, after the analogy:
 
 - **Why this format.** The correct flag sits on the option, so reordering options cannot break the key. That rules out the inverted-index class of bug (D-03) and the string-mismatch class.
 - **Why not `<QuizQuestion>` children.** The children path (`mdx-component-registry.tsx`) silently drops any question whose `correctAnswer` is not a string.
-- **Optional fields.** `feedback` and `objective` are ignored by today's renderer. `feedback` is forward-compatible with ASSESS-3 per-option feedback. Until then, `explanation` must address every distractor.
+- **Optional fields.** `Quiz.tsx` shows `feedback` for the option the learner picks, and (from 2026-10-18) shows `objective` as an "Objective n" tag beside "Question i of N", so a page may say "Each question names the objective it checks". `explanation` must still address every distractor, because a question may have no `feedback`.
 - **Key style.** Unquoted JS keys are preferred (53 files vs 12); both parse.
 - **Rules:**
   - at least 4 questions per page;
@@ -2624,7 +2626,7 @@ Inside `## Quick Take`, after the analogy:
 
 Checked against the IEEE 1800-2023 text, the IEEE 1800.2-2020 PDF (`uvm_lrm.pdf`), uvm-core 2020.3.1 sources (GitHub), IHI0022E and IHI0033B.b.
 
-The 2026-10-18 additions are the clauses that the wave-6 author logs (`reviews/L41a`–`L46b`) and `reviews/L32a.author.md` say were checked against the text. They add IHI0022G, IHI0022H.c, IHI0024C, IHI0024E, IHI0033C, IHI0050E.b, IHI0051A, Accellera SCE-MI 2.4, Accellera PSS 3.0 and IEEE 1801 (table of contents only; see its note).
+The 2026-10-18 additions are the clauses that the wave-6 author logs (`reviews/L41a`–`L46b`) and `reviews/L32a.author.md` say were checked against the text. They add IHI0022G, IHI0022H.c, IHI0024C, IHI0024E, IHI0033C, IHI0050E.b, IHI0051A, Accellera SCE-MI 2.4, Accellera PSS 3.0 and IEEE 1801 (table of contents only; see its note). A second 2026-10-18 pass adds the AMBA clauses that `reviews/L32a.author.md` (round 2), `L33a.author.md` and `L39.author.md` say were verified, plus the IHI0022E and IHI0022L clauses that the B-AXI-4 card now cites (`L37b.author.md`); each heading was re-located in the local texts (`sources/arm_axi.txt` IHI0022E, `arm_ahb.txt` IHI0033B.b, `ahb5.txt` IHI0033C, `arm_apb.txt` IHI0024C, `arm_axis.txt` IHI0051A; IHI0022L and IHI0024E from session text extracts of the Arm PDFs).
 
 **IEEE 1800-2023:**
 
@@ -2685,31 +2687,34 @@ The 2026-10-18 additions are the clauses that the wave-6 author logs (`reviews/L
 **Arm:**
 - **IHI0022E:**
   - A1.3 (A1.3.2 the three interconnect topologies; A1.3.3); A1.4.2 terminology;
-  - A3.1 clock and reset;
+  - A3.1 clock and reset (A3.1.2 reset);
   - A3.2.1 handshake process; A3.2.2 channel signaling requirements;
   - A3.3 channel relationships; A3.3.1 dependencies between channel handshake signals ("To prevent a deadlock situation"); A3.3.2;
   - A3.4.1 address structure (4KB); A3.4.3 data read/write structure; A3.4.4 responses (DECERR from a default slave);
-  - A4.3 AXI4 memory-attribute changes (A4.3.1); A4.4 (with A4.3.1: Non-modifiable, Non-bufferable); A4.7 access permissions (AxPROT);
-  - A5.1–A5.3 IDs and ordering (A5.3.1 read ordering; A5.3.4–A5.3.6); A5.4 (A5.4.1, A5.4.2); A6.1 ordering model;
-  - A7.2 exclusive accesses; A7.3 locked accesses;
-  - A8.1 QoS (A8.1.1 AxQOS, recommended for use as a priority); A8.2.1;
+  - A4.3 AXI4 memory-attribute changes (A4.3.1, Table A4-2 parameters fixed as Non-modifiable; A4.3.2 ordering for Non-modifiable transactions and its Note); A4.4 (with A4.3.1: Non-modifiable, Non-bufferable; A4.4.1 memory type requirements); A4.7 access permissions (AxPROT);
+  - A5.1–A5.3 IDs and ordering (A5.3 transaction ordering; A5.3.1 read ordering; A5.3.4–A5.3.6); A5.4 (A5.4.1, A5.4.2); A6.1 ordering model; A6.4 slave ordering; A6.5 response before final destination;
+  - A7.1 single-copy atomicity size (A7.1.1 multi-copy write atomicity); A7.2 exclusive accesses (A7.2.4 restrictions, A7.2.5 slaves without exclusive support); A7.3 locked accesses;
+  - A8.1 QoS (A8.1.1 AxQOS, recommended for use as a priority); A8.2 multiple region signaling (A8.2.1); A8.3 user-defined signaling;
   - B1.1 AXI4-Lite (B1.1.1–B1.1.4, Table B1-1); B1.2 (B1.2.1, B1.2.2); B1.3.1;
-  - C1.3.1 ACE additions to the AR/AW signals and RRESP[3:2]; C1.3.2 AC, CR and CD channels; C1.3.3 RACK and WACK;
+  - C1.3.1 ACE additions to the AR/AW signals and RRESP[3:2]; C1.3.2 AC, CR and CD channels; C1.3.3 RACK and WACK; C1.6.1 domains;
+  - C2.1.1 and C2.1.2 ACE read and write address channel signals;
   - C11.1 ACE-Lite (AXI4 plus the AR/AW signals only); C11.2 ACE-Lite transactions (Shareable, Non-shareable).
+- **IHI0022L** (Issue L, 2025; manager/subordinate): A6.4 atomic transactions (A6.4.1 overview).
 - **IHI0022G:** change history (issue F AXI5 interfaces); C1.1 (Table C1-1; Table C1-2 AWATOP); E1.1, E1.1.1, E1.1.4 (atomics: one ID for the request, the write response and the read data).
 - **IHI0022H.c:** change history (issue H.b introduces manager/subordinate).
 - **IHI0033B.b:**
-  - 1.1 (1.1.3 multi-master through an arbitrating interconnect); 1.2; 1.3 ("a slave cannot request that the address phase is extended"); Table 2-2;
+  - 1.1 (1.1.3 multi-master through an arbitrating interconnect; Figure 1-1 block diagram); 1.2; 1.3 ("a slave cannot request that the address phase is extended"); Table 2-2 master signals; Table 2-5 multiplexor signals;
   - 2.1 global signals;
-  - 3.1 basic transfers; 3.2 transfer types; 3.3 locked transfers; 3.4 transfer size; 3.5 burst operation ("must not … cross a 1KB address boundary"); 3.6 waited transfers;
-  - 4.1 interconnect;
-  - 5.1 slave transfer responses;
-  - 6.1 data buses;
-  - 7.1 clock and reset requirements.
-- **IHI0033C:** change history (2021 features; manager/subordinate).
-- **IHI0024C (APB2–APB4):** 1.1; 1.2; 2.1.1; 3.4 error response (PSLVERR); 4.1.
-- **IHI0024E (APB5):** Preface "APB Revisions" (issues D and E); 1.1 (Requester/Completer).
-- **IHI0051A (AXI4-Stream):** 1.1; 1.1.2 (a packet is similar to an AXI4 burst); 2.2.1 handshake; 2.5 TLAST; 3.1.1 (TVALID required, TREADY and the other signals optional); 4.2 ordering; Table 2-1 (TDEST routing).
+  - 3.1 basic transfers; 3.2 transfer types; 3.3 locked transfers; 3.4 transfer size (Table 3-2); 3.5 burst operation ("must not … cross a 1KB address boundary"; Table 3-3 burst encoding; 3.5.1 termination after BUSY; 3.5.2 early burst termination; 3.5.3 burst examples, Figures 3-8 to 3-12); 3.6 waited transfers; 3.7 protection control; 3.8.4 Device and 3.8.5 Normal memory requirements;
+  - 4.1 interconnect; 4.2.1 default slave; 4.2.2 multiple slave select;
+  - 5.1 slave transfer responses (5.1.2 transfer pending and its Note);
+  - 6.1 data buses; 6.2 endianness;
+  - 7.1 clock and reset requirements (7.1.2 reset);
+  - 8.3 exclusive access signaling; 8.4 exclusive transfer restrictions.
+- **IHI0033C:** change history (2021 features; manager/subordinate); 3.5 write strobes (`HWSTRB`; 3.5.3 interoperability, Table 3-3).
+- **IHI0024C (APB2–APB4):** 1.1; 1.2 (1.2.2 APB3 adds PREADY and PSLVERR; 1.2.3 APB4 adds PPROT and PSTRB); 2.1.1; 3.2 write strobes (LOW for reads); 3.3.2 read with wait states; 3.4 error response (PSLVERR); 4.1.
+- **IHI0024E (APB5):** Preface "APB Revisions" (issues D and E); 1.1 (Requester/Completer); 3.2 Table 3-1 (PSTRB presence and compatibility: optional on both sides).
+- **IHI0051A (AXI4-Stream):** 1.1; 1.1.2 (a packet is similar to an AXI4 burst); 2.2.1 handshake; 2.5 TLAST; 3.1 default value signaling (3.1.1 TVALID required, TREADY and the other signals optional; 3.1.5 optional TDATA); 4.2 ordering; Table 2-1 (TDEST routing).
 - **IHI0050E.b (CHI):** 1.1.2 (Table 1-1); 1.3; 1.6; 2.1 (Table 2-1 channels REQ, WDAT, SRSP, CRSP, RDAT, SNP).
 
 **Accellera SCE-MI 2.4:**
@@ -2757,10 +2762,10 @@ The 2026-10-18 additions are the clauses that the wave-6 author logs (`reviews/L
 | `scoreboard-reference-model` | available | A-UVM-6 | A-UVM-6 (M3) | Accounting fix (LAB-S1) |
 | `callbacks-driver-behavior` | available | A-UVM-5 | A-UVM-5 | Null-handle registration in the solution |
 | `ral-mirror-bug` | available | A-UVM-4B | A-UVM-4B | Fix printed in comments |
-| `ahb-checker-lab` | available | B-AHB-3 | B-AHB-3 | BROKEN_MODE criterion unachievable |
-| `axi-deadlock-hunt-lab` | available | B-AXI-5 | B-AXI-5 | `modulePrerequisites` lists a lab id |
-| `axi-scoreboard-lab` | available | B-AXI-6 | B-AXI-6 (M6) | Starter does not compile |
-| `ahb-axi-bridge-debug` | available | B-AMBA-F1 | B-AMBA-F1 | False 4KB premise; `modulePrerequisites` lists lab ids |
+| `ahb-checker-lab` | available | B-AHB-3 | B-AHB-3 | `lab.json` v1 (refreshed 2026-10-18): four steps (monitor, checker, triage, pipelined); editable `ahb_monitor.sv`, `ahb_checker.sv`, `testbench.sv`; `modulePrerequisites` B-AHB-1, B-AHB-2, I-SV-4A; no lab prerequisites. The README gives the expected result of every mode, `BROKEN_MODE` included (audit X5 reworked); not yet run in a simulator, and the backend for its concurrent SVA is unconfirmed (L34 request 2) |
+| `axi-deadlock-hunt-lab` | available | B-AXI-5 | B-AXI-5 | `lab.json` v1 (refreshed 2026-10-18): four steps (observe, analyse the dependency, protocol checks and labelled service watchdogs, fix and prove progress); editable `axi_deadlock_checker.sv`; `moduleHref` set; no lab or module prerequisites (the lab-id entry is gone; B-AXI-1 and B-AXI-2 proposed in L38a request 2, undecided) |
+| `axi-scoreboard-lab` | available | B-AXI-6 | B-AXI-6 (M6) | `lab.json` v2 (refreshed 2026-10-18): five steps (monitor, scoreboard, simulate, mutants, write-path stretch); editable `axi_monitor.sv`, `axi_scoreboard.sv`, `write_pairing.sv`; `labPrerequisites` `scoreboard-reference-model`; `modulePrerequisites` B-AXI-1, B-AXI-3, A-UVM-6, A-UVM-7. Starter rewritten in wave 5; compiling it in a UVM simulator is still open (L38b request 3) |
+| `ahb-axi-bridge-debug` | available | B-AMBA-F1 | B-AMBA-F1 | `lab.json` v2 (refreshed 2026-10-18): four steps (reproduce the split bug, complete the checker, fix the split function, stress the handshakes); editable `bridge_split_checker.sv`, `testbench.sv`; `labPrerequisites` `ahb-checker-lab`, `axi-scoreboard-lab`; no `modulePrerequisites` (B-AHB-3 and B-AXI-6 proposed in L39 request 3) and no `moduleHref`. The 4KB premise is gone: the splits are the AXI4 256-transfer limit and 1KB (IHI0033B.b §3.5, IHI0022E A3.4.1) |
 | `formal-harness` | available | E-INT-1 | E-INT-1 | |
 | `methodology-custom-phase` | available | E-CUST-1 | E-CUST-1 | Solution implements `exec_task`; `modulePrerequisites` I-UVM-1C; five steps |
 | `debug-waveform-trigger` | available | E-DBG-1 | E-DBG-1 | |

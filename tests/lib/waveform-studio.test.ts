@@ -58,6 +58,12 @@ describe('samples come from the protocol models', () => {
     expect(sample('axi-read').source).toEqual(lessonFigure('read'));
   });
 
+  it('every AXI sample carries edge numbers (WaveDrom tick -1: the boundary ending column k reads k)', () => {
+    for (const s of STUDIO_SAMPLES.filter((x) => x.protocol === 'AXI')) {
+      expect(s.source.head, s.id).toEqual({ tick: -1 });
+    }
+  });
+
   it('legal AXI samples pass the A3.2.1 / A3.3.1 checker', () => {
     for (const id of ['axi-handshake', 'axi-write', 'axi-read']) {
       const analysis = analyzeSource(sample(id).source);

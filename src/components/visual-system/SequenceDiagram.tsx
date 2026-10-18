@@ -4,8 +4,8 @@ import React, { useId } from "react";
 
 import { cn } from "@/lib/utils";
 
-import { nodeKindTags } from "./BlockDiagram";
-import { layoutSequence, type SequenceMessage, type SequenceParticipant } from "./diagram-layout";
+import { DiagramScrollFrame, nodeKindTags } from "./BlockDiagram";
+import { layoutSequence, PHONE_FIT_WIDTH, SEQ_SELF_TEXT_DX, type SequenceMessage, type SequenceParticipant } from "./diagram-layout";
 
 interface SequenceDiagramProps {
   title: string;
@@ -37,15 +37,17 @@ const toneFill = {
  */
 export function SequenceDiagram({ title, participants, messages, numbered = true, columnWidth, className }: SequenceDiagramProps) {
   const id = useId();
-  const layout = layoutSequence({ participants, messages, columnWidth });
+  const layout = layoutSequence({ participants, messages, columnWidth, numbered });
   const { width, height, headerHeight, lifelineX } = layout;
+  // Phone floor for the lifeline columns; extra width for self-message text keeps the same scale and scrolls.
+  const minWidth = Math.round((Math.min(layout.columnsWidth, Math.max(320, participants.length * 120)) * width) / layout.columnsWidth);
 
   return (
     <div className={cn("space-y-2", className)}>
-      <div className="overflow-x-auto rounded-xl border border-border/70 bg-background/40 p-2">
+      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH} className="rounded-xl border border-border/70 bg-background/40 p-2">
         <svg
           viewBox={`0 0 ${width} ${height}`}
-          style={{ minWidth: Math.min(width, Math.max(320, participants.length * 120)) }}
+          style={{ minWidth }}
           className="block h-auto w-full"
           role="img"
           aria-labelledby={`${id}-title`}
@@ -123,7 +125,7 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
                     markerEnd={`url(#${id}-filled)`}
                   />
                   {m.lines.map((line, k) => (
-                    <text key={k} x={x + 42} y={m.y + 12 + k * 14} className={cn("font-mono text-[10.5px] [font-variant-ligatures:none]", m.tone === "normal" ? "fill-foreground" : toneFill[m.tone])}>
+                    <text key={k} x={x + SEQ_SELF_TEXT_DX} y={m.y + 12 + k * 14} className={cn("font-mono text-[10.5px] [font-variant-ligatures:none]", m.tone === "normal" ? "fill-foreground" : toneFill[m.tone])}>
                       {k === 0 ? prefix : ""}
                       {line}
                     </text>
@@ -163,7 +165,7 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
             );
           })}
         </svg>
-      </div>
+      </DiagramScrollFrame>
       <details className="rounded-lg border border-border/70 px-3 py-2 text-sm">
         <summary className="cursor-pointer font-medium text-foreground">Steps as text</summary>
         <ol className="mt-2 list-none space-y-1 font-mono text-xs text-foreground [font-variant-ligatures:none]">
@@ -179,8 +181,31 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
   );
 }
 
-/** Visible notice for diagram data errors, so a wrong diagram is never shown silently. */
-export function DiagramProblems({ problems }: { problems: string[] }) {
+/**
+ * Whether geometry warnings are drawn on the page. They are for authors, so
+ * they show in development and tests but not in production builds (where data
+ * errors still show).
+ */
+export const SHOW_LAYOUT_WARNINGS = process.env.NODE_ENV !== "production";
+
+/**
+ * Visible notice for diagram problems, so a wrong diagram is never shown
+ * silently. `variant="layout"` is the author-facing geometry warning
+ * (label collisions); the default is the data-error alert.
+ */
+export function DiagramProblems({ problems, variant = "error" }: { problems: string[]; variant?: "error" | "layout" }) {
+  if (variant === "layout") {
+    return (
+      <div role="note" data-testid="diagram-layout-warning" className="mt-2 rounded-md border border-dashed border-amber-500/60 bg-amber-500/5 p-2 text-xs text-amber-900 dark:text-amber-100">
+        <p className="font-semibold">Diagram layout warning (shown outside production)</p>
+        <ul className="list-disc pl-5">
+          {problems.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
   return (
     <div role="alert" data-testid="diagram-data-error" className="rounded-md border border-amber-500/60 bg-amber-500/10 p-2 text-xs text-amber-900 dark:text-amber-100">
       <p className="font-semibold">Diagram data error</p>

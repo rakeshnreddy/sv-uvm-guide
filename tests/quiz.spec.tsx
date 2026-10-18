@@ -80,4 +80,26 @@ describe('Quiz component', () => {
     fireEvent.click(screen.getByText('Retry quiz'));
     expect(screen.getByText('Question 1 of 2')).toBeInTheDocument();
   });
+
+  it('names the objective each question checks, so "Each question names the objective it checks" is true on the page', () => {
+    render(<Quiz questions={canonical as never} />);
+    expect(screen.getByText('Question 1 of 2')).toBeInTheDocument();
+    expect(screen.getByTestId('quiz-objective')).toHaveTextContent('Checks lesson Objective 2');
+    fireEvent.click(screen.getByText('In the NBA region of the same time slot'));
+    fireEvent.click(screen.getByText('Next Question'));
+    // The second question has no objective, so no tag is drawn.
+    expect(screen.getByText('Question 2 of 2')).toBeInTheDocument();
+    expect(screen.queryByTestId('quiz-objective')).not.toBeInTheDocument();
+  });
+
+  it.each([[0], [-1], [1.5], ['2']])('ignores a malformed objective (%s)', (objective) => {
+    render(<Quiz questions={[{ ...canonical[0], objective }] as never} />);
+    expect(screen.queryByTestId('quiz-objective')).not.toBeInTheDocument();
+  });
+
+  it('keeps the objective for options-style questions too', () => {
+    render(<Quiz questions={[{ question: 'Q?', options: ['a', 'b'], correctAnswer: 'a', explanation: 'e', objective: 3 }] as never} />);
+    expect(screen.getByTestId('quiz-objective')).toHaveTextContent('Objective 3');
+  });
 });
+

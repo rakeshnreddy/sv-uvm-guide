@@ -1,8 +1,12 @@
 "use client";
 
-import React, { useId } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
+
+import { EDGE_STYLES, edgeLabelBox, nodeKindTags, PHONE_FIT_WIDTH, pointAlong, portPosition, routeEdges, type Point } from "./diagram-layout";
+
+export { nodeKindTags, pointAlong };
 
 export type DiagramNodeKind =
   | "test"
@@ -21,26 +25,6 @@ export type DiagramNodeKind =
   | "interface"
   | "reg"
   | "generic";
-
-/** Short text tags: the non-colour cue for component role. */
-export const nodeKindTags: Record<DiagramNodeKind, string> = {
-  test: "TEST",
-  env: "ENV",
-  agent: "AGT",
-  sequencer: "SQR",
-  driver: "DRV",
-  monitor: "MON",
-  scoreboard: "SCB",
-  subscriber: "SUB",
-  predictor: "PRD",
-  model: "REF",
-  fifo: "FIFO",
-  sequence: "SEQ",
-  dut: "DUT",
-  interface: "IF",
-  reg: "REG",
-  generic: "",
-};
 
 export type NodeState = "normal" | "active" | "dim" | "error" | "ok";
 
@@ -108,10 +92,19 @@ interface BlockDiagramProps {
   /** Minimum rendered width before the diagram scrolls horizontally (px). */
   minWidth?: number;
   showLegend?: boolean;
+  /**
+   * Accessible role of the SVG. "img" (static pictures: the MDX kit) names it
+   * with <title> and describes it with <desc>; "group" (the default, for
+   * visualizers with live state or selectable nodes) uses aria-label and keeps
+   * its children in the accessibility tree.
+   */
+  role?: "img" | "group";
+  /** Text equivalent rendered as <desc> when role is "img". */
+  description?: string;
+  /** Spread edge ends that share a node side along that side (see routeEdges). */
+  spreadAnchors?: boolean;
   className?: string;
 }
-
-type Point = [number, number];
 
 const nodeStateClass: Record<NodeState, string> = {
   normal: "fill-card stroke-border",
@@ -121,54 +114,68 @@ const nodeStateClass: Record<NodeState, string> = {
   ok: "fill-emerald-500/10 stroke-emerald-500",
 };
 
-const edgeStyleProps: Record<EdgeStyle, { dash?: string; marker?: "filled" | "open"; width: number }> = {
-  structural: { width: 1.2 },
-  data: { marker: "filled", width: 1.8 },
-  causal: { dash: "6 4", marker: "open", width: 1.5 },
-  control: { dash: "2 3", marker: "open", width: 1.5 },
-};
+/** Legend entries in display order: TLM endpoint symbols, then line styles. */
+const PORT_LEGEND: { kinds: PortKind[]; text: string }[] = [
+  { kinds: ["port"], text: "■ port" },
+  { kinds: ["export"], text: "○ export" },
+  { kinds: ["imp", "analysis_imp"], text: "● imp" },
+  { kinds: ["analysis_port"], text: "◆ analysis port" },
+];
+const EDGE_LEGEND: { style: EdgeStyle; text: string }[] = [
+  { style: "data", text: "── data flow →" },
+  { style: "control", text: "··· control →" },
+  { style: "causal", text: "- - causal / call order →" },
+  { style: "structural", text: "── connection (no direction)" },
+];
 
-function portPosition(port: DiagramPort, node: DiagramNode): Point {
-  switch (port.side) {
-    case "left":
-      return [node.x, node.y + node.h * port.offset];
-    case "right":
-      return [node.x + node.w, node.y + node.h * port.offset];
-    case "top":
-      return [node.x + node.w * port.offset, node.y];
-    case "bottom":
-      return [node.x + node.w * port.offset, node.y + node.h];
-  }
+/** The legend lists only the port symbols and line styles the diagram actually draws. */
+export function legendItems(ports: Pick<DiagramPort, "kind">[], edges: Pick<DiagramEdge, "style">[]): string[] {
+  const kinds = new Set(ports.map((p) => p.kind));
+  const styles = new Set(edges.map((e) => e.style));
+  return [
+    ...PORT_LEGEND.filter((item) => item.kinds.some((k) => kinds.has(k))).map((item) => item.text),
+    ...EDGE_LEGEND.filter((item) => styles.has(item.style)).map((item) => item.text),
+  ];
 }
 
-function nodeAnchor(node: DiagramNode, toward: Point): Point {
-  const cx = node.x + node.w / 2;
-  const cy = node.y + node.h / 2;
-  const dx = toward[0] - cx;
-  const dy = toward[1] - cy;
-  if (Math.abs(dx) * node.h > Math.abs(dy) * node.w) {
-    return [dx > 0 ? node.x + node.w : node.x, cy];
-  }
-  return [cx, dy > 0 ? node.y + node.h : node.y];
-}
-
-/** Interpolates a point at fraction t along a polyline. */
-export function pointAlong(points: Point[], t: number): Point {
-  const segments = points.slice(1).map((p, i) => {
-    const a = points[i];
-    return { a, b: p, len: Math.hypot(p[0] - a[0], p[1] - a[1]) };
-  });
-  const total = segments.reduce((s, seg) => s + seg.len, 0);
-  if (total === 0) return points[0];
-  let remaining = Math.min(Math.max(t, 0), 1) * total;
-  for (const seg of segments) {
-    if (remaining <= seg.len) {
-      const f = seg.len === 0 ? 0 : remaining / seg.len;
-      return [seg.a[0] + (seg.b[0] - seg.a[0]) * f, seg.a[1] + (seg.b[1] - seg.a[1]) * f];
-    }
-    remaining -= seg.len;
-  }
-  return points[points.length - 1];
+/**
+ * Horizontal scroll frame for a diagram that may be wider than the screen.
+ * While its content overflows it is a named, focusable region, so keyboard
+ * users can scroll it with the arrow keys. Before the first measurement (and
+ * without ResizeObserver) it trusts `initiallyScrolls`.
+ */
+export function DiagramScrollFrame({
+  label,
+  initiallyScrolls,
+  className,
+  children,
+}: {
+  label: string;
+  initiallyScrolls: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [scrolls, setScrolls] = useState(initiallyScrolls);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => setScrolls(el.scrollWidth > el.clientWidth + 1);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div
+      ref={ref}
+      className={cn("overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", className)}
+      data-diagram-scroll={scrolls ? "true" : undefined}
+      {...(scrolls ? { role: "region", tabIndex: 0, "aria-label": `Scrollable diagram: ${label}` } : {})}
+    >
+      {children}
+    </div>
+  );
 }
 
 function PortGlyph({ port, at }: { port: DiagramPort; at: Point }) {
@@ -208,44 +215,28 @@ export function BlockDiagram({
   onSelect,
   minWidth = 320,
   showLegend = false,
+  role = "group",
+  description,
+  spreadAnchors = false,
   className,
 }: BlockDiagramProps) {
   const id = useId();
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
-  const portById = new Map(ports.map((p) => [p.id, p]));
-
-  const resolve = (ref: string, toward: Point): Point => {
-    const port = portById.get(ref);
-    if (port) {
-      const node = nodeById.get(port.nodeId);
-      return node ? portPosition(port, node) : toward;
-    }
-    const node = nodeById.get(ref);
-    return node ? nodeAnchor(node, toward) : toward;
-  };
-  const centerOf = (ref: string): Point => {
-    const port = portById.get(ref);
-    if (port) {
-      const node = nodeById.get(port.nodeId);
-      return node ? portPosition(port, node) : [0, 0];
-    }
-    const node = nodeById.get(ref);
-    return node ? [node.x + node.w / 2, node.y + node.h / 2] : [0, 0];
-  };
-
-  const edgePoints = (edge: DiagramEdge): Point[] => {
-    const via = edge.points ?? [];
-    const start = resolve(edge.from, via[0] ?? centerOf(edge.to));
-    const end = resolve(edge.to, via[via.length - 1] ?? centerOf(edge.from));
-    return [start, ...via, end];
-  };
+  const routes = routeEdges(nodes, ports, edges, { spreadAnchors });
+  const legend = showLegend ? legendItems(ports, edges) : [];
 
   const ordered = [...nodes].sort((a, b) => Number(Boolean(b.container)) - Number(Boolean(a.container)));
+  const a11y =
+    role === "img"
+      ? { role: "img", "aria-labelledby": `${id}-title`, "aria-describedby": description ? `${id}-desc` : undefined }
+      : { role: "group", "aria-label": title };
 
   return (
     <figure className={cn("rounded-xl border border-border/70 bg-background/40 p-2", className)}>
-      <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${width} ${height}`} style={{ minWidth }} className="block h-auto w-full" role="group" aria-label={title}>
+      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH}>
+        <svg viewBox={`0 0 ${width} ${height}`} style={{ minWidth }} className="block h-auto w-full" {...a11y}>
+          {role === "img" ? <title id={`${id}-title`}>{title}</title> : null}
+          {role === "img" && description ? <desc id={`${id}-desc`}>{description}</desc> : null}
           <defs>
             <marker id={`${id}-filled`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 Z" className="fill-foreground/70" />
@@ -332,10 +323,11 @@ export function BlockDiagram({
             );
           })}
 
-          {edges.map((edge) => {
-            const pts = edgePoints(edge);
-            const style = edgeStyleProps[edge.style];
+          {edges.map((edge, i) => {
+            const pts = routes[i];
+            const style = EDGE_STYLES[edge.style];
             const mid = pointAlong(pts, 0.5);
+            const labelBox = edge.label ? edgeLabelBox(edge.label, mid) : null;
             const stateCls =
               edge.state === "error" ? "stroke-rose-500" : edge.state === "active" ? "stroke-cyan-400" : edge.state === "dim" ? "stroke-foreground/20" : "stroke-foreground/60";
             return (
@@ -348,9 +340,9 @@ export function BlockDiagram({
                   strokeDasharray={style.dash}
                   markerEnd={style.marker ? `url(#${id}-${style.marker})` : undefined}
                 />
-                {edge.label ? (
+                {labelBox ? (
                   <g>
-                    <rect x={mid[0] - edge.label.length * 3.1 - 4} y={mid[1] - 9} width={edge.label.length * 6.2 + 8} height={16} rx={4} className="fill-background/90" />
+                    <rect x={labelBox.x} y={labelBox.y} width={labelBox.w} height={labelBox.h} rx={4} className="fill-background/90" />
                     <text x={mid[0]} y={mid[1] + 3} textAnchor="middle" className="fill-foreground font-mono text-[10px] [font-variant-ligatures:none]">
                       {edge.label}
                     </text>
@@ -380,9 +372,10 @@ export function BlockDiagram({
           })}
 
           {tokens.map((token, i) => {
-            const edge = edges.find((e) => e.id === token.edgeId);
-            if (!edge) return null;
-            const [x, y] = pointAlong(edgePoints(edge), token.t);
+            const index = edges.findIndex((e) => e.id === token.edgeId);
+            if (index < 0) return null;
+            const edge = edges[index];
+            const [x, y] = pointAlong(routes[index], token.t);
             const tone = token.tone ?? "data";
             return (
               <g key={`tok-${i}`} aria-label={`${token.label} on ${edge.label ?? edge.id}`}>
@@ -404,15 +397,12 @@ export function BlockDiagram({
             );
           })}
         </svg>
-      </div>
-      {showLegend ? (
-        <figcaption className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-          <span>■ port</span>
-          <span>○ export</span>
-          <span>● imp</span>
-          <span>◆ analysis port</span>
-          <span>── data flow →</span>
-          <span>- - causal / call order</span>
+      </DiagramScrollFrame>
+      {legend.length ? (
+        <figcaption className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground" data-testid="diagram-legend">
+          {legend.map((text) => (
+            <span key={text}>{text}</span>
+          ))}
         </figcaption>
       ) : null}
     </figure>

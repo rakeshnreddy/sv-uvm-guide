@@ -25,7 +25,7 @@ import {
 import { cn } from "@/lib/utils";
 
 export const AMBA_FAMILY_ASSUMPTIONS = [
-  "Facts are checked against Arm IHI0024D (APB), IHI0033B.b (AHB-Lite and AHB5), IHI0022E (AXI3, AXI4, AXI4-Lite, ACE, ACE-Lite), IHI0051A (AXI4-Stream) and IHI0050E.b (CHI). Each row cites its section.",
+  "Facts are checked against Arm IHI0024C (APB; IHI0024E for optional PSTRB), IHI0033B.b (AHB-Lite and AHB5), IHI0022E (AXI3, AXI4, AXI4-Lite, ACE, ACE-Lite), IHI0051A (AXI4-Stream) and IHI0050E.b (CHI). Each row cites its section.",
   "Later issues add features not covered here (for example AXI5 atomics and newer CHI revisions).",
   "The fit check compares what a block needs with what each protocol offers. Real choices also weigh existing IP, the interconnect, clocking and verification effort.",
   "'Typical use' lines are engineering practice, not specification text. Older issues say master/slave; newer Arm issues say manager/subordinate or requester/completer.",

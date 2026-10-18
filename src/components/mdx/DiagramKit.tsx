@@ -4,8 +4,17 @@ import React from "react";
 
 import { BlockDiagram } from "@/components/visual-system/BlockDiagram";
 import { CycleWaveform, type CycleHighlight, type CycleMarker, type CycleSignal } from "@/components/visual-system/CycleWaveform";
-import { layoutGridDiagram, type GridEdge, type GridNode, type GridPort, type SequenceMessage, type SequenceParticipant } from "@/components/visual-system/diagram-layout";
-import { DiagramProblems, SequenceDiagram as SequenceDiagramView } from "@/components/visual-system/SequenceDiagram";
+import {
+  layoutGridDiagram,
+  nodeKindTags,
+  readableMinWidth,
+  type GridEdge,
+  type GridNode,
+  type GridPort,
+  type SequenceMessage,
+  type SequenceParticipant,
+} from "@/components/visual-system/diagram-layout";
+import { DiagramProblems, SequenceDiagram as SequenceDiagramView, SHOW_LAYOUT_WARNINGS } from "@/components/visual-system/SequenceDiagram";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,7 +27,13 @@ import { cn } from "@/lib/utils";
  *
  * Every diagram needs a `title` (its accessible name) and a visible `caption`
  * that tells the learner what to look at. Data errors are shown on the page,
- * never drawn silently.
+ * never drawn silently; geometry warnings (labels that hide lines or collide)
+ * are shown outside production and checked per lesson by
+ * tests/lib/diagram-kit-content.test.ts.
+ *
+ * On a phone, a wide ArchitectureDiagram keeps at least MIN_RENDER_SCALE and
+ * scrolls sideways inside its own (keyboard-focusable) frame instead of
+ * shrinking its text to a few pixels.
  */
 
 function Caption({ children }: { children: React.ReactNode }) {
@@ -35,27 +50,64 @@ interface ArchitectureDiagramProps {
   cellHeight?: number;
   gapX?: number;
   gapY?: number;
-  /** Show the port and line legend (default true when ports or edges exist). */
+  /**
+   * Show the legend of port symbols and line styles (default true when ports or
+   * edges exist). It lists only the symbols and styles this diagram draws.
+   */
   legend?: boolean;
+  /** Spread edges that meet the same side of a node along that side instead of one centre point. */
+  spreadAnchors?: boolean;
   className?: string;
 }
 
-export function ArchitectureDiagram({ title, caption, nodes, ports, edges, cellWidth, cellHeight, gapX, gapY, legend, className }: ArchitectureDiagramProps) {
-  const layout = layoutGridDiagram({ nodes, ports, edges, cellWidth, cellHeight, gapX, gapY });
+/** Text equivalent of an architecture diagram, used as the SVG's <desc>. */
+function describeArchitecture(nodes: GridNode[], ports: GridPort[] = [], edges: GridEdge[] = []): string {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const portById = new Map(ports.map((p) => [p.id, p]));
+  const tagged = (n: GridNode) => {
+    const tag = nodeKindTags[n.kind ?? "generic"];
+    return `${tag ? `${tag} ` : ""}${n.label}${n.sublabel ? ` (${n.sublabel})` : ""}`;
+  };
+  const end = (ref: string) => {
+    const port = portById.get(ref);
+    if (port) return `${byId.get(port.node)?.label ?? port.node} ${port.label ?? port.id}`;
+    return byId.get(ref)?.label ?? ref;
+  };
+  const within = (n: GridNode, c: GridNode) =>
+    n.col >= c.col && n.row >= c.row && n.col + (n.colSpan ?? 1) <= c.col + (c.colSpan ?? 1) && n.row + (n.rowSpan ?? 1) <= c.row + (c.rowSpan ?? 1);
+  const leaves = nodes.filter((n) => !n.container);
+  const parts = [`Components: ${leaves.map(tagged).join(", ")}.`];
+  for (const c of nodes.filter((n) => n.container)) {
+    const members = leaves.filter((n) => within(n, c)).map((n) => n.label);
+    if (members.length) parts.push(`${c.label} contains ${members.join(", ")}.`);
+  }
+  if (edges.length) {
+    const lines = edges.map((e) => `${end(e.from)} ${e.style === "structural" ? "connects to" : "to"} ${end(e.to)}${e.label ? ` (${e.label})` : ""}`);
+    parts.push(`Connections: ${lines.join("; ")}.`);
+  }
+  return parts.join(" ");
+}
+
+export function ArchitectureDiagram({ title, caption, nodes, ports, edges, cellWidth, cellHeight, gapX, gapY, legend, spreadAnchors, className }: ArchitectureDiagramProps) {
+  const layout = layoutGridDiagram({ nodes, ports, edges, cellWidth, cellHeight, gapX, gapY, spreadAnchors });
   const showLegend = legend ?? Boolean((ports && ports.length) || (edges && edges.length));
   return (
     <figure className={cn("not-prose my-6", className)} data-diagram="architecture">
       <BlockDiagram
         title={title}
+        role="img"
+        description={describeArchitecture(nodes, ports, edges)}
         width={layout.width}
         height={layout.height}
         nodes={layout.nodes}
         ports={layout.ports}
         edges={layout.edges}
-        minWidth={Math.min(layout.width, 360)}
+        spreadAnchors={spreadAnchors}
+        minWidth={readableMinWidth(layout.width)}
         showLegend={showLegend}
       />
       {layout.problems.length ? <DiagramProblems problems={layout.problems} /> : null}
+      {SHOW_LAYOUT_WARNINGS && layout.warnings.length ? <DiagramProblems variant="layout" problems={layout.warnings.map((w) => w.message)} /> : null}
       <Caption>{caption}</Caption>
     </figure>
   );

@@ -112,7 +112,7 @@ Every waveform states its x-axis in its caption. For example, the F3C waveform s
 - [ ] All controls are `<button>`/`<input>`; SVG controls use `role="button"`, `tabIndex=0`, Enter/Space.
 - [ ] Every encoding has a non-colour cue (glyph, outline, text).
 - [ ] Live narration uses `aria-live="polite"`; the current code line uses `aria-current="step"`.
-- [ ] SVGs have `role="img"`/`group` and an `aria-label` describing the state, not the shape.
+- [ ] SVGs have `role="img"`/`group` and an `aria-label` describing the state, not the shape. Static pictures (the MDX kit) use `role="img"` with `<title>` and `<desc>`; `group` is for SVGs with focusable or live children.
 - [ ] Works with `prefers-reduced-motion`; nothing autoplays.
 - [ ] No hover-only information.
 - [ ] At 390 px: no page overflow; touch targets ≥ 40 px tall.
@@ -145,6 +145,22 @@ Every waveform states its x-axis in its caption. For example, the F3C waveform s
 ## 9. MDX diagram kit (static diagrams written as data)
 
 Use the kit when a concept needs an accurate picture but not an interactive model. It draws with the same encodings as the visuals above: role tags (DRV, MON…), TLM port symbols (■ port, ○ export, ● imp, ◆ analysis port), line styles, and theme-safe colours. It is readable at 390 px and has an accessible name. Data errors (unknown node, overlapping cells, a waveform longer than its edge count) appear on the page as a "Diagram data error" notice. They are never drawn silently, and the lesson sweep fails on them.
+
+**Geometry warnings.** `layoutGridDiagram` also measures what it will draw, with the same anchors and label chip (`edgeLabelBox`: 6.2 px per character + 8, 16 px tall, centred on the edge's midpoint) that `BlockDiagram` uses, and reports in `warnings`:
+
+| Code | Means | Usual fix |
+|---|---|---|
+| `label-hides-edge` | The label chip covers so much of its line that less than one arrowhead (or 6 px of a plain line) shows. A 10-character label over the default 64 px column gap hides the whole line. | Shorter label, wider `gapX`/`gapY`/`cellWidth`, or name it in the caption. |
+| `label-same-point` | Two labels are centred on the same point (crossing or converging edges). | Move an edge end, add `via`, or set `spreadAnchors`. |
+| `label-overlap` | Two label chips overlap. | As above. |
+| `label-on-node` | A label chip covers a node it does not connect, or a container's name. | Re-route with `via` or move the node. |
+| `container-same-span` | Two containers span the same cells, so they share one rectangle and their names overprint. | Drop one (a badge or sublabel can carry it), or make the outer one larger. |
+
+Warnings show under the diagram as a "Diagram layout warning" in development and tests, not in production. `tests/lib/diagram-kit-content.test.ts` runs every `<ArchitectureDiagram>` and `<SequenceDiagram>` in `content/curriculum/**/*.mdx` through the layout and fails on any data error or warning that is not in `tests/lib/diagram-kit-known-issues.json` (the findings that existed when the checks were added; remove an entry when you fix its diagram). `DIAGRAM_KIT_REPORT=1 npx vitest run tests/lib/diagram-kit-content.test.ts` prints every current finding with its file and line.
+
+**Phone width.** A diagram up to 400 units wide shrinks to fit a phone as before (`min(width, 360)` px). A wider one never draws below 0.9 scale (`MIN_RENDER_SCALE`; node labels stay at 10.4 px, edge labels at 9 px) and scrolls sideways inside its own frame. While it overflows, the frame is a focusable region ("Scrollable diagram: <title>") so the arrow keys scroll it. The page itself never scrolls sideways. Narrower grids (`cellWidth={120} gapX={48}`) still read best on a phone.
+
+**Accessibility.** An `<ArchitectureDiagram>` is `role="img"`, named by its `title` (`<title>`) and described by a generated `<desc>` that lists the components, what each container holds, and every connection with its label. A `<SequenceDiagram>` is `role="img"` with a "Steps as text" list.
 
 Every diagram needs a `title` (its accessible name) and a `caption` that tells the learner what to look at.
 
@@ -179,6 +195,10 @@ Nodes sit on a grid by `col` and `row` (zero-based), with optional `colSpan` and
 
 Node kinds: `test env agent sequencer driver monitor scoreboard subscriber predictor model fifo sequence dut interface reg generic`. Edge styles: `data` (solid with a filled arrow), `control` (dotted), `causal` (dashed, call order), `structural` (plain).
 
+The legend (on by default when there are ports or edges) lists only the port symbols and line styles the diagram draws, so a protocol diagram with plain bus lines shows "── connection (no direction)" and no UVM port symbols. `legend={false}` hides it; then the caption should say what the lines mean.
+
+Edges attach to the centre of the node side that faces them, so several edges meeting one side share a point. `spreadAnchors` spreads them evenly along that side, ordered by where each edge comes from (off by default, so existing diagrams do not move).
+
 ### `<TimingDiagram>`: cycle-accurate waveforms
 
 `values[k]` is the value **sampled at rising edge k**, drawn as changing just after edge k−1, like a flop output. Use `undefined` for X. Markers sit on an edge and must explain themselves through `label`.
@@ -210,7 +230,7 @@ Message kinds:
 - `note`: spans `from` to `to`.
 - `divider`: time passes or an event, e.g. `@(posedge clk)`.
 
-Calls, async sends and returns are numbered. A "Steps as text" list under the drawing repeats every step for screen readers.
+Calls, async sends and returns are numbered. A "Steps as text" list under the drawing repeats every step for screen readers. The canvas widens when a self-message's text would run past the right edge (the last lifeline has only a few characters of room); the lifelines keep their phone scale and the extra width scrolls.
 
 ```mdx
 <SequenceDiagram

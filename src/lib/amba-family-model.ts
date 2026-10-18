@@ -3,7 +3,9 @@
  * model. Pure data and functions: no React.
  *
  * Every fact cites the Arm specification it was checked against:
- * - APB:          Arm IHI0024D (AMBA APB Protocol Specification, APB2 to APB5)
+ * - APB:          Arm IHI0024C (AMBA APB Protocol Specification v2.0: APB2 to APB4),
+ *                 the issue B-AMBA-1 cites for these facts; IHI0024E (APB5) Table 3-1
+ *                 for PSTRB being optional on both sides
  * - AHB:          Arm IHI0033B.b (AMBA AHB: AHB-Lite and AHB5)
  * - AXI3/AXI4, AXI4-Lite, ACE, ACE-Lite: Arm IHI0022E (AXI and ACE Protocol Specification)
  * - AXI4-Stream:  Arm IHI0051A (AMBA 4 AXI4-Stream Protocol Specification)
@@ -129,35 +131,35 @@ export const AMBA_PROTOCOLS: AmbaProtocol[] = [
     id: "apb",
     name: "APB",
     fullName: "Advanced Peripheral Bus",
-    spec: "Arm IHI0024D (APB2 to APB5)",
+    spec: "Arm IHI0024C (APB2 to APB4)",
     tagline: "a non-pipelined register bus, one transfer at a time",
     summary:
       "The low-cost peripheral bus. Designed for the programmable control registers of peripherals, reached through a bridge from AHB or AXI. Data buses are at most 32 bits wide.",
     lanes: [
       { name: "SETUP", dir: "out", carries: "PSEL high, PENABLE low: address, PWRITE, write data" },
-      { name: "ACCESS", dir: "out", carries: "PENABLE high until the completer drives PREADY high" },
+      { name: "ACCESS", dir: "out", carries: "PENABLE high until the slave drives PREADY high" },
       { name: "PRDATA / PREADY / PSLVERR", dir: "in", carries: "read data, completion and error in the last ACCESS cycle" },
     ],
     facts: {
       channels: {
         text: "One shared signal set. Each transfer is a SETUP cycle (PSEL high, PENABLE low), then ACCESS cycles (PENABLE high) until PREADY is high.",
-        source: "IHI0024D §4.1",
+        source: "IHI0024C §4.1",
       },
-      pipelining: { support: "no", text: "Not pipelined. Every transfer takes at least two cycles.", source: "IHI0024D §1.1" },
-      bursts: { support: "no", text: "Single transfers only; the specification defines no bursts.", source: "IHI0024D §3.1, §3.3" },
-      outstanding: { support: "no", text: "One transfer at a time and no transaction IDs.", source: "IHI0024D §4.1" },
-      ordering: { support: "no", text: "Transfers complete one by one, in issue order.", source: "IHI0024D §4.1" },
+      pipelining: { support: "no", text: "Not pipelined. Every transfer takes at least two cycles.", source: "IHI0024C §1.1" },
+      bursts: { support: "no", text: "Single transfers only; the specification defines no bursts.", source: "IHI0024C §3.1, §3.3" },
+      outstanding: { support: "no", text: "One transfer at a time and no transaction IDs.", source: "IHI0024C §4.1" },
+      ordering: { support: "no", text: "Transfers complete one by one, in issue order.", source: "IHI0024C §4.1" },
       strobes: {
         support: "optional",
         text: "PSTRB, one bit per byte lane (APB4 onwards, optional). It must be LOW for reads.",
-        source: "IHI0024D §3.2",
+        source: "IHI0024C §1.2.3, §3.2; IHI0024E Table 3-1",
       },
       errors: {
         support: "optional",
         text: "PSLVERR (APB3 onwards, optional), valid only in the last ACCESS cycle. A write that errors may still have changed the register.",
-        source: "IHI0024D §3.4",
+        source: "IHI0024C §1.2.2, §3.4",
       },
-      coherency: { support: "no", text: "None.", source: "not defined in IHI0024D" },
+      coherency: { support: "no", text: "None.", source: "not defined in IHI0024C" },
     },
     typicalUse: "UART, GPIO, timer and other low-bandwidth configuration registers behind an AXI-to-APB or AHB-to-APB bridge.",
     capabilities: caps(["addressed"]),
@@ -575,7 +577,7 @@ export const FIT_SCENARIOS: FitScenario[] = [
       {
         protocol: "apb",
         feedback:
-          "APB was designed for exactly this: programmable control registers behind a bridge (IHI0024D §1.1). Two cycles per access is irrelevant at polling rates, and the interface is the smallest in the family.",
+          "APB was designed for exactly this: programmable control registers behind a bridge (IHI0024C §1.1). Two cycles per access is irrelevant at polling rates, and the interface is the smallest in the family.",
       },
       {
         protocol: "axi4-lite",
@@ -605,7 +607,7 @@ export const FIT_SCENARIOS: FitScenario[] = [
       {
         protocol: "apb",
         feedback:
-          "APB has no bursts, no pipelining and only one transfer at a time (IHI0024D §1.1, §4.1). Each word would pay the full DDR latency.",
+          "APB has no bursts, no pipelining and only one transfer at a time (IHI0024C §1.1, §4.1). Each word would pay the full DDR latency.",
       },
       {
         protocol: "ahb",
@@ -695,7 +697,7 @@ export const FIT_SCENARIOS: FitScenario[] = [
     options: [
       {
         protocol: "apb",
-        feedback: "APB needs at least two cycles per transfer (IHI0024D §1.1), so it cannot move a pixel group every clock.",
+        feedback: "APB needs at least two cycles per transfer (IHI0024C §1.1), so it cannot move a pixel group every clock.",
       },
       {
         protocol: "axi4-lite",

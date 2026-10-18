@@ -11,7 +11,7 @@
  * - Any spec whose signals use AXI channel names (AWVALID/AWREADY, WVALID, …)
  *   is checked with `checkWaveDrom`, which applies IHI0022E A3.2.1 and A3.3.1.
  */
-import { checkWaveDrom, lessonFigure as axiFigure, type ChannelName, type ProtocolViolation } from "@/lib/axi-channel-model";
+import { EDGE_NUMBER_HEAD, checkWaveDrom, lessonFigure as axiFigure, type ChannelName, type ProtocolViolation } from "@/lib/axi-channel-model";
 import { lessonFigure as ahbFigure } from "@/lib/ahb-model";
 import type { WaveDromSource } from "@/lib/wavedrom";
 
@@ -142,6 +142,8 @@ const DROPPED_VALID: WaveDromSource = {
       { name: "AWADDR", wave: "x=.x=.x", data: ["0x1000", "0x1000"] },
     ],
   ] as unknown as WaveDromSource["signal"],
+  // Edge numbers, as on the generated AXI samples: the boundary ending column k reads k.
+  head: { ...EDGE_NUMBER_HEAD },
 };
 
 /**
@@ -175,6 +177,7 @@ const EARLY_BVALID: WaveDromSource = {
       { name: "BRESP", wave: "x..=x..", data: ["OKAY"] },
     ],
   ] as unknown as WaveDromSource["signal"],
+  head: { ...EDGE_NUMBER_HEAD },
 };
 
 export const STUDIO_SAMPLES: StudioSample[] = [

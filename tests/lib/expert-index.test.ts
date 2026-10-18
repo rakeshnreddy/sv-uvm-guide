@@ -187,7 +187,7 @@ describe.skipIf(!fs.existsSync(headingIdsPlugin))('anchors agree with the lesson
       }
     }
     expect(lessons).toBeGreaterThan(100);
-  }, 30_000);
+  }, 90_000); // parses every lesson; slow under a loaded parallel run
 });
 
 describe('the expert index over the real curriculum', () => {

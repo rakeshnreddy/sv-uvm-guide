@@ -13,7 +13,7 @@ interface MdxQuestion {
     feedback?: string;
   }[];
   explanation: string;
-  /** 1-based index of the lesson objective this question checks (not rendered). */
+  /** 1-based index of the lesson objective this question checks, shown as an "Objective n" tag. */
   objective?: number;
 }
 
@@ -25,6 +25,8 @@ interface FormattedQuestion {
   explanation: string;
   /** Option text -> feedback for that option. */
   feedback?: Record<string, string>;
+  /** 1-based lesson objective (the numbered "You will be able to" list). */
+  objective?: number;
 }
 
 interface LegacyFormattedQuestion {
@@ -38,27 +40,49 @@ interface QuizProps {
   questions: (FormattedQuestion | LegacyFormattedQuestion | MdxQuestion)[];
 }
 
-const toFormatted = (qs: (FormattedQuestion | LegacyFormattedQuestion | MdxQuestion)[]): FormattedQuestion[] => {
-  return qs.map((q) => {
-    const anyQ = q as any;
+/** A positive integer objective number, or undefined (malformed values are never rendered). */
+const objectiveOf = (q: unknown): number | undefined => {
+  const value = (q as { objective?: unknown } | null)?.objective;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+};
 
-    if (Array.isArray(anyQ.options)) {
-      // Several lessons store the answer as a 0-based option index.
-      const index = [anyQ.correctAnswer, anyQ.correctIndex, anyQ.answer].find(
-        (value): value is number => typeof value === 'number' && Number.isInteger(value),
-      );
-      const indexed =
-        index !== undefined && index >= 0 && index < anyQ.options.length ? String(anyQ.options[index]) : undefined;
-      const correct = indexed ??
-        (typeof anyQ.correctAnswer === 'string'
+const toFormattedOne = (q: FormattedQuestion | LegacyFormattedQuestion | MdxQuestion): FormattedQuestion => {
+  const anyQ = q as any;
+
+  if (Array.isArray(anyQ.options)) {
+    // Several lessons store the answer as a 0-based option index.
+    const index = [anyQ.correctAnswer, anyQ.correctIndex, anyQ.answer].find(
+      (value): value is number => typeof value === 'number' && Number.isInteger(value),
+    );
+    const indexed =
+      index !== undefined && index >= 0 && index < anyQ.options.length ? String(anyQ.options[index]) : undefined;
+    const correct = indexed ??
+      (typeof anyQ.correctAnswer === 'string'
+        ? anyQ.correctAnswer
+        : typeof anyQ.answer === 'string'
+          ? anyQ.answer
+          : typeof anyQ.correct === 'string'
+            ? anyQ.correct
+            : undefined);
+    const options = anyQ.options.map((opt: unknown) => String(opt));
+
+    return {
+      question: String(anyQ.question),
+      options,
+      correctAnswer: correct ?? options[0] ?? '',
+      explanation: String(anyQ.explanation ?? ''),
+    };
+  }
+
+  if (Array.isArray(anyQ.answers)) {
+    if (anyQ.answers.length > 0 && typeof anyQ.answers[0] === 'string') {
+      const correct =
+        typeof anyQ.correctAnswer === 'string'
           ? anyQ.correctAnswer
           : typeof anyQ.answer === 'string'
             ? anyQ.answer
-            : typeof anyQ.correct === 'string'
-              ? anyQ.correct
-              : undefined);
-      const options = anyQ.options.map((opt: unknown) => String(opt));
-
+            : undefined;
+      const options = anyQ.answers.map((opt: unknown) => String(opt));
       return {
         question: String(anyQ.question),
         options,
@@ -67,44 +91,29 @@ const toFormatted = (qs: (FormattedQuestion | LegacyFormattedQuestion | MdxQuest
       };
     }
 
-    if (Array.isArray(anyQ.answers)) {
-      if (anyQ.answers.length > 0 && typeof anyQ.answers[0] === 'string') {
-        const correct =
-          typeof anyQ.correctAnswer === 'string'
-            ? anyQ.correctAnswer
-            : typeof anyQ.answer === 'string'
-              ? anyQ.answer
-              : undefined;
-        const options = anyQ.answers.map((opt: unknown) => String(opt));
-        return {
-          question: String(anyQ.question),
-          options,
-          correctAnswer: correct ?? options[0] ?? '',
-          explanation: String(anyQ.explanation ?? ''),
-        };
-      }
-
-      const mdxQ = anyQ as MdxQuestion;
-      const correctAnswer = mdxQ.answers.find((a) => a.correct)?.text;
-      const options = mdxQ.answers.map((a) => a.text);
-      const feedback = Object.fromEntries(mdxQ.answers.filter((a) => a.feedback).map((a) => [a.text, String(a.feedback)]));
-      return {
-        question: mdxQ.question,
-        options,
-        correctAnswer: correctAnswer ?? options[0] ?? '',
-        explanation: mdxQ.explanation,
-        feedback: Object.keys(feedback).length ? feedback : undefined,
-      };
-    }
-
+    const mdxQ = anyQ as MdxQuestion;
+    const correctAnswer = mdxQ.answers.find((a) => a.correct)?.text;
+    const options = mdxQ.answers.map((a) => a.text);
+    const feedback = Object.fromEntries(mdxQ.answers.filter((a) => a.feedback).map((a) => [a.text, String(a.feedback)]));
     return {
-      question: String(anyQ?.question ?? 'Question unavailable'),
-      options: ['N/A'],
-      correctAnswer: 'N/A',
-      explanation: String(anyQ?.explanation ?? ''),
+      question: mdxQ.question,
+      options,
+      correctAnswer: correctAnswer ?? options[0] ?? '',
+      explanation: mdxQ.explanation,
+      feedback: Object.keys(feedback).length ? feedback : undefined,
     };
-  });
+  }
+
+  return {
+    question: String(anyQ?.question ?? 'Question unavailable'),
+    options: ['N/A'],
+    correctAnswer: 'N/A',
+    explanation: String(anyQ?.explanation ?? ''),
+  };
 };
+
+const toFormatted = (qs: (FormattedQuestion | LegacyFormattedQuestion | MdxQuestion)[]): FormattedQuestion[] =>
+  qs.map((q) => ({ ...toFormattedOne(q), objective: objectiveOf(q) }));
 
 const Quiz: React.FC<QuizProps> = ({ questions }) => {
   const parsedQuestions: FormattedQuestion[] = useMemo(() => {
@@ -169,14 +178,24 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
     );
   }
 
-  const { question, options, explanation, correctAnswer, feedback } = parsedQuestions[currentQuestionIndex];
+  const { question, options, explanation, correctAnswer, feedback, objective } = parsedQuestions[currentQuestionIndex];
   const selectedFeedback = selectedAnswer ? feedback?.[selectedAnswer] : undefined;
 
   return (
     <div className="rounded-lg border border-border bg-card/60 p-4 shadow-sm">
-      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Question {currentQuestionIndex + 1} of {parsedQuestions.length}
-      </p>
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Question {currentQuestionIndex + 1} of {parsedQuestions.length}
+        </p>
+        {objective !== undefined ? (
+          <span
+            className="rounded-full border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground"
+            data-testid="quiz-objective"
+          >
+            <span className="sr-only">Checks lesson </span>Objective {objective}
+          </span>
+        ) : null}
+      </div>
       <h3 className="text-xl font-bold text-primary mb-4">{question}</h3>
       <div className="space-y-2">
         {options.map((option) => (

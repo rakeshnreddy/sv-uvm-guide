@@ -2,7 +2,12 @@ import React from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import AxiIdOrderingVisualizer, { ORDERING_PRESETS } from "@/components/visualizers/AxiIdOrderingVisualizer";
+import AxiIdOrderingVisualizer, {
+  ID_ORDERING_MENU,
+  ORDERING_PRESETS,
+  READ_AFTER_WRITE_PRESET,
+  isLegalReadResult,
+} from "@/components/visualizers/AxiIdOrderingVisualizer";
 import { isLegalOrdering } from "@/lib/axi-channel-model";
 
 const lockIn = (label: string) => {
@@ -76,5 +81,60 @@ describe("AxiIdOrderingVisualizer", () => {
     first.focus();
     fireEvent.keyDown(first, { key: "End" });
     expect(within(screen.getByRole("radiogroup", { name: "Ordering situation" })).getByRole("radio", { name: "Two masters" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("offers six situations, with read after write between the four rules and Two masters", () => {
+    expect(ID_ORDERING_MENU.map((m) => m.value)).toEqual(["same-id", "diff-id", "b-order", "w-order", "read-after-write", "interconnect"]);
+  });
+
+  it("read after write: exactly one offered result pair is legal (A5.3.4, A6.1, A6.4)", () => {
+    const legal = READ_AFTER_WRITE_PRESET.options.filter((o) => isLegalReadResult(READ_AFTER_WRITE_PRESET, o));
+    expect(legal).toEqual([{ R1: "0x00", R2: "0x42" }]);
+    // R1 was issued before the write's B and R2 after it.
+    const { write, reads } = READ_AFTER_WRITE_PRESET;
+    expect(reads[0].arEdge).toBeLessThan(write.bEdge);
+    expect(reads[1].arEdge).toBeGreaterThan(write.bEdge);
+    expect(reads.every((r) => r.id === write.id)).toBe(true);
+  });
+
+  it("opens on the situation named by initialPreset", () => {
+    render(<AxiIdOrderingVisualizer initialPreset="read-after-write" />);
+    const group = screen.getByRole("radiogroup", { name: "Ordering situation" });
+    expect(within(group).getByRole("radio", { name: "Read after write, same ID" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/It issues read R1 \(ARID 1\)/)).toBeInTheDocument();
+  });
+
+  it("falls back to the first situation for an unknown initialPreset", () => {
+    render(<AxiIdOrderingVisualizer initialPreset={"nope" as never} />);
+    expect(within(screen.getByRole("radiogroup", { name: "Ordering situation" })).getByRole("radio", { name: "Reads, same ID" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("read after write: a stale R2 is the bug, because R2 was issued after B (A6.4)", () => {
+    render(<AxiIdOrderingVisualizer initialPreset="read-after-write" />);
+    lockIn("R1 = 0x00, R2 = 0x00");
+    expect(screen.getByText(/Not quite/)).toBeInTheDocument();
+    expect(screen.getAllByText(/R2 was issued at edge 6, after the write's B at edge 5/).length).toBeGreaterThan(0);
+  });
+
+  it("read after write: the legal pair explains both reads", () => {
+    render(<AxiIdOrderingVisualizer initialPreset="read-after-write" />);
+    lockIn("R1 = 0x00, R2 = 0x42");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/R1 may return 0x00 or 0x42 \(IHI0022E A5\.3\.4, A6\.1\); R2 may return only 0x42 \(IHI0022E A6\.4\)/).length).toBeGreaterThan(0);
+  });
+
+  it("read after write: play the slave and see each returned value checked", () => {
+    render(<AxiIdOrderingVisualizer />);
+    situation("Read after write, same ID");
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(screen.getAllByText(/not returned yet/)).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "R1 returns 0x42" }));
+    expect(screen.getByRole("button", { name: "R1 returns 0x42" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByText(/Legal: R1 returns 0x42/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "R2 returns 0x00" }));
+    expect(screen.getAllByText(/Illegal: R2 returns 0x00, the stale value from before the write/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "R2 returns 0x42" }));
+    expect(screen.queryAllByText(/Illegal: R2/)).toHaveLength(0);
   });
 });

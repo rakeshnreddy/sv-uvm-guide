@@ -16,6 +16,9 @@
  * - A5.3 / A5.3.2 / A5.4: same-AWID writes complete in issue order; AXI4 write
  *   data follows address order with no interleaving.
  * - A5.3.5: the interconnect appends master-port bits to the ID.
+ * - A5.3.4, A6.1, A6.4 (read after write): a read issued before the write's
+ *   B may return the old or the new value; one issued after B must observe
+ *   the write, whatever the IDs.
  *
  * Time model: edge k is the k-th rising ACLK edge. A value at edge k is the
  * value sampled at that edge (it changed just after edge k-1). Pure, no React.
@@ -374,7 +377,19 @@ export interface WaveLaneSignal {
 export type WaveLane = WaveLaneSignal | Record<string, never> | (string | WaveLaneSignal)[];
 export interface WaveDromSpec {
   signal: WaveLane[];
+  /** Edge numbers drawn above the diagram (see `EDGE_NUMBER_HEAD`). */
+  head?: { tick: number };
 }
+
+/**
+ * WaveDrom numbers the column boundaries from `tick`: boundary i is labelled
+ * i + tick. Column k ends at model edge k, so `tick: -1` labels the boundary
+ * at the right-hand end of column k with k, and the far-left boundary (the
+ * rising edge drawn before edge 0) with -1. A number, not a list: WaveDrom
+ * 3.5 adds a number to `tick` while parsing (parse-config.js), which corrupts
+ * string and array lists.
+ */
+export const EDGE_NUMBER_HEAD = { tick: -1 } as const;
 
 function bitWave(values: (number | undefined)[]): string {
   let out = "";
@@ -418,7 +433,8 @@ export interface WaveGroup {
 
 /**
  * Column k of the WaveDrom diagram holds the value sampled at model edge k,
- * i.e. at the rising ACLK edge that ends column k.
+ * i.e. at the rising ACLK edge that ends column k. The spec carries edge
+ * numbers (`EDGE_NUMBER_HEAD`), so the boundary that ends column k reads k.
  */
 export function traceToWaveDrom(trace: ChannelTrace, groups: WaveGroup[]): WaveDromSpec {
   const signal: WaveLane[] = [{ name: "ACLK", wave: `p${".".repeat(trace.edges - 1)}` }];
@@ -440,7 +456,8 @@ export function traceToWaveDrom(trace: ChannelTrace, groups: WaveGroup[]): WaveD
     signal.push(g.label ? [g.label, ...lanes] : lanes[0]);
     if (!g.label) lanes.slice(1).forEach((l) => signal.push(l));
   }
-  return { signal };
+  // WaveDrom 3.5 mis-parses a numeric tick when it has only two labels (one column).
+  return trace.edges >= 2 ? { signal, head: { ...EDGE_NUMBER_HEAD } } : { signal };
 }
 
 /** Expands a WaveDrom wave string into one value per column. */
@@ -724,6 +741,25 @@ export function lessonFigure(name: keyof typeof LESSON_FIGURES): WaveDromSpec {
   return traceToWaveDrom(simulateChannels(fig.scenario), fig.groups);
 }
 
+/**
+ * Every AW information signal of IHI0022E Table A2-2 (all but AWVALID and
+ * AWREADY). A3.2.1: the source "must keep its information stable until the
+ * transfer occurs", so `a_aw_stable` lists all of them.
+ */
+export const AW_INFORMATION_SIGNALS = [
+  "AWID",
+  "AWADDR",
+  "AWLEN",
+  "AWSIZE",
+  "AWBURST",
+  "AWLOCK",
+  "AWCACHE",
+  "AWPROT",
+  "AWQOS",
+  "AWREGION",
+  "AWUSER",
+] as const;
+
 /** SVA that checks the same rules as `checkChannels`, keyed by rule id. */
 export const CHANNEL_SVA: { key: ProtocolRule; clause: string; lines: string[] }[] = [
   {
@@ -739,9 +775,11 @@ export const CHANNEL_SVA: { key: ProtocolRule; clause: string; lines: string[] }
     key: "payload-stable",
     clause: "A3.2.1",
     lines: [
-      "// A3.2.1: the payload is stable while the transfer waits",
+      "// A3.2.1: all AW information is stable while the transfer waits",
+      "// (Table A2-2; AWUSER is optional: drop it if the port has none)",
       "a_aw_stable: assert property (@(posedge ACLK) disable iff (!ARESETn)",
-      "  AWVALID && !AWREADY |=> $stable({AWADDR, AWLEN, AWSIZE, AWBURST, AWID}));",
+      "  AWVALID && !AWREADY |=> $stable({AWID, AWADDR, AWLEN, AWSIZE, AWBURST,",
+      "    AWLOCK, AWCACHE, AWPROT, AWQOS, AWREGION, AWUSER}));",
     ],
   },
   {
@@ -898,4 +936,93 @@ export function splitExtendedId(slaveId: number, masterIdBits: number): { master
 
 export function idBits(value: number, width: number): string {
   return value.toString(2).padStart(width, "0");
+}
+
+// ---------------------------------------------------------------------------
+// Read after write to the same address (A5.3.4, A6.1, A6.4)
+// ---------------------------------------------------------------------------
+
+/** One write to the address under test, with the edges of its AW, W (WLAST) and B handshakes. */
+export interface RawWrite {
+  id: number;
+  addr: string;
+  /** Value at the address before the write. */
+  oldValue: string;
+  /** Value the write stores. */
+  newValue: string;
+  awEdge: number;
+  wEdge: number;
+  bEdge: number;
+}
+
+/** A read of the same address: its AR handshake (where it is issued) and its R handshake. */
+export interface RawRead {
+  key: string;
+  label: string;
+  id: number;
+  arEdge: number;
+  rEdge: number;
+}
+
+export interface RawVerdict {
+  /** The values a correct slave may return for this read. */
+  values: string[];
+  /** True when the read was issued after the write's B, so it must observe the write. */
+  ordered: boolean;
+  clause: string;
+  reason: string;
+}
+
+/**
+ * Which values may `read` return? Verified in IHI0022E:
+ * - A5.3.4: "AXI has no ordering restrictions between read and write
+ *   transactions ... even if the ARID value of a read transaction is the same
+ *   as the AWID value of a write transaction"; a master that needs an order
+ *   must wait until the earlier transaction is complete (for a write, "it
+ *   receives the write response"), and sending all the write data does not
+ *   count as completion.
+ * - A6.1: a transaction issued before the response to an earlier transaction
+ *   in the other direction has "no ordering guarantees" with it.
+ * - A6.4: "Any write transaction for which it has issued a response must be
+ *   observed by any subsequent write or read transaction, regardless of the
+ *   transaction IDs."
+ *
+ * A read is issued at its AR handshake. It is "after B" only when its AR
+ * handshake edge is later than the B handshake edge; an AR accepted at the
+ * same edge as B is treated as not after it (the model's reading: the master
+ * presented it before it had the response). Assumes one master, no other
+ * writer to the address, a read inside one single-copy atomic block (A7.1, so
+ * no mix of old and new bytes) and a B from the final destination (A6.1 Note).
+ */
+export function legalReadValues(write: RawWrite, read: RawRead): RawVerdict {
+  const idNote = read.id === write.id ? `even though ARID ${read.id} equals the write's AWID` : `and the IDs (AWID ${write.id}, ARID ${read.id}) play no part`;
+  if (read.arEdge > write.bEdge) {
+    return {
+      values: [write.newValue],
+      ordered: true,
+      clause: "IHI0022E A6.4",
+      reason: `${read.label} was issued at edge ${read.arEdge}, after the write's B at edge ${write.bEdge}. A slave must make a write it has responded to observed by every subsequent read, whatever the IDs, so only ${write.newValue} is legal.`,
+    };
+  }
+  const dataNote = write.wEdge <= read.arEdge ? ` The write data had already transferred, but sending all the write data does not complete a write; only its B does.` : "";
+  return {
+    values: [write.oldValue, write.newValue],
+    ordered: false,
+    clause: "IHI0022E A5.3.4, A6.1",
+    reason: `${read.label} was issued at edge ${read.arEdge}, before the write's B at edge ${write.bEdge}, so the two are not ordered, ${idNote}. Both ${write.oldValue} (old) and ${write.newValue} (new) are legal.${dataNote}`,
+  };
+}
+
+/** Checks one returned value against `legalReadValues`. */
+export function checkReadValue(write: RawWrite, read: RawRead, value: string): OrderCheck {
+  const verdict = legalReadValues(write, read);
+  if (verdict.values.includes(value)) {
+    return { legal: true, clause: verdict.clause, reason: `Legal: ${read.label} returns ${value}. ${verdict.reason}` };
+  }
+  const what = value === write.oldValue ? "the stale value from before the write" : "a value that no write stored";
+  return {
+    legal: false,
+    clause: verdict.clause,
+    reason: `Illegal: ${read.label} returns ${value}, ${what}. ${verdict.reason} Returning ${value} is a slave (DUT) bug.`,
+  };
 }

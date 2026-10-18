@@ -19,25 +19,33 @@ describe("AMBA family facts", () => {
     for (const p of AMBA_PROTOCOLS) {
       for (const key of FACT_KEYS) {
         expect(p.facts[key].text.length, `${p.id}.${key}`).toBeGreaterThan(0);
-        expect(p.facts[key].source, `${p.id}.${key}`).toMatch(/IHI00(22E|24D|33B\.b|50E\.b|51A)/);
+        expect(p.facts[key].source, `${p.id}.${key}`).toMatch(/IHI00(22E|24C|33B\.b|50E\.b|51A)/);
       }
       for (const c of CAPABILITIES) expect(typeof p.capabilities[c]).toBe("boolean");
     }
   });
 
-  it("APB is not pipelined and has no bursts or outstanding transfers (IHI0024D §1.1, §4.1)", () => {
-    expect(fact("apb", "pipelining")).toMatchObject({ support: "no", source: "IHI0024D §1.1" });
+  it("APB is not pipelined and has no bursts or outstanding transfers (IHI0024C §1.1, §4.1)", () => {
+    expect(fact("apb", "pipelining")).toMatchObject({ support: "no", source: "IHI0024C §1.1" });
     expect(fact("apb", "pipelining").text).toMatch(/at least two cycles/);
     expect(fact("apb", "bursts").support).toBe("no");
     expect(fact("apb", "outstanding").support).toBe("no");
     expect(getProtocol("apb").capabilities.backToBack).toBe(false);
   });
 
-  it("APB strobes and error response are optional additions (PSTRB in APB4, PSLVERR in APB3; IHI0024D §3.2, §3.4)", () => {
+  it("APB strobes and error response are optional additions (PSTRB in APB4, PSLVERR in APB3; IHI0024C §1.2.2, §1.2.3, §3.2, §3.4)", () => {
     expect(fact("apb", "strobes")).toMatchObject({ support: "optional" });
     expect(fact("apb", "strobes").text).toMatch(/PSTRB/);
     expect(fact("apb", "errors")).toMatchObject({ support: "optional" });
     expect(fact("apb", "errors").text).toMatch(/PSLVERR.*last ACCESS cycle/);
+  });
+
+  it("APB cites the issue the hosting page (B-AMBA-1) cites: IHI0024C, the local source text, never IHI0024D", () => {
+    const apb = getProtocol("apb");
+    expect(apb.spec).toBe("Arm IHI0024C (APB2 to APB4)");
+    for (const key of FACT_KEYS) expect(apb.facts[key].source, key).not.toMatch(/IHI0024D/);
+    expect(fact("apb", "strobes").source).toBe("IHI0024C §1.2.3, §3.2; IHI0024E Table 3-1");
+    expect(fact("apb", "errors").source).toBe("IHI0024C §1.2.2, §3.4");
   });
 
   it("AHB has separate HWDATA and HRDATA buses, not one multiplexed channel (IHI0033B.b §6.1; audit B-AMBA-1 L81)", () => {
