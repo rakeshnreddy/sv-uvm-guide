@@ -127,3 +127,7 @@ Still waiting on the user:
   is never retried (IHI0050E.b 2.11).
 - Still open: the E-RISCV-1 interview question (no bank has one; SoC bank suggested); follow-up answers field;
   `debug`/`predict-output` categories in `bank-schema.test.ts`; a `visual` field linking visualizers.
+- 2026-10-18: W5 review-only pass (wf_e047c557-093) came back with all 15 groups clean; integrated as f8784b67
+  (B-APB-1 now live). W6 review-only pass started (run `wf_7ee1b1aa-4df`, 6 groups). Two follow-up agents running:
+  diagram kit (phone width, label geometry checks, legend, role=img) and AMBA models/spine (AW payload SVA,
+  WaveDrom edge numbers, same-ID RAW preset, APB citation, quiz-objective sentence, spine B-AHB-3/B-AXI-4/App. A/B).
