@@ -182,15 +182,29 @@ describe('resolved routes', () => {
     expect(() => resolveRoutes(curriculumData, { routes: [broken], labs })).toThrow(/not in PRACTICE_PAGES/);
   });
 
-  it('label labs from the lab registry and say they need sign-in', () => {
+  it('label labs from the lab registry and link them with no note, since they open without an account', () => {
     const labItems = routes.flatMap((r) => r.steps.flatMap((s) => s.practice)).filter((p) => p.kind === 'lab');
     expect(labItems.length).toBeGreaterThan(10);
     for (const item of labItems) {
       const registered = labs.find((l) => item.href === `/practice/lab/${l.id}`);
       expect(registered, item.label).toBeDefined();
       expect(item.label).toBe(registered!.title.replace(/\s+/g, ' ').trim());
-      expect(item.note).toBe('sign-in required');
+      expect(item.href).toBe(`/practice/lab/${registered!.id}`);
+      expect(item.note).toBeUndefined();
     }
+  });
+
+  it('render a lab that is not available as text marked coming soon, never as a link', () => {
+    expect(labs.find((l) => l.id === 'dma-1')?.status).toBe('coming_soon');
+    const junior = getRoute('junior');
+    const planned: LearningRoute = {
+      ...junior,
+      steps: [{ ...junior.steps[0], practice: [{ kind: 'lab', labId: 'dma-1' }] }, ...junior.steps.slice(1)],
+    };
+    const [resolved] = resolveRoutes(curriculumData, { routes: [planned], labs });
+    const item = resolved.steps[0].practice.find((p) => p.kind === 'lab')!;
+    expect(item.href).toBeUndefined();
+    expect(item.note).toBe('coming soon');
   });
 
   it('list the core modules the Junior route leaves for later', () => {

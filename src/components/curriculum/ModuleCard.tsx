@@ -142,8 +142,7 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
                   <li key={lab.id} className="[overflow-wrap:anywhere]">
                     <Link href={lab.href} className={textLink}>
                       {lab.title}
-                    </Link>{' '}
-                    <span className="text-muted-foreground">(sign-in required)</span>
+                    </Link>
                   </li>
                 ))}
               </ul>

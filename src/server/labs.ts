@@ -2,8 +2,9 @@ import { Prisma } from "@prisma/client";
 
 import type { LabManifest } from "@/lib/lab-manifest";
 import type { LabAccess } from "@/lib/lab-assets";
+import { applyStepCompletion, toLabPolicyInput, validateStepCompletion } from "@/lib/lab-progress-policy";
 import { getPrisma } from "@/lib/prisma";
-import type { LabProgressDto, LabWorkspaceDto } from "@/types/lab";
+import type { LabProgressDto, LabProgressState, LabWorkspaceDto } from "@/types/lab";
 
 type StepEvidence =
   | { kind: "graded"; graderId: string; graderVersion: string }
@@ -92,48 +93,63 @@ export async function saveLabWorkspace(
   return toProgress(lab, attempt);
 }
 
+/**
+ * Records a completed step on the server. Ordering, evidence and completion
+ * come from the shared policy (applyStepCompletion in
+ * src/lib/lab-progress-policy.ts), the same one the browser lab store runs;
+ * this function only reads and writes the LabAttempt row. Stored evidence
+ * keeps its shape: {kind, graderId?, graderVersion?, stepVersion, recordedAt (ISO)}.
+ */
 export async function completeLabStep(
   userId: string,
   lab: LabManifest,
   stepId: string,
   evidence: StepEvidence,
 ): Promise<LabProgressDto> {
-  const stepIndex = lab.steps.findIndex((step) => step.id === stepId);
-  if (stepIndex < 0) throw new LabStepCompletionError("LAB_STEP_NOT_FOUND");
-  if (lab.steps[stepIndex].completion !== evidence.kind) {
-    throw new LabStepCompletionError("LAB_COMPLETION_POLICY_MISMATCH");
-  }
+  const policy = toLabPolicyInput(lab);
+  // The checks that need no stored progress run before the database is read.
+  const invalid = validateStepCompletion(policy, stepId, evidence.kind);
+  if (invalid) throw new LabStepCompletionError(invalid);
 
   const client = getPrisma();
   const existing = await client.labAttempt.findFirst({
     where: { userId, labId: lab.id, labVersion: lab.version },
     orderBy: { updatedAt: "desc" },
   });
-  const completedSteps = existing?.completedSteps ?? [];
-  const previousStep = lab.steps[stepIndex - 1];
-  if (previousStep && !completedSteps.includes(previousStep.id)) {
-    throw new LabStepCompletionError("LAB_PREVIOUS_STEP_INCOMPLETE");
-  }
+  const now = Date.now();
+  const current: LabProgressState = {
+    currentStepId: existing?.currentStepId ?? null,
+    completedSteps: existing?.completedSteps ?? [],
+    // Stored evidence stays opaque JSON here; the new entry is merged in below.
+    stepEvidence: {},
+    fileBuffers: {},
+    status: existing?.status === "COMPLETED" ? "completed" : "in_progress",
+  };
+  const result = applyStepCompletion(
+    policy,
+    current,
+    stepId,
+    evidence.kind === "graded" ? { ...evidence, origin: "server" } : evidence,
+    now,
+  );
+  if (!result.ok) throw new LabStepCompletionError(result.code);
 
-  const canonicalCompletedSteps = lab.steps
-    .filter((step) => step.id === stepId || completedSteps.includes(step.id))
-    .map((step) => step.id);
-  const isComplete = lab.steps.length > 0 && canonicalCompletedSteps.length === lab.steps.length;
+  const recorded = result.progress.stepEvidence[stepId];
+  const isComplete = result.progress.status === "completed";
   const stepEvidence = {
     ...parseStepEvidence(existing?.stepEvidence ?? null),
     [stepId]: {
       ...evidence,
-      stepVersion: lab.steps[stepIndex].version,
-      recordedAt: new Date().toISOString(),
+      stepVersion: recorded.stepVersion,
+      recordedAt: new Date(recorded.recordedAt).toISOString(),
     },
   } as Prisma.InputJsonValue;
-  const nextStepId = lab.steps[stepIndex + 1]?.id ?? stepId;
   const data = {
-    currentStepId: nextStepId,
-    completedSteps: canonicalCompletedSteps,
+    currentStepId: result.progress.currentStepId,
+    completedSteps: result.progress.completedSteps,
     stepEvidence,
     status: isComplete ? "COMPLETED" as const : "IN_PROGRESS" as const,
-    completedAt: isComplete ? new Date() : null,
+    completedAt: isComplete ? new Date(now) : null,
   };
 
   const attempt = existing

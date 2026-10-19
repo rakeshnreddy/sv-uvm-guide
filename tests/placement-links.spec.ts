@@ -87,11 +87,20 @@ describe('placement page with default flags', () => {
   afterEach(() => {
     vi.resetModules();
     vi.doUnmock('@/tools/featureFlags');
+    vi.doUnmock('next/link');
   });
 
-  async function renderPage(tracking: boolean): Promise<string> {
+  async function renderPage(enabled: readonly string[] = []): Promise<string> {
     vi.resetModules();
-    vi.doMock('@/tools/featureFlags', () => ({ __esModule: true, isFeatureEnabled: () => tracking }));
+    // GD6: every mock of the flags module defines isFeatureEnabled and a featureFlags object that agrees with it.
+    vi.doMock('@/tools/featureFlags', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/tools/featureFlags')>();
+      const isFeatureEnabled = (flag: string) => enabled.includes(flag);
+      const featureFlags = Object.freeze(
+        Object.fromEntries(Object.keys(actual.featureFlags).map((flag) => [flag, isFeatureEnabled(flag)])),
+      ) as typeof actual.featureFlags;
+      return { ...actual, __esModule: true, isFeatureEnabled, featureFlags };
+    });
     vi.doMock('next/link', () => ({
       __esModule: true,
       default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) =>
@@ -101,17 +110,20 @@ describe('placement page with default flags', () => {
     return renderToStaticMarkup(React.createElement(Page));
   }
 
-  it('links neither the dashboard nor the disabled assessment center when tracking is off (G30-PATH-02, G30-PATH-06)', async () => {
-    const html = await renderPage(false);
+  it('links the dashboard and never the assessment center, and every link resolves (G30-PATH-02, G30-PATH-06)', async () => {
+    const html = await renderPage();
     expect(html).toContain('<h1');
-    expect(html).not.toContain('href="/dashboard"');
+    expect(html).toContain('href="/dashboard"');
     expect(html).not.toContain('href="/assessment"');
+    expect(html).not.toMatch(/assessment center/i);
     for (const href of [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1])) {
       expect(appRouteExists(href), href).toBe(true);
     }
   });
 
-  it('links the assessment center when tracking is on', async () => {
-    expect(await renderPage(true)).toContain('href="/assessment"');
+  it('no longer links the assessment center when the tracking flag is on', async () => {
+    const html = await renderPage(['tracking', 'personalization']);
+    expect(html).toContain('href="/dashboard"');
+    expect(html).not.toContain('href="/assessment"');
   });
 });

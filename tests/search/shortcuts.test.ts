@@ -118,9 +118,9 @@ describe('theme and route helpers', () => {
     expect(toggledThemeName('system')).toBe('default-light');
   });
 
-  it('only routes to flagged sections when their flag is on', () => {
-    const off = { tracking: false, community: false };
-    const on = { tracking: true, community: true };
+  it('only routes to a section while it is on', () => {
+    const off = { dashboard: false, community: false };
+    const on = { dashboard: true, community: true };
     expect(shortcutRoute('go-curriculum', off)).toBe('/curriculum');
     expect(shortcutRoute('go-practice', off)).toBe('/practice');
     expect(shortcutRoute('go-dashboard', off)).toBeUndefined();
@@ -128,6 +128,15 @@ describe('theme and route helpers', () => {
     expect(shortcutRoute('go-dashboard', on)).toBe('/dashboard');
     expect(shortcutRoute('go-community', on)).toBe('/community');
     expect(shortcutRoute('help', on)).toBeUndefined();
+  });
+
+  it('routes Alt+3 to the dashboard and keeps Alt+C off while community is off (the default site)', () => {
+    const site = { dashboard: true, community: false };
+    expect(shortcutRoute('go-dashboard', site)).toBe('/dashboard');
+    expect(shortcutRoute('go-community', site)).toBeUndefined();
+    // The flags are read per section: each one gates only its own route.
+    expect(shortcutRoute('go-community', { dashboard: false, community: true })).toBe('/community');
+    expect(shortcutRoute('go-dashboard', { dashboard: false, community: true })).toBeUndefined();
   });
 });
 
@@ -146,24 +155,40 @@ describe('shortcutHelp', () => {
     'help',
   ];
 
-  it('lists every shortcut the matcher knows when every flag is on', () => {
-    const listed = shortcutHelp({ apple: false, flags: { tracking: true, community: true } }).flatMap((group) =>
+  it('lists every shortcut the matcher knows when every section is on', () => {
+    const listed = shortcutHelp({ apple: false, flags: { dashboard: true, community: true } }).flatMap((group) =>
       group.items.map((item) => item.id),
     );
     for (const shortcut of allIds) expect(listed).toContain(shortcut);
   });
 
   it('hides shortcuts to sections that are switched off', () => {
-    const listed = shortcutHelp({ apple: false, flags: { tracking: false, community: false } }).flatMap((group) =>
+    const listed = shortcutHelp({ apple: false, flags: { dashboard: false, community: false } }).flatMap((group) =>
       group.items.map((item) => item.id),
     );
     expect(listed).not.toContain('go-dashboard');
     expect(listed).not.toContain('go-community');
   });
 
+  it('lists "Go to your dashboard" on Alt+3, and no community row, while community is off', () => {
+    const anywhere = shortcutHelp({ apple: false, flags: { dashboard: true, community: false } })[0];
+    expect(anywhere.title).toBe('Anywhere');
+    const dashboard = anywhere.items.find((item) => item.id === 'go-dashboard');
+    expect(dashboard).toEqual({ id: 'go-dashboard', keys: [['Alt', '3']], description: 'Go to your dashboard' });
+    expect(anywhere.items.map((item) => item.id)).not.toContain('go-community');
+    // It follows the other "Go to" rows.
+    const ids = anywhere.items.map((item) => item.id);
+    expect(ids.indexOf('go-dashboard')).toBe(ids.indexOf('go-practice') + 1);
+    expect(
+      shortcutHelp({ apple: true, flags: { dashboard: true, community: false } })[0].items.find(
+        (item) => item.id === 'go-dashboard',
+      )?.keys,
+    ).toEqual([['Option', '3']]);
+  });
+
   it('names the modifier keys the way each platform prints them', () => {
     const items = (apple: boolean) =>
-      shortcutHelp({ apple, flags: { tracking: false, community: false } }).flatMap((group) => group.items);
+      shortcutHelp({ apple, flags: { dashboard: true, community: false } }).flatMap((group) => group.items);
     expect(items(true).find((item) => item.id === 'search')?.keys).toEqual([['Cmd', 'K'], ['/']]);
     expect(items(true).find((item) => item.id === 'go-curriculum')?.keys).toEqual([['Option', '1']]);
     expect(items(false).find((item) => item.id === 'search')?.keys).toEqual([['Ctrl', 'K'], ['/']]);

@@ -3,6 +3,7 @@ import { compileMDX } from "next-mdx-remote/rsc";
 import { notFound, permanentRedirect } from "next/navigation";
 import React from "react";
 
+import { LessonCompletionToggle } from "@/components/curriculum/LessonCompletionToggle";
 import LessonOrientation from "@/components/curriculum/LessonOrientation";
 import LessonPager from "@/components/curriculum/LessonPager";
 import { LessonPractice, type LessonPracticeProps } from "@/components/curriculum/LessonPractice";
@@ -10,6 +11,7 @@ import LessonToc from "@/components/curriculum/LessonToc";
 import LessonVisitTracker from "@/components/curriculum/LessonVisitTracker";
 import Breadcrumbs from "@/components/layout/Breadcrumbs";
 import { getMdxComponents } from "@/generated/mdx-component-registry";
+import { lessonHref } from "@/lib/curriculum-overview";
 import { getLessonContext } from "@/lib/curriculum/lesson-context";
 import {
   generateCurriculumStaticParams,
@@ -54,7 +56,9 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
   if (!lesson || !context) notFound();
 
   const { content: mdxContent, frontmatter, normalizedSlug, topic } = lesson;
-  const [, sectionSlug, topicSlug] = normalizedSlug;
+  const [tierSlug, sectionSlug, topicSlug] = normalizedSlug;
+  // The canonical lesson path (GD15): what usePathname() returns on this page.
+  const lessonPath = lessonHref(tierSlug, sectionSlug, topicSlug);
   const summary = typeof frontmatter.description === "string" && frontmatter.description.trim().length > 0
     ? frontmatter.description
     : topic.description;
@@ -76,6 +80,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
         level={props.level}
         deckId={flashcardDeckId}
         conceptTitle={topic.title}
+        lessonPath={lessonPath}
         practice={practice}
         moduleCode={context.module.code}
       />
@@ -96,7 +101,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
 
   return (
     <div className="mx-auto w-full max-w-6xl pb-16">
-      <LessonVisitTracker moduleId={sectionSlug} lessonSlug={topicSlug} />
+      <LessonVisitTracker moduleId={sectionSlug} lessonSlug={topicSlug} lessonPath={lessonPath} />
       <Breadcrumbs slug={normalizedSlug} />
       {/*
         One column below xl, with "On this page" as a disclosure above the lesson
@@ -127,6 +132,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
           >
             {content}
           </article>
+          <LessonCompletionToggle className="mt-6" moduleId={sectionSlug} lessonSlug={topicSlug} />
         </div>
         <LessonPager className="xl:col-start-1 xl:row-start-3" context={context} />
       </div>

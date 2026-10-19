@@ -108,6 +108,20 @@ describe('deriveNotificationsFromEngagement', () => {
     expect(notifications.some((notification) => notification.category === 'progress')).toBe(true);
   });
 
+  it('links the community notification only while the community pages are on', () => {
+    const engagement = createEngagementFixture();
+    const preferences = resolveNotificationPreferences();
+    preferences.categories.community = true;
+
+    const community = deriveNotificationsFromEngagement(engagement, preferences).find(
+      (notification) => notification.category === 'community',
+    );
+
+    // The default build has community off, so /community answers 404 and must not be linked.
+    expect(community).toBeDefined();
+    expect(community?.href).toBeUndefined();
+  });
+
   it('respects the limit option when provided', () => {
     const engagement = createEngagementFixture();
     const preferences = resolveNotificationPreferences();

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useReducer, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { useAccountSession } from "@/lib/persistence/target";
 
 export const ADAPTIVE_ASSESSMENT_VERSION = "adaptive-v2";
 export const ADAPTIVE_SCORING_VERSION = "adaptive-scoring-v1";
@@ -107,9 +108,12 @@ export function adaptiveTestReducer(state: AdaptiveTestState, action: AdaptiveTe
 export const AdaptiveTestEngine = () => {
   const [state, dispatch] = useReducer(adaptiveTestReducer, { status: "intro" });
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  // Only a signed-in learner has an account to send the result to; with
+  // accounts off (or signed out) nothing is requested.
+  const signedIn = useAccountSession().status === "authenticated";
 
   useEffect(() => {
-    if (state.status !== "complete") return;
+    if (state.status !== "complete" || !signedIn) return;
     void fetch("/api/me/assessments", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -123,7 +127,7 @@ export const AdaptiveTestEngine = () => {
         })),
       }),
     }).catch(() => undefined);
-  }, [state]);
+  }, [state, signedIn]);
 
   if (state.status === "intro") {
     return (

@@ -1,37 +1,19 @@
 'use server';
 
-import { revalidatePath } from 'next/cache.js';
-
+/**
+ * Account-era flashcard review actions. They stay behind requireSession and
+ * fail closed (AuthenticationError) without a signed-in learner; no page calls
+ * them while accounts are off, and no client component imports this module.
+ * Learners review in the browser through src/lib/srs/review-store.ts, which
+ * uses the same scheduler.
+ */
 import { prisma } from '@/lib/prisma';
 import { requireSession } from '@/lib/auth';
-
-export async function createFlashcard(topicId: string) {
-  const session = await requireSession();
-
-  // In a real application, you would fetch the content for the topicId
-  // and use an AI to generate the front and back of the flashcard.
-  // For now, we'll use placeholder content.
-  const front = `What is the main concept of topic ${topicId}?`;
-  const back = `This is a detailed explanation of the main concept of topic ${topicId}.`;
-
-  const flashcard = await prisma.flashcard.create({
-    data: {
-      userId: session.user.id,
-      topicId,
-      front,
-      back,
-    },
-  });
-
-  revalidatePath('/dashboard/memory-hub');
-  return flashcard;
-}
+import { assertReviewQuality, scheduleReview } from '@/lib/srs/scheduler';
 
 export async function reviewFlashcard(flashcardId: string, quality: number) {
   const session = await requireSession();
-  if (!Number.isInteger(quality) || quality < 0 || quality > 5) {
-    throw new Error('Review quality must be an integer from 0 through 5.');
-  }
+  assertReviewQuality(quality);
 
   const flashcard = await prisma.flashcard.findUnique({
     where: { id: flashcardId },
@@ -41,43 +23,28 @@ export async function reviewFlashcard(flashcardId: string, quality: number) {
     throw new Error('Flashcard not found or you do not have permission to review it.');
   }
 
-  // Simplified SM-2 algorithm implementation
-  let { interval, repetitions, easinessFactor } = flashcard;
-
-  if (quality >= 3) {
-    if (repetitions === 0) {
-      interval = 1;
-    } else if (repetitions === 1) {
-      interval = 6;
-    } else {
-      interval = Math.round(interval * easinessFactor);
-    }
-    repetitions += 1;
-  } else {
-    repetitions = 0;
-    interval = 1;
-  }
-
-  easinessFactor = easinessFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
-  if (easinessFactor < 1.3) {
-    easinessFactor = 1.3;
-  }
-
-  const nextReviewAt = new Date();
-  nextReviewAt.setDate(nextReviewAt.getDate() + interval);
+  const now = Date.now();
+  const next = scheduleReview(
+    {
+      interval: flashcard.interval,
+      repetitions: flashcard.repetitions,
+      ease: flashcard.easinessFactor,
+    },
+    quality,
+    now,
+  );
 
   const updatedFlashcard = await prisma.flashcard.update({
     where: { id: flashcardId },
     data: {
-      interval,
-      repetitions,
-      easinessFactor,
-      nextReviewAt,
-      lastReviewedAt: new Date(),
+      interval: next.interval,
+      repetitions: next.repetitions,
+      easinessFactor: next.ease,
+      nextReviewAt: new Date(next.dueAt),
+      lastReviewedAt: new Date(now),
     },
   });
 
-  revalidatePath('/dashboard/memory-hub');
   return updatedFlashcard;
 }
 

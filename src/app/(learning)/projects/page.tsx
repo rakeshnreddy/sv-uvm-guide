@@ -1,16 +1,15 @@
+import { notFound } from 'next/navigation';
 import { InfoPage } from '@/components/templates/InfoPage';
-import { isFeatureEnabled } from '@/tools/featureFlags';
+import { SITE_FEATURES } from '@/lib/site-features';
 
+/*
+ * A draft page: its content is still placeholder text, so it is hidden
+ * (404, unlinked and out of the sitemap) unless draft pages are switched on
+ * for a preview build (SITE_FEATURES.draftPages).
+ */
 export default async function ProjectsPage() {
-  if (!isFeatureEnabled('personalization')) {
-    return (
-      <InfoPage title="Practical Projects & Case Studies">
-        <p className="text-sm text-muted-foreground">
-          Project workspaces will re-open once personalization features are prioritized. Until then, lean on the core curriculum
-          and labs to build mastery.
-        </p>
-      </InfoPage>
-    );
+  if (!SITE_FEATURES.draftPages) {
+    notFound();
   }
 
   const { CodeBlock } = await import('@/components/ui/CodeBlock');

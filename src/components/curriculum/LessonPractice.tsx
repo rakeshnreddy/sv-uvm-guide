@@ -4,15 +4,18 @@ import React from "react";
 import FeynmanPromptWidget from "@/components/widgets/FeynmanPromptWidget";
 import FlashcardWidget from "@/components/widgets/FlashcardWidget";
 import { FLASHCARDS_SECTION, HANDS_ON_SECTION, TEACH_BACK_SECTION } from "@/lib/curriculum/lesson-mdx";
+import { getDeckCards } from "@/lib/flashcard-decks";
 import { PRACTICE_KIND_LABELS, type LessonPracticeEntry } from "@/lib/practice-links";
 
 export interface LessonPracticeProps {
   /** "3" inside the lesson's Practice & Reinforce section, "2" elsewhere (set by remarkPracticeSlot). */
   level?: string | number;
-  /** Flashcard deck id from the lesson frontmatter; no deck, no flashcards. */
+  /** Flashcard deck id (or alias) from the lesson frontmatter; no deck, no flashcards. Resolved here, on the server. */
   deckId?: string;
-  /** Lesson title for the teach-back prompt. */
+  /** Lesson title, for the teach-back prompt and the flashcard deck's "From lesson" link. */
   conceptTitle: string;
+  /** The canonical lesson path (GD15), which the teach-back entry is saved under. Without it the widget uses usePathname(). */
+  lessonPath?: string;
   /** The module's labs, exercises and interactive models (src/lib/practice-links.ts), in manifest order. */
   practice?: readonly LessonPracticeEntry[];
   /** Module code, for example "I-UVM-3B". */
@@ -51,7 +54,6 @@ function HandsOnItem({ entry }: { entry: LessonPracticeEntry }) {
           .
         </p>
       ) : null}
-      {item.kind === "lab" && !planned ? <p className="mt-2 text-xs text-muted-foreground">Sign in to run labs.</p> : null}
     </li>
   );
 }
@@ -60,14 +62,17 @@ function HandsOnItem({ entry }: { entry: LessonPracticeEntry }) {
  * The page's own practice, rendered inside the lesson where remarkPracticeSlot
  * puts it, so it comes before References & Next Topics and the in-content Next
  * link (G30-PAGE-V02):
- * - the lesson's flashcards, "Reinforce the essentials" (an e2e-pinned heading);
+ * - the lesson's flashcards, "Reinforce the essentials" (an e2e-pinned heading).
+ *   The deck is resolved here on the server (aliases to their canonical deck),
+ *   and only its cards reach the client widget, never the deck registry;
  * - the module's labs, exercises and interactive models from the practice map
  *   (G30-PAGE-13, G30-PRAC-01, G30-PRAC-V05), with "Do this after …" for items
  *   taught later;
  * - the "Teach it back" prompt.
  */
-export function LessonPractice({ level, deckId, conceptTitle, practice = [], moduleCode }: LessonPracticeProps) {
+export function LessonPractice({ level, deckId, conceptTitle, lessonPath, practice = [], moduleCode }: LessonPracticeProps) {
   const Heading = Number(level) === 3 ? "h3" : "h2";
+  const deck = deckId ? getDeckCards(deckId) : null;
   return (
     <div className="not-prose my-10 flex flex-col gap-6" data-testid="lesson-practice">
       {deckId ? (
@@ -75,12 +80,19 @@ export function LessonPractice({ level, deckId, conceptTitle, practice = [], mod
           <Heading id={FLASHCARDS_SECTION.id} className={headingClass}>
             {FLASHCARDS_SECTION.text}
           </Heading>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Use the flashcards to keep terminology and heuristics sharp before you move on.
-          </p>
-          <div className="mt-4">
-            <FlashcardWidget deckId={deckId} />
-          </div>
+          {deck && deck.cards.length > 0 ? (
+            <>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Use the flashcards to keep terminology and heuristics sharp before you move on. Flip a card, then rate
+                how well you recalled it to schedule its next review.
+              </p>
+              <div className="mt-4">
+                <FlashcardWidget deckId={deck.deckId} cards={deck.cards} lessonTitle={conceptTitle} />
+              </div>
+            </>
+          ) : (
+            <p className="mt-2 text-sm text-muted-foreground">This lesson has no flashcards yet.</p>
+          )}
         </section>
       ) : null}
       {practice.length > 0 ? (
@@ -106,7 +118,7 @@ export function LessonPractice({ level, deckId, conceptTitle, practice = [], mod
           Explain the concept in your own words to expose any gaps before tackling the next lesson.
         </p>
         <div className="mt-4">
-          <FeynmanPromptWidget conceptTitle={conceptTitle} />
+          <FeynmanPromptWidget conceptTitle={conceptTitle} lessonPath={lessonPath} />
         </div>
       </section>
     </div>

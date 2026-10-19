@@ -94,4 +94,52 @@ describe("server-authoritative lab progress", () => {
       }),
     }));
   });
+
+  it("rejects an unknown step or a mismatched completion kind before reading the database", async () => {
+    await expect(completeLabStep("user-1", lab, "ghost", { kind: "self_attested" }))
+      .rejects.toMatchObject({ code: "LAB_STEP_NOT_FOUND" });
+    await expect(completeLabStep("user-1", lab, lab.steps[0].id, { kind: "graded", graderId: "g", graderVersion: "1" }))
+      .rejects.toMatchObject({ code: "LAB_COMPLETION_POLICY_MISMATCH" });
+    expect(mocks.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("stores graded evidence in the existing shape: ISO recordedAt, no browser origin, canonical order", async () => {
+    const basics = getLabById("basics-1")!;
+    mocks.findFirst.mockResolvedValueOnce(null);
+    mocks.create.mockImplementationOnce(({ data }) => Promise.resolve({ ...data }));
+    await expect(completeLabStep("user-1", basics, "write-task", { kind: "graded", graderId: "sv-basics-v2", graderVersion: "1" }))
+      .rejects.toMatchObject({ code: "LAB_PREVIOUS_STEP_INCOMPLETE" });
+
+    mocks.findFirst.mockResolvedValueOnce({
+      id: "attempt-2",
+      currentStepId: "write-task",
+      completedSteps: ["run-starter"],
+      workspace: { "work/tb_counter_unrefactored.sv": "kept" },
+      stepEvidence: { "run-starter": { kind: "self_attested", stepVersion: "1", recordedAt: "2026-10-01T00:00:00.000Z" } },
+      status: "IN_PROGRESS",
+    });
+    mocks.update.mockImplementationOnce(({ data }) => Promise.resolve({ ...data, workspace: { "work/tb_counter_unrefactored.sv": "kept" } }));
+
+    const progress = await completeLabStep("user-1", basics, "write-task", {
+      kind: "graded",
+      graderId: "sv-basics-v2",
+      graderVersion: "1",
+    });
+
+    expect(progress).toEqual({
+      currentStepId: "call-task",
+      completedSteps: ["run-starter", "write-task"],
+      fileBuffers: { "work/tb_counter_unrefactored.sv": "kept" },
+    });
+    const { data } = mocks.update.mock.calls[0][0];
+    expect(data).toMatchObject({ status: "IN_PROGRESS", completedAt: null, currentStepId: "call-task" });
+    expect(data.stepEvidence["run-starter"]).toEqual({ kind: "self_attested", stepVersion: "1", recordedAt: "2026-10-01T00:00:00.000Z" });
+    expect(data.stepEvidence["write-task"]).toEqual({
+      kind: "graded",
+      graderId: "sv-basics-v2",
+      graderVersion: "1",
+      stepVersion: "1",
+      recordedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+    });
+  });
 });

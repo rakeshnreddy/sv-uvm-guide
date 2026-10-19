@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { isFeatureEnabled } from '@/tools/featureFlags';
+import { SITE_FEATURES } from '@/lib/site-features';
 
 type Post = {
   id: string;
@@ -16,7 +16,8 @@ type PostPageProps = {
 };
 
 export default async function PostPage({ params }: PostPageProps) {
-  if (!isFeatureEnabled('community')) {
+  // Community needs several learners' data, so it also needs accounts (SITE_FEATURES.community).
+  if (!SITE_FEATURES.community) {
     notFound();
   }
 

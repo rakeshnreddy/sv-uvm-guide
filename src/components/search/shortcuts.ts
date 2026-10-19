@@ -39,9 +39,13 @@ export interface ShortcutMatch {
   allowWhileTyping: boolean;
 }
 
-/** Routes behind feature flags are only reachable by shortcut when the flag is on. */
+/**
+ * Sections that can be switched off. Their shortcuts work, and are listed in
+ * the help dialog, only while the section is on. KeyboardShortcuts and
+ * ShortcutsHelpDialog pass SITE_FEATURES.dashboard and SITE_FEATURES.community.
+ */
 export interface ShortcutFlags {
-  tracking: boolean;
+  dashboard: boolean;
   community: boolean;
 }
 
@@ -123,9 +127,9 @@ export function toggledThemeName(theme: string | undefined): string {
   return current.endsWith("-dark") ? `${base}-light` : `${base}-dark`;
 }
 
-/** A shortcut route is available only when its feature flag is on. */
+/** A shortcut route is available only while its section is on. */
 export function shortcutRoute(id: ShortcutId, flags: ShortcutFlags): string | undefined {
-  if (id === "go-dashboard" && !flags.tracking) return undefined;
+  if (id === "go-dashboard" && !flags.dashboard) return undefined;
   if (id === "go-community" && !flags.community) return undefined;
   return SHORTCUT_ROUTES[id];
 }
@@ -152,7 +156,7 @@ export function shortcutHelp({ apple, flags }: { apple: boolean; flags: Shortcut
     { id: "go-curriculum", keys: [[alt, "1"]], description: "Go to the curriculum" },
     { id: "go-practice", keys: [[alt, "2"]], description: "Go to practice" },
   ];
-  if (flags.tracking) anywhere.push({ id: "go-dashboard", keys: [[alt, "3"]], description: "Go to your dashboard" });
+  if (flags.dashboard) anywhere.push({ id: "go-dashboard", keys: [[alt, "3"]], description: "Go to your dashboard" });
   if (flags.community) anywhere.push({ id: "go-community", keys: [[alt, "C"]], description: "Go to the community" });
   anywhere.push(
     { id: "toggle-theme", keys: [[alt, "T"]], description: "Switch between light and dark mode" },

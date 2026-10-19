@@ -1,4 +1,5 @@
 import { resolveCurriculumPath } from '@/lib/curriculum-path';
+import { SITE_FEATURES } from '@/lib/site-features';
 import {
   type EngagementActivityLog,
   type EngagementResponse,
@@ -175,7 +176,8 @@ function buildActivityNotification({ activity, preferences }: BuildActivityNotif
         ...base,
         title: 'Community thread active',
         description: `New replies in “${postTitle}”. Share a follow-up when you have a moment.`,
-        href: '/community',
+        // /community answers 404 while its switch is off; the feeds hide "Open" without an href.
+        ...(SITE_FEATURES.community ? { href: '/community' } : {}),
       };
     }
     case 'code_review': {

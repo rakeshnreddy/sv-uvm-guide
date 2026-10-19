@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { authenticateTestLearner } from '../fixtures/auth';
 
+import { getLabById } from '@/lib/lab-registry';
+
+// Anonymous, like the deployed site: lessons and labs need no sign-in.
 test.describe('Curriculum Interaction Gates', () => {
   test.setTimeout(180000);
-  test.beforeEach(async ({ page }) => authenticateTestLearner(page));
 
   test('Interactive Elements: Flashcards and Quiz', async ({ page }) => {
     await page.goto('/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics');
@@ -56,9 +57,19 @@ test.describe('Curriculum Interaction Gates', () => {
       await labLink.scrollIntoViewIfNeeded();
       await expect(labLink).toBeVisible({ timeout: 30000 });
       const labHref = await labLink.getAttribute('href');
-      if (labHref) {
-        const response = await page.request.get(labHref);
-        expect(response.status()).toBeLessThan(400);
+      expect(labHref).toMatch(/^\/practice\/lab\/[a-z0-9-]+$/);
+      const lab = getLabById(labHref!.split('/').pop()!);
+      expect(lab, `${labHref} is a registered lab`).toBeDefined();
+
+      // The static lab page itself: 200 with the lab's title, no sign-in in between.
+      const labPage = await page.context().newPage();
+      try {
+        const response = await labPage.goto(labHref!);
+        expect(response?.status()).toBe(200);
+        expect(new URL(labPage.url()).pathname).toBe(labHref);
+        await expect(labPage.getByRole('heading', { level: 1 })).toHaveText(lab!.title, { timeout: 30000 });
+      } finally {
+        await labPage.close();
       }
     });
 

@@ -9,12 +9,25 @@ import {
   placementQuestions,
   calculatePlacementResults,
   placementCategoryFocus,
+  PLACEMENT_ASSESSMENT_VERSION,
+  PLACEMENT_SCORING_VERSION,
   type PlacementCategory,
   type PlacementQuestion,
   type PlacementAnswer,
+  type PlacementResults,
 } from "@/components/assessment/placementQuizData";
 import type { PlacementPlan } from "@/lib/learning-paths";
-import { routeAnchor } from "@/lib/learning-route-state";
+import { routeAnchor, writeSelectedRoute, type RouteId } from "@/lib/learning-route-state";
+import { useHydrated, useRecord } from "@/lib/learner-store/react";
+import { writeOutcomeMessage, type WriteOutcome } from "@/lib/learner-store/record";
+import { recordActivity } from "@/lib/learner-store/repositories/activity";
+import {
+  addPlacementAttempt,
+  assessmentRecord,
+  latestPlacementAttempt,
+  type PlacementAttempt,
+} from "@/lib/learner-store/repositories/assessments";
+import { usePersistenceTarget } from "@/lib/persistence/target";
 import { cn } from "@/lib/utils";
 
 type Stage = "intro" | "question" | "results";
@@ -28,8 +41,6 @@ interface FeedbackState {
 export interface PlacementQuizProps {
   /** Start lesson, route and skim list for each recommended tier (1–4), resolved on the server from the manifest. */
   plans: Readonly<Record<number, PlacementPlan>>;
-  /** Link the dashboard after the quiz. Only when the tracking feature is on; the dashboard returns 404 otherwise. */
-  showDashboardLink?: boolean;
 }
 
 const panel = "rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-8";
@@ -49,6 +60,55 @@ const textLink = cn("rounded-sm font-medium text-primary underline-offset-4 hove
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
 
 const titleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+const dateFormat = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" });
+
+/** The attempt saved in this browser for a complete result. Percentages are fractions from 0 to 1. */
+export function toPlacementAttempt(
+  results: PlacementResults,
+  answers: readonly PlacementAnswer[],
+  completedAt: number,
+): PlacementAttempt {
+  return {
+    assessmentVersion: results.assessmentVersion,
+    scoringVersion: results.scoringVersion,
+    responses: answers.map(({ questionId, optionId }) => ({ questionId, optionId })),
+    tier: results.recommendedTier.tier,
+    routeId: results.recommendedTier.route.routeId,
+    percent: results.overallPercent,
+    categories: (Object.keys(results.categoryScores) as PlacementCategory[]).map((id) => {
+      const score = results.categoryScores[id];
+      return { id, percent: score.total > 0 ? score.correct / score.total : 0 };
+    }),
+    completedAt,
+  };
+}
+
+/**
+ * The saved attempt's answers, when they rebuild the same plan with the current
+ * questions: every question answered once with a known option, giving the
+ * saved tier and route. Null otherwise (an earlier quiz, or an imported or
+ * edited attempt with missing answers), so "See your plan" never shows a plan
+ * that contradicts the saved result.
+ */
+function replayableAnswers(attempt: PlacementAttempt | null): PlacementAnswer[] | null {
+  if (
+    !attempt ||
+    attempt.assessmentVersion !== PLACEMENT_ASSESSMENT_VERSION ||
+    attempt.scoringVersion !== PLACEMENT_SCORING_VERSION
+  ) {
+    return null;
+  }
+  const answers = attempt.responses.map(({ questionId, optionId }) => ({ questionId, optionId }));
+  const replay = calculatePlacementResults(placementQuestions, answers);
+  if (!replay.isComplete) return null;
+  if (replay.recommendedTier.tier !== attempt.tier || replay.recommendedTier.route.routeId !== attempt.routeId) return null;
+  return answers;
+}
+
+function routeNameFor(plans: Readonly<Record<number, PlacementPlan>>, routeId: RouteId): string {
+  return Object.values(plans).find((plan) => plan.routeId === routeId)?.routeName ?? titleCase(routeId);
+}
 
 const confidenceBand = (value: number) => {
   if (value >= 0.85) return { label: "High", description: "You consistently apply advanced verification patterns." };
@@ -78,13 +138,25 @@ function InlineCode({ text }: { text: string }) {
   );
 }
 
-export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans, showDashboardLink = false }) => {
+export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
   const totalQuestions = placementQuestions.length;
   const [stage, setStage] = useState<Stage>("intro");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [answers, setAnswers] = useState<PlacementAnswer[]>([]);
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
+  const [saveOutcome, setSaveOutcome] = useState<WriteOutcome | null>(null);
+  const [routeConfirmation, setRouteConfirmation] = useState<string | null>(null);
+
+  // The last attempt saved in this browser; shown only after hydration, so the server render stays neutral.
+  const hydrated = useHydrated();
+  const assessments = useRecord(assessmentRecord);
+  const lastAttempt = hydrated ? latestPlacementAttempt(assessments) : null;
+  const lastAnswers = useMemo(() => replayableAnswers(lastAttempt), [lastAttempt]);
+  const { target } = usePersistenceTarget();
+  // Each completed set of answers is saved once (and sent to the account once), whatever re-renders.
+  const savedAnswers = useRef<readonly PlacementAnswer[] | null>(null);
+  const postedAnswers = useRef<readonly PlacementAnswer[] | null>(null);
 
   const questionHeadingRef = useRef<HTMLHeadingElement>(null);
   const resultsHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -102,17 +174,27 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans, showDashboa
 
   useEffect(() => {
     if (!results?.isComplete) return;
-    void fetch("/api/me/assessments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        assessmentId: "placement",
-        assessmentVersion: results.assessmentVersion,
-        scoringVersion: results.scoringVersion,
-        responses: answers,
-      }),
-    }).catch(() => undefined);
-  }, [answers, results]);
+    if (savedAnswers.current !== answers) {
+      savedAnswers.current = answers;
+      const completedAt = Date.now();
+      setSaveOutcome(addPlacementAttempt(toPlacementAttempt(results, answers, completedAt)));
+      recordActivity("placement", completedAt);
+    }
+    // Only signed-in learners whose records live on the server send the attempt to their account.
+    if (target === "server" && postedAnswers.current !== answers) {
+      postedAnswers.current = answers;
+      void fetch("/api/me/assessments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assessmentId: "placement",
+          assessmentVersion: results.assessmentVersion,
+          scoringVersion: results.scoringVersion,
+          responses: answers,
+        }),
+      }).catch(() => undefined);
+    }
+  }, [answers, results, target]);
 
   useEffect(() => {
     const target = pendingFocus.current;
@@ -134,6 +216,30 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans, showDashboa
     setSelectedOption(null);
     setAnswers([]);
     setFeedback(null);
+    setSaveOutcome(null);
+    setRouteConfirmation(null);
+  };
+
+  /** Shows the saved attempt's result again. It was saved when it was taken, so nothing is written or sent. */
+  const showLastResult = () => {
+    if (!lastAnswers) return;
+    const restored = lastAnswers;
+    savedAnswers.current = restored;
+    postedAnswers.current = restored;
+    pendingFocus.current = "results";
+    setAnswers(restored);
+    setFeedback(null);
+    setSelectedOption(null);
+    setSaveOutcome(null);
+    setRouteConfirmation(null);
+    setStage("results");
+  };
+
+  const followRoute = (plan: PlacementPlan) => {
+    writeSelectedRoute(plan.routeId);
+    setRouteConfirmation(
+      `You're following the ${plan.routeName} route. The curriculum page and your dashboard show your next lesson on it.`,
+    );
   };
 
   const recordAnswer = (questionId: string, optionId: string) => {
@@ -183,9 +289,15 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans, showDashboa
     setSelectedOption(null);
     setAnswers([]);
     setFeedback(null);
+    setSaveOutcome(null);
+    setRouteConfirmation(null);
   };
 
   if (stage === "intro") {
+    const lastIsCurrent =
+      lastAttempt !== null &&
+      lastAttempt.assessmentVersion === PLACEMENT_ASSESSMENT_VERSION &&
+      lastAttempt.scoringVersion === PLACEMENT_SCORING_VERSION;
     return (
       <section aria-labelledby="placement-start-heading" className={panel}>
         <h2 id="placement-start-heading" className="text-2xl font-semibold text-foreground">
@@ -193,8 +305,39 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans, showDashboa
         </h2>
         <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
           The questions span SystemVerilog foundations, UVM methodology and debug habits. Each answer shows why it is
-          right or wrong. Harder questions weigh more, and the result names the lesson to start at.
+          right or wrong. Harder questions weigh more, and the result names the lesson to start at. Your result is
+          saved in this browser and shows on your{" "}
+          <Link href="/dashboard" className={cn(textLink, "underline")}>
+            dashboard
+          </Link>
+          .
         </p>
+        {lastAttempt && (
+          <div className="mt-5 rounded-2xl border border-border bg-background p-4 text-sm" data-testid="placement-last-result">
+            {lastIsCurrent ? (
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-foreground">
+                    Your last result: Tier {lastAttempt.tier} on the {routeNameFor(plans, lastAttempt.routeId)} route,{" "}
+                    {formatPercent(lastAttempt.percent)} · {dateFormat.format(lastAttempt.completedAt)}
+                  </p>
+                  {!lastAnswers && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      The full plan for this attempt can&apos;t be rebuilt here. Retake the quiz to see one.
+                    </p>
+                  )}
+                </div>
+                {lastAnswers && (
+                  <Button variant="outline" onClick={showLastResult} className="min-h-[44px]">
+                    See your plan
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <p className="text-foreground">The quiz changed since your last attempt. Retake it.</p>
+            )}
+          </div>
+        )}
         <div className="mt-6">
           <Button ref={startButtonRef} size="lg" onClick={startQuiz} className="min-h-[44px]">
             Start the quiz
@@ -207,6 +350,7 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans, showDashboa
   if (stage === "results" && results) {
     const recommendation = results.recommendedTier;
     const plan = plans[recommendation.tier];
+    const saveMessage = saveOutcome ? writeOutcomeMessage(saveOutcome) : null;
     const confidence = confidenceBand(results.overallPercent);
     const categories = (Object.keys(results.categoryScores) as PlacementCategory[]).map((category) => {
       const score = results.categoryScores[category];
@@ -266,7 +410,13 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans, showDashboa
                 <Link href={`/curriculum#${routeAnchor(plan.routeId)}`} className={secondaryLink}>
                   See the {plan.routeName} route
                 </Link>
+                <Button variant="outline" onClick={() => followRoute(plan)} className="min-h-[44px]">
+                  Follow the {plan.routeName} route
+                </Button>
               </div>
+              <p role="status" aria-live="polite" className="text-sm text-foreground">
+                {routeConfirmation ? <span className="mt-3 block">{routeConfirmation}</span> : null}
+              </p>
               {plan.skim.length > 0 && (
                 <div className="mt-5">
                   <h4 id="placement-skim-heading" className="text-sm font-semibold text-foreground">
@@ -328,15 +478,18 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans, showDashboa
           </div>
         </section>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <Button variant="secondary" onClick={handleRetake} className="min-h-[44px]">
-            Retake the quiz
-          </Button>
-          {showDashboardLink && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="secondary" onClick={handleRetake} className="min-h-[44px]">
+              Retake the quiz
+            </Button>
             <Link href="/dashboard" className={secondaryLink}>
               Go to dashboard
             </Link>
-          )}
+          </div>
+          <p role="status" aria-live="polite" className="text-sm font-medium text-amber-800 dark:text-amber-200">
+            {saveMessage}
+          </p>
         </div>
       </div>
     );

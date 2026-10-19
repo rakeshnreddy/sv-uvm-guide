@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act, cleanup, waitFor } from '@testing-library/react';
 import { useCurriculumProgress } from '@/hooks/useCurriculumProgress';
+import { __resetRecordsForTests } from '@/lib/learner-store/record';
+import { __resetStorageForTests } from '@/lib/learner-store/storage';
 
 const MODULE_ID = 'I-SV-2A_Constrained_Randomization_Fundamentals';
 const LESSON_SLUG = 'index';
@@ -10,6 +12,8 @@ describe('useCurriculumProgress', () => {
   let nowSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    __resetStorageForTests();
+    __resetRecordsForTests();
     localStorage.clear();
     nowSpy = vi
       .spyOn(Date, 'now')
@@ -17,7 +21,11 @@ describe('useCurriculumProgress', () => {
   });
 
   afterEach(() => {
+    cleanup();
     nowSpy.mockRestore();
+    localStorage.clear();
+    __resetStorageForTests();
+    __resetRecordsForTests();
   });
 
   it('records lesson visits and persists metadata to storage', async () => {

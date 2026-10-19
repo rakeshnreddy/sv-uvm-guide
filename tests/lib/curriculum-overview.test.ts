@@ -69,7 +69,7 @@ describe('curriculum overview data', () => {
     expect(all.find((m) => m.id === 'F1A_The_Cost_of_Bugs')?.unlocks).toEqual(['F1B_The_Verification_Mindset']);
   });
 
-  it('lists only available labs from the registry, with sign-in routes', () => {
+  it('lists only available labs from the registry, with lab routes', () => {
     const labs = getAllLabs();
     for (const mod of tiers.flatMap((t) => t.modules)) {
       for (const lab of mod.labs) {
