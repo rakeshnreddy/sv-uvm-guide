@@ -58,6 +58,22 @@ describe('Security Configuration', () => {
       await expect(loadAuthModule()).rejects.toThrow(SECRET_MESSAGE);
     });
 
+    it('allows a missing secret only while next build collects page data, never at runtime', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      removeSecrets();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      vi.stubEnv('NEXT_PHASE', 'phase-production-build');
+      await expect(loadAuthModule()).resolves.toBeDefined();
+
+      // Any other phase (or none, as on the deployed Worker) still fails closed.
+      vi.stubEnv('NEXT_PHASE', 'phase-production-server');
+      await expect(loadAuthModule()).rejects.toThrow(SECRET_MESSAGE);
+      vi.stubEnv('NEXT_PHASE', undefined);
+      await expect(loadAuthModule()).rejects.toThrow(SECRET_MESSAGE);
+      warn.mockRestore();
+    });
+
     it('accepts either secret', async () => {
       removeSecrets();
       vi.stubEnv('NEXTAUTH_SECRET', 'nextauth-secret-at-least-32-characters');

@@ -161,7 +161,7 @@ setup in the dashboard:
    | Setting | Value |
    |---|---|
    | Git repository | `rakeshnreddy/sv-uvm-guide` |
-   | Branch (production) | `deploy/cloudflare` (phase 2: `curriculum-quality-program`) |
+   | Branch (production) | `main` (set 2026-10-19; `main` is fast-forwarded to the integration branch at each checkpoint) |
    | Build command | `npm ci --ignore-scripts && npx prisma generate && npx opennextjs-cloudflare build` |
    | Deploy command | `npx opennextjs-cloudflare deploy` |
    | Non-production branch builds | **Off** (or preview command `npx opennextjs-cloudflare upload`) |
@@ -177,7 +177,12 @@ setup in the dashboard:
    | `SKIP_DEPENDENCY_INSTALL` | `1` | text |
    | `APP_URL` | `https://sv-uvm-guide.rakesh-n99.workers.dev` | text |
    | `NEXT_TELEMETRY_DISABLED` | `1` | text |
-   | `NEXTAUTH_SECRET` | output of `openssl rand -base64 32` | **secret** |
+
+   No build secret is needed: `src/lib/auth.ts` tolerates a missing `NEXTAUTH_SECRET` only while
+   `next build` runs (`NEXT_PHASE=phase-production-build`) and still fails closed at runtime, where
+   the Worker's own `NEXTAUTH_SECRET` secret (Settings → Variables and secrets) is used. The repo's
+   `postinstall` also skips Playwright browser installs when `WORKERS_CI` or `CF_PAGES` is set, so a
+   missing `SKIP_DEPENDENCY_INSTALL` can no longer fail the build (`su: Authentication failure`).
 
    Do **not** add `DATABASE_URL`, `GOOGLE_*`, `GEMINI_API_KEY` or any
    `NEXT_PUBLIC_FEATURE_FLAG_*` variable on the anonymous deploy (see

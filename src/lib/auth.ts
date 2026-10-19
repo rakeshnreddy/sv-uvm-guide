@@ -70,8 +70,13 @@ if (testAuthEnabled) {
 }
 
 const secret = process.env.NEXTAUTH_SECRET ?? process.env.SESSION_SECRET;
+// `next build` imports every route module to read its config, but no request is
+// served while building, so a missing secret only matters at runtime. Fail
+// closed everywhere except the production build phase, so CI and Cloudflare
+// builds need no secret; the deployed Worker must still provide one.
+const isProductionBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
 
-if (!secret) {
+if (!secret && !isProductionBuildPhase) {
   throw new Error(
     "NEXTAUTH_SECRET or SESSION_SECRET must be set to ensure secure sessions.",
   );
