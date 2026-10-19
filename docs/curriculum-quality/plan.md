@@ -237,7 +237,7 @@ Waves overlap when usage allows. A group whose verifier could not run still proc
 
 Status, 2026-10-18: every wave is integrated and deployed. The owner set the order of the remaining work:
 
-1. **No-login mode (in progress).** Owner decision: "do not block anything for login; we can eventually implement it and
+1. **No-login mode (done 2026-10-19; f13e357d, deployed e10696e2).** Owner decision: "do not block anything for login; we can eventually implement it and
    guard it as required; the initial site should work completely."
    - Every visible feature works for an anonymous visitor. That includes labs, flashcard review, progress and dashboard,
      notebook and settings.

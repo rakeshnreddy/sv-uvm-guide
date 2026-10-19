@@ -185,3 +185,11 @@ and the working tree was clean.
 
   It edits src/ and tests/ in the main tree; integrate its result in a clean worktree, test in the browser, deploy, then
   fast-forward `main`. Do not run the visual enrichment or closure sweep while it runs.
+- 2026-10-19: no-login mode integrated (f13e357d), verified (4317 tests, tsc, lint, production and analyzer builds,
+  prerender check, browser walkthrough) and deployed (version e10696e2). `main` was fast-forwarded to the branch (691c7bd7),
+  which also merged PR #392 (its one extra commit was superseded). **Next: phase 6a, visual enrichment**, then resume
+  the 6b closure sweep. Follow-ups:
+  - self-host Monaco instead of loading it from jsDelivr (the privacy policy now discloses the CDN);
+  - add a theme control to the phone menu;
+  - remove or replace the knowledge-graph placeholder behind the opt-in ConceptLink;
+  - when accounts return: navbar overflow at 768 px, and the `POST /api/me/import` route (SERVER_SYNC_READY).
