@@ -65,12 +65,10 @@ Each file is a few very long lines, so search it with Python. Every path in the 
    and runs the full test suite and tsc.
    - Run `npx next lint` and `npx next build` in the worktree before committing: every push deploys to Cloudflare.
    - Commit explicit paths only, with `--no-verify`.
-   - **Checkpoint deploy (user request, 2026-10-18):** after a green integration, with a clean main tree and no agents
-     editing it, deploy from this machine (wrangler is logged in):
-     `PATH=$HOME/.nvm/versions/node/v22.23.3/bin:$PATH APP_URL=https://sv-uvm-guide.rakesh-n99.workers.dev NEXTAUTH_SECRET=local-build-only npm run cf:deploy`,
-     then curl https://sv-uvm-guide.rakesh-n99.workers.dev for a page only the new build has, and delete `.open-next/`.
-     Cloudflare Workers Builds (watching `deploy/cloudflare`) fails instantly as of 2026-10-18; the user must check its log
-     in the dashboard before pushes can deploy by themselves.
+   - **Checkpoint deploy:** Cloudflare Workers Builds deploys every push to `main` (fixed 2026-10-19, see
+     docs/deploy/cloudflare.md). After a green integration, fast-forward `main`
+     (`git push origin curriculum-quality-program:main`), then check the GitHub check "Workers Builds: sv-uvm-guide"
+     on the commit and curl the live site. Fallback: the local `npm run cf:deploy` described in the runbook.
    - Load-related timeouts in `feature-gating`, `expert-index` and `tests/qa/*` pass when the file is run alone.
 6. **Escalated groups:** read the `open` findings and fix them yourself or with a targeted agent, then integrate.
    `author-args-w5-w6.json` has the full author briefs, for any group that must be re-authored.
