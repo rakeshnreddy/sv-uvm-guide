@@ -1,8 +1,9 @@
 import React from 'react';
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import PracticeHub from '@/components/practice/PracticeHub';
 import { loadInterviewBanks } from '@/app/(learning)/interview-prep/interview-banks';
-import { getAllLabs, getLabById } from '@/lib/lab-registry';
+import { getAllLabs, getLabById, labCheckSummary } from '@/lib/lab-registry';
+import { labProgressRecords, labRecordId } from '@/lib/learner-store/repositories/labs';
 import { getLabLessons, getPracticePages } from '@/lib/practice-links';
 
 describe('PracticeHub', () => {
@@ -55,7 +56,56 @@ describe('PracticeHub', () => {
       expect(within(card).getByText('Learn it in')).toBeInTheDocument();
       const hrefs = within(card).getAllByRole('link').map((a) => a.getAttribute('href'));
       expect(hrefs).toContain(getLabLessons(lab)[0].href);
-      expect(card).toHaveTextContent('Sign in to open.');
+      expect(card).toHaveTextContent(`${labCheckSummary(lab)}. Progress is saved in this browser.`);
+      expect(card).not.toHaveTextContent(/sign[ -]in/i);
+    }
+  });
+
+  it('says how each lab is checked and that progress stays in this browser', () => {
+    render(<PracticeHub />);
+    const labs = screen.getByRole('region', { name: 'Labs' });
+    expect(labs).toHaveTextContent(
+      'Guided labs with starter code, step-by-step instructions and reference solutions. Your progress is saved in this browser.',
+    );
+    expect(labs).not.toHaveTextContent(/sign[ -]in/i);
+    for (const id of ['basics-1', 'simple-dut-1']) {
+      const card = screen.getByRole('link', { name: getLabById(id)!.title }).closest('li') as HTMLElement;
+      expect(card).toHaveTextContent('Auto-checked steps (structural, in your browser). Progress is saved in this browser.');
+    }
+    const selfChecked = screen.getByRole('link', { name: getLabById('pss-portable-intent')!.title }).closest('li') as HTMLElement;
+    expect(selfChecked).toHaveTextContent('Self-checked steps: you mark each one complete. Progress is saved in this browser.');
+  });
+
+  it('shows this browser\'s progress on an available lab card, and nothing before there is any', () => {
+    const lab = getLabById('basics-1')!;
+    try {
+      render(<PracticeHub />);
+      expect(screen.queryByTestId('lab-progress-badge')).not.toBeInTheDocument();
+      cleanup();
+
+      labProgressRecords.set(labRecordId(lab.id, lab.version), {
+        labId: lab.id,
+        labVersion: lab.version,
+        currentStepId: lab.steps[1].id,
+        completedSteps: [lab.steps[0].id],
+        stepEvidence: {},
+        fileBuffers: {},
+        status: 'in_progress',
+        startedAt: 1_000,
+        updatedAt: 2_000,
+      });
+      render(<PracticeHub />);
+      const badges = screen.getAllByTestId('lab-progress-badge');
+      expect(badges).toHaveLength(1);
+      const card = screen.getByRole('link', { name: lab.title }).closest('li') as HTMLElement;
+      expect(card).toContainElement(badges[0]);
+      expect(badges[0]).toHaveTextContent(`${lab.title}: In progress · step 2 of ${lab.steps.length}`);
+      expect(badges[0].closest('a')).toBeNull();
+    } finally {
+      // Unmount first, so removing the record does not update a mounted badge outside act().
+      cleanup();
+      labProgressRecords.remove(labRecordId(lab.id, lab.version));
+      window.localStorage.clear();
     }
   });
 

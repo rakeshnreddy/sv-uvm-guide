@@ -1,3 +1,21 @@
+/**
+ * The flashcard deck registry. Server only: lesson pages resolve their deck
+ * here, in the LessonPractice server component, and pass only that deck's
+ * cards to the client FlashcardWidget, so the registry (every deck, about
+ * 600 KB) never reaches a lesson page's JavaScript. The review page loads
+ * decks one at a time with src/lib/flashcard-deck-loaders.ts instead. No
+ * 'use client' module may import this file: the 'server-only' marker makes
+ * such an import fail the build, and tests/lib/flashcard-registry.test.ts
+ * checks it too (vitest aliases the marker to an empty module).
+ *
+ * scripts/check-mdx.mjs reads this file as text with regular expressions:
+ * keep the flashcardDecks and deckAliases object literals in their current
+ * shape, each opened on its declaration line and closed by a line that holds
+ * only the closing brace and semicolon.
+ */
+import 'server-only';
+
+import type { DeckCards, FlashcardCard } from './flashcard-deck-loaders';
 import F1A_Cost_of_Bugs from '../../content/flashcards/F1A_Cost_of_Bugs.json';
 import F1B_Verification_Mindset from '../../content/flashcards/F1B_Verification_Mindset.json';
 import F1C_Why_SystemVerilog from '../../content/flashcards/F1C_Why_SystemVerilog.json';
@@ -122,7 +140,7 @@ export interface RawFlashcard {
   back?: string;
 }
 
-export const flashcardDecks: Record<string, any[]> = {
+export const flashcardDecks: Record<string, RawFlashcard[]> = {
   F1A_Cost_of_Bugs,
   F1B_Verification_Mindset,
   F1C_Why_SystemVerilog,
@@ -240,11 +258,17 @@ export const flashcardDecks: Record<string, any[]> = {
   'E-EMU-1_Emulation': E_EMU_1_Emulation,
 };
 
+/** The canonical deck ids: the registry's own keys, before the aliases below are added. */
+const CANONICAL_DECK_IDS: readonly string[] = Object.freeze(Object.keys(flashcardDecks));
+const CANONICAL_DECK_ID_SET: ReadonlySet<string> = new Set(CANONICAL_DECK_IDS);
+
 /**
  * Lesson frontmatter IDs for modules that were split after their combined
  * deck was written. Each alias points at the deck that covers the module.
+ * Aliases share the canonical deck's cards and card ids; learner state is
+ * always keyed by the canonical id.
  */
-const deckAliases: Record<string, string> = {
+export const deckAliases: Record<string, string> = {
   'I-UVM-1A_Components': 'I-UVM-1_UVM_Intro',
   'I-UVM-1B_The_UVM_Factory': 'I-UVM-4_Factory_and_Overrides',
   'I-UVM-1C_UVM_Phasing': 'I-UVM-5_Phasing_and_Synchronization',
@@ -252,6 +276,51 @@ const deckAliases: Record<string, string> = {
 
 for (const [alias, target] of Object.entries(deckAliases)) {
   if (!flashcardDecks[alias] && flashcardDecks[target]) flashcardDecks[alias] = flashcardDecks[target];
+}
+
+/** Every canonical deck id, in registry order (aliases excluded). */
+export function listCanonicalDeckIds(): string[] {
+  return [...CANONICAL_DECK_IDS];
+}
+
+/** The canonical id for a deck id or alias, or null when neither is registered. */
+export function canonicalDeckId(deckId: string): string | null {
+  if (CANONICAL_DECK_ID_SET.has(deckId)) return deckId;
+  const target = Object.prototype.hasOwnProperty.call(deckAliases, deckId) ? deckAliases[deckId] : undefined;
+  return target !== undefined && CANONICAL_DECK_ID_SET.has(target) ? target : null;
+}
+
+const resolvedDecks = new Map<string, DeckCards>();
+
+/**
+ * {id, front, back} for a registry deck. The same mapping as normalizeDeckCards
+ * in flashcard-deck-loaders.ts, kept here so the server registry imports only
+ * types from that module and never pulls its per-deck dynamic imports into the
+ * server bundle (tests/lib/flashcard-registry.test.ts checks both agree).
+ */
+function toFlashcardCards(deckId: string, raw: readonly RawFlashcard[]): FlashcardCard[] {
+  return raw.map((card, index) => ({
+    id: typeof card.id === 'string' && card.id.length > 0 ? card.id : `${deckId}-${index}`,
+    front: card.question ?? card.front ?? '',
+    back: card.answer ?? card.back ?? '',
+  }));
+}
+
+/**
+ * A lesson's deck as plain {id, front, back} cards (question|front,
+ * answer|back) under its canonical deck id, so an alias and its target share
+ * one deck id and one set of card ids. Null when the id is not registered.
+ */
+export function getDeckCards(deckId: string): DeckCards | null {
+  const canonical = canonicalDeckId(deckId);
+  if (canonical === null) return null;
+  let deck = resolvedDecks.get(canonical);
+  if (!deck) {
+    const cards = toFlashcardCards(canonical, flashcardDecks[canonical] ?? []).map((card) => Object.freeze(card));
+    deck = Object.freeze({ deckId: canonical, cards: Object.freeze(cards) });
+    resolvedDecks.set(canonical, deck);
+  }
+  return deck;
 }
 
 export default flashcardDecks;

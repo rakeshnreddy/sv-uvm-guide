@@ -5,10 +5,11 @@ import matter from "gray-matter";
 import { compileMDX } from "next-mdx-remote/rsc";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LessonPractice } from "@/components/curriculum/LessonPractice";
 import { getMdxComponents } from "@/generated/mdx-component-registry";
+import { getDeckCards } from "@/lib/flashcard-decks";
 import { LESSON_PRACTICE_SLOT, lessonRemarkPlugins } from "@/lib/curriculum/lesson-mdx";
 import type { TocEntry } from "@/lib/curriculum/remark-heading-ids";
 import { getAllLabs } from "@/lib/lab-registry";
@@ -31,7 +32,14 @@ async function renderLesson(source: string, lessonSlug: string[], deckId?: strin
   const components = {
     ...getMdxComponents([], { lessonSlug }),
     [LESSON_PRACTICE_SLOT]: (props: { level?: string }) => (
-      <LessonPractice level={props.level} deckId={deckId} conceptTitle="Lesson" practice={practice} moduleCode="X" />
+      <LessonPractice
+        level={props.level}
+        deckId={deckId}
+        deck={deckId ? getDeckCards(deckId) : null}
+        conceptTitle="Lesson"
+        practice={practice}
+        moduleCode="X"
+      />
     ),
   };
   const { content } = await compileMDX({
@@ -47,8 +55,33 @@ async function renderLesson(source: string, lessonSlug: string[], deckId?: strin
 }
 
 const IUVM3B = ["T2_Intermediate", "I-UVM-3B_Advanced_Sequencing_and_Layering", "virtual-sequences"];
+const IUVM3B_DECK = "I-UVM-3B_Advanced_Sequencing";
+
+/** Text as renderToStaticMarkup escapes it. */
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
+}
+
+/** The flashcards <section>, from its heading to its closing tag. */
+function flashcardsSection(html: string): string {
+  const start = html.lastIndexOf("<section", html.indexOf('id="reinforce-the-essentials"'));
+  return html.slice(start, html.indexOf("</section>", start));
+}
 
 describe("the lesson page's MDX pipeline", () => {
+  beforeEach(() => {
+    // framer-motion (the flashcard widget) uses layout effects under jsdom; React warns about them while rendering to a string.
+    const originalError = console.error;
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      if (typeof args[0] === "string" && args[0].includes("useLayoutEffect does nothing on the server")) return;
+      originalError(...args);
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("renders <BeforeYouStart /> and <NextLesson /> without props, from the lesson being rendered", async () => {
     const { html } = await renderLesson(
       "## Quick Take\n\nIntro.\n\n<BeforeYouStart />\n\n## References & Next Topics\n\n<NextLesson />\n",
@@ -63,7 +96,7 @@ describe("the lesson page's MDX pipeline", () => {
     const { html, toc } = await renderLesson(
       "## Quick Take\n\n## Push Further\n\n### Expert: scale\n\n## Practice & Reinforce\n\nQuiz.\n\n## References & Next Topics\n",
       IUVM3B,
-      "I-UVM-3B_Advanced_Sequencing_and_Layering",
+      IUVM3B_DECK,
     );
     expect(html).toContain('<h2 id="quick-take">Quick Take</h2>');
     expect(html).toContain('<h3 id="expert-scale">Expert: scale</h3>');
@@ -82,6 +115,33 @@ describe("the lesson page's MDX pipeline", () => {
     expect(toc.filter((entry) => entry.expert).map((entry) => entry.id)).toEqual(["push-further", "expert-scale"]);
   });
 
+  it("server-renders the lesson's first flashcard inside the flashcards section", async () => {
+    const deck = getDeckCards(IUVM3B_DECK);
+    expect(deck?.cards.length).toBeGreaterThan(1);
+    const { html } = await renderLesson("## Practice & Reinforce\n\n## References & Next Topics\n", IUVM3B, IUVM3B_DECK);
+    const section = flashcardsSection(html);
+    expect(section).toContain(escapeHtml(deck!.cards[0].front));
+    expect(section).toMatch(/Card (?:<!-- -->)?1(?:<!-- -->)? of (?:<!-- -->)?\d+/);
+    expect(section).not.toContain(escapeHtml(deck!.cards[1].front));
+    expect(section).not.toContain("No flashcards available");
+    // The card is the first element with an explicit role="button" in the section, and the widget adds no <section>.
+    expect(section.match(/role="button"/g)).toHaveLength(1);
+    expect(section.indexOf('role="button"')).toBeLessThan(section.indexOf('aria-label="Next card"'));
+    expect(section).toContain('aria-pressed="false"');
+    expect(html.match(/<section/g)).toHaveLength(2);
+  });
+
+  it("resolves an aliased deck and says so when a deck has no cards", async () => {
+    const alias = await renderLesson("## Practice & Reinforce\n", IUVM3B, "I-UVM-1A_Components");
+    expect(flashcardsSection(alias.html)).toContain(escapeHtml(getDeckCards("I-UVM-1_UVM_Intro")!.cards[0].front));
+
+    const missing = await renderLesson("## Practice & Reinforce\n", IUVM3B, "No_Such_Deck");
+    expect(missing.html).toContain('id="reinforce-the-essentials"');
+    expect(flashcardsSection(missing.html)).toContain("This lesson has no flashcards yet.");
+    expect(missing.html).not.toContain('role="button"');
+    expect(missing.html.match(/<section/g)).toHaveLength(2);
+  });
+
   it("offers the module's labs, exercises and models in the practice block (G30-PAGE-13)", async () => {
     const practice = getPracticeForModule("E-PSS-1_Portable_Stimulus_Standard", "E-PSS-1_Portable_Stimulus_Standard/index", getAllLabs());
     expect(practice.some((entry) => entry.item.kind === "lab")).toBe(true);
@@ -94,7 +154,7 @@ describe("the lesson page's MDX pipeline", () => {
     expect(toc.map((entry) => entry.id)).toEqual(["knowledge-check", "hands-on-practice", "teach-it-back", "references--next-topics"]);
     expect(html).toContain('<h2 id="hands-on-practice"');
     expect(html).toContain('href="/practice/lab/pss-portable-intent"');
-    expect(html).toContain("Sign in to run labs.");
+    expect(html).not.toContain("Sign in");
     expect(html.indexOf('id="hands-on-practice"')).toBeLessThan(html.indexOf('id="references--next-topics"'));
   });
 

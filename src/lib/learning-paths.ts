@@ -824,7 +824,8 @@ function resolvePractice(
       kind: 'lab',
       kindLabel,
       label: resolved.title,
-      ...(resolved.href ? { href: resolved.href, note: 'sign-in required' } : { note: 'coming soon' }),
+      // An available lab needs nothing to open (its progress stays in this browser); one that is not available is text only.
+      ...(resolved.href ? { href: resolved.href } : { note: 'coming soon' }),
     };
   }
   if (item.kind === 'lesson') {

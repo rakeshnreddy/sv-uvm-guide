@@ -1,33 +1,30 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { MessageSquarePlus } from "lucide-react";
-import React, { useState } from "react";
+import React from "react";
 
-import { Button } from "@/components/ui/Button";
+import { useServerFeature } from "@/lib/persistence/target";
 
-const AIAssistantDialog = dynamic(() => import("./AIAssistantDialog"), {
+// The button and the dialog live in a lazy chunk, so this gate is all the
+// (learning) layout's client bundle carries. ssr:false costs nothing:
+// useServerFeature is false on the server and until hydration.
+const AIAssistantLauncher = dynamic(() => import("./AIAssistantLauncher"), {
   ssr: false,
   loading: () => null,
 });
 
+/**
+ * The gate for the floating AI tutor. The tutor needs a server secret and a
+ * per-learner rate limit, so this renders nothing, loads no launcher chunk and
+ * never requests /api/ai/* unless the AI tutor is on and a learner is signed
+ * in. The (learning) layout also mounts it only when SITE_FEATURES.aiTutor is on.
+ */
 export default function AIAssistantWidget() {
-  const [isOpen, setIsOpen] = useState(false);
+  const enabled = useServerFeature("aiTutor");
 
-  if (isOpen) {
-    return <AIAssistantDialog onClose={() => setIsOpen(false)} />;
+  if (!enabled) {
+    return null;
   }
 
-  return (
-    <div className="fixed bottom-6 right-6 z-[9998]">
-      <Button
-        onClick={() => setIsOpen(true)}
-        size="lg"
-        className="flex h-16 w-16 items-center justify-center rounded-full bg-primary p-0 shadow-2xl hover:bg-primary/90"
-        aria-label="Open AI assistant"
-      >
-        <MessageSquarePlus aria-hidden="true" size={28} />
-      </Button>
-    </div>
-  );
+  return <AIAssistantLauncher />;
 }

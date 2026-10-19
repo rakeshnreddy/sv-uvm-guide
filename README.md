@@ -50,7 +50,7 @@ The `.env.example` file in the project root documents all supported variables. C
 * Firebase credentials (`NEXT_PUBLIC_FIREBASE_*`) – optional locally; leave blank to use the mocked client.
 * `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` – required to enable Google sign-in.
 * `GEMINI_API_KEY` – enables AI-driven helpers and feedback flows.
-* Feature flag overrides (`NEXT_PUBLIC_FEATURE_FLAG_*`, `FEATURE_FLAGS_FORCE_ON`) – useful for unlocking in-progress UI.
+* Feature flag overrides (`NEXT_PUBLIC_FEATURE_FLAG_*` only: `COMMUNITY`, `TRACKING`, `PERSONALIZATION`, `FAKE_COMMENTS`, `ACCOUNT_UI`, `AI_TUTOR`, `SIMULATION`) – all off by default and inlined at build time, so rebuild after changing one. There is no global force-on switch. `TRACKING` and `PERSONALIZATION` only preview draft pages and stay off in production; `AI_TUTOR`, `SIMULATION` and `COMMUNITY` also need `ACCOUNT_UI` and their backends; see [docs/deploy/cloudflare.md](docs/deploy/cloudflare.md).
 * Build tooling flags (`ANALYZE`, `BUNDLE_ANALYZER_*`, `BUNDLE_BASELINE_PATH`) – power bundle reports and guard rails enforced by `npm run bundle:check`.
 * Commit metadata (`NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA`, `NEXT_PUBLIC_COMMIT_SHA`) – shown in dashboards/downloads when populated by CI.
 

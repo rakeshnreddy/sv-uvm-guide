@@ -1,18 +1,15 @@
+import { notFound } from 'next/navigation';
 import InfoPage from '@/components/templates/InfoPage';
-import { isFeatureEnabled } from '@/tools/featureFlags';
+import { SITE_FEATURES } from '@/lib/site-features';
 
+/*
+ * The assessment center is mostly mock content, so it is hidden (404,
+ * unlinked and out of the sitemap) unless it is switched on for a preview
+ * build (SITE_FEATURES.assessmentCenter).
+ */
 export default async function AssessmentPage() {
-  if (!isFeatureEnabled('tracking')) {
-    return (
-      <InfoPage
-        title="Assessment Center"
-        description="Test your skills and track your progress."
-      >
-        <p className="text-sm text-muted-foreground">
-          The assessment center is currently disabled while we focus on the core learning path.
-        </p>
-      </InfoPage>
-    );
+  if (!SITE_FEATURES.assessmentCenter) {
+    notFound();
   }
 
   const ComprehensiveAssessmentSystem = (await import('@/components/assessment/ComprehensiveAssessmentSystem')).default;

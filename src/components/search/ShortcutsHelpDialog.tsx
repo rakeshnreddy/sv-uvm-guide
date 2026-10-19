@@ -3,7 +3,7 @@
 import React, { Fragment, useId, useRef } from "react";
 import { X } from "lucide-react";
 
-import { featureFlags } from "@/tools/featureFlags";
+import { SITE_FEATURES } from "@/lib/site-features";
 
 import { isApplePlatform } from "./platform";
 import { MODAL_LAYER, shellStore, useShellState } from "./shell-store";
@@ -56,7 +56,11 @@ function ShortcutsHelpPanel() {
   const descriptionId = useId();
   useModalDialog(panelRef, { onClose: shellStore.closeHelp });
   const apple = isApplePlatform();
-  const groups = shortcutHelp({ apple, flags: { tracking: featureFlags.tracking, community: featureFlags.community } });
+  // Only the sections that are on (fixed at build time) get a "Go to" row.
+  const groups = shortcutHelp({
+    apple,
+    flags: { dashboard: SITE_FEATURES.dashboard, community: SITE_FEATURES.community },
+  });
 
   return (
     <div className={`fixed inset-0 ${MODAL_LAYER} flex items-start justify-center overflow-y-auto px-4 py-6 sm:py-[10vh]`}>

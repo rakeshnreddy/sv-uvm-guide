@@ -28,6 +28,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // Next aliases 'server-only' per bundling layer; tests run server modules
+      // directly, so point it at Next's own empty build of the marker module.
+      'server-only': path.resolve(__dirname, './node_modules/next/dist/compiled/server-only/empty.js'),
     },
   },
 });

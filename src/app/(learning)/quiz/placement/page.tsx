@@ -6,7 +6,6 @@ import { placementTierRecommendations } from '@/components/assessment/placementQ
 import { curriculumData } from '@/lib/curriculum-data';
 import { getAllLabs } from '@/lib/lab-registry';
 import { resolvePlacementPlan, resolveRoutes, type PlacementPlan } from '@/lib/learning-paths';
-import { isFeatureEnabled } from '@/tools/featureFlags';
 
 export const metadata: Metadata = {
   title: 'Find your level',
@@ -44,7 +43,6 @@ export default function PlacementQuizPage() {
       resolvePlacementPlan(recommendation.route, routes),
     ]),
   );
-  const tracking = isFeatureEnabled('tracking');
 
   return (
     <div className="mx-auto max-w-5xl space-y-10 pb-16">
@@ -60,7 +58,7 @@ export default function PlacementQuizPage() {
         </p>
       </header>
 
-      <PlacementQuiz plans={plans} showDashboardLink={tracking} />
+      <PlacementQuiz plans={plans} />
 
       <section aria-labelledby="placement-coverage-heading">
         <h2 id="placement-coverage-heading" className="text-xl font-semibold text-foreground">
@@ -112,16 +110,6 @@ export default function PlacementQuizPage() {
             expert index
           </Link>
           .
-          {tracking && (
-            <>
-              {' '}
-              For practice tabs, analytics and project-style evaluations, open the{' '}
-              <Link href="/assessment" className={inlineLink}>
-                assessment center
-              </Link>
-              .
-            </>
-          )}
         </p>
       </section>
     </div>

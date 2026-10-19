@@ -1,5 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
+import { authenticateTestLearner, requireAccountsMode } from '../fixtures/auth';
+
 test('sequence arbitration page next link navigates to sequence libraries', async ({ page }) => {
   await page.goto('/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration');
   const nextLessonLink = page.getByRole('link', { name: /^Next lesson Sequence Libraries & Arbitration Control/i });
@@ -23,6 +25,9 @@ async function accountUiEnabled(page: Page): Promise<boolean> {
   const flags = await (await page.request.get('/api/feature-flags')).json();
   return Boolean(flags.accountUI);
 }
+
+/** Paths a learning page must never request while accounts are off. */
+const ACCOUNT_REQUEST = /\/api\/(auth|me)\//;
 
 test.describe('Advanced Navigation Features', () => {
 
@@ -97,6 +102,17 @@ test.describe('Advanced Navigation Features', () => {
     await expect(page).toHaveURL('/practice');
   });
 
+  test('should go to the dashboard with Alt+3, and list it in the shortcuts help', async ({ page }) => {
+    await page.keyboard.press('?');
+    const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    await expect(help.getByRole('cell', { name: 'Go to your dashboard' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(help).toHaveCount(0);
+
+    await page.keyboard.press('Alt+Digit3');
+    await expect(page).toHaveURL('/dashboard');
+  });
+
   test('should list the shortcuts in a help dialog opened with "?" (G30-SRCH-05)', async ({ page }) => {
     await page.keyboard.press('?');
     const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
@@ -110,41 +126,27 @@ test.describe('Advanced Navigation Features', () => {
     await expect(help).toBeVisible();
   });
 
-  test('should hide account UI unless accountUI is on (G30-SIDE-V07)', async ({ page }) => {
+  test('should show no account UI and request no account data on the default site (G30-SIDE-V07)', async ({ page }) => {
     test.skip(await accountUiEnabled(page), 'accountUI is on for this server; this checks the default build.');
+    const accountRequests: string[] = [];
+    page.on('request', (request) => {
+      if (ACCOUNT_REQUEST.test(new URL(request.url()).pathname)) accountRequests.push(request.url());
+    });
+    await page.goto('/curriculum');
+    await waitForShell(page);
+
+    const banner = page.getByRole('banner');
     await expect(page.getByTestId('notification-button')).toHaveCount(0);
     await expect(page.getByTestId('user-profile-button')).toHaveCount(0);
-    await expect(page.getByText(/sign out/i)).toHaveCount(0);
-  });
-
-  test('should open the account and notification menus on click when accountUI is enabled', async ({ page }) => {
-    test.skip(
-      !(await accountUiEnabled(page)),
-      'accountUI is off on this server. Rebuild with NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI=true (inlined at build time), '
-        + 'or let playwright.config.ts start its own next dev server, which turns every flag on.',
+    await expect(banner.getByText(/sign in|sign out/i)).toHaveCount(0);
+    // The dashboard needs no account: it is in the main navigation (at 1280 px, in the bar itself).
+    await expect(banner.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Dashboard' })).toHaveAttribute(
+      'href',
+      '/dashboard',
     );
 
-    const account = page.getByTestId('user-profile-button');
-    await account.click();
-    await expect(account).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(account).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.getByText('Jane Doe')).toHaveCount(0);
-
-    await page.getByTestId('notification-button').click();
-    await expect(page.getByText('Notifications', { exact: true }).first()).toBeVisible();
-  });
-
-  test('should link to the notifications hub when accountUI is enabled', async ({ page }) => {
-    test.skip(
-      !(await accountUiEnabled(page)),
-      'accountUI is off on this server. Rebuild with NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI=true (inlined at build time), '
-        + 'or let playwright.config.ts start its own next dev server, which turns every flag on.',
-    );
-
-    await page.getByTestId('notification-button').click();
-    await expect(page.getByRole('link', { name: 'View all' })).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    expect(accountRequests).toEqual([]);
   });
 
   test('should show an accessible breadcrumb trail and a "Jump to" lesson list (G30-PAGE-05, G30-PAGE-14, G30-PAGE-V14)', async ({ page }) => {
@@ -234,5 +236,132 @@ test.describe('Lesson page shell', () => {
     await searchInput.fill('WSTRB write strobe');
     const section = page.getByRole('listbox', { name: 'Search results' }).getByRole('option', { name: /WSTRB/ }).first();
     await expect(section).toHaveAttribute('href', /\/curriculum\/T3_Advanced\/B-AXI-2_AXI_Burst_Math\/index#3-wstrb--write-strobe-generation$/);
+  });
+});
+
+test.describe('Phone layout (390 px)', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test('lists Dashboard in the phone menu with a visible focus ring, and the navbar does not overflow', async ({ page }) => {
+    await page.goto('/curriculum');
+    await waitForShell(page);
+
+    const banner = page.getByRole('banner');
+    expect(await banner.evaluate((header) => header.scrollWidth <= header.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    const menuButton = page.getByRole('button', { name: 'Open main menu' });
+    await menuButton.focus();
+    await page.keyboard.press('Enter');
+    const menu = page.getByTestId('mobile-menu');
+    await expect(menu).toBeVisible();
+    const dashboard = menu.getByRole('link', { name: 'Dashboard' });
+    await expect(dashboard).toBeVisible();
+    await expect(dashboard).toHaveAttribute('href', '/dashboard');
+
+    // Reach it from the keyboard, so the focus ring is the :focus-visible one.
+    for (let step = 0; step < 12 && !(await dashboard.evaluate((link) => link === document.activeElement)); step += 1) {
+      await page.keyboard.press('Tab');
+    }
+    await expect(dashboard).toBeFocused();
+    expect(await dashboard.evaluate((link) => getComputedStyle(link).boxShadow)).not.toBe('none');
+
+    await dashboard.press('Enter');
+    await expect(page).toHaveURL('/dashboard');
+  });
+});
+
+test.describe('Tablet layout (768 px)', () => {
+  test.use({ viewport: { width: 768, height: 1024 } });
+
+  test('fits the md bar without sideways scrolling, with Dashboard under "More"', async ({ page }) => {
+    await page.goto('/curriculum');
+    await waitForShell(page);
+    // With accounts on, the account menu (and, signed in, the bell) do not fit yet; the accounts-mode check below covers that.
+    test.skip(await accountUiEnabled(page), 'accountUI is on for this server; this checks the default build.');
+
+    const banner = page.getByRole('banner');
+    await expect(banner.getByRole('combobox', { name: 'Select theme' })).toBeVisible();
+    expect(await banner.evaluate((header) => header.scrollWidth <= header.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    const nav = banner.getByRole('navigation', { name: 'Main' });
+    for (const name of ['Start here', 'Curriculum', 'Practice']) {
+      await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
+    }
+    const more = nav.getByRole('button', { name: 'More' });
+    await more.click();
+    await expect(more).toHaveAttribute('aria-expanded', 'true');
+    await expect(nav.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+  });
+});
+
+test.describe('Account menus (accounts mode)', () => {
+  requireAccountsMode(test);
+
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/curriculum');
+    await waitForShell(page);
+  });
+
+  test('offers a signed-out visitor Sign in, back to this page, and no notification bell', async ({ page }) => {
+    const banner = page.getByRole('banner');
+    const account = banner.getByTestId('user-profile-button');
+    await expect(account).toBeVisible();
+    await expect(banner.getByTestId('notification-button')).toHaveCount(0);
+
+    await account.click();
+    await expect(account).toHaveAttribute('aria-expanded', 'true');
+    await expect(banner.getByText('Not signed in')).toBeVisible();
+    await expect(banner.getByRole('link', { name: 'Sign in' })).toHaveAttribute(
+      'href',
+      '/api/auth/signin?callbackUrl=%2Fcurriculum',
+    );
+    await expect(banner.getByRole('link', { name: 'Settings' })).toBeVisible();
+    await expect(banner.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
+
+    await page.keyboard.press('Escape');
+    await expect(account).toHaveAttribute('aria-expanded', 'false');
+    await expect(account).toBeFocused();
+  });
+
+  test('opens the account and notification menus for a signed-in learner', async ({ page }) => {
+    await authenticateTestLearner(page);
+    await page.reload();
+    await waitForShell(page);
+    const banner = page.getByRole('banner');
+
+    const account = banner.getByTestId('user-profile-button');
+    await account.click();
+    await expect(account).toHaveAttribute('aria-expanded', 'true');
+    await expect(banner.getByRole('link', { name: 'Settings' })).toBeVisible();
+    await expect(banner.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    await expect(banner.getByRole('link', { name: 'Sign in' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(account).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByText('Jane Doe')).toHaveCount(0);
+
+    const bell = banner.getByTestId('notification-button');
+    await bell.click();
+    await expect(bell).toHaveAttribute('aria-expanded', 'true');
+    await expect(banner.getByText('Notifications', { exact: true }).first()).toBeVisible();
+    await expect(banner.getByRole('link', { name: 'View all' })).toHaveAttribute('href', '/notifications');
+  });
+
+  // Open item, kept as a check for when accounts are turned on: from md to lg the
+  // account menu and the bell add about 88 px to a bar that has 720 px of room at
+  // 768 px, so it overflows (see the Navbar component's comment). Turn this into
+  // a plain test once the md bar makes room for them.
+  test.fixme('fits the md bar at 768 px for a signed-in learner', async ({ page }) => {
+    await authenticateTestLearner(page);
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await page.reload();
+    await waitForShell(page);
+    const banner = page.getByRole('banner');
+    await expect(banner.getByTestId('notification-button')).toBeVisible();
+    await expect(banner.getByTestId('user-profile-button')).toBeInViewport({ ratio: 1 });
+    expect(await banner.evaluate((header) => header.scrollWidth <= header.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
 });

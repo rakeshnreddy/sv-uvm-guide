@@ -1,7 +1,9 @@
+import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { isFeatureEnabled } from '@/tools/featureFlags';
-import { requireSession } from '@/lib/auth';
-import { buildEngagementResponse } from '@/lib/engagement';
+import { cookies } from 'next/headers';
+import { notFound } from 'next/navigation';
+import { SITE_FEATURES } from '@/lib/site-features';
+import { isServerPersistenceConfigured } from '@/server/persistence-gate';
 import {
   deriveNotificationsFromEngagement,
   resolveNotificationPreferences,
@@ -11,22 +13,76 @@ import {
 } from '@/lib/notifications';
 import { normalizeUserPreferences } from '@/lib/user-preferences';
 import type { PartialUserPreferences } from '@/lib/user-preferences';
-import { prisma } from '@/lib/prisma';
 
-export const dynamic = 'force-dynamic';
+/*
+ * Notifications exist only for signed-in learners, so the page renders only
+ * while accounts are on (SITE_FEATURES.accounts). The route does not force a
+ * dynamic render: with accounts off (this deploy) it prerenders as a static
+ * 404 and costs no Worker render. With accounts on, the cookies() call below
+ * opts that branch alone into a per-request render, and auth, Prisma and the
+ * engagement queries are imported only there, once the persistence gate is
+ * open. On a half-configured deploy (accounts on, isServerPersistenceConfigured()
+ * false) /api/auth/signin answers 404, so the page offers no Sign in link then.
+ */
 
-function renderPlaceholder() {
+const SIGN_IN_HREF = `/api/auth/signin?callbackUrl=${encodeURIComponent('/notifications')}`;
+
+function NotificationsNotice({ children }: { children: ReactNode }) {
   return (
     <div className="space-y-6">
       <header className="glass-card border border-white/10 bg-[var(--blueprint-glass)] p-8 shadow-xl">
         <h1 className="text-3xl font-semibold text-[var(--blueprint-foreground)]">Notifications</h1>
-        <p className="mt-2 text-sm text-[rgba(230,241,255,0.75)]">
-          Notifications will launch once account preferences are wired up. For now, focus on the core curriculum—there are no
-          alerts you might miss.
-        </p>
+        {children}
       </header>
     </div>
   );
+}
+
+function renderSignedOut() {
+  return (
+    <NotificationsNotice>
+      <p className="mt-2 text-sm text-[rgba(230,241,255,0.75)]">Sign in to see your notifications.</p>
+      {/* A plain link: NextAuth's sign-in page is not an app route, so it needs a full page load. */}
+      <a
+        href={SIGN_IN_HREF}
+        className="mt-4 inline-flex items-center justify-center rounded-full border border-white/20 px-5 py-2 text-sm text-[var(--blueprint-accent)] transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      >
+        Sign in
+      </a>
+    </NotificationsNotice>
+  );
+}
+
+function renderSignInUnavailable() {
+  return (
+    <NotificationsNotice>
+      <p className="mt-2 text-sm text-[rgba(230,241,255,0.75)]">
+        Sign-in is not available on this site yet, so there are no notifications to show. Your progress is kept in this
+        browser.
+      </p>
+      <Link
+        href="/dashboard"
+        className="mt-4 inline-flex items-center justify-center rounded-full border border-white/20 px-5 py-2 text-sm text-[var(--blueprint-accent)] transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      >
+        Open your dashboard
+      </Link>
+    </NotificationsNotice>
+  );
+}
+
+function renderUnavailable() {
+  return (
+    <NotificationsNotice>
+      <p className="mt-2 text-sm text-[rgba(230,241,255,0.75)]">
+        Your notifications could not be loaded. Try again in a moment.
+      </p>
+    </NotificationsNotice>
+  );
+}
+
+/** requireSession() throws AuthenticationError (matched by name, so its module stays a lazy import) when nobody is signed in. */
+function isSignedOutError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AuthenticationError';
 }
 
 function NotificationsEmptyState() {
@@ -83,9 +139,24 @@ function NotificationCard({ notification }: { notification: NotificationItem }) 
 }
 
 export default async function NotificationsPage() {
-  if (!isFeatureEnabled('accountUI')) {
-    return renderPlaceholder();
+  if (!SITE_FEATURES.accounts) {
+    notFound();
   }
+
+  // Outside any try/catch on purpose: reading the request cookies is what makes
+  // this branch render per request, and Next signals that by throwing.
+  cookies();
+
+  // The gate reads the runtime environment, so check it only in this per-request branch.
+  if (!isServerPersistenceConfigured()) {
+    return renderSignInUnavailable();
+  }
+
+  const [{ requireSession }, { prisma }, { buildEngagementResponse }] = await Promise.all([
+    import('@/lib/auth'),
+    import('@/lib/prisma'),
+    import('@/lib/engagement'),
+  ]);
 
   let userId: string;
   let timeZone = 'UTC';
@@ -100,7 +171,11 @@ export default async function NotificationsPage() {
     timeZone = user?.timeZone ?? 'UTC';
     storedPreferences = user?.preferences as PartialUserPreferences | null;
   } catch (error) {
-    return renderPlaceholder();
+    if (isSignedOutError(error)) {
+      return renderSignedOut();
+    }
+    console.error('NotificationsPage: failed to load the account', error);
+    return renderUnavailable();
   }
   const notificationPreferences = normalizeUserPreferences(
     storedPreferences,

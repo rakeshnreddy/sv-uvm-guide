@@ -3,6 +3,7 @@ import { z, ZodError } from "zod";
 
 import { AuthenticationError, requireSession } from "@/lib/auth";
 import { graderRegistry, type LabSubmission } from "@/lib/lab-graders";
+import { checkGradedSubmission, toLabPolicyInput } from "@/lib/lab-progress-policy";
 import { getLabById } from "@/lib/lab-registry";
 import { completeLabStep, LabStepCompletionError } from "@/server/labs";
 
@@ -31,28 +32,11 @@ export async function POST(request: Request) {
     if (!lab || lab.status !== "available") {
       return NextResponse.json({ error: "LAB_NOT_FOUND" }, { status: 404 });
     }
-    if (submission.labVersion !== lab.version) {
-      return NextResponse.json({ error: "LAB_VERSION_MISMATCH" }, { status: 409 });
-    }
 
-    const step = lab.steps.find((candidate) => candidate.id === submission.stepId);
-    if (!step || step.version !== submission.stepVersion) {
-      return NextResponse.json({ error: "LAB_STEP_VERSION_MISMATCH" }, { status: 409 });
-    }
-    if (step.completion !== "graded") {
-      return NextResponse.json({ error: "LAB_STEP_IS_SELF_ATTESTED" }, { status: 409 });
-    }
-    const editablePaths = new Set(lab.assets.filter((asset) => asset.editable).map((asset) => asset.path));
-    if (submission.files.some((file) => !editablePaths.has(file.path))) {
-      return NextResponse.json({ error: "INVALID_SUBMISSION_FILE" }, { status: 400 });
-    }
-    if (!lab.graderId) return NextResponse.json({ error: "GRADER_NOT_CONFIGURED" }, { status: 404 });
-
-    const grader = graderRegistry.get(lab.graderId);
-    if (!grader) return NextResponse.json({ error: "GRADER_NOT_FOUND" }, { status: 503 });
-    if (grader.requiresSandbox) {
-      return NextResponse.json({ error: "GRADING_QUEUE_UNAVAILABLE" }, { status: 503 });
-    }
+    // The same prechecks, codes and statuses the browser lab store applies (src/lib/lab-progress-policy.ts).
+    const check = checkGradedSubmission(toLabPolicyInput(lab), submission, graderRegistry);
+    if (!check.ok) return NextResponse.json({ error: check.code }, { status: check.status });
+    const { grader, step } = check;
     const result = await grader.grade(submission);
     if (!result.success) return NextResponse.json(result);
     const progress = await completeLabStep(session.user.id, lab, step.id, {

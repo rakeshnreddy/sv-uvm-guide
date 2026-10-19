@@ -1,10 +1,13 @@
 # Cloudflare Workers deployment
 
 The site runs on Cloudflare Workers through the OpenNext adapter
-([`@opennextjs/cloudflare`](https://opennext.js.org/cloudflare)). Phase 1 is a
-**lessons-only** deploy: curriculum pages, search, visualizers, practice pages and
-the home page. Sign-in, lab progress, account and dashboard data need PostgreSQL
-and stay off until phase 3.
+([`@opennextjs/cloudflare`](https://opennext.js.org/cloudflare)). It is a
+**no-login** deploy: lessons, search, visualizers, the practice hub, all 23
+available labs, the placement quiz, flashcard review, the notebook, the dashboard
+and settings all work for an anonymous visitor, and learner data stays in that
+visitor's browser. Accounts (sign-in and server-side records), the AI tutor,
+simulation and community need PostgreSQL and secrets; they stay off until
+[Turning accounts and server features on](#turning-accounts-and-server-features-on-later).
 
 | | |
 |---|---|
@@ -46,38 +49,75 @@ go live. `src/middleware.ts` still runs in the Worker and sends the 308 for
 non-canonical lesson URLs. Search is client-side (`src/generated/search-index.json`
 chunk), so it needs no server.
 
-## Behaviour without a database (phase 1)
+## Behaviour without a database
 
-`DATABASE_URL` is **not** set. What happens:
+`DATABASE_URL` is **not** set and accounts are off (`ACCOUNTS_ENABLED`, the
+`accountUI` flag, is false). What happens:
 
 - **Build:** no route calls Prisma. `src/lib/prisma.ts` constructs the client lazily
   (a Proxy), and every Prisma-backed route is dynamic (`ƒ` in the build output:
   `force-dynamic`, or it reads the session cookie first), so nothing is prerendered
   through the database. Verified by a clean build with no `DATABASE_URL`.
-- **Lessons:** the server chunks of `/curriculum/[...slug]`, `/curriculum`, `/`,
-  `/practice` and the visualizer pages contain no Prisma client, `next-auth` or
-  `src/lib/auth.ts` code (the lab page and `/api/me/*` chunks do, as expected).
-  Lessons are served from prerendered assets.
-- **Feature flags:** `community`, `tracking`, `personalization`, `fakeComments` and
-  `accountUI` default to **off** in `src/tools/featureFlags.ts`. Leave the
-  `NEXT_PUBLIC_FEATURE_FLAG_*` and `FEATURE_FLAGS_FORCE_ON` variables **unset**.
-- **Auth:** no Google keys, so `src/lib/auth.ts` registers a placeholder provider
-  that always refuses sign-in. `/api/auth/session` answers `{}` (signed out).
-  `requireSession()` throws `AuthenticationError` before any Prisma call, so the
-  `/api/me/*`, `/api/reviews`, `/api/simulate`, `/api/ai/*` and `/api/labs/run`
-  routes answer **401** (405 for a GET on POST-only routes), and
-  `/practice/lab/[labId]` redirects (307) to `/api/auth/signin`, whose page offers
-  no working provider. `/settings` and `/community/post/*` answer 404 while their
-  flags are off.
+- **Lessons and labs are static.** Lessons, `/curriculum`, `/`, `/practice`, the
+  visualizers and all **23** `/practice/lab/<id>` pages are prerendered by
+  `next build` and served from Worker static assets. The lab page uses
+  `generateStaticParams` with `dynamicParams = false` and `dynamic = 'error'`; its
+  files and solutions are read at build time and travel as props. Nothing
+  redirects: there is no sign-in wall in front of a lab, and an unknown or
+  coming-soon lab id is a 404. `npm run check:prerender`
+  (`scripts/check-prerendered-labs.mjs`, run by `npm run test:ci` after the build)
+  fails unless `.next/prerender-manifest.json` lists every available lab plus the
+  four learner pages below. The server chunks of these pages contain no Prisma
+  client, `next-auth` or `src/lib/auth.ts` code; only the `/api/*` route chunks do.
+- **Learner pages are static too.** `/dashboard`, `/dashboard/review`,
+  `/dashboard/notebook` and `/settings` are prerendered shells with client islands.
+  Progress, flashcard schedules, notes, quiz and placement results live in the
+  visitor's browser storage (`localStorage`, keys starting `sv-uvm-guide:` plus a
+  few legacy keys), labelled "Saved in this browser" on the page. `/settings`
+  offers export (a JSON backup), import (replace or merge) and reset of that data.
+  These pages are reachable from the navigation but kept out of the sitemap, and
+  `robots.txt` keeps disallowing `/dashboard` and `/settings`.
+- **No session traffic.** With accounts off, `ClientProviders` does not mount
+  next-auth's `SessionProvider` and `useAuth()` returns a constant signed-out
+  value, so no page requests `/api/auth/session`, on load or on tab focus. (Before
+  the no-login work every learning page did, and each request was a 100–500 ms
+  dynamic Worker call.)
+- **`/api/auth/*` is closed.** `src/app/api/auth/[...nextauth]/route.ts` is
+  `force-dynamic` and checks `isServerPersistenceConfigured()`
+  (`src/server/persistence-gate.ts`) before it loads `next-auth` or
+  `src/lib/auth.ts`. The gate needs `accountUI` **and** `DATABASE_URL` **and** a real
+  provider (both Google keys) **and** `NEXTAUTH_SECRET` or `SESSION_SECRET`. While it
+  is closed: `GET /api/auth/session` answers `200 {}` (signed out, `no-store`),
+  `POST /api/auth/_log` answers `204`, and every other path, including
+  `/api/auth/signin`, answers `404 {"error":"ACCOUNTS_DISABLED"}`. The old
+  placeholder sign-in page is gone.
+- **Account-only API routes fail closed.** `/api/me/*`, `/api/reviews`,
+  `/api/simulate`, `/api/ai/*` and `/api/labs/run` are unchanged: `requireSession()`
+  throws `AuthenticationError` before any Prisma call, so they answer **401** (405
+  for a GET on POST-only routes). No page calls them while accounts are off; they
+  are the backends for when accounts return.
+- **Hidden pages.** `/notifications`, `/community/**`, `/assessment`, `/resources`,
+  `/projects` and `/history` answer 404 and are neither linked nor in the sitemap
+  while their switches are off (see the flags below).
+- **Feature flags:** `community`, `tracking`, `personalization`, `fakeComments`,
+  `accountUI`, `aiTutor` and `simulation` default to **off** in
+  `src/tools/featureFlags.ts`. They are read only from `NEXT_PUBLIC_FEATURE_FLAG_*`
+  build variables, which Next inlines into the server render and the browser alike,
+  so the two always agree. Leave every `NEXT_PUBLIC_FEATURE_FLAG_*` variable
+  **unset** on this deploy. `tracking` and `personalization` now only preview draft
+  pages (the assessment center; resources, projects and history) and must stay off
+  in production.
 - **Unknown lesson URLs** (`/curriculum/<no such lesson>`) render a 404 on demand.
   The Worker log then shows `StaticAssetsIncrementalCache: Failed to set to
   read-only cache`, which is expected: the read-only cache refuses to store the 404.
-- **NEXTAUTH_SECRET is required anyway.** `src/lib/auth.ts` throws on import when
-  neither `NEXTAUTH_SECRET` nor `SESSION_SECRET` is set. `next build` imports every
-  API route while collecting page data, so the **build** fails without it
-  (`Failed to collect page data for /api/me/notifications`), and at runtime any
-  route that imports it would 500. Set it in both places: a build variable (any
-  random value; nothing is signed at build time) and a Worker secret.
+- **NEXTAUTH_SECRET is still required at build.** `src/lib/auth.ts` throws on import
+  when neither `NEXTAUTH_SECRET` nor `SESSION_SECRET` is set. The auth route now
+  imports it lazily, but `next build` still imports the other API routes
+  (`/api/me/*` and friends) while collecting page data, and they import auth at
+  module load, so the **build** fails without a secret (`Failed to collect page
+  data for /api/me/notifications`), and at runtime those routes would 500. Set it
+  in both places: a build variable (any random value; nothing is signed at build
+  time) and a Worker secret.
 
 ## Size and plan
 
@@ -89,10 +129,15 @@ Measured on the phase-1 build (OpenNext 1.15.1, Next 14.2.35, 163 static pages):
 | Worker startup time | 30 ms | 1 s | 1 s |
 | Static asset files | 406 (largest well under 25 MiB) | 20,000 | 100,000 |
 | CPU per cached lesson page (warm) | **11–27 ms** | **10 ms** | 30 s default |
-| CPU, cold isolate or dynamic route (`/api/auth/session`, lab redirect, 404) | 100–500 ms | 10 ms | 30 s default |
+| CPU, cold isolate or dynamic route (`/api/*`, an on-demand 404) | 100–500 ms | 10 ms | 30 s default |
 
 Cloudflare's current limits page counts only the uncompressed size (64 MiB on both
-plans); the gzip figure is informational.
+plans); the gzip figure is informational. The dynamic-route row was measured on
+`/api/auth/session` and the old lab redirect; the no-login build serves neither on
+a normal page view (labs are static and there is no session fetch), so those
+figures now apply only to the `/api/*` routes and on-demand 404s. Re-measure the
+Worker size and static asset count after the next deploy, since the 23 lab pages
+and four learner pages are now prerendered.
 
 **Verdict: the bundle fits the Free plan, but serving needs Workers Paid
 ($5/month).** Even cached lesson pages consistently use more than Free's 10 ms of
@@ -135,7 +180,8 @@ setup in the dashboard:
    | `NEXTAUTH_SECRET` | output of `openssl rand -base64 32` | **secret** |
 
    Do **not** add `DATABASE_URL`, `GOOGLE_*`, `GEMINI_API_KEY` or any
-   `NEXT_PUBLIC_FEATURE_FLAG_*` variable in phase 1.
+   `NEXT_PUBLIC_FEATURE_FLAG_*` variable on the anonymous deploy (see
+   [Turning accounts and server features on](#turning-accounts-and-server-features-on-later)).
 
 Why each setting:
 
@@ -228,9 +274,79 @@ wrangler, the OpenNext AWS SDK dependencies). `npm run dev`, `npm run build`,
 `cf:*` scripts need Node 22. `tsc` skips dot-directories, so a local `.open-next/`
 never enters `npm run type-check`; `tsconfig.json` needs no change.
 
-## Phase 3 (later): database, sign-in and labs
+## Release checklist and `cf:preview` smoke test
 
-Not done in phase 1. To turn auth, lab progress, account and dashboard back on:
+Run this on the owner's machine once every package of an integration is in, before
+deploying:
+
+1. `npx vitest --run`, `npm run type-check`, `npm run lint`,
+   `npm run validate:flashcards` and `node scripts/check-mdx.mjs content/curriculum`.
+2. Check `df -h` (a build needs about 1.5 GB), then
+   `ANALYZE=true npm run build && npm run bundle:check && npm run check:prerender`.
+   `check:prerender` expects 23 `/practice/lab/<id>` routes plus `/dashboard`,
+   `/dashboard/review`, `/dashboard/notebook` and `/settings`.
+3. `npm run test:e2e:release` (anonymous mode), then `npm run test:e2e:accounts`
+   against a disposable database (see *Running the Playwright suites locally* in
+   `CONTRIBUTING.md`).
+4. `npm run cf:preview` (Node 22, `.dev.vars` with `NEXTAUTH_SECRET`), then, with
+   `B=http://localhost:8787`, check:
+
+   | Check | Expected |
+   |---|---|
+   | `curl -sI $B/practice/lab/basics-1` | `200`, `content-type: text/html` |
+   | `curl -s -D - -H 'RSC: 1' $B/practice/lab/basics-1` (what a client-side navigation fetches) | `200`, `content-type: text/x-component` (an RSC payload, not HTML or an error) |
+   | `curl -sI $B/practice/lab/nope` | `404` |
+   | `curl -sI` on `$B/dashboard`, `$B/dashboard/review`, `$B/dashboard/notebook`, `$B/settings` | `200` each |
+   | `curl -si $B/api/auth/signin` | `404`, body `{"error":"ACCOUNTS_DISABLED"}` |
+   | `curl -si $B/api/auth/session` | `200`, body `{}` |
+   | DevTools → Network on a lesson, a lab, `/dashboard` and `/settings`, including after switching tabs away and back | no request to `/api/auth/*` or `/api/me/*` |
+
+5. Deploy (`npm run cf:deploy`, or push the deploy branch).
+
+## Turning accounts and server features on (later)
+
+Not done on this deploy. Each server feature needs **all** of its pieces in the
+same build and deploy; a half-configured switch either shows nothing or, for
+accounts, a sign-in link that answers 404.
+
+| Feature | Build variables (inlined, so rebuild) | Runtime secrets and services | Also needs |
+|---|---|---|---|
+| Accounts: sign-in, account menu, notifications, account preferences | `NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI=true` | `DATABASE_URL` (or Hyperdrive), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `NEXTAUTH_SECRET` | the database steps below |
+| AI tutor, Teach-it-back and notebook AI feedback | `NEXT_PUBLIC_FEATURE_FLAG_AI_TUTOR=true` | `GEMINI_API_KEY` (optional `GEMINI_MODEL`) | accounts |
+| Server simulation (the lab "Run" panel) | `NEXT_PUBLIC_FEATURE_FLAG_SIMULATION=true` | `SIMULATION_QUEUE_URL`, `SIMULATION_QUEUE_TOKEN` and the isolated runner service | accounts |
+| Community | `NEXT_PUBLIC_FEATURE_FLAG_COMMUNITY=true` | a real backend (today's Firebase client is a mock: posts are denied by `firestore.rules`) | accounts |
+
+The AI tutor, simulation and community switches are ANDed with accounts in
+`src/lib/site-features.ts`. The AI tutor and AI feedback, the simulation panel,
+the notification feed and the account preferences panel also appear only for a
+**signed-in** learner (`useServerFeature` and `useAccountSession` in
+`src/lib/persistence/target.ts`); signed-out visitors keep the local, anonymous
+UI. Leave `TRACKING` and `PERSONALIZATION` off: they only preview draft pages.
+
+What changes when accounts are on and fully configured:
+
+- `ClientProviders` mounts `SessionProvider`, so pages fetch `/api/auth/session`
+  again (on load and on tab focus): budget for those dynamic Worker calls.
+- The persistence gate opens and `/api/auth/*` is served by NextAuth.
+- **Sign-in entry point:** when the learner is signed out, the navbar account menu
+  offers **Sign in**, linking to `/api/auth/signin?callbackUrl=<current path>`.
+  Configure the Google OAuth redirect URI `https://<host>/api/auth/callback/google`.
+- **Learner data stays in the browser.** `SERVER_SYNC_READY` in
+  `src/lib/persistence/accounts.ts` is the constant `false`, so even signed-in
+  learners keep every record (labs, flashcards, notebook, progress, placement) in
+  browser storage, and the dashboard always reads local data. Turning accounts on
+  therefore never hides local progress. Flip `SERVER_SYNC_READY` only after
+  `POST /api/me/import` exists: it must accept the `/settings` export bundle on
+  first sign-in, re-validate every entry and re-grade lab evidence recorded with
+  origin `browser`.
+- If `accountUI` is on but the gate is not configured (for example the Google keys
+  are missing), `SessionProvider` still mounts but `/api/auth/session` answers
+  `200 {}`, so pages quietly stay signed out instead of failing on every focus;
+  the **Sign in** link, however, leads to a 404, and `/notifications` shows
+  "Sign-in is not available on this site yet" instead of a Sign in link.
+  Configure everything together.
+
+Steps:
 
 1. **Database.** Create a hosted Postgres: **Neon** (serverless driver, branchable,
    free tier) or **Supabase** (use the pooled "transaction" connection string, port
@@ -241,6 +357,10 @@ Not done in phase 1. To turn auth, lab progress, account and dashboard back on:
      `"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<id>" }]` to
      `wrangler.jsonc`; or
    - a direct `DATABASE_URL` Worker secret with Neon's serverless driver.
+
+   The persistence gate checks `DATABASE_URL` at request time. With Hyperdrive
+   only, still provide a `DATABASE_URL` value (or extend the gate to accept the
+   binding) or `/api/auth/*` stays closed.
 3. **Prisma on Workers.** In `prisma/schema.prisma`, add
    `previewFeatures = ["driverAdapters"]` to the generator (keep the default output
    location; OpenNext patches the generated client). Install `@prisma/adapter-pg`
@@ -255,16 +375,27 @@ Not done in phase 1. To turn auth, lab progress, account and dashboard back on:
 
    | Secret | Purpose |
    |---|---|
-   | `DATABASE_URL` | Prisma (skip if only Hyperdrive is used) |
-   | `NEXTAUTH_SECRET` | already set in phase 1; keep it |
+   | `DATABASE_URL` | Prisma and the persistence gate |
+   | `NEXTAUTH_SECRET` | already set for the anonymous deploy; keep it |
    | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in; OAuth redirect URI `https://<host>/api/auth/callback/google` |
-   | `GEMINI_API_KEY` | AI tutor routes (optional) |
-   | `SIMULATION_QUEUE_URL`, `SIMULATION_QUEUE_TOKEN` | lab simulation worker (optional) |
+   | `GEMINI_API_KEY` | AI tutor routes (only with the `aiTutor` flag) |
+   | `SIMULATION_QUEUE_URL`, `SIMULATION_QUEUE_TOKEN` | lab simulation worker (only with the `simulation` flag) |
 
    `NEXTAUTH_URL` stays a plain var in `wrangler.jsonc`; point it at the custom
-   domain if one is added.
-5. **Flags.** Turn on `NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI` /
-   `..._TRACKING` / `..._PERSONALIZATION` as **build** variables (they are inlined
-   at build time), one at a time, and redeploy.
-6. **Plan.** Database-backed SSR routes use 100+ ms of CPU per request; they need
-   Workers Paid (already recommended for phase 1, see *Size and plan*).
+   domain if one is added. Never set `AUTH_TEST_MODE` on the Worker: the test
+   identity is refused in production anyway, and it exists only for Playwright.
+5. **Flags.** Add `NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI=true` as a **build** variable
+   (it is inlined at build time) and redeploy. Add `..._AI_TUTOR`, `..._SIMULATION`
+   or `..._COMMUNITY` the same way, each only once its backend from the table above
+   is in place.
+6. **Verify.** With a test Google account: the navbar shows **Sign in** when signed
+   out; signing in returns to the same page; `/api/auth/session` returns the user;
+   local progress is still visible after sign-in; `npm run test:e2e:accounts`
+   passes against a disposable database. Check the navbar at 768 px with a
+   signed-in learner (no sideways scroll; the account menu and the bell do not
+   fit there yet), and once it fits turn the `test.fixme` in
+   `tests/e2e/navigation.spec.ts` into a normal test.
+7. **Plan.** Database-backed SSR routes use 100+ ms of CPU per request; they need
+   Workers Paid (already recommended, see *Size and plan*).
+8. **Later:** add `POST /api/me/import`, then flip `SERVER_SYNC_READY` so signed-in
+   learners' records move to the server stores.

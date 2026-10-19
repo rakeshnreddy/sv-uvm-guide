@@ -1,6 +1,17 @@
 import React from 'react';
+import { notFound } from 'next/navigation';
+import { SITE_FEATURES } from '@/lib/site-features';
 
+/*
+ * A draft page: the resource catalog is not written yet, so the page is
+ * hidden (404, unlinked and out of the sitemap) unless draft pages are
+ * switched on for a preview build (SITE_FEATURES.draftPages).
+ */
 export default function ResourcesPage() {
+  if (!SITE_FEATURES.draftPages) {
+    notFound();
+  }
+
   return (
     <div>
       <h1 className="text-3xl sm:text-4xl font-bold text-accent font-sans mb-6 pb-2 border-b border-border">

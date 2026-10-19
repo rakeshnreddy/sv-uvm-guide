@@ -2,9 +2,10 @@ import React, { useId } from 'react';
 import Link from 'next/link';
 import { Beaker } from 'lucide-react';
 
+import { LabProgressBadge } from '@/components/practice/LabProgressBadge';
 import { LabPrerequisiteList } from '@/components/practice/LearnInLesson';
 import type { LabManifest } from '@/lib/lab-manifest';
-import { getLabById, labRequiresSignIn } from '@/lib/lab-registry';
+import { getLabById, labBadgeProps, labProgressNote } from '@/lib/lab-registry';
 import { getLabPrerequisites } from '@/lib/practice-links';
 import { cn } from '@/lib/utils';
 
@@ -22,10 +23,14 @@ const UNAVAILABLE_LABELS: Readonly<Record<Exclude<LabManifest['status'], 'availa
 };
 
 /**
- * A lab callout inside a lesson (`<LabLink labId="…" />` in MDX):
+ * A lab callout inside a lesson (`<LabLink labId="…" />` in MDX). This is a
+ * server component: it reads the lab registry and hands the client
+ * LabProgressBadge only plain props (labBadgeProps), so the lesson bundle
+ * never includes the registry.
  * - an available lab gets "Launch Lab" (the link name is pinned by
- *   learner-flow.spec), described by a note that the lab needs sign-in
- *   (G30-PRAC-10; see labRequiresSignIn);
+ *   learner-flow.spec), described by labProgressNote ("Your progress is saved
+ *   in this browser."), and a LabProgressBadge beside it that shows this
+ *   browser's progress on the lab once the page has hydrated;
  * - a coming-soon lab gets a "Coming soon" chip and no link, because the lab
  *   route answers 404 for it (G30-PRAC-09);
  * - "Do this lab after <lesson>" appears when a prerequisite is taught later
@@ -46,7 +51,7 @@ export const LabLink = ({ labId }: LabLinkProps) => {
 
   // Null for an available lab; otherwise why it cannot be opened.
   const unavailable = lab.status === 'available' ? null : UNAVAILABLE_LABELS[lab.status];
-  const signIn = labRequiresSignIn(lab);
+  const progressNote = labProgressNote(lab);
   const { doAfter } = getLabPrerequisites(lab);
 
   return (
@@ -65,7 +70,7 @@ export const LabLink = ({ labId }: LabLinkProps) => {
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
               <Link
                 href={`/practice/lab/${lab.id}`}
-                aria-describedby={signIn ? noteId : undefined}
+                aria-describedby={progressNote ? noteId : undefined}
                 className={cn(
                   'inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground no-underline transition-colors hover:bg-primary/90 motion-reduce:transition-none',
                   focusRing,
@@ -73,11 +78,12 @@ export const LabLink = ({ labId }: LabLinkProps) => {
               >
                 Launch Lab
               </Link>
-              {signIn ? (
+              {progressNote ? (
                 <p id={noteId} className="m-0 text-xs text-muted-foreground">
-                  Sign in required: the lab saves your progress to your account.
+                  {progressNote}
                 </p>
               ) : null}
+              <LabProgressBadge {...labBadgeProps(lab)} />
             </div>
           ) : (
             <p className="mb-0 mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">

@@ -1,5 +1,6 @@
 import React from 'react';
 import dynamic from 'next/dynamic';
+import Footer from '@/components/Footer';
 import HeroSection from '@/components/home/HeroSection';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getAllLabs } from '@/lib/lab-registry';
@@ -24,12 +25,17 @@ export default function HomePage() {
   // and never bundle the curriculum (G30-PATH-05; NB2 request 3).
   const routes = summarizeRoutes(resolveRoutes(curriculumData, { labs: getAllLabs() }));
 
+  // The site footer, as on the privacy and terms pages: its site map links a first-time visitor to the
+  // Privacy Policy and Terms, which explain what this site keeps in the browser.
   return (
-    <main className="flex flex-col items-center w-full bg-background">
-      <HeroSection />
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <main className="flex flex-col items-center w-full flex-1 bg-background">
+        <HeroSection />
 
-      <LearningPathsSection routes={routes} />
-      <InteractiveFeaturesSection />
-    </main>
+        <LearningPathsSection routes={routes} />
+        <InteractiveFeaturesSection />
+      </main>
+      <Footer />
+    </div>
   );
 }

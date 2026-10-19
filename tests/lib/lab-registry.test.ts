@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getAllLabs, getLabById, LAB_REGISTRY } from '@/lib/lab-registry';
+import * as labRegistry from '@/lib/lab-registry';
+import {
+  getAllLabs,
+  getLabById,
+  LAB_PROGRESS_NOTE,
+  LAB_REGISTRY,
+  labBadgeProps,
+  labCheckSummary,
+  labProgressNote,
+} from '@/lib/lab-registry';
 
 const repoRoot = process.cwd();
 
@@ -122,6 +131,44 @@ describe('lab-registry utilities', () => {
       const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
       expect(metadata.id).toBe(lab?.id);
       expect(metadata.description).toContain('generated UVM sequence and C bare-metal');
+    });
+  });
+
+  describe('lab entry-point helpers', () => {
+    it('no longer offers a sign-in check: labs open without an account', () => {
+      expect('labRequiresSignIn' in labRegistry).toBe(false);
+    });
+
+    it('labProgressNote says where progress lives for available labs only', () => {
+      expect(LAB_PROGRESS_NOTE).toBe('Your progress is saved in this browser.');
+      for (const lab of getAllLabs()) {
+        expect(labProgressNote(lab), lab.id).toBe(lab.status === 'available' ? LAB_PROGRESS_NOTE : null);
+      }
+    });
+
+    it('labCheckSummary is auto-checked only for labs with a grader and a graded step', () => {
+      for (const lab of getAllLabs()) {
+        const autoChecked = Boolean(lab.graderId) && lab.steps.some((step) => step.completion === 'graded');
+        expect(labCheckSummary(lab), lab.id).toBe(
+          autoChecked ? 'Auto-checked steps (structural, in your browser)' : 'Self-checked steps: you mark each one complete',
+        );
+      }
+      // The copy never promises a compile or a simulation.
+      for (const lab of getAllLabs()) expect(labCheckSummary(lab)).not.toMatch(/compil|simulat|grad/i);
+    });
+
+    it('labBadgeProps passes the badge only plain, serializable lab facts', () => {
+      const lab = getLabById('basics-1')!;
+      const props = labBadgeProps(lab);
+      expect(props).toEqual({
+        labId: 'basics-1',
+        version: lab.version,
+        stepCount: lab.steps.length,
+        title: lab.title,
+        stepIds: lab.steps.map((step) => step.id),
+      });
+      expect(JSON.parse(JSON.stringify(props))).toEqual(props);
+      for (const entry of getAllLabs()) expect(labBadgeProps(entry).stepCount, entry.id).toBe(entry.steps.length);
     });
   });
 });

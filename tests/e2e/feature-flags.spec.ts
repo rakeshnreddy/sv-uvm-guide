@@ -1,56 +1,79 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type APIRequestContext } from '@playwright/test';
 
-const flagsEnabled =
-  process.env.FEATURE_FLAGS_FORCE_ON === 'true' ||
-  process.env.NEXT_PUBLIC_FEATURE_FLAG_COMMUNITY === 'true' ||
-  process.env.NEXT_PUBLIC_FEATURE_FLAG_TRACKING === 'true' ||
-  process.env.NEXT_PUBLIC_FEATURE_FLAG_PERSONALIZATION === 'true' ||
-  process.env.NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI === 'true';
+/*
+ * The default site, as deployed: every NEXT_PUBLIC_FEATURE_FLAG_* is off
+ * (Playwright's default mode is anonymous). Pages that are not ready, or
+ * that need accounts, answer 404 and are not linked from the navigation.
+ *
+ * Flags are inlined at build time, so ask the running server which ones are
+ * on rather than reading this process's environment. A test skips only when
+ * the server reports the draft or accounts flag that turns its page on.
+ */
 
-const describeOrSkip = flagsEnabled ? test.describe.skip : test.describe;
+type ServerFlags = Partial<Record<'community' | 'tracking' | 'personalization' | 'accountUI', boolean>>;
 
-let serverFlagsForceOn = false;
+let serverFlags: ServerFlags = {};
 
-describeOrSkip('feature flag defaults', () => {
+async function loadServerFlags(request: APIRequestContext): Promise<ServerFlags> {
+  const response = await request.get('/api/feature-flags');
+  return response.ok() ? ((await response.json()) as ServerFlags) : {};
+}
+
+/** The hidden pages, and the flags that would turn each one on. */
+const HIDDEN_PAGES: Array<{ path: string; shownWhen: (flags: ServerFlags) => boolean; reason: string }> = [
+  {
+    path: '/community',
+    shownWhen: (flags) => Boolean(flags.community && flags.accountUI),
+    reason: 'community and accountUI are on for this server',
+  },
+  { path: '/notifications', shownWhen: (flags) => Boolean(flags.accountUI), reason: 'accountUI is on for this server' },
+  { path: '/assessment', shownWhen: (flags) => Boolean(flags.tracking), reason: 'tracking (draft preview) is on for this server' },
+  {
+    path: '/projects',
+    shownWhen: (flags) => Boolean(flags.personalization),
+    reason: 'personalization (draft preview) is on for this server',
+  },
+  {
+    path: '/history',
+    shownWhen: (flags) => Boolean(flags.personalization),
+    reason: 'personalization (draft preview) is on for this server',
+  },
+  {
+    path: '/resources',
+    shownWhen: (flags) => Boolean(flags.personalization),
+    reason: 'personalization (draft preview) is on for this server',
+  },
+];
+
+test.describe('hidden pages on the default site', () => {
   test.beforeAll(async ({ request }) => {
-    const res = await request.get('/api/feature-flags');
-    if (res.ok()) {
-      const data = await res.json();
-      serverFlagsForceOn = Object.values(data).some(Boolean);
-    }
+    serverFlags = await loadServerFlags(request);
   });
 
-  test('dashboard route returns 404 when tracking flag is off', async ({ page }) => {
-    test.skip(serverFlagsForceOn, 'Feature flags are forced on for this environment');
-    const response = await page.goto('/dashboard');
+  for (const { path, shownWhen, reason } of HIDDEN_PAGES) {
+    test(`${path} returns 404`, async ({ page }) => {
+      test.skip(shownWhen(serverFlags), reason);
+      const response = await page.goto(path);
 
-    expect(response?.status()).toBe(404);
-    await expect(page.getByText('This page could not be found.')).toBeVisible();
-  });
+      expect(response?.status()).toBe(404);
+      await expect(page.getByText('This page could not be found.')).toBeVisible();
+      // No placeholder copy leaks through.
+      await expect(page.getByText(/will launch|will re-open|currently disabled|is paused|listed here soon/i)).toHaveCount(0);
+    });
+  }
 
-  test('community route returns 404 when community flag is off', async ({ page }) => {
-    test.skip(serverFlagsForceOn, 'Feature flags are forced on for this environment');
-    const response = await page.goto('/community');
+  test('the navigation links no hidden page', async ({ page }) => {
+    test.skip(
+      Boolean(serverFlags.accountUI || serverFlags.personalization || serverFlags.tracking),
+      'A draft or accounts flag is on for this server; this checks the default build.',
+    );
+    await page.goto('/curriculum');
+    await page.locator('html[data-shortcuts-ready]').waitFor({ state: 'attached' });
 
-    expect(response?.status()).toBe(404);
-    await expect(page.getByText('This page could not be found.')).toBeVisible();
-  });
-
-  test('notifications route falls back to placeholder copy', async ({ page }) => {
-    test.skip(serverFlagsForceOn, 'Feature flags are forced on for this environment');
-    await page.goto('/notifications');
-
-    await expect(
-      page.getByText('Notifications will launch once account preferences are wired up.'),
-    ).toBeVisible();
-  });
-
-  test('projects route surfaces placeholder guidance by default', async ({ page }) => {
-    test.skip(serverFlagsForceOn, 'Feature flags are forced on for this environment');
-    await page.goto('/projects');
-
-    await expect(
-      page.getByText('Project workspaces will re-open once personalization features are prioritized.'),
-    ).toBeVisible();
+    const hrefs = await page
+      .locator('header a[href], nav a[href]')
+      .evaluateAll((links) => links.map((link) => new URL((link as HTMLAnchorElement).href).pathname));
+    for (const { path } of HIDDEN_PAGES) expect(hrefs, `a navigation link points at ${path}`).not.toContain(path);
+    expect(hrefs).toContain('/dashboard');
   });
 });

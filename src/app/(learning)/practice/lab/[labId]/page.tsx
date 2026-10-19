@@ -1,17 +1,32 @@
 import type { Metadata } from "next";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
+import React from "react";
 
-import { AuthenticationError, requireSession } from "@/lib/auth";
-import { getLearnerLabAssets } from "@/lib/lab-assets";
-import { getLabById, toLearnerLabDto } from "@/lib/lab-registry";
+import { readLabFilesForBuild } from "@/lib/lab-assets";
+import { toLabPolicyInput } from "@/lib/lab-progress-policy";
+import { getAllLabs, getLabById, toLearnerLabDto } from "@/lib/lab-registry";
 import { getLabBackLink, getLabLessons, getLabPrerequisites } from "@/lib/practice-links";
-import { getLabProgress, labAccessService } from "@/server/labs";
 
 import LabClientPage from "./LabClientPage";
 
 type LabPageProps = { params: { labId: string } };
 
-export const dynamic = "force-dynamic";
+/*
+ * Every available lab is prerendered at build time and served as a static
+ * page, like the lessons. The page needs no session: steps, editing, checks
+ * and progress run in the browser (LabClientPage). The lab files are read
+ * here, at build time only, and travel as props. dynamic = "error" makes the
+ * build fail if anything would turn the route into a per-request render, and
+ * dynamicParams = false answers 404 for unknown and coming-soon lab ids.
+ */
+export const dynamic = "error";
+export const dynamicParams = false;
+
+export function generateStaticParams(): Array<LabPageProps["params"]> {
+  return getAllLabs()
+    .filter((lab) => lab.status === "available")
+    .map((lab) => ({ labId: lab.id }));
+}
 
 export function generateMetadata({ params }: LabPageProps): Metadata {
   const lab = getLabById(params.labId);
@@ -29,32 +44,22 @@ export default async function LabPage({ params }: LabPageProps) {
   const lab = getLabById(params.labId);
   if (!lab || lab.status !== "available") notFound();
 
-  try {
-    const session = await requireSession();
-    const access = await labAccessService.resolve(session.user.id, lab);
-    const [assets, initialProgress] = await Promise.all([
-      getLearnerLabAssets(lab, access),
-      getLabProgress(session.user.id, lab),
-    ]);
+  // Guide, starter and reference files, plus the solutions the client lists once the lab is complete.
+  const { files, solutions } = await readLabFilesForBuild(lab);
 
-    // Orientation comes from the practice map and the manifest order (src/lib/practice-links.ts):
-    // the launching lesson for "Back to module", prerequisites, and "do this lab after" for forward ones.
-    const { items, doAfter } = getLabPrerequisites(lab);
+  // Orientation comes from the practice map and the manifest order (src/lib/practice-links.ts):
+  // the launching lesson for "Back to module", prerequisites, and "do this lab after" for forward ones.
+  const { items, doAfter } = getLabPrerequisites(lab);
 
-    return (
-      <LabClientPage
-        lab={toLearnerLabDto(lab)}
-        assets={assets}
-        initialProgress={initialProgress}
-        backLink={getLabBackLink(lab)}
-        lessons={getLabLessons(lab)}
-        prerequisites={{ items, doAfter }}
-      />
-    );
-  } catch (error) {
-    if (error instanceof AuthenticationError) {
-      redirect(`/api/auth/signin?callbackUrl=${encodeURIComponent(`/practice/lab/${lab.id}`)}`);
-    }
-    throw error;
-  }
+  return (
+    <LabClientPage
+      lab={toLearnerLabDto(lab)}
+      policy={toLabPolicyInput(lab)}
+      files={files}
+      solutions={solutions}
+      backLink={getLabBackLink(lab)}
+      lessons={getLabLessons(lab)}
+      prerequisites={{ items, doAfter }}
+    />
+  );
 }

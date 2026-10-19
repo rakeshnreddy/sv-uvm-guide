@@ -27,7 +27,7 @@ const featureConfigs = [
   },
   {
     title: 'Guided Labs',
-    description: 'Starter code, step-by-step instructions and reference solutions for SystemVerilog and UVM testbenches. Sign in to open a lab.',
+    description: 'Starter code, step-by-step instructions and reference solutions for SystemVerilog and UVM testbenches. Your progress is saved in this browser.',
     icon: FlaskConical,
     href: '/practice',
   },

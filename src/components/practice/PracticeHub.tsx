@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { getInterviewPracticeItems, loadInterviewBanks } from '@/app/(learning)/interview-prep/interview-banks';
 import { createSlugger } from '@/lib/heading-slug';
 import type { LabManifest } from '@/lib/lab-manifest';
-import { getAllLabs } from '@/lib/lab-registry';
+import { getAllLabs, labBadgeProps, labCheckSummary } from '@/lib/lab-registry';
 import {
   PRACTICE_KIND_LABELS,
   getLabPrerequisites,
@@ -16,14 +16,17 @@ import {
 } from '@/lib/practice-links';
 import { cn } from '@/lib/utils';
 
+import { LabProgressBadge } from './LabProgressBadge';
 import { LabPrerequisiteList, LessonChipLink, focusRing } from './LearnInLesson';
 
 const eyebrow = 'text-[11px] font-semibold uppercase tracking-wider text-muted-foreground';
 const textLink = cn('rounded-sm font-medium text-primary underline-offset-4 hover:underline', focusRing);
 
-/** Extra lines for a card: lab prerequisites and sign-in notes, interview question counts. */
+/** Extra lines for a card: lab check and progress notes, prerequisites and progress badge; interview question counts. */
 export interface PracticeCardDetails {
   notes?: string[];
+  /** A status node under the notes, such as a LabProgressBadge. It sits under the card's link layer and must not be interactive. */
+  badge?: React.ReactNode;
   prerequisites?: Pick<LabPrerequisites, 'items' | 'doAfter'>;
 }
 
@@ -69,6 +72,7 @@ export function PracticeCard({ item, details, headingLevel = 'h3' }: PracticeCar
           {note}
         </p>
       ))}
+      {details?.badge}
       {details?.prerequisites ? (
         <LabPrerequisiteList prerequisites={details.prerequisites} className="mt-3" linkClassName="relative z-10" />
       ) : null}
@@ -152,8 +156,7 @@ const PAGE_SECTIONS: readonly { kind: PracticeKind; title: string; intro: React.
 ];
 
 function labNotes(lab: LabManifest): string[] {
-  const graded = Boolean(lab.graderId) && lab.steps.some((step) => step.completion === 'graded');
-  return [`${graded ? 'Auto-graded steps' : 'Self-checked steps: you mark each one complete'}. Sign in to open.`];
+  return [`${labCheckSummary(lab)}. Progress is saved in this browser.`];
 }
 
 const PracticeHub = () => {
@@ -164,7 +167,10 @@ const PracticeHub = () => {
   const labDetails: Record<string, PracticeCardDetails> = Object.fromEntries(
     labs.map((lab) => {
       const { items, doAfter } = getLabPrerequisites(lab);
-      return [`lab:${lab.id}`, { notes: labNotes(lab), prerequisites: { items, doAfter } }];
+      // The badge renders nothing until this browser holds progress on the lab, so the card keeps its layout.
+      const badge =
+        lab.status === 'available' ? <LabProgressBadge {...labBadgeProps(lab)} className="mt-2 self-start" /> : undefined;
+      return [`lab:${lab.id}`, { notes: labNotes(lab), badge, prerequisites: { items, doAfter } }];
     }),
   );
 
@@ -226,7 +232,7 @@ const PracticeHub = () => {
           Labs
         </h2>
         <p className="mt-1 text-muted-foreground">
-          Guided labs with starter code, step-by-step instructions and reference solutions. Labs open after you sign in.
+          Guided labs with starter code, step-by-step instructions and reference solutions. Your progress is saved in this browser.
         </p>
         <div className="mt-5">
           <PracticeCardGrid items={availableLabs} details={labDetails} />

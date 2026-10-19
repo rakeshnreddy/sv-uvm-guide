@@ -1,6 +1,12 @@
 "use client";
 
 import React, { useState, useMemo } from 'react';
+import { usePathname } from 'next/navigation';
+
+import { writeOutcomeMessage, type WriteOutcome } from '@/lib/learner-store/record';
+import { recordActivity } from '@/lib/learner-store/repositories/activity';
+import { quizIdFromQuestions, recordQuizResult } from '@/lib/learner-store/repositories/assessments';
+import { canonicalLessonPath } from '@/lib/learner-store/repositories/lessons';
 import { Button } from './Button';
 
 // This is the structure of the data coming from the MDX file
@@ -115,6 +121,14 @@ const toFormattedOne = (q: FormattedQuestion | LegacyFormattedQuestion | MdxQues
 const toFormatted = (qs: (FormattedQuestion | LegacyFormattedQuestion | MdxQuestion)[]): FormattedQuestion[] =>
   qs.map((q) => ({ ...toFormattedOne(q), objective: objectiveOf(q) }));
 
+/** What to tell the learner when their score was not stored normally; null when it was (or nothing was saved on purpose). */
+const quizSaveMessage = (outcome: WriteOutcome | null): string | null => {
+  if (outcome === 'too-large') {
+    return "Your score wasn't saved: the quiz results kept in this browser have reached their size limit.";
+  }
+  return outcome ? writeOutcomeMessage(outcome) : null;
+};
+
 const Quiz: React.FC<QuizProps> = ({ questions }) => {
   const parsedQuestions: FormattedQuestion[] = useMemo(() => {
     try {
@@ -125,12 +139,17 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
     }
   }, [questions]);
 
+  // Results are saved in this browser per lesson and quiz (`${lessonPath}#${quizId}`); quizId
+  // hashes the question texts, so a lesson with two quizzes keeps both.
+  const lessonPath = canonicalLessonPath(usePathname());
+  const quizId = useMemo(() => quizIdFromQuestions(parsedQuestions.map((q) => q.question)), [parsedQuestions]);
+
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
   const [showExplanation, setShowExplanation] = useState(false);
   const [score, setScore] = useState(0);
-
+  const [saveOutcome, setSaveOutcome] = useState<WriteOutcome | null>(null);
 
   const handleAnswerSelection = (option: string) => {
     setSelectedAnswer(option);
@@ -141,6 +160,13 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
   };
 
   const handleNextQuestion = () => {
+    const finishing = currentQuestionIndex + 1 >= parsedQuestions.length;
+    // Once per completion, from the learner's click. Not on a page without a lesson path.
+    if (finishing && lessonPath) {
+      const now = Date.now();
+      setSaveOutcome(recordQuizResult(lessonPath, quizId, score, parsedQuestions.length, now));
+      recordActivity('quiz', now);
+    }
     setSelectedAnswer(null);
     setIsCorrect(null);
     setShowExplanation(false);
@@ -152,6 +178,7 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
     setIsCorrect(null);
     setShowExplanation(false);
     setScore(0);
+    setSaveOutcome(null);
     setCurrentQuestionIndex(0);
   };
 
@@ -165,12 +192,18 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
 
   if (currentQuestionIndex >= parsedQuestions.length) {
     const total = parsedQuestions.length;
+    const saveMessage = quizSaveMessage(saveOutcome);
     return (
       <div className="rounded-lg border border-border bg-card/60 p-4 shadow-sm" role="status" aria-live="polite">
         <h3 className="text-xl font-bold text-primary">Quiz Complete!</h3>
         <p className="mt-2 text-foreground">
           You answered {score} of {total} correctly{score === total ? '.' : '. Review the explanations, then try again.'}
         </p>
+        {saveMessage ? (
+          <p className="mt-2 text-sm font-medium text-amber-800 dark:text-amber-200" data-testid="quiz-save-message">
+            {saveMessage}
+          </p>
+        ) : null}
         <Button onClick={handleRetry} variant="outline" className="mt-4">
           Retry quiz
         </Button>

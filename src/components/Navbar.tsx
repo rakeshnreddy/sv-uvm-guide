@@ -14,34 +14,52 @@ import Logo from "@/components/ui/Logo";
 import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatTimestamp, NOTIFICATION_CATEGORY_META, type NotificationItem } from "@/lib/notifications";
+import { useAccountSession, useServerFeature, type AccountSessionStatus } from "@/lib/persistence/target";
+import { SITE_FEATURES, type SiteFeatureSwitches } from "@/lib/site-features";
 import { INTERVIEW_PREP_HREF, LABS_HREF, START_HERE_HREF } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
-import { featureFlags } from "@/tools/featureFlags";
 
 interface NavLink {
   label: string;
   href: string;
   /**
    * In the desktop bar only from xl (1280 px), where it fits beside the search
-   * field. From md to xl the bar's "More" disclosure lists it; on phones it is
-   * in the phone menu, and it is always in the course outline's quick links.
+   * field. From md to xl the bar's "More" disclosure lists it and on phones the
+   * phone menu does. Labs, Interview prep and Dashboard are also always in the
+   * course outline's quick links.
    */
   wideOnly?: boolean;
 }
 
-/** The main navigation, in order (G30-SIDE-05, G30-PATH-07). */
-const navLinks: readonly NavLink[] = [
-  { label: "Start here", href: START_HERE_HREF },
-  { label: "Curriculum", href: "/curriculum" },
-  { label: "Practice", href: "/practice" },
-  { label: "Labs", href: LABS_HREF, wideOnly: true },
-  { label: "Interview prep", href: INTERVIEW_PREP_HREF, wideOnly: true },
-  ...(featureFlags.tracking ? [{ label: "Dashboard", href: "/dashboard" }] : []),
-  ...(featureFlags.community ? [{ label: "Community", href: "/community" }] : []),
-];
+/**
+ * The main navigation, in order (G30-SIDE-05, G30-PATH-07). Dashboard is
+ * always listed: it shows the progress kept in this browser, so it needs no
+ * account. Community is listed only while SITE_FEATURES.community is on, which
+ * also needs accounts. The switches are fixed at build time, so the server
+ * render and hydration list the same links.
+ */
+export function mainNavLinks(features: Pick<SiteFeatureSwitches, "community"> = SITE_FEATURES): readonly NavLink[] {
+  return [
+    { label: "Start here", href: START_HERE_HREF },
+    { label: "Curriculum", href: "/curriculum" },
+    { label: "Practice", href: "/practice" },
+    { label: "Labs", href: LABS_HREF, wideOnly: true },
+    { label: "Interview prep", href: INTERVIEW_PREP_HREF, wideOnly: true },
+    { label: "Dashboard", href: "/dashboard", wideOnly: true },
+    ...(features.community ? [{ label: "Community", href: "/community", wideOnly: true }] : []),
+  ];
+}
 
-/** The links the bar shows only from xl; below that, "More" lists them. */
-const wideLinks = navLinks.filter((link) => link.wideOnly);
+/**
+ * NextAuth's sign-in page, returning to `pathname` afterwards. Offered only while
+ * accounts are on. The client cannot tell whether the server's persistence gate
+ * is open: on a half-configured deploy (accounts on, isServerPersistenceConfigured()
+ * false) this link answers 404 {error: "ACCOUNTS_DISABLED"}, so the runbook
+ * (docs/deploy/cloudflare.md) has every account piece configured in one deploy.
+ */
+export function signInHref(pathname: string | null): string {
+  return `/api/auth/signin?callbackUrl=${encodeURIComponent(pathname || "/")}`;
+}
 
 const MD_MIN_WIDTH = 768;
 
@@ -114,7 +132,7 @@ function MoreLinks({ pathname, links }: { pathname: string | null; links: readon
         aria-expanded={open}
         aria-controls={panelId}
         className={cn(
-          "inline-flex h-10 shrink-0 items-center gap-1 whitespace-nowrap border-b-2 px-3 text-sm transition-colors motion-reduce:transition-none",
+          "inline-flex h-10 shrink-0 items-center gap-1 whitespace-nowrap border-b-2 px-2 text-sm transition-colors motion-reduce:transition-none lg:px-3",
           active ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
           focusRing,
         )}
@@ -149,9 +167,15 @@ function MoreLinks({ pathname, links }: { pathname: string | null; links: readon
   );
 }
 
-/** Account menu: shown only when the accountUI flag is on (G30-SIDE-06, G30-SIDE-V07). Opens on click, Enter or Space. */
-function UserMenu() {
+/**
+ * Account menu: shown only while accounts are on (SITE_FEATURES.accounts;
+ * G30-SIDE-06, G30-SIDE-V07). Opens on click, Enter or Space. A signed-out
+ * visitor is offered "Sign in", which comes back to this page; a signed-in
+ * learner gets "Sign out".
+ */
+function UserMenu({ pathname }: { pathname: string | null }) {
   const { user, signOut } = useAuth();
+  const { status } = useAccountSession();
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -178,21 +202,27 @@ function UserMenu() {
       {open && (
         <div id={panelId} className={cn(popoverPanel, "w-64 p-3")}>
           <p className="px-2 text-sm font-semibold text-foreground">
-            {user ? user.displayName || "Signed in" : "Not signed in"}
+            {user ? user.displayName || "Signed in" : status === "loading" ? "Checking sign-in…" : "Not signed in"}
           </p>
           <ul className="mt-2 space-y-0.5 border-t border-border pt-2">
-            {featureFlags.tracking && (
-              <li>
-                <Link href="/dashboard" className={itemClass} onClick={() => setOpen(false)}>
-                  Dashboard
-                </Link>
-              </li>
-            )}
+            <li>
+              <Link href="/dashboard" className={itemClass} onClick={() => setOpen(false)}>
+                Dashboard
+              </Link>
+            </li>
             <li>
               <Link href="/settings" className={itemClass} onClick={() => setOpen(false)}>
                 Settings
               </Link>
             </li>
+            {!user && status === "unauthenticated" && (
+              <li>
+                {/* A plain link: NextAuth's sign-in page is not an app route, so it needs a full page load. */}
+                <a href={signInHref(pathname)} className={itemClass} onClick={() => setOpen(false)}>
+                  Sign in
+                </a>
+              </li>
+            )}
             {user && (
               <li>
                 <button
@@ -214,7 +244,11 @@ function UserMenu() {
   );
 }
 
-/** Notification feed: shown only when the accountUI flag is on (G30-SIDE-V07). */
+/**
+ * Notification feed: mounted, and so fetching /api/me/notifications, only for
+ * a signed-in learner while accounts are on (useServerFeature("notifications");
+ * G30-SIDE-V07). Signed-out visitors never request it.
+ */
 function NotificationCenter() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<NotificationItem[]>([]);
@@ -327,7 +361,85 @@ function NotificationCenter() {
   );
 }
 
-function MobileMenuPanel({ pathname }: { pathname: string | null }) {
+/** A full-width, 44 px row in the phone menu, marked while it is the current page. */
+function mobileRowClass(current?: "page" | "true") {
+  return cn(
+    "flex min-h-11 items-center rounded-xl border-l-4 px-3 text-lg",
+    current ? "border-primary bg-muted font-semibold text-foreground" : "border-transparent text-foreground hover:bg-muted",
+    focusRing,
+  );
+}
+
+/** What the phone menu says about the session: the same states as UserMenu, in a sentence. */
+function mobileAccountStatus(user: { displayName?: string | null } | null, status: AccountSessionStatus): string {
+  if (user) return user.displayName ? `Signed in as ${user.displayName}` : "Signed in";
+  return status === "loading" ? "Checking sign-in…" : "Not signed in";
+}
+
+/**
+ * The account items on phones. The account menu and the notification bell sit
+ * in the bar's md-and-up group, so below 768 px the phone menu carries them;
+ * it renders this only while accounts are on (SITE_FEATURES.accounts). It
+ * follows UserMenu: "Sign in", back to this page, once the session check says
+ * nobody is signed in; "Sign out" for a signed-in learner; neither while the
+ * check runs. Dashboard is already a main link in the same menu, so it is not
+ * repeated here. Notifications is a link to /notifications, shown only to a
+ * signed-in learner (useServerFeature), so this menu never fetches the feed.
+ */
+function MobileAccountItems({ pathname }: { pathname: string | null }) {
+  const { user, signOut } = useAuth();
+  const { status } = useAccountSession();
+  const notificationsOn = useServerFeature("notifications");
+  const accountLinks = [
+    ...(notificationsOn ? [{ label: "Notifications", href: "/notifications" }] : []),
+    { label: "Settings", href: "/settings" },
+  ];
+
+  return (
+    <div data-testid="mobile-account" className="mt-4 border-t border-border pt-4">
+      <h3 className="px-3 text-sm font-semibold text-muted-foreground">Account</h3>
+      <p aria-live="polite" className="mt-1 break-words px-3 text-sm text-foreground">
+        {mobileAccountStatus(user, status)}
+      </p>
+      <ul className="mt-2 space-y-1">
+        {accountLinks.map((link) => {
+          const current = navLinkCurrent(pathname, link.href);
+          return (
+            <li key={link.href}>
+              <Link href={link.href} aria-current={current} onClick={shellStore.closeMenu} className={mobileRowClass(current)}>
+                {link.label}
+              </Link>
+            </li>
+          );
+        })}
+        {!user && status === "unauthenticated" && (
+          <li>
+            {/* A plain link: NextAuth's sign-in page is not an app route, so it needs a full page load. */}
+            <a href={signInHref(pathname)} onClick={shellStore.closeMenu} className={mobileRowClass()}>
+              Sign in
+            </a>
+          </li>
+        )}
+        {user && (
+          <li>
+            <button
+              type="button"
+              className={cn(mobileRowClass(), "w-full text-left")}
+              onClick={async () => {
+                shellStore.closeMenu();
+                await signOut();
+              }}
+            >
+              Sign out
+            </button>
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: readonly NavLink[] }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   useModalDialog(panelRef, { onClose: shellStore.closeMenu });
@@ -353,29 +465,23 @@ function MobileMenuPanel({ pathname }: { pathname: string | null }) {
             <X aria-hidden="true" className="h-5 w-5" />
           </button>
         </div>
-        <nav aria-label="Main" className="flex-1 overflow-y-auto p-4">
-          <ul className="space-y-1">
-            {navLinks.map((link) => {
-              const current = navLinkCurrent(pathname, link.href);
-              return (
-                <li key={link.href}>
-                  <Link
-                    href={link.href}
-                    aria-current={current}
-                    onClick={shellStore.closeMenu}
-                    className={cn(
-                      "flex min-h-11 items-center rounded-xl border-l-4 px-3 text-lg",
-                      current ? "border-primary bg-muted font-semibold text-foreground" : "border-transparent text-foreground hover:bg-muted",
-                      focusRing,
-                    )}
-                  >
-                    {link.label}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+        <div className="flex-1 overflow-y-auto p-4">
+          <nav aria-label="Main">
+            <ul className="space-y-1">
+              {links.map((link) => {
+                const current = navLinkCurrent(pathname, link.href);
+                return (
+                  <li key={link.href}>
+                    <Link href={link.href} aria-current={current} onClick={shellStore.closeMenu} className={mobileRowClass(current)}>
+                      {link.label}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+          {SITE_FEATURES.accounts && <MobileAccountItems pathname={pathname} />}
+        </div>
       </div>
     </div>
   );
@@ -383,12 +489,22 @@ function MobileMenuPanel({ pathname }: { pathname: string | null }) {
 
 /**
  * Site header for the learning pages: the course outline button, the logo,
- * curriculum search (an inline field from md, a dialog on phones), the main
- * links, the theme switch, and, only when the accountUI flag is on, the
- * notification and account menus.
+ * curriculum search (an inline field from lg, a dialog below it), the main
+ * links, the theme switch, and, only while accounts are on, the account menu
+ * and (for a signed-in learner) the notification feed. Below md the phone menu
+ * holds the main links and, while accounts are on, the account items.
+ *
+ * From md to lg the bar has 720 px of room at 768 px, so the links and the
+ * controls are spaced more tightly there and the divider is hidden: the default
+ * bar then needs about 700 px. With accounts on, the account menu (and, signed
+ * in, the bell) add about 44 px each and do not fit yet at 768 px; check this layout
+ * when accounts are turned on.
  */
 const Navbar = () => {
   const pathname = usePathname();
+  const navLinks = mainNavLinks();
+  const wideLinks = navLinks.filter((link) => link.wideOnly);
+  const notificationsOn = useServerFeature("notifications");
   const outline = useOutlineToggle();
   const searchOpen = useShellState((state) => state.searchOpen);
   const menuOpen = useShellState((state) => state.menuOpen);
@@ -435,7 +551,7 @@ const Navbar = () => {
                   aria-current={current}
                   className={cn(
                     link.wideOnly ? "hidden xl:inline-flex" : "inline-flex",
-                    "h-10 shrink-0 items-center whitespace-nowrap border-b-2 px-3 text-sm transition-colors motion-reduce:transition-none",
+                    "h-10 shrink-0 items-center whitespace-nowrap border-b-2 px-2 text-sm transition-colors motion-reduce:transition-none lg:px-3",
                     current ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
                     focusRing,
                   )}
@@ -447,7 +563,7 @@ const Navbar = () => {
             {wideLinks.length > 0 && <MoreLinks pathname={pathname} links={wideLinks} />}
           </nav>
 
-          <div className="hidden items-center gap-2 md:flex">
+          <div className="hidden items-center gap-1 md:flex lg:gap-2">
             <button
               type="button"
               onClick={shellStore.openSearch}
@@ -458,12 +574,12 @@ const Navbar = () => {
             >
               <Search aria-hidden="true" className="h-5 w-5" />
             </button>
-            <span aria-hidden="true" className="mx-1 h-6 border-l border-border" />
+            <span aria-hidden="true" className="mx-1 hidden h-6 border-l border-border lg:block" />
             <ThemeSwitcher />
-            {featureFlags.accountUI && (
+            {SITE_FEATURES.accounts && (
               <>
-                <NotificationCenter />
-                <UserMenu />
+                {notificationsOn && <NotificationCenter />}
+                <UserMenu pathname={pathname} />
               </>
             )}
           </div>
@@ -493,7 +609,7 @@ const Navbar = () => {
         </div>
       </header>
 
-      {menuOpen && <MobileMenuPanel pathname={pathname} />}
+      {menuOpen && <MobileMenuPanel pathname={pathname} links={navLinks} />}
       <SearchDialog />
     </>
   );

@@ -141,6 +141,17 @@ function isCanonical(route) {
   return fs.existsSync(path.join(curriculumRoot, parts[0], parts[1], `${parts[2]}.mdx`));
 }
 
+/** Every .mdx file under `dir`, in sorted order (lessons sit two folders below content/curriculum). */
+function mdxFilesUnder(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...mdxFilesUnder(full));
+    else if (entry.isFile() && entry.name.endsWith(".mdx")) out.push(full);
+  }
+  return out;
+}
+
 function collectFiles(args) {
   const out = [];
   for (const a of args) {
@@ -150,9 +161,8 @@ function collectFiles(args) {
       process.exitCode = 1;
       continue;
     }
-    if (fs.statSync(p).isDirectory()) {
-      for (const f of fs.readdirSync(p)) if (f.endsWith(".mdx")) out.push(path.join(p, f));
-    } else out.push(p);
+    if (fs.statSync(p).isDirectory()) out.push(...mdxFilesUnder(p));
+    else out.push(p);
   }
   return out;
 }

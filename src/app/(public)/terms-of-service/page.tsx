@@ -6,37 +6,103 @@ import Footer from '@/components/Footer';
 import InfoPage from '@/components/templates/InfoPage';
 import Logo from '@/components/ui/Logo';
 
-const commitments = [
+/*
+ * OWNER SIGN-OFF NEEDED (GD23): this wording was rewritten in October 2026 for
+ * the site as deployed without accounts: learner data lives only in the
+ * browser's local storage, with export, import and reset in Settings
+ * (/settings#data). The uptime promise, the community channel and the account
+ * deletion and purge terms were removed because none of them exist. It is
+ * reversible; revisit it before accounts or community features are switched on.
+ */
+
+const settingsLink = (
+  <Link href="/settings#data" className="text-primary underline underline-offset-4 hover:no-underline">
+    Settings
+  </Link>
+);
+
+const commitments: { heading: string; points: { id: string; content: React.ReactNode }[] }[] = [
   {
     heading: 'Using the Platform',
     points: [
-      'You may access the curriculum, labs, and visual assets for personal or organizational learning.',
-      'Accounts must belong to real people; automated scraping or credential sharing is not permitted.',
-      'Downloaded lab material keeps its open-source license; credit the project when you redistribute changes.',
+      {
+        id: 'personal-use',
+        content: 'You may use the curriculum, labs, and visual assets for personal or organizational learning.',
+      },
+      {
+        id: 'no-account',
+        content: (
+          <>
+            No account is needed. Your progress is kept in your browser&apos;s local storage, not on our servers; use{' '}
+            {settingsLink} to back it up, import it, or delete it.
+          </>
+        ),
+      },
+      {
+        id: 'fair-use',
+        content: 'Do not scrape the site or send automated traffic that slows it down for other learners.',
+      },
+      {
+        id: 'license',
+        content:
+          'Downloaded lab material keeps its open-source license; credit the project when you redistribute changes.',
+      },
     ],
   },
   {
     heading: 'Contributor Responsibilities',
     points: [
-      'Follow the style guide and Definition of Done before submitting pull requests.',
-      'Do not upload proprietary RTL or verification IP unless you own the rights to share it.',
-      'Disclose simulated data or anonymized logs that originate from real silicon projects.',
+      { id: 'style', content: 'Follow the style guide and Definition of Done before submitting pull requests.' },
+      {
+        id: 'rights',
+        content: 'Do not upload proprietary RTL or verification IP unless you own the rights to share it.',
+      },
+      {
+        id: 'disclose',
+        content: 'Disclose simulated data or anonymized logs that originate from real silicon projects.',
+      },
     ],
   },
   {
     heading: 'Availability & Updates',
     points: [
-      'We aim for 99.5% uptime; planned maintenance windows are announced in the community channel.',
-      'Feature flags may hide beta functionality until the curriculum steward approves a release.',
-      'Breaking changes to API contracts or schema migrations are documented two sprints in advance.',
+      {
+        id: 'as-is',
+        content:
+          'The site is provided as is, without a guaranteed uptime. Pages may change, or be briefly unavailable, while they are updated.',
+      },
+      {
+        id: 'unreleased',
+        content: 'Features that are not ready stay switched off until they are.',
+      },
+      {
+        id: 'revisions',
+        content:
+          'Lessons and labs are revised over time, so progress saved in your browser may refer to an earlier version of a lab.',
+      },
     ],
   },
   {
     heading: 'Termination',
     points: [
-      'We reserve the right to disable access that violates the code of conduct or endangers learners.',
-      'You may delete your account at any time; feedback helps us resolve issues before departure.',
-      'Inactive beta accounts are purged after 12 months to protect learner data.',
+      {
+        id: 'conduct',
+        content: 'We may block access that violates the code of conduct or endangers learners.',
+      },
+      {
+        id: 'stop',
+        content: (
+          <>
+            You can stop using the site at any time. To remove your learning data, delete it in {settingsLink} or clear
+            this site&apos;s data in your browser.
+          </>
+        ),
+      },
+      {
+        id: 'browser-only',
+        content:
+          "Because your data lives only in your browser's local storage, clearing site data, or a browser removing data for sites you haven't visited for a while, deletes it. Keep a backup.",
+      },
     ],
   },
 ];
@@ -71,16 +137,16 @@ export default function TermsOfServicePage() {
       <main id="main-content" className="flex-1">
         <InfoPage
           title="Terms of Service"
-          description="Guidelines for engaging with the SystemVerilog &amp; UVM learning platform."
+          description="Guidelines for using the SystemVerilog &amp; UVM learning site."
         >
           <div className="space-y-10">
-            <p className="text-sm text-foreground/80">Last updated: October 7, 2025</p>
+            <p className="text-sm text-foreground/80">Last updated: October 2026</p>
             {commitments.map((section) => (
               <section key={section.heading} className="space-y-4">
                 <h2 className="text-2xl font-semibold text-primary">{section.heading}</h2>
                 <ul className="list-disc space-y-2 pl-6 text-foreground/90">
                   {section.points.map((item) => (
-                    <li key={item}>{item}</li>
+                    <li key={item.id}>{item.content}</li>
                   ))}
                 </ul>
               </section>

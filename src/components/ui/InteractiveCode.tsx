@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import dynamic from 'next/dynamic';
 import { useTheme } from 'next-themes';
 import { cn } from '@/lib/utils';
 import { Button } from './Button';
+import { CodeEditor } from './CodeEditor';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { EditorProps, OnMount } from '@monaco-editor/react';
+import type { OnMount } from '@monaco-editor/react';
 import type * as monacoEditor from 'monaco-editor';
 import { SITE_MONACO_THEME, defineSiteMonacoThemes } from '@/lib/monaco-themes';
 import { select } from 'd3-selection';
@@ -24,11 +24,6 @@ import {
   broadcastEdit,
   type UserEdit,
 } from '../../lib/collaboration';
-
-const MonacoEditor = dynamic<EditorProps>(
-  () => import('@monaco-editor/react').then(mod => mod.default),
-  { ssr: false }
-);
 
 // Register a more complete SystemVerilog language definition using Monarch
 // tokenization rules. This provides basic support for numbers, strings,
@@ -174,6 +169,22 @@ const parseTargetLines = (target: string, monacoInstance: Monaco | null): Monaco
     }
   });
   return ranges;
+};
+
+/**
+ * The lines a walkthrough step points at, in words ("Line 4", "Lines 3–5, 9"),
+ * for the plain editor, which cannot highlight them. Null for "all" or no target.
+ */
+export const describeTargetLines = (target: string | undefined): string | null => {
+  if (!target || target.trim().toLowerCase() === 'all') return null;
+  const parts = target
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => /^\d+(\s*-\s*\d+)?$/.test(part))
+    .map((part) => part.replace(/\s*-\s*/, '–'));
+  if (parts.length === 0) return null;
+  const single = parts.length === 1 && !parts[0].includes('–');
+  return `${single ? 'Line' : 'Lines'} ${parts.join(', ')}`;
 };
 
 interface ASTNode {
@@ -340,6 +351,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   const editorRef = useRef<MonacoEditorInstance | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const decorationsRef = useRef<string[]>([]);
+  // True while the plain text editor stands in for Monaco (it cannot highlight lines).
+  const [usingPlainEditor, setUsingPlainEditor] = useState(false);
 
   const code = useMemo(
     () => (codeProp ?? extractCodeText(children)).replace(/^\n+|\s+$/g, ''),
@@ -454,6 +467,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   }, [analysis]);
 
   const hasExplanations = explanationSteps.length > 0;
+  // Monaco highlights the step's lines; the plain editor cannot, so the step names them instead.
+  const plainTargetLines = usingPlainEditor ? describeTargetLines(explanationSteps[currentStepIndex]?.target) : null;
 
   useEffect(() => {
     if (editorRef.current && monacoRef.current && hasExplanations) {
@@ -542,13 +557,23 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
         {fileName && (
           <div className="bg-gray-700 text-white text-sm py-1 px-4">{fileName}</div>
         )}
-        <MonacoEditor
+        <CodeEditor
           height="400px"
           language={language}
           value={codeContent}
+          ariaLabel={`${fileName ?? 'Code example'} (${isEditable ? 'editable' : 'read-only'})`}
+          readOnly={!isEditable}
           onMount={handleEditorDidMount}
-          onChange={(value) => {
-            const newValue = value || '';
+          onFallbackChange={(plain) => {
+            setUsingPlainEditor(plain);
+            if (plain) {
+              // The Monaco instance is gone; a later Monaco mount sets these again.
+              editorRef.current = null;
+              monacoRef.current = null;
+              decorationsRef.current = [];
+            }
+          }}
+          onChange={(newValue) => {
             setCodeContent(newValue);
             if (socketRef.current) {
               const edit: UserEdit = {
@@ -562,7 +587,6 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
           beforeMount={defineSiteMonacoThemes}
           theme={isDarkMode ? SITE_MONACO_THEME.dark : SITE_MONACO_THEME.light}
           options={{
-            readOnly: !isEditable,
             domReadOnly: !isEditable,
             minimap: { enabled: true },
             scrollBeyondLastLine: false,
@@ -634,6 +658,11 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
                 transition={{ duration: 0.3 }}
               >
                 {explanationSteps[currentStepIndex]?.title && <h4 className="font-semibold text-lg mb-2 text-primary">{explanationSteps[currentStepIndex].title}</h4>}
+                {plainTargetLines ? (
+                  <p className="mb-1 text-xs font-semibold text-foreground" data-testid="interactive-code-target-lines">
+                    {plainTargetLines}
+                  </p>
+                ) : null}
                 <div className="text-sm text-foreground/90">{explanationSteps[currentStepIndex]?.explanation || 'End of walkthrough.'}</div>
               </motion.div>
             </AnimatePresence>

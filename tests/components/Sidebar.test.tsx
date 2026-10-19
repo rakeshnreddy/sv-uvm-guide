@@ -42,6 +42,15 @@ vi.mock('next/link', async () => {
   return { __esModule: true, default: MockLink };
 });
 
+// Picking a link in the drawer starts focusAfterNavigation, which polls for up
+// to 8 s until window.location shows the new path. The mocked router never
+// navigates, so the real poller would outlive the test file and fire after the
+// jsdom environment is torn down ("document is not defined").
+vi.mock('@/components/search/focus-target', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/search/focus-target')>()),
+  focusAfterNavigation: vi.fn(() => () => {}),
+}));
+
 const MAILBOXES = '/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes';
 
 const manifestLessonHrefs = manifest.tiers.flatMap((tier) =>
@@ -281,7 +290,7 @@ describe('course outline drawer (below lg, and off lesson pages)', () => {
     const close = within(dialog).getByRole('button', { name: 'Close course outline' });
     // The last quick link is the dialog's last focusable element.
     const last = within(within(dialog).getByRole('list', { name: 'Quick links' })).getAllByRole('link').at(-1)!;
-    expect(last).toHaveAccessibleName('Interview prep');
+    expect(last).toHaveAccessibleName('Dashboard');
 
     last.focus();
     await user.tab();
@@ -302,7 +311,7 @@ describe('course outline drawer (below lg, and off lesson pages)', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('lists quick links: Start here, the overview, the practice hub, Labs and Interview prep (G30-SIDE-04/05)', () => {
+  it('lists quick links: Start here, the overview, the practice hub, Labs, Interview prep and Dashboard (G30-SIDE-04/05)', () => {
     renderWithOpener();
     act(() => shellStore.openOutline());
     const dialog = screen.getByRole('dialog', { name: 'Course outline' });
@@ -312,13 +321,25 @@ describe('course outline drawer (below lg, and off lesson pages)', () => {
     expect(quickLinks.map((link) => [link.textContent, link.getAttribute('href')])).toEqual(
       OUTLINE_QUICK_LINKS.map((link) => [link.label, link.href]),
     );
-    expect(OUTLINE_QUICK_LINKS.map((link) => link.href)).toEqual([
-      '/curriculum#routes',
-      '/curriculum',
-      '/practice',
-      '/practice#labs',
-      '/interview-prep',
+    expect(OUTLINE_QUICK_LINKS.map((link) => [link.label, link.href])).toEqual([
+      ['Start here', '/curriculum#routes'],
+      ['Curriculum overview', '/curriculum'],
+      ['Practice hub', '/practice'],
+      ['Labs', '/practice#labs'],
+      ['Interview prep', '/interview-prep'],
+      ['Dashboard', '/dashboard'],
     ]);
+    expect(quickLinks.some((link) => link.hasAttribute('aria-current'))).toBe(false);
+  });
+
+  it('links the dashboard from the quick links without marking it current, even on the dashboard', () => {
+    mockPathname = '/dashboard';
+    renderWithOpener();
+    act(() => shellStore.openOutline());
+    const dialog = screen.getByRole('dialog', { name: 'Course outline' });
+    const list = within(dialog).getByRole('list', { name: 'Quick links' });
+    expect(within(list).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/dashboard');
+    expect(list.querySelector('[aria-current]')).toBeNull();
   });
 
   it('closes when a quick link is followed', async () => {

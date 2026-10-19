@@ -37,9 +37,10 @@ export const DOCKED_OUTLINE_ID = "course-outline-docked";
 /**
  * Quick links under the outline, in the drawer and in the docked column
  * (G30-SIDE-04, G30-SIDE-05, G30-PATH-07): the route chooser, the overview,
- * the practice hub, its labs and the interview banks. The navbar shows Labs
- * and Interview prep only from xl, so on narrower windows these are their
- * links in the shell.
+ * the practice hub, its labs, the interview banks and the learner dashboard
+ * (progress kept in this browser). The navbar shows Labs, Interview prep and
+ * Dashboard only from xl, so on narrower windows these are their links in the
+ * shell.
  */
 export const OUTLINE_QUICK_LINKS: readonly { label: string; href: string }[] = [
   { label: "Start here", href: START_HERE_HREF },
@@ -47,6 +48,7 @@ export const OUTLINE_QUICK_LINKS: readonly { label: string; href: string }[] = [
   { label: "Practice hub", href: "/practice" },
   { label: "Labs", href: LABS_HREF },
   { label: "Interview prep", href: INTERVIEW_PREP_HREF },
+  { label: "Dashboard", href: "/dashboard" },
 ];
 
 type Density = "compact" | "comfortable";

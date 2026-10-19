@@ -17,7 +17,7 @@ import {
 } from "@/components/search/shortcuts";
 import ShortcutsHelpDialog from "@/components/search/ShortcutsHelpDialog";
 import { findPrevNextTopics } from "@/lib/curriculum-data";
-import { featureFlags } from "@/tools/featureFlags";
+import { SITE_FEATURES } from "@/lib/site-features";
 
 let activeShortcutIslands = 0;
 
@@ -92,7 +92,8 @@ export default function KeyboardShortcuts() {
           return true;
         }
         default: {
-          const href = shortcutRoute(id, featureFlags);
+          // Sections that are switched off (fixed at build time) leave the key alone.
+          const href = shortcutRoute(id, { dashboard: SITE_FEATURES.dashboard, community: SITE_FEATURES.community });
           if (!href) return false;
           router.push(href);
           return true;

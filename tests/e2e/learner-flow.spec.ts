@@ -1,9 +1,8 @@
 import { expect, test } from '@playwright/test';
-import { authenticateTestLearner } from '../fixtures/auth';
 
+// Anonymous, like the deployed site: lab progress and solution reveal come from this browser's storage.
 test.describe('Learner navigation flow', () => {
   test.setTimeout(180000);
-  test.beforeEach(async ({ page }) => authenticateTestLearner(page));
 
   test('moves from curriculum to lab, back to module, flashcards, quiz, and next module', async ({ page }) => {
     await page.goto('/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index');
@@ -25,11 +24,15 @@ test.describe('Learner navigation flow', () => {
       await expect(page.getByRole('heading', { name: /Step 3:/ })).toBeVisible();
       await page.getByRole('button', { name: 'Mark lab complete' }).click();
       await expect(page.getByText('Lab completed.')).toBeVisible();
+      await expect(page.getByText(/Solutions unlocked/)).toBeVisible();
 
       await page.reload();
       const solutionAsset = page.getByRole('button', { name: /solution\/generated_uvm_sequence\.sv/i });
       await solutionAsset.click();
       await expect(solutionAsset).toHaveAttribute('aria-pressed', 'true');
+      await expect(
+        page.getByText('This step is complete. Your progress and workspace edits are saved in this browser.'),
+      ).toBeVisible();
     });
 
     await test.step('Return to owning module', async () => {

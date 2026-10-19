@@ -1,51 +1,19 @@
-'use client';
+import React from 'react';
+import { notFound } from 'next/navigation';
+import { SITE_FEATURES } from '@/lib/site-features';
+import KnowledgeHubClient from './KnowledgeHubClient';
 
-import React, { useState } from 'react';
-import dynamic from 'next/dynamic';
-import ConceptRelationshipMapper from '@/components/knowledge/ConceptRelationshipMapper';
-import IntelligentCrossReference from '@/components/knowledge/IntelligentCrossReference';
-import LearningPathGenerator from '@/components/knowledge/LearningPathGenerator';
-import ConceptDependencyAnalyzer from '@/components/knowledge/ConceptDependencyAnalyzer';
+/*
+ * A draft page: its concept graph is 15 hand-written placeholder nodes that
+ * link to no lesson (src/lib/knowledge-graph-engine.ts), so the page is hidden
+ * (404, unlinked and out of the sitemap) unless draft pages are switched on
+ * for a preview build (SITE_FEATURES.draftPages). The lessons and the Practice
+ * Hub already cover what it would teach.
+ */
+export default function KnowledgeHubPage() {
+  if (!SITE_FEATURES.draftPages) {
+    notFound();
+  }
 
-const KnowledgeGraphVisualizer = dynamic(
-  () => import('@/components/knowledge/KnowledgeGraphVisualizer'),
-  {
-    ssr: false,
-    loading: () => <div className="flex h-64 items-center justify-center">Loading visualization...</div>,
-  },
-);
-
-const KnowledgeHubPage = () => {
-  const [highlightedPath, setHighlightedPath] = useState<string[]>([]);
-
-  return (
-    <div className="container mx-auto p-4">
-      <header className="mb-10 text-center">
-        <h1 className="text-4xl font-bold mb-2">SystemVerilog & UVM Knowledge Hub</h1>
-        <p className="text-xl text-gray-600">
-          An intelligent ecosystem for mastering hardware verification.
-        </p>
-      </header>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="lg:col-span-2">
-          <KnowledgeGraphVisualizer highlightedPath={highlightedPath} />
-        </div>
-        <div className="bg-white shadow-md rounded-lg p-6">
-          <ConceptRelationshipMapper />
-        </div>
-        <div className="bg-white shadow-md rounded-lg p-6">
-          <IntelligentCrossReference />
-        </div>
-        <div className="bg-white shadow-md rounded-lg p-6">
-          <LearningPathGenerator onPathGenerated={setHighlightedPath} />
-        </div>
-        <div className="bg-white shadow-md rounded-lg p-6">
-          <ConceptDependencyAnalyzer />
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default KnowledgeHubPage;
+  return <KnowledgeHubClient />;
+}

@@ -1,12 +1,14 @@
 import nextDynamic from 'next/dynamic';
+import { notFound } from 'next/navigation';
 import { InfoPage } from '@/components/templates/InfoPage';
-import { isFeatureEnabled } from '@/tools/featureFlags';
-import { normalizeUserPreferences, type PartialUserPreferences } from '@/lib/user-preferences';
-import { resolveNotificationPreferences } from '@/lib/notifications';
-import { requireSession } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
+import { SITE_FEATURES } from '@/lib/site-features';
 
-export const dynamic = 'force-dynamic';
+/*
+ * A draft page: most of its text is still placeholder copy, so it is hidden
+ * (404, unlinked and out of the sitemap) unless draft pages are switched on
+ * for a preview build (SITE_FEATURES.draftPages). Either way the page is
+ * static: it reads no session, database or learner preferences.
+ */
 
 const VisualizationFallback = () => (
   <div className="flex h-48 items-center justify-center">Loading visualization...</div>
@@ -17,41 +19,9 @@ const HistoryTimelineChart = nextDynamic(
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
 
-const loadTrackingAvailability = async () => {
-  if (!isFeatureEnabled('tracking')) {
-    return false;
-  }
-
-  try {
-    const session = await requireSession();
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { preferences: true },
-    });
-    const preferences = normalizeUserPreferences(
-      user?.preferences as PartialUserPreferences | null,
-      resolveNotificationPreferences(),
-    );
-    return preferences.shareTelemetry;
-  } catch (error) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('HistoryPage: falling back to tracking disabled', error);
-    }
-    return false;
-  }
-};
-
-export default async function HistoryPage() {
-  const trackingEnabled = await loadTrackingAvailability();
-
-  if (!trackingEnabled) {
-    return (
-      <InfoPage title="History of SystemVerilog & UVM">
-        <p className="text-sm text-muted-foreground">
-          The history module is paused until we have real learner tracking data to justify the heavy visualizations.
-        </p>
-      </InfoPage>
-    );
+export default function HistoryPage() {
+  if (!SITE_FEATURES.draftPages) {
+    notFound();
   }
 
   const timelineSection = (

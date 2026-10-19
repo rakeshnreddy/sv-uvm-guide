@@ -1,85 +1,95 @@
 /// <reference types="vitest/globals" />
-import { describe, it, expect, vi, Mock } from 'vitest';
-import { createFlashcard, reviewFlashcard, getDueFlashcards } from '../src/app/actions/srs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, it, expect, vi, Mock, beforeEach } from 'vitest';
+import { reviewFlashcard, getDueFlashcards } from '../src/app/actions/srs';
+import * as srsActions from '../src/app/actions/srs';
 import { prisma } from '@/lib/prisma';
 import { withFrozenTime } from './setup/time-travel';
 
 const mPrismaClient = vi.hoisted(() => ({
 
   flashcard: {
-    create: vi.fn(),
     findUnique: vi.fn(),
     update: vi.fn(),
     findMany: vi.fn(),
   },
 }));
 
-const requireSession = vi.hoisted(() => vi.fn().mockResolvedValue({
-  user: { id: 'test-user-id' },
-}));
+const auth = vi.hoisted(() => {
+  class AuthenticationError extends Error {
+    constructor(message = 'Authentication required') {
+      super(message);
+      this.name = 'AuthenticationError';
+    }
+  }
+  return {
+    AuthenticationError,
+    requireSession: vi.fn(),
+  };
+});
 
+const signedIn = { user: { id: 'test-user-id' } };
 
 // Mock Prisma Client helper
 vi.mock('@/lib/prisma', () => ({ prisma: mPrismaClient }));
 
 vi.mock('@/lib/auth', () => ({
-  requireSession,
+  requireSession: auth.requireSession,
+  AuthenticationError: auth.AuthenticationError,
 }));
 
 vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
 }));
 
+function storedFlashcard(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'test-flashcard-id',
+    userId: 'test-user-id',
+    topicId: 'test-topic-id',
+    front: 'Test front',
+    back: 'Test back',
+    interval: 1,
+    easinessFactor: 2.5,
+    repetitions: 0,
+    nextReviewAt: new Date(),
+    ...overrides,
+  };
+}
+
 describe('SRS Actions', () => {
-  it('should create a flashcard', async () => {
-    const topicId = 'test-topic-id';
-    const expectedFlashcard = {
-      id: 'new-flashcard-id',
-      userId: 'test-user-id',
-      topicId,
-      front: `What is the main concept of topic ${topicId}?`,
-      back: `This is a detailed explanation of the main concept of topic ${topicId}.`,
-      interval: 1,
-      easinessFactor: 2.5,
-      repetitions: 0,
-      nextReviewAt: new Date(),
-    };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    auth.requireSession.mockResolvedValue(signedIn);
+    (prisma.flashcard.update as Mock).mockImplementation(async ({ data }: { data: any }) => ({
+      ...storedFlashcard(),
+      ...data,
+    }));
+  });
 
-    (prisma.flashcard.create as Mock).mockResolvedValue(expectedFlashcard);
+  it('no longer exports a placeholder createFlashcard action', () => {
+    expect('createFlashcard' in srsActions).toBe(false);
+  });
 
-    const flashcard = await createFlashcard(topicId);
-
-    expect(prisma.flashcard.create).toHaveBeenCalledWith({
-      data: {
-        userId: 'test-user-id',
-        topicId,
-        front: expectedFlashcard.front,
-        back: expectedFlashcard.back,
-      },
+  it('is not imported by any client component', () => {
+    const files = (function walk(dir: string): string[] {
+      return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const full = path.join(dir, entry.name);
+        return entry.isDirectory() ? walk(full) : /\.(ts|tsx)$/.test(entry.name) ? [full] : [];
+      });
+    })('src');
+    const clientImporters = files.filter((file) => {
+      const source = fs.readFileSync(file, 'utf8');
+      return /^\s*['"]use client['"]/.test(source) && /['"]@\/app\/actions\/srs['"]/.test(source);
     });
-    expect(flashcard).toEqual(expectedFlashcard);
+    expect(clientImporters).toEqual([]);
   });
 
   it('should review a flashcard and update its state', async () => {
     await withFrozenTime('2024-01-15T09:00:00.000Z', async ({ now }) => {
       const flashcardId = 'test-flashcard-id';
-      const initialFlashcard = {
-        id: flashcardId,
-        userId: 'test-user-id',
-        topicId: 'test-topic-id',
-        front: 'Test front',
-        back: 'Test back',
-        interval: 1,
-        easinessFactor: 2.5,
-        repetitions: 0,
-        nextReviewAt: new Date(),
-      };
-
-      (prisma.flashcard.findUnique as Mock).mockResolvedValue(initialFlashcard);
-      (prisma.flashcard.update as Mock).mockImplementation(async ({ data }: { data: any }) => ({
-        ...initialFlashcard,
-        ...data,
-      }));
+      (prisma.flashcard.findUnique as Mock).mockResolvedValue(storedFlashcard());
 
       const quality = 4; // "Good"
       const updatedFlashcard = await reviewFlashcard(flashcardId, quality);
@@ -88,9 +98,49 @@ describe('SRS Actions', () => {
       expect(prisma.flashcard.update).toHaveBeenCalled();
       expect(updatedFlashcard.repetitions).toBe(1);
       expect(updatedFlashcard.interval).toBe(1); // First repetition
+      expect(updatedFlashcard.easinessFactor).toBe(2.5);
       const baseTime = now().getTime();
       expect(updatedFlashcard.nextReviewAt.getTime()).toBe(baseTime + 24 * 60 * 60 * 1000);
+      expect(updatedFlashcard.lastReviewedAt?.getTime()).toBe(baseTime);
     });
+  });
+
+  it('resets a failed card with the shared scheduler', async () => {
+    await withFrozenTime('2024-01-15T09:00:00.000Z', async ({ now }) => {
+      (prisma.flashcard.findUnique as Mock).mockResolvedValue(
+        storedFlashcard({ interval: 15, repetitions: 3, easinessFactor: 2.5 }),
+      );
+
+      const updated = await reviewFlashcard('test-flashcard-id', 0);
+
+      expect(updated.repetitions).toBe(0);
+      expect(updated.interval).toBe(1);
+      expect(updated.easinessFactor).toBe(1.7);
+      expect(updated.nextReviewAt.getTime()).toBe(now().getTime() + 24 * 60 * 60 * 1000);
+    });
+  });
+
+  it('rejects a quality outside 0-5 before touching the database', async () => {
+    await expect(reviewFlashcard('test-flashcard-id', 6)).rejects.toThrow(
+      'Review quality must be an integer from 0 through 5.',
+    );
+    expect(prisma.flashcard.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('refuses another learner\'s card', async () => {
+    (prisma.flashcard.findUnique as Mock).mockResolvedValue(storedFlashcard({ userId: 'someone-else' }));
+    await expect(reviewFlashcard('test-flashcard-id', 4)).rejects.toThrow(/not found/);
+    expect(prisma.flashcard.update).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for an anonymous caller', async () => {
+    auth.requireSession.mockRejectedValue(new auth.AuthenticationError());
+
+    await expect(reviewFlashcard('test-flashcard-id', 4)).rejects.toBeInstanceOf(auth.AuthenticationError);
+    await expect(getDueFlashcards()).rejects.toBeInstanceOf(auth.AuthenticationError);
+    expect(prisma.flashcard.findUnique).not.toHaveBeenCalled();
+    expect(prisma.flashcard.findMany).not.toHaveBeenCalled();
+    expect(prisma.flashcard.update).not.toHaveBeenCalled();
   });
 
   it('should get due flashcards for a user', async () => {

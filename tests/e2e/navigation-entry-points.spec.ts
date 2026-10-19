@@ -7,8 +7,9 @@ import { INTERVIEW_PREP_HREF, LABS_HREF, START_HERE_HREF } from '@/lib/site-link
  * Lead integration after the navigation foundations
  * (docs/curriculum-quality/reviews/lead-integration.build.md): the navbar and
  * course-outline entry points (G30-SIDE-04/05, G30-PATH-07), the home route
- * cards (NB2 request 3), the lab callout's sign-in note (G30-PRAC-10) and a
- * single theme toggle on Alt/Option+T (NB3 request 4).
+ * cards (NB2 request 3), the lab callout's progress note (labs open without
+ * an account and keep progress in this browser) and a single theme toggle on
+ * Alt/Option+T (NB3 request 4).
  */
 
 const F1A = '/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index';
@@ -25,13 +26,14 @@ const mainNav = (page: Page) => page.getByRole('banner').getByRole('navigation',
 test.describe('navbar entry points at 1280 px', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test('links Start here, Labs and Interview prep', async ({ page }) => {
+  test('links Start here, Labs, Interview prep and Dashboard', async ({ page }) => {
     await page.goto('/practice');
     await waitForShell(page);
     const nav = mainNav(page);
     await expect(nav.getByRole('link', { name: 'Start here', exact: true })).toHaveAttribute('href', START_HERE_HREF);
     await expect(nav.getByRole('link', { name: 'Labs', exact: true })).toHaveAttribute('href', LABS_HREF);
     await expect(nav.getByRole('link', { name: 'Interview prep', exact: true })).toHaveAttribute('href', INTERVIEW_PREP_HREF);
+    await expect(nav.getByRole('link', { name: 'Dashboard', exact: true })).toHaveAttribute('href', '/dashboard');
     // A link to part of a page never claims to be the current page.
     await expect(nav.getByRole('link', { name: 'Labs', exact: true })).not.toHaveAttribute('aria-current');
   });
@@ -66,7 +68,14 @@ test.describe('navbar entry points at 1280 px', () => {
     await waitForShell(page);
     await page.getByRole('button', { name: 'Course outline', exact: true }).click();
     const quickLinks = page.getByRole('dialog', { name: 'Course outline' }).getByRole('list', { name: 'Quick links' });
-    await expect(quickLinks.getByRole('link')).toHaveText(['Start here', 'Curriculum overview', 'Practice hub', 'Labs', 'Interview prep']);
+    await expect(quickLinks.getByRole('link')).toHaveText([
+      'Start here',
+      'Curriculum overview',
+      'Practice hub',
+      'Labs',
+      'Interview prep',
+      'Dashboard',
+    ]);
     await page.keyboard.press('Escape');
 
     await page.goto(MAILBOXES);
@@ -86,7 +95,7 @@ test.describe('navbar entry points on a phone', () => {
     expect(await header.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await page.getByRole('button', { name: 'Open main menu' }).click();
     const menu = page.getByTestId('mobile-menu');
-    for (const name of ['Start here', 'Curriculum', 'Practice', 'Labs', 'Interview prep']) {
+    for (const name of ['Start here', 'Curriculum', 'Practice', 'Labs', 'Interview prep', 'Dashboard']) {
       await expect(menu.getByRole('link', { name, exact: true })).toBeVisible();
     }
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -119,11 +128,12 @@ test.describe('home route cards (NB2 request 3)', () => {
   });
 });
 
-test('the lesson lab callout says the lab needs sign-in (G30-PRAC-10)', async ({ page }) => {
+test('the lesson lab callout says progress is saved in this browser', async ({ page }) => {
   await page.goto(PSS);
   const launch = page.getByRole('link', { name: 'Launch Lab' });
   await expect(launch).toHaveAttribute('href', '/practice/lab/pss-portable-intent');
-  await expect(launch).toHaveAccessibleDescription(/Sign in required/);
+  await expect(launch).toHaveAccessibleDescription(/saved in this browser/);
+  await expect(page.getByTestId('lab-link')).not.toContainText(/sign[ -]in/i);
 });
 
 test('Alt/Option+T switches light and dark exactly once per press (NB3 request 4)', async ({ page }) => {

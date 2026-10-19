@@ -7,10 +7,23 @@ import KeyboardShortcuts, { lessonNeighbourHref } from '@/components/layout/Keyb
 import { shellStore } from '@/components/search/shell-store';
 import { findPrevNextTopics } from '@/lib/curriculum-data';
 
-const { push, setTheme, nav } = vi.hoisted(() => ({
+const { push, setTheme, nav, features } = vi.hoisted(() => ({
   push: vi.fn(),
   setTheme: vi.fn(),
   nav: { pathname: '/curriculum' as string },
+  // The default site: learner pages on, accounts and everything that needs them off.
+  features: {
+    dashboard: true,
+    review: true,
+    notebook: true,
+    settings: true,
+    accounts: false,
+    community: false,
+    aiTutor: false,
+    simulation: false,
+    draftPages: false,
+    assessmentCenter: false,
+  },
 }));
 
 vi.mock('next/navigation', () => ({
@@ -22,9 +35,8 @@ vi.mock('next-themes', () => ({
   useTheme: () => ({ theme: 'ocean-dark', resolvedTheme: 'ocean-dark', setTheme }),
 }));
 
-vi.mock('@/tools/featureFlags', () => ({
-  featureFlags: { community: false, tracking: false, personalization: false, fakeComments: false, accountUI: false },
-}));
+// Components read switches through SITE_FEATURES only (GD5, GD6).
+vi.mock('@/lib/site-features', () => ({ SITE_FEATURES: features }));
 
 const MAILBOXES = '/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes';
 
@@ -38,6 +50,8 @@ function press(init: KeyboardEventInit & { key: string }, target: EventTarget = 
 
 beforeEach(() => {
   nav.pathname = '/curriculum';
+  features.dashboard = true;
+  features.community = false;
   push.mockReset();
   setTheme.mockReset();
   shellStore.reset();
@@ -65,7 +79,33 @@ describe('KeyboardShortcuts', () => {
     expect(push).toHaveBeenCalledWith('/curriculum');
   });
 
-  it('ignores shortcuts to sections whose feature flag is off, and leaves the key alone', () => {
+  it('goes to the dashboard with Alt/Option+3 (G30-SRCH-04)', () => {
+    render(<KeyboardShortcuts />);
+    const mac = press({ key: '£', code: 'Digit3', altKey: true });
+    expect(push).toHaveBeenLastCalledWith('/dashboard');
+    expect(mac.defaultPrevented).toBe(true);
+    press({ key: '3', code: 'Digit3', altKey: true });
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(push).toHaveBeenLastCalledWith('/dashboard');
+  });
+
+  it('ignores Alt+C while community is off, and leaves the key alone', () => {
+    render(<KeyboardShortcuts />);
+    const event = press({ key: 'ç', code: 'KeyC', altKey: true });
+    expect(push).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('goes to the community with Alt+C only while community is on', () => {
+    features.community = true;
+    render(<KeyboardShortcuts />);
+    const event = press({ key: 'c', code: 'KeyC', altKey: true });
+    expect(push).toHaveBeenLastCalledWith('/community');
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('ignores shortcuts to sections that are switched off', () => {
+    features.dashboard = false;
     render(<KeyboardShortcuts />);
     const event = press({ key: '£', code: 'Digit3', altKey: true });
     expect(push).not.toHaveBeenCalled();
@@ -288,6 +328,7 @@ describe('keyboard shortcuts help', () => {
       'Show or hide the course outline',
       'Go to the curriculum',
       'Go to practice',
+      'Go to your dashboard',
       'Switch between light and dark mode',
       'Show this list of shortcuts',
       'Previous lesson',
@@ -296,14 +337,23 @@ describe('keyboard shortcuts help', () => {
     ]) {
       expect(within(dialog).getByRole('cell', { name: action })).toBeInTheDocument();
     }
-    // Sections behind flags that are off are not offered.
-    expect(within(dialog).queryByRole('cell', { name: 'Go to your dashboard' })).not.toBeInTheDocument();
+    // Sections that are switched off are not offered: community is off on the default site.
+    expect(within(dialog).queryByRole('cell', { name: 'Go to the community' })).not.toBeInTheDocument();
     // Keys are text, not glyphs alone.
     expect(within(dialog).getAllByText('Question mark').length).toBeGreaterThan(0);
 
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(document.activeElement).toBe(somewhere);
+  });
+
+  it('lists the community shortcut only while community is on', () => {
+    features.community = true;
+    render(<KeyboardShortcuts />);
+    act(() => shellStore.openHelp());
+    const dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    expect(within(dialog).getByRole('cell', { name: 'Go to the community' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('cell', { name: 'Go to your dashboard' })).toBeInTheDocument();
   });
 
   it('closes from its close button and from the backdrop', async () => {
