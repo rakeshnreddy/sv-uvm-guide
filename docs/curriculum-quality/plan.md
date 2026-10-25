@@ -266,9 +266,10 @@ Status, 2026-10-18: every wave is integrated and deployed. The owner set the ord
        `common-1`, re-owned toward F2A; `fifo-1`; `assertions-1`; `arbiter-1`; `dma-1`) and a new M5 lab
        (`multi-agent-vseq`).
      - **Process:** each item is authored, then reviewed for accuracy and quality, with fix rounds. Every SystemVerilog
-       file is compiled with Verilator once it is installed.
+       file is compiled with Verilator (`npm run test:sv`); each new lab adds its units to
+       `content/curriculum/labs/compile-units.json`.
      - **Integrate step:** unhide the pages, update navigation, the sitemap, the practice links and the milestones.
-3. **Phase 6b: closure sweep (paused by the owner; resume after 6a, so it also reviews the new visuals).**
+3. **Phase 6b: closure sweep (resumed first by the owner on 2026-10-25, ahead of 6a).**
    - Curriculum-wide accuracy, completeness and consistency critics, in rounds, until two consecutive rounds find nothing
      new. Each serious finding is checked by three skeptics.
    - Script: `docs/curriculum-quality/workflows/phase6-closure-sweep.js`. The paused run is `wf_010d0167-550`; resume steps
@@ -280,11 +281,24 @@ Status, 2026-10-18: every wave is integrated and deployed. The owner set the ord
    - The bundle check, and a final review of the PROJECT_GUIDE §3 table, generated from the manifest.
    - Update TASKS.md and SESSION_HANDOFF.
 
+**Compile fixes (2026-10-25, after 6b integrates and before 6a).** Verilator 5.052 is installed locally, and
+`npm run test:sv` (`scripts/compile-sv.mjs`) compiles every lesson block tagged `// compile` and every lab unit, in CI
+too. The first run: 309 units, 245 compile. The 64 failures are listed with a reason under "known" in
+`scripts/sv-compile.config.json`:
+- **25 content bugs.** 13 benches name a variable `matches`, one names one `before`, and the common arbiter names one
+  `priority` (all reserved keywords). The scoreboard lab's two benches have no `endmodule`. I-SV-6 includes
+  `tb_defines.svh` without tagging it as a bench file.
+- **9 to verify against the LRM**, plus one harness case: the B-AHB-3 "(part of the bench)" blocks need file tags.
+- **29 Verilator limitations**, for example coverpoint member access, `checker`, `program` inside a module,
+  `randomize(null)` with rand members, `$past` with a clock, `wait_order`, and `@(cb)` through a modport.
+A fix pass corrects the content bugs, settles the to-verify entries and removes each fixed entry; the list then holds
+only tool limitations. It cannot run while 6b edits the same lessons and labs.
+
 Never run 6a and 6b at the same time: both edit lesson files.
 
 ## 6. Risks and open questions
 
-- **No local simulator.** Lesson code is verified by reading and against the standards' text. Installing Verilator (Homebrew) would let reviewers compile `// compile` snippets and labs; this needs the user's approval.
+- **Simulator coverage.** Verilator 5.052 (built from source on this Mac, `~/.local/verilator`) lints every `// compile` unit and lab, but it does not simulate them, and it rejects some legal constructs (the "verilator-limitation" entries in `scripts/sv-compile.config.json`). Code that only Verilator's limits block, and all run-time behaviour, is still verified by reading and against the standards' text.
 - **Usage limits** interrupted the first analysis run. Workflows resume from their caches, so finished work is never repeated.
 - **One analysis (E-DBG-1) was blocked by a content filter.** It was retried; if it recurs, it will run with a narrower prompt.
 - **Release e2e specs** need `AUTH_TEST_MODE` and a test database (see CONTRIBUTING.md); they run in CI.

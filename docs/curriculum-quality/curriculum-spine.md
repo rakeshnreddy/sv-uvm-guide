@@ -2442,7 +2442,11 @@ These are enforceable rules. Every analyst scores R3, R4, R6 and R8 against them
 
 Consistent with the [README](README.md#the-target-lesson):
 
-1. **Tagging.** Each fenced `systemverilog` block, and each `InteractiveCode` body, starts with `// compile` (a complete unit CI can compile, per TRUST-1) or `// snippet` (a fragment). Today 0 blocks use `// snippet` and 2 use `// compile`.
+1. **Tagging.** Each fenced `systemverilog` block, and each `InteractiveCode` body, starts with `// compile` (a complete unit CI can compile, per TRUST-1) or `// snippet` (a fragment). CI compiles every `// compile` unit with Verilator (`npm run test:sv`, `scripts/compile-sv.mjs`), so the tag must be true. The forms it understands:
+   - `// compile` — one self-contained unit. It may use a package, module or class that another block of the same lesson defines.
+   - `// compile: <file>.sv` or `<file>.svh` — one file of the lesson's bench. The named files compile together, and `.svh` files are `include`d. Naming a file a second time starts a new bench that replaces it.
+   - `// compile: add to <file>, ...` or `// compile (add to <package>, ...)` — an addition to an earlier bench file or package.
+   - A bench that reuses another lesson's files names that bench under `inherit` in `scripts/sv-compile.config.json`.
 2. **Fences.** Use `systemverilog` (not `sv`/`verilog`), `c` for DPI C, `tcl` for UPF, `pss`, `python`, `bash` for shell, `text` for logs.
 3. **Legality.**
    - Code must be IEEE 1800-2023 legal and use only APIs in uvm-core 2020.3.1.

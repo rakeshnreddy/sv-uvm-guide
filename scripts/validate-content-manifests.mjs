@@ -24,6 +24,7 @@ const frontmatterSchema = z.object({
     type: z.string().min(1),
     identifier: z.string().min(1).optional(),
     version: z.union([z.string().min(1), z.number()]).optional(),
+    url: z.string().url().optional(), // as in src/lib/source-metadata-schema.ts
   }).strict()).optional(),
 }).strict();
 
