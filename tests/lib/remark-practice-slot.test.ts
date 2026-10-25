@@ -78,10 +78,12 @@ describe("remarkPracticeSlot", () => {
     expect(slot).toBeLessThan(code.indexOf("After the wrapper."));
   });
 
-  it("puts practice before References & Next Topics in every lesson that has that section", () => {
+  it("puts practice before References & Next Topics in every lesson that has that section", async () => {
     for (const tier of curriculumData) {
       for (const section of tier.sections) {
         for (const topic of section.topics) {
+          // Yield between lessons: a worker that blocks for over 60 s fails Vitest's RPC ("Timeout calling onTaskUpdate").
+          await new Promise((resolve) => setTimeout(resolve, 0));
           const file = path.join(process.cwd(), "content", "curriculum", tier.slug, section.slug, `${topic.slug}.mdx`);
           const { code } = compileLesson(matter(fs.readFileSync(file, "utf8")).content);
           const order = outline(code);

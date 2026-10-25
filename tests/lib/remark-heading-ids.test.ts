@@ -134,10 +134,12 @@ describe("remarkHeadingIds", () => {
     expect(headingIds(code)).toEqual(["first", "second", "second-1"]);
   });
 
-  it("gives every lesson unique ids that equal the search and expert index anchors", () => {
+  it("gives every lesson unique ids that equal the search and expert index anchors", async () => {
     const files = lessonFiles();
     expect(files.length).toBeGreaterThan(100);
     for (const { route, file } of files) {
+      // Yield between lessons: a worker that blocks for over 60 s fails Vitest's RPC ("Timeout calling onTaskUpdate").
+      await new Promise((resolve) => setTimeout(resolve, 0));
       const body = matter(fs.readFileSync(file, "utf8")).content;
       const { code, toc } = compileWithIds(body);
       const ids = headingIds(code);

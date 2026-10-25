@@ -172,6 +172,8 @@ describe.skipIf(!fs.existsSync(headingIdsPlugin))('anchors agree with the lesson
     for (const tier of curriculumData) {
       for (const section of tier.sections) {
         for (const topic of section.topics) {
+          // Yield between lessons: a worker that blocks for over 60 s fails Vitest's RPC ("Timeout calling onTaskUpdate").
+          await new Promise((resolve) => setTimeout(resolve, 0));
           const body = readLessonBody(tier.slug, section.slug, topic.slug) ?? '';
           const tree = parser.parse(body) as unknown as PageNode;
           remarkHeadingIds()(tree as never);
@@ -202,12 +204,13 @@ describe('the expert index over the real curriculum', () => {
     expect(index.moduleCount).toBe(curriculumData.reduce((n, t) => n + t.sections.length, 0));
   });
 
-  it('parses every lesson and links only canonical lesson URLs with anchors that exist on the page', () => {
+  it('parses every lesson and links only canonical lesson URLs with anchors that exist on the page', async () => {
     expect(index.unparsedLessons).toEqual([]);
     for (const tier of index.tiers) {
       for (const mod of tier.modules) {
         expect(isCanonicalLessonHref(mod.href), mod.href).toBe(true);
         for (const entry of mod.lessons) {
+          await new Promise((resolve) => setTimeout(resolve, 0)); // see the heading-id test above
           const [tierId, moduleId, slug] = entry.href.replace('/curriculum/', '').split('/');
           const anchors = new Set(scanLessonHeadings(readLessonBody(tierId, moduleId, slug) ?? '').headings.map((h) => h.anchor));
           for (const href of [...entry.topics.map((t) => t.href), ...(entry.pushFurtherHref ? [entry.pushFurtherHref] : [])]) {
