@@ -191,3 +191,7 @@ and the working tree was clean.
   - add a theme control to the phone menu;
   - remove or replace the knowledge-graph placeholder behind the opt-in ConceptLink;
   - when accounts return: navbar overflow at 768 px, and the `POST /api/me/import` route (SERVER_SYNC_READY).
+- 2026-10-25: the owner asked to resume the paused work. Phase 6b closure sweep resumed: same run `wf_010d0167-550`
+  (task `wu1b1igge`), same script. No agent had finished before the pause, so it starts at round 1. 6a visual enrichment
+  stays planned for afterwards. Its fixers edit lesson files in the main tree, so run nothing else on lessons until it
+  ends. Then integrate in a clean worktree and fast-forward `main` to deploy.
