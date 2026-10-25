@@ -187,7 +187,7 @@ describe.skipIf(!fs.existsSync(headingIdsPlugin))('anchors agree with the lesson
       }
     }
     expect(lessons).toBeGreaterThan(100);
-  }, 90_000); // parses every lesson; slow under a loaded parallel run
+  }, 120_000); // parses every lesson; slow on CI and under a loaded parallel run
 });
 
 describe('the expert index over the real curriculum', () => {
@@ -218,7 +218,7 @@ describe('the expert index over the real curriculum', () => {
         }
       }
     }
-  }, 30_000);
+  }, 120_000); // parses every lesson; ~36 s on a 2-vCPU CI runner
 
   it('counts consistently', () => {
     const topics = index.tiers.flatMap((t) => t.modules.flatMap((m) => m.lessons.flatMap((l) => l.topics)));

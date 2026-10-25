@@ -46,7 +46,7 @@ describe('/curriculum', () => {
     for (const href of links) expect(appRouteExists(href), href).toBe(true);
     expect(links).toContain('/curriculum/expert-index');
     expect(links).toContain('/quiz/placement');
-  }, 30_000);
+  }, 120_000); // renders the whole curriculum; ~35 s on a 2-vCPU CI runner
 });
 
 describe('/curriculum/expert-index', () => {
@@ -63,5 +63,5 @@ describe('/curriculum/expert-index', () => {
     for (const href of links) expect(appRouteExists(href), href).toBe(true);
     // Every module is listed, tagged or not.
     expect(count(html, /href="\/curriculum\/T\d_[^"#]+\/index"/g)).toBeGreaterThanOrEqual(69);
-  }, 30_000);
+  }, 120_000); // renders the whole curriculum; ~35 s on a 2-vCPU CI runner
 });
