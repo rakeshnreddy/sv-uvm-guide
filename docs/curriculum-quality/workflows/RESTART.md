@@ -195,3 +195,8 @@ and the working tree was clean.
   (task `wu1b1igge`), same script. No agent had finished before the pause, so it starts at round 1. 6a visual enrichment
   stays planned for afterwards. Its fixers edit lesson files in the main tree, so run nothing else on lessons until it
   ends. Then integrate in a clean worktree and fast-forward `main` to deploy.
+- 2026-10-25: the owner approved Verilator, and adding the hidden pages and missing labs to 6a. The extras workflow is
+  saved as `docs/curriculum-quality/workflows/phase6a-extras.js` (run it after the 6b sweep, with or after
+  visual-enrichment.js). Verilator via Homebrew is blocked: /opt/homebrew is owned by macOS user "chaitra". Options: the
+  owner runs `brew install verilator` from that account, or a no-admin build into ~/.local (autoconf 2.72, bison 3.8.2,
+  verilator 5.052 from source).

@@ -257,6 +257,17 @@ Status, 2026-10-18: every wave is integrated and deployed. The owner set the ord
    - **Output:** a list of new interactive components that lessons need, which feeds a component-build workflow.
    - Run it in batches with args, for example `{ "tiers": ["T1_Foundational"] }`, then T2, T3 and T4. Integrate each batch
      in a clean worktree and deploy at each checkpoint.
+   - **6a extras (owner, 2026-10-25), run with `docs/curriculum-quality/workflows/phase6a-extras.js`:**
+     - **Hidden pages:** bring back the five hidden pages with real, verified content: /resources (a checked link
+       library), /history (a cited timeline of SV and UVM), /projects (milestone M0–M8 capstone briefs), /knowledge-hub (a
+       concept map derived from the manifest and spine; it also feeds ConceptLink) and /assessment (a self-assessment
+       from the learner store).
+     - **Labs:** build the six coming-soon labs (`constructs-1`, the M1 lab, re-owned to the clocking-block lesson;
+       `common-1`, re-owned toward F2A; `fifo-1`; `assertions-1`; `arbiter-1`; `dma-1`) and a new M5 lab
+       (`multi-agent-vseq`).
+     - **Process:** each item is authored, then reviewed for accuracy and quality, with fix rounds. Every SystemVerilog
+       file is compiled with Verilator once it is installed.
+     - **Integrate step:** unhide the pages, update navigation, the sitemap, the practice links and the milestones.
 3. **Phase 6b: closure sweep (paused by the owner; resume after 6a, so it also reviews the new visuals).**
    - Curriculum-wide accuracy, completeness and consistency critics, in rounds, until two consecutive rounds find nothing
      new. Each serious finding is checked by three skeptics.
