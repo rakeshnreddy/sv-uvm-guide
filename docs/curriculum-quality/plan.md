@@ -283,8 +283,10 @@ Status, 2026-10-18: every wave is integrated and deployed. The owner set the ord
 
 **Compile fixes (2026-10-25, after 6b integrates and before 6a).** Verilator 5.052 is installed locally, and
 `npm run test:sv` (`scripts/compile-sv.mjs`) compiles every lesson block tagged `// compile` and every lab unit, in CI
-too. The first run: 309 units, 245 compile. The 64 failures are listed with a reason under "known" in
+too. The first run: 309 units, 237 compile. The 72 failures are listed with a reason under "known" in
 `scripts/sv-compile.config.json`:
+- **8 mixed time scales.** Some design elements have a time unit and others do not, which IEEE 1800-2023 3.14.2.3
+  makes an error. Verilator only warns (TIMESCALEMOD), so the checker counts that warning, except in uvm_pkg.
 - **25 content bugs.** 13 benches name a variable `matches`, one names one `before`, and the common arbiter names one
   `priority` (all reserved keywords). The scoreboard lab's two benches have no `endmodule`. I-SV-6 includes
   `tb_defines.svh` without tagging it as a bench file.

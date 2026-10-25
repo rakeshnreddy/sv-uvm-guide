@@ -209,7 +209,7 @@ and the working tree was clean.
   built from source with GNU flex 2.6.4 (a Homebrew keg). Its `src/flexfix` macOS rewrite of `int` to `size_t` was turned
   off, because the GNU FlexLexer.h declares `int`. uvm-core 2020.3.1 is at `/Users/Rakesh/Downloads/1800.2-2020.3.1`
   (use it as UVM_HOME). `npm run test:sv` (f7d139fa) compiles 309 units: 241 lesson units and 68 lab units
-  (`content/curriculum/labs/compile-units.json`). 245 compile; the 64 that fail are listed under "known" in
+  (`content/curriculum/labs/compile-units.json`). 237 compile; the 72 that fail (8 of them mixed time scales, IEEE 1800-2023 3.14.2.3) are listed under "known" in
   `scripts/sv-compile.config.json`. CI pulls verilator v5.052 too.
   - Two CI fixes are also in: the whole-curriculum tests yield between lessons (04a6269b), and validate:content accepts
     `url` on lesson sources.

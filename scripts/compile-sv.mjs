@@ -220,7 +220,16 @@ function run(command, args, cwd) {
   });
 }
 
-const errorLines = (output) => output.split("\n").filter((line) => /^%Error/.test(line));
+/**
+ * Verilator's errors, plus TIMESCALEMOD: IEEE 1800-2023 3.14.2.3 makes it an error when some design
+ * elements have a time unit and others do not, but Verilator only warns. uvm_pkg has none and is
+ * compiled on its own in real flows, so a warning located in it (or in the checker's empty top) is not counted.
+ */
+function errorLines(output) {
+  return output.split("\n").filter((line) =>
+    /^%Error/.test(line)
+    || (/^%Warning-TIMESCALEMOD:/.test(line) && !(uvmHome && line.includes(uvmHome)) && !line.includes("sv_compile_top.sv")));
+}
 
 /** Names Verilator could not find, so a lesson unit can borrow their definitions. */
 function missingNames(output) {
@@ -272,7 +281,7 @@ async function compileLessonUnit(unit, index) {
     if (uvm && !uvmHome) return { status: "fail", errors: ["UVM_HOME is required"] };
     const files = writeLessonUnit(unit, extra, dir);
     const result = await run(compiler, verilatorArgs({ uvm, includeDirs: [dir], defines: [], files }), dir);
-    if (result.status === 0) return { status: "pass", borrowed: extra.map((block) => block.line) };
+    if (result.status === 0 && errorLines(result.output).length === 0) return { status: "pass", borrowed: extra.map((block) => block.line) };
     const firstLine = unit.files[0]?.line ?? 0;
     const missing = missingNames(result.output).filter((name) => !own.has(name));
     // Borrow the nearest earlier block of the lesson that defines a missing name (or else the nearest later one).
@@ -304,7 +313,8 @@ async function compileLabUnit(unit) {
     defines: unit.defines,
     files: unit.labFiles,
   }), unit.cwd);
-  return result.status === 0 ? { status: "pass" } : { status: "fail", errors: errorLines(result.output), output: result.output };
+  const errors = errorLines(result.output);
+  return result.status === 0 && errors.length === 0 ? { status: "pass" } : { status: "fail", errors, output: result.output };
 }
 
 /** Maps "<dir>/<file>:<line>" in an error to the lesson line the block came from. */
