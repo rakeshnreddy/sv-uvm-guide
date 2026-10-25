@@ -3,6 +3,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import { getServerSession } from "next-auth/next";
 import { timingSafeEqual } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 const googleClientId = process.env.GOOGLE_CLIENT_ID;
@@ -119,18 +120,22 @@ export async function requireSession(): Promise<AuthenticatedPrincipal> {
     throw new AuthenticationError();
   }
 
-  await prisma.user.upsert({
-    where: { id: userId },
-    update: {
-      email: user.email ?? undefined,
-      name: user.name ?? undefined,
-    },
-    create: {
-      id: userId,
-      email: user.email ?? undefined,
-      name: user.name ?? undefined,
-    },
-  });
+  const profile = { email: user.email ?? undefined, name: user.name ?? undefined };
+  const upsertUser = () =>
+    prisma.user.upsert({
+      where: { id: userId },
+      update: profile,
+      create: { id: userId, ...profile },
+    });
+  try {
+    await upsertUser();
+  } catch (error) {
+    // A new user's first page load sends several requests at once (for example the notification
+    // feed and the preferences request); each tries to create the row, and all but one fail with
+    // a unique-constraint error. The row exists by then, so one retry updates it instead.
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002")) throw error;
+    await upsertUser();
+  }
 
   return {
     user: {
