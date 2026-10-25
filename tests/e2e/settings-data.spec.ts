@@ -56,7 +56,8 @@ test.describe('settings: learning data in this browser', () => {
     );
     const data = page.locator('section#data');
     await expect(data.getByRole('heading', { name: 'Your learning data' })).toBeVisible();
-    await expect(data.getByText('Stored only in this browser')).toBeVisible();
+    // The status line; the paragraph above it also says where the data is stored.
+    await expect(data.getByRole('status').getByText('Stored only in this browser', { exact: true })).toBeVisible();
     await expect(data.getByText(/Some browsers clear data for sites you haven.t visited recently/)).toBeVisible();
     await expect(data.getByText('No learning data is saved in this browser yet.')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Account preferences' })).toHaveCount(0);
