@@ -1,4 +1,24 @@
-import { Page, expect } from '@playwright/test';
+import { Locator, Page, expect } from '@playwright/test';
+
+/**
+ * Clicks a link until the page reaches `url`. On a long lesson page, a click that lands while the
+ * page is still hydrating, or while lazily mounted visualizers above the link shift the layout, can
+ * be lost (seen on the 2-vCPU CI runner), so the click repeats until the URL changes.
+ */
+export async function followLink(page: Page, link: Locator, url: RegExp, timeout = 45_000) {
+  await expect(async () => {
+    if (!url.test(page.url())) await link.click({ timeout: 5_000 });
+    await expect(page).toHaveURL(url, { timeout: 5_000 });
+  }).toPass({ timeout });
+}
+
+/** Clicks `target` until `done` passes, for controls on a lesson page that may not have hydrated yet. */
+export async function clickUntil(target: Locator, isDone: () => Promise<boolean>, done: () => Promise<void>, timeout = 45_000) {
+  await expect(async () => {
+    if (!(await isDone())) await target.click({ timeout: 5_000 });
+    await done();
+  }).toPass({ timeout });
+}
 
 const normalizePathname = (pathname: string) => {
   if (!pathname) {

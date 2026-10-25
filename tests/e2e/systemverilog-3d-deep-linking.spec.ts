@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { followLink } from "./utils/navigation";
+
 type SceneId = "dynamic-array" | "queue" | "associative" | "packed-matrix";
 
 const sceneLabels: Record<SceneId, string> = {
@@ -52,14 +54,9 @@ test.describe("SystemVerilog 3D Explorer deep linking", () => {
 
   test("deep links from the F2B curriculum", async ({ page }) => {
     await page.goto("/curriculum/T1_Foundational/F2B_Dynamic_Structures/");
+    // The lesson also embeds the sandbox on its queue scene, so the URL proves the link was followed.
     const link = page.locator('a[href="/visualizations/systemverilog-3d?scene=queue"]');
-    // The lesson is long and its visualizers mount lazily above the link, so a click can land
-    // while the layout still shifts. Click again until the sandbox page loads. The lesson also
-    // embeds the sandbox on its queue scene, so the URL is what proves the link was followed.
-    await expect(async () => {
-      if (!/scene=queue/.test(page.url())) await link.click({ timeout: 5_000 });
-      await expect(page).toHaveURL(/\/visualizations\/systemverilog-3d\?scene=queue/, { timeout: 5_000 });
-    }).toPass({ timeout: 45_000 });
+    await followLink(page, link, /\/visualizations\/systemverilog-3d\?scene=queue/);
     await expectInitialScene(page, "queue");
   });
 

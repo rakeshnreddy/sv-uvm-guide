@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+import { clickUntil, followLink } from './utils/navigation';
+
 // Anonymous, like the deployed site: lab progress and solution reveal come from this browser's storage.
 test.describe('Learner navigation flow', () => {
   test.setTimeout(180000);
@@ -11,8 +13,7 @@ test.describe('Learner navigation flow', () => {
     });
 
     await test.step('Open linked lab', async () => {
-      await page.getByRole('link', { name: 'Launch Lab' }).click();
-      await expect(page).toHaveURL(/\/practice\/lab\/pss-portable-intent/);
+      await followLink(page, page.getByRole('link', { name: 'Launch Lab' }), /\/practice\/lab\/pss-portable-intent/);
       await expect(page.getByRole('heading', { name: 'Memory Read/Write Portable Intent' })).toBeVisible();
       await expect(page.locator('.monaco-editor')).toBeVisible({ timeout: 60000 });
       await expect(page.getByRole('button', { name: /starter\/mem_test\.pss/i })).toBeVisible();
@@ -36,8 +37,7 @@ test.describe('Learner navigation flow', () => {
     });
 
     await test.step('Return to owning module', async () => {
-      await page.getByRole('link', { name: 'Back to module' }).click();
-      await expect(page).toHaveURL(/E-PSS-1_Portable_Stimulus_Standard/);
+      await followLink(page, page.getByRole('link', { name: 'Back to module' }), /E-PSS-1_Portable_Stimulus_Standard/);
       await expect(page.getByRole('heading', { level: 1 })).toContainText('E-PSS-1: Portable Stimulus Standard');
     });
 
@@ -46,8 +46,11 @@ test.describe('Learner navigation flow', () => {
       await expect(flashcardSection).toBeVisible({ timeout: 30000 });
       await flashcardSection.scrollIntoViewIfNeeded();
       const flashcard = flashcardSection.locator('[role="button"]').first();
-      await flashcard.click();
-      await expect(flashcard).toHaveAttribute('aria-pressed', 'true', { timeout: 15000 });
+      await clickUntil(
+        flashcard,
+        async () => (await flashcard.getAttribute('aria-pressed')) === 'true',
+        () => expect(flashcard).toHaveAttribute('aria-pressed', 'true', { timeout: 5000 }),
+      );
     });
 
     await test.step('Answer the quiz', async () => {
@@ -55,17 +58,17 @@ test.describe('Learner navigation flow', () => {
         name: /What is the primary problem that the Portable Stimulus Standard/,
       });
       await quizQuestion.scrollIntoViewIfNeeded();
-      await page
-        .getByRole('button', {
-          name: 'It eliminates the need to maintain separate test implementations for different execution targets',
-        })
-        .click();
-      await expect(page.getByText(/Correct!|Incorrect\./).first()).toBeVisible({ timeout: 15000 });
+      const answer = page.getByRole('button', {
+        name: 'It eliminates the need to maintain separate test implementations for different execution targets',
+      });
+      const feedback = page.getByText(/Correct!|Incorrect\./).first();
+      await clickUntil(answer, () => feedback.isVisible(), () => expect(feedback).toBeVisible({ timeout: 5000 }));
     });
 
     await test.step('Navigate to the next module', async () => {
       // The lesson's own pager; the breadcrumb and "On this page" are navigation landmarks too.
-      await page.getByRole('navigation', { name: 'Previous and next lesson' }).getByRole('link', { name: /^Next lesson/ }).click();
+      const next = page.getByRole('navigation', { name: 'Previous and next lesson' }).getByRole('link', { name: /^Next lesson/ });
+      await followLink(page, next, /E-PWR-1_Power_Aware_Verification/);
       await expect(page.locator('header h1')).toContainText('Power-Aware UVM Verification Strategy', {
         timeout: 60000,
       });
