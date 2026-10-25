@@ -219,3 +219,12 @@ and the working tree was clean.
     3. Run `docs/curriculum-quality/workflows/compile-fix.js` with the Workflow tool's `scriptPath` and those args.
     4. Update the "known" list from its report: remove fixed units, and replace each to-verify reason with the verdict.
     5. Run `npm run test:sv`, then integrate.
+- 2026-10-25: CI is green end to end for the first time: run 40190482658 on a0d04db3, including both Playwright
+  suites. Fixes on the way:
+  - e2e: `followLink` and `clickUntil` in `tests/e2e/utils/navigation.ts` retry clicks that are lost on long lesson
+    pages, and the B-AXI-2 search test uses the renamed heading.
+  - `requireSession` retries the user upsert once on P2002. Concurrent first requests raced to create the row.
+
+  The 6b sweep stopped at the session limit: 109 agents failed, including 17 round-1 fixers, most checks, and every
+  round-2 and round-3 critic. Its "two dry rounds" were not real. It was resumed with `resumeFromRunId` (task
+  `wno3tqlqk`); cached agents replay and the failed ones rerun. Round 1 had already edited 12 files in the tree.
