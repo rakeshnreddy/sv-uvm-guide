@@ -200,3 +200,8 @@ and the working tree was clean.
   visual-enrichment.js). Verilator via Homebrew is blocked: /opt/homebrew is owned by macOS user "chaitra". Options: the
   owner runs `brew install verilator` from that account, or a no-admin build into ~/.local (autoconf 2.72, bison 3.8.2,
   verilator 5.052 from source).
+- 2026-10-25: CI enabled on every push to `curriculum-quality-program` (6df00f99; docs-only pushes skipped). It runs the
+  full quality gates, including the Verilator 5.050 + uvm-core 2020.3.1 compile of lab solutions and Playwright. The first
+  run is 40181660082. Homebrew is now owned by Rakesh with group `admin`. The Verilator install waits on the owner
+  updating the Command Line Tools for Xcode 27 (`softwareupdate`); then `brew install --build-from-source` for m4,
+  autoconf, automake, flex, help2man and verilator.
