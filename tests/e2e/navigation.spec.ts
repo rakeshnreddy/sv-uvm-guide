@@ -1,13 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
 
 import { authenticateTestLearner, requireAccountsMode } from '../fixtures/auth';
+import { followLink } from './utils/navigation';
 
 test('sequence arbitration page next link navigates to sequence libraries', async ({ page }) => {
   await page.goto('/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration');
   const nextLessonLink = page.getByRole('link', { name: /^Next lesson Sequence Libraries & Arbitration Control/i });
   await expect(nextLessonLink, 'Next lesson link should be rendered once').toHaveCount(1);
-  await nextLessonLink.click();
-  await expect(page).toHaveURL('/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-libraries');
+  await followLink(page, nextLessonLink, /\/curriculum\/T2_Intermediate\/I-UVM-3B_Advanced_Sequencing_and_Layering\/sequence-libraries$/);
   await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('Sequence Libraries & Arbitration Control');
 });
 
@@ -233,9 +233,9 @@ test.describe('Lesson page shell', () => {
 
   test('deep-links a search result to its heading anchor', async ({ page }) => {
     const searchInput = page.getByTestId('main-search-input');
-    await searchInput.fill('WSTRB write strobe');
+    await searchInput.fill('WSTRB any subset of the active lanes');
     const section = page.getByRole('listbox', { name: 'Search results' }).getByRole('option', { name: /WSTRB/ }).first();
-    await expect(section).toHaveAttribute('href', /\/curriculum\/T3_Advanced\/B-AXI-2_AXI_Burst_Math\/index#3-wstrb--write-strobe-generation$/);
+    await expect(section).toHaveAttribute('href', /\/curriculum\/T3_Advanced\/B-AXI-2_AXI_Burst_Math\/index#wstrb-any-subset-of-the-active-lanes$/);
   });
 });
 
