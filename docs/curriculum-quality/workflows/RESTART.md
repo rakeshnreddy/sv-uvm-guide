@@ -205,3 +205,17 @@ and the working tree was clean.
   run is 40181660082. Homebrew is now owned by Rakesh with group `admin`. The Verilator install waits on the owner
   updating the Command Line Tools for Xcode 27 (`softwareupdate`); then `brew install --build-from-source` for m4,
   autoconf, automake, flex, help2man and verilator.
+- 2026-10-25: Verilator 5.052 is installed in `~/.local/verilator` (`/opt/homebrew/bin/verilator` links to it). It was
+  built from source with GNU flex 2.6.4 (a Homebrew keg). Its `src/flexfix` macOS rewrite of `int` to `size_t` was turned
+  off, because the GNU FlexLexer.h declares `int`. uvm-core 2020.3.1 is at `/Users/Rakesh/Downloads/1800.2-2020.3.1`
+  (use it as UVM_HOME). `npm run test:sv` (f7d139fa) compiles 309 units: 241 lesson units and 68 lab units
+  (`content/curriculum/labs/compile-units.json`). 245 compile; the 64 that fail are listed under "known" in
+  `scripts/sv-compile.config.json`. CI pulls verilator v5.052 too.
+  - Two CI fixes are also in: the whole-curriculum tests yield between lessons (04a6269b), and validate:content accepts
+    `url` on lesson sources.
+  - **Next, after the 6b sweep integrates and before 6a: the compile fix pass.**
+    1. Run `UVM_HOME=/Users/Rakesh/Downloads/1800.2-2020.3.1 node scripts/compile-sv.mjs --report <scratch>/sv-report.json`.
+    2. Then `node docs/curriculum-quality/workflows/compile-fix-args.mjs <scratch>/sv-report.json > <scratch>/args.json`.
+    3. Run `docs/curriculum-quality/workflows/compile-fix.js` with the Workflow tool's `scriptPath` and those args.
+    4. Update the "known" list from its report: remove fixed units, and replace each to-verify reason with the verdict.
+    5. Run `npm run test:sv`, then integrate.
