@@ -292,8 +292,12 @@ The pause started at 61 % of the weekly limit, because two parallel workflows we
 
 Preview builds (fixed 2026-10-26, with the owner's approval). Every push to a non-`main` branch builds that
 branch's own Cloudflare **Preview**, a separate Worker named after the branch, at
-`https://<branch>-sv-uvm-guide.rakesh-n99.workers.dev`. Its deploy command is `npx wrangler preview` (open beta), which
-needs a `previews` block in `wrangler.jsonc`; that block was missing, so every preview build failed after a good build.
+`https://<branch>-sv-uvm-guide.rakesh-n99.workers.dev`. Its deploy command is now
+`npx opennextjs-cloudflare populateCache local && npx wrangler preview`.
+- `wrangler preview` (open beta) needs a `previews` block in `wrangler.jsonc`. That block was missing, so every preview
+  build failed after a good build.
+- The `populateCache local` step copies the prerendered pages into the static assets, as `opennextjs-cloudflare deploy`
+  does. Without it, the preview answered 404 for lessons and 500 for `/curriculum`.
 - Now `wrangler.jsonc` has `previews.vars` (APP_URL and NEXTAUTH_URL, both the production origin).
 - The build settings ("Previews Base" and the existing `curriculum-quality-program` Preview) carry the production
   build variables: NODE_VERSION=22, SKIP_DEPENDENCY_INSTALL=1, NEXT_TELEMETRY_DISABLED=1, APP_URL.
