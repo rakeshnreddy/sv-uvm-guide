@@ -9,6 +9,10 @@
 // Tags: [AHB protocol] Arm IHI0033B.b, [AXI protocol] Arm IHI0022E,
 //       [Bridge design] a choice this bridge made.
 
+// Same time unit as testbench.sv: IEEE 1800-2023 3.14.2.3 makes it an error
+// when some design elements have a time unit and others do not.
+`timescale 1ns/1ps
+
 module bridge_split_checker #(
   parameter int MAX_AW_LATENCY = 16
 )(

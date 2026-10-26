@@ -107,7 +107,7 @@ class bus_item extends uvm_sequence_item;
 endclass
 ```
 
-**Way 2: hand-written methods.** You override `do_copy()` and `do_compare()`, the hooks that `copy()` and `compare()` call, and `convert2string()`. This is the version used in Make It Work. It is longer, but every line is visible, it is easy to debug, and it avoids the field automation that runs on every copy and compare.
+**Way 2: hand-written methods.** You override `do_copy()` and `do_compare()`, the hooks that `copy()` and `compare()` call, and `convert2string()`. This is the version used in Make It Work. It is longer, but every line is visible and it avoids the field automation that runs on every copy and compare. `do_compare` still compares each field through the comparer it is given, not with `==`: IEEE 1800.2-2020 §5.3.9 requires `do_compare` to use the comparer's API, so the comparer counts every miscompare, records it in `get_miscompares()` and prints it as a `MISCMP` line, up to `show_max` (1 by default). A hook that tests `addr == rhs_.addr` itself still returns the right bit, but the comparer cannot count, show or report the miscompare. [I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) covers the comparer in detail.
 
 ```systemverilog
 // snippet: the same item with hand-written methods (in a package that imports uvm_pkg)
@@ -139,8 +139,11 @@ class bus_item extends uvm_sequence_item;
   virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
     bus_item rhs_;
     if (!$cast(rhs_, rhs)) return 0;     // a different type never matches
-    return super.do_compare(rhs, comparer) &&
-           op == rhs_.op && addr == rhs_.addr && data == rhs_.data;
+    // Through the comparer (§5.3.9), so every miscompare is counted and recorded.
+    do_compare = super.do_compare(rhs, comparer);
+    do_compare &= comparer.compare_string("op", op.name(), rhs_.op.name());
+    do_compare &= comparer.compare_field_int("addr", addr, rhs_.addr, $bits(addr), UVM_HEX);
+    do_compare &= comparer.compare_field_int("data", data, rhs_.data, $bits(data), UVM_HEX);
   endfunction
 
   virtual function string convert2string();
@@ -672,8 +675,11 @@ package bus_pkg;
     virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
       bus_item rhs_;
       if (!$cast(rhs_, rhs)) return 0;
-      return super.do_compare(rhs, comparer) &&
-             op == rhs_.op && addr == rhs_.addr && data == rhs_.data;
+      // Through the comparer, so every miscompare is counted and recorded.
+      do_compare = super.do_compare(rhs, comparer);
+      do_compare &= comparer.compare_string("op", op.name(), rhs_.op.name());
+      do_compare &= comparer.compare_field_int("addr", addr, rhs_.addr, $bits(addr), UVM_HEX);
+      do_compare &= comparer.compare_field_int("data", data, rhs_.data, $bits(data), UVM_HEX);
     endfunction
 
     virtual function string convert2string();
@@ -1229,7 +1235,7 @@ For each one, write down the first log line you would search for in a real regre
 **Primary sources**
 - IEEE 1800.2-2020 §13.7 (`uvm_driver`); §14.1 (`uvm_sequence_item`; §14.1.2.4 `set_id_info`); §14.2 (`uvm_sequence_base`): §14.2.2.3 `set_randomize_enabled`, §14.2.3.1 `start` and §14.2.3.2 to §14.2.3.9 its hooks, §14.2.4.1 `get_starting_phase`, §14.2.4.2 `set_starting_phase`, §14.2.4.4 `set_automatic_phase_objection`, §14.2.6.1 to §14.2.6.6 item execution (`create_item`, `start_item`, `finish_item`, `wait_for_grant`, `send_request`, `wait_for_item_done`), §14.2.7.1 `use_response_handler`, §14.2.7.5 to §14.2.7.8 the response queue; §14.3 (`uvm_sequence`; §14.3.3.2 `get_current_item`, §14.3.3.3 `get_response`).
 - IEEE 1800.2-2020 §15.2.1 (`uvm_sqr_if_base`): §15.2.1.2.1 `get_next_item`, §15.2.1.2.2 `try_next_item`, §15.2.1.2.3 `item_done`, §15.2.1.2.6 `get`, §15.2.1.2.7 `peek`, §15.2.1.2.8 `put`, §15.2.1.2.9 `put_response`, §15.2.1.2.10 `disable_auto_item_recording`; §15.2.2.1 `uvm_seq_item_pull_port`; §15.5 `uvm_sequencer`.
-- IEEE 1800.2-2020 §5.3.6.4 `convert2string`, §5.3.8 copying, §5.3.9 comparing; Annex B.3.1.1 to B.3.1.4 (`` `uvm_create ``, `` `uvm_send ``, `` `uvm_rand_send ``, `` `uvm_do ``); Annex G.2.1 `+UVM_TESTNAME`; Annex G.2.9 `+uvm_set_default_sequence`.
+- IEEE 1800.2-2020 §5.3.6.4 `convert2string`, §5.3.8 copying, §5.3.9 comparing; §16.3.3.2 `compare_field_int`, §16.3.3.6 `compare_string`; Annex B.3.1.1 to B.3.1.4 (`` `uvm_create ``, `` `uvm_send ``, `` `uvm_rand_send ``, `` `uvm_do ``); Annex G.2.1 `+UVM_TESTNAME`; Annex G.2.9 `+uvm_set_default_sequence`.
 - IEEE 1800-2023 §18.7.1 (`local::` in inline constraints); §3.14.2.2 (`timeunit` and `timeprecision`).
 - uvm-core 2020.3.1 (uvm-core impl.): `src/seq/uvm_sequence_base.svh`, `src/seq/uvm_sequencer.svh`, `src/seq/uvm_sequencer_param_base.svh`, `src/seq/uvm_sequencer_base.svh`, `src/seq/uvm_sequence.svh`, `src/comps/uvm_driver.svh`, `src/macros/uvm_sequence_defines.svh`, `src/deprecated/macros/uvm_sequence_defines.svh`, `src/base/uvm_copier.svh`, `src/base/uvm_comparer.svh`, `src/base/uvm_root.svh`.
 - IEEE 1800.2 clause numbers for individual methods are taken from the `@uvm-ieee 1800.2-2020` annotations next to each method in the uvm-core 2020.3.1 source.

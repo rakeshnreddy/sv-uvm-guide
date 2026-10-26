@@ -414,7 +414,7 @@ A **false pass** is a run that reports success although the DUT is wrong; a **fa
 | `SCB/MISSING` for the last few requests on a correct DUT | `run_phase` ended before they arrived: no drain, or a drain time shorter than the latency | Hold the phase in `phase_ready_to_end` until `outstanding == 0` |
 | Every expected item shows the last transaction's data | A monitor reuses one object, and the scoreboard stored handles to it | The monitor creates a new item per transaction (below) |
 | Results paired with the wrong inputs, but only under back-to-back traffic | One monitor samples inputs at the output edge, or samples raw signals on the wrong edge | One monitor per side, each sampling through a clocking block (the waveform above) |
-| A burst of `SCB/MISSING` or `SCB/MISMATCH` right after a mid-test reset | Predictions for requests the reset discarded are still queued | Flush on reset and report the flushed items separately (below) |
+| A burst of `SCB/MISSING` or `SCB/MISMATCH` right after a mid-test reset | Predictions for requests the reset discarded are still queued | Flush the predictions on reset and count them separately; still check the results already observed (below) |
 | `SCB/MISMATCH` on every request a test injects as illegal on purpose | The model predicts the normal result for an illegal request | Predict the specified error response; never demote `SCB/*` errors for the whole test |
 
 **Aliasing: one object, many handles.** An analysis FIFO, a queue and a `write()` all store or pass **handles**, never copies. A monitor that creates its item once, before its loop, and overwrites it for every transfer publishes the same object again and again; every handle the scoreboard stored then shows the last transfer's values. Try the model below: it is the same bug, with a plain queue in place of the analysis FIFO. **Predict** which line causes it before you click.
@@ -423,24 +423,45 @@ A **false pass** is a run that reports success although the DUT is wrong; a **fa
 
 **What it showed, in UVM terms.** Only one `txn` object existed, so every stored handle pointed at it. In a UVM bench the rule has two halves: the **publisher** creates a new item for every transaction (`alu_in_mon` and `alu_out_mon` call `alu_item::type_id::create()` inside their loops) and never touches it after `write()`; the **subscriber** never modifies what it receives (§12.2.10.2) and predicts into a copy (`alu_predictor` calls `clone()`). [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) explains shallow and deep copies.
 
-**Reset in the middle of a test (basic version).** When reset is asserted, the DUT discards the requests in flight, so their predictions will never be answered. Without care, `check_phase` reports them as missing on a correct DUT. The minimum a scoreboard needs is a flush, called when a reset monitor sees `rst_n` fall:
+**Reset in the middle of a test (basic version).** When reset is asserted, the DUT discards the requests in flight, so their predictions will never be answered. Without care, `check_phase` reports them as missing on a correct DUT. The minimum a scoreboard needs is a flush, called when a reset monitor sees `rst_n` fall. It flushes **expectations, never observations**: a result the DUT produced before the reset is real and is still checked.
 
 ```systemverilog
 // snippet: basic reset handling for alu_scoreboard (the full strategy,
 // including when to stop predicting, is covered in A-UVM-9)
-int unsigned n_flushed;
+int unsigned n_flushed;                 // predictions discarded by resets
+int unsigned n_unexpected;              // held actuals reported at a reset
 function void flush_on_reset();
-  int unsigned flushed = outstanding + held_q.size();
-  exp_q.delete();               // predictions the reset discarded
+  // 1. Observations: a held actual is a result the DUT produced before the
+  //    reset that matched no prediction. Report it now, as check_phase would,
+  //    and keep counting it, so it still shows in pending.
+  foreach (held_q[i])
+    `uvm_error("SCB/UNEXPECTED", $sformatf(
+      "tag=%0d result=%0d matched no prediction before reset",
+      held_q[i].tag, held_q[i].result))
+  n_unexpected += held_q.size();
   held_q.delete();
-  outstanding = 0;
-  n_flushed += flushed;         // report these in the summary, never as MISSING
-  `uvm_info("SCB/RESET", $sformatf("reset: %0d pending items flushed", flushed),
+  // 2. Expectations: the reset discarded these requests. Count, never MISSING.
+  `uvm_info("SCB/RESET", $sformatf("reset: %0d predictions flushed", outstanding),
             UVM_LOW)
+  n_flushed += outstanding;
+  exp_q.delete();
+  outstanding = 0;
+endfunction
+
+// summary(): pending also counts the actuals reported at a reset, and the
+// flushed count is added once a reset has flushed anything:
+protected function string summary();
+  string s = $sformatf("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+                       n_match, n_mismatch,
+                       outstanding + held_q.size() + n_unexpected);
+  if (n_flushed != 0) s = {s, $sformatf(" flushed=%0d", n_flushed)};
+  return s;
 endfunction
 ```
 
-A form-B scoreboard flushes its FIFOs with `flush()` (IEEE 1800.2-2020 §12.2.8.2.6). The per-item `watch()` processes of flushed items find nothing queued and stay silent.
+Every result `write_act()` received before the reset was either compared at once or is in `held_q`, so the flush loses no observation. In `alu_pipe` a result comes two clocks after its prediction, so an actual still held at reset is an extra response. With a DUT that can answer in its request's own time step, defer the flush until the zero-time `write()` calls the monitors make in that time step have run, so a prediction made later in it still meets its held actual: for example, start it with `fork begin uvm_wait_for_nba_region(); flush_on_reset(); end join_none` (`uvm_wait_for_nba_region()` is a uvm-core 2020.3.1 utility, not part of IEEE 1800.2). The per-item `watch()` processes of flushed predictions find nothing queued and stay silent. An actual reported at a reset still counts in `pending`, so an extra response gives `pending=1` whether or not a reset follows it. A clean run with a reset then ends with `SCB_SUMMARY matches=N mismatches=0 pending=0 flushed=F`; a run without one keeps the milestone format.
+
+A form-B scoreboard keeps the same order with its FIFOs. It first takes each result still in `act_fifo` with `try_get()` and compares it with the oldest prediction in `exp_fifo`, or reports `SCB/UNEXPECTED` if there is none; only then does it empty `exp_fifo` with `flush()` (IEEE 1800.2-2020 §12.2.8.2.6) and restart its comparison thread, which may still hold a prediction it peeked before the flush. Never `flush()` `act_fifo` unread: what it holds completed before the reset ([A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) builds its reset handling on this rule).
 
 **Expected errors (basic version).** When a test drives an illegal request on purpose and the specification says the DUT answers with an error response, the reference model predicts that error response, and the scoreboard compares as usual. The two shortcuts are both false passes waiting to happen: turning `SCB/MISMATCH` into a warning for the whole test hides every other bug in it, and skipping prediction for "error tests" leaves the error path unchecked. The full strategy (error catchers, demoting one expected message) is in [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
 
@@ -1205,10 +1226,10 @@ Operand values depend on the seed; the IDs, the times and the counts do not, exc
 
 ### Expert: scoreboards across reset and injected errors
 
-- **Reset.** On reset, stop treating discarded requests as missing: flush the expected queues, the held queue and any analysis FIFOs (`flush()`, IEEE 1800.2-2020 §12.2.8.2.6), and count the flushed items separately so a reset that discards too much is still visible. A predictor component with state (a memory image) must reset its state to what the specification says reset does, not to what the RTL happens to do.
+- **Reset.** On reset, stop treating discarded requests as missing, but keep checking what was already observed. First report every held actual as `SCB/UNEXPECTED` and compare every result still in an analysis FIFO; then flush the expected queues and any FIFO of predictions (`flush()`, IEEE 1800.2-2020 §12.2.8.2.6), and count the flushed predictions separately so a reset that discards too much is still visible. A predictor component with state (a memory image) must reset its state to what the specification says reset does, not to what the RTL happens to do.
 - **When to stop predicting.** Requests accepted while reset is asserted are not requests; monitors that skip cycles with `rst_n` low (as `alu_in_mon` does) keep them out of the model.
 - **Injected errors.** The reference model predicts the specified error response for an illegal input. Demoting one specific expected message with a report catcher (IEEE 1800.2-2020 §6.6) is a precise tool; demoting `SCB/*` for a whole test is a blindfold. The full strategy is in [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
-- **Interview angle:** "After a mid-test reset, your scoreboard reports 3 `SCB/MISSING`. The designers say the DUT is right. What do you change?" (Flush on reset and report flushed items separately; do not lengthen the drain or disable `check_phase`.)
+- **Interview angle:** "After a mid-test reset, your scoreboard reports 3 `SCB/MISSING`. The designers say the DUT is right. What do you change?" (Flush the predictions on reset, after checking the results already observed, and report the flushed count separately; do not lengthen the drain or disable `check_phase`.)
 
 ### Expert: where checking belongs in a large environment
 
@@ -1354,9 +1375,9 @@ Attempt each question before you open the feedback.
         { text: "Lengthen the drain watchdog so the 3 responses have time to arrive", correct: false, feedback: "They will never arrive: reset discarded them. Waiting longer only delays the same errors." },
         { text: "Demote SCB/MISSING to a warning for this test", correct: false, feedback: "That hides every real missing response in the test, including ones unrelated to reset." },
         { text: "Disable check_phase in tests that use reset", correct: false, feedback: "That removes the accounting that catches dropped responses for the whole test." },
-        { text: "Flush the expected and held queues when reset is seen, and report the flushed items separately", correct: true, feedback: "Right. The scoreboard stops expecting what reset discarded, and the flushed count stays visible in the summary." }
+        { text: "Flush the queued predictions when reset is seen, after checking the results already observed, and report the flushed count separately", correct: true, feedback: "Right. The scoreboard stops expecting what reset discarded, still checks every result the DUT produced before the reset, and the flushed count stays visible in the summary." }
       ],
-      explanation: "A reset discards in-flight work, so the scoreboard must discard the matching predictions, counting them separately. Blanket demotion and disabling check_phase both create false passes; a longer wait changes nothing.",
+      explanation: "A reset discards in-flight work, so the scoreboard must discard the matching predictions, counting them separately; results already observed are real and are still checked. Blanket demotion and disabling check_phase both create false passes; a longer wait changes nothing.",
       objective: 4
     },
     {

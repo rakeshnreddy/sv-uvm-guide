@@ -1,10 +1,16 @@
 // =============================================================
 // Lab Solution: Memory Read/Write Portable Intent
 // File: solution/mem_test.pss
+//
+// Three parts: the scenario (no target code), then one realization
+// package per target language. Each generated test uses ONE package:
+// mem_real_sv for the UVM test, mem_real_c for the C test.
 // =============================================================
 
 typedef bit[32] addr_t;
 typedef bit[32] data_t;
+
+// ---- Part 1: the scenario, the same for every target ----
 
 // The write hands its address and data to the read through a buffer:
 // the producer (write_mem) completes before the consumer (read_verify) starts.
@@ -22,6 +28,7 @@ component mem_portability_lab {
   pool mem_buf_s buf_p;   // where mem_buf_s objects are exchanged
   bind buf_p *;
 
+  // Atomic actions: their exec body templates are in the packages below.
   action write_mem {
     output mem_buf_s wr;  // the buffer this write produces
 
@@ -30,7 +37,32 @@ component mem_portability_lab {
       wr.addr % 4 == 0;
       wr.data in [0x0000..0xFFFF];
     }
+  }
 
+  action read_verify {
+    input mem_buf_s rd;   // the buffer some write_mem produced
+  }
+
+  action mem_read_write_test {
+    activity {
+      wr_a: do write_mem;
+      rd_a: do read_verify;
+      bind wr_a.wr rd_a.rd;  // read exactly the buffer this write produced
+    }
+  }
+}
+
+// ---- Why two packages ----
+// A single exec block maps to at most one language, and same-kind exec
+// blocks in one scope merge into one block (PSS 3.0 §22.1.1 b, e). The
+// standard gives one action a C and an SV realization through different
+// packages that are not used for the same test (§22.5.1). How you tell the
+// tool which package is active is tool-dependent (§21.1); if your tool
+// selects packages by file, move each package into its own file.
+
+// ---- Part 2: SystemVerilog realization (UVM test) ----
+package mem_real_sv {
+  extend action mem_portability_lab::write_mem {
     // Wrapped in begin/end so the declaration is legal wherever the
     // generator pastes this block inside a task body.
     exec body SV = """
@@ -41,15 +73,9 @@ component mem_portability_lab {
         wr_seq.start(p_sequencer.mem_sqr);
       end
     """;
-
-    exec body C = """
-      mem_write32({{wr.addr}}, {{wr.data}});
-    """;
   }
 
-  action read_verify {
-    input mem_buf_s rd;   // the buffer some write_mem produced
-
+  extend action mem_portability_lab::read_verify {
     exec body SV = """
       begin
         mem_read_seq rd_seq = mem_read_seq::type_id::create("rd_seq");
@@ -61,18 +87,21 @@ component mem_portability_lab {
                       {{rd.addr}}, {{rd.data}}, rd_seq.data))
       end
     """;
+  }
+}
 
+// ---- Part 3: C realization (bare-metal test) ----
+package mem_real_c {
+  extend action mem_portability_lab::write_mem {
+    exec body C = """
+      mem_write32({{wr.addr}}, {{wr.data}});
+    """;
+  }
+
+  extend action mem_portability_lab::read_verify {
     exec body C = """
       if (mem_read32({{rd.addr}}) != {{rd.data}})
           test_fail("read-after-write mismatch");
     """;
-  }
-
-  action mem_read_write_test {
-    activity {
-      wr_a: do write_mem;
-      rd_a: do read_verify;
-      bind wr_a.wr rd_a.rd;  // read exactly the buffer this write produced
-    }
   }
 }

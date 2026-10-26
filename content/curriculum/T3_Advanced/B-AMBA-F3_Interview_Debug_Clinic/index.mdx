@@ -694,11 +694,11 @@ module tb_top;
     cb.bvalid <= 1'b0;
   endtask
 
-  task automatic check_case(input string name, input int unsigned before,
+  task automatic check_case(input string name, input int unsigned errs_before,
                             input int unsigned want);
     int unsigned got;
     @(cb);                  // the checker has now evaluated the last handshake edge
-    got = chk.errors - before;
+    got = chk.errors - errs_before;
     if (got == want) pass_n++;
     else fail_n++;
     $display("case %s: errors=%0d expected=%0d %s", name, got, want,
@@ -706,7 +706,7 @@ module tb_top;
   endtask
 
   initial begin
-    int unsigned before;
+    int unsigned errs_before;
     cb.awready <= 1'b1;     // READY high by default, as A3.2.2 recommends for AW
     cb.wready  <= 1'b1;
     cb.bready  <= 1'b1;
@@ -714,25 +714,25 @@ module tb_top;
     cb.aresetn <= 1'b1;
     @(cb);
 
-    before = chk.errors;    // legal: address first, 4 beats, WLAST on the 4th
+    errs_before = chk.errors;  // legal: address first, 4 beats, WLAST on the 4th
     send_aw(8'd3); send_w(4, 4); send_b();
-    check_case("legal AW then W", before, 0);
+    check_case("legal AW then W", errs_before, 0);
 
-    before = chk.errors;    // legal: both data beats before the address
+    errs_before = chk.errors;  // legal: both data beats before the address
     send_w(2, 2); send_aw(8'd1); send_b();
-    check_case("legal W before AW", before, 0);
+    check_case("legal W before AW", errs_before, 0);
 
-    before = chk.errors;    // Drill 2: four beats, no WLAST
+    errs_before = chk.errors;  // Drill 2: four beats, no WLAST
     send_aw(8'd3); send_w(4, 0);
-    check_case("bug no WLAST", before, 1);
+    check_case("bug no WLAST", errs_before, 1);
 
-    before = chk.errors;    // BVALID after WLAST but before the AW handshake
+    errs_before = chk.errors;  // BVALID after WLAST but before the AW handshake
     send_w(1, 1); send_b(); send_aw(8'd0); send_b();
-    check_case("bug early BVALID", before, 1);
+    check_case("bug early BVALID", errs_before, 1);
 
-    before = chk.errors;    // WLAST on beat 2 of a 4-beat burst
+    errs_before = chk.errors;  // WLAST on beat 2 of a 4-beat burst
     send_aw(8'd3); send_w(2, 2); send_b();
-    check_case("bug early WLAST", before, 1);
+    check_case("bug early WLAST", errs_before, 1);
 
     $display("PASS=%0d FAIL=%0d", pass_n, fail_n);
     $finish;
@@ -740,7 +740,7 @@ module tb_top;
 endmodule
 ```
 
-**Expected output** (illustrative, worked out by hand from the code, not from a simulator run; the prefix and location that `$error` prints are tool-dependent):
+**Expected output** (confirmed with Verilator 5.052, run as described below; the prefix and location that `$error` prints are tool-dependent):
 
 ```text
 case legal AW then W: errors=0 expected=0 ok
@@ -754,7 +754,7 @@ case bug early WLAST: errors=1 expected=1 ok
 PASS=5 FAIL=0
 ```
 
-**Run it.** Save the block as one file and compile it with any IEEE 1800-2023 simulator, with `tb_top` as the top module; no UVM library and no plusargs are needed. The last line should read `PASS=5 FAIL=0`. No simulator was available when this page was written, so the output above was worked out by hand. Support for clocking blocks and queues in open-source simulators varies by tool and version (tool-dependent).
+**Run it.** Save the block as one file and compile it with any IEEE 1800-2023 simulator, with `tb_top` as the top module; no UVM library is needed. The standard does not make `$error` end the run (IEEE 1800-2023 §20.10), but Verilator stops at the first `$error` by default, so run its binary with `+verilator+error+limit+100` (for example `verilator --binary --timing -Wno-fatal --top-module tb_top tb.sv`, which keeps a width warning from stopping the build, then `./obj_dir/Vtb_top +verilator+error+limit+100`). The last line should read `PASS=5 FAIL=0`. The output above was confirmed that way with Verilator 5.052; apart from the tool-specific `$error` prefix, the only difference is that Verilator pads the short `ok` with leading spaces, where the standard prints no leading zeros under `%s` (IEEE 1800-2023 §21.2.1.7). Support for clocking blocks and queues in open-source simulators varies by tool and version (tool-dependent).
 
 **Trace of the two cases that matter most.**
 

@@ -206,7 +206,7 @@ Details that matter:
 - The monitor samples through its clocking block `mon_cb`, so it reads the values just before the edge, whichever process drove them ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index), IEEE 1800-2023 §14.13).
 - It publishes the read on the RLAST beat, not on each beat. A per-beat publisher hands the scoreboard pieces it cannot compare.
 - When the length and RLAST disagree, the monitor reports once and closes the read anyway. If it kept the read open, every later beat of that ID would be attributed to the wrong read and one fault would cascade into dozens of errors.
-- During reset it empties `open_q` without publishing: reset ends every transfer, and VALIDs are LOW (§A3.1.2). The scoreboard must flush its expected queues on the same reset, or it reports reads that the reset legally discarded; [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) teaches the reset protocol between components.
+- During reset it empties `open_q` without publishing. IHI0022E §A3.1.2 defines only the interface during reset (VALIDs LOW), not what happens to transactions in flight, so dropping open reads is this testbench's reset policy, not a protocol rule. The scoreboard must apply the same policy and flush its expected queues on the same reset, or it reports reads the monitor dropped; [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) teaches the reset protocol between components.
 
 **The mistake everyone makes: one slot per ID.** The obvious structure is `axi_rd_item open[int]`, one entry per ID. It works until two reads with one ID are outstanding, which AXI allows and real masters do constantly. Then `open[1] = C` overwrites A, A's beats are appended to C, and the next RLAST publishes the wrong read. The same bug in a write monitor (`pending_writes[AWID] = txn`) makes the first B complete the second write and the second B report "no pending write". A queue per ID is the fix, not an optimisation.
 
@@ -1094,7 +1094,7 @@ package axi_rd_pkg;
         @(vif.mon_cb);
         cycle++;
         if (!vif.mon_cb.ARESETn) begin
-          open_q.delete();              // reset ends every read: drop, never publish
+          open_q.delete();              // reset policy: drop open reads, never publish
           n_open = 0;
         end else begin
           // R first: a beat at this edge can only belong to a read whose AR

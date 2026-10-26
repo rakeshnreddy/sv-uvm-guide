@@ -1,4 +1,5 @@
 // solution.sv - The Robust Implementation
+`timescale 1ns/1ps // 1 ns unit: the 10 ns clock period is longer than the 1 ns skew
 
 interface dut_if (input logic clk);
   logic [7:0] d;
@@ -44,17 +45,19 @@ module tb;
     // Wait for 2 cycles
     repeat (2) @(vif.cb);
     
-    // Drive via clocking block
-    // The value is driven 1ns AFTER the edge (Output Skew)
-    // The DUT samples the stable value from before the edge (or the hold time is met)
+    // Drive via clocking block at this clocking event (edge k, t=15).
+    // d changes in the Re-NBA region 1 ns after this edge (output skew;
+    // IEEE 1800-2023 §14.16), so the DUT has already read the old d at this
+    // edge, in any process order.
     vif.cb.d <= 8'hA5;
     
     @(vif.cb);
-    // Sample via clocking block (Input Skew #1step - Preponed)
+    // Edge k+1 (t=25): the DUT captures A5 here; q updates in the NBA region.
+    // vif.cb.q is the #1step (Preponed) sample, the value q had just before
+    // this edge, so it still shows 00.
     $display("Driven: A5, DUT Output: %h", vif.cb.q);
-    
-    // Note: Since we drive at T, the DUT captures at T, and output updates at T+1 (pipeline)
-    // We need to wait one more cycle to see the effect on q if it's a register
+
+    // Edge k+2 (t=35): the first vif.cb.q sample taken after the DUT captured A5.
     @(vif.cb);
     $display("Next Cycle Output: %h", vif.cb.q);
     

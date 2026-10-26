@@ -78,7 +78,7 @@ The **wait-for chain** is the list you get by starting at the holder and repeate
 | a **partner that will never act**: a producer that is not connected or never writes, a driver that never calls `item_done()`, a lock that is never released | **blocked get** (a missing partner) | the partner, or the connection to it |
 | **the process you started from**: A waits for B, and B waits for A | **deadlocked handshake** | the side that broke the protocol's dependency rule |
 
-The rule that saves the most time: **the holder is usually the victim, not the owner.** A scoreboard holding an objection while it waits in `act_fifo.get()` is doing exactly what it should. The bug is wherever the actual transactions stopped.
+The rule that saves the most time: **the holder is usually the victim, not the owner.** A scoreboard holding an objection while it waits in `act_fifo.get()` is doing exactly what its code says. The bug is wherever the actual transactions stopped.
 
 The three diagrams below show one chain of each family, using the bench you will run in Make It Work. Arrows point from a waiting party to whatever it waits for.
 
@@ -304,7 +304,7 @@ What a heartbeat cannot see: a component that keeps beating while the run never 
 
 If no objection is raised before UVM first checks the run phase, `run_phase` ends at 0 ns and kills every process in it, including the sequence that should have run. With `+UVM_PHASE_TRACE`, uvm-core prints "No objections raised, skipping phase" (ID `PH/TRC/SKIP`). The summary shows `UVM_ERROR :    0` and `UVM_FATAL :    0`.
 
-It is the mirror image of a hang: a hang has an objection that is never dropped, this run has none at all. Both are failures of objection ownership, and both are invisible to the error counts. Guard against both in your base test: a timeout for the first, and a scoreboard that reports a `uvm_error` in `check_phase` when it compared nothing (`matches == 0`) for the second. [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) teaches the pass/fail rule that catches it.
+It is the mirror image of a hang: a hang has an objection that is never dropped, this run has none at all. Both are failures of objection ownership, and both are invisible to the error counts. Guard against both in your base test: a timeout for the first, and a scoreboard that reports a `uvm_error` in `check_phase` when it compared nothing (zero matches) for the second. [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) teaches the pass/fail rule that catches it.
 
 ### Drill: triage four broken runs on the hang model
 
@@ -317,7 +317,7 @@ The simulator below runs four broken tests on a tested model of the sequencer, d
 | Scenario | Holder | Chain ends at | Family | Owner and fix |
 |---|---|---|---|---|
 | Same packet, over and over | `uvm_test_top` (waiting for `main_seq`) | `main_seq` in `finish_item()`, waiting for an `item_done()` the driver never calls | blocked get (missing partner call) | driver: call `item_done()` after driving |
-| One mismatch, then silence | `scb` | `scb` itself: the mismatch path `continue`s past the drop | objection never dropped | scoreboard: drop on every path |
+| One mismatch, then silence | `scb` | `scb` itself: the mismatch path `continue`s past the drop | objection never dropped | scoreboard: drop on every path; long term, no per-compare objection, only a bounded `phase_ready_to_end` drain ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)) |
 | Stimulus stops after the interrupt | `uvm_test_top` (waiting for `main_seq`) | `main_seq` in `start_item()`; the grant is held by `irq_seq`, which is alive and never calls `ungrab()` | blocked get (a lock never released) | `irq_seq`: `ungrab()` after the ISR item |
 | The test passes in 0 ns | nobody | — | not a hang: zero activity | test: raise before `seq.start()`, drop after |
 
@@ -543,7 +543,7 @@ package hang_pkg;
     `uvm_component_utils(pkt_scb)
     uvm_tlm_analysis_fifo #(pkt_item) exp_fifo, act_fifo;
     uvm_objection hb_obj;                   // set by pkt_env; the heartbeat watches it
-    int unsigned matches, mismatches;
+    int unsigned n_match, n_mismatch;       // "matches" is a keyword (1800-2023 Annex B)
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
@@ -556,12 +556,14 @@ package hang_pkg;
       forever begin
         note(this, "exp_fifo.get()");
         exp_fifo.get(exp);
+        // A common pattern this course discourages (see the note after the bench):
+        // the hold is unbounded, so a skipped drop or a blocked get becomes a hang.
         phase.raise_objection(this, "compare pending");  // hold the phase for in-flight beats
         note(this, "act_fifo.get()");
         act_fifo.get(act);
-        if (exp.data == act.data) matches++;
+        if (exp.data == act.data) n_match++;
         else begin
-          mismatches++;
+          n_mismatch++;
           `uvm_error("SCB", $sformatf("exp 'h%0h act 'h%0h", exp.data, act.data))
         end
         hb_obj.raise_objection(this);        // one heartbeat per compare
@@ -571,7 +573,7 @@ package hang_pkg;
     endtask
     function void report_phase(uvm_phase phase);
       `uvm_info("SCB_SUMMARY", $sformatf("matches=%0d mismatches=%0d pending=%0d",
-                matches, mismatches, exp_fifo.used()), UVM_NONE)
+                n_match, n_mismatch, exp_fifo.used()), UVM_NONE)
     endfunction
   endclass
 
@@ -717,6 +719,8 @@ module tb_top;
 endmodule
 ```
 
+**A pattern to recognise, not to copy.** `pkt_scb` raises the run-phase objection when an expected beat arrives and drops it after the compare, so the phase stays open for the last in-flight beat. Many real benches do this, which is why this bench does, but this course discourages it: objections belong in tests and top sequences, and a raise and drop per item costs time on every transaction ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). It is also what turns a scoreboard bug into a hang. The hold has no bound, so a path that skips the drop is an objection never dropped (the drill's "One mismatch, then silence"), and a get whose partner never acts holds the phase until the heartbeat or the timeout ends the run (hang 2) instead of failing with a missing-item error. The preferred design holds the phase only once the stimulus has ended, from `phase_ready_to_end` (IEEE 1800.2-2020 §13.1.4.3.2), with a watchdog that drops the objection after the longest legal latency; `check_phase` then reports what is still pending as an error. That bounded drain is the one exception the course allows to "objections in tests and top sequences only", and [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) builds it. Wherever a worked fix on this page involves the scoreboard, it gives both changes: the fix in the owner, and this long-term change to the scoreboard.
+
 **Run it.** Compile `hang_triage_tb.sv` with uvm-core 2020.3.1 on the include path, using the same time unit and precision for `uvm_pkg` and the TB (I-UVM-1C, Push Further, explains why), then run four times: with no plusarg, and with `+HANG=1`, `+HANG=2` and `+HANG=3`. Add `+UVM_OBJECTION_TRACE` for the guided exercise. Any simulator with UVM support works; open-source UVM support (for example in Verilator) is limited and has not been verified for this bench.
 
 **Expected output.** Illustrative: derived by hand from the code above and the uvm-core 2020.3.1 message formats, not captured from a simulator run. File and line numbers are removed, and long summaries are cut with "…". In the healthy run each item takes three clock cycles: item k is accepted at 45 + 30(k − 1) ns and compared one cycle later.
@@ -814,7 +818,7 @@ Predict: when does the heartbeat fire, and what does the scoreboard's breadcrumb
 2. **Holders.** `uvm_test_top` (still running `main_seq`, which is normal at 200 ns) and `scb`, which raised "compare pending" at 45 ns, when the first input beat arrived, and never dropped.
 3. **Waits.** `scb` waits in `act_fifo.get()`. Who fills `act_fifo`? `out_mon`, through `out_mon.ap`. The driver is fine: its breadcrumb shows it driving item after item, and `exp_fifo.used()` would show 5 waiting entries at 200 ns (6 accepted beats minus the one `scb` took).
 4. **Chain end.** At a producer that will never deliver: `out_mon.ap.size()` is 0 after end of elaboration, because `pkt_env::connect_phase` never connected it. **Family 2: a blocked get.** Owner: `pkt_env`, not the scoreboard.
-5. **Fix.** Restore `out_mon.ap.connect(scb.act_fifo.analysis_export);`. Prevent the next one with a check in `pkt_env::end_of_elaboration_phase`: `` if (out_mon.ap.size() == 0) `uvm_fatal("NOCONN", "out_mon.ap is not connected") ``. Wrong fix: dropping the scoreboard's objection before `act_fifo.get()`. The heartbeat would still fire at 200 ns; without it, the run would end at 255 ns with `UVM_ERROR :    0` and `SCB_SUMMARY matches=0 mismatches=0 pending=7` (the first expected item sits inside the blocked scoreboard, which took it at 45 ns; `pending` counts items 2 to 8, still in `exp_fifo`). Only a scoreboard that reports `matches == 0` or `pending != 0` as an error would still fail that run.
+5. **Fix.** Restore `out_mon.ap.connect(scb.act_fifo.analysis_export);`. Prevent the next one with a check in `pkt_env::end_of_elaboration_phase`: `` if (out_mon.ap.size() == 0) `uvm_fatal("NOCONN", "out_mon.ap is not connected") ``. Wrong fix: dropping the scoreboard's objection before `act_fifo.get()`. The heartbeat would still fire at 200 ns; without it, the run would end at 255 ns with `UVM_ERROR :    0` and `SCB_SUMMARY matches=0 mismatches=0 pending=7` (the first expected item sits inside the blocked scoreboard, which took it at 45 ns; `pending` counts items 2 to 8, still in `exp_fifo`). Only a scoreboard that reports zero matches or a non-zero pending count as an error would still fail that run. **Long-term change** (hardening, not the owner fix): replace the scoreboard's per-compare objection with a bounded `phase_ready_to_end` drain whose watchdog drops after the longest legal latency, and report missing items and zero traffic in `check_phase` ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)). Unlike the wrong fix, that keeps the verdict honest: without the heartbeat, the same missing connection then ends the run one watchdog period after the test's drop, with a drain warning and the pending items reported as errors in `check_phase`: a failure, not a hang and not a green run.
 
 </details>
 
@@ -841,7 +845,7 @@ Predict: the `HBFAIL` line is identical to hang 2. Which two lines of the dump t
 4. **Separate stuck holders from transient ones** by their raise and drop history.
 5. **Follow the wait-for chain** from each stuck holder using breadcrumbs, `is_grabbed()`/`current_grabber()`, `get_current_item()`, `fifo.used()` and `port.size()`, until it ends.
 6. **Name the family and the owner,** fix the owner, and rerun to prove the run now ends on its own with positive evidence of work.
-7. **Lock it in:** add the check that would have caught it at elaboration or within one heartbeat window (a connection check, a heartbeat, a drop on every path).
+7. **Lock it in:** add the check that would have caught it at elaboration or within one heartbeat window (a connection check, a heartbeat, a drop on every path, or better, a bounded `phase_ready_to_end` drain in place of a per-item objection).
 
 **Checklist before moving on:**
 - [ ] I can say which of `PH_TIMEOUT`, `HBFAIL` or a time-stopped job a log shows, and what each one means.
@@ -900,7 +904,7 @@ Circular waits come from rules about who may wait for whom. Design them out:
   options={[
     { text: "Agree: the scoreboard holds the objection, so it owns the hang.", isCorrect: false, feedback: "The scoreboard is the holder, not necessarily the owner. Dropping before the get ends the run, but the missing actual transaction is still missing, and the scoreboard now reports nothing about it." },
     { text: "Raise the timeout to 50 ms; 3 % of seeds are just long tests.", isCorrect: false, feedback: "The scoreboard has been waiting since 41 µs. Nothing about the objection count changes with time." },
-    { text: "Follow the chain first: find where the scoreboard waits (which FIFO), who should fill it, and why that producer stopped at 41 µs. Fix that owner, and make the scoreboard report pending expected items as errors so the next stall fails visibly.", isCorrect: true, feedback: "Right. The holder is usually the victim. A seed-dependent stall points at the stimulus or the DUT path feeding the actual stream; the heartbeat or a pending-count check makes the next one fail fast." },
+    { text: "Follow the chain first: find where the scoreboard waits (which FIFO), who should fill it, and why that producer stopped at 41 µs. Fix that owner, and make the scoreboard report pending expected items as errors so the next stall fails visibly.", isCorrect: true, feedback: "Right. The holder is usually the victim. A seed-dependent stall points at the stimulus or the DUT path feeding the actual stream; the heartbeat or a pending-count check makes the next one fail fast. Longer term, remove the per-compare objection: hold the phase only from phase_ready_to_end, bounded by a watchdog (A-UVM-6), so a stall in the actual stream after the stimulus has finished ends the run one watchdog period after the test's drop, with the pending items reported as errors instead of a 10 ms timeout; a stall that also blocks the stimulus still needs the heartbeat or the timeout." },
     { text: "Add a 1 µs drain time.", isCorrect: false, feedback: "A drain starts only when the total reaches zero (§10.5.1.3.7). It never does here." }
   ]}
 />
@@ -943,7 +947,7 @@ Start with the quiz, which covers all four objectives. Then do the kata: three n
       { text: "Drop the objection on every path through the loop, including the mismatch path", correct: true, feedback: "Right. The error path skipped the drop. The run then ends normally and reports the mismatch as a UVM_ERROR: a clean failure instead of a hang." },
       { text: "Remove the uvm_error so the loop does not take the error path", correct: false, feedback: "That hides the real mismatch and leaves the missing drop in place for the next error path." }
     ],
-    explanation: "This is family 1: the holder raised and its own code never drops on one path. Only a change to the holder fixes it. Timeouts and drain times change when you notice, never whether the count reaches zero."
+    explanation: "This is family 1: the holder raised and its own code never drops on one path. Only a change to the holder fixes it. Timeouts and drain times change when you notice, never whether the count reaches zero. The lasting change is to stop objecting per compare: hold the phase only from phase_ready_to_end, bounded by a watchdog (A-UVM-6), which leaves no per-compare drop to skip."
   },
   {
     question: "Your driver does @(vif.cb iff vif.cb.ready); then vif.cb.valid <= 1. The DUT raises ready one cycle after it samples valid high. What happens, and what is the fix?",
@@ -1036,7 +1040,7 @@ Three new hangs, from three different benches. For each one, name the stuck hold
 <summary className="cursor-pointer font-semibold">Show the worked solution</summary>
 
 1. **Bench A: blocked get (a missing partner).** Holder: the test, waiting for its sequence. The sequence waits in `get_response()`; the partner that should act is the driver, which completed the item with `item_done()` but never sent a response. The driver, idle and waiting for the next item, will never act. Owner: the driver (if the protocol has responses) or the sequence (if it does not). Fix: in the driver, `rsp.set_id_info(req); seq_item_port.item_done(rsp);`, or delete the `get_response()` call. [Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake) lists this signature.
-2. **Bench B: objection never dropped.** Holder: `scb`, and it is not blocked on its partner: its breadcrumb is `exp_fifo.get()`, the *top* of its loop. It raised "check", hit the length-mismatch error, and went back to the top of the loop without dropping: an early `continue` or `return` on the error path. Owner: the scoreboard. Fix: drop on every path, for example by moving the drop before the error report or into a single exit point. The breadcrumb is what proves it is not a blocked get: a blocked scoreboard would be in `act_fifo.get()`.
+2. **Bench B: objection never dropped.** Holder: `scb`, and it is not blocked on its partner: its breadcrumb is `exp_fifo.get()`, the *top* of its loop. It raised "check", hit the length-mismatch error, and went back to the top of the loop without dropping: an early `continue` or `return` on the error path. Owner: the scoreboard. Fix: drop on every path, for example by moving the drop before the error report or into a single exit point. Long-term change: do not object per check at all; hold the phase only at the end of the test, from a `phase_ready_to_end` drain bounded by a watchdog ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)), so there is no per-check drop to skip. The breadcrumb is what proves it is not a blocked get: a blocked scoreboard would be in `act_fifo.get()`.
 3. **Bench C: deadlock (lock order).** Holders: both virtual sequences. `vseq_a` holds `sqr_x` and, by its code, waits in `lock(sqr_y)`; `vseq_b` holds `sqr_y` and waits in `lock(sqr_x)`. The chain loops: a waits for b, b waits for a. Owner: the virtual sequences' design. Fix: every sequence takes locks in one global order (`sqr_x` before `sqr_y`), or one coordinating sequence owns both locks.
 
 </details>
@@ -1054,11 +1058,12 @@ The deck for this page covers the definition of a hang, the three pieces of evid
   - §10.5 (`uvm_objection`): §10.5.1.3.7 `set_drain_time`, §10.5.1.5.1 `get_objectors`, §10.5.1.5.3 `get_objection_count`;
   - §10.6 (`uvm_heartbeat`): §10.6.2.1 `new`, §10.6.2.2 `set_mode`, §10.6.2.3 `set_heartbeat`, §10.6.2.4–5 `add`, `remove`, §10.6.2.6 `start`, §10.6.2.7 `stop`;
   - §5.5.2.12 (`uvm_port_base::size`), §12.2.8.2.3 (`uvm_tlm_fifo::used`), §12.2.8.3 (`uvm_tlm_analysis_fifo`, unbounded);
+  - §13.1.4.3.2 (`phase_ready_to_end`);
   - §14.2.4.2 `set_starting_phase`, §14.2.4.4 `set_automatic_phase_objection` (and its NOTE on `forever` bodies), §14.2.5.5 `lock`;
   - §15.3.2.15 `is_grabbed`, §15.3.2.16 `current_grabber`, §15.4.1 `get_current_item`;
   - §6.5.1.2.14 (report processing order: catchers first), §6.6.5 (`catch`, `THROW`, `CAUGHT`), §6.6.6 (catcher reporting methods bypass catchers); Annex F.7.3.3 (`set_timeout`).
 - uvm-core 2020.3.1 (behaviour labelled "uvm-core" on this page): `src/base/uvm_phase_hopper.svh` (`PH_TIMEOUT` text, the `#` delay watchdog read at the start of `run_phase`, outstanding objections under `+UVM_PHASE_TRACE`, "No objections raised, skipping phase"), `src/base/uvm_objection.svh` (`+UVM_OBJECTION_TRACE` and the `OBJTN_TRC` format, a sequence's objection parent is its sequencer, `get_objectors` lists objects with own count 0 until their total reaches 0, `display_objections`), `src/base/uvm_heartbeat.svh` (first trigger only opens a window, context propagation check, `HBFAIL` texts), `src/tlm1/uvm_analysis_port.svh` (minimum of zero connections), `src/base/uvm_port_base.svh` (`debug_connected_to`), `src/seq/uvm_sequence_base.svh` (automatic phase objection raised in `start()`).
-- IEEE 1800-2023: §14.3 and §14.16 (clocking blocks: default input skew `1step`, synchronous drives), §18.14.1 (random stability), §9.7 (process control).
+- IEEE 1800-2023: §14.3 and §14.16 (clocking blocks: default input skew `1step`, synchronous drives), §18.14.1 (random stability), §9.7 (process control), Annex B (keywords).
 - Arm IHI0022E §A3.3.1 (dependencies between channel handshake signals; the deadlock caution).
 
 **Prerequisites:** [I-UVM-1C: UVM Phasing and Synchronization](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) (objections, drain time, the timeout) and [Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake) (handshake hang signatures).

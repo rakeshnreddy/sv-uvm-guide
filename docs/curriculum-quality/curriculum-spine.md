@@ -734,7 +734,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Out of scope here (covered in):** repetition, `throughout/within/intersect/first_match`, local variables, multiclock, `until/s_eventually`, strong/weak (I-SV-4B); checkers and bind (I-SV-4C); formal (E-INT-1); routing SVA into UVM reports (A-UVM-7, I-UVM-1D).
 - **Prerequisites:** F3B, F4C.
 - **Feeds milestone:** M6 (protocol checks); M1 and M2 (interface and VIP assertions).
-- **Hands-on that should exist:** kata P5 (audit appendix B §4): a valid/ready SVA with `disable iff`, `$stable` payload, bounded `##[1:N]` and a cover, then debug 4 failing traces. Lab `assertions-1` (coming soon) fits I-SV-4B.
+- **Hands-on that should exist:** kata P5 (audit appendix B §4): a valid/ready SVA with `disable iff`, `$stable` payload, bounded `##[1:N]` and a cover, then debug 4 failing traces. Lab `assertions-1` (coming soon) is owned here: a valid/ready register-slice lab (valid hold, stable payload, a bounded-ready assume, two covers, a seeded payload bug). It uses no local variables; the injected "Hands-on practice" section on this module's pages shows it as a planned card from the lab registry, so the MDX need not repeat it.
 - **Assessment focus:** misconceptions:
   1. concurrent assertions see values updated at the edge;
   2. `|->` and `|=>` differ only in style;
@@ -765,7 +765,6 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Feeds milestone:** M6.
 - **Hands-on that should exist:**
   - TemporalLogicExplorer ("compare operators on one trace");
-  - Lab `assertions-1` (coming soon; pipeline data-integrity, which needs local variables) re-owned here from I-SV-4A;
   - a kata: bounded-latency valid/ready with a data check.
 - **Assessment focus:** misconceptions:
   1. local variables are shared across attempts;
@@ -2754,7 +2753,7 @@ The 2026-10-18 additions are the clauses that the wave-6 author logs (`reviews/L
 | `common-1` | coming soon | F2C | F2A | structs, enums, arrays |
 | `constructs-1` | coming soon | F2B | F4C (LAB-M1) | Contains `lab1_race_condition` |
 | `fifo-1` | coming soon | I-SV-1 | I-SV-9 (bridge capstone P8) | Layered class-based SV TB |
-| `assertions-1` | coming soon | I-SV-4A | I-SV-4B | Pipeline data integrity needs local variables |
+| `assertions-1` | coming soon | I-SV-4A | I-SV-4A | Valid/ready register-slice lab (lab.json v2): valid hold, stable payload, bounded-ready assume, covers, seeded payload bug; no local variables, so not I-SV-4B |
 | `randomization-advanced-1` | available | I-SV-2B | I-SV-2B | Premise to fix |
 | `coverage-advanced-1` | available | I-SV-3B | I-SV-3B | Cannot close as written |
 | `ipc-deadlock` | available | I-SV-5 | I-SV-5 | `modulePrerequisites` F2C, I-SV-1 (valid ids); four steps |

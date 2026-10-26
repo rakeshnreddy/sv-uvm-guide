@@ -891,12 +891,13 @@ package rb_pkg;
       env.ral.int_status.write(st, 'h1);
       check_ok(st, "int_status.write");
 
-      // 5. Every mirror must now equal the DUT. CNT is volatile: read, not compared.
+      // 5. Every checked mirror must now equal the DUT. CNT is volatile: read it,
+      //    do not check it (UVM_CHECK would only add a volatile-field warning).
       env.ral.ctrl.mirror(st, UVM_CHECK);
       check_ok(st, "ctrl.mirror");
       env.ral.int_status.mirror(st, UVM_CHECK);
       check_ok(st, "int_status.mirror");
-      env.ral.cnt.mirror(st, UVM_CHECK);
+      env.ral.cnt.mirror(st, UVM_NO_CHECK);
       check_ok(st, "cnt.mirror");
 
       phase.drop_objection(this);
@@ -954,7 +955,7 @@ UVM_FATAL :    0
 - The clock has a 10 ns period with rising edges at 5, 15, 25 ns and so on. Reset is released at 20 ns, so the driver starts at the 25 ns edge and each access takes two edges: the transfer edge, then one idle edge.
 - The stray write to `'hFC` at 55 ns is published too, but it targets no register. The predictor logs `REG_PREDICT_NOT_FOR_ME` only at `UVM_FULL`, so it is not in this excerpt.
 - At default verbosity you see only the `W1C` line and the summary.
-- CNT reads `'hb` (11) because EN became 1 at the 35 ns edge and the counter then advanced on the 11 edges from 45 ns to 145 ns. Because CNT is volatile, `mirror(UVM_CHECK)` reads it but does not compare it.
+- CNT reads `'hb` (11) because EN became 1 at the 35 ns edge and the counter then advanced on the 11 edges from 45 ns to 145 ns. CNT is volatile, so step 5 refreshes it with `mirror(UVM_NO_CHECK)`. `mirror(UVM_CHECK)` would not compare it either, but in uvm-core 2020.3.1 it first calls `get_mirrored_value()`, which logs `UVM/FLD/GET_MIRRORED_VAL/VOL` once per volatile field ([A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index)), and the summary would read `UVM_WARNING :    1`.
 
 **Why the driver waits one extra edge before `item_done()`.** An explicit predictor runs when the monitor publishes, not when `write()` returns. If `item_done()` came at the transfer edge, `write()` could return, and the test could look at the mirror, *before* the monitor's process had run in that same time step. Here the monitor publishes at the transfer edge and `item_done()` comes one edge later, so every prediction has happened by the time the register call returns:
 
@@ -983,7 +984,7 @@ UVM_FATAL :    0
 3. In the register model, give each field its real policy, and decide per hardware-changed field: volatile (moves at any time) or checked after a read (moves only on events the test causes).
 4. In `connect_phase`: `set_sequencer()` on the root map, leave auto-predict at 0, set `predictor.map` (the root map) and `predictor.adapter`, and connect `mon.ap` to `predictor.bus_in`.
 5. In the test, read any hardware-changed field before you check it, and check every access's `status`.
-6. Finish with `mirror(UVM_CHECK)` on each register (or on the block). The run must end with `UVM_ERROR :    0` and `UVM_FATAL :    0`.
+6. Finish with `mirror(UVM_CHECK)` on each register that has checked fields, and `mirror(UVM_NO_CHECK)` on a register whose fields are all volatile. A block-level `mirror(UVM_CHECK)` also works, with one `GET_MIRRORED_VAL/VOL` warning per volatile field. The run must end with `UVM_ERROR :    0` and `UVM_FATAL :    0`.
 7. Prove the checks can fail: try the three mutants in the kata under Practice & Reinforce.
 
 **Checklist before moving on:**
@@ -991,7 +992,7 @@ UVM_FATAL :    0
 - [ ] Auto-predict is off wherever a predictor is connected, and every predictor is bound to a root map.
 - [ ] Every hardware-changed field is either volatile or read before it is checked.
 - [ ] Your adapter's `provides_responses` matches how your driver returns read data.
-- [ ] Your test checks `status` after every access and ends with `mirror(UVM_CHECK)`.
+- [ ] Your test checks `status` after every access and ends with `mirror(UVM_CHECK)` on every register with checked fields (`UVM_NO_CHECK` on all-volatile ones).
 - [ ] You can predict which check each kata mutant breaks, and why.
 
 ## Push Further
@@ -1004,7 +1005,7 @@ The predictor is a short function, and knowing it line by line answers most "why
 3. If no register matches, it logs `REG_PREDICT_NOT_FOR_ME` at `UVM_FULL` and returns. At normal verbosity, a predictor that never matches is completely silent.
 4. A register wider than the bus arrives as several transfers. The predictor collects one per bus word before predicting, raises `REG_PREDICT_COLLISION` if the same word arrives twice, and reports `PENDING REG ITEMS` in `check_phase` if a register is still incomplete at the end of the test (§19.3.3.3).
 5. For a read with check-on-read enabled on the map, it compares the read data with the mirror (`do_check`) **before** predicting.
-6. It calls `pre_predict(item)` (§19.3.3.2: "change the value or redirect the target register"), samples register coverage, and calls `do_predict(item, UVM_PREDICT_WRITE or UVM_PREDICT_READ)` with door `UVM_PREDICT`.
+6. It calls `pre_predict(item)` (§19.3.3.2), samples register coverage, and calls `do_predict(item, UVM_PREDICT_WRITE or UVM_PREDICT_READ)` on the register it looked up in step 2, with door `UVM_PREDICT`. An override can change the item's value, but in uvm-core 2020.3.1 it cannot redirect the prediction to another register ([Explicit vs. Implicit Prediction](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit) has the details).
 7. It logs `REG_PREDICT` at `UVM_HIGH` and publishes the item on `reg_ap` (§19.3.2.2), which is the clean place to attach a register scoreboard.
 
 `flush()` clears pending multi-beat items after a reset; it is a uvm-core extension marked `@uvm-contrib`, not part of IEEE 1800.2-2020.
@@ -1030,7 +1031,7 @@ The interview angle: "Writing one field turned off an enable in the same registe
 - **Aliases.** An RO register and a WO register may share one address. The map accepts that pair, adds `uvm_reg_read_only_cbs` and `uvm_reg_write_only_cbs` to them, and the predictor picks the right one by direction. Any other overlap warns that a register "maps to same address as register" (uvm-core `uvm_reg_map.svh`).
 - **Indirect registers.** `uvm_reg_indirect_data` (§18.7) models a register array reached through an index register. It installs its own frontdoors on the array entries, and its `do_predict()` forwards predictions to the entry the index selects, so an explicit predictor *does* update the array.
 - **FIFOs.** `uvm_reg_fifo` (§18.8) models a FIFO data register in which writes push and reads pop. Backdoor access is not supported, because no single deposit can set the FIFO's internal state.
-- **Your own frontdoors** get none of this: the predictor sees only the transfers they make. Pair a user frontdoor with auto-predict, an explicit `predict()`, or a `pre_predict()` override that redirects the item.
+- **Your own frontdoors** get none of this: the predictor sees only the transfers they make. With a predictor connected, call `predict()` on the target register after the access returns, or model an index/data pair as `uvm_reg_indirect_data` instead ([Frontdoor vs. Backdoor Access](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/frontdoor-vs-backdoor) works through an index/data frontdoor). Auto-predict on the root map also predicts the target when the frontdoor returns, but it is an option only when no predictor is connected: it is set per root map, so next to a predictor it double-predicts every register-model access through that map (kata Mutant C). Do not rely on a `pre_predict()` override that redirects the item: §19.3.3.2 allows it, but uvm-core 2020.3.1 ignores the new target and still predicts the register the predictor looked up.
 
 ### Expert: reset and the mirror
 

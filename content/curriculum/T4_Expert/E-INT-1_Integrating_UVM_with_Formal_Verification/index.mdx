@@ -436,7 +436,7 @@ Each line names its depth when the result is bounded ("bounded to 30"), and each
 Three files. `fifo.sv` is the DUT, with a parameter that switches in the late-flag bug. `fifo_props.sv` is the shared property module and its bind. `fifo_tb.sv` is a small UVM bench that replays a formal counterexample.
 
 ```systemverilog
-// compile
+// compile: fifo.sv
 // fifo.sv: the control block of a FIFO (occupancy counter and flags)
 module fifo #(
   parameter int DEPTH     = 4,
@@ -446,6 +446,8 @@ module fifo #(
   output logic [$clog2(DEPTH):0] count,
   output logic                   full, empty
 );
+  timeunit 1ns; timeprecision 1ps;  // every design element of the bench uses one time unit (§3.14.2.3)
+
   // The interface contract forbids push while full and pop while empty,
   // so the counter is deliberately unguarded: an illegal input overflows it.
   always_ff @(posedge clk or negedge rst_n)
@@ -465,7 +467,7 @@ endmodule
 ```
 
 ```systemverilog
-// compile
+// compile: fifo_props.sv
 // fifo_props.sv: one property library for simulation and formal
 module fifo_props #(
   parameter int DEPTH          = 4,
@@ -474,6 +476,8 @@ module fifo_props #(
   input logic                   clk, rst_n, push, pop, full, empty,
   input logic [$clog2(DEPTH):0] count
 );
+  timeunit 1ns; timeprecision 1ps;
+
 `ifdef FIFO_PROPS_UVM  // defined only by the simulation compile
   import uvm_pkg::*;
   // Failures reach the UVM report server, so they count in the summary.
@@ -516,9 +520,10 @@ bind fifo fifo_props #(.DEPTH(DEPTH)) u_fifo_props (.*);
 The simulation side drives the DUT through a clocking block and replays the run-C counterexample: `p_full_is_correct` failing at edge 4. The replay sequence is the pattern the visualizer generates from a trace: copy the trace's `push` and `pop` columns into arrays, and send one item per clock.
 
 ```systemverilog
-// compile
+// compile: fifo_tb.sv
 // fifo_tb.sv: a minimal UVM bench that replays a formal counterexample
 interface fifo_if (input logic clk);
+  timeunit 1ns; timeprecision 1ps;
   logic       rst_n, push, pop, full, empty;
   logic [2:0] count;  // $clog2(DEPTH) + 1 bits for DEPTH = 4
   clocking cb @(posedge clk);
@@ -528,6 +533,7 @@ interface fifo_if (input logic clk);
 endinterface
 
 package fifo_tb_pkg;
+  timeunit 1ns; timeprecision 1ps;
   import uvm_pkg::*;
   `include "uvm_macros.svh"
 
@@ -680,7 +686,7 @@ Simulation of `tb_top` (illustrative log; message format and time units are tool
 ```text
 UVM_INFO @ 0: reporter [RNTST] Running test fifo_cex_replay_test...
 UVM_ERROR @ 75000: reporter [FIFO_PROPS] p_full_is_correct: count == DEPTH but full == 0
-UVM_INFO fifo_tb.sv(99) @ 85000: uvm_test_top [CEX] replayed 4 items from the run-C trace
+UVM_INFO fifo_tb.sv(101) @ 85000: uvm_test_top [CEX] replayed 4 items from the run-C trace
 
 --- UVM Report Summary ---
 
@@ -764,7 +770,7 @@ The replay fails exactly as formal predicted: 4 edges after the first replayed p
 
 - **`assume` in simulation is a check, not a generator** (§16.14.2). A failing assumption in simulation means either the testbench broke the interface rule or the assumption is wrong; both are worth knowing. Some tools can drive random simulation from assumptions; that is tool-dependent.
 - **`dist` in assumptions** biases random simulation only. Formal treats the assumption as if the weights were absent, and in an `assert` or `cover` the `dist` acts like `inside` (§16.14.2).
-- **Weak and strong sequences.** A bare sequence used as a property is weak in `assert` and `assume` and strong elsewhere, including `cover` (§16.12.2). So in `assert property (req |-> ##[1:$] ack)` the consequent is weak: the assertion cannot fail at the end of a simulation in which `ack` never came. Use `s_eventually` (§16.12.13) or a bounded `##[1:N]` when the obligation must bite. In a `cover`, the same bare sequence is strong and counts only completed matches.
+- **Weak and strong sequences.** A bare sequence used as a property is weak in `assert` and `assume` and strong elsewhere, including `cover` (§16.12.2). So in `assert property (req |-> ##[1:$] ack)` the consequent is weak: the assertion cannot fail at the end of a simulation in which `ack` never came. Which fix bites depends on the engine. In simulation only a bound does: `req |-> ##[1:N] ack` fails N edges after `req` if `ack` has not come. Making the wait strong with `s_eventually ack` (§16.12.13) does not help there, because its failure cannot be identified at a finite time (§16.12.15); at the end of the run the open obligation is only pending, not failed (§16.12.21), as [I-SV-4B](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/index#safety-liveness-and-unbounded-waits) teaches. In formal, `s_eventually`, usually with fairness assumptions, is how liveness is proven or refuted (see [Liveness, fairness and bounded response](#expert-liveness-fairness-and-bounded-response)). In a `cover`, the same bare sequence is strong and counts only completed matches.
 - **Cover counting.** `cover property` records attempts, successes (at most one per attempt) and successes because of vacuity; `cover sequence` records every match per attempt (§16.14.3). Disabled evaluations are not counted as successes.
 - **Case splits with `restrict`** (§16.14.4) need care: two sessions that restrict a signal to 0 and to 1 at every edge together cover only traces where the signal is constant. That is complete for a static mode bit, but not for a signal that can change during a trace.
 
@@ -1081,7 +1087,7 @@ The `formal-harness` lab gives you this lesson's FIFO harness in its over-constr
 ## References & Next Topics
 
 **Primary sources**
-- **IEEE 1800-2023:** §16.2 (the four kinds of assertion statement; cycle-based vs event-based evaluation); §16.5.1 (sampled values); §16.6 (assertion expressions shall not reference non-static class properties; X counts as false); §16.12.2 (weak and strong sequence properties); §16.12.7 (implication); §16.12.13 (`s_eventually`); §16.14.1 (`assert`); §16.14.2 (`assume`, `dist` biasing); §16.14.3 (`cover property` and `cover sequence`, vacuous-success counts); §16.14.4 (`restrict`); §16.14.5 (where concurrent assertions may appear); §16.14.6 (procedural concurrent assertions); §16.14.8 (nonvacuous evaluation); §16.15 (`default disable iff`); §17.7 (checker variables, free and constant free variables, the `data_legal` example); §17.7.2 (assume-based randomization of checker variables); §20.11 (assertion control tasks); §23.11 (`bind`; ports and parameters resolve in the target's scope).
+- **IEEE 1800-2023:** §3.14.2.3 (time-unit precedence; an error if some design elements have a time unit and others do not); §16.2 (the four kinds of assertion statement; cycle-based vs event-based evaluation); §16.5.1 (sampled values); §16.6 (assertion expressions shall not reference non-static class properties; X counts as false); §16.12.2 (weak and strong sequence properties); §16.12.7 (implication); §16.12.13 (`s_eventually`); §16.12.15 (weak and strong operators; a liveness failure cannot be identified at a finite time); §16.12.21 (finite-length behaviour: holds strongly, holds, pending, fails); §16.14.1 (`assert`); §16.14.2 (`assume`, `dist` biasing); §16.14.3 (`cover property` and `cover sequence`, vacuous-success counts); §16.14.4 (`restrict`); §16.14.5 (where concurrent assertions may appear); §16.14.6 (procedural concurrent assertions); §16.14.8 (nonvacuous evaluation); §16.15 (`default disable iff`); §17.7 (checker variables, free and constant free variables, the `data_legal` example); §17.7.2 (assume-based randomization of checker variables); §20.11 (assertion control tasks); §23.11 (`bind`; ports and parameters resolve in the target's scope).
 - **IEEE 1800.2-2020 and uvm-core 2020.3.1:** `uvm_sequence`, `start_item`/`finish_item`, `uvm_driver` and `try_next_item` (`src/seq/uvm_sequencer.svh`); the global `uvm_report_error`, which reports through `uvm_root` (`src/base/uvm_globals.svh`).
 - **Formal tools:** commands, result names, bound conventions, apps, abstraction and formal coverage are tool-dependent; use your tool's documentation for them.
 

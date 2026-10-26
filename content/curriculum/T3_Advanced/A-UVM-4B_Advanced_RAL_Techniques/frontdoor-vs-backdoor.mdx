@@ -226,7 +226,7 @@ The opposite mistake is to expect `poke()` to respect policies: `ctrl.poke(st, '
 
 "I only want to look at the interrupt counter without disturbing the bus, so I will use a backdoor `read()`." That read clears the counter in the DUT, exactly as a bus read would; that is what "mimics a physical read" means. The same is true of `mirror(…, UVM_BACKDOOR)`, which some guides recommend for speed. On a register with RC or RS fields both are destructive, and in uvm-core the mirror also keeps the value from before the clear (Push Further explains why).
 
-**To look without touching, use `peek()`**: it has no side effect on the DUT. If you also want a comparison, compare the peeked value with `get_mirrored_value()` yourself, or let a frontdoor `mirror(UVM_CHECK)` run while the hardware is quiet.
+**To look without touching, use `peek()`**: it has no side effect on the DUT. For a volatile or RC field such as this counter, the peeked value is the answer: compare it with the value you expect. A comparison with the mirror makes sense only on a non-volatile field, and then you call `get_mirrored_value()` *before* `peek()`, because in uvm-core `peek()` ends by predicting the peeked value into the mirror, so a mirror read afterwards always matches. A frontdoor `mirror(UVM_CHECK)` does not help on this register either: its bus read clears CNT, and CNT, being volatile, is not compared.
 
 ### When there is no path: fallbacks and failures
 
@@ -750,6 +750,7 @@ package timer_pkg;
 
     // Print the mirror, then the DUT value. peek() does not disturb the DUT,
     // but it does update the mirror, so the mirror is read first.
+    // On OVF and IRQ, get_mirrored_value() warns once per volatile field.
     local task show(string step, uvm_reg rg);
       uvm_status_e   st;
       uvm_reg_data_t mir;
@@ -873,8 +874,11 @@ endmodule
 ```text
 UVM_INFO ... [FVB] 1 ctrl.write(FFFFFFFF, BACKDOOR): mirror=0000000f DUT=0000000f
 UVM_INFO ... [FVB] 2 ctrl.poke(FFFFFFFF): mirror=ffffffff DUT=0000000f
+UVM_WARNING ... [UVM/FLD/GET_MIRRORED_VAL/VOL] Mirrored value returned for volatile field "ral.ovf.cnt" may not reflect the actual current value.
 UVM_INFO ... [FVB] 3 ovf.read(BACKDOOR) returned 3: mirror=00000003 DUT=00000000
+UVM_WARNING ... [UVM/FLD/GET_MIRRORED_VAL/VOL] Mirrored value returned for volatile field "ral.ovf.cnt" may not reflect the actual current value.
 UVM_INFO ... [FVB] 4 ovf.read(FRONTDOOR) returned 3: mirror=00000000 DUT=00000000
+UVM_WARNING ... [UVM/FLD/GET_MIRRORED_VAL/VOL] Mirrored value returned for volatile field "ral.irq.done" may not reflect the actual current value.
 UVM_INFO ... [FVB] 5 irq.write(1, BACKDOOR): mirror=00000000 DUT=00000000
 UVM_INFO ... [FVB] 6 ctrl.mirror(UVM_CHECK, FRONTDOOR) passed
 UVM_INFO ... [MON] bus transfers observed: 2
@@ -883,10 +887,12 @@ UVM_INFO ... [MON] bus transfers observed: 2
 
 ** Report counts by severity
 ...
-UVM_WARNING :    0
+UVM_WARNING :    3
 UVM_ERROR :    0
 UVM_FATAL :    0
 ```
+
+The three warnings are expected. `show()` calls `get_mirrored_value()` on OVF in steps 3 and 4 and on IRQ in step 5, and in uvm-core 2020.3.1 that call logs `UVM/FLD/GET_MIRRORED_VAL/VOL` once for each volatile field (CNT and DONE), as [A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index) explains. The bench prints these mirrors on purpose, to show where they part from the DUT. A real test should not rely on a volatile field's mirror; `peek()` the DUT value instead.
 
 Step 3's mirror value, 3 with the DUT at 0, follows from reading the uvm-core source (Push Further, "Backdoor reads have read side effects"). Confirm it on your simulator before you rely on it.
 
@@ -1128,7 +1134,7 @@ Answer from the rules, not from the tables. Every question maps to one objective
     question: "A test must start with 200 configuration registers programmed, then check status registers (some RC) between traffic bursts without disturbing the DUT. Which plan is sound?",
     answers: [
       { text: "poke() all 200 registers, and check status with backdoor read()", correct: false, feedback: "poke() ignores the access policies, and a backdoor read() clears RC fields in the DUT." },
-      { text: "Backdoor update() or write() for the set-up; peek() and a comparison with the mirror for the status checks; and a frontdoor access test of every register somewhere in the regression", correct: true, feedback: "Right. Fast set-up that honours the policies, non-destructive checks, and one frontdoor proof of the decode and bus path." },
+      { text: "Backdoor update() or write() for the set-up; peek() and a comparison with the expected value for the status checks; and a frontdoor access test of every register somewhere in the regression", correct: true, feedback: "Right. Fast set-up that honours the policies, non-destructive checks, and one frontdoor proof of the decode and bus path." },
       { text: "Frontdoor for everything, because backdoor writes skip the access policies", correct: false, feedback: "Backdoor write() honours the policies (§18.4.4.9). Frontdoor everywhere works, but wastes simulation time." },
       { text: "Backdoor mirror(UVM_CHECK) for the status checks, because it compares without bus traffic", correct: false, feedback: "A backdoor mirror() mimics a read, so it clears RC status bits in the DUT." }
     ],
@@ -1158,7 +1164,7 @@ endtask
 
 **Problems and predictions:**
 1. `poke('hFFFF_FFF5)` deposits EN = 1 and MODE = 2 (bits 3:1 of `'h5` are `010`), but puts `'hFFFF_FFF5` in the mirror. Bits 31:4 have no storage, so the DUT reads `'h0000_0005` and the next frontdoor `mirror(UVM_CHECK)` reports a mismatch on RSVD. Use a backdoor `write()`, or poke only `'h5`.
-2. `ovf.mirror(…, UVM_BACKDOOR)` clears CNT in the DUT, because it mimics a read, and compares nothing, because CNT is volatile. It destroys what it was meant to check. Use `peek()` and compare the value yourself.
+2. `ovf.mirror(…, UVM_BACKDOOR)` clears CNT in the DUT, because it mimics a read, and compares nothing, because CNT is volatile. It destroys what it was meant to check. Use `peek()` and compare the value with the one you expect.
 3. `irq.poke(st, 'h1)` stores 1: it *sets* DONE. To clear a W1C bit through the backdoor, write 1 with `write(st, 1, UVM_BACKDOOR)` or poke 0.
 4. No status is checked. A backdoor that fails, or a rights failure, would go unnoticed.
 
@@ -1193,8 +1199,11 @@ Someone changed the environment of Make It Work to `ral.configure(null, "")` and
 ```text
 UVM_INFO ... [FVB] 1 ctrl.write(FFFFFFFF, BACKDOOR): mirror=ffffffff DUT=00000000
 UVM_INFO ... [FVB] 2 ctrl.poke(FFFFFFFF): mirror=ffffffff DUT=00000000
+UVM_WARNING ... [UVM/FLD/GET_MIRRORED_VAL/VOL] Mirrored value returned for volatile field "ral.ovf.cnt" may not reflect the actual current value.
 UVM_INFO ... [FVB] 3 ovf.read(BACKDOOR) returned 0: mirror=00000000 DUT=00000000
+UVM_WARNING ... [UVM/FLD/GET_MIRRORED_VAL/VOL] Mirrored value returned for volatile field "ral.ovf.cnt" may not reflect the actual current value.
 UVM_INFO ... [FVB] 4 ovf.read(FRONTDOOR) returned 0: mirror=00000000 DUT=00000000
+UVM_WARNING ... [UVM/FLD/GET_MIRRORED_VAL/VOL] Mirrored value returned for volatile field "ral.irq.done" may not reflect the actual current value.
 UVM_INFO ... [FVB] 5 irq.write(1, BACKDOOR): mirror=00000000 DUT=00000000
 UVM_INFO ... [FVB] 6 ctrl.mirror(UVM_CHECK, FRONTDOOR) passed
 UVM_INFO ... [MON] bus transfers observed: 2
@@ -1205,7 +1214,7 @@ Compare it with the expected output. Which lines differ, what do they tell you, 
 <details>
 <summary>Reveal the worked solution</summary>
 
-**What differs.** Steps 1 and 2 report the DUT as `00000000` instead of `0000000f`, and steps 3 and 4 return 0 instead of 3.
+**What differs.** Steps 1 and 2 report the DUT as `00000000` instead of `0000000f`, and steps 3 and 4 return 0 instead of 3. The three `GET_MIRRORED_VAL/VOL` warnings are the same in both logs: they come from `show()` printing volatile mirrors, not from the missing path.
 
 **What it means.** No backdoor access reached the design. The block "has" an HDL path of kind `"RTL"`, the empty string recorded by `configure(null, "")`, so `has_hdl_path()` is true and no "No backdoor access" message appears. But `get_full_hdl_path()` skips the empty path, so every register's list of full paths is empty. `backdoor_write()` and `backdoor_read_func()` loop over nothing and return `UVM_IS_OK`:
 - step 1: the backdoor read inside `write()` leaves the item holding the written value, the policy step keeps it, nothing is deposited, and the mirror is predicted as `'hFFFF_FFFF`;

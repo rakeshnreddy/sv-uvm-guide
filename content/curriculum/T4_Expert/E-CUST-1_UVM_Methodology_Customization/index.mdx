@@ -454,7 +454,7 @@ Choose the mechanism by the requirement:
 | A VIP needs its own reset and configure cadence | A separate domain (Push Further) | Isolates the VIP instead of changing everyone's schedule |
 | A project-wide step that every component must take part in, which no existing phase names, and that a sequence cannot express | A custom phase, owned by the methodology team, added once by `proj_base_test` | The rare case the mechanism exists for |
 
-Reset strategy in depth (reset-aware drivers, mid-test reset) is a planned T3 module; this lesson only needs the decision above.
+Reset strategy in depth (reset-aware drivers, mid-test reset) is taught in [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index); this lesson only needs the decision above.
 
 ### Governance: guidelines, lint, CI gates, pinned versions
 
@@ -471,25 +471,29 @@ Reset strategy in depth (reset-aware drivers, mid-test reset) is a planned T3 mo
    | `raise_objection` in a driver or monitor | Objections owned by the wrong component | Drivers, monitors |
    | `$display`, `$error` in UVM classes | Messages the report server never counts | All UVM code |
    | `uvm_domain::get_uvm_schedule().add` or `get_common_domain().add` outside `proj_pkg` | Unowned custom phases | All code |
+   | `return CAUGHT` in a report catcher without a narrow ID and message match, or a type-wide `uvm_report_cb::add(null, …)` | A catcher that can hide real errors from the counts | Catcher code; the narrow catchers of reviewed error-injection tests are exempt by name |
+   | `UVM_NO_ACTION` for `UVM_ERROR` or `UVM_FATAL`, or a `+uvm_set_severity` that demotes them | Errors removed before they are counted | Regression command lines and run scripts |
 
-3. **An honest CI gate.** A run passes only if **all** of these hold, each for a reason ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) and [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) show the failures each one catches):
+3. **An honest CI gate.** A run passes only if **all** of these hold, each for a reason ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) and [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) show the failures each one catches). Six of them are E-DBG-1's gate rules written as pass conditions; the exit status is the one this page adds:
    - the `--- UVM Report Summary ---` block is present (a missing summary means a crash, a kill or a `$fatal`);
    - `UVM_ERROR :    0` and `UVM_FATAL :    0` in that summary, matched with anchored patterns;
    - no assertion failures and no simulator-format errors anywhere in the log, because an SVA or `$error` failure does not enter the UVM counts;
    - the simulator exit status is 0: a non-zero status always fails, but 0 alone proves nothing, since UVM ends passing and failing runs alike with `$finish`;
-   - an activity floor: every checker reports a positive count (for example `matched > 0`), and the log names the test that was meant to run.
+   - an activity floor: every checker reports a positive count (for example `matched > 0`), and the log names the test that was meant to run;
+   - the catcher summary shows no caught or demoted errors, unless the test is on a reviewed list of error-injection tests that check their own counts: a caught report ends processing before it is counted (§6.5.1.2.14), and a demoted one is counted at its new severity. This check needs the run at `UVM_LOW` or above, as the verbosity policy sets: uvm-core prints the catcher summary at `UVM_LOW` (uvm-core impl.: `uvm_report_catcher::summarize`), so at `UVM_NONE` it is absent even when a catcher caught errors, and the check proves nothing;
+   - the command line sets no `UVM_NO_ACTION` for `UVM_ERROR` or `UVM_FATAL`, and the log holds no `INVLCMDARGS` warning (uvm-core impl.: a `+uvm_set_*` setting that was malformed or never took effect), because a report whose action is `UVM_NO_ACTION` is dropped before it is counted (§6.5.1.2.14).
 4. **A pinned uvm-core version.** Every project compiles against one uvm-core release, and the base test proves it at run time by comparing `uvm_pkg::UVM_VERSION_STRING` with the pinned string, as `proj_base_test` does above. The parameter is standard (IEEE 1800.2-2020 B.7.2); only its *value* is implementation-defined, and uvm-core 2020.3.1 gives `"Accellera:1800.2:UVM:2020.3.1"` (`src/base/uvm_version.svh`). `proj_pkg` itself is versioned too: breaking changes to a base class bump its major version and ship with a migration note.
 
 <ArchitectureDiagram
   title="The methodology release pipeline"
-  caption="A change to proj_pkg goes through lint, a build against the pinned uvm-core, and a regression of the example environments. The gate passes only when every criterion from point 3 holds: summary present, UVM_ERROR and UVM_FATAL 0, no assertion or simulator errors, exit status 0 and a positive check count. Only then is a new proj_pkg version released to block teams."
+  caption="A change to proj_pkg goes through lint, a build against the pinned uvm-core, and a regression of the example environments. The gate passes only when every criterion from point 3 holds: summary present, UVM_ERROR and UVM_FATAL 0, no assertion or simulator errors, exit status 0, a positive check count, no unreviewed caught or demoted errors, and no UVM_NO_ACTION on errors or INVLCMDARGS warning. Only then is a new proj_pkg version released to block teams."
   cellWidth={160}
   cellHeight={64}
   gapX={82}
   gapY={56}
   nodes={[
     { id: "pr", label: "proj_pkg change", sublabel: "merge request", kind: "generic", col: 0, row: 0 },
-    { id: "lint", label: "lint", sublabel: "the six rules above", kind: "generic", col: 1, row: 0 },
+    { id: "lint", label: "lint", sublabel: "the eight rules above", kind: "generic", col: 1, row: 0 },
     { id: "build", label: "build", sublabel: "against pinned uvm-core 2020.3.1", kind: "generic", col: 2, row: 0 },
     { id: "regr", label: "example-env regression", sublabel: "block and SoC examples", kind: "env", col: 2, row: 1 },
     { id: "gate", label: "CI gate", sublabel: "every criterion in point 3", kind: "generic", col: 1, row: 1 },
@@ -649,6 +653,8 @@ package soc_pkg;
 endpackage
 
 module tb_top;
+  timeunit 1ns;        // every design element in the unit declares the same time
+  timeprecision 1ps;   // unit; mixing declared and undeclared is an error (§3.14.2.3)
   import uvm_pkg::*;
   import soc_pkg::*;
   initial run_test("base_test");
@@ -703,7 +709,7 @@ Predict each log before you run it. Every row was traced through uvm-core's `add
 - [ ] I can predict the start times of `post_reset` and `configure` for a series splice and for a parallel branch.
 - [ ] I can explain why a second `add()` runs the phase twice, and where the guard belongs.
 - [ ] I can name two existing mechanisms that would replace a proposed `pll_lock` phase.
-- [ ] I can list the five conditions of an honest CI gate and say what each one catches.
+- [ ] I can list the seven conditions of an honest CI gate and say what each one catches, including the two that catch errors hidden before counting.
 
 ## Push Further
 
@@ -917,10 +923,10 @@ Start with the quiz, which covers all five objectives. Then do the kata and the 
     answers: [
       { text: "UVM_ERROR : 0 in the report summary, since every error in the run is counted there", correct: false, feedback: "An SVA or $error failure is not counted there, and a test that compared nothing also reports 0 errors." },
       { text: "The test prints TEST PASSED from its report_phase after checking its own error flag", correct: false, feedback: "Any code can print that string, including a test that crashed later or checked nothing." },
-      { text: "Summary present, UVM_ERROR and UVM_FATAL 0, no assertion or simulator errors, exit status 0, and a positive count from every checker", correct: true, feedback: "Right. Each condition closes one hole: crashes, UVM errors, non-UVM errors, abnormal exits and zero-activity runs." },
-      { text: "The simulation reached $finish before the timeout fired and the exit status is 0", correct: false, feedback: "UVM ends failing runs with $finish too, and exit status 0 is tool-dependent: it does not prove the UVM counts are 0." }
+      { text: "Summary present with UVM_ERROR and UVM_FATAL 0, no assertion or simulator errors, exit status 0, positive checker counts, no unreviewed caught or demoted errors, and no UVM_NO_ACTION on errors or INVLCMDARGS", correct: true, feedback: "Right. Each condition closes one hole: crashes, UVM errors, non-UVM errors, abnormal exits, zero-activity runs, errors a catcher hid, and errors switched off or settings that never took effect." },
+      { text: "Summary present with UVM_ERROR and UVM_FATAL 0, no assertion or simulator errors, exit status 0, and a positive count from every checker", correct: false, feedback: "Close, but nothing here sees errors removed before counting: a catcher returning CAUGHT, or +uvm_set_action=…,UVM_ERROR,UVM_NO_ACTION, leaves a clean summary. This gate passes E-DBG-1's dishonest kata Runs A and B." }
     ],
-    explanation: "The UVM counts see only messages that go through UVM; assertions and $error bypass them. Exit status alone is tool-dependent and UVM ends every run with $finish. A positive check count guards against runs that did nothing."
+    explanation: "The UVM counts see only messages that go through UVM and survive the catchers and actions: assertions and $error bypass them, and a CAUGHT return or UVM_NO_ACTION drops an error before it is counted (§6.5.1.2.14). A printed TEST PASSED proves only that some code printed it. Exit status alone is tool-dependent and UVM ends every run with $finish. A positive check count guards against runs that did nothing."
   },
   {
     question: "After a tool upgrade, regressions behave slightly differently, and nobody knows whether uvm-core changed too. Which check in proj_base_test turns this into a clear failure?",
@@ -959,7 +965,7 @@ Start with the quiz, which covers all five objectives. Then do the kata and the 
 
 ### Kata: a base driver with reset hooks
 
-Objective 1 in code. The project wants every block driver to behave the same way around reset: outputs idle while reset is asserted, items driven only after reset is released, and a clean stop when reset asserts in the middle of a test. Here is an abstract base that adds the reset contract on top of `proj_driver` (so it keeps the config and the policy hook); a block team supplies the four hooks.
+Objective 1 in code. The project wants every block driver to behave the same way around reset: outputs idle while reset is asserted, items driven only after reset is released, and a clean stop when reset asserts in the middle of a test. Here is an abstract base that adds the reset contract on top of `proj_driver` (so it keeps the config and the policy hook); a block team supplies the four hooks. The base adds no reset rule of its own: it packages the reviewed single-thread pattern of [A-UVM-9's reset-aware driver](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index#the-reset-aware-driver), in which one thread reads the sampled reset at each edge of an item, so that "accepted" and "reset" are decided once, with no `fork` to race.
 
 ```systemverilog
 // snippet: kata starter, part of proj_pkg
@@ -971,69 +977,69 @@ virtual class proj_reset_driver #(type REQ = uvm_sequence_item) extends proj_dri
   endfunction
 
   // The contract: four hooks every block driver implements.
-  pure virtual task wait_reset_released();
-  pure virtual task wait_reset_asserted();
-  pure virtual task drive_item(REQ item);
+  pure virtual task wait_reset_released();   // first edge that samples reset released
+  pure virtual function bit in_reset();      // reset as sampled at the latest edge
+  pure virtual task drive_item(REQ item);    // returns at the accept edge, or on reset
   pure virtual task idle_outputs();
 
+  // One thread (A-UVM-9): reset is read at the item's edges, never raced against it.
   task run_phase(uvm_phase phase);
-    forever begin
-      idle_outputs();
-      wait_reset_released();
-      fork
-        drive_loop();
-        wait_reset_asserted();
-      join_any
-      disable fork;
-      // TODO 2: an item taken with get_next_item but not finished is still pending here.
-    end
-  endtask
-
-  protected task drive_loop();
     REQ item;
+    super.run_phase(phase);
+    idle_outputs();
+    wait_reset_released();
     forever begin
       seq_item_port.get_next_item(item);
-      drive_item(item);
-      seq_item_port.item_done();
+      if (!in_reset()) drive_item(item);
+      if (in_reset()) begin
+        // TODO 2: reset came before this item's accept edge; the item is still pending.
+        idle_outputs();
+        wait_reset_released();
+      end else begin
+        seq_item_port.item_done();
+      end
     end
   endtask
 endclass
 ```
 
-1. **Write `apb_driver`** on top of this base for an `apb_if` with `pclk`, `presetn` (active low), `psel`, `penable`, `pwrite`, `paddr`, `pwdata` and a clocking block `drv_cb`, driving an `apb_item` with `addr`, `data` and `write`. Keep the protocol minimal: one setup cycle, one access cycle.
-2. **Decide and implement** what happens to an item taken but not finished when reset asserts. Calling `get_next_item` again without `item_done` is an error, and the sequence that sent the item stays blocked in `finish_item` until `item_done` is called.
+1. **Write `apb_driver`** on top of this base for an `apb_if` with `pclk`, `presetn` (active low), `psel`, `penable`, `pwrite`, `paddr`, `pwdata` and a clocking block `drv_cb`, driving an `apb_item` with `addr`, `data` and `write`. Keep the protocol minimal: one setup cycle, one access cycle. `drive_item` returns at the access (accept) edge, or straight after the setup edge if that edge sampled reset asserted.
+2. **Decide and implement** what happens to an item taken but not finished when reset asserts (the `TODO 2` branch). Calling `get_next_item` again without `item_done` is an error, and the sequence that sent the item stays blocked in `finish_item` until `item_done` is called.
 3. **Predict** what a run shows if you skip step 2 and reset asserts once in the middle of an item.
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Show the worked solution</summary>
 
-**Step 2 first, because it belongs in the base.** Track the pending item and complete the handshake after `disable fork`:
+**Step 2 first, because it belongs in the base.** An item that reset cut short is *abandoned*: give it back with `item_done()` exactly as an accepted item, so the sequence's `finish_item` returns, and count it so the abandonment is visible:
 
 ```systemverilog
-// snippet: changes to proj_reset_driver
-protected bit m_item_pending;
+// snippet: proj_reset_driver::run_phase with TODO 2 done
+protected int unsigned n_abandoned;   // items taken but cut short by reset
 
-protected task drive_loop();
+task run_phase(uvm_phase phase);
   REQ item;
+  super.run_phase(phase);
+  idle_outputs();
+  wait_reset_released();
   forever begin
     seq_item_port.get_next_item(item);
-    m_item_pending = 1;
-    drive_item(item);
+    if (!in_reset()) drive_item(item);
+    if (in_reset()) begin
+      n_abandoned++;
+      `uvm_info("PROJ/RESET", "item abandoned by reset", UVM_MEDIUM)
+    end
+    // Accepted or abandoned: give the item back, so finish_item returns.
+    // Sequences check their own status or the reset epoch.
     seq_item_port.item_done();
-    m_item_pending = 0;
+    if (in_reset()) begin
+      idle_outputs();
+      wait_reset_released();
+    end
   end
 endtask
-
-// in run_phase, after disable fork:
-if (m_item_pending) begin
-  // Finish the handshake so the sequence's finish_item returns. The item was cut
-  // short by reset; sequences check their own status or the reset epoch.
-  seq_item_port.item_done();
-  m_item_pending = 0;
-end
 ```
 
-Putting this in the base is the point of the kata: every block driver gets the same, reviewed reset behaviour instead of forty variants. `disable fork` kills both branches and anything they started. If the base ever forks other long-lived threads from `run_phase`, wrap the `fork … join_any; disable fork;` in its own `fork begin … end join` so that `disable fork` cannot reach them.
+Putting this in the base is the point of the kata: every block driver inherits one reviewed reset behaviour instead of forty variants. **Why one thread:** `in_reset()` reads the value the clocking block sampled at the edge `drive_item` has just returned from, so acceptance is decided once, as a DUT that samples reset on its clock decides it. A base that forked the drive loop against a reset watcher would wake both branches at the same clocking event, in an order the simulator chooses, and its `disable fork` could land inside `get_next_item()` (A-UVM-9 explains both). This base fits a reset the driver can sample on a running clock, as `apb_driver` does. For a DUT with an asynchronous reset whose clock may stop, give the project a second base on [A-UVM-9's asynchronous-reset driver](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index#an-asynchronous-reset-is-watched-outside-the-clocking-block): `get_next_item()` outside the fork, only the drive raced against the raw reset, and `item_done()` whether the item was accepted or abandoned.
 
 **Step 1, the block driver:**
 
@@ -1057,9 +1063,10 @@ class apb_driver extends proj_reset_driver #(apb_item);
     @(vif.drv_cb iff vif.drv_cb.presetn === 1'b1);
   endtask
 
-  virtual task wait_reset_asserted();
-    @(vif.drv_cb iff vif.drv_cb.presetn === 1'b0);
-  endtask
+  // The value drv_cb sampled at the latest edge: what a synchronous DUT acts on.
+  virtual function bit in_reset();
+    return vif.drv_cb.presetn !== 1'b1;
+  endfunction
 
   virtual task idle_outputs();
     vif.drv_cb.psel    <= 1'b0;
@@ -1073,17 +1080,18 @@ class apb_driver extends proj_reset_driver #(apb_item);
     vif.drv_cb.paddr   <= item.addr;
     vif.drv_cb.pwdata  <= item.data;
     @(vif.drv_cb);
+    if (in_reset()) return;          // reset at the setup edge: the base idles the bus
     vif.drv_cb.penable <= 1'b1;      // access cycle
-    @(vif.drv_cb);
+    @(vif.drv_cb);                   // the accept edge; the base reads in_reset() here
     vif.drv_cb.psel    <= 1'b0;
     vif.drv_cb.penable <= 1'b0;
   endtask
 endclass
 ```
 
-(`presetn` must be an `input` of `drv_cb` and the bus signals its `output`s. This minimal driver ignores `PREADY` wait states; real APB timing belongs to a planned APB protocol module.) `apb_driver` is a concrete class, so it uses `` `uvm_component_utils ``, while the abstract base uses the abstract macro.
+(`presetn` must be an `input` of `drv_cb` and the bus signals its `output`s. This minimal driver ignores `PREADY` wait states; real APB timing, with wait states, is taught in [B-APB-1](/curriculum/T3_Advanced/B-APB-1_APB_Protocol_and_Verification/index).) `apb_driver` is a concrete class, so it uses `` `uvm_component_utils ``, while the abstract base uses the abstract macro.
 
-**Step 3, without the fix:** reset asserts and `disable fork` kills `drive_loop` between `get_next_item` and `item_done`. The sequence that sent the item stays blocked in `finish_item` for the whole reset. When reset is released, `drive_loop` calls `get_next_item` again while the first item is still outstanding. uvm-core's sequencer reports `Get_next_item called twice without item_done or get in between` as a `UVM_ERROR` (`uvm_sequencer.svh`) and, because the item is still at the head of its request FIFO, hands the driver the *same* item again (`uvm_sequencer_param_base.svh`, `m_safe_select_item`). So the run shows one `UVM_ERROR` and the item driven twice, once cut short by reset and once complete, which a scoreboard may also flag as a duplicate. (Traced through the uvm-core source, not run.)
+**Step 3, without the fix:** reset is sampled at the item's setup or accept edge, `drive_item` returns, and the base idles the bus and waits for release without calling `item_done`. The sequence that sent the item stays blocked in `finish_item` for the whole reset. When reset is released, the loop calls `get_next_item` again while the first item is still outstanding. uvm-core's sequencer reports `Get_next_item called twice without item_done or get in between` as a `UVM_ERROR` (`uvm_sequencer.svh`) and, because the item is still at the head of its request FIFO, hands the driver the *same* item again (`uvm_sequencer_param_base.svh`, `m_safe_select_item`). So the run shows one `UVM_ERROR` and the item driven twice, once cut short by reset and once complete, which a scoreboard may also flag as a duplicate. (Traced through the uvm-core source, not run.)
 
 </details>
 
@@ -1106,18 +1114,19 @@ Each variant below compiles. For each, predict the first line of the log that te
 
 ### Governance exercise: write the gate
 
-Three runs end like this (summaries abbreviated):
+Four runs end like this (summaries abbreviated). Unless a line says otherwise, the command line sets no actions or severities, and the catcher summary shows no caught or demoted reports:
 
 - **Run A:** `UVM_ERROR :    0`, `UVM_FATAL :    0`, `SCB matched=412`, but earlier in the log the simulator printed an assertion failure for `a_hold`.
 - **Run B:** `UVM_ERROR :    0`, `UVM_FATAL :    0`, `SCB matched=0`.
 - **Run C:** `UVM_ERROR :    0`, `UVM_FATAL :    0`, `SCB matched=388`, exit status 0, no other errors.
+- **Run D:** `irq_test`, which is not an error-injection test: `UVM_ERROR :    0`, `UVM_FATAL :    0`, `SCB matched=230`, exit status 0, and the catcher summary reads `Number of caught UVM_ERROR reports   :    6`.
 
-Write the CI rule (in words or pseudo-code) that passes only run C, and name the condition that fails A and the one that fails B.
+Write the CI rule (in words or pseudo-code) that passes only run C, and name the condition that fails each of A, B and D.
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Show a model answer</summary>
 
-Pass if and only if: the summary block is present; the anchored `UVM_ERROR` and `UVM_FATAL` counts are 0; no line matches the simulator's assertion or error format (tool-specific patterns); the exit status is 0; and every checker's count is positive. Run A fails on the assertion-failure condition: the assertion reported through `$error`, which the UVM counts never see. Run B fails on the activity floor: zero comparisons means the test checked nothing. Run C passes every condition.
+Pass if and only if: the summary block is present; the anchored `UVM_ERROR` and `UVM_FATAL` counts are 0; no line matches the simulator's assertion or error format (tool-specific patterns); the exit status is 0; every checker's count is positive; the catcher summary (which uvm-core prints only at `UVM_LOW` or above) shows no caught or demoted errors unless the test is on the reviewed error-injection list; and the command line sets no `UVM_NO_ACTION` for errors and the log holds no `INVLCMDARGS`. Run A fails on the assertion-failure condition: the assertion reported through `$error`, which the UVM counts never see. Run B fails on the activity floor: zero comparisons means the test checked nothing. Run D fails on the catcher condition: six errors were caught, so they never reached the counts, and nothing in `irq_test` accounts for them ([E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) shows how to find the catcher). Run C passes every condition.
 
 </details>
 
@@ -1138,10 +1147,10 @@ The deck for this lesson covers the methodology layer and why not to fork, the e
 - IEEE 1800.2-2020:
   - Phasing: §9.2.1 (singleton IMP and nodes), §9.3.1.1.1 (custom phase definition, typed proxies), §9.3.1.4.4 (`find`), §9.3.1.5.1–9.3.1.5.2 (`exec_func`, `exec_task`), §9.3.1.6.1 (`add`), §9.3.1.6.2 (`get_parent`), §9.3.1.6.4 (`get_schedule`), §9.3.1.8.1–9.3.1.8.2 (`sync`, `unsync`), §9.3.1.9.1 (`jump`), §9.4.2.1–9.4.2.4 (`uvm_domain`: `new`, `get_domains`, `add_uvm_phases`, `jump`), §9.6 (task phases, sibling waits, the shared-successor rule), §9.6.2.2 (`traverse`), §9.8.2 (run-time phases; users may add phases), §9.8.2.6 (`post_configure_phase`);
   - Components: §13.1.4.3.1–13.1.4.3.3 (`phase_started`, `phase_ready_to_end`, `phase_ended`), §13.1.4.4.1–13.1.4.4.3 (`set_domain`, `get_domain`, `define_domain`), §13.5 (`uvm_monitor`), §13.7, §13.7.2.1 (`uvm_driver`, `seq_item_port`);
-  - Extension points: §6.5.1.1, §6.5.1.2.15, §6.5.1.2.19, §6.5.2 (report server), §6.6 (report catcher), §8.3.1.4.1–8.3.1.4.2 (overrides), §8.3.1.7.5 (factory `print`), §10.7 (callbacks), §14.2.4.4 (`set_automatic_phase_objection`), §15.3.5 (default sequences), §16.2, §16.3, §16.6 (policy classes);
+  - Extension points: §6.5.1.1, §6.5.1.2.14–6.5.1.2.15, §6.5.1.2.19, §6.5.2 (report server, including where `CAUGHT` and `UVM_NO_ACTION` end processing), §6.6 (report catcher), §8.3.1.4.1–8.3.1.4.2 (overrides), §8.3.1.7.5 (factory `print`), §10.7 (callbacks), §14.2.4.4 (`set_automatic_phase_objection`), §15.3.5 (default sequences), §16.2, §16.3, §16.6 (policy classes);
   - Annexes: B.2.1.3 (component utility macros, including the abstract forms), B.7.1–B.7.3 (version globals), C.4 (`uvm_config_db`), F.7.3.3 (`set_timeout`), F.7.4.1 (`find_all`), F.7.4.2 (`print_topology`), G.2.4 (`+uvm_set_action`), G.2.7 (`+uvm_set_type_override`, name-based), G.2.9 (`+uvm_set_default_sequence`).
 - uvm-core 2020.3.1 (implementation behaviour, labelled "uvm-core" on this page): `src/base/uvm_phase.svh` (`add`, `find`, `m_find_successor`, `PH_BAD_ADD`, `+UVM_PHASE_TRACE`), `uvm_domain.svh` (`get_uvm_schedule`, `get_common_domain`, `get_uvm_domain`), `uvm_task_phase.svh` (`traverse` domain filter, `execute`), `uvm_phase_hopper.svh` (`PH/TRC/*` messages, run-only timeout watchdog), `uvm_runtime_phases.svh` (protected constructors), `uvm_component.svh` (`set_domain`, `define_domain`), `uvm_report_server.svh`, `uvm_version.svh`, `src/macros/uvm_version_defines.svh`, `src/macros/uvm_object_defines.svh`, `src/seq/uvm_sequencer_base.svh` (default-sequence scope).
-- IEEE 1800-2023: §6.18 (incomplete forward types), §8.13 (single inheritance), §8.26 and §8.26.5 (interface classes and casting to them), §8.27 (typedef class).
+- IEEE 1800-2023: §3.14.2.3 (time units: all design elements or none), §6.18 (incomplete forward types), §8.13 (single inheritance), §8.26 and §8.26.5 (interface classes and casting to them), §8.27 (typedef class).
 
 **Prerequisites:** [I-UVM-1C: UVM Phasing and Synchronization](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index), [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index), [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index).
 
@@ -1152,6 +1161,7 @@ The deck for this lesson covers the methodology layer and why not to fork, the e
 - [I-UVM-4: UVM Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index): printers, comparers and copiers as extension points.
 - [I-UVM-3B: Advanced Sequencing and Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index): the top virtual sequence that usually replaces a custom phase.
 - [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): packaging reusable components on top of a project layer.
+- [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index): the reset-aware driver that the kata's `proj_reset_driver` packages.
 - [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): report catchers, honest verdicts and failure bucketing.
 - [E-PERF-1: UVM Performance](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index): measuring the cost of base classes and phases.
 

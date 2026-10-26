@@ -15,18 +15,18 @@ This lab asks you to capture the intent once in PSS: write a value to an aligned
    - A write action whose `output` is a `mem_buf_s` buffer, and a read-verify action whose `input` is a `mem_buf_s` buffer.
    - A 4-byte aligned address and a write-data range of `0x0000` through `0xFFFF`.
    - An activity that traverses the write and then the read, and binds the read's input to the write's output so the read checks exactly the address and data that write chose.
-   - The four `exec body` templates: SV templates that start `mem_write_seq` and `mem_read_seq` on `p_sequencer.mem_sqr`, and C templates that call `mem_write32()` and `mem_read32()`.
+   - The two realization packages at the end of the file, each extending `write_mem` and `read_verify`: `mem_real_sv`, whose SV templates start `mem_write_seq` and `mem_read_seq` on `p_sequencer.mem_sqr`, and `mem_real_c`, whose C templates call `mem_write32()` and `mem_read32()`.
 3. Before you open the solution, predict: if you delete the `bind`, what may the tool do?
-4. Compare the two generated targets below. They show how one PSS model becomes UVM and C code.
+4. Compare the two generated targets below. They show how one scenario becomes UVM code with `mem_real_sv` active and C code with `mem_real_c` active.
 
 ## Files
 
 | File | Purpose |
 |---|---|
 | `starter/mem_test.pss` | PSS skeleton with TODOs |
-| `solution/mem_test.pss` | Complete reference PSS intent (unlocks when you finish the lab) |
-| `solution/generated_uvm_sequence.sv` | Simplified UVM virtual sequence generated from the PSS intent |
-| `solution/generated_baremetal_test.c` | Simplified C bare-metal test generated from the same PSS intent |
+| `solution/mem_test.pss` | Complete reference model: the scenario and its two realization packages (unlocks when you finish the lab) |
+| `solution/generated_uvm_sequence.sv` | Simplified UVM virtual sequence generated from the scenario with `mem_real_sv` active |
+| `solution/generated_baremetal_test.c` | Simplified C bare-metal test generated from the same scenario with `mem_real_c` active |
 
 ## PSS rules this lab relies on
 
@@ -34,6 +34,7 @@ This lab asks you to capture the intent once in PSS: write a value to an aligned
 - **Traversals are labelled, not aliased.** Write `wr_a: do write_mem;`. PSS has no `do write_mem as wr` form.
 - **`bind` pins which object an action consumes.** Here, `bind wr_a.wr rd_a.rd;` makes the read consume this write's buffer. (A buffer may feed any number of readers, and one `bind` may list several fields.) Without it, the tool may bind the input to any suitable earlier output, or infer a new write.
 - **Templates are pasted verbatim.** The tool inserts each `exec body` text into the generated test with every `{{...}}` reference replaced by its solved value. Wrap each SV template in `begin ... end` so its declaration is legal wherever it lands.
+- **One realization package per generated test.** A single exec block maps to at most one language, and same-kind exec blocks in one scope merge into one (PSS 3.0 §22.1.1 b, e). So the standard gives an action a C and an SV realization through different packages that are not used for the same test (§22.5.1): here `mem_real_sv` and `mem_real_c`, each an `extend action` of `write_mem` and `read_verify`. Each generated test, UVM or C, uses one of them. How you tell the tool which package is active is tool-dependent (§21.1). Some tools also accept SV and C bodies side by side in one action; that is tool behaviour, not the standard.
 - **The root component.** The tool must be told the root action and root component. The standard's default root component is `pss_top`; this lab's model is in `mem_portability_lab`, so designate it as the root (or wrap it in a `component pss_top`).
 
 ## Where checking lives
@@ -49,6 +50,7 @@ This lab's SV `read_verify` template checks the read data itself and reports `PS
 | `wr.addr % 4 == 0` | A solved address such as 4160 (`0x1040`) | The same address |
 | `wr.data in [0x0000..0xFFFF]` | A solved data value such as 48879 (`0xBEEF`) | The same data |
 | `bind wr_a.wr rd_a.rd` | The read uses the write's address and expected data | The readback compares against the same data |
+| Active realization package | `mem_real_sv` | `mem_real_c` |
 
 ## Side-by-Side Diff
 
@@ -65,9 +67,9 @@ This lab's SV `read_verify` template checks the read data itself and reports `PS
 
 ## Generated targets (excerpts)
 
-In this example the tool solved `addr = 0x1040` and `data = 0xBEEF`, then pasted each action's `exec body` template with the `{{...}}` references filled in. A `bit` field is printed as unsigned decimal, so the generated code really contains `4160` and `48879`; the listings below and the files in `solution/` show the values in hex for readability. Some tools instead emit code that solves on the target at run time.
+In this example the tool solved `addr = 0x1040` and `data = 0xBEEF`, then pasted each action's `exec body` template from the active package with the `{{...}}` references filled in. A `bit` field is printed as unsigned decimal, so the generated code really contains `4160` and `48879`; the listings below and the files in `solution/` show the values in hex for readability. Some tools instead emit code that solves on the target at run time.
 
-UVM (`exec body SV` templates, inside the generated virtual sequence's `body()`):
+UVM (generated with `mem_real_sv` active; its `exec body SV` templates land inside the generated virtual sequence's `body()`):
 
 ```systemverilog
 // excerpt: each template is wrapped in begin ... end
@@ -87,7 +89,7 @@ end
 
 The generated sequence runs on a virtual sequencer and reaches the real memory sequencer through `p_sequencer`, as taught in [I-UVM-3B: virtual sequences and the virtual sequencer](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences).
 
-C (`exec body C` templates):
+C (generated with `mem_real_c` active, from its `exec body C` templates):
 
 ```c
 mem_write32(0x00001040u, 0x0000BEEFu);                 /* wr_a */
@@ -97,7 +99,7 @@ if (mem_read32(0x00001040u) != 0x0000BEEFu)            /* rd_a */
 
 ## Expected Outcome
 
-Your PSS model is complete when every TODO is filled and it matches the solution's structure: the constraints live on `wr`, the read takes `rd` as an `input`, the activity binds `wr_a.wr` to `rd_a.rd`, and each SV template is wrapped in `begin ... end`. Running either generated target against a correct memory writes `0x0000BEEF` to `0x00001040`, reads the same value back, and reports no `PSS_MEM_VERIFY` error (UVM) and no `test_fail()` (C).
+Your PSS model is complete when every TODO is filled and it matches the solution's structure: the constraints live on `wr`, the read takes `rd` as an `input`, the activity binds `wr_a.wr` to `rd_a.rd`, the SV templates live in `mem_real_sv` and the C templates in `mem_real_c`, and each SV template is wrapped in `begin ... end`. Generate the UVM test with `mem_real_sv` active and the C test with `mem_real_c` active. Running either generated target against a correct memory writes `0x0000BEEF` to `0x00001040`, reads the same value back, and reports no `PSS_MEM_VERIFY` error (UVM) and no `test_fail()` (C).
 
 Your Step 3 prediction: without the `bind`, the read's input is unbound. The tool must still complete the scenario, so it may bind the input to this write's buffer or to another legal producer, including a write it infers (PSS 3.0 §17.1). In this tiny model the traversed write is the only candidate that completes first, but nothing in the model guarantees it once other writes are added.
 

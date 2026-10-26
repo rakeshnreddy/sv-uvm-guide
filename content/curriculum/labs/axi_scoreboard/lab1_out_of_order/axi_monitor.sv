@@ -26,7 +26,7 @@ class axi_rd_monitor extends uvm_monitor;
   task run_phase(uvm_phase phase);
     forever begin
       @(vif.mon_cb);                  // sample through the clocking block
-      if (!vif.mon_cb.ARESETn) open_q.delete();   // reset ends every read
+      if (!vif.mon_cb.ARESETn) open_q.delete();   // reset policy: drop open reads, never publish
       else begin
         // R first: a beat at this edge can only belong to a read whose AR
         // handshake came at an earlier edge (A3.3.1).

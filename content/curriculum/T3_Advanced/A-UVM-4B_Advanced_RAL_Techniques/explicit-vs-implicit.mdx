@@ -254,7 +254,7 @@ Each set-up has blind spots. A stale mirror is not a bug in itself; checking aga
 | An access on another bus port with no predictor | stale | stale | stale | a predictor on every bus port (see the module index for multiple maps) |
 | The hardware itself: status bits, counters, interrupt flags | **stale** | **stale** | **stale** | read the register, call `predict()`, and make the field volatile |
 | A DUT reset in the middle of a test | stale | stale | stale | `ral.reset()` (see the expert note on reset) |
-| An access that ended with `UVM_NOT_OK` | not predicted | not predicted | not predicted | intended: a failed access changes nothing |
+| An access that ended with `UVM_NOT_OK` | not predicted | not predicted | not predicted | intended, but an error does not prove the register is unchanged: an APB write that gets an error may still have updated it (Arm IHI 0024C §3.4). Read the register back after the error (for example with `mirror()`) so prediction relearns it, or model the peripheral's documented behaviour ([B-APB-1](/curriculum/T3_Advanced/B-APB-1_APB_Protocol_and_Verification/index)) |
 | Backdoor `poke()` or `peek()` | predicted by the call itself (uvm-core) | same; the monitor sees no bus traffic | same | none needed in uvm-core 2020.3.1 |
 
 **Hardware changes, traced.** The hardware sets INT_STATUS.ERR (W1C) when the test programs an illegal mode, as in the Make It Work example. Explicit prediction is on:
@@ -796,15 +796,19 @@ UVM_INFO ... uvm_test_top.env [PRED] prediction set-up: PRED_EXPLICIT
 UVM_INFO ... uvm_test_top [STEP] 1 ral.ctrl.write('h5): ral.ctrl mirror='h5
 UVM_INFO ... uvm_test_top [STEP] 2 raw bus write CTRL='h9: ral.ctrl mirror='h9
 UVM_INFO ... uvm_test_top [STEP] 3 ral.gpio.write('h1): ral.gpio mirror='h1
+UVM_WARNING ... reporter [UVM/FLD/GET_MIRRORED_VAL/VOL] Mirrored value returned for volatile field "ral.int_status.err" may not reflect the actual current value.
 UVM_INFO ... uvm_test_top [STEP] 4 after MODE=3: int_status mirror='h0
+UVM_WARNING ... reporter [UVM/FLD/GET_MIRRORED_VAL/VOL] Mirrored value returned for volatile field "ral.int_status.err" may not reflect the actual current value.
 UVM_INFO ... uvm_test_top [STEP] 4 read int_status='h1, mirror now='h1
 ...
 --- UVM Report Summary ---
 ...
-UVM_WARNING :    0
+UVM_WARNING :    2
 UVM_ERROR :    0
 UVM_FATAL :    0
 ```
+
+The two warnings are expected. Each step-4 log line calls `get_mirrored_value()` on INT_STATUS, whose ERR field is volatile, and uvm-core 2020.3.1 warns on every such call because a volatile field's mirror may already be out of date ([A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index) teaches this warning). Each warning prints just before its `STEP` line, and every `+PRED` set-up below prints the same two.
 
 Add `+UVM_VERBOSITY=UVM_HIGH` to see the predictor at work, for example `[REG_PREDICT] Observed WRITE transaction to register ral.ctrl: value='h9 : updated value = 'h9` from `uvm_test_top.env.predictor` for step 2.
 
@@ -1036,7 +1040,7 @@ Before you look at the table in Make It Work, cover it and predict, for each `+P
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Show the worked solution</summary>
 
-- **NONE (3 errors):** steps 1, 2 and 3. Nothing ever moves the mirror, and in uvm-core the frontdoor `mirror()` does not update it either, so it stays at the reset value. Step 4 reports nothing because ERR is volatile, and its mirror stays `'h0` even after the read.
+- **NONE (3 errors):** steps 1, 2 and 3. Nothing ever moves the mirror, and in uvm-core the frontdoor `mirror()` does not update it either, so it stays at the reset value. Step 4 reports no error, because nothing in step 4 compares the mirror (it prints only the two volatile-field warnings that every set-up prints), and its mirror stays `'h0` even after the read.
 - **AUTO (1 error):** step 2 only. The raw write is invisible to auto-predict, so the check compares 9 with 5. The read inside `mirror()` is auto-predicted, so the mirror is back to `'h9` afterwards.
 - **EXPLICIT (0 errors):** the predictor sees all three bus writes. Step 4's mirror is stale (`'h0`) until the read, and the read is predicted.
 - **BOTH (1 error):** step 3 only. The W1T write is predicted twice, so the mirror toggles back to `'h0` while the DUT holds 1. Step 2 is fine: the raw write is predicted once, by the predictor.
@@ -1093,6 +1097,7 @@ The module's lab drops you into an environment whose mirror never updates, with 
   - §18.5.3.2 (field `configure`, the `volatile` argument), §18.5.4.10 (`is_volatile`), §18.5.5.15 (`set_compare`), §18.5.5.17 (field `predict`);
   - §19.2.1 (`uvm_reg_adapter`), §19.2.1.2.3 (`provides_responses`), §19.2.1.2.5–§19.2.1.2.6 (`reg2bus`, `bus2reg`);
   - §19.3 (`uvm_reg_predictor`): §19.3.2.1–§19.3.2.4 (`bus_in`, `reg_ap`, `map`, `adapter`), §19.3.3.2 (`pre_predict`), §19.3.3.3 (`check_phase`).
+- Arm IHI 0024C (AMBA APB): §3.4 (error response: an errored transfer may or may not have changed the peripheral's state).
 - uvm-core 2020.3.1 (implementation behaviour labelled on this page): `src/reg/uvm_reg_predictor.svh`, `src/reg/uvm_reg_map.svh` (`new`, `set_auto_predict`, `get_reg_by_offset`, `perform_accesses`), `src/reg/uvm_reg.svh` (`do_write`, `do_read`, `do_predict`, `predict`, `mirror`, `do_check`), `src/reg/uvm_reg_field.svh` (`configure`, `predict`, `do_predict`, `XpredictX`), `src/reg/sequences/uvm_reg_access_seq.svh`.
 
 **Prerequisites:** [A-UVM-4B overview](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index), the previous lesson; [A-UVM-4A: RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index) for desired and mirrored values, maps and adapters; [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) for analysis ports.

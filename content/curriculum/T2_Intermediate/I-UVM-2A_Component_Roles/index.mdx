@@ -449,7 +449,7 @@ The agent copies `cfg.is_active` into the `is_active` field right after `super.b
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| A "passive" agent has `drv` and `sqr` in the topology listing; `out_if.valid` shows X whenever the DUT drives it to 1; the scoreboard never sees an output and the run ends only at `UVM_FATAL [PH_TIMEOUT]` | The agent's `build_phase` does not call `super.build_phase`, so `is_active` keeps its default. The unwanted driver drives `valid` to 0 against the DUT's 1 | Call `super.build_phase(phase)` first in every component's `build_phase` |
+| A "passive" agent has `drv` and `sqr` in the topology listing; `out_if.valid` shows X whenever the DUT drives it to 1; the scoreboard never sees an output and the run ends only when the test's timeout fires, with `UVM_FATAL [PH_TIMEOUT]` | The agent's `build_phase` does not call `super.build_phase`, so `is_active` keeps its default. The unwanted driver drives `valid` to 0 against the DUT's 1 | Call `super.build_phase(phase)` first in every component's `build_phase` |
 | The same symptoms, although `super.build_phase` is called | The `is_active` setting never matched: a mistyped path, a set made after the env was built, or a set from the wrong component | Fix the path or move the set before `create("env", this)`; then confirm with the listing or the check in the next row |
 | You want to catch either of the two rows above before any traffic runs | — | In the test's `end_of_elaboration_phase`, compare `env.out_agt.get_is_active()` with what you intended and raise `` `uvm_error `` if they differ; or read the `print_topology` listing |
 | The simulator stops in `connect_phase` with a null-object access in `bus_agent` | `drv.seq_item_port.connect(...)` runs without the `get_is_active()` guard in a passive agent | Guard the connection with the same test used in `build_phase` |
@@ -470,7 +470,7 @@ The agent copies `cfg.is_active` into the `is_active` field right after `super.b
 
 ### A complete bench: one agent class, two shapes
 
-The example below is the whole bench from the picture at the top of the page: `incr_dut`, two instances of `bus_if`, and the package `bus_pkg` with an item, a sequence, the driver, monitor, agent, scoreboard, coverage subscriber, env and test. The sequence is a preview of [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index); read it as "send these four bytes". The test makes `out_agt` passive, prints the topology at the end of elaboration, sends four bytes, and ends when the scoreboard has compared all four.
+The example below is the whole bench from the picture at the top of the page: `incr_dut`, two instances of `bus_if`, and the package `bus_pkg` with an item, a sequence, the driver, monitor, agent, scoreboard, coverage subscriber, env and test. The sequence is a preview of [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index); read it as "send these four bytes". The test sets a 1 µs timeout, makes `out_agt` passive, prints the topology at the end of elaboration, sends four bytes, and ends when the scoreboard has compared all four.
 
 ```systemverilog
 // compile
@@ -482,6 +482,9 @@ The example below is the whole bench from the picture at the top of the page: `i
 // sides of the DUT".
 // -----------------------------------------------------------------
 interface bus_if (input logic clk, input logic rst_n);
+  timeunit 1ns;
+  timeprecision 1ps;
+
   wire       valid;
   wire       ready;
   wire [7:0] data;
@@ -511,6 +514,9 @@ module incr_dut (
   input  logic       out_ready,
   output logic [7:0] out_data
 );
+  timeunit 1ns;
+  timeprecision 1ps;
+
   // Accept a new byte whenever the stage is empty or its byte is leaving.
   assign in_ready = !out_valid || out_ready;
 
@@ -528,6 +534,9 @@ endmodule
 // The UVM package.
 // -----------------------------------------------------------------
 package bus_pkg;
+  timeunit 1ns;
+  timeprecision 1ps;
+
   import uvm_pkg::*;
   `include "uvm_macros.svh"
 
@@ -779,6 +788,8 @@ package bus_pkg;
 
     function void build_phase(uvm_phase phase);
       super.build_phase(phase);
+      // Bound the run first: a lost byte ends at 1 us with PH_TIMEOUT.
+      uvm_root::get().set_timeout(1us, 1);
       // Before env exists: out_agt only watches the DUT's output bus.
       uvm_config_db#(uvm_active_passive_enum)::set(this, "env.out_agt", "is_active",
                                                     UVM_PASSIVE);
@@ -900,12 +911,12 @@ How to read it:
 - **The timing matches the waveform.** Inputs are accepted at 35, 55, 75 and 95 ns; each output appears one clock later, at 45, 65, 85 and 105 ns, so the run ends at 105 ns. The bytes 10, 20, 7F and FF come out as 11, 21, 80 and 00 (8-bit wrap-around), which hits all three coverage bins.
 - **Pass or fail is in the last lines.** `UVM_ERROR :    0`, `UVM_FATAL :    0` and `pending=0` together say the test passed. The `UVM_INFO` count includes banner messages and varies by version ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) covers reading the summary).
 
-**Run it.** Compile the block above as one file with your simulator's UVM library enabled (the switch is tool-specific), use one timescale for every file, make `tb_top` the top level and run. No timeout is set here: if the DUT ever lost a byte, the test would wait until UVM's default phase timeout. Add a run timeout as [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) shows before you reuse this bench.
+**Run it.** Compile the block above as one file with your simulator's UVM library enabled (the switch is tool-specific), make `tb_top` the top level and run. Every design element in the block declares `timeunit 1ns` and `timeprecision 1ps`, but `uvm_pkg` declares none, and IEEE 1800-2023 §3.14.2.3 makes it an error for some design elements to specify a time unit and precision while others do not: give the compile a default of 1 ns / 1 ps with your tool's switch, so uvm-core gets the same unit. The test's `build_phase` bounds the run with `uvm_root::get().set_timeout(1us, 1)`, as [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) and [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) teach. The passing run ends at 105 ns, well inside it. If the DUT ever lost a byte, the test's `wait` would never end, and the timeout would stop the run at 1 µs with `UVM_FATAL [PH_TIMEOUT]` instead of letting it run toward uvm-core's 9200 s default. The literal `1us` is scaled to `bus_pkg`'s time unit (IEEE 1800-2023 §5.8) and the watchdog waits in `uvm_pkg`'s, one more reason to compile everything, uvm-core included, with one time unit ([I-UVM-1C's "time units" note](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index#expert-time-units-of-set_timeout-and-set_drain_time) explains the trap).
 
 **Prove the checks can fail.** Change `bus_agent::build_phase` so it no longer calls `super.build_phase(phase)` and run again. Predict first, then compare:
 - the listing now shows `drv` and `sqr` under `out_agt`, and `DRVCONNECT` stays silent, because the guarded connect does run;
 - `out_agt.drv` drives `out_if.valid` to 0 while the DUT drives it to 1, so the waveform shows X there;
-- `out_agt`'s monitor never sees a transfer, `compared` stays 0, and the run ends with `UVM_FATAL [PH_TIMEOUT]`.
+- `out_agt`'s monitor never sees a transfer, `compared` stays 0, and at 1 µs the timeout ends the run with `UVM_FATAL … [PH_TIMEOUT] Explicit timeout of … hit, indicating a probable testbench issue` (uvm-core wording). `report_phase` never runs, so there is no `SCB_SUMMARY` line, and the summary shows `UVM_FATAL :    1`.
 
 ### How to build an agent-based bench
 
@@ -914,7 +925,7 @@ How to read it:
 3. **Write the item, then the driver and the monitor** for each interface type: the driver loops on `get_next_item` / drive / `item_done`; the monitor samples through `mon_cb`, creates a new item per transfer, and publishes it.
 4. **Write the agent:** `super.build_phase` first; always the monitor and `ap`; sequencer and driver under `get_is_active() == UVM_ACTIVE`; the driver connection under the same test.
 5. **Write the env:** create the agents, the scoreboard and the subscribers in `build_phase`; connect each agent's `ap` in `connect_phase`.
-6. **Write the test:** set each agent's mode (or its configuration object) before creating the env; print the topology at the end of elaboration while you develop.
+6. **Write the test:** set a timeout first; set each agent's mode (or its configuration object) before creating the env; print the topology at the end of elaboration while you develop.
 7. **Write `tb_top`:** instantiate the DUT and one interface per bus, set each interface handle on its own agent's path, then call `run_test()`.
 8. **Run, then break it on purpose:** check the listing and the scoreboard summary, then remove a `super.build_phase` or a `connect` and make sure the bench notices.
 
@@ -1281,13 +1292,13 @@ The log ends with `SCB_SUMMARY matches=4 mismatches=0 pending=0` and `UVM_ERROR 
 **Primary sources**
 
 - IEEE 1800.2-2020 (clause numbers from the `@uvm-ieee` annotations in uvm-core 2020.3.1):
-  - §13.1.1 `uvm_component`; §13.1.4.1.1 `build_phase`; §13.1.4.1.2 `connect_phase`; §13.1.4.1.3 `end_of_elaboration_phase`; §13.1.4.1.5 `run_phase`;
+  - §9.8.1.5 `uvm_run_phase` (the global timeout counter); §13.1.1 `uvm_component`; §13.1.4.1.1 `build_phase`; §13.1.4.1.2 `connect_phase`; §13.1.4.1.3 `end_of_elaboration_phase`; §13.1.4.1.5 `run_phase`;
   - §13.2.1 `uvm_test`; §13.3.1 `uvm_env`; §13.4.1 `uvm_agent` (§13.4.2.2 `get_is_active`); §13.5.1 `uvm_monitor`; §13.6.1 `uvm_scoreboard`; §13.7.1 `uvm_driver`; §13.8.1 `uvm_push_driver`; §13.9.1 `uvm_subscriber` (§13.9.3.2 `write`);
   - §14.1 `uvm_sequence_item`; §15.2.2.1 `uvm_seq_item_pull_port`; §15.5.1 `uvm_sequencer`;
   - §12.2.10.1 `uvm_analysis_port`, §12.2.10.2 `uvm_analysis_imp`, Annex B.5.22 (`` `uvm_analysis_imp_decl ``); §5.5.2.9 `get_connected_to`, §5.5.2.10 `get_provided_to`;
-  - Annex C.4.2 `uvm_config_db`; Annex F.2.1.7 `uvm_active_passive_enum`; Annex F.7.4.2 `print_topology`; Annex G.2.8 `+uvm_set_config_int` and `+uvm_set_config_string`.
-- uvm-core 2020.3.1 implementation details: `src/comps/uvm_agent.svh` (how `is_active` is read), `src/macros/uvm_resource_defines.svh` (`` `uvm_resource_enum_read ``), `src/comps/uvm_driver.svh` (`DRVCONNECT`), `src/base/uvm_root.svh` (`print_topology`, `set_enable_print_topology`), `src/base/uvm_port_base.svh` (`debug_connected_to`), `src/seq/uvm_sequence_base.svh` (the `[SEQ]` fatal for a missing sequencer).
-- IEEE 1800-2023: §6.8 (initializing a variable in its declaration); §8.20 (an override keeps the argument names); §9.4.2 (waiting on class properties); §14.3 (clocking blocks); §14.4 (input and output skews); §14.13 (input sampling); §14.16 and §14.16.2 (synchronous drives, and clocking outputs on variables versus nets); §19.4 (covergroups in classes); §23.3.3.2 (a variable on an output port implies a continuous assignment); §25.9 (virtual interfaces).
+  - Annex C.4.2 `uvm_config_db`; Annex F.2.1.7 `uvm_active_passive_enum`; Annex F.7.3.3 `set_timeout`; Annex F.7.4.2 `print_topology`; Annex G.2.8 `+uvm_set_config_int` and `+uvm_set_config_string`.
+- uvm-core 2020.3.1 implementation details: `src/comps/uvm_agent.svh` (how `is_active` is read), `src/macros/uvm_resource_defines.svh` (`` `uvm_resource_enum_read ``), `src/comps/uvm_driver.svh` (`DRVCONNECT`), `src/base/uvm_root.svh` (`print_topology`, `set_enable_print_topology`), `src/base/uvm_phase_hopper.svh` (the timeout watchdog and its `PH_TIMEOUT` wording), `src/macros/uvm_global_defines.svh` (`` `UVM_DEFAULT_TIMEOUT `` = 9200 s), `src/base/uvm_port_base.svh` (`debug_connected_to`), `src/seq/uvm_sequence_base.svh` (the `[SEQ]` fatal for a missing sequencer).
+- IEEE 1800-2023: §3.14.2.3 (an error when some design elements have a time unit and precision specified and others do not); §5.8 (time literals are scaled to the current time unit); §6.8 (initializing a variable in its declaration); §8.20 (an override keeps the argument names); §9.4.2 (waiting on class properties); §14.3 (clocking blocks); §14.4 (input and output skews); §14.13 (input sampling); §14.16 and §14.16.2 (synchronous drives, and clocking outputs on variables versus nets); §19.4 (covergroups in classes); §23.3.3.2 (a variable on an output port implies a continuous assignment); §25.9 (virtual interfaces).
 
 **Prerequisites:** [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index) for `type_id::create`; [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) for build, connect and run, and objections; [F4C: Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) for `drv_cb`, `mon_cb` and skews.
 

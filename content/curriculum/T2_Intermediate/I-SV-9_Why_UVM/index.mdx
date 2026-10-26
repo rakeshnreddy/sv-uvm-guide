@@ -462,7 +462,7 @@ Two misconceptions to retire: "every bench needs UVM" (scenario 1 does not) and 
 
 This is the bench every picture above is drawn from, and the **bridge capstone** of the SystemVerilog half of the tier. It is race-free (clocking blocks), self-checking (a reference queue in the scoreboard), measures coverage, and binds assertions to the DUT. Read it once as a whole, then find each of the six limits in it.
 
-The five design units are in one listing, separated by file comments. Compile them in the order shown: the interface must be known before the package that declares `virtual fifo_if`.
+The five design units are in one listing, separated by file comments. Compile them in the order shown: the interface must be known before the package that declares `virtual fifo_if`. Every design element declares `timeunit 1ns; timeprecision 1ps;` first, as [I-SV-6](/curriculum/T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/index) teaches: leaving it out of some units while others have it is an error (IEEE 1800-2023 §3.14.2.3).
 
 ```systemverilog
 // compile
@@ -479,6 +479,8 @@ module sync_fifo #(parameter int WIDTH = 8, parameter int DEPTH = 8) (
   output logic             full,
   output logic             empty
 );
+  timeunit 1ns;
+  timeprecision 1ps;
   localparam int AW = $clog2(DEPTH);
   logic [WIDTH-1:0] mem [DEPTH];
   logic [AW:0]      wptr, rptr;     // the extra bit tells full from empty
@@ -506,6 +508,8 @@ endmodule
 
 // ------------------------------------------------------------------ fifo_if.sv
 interface fifo_if (input logic clk);
+  timeunit 1ns;
+  timeprecision 1ps;
   logic       rst_n;
   logic       wr_en, rd_en;
   logic [7:0] wr_data, rd_data;
@@ -525,6 +529,8 @@ endinterface
 // ----------------------------------------------------------------- fifo_sva.sv
 // Flag assertions, kept out of the design file and bound in from tb_top.
 module fifo_sva (input logic clk, rst_n, wr_en, rd_en, full, empty);
+  timeunit 1ns;
+  timeprecision 1ps;
   a_not_full_and_empty: assert property (
     @(posedge clk) disable iff (!rst_n) !(full && empty))
     else $error("SVA a_not_full_and_empty failed");
@@ -538,6 +544,8 @@ endmodule
 
 // ------------------------------------------------------------- fifo_tb_pkg.sv
 package fifo_tb_pkg;
+  timeunit 1ns;
+  timeprecision 1ps;
 
   typedef enum bit {WRITE, READ} fifo_op_e;
 
@@ -1210,6 +1218,7 @@ Build the Make It Work bench yourself, from an empty file, on your simulator. **
 <details>
 <summary>Self-check list for the capstone</summary>
 
+- Every design element (`sync_fifo`, `fifo_if`, `fifo_sva`, `fifo_tb_pkg` and `tb_top`) declares `timeunit` and `timeprecision` first.
 - The interface has two clocking blocks, and no class touches a DUT input outside `drv_cb`.
 - The generator and the monitor call `new` for every item.
 - The monitor captures read data one edge after the accepted `rd_en`.

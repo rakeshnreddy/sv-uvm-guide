@@ -1228,7 +1228,7 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "pss-portable-intent",
-    "version": "1",
+    "version": "2",
     "title": "Memory Read/Write Portable Intent",
     "description": "Write one PSS read-after-write memory intent and inspect the generated UVM sequence and C bare-metal equivalents.",
     "owningModule": "E-PSS-1",
@@ -1251,18 +1251,18 @@ export const GENERATED_LAB_MANIFESTS = [
       },
       {
         "id": "2",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
         "title": "Step 2: Bind Read-Verify to the Write",
-        "instructions": "Give `read_verify` a buffer input named `rd`. In `mem_read_write_test`'s activity, traverse the write and then the read with the labels `wr_a` and `rd_a`, and bind the read's input to the write's output so the read consumes exactly that buffer. Then fill the four `exec body` templates: SV templates wrapped in `begin ... end` that start `mem_write_seq` and `mem_read_seq` on `p_sequencer.mem_sqr` (the read reports `PSS_MEM_VERIFY` on a mismatch), and C templates that call `mem_write32()`, `mem_read32()` and `test_fail()`.",
+        "instructions": "Give `read_verify` a buffer input named `rd`. In `mem_read_write_test`'s activity, traverse the write and then the read with the labels `wr_a` and `rd_a`, and bind the read's input to the write's output so the read consumes exactly that buffer. Then fill the SV package and the C package at the end of the file; each extends `write_mem` and `read_verify`. In `mem_real_sv`, write SV templates wrapped in `begin ... end` that start `mem_write_seq` and `mem_read_seq` on `p_sequencer.mem_sqr` (the read reports `PSS_MEM_VERIFY` on a mismatch). In `mem_real_c`, write C templates that call `mem_write32()`, `mem_read32()` and `test_fail()`. The languages stay in separate packages because a generated test uses one realization package, never both (PSS 3.0 §22.5.1).",
         "starterCode": ""
       },
       {
         "id": "3",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
         "title": "Step 3: Compare Generated Targets",
-        "instructions": "Predict first: if you delete the `bind`, what may the tool do with the read's input? Write your answer down, then check it against the README's Expected Outcome. Compare the generated UVM and C excerpts in the README (the full files in `solution/` unlock when you finish): find where each `exec body` template and each solved value from your constraints appears in both targets, and note that the tool prints bit values in decimal.",
+        "instructions": "Predict first: if you delete the `bind`, what may the tool do with the read's input? Write your answer down, then check it against the README's Expected Outcome. Compare the generated UVM and C excerpts in the README (the full files in `solution/` unlock when you finish): the UVM test was generated with `mem_real_sv` active and the C test with `mem_real_c` active, from the same scenario. Find where each package's `exec body` templates and each solved value from your constraints appear, and note that the tool prints bit values in decimal.",
         "starterCode": ""
       }
     ],

@@ -50,9 +50,9 @@ Each copy has its own bugs, and a change to the address map is made four times. 
   title="One PSS model, two realizations"
   cellWidth={160}
   gapX={40}
-  caption="Read top to bottom. The PSS tool reads one model and emits two scenario-level programs (generated). Everything below them, the UVM sequences and environment and the C HAL, is hand-written and reused. Names match the Make It Work example. MMIO is memory-mapped I/O: the processor reads and writes the DUT's registers and memory as addresses."
+  caption="Read top to bottom. The PSS tool reads one scenario model and emits two scenario-level programs (generated), one per generation run: each run adds one realization package, mem_real_sv or mem_real_c, which holds that target's templates. Everything below them, the UVM sequences and environment and the C HAL, is hand-written and reused. Names match the Make It Work example. MMIO is memory-mapped I/O: the processor reads and writes the DUT's registers and memory as addresses."
   nodes={[
-    { id: "pss", label: "mem_stress.pss", sublabel: "one model: actions, activity, templates", kind: "generic", col: 0, row: 0, colSpan: 2 },
+    { id: "pss", label: "mem_stress.pss", sublabel: "scenario model, plus mem_real_sv or mem_real_c", kind: "generic", col: 0, row: 0, colSpan: 2 },
     { id: "tool", label: "PSS tool", sublabel: "binds, infers, schedules, solves", kind: "generic", col: 0, row: 1, colSpan: 2 },
     { id: "vseq", label: "mem_stress_a_vseq", sublabel: "generated from exec body SV", kind: "sequence", col: 0, row: 2 },
     { id: "ctest", label: "mem_stress_a()", sublabel: "generated from exec body C", kind: "generic", col: 1, row: 2 },
@@ -73,7 +73,7 @@ Each copy has its own bugs, and a change to the address map is made four times. 
   ]}
 />
 
-**What the picture shows.** The words "generated" and "hand-written" are the whole story of adoption. The tool writes the scenario layer: which action runs when, with which values. You write, once, the realization layer: the per-platform template inside each action and the environment those templates call.
+**What the picture shows.** The words "generated" and "hand-written" are the whole story of adoption. The tool writes the scenario layer: which action runs when, with which values. You write, once, the realization layer: each action's template for each platform, grouped in one realization package per platform, and the environment those templates call.
 
 **The two mistakes everyone makes here.**
 - *"PSS replaces UVM."* It does not. The generated UVM code is a sequence that starts your sequences; the agents, scoreboard and coverage are still yours.
@@ -91,6 +91,7 @@ Read these terms once; the model below uses every one of them.
 - A **flow object** is data one action hands to another: a `buffer`, `stream` or `state` (§13). An action declares it as an `input` or `output`.
 - A **resource** is something an action needs for its whole execution, such as a DMA channel. Actions claim it with `lock` or `share`, never as an input (§14).
 - A **pool** is where objects of one type are exchanged or held. Every flow-object exchange and every resource claim goes through a pool (§15). A **static bind directive**, such as `bind buf_p *;`, says which actions use which pool.
+- A **package** is a named group of type declarations and type extensions (§21.1). This lesson calls a package that adds one platform's templates to actions declared elsewhere, with `extend action` (§20.2), a **realization package**.
 - The **PSS tool** (the processing tool, in the standard's words) reads the model, completes what the activity leaves open, picks random values with its **solver**, and generates target code.
 
 Here is how one buffer pool connects two actions, before you read the code:
@@ -115,10 +116,10 @@ Here is how one buffer pool connects two actions, before you read the code:
   ]}
 />
 
-The minimal correct model. It is complete: a tool given `raw_test_a` as the root action can generate both targets from it.
+The minimal correct model has two parts. The **scenario model** holds the intent and no target code:
 
 ```pss
-// A complete PSS model: write a word, then read the same word back
+// The scenario model: write a word, then read the same word back (no target code)
 buffer mem_buf_s {                      // flow object: data one action hands to another
   rand bit[32] addr;
   rand bit[32] data;
@@ -129,34 +130,12 @@ component mem_subsys_c {
   pool mem_buf_s buf_p;                 // where mem_buf_s objects are exchanged
   bind buf_p *;                         // every action in this component uses buf_p
 
-  action write_a {                      // atomic: realized by its exec body templates
+  action write_a {                      // atomic: its exec body comes from a realization package
     output mem_buf_s out_buf;
-    exec body C = """ mem_write32({{out_buf.addr}}, {{out_buf.data}}); """;
-    exec body SV = """
-      begin
-        mem_wr_seq wr = mem_wr_seq::type_id::create("wr");
-        wr.addr = {{out_buf.addr}};
-        wr.data = {{out_buf.data}};
-        wr.start(p_sequencer.mem_sqr, this);
-      end
-    """;
   }
 
   action read_check_a {
     input mem_buf_s in_buf;
-    // Bare metal has no scoreboard, so the C template checks the data itself.
-    exec body C = """
-      if (mem_read32({{in_buf.addr}}) != {{in_buf.data}})
-        test_fail("read-after-write mismatch");
-    """;
-    // In UVM the scoreboard checks every monitored read, so the SV template only reads.
-    exec body SV = """
-      begin
-        mem_rd_seq rd = mem_rd_seq::type_id::create("rd");
-        rd.addr = {{in_buf.addr}};
-        rd.start(p_sequencer.mem_sqr, this);
-      end
-    """;
   }
 }
 
@@ -173,11 +152,57 @@ component pss_top {                     // the default root component (§9.4.1)
 }
 ```
 
+Each target's templates live in their own **realization package**, which adds them to the existing actions with `extend action` (§20.2, §21.1). A generated test uses one of the two packages, never both (§22.5.1):
+
+```pss
+// file mem_real_c.pss: the bare-metal C realization; never in the same test as mem_real_sv
+package mem_real_c {
+  extend action mem_subsys_c::write_a {
+    exec body C = """ mem_write32({{out_buf.addr}}, {{out_buf.data}}); """;
+  }
+  extend action mem_subsys_c::read_check_a {
+    // Bare metal has no scoreboard, so the C template checks the data itself.
+    exec body C = """
+      if (mem_read32({{in_buf.addr}}) != {{in_buf.data}})
+        test_fail("read-after-write mismatch");
+    """;
+  }
+}
+
+// file mem_real_sv.pss: the UVM realization; never in the same test as mem_real_c
+package mem_real_sv {
+  extend action mem_subsys_c::write_a {
+    exec body SV = """
+      begin
+        mem_wr_seq wr = mem_wr_seq::type_id::create("wr");
+        wr.addr = {{out_buf.addr}};
+        wr.data = {{out_buf.data}};
+        wr.start(p_sequencer.mem_sqr, this);
+      end
+    """;
+  }
+  extend action mem_subsys_c::read_check_a {
+    // In UVM the scoreboard checks every monitored read, so the SV template only reads.
+    exec body SV = """
+      begin
+        mem_rd_seq rd = mem_rd_seq::type_id::create("rd");
+        rd.addr = {{in_buf.addr}};
+        rd.start(p_sequencer.mem_sqr, this);
+      end
+    """;
+  }
+}
+```
+
+Together they are complete. Give a tool the scenario model, `mem_real_sv` and `raw_test_a` as the root action, and it generates the UVM test; give it the scenario model and `mem_real_c` instead, and it generates the C test. How you tell a tool which packages are active for a test is tool-dependent (§21.1).
+
 Three syntax points that trip SystemVerilog engineers: set membership is `in` (§8.5.9), not `inside`; widths are written `bit[32]` (the `bit[31:0]` form is deprecated, §7.2.1); and a traversal is named with a label, `w1: do write_a;` (§12.3.1), because PSS has no `do write_a as w1` form (`as` exists only for package import aliases).
 
 ### Actions and their exec templates
 
-An atomic action says *how* it runs on each platform with **target-template exec blocks**: `exec body C = """..."""` and `exec body SV = """..."""` (§22.1, §22.5). The triple-quoted string is foreign code. The tool pastes it **verbatim** into the generated test, in schedule order, after replacing each `{{expression}}` with the solved value; this `{{ }}` notation is called **mustache** (§22.5.3). The language identifiers C, CPP and SV are the ones the standard reserves (§22.5.1).
+An atomic action says *how* it runs on a platform with a **target-template exec block**, such as `exec body C = """..."""` or `exec body SV = """..."""` (§22.1, §22.5). The triple-quoted string is foreign code. The tool pastes it **verbatim** into the generated test, in schedule order, after replacing each `{{expression}}` with the solved value; this `{{ }}` notation is called **mustache** (§22.5.3). The standard recommends that tools reserve the language identifiers C, CPP and SV for C, C++ and SystemVerilog (§22.5.1).
+
+**One language per test, so one package per language.** Several exec blocks of the same kind in one definition scope count as a single block, processed in source order, and a single exec block maps to at most one foreign language (§22.1.1 b and e). So an action gets C templates and SV templates only from different packages that are never used for the same generated test (§22.5.1). That is why the model above keeps its actions free of target code and puts the templates in `mem_real_c` and `mem_real_sv`. Some tools also accept `exec body C` and `exec body SV` side by side in one action; that is tool behaviour, not the standard, so a model written that way may not move to another tool. The packages also give each realization its own file and owner.
 
 Three consequences follow directly from "pasted verbatim":
 
@@ -346,7 +371,7 @@ The tool picks which instance each claim gets. Two actions that overlap in time 
 
 ### Try it: what does the tool complete?
 
-The visualizer below holds four scenarios built on `write_a`, `read_check_a` and a `dma_copy_a` action that inputs one buffer, outputs another and locks a DMA channel from `chan_p`. For each scenario, read the PSS source, then answer its prediction before you open the resolved schedule:
+The visualizer below holds four scenarios built on `write_a`, `read_check_a` and a `dma_copy_a` action that inputs one buffer, outputs another and locks a DMA channel from `chan_p`. Its source listing is a comparison view, not a conforming model: it shows each action's C and SV templates together so that you can compare them, whereas a conforming model puts them in two realization packages, as above, and each generated test uses one. For each scenario, read the PSS source, then answer its prediction before you open the resolved schedule:
 
 1. **Write, then read back.** Does the tool add anything?
 2. **Read only.** `read_check_a` has an unbound input and nothing writes. What appears before it?
@@ -469,8 +494,8 @@ Key differences from SystemVerilog constraints:
 What a tool produces for simulation is tool-dependent, but the common shape follows from the template rules:
 
 1. The tool solves the scenario: the schedule, the bindings, any inferred actions, the resource instances and the values.
-2. For UVM it emits a sequence, typically a **virtual sequence** that runs on your virtual sequencer, whose `body()` contains each scheduled action's `exec body SV` template in order, with `fork … join` for `parallel` branches. The templates start your existing sequences on real sequencers through `p_sequencer` (declared by `` `uvm_declare_p_sequencer ``).
-3. For bare metal it emits a C function made of the `exec body C` templates, plus any `exec header C` text.
+2. For UVM, generated with the SV realization package, it emits a sequence, typically a **virtual sequence** that runs on your virtual sequencer, whose `body()` contains each scheduled action's `exec body SV` template in order, with `fork … join` for `parallel` branches. The templates start your existing sequences on real sequencers through `p_sequencer` (declared by `` `uvm_declare_p_sequencer ``).
+3. For bare metal, generated with the C realization package, it emits a C function made of the `exec body C` templates, plus any `exec header C` text.
 
 **Where checking lives.** A template can check (the C `read_check_a` compares the read data, because bare metal has no scoreboard), or it can leave checking to your UVM **scoreboard** ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)), which compares every monitored read against a reference memory whoever started it. This page's SV templates only read. The lab uses the other pattern, a self-checking SV template. Both are legitimate; pick one per environment so a read is not checked twice by different rules.
 
@@ -512,13 +537,14 @@ PSS is a cost: a tool licence, a new language, a realization layer someone must 
 - **An unbound input when several producers exist.** The tool may bind or infer something you did not intend (§17.1); add `bind`.
 - **A pool too small for parallel locks.** No legal scenario (§12.3.4, §14.2.1).
 - **SV templates without `begin … end`.** The generated SystemVerilog does not compile (§22.5).
+- **C and SV templates side by side in one action.** Same-kind exec blocks in one scope form one block, for at most one language (§22.1.1); put each language in its own realization package (§22.5.1). A tool that accepts the side-by-side form is going beyond the standard.
 - **`dist` read as SystemVerilog `soft`.** Unlisted values are excluded, not just rare (§16.1.11).
 
 ### Recap
 
 - PSS is Accellera's language for test intent; the tool writes the scenario layer and you write the realization layer once.
 - Components own actions and pools; `bind` directives connect pools to actions.
-- Atomic actions carry `exec` templates that are pasted verbatim with decimal values; compound actions carry activities.
+- Atomic actions get `exec` templates from one realization package per target language, and the tool pastes them verbatim with decimal values; compound actions carry activities.
 - Activities order traversals with sequence, `parallel`, `schedule`, `select` and `repeat`; explicit `bind` pins which object an action consumes.
 - Buffers, streams and states differ in timing; resources are claimed, never passed.
 - PSS pays when many platforms or resource-constrained concurrency make the scenario layer expensive.
@@ -527,10 +553,11 @@ PSS is a cost: a tool licence, a new language, a realization layer someone must 
 
 ### A complete model: two writers, two readers, two regions
 
-The scenario: in each round, two write-then-read pairs run in parallel, each in its own 4KB memory region, and every read checks the word its own write produced. The number of rounds is random with a default of 2. **Predict before you read the generated code:** in round 1, can both writes use region 0? What would change with `pool [1]`?
+The scenario: in each round, two write-then-read pairs run in parallel, each in its own 4KB memory region, and every read checks the word its own write produced. The number of rounds is random with a default of 2. The model is three files: the scenario model and the two realization packages. **Predict before you read the generated code:** in round 1, can both writes use region 0? What would change with `pool [1]`?
 
 ```pss
 // compile (Accellera PSS 3.0; checked against the standard by reading, not by a tool)
+// file mem_stress.pss: the scenario model, the same for every target
 buffer mem_buf_s {
   rand bit[32] addr;
   rand bit[32] data;
@@ -552,15 +579,6 @@ component mem_subsys_c {
       out_buf.addr >= 0x1000 * (region.instance_id + 1);
       out_buf.addr <  0x1000 * (region.instance_id + 2);
     }
-    exec body C = """ mem_write32({{out_buf.addr}}, {{out_buf.data}}); """;
-    exec body SV = """
-      begin
-        mem_wr_seq wr = mem_wr_seq::type_id::create("wr");
-        wr.addr = {{out_buf.addr}};
-        wr.data = {{out_buf.data}};
-        wr.start(p_sequencer.mem_sqr, this);
-      end
-    """;
   }
 
   action read_check_a {
@@ -570,17 +588,6 @@ component mem_subsys_c {
       in_buf.addr >= 0x1000 * (region.instance_id + 1);
       in_buf.addr <  0x1000 * (region.instance_id + 2);
     }
-    exec body C = """
-      if (mem_read32({{in_buf.addr}}) != {{in_buf.data}})
-        test_fail("read-after-write mismatch");
-    """;
-    exec body SV = """
-      begin
-        mem_rd_seq rd = mem_rd_seq::type_id::create("rd");
-        rd.addr = {{in_buf.addr}};
-        rd.start(p_sequencer.mem_sqr, this);
-      end
-    """;
   }
 }
 
@@ -591,7 +598,6 @@ component pss_top {
     rand bit[8] rounds;
     constraint rounds in [1..8];
     constraint default rounds == 2;     // a containing test may set its own default
-    exec header C = """ #include "mem_test_platform.h" """;
 
     activity {
       repeat (rounds) {
@@ -613,12 +619,60 @@ component pss_top {
 }
 ```
 
+The realization packages are the minimal model's two, with one addition: the C package also gives `mem_stress_a` the `#include` its generated test needs.
+
+```pss
+// compile (together with mem_stress.pss; not in the same test as mem_real_sv.pss)
+// file mem_real_c.pss: the bare-metal C realization
+package mem_real_c {
+  extend action pss_top::mem_stress_a {
+    exec header C = """ #include "mem_test_platform.h" """;
+  }
+  extend action mem_subsys_c::write_a {
+    exec body C = """ mem_write32({{out_buf.addr}}, {{out_buf.data}}); """;
+  }
+  extend action mem_subsys_c::read_check_a {
+    exec body C = """
+      if (mem_read32({{in_buf.addr}}) != {{in_buf.data}})
+        test_fail("read-after-write mismatch");
+    """;
+  }
+}
+```
+
+```pss
+// compile (together with mem_stress.pss; not in the same test as mem_real_c.pss)
+// file mem_real_sv.pss: the UVM realization
+package mem_real_sv {
+  extend action mem_subsys_c::write_a {
+    exec body SV = """
+      begin
+        mem_wr_seq wr = mem_wr_seq::type_id::create("wr");
+        wr.addr = {{out_buf.addr}};
+        wr.data = {{out_buf.data}};
+        wr.start(p_sequencer.mem_sqr, this);
+      end
+    """;
+  }
+  extend action mem_subsys_c::read_check_a {
+    exec body SV = """
+      begin
+        mem_rd_seq rd = mem_rd_seq::type_id::create("rd");
+        rd.addr = {{in_buf.addr}};
+        rd.start(p_sequencer.mem_sqr, this);
+      end
+    """;
+  }
+}
+```
+
 What each piece guarantees:
 - **The two locks force two regions.** `w0` and `w1` start together and each locks a region for its whole execution, so they must get different instances. With `pool [1]` they cannot, and the tool reports that no legal scenario exists.
 - **The read follows its write's region.** Both actions tie the address to `region.instance_id`, and the `bind` makes them the same buffer, so `r0` shares exactly the region `w0` locked.
 - **Nothing is inferred.** Every input is explicitly bound to a traversed action, so the tool may not add actions (§17.1).
+- **One realization package per test.** The scenario model has no target code. `mem_real_c` and `mem_real_sv` each add one language's templates to the same actions, and each generated test uses one of them (§22.1.1, §22.5.1), so the UVM test and the C test below come from two generation runs.
 
-**The generated UVM side.** Below, the hand-written environment pieces the templates call, then the virtual sequence a tool might generate for `rounds = 2` (simplified: tool-specific glue omitted, comments added for reading). Note the decimal values: `6716` is `0x1A3C`.
+**The generated UVM side.** Below, the hand-written environment pieces the templates call, then the virtual sequence a tool might generate from `mem_stress.pss` and `mem_real_sv.pss` for `rounds = 2` (simplified: tool-specific glue omitted, comments added for reading). Note the decimal values: `6716` is `0x1A3C`.
 
 ```systemverilog
 // compile (env pieces the templates call, then the generated virtual sequence)
@@ -664,7 +718,7 @@ class mem_vsqr extends uvm_sequencer;     // virtual sequencer: handles only
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
 endclass
 
-// ---- Generated from mem_stress_a (rounds = 2: the default held) ----
+// ---- Generated from mem_stress_a with mem_real_sv (rounds = 2: the default held) ----
 class mem_stress_a_vseq extends uvm_sequence;
   `uvm_object_utils(mem_stress_a_vseq)
   `uvm_declare_p_sequencer(mem_vsqr)      // the sequencer type comes from tool setup
@@ -767,10 +821,10 @@ The two branches of each round run on one real sequencer, `mem_sqr`, so its arbi
   ]}
 />
 
-**The generated C side** (simplified). A real generated test dispatches the two parallel branches to two cores or threads, which is tool- and platform-dependent; here they are listed one after the other for reading.
+**The generated C side** (simplified), from `mem_stress.pss` and `mem_real_c.pss`. For comparison it shows the same solved values as the UVM listing; whether a second generation run with the same seed reproduces them is tool-dependent. A real generated test dispatches the two parallel branches to two cores or threads, which is tool- and platform-dependent; here they are listed one after the other for reading.
 
 ```c
-/* Generated from mem_stress_a (rounds = 2), values solved at generation time */
+/* Generated from mem_stress_a with mem_real_c (rounds = 2), values solved at generation time */
 #include "mem_test_platform.h"   /* from exec header C */
 
 void mem_stress_a(void) {
@@ -816,8 +870,8 @@ On the bare-metal target the same scenario passes when `mem_stress_a()` returns 
 2. **Pick a flow-object kind for each exchange.** Data left in memory is a buffer, data in flight is a stream, a mode or configuration is a state.
 3. **Model shared hardware as resources** and size each pool to the number of real instances. Claim with `lock` for exclusive use and `share` otherwise.
 4. **Write the activity**, then add `bind` for every exchange whose producer matters to the check.
-5. **Write the `exec` templates** for each platform: wrap SystemVerilog in `begin … end`, start real sequences through `p_sequencer`, and decide where checking lives.
-6. **Generate, then read the resolved schedule before you run it**: which actions were inferred, which instances were assigned, which values were chosen.
+5. **Write the `exec` templates** for each platform, in one realization package per platform that extends the actions: wrap SystemVerilog in `begin … end`, start real sequences through `p_sequencer`, and decide where checking lives.
+6. **Generate with one realization package at a time, then read the resolved schedule before you run it**: which actions were inferred, which instances were assigned, which values were chosen.
 7. **Run on each platform** and keep the seed and schedule report with every failure.
 
 ### Debugging a PSS model
@@ -829,11 +883,12 @@ On the bare-metal target the same scenario passes when `mem_stress_a()` returns 
 | Unexpected extra actions in the schedule | Inference completed an unbound input (§17.1) | Add explicit `bind`s; use an `atomic` block (§12.3.7) to keep inferred actions out of a region |
 | The read checks the wrong address | The input was bound to a different producer | Add `bind w.out_buf r.in_buf;` |
 | Generated SystemVerilog does not compile | Template declarations outside `begin … end`, or a template typo (templates are not checked, §22.5) | Wrap every SV template; compile one generated test early |
-| C and UVM runs disagree | The two templates of an action do different things | Review each action's templates side by side |
+| The tool rejects an action that has both an `exec body C` and an `exec body SV`, or the model works on one tool and not on another | Both languages' templates side by side in one action: same-kind exec blocks in one scope form one block, for at most one language (§22.1.1) | Move each language into its own realization package and generate each test with one of them (§22.5.1) |
+| C and UVM runs disagree | The two templates of an action do different things | Compare the C and SV realization packages one action at a time (here `mem_real_c` and `mem_real_sv`) |
 | The UVM test hangs in `start_item` | A child sequence was started on the virtual sequencer, which has no driver | Start children on `p_sequencer.<real sequencer>` |
 
 **Checklist before moving on:**
-- [ ] I can name every PSS element in the Make It Work model: component, pool, bind directive, atomic and compound action, activity, flow object, resource.
+- [ ] I can name every PSS element in the Make It Work model: component, pool, bind directive, atomic and compound action, activity, flow object, resource, realization package.
 - [ ] I can say which flow-object kind fits a piece of data and what timing rule it imposes.
 - [ ] I can predict what the tool does with `pool [1]` under `parallel` and under `schedule`.
 - [ ] I can point to what the tool generated and what I must hand-write in the UVM and C outputs.
@@ -869,6 +924,8 @@ PSS `dist` (§16.1.11) is a directive: constraints take priority over it, and wi
 ### Expert: realization flows and exec kinds
 
 PSS 3.0 defines three mapping mechanisms: imported functions bound to a foreign API (§22.4), target-template functions (§22.6) and target-template exec blocks (§22.5). It also defines three flows: no target code generation (the test calls existing APIs directly), per-model generation and per-test generation (§22.8, Tables 25 and 26). Not every mechanism works in every flow: target-template exec blocks need generated code, and `exec header` and `declaration` may only be templates (§22.1.2). The target exec kinds are `body`, `run_start`, `run_end`, `header` and `declaration`; `run_start` and `run_end` are restricted to pre-generation flows. Whether a given tool solves before the run or on the target is **tool-dependent**.
+
+Realization packages rest on two rules. The full definition of a type is its initial declaration plus the extensions in the *active* packages, and every extension belongs to the package that lexically encloses it (§20.2). Which packages are active for a given test is left to the tool (§21.1). Because a target-template exec block is limited to one language per generated test (§22.5.1), a model that must reach both C and SystemVerilog needs at least two packages, and a flow that activates both for one test is outside the standard.
 
 *Architecture consequence:* if you need on-target randomization on silicon, design the realization around imported functions into your HAL, not around pasted templates with constants.
 
@@ -1159,7 +1216,8 @@ The flashcards for this lesson follow below, under "Reinforce the essentials".
   - §14.1 declaring resources; §14.2 claiming resources; §15.1 pools; §15.3 static pool binding
   - §16.1.10 default value constraints; §16.1.11 distribution directive; §16.4.9 relationship lookahead; §16.4.10 lookahead and sub-actions; §16.4.13 body blocks and external data
   - §17.1 implicit binding and action inference; Clause 18 data coverage; Clause 19 behavioral coverage
-  - §22.1.2 exec block kinds; §22.4 foreign procedural interface; §22.5 target-template exec blocks (§22.5.1 target language, §22.5.3 mustache references and formatting); §22.6 target-template functions; §22.8 comparison between mapping mechanisms; Annex E (informative) inference
+  - §20.2 type extension (`extend action`); §21.1 packages
+  - §22.1.1 exec block rules (one language per block; same-kind blocks form one block); §22.1.2 exec block kinds; §22.4 foreign procedural interface; §22.5 target-template exec blocks (§22.5.1 target language, §22.5.3 mustache references and formatting); §22.6 target-template functions; §22.8 comparison between mapping mechanisms; Annex E (informative) inference
 - **IEEE 1800-2023**: §18.5.3 Distribution; §18.5.13 Soft constraints.
 - **uvm-core 2020.3.1**: `src/macros/uvm_sequence_defines.svh` (`` `uvm_declare_p_sequencer ``); `src/seq/uvm_sequence.svh` (`req`); `src/seq/uvm_sequence_base.svh` (`start()`).
 - **Accellera PSS Working Group**: [accellera.org/activities/working-groups/portable-stimulus](https://accellera.org/activities/working-groups/portable-stimulus), for the specification and the status of 3.1.

@@ -71,7 +71,7 @@ Every technique in this module acts at one step of a single `randomize()` call. 
 
 <SequenceDiagram
   title="One call to item.randomize()"
-  caption="The boxes over item are the hooks: they run on the object and on each enabled rand member object. The wide box is the solver's work. post_randomize() runs only when the solver found a solution; on failure the call returns 0 and every random variable keeps its old value."
+  caption="The boxes over item are the hooks: they run on the object and on each enabled rand member object, in an order the standard does not specify. The wide box is the solver's work. post_randomize() runs only when the solver found a solution; on failure the call returns 0 and every random variable keeps its old value."
   participants={[
     { id: "tb", label: "test code", kind: "generic" },
     { id: "obj", label: "item", kind: "generic" },
@@ -79,7 +79,7 @@ Every technique in this module acts at one step of a single `randomize()` call. 
   ]}
   messages={[
     { from: "tb", to: "obj", label: "item.randomize()" },
-    { kind: "note", from: "obj", label: "pre_randomize() on item, then on each enabled rand member" },
+    { kind: "note", from: "obj", label: "pre_randomize() on item and on each enabled rand member" },
     { from: "obj", to: "slv", label: "active variables and constraints (plus any inline with)" },
     { kind: "note", from: "obj", to: "slv", label: "solver: solve everything together; randc, array sizes and function arguments are decided first" },
     { kind: "divider", label: "a solution exists" },
@@ -95,7 +95,7 @@ Every technique in this module acts at one step of a single `randomize()` call. 
 
 The same steps in words, with the clause for each:
 
-1. **Hooks before.** `randomize()` first calls `pre_randomize()` on the object, then on every `rand` member object that is enabled (§18.6.2). A **hook** is a method the language calls for you; you override it to add your own steps.
+1. **Hooks before.** Before the solve, `randomize()` calls `pre_randomize()` on the object and on every `rand` member object that is enabled (§18.6.2). The standard does not specify the order between the object's hook and its members' hooks, so do not write code that depends on it ([controlling randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization#expert-hooks-and-nested-objects)). A **hook** is a method the language calls for you; you override it to add your own steps.
 2. **Collect the problem.** The solver gathers the active random variables and active constraints of the object and of every `rand` object member, which is how a constraint can reach into another object (a **global constraint**, §18.5.8). A variable switched off with `rand_mode(0)` becomes a state variable (§18.8). A block switched off with `constraint_mode(0)` is ignored (§18.9). Constraints from `randomize() with { … }` are added for this call only (§18.7).
 3. **Solve.** All of it is one problem, solved together, with three exceptions that the standard orders: `randc` variables (§18.4.2), array sizes before the rules on elements (§18.5.7.1), and the arguments of functions called in constraints (§18.5.11). Each legal combination is equally likely unless `dist` or `solve…before` reshapes the odds (§18.5.3, §18.5.9).
 4. **Success.** The solver assigns the new values, `post_randomize()` runs on the object and its enabled members, and the call returns 1 (§18.6.2).
@@ -490,7 +490,7 @@ Answer each one before you open the feedback.
   title="Interview: one call, in order"
   question="An item has a rand sub-object handle that points to an object. Walk through what happens, in order, when the test calls item.randomize() with { len > 4; }."
   options={[
-    { text: "pre_randomize() runs on the item and then on the enabled rand sub-object. The solver takes the active variables and constraints of both objects, plus the inline rule, and solves them together, apart from any order the standard imposes. On success the values are assigned, post_randomize() runs on both, and the call returns 1; on failure it returns 0, nothing changes, and post_randomize() is skipped.", isCorrect: true, feedback: "Correct (§18.6.2, §18.5.8, §18.7, §18.6.3). The sub-object's constraints are global constraints of the same problem." },
+    { text: "Before the solve, pre_randomize() runs on the item and on the enabled rand sub-object; the standard does not specify which of the two runs first. The solver takes the active variables and constraints of both objects, plus the inline rule, and solves them together, apart from any order the standard imposes. On success the values are assigned, post_randomize() runs on both, and the call returns 1; on failure it returns 0, nothing changes, and post_randomize() is skipped.", isCorrect: true, feedback: "Correct (§18.6.2, §18.5.8, §18.7, §18.6.3). The sub-object's constraints are global constraints of the same problem." },
     { text: "The item is randomized first; then randomize() is called separately on the sub-object, so the sub-object's constraints cannot refer to the item.", isCorrect: false, feedback: "A rand object member is solved concurrently with its container (§18.4, §18.5.8): one problem, not two calls." },
     { text: "The inline rule replaces the item's class constraints for this call, then the solve runs and post_randomize() always runs to clean up.", isCorrect: false, feedback: "Inline constraints are applied along with the class constraints (§18.7), and post_randomize() is not called when the call fails (§18.6.3)." },
     { text: "pre_randomize() runs only if the call succeeds, because it prepares the values that were just chosen.", isCorrect: false, feedback: "pre_randomize() runs first, before the solve (§18.6.2); post_randomize() is the one that needs success." }
@@ -570,14 +570,14 @@ Answer each one before you open the feedback.
       objective: 4
     },
     {
-      question: "A class declares rand int delay with constraint c { delay < 10; }, and the driver waits for delay clock cycles. Debugging shows huge waits. What is wrong?",
+      question: "A class declares rand int delay with constraint c { delay < 10; }, and the driver waits with repeat (delay) @(posedge vif.clk). Debugging shows almost every item driven back to back, with no gap. What is wrong?",
       answers: [
         { text: "Nothing in the constraint: rand variables are unsigned, so delay is 0 to 9.", correct: false, feedback: "rand does not change a type's signedness. int is a signed type (§6.11.3)." },
         { text: "int is signed, so delay < 10 also allows negative values, and almost all legal values are negative. Use int unsigned or delay inside {[0:9]}.", correct: true, feedback: "Right. Over two billion negative values satisfy delay < 10, and each legal value is equally likely." },
         { text: "The solver prefers small values, so the problem must be in the driver.", correct: false, feedback: "Without dist or solve…before, every legal value is equally likely; the solver has no preference for small numbers." },
         { text: "The constraint only applies when delay is declared signed.", correct: false, feedback: "The constraint always applies. int is already signed, and that is the problem." }
       ],
-      explanation: "int is a 32-bit signed type (§6.11.3), and rand keeps the declared type. delay < 10 therefore admits about 2.1 billion negative values and only ten non-negative ones. A negative delay used as a cycle count becomes a huge wait. Bound both ends, or use an unsigned type.",
+      explanation: "int is a 32-bit signed type (§6.11.3), and rand keeps the declared type. delay < 10 therefore admits about 2.1 billion negative values and only ten non-negative ones. A repeat loop treats a negative count as zero (§12.7.2), so almost every item gets no wait at all. Bound both ends, or use an unsigned type.",
       objective: 5
     },
     {

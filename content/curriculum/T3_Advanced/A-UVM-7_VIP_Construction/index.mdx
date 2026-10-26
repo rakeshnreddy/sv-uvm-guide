@@ -90,9 +90,9 @@ The picture shows the VIP built in this lesson. The names match the code in Make
 
 ### The APB3 subset this VIP speaks
 
-The example protocol is **APB**, Arm's simple register bus (Arm IHI 0024C). It has no dedicated lesson yet (a B-APB-1 module is planned), so this section defines the subset the VIP implements. IHI 0024C calls the revision with wait states and error reporting **APB3** and the one that adds `PPROT` and `PSTRB` **APB4** (§1.2). This VIP implements APB3 signals with 32-bit buses, the maximum the specification allows (§2.1.1).
+The example protocol is **APB**, Arm's simple register bus (Arm IHI 0024C). The protocol itself is taught in full later on this path, in [B-APB-1](/curriculum/T3_Advanced/B-APB-1_APB_Protocol_and_Verification/index); this section defines only the subset the VIP implements. IHI 0024C calls the revision with wait states and error reporting **APB3** and the one that adds `PPROT` and `PSTRB` **APB4** (§1.2). This VIP implements APB3 signals with 32-bit buses, the maximum the specification allows (§2.1.1).
 
-The **master** (the requester, usually a bridge) drives `PSEL`, `PENABLE`, `PWRITE`, `PADDR` and `PWDATA`. The **slave** (the completer) drives `PREADY`, `PRDATA` and `PSLVERR`. Later Arm issues call these roles manager and subordinate. Every transfer has two phases (§4.1):
+The **master** (the requester, usually a bridge) drives `PSEL`, `PENABLE`, `PWRITE`, `PADDR` and `PWDATA`. The **slave** (the completer) drives `PREADY`, `PRDATA` and `PSLVERR`. Later APB issues (IHI 0024D and E) call these roles **Requester** and **Completer** (IHI 0024E §1.1; Appendix C, Table C-4), the words [B-APB-1](/curriculum/T3_Advanced/B-APB-1_APB_Protocol_and_Verification/index) uses; later AXI and AHB issues say manager and subordinate. Every transfer has two phases (§4.1):
 
 - **SETUP:** `PSEL` = 1, `PENABLE` = 0. It always lasts exactly one clock cycle; the bus moves to ACCESS at the next rising edge. Address, direction and write data must not change between SETUP and ACCESS.
 - **ACCESS:** `PSEL` = 1, `PENABLE` = 1. The slave ends it by driving `PREADY` high. While `PREADY` is low the transfer waits, and the master holds `PADDR`, `PWRITE`, `PSEL`, `PENABLE` and, for writes only, `PWDATA` unchanged (§3.1.2, §3.3.2). Any number of wait states is legal, from zero upwards (§3.3.2). `PREADY` may take any value while `PENABLE` is low (§3.1.2).
@@ -238,7 +238,7 @@ The visualizer below shows one agent reused at two levels: at block level it dri
 
 A driver must do two things right: drive the pins only through its clocking block, and survive a reset in the middle of a transfer.
 
-**Clocking-block drives.** A synchronous drive such as `vif.drv_cb.psel <= 1'b1;` with zero output skew, executed in the time step of a clock edge, changes the signal in the Re-NBA region of that time step (a late scheduling region, after every flop has sampled the edge; see [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)), so the value is sampled at the **next** edge (IEEE 1800-2023 §14.16). That is why the master below waits for an edge first, then drives, then waits for the edge that samples what it drove. It reads `PREADY` from `vif.drv_cb.pready`, the value sampled just before the edge (input skew `1step` by default, §14.3).
+**Clocking-block drives.** A synchronous drive such as `vif.drv_cb.psel <= 1'b1;` with zero output skew, executed in the time slot of a clock edge, changes the signal in the Re-NBA region of that time slot (a late scheduling region, after every flop has sampled the edge; see [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)), so the value is sampled at the **next** edge (IEEE 1800-2023 §14.16). That is why the master below waits for an edge first, then drives, then waits for the edge that samples what it drove. It reads `PREADY` from `vif.drv_cb.pready`, the value sampled just before the edge (input skew `1step` by default, §14.3).
 
 ```systemverilog
 // snippet: apb_master_driver::drive_item (complete class in Make It Work)
@@ -270,8 +270,13 @@ endtask
 task run_phase(uvm_phase phase);
   drive_idle();
   forever begin
+    wait (vif.preset_n === 1'b1);           // hold no item during reset
     seq_item_port.get_next_item(req);
-    wait (vif.preset_n === 1'b1);           // never start an item during reset
+    if (vif.preset_n !== 1'b1) begin        // reset came while get_next_item waited
+      `uvm_info("APB_RST", {"released undriven: ", req.convert2string()}, UVM_MEDIUM)
+      seq_item_port.item_done();            // give it back at once, then wait above
+      continue;
+    end
     fork
       begin : guard                         // keeps disable fork local to this block
         fork
@@ -294,14 +299,15 @@ task run_phase(uvm_phase phase);
 endtask
 ```
 
-Three details are easy to miss:
+Four details are easy to miss:
 - **`disable fork` kills every child process of the calling process** (IEEE 1800-2023 §9.6.3), not just the two in this `fork`. The `guard` block makes the `drive_item` and `wait` threads children of a fresh process, so the `disable fork` cannot reach anything else `run_phase` may have started.
 - **Reset is read directly from `vif.preset_n`, not through the clocking block**, because it is asynchronous: a clocking block would see it only at the next edge.
 - **`get_next_item()` is never inside the killed fork.** Killing a driver while it waits inside the sequencer's handshake leaves the sequencer's bookkeeping to the implementation; this structure never does it.
+- **No item is held through reset.** The driver asks for an item only while `PRESETn` is high, and an item that arrives anyway (reset asserted while `get_next_item()` waited) goes straight back with `item_done()`, undriven. So once the aborted item is released, the driver holds nothing until reset ends, and an environment may flush the sequencer in that window (see the expert item on reset ownership in Push Further). Calling `get_next_item()` first and then waiting for reset would keep the next item for the whole reset.
 
 <TimingDiagram
   title="Reset during a wait state: the driver aborts, releases the item and resumes"
-  caption="PRESETn falls between edges 2 and 3. The driver's wait wakes at once, kills drive_item, calls drive_idle() and item_done() in that same instant. A clocking drive executed between edges acts at the next edge (§14.16), so PSEL and PENABLE are still sampled 1 at edge 3 and are 0 from edge 4. Reset rises at edge 6 (sampled 1 at edge 7), and the next item's SETUP is sampled at edge 8."
+  caption="PRESETn falls between edges 2 and 3. The driver's wait wakes at once, kills drive_item, calls drive_idle() and item_done() in that same instant. A clocking drive executed between edges acts at the next edge (§14.16), so PSEL and PENABLE are still sampled 1 at edge 3 and are 0 from edge 4. The driver asks for no new item while PRESETn is low. Reset rises at edge 6 (sampled 1 at edge 7); the driver then takes the next item, whose SETUP is sampled at edge 8."
   edges={10}
   signals={[
     { name: "PCLK", kind: "clock" },
@@ -419,7 +425,7 @@ endtask
 
 <SequenceDiagram
   title="One request answered by a responder agent"
-  caption="Read the order. The driver is already waiting in get_next_item, so start_item is granted at once. Everything from the SETUP edge to rsp reaching the driver happens in zero time, inside the SETUP edge's time step."
+  caption="Read the order. The driver is already waiting in get_next_item, so start_item is granted at once. Everything from the SETUP edge to rsp reaching the driver happens in zero time, inside the SETUP edge's time slot."
   participants={[
     { id: "mon", label: "mon", sublabel: "apb_monitor", kind: "monitor" },
     { id: "fifo", label: "sqr.req_fifo", sublabel: "analysis FIFO", kind: "fifo" },
@@ -1009,8 +1015,13 @@ package apb_pkg;
     task run_phase(uvm_phase phase);
       drive_idle();
       forever begin
+        wait (vif.preset_n === 1'b1);         // hold no item during reset
         seq_item_port.get_next_item(req);
-        wait (vif.preset_n === 1'b1);         // never start an item during reset
+        if (vif.preset_n !== 1'b1) begin      // reset came while get_next_item waited
+          `uvm_info("APB_RST", {"released undriven: ", req.convert2string()}, UVM_MEDIUM)
+          seq_item_port.item_done();          // give it back at once, then wait above
+          continue;
+        end
         fork
           begin : guard                       // keeps disable fork local
             fork
@@ -1084,7 +1095,7 @@ package apb_pkg;
       vif.rsp_cb.pslverr <= 1'b0;   // recommended low when not sampled (IHI 0024C 3.4)
     endfunction
 
-    // Called in the time step of the SETUP edge (see apb_reactive_seq).
+    // Called in the time slot of the SETUP edge (see apb_reactive_seq).
     virtual task drive_item(apb_item it);
       repeat (it.wait_cycles) @(vif.rsp_cb);
       vif.rsp_cb.pready  <= 1'b1;
@@ -1652,7 +1663,7 @@ On a **net** (`wire`), each clocking-block output creates its own driver that is
 
 This lesson keeps reset handling inside the agent: the driver aborts, releases the item with `item_done()`, idles and waits. Environments often add a second reaction: on reset, a test or virtual sequence calls `sqr.stop_sequences()`, which kills the sequences on the sequencer and removes all queued requests, locks and responses (IEEE 1800.2-2020 §15.3.2.14). Both react to the same reset edge, so their order is a race. In uvm-core 2020.3.1, `stop_sequences()` empties the request FIFO, and a later `item_done()` from the driver finds no outstanding request and ends the run with `UVM_FATAL [SQRBADITMDN] Item_done() called with no outstanding requests` (`src/seq/uvm_sequencer.svh`).
 
-The rule is **one owner for the in-flight item**. Either the driver releases it and nothing else flushes, as in this lesson, or the environment flushes and the driver must not call `item_done()` for a flushed item (for example, it waits for the environment's "flushed" event and skips the release). A driver that uses `get()` instead of `get_next_item()` completes the handshake inside `get()` (§14.2.6.3 NOTE), so it has nothing to release, at the price of not being able to return a response through the same item. Scoreboard flushing, objections across reset and phase jumps are environment strategy, covered in [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
+The rule is **one owner for the in-flight item**. Either the driver releases it and the environment flushes only after that, or the environment flushes and the driver must not call `item_done()` for a flushed item (for example, it waits for the environment's "flushed" event and skips the release). This lesson's driver supports the first option: it releases the aborted item in the time slot where `PRESETn` falls, and while reset is asserted it asks for no other item and returns at once any item that arrives. So an environment that calls `stop_sequences()` or `kill()` at a clock edge after the reset fell, as the mid-test reset sequence in [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) does, finds the driver holding nothing. A driver that took the next item and then waited for reset to end would still hold it at that point. With `stop_sequences()`, the FIFO is emptied under it, so after reset it drives an item from a killed sequence and its `item_done()` ends the run with `SQRBADITMDN`. With `kill()`, the FIFO keeps the item (uvm-core 2020.3.1 `kill_sequence()` removes only the sequence's queued requests and locks, `src/seq/uvm_sequencer_base.svh`), so `item_done()` succeeds, but the transfer it drove after reset belonged to a killed sequence. A driver that uses `get()` instead of `get_next_item()` completes the handshake inside `get()` (§14.2.6.3 NOTE), so it has nothing to release, at the price of not being able to return a response through the same item. Scoreboard flushing, objections across reset and phase jumps are environment strategy, covered in [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
 
 ### Expert: Configuration API design
 
@@ -1966,8 +1977,9 @@ A milestone lab for this module, LAB-M2 (one valid/ready or APB agent reused as 
 **Primary sources**
 - **IEEE 1800.2-2020:** §9.3.1.7.1 `get_objection`; §9.8.1.1 `uvm_build_phase` (top-down); §10.5.1.3.7 `set_drain_time`; §6.3.5.2 report actions; §6.3.7 severity overrides; §6.6 `uvm_report_catcher`; §8.2.3.2.5 `set_type_override`; §8.3.1.4.2 `set_type_override_by_type`; §12.2.8.3 `uvm_tlm_analysis_fifo`; §12.2.10.2 analysis imp (subscribers do not modify what they receive); §13.4 `uvm_agent` (§13.4.2.2 `get_is_active` and the `is_active` setting); §13.9 `uvm_subscriber`; §14.2.4.4 `set_automatic_phase_objection` (NOTE on `forever` sequences); §14.2.6.2 `start_item`; §14.2.6.3 `finish_item` (NOTE on `item_done` and `get`); §14.4 `uvm_sequence_library`; §15.3.2.14 `stop_sequences`; §15.3.2.20 `send_request`; §15.5.2.3 `get_next_item`; Annex B.2.1.3 component utils and param utils macros; B.3.3 `` `uvm_declare_p_sequencer ``; B.7.1 to B.7.3 version defines; F.2.1.7 `uvm_active_passive_enum`; F.3.2.1 `uvm_get_report_object`; F.3.2.3 global `uvm_report_*`; F.7.4.2 `print_topology`; G.2.7 `+uvm_set_type_override`.
 - **IEEE 1800-2023:** §6.5 nets and variables; §8.4 objects and handles; §8.12 assignment and copying; §8.27 `typedef class`; §9.6.3 `disable fork`; §13.4.4 clocking drives allowed in functions; §14.3 clocking block declaration (default skews); §14.16 synchronous drives (nets, `'z` driver, drives between edges); §16.14.1 `assert` (disabled attempts run no action block); §18.7.1 `local::` scope resolution in inline constraints; §18.11 inline random-variable control; §20.10 severity tasks; §20.11 assertion control tasks; §23.11 `bind`; §25.8 parameterized interfaces; §25.9 virtual interfaces (type includes parameters and modport; null use is fatal; no hierarchical references); §26.2 package declarations.
-- **Arm IHI 0024C (AMBA APB Protocol Specification v2.0):** §1.2 revisions (APB3, APB4); §2.1.1 data buses (up to 32 bits); §3.1.1 write without wait states (`PENABLE` deasserted at the end); §3.1.2 write with wait states (signals held; `PREADY` any value while `PENABLE` is low); §3.3.2 read with wait states (any number); §3.4 error response (`PSLVERR` valid only at completion; driving it low otherwise is recommended); §4.1 operating states (SETUP lasts one cycle). Later issues of the APB specification were not checked for this lesson.
-- **uvm-core 2020.3.1 (implementation behaviour, labelled "uvm-core" on this page):** `src/comps/uvm_agent.svh` (the `is_active` member and the scalar lookup); `src/macros/uvm_message_defines.svh` (`` `uvm_error `` and `uvm_get_report_object()`); `src/seq/uvm_sequence_base.svh` (`SEQ` fatal); `src/seq/uvm_sequencer.svh` (`stop_sequences`, `SQRBADITMDN`); `src/seq/uvm_sequencer_param_base.svh` (`SQRSNDREQCAST`); `src/tlm1/uvm_tlm_fifos.svh`; `src/base/uvm_version.svh`; `src/macros/uvm_version_defines.svh`; `+UVM_CONFIG_DB_TRACE` and `check_config_usage()`.
+- **Arm IHI 0024C (AMBA APB Protocol Specification v2.0):** §1.2 revisions (APB3, APB4); §2.1.1 data buses (up to 32 bits); §3.1.1 write without wait states (`PENABLE` deasserted at the end); §3.1.2 write with wait states (signals held; `PREADY` any value while `PENABLE` is low); §3.3.2 read with wait states (any number); §3.4 error response (`PSLVERR` valid only at completion; driving it low otherwise is recommended); §4.1 operating states (SETUP lasts one cycle). Later issues of the APB specification were checked only for the terminology below.
+- **Arm IHI 0024E (AMBA APB Protocol Specification, issue E, 2023):** §1.1 about the APB protocol (the roles are named Requester and Completer); Appendix C, Table C-4 changes from issue C to issue D (terminology regularized to Completer and Requester).
+- **uvm-core 2020.3.1 (implementation behaviour, labelled "uvm-core" on this page):** `src/comps/uvm_agent.svh` (the `is_active` member and the scalar lookup); `src/macros/uvm_message_defines.svh` (`` `uvm_error `` and `uvm_get_report_object()`); `src/seq/uvm_sequence_base.svh` (`SEQ` fatal); `src/seq/uvm_sequencer.svh` (`stop_sequences`, `SQRBADITMDN`); `src/seq/uvm_sequencer_base.svh` (`kill_sequence` removes queued requests and locks, not the request FIFO); `src/seq/uvm_sequencer_param_base.svh` (`SQRSNDREQCAST`); `src/tlm1/uvm_tlm_fifos.svh`; `src/base/uvm_version.svh`; `src/macros/uvm_version_defines.svh`; `+UVM_CONFIG_DB_TRACE` and `check_config_usage()`.
 
 **Related**
 - [I-UVM-2A Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): the agent's roles and the active/passive mechanism this VIP packages.
