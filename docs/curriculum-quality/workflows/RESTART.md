@@ -3,6 +3,44 @@
 Written 2026-10-12, when the weekly usage limit paused the program. Read this first in the next session,
 then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASKS.md`.
 
+## Release cadence and pause procedure (owner, 2026-10-26)
+
+The owner wants work visible on the live site before each week's usage limit, and a clean pause that resumes
+seamlessly. Two scripts and two rules make that routine.
+
+**Checkpoint release.** Run `SCR=<scratchpad> docs/curriculum-quality/workflows/checkpoint-release.sh <filelist> "<msg>"`.
+- It copies the listed files into a clean worktree, regenerates the derived data, and runs the gates: flashcards,
+  content, MDX render, tsc, lint, unit tests and `test:sv`.
+- It commits there and moves the branch without touching the main tree, so agents that are still editing lose
+  nothing.
+- It pushes, waits for CI, and fast-forwards `main` only if CI passes. Cloudflare deploys `main`.
+
+Release at each of these points:
+- after each 6b round's fixes are checked (while the next round is still in its read-only critique);
+- after the compile-fix pass;
+- after the components track registers its components;
+- after each 6a tier batch;
+- at least once a day when reviewed work is waiting.
+
+Only reviewed work is released. Work that has not been reviewed goes to a backup branch, never to `main`.
+
+**Usage watch.** At every checkpoint, read the plan limits (`get_usage`). At 85 % of the weekly limit, start the pause
+procedure without waiting to be asked. Launch nothing large when less than about 15 % of the weekly budget is left.
+
+**Pause procedure**, when the owner says pause or the usage watch fires:
+1. Launch nothing new.
+2. For each running workflow, read its journal or agent files to see whether fixers or builders are mid-edit.
+   - If only read-only agents (critics, skeptics, auditors, reviewers) are running, stop it with `TaskStop`.
+   - Otherwise, let the edit agents in flight finish, then stop it.
+3. Release every reviewed change with checkpoint-release.sh, and confirm the live site.
+4. Push every change that has not been reviewed (for example a fixer that was killed before its check) to
+   `backup/wip-<date>`. Then revert those files in the main tree, so the next release cannot pick them up by accident.
+5. Update this file for each workflow: the run ID, its saved script, which phases finished, and the exact resume step.
+   - In the same session, use `resumeFromRunId`.
+   - In a new session, rerun the saved script. Finished fixes are already committed, so a new run starts with fresh
+     critics.
+6. Update the memory note, then report to the owner what is live, what is on the backup branch, and what resumes next.
+
 ## Where things stand
 
 **Integrated and deployed** (branch `curriculum-quality-program`, last integration `1f15a3f0`): tiers 1 and 2;
