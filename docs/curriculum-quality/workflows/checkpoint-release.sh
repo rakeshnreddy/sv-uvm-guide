@@ -84,8 +84,18 @@ for _ in $(seq 1 20); do
 done
 [ -n "$RUN" ] || { echo "no CI run found for $COMMIT; main not updated"; exit 1; }
 if gh run watch "$RUN" --exit-status --interval 60 >/dev/null 2>&1; then
+  PUSHED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   git push -q origin "$COMMIT:main"
-  echo "CI run $RUN passed; main is now $(git rev-parse --short "$COMMIT") and Cloudflare is deploying it"
+  echo "CI run $RUN passed; main is now $(git rev-parse --short "$COMMIT"); waiting for the production build"
+  # The branch push also starts a Workers *preview* build, which fails (the non-production deploy command is
+  # not set up). Only the build that starts after the main push is the production deploy.
+  BUILD=""
+  for _ in $(seq 1 40); do
+    BUILD=$(gh api "repos/rakeshnreddy/sv-uvm-guide/commits/$COMMIT/check-runs?filter=all" --jq "[.check_runs[] | select((.name|test(\"Workers\")) and .started_at >= \"$PUSHED\" and .status == \"completed\")] | last | .conclusion // empty" 2>/dev/null || true)
+    [ -n "$BUILD" ] && break; sleep 30
+  done
+  echo "production Workers build: ${BUILD:-not finished after 20 minutes}"
+  [ "$BUILD" = "success" ] || exit 1
 else
   echo "CI run $RUN failed; main not updated:"
   gh run view "$RUN" --json jobs --jq '.jobs[].steps[] | select(.conclusion=="failure") | .name'

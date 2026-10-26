@@ -280,15 +280,21 @@ and the working tree was clean.
 
 The pause started at 61 % of the weekly limit, because two parallel workflows were spending about 6 % per 40 minutes. At the time of stopping, both workflows had only read-only agents running, so no edit was cut off.
 
-**Live (`main`):** everything below has passed CI and is deployed.
+**Live (`main` = 648bd15b, production build 7885a3e9 succeeded):** everything below has passed CI and is deployed.
 - This session's engineering work, in 5f10ccf8:
   - the Verilator compile check (`npm run test:sv`);
   - e2e fixes and the `followLink`/`clickUntil` helpers;
   - the `requireSession` P2002 retry;
   - checkpoint-release.sh.
 - 6b closure sweep, round 1 fixes (cd4aa4e2).
-- 6b closure sweep, round 2 fixes (the round-2 checkpoint commit). Every file passed its independent check or was
-  repaired after one.
+- 6b closure sweep, round 2 fixes (648bd15b). Every file passed its independent check or was repaired after one.
+  Spot check: the live A-UVM-8 scoreboard declares `int unsigned n_match, n_mismatch;`.
+
+Note: every push to `curriculum-quality-program` also starts a Cloudflare *preview* build, and it always fails,
+because the non-production deploy command is not set up. Builds of `main` are the ones that deploy, and they succeed.
+To turn previews into working branch URLs, the owner can set the non-production deploy command to
+`npx opennextjs-cloudflare upload` in the Workers Builds settings. checkpoint-release.sh checks only the production
+build.
 
 The working tree is clean except for `.claude/`. There is no unreviewed work, so no backup branch was needed.
 
