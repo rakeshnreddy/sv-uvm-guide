@@ -162,6 +162,8 @@ package axi_rd_pkg;
     endfunction
 
     // "" when act matches this expected read, else the first difference.
+    // Each beat's response is compared first. RDATA is compared only on OKAY
+    // and EXOKAY beats: A3.4.4 sets no RDATA value for SLVERR or DECERR.
     function string diff(axi_rd_item act);
       if (act.id != id || act.addr != addr || act.len != len)
         return $sformatf("header: exp %s, act %s",
@@ -170,12 +172,12 @@ package axi_rd_pkg;
         return $sformatf("beat count: exp %0d, act %0d",
                          data.size(), act.data.size());
       foreach (data[i]) begin
-        if (act.data[i] != data[i])
-          return $sformatf("beat %0d data: exp 0x%08h, act 0x%08h",
-                           i, data[i], act.data[i]);
         if (act.resp[i] != resp[i])
           return $sformatf("beat %0d resp: exp %0d, act %0d",
                            i, resp[i], act.resp[i]);
+        if (!resp[i][1] && act.data[i] != data[i])
+          return $sformatf("beat %0d data: exp 0x%08h, act 0x%08h",
+                           i, data[i], act.data[i]);
       end
       return "";
     endfunction
@@ -334,7 +336,7 @@ package axi_rd_pkg;
       h = pend[cur][0];
       a = h.addr + 4 * h.sent;          // INCR, 4-byte beats
       vif.slv_cb.RID   <= h.bad_rid ? cur ^ 8 : cur;
-      vif.slv_cb.RDATA <= axi_mem_model::data_at(a);
+      vif.slv_cb.RDATA <= axi_mem_model::data_at(a);   // not compared on SLVERR
       vif.slv_cb.RRESP <= axi_mem_model::resp_at(cfg, a);   // per beat
       vif.slv_cb.RLAST <= last_flag(h);
       vld = 1;
@@ -352,6 +354,11 @@ package axi_rd_pkg;
       rd_req_t t;
       if (cfg.mutant != "SAME_ID_SWAP" || mutated || pend[id].size() < 2) return;
       if (pend[id][0].sent != 0 || pend[id][1].sent != 0) return;
+      // Two equal-length reads answered SLVERR on every beat cannot be told
+      // apart (RDATA is not compared there). To stay simple, skip every pair
+      // whose reads both start in the error window.
+      if (axi_mem_model::resp_at(cfg, pend[id][0].addr) != RESP_OKAY &&
+          axi_mem_model::resp_at(cfg, pend[id][1].addr) != RESP_OKAY) return;
       t           = pend[id][0];
       pend[id][0] = pend[id][1];        // the younger read answers first
       pend[id][1] = t;

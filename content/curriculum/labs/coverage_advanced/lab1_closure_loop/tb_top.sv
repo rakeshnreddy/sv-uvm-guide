@@ -1,8 +1,9 @@
 // tb_top.sv: stimulus, the ALU-5 and ALU-6 checks, and the coverage report.
 // Run with +SEED=<n> (default 1). The same seed replays the same stimulus.
 module tb_top;
-  timeunit 1ns;
-  timeprecision 1ns;
+  timeunit 1ns;      // alu_pkg, alu and tb_top all declare the same time unit
+  timeprecision 1ns; // and precision: some set, some unset is an error
+                     // (IEEE 1800-2023 §3.14.2.3)
   import alu_pkg::*;
 
   localparam int BUDGET = 500;  // transactions per seed

@@ -43,7 +43,7 @@ describe('/interview-prep page', () => {
     expect(first).toHaveTextContent('Hide model answer');
     expect(panel).toBeVisible();
     expect(within(panel as HTMLElement).getByText('Model answer')).toBeInTheDocument();
-  });
+  }, 30_000); // renders every question of every bank; about 2 s alone, much slower under a loaded parallel run
 
   it('links questions and banks to canonical lesson URLs', () => {
     render(<InterviewPrepPage />);

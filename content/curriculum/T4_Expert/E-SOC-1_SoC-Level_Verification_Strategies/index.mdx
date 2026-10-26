@@ -426,26 +426,45 @@ Typical SoC liveness properties:
 **Weak, strong and bounded.** In an `assert property`, a sequence written without `strong` is evaluated as **weak** (IEEE 1800-2023 §16.12.2). A weak sequence fails only when a finite stretch of the trace proves it cannot match, and `##[1:$]` can always still match later, so this assertion can **never fail** in simulation, however long the response is missing:
 
 ```systemverilog
-// snippet: AXI write channel, one write outstanding at a time
+// snippet: AXI4 write channel, one write outstanding at a time
+// aw_seen and w_seen hold the AW and WLAST handshakes until the B handshake
+logic aw_seen, w_seen;
+wire  aw_hs    = awvalid && awready;
+wire  wlast_hs = wvalid && wready && wlast;
+wire  b_hs     = bvalid && bready;
+always_ff @(posedge aclk or negedge aresetn)
+  if (!aresetn) begin
+    aw_seen <= 1'b0;  w_seen <= 1'b0;
+  end else begin
+    if (b_hs)     begin aw_seen <= 1'b0;  w_seen <= 1'b0; end
+    if (aw_hs)    aw_seen <= 1'b1;  // set after clear: a handshake on the B edge
+    if (wlast_hs) w_seen  <= 1'b1;  // belongs to the next write
+  end
+// On the B edge the held flags still belong to the write being answered: ignore them
+wire  aw_pend = aw_seen && !b_hs;
+wire  w_pend  = w_seen  && !b_hs;
+// True at one edge per write: the later of the two handshakes, or both at once
+wire  b_owed = (aw_hs || aw_pend) && (wlast_hs || w_pend) && !(aw_pend && w_pend);
+
 // Weak: never fails in a finite simulation (§16.12.2)
 a_bresp_weak: assert property (@(posedge aclk) disable iff (!aresetn)
-  (wvalid && wready && wlast) |-> ##[1:$] bvalid);
+  b_owed |-> ##[1:$] bvalid);
 
 // Bounded: a safety check that simulation can fail; 8 is a project budget
 a_bresp_bounded: assert property (@(posedge aclk) disable iff (!aresetn)
-  (wvalid && wready && wlast) |-> ##[1:8] bvalid)
-  else `uvm_error("LIVE_B", "no BVALID within 8 cycles of the last W beat")
+  b_owed |-> ##[1:8] bvalid)
+  else `uvm_error("LIVE_B", "no BVALID within 8 cycles of the later of the AW and WLAST handshakes")
 
 // Strong: true liveness, for formal (§16.12.13); see Push Further
 a_bresp_live: assert property (@(posedge aclk) disable iff (!aresetn)
-  (wvalid && wready && wlast) |-> s_eventually bvalid);
+  b_owed |-> s_eventually bvalid);
 ```
 
-The trigger is the **last write-data beat**, not the address: an AXI slave "must wait for both WVALID and WREADY to be asserted before asserting BVALID" and also for `WLAST` (IHI0022E §A3.3.1). Measuring from the address would blame the slave for a missing data beat, which is a master or bench bug. Count the edges in the waveform before you read the caption.
+The trigger is the **later of two handshakes**: the address (AW) and the last write-data beat (`WLAST`). In AXI4 the slave "must wait for AWVALID, AWREADY, WVALID, and WREADY to be asserted before asserting BVALID", and also for `WLAST` (IHI0022E §A3.3.1, AXI4 write response dependency). Write data may arrive before, with or after its address, so neither handshake alone is the start of the obligation ([B-AXI-1](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index) traces both orders). Measuring from the address alone would blame the slave for a missing data beat; measuring from `WLAST` alone would blame it for an address the master has not sent yet. Both are master or bench bugs, not a lost response. Count the edges in the waveform before you read the caption.
 
 <TimingDiagram
   title="A lost write response: the bounded check fails, the weak check never does"
-  caption="Values are sampled at each rising edge; the markers above the clock are labelled AW, W and fail. The address handshake is at edge 2 and the last (only) data beat at edge 3, so the obligation starts at edge 3 and ##[1:8] covers edges 4 to 11. BVALID never rises, so a_bresp_bounded fails at edge 11. a_bresp_weak is still waiting at the end of any finite run, and reports nothing."
+  caption="Values are sampled at each rising edge; the markers above the clock are labelled AW, W and fail. The address handshake is at edge 2 and the last (only) data beat at edge 3; the later of the two is edge 3, so b_owed is true there, the obligation starts at edge 3 and ##[1:8] covers edges 4 to 11. BVALID never rises, so a_bresp_bounded fails at edge 11. a_bresp_weak is still waiting at the end of any finite run, and reports nothing."
   edges={13}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -459,7 +478,7 @@ The trigger is the **last write-data beat**, not the address: an AXI slave "must
   ]}
   markers={[
     { edge: 2, tone: "info", short: "AW", label: "edge 2: AW handshake, the address is accepted" },
-    { edge: 3, tone: "info", short: "W", label: "edge 3: W handshake with WLAST, the obligation starts" },
+    { edge: 3, tone: "info", short: "W", label: "edge 3: W handshake with WLAST, the later of the two handshakes, so the obligation starts" },
     { edge: 11, tone: "fail", short: "fail", label: "edge 11: no BVALID in edges 4 to 11, a_bresp_bounded fails" }
   ]}
   highlights={[{ from: 4, to: 11, tone: "attempt", label: "##[1:8] window" }]}
@@ -1523,7 +1542,7 @@ In the **Staff-Level SoC Verification Strategy Review** you write and review a f
 - IEEE 1800.2-2020: §6.6 `uvm_report_catcher`; §10.1.1.2.2 `wait_on`; §10.1.1.2.4 `wait_trigger`; §10.1.1.2.5 `wait_ptrigger`; §10.4.1.2.3 `uvm_event_pool::get_global`; §10.6 `uvm_heartbeat`; §13.3 `uvm_env` (reuse as a sub-environment); §13.4.2.2 `get_is_active` and the `is_active` parameter; §13.9 `uvm_subscriber`; §18.1.2.3 `create_map`; §18.2.3.5 `add_submap`; §18.2.5.2 `set_auto_predict`; §18.4.4.1 `get`; §18.4.4.3 `get_mirrored_value`; §18.4.4.11 `poke`; §19.3 `uvm_reg_predictor` (§19.3.2.3 `map`); Annex F.7.3.1 `run_test`; Annex F.7.4.2 `print_topology`; Annex G.2.1 `+UVM_TESTNAME`; Annex G.2.3 `+uvm_set_verbosity`; Annex G.2.6 `+UVM_MAX_QUIT_COUNT`; Annex G.2.8 `+uvm_set_config_string`.
 - IEEE 1800-2023: §6.5 nets and variables (multiple drivers); §8.4 objects (access through a null handle is illegal); §14.16 synchronous drives (a clocking output to a net starts at `'z`); §16.12.2 sequence property (weak in `assert property`); §16.12.13 eventually properties (`s_eventually`); §19.4 covergroups in classes; §19.6.2 excluding cross products (`ignore_bins`); §19.8.1 overriding the built-in `sample` method; §21.4 `$readmemh`; §21.6 command-line input (`$value$plusargs`); §26.4 package import in module headers.
 - uvm-core 2020.3.1 (Accellera reference implementation): `src/comps/uvm_agent.svh` (`build_phase` reads `is_active`); `src/seq/uvm_sequence_base.svh` (the `SEQ` fatal at `start_item()`); `src/reg/uvm_reg_predictor.svh` (one map, one adapter); `src/reg/uvm_reg.svh` (`poke()` predicts unconditionally; auto-predict calls `do_predict` after `write()`); `src/reg/uvm_reg_field.svh` (field prediction rules, such as W1T toggling); `src/base/uvm_report_server.svh` (the report summary); `+UVM_CONFIG_DB_TRACE` (implementation plusarg).
-- Arm IHI0022E, AMBA AXI and ACE Protocol Specification: §A3.2.1 handshake process; §A3.3.1 dependencies between channel handshake signals (BVALID after the last W beat); §A3.4.4 read and write response structure (DECERR); §A4.7 access permissions (`AxPROT`); §A5.3.5 interconnect use of transaction identifiers.
+- Arm IHI0022E, AMBA AXI and ACE Protocol Specification: §A3.2.1 handshake process; §A3.3.1 dependencies between channel handshake signals (in AXI4, BVALID only after both the AW handshake and the last W beat); §A3.4.4 read and write response structure (DECERR); §A4.7 access permissions (`AxPROT`); §A5.3.5 interconnect use of transaction identifiers.
 - Accellera, Standard for IP Abstraction for Clock and Reset Domain Crossing Integration 1.0 (approved 2026).
 
 **Prerequisites:** [A-UVM-8 Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index), [A-UVM-4B Advanced RAL Techniques](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index) and [E-DBG-1 Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index).

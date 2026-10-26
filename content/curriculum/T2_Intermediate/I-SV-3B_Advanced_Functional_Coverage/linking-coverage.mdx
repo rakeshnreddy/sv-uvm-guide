@@ -48,22 +48,22 @@ Here is the plan for the 8-bit ALU used throughout this module. It has seven ope
 | ALU-2 | Operand `a` edge values | `a` is `8'h00` and `8'hFF` | `cp_a` | result compare | 100 % and 0 mismatches |
 | ALU-3 | Operand `b` edge values | `b` is `8'h00` and `8'hFF` | `cp_b` | result compare | 100 % and 0 mismatches |
 | ALU-4 | Every operation at each `a` edge | 7 operations × 2 edges | `x_op_a` | result compare | 100 % and 0 mismatches |
-| ALU-5 | Divide by zero is forbidden by the spec | Never sent | `x_op_b` illegal bin `div_by_zero` | input check, plus the stimulus rule | Never seen |
-| ALU-6 | Every result matches the reference model | Check-only row: exercised by ALU-1 to ALU-4 | none of its own | result compare: `y` against `alu_model()` | 0 mismatches |
+| ALU-5 | Every operation at each `b` edge; divide by zero is forbidden by the spec | 7 operations × 2 edges, except `DIV` with `b == 0`, which is never sent | `x_op_b`: 13 cells that count, plus the illegal bin `div_by_zero` | result compare, plus the input check and the stimulus rule for the forbidden cell | 100 %, 0 mismatches, forbidden cell never seen |
+| ALU-6 | Every result matches the reference model | Check-only row: exercised by ALU-1 to ALU-5 | none of its own | result compare: `y` against `alu_model()` | 0 mismatches |
 
 Three rules turn this table into something you can trust:
 
-1. **Every scenario row names at least one coverage item and at least one check.** ALU-1 to ALU-4 all point at the result compare: the coverage proves the scenario ran, the compare proves the result was right.
-2. **A check-only row names the scenario rows whose coverage exercises it.** ALU-6 has no coverage item of its own; it is exercised exactly as far as ALU-1 to ALU-4 are covered.
-3. **Every coverage item that counts traces to a row.** An item with no row is an **orphan item**: it moves the score without being evidence for anything. Either give it a row, or give it `option.weight = 0` if it only exists to feed a cross or to guard a forbidden case (ALU-5's `x_op_b`). A scenario row with no item or no check is an **orphan row**: it can never close honestly. (A check-only row such as ALU-6 is not an orphan, because rule 2 ties it to the scenario rows that exercise it.)
+1. **Every scenario row names at least one coverage item and at least one check.** ALU-1 to ALU-5 all point at the result compare: the coverage proves the scenario ran, the compare proves the result was right. ALU-5 also names the input check, for its forbidden cell.
+2. **A check-only row names the scenario rows whose coverage exercises it.** ALU-6 has no coverage item of its own; it is exercised exactly as far as ALU-1 to ALU-5 are covered.
+3. **Every coverage item that counts traces to a row.** An item with no row is an **orphan item**: it moves the score without being evidence for anything. Either give it a row, or give it `option.weight = 0` if it only exists to feed a cross or to hold an illegal bin (the FIFO kata at the end of this page has one). A scenario row with no item or no check is an **orphan row**: it can never close honestly. (A check-only row such as ALU-6 is not an orphan, because rule 2 ties it to the scenario rows that exercise it.)
 
-Forbidden behaviour (ALU-5) is a row too. It gets an `illegal_bins` in the model, a constraint that stops the stimulus from producing it, and a check. You will see why the check is needed further down.
+Forbidden behaviour is part of the plan too: ALU-5's cell `DIV` with `b == 0` gets an `illegal_bins` in the model, a constraint that stops the stimulus from producing it, and a check. You will see why the check is needed further down. The illegal cell is excluded from coverage (IEEE 1800-2023 §19.6.3), so `x_op_b` counts the other 7 × 2 − 1 = 13 cells, and it keeps weight 1 because those 13 cells are ALU-5's scenario.
 
 ### The picture: rows on one side, evidence on two
 
 <ArchitectureDiagram
   title="ALU plan rows linked to coverage items and checks"
-  caption="Plan rows are in the middle. Plain lines go left to the coverage item whose option.comment carries the row ID; dashed lines go right, along a shared bus, to the check that proves the row correct. Both checks are inline if statements in tb_top.apply(), not separate classes. ALU-6 has no plain line: it is a check-only row. x_op_b has weight 0 because it only guards the forbidden case ALU-5."
+  caption="Plan rows are in the middle. Plain lines go left to the coverage item whose option.comment carries the row ID; dashed lines go right, along a shared bus, to the check that proves the row correct. Both checks are inline if statements in tb_top.apply(), not separate classes. ALU-6 has no plain line: it is a check-only row. x_op_b counts ALU-5's 13 legal cells and also holds the illegal bin for DIV with b == 0, which the input check guards as well."
   cellWidth={120}
   cellHeight={46}
   gapX={44}
@@ -75,12 +75,12 @@ Forbidden behaviour (ALU-5) is a row too. It gets an `illegal_bins` in the model
     { id: "cp_a", label: "cp_a", sublabel: "comment ALU-2", kind: "generic", col: 0, row: 1 },
     { id: "cp_b", label: "cp_b", sublabel: "comment ALU-3", kind: "generic", col: 0, row: 2 },
     { id: "x_op_a", label: "x_op_a", sublabel: "comment ALU-4", kind: "generic", col: 0, row: 3 },
-    { id: "x_op_b", label: "x_op_b", sublabel: "ALU-5, weight 0", kind: "generic", col: 0, row: 4 },
+    { id: "x_op_b", label: "x_op_b", sublabel: "comment ALU-5", kind: "generic", col: 0, row: 4 },
     { id: "r1", label: "ALU-1", sublabel: "every op", kind: "generic", col: 1, row: 0 },
     { id: "r2", label: "ALU-2", sublabel: "a edges", kind: "generic", col: 1, row: 1 },
     { id: "r3", label: "ALU-3", sublabel: "b edges", kind: "generic", col: 1, row: 2 },
     { id: "r4", label: "ALU-4", sublabel: "op x a edge", kind: "generic", col: 1, row: 3 },
-    { id: "r5", label: "ALU-5", sublabel: "no DIV by 0", kind: "generic", col: 1, row: 4 },
+    { id: "r5", label: "ALU-5", sublabel: "op x b, no DIV/0", kind: "generic", col: 1, row: 4 },
     { id: "r6", label: "ALU-6", sublabel: "result correct", kind: "generic", col: 1, row: 5 },
     { id: "chk_y", label: "result compare", sublabel: "y vs alu_model()", kind: "generic", col: 2, row: 1, rowSpan: 2 },
     { id: "chk_in", label: "input check", sublabel: "DIV with b == 0", kind: "generic", col: 2, row: 4 }
@@ -95,19 +95,20 @@ Forbidden behaviour (ALU-5) is a row too. It gets an `illegal_bins` in the model
     { from: "r2", to: "chk_y", style: "causal", via: [[1.5, 1], [1.5, 1.5]] },
     { from: "r3", to: "chk_y", style: "causal", via: [[1.5, 2], [1.5, 1.5]] },
     { from: "r4", to: "chk_y", style: "causal", via: [[1.5, 3], [1.5, 1.5]] },
+    { from: "r5", to: "chk_y", style: "causal", via: [[1.5, 4], [1.5, 1.5]] },
     { from: "r6", to: "chk_y", style: "causal", via: [[1.5, 5], [1.5, 1.5]] },
     { from: "r5", to: "chk_in", style: "causal" }
   ]}
 />
 
-In text: ALU-1, ALU-2, ALU-3 and ALU-4 each link to one coverage item (`cp_op`, `cp_a`, `cp_b`, `x_op_a`) and to the result compare. ALU-5 links to `x_op_b` (weight 0, holding the illegal bin) and to the input check. ALU-6 links only to the result compare. Every name matches the code in Make It Work.
+In text: ALU-1 to ALU-5 each link to one coverage item (`cp_op`, `cp_a`, `cp_b`, `x_op_a`, `x_op_b`) and to the result compare. ALU-5 also links to the input check, because `x_op_b` holds the illegal bin for its forbidden cell. ALU-6 links only to the result compare. Every name matches the code in Make It Work.
 
 **Predict before you read on.** Suppose you delete the result compare. Which rows can still reach their coverage goal? Which rows can still close?
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Check your prediction</summary>
 
-ALU-1 to ALU-4 can all still reach 100 %: coverage does not depend on the compare. But none of ALU-1 to ALU-4 or ALU-6 can close, because each names the compare as its check. Only ALU-5 keeps its check (the input check).
+ALU-1 to ALU-5 can all still reach 100 %: coverage does not depend on the compare. But none of the six rows can close, because each names the compare as a check. ALU-5 keeps its input check, so its forbidden cell is still guarded, but nothing now judges the results of its 13 legal cells.
 
 </details>
 
@@ -273,11 +274,13 @@ cg.set_inst_name("tb_top.dut1");`}
 
 ### Worked example: a two-lane ALU with a traced plan report
 
-The bench has two copies of a combinational ALU (`dut0`, `dut1`), one collector per lane, a result compare against a reference model (ALU-6), and an input check for the forbidden case (ALU-5). Lane 0 gets 14 transactions that cover every scenario row. Lane 1 gets only the first 7, so it never sees `a == 8'hFF`. At the end, each collector prints one line per plan-linked item, reading the ID back from the model through `cg.<item>.option.comment` (`option` is a built-in member of every covergroup, coverpoint and cross, §19.10).
+The bench has two copies of a combinational ALU (`dut0`, `dut1`), one collector per lane, a result compare against a reference model (ALU-6), and an input check for ALU-5's forbidden cell. Lane 0 gets 14 transactions that cover every scenario row. Lane 1 gets only the first 7, so it never sees `a == 8'hFF` and meets each operation with only one edge of `b`. At the end, each collector prints one line per plan-linked item, reading the ID back from the model through `cg.<item>.option.comment` (`option` is a built-in member of every covergroup, coverpoint and cross, §19.10).
 
 ```systemverilog
 // compile: alu_pkg.sv
 package alu_pkg;
+  timeunit 1ns;        // all three files set the same time unit and precision;
+  timeprecision 1ps;   // some set, some unset is an error (IEEE 1800-2023 3.14.2.3)
   typedef enum bit [2:0] {ADD, SUB, MUL, DIV, AND, OR, XOR} op_t;
 
   // Reference model for ALU-6. Divide by zero never reaches it (ALU-5).
@@ -318,11 +321,11 @@ package alu_pkg;
       x_op_a: cross cp_op, cp_a {
         option.comment = "ALU-4";
       }
-      // Guards ALU-5 only. Its 13 legal bins belong to no plan row,
-      // so weight 0 keeps them out of the score.
+      // ALU-5: every operation with each edge of b, except DIV with b == 0,
+      // which the spec forbids: 14 - 1 = 13 cells that count. Sampling the
+      // forbidden cell raises a run-time error (IEEE 1800-2023 19.6.3).
       x_op_b: cross cp_op, cp_b {
         option.comment = "ALU-5";
-        option.weight  = 0;
         illegal_bins div_by_zero = binsof(cp_op) intersect {DIV} &&
                                    binsof(cp_b.zero);
       }
@@ -355,6 +358,8 @@ package alu_pkg;
       show_item(cg.cp_b.option.comment, "cp_b", c, t);
       void'(cg.x_op_a.get_inst_coverage(c, t));
       show_item(cg.x_op_a.option.comment, "x_op_a", c, t);
+      void'(cg.x_op_b.get_inst_coverage(c, t));
+      show_item(cg.x_op_b.option.comment, "x_op_b", c, t);
       $display("COV %s total %.2f", name, cg.get_inst_coverage());
     endfunction
   endclass
@@ -371,6 +376,8 @@ module alu
   input  logic [7:0] b,
   output logic [7:0] y
 );
+  timeunit 1ns;
+  timeprecision 1ps;
   always_comb begin
     case (op)
       ADD:     y = a + b;
@@ -445,7 +452,7 @@ module tb_top;
 endmodule
 ```
 
-**Predict first.** Before you read the output, write down lane 1's four item lines and its total. Hints: lane 1 sees all seven operations, only `a == 8'h00`, and both values of `b`; `x_op_b` has weight 0.
+**Predict first.** Before you read the output, write down lane 1's five item lines and its total. Hints: lane 1 sees each of the seven operations once, only `a == 8'h00`, and each operation with only one value of `b`; every item has weight 1.
 
 Expected output (illustrative, traced by hand from §19.8 and §19.11, not from a simulator run):
 
@@ -454,12 +461,14 @@ COV tb_top.dut0 ALU-1 cp_op 7/7
 COV tb_top.dut0 ALU-2 cp_a 2/2
 COV tb_top.dut0 ALU-3 cp_b 2/2
 COV tb_top.dut0 ALU-4 x_op_a 14/14
+COV tb_top.dut0 ALU-5 x_op_b 13/13
 COV tb_top.dut0 total 100.00
 COV tb_top.dut1 ALU-1 cp_op 7/7
 COV tb_top.dut1 ALU-2 cp_a 1/2
 COV tb_top.dut1 ALU-3 cp_b 2/2
 COV tb_top.dut1 ALU-4 x_op_a 7/14
-COV tb_top.dut1 total 75.00
+COV tb_top.dut1 ALU-5 x_op_b 7/13
+COV tb_top.dut1 total 70.77
 CHK ALU-5 illegal_inputs=0
 CHK ALU-6 compares=21 mismatches=0
 PASS=21 FAIL=0
@@ -469,10 +478,11 @@ PASS=21 FAIL=0
 - Lane 0, items 0 to 6, use `a = 8'h00` with each operation once; items 7 to 13 repeat the operations with `a = 8'hFF`. So `cp_a` sees both bins and `x_op_a` sees all 7 × 2 = 14 crosses.
 - Lane 1 stops after item 6, so `cp_a` has 1 of 2 bins and `x_op_a` 7 of 14.
 - `b` alternates: `8'h00` on even items and `8'hFF` on odd ones, except that `DIV` always gets `8'hFF` (the ALU-5 stimulus rule in `b_for()`). Items 0 and 1 already give both values, so `cp_b` is 2/2 on both lanes, and `div_by_zero` is never hit.
-- Lane 1's total is the weighted average of the items with nonzero weight (§19.11): (100 + 50 + 100 + 50) / 4 = 75.00. `x_op_b` has weight 0, so it is left out of both the numerator and the denominator.
+- `x_op_b` has 7 × 2 − 1 = 13 cells that count, because the illegal cell is excluded from coverage (§19.6.3, §19.11.2). On lane 0 each operation other than `DIV` appears at items `i` and `i + 7`, which have opposite parity, so it meets both edges of `b`; `DIV` meets `8'hFF`, its only legal cell. That is 13/13. Lane 1 has each operation once, so one cell per operation: 7/13.
+- Lane 1's total is the weighted average of its five items, weight 1 each (§19.11): (100 + 50 + 100 + 50 + 53.85) / 5 = 70.77, where 53.85 is 7/13 as a percentage.
 - Each of the 21 transactions is compared once, and the DUT matches the model, so `PASS=21 FAIL=0`.
 
-**Reading it against the plan.** On lane 0, rows ALU-1 to ALU-4 are at goal and the compare ran with 0 mismatches, so they are closed; ALU-5 was never seen; ALU-6 has 0 mismatches over fully covered scenarios. On lane 1, ALU-2 and ALU-4 are open: no `a == 8'hFF` was ever applied there. More seeds of this bench would not help, because lane 1's stimulus can never produce that value; the [closure loop page](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) shows how to classify and fix such holes.
+**Reading it against the plan.** On lane 0, rows ALU-1 to ALU-5 are at goal and the compare ran with 0 mismatches, so they are closed; ALU-5's forbidden cell was never sent (`illegal_inputs=0`); ALU-6 has 0 mismatches over fully covered scenarios. On lane 1, ALU-2, ALU-4 and ALU-5 are open: no `a == 8'hFF` was ever applied there, and each operation met only one edge of `b`. More seeds of this bench would not help, because lane 1's stimulus is fixed and can never produce those combinations; the [closure loop page](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) shows how to classify and fix such holes.
 
 **Run it.** Compile the three files in one compilation, package first (`alu_pkg.sv`, `alu.sv`, `tb_top.sv`), with any simulator that supports IEEE 1800-2023 functional coverage, and run `tb_top`. Covergroup support in open-source simulators is limited; check your tool's documentation. Your tool's own coverage report should show the same IDs next to the same items.
 
@@ -481,7 +491,7 @@ PASS=21 FAIL=0
 1. **Start from the plan, not the covergroup.** Write the table: ID, feature, scenario, coverage item, check, goal. Mark forbidden rows and check-only rows.
 2. **Check the table for orphans.** Every scenario row needs an item and a check; every check-only row names the rows that exercise it.
 3. **Write one item per row, or one row per item.** Put `option.comment = "<ID>"` inside each coverpoint and cross. Add `type_option.comment` if anyone reads cumulative reports.
-4. **Give leftover items a job.** An item that only feeds a cross or guards a forbidden row gets `option.weight = 0` and a comment saying why.
+4. **Give leftover items a job.** An item that only feeds a cross or guards a forbidden row gets `option.weight = 0` and a comment saying why. An item that holds an illegal bin *and* counts a row's legal cells, such as `x_op_b`, keeps weight 1.
 5. **Map forbidden rows three ways:** `illegal_bins` in the model, a constraint in the stimulus, and a check that counts the case as a failure.
 6. **Name every instance.** `option.per_instance = 1` in the definition, and `set_inst_name()` with a hierarchy-derived string in the constructor.
 7. **Print the evidence together.** Report each item's `covered/total` with its ID, then the check counts, so one log shows both halves of every row.
@@ -606,15 +616,15 @@ Answer the quiz first; it covers all four objectives. Then do the kata. Come bac
     explanation: "Stable, hierarchy-derived instance names are what make per-instance rows line up across a regression."
   },
   {
-    question: "Predict: in the Make It Work bench, lane 1 sees all seven operations, only a == 8'h00, and both b edges. x_op_b has option.weight = 0. What does the line COV tb_top.dut1 total print?",
+    question: "Predict: in the Make It Work bench, lane 1 sees each of the seven operations once, only a == 8'h00, and both b edges, so x_op_b has 7 of its 13 legal cells. Every item has weight 1. What does the line COV tb_top.dut1 total print?",
     objective: 1,
     answers: [
-      { text: "75.00", correct: true, feedback: "Right. (100 for cp_op + 50 for cp_a + 100 for cp_b + 50 for x_op_a) / 4. Weight 0 removes x_op_b from both numerator and denominator (§19.11)." },
-      { text: "70.77", correct: false, feedback: "That is what you get if x_op_b counted with weight 1 (7 of its 13 legal bins hit, about 53.85 %). Weight 0 leaves it out, which is why it has that weight: its legal bins belong to no plan row." },
-      { text: "87.50", correct: false, feedback: "That is the average of lane 0 (100) and lane 1 (75): the type number from get_coverage(), not lane 1's own get_inst_coverage()." },
+      { text: "70.77", correct: true, feedback: "Right. (100 for cp_op + 50 for cp_a + 100 for cp_b + 50 for x_op_a + 53.85 for x_op_b) / 5. x_op_b is ALU-5's coverage item, so it counts with weight 1; its illegal cell is not one of the 13 (§19.6.3, §19.11)." },
+      { text: "75.00", correct: false, feedback: "That leaves x_op_b out, as if it had weight 0. Weight 0 is for an item that only feeds a cross or only holds an illegal bin; x_op_b's 13 legal cells are ALU-5's scenario, so they count." },
+      { text: "85.38", correct: false, feedback: "That is the average of lane 0 (100) and lane 1 (70.77): the type number from get_coverage(), not lane 1's own get_inst_coverage()." },
       { text: "50.00", correct: false, feedback: "The total is a weighted average of all items with nonzero weight, not the lowest item." }
     ],
-    explanation: "Instance coverage is the weighted average of the items (§19.11). Items with weight 0, such as an item that only guards a forbidden case, do not count."
+    explanation: "Instance coverage is the weighted average of the items (§19.11). Every plan-linked item counts; only an item with weight 0, such as one that only feeds a cross or holds an illegal bin, is left out."
   },
   {
     question: "A plan review finds: row ALU-7 (SUB wraps below zero) with a coverage item and no check, and a coverpoint cp_flags with weight 1 and no plan row. What should happen?",
@@ -628,15 +638,15 @@ Answer the quiz first; it covers all four objectives. Then do the kata. Come bac
     explanation: "Every scenario row needs an item and a check; every counted item needs a row. Orphans in either direction make the number say something nobody planned."
   },
   {
-    question: "The spec forbids DIV with b == 0 (row ALU-5). How should this row be mapped?",
+    question: "The spec forbids DIV with b == 0 (the forbidden cell of row ALU-5). How should this case be mapped?",
     objective: 1,
     answers: [
       { text: "An ignore_bins for that cross product, so the row shows 100 %", correct: false, feedback: "Excluding a bin is not covering it, and ignore_bins would let a forbidden case pass silently." },
-      { text: "A normal bin with a goal of 100 %, so the regression proves it happens", correct: false, feedback: "The row is forbidden: hitting it is a failure, not progress." },
+      { text: "A normal bin with a goal of 100 %, so the regression proves it happens", correct: false, feedback: "The case is forbidden: hitting it is a failure, not progress." },
       { text: "An illegal_bins in the model, a constraint that stops the stimulus producing it, and a check that counts it as a failure", correct: true, feedback: "Right. illegal_bins raises a simulator error if the case is sampled (§19.5.6, §19.6.3), the constraint keeps it out of the stimulus, and the check makes the bench itself fail." },
       { text: "No mapping: forbidden behaviour is not part of the plan", correct: false, feedback: "Forbidden behaviour is a requirement too, and the plan must say how it is guarded and checked." }
     ],
-    explanation: "Forbidden rows get three guards. The check matters because an illegal-bin error is a simulator message, not a failure the bench counts."
+    explanation: "Forbidden cases get three guards. The check matters because an illegal-bin error is a simulator message, not a failure the bench counts."
   },
   {
     question: "Your team reads only the cumulative (type) coverage report, and option.per_instance is 0. Where should each item's plan ID go so it appears in that report?",
@@ -681,7 +691,9 @@ covergroup fifo_cg with function sample(bit push, bit pop, int unsigned count);
     option.comment = "FIFO-2";
     bins seen = {1};
   }
-  // Forbidden: guards FIFO-3 only, so it must not count toward the score.
+  // Forbidden: guards FIFO-3 only. With no other bins it still gets automatic
+  // bins (19.5.3); auto[0] is hit on almost every cycle, so weight 0 keeps it
+  // out of the score.
   cp_pop_empty: coverpoint (pop && count == 0) {
     option.comment = "FIFO-3";
     option.weight  = 0;
@@ -709,7 +721,7 @@ endgroup
 
 **Why these choices.**
 - Each ID is inside its own coverpoint, because a covergroup-level comment would not reach the items (§19.7).
-- `cp_pop_empty` has weight 0: its only bin is illegal, so it has nothing to count, and it exists only to guard FIFO-3. The bench check is still needed, because the illegal bin produces a simulator error, not a failure the bench counts.
+- `cp_pop_empty` has weight 0 because it *does* have something to count. It declares no bins other than an illegal one, so the tool still creates automatic bins for the 1-bit expression, `auto[0]` and `auto[1]` (§19.5.3; the [I-SV-3A automatic-bins rule](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index#bins-decide-what-counts)). The illegal value 1 is then removed (§19.5.6), which leaves `auto[0]`, hit by every sampled cycle that is not a pop at level 0, so almost every cycle. With weight 1 the item would sit at a meaningless 100 % and lift the score; weight 0 keeps it out, since the item exists only to guard FIFO-3. The bench check is still needed, because the illegal bin produces a simulator error, not a failure the bench counts.
 - A coverpoint on an expression such as `(push && count == 4)` turns one scenario into one item, so the row and the item match one-to-one.
 - FIFO-5 is exercised exactly as far as the rows that move data are covered. If FIFO-4 were at 1 of 3 bins, the order check would have been tried on fewer simultaneous push-and-pop levels than the plan asks for, even with 0 mismatches.
 
@@ -725,12 +737,12 @@ The deck for this page, **I-SV-3B Linking Coverage**, covers where IDs go, insta
 
 - IEEE 1800-2023:
   - §19.4 (embedded covergroups: an anonymous type, created in the class constructor), §19.4.1 (embedded covergroup inheritance);
-  - §19.5 and §19.5.6 (bins count sampled values; illegal bins issue a run-time error), §19.6.3 (illegal cross products, which take precedence over ignored ones);
+  - §19.5, §19.5.3 and §19.5.6 (bins count sampled values; automatic bins are still created when a coverpoint declares only ignored or illegal bins; illegal bins issue a run-time error), §19.6.3 (illegal cross products, which take precedence over ignored ones);
   - §19.7 with Table 19-1 (instance options: `name`, `weight`, `comment`, `per_instance`; what is saved and reported) and Table 19-2 (the level at which each option is allowed; `weight`, `goal`, `comment` and `per_instance` are not inherited);
   - §19.7.1 with Table 19-3 and Table 19-4 (type options, including `type_option.comment`; constant expressions; the same value for every instance);
   - §19.8 with Table 19-5 (`set_inst_name()`, `get_coverage()`, `get_inst_coverage()`, and the `(covered, total)` arguments);
   - §19.10 (the `option` and `type_option` members of covergroups, coverpoints and crosses);
-  - §19.11 (coverage computation: weighted average of items; zero weights excluded).
+  - §19.11 (coverage computation: weighted average of items; zero weights excluded), §19.11.2 (illegal cross products leave a cross's denominator).
 - IEEE 1800.2-2020 §13.9 (`uvm_subscriber`; checked in uvm-core 2020.3.1, `uvm_subscriber.svh`).
 - Accellera Unified Coverage Interoperability Standard (UCIS) 1.0, June 2012.
 

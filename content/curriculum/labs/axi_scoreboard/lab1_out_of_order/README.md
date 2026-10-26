@@ -38,7 +38,7 @@ The starters compile as given. With them, the run ends with `[EOT] 0 of 40 reads
 
 | Mutant | What the slave does wrong | What must catch it |
 |---|---|---|
-| `SAME_ID_SWAP` | answers the younger of two same-ID reads first | scoreboard: two `SCB_MISMATCH ... beat 0 data` when the two lengths are equal. When they differ: two monitor `RLAST` errors, one `SCB_MISMATCH ... beat count` and one `... beat 0 data`, then `UNEXPECTED_R` for the leftover beats (or a further mismatch if another read with that ID is open) |
+| `SAME_ID_SWAP` | answers the younger of two same-ID reads first | scoreboard: two `SCB_MISMATCH ... beat 0 data` when the two lengths are equal (`beat 0 resp` when only one of the two reads starts in the SLVERR window). When they differ: two monitor `RLAST` errors, one `SCB_MISMATCH ... beat count` and one `... beat 0 data` (or `resp`), then `UNEXPECTED_R` for the leftover beats (or a further mismatch if another read with that ID is open) |
 | `DROP_RLAST` | sends the last beat without RLAST | monitor: `RLAST` on beat N of N |
 | `EXTRA_BEAT` | sends one more beat, with RLAST, after a read is complete | monitor: `UNEXPECTED_R` (or `RLAST`/`SCB_MISMATCH` if a new same-ID read was already open). The checker also reports `AXI_CHK` errors: the extra RLAST leaves its counters one completion ahead, so `a_r_after_ar` fires at RVALID edges while only one read is in flight |
 | `WRONG_RID` | after the last AR, answers every beat of one read with an ID that was never issued; it picks a read that is the last with its ID | monitor: `UNEXPECTED_R` once per beat of that read; then the test's `[EOT]` warning after the timeout, scoreboard `SCB_PENDING`, test `[EOT] 39 of 40 reads compared` and `pending=1` |

@@ -74,7 +74,7 @@ Because every TLM-1 port class extends `uvm_port_base #(uvm_tlm_if_base #(T,T))`
 What the stepper showed:
 - **Call direction is not data direction.** The driver's port *calls* `get_next_item(req)` into the sequencer, and the item comes *back* as the call's output argument. `connect()` always follows the call: requirer `.connect(` provider `)`.
 - **Backwards is a run-time UVM error, not a compile error.** Both ends have the same type, so `sqr.seq_item_export.connect(drv.seq_item_port)` compiles. `connect()` itself refuses any call made on an imp, and the error stops the run at end of elaboration.
-- **Some ports may stay unconnected.** `uvm_seq_item_pull_port` is built with a minimum of 0 connections (§15.2.2.1), so a forgotten driver connection is not caught at end of elaboration. You get only a `DRVCONNECT` warning, then a null-object error at the first `get_next_item()`.
+- **Some ports may stay unconnected.** uvm-core 2020.3.1 builds the driver's `uvm_seq_item_pull_port` (§15.2.2.1) with a minimum of 0 connections (`UVM_SEQ_PORT` in `uvm_tlm_imps.svh`). That is implementation behaviour: the standard gives the class only the standard port constructor, whose default minimum is 1 (§12.2.5.1). So in uvm-core a forgotten driver connection is not caught at end of elaboration. You get only a `DRVCONNECT` warning, then a null-object error at the first `get_next_item()`.
 
 That is all this lesson needs from the sequencer-driver link: it is a TLM pull connection like any other. The handshake itself (`get_next_item`, `item_done`, responses) belongs to [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index), which comes two lessons later.
 
@@ -390,7 +390,7 @@ out_agt.ap.connect(scb.act_imp);
   ]}
 />
 
-**Fix B: two analysis FIFOs and a `get()` thread.** The scoreboard owns two `uvm_tlm_analysis_fifo`s and one `run_phase` loop that takes one item from each and compares them. The scoreboard can wait for whichever stream is late, and it can be given time-consuming checks later without rewiring. To keep its FIFOs private, the scoreboard exposes two `uvm_analysis_export`s and connects each **down** to its FIFO. uvm-core's own `uvm_sequencer` uses the same pattern: its `rsp_export` is an analysis export connected down to an internal analysis FIFO (uvm-core 2020.3.1, `uvm_sequencer_param_base.svh`). The Make It Work example builds this version completely.
+**Fix B: two analysis FIFOs and a `get()` thread.** The scoreboard owns two `uvm_tlm_analysis_fifo`s and one `run_phase` loop that takes one item from each and compares them. The scoreboard can wait for whichever stream is late, and it can be given time-consuming checks later without rewiring. To keep its FIFOs private, the scoreboard exposes two `uvm_analysis_export`s and connects each **down** to its FIFO. uvm-core's own `uvm_sequencer` uses the same pattern: its `rsp_export` is an analysis export connected down to an internal analysis FIFO (uvm-core 2020.3.1, `uvm_sequencer_param_base.svh`). The loop calls `peek()` on the expected FIFO, then `get()` on the actual FIFO, and only then `try_get()` on the expected FIFO. If it took the expected item out first and the run ended while it waited for a partner, that item would sit in a local variable, `check_phase` would find both FIFOs empty, and the leftover would go unreported ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index#in-order-matching-and-comparing-by-value) traces this case). The Make It Work example builds this version completely.
 
 **How to choose.** Start with Fix A when both streams arrive in order and every check is zero-time. Use Fix B when a check must wait, when items on the two streams arrive far apart, or when you expect the scoreboard to grow. Matching algorithms for out-of-order and keyed streams belong to [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).
 
@@ -415,7 +415,7 @@ This complete example needs no DUT, no virtual interface and no sequences, so it
 
 <ArchitectureDiagram
   title="Worked example topology: prod, req_fifo, model, scb and cov inside env"
-  caption="Each arrow is one connect() call, drawn from the caller to the provider. put(t) and write(t) carry the item along the arrow; get(t) is a call from model, so its item travels against the arrow. Inside scb, each export connects down to its own analysis FIFO, and scb's run_phase calls get() on those child FIFOs directly."
+  caption="Each arrow is one connect() call, drawn from the caller to the provider. put(t) and write(t) carry the item along the arrow; get(t) is a call from model, so its item travels against the arrow. Inside scb, each export connects down to its own analysis FIFO, and scb's run_phase calls peek(), get() and try_get() on those child FIFOs directly."
   cellWidth={140}
   cellHeight={72}
   gapX={70}
@@ -581,8 +581,10 @@ package tlm_demo_pkg;
     task run_phase(uvm_phase phase);
       bus_item exp_item, act_item, pred;
       forever begin
-        exp_fifo.get(exp_item);          // the FIFOs are my children: call get() directly
+        exp_fifo.peek(exp_item);         // the FIFOs are my children: call them directly
+                                         // peek() leaves the expected item in exp_fifo
         act_fifo.get(act_item);          // waits here until the model's result arrives
+        void'(exp_fifo.try_get(exp_item));  // only now consume the expected item
         if (!$cast(pred, exp_item.clone())) `uvm_fatal("SCB", "clone failed")
         pred.data = exp_item.data + 8'd1;   // the prediction, made on a copy
         if (act_item.compare(pred)) matches++;
@@ -842,7 +844,7 @@ Answer each one before you open the feedback.
   question="A scoreboard has reported zero errors on every regression for months. A designer injects an obvious bug and it still passes. What do you check first?"
   options={[
     { text: "Whether the scoreboard checked anything: an analysis port with no subscriber, or a reversed promotion such as ap.connect(mon.ap), is legal and silent, so I look at the match count and make zero checks an error.", isCorrect: true, feedback: "Right. Unconnected analysis ports have a minimum of 0, and analysis ports skip the relationship check, so end of elaboration reports nothing. A summary that fails on zero checks, plus a non-empty-FIFO check, closes the gap." },
-    { text: "The end-of-elaboration log: UVM reports every unconnected port.", isCorrect: false, feedback: "Only ports and exports below their minimum count are reported. Analysis ports and the driver's seq_item_port have a minimum of 0." },
+    { text: "The end-of-elaboration log: UVM reports every unconnected port.", isCorrect: false, feedback: "Only ports and exports below their minimum count are reported. Analysis ports have a minimum of 0 by the standard, and uvm-core 2020.3.1 also builds the driver's seq_item_port with a minimum of 0 (implementation behaviour)." },
     { text: "print_topology(): if the scoreboard is in the tree, it is connected.", isCorrect: false, feedback: "print_topology() shows which components exist, not how they are connected." },
     { text: "The random seed: the bug was probably not exercised.", isCorrect: false, feedback: "Possible, but an obvious injected bug that never fails points first at a checker that sees no data. Verify the checker before blaming the stimulus." }
   ]}
@@ -971,7 +973,7 @@ Other questions to rehearse, each answered somewhere on this page: design a scor
       answers: [
         { text: "UVM_ERROR [Connection Error] connection count of 0 does not meet required minimum of 1, then UVM_FATAL [BUILDERR] at the start of end of elaboration", correct: true, feedback: "Right. Get ports have a minimum of 1. The count is checked when bindings are resolved, and the error count stops the run before run_phase." },
         { text: "The model waits forever in get()", correct: false, feedback: "The run never reaches run_phase: the missing connection is caught at end of elaboration." },
-        { text: "A null-object error at the model's first get()", correct: false, feedback: "That is the symptom for the driver's seq_item_port, whose minimum is 0. A get port's minimum of 1 is enforced earlier." },
+        { text: "A null-object error at the model's first get()", correct: false, feedback: "That is the symptom for the driver's seq_item_port, which uvm-core 2020.3.1 builds with a minimum of 0 (implementation behaviour). A get port's minimum of 1 is enforced earlier." },
         { text: "Nothing: unconnected ports are legal", correct: false, feedback: "True only for analysis ports and the driver's seq_item_port. Put, get and peek ports must reach exactly one imp." }
       ],
       explanation: "Read the end-of-elaboration log first: a Connection Error names the port and the count. BUILDERR follows because any UVM_ERROR during build stops the run.",

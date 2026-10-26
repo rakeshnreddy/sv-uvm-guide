@@ -526,6 +526,7 @@ module tb_top;
   always #5 clk = ~clk;
 
   initial begin
+    $timeformat(-9, 0, " ns", 0);       // %t prints ns, not the 1 ps default (F2D)
     drv     = new;
     drv.vif = bus;                      // bind the handle before its first use
     @(bus.cb);
@@ -540,7 +541,7 @@ endmodule
 Expected output (illustrative, traced by hand: rising edges at 5, 15 and 25 ns; your simulator then prints its own `$finish` message):
 
 ```text
-[25] sent A5
+[25 ns] sent A5
 ```
 
 <ArchitectureDiagram
@@ -634,7 +635,7 @@ endfunction
 
 class scoreboard;
   local txn          exp_q[$];            // expected items this scoreboard owns
-  local int unsigned matches, mismatches; // only report() publishes them
+  local int unsigned n_match, n_mismatch; // only report() publishes them
 
   // The producer may reuse its object after this call returns, so store a copy.
   function void add_expected(txn t);
@@ -646,21 +647,21 @@ class scoreboard;
   function void check(bit [7:0] actual);
     txn e;
     if (exp_q.size() == 0) begin
-      mismatches++;
+      n_mismatch++;
       $error("SCB: unexpected output %02h", actual);
       return;
     end
     e = exp_q.pop_front();
-    if (e.data === actual) matches++;
+    if (e.data === actual) n_match++;
     else begin
-      mismatches++;
+      n_mismatch++;
       $error("SCB: expected %s, got %02h", e.convert2string(), actual);
     end
   endfunction
 
   function void report();
     $display("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
-             matches, mismatches, exp_q.size());
+             n_match, n_mismatch, exp_q.size());
   endfunction
 endclass
 

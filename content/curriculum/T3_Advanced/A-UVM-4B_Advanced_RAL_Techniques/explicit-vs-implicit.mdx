@@ -220,7 +220,7 @@ With check-on-read on, the predictor compares every observed **read** with the c
 
 Two conditions make passive checking trustworthy:
 
-- **Hardware-driven fields must be volatile.** A field configured with `volatile = 1` gets the compare policy `UVM_NO_CHECK` in `configure()` (uvm-core `uvm_reg_field.svh`), so it is skipped by the compare but still predicted. A status bit set by hardware and configured `volatile = 0` produces a mismatch on every firmware read that follows a hardware change: a false failure.
+- **Hardware-driven fields must be volatile here.** Elsewhere, a field that the hardware changes only on an event your test causes can stay checked, as long as the test reads it before it checks it ([Fields the hardware changes](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index#fields-the-hardware-changes-w1c-w1t-rc-and-volatile)). Passive checking removes that option: firmware decides when to read, and every observed read is checked, so no unchecked read can bring the mirror up to date first. A field configured with `volatile = 1` gets the compare policy `UVM_NO_CHECK` in `configure()` (uvm-core `uvm_reg_field.svh`), so it is skipped by the compare but still predicted. A status bit set by hardware and configured `volatile = 0` produces a mismatch on every firmware read that follows a hardware change: a false failure.
 - **Writes must be predicted too.** Check-on-read only compares reads. The writes that firmware makes are predicted by the same predictor, which is what makes the later comparisons meaningful.
 
 ### Double prediction, and how to choose
@@ -252,7 +252,7 @@ Each set-up has blind spots. A stale mirror is not a bug in itself; checking aga
 | Register-model `write()`, `read()`, `update()`, `mirror()` through the map | predicted when the call completes | predicted when the monitor publishes | (no such accesses) | — |
 | Firmware, DMA or a raw sequence on the same bus | **stale** | predicted | predicted | explicit prediction |
 | An access on another bus port with no predictor | stale | stale | stale | a predictor on every bus port (see the module index for multiple maps) |
-| The hardware itself: status bits, counters, interrupt flags | **stale** | **stale** | **stale** | read the register, call `predict()`, and make the field volatile |
+| The hardware itself: status bits, counters, interrupt flags | **stale** | **stale** | **stale** | read the register before you check it, or call `predict()`; make the field volatile if the hardware changes it at times the test cannot predict, or if a passive checker checks it |
 | A DUT reset in the middle of a test | stale | stale | stale | `ral.reset()` (see the expert note on reset) |
 | An access that ended with `UVM_NOT_OK` | not predicted | not predicted | not predicted | intended, but an error does not prove the register is unchanged: an APB write that gets an error may still have updated it (Arm IHI 0024C §3.4). Read the register back after the error (for example with `mirror()`) so prediction relearns it, or model the peripheral's documented behaviour ([B-APB-1](/curriculum/T3_Advanced/B-APB-1_APB_Protocol_and_Verification/index)) |
 | Backdoor `poke()` or `peek()` | predicted by the call itself (uvm-core) | same; the monitor sees no bus traffic | same | none needed in uvm-core 2020.3.1 |
@@ -263,7 +263,7 @@ Each set-up has blind spots. A stale mirror is not a bug in itself; checking aga
 | --- | --- | --- | --- |
 | 0. After reset | 0 | 0 | `ral.reset()` and the DUT reset agree |
 | 1. `ral.ctrl.write(st, 'hD)` sets MODE = 3 | **1** | 0 | No access to INT_STATUS, so nothing predicts it: the mirror is stale |
-| 2. `ral.int_status.mirror(st, UVM_CHECK)` | 1 | 1 | ERR is volatile (`UVM_NO_CHECK`), so no error; the predictor then learns 1 from the read. With `volatile = 0` this step reports a false mismatch |
+| 2. `ral.int_status.mirror(st, UVM_CHECK)` | 1 | 1 | ERR is volatile (`UVM_NO_CHECK`), so no error; the predictor then learns 1 from the read. With `volatile = 0` this step reports a false mismatch; a `read()` before the check, as the Make It Work test does, avoids it |
 | 3. `ral.int_status.write(st, 'h1)` | 0 | 0 | W1C: the predictor computes `1 & ~1 = 0`, matching the DUT |
 
 **`predict()` versus volatile.** When the TB *knows* the hardware changed a field, for example because an interrupt line rose, it can tell the model with `predict()`. That is a **direct** prediction (`UVM_PREDICT_DIRECT`): the value is stored as is, with no policy applied (§17.2.2.8, §18.5.5.17). It is not "explicit prediction", which is the predictor component. Check the return value, because a prediction made while the register is in the middle of an access is refused:
@@ -282,7 +282,7 @@ task note_hw_error();
 endtask
 ```
 
-The busy test and the `predict()` call run with no time passing between them, so no access can start in between. This uses the register-level `predict()`, which leaves the mirror unchanged if it ever refuses. The field-level `ral.int_status.err.predict(1)` behaves differently in uvm-core 2020.3.1: it warns, returns 0 and *still* writes the mirror, which the access in flight can then overwrite (see the expert section). Use `predict()` only when the TB knows the exact new value, and make the field volatile in any case, so that a `mirror(UVM_CHECK)` between the hardware change and your prediction does not fail.
+The busy test and the `predict()` call run with no time passing between them, so no access can start in between. This uses the register-level `predict()`, which leaves the mirror unchanged if it ever refuses. The field-level `ral.int_status.err.predict(1)` behaves differently in uvm-core 2020.3.1: it warns, returns 0 and *still* writes the mirror, which the access in flight can then overwrite (see the expert section). Use `predict()` only when the TB knows the exact new value. Until it runs, the mirror is stale, so a field that the hardware can change while a check may run (an interrupt that can fire in any cycle) must also be volatile, or a `mirror(UVM_CHECK)` in that window fails. A field that changes only on an event your test causes can stay checked (`volatile = 0`), as long as the test reads or predicts it before it checks it.
 
 ### Debugging a stale mirror
 
@@ -299,7 +299,7 @@ Start from the symptom. The messages are uvm-core 2020.3.1 formats; `...` stands
 | `read()` returns 0 or old data; mismatches appear only on reads | `provides_responses` does not match the driver: the driver returns read data only in a separate response, but the adapter says 0, so the map reads the request item (§19.2.1.2.3) | Set `provides_responses = 1`, or copy the data into the request item. With implicit prediction the mirror is wrong too; with explicit prediction only the returned value is |
 | A `RegModel` mismatch right after a write, which passes when you check again later | The monitor publishes after `write()` returns, so the check compared with the old mirror | Make the driver finish after the monitor publishes, or wait for the prediction (see the expert section on timing) |
 | `UVM_WARNING ... [RegModel] Trying to predict value of register 'ral.int_status' while it is being accessed` (or, field-level, `Trying to predict value of field 'err' while register 'ral.int_status' is being accessed`) | `predict()` called during an access to the same register | Wait until `is_busy()` is 0, call `predict()` and check its return value |
-| False mismatches on status bits, counters or interrupt flags | Hardware-driven fields configured `volatile = 0` | Configure them `volatile = 1`; check them against your own expectation |
+| False mismatches on status bits, counters or interrupt flags | A hardware-driven field configured `volatile = 0` was checked while its mirror was stale | Configure fields that change at unpredictable times, and every hardware-driven field under passive checking, `volatile = 1` and check them against your own expectation; read a field that changes only on an event your test causes before you check it |
 
 A mismatch itself always looks like this (uvm-core `uvm_reg.svh`), followed by one `UVM_INFO` line per mismatching field:
 
@@ -589,7 +589,9 @@ package rbus_pkg;
 
     virtual function void build();
       err = uvm_reg_field::type_id::create("err");
-      // volatile = 1: hardware sets ERR, so mirror(UVM_CHECK) must not compare it
+      // volatile = 1, so a mirror(UVM_CHECK) issued before the test reads ERR does
+      // not fail. The test reads ERR before any check, so volatile = 0 would also
+      // pass, as in the module index's bench.
       err.configure(this, 1, 0, "W1C", 1, 0, 1, 0, 0);
     endfunction
   endclass
@@ -833,7 +835,7 @@ Read the table by column. NONE never moves the mirror: even `mirror()` does not 
 3. **Build** the register model, call `lock_model()` at the end of its `build()`, and call `reset()`. Create one adapter and, for explicit or passive prediction, one `uvm_reg_predictor #(your_item)` per bus in `build_phase`.
 4. **Wire** in `connect_phase`: `set_sequencer()` on the root map (active buses only), `predictor.map` = the root map, `predictor.adapter`, and `mon.ap.connect(predictor.bus_in)`. Leave auto-predict at 0.
 5. **Check the monitor**: it publishes a new object for every transfer, reads included, with the read data filled in, and it publishes no later than the driver's `item_done()`.
-6. **Mark hardware-driven fields volatile**, and add `predict()` calls only where the TB knows the exact new value.
+6. **Decide for each hardware-driven field.** Make it volatile if the hardware can change it at times the test cannot predict (an interrupt that can fire in any cycle, a free-running counter) or if a passive checker checks it; otherwise keep it checked and read it before you check it. Add `predict()` calls only where the TB knows the exact new value.
 7. **Prove it** with a firmware-style raw write followed by `mirror(UVM_CHECK)`, as in step 2 above, and a W1T write if the block has one.
 
 **Checklist before moving on:**
@@ -841,7 +843,7 @@ Read the table by column. NONE never moves the mirror: even `mirror()` does not 
 - [ ] Every bus that can change a register has a connected predictor bound to the root map, or auto-predict is on and the register model is the only initiator on that bus.
 - [ ] Auto-predict and a connected predictor are never active on the same map.
 - [ ] The monitor publishes reads with their data, and publishes before the driver's `item_done()`.
-- [ ] Hardware-driven fields are volatile; `predict()` calls wait for `is_busy()` to clear and check their return value.
+- [ ] Every hardware-driven field is either volatile or read before it is checked, and is volatile wherever a passive checker checks it; `predict()` calls wait for `is_busy()` to clear and check their return value.
 - [ ] You can name, for each `+PRED` column above, which step fails and why.
 
 ## Push Further
@@ -903,7 +905,7 @@ A DUT reset in the middle of a test changes every register, and no access report
   options={[
     { text: "Nothing: the two modes back each other up, so the mirror is always right.", isCorrect: false, feedback: "Every register-model access is predicted twice. RW and W1C fields hide it; a W1T field toggles twice in the mirror and once in the DUT." },
     { text: "Turn the predictor off: auto-predict already covers every access on the bus.", isCorrect: false, feedback: "Auto-predict runs inside the register model's own read() and write(). It never sees the firmware's accesses, so the mirror goes stale whenever firmware writes." },
-    { text: "Keep the predictor bound to the root map, set auto-predict to 0, and mark hardware-driven fields volatile.", isCorrect: true, feedback: "Right. The predictor alone sees both initiators exactly once. Volatile fields stop false mismatches from hardware changes, which neither mode can see." },
+    { text: "Keep the predictor bound to the root map, set auto-predict to 0, and make hardware-driven fields volatile or read them before each check.", isCorrect: true, feedback: "Right. The predictor alone sees both initiators exactly once. Neither mode sees hardware changes, so a field the hardware changes at unpredictable times is volatile, and one your test triggers is read before it is checked." },
     { text: "Call predict() after every firmware write.", isCorrect: false, feedback: "The TB does not know what firmware writes; the bus monitor does. That is the predictor's job." }
   ]}
 />
@@ -1018,18 +1020,18 @@ Start with the quiz, which covers all five objectives. Then do the two katas on 
       { text: "The predictor updates the mirror first, so the compare passes", correct: false, feedback: "The predictor compares before it predicts. Otherwise the compare would always pass." },
       { text: "A REG_PREDICT_COLLISION error", correct: false, feedback: "Collisions are about beats of a register wider than the bus, not about hardware changes." }
     ],
-    explanation: "Check-on-read compares each observed read with the current mirror, then predicts. Hardware changes are invisible to every prediction mode, so hardware-driven fields must be volatile or every read after a change is a false failure."
+    explanation: "Check-on-read compares each observed read with the current mirror, then predicts. Hardware changes are invisible to every prediction mode, and under check-on-read firmware chooses when to read and every read is checked, so no earlier read can update the mirror first. Hardware-driven fields must therefore be volatile, or every read after a change is a false failure."
   },
   {
     question: "INT_STATUS.ERR is W1C and set by hardware, and explicit prediction is wired correctly. Hardware sets ERR, and nothing has accessed INT_STATUS since. What does ral.int_status.get_mirrored_value() return, and what makes it right?",
     objective: 5,
     answers: [
       { text: "1, because the predictor watches the bus", correct: false, feedback: "The hardware change makes no bus transfer, so the monitor has nothing to publish." },
-      { text: "0: read the register (the predictor then learns 1), or call predict(1) when the TB knows, for example from the interrupt line", correct: true, feedback: "Right. No mode sees hardware changes. A read updates the mirror through prediction; predict() stores a value the TB knows; volatile = 1 stops checks failing in between." },
+      { text: "0: read the register (the predictor then learns 1), or call predict(1) when the TB knows, for example from the interrupt line", correct: true, feedback: "Right. No mode sees hardware changes. A read updates the mirror through prediction; predict() stores a value the TB knows. Until one of them runs, a check of the field fails unless it is volatile." },
       { text: "1, because W1C fields are predicted from the hardware", correct: false, feedback: "W1C describes what a write does: mirror & ~data. It says nothing about hardware setting the bit." },
       { text: "X, until the next reset", correct: false, feedback: "The mirror holds its last predicted value, 0. It is stale, not unknown." }
     ],
-    explanation: "Prediction follows accesses. A hardware change is not an access, so the mirror stays stale until a read, a predict() or a reset. That is why such fields are volatile."
+    explanation: "Prediction follows accesses. A hardware change is not an access, so the mirror stays stale until a read, a predict() or a reset. That is why such a field is either volatile or read before it is checked."
   }
 ]} />
 

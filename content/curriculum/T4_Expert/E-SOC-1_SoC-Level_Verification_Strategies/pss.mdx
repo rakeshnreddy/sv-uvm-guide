@@ -49,8 +49,8 @@ Follow one use case up the test layers of the [SoC strategy](/curriculum/T4_Expe
 
 | Test layer | Who drives the DMA's registers | How the use case is written by hand | What checks it |
 |---|---|---|---|
-| Subsystem simulation | the bench: an **active** APB agent plays the CPU | a UVM virtual sequence ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences)) | scoreboards, an interrupt checker, assertions |
-| SoC simulation | the real CPU running firmware; the APB agent is now **passive** | a firmware C test compiled into the boot image | the C test itself (reported through the mailbox), plus the passive bench's monitors and scoreboards |
+| Subsystem simulation | the bench: a CPU bus-functional model (BFM), an **active** AXI master agent, plays the CPU and writes the registers through the interconnect and the AXI-to-APB bridge; the DMA's APB agent is **passive** | a UVM virtual sequence ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences)) | scoreboards, an interrupt checker, assertions |
+| SoC simulation | the real CPU running firmware, through the same bridge; the CPU BFM is gone, and the APB agent stays **passive** | a firmware C test compiled into the boot image | the C test itself (reported through the mailbox), plus the passive bench's monitors and scoreboards |
 | Emulation or FPGA prototype | the real CPU | the same firmware test, often extended for longer runs | the C test, plus whatever the platform can observe |
 | Silicon | the real CPU | a bare-metal C test on the lab bench | the C test only |
 
@@ -65,7 +65,7 @@ Before you read the caption, predict: in the picture below, which boxes does the
   cellWidth={150}
   gapX={28}
   legend={false}
-  caption="Generated: only the row of platform tests (the virtual sequence and the C test). Hand-written: the model at the top and the whole realization row at the bottom, including the template packages dma_real_sv.pss and dma_real_c.pss and the subsystem env with its active APB agent. The C driver and HAL (dma_driver.h) is reused unchanged on SoC simulation, emulation and silicon, because the same compiled C test (the same image) runs on the same CPU. Dashed arrows: generation and image flow; dotted arrows: calls into the realization. Names match the Make It Work model."
+  caption="Generated: only the row of platform tests (the virtual sequence and the C test). Hand-written: the model at the top and the whole realization row at the bottom, including the template packages dma_real_sv.pss and dma_real_c.pss and the subsystem env with its active CPU BFM. The C driver and HAL (dma_driver.h) is reused unchanged on SoC simulation, emulation and silicon, because the same compiled C test (the same image) runs on the same CPU. Dashed arrows: generation and image flow; dotted arrows: calls into the realization. Names match the Make It Work model."
   nodes={[
     { id: "pss", label: "dma_soc.pss", sublabel: "hand-written scenario library: dma_under_load_a and others", kind: "generic", col: 0, row: 0, colSpan: 4 },
     { id: "tool", label: "PSS tool", sublabel: "solves values and schedule, emits each target", kind: "generic", col: 0, row: 1, colSpan: 4 },
@@ -129,14 +129,14 @@ The scenario is shared; the evidence is not. The table is the practitioner's ver
 
 | Platform | Target the tool emits | What executes the actions | Checks that exist here | What you lose |
 |---|---|---|---|---|
-| Subsystem simulation | SystemVerilog: a virtual sequence | the bench's active APB agent (playing the CPU) and AXI traffic agent | scoreboards, interrupt checker, protocol assertions, functional coverage | nothing; but the real CPU and firmware are absent |
+| Subsystem simulation | SystemVerilog: a virtual sequence | the bench's CPU BFM, an active AXI master agent playing the CPU: it programs the DMA through the interconnect and the AXI-to-APB bridge, and it loads DDR | scoreboards, interrupt checker, protocol assertions, functional coverage | nothing; but the real CPU and firmware are absent |
 | SoC simulation | C, compiled into the boot image | the RTL CPU running the generated test and the product driver | the C test's own checks (in the SoC build, `test_fail()` writes FW_FAIL to the mailbox), plus the **passive** bench's monitors, scoreboards and assertions | speed: every cycle of the CPU is simulated |
 | Emulation / FPGA | the same C | the CPU in the emulated or prototyped design | the C checks, plus whatever the platform can capture | most internal visibility; scoreboards only if the bench was made acceleration-ready |
 | Silicon | the same C | the manufactured CPU | the C checks only | everything except what software can read |
 
 Three consequences for the plan:
 - **The C self-check is the only check that survives to silicon.** Write it in the C realization of every action that must be checked on silicon (the `mem_equal()` in Make It Work), and make the simulation scoreboards check the same rule, so a pass means the same thing on every platform. In simulation the scoreboards add what software cannot see: protocol, routing, ordering and interrupt timing.
-- **The SystemVerilog target needs active agents.** It starts sequences on the bench's sequencers. At SoC level the APB agent is passive (the CPU drives that port), so its sequencer was never built: run the C target there, not the SystemVerilog one. The [active and passive rule](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#active-and-passive-reuse) decides which target each layer can use.
+- **The SystemVerilog target needs active agents.** It starts sequences on the bench's sequencers, here the CPU BFM's. The DMA's APB agent is passive on both benches, because the CPU or its BFM writes the registers through the bridge. At SoC level the RTL CPU takes the CPU BFM's place on its AXI port, so the bench has no agent there that could drive (at most a passive one) and the sequencer the templates use was never built: run the C target there, not the SystemVerilog one. The [active and passive rule](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#active-and-passive-reuse) decides which target each layer can use.
 - **The passive bench must not assume it started the traffic.** When the generated C test drives the DMA, the scoreboards take their expected values from what the monitors observe, not from a bench sequence ([keeping block checks useful](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#keeping-block-checks-useful-at-soc)). The register model's mirror follows the firmware's writes only through an explicit predictor on the passive APB monitor; auto-prediction sees only the register model's own accesses ([prediction limits](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#the-soc-register-model-and-its-prediction-limits)).
 
 Follow one generated C test through SoC simulation. Notice that the bench never drives the DMA: it only watches, and it learns the verdict through the mailbox.
@@ -154,7 +154,7 @@ Follow one generated C test through SoC simulation. Notice that the bench never 
   ]}
   messages={[
     { kind: "divider", label: "boot image (generated test + driver) loaded; reset released" },
-    { kind: "async", from: "cpu", to: "dma", label: "dma_copy(0, ...): APB writes SRC, DST, LEN, then START" },
+    { kind: "async", from: "cpu", to: "dma", label: "dma_copy(0, ...): writes SRC, DST, LEN, then START (AXI, bridged to APB)" },
     { kind: "note", from: "dma", to: "mon", label: "apb_mon sees each write; the register predictor updates the mirror" },
     { kind: "self", from: "dma", label: "AXI reads SRAM, writes DDR (scoreboards check)" },
     { kind: "async", from: "dma", to: "cpu", label: "completion interrupt" },
@@ -190,7 +190,7 @@ PSS is a cost: a tool licence, a model, a realization someone owns, and debuggin
 - **"PSS coverage closes the SoC."** PSS coverage (data coverage, Clause 18; behavioral coverage, Clause 19) shows which scenarios were generated or executed. It does not show that the design behaved correctly; that takes checks and DUT functional coverage linked to the verification plan. Merging block coverage, or PSS coverage, is not SoC closure ([SoC coverage and closure](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#soc-coverage-and-closure)).
 - **"Resources are passed between actions as inputs."** Data flows between actions; resources such as DMA channels are claimed with `lock` or `share` (§14.2). At SoC level, a missing claim lets the tool schedule two copies on one channel.
 - **"Put the C and SV templates side by side in each action."** In one scope, exec blocks of the same kind merge into one block, which maps to at most one language (§22.1.1). The standard puts each language's templates in its own package, never used in the same test (§22.5.1). A tool may accept the side-by-side form, but that is tool behaviour.
-- **Running the SystemVerilog target at SoC level.** Its sequences need sequencers that passive agents never built. It does not fail cleanly: a sequence started on a null sequencer runs on its parent's sequencer instead (uvm-core 2020.3.1, `uvm_sequence_item::set_item_context`), here the virtual sequencer. A child sequence that declares `p_sequencer` then stops with `UVM_FATAL [DCLPSQ]`; one that does not waits forever in `start_item()`, because no driver pulls from the virtual sequencer, until the phase timeout.
+- **Running the SystemVerilog target at SoC level.** Its sequences need the CPU BFM's sequencer, and the SoC bench never built one: the RTL CPU drives that port, so any agent left there is passive. It does not fail cleanly: a sequence started on a null sequencer runs on its parent's sequencer instead (uvm-core 2020.3.1, `uvm_sequence_item::set_item_context`), here the virtual sequencer. A child sequence that declares `p_sequencer` then stops with `UVM_FATAL [DCLPSQ]`; one that does not waits forever in `start_item()`, because no driver pulls from the virtual sequencer, until the phase timeout.
 
 ### Recap
 
@@ -204,7 +204,7 @@ PSS is a cost: a tool licence, a model, a realization someone owns, and debuggin
 
 ### A complete scenario model for the DMA subsystem
 
-The subsystem: a DMA engine with two channels, an APB register port and an AXI master port; SRAM and DDR behind an interconnect; a completion interrupt to the CPU. The use case: two DMA copies run at the same time while other traffic loads DDR. The model is three files: the scenario library, which the system-validation team owns, and one realization file per platform family. **Predict before you read the model:** can both copies use the same channel? Can they write the same DDR addresses?
+The subsystem: a DMA engine with two channels, an APB register port and an AXI master port; an AXI interconnect with an AXI-to-APB bridge in front of that register port; SRAM and DDR behind the interconnect; a completion interrupt to the CPU. At subsystem level the CPU is a BFM with its own AXI master port into the interconnect, as in the [worked strategy](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index#worked-strategy-one-page-for-the-dma-subsystem). The use case: two DMA copies run at the same time while other traffic loads DDR. The model is three files: the scenario library, which the system-validation team owns, and one realization file per platform family. **Predict before you read the model:** can both copies use the same channel? Can they write the same DDR addresses?
 
 The scenario library holds the actions, the SoC facts and the use case. It contains no target code:
 
@@ -280,15 +280,16 @@ package dma_real_c {
 }
 ```
 
-The SystemVerilog realization extends the same actions for the subsystem bench, where the APB agent is active. Its templates run inside the generated virtual sequence; the handles `p_sequencer.apb_sqr` and `p_sequencer.axi_sqr` assume a virtual sequencer with those fields, and how a tool sets up that context is tool-dependent:
+The SystemVerilog realization extends the same actions for the subsystem bench, where the CPU BFM's AXI master agent is active and the DMA's APB agent is passive. Its templates run inside the generated virtual sequence and start both sequences on the CPU BFM's sequencer: the register writes reach the DMA through the interconnect and the AXI-to-APB bridge, and the DDR load comes from the same port, as `ddr_stress()` does from the CPU. The handle `p_sequencer.cpu_sqr` assumes a virtual sequencer with that field, and how a tool sets up that context is tool-dependent:
 
 ```pss
 // compile (together with dma_soc.pss; not in the same test as dma_real_c.pss)
 // file dma_real_sv.pss: owned by the subsystem team; subsystem simulation only
 package dma_real_sv {
   extend action dma_subsys_c::dma_copy_a {
-    // dma_copy_seq programs the channel over APB and waits for the interrupt;
-    // the bench's scoreboards check the copy.
+    // dma_copy_seq programs the channel with CPU BFM writes (the bridge turns
+    // them into APB writes) and waits for the interrupt; the bench's
+    // scoreboards check the copy.
     exec body SV = """
       begin
         dma_copy_seq cp = dma_copy_seq::type_id::create("cp");
@@ -296,7 +297,7 @@ package dma_real_sv {
         cp.src  = {{src}};
         cp.dst  = {{dst}};
         cp.len  = {{len}};
-        cp.start(p_sequencer.apb_sqr, this);
+        cp.start(p_sequencer.cpu_sqr, this);
       end
     """;
   }
@@ -306,7 +307,7 @@ package dma_real_sv {
         axi_burst_seq ld = axi_burst_seq::type_id::create("ld");
         ld.base   = 32'h8100_0000;   // the scratch window, as DDR_SCRATCH_BASE
         ld.bursts = {{bursts}};
-        ld.start(p_sequencer.axi_sqr, this);
+        ld.start(p_sequencer.cpu_sqr, this);
       end
     """;
   }
@@ -363,7 +364,7 @@ Check the solution against the model: `c1` holds channel 0, so its `dst` (0x8000
 | Tool | the chosen tool and its version, and the PSS version it accepts; behavioral coverage needs 3.0 |
 | In PSS | use cases that run on two or more platforms (`dma_under_load_a`, boot, low-power entry and exit) and channel concurrency. Not in PSS: AXI protocol corners, register tests, forced resets and error injection |
 | Model and SoC facts | `dma_soc.pss`, owned by system validation; pool sizes and DDR windows reviewed with every integration change |
-| Realizations | `dma_real_c.pss`, firmware team (calls the product driver); `dma_real_sv.pss`, subsystem team (starts `dma_copy_seq`, `axi_burst_seq`); one package per generated test |
+| Realizations | `dma_real_c.pss`, firmware team (calls the product driver); `dma_real_sv.pss`, subsystem team (starts `dma_copy_seq`, `axi_burst_seq` on the CPU BFM's sequencer); one package per generated test |
 | Checks | C self-checks (`dma_wait_irq()`, `mem_equal()`) on every platform; the simulation scoreboards check the same copy rule |
 | Coverage | PSS behavioral coverage reported per platform, next to the closure evidence and never merged into it |
 | Reproducibility | seed, tool version, model revision, solved schedule and image hash archived with every failure |
@@ -373,7 +374,7 @@ Check the solution against the model: `c1` holds channel 0, so its `dst` (0x8000
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | The subsystem run passes, but the same solved scenario fails in SoC simulation with "dma copy mismatch", while the scoreboards saw correct data on the bus | The C realization differs from the SystemVerilog one (for example the driver takes a length in words, the template passes bytes) | Review each action in `dma_real_c.pss` and `dma_real_sv.pss` side by side; a model bug, not an RTL bug |
-| The SystemVerilog target in the SoC bench stops with `UVM_FATAL [DCLPSQ]` (a cast error on `p_sequencer`), or hangs in `start_item()` until `UVM_FATAL [PH_TIMEOUT]` | It was run where the APB agent is passive, so `p_sequencer.apb_sqr` is null, and `cp.start(null, this)` quietly runs `dma_copy_seq` on the parent's sequencer, the virtual sequencer, which has no driver | Run the C target at SoC level; keep the SystemVerilog target for benches whose agents are active. A template can also guard with `if (p_sequencer.apb_sqr == null)` and report a `` `uvm_fatal `` that names the cause |
+| The SystemVerilog target in the SoC bench stops with `UVM_FATAL [DCLPSQ]` (a cast error on `p_sequencer`), or hangs in `start_item()` until `UVM_FATAL [PH_TIMEOUT]` | It was run where the RTL CPU has replaced the CPU BFM, so `p_sequencer.cpu_sqr` is null, and `cp.start(null, this)` quietly runs `dma_copy_seq` on the parent's sequencer, the virtual sequencer, which has no driver | Run the C target at SoC level; keep the SystemVerilog target for benches whose agents are active. A template can also guard with `if (p_sequencer.cpu_sqr == null)` and report a `` `uvm_fatal `` that names the cause |
 | The tool reports no legal scenario after the SoC integration changed | A pool size or address window no longer matches the SoC (one DMA channel, a smaller SRAM) | Update the SoC facts in the model; review them with every integration change |
 | The generated C test hangs on a one-core silicon or emulation setup, but passes where it had more executors | Parallel actions were assigned to one executor. §24.6.2 makes the tool responsible for running them concurrently, for example by cooperative multitasking, but a C realization that busy-waits (polls a register in a loop without yielding) never lets the other action run. PSS 3.0 provides a `yield;` statement for procedural exec code (exec blocks written as PSS statements rather than template text): it lets other exec code running in parallel on the same executor run before the next statement (§22.7.14). Inside a C target-template body, how the code yields (for example a driver wait that calls the tool's scheduler) is tool-dependent | Use `yield;` in procedural exec code, or write blocking waits in the template in the form your tool can interleave, or assign the actions to separate cores, or change `parallel` to `schedule` for that platform's test set |
 | Passes in simulation, fails on silicon only | A real silicon issue, or a template that relies on simulation behaviour (memory that starts as zero, a backdoor-loaded buffer) | Rerun the same seed and image on emulation for visibility; remove simulation-only assumptions from C realizations |
@@ -467,7 +468,7 @@ Try each before you look anything up; the sections above hold the answers.
       { text: "An RTL bug in the DMA engine; file it against the DMA team", correct: false, feedback: "The scoreboards saw a correct copy on the bus, so the DMA did what it was told. Suspect what told it." },
       { text: "The PSS tool solved different values for the C target", correct: false, feedback: "The stem says the solved values are the same. One solve feeds both targets." },
       { text: "The two realizations of dma_copy_a differ, for example the C driver takes a length in words while the template passes bytes", correct: true, feedback: "Right. The scenario is shared but the realizations are not. Review each action's C and SV templates side by side; this is a model bug, not a design bug." },
-      { text: "The APB agent is passive, so the copy never started", correct: false, feedback: "At SoC level the CPU drives APB, and the scoreboards saw the copy. A passive agent only breaks the SystemVerilog target." }
+      { text: "The APB agent is passive, so the copy never started", correct: false, feedback: "The APB agent is passive on both benches, because the CPU (at subsystem level, its BFM) writes the registers through the bridge; and the scoreboards saw the copy. A missing sequencer breaks only the SystemVerilog target." }
     ],
     explanation: "When one platform passes and another fails on the same solved scenario, and the hardware's observable behaviour was correct, the difference lies in the per-platform realization. Keeping the C and SV templates of each action reviewed together prevents it."
   },
@@ -538,7 +539,7 @@ The DMA subsystem's strategy needs one more use case: "a descriptor points into 
 |---|---|
 | Actions and resources | `dma_copy_a` (reused), a new `dma_copy_bad_a` whose `dst` is constrained into a hole of the address map, and a compound `dma_error_retry_a` whose activity runs the bad copy, then a good copy on the **same** channel. Both claim `dma_chan_r` with `lock`; the compound action constrains them to one channel (`bad.chan.instance_id == good.chan.instance_id`) so the retry proves the channel recovered. |
 | Platforms | Subsystem and SoC simulation: yes. Emulation: yes. Silicon: only if the hole is a real decode hole that answers DECERR on that chip, and the lab agrees the error interrupt cannot hang the bench; otherwise exclude it from the silicon test set and say so in the strategy. |
-| Realization | C: the product driver's error handler path (`dma_copy`, `dma_wait_irq` returning an error status, `dma_clear_error`), owned by the firmware team. SystemVerilog: `dma_copy_seq` plus an error-status check sequence on the active APB agent, owned by the subsystem team. |
+| Realization | C: the product driver's error handler path (`dma_copy`, `dma_wait_irq` returning an error status, `dma_clear_error`), owned by the firmware team. SystemVerilog: `dma_copy_seq` plus an error-status check sequence, both started on the CPU BFM's sequencer (the APB agent is passive), owned by the subsystem team. |
 | Checks | Everywhere: the C code checks that the error status is set, that it clears, and that the retry's data matches. Simulation adds: the AXI monitor sees DECERR on the B channel (IHI0022E §A3.4.4), the error interrupt arrives within budget, and no write landed in the hole. |
 | Decision | PSS, because the scenario must run on three or four platforms and the concurrency variant (an error on one channel while the other copies) comes free from the resource model. The forced-signal variants (an error injected inside the interconnect) stay UVM-only, as in [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index). |
 | Strategy entry | *In PSS:* add `dma_error_retry_a` to the use-case category. *Realizations:* the firmware team adds the error path to `dma_real_c.pss`; the subsystem team adds the error-status sequence to `dma_real_sv.pss`. *Platforms:* the silicon run is excluded unless the lab confirms a real decode hole, recorded with an owner and a reason. *Coverage:* behavioral coverage of "bad copy, then good copy on the same channel", reported next to the error-response rows of the closure evidence. |

@@ -332,10 +332,10 @@ In words:
 The M1 bench therefore:
 1. Declares `rst_n` as a plain interface variable with a declaration initializer, `logic rst_n = 1'b0;`. The initializer runs at time 0, before any `initial` or `always` procedure starts (§6.8), so the DUT is in reset from the start.
 2. Releases it with a direct write between edges: `#12 bus.rst_n = 1'b1;`. This is practice, not a rule of the standard: assert reset whenever you need to, but release it away from the active clock edge. Real cell libraries add recovery and removal checks, whose values are library- and tool-dependent.
-3. Lists `rst_n` as an **input** of `mon_cb`. Sampling a signal through a clocking block is fine; only driving it through one is the problem. The monitor skips every edge whose sample shows reset asserted.
+3. Lists `rst_n` as an **input** of `mon_cb`, and the monitor skips every edge whose sample shows reset asserted. Sampling reset through a clocking block is enough here because this bench applies only a power-on reset and its clock runs freely. It is not a general rule: a clocking block samples only at its clocking event (§14.13), so it sees an asynchronous reset that arrives mid-test late, or never. A short pulse between two edges, or a reset held while the clock is gated off, leaves no sample at all. A monitor for such a DUT also watches the raw signal, with `@(negedge bus.rst_n)` in a fork against its sampling loop.
 4. Starts driving only after the release, then synchronizes with `@(bus.cb)`. A reusable driver that does not release reset itself does the same with `wait (bus.rst_n === 1'b1); @(bus.cb);`.
 
-Reset in the middle of a test, with a driver, monitor and scoreboard that flush their state, is planned for Tier 3.
+Reset in the middle of a test, with that raw-signal watcher and a driver, monitor and scoreboard that flush their state, is built in Tier 3 by [A-UVM-9 Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
 
 ### Several drives to one signal in one cycle
 
@@ -714,7 +714,7 @@ Use this whenever you inherit a bench that drives the DUT with raw assignments:
 2. **Monitor block.** Add a second clocking block with inputs only: every signal the monitor checks, including reset.
 3. **Drives.** Make the driver wait on `@(bus.cb)`, and turn every `bus.sig = v;` or `bus.sig <= v;` into `bus.cb.sig <= v;`.
 4. **Reads.** Make the monitor wait on `@(bus.mon_cb)` and read only `bus.mon_cb.sig`. Delete every `@(posedge clk)` from testbench code.
-5. **Asynchronous signals.** Leave reset, and any other asynchronous input, as direct writes made between edges.
+5. **Asynchronous signals.** Leave reset, and any other asynchronous input, as direct writes made between edges. If an asynchronous reset can arrive mid-test, the monitor also watches the raw signal, as "Reset stays outside the clocking block" describes.
 6. **Verify.** Declare time units in every design element, rerun, compare the log with the old one, and run the mutant: the bench must fail with `.BUG(1)`.
 
 **Checklist before moving on:**
@@ -1159,6 +1159,7 @@ The flashcards for this lesson follow below, under "Reinforce the essentials".
 - [I-UVM-2A Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): drivers, monitors and passive agents.
 - [I-UVM-2C Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): passing the virtual interface with `uvm_config_db`.
 - [A-UVM-7 VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): clocking blocks inside reusable verification IP.
+- [A-UVM-9 Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index): reset in the middle of a test, and watching an asynchronous reset on the raw signal.
 - Practice: [Interface Signal Flow](/practice/visualizations/interface-signal-flow) steps a value from a class through a virtual interface and a clocking block to the pins.
 
 <NextLesson />

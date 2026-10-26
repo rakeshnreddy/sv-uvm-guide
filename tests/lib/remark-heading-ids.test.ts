@@ -149,7 +149,7 @@ describe("remarkHeadingIds", () => {
       );
       for (const entry of toc) expect(ids, `${route}#${entry.id}`).toContain(entry.id);
     }
-  }, 120_000);
+  }, 300_000); // compiles every lesson: about 30 s alone, over 120 s in a loaded run with a cold cache
 
   it("resolves the curriculum anchors that diagrams link to (G30-OVW-08)", () => {
     const broken: string[] = [];

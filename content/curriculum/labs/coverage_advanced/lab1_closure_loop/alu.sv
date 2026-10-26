@@ -8,6 +8,8 @@ module alu
   input  logic [7:0] b,
   output logic [7:0] y
 );
+  timeunit 1ns;      // same time unit and precision as alu_pkg and tb_top
+  timeprecision 1ns; // (IEEE 1800-2023 §3.14.2.3)
   always_comb begin
     case (op)
       ADD:     y = a + b;

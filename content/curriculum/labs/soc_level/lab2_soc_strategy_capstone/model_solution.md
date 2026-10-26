@@ -63,7 +63,7 @@ Exit criteria: all planned system bins hit or waived with a written reachability
 
 | Property | Kind | Trigger | Obligation | Failure meaning |
 | --- | --- | --- | --- | --- |
-| Accepted request eventually receives response | liveness in formal (`s_eventually`); bounded `##[1:N]` safety check in simulation, N from the interconnect's worst-case latency budget | AXI/ACE address handshake (for writes, the last W beat) | matching response or documented error | interconnect can lose or indefinitely stall a transaction |
+| Accepted request eventually receives response | liveness in formal (`s_eventually`); bounded `##[1:N]` safety check in simulation, N from the interconnect's worst-case latency budget | AXI/ACE read address handshake; for writes, the later of the AW handshake and the last W beat (AXI4 write response dependency, IHI0022E §A3.3.1) | matching response or documented error | interconnect can lose or indefinitely stall a transaction |
 | No channel-dependency cycle | liveness in formal | outstanding read/write with backpressure | at least one dependent channel can always make progress | circular wait deadlock |
 | Reset convergence | liveness in formal; bounded in simulation | reset asserted with outstanding traffic | all outstanding queues drain or invalidate and outputs reach idle | reset leaves stale transactions alive |
 | Interrupt eventual delivery | liveness in formal; bounded in simulation | enabled source asserts interrupt | target core sees pending interrupt or masked status is visible | lost interrupt or wrong router programming |

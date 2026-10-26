@@ -114,8 +114,8 @@ Use the table as a map: each row is explained in a section below, and the Recap 
 | X on R only in active lanes | monitor | needs the read's address and size, and the 4-state sample; a testbench policy | §A3.4.1, §A3.4.3 (policy) |
 | RLAST and WLAST on beat AxLEN + 1 | monitor (or checker with per-ID length queues) | needs the length of the oldest read of that RID, or the AW that a W burst pairs with | §A3.2.2, §A3.4.1 |
 | RID or BID that matches nothing outstanding | monitor (or checker with per-ID counters) | needs per-ID outstanding counts | §A5.3.1, §A6.4 |
-| Data and per-beat responses equal the prediction | scoreboard | needs the reference model | §A3.4.4 |
-| Same-ID read order | scoreboard | only the data shows which read came back | §A5.3.1 |
+| Per-beat responses equal the prediction, and data too except on SLVERR and DECERR beats | scoreboard | needs the reference model | §A3.4.4 |
+| Same-ID read order | scoreboard | only the data (or the per-beat responses) shows which read came back | §A5.3.1 |
 | Same-ID write order | scoreboard, end to end (read the data back, or make the responses differ) | B carries only BID and BRESP | §A3.4.4, §A6.4 |
 | What a read overlapping an in-flight write may return | reference model | needs addresses, data and B times | §A5.3.4, §A6.4 |
 | Every read and write completed by the end of the test | scoreboard `check_phase` | needs the list of predictions | — |
@@ -373,7 +373,7 @@ In `check_phase`, which runs after the run phase ends (IEEE 1800.2-2020 §9.8.1.
 
 | Mutant (what the slave does wrong) | What catches it | Log |
 |---|---|---|
-| `SAME_ID_SWAP`: answers the younger of two same-ID reads first | scoreboard: each read's data is compared with the other's prediction | equal lengths: two `SCB_MISMATCH ... beat 0 data`. Different lengths: two `RLAST` errors from the monitor, one `SCB_MISMATCH ... beat count` and one `... beat 0 data`, then `UNEXPECTED_R` for the leftover beats (or a further mismatch if another read with that ID is open) |
+| `SAME_ID_SWAP`: answers the younger of two same-ID reads first | scoreboard: each read's data or responses are compared with the other's prediction | equal lengths: two `SCB_MISMATCH ... beat 0 data` (`beat 0 resp` when only one of the two reads starts in the SLVERR window). Different lengths: two `RLAST` errors from the monitor, one `SCB_MISMATCH ... beat count` and one `... beat 0 data` (or `resp`), then `UNEXPECTED_R` for the leftover beats (or a further mismatch if another read with that ID is open) |
 | `DROP_RLAST`: last beat without RLAST | monitor: beat AxLEN + 1 without RLAST | `RLAST ... RLAST=0 on beat 4 of 4` |
 | `EXTRA_BEAT`: one more beat, with RLAST, after a read is complete | monitor: no read of that ID is open; checker: the extra RLAST unbalances its counters | `UNEXPECTED_R`, and `AXI_CHK` errors from `a_r_after_ar` |
 | `WRONG_RID`: every beat of one read answered with an ID never issued; the responder waits for the last AR and picks a read that is the last with its ID | monitor, then end-of-test accounting | `UNEXPECTED_R` for each beat of that read, then `SCB_PENDING`, `[EOT] 39 of 40 reads compared` and `pending=1` |
@@ -386,13 +386,17 @@ Why `WRONG_RID` is timed that way: the monitor never receives a beat with the an
 ```systemverilog
 // snippet: lane-aware read compare, for an item that also records size and
 // burst. beat_addr() and active_lanes() are the IHI0022E A3.4.1 equations
-// from B-AXI-2's axi_burst_pkg (beat numbers there start at 1).
+// from B-AXI-2's axi_burst_pkg (beat numbers there start at 1). The response
+// is compared first; RDATA is not compared on an SLVERR or DECERR beat.
 for (int unsigned k = 0; k < e.data.size(); k++) begin
   logic [DATA_BYTES-1:0] lanes =
     active_lanes(beat_addr(e.addr, e.size, e.len, e.burst, k + 1), e.size);
-  for (int unsigned b = 0; b < DATA_BYTES; b++)
-    if (lanes[b] && a.data[k][8*b +: 8] !== e.data[k][8*b +: 8])
-      `uvm_error("SCB_MISMATCH", $sformatf("beat %0d lane %0d", k, b))
+  if (a.resp[k] != e.resp[k])
+    `uvm_error("SCB_MISMATCH", $sformatf("beat %0d resp", k))
+  else if (!e.resp[k][1])             // OKAY or EXOKAY: compare the data
+    for (int unsigned b = 0; b < DATA_BYTES; b++)
+      if (lanes[b] && a.data[k][8*b +: 8] !== e.data[k][8*b +: 8])
+        `uvm_error("SCB_MISMATCH", $sformatf("beat %0d lane %0d", k, b))
 end
 ```
 
@@ -449,6 +453,8 @@ Who decides what about that SLVERR:
 | scoreboard | compares the actual response with the prediction, beat by beat |
 | checker | flags only protocol misuse, such as a burst cut short after an error, or EXOKAY on a normal (non-exclusive) access, which has no defined meaning (§A3.4.4, §A7.2) |
 | test | decides whether an *unpredicted* error fails the run, or is an expected error the test injected ([A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index)) |
+
+**No RDATA compare on an error beat.** §A3.4.4 requires every beat of a failed read to transfer, but it places no requirement on RDATA for a beat whose RRESP is SLVERR or DECERR. So the scoreboard compares each beat's response first, and a difference is reported as a response mismatch. When the predicted and actual responses are both SLVERR or DECERR (`resp[1]` is 1), it compares nothing more for that beat. Comparing RDATA there would fail a legal slave that returns zeros or stale data with its SLVERR, and the message would name the data instead of the response. The Make It Work responder returns the reference data on its SLVERR beats only as a convenience of the self-test; the scoreboard does not rely on it, so a real slave can replace `rsp` unchanged. AHB states the same rule outright for HRDATA on an ERROR response ([B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index)). One cost follows: two same-ID reads of equal length answered SLVERR on every beat cannot be told apart. To stay simple, the `SAME_ID_SWAP` mutant skips every pair whose reads both start in the error window, a wider rule than that case needs, so it swaps only a pair in which at least one read starts outside the window.
 
 **The misconception: "SLVERR is a protocol error, so the monitor should flag it."** SLVERR is a defined, legal response. A monitor that raises `uvm_error` on it fails every error-injection test and every test of a slave's error path, and it gets switched off, taking its real checks with it. The monitor records; the scoreboard decides whether the error was expected.
 
@@ -652,7 +658,7 @@ The definitions must separate the slave's delay from the master's:
 |---|---|---|---|
 | monitor | per-ID queues of open reads; AW and W FIFOs; per-AWID queues for B | RLAST/WLAST position, RID/BID with nothing open, X on active R lanes | judges data values or responses |
 | predictor | the reference memory | — | predicts at data time |
-| scoreboard | per-ID queues of expected reads | data and responses per beat, same-ID order, leftovers in `check_phase` | uses one queue for all IDs or one slot per ID |
+| scoreboard | per-ID queues of expected reads | responses per beat, data on OKAY and EXOKAY beats, same-ID order, leftovers in `check_phase` | uses one queue for all IDs or one slot per ID |
 | checker | handshake counters | pin rules, burst legality, X on strobed W lanes | needs expected data |
 | responder | per-ID queues of accepted requests | — | answers in only one order |
 | performance | cycle counts | contracts from the product spec | mixes master stalls into slave latency |
@@ -837,6 +843,8 @@ package axi_rd_pkg;
     endfunction
 
     // "" when act matches this expected read, else the first difference.
+    // Each beat's response is compared first. RDATA is compared only on OKAY
+    // and EXOKAY beats: A3.4.4 sets no RDATA value for SLVERR or DECERR.
     function string diff(axi_rd_item act);
       if (act.id != id || act.addr != addr || act.len != len)
         return $sformatf("header: exp %s, act %s",
@@ -845,12 +853,12 @@ package axi_rd_pkg;
         return $sformatf("beat count: exp %0d, act %0d",
                          data.size(), act.data.size());
       foreach (data[i]) begin
-        if (act.data[i] != data[i])
-          return $sformatf("beat %0d data: exp 0x%08h, act 0x%08h",
-                           i, data[i], act.data[i]);
         if (act.resp[i] != resp[i])
           return $sformatf("beat %0d resp: exp %0d, act %0d",
                            i, resp[i], act.resp[i]);
+        if (!resp[i][1] && act.data[i] != data[i])
+          return $sformatf("beat %0d data: exp 0x%08h, act 0x%08h",
+                           i, data[i], act.data[i]);
       end
       return "";
     endfunction
@@ -1009,7 +1017,7 @@ package axi_rd_pkg;
       h = pend[cur][0];
       a = h.addr + 4 * h.sent;          // INCR, 4-byte beats
       vif.slv_cb.RID   <= h.bad_rid ? cur ^ 8 : cur;
-      vif.slv_cb.RDATA <= axi_mem_model::data_at(a);
+      vif.slv_cb.RDATA <= axi_mem_model::data_at(a);   // not compared on SLVERR
       vif.slv_cb.RRESP <= axi_mem_model::resp_at(cfg, a);   // per beat
       vif.slv_cb.RLAST <= last_flag(h);
       vld = 1;
@@ -1027,6 +1035,11 @@ package axi_rd_pkg;
       rd_req_t t;
       if (cfg.mutant != "SAME_ID_SWAP" || mutated || pend[id].size() < 2) return;
       if (pend[id][0].sent != 0 || pend[id][1].sent != 0) return;
+      // Two equal-length reads answered SLVERR on every beat cannot be told
+      // apart (RDATA is not compared there). To stay simple, skip every pair
+      // whose reads both start in the error window.
+      if (axi_mem_model::resp_at(cfg, pend[id][0].addr) != RESP_OKAY &&
+          axi_mem_model::resp_at(cfg, pend[id][1].addr) != RESP_OKAY) return;
       t           = pend[id][0];
       pend[id][0] = pend[id][1];        // the younger read answers first
       pend[id][1] = t;
@@ -1518,6 +1531,7 @@ Every mutant run fails, which is the point.
 | One `UNEXPECTED_R`, then `SCB_MISMATCH` and `RLAST` errors on later reads of one ID | the slave answered a read with a wrong RID; that read stays at the head of `open_q[ID]`, and later reads of that ID are attributed to it | debug the first error; the later ones are its consequences |
 | Errors on every narrow write | whole-bus X check or whole-bus compare | gate by WSTRB, compare only active lanes |
 | `uvm_error` on every error-injection test | the monitor flags SLVERR or DECERR | record responses; let the scoreboard compare them with the prediction |
+| `SCB_MISMATCH ... beat k data` on a predicted SLVERR beat, only with a real slave | the scoreboard compares RDATA on error beats, where IHI0022E sets no value | compare the response first; skip RDATA on SLVERR and DECERR beats |
 | A test that passes with zero reads, or with reads that never returned | no end-of-test accounting, or the test ends on a fixed delay | `check_phase` leftovers and a compared-count check; wait on `n_pending` with a cycle timeout |
 | Latency looks long only when RREADY is random | master stalls counted as slave latency | measure AR to first RVALID; count stalls separately |
 | `NO_VIF` fatal at build | the `uvm_config_db` scope does not match the component's full name | set with `"uvm_test_top*"` or set from the test for `"env.*"` |

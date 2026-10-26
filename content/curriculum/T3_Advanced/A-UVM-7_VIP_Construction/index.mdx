@@ -455,7 +455,7 @@ Two design decisions make the responder robust:
 - **`PREADY` is low by default.** The responder raises it only to complete a transfer. If a reactive sequence is slow, for example because it waits for a reference model, the master simply sees more wait states, which APB allows in any number (IHI 0024C §3.3.2). A responder that held `PREADY` high by default would complete transfers it had not answered yet.
 - **`PSLVERR` is driven low when it is not sampled.** IHI 0024C §3.4 recommends this but does not require it, so a monitor must ignore `PSLVERR` outside the completion edge.
 
-**Pitfall: an objection in a `forever` sequence.** A reactive sequence never ends. If it raises an objection, or the test turns on its automatic phase objection, the objection is never dropped and the run phase never ends; IEEE 1800.2-2020 §14.2.4.4 warns against exactly this. Start it without an objection, in a `fork ... join_none`, and let the test's own traffic hold the objection. The AXI and AHB verification lessons, [B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index) and [B-AHB-3](/curriculum/T3_Advanced/B-AHB-3_AHB_Verification/index), apply the same pattern to responders with random `READY` signals, out-of-order answers and error injection.
+**Pitfall: an objection in a `forever` sequence.** A reactive sequence never ends. If it raises an objection, or the test turns on its automatic phase objection, the objection is never dropped and the run phase never ends; IEEE 1800.2-2020 §14.2.4.4 warns against exactly this. Start it without an objection, in its own `fork ... join_none`, let the test's own traffic hold the objection, and stop it explicitly with `kill()` (§14.2.5.11) when the scenario ends. Do not leave it for the end of the run phase to stop: uvm-core 2020.3.1 kills the phase's processes then, including the thread that called `start()`, and a process guard (an implementation addition, not in 1800.2) reports `UVM_WARNING [SEQPRTZMB]` and kills the sequence itself. The AXI and AHB verification lessons, [B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index) and [B-AHB-3](/curriculum/T3_Advanced/B-AHB-3_AHB_Verification/index), apply the same pattern to responders with random `READY` signals, out-of-order answers and error injection.
 
 ### The sequences a VIP ships
 
@@ -819,7 +819,7 @@ A VIP is a product, and its users need three things beside the code.
 | One `config_db` entry per knob | silent misses on typos and type mismatches | one configuration object, one typed `get`, fatal if missing |
 | Monitor refills one object | every stored handle shows the last transfer | `type_id::create` per transfer |
 | Reset kills the transfer without `item_done()` | the sequence hangs in `finish_item` | one `item_done()` per `get_next_item()` |
-| Reactive sequence with an objection | the run phase never ends | start it in `fork ... join_none`, no objection |
+| Reactive sequence with an objection | the run phase never ends | start it in its own `fork ... join_none`, no objection; stop it with `kill()` when the scenario ends (left running, uvm-core warns `SEQPRTZMB` at the end of the run phase) |
 | `set` and `get` with different vif parameters or modport | `get()` returns 0 silently | one typedef, used on both sides |
 
 ## Make It Work
@@ -1283,7 +1283,8 @@ package apb_pkg;
     endtask
   endclass
 
-  // Never ends: start it without an objection (IEEE 1800.2-2020 14.2.4.4 NOTE).
+  // Never ends: start it without an objection (IEEE 1800.2-2020 14.2.4.4 NOTE)
+  // and stop it with kill() when the scenario ends.
   class apb_reactive_seq extends apb_base_seq;
     `uvm_object_utils(apb_reactive_seq)
 
@@ -1323,7 +1324,7 @@ package apb_selftest_pkg;
     `uvm_component_utils(apb_selftest_sb)
     uvm_tlm_analysis_fifo #(apb_item) exp_fifo;   // from master.drv.done_ap
     uvm_tlm_analysis_fifo #(apb_item) act_fifo;   // from observer.ap
-    int unsigned matches, mismatches, slverrs;
+    int unsigned n_match, n_mismatch, n_slverr;   // not "matches": a reserved keyword
 
     function new(string name, uvm_component parent);
       super.new(name, parent);
@@ -1334,29 +1335,33 @@ package apb_selftest_pkg;
     task run_phase(uvm_phase phase);
       apb_item exp, act;
       forever begin
-        exp_fifo.get(exp);
-        act_fifo.get(act);
-        if (act.compare(exp)) matches++;
+        exp_fifo.peek(exp);            // wait for the intent, but leave it in the FIFO
+        act_fifo.get(act);             // wait for what the observer saw
+        void'(exp_fifo.try_get(exp));  // only now consume the intent
+        if (act.compare(exp)) n_match++;
         else begin
-          mismatches++;
+          n_mismatch++;
           `uvm_error("SELFTEST", {"expected ", exp.convert2string(),
                                   " observed ", act.convert2string()})
         end
-        if (act.slverr) slverrs++;
+        if (act.slverr) n_slverr++;
       end
     endtask
 
+    // After run_phase: anything left in a FIFO was never compared.
     function void check_phase(uvm_phase phase);
       super.check_phase(phase);
       if (exp_fifo.used() != 0 || act_fifo.used() != 0)
         `uvm_error("SELFTEST", $sformatf("unmatched: %0d expected, %0d observed",
                                          exp_fifo.used(), act_fifo.used()))
+      if (n_match + n_mismatch == 0)
+        `uvm_error("SELFTEST", "no transfer was compared: this run proves nothing")
     endfunction
 
     function void report_phase(uvm_phase phase);
       super.report_phase(phase);
       `uvm_info("SELFTEST", $sformatf("transfers=%0d mismatches=%0d slverr=%0d",
-                matches + mismatches, mismatches, slverrs), UVM_LOW)
+                n_match + n_mismatch, n_mismatch, n_slverr), UVM_LOW)
     endfunction
   endclass
 
@@ -1425,12 +1430,13 @@ package apb_selftest_pkg;
       phase.raise_objection(this);
       answers = apb_reactive_seq::type_id::create("answers");
       fork
-        answers.start(env.responder.sqr);   // runs forever and holds no objection
+        answers.start(env.responder.sqr);   // runs until killed; holds no objection
       join_none
       traffic = apb_rw_seq::type_id::create("traffic");
       if (!traffic.randomize() with { n_transfers == 20; })
         `uvm_fatal("RAND", "traffic randomization failed")
       traffic.start(env.master.sqr);
+      answers.kill();                       // stop the responder ourselves (SEQPRTZMB)
       phase.get_objection().set_drain_time(this, 50ns);  // let the last compare run
       phase.drop_objection(this);
     endtask
@@ -1566,7 +1572,7 @@ UVM_ERROR :    1
 UVM_FATAL :    0
 ```
 
-Read the output against the code. The `observer` has `cov` and `mon` and no `drv` or `sqr`: passive, and the only agent with coverage. The banner prints once, from the first agent to reach `start_of_simulation_phase` (a bottom-up phase, IEEE 1800.2-2020 §9.8.1.4; uvm-core visits siblings in name order, so `master` comes first), and each agent then prints its configuration, so a log always records how every agent was set up. In the assertion test the scoreboard still matches, because the master's intent and the monitor's capture both use the address from the SETUP edge; only the assertion sees the illegal change, and it is counted. The `%m` text, here `tb_top.bus.a_wait_stable`, varies by simulator. If the random responder never inserts a wait state in 20 transfers (each transfer has a three in four chance of at least one), the bad driver never fires and the test reports no error; a release self-test pins the seed or forces `max_wait` and a minimum wait for this test.
+Read the output against the code. The `observer` has `cov` and `mon` and no `drv` or `sqr`: passive, and the only agent with coverage. The banner prints once, from the first agent to reach `start_of_simulation_phase` (a bottom-up phase, IEEE 1800.2-2020 §9.8.1.4; uvm-core visits siblings in name order, so `master` comes first), and each agent then prints its configuration, so a log always records how every agent was set up. `UVM_WARNING :    0` holds because the test stops `answers` with `kill()` once `traffic` returns: left running, the sequence would still be inside `start()` when the run phase ends, uvm-core 2020.3.1 would kill that thread with the phase's other processes, and its process guard would add `UVM_WARNING [SEQPRTZMB]` to both logs (by source inspection of `uvm_phase_hopper.svh` and `uvm_sequence_base.svh`, not a simulator run). In the assertion test the scoreboard still matches, because the master's intent and the monitor's capture both use the address from the SETUP edge; only the assertion sees the illegal change, and it is counted. The `%m` text, here `tb_top.bus.a_wait_stable`, varies by simulator. If the random responder never inserts a wait state in 20 transfers (each transfer has a three in four chance of at least one), the bad driver never fires and the test reports no error; a release self-test pins the seed or forces `max_wait` and a minimum wait for this test.
 
 **Run it.** No simulator ships with this site, so the steps are tool-neutral:
 1. Compile uvm-core 2020.3.1 (`src/uvm_pkg.sv`, with `src` on the include path), or select your simulator's built-in UVM library and check that it is 2020.3.1 or later.
@@ -1730,7 +1736,7 @@ Answer each one before you open the feedback.
   title="Interview: a responder whose answers come from sequences"
   question="Design an APB responder agent whose wait states and errors are controlled by sequences. What are the moving parts, and what is the classic bug?"
   options={[
-    { text: "The monitor publishes each request at SETUP to an analysis FIFO in the sequencer; a forever reactive sequence gets it through p_sequencer and sends a response item; the driver holds PREADY low until the response says otherwise. The classic bug is an objection in the forever sequence, which hangs the test.", isCorrect: true, feedback: "Right. Add that PREADY low by default turns a slow answer into legal wait states, and that the reactive sequence is started in fork-join_none with no objection." },
+    { text: "The monitor publishes each request at SETUP to an analysis FIFO in the sequencer; a forever reactive sequence gets it through p_sequencer and sends a response item; the driver holds PREADY low until the response says otherwise. The classic bug is an objection in the forever sequence, which hangs the test.", isCorrect: true, feedback: "Right. Add that PREADY low by default turns a slow answer into legal wait states, and that the reactive sequence is started in fork-join_none with no objection and stopped with kill() when the scenario ends." },
     { text: "Generate all responses in advance in a sequence started before the test, and have the driver pop them in order.", isCorrect: false, feedback: "Responses depend on requests the DUT has not made yet: read or write, address. A reactive design answers each request as it arrives." },
     { text: "Let the driver randomize responses itself; sequences cannot react to the bus.", isCorrect: false, feedback: "Then tests must override the driver to change responses. Sequences can react through p_sequencer and an analysis FIFO fed by the monitor." },
     { text: "Drive PREADY high by default so transfers never stall.", isCorrect: false, feedback: "Then the responder completes transfers it has not answered yet, with stale data. Low by default is the safe choice; APB allows any number of wait states." }
@@ -1975,11 +1981,11 @@ A milestone lab for this module, LAB-M2 (one valid/ready or APB agent reused as 
 ## References & Next Topics
 
 **Primary sources**
-- **IEEE 1800.2-2020:** §9.3.1.7.1 `get_objection`; §9.8.1.1 `uvm_build_phase` (top-down); §10.5.1.3.7 `set_drain_time`; §6.3.5.2 report actions; §6.3.7 severity overrides; §6.6 `uvm_report_catcher`; §8.2.3.2.5 `set_type_override`; §8.3.1.4.2 `set_type_override_by_type`; §12.2.8.3 `uvm_tlm_analysis_fifo`; §12.2.10.2 analysis imp (subscribers do not modify what they receive); §13.4 `uvm_agent` (§13.4.2.2 `get_is_active` and the `is_active` setting); §13.9 `uvm_subscriber`; §14.2.4.4 `set_automatic_phase_objection` (NOTE on `forever` sequences); §14.2.6.2 `start_item`; §14.2.6.3 `finish_item` (NOTE on `item_done` and `get`); §14.4 `uvm_sequence_library`; §15.3.2.14 `stop_sequences`; §15.3.2.20 `send_request`; §15.5.2.3 `get_next_item`; Annex B.2.1.3 component utils and param utils macros; B.3.3 `` `uvm_declare_p_sequencer ``; B.7.1 to B.7.3 version defines; F.2.1.7 `uvm_active_passive_enum`; F.3.2.1 `uvm_get_report_object`; F.3.2.3 global `uvm_report_*`; F.7.4.2 `print_topology`; G.2.7 `+uvm_set_type_override`.
-- **IEEE 1800-2023:** §6.5 nets and variables; §8.4 objects and handles; §8.12 assignment and copying; §8.27 `typedef class`; §9.6.3 `disable fork`; §13.4.4 clocking drives allowed in functions; §14.3 clocking block declaration (default skews); §14.16 synchronous drives (nets, `'z` driver, drives between edges); §16.14.1 `assert` (disabled attempts run no action block); §18.7.1 `local::` scope resolution in inline constraints; §18.11 inline random-variable control; §20.10 severity tasks; §20.11 assertion control tasks; §23.11 `bind`; §25.8 parameterized interfaces; §25.9 virtual interfaces (type includes parameters and modport; null use is fatal; no hierarchical references); §26.2 package declarations.
+- **IEEE 1800.2-2020:** §9.3.1.7.1 `get_objection`; §9.8.1.1 `uvm_build_phase` (top-down); §10.5.1.3.7 `set_drain_time`; §6.3.5.2 report actions; §6.3.7 severity overrides; §6.6 `uvm_report_catcher`; §8.2.3.2.5 `set_type_override`; §8.3.1.4.2 `set_type_override_by_type`; §12.2.8.3 `uvm_tlm_analysis_fifo`; §12.2.10.2 analysis imp (subscribers do not modify what they receive); §13.4 `uvm_agent` (§13.4.2.2 `get_is_active` and the `is_active` setting); §13.9 `uvm_subscriber`; §14.2.4.4 `set_automatic_phase_objection` (NOTE on `forever` sequences); §14.2.5.11 `kill`; §14.2.6.2 `start_item`; §14.2.6.3 `finish_item` (NOTE on `item_done` and `get`); §14.4 `uvm_sequence_library`; §15.3.2.14 `stop_sequences`; §15.3.2.20 `send_request`; §15.5.2.3 `get_next_item`; Annex B.2.1.3 component utils and param utils macros; B.3.3 `` `uvm_declare_p_sequencer ``; B.7.1 to B.7.3 version defines; F.2.1.7 `uvm_active_passive_enum`; F.3.2.1 `uvm_get_report_object`; F.3.2.3 global `uvm_report_*`; F.7.4.2 `print_topology`; G.2.7 `+uvm_set_type_override`.
+- **IEEE 1800-2023:** §6.5 nets and variables; §8.4 objects and handles; §8.12 assignment and copying; §8.27 `typedef class`; §9.6.3 `disable fork`; §9.7 `process::kill()` (also terminates descendant subprocesses); §13.4.4 clocking drives allowed in functions; §14.3 clocking block declaration (default skews); §14.16 synchronous drives (nets, `'z` driver, drives between edges); §16.14.1 `assert` (disabled attempts run no action block); §18.7.1 `local::` scope resolution in inline constraints; §18.11 inline random-variable control; §20.10 severity tasks; §20.11 assertion control tasks; §23.11 `bind`; §25.8 parameterized interfaces; §25.9 virtual interfaces (type includes parameters and modport; null use is fatal; no hierarchical references); §26.2 package declarations; Annex B reserved keywords (`matches`).
 - **Arm IHI 0024C (AMBA APB Protocol Specification v2.0):** §1.2 revisions (APB3, APB4); §2.1.1 data buses (up to 32 bits); §3.1.1 write without wait states (`PENABLE` deasserted at the end); §3.1.2 write with wait states (signals held; `PREADY` any value while `PENABLE` is low); §3.3.2 read with wait states (any number); §3.4 error response (`PSLVERR` valid only at completion; driving it low otherwise is recommended); §4.1 operating states (SETUP lasts one cycle). Later issues of the APB specification were checked only for the terminology below.
 - **Arm IHI 0024E (AMBA APB Protocol Specification, issue E, 2023):** §1.1 about the APB protocol (the roles are named Requester and Completer); Appendix C, Table C-4 changes from issue C to issue D (terminology regularized to Completer and Requester).
-- **uvm-core 2020.3.1 (implementation behaviour, labelled "uvm-core" on this page):** `src/comps/uvm_agent.svh` (the `is_active` member and the scalar lookup); `src/macros/uvm_message_defines.svh` (`` `uvm_error `` and `uvm_get_report_object()`); `src/seq/uvm_sequence_base.svh` (`SEQ` fatal); `src/seq/uvm_sequencer.svh` (`stop_sequences`, `SQRBADITMDN`); `src/seq/uvm_sequencer_base.svh` (`kill_sequence` removes queued requests and locks, not the request FIFO); `src/seq/uvm_sequencer_param_base.svh` (`SQRSNDREQCAST`); `src/tlm1/uvm_tlm_fifos.svh`; `src/base/uvm_version.svh`; `src/macros/uvm_version_defines.svh`; `+UVM_CONFIG_DB_TRACE` and `check_config_usage()`.
+- **uvm-core 2020.3.1 (implementation behaviour, labelled "uvm-core" on this page):** `src/comps/uvm_agent.svh` (the `is_active` member and the scalar lookup); `src/macros/uvm_message_defines.svh` (`` `uvm_error `` and `uvm_get_report_object()`); `src/seq/uvm_sequence_base.svh` (`SEQ` fatal; the `SEQPRTZMB` process guard on the thread that called `start()`); `src/base/uvm_process_guard.svh`; `src/base/uvm_phase_hopper.svh` (`cleanup_phase` kills the phase's processes); `src/seq/uvm_sequencer.svh` (`stop_sequences`, `SQRBADITMDN`); `src/seq/uvm_sequencer_base.svh` (`kill_sequence` removes queued requests and locks, not the request FIFO); `src/seq/uvm_sequencer_param_base.svh` (`SQRSNDREQCAST`); `src/tlm1/uvm_tlm_fifos.svh`; `src/base/uvm_version.svh`; `src/macros/uvm_version_defines.svh`; `+UVM_CONFIG_DB_TRACE` and `check_config_usage()`.
 
 **Related**
 - [I-UVM-2A Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): the agent's roles and the active/passive mechanism this VIP packages.

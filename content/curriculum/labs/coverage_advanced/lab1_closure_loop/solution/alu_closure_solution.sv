@@ -2,6 +2,8 @@
 // One self-contained file (package, DUT, testbench). Top level: tb_top.
 // The only changes from the starter are in class alu_txn: see "FIX" below.
 package alu_pkg;
+  timeunit 1ns;      // every design element in the file declares the same
+  timeprecision 1ns; // time unit and precision (IEEE 1800-2023 §3.14.2.3)
   typedef enum bit [2:0] {ADD, SUB, MUL, DIV, AND, OR, XOR} op_t;
 
   function automatic bit [7:0] alu_model(op_t op, bit [7:0] a, bit [7:0] b);
@@ -106,6 +108,8 @@ module alu
   input  logic [7:0] b,
   output logic [7:0] y
 );
+  timeunit 1ns;
+  timeprecision 1ns;
   always_comb begin
     case (op)
       ADD:     y = a + b;

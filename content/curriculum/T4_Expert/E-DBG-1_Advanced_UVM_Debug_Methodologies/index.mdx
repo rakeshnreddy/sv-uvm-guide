@@ -146,8 +146,8 @@ Now follow one injected error through a catcher. **Predict first:** if `crc_demo
 **Debrief.** No. In uvm-core 2020.3.1, when a catcher changes the severity without calling `set_action()`, and the action was still the old severity's default, the server switches it to the new severity's default action (`uvm_report_catcher.svh`, `process_all_report_catchers`). `UVM_INFO`'s default is `UVM_DISPLAY`, so the demoted report is printed and counted under `UVM_INFO`, and it no longer feeds the quit counter. Call `set_action()` yourself if you want something else.
 
 **Pitfalls, and why each is wrong:**
-- **The catch-all.** `if (get_severity() == UVM_ERROR) return CAUGHT;` hides every error, the real bug included. A catcher must match severity *and* ID *and* message.
-- **Demoting without counting.** If the injection stops working (a refactored sequence no longer corrupts the CRC), a catcher alone lets the test pass while it tests nothing. Count demotions and check the count in `check_phase`.
+- **The catch-all.** `if (get_severity() == UVM_ERROR) return CAUGHT;` hides every error, the real bug included. A catcher must be **narrow** in the sense [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) uses: one reporter, one severity and one ID, and a count. This page adds one refinement: match the message pattern too whenever the ID alone does not single out the injected failure, for example when a monitor reports several different checks under one ID. `crc_demoter` matches its message as well; where an ID is used only by the injected check, a catcher without a message match, like A-UVM-9's, is just as narrow.
+- **Demoting without counting.** If the injection stops working (a refactored sequence no longer corrupts the CRC), a catcher alone lets the test pass while it tests nothing. Count demotions and check the count in `check_phase`. A-UVM-9's catcher also stops demoting at the planned count, so a surplus error stays a `UVM_ERROR`; `crc_demoter` has no cap, and its exact check in `check_phase` fails the run on a surplus instead.
 - **Registering too early.** Build is top-down (§9.8.1.1): in the test's `build_phase`, `env.chk` does not exist yet. `uvm_report_cb::add(env.chk, demoter)` then passes `null`, and the catcher silently becomes type-wide. Register on a specific component in `connect_phase` or later.
 - **Attaching to the wrong object.** A sequence reports through its sequencer (§14.1.3), so a catcher for a sequence's errors must be attached to the sequencer, not the driver.
 - **Returning neither THROW nor CAUGHT.** uvm-core reports `RPTCTHR` ("must return THROW or CAUGHT").
@@ -379,7 +379,7 @@ Each box has its own technique:
 ### Recap
 
 - `UVM_ERROR : 0` proves no counted check failed. It does not prove that errors were counted, that UVM saw every failure, or that anything was checked. Four mechanisms make a verdict lie; a CI gate checks for all of them.
-- A catcher runs inside the server after the handler; it sees the overridden severity. Match severity, ID and message; return THROW; count what you demote; check the count; register on a component that exists.
+- A catcher runs inside the server after the handler; it sees the overridden severity. Narrow it to one reporter, one severity and one ID, adding the message pattern when that ID covers more than the injected failure; return THROW; count what you demote; check the count; register on a component that exists.
 - Pick the trace by the question. `+UVM_*_TRACE` plusargs, `display_objections` and `check_config_usage` are uvm-core features; `get_objectors`, `find_override_by_type`, factory `print` and `print_topology` are in the standard.
 - A debug event bus is an analysis port for debug actions, not for errors. Dump control lives in `tb_top`, reached through a named `uvm_event`.
 - A dump started by a trigger records only what follows it. Rerun the same seed and build with a window that opens before the cause.
@@ -567,8 +567,8 @@ Read it the way a gate would: the summary is present, `UVM_ERROR` and `UVM_FATAL
 
 ### How to write an error-injection test with an honest verdict
 
-1. **List the expected errors** the test will cause: severity, ID, message pattern and count.
-2. **Write a catcher that matches all three** (severity, ID, message) and demotes with `set_severity(UVM_INFO)`, returning THROW so the report stays visible.
+1. **List the expected errors** the test will cause: reporter, severity, ID and count, plus a message pattern if other failures share that ID.
+2. **Write a catcher that matches them** (severity and ID, and the message pattern when the ID is shared) and demotes with `set_severity(UVM_INFO)`, returning THROW so the report stays visible.
 3. **Count every demotion** in the catcher.
 4. **Register on the reporting component**, not `null`, in `connect_phase` or later, when that component exists. For a sequence's errors, register on its sequencer.
 5. **Check the count in `check_phase`** and raise `` `uvm_error `` on any mismatch, too few or too many.
@@ -579,7 +579,7 @@ Read it the way a gate would: the summary is present, `UVM_ERROR` and `UVM_FATAL
 **Checklist before moving on:**
 - [ ] I can name the four ways a verdict lies and the log evidence for each.
 - [ ] I can predict the `UVM_ERROR` count for the catch-all, demote and `UVM_NO_ACTION` configurations, and say which verdicts are honest.
-- [ ] My catcher matches severity, ID and message, returns THROW, and counts.
+- [ ] My catcher matches severity and ID (and the message when the ID is shared), is registered on one reporter, returns THROW, and counts.
 - [ ] My test fails when the injected-error count is wrong in either direction.
 - [ ] I register catchers on components that exist, and I know why `add(null, …)` is type-wide.
 - [ ] I can pick the trace that answers "did my configuration arrive?", "who holds the phase open?" and "which class was built?".
@@ -620,9 +620,9 @@ Methodology practice; no standard defines regression management.
   title="Interview angle: the catcher review"
   question="In code review you find an error-injection test whose catcher is: if (get_severity() == UVM_ERROR && get_id() == 'CRC') begin set_severity(UVM_INFO); end return THROW; registered with uvm_report_cb::add(null, c) in build_phase. The test has passed in every regression for a year. What do you ask for?"
   options={[
-    { text: "Nothing: it returns THROW, so every error stays visible.", isCorrect: false, feedback: "Visible is not the same as checked. With no count and no message match, the test passes whether the injection works or not, and it demotes CRC errors from every component, including real ones." },
+    { text: "Nothing: it returns THROW, so every error stays visible.", isCorrect: false, feedback: "Visible is not the same as checked. With no count, the test passes whether the injection works or not, and add(null, c) makes it demote CRC errors from every component, including real ones." },
     { text: "Change THROW to CAUGHT so the log is quieter.", isCorrect: false, feedback: "That makes it worse: CAUGHT removes the reports from the log and the counts entirely." },
-    { text: "Match the message pattern too, count the demotions and check the expected count in check_phase, and register on the reporting component (not null) in connect_phase or later.", isCorrect: true, feedback: "Right. Narrow (severity, ID, message, one component), counted, and checked in both directions. Then the test fails if the injection stops or if an unexpected CRC error appears." },
+    { text: "Register on the reporting component (not null) in connect_phase or later, count the demotions and check the expected count in check_phase, and match the message pattern too if other checks also report CRC.", isCorrect: true, feedback: "Right. Narrow (one reporter, severity and ID, plus the message when the ID is shared), counted, and checked in both directions. Then the test fails if the injection stops or if an unexpected CRC error appears." },
     { text: "Replace the catcher with +uvm_set_action=...,CRC,UVM_ERROR,UVM_NO_ACTION.", isCorrect: false, feedback: "UVM_NO_ACTION drops the errors before counting; through the macros they are never even built, so nothing can audit them." }
   ]}
 />
@@ -649,12 +649,12 @@ Start with the quiz, which covers all five objectives. Then do the kata, which p
     question: "An error-injection test must ignore the CRC errors it injects but still fail on any other error. Which approach is right?",
     objective: 2,
     answers: [
-      { text: "A catcher that demotes only UVM_ERROR with ID CRC and the expected message, returns THROW, counts demotions, and a check_phase check of that count.", correct: true, feedback: "Right: narrow, visible and accounted. The test fails if the injection stops or an unexpected CRC error appears." },
+      { text: "A catcher registered on the CRC checker that demotes only UVM_ERROR with ID CRC and the expected message, returns THROW, counts demotions, and a check_phase check of that count.", correct: true, feedback: "Right: narrow, visible and accounted. The test fails if the injection stops or an unexpected CRC error appears." },
       { text: "+uvm_set_action=uvm_test_top.*,_ALL_,UVM_ERROR,UVM_NO_ACTION", correct: false, feedback: "That drops every error below the test before counting, real bugs included; through the macros they are never even built." },
       { text: "A catcher that returns CAUGHT for every UVM_ERROR.", correct: false, feedback: "CAUGHT removes reports from the log and the counts; a catch-all hides the real bug too." },
       { text: "+UVM_VERBOSITY=UVM_NONE", correct: false, feedback: "Verbosity never filters errors: the macros issue them at UVM_NONE." }
     ],
-    explanation: "Only a catcher that matches severity, ID and message removes exactly the expected errors from the error count, and only a count checked by the test proves the injection happened. UVM_NO_ACTION and a catch-all catcher remove every error; verbosity removes none."
+    explanation: "Only a narrow catcher (one reporter, severity and ID, plus the message pattern when that ID is shared, as crc_demoter matches it) removes exactly the expected errors from the error count, and only a count checked by the test proves the injection happened. UVM_NO_ACTION and a catch-all catcher remove every error; verbosity removes none."
   },
   {
     question: "A test's final lines read SCB_SUMMARY: 0 compares, then a report summary with UVM_ERROR : 0 and UVM_FATAL : 0. What is the verdict?",

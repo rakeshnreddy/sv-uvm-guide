@@ -277,7 +277,7 @@ The arguments are the stream name, an optional object whose fields are recorded 
 
 ### A recorded agent: sequencer, driver and monitor on three streams
 
-The example is a one-agent testbench on a tiny bus: `valid` is high for one clock per transfer, and `parity` makes `{addr, data, parity}` even. The test enables recording on the whole agent and injects one parity error on purpose. Because that error is expected, the test applies a **severity override** that turns the monitor's `PARITY` error reports into info messages ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)). It also sets a **drain time**, extra time the run phase keeps going after the last objection is dropped ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)), so the monitor can close its last record. Values are fixed rather than random so that the logs below are reproducible. Save it as `tb_top.sv`.
+The example is a one-agent testbench on a tiny bus: `valid` is high for one clock per transfer, and `parity` makes `{addr, data, parity}` even. The test enables recording on the whole agent and injects one parity error on purpose. Because that error is expected, the test applies a **severity override** that turns the monitor's `PARITY` error reports into info messages ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)), and then **counts** them in `check_phase`. A demotion alone would let the test pass if the monitor stopped detecting parity errors, or if unplanned ones appeared, because those would be demoted too; requiring exactly one `PARITY` report proves the injected error was detected once and nothing else was hidden. It also sets a **drain time**, extra time the run phase keeps going after the last objection is dropped ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)), so the monitor can close its last record. Values are fixed rather than random so that the logs below are reproducible. Save it as `tb_top.sv`.
 
 ```systemverilog
 // compile
@@ -486,6 +486,16 @@ package rec_pkg;
       env.agt.mon.set_report_severity_id_override(UVM_ERROR, "PARITY", UVM_INFO);
     endfunction
 
+    // A demoted report is still counted under its ID. Exactly one PARITY
+    // report means the injected error was detected, and no other was hidden.
+    function void check_phase(uvm_phase phase);
+      int n;
+      super.check_phase(phase);
+      n = uvm_report_server::get_server().get_id_count("PARITY");
+      if (n != 1)
+        `uvm_error("PARITY_COUNT", $sformatf("expected 1 PARITY report, got %0d", n))
+    endfunction
+
     task run_phase(uvm_phase phase);
       bus_seq seq = bus_seq::type_id::create("seq");
       phase.raise_objection(this);
@@ -531,6 +541,9 @@ UVM_INFO tb_top.sv(167) @ 75: uvm_test_top.env.agt.mon [PARITY] parity error: ad
 UVM_WARNING :    0
 UVM_ERROR :    0
 UVM_FATAL :    0
+** Report counts by id
+[PARITY]     1
+...
 ```
 
 And the start of `tr_db.log`, abbreviated (`...` marks omitted lines). Handles and `inst_id` values vary. Times are shown in ns for reading; the file prints them with `%t`, so their units follow your `$timeformat` and time precision (tool- and setup-dependent). Lines written in the same time step may appear in a different order.
@@ -592,7 +605,7 @@ Now trace what the run shows:
 2. **Each item appears once, on `drv`**, from the edge where it is driven (25 ns) to the next edge (35 ns), with a `LINK` to the sequence. No item appears on stream `seq`, because the driver disabled automatic item recording.
 3. **The monitor's records trail the driver's by one clock** (35 to 45 ns for the first transfer): it samples a transfer at the edge after it was driven, and closes the record one clock later. That offset is sampling, not a bug.
 4. **The monitor's records have no `LINK`**: a monitor builds new objects with no parent sequence.
-5. **The parity error is a zero-length `Error` record** at 75 ns on stream `mon`, carrying the transfer's fields. The report summary still shows `UVM_ERROR :    0` only because the test demoted that one ID; without the demotion the test would fail, as it should.
+5. **The parity error is a zero-length `Error` record** at 75 ns on stream `mon`, carrying the transfer's fields. The report summary still shows `UVM_ERROR :    0` only because the test demoted that one ID; without the demotion the test would fail, as it should. The demoted report is still counted (`[PARITY]     1`), and that count is what the test's `check_phase` requires: no parity report, or a second one, raises `PARITY_COUNT` and fails the run. Demoting expected errors with a reporter, an ID *and* a count is taught in full, with report catchers, in [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
 
 ### How to add recording to an agent
 

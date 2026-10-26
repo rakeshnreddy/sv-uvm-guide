@@ -95,7 +95,7 @@ Read the picture as a 2×2: is the scenario covered, and was it checked?
 | ALU-2 | `a` at its edge values 0 and `8'hFF` | `cp_a` | ALU-6 compare |
 | ALU-3 | `b` at its edge values | `cp_b` (lab) | ALU-6 compare |
 | ALU-4 | every operation with each edge of `a` | `x_op_a` | ALU-6 compare |
-| ALU-5 | DIV with `b == 0` is forbidden by the spec | `illegal_bins` in `x_op_b` (lab) | the constraint, plus a forbidden-input check |
+| ALU-5 | every operation with each edge of `b`; DIV with `b == 0` is forbidden by the spec | `x_op_b` (lab): 13 cells that count, plus the illegal bin | ALU-6 compare, plus the constraint and a forbidden-input check |
 | ALU-6 | the result `y` always equals the reference model | none: exercised by ALU-1 to ALU-5 | `y !== alu_model(...)` in `tb_top` |
 
 **A traced example.** Suppose the DUT has a bug: SUB computes `b - a` instead of `a - b`. The covergroup samples `op` and `a` (inputs), so it counts the same bins whether the result is right or wrong:
@@ -243,6 +243,8 @@ This bench puts every core idea of the module into one file. It randomizes ALU t
 // compile
 // alu_closure.sv: one file. Top level: tb_top.
 package alu_pkg;
+  timeunit 1ns;      // every design element in the file declares the same
+  timeprecision 1ns; // time unit and precision (IEEE 1800-2023 §3.14.2.3)
   typedef enum bit [2:0] {ADD, SUB, MUL, DIV, AND, OR, XOR} op_t;
 
   // Reference model for plan row ALU-6: what the spec says y must be.
@@ -315,6 +317,8 @@ module alu
   input  logic [7:0] b,
   output logic [7:0] y
 );
+  timeunit 1ns;
+  timeprecision 1ns;
   always_comb begin
     case (op)
       ADD:     y = a + b;
@@ -589,7 +593,7 @@ More staff-level prompts to practise aloud:
     question: "In a closure loop, STEER is printed at item 100, but x_op_a keeps growing at the uniform rate and the budget runs out at 10/14. The loop body begins: t.corner_mode = corner_mode; t = new(); if (!t.randomize()) ... What is wrong?",
     answers: [
       { text: "The knob is written to the previous object; t = new() then creates an object whose corner_mode is 0, so the steering constraint never applies", correct: true, feedback: "Right. Set the knob after new(), on the object that is about to be randomized." },
-      { text: "The c_spec constraint conflicts with the dist weights, so the solver ignores them", correct: false, feedback: "c_spec constrains op and b; the steering dist is on a. Nothing conflicts, and a conflict would make randomize() fail, not ignore weights." },
+      { text: "The c_spec constraint conflicts with the dist weights, so the solver ignores them", correct: false, feedback: "c_spec constrains op and b; the steering dist is on a. Nothing conflicts here, and a clash would not make randomize() fail either: nonzero dist weights do not change the solution space, so the solver still satisfies the hard constraints and only the weights stop holding (§18.5.3)." },
       { text: "get_inst_coverage() only returns up-to-date numbers at the end of simulation", correct: false, feedback: "The coverage methods can be invoked procedurally at any time (IEEE 1800-2023 §19.8)." },
       { text: "Nothing is wrong; the seed was unlucky, and more seeds would close it", correct: false, feedback: "With steering applied, each cell has p ≈ 1/28, and 1,400 more samples would close all 14 cells almost surely. A stall this long means the steering never took effect." }
     ],

@@ -24,10 +24,11 @@ Release at each of these points:
 
 Only reviewed work is released. Work that has not been reviewed goes to a backup branch, never to `main`.
 
-**Usage watch.** At every checkpoint, read the plan limits (`get_usage`). At 85 % of the weekly limit, start the pause
-procedure without waiting to be asked. Launch nothing large when less than about 15 % of the weekly budget is left.
+**Usage watch (owner, 2026-10-26: pause at 65 % of the weekly limit).** Read the plan limits (`get_usage`) at every
+checkpoint and about every 10 minutes while workflows run. Begin the pause procedure at about 62 %, so the wind-down
+(stopping, releasing, CI, deploy, notes) finishes by 65 %. Launch nothing large past 60 %.
 
-**Pause procedure**, when the owner says pause or the usage watch fires:
+**Pause procedure**, when the owner says pause or the usage watch fires (65 % weekly):
 1. Launch nothing new.
 2. For each running workflow, read its journal or agent files to see whether fixers or builders are mid-edit.
    - If only read-only agents (critics, skeptics, auditors, reviewers) are running, stop it with `TaskStop`.
@@ -274,3 +275,38 @@ and the working tree was clean.
   lessons, builds the backlog, builds and reviews each new interactive, and registers them. It edits only `src/` and
   `tests/` (plus the two registry files), so it runs alongside 6b. Save its `lessonPlans` output for the 6a author
   step.
+
+## Weekly pause, 2026-10-26 (owner: "at 65 % weekly limit we will pause this week's work")
+
+The pause started at 61 % of the weekly limit, because two parallel workflows were spending about 6 % per 40 minutes. At the time of stopping, both workflows had only read-only agents running, so no edit was cut off.
+
+**Live (`main`):** everything below has passed CI and is deployed.
+- This session's engineering work, in 5f10ccf8:
+  - the Verilator compile check (`npm run test:sv`);
+  - e2e fixes and the `followLink`/`clickUntil` helpers;
+  - the `requireSession` P2002 retry;
+  - checkpoint-release.sh.
+- 6b closure sweep, round 1 fixes (cd4aa4e2).
+- 6b closure sweep, round 2 fixes (the round-2 checkpoint commit). Every file passed its independent check or was
+  repaired after one.
+
+The working tree is clean except for `.claude/`. There is no unreviewed work, so no backup branch was needed.
+
+**Resume next week, in this order.** Release with checkpoint-release.sh after each step. Pause at 65 % weekly; start
+the wind-down at about 62 %.
+1. **Finish 6b.** The run `wf_010d0167-550` (script `phase6-closure-sweep.js`) was stopped during round 3's read-only
+   critique.
+   - In this same session, resume it with `resumeFromRunId`: rounds 1 and 2 replay from cache, and round 3 runs live.
+   - In a new session, rerun the saved script fresh. Its critics start at round 1 with no "seen" list, but rounds 1 and
+     2 are fixed, so they look for what remains. It stops after two rounds with no new confirmed finding (at most 5).
+2. **Compile-fix pass.** Follow the 2026-10-25 entry above. There are 60 known compile failures, minus any that 6b
+   fixed (`npm run test:sv` lists them).
+3. **Interactive components.** The run `wf_d75ad03e-524` (script `visual-components.js`) was stopped during the
+   lesson audit, with 70 of 112 audits done.
+   - In this same session, resume it with `resumeFromRunId`.
+   - In a new session, run `docs/curriculum-quality/workflows/visual-components.js` with
+     `args = visual-components-args.json` (the 112 lessons). Its audits run again.
+   - Then save the `lessonPlans` output for step 4.
+4. **Phase 6a.** Run visual-enrichment.js per tier, embedding the new components and adding the static visuals from
+   the lesson plans. Run phase6a-extras.js for the hidden pages and labs. Release after each tier.
+5. **Closure checks** (plan §5 item 4).

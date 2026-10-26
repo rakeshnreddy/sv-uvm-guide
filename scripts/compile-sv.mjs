@@ -25,7 +25,9 @@
 // kind and a reason, are reported but do not fail the run; a listed unit that
 // now compiles does, so the list cannot go stale.
 //
-// Usage: node scripts/compile-sv.mjs [--only <substring>] [--report <file.json>] [--verbose]
+// Usage: node scripts/compile-sv.mjs [--only <substring>] [--report <file.json>] [--verbose] [--prune-known]
+// --prune-known removes the known entries that now compile or no longer exist, instead of failing on them
+// (checkpoint releases use it, because fix rounds keep making known units compile).
 // Needs Verilator (or SV_COMPILER, for example scripts/verilator-docker.sh in CI)
 // and UVM_HOME pointing at uvm-core 2020.3.1 for the UVM units.
 import { spawn, spawnSync } from "node:child_process";
@@ -48,6 +50,7 @@ const option = (name) => {
 const only = option("--only");
 const reportFile = option("--report");
 const verbose = argv.includes("--verbose");
+const pruneKnown = argv.includes("--prune-known") && !only;
 
 const SV_LANGS = new Set(["systemverilog", "sv", "verilog"]);
 const FILE_NAME = /^([\w-]+\.(?:sv|svh|v))\b/;
@@ -353,7 +356,10 @@ async function main() {
   const allUnits = [...lessons, ...labUnits()];
   const units = allUnits.filter((unit) => !only || unit.id.includes(only));
   const missing = Object.keys(config.known ?? {}).filter((id) => !allUnits.some((unit) => unit.id === id));
-  if (missing.length) {
+  if (missing.length && pruneKnown) {
+    missing.forEach((id) => delete config.known[id]);
+    console.log(`Pruned ${missing.length} known units that no longer exist: ${missing.join(", ")}`);
+  } else if (missing.length) {
     console.error(`sv-compile.config.json lists units that no longer exist; remove or rename them:\n${missing.map((id) => `  ${id}`).join("\n")}`);
     process.exit(1);
   }
@@ -405,6 +411,14 @@ async function main() {
 
   const lessonCount = results.filter((result) => result.unit.lesson).length;
   const describe = (result) => `${result.unit.id}\n${(result.errors ?? []).slice(0, 8).map((error) => `  ${error.replace(tempBase, "")}${lessonLocation(result.unit, error)}`).join("\n")}`;
+  if (stale.length && pruneKnown) {
+    stale.forEach((result) => delete config.known[result.unit.id]);
+    fs.writeFileSync(configFile, `${JSON.stringify(config, null, 2).replace(/\[\s+("[^"\]]*"(?:,\s+"[^"\]]*")*)\s+\]/g, (_, items) => `[${items.replace(/,\s+/g, ", ")}]`)}\n`);
+    console.log(`Pruned ${stale.length} known units that now compile: ${stale.map((result) => result.unit.id).join(", ")}`);
+    stale.length = 0;
+  } else if (missing.length && pruneKnown) {
+    fs.writeFileSync(configFile, `${JSON.stringify(config, null, 2).replace(/\[\s+("[^"\]]*"(?:,\s+"[^"\]]*")*)\s+\]/g, (_, items) => `[${items.replace(/,\s+/g, ", ")}]`)}\n`);
+  }
   if (unexpected.length) console.error(`\n${unexpected.length} compile units failed:\n\n${unexpected.map(describe).join("\n\n")}`);
   if (stale.length) console.error(`\n${stale.length} units listed as known in scripts/sv-compile.config.json now compile; remove them:\n${stale.map((result) => `  ${result.unit.id}`).join("\n")}`);
   if (unexpected.length || stale.length) process.exit(1);

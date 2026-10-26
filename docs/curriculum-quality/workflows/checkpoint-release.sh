@@ -50,11 +50,13 @@ npx tsc --noEmit -p .
 npm run -s lint
 echo "== unit tests"
 NODE_OPTIONS='--require @prisma/client' npx vitest run tests/curriculum-generator.test.ts -u --reporter=dot >/dev/null 2>&1 || true
-NODE_OPTIONS='--require @prisma/client' npx vitest run --reporter=dot > "$SCR/vitest-release.log" 2>&1 || {
+# Half the workers and longer timeouts: a fresh worktree starts with a cold transform cache, and the
+# default pool on this Mac starves tests into timeouts. CI keeps the normal timeouts.
+NODE_OPTIONS='--require @prisma/client' npx vitest run --reporter=dot --maxWorkers=50% --testTimeout=30000 --hookTimeout=30000 > "$SCR/vitest-release.log" 2>&1 || {
   sed 's/\x1b\[[0-9;]*m//g' "$SCR/vitest-release.log" | grep -E "^ FAIL|Test Files|Tests " | sort -u; echo "unit tests failed"; exit 1; }
 sed 's/\x1b\[[0-9;]*m//g' "$SCR/vitest-release.log" | grep -E "Test Files|Tests " | sort -u
 echo "== Verilator compile check"
-npm run -s test:sv | tail -1
+node scripts/compile-sv.mjs --prune-known | tail -2
 
 echo "== commit"
 git add -A   # node_modules (a symlink here) and the .env files are gitignored
@@ -66,6 +68,8 @@ COMMIT=$(git rev-parse HEAD)
 # would keep the stale generated data and show it as a change against the new HEAD.
 git diff --name-only HEAD~1 HEAD | grep -vxF -f "$LIST" > "$SCR/release-generated.txt" || true
 while read -r f; do [ -n "$f" ] && mkdir -p "$MAIN/$(dirname "$f")" && cp "$WT/$f" "$MAIN/$f"; done < "$SCR/release-generated.txt"
+# The compile check may have pruned known entries; the main tree takes that file too.
+cp "$WT/scripts/sv-compile.config.json" "$MAIN/scripts/sv-compile.config.json"
 cd "$MAIN"
 git update-ref "refs/heads/$BRANCH" "$COMMIT"
 git reset -q   # index follows the new HEAD; the working tree is left exactly as the agents have it

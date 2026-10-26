@@ -2,6 +2,8 @@
 // for the I-SV-3B closure-loop lab.
 // Compile order: alu_pkg.sv, alu.sv, tb_top.sv. Top level: tb_top.
 package alu_pkg;
+  timeunit 1ns;      // all three files declare the same time unit and precision:
+  timeprecision 1ns; // some set, some unset is an error (IEEE 1800-2023 §3.14.2.3)
   typedef enum bit [2:0] {ADD, SUB, MUL, DIV, AND, OR, XOR} op_t;
 
   // Reference model for plan row ALU-6: what the spec says y must be.
