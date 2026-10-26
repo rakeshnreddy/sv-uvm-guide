@@ -290,15 +290,19 @@ The pause started at 61 % of the weekly limit, because two parallel workflows we
 - 6b closure sweep, round 2 fixes (648bd15b). Every file passed its independent check or was repaired after one.
   Spot check: the live A-UVM-8 scoreboard declares `int unsigned n_match, n_mismatch;`.
 
-Preview builds (fixed 2026-10-26, with the owner's approval). Every push to `curriculum-quality-program` also starts
-a Cloudflare *preview* build. These failed because the "Previews Base" deploy command was `npx wrangler preview`, an
-open-beta command that requires a `previews` block in wrangler.jsonc. Each branch has its own Preview, whose build
-settings are copied from "Previews Base" when the Preview is first created. So both of these now use
-`npx opennextjs-cloudflare upload`: "Previews Base" (for new branches) and the existing `curriculum-quality-program`
-Preview. Both have the same build variables as production (NODE_VERSION=22,
-SKIP_DEPENDENCY_INSTALL=1, NEXT_TELEMETRY_DISABLED=1, APP_URL). A branch push now uploads a version with a preview URL
-under `*-sv-uvm-guide.rakesh-n99.workers.dev`, and the live site is untouched. Production (`main`) still deploys with
-`npx opennextjs-cloudflare deploy`. checkpoint-release.sh checks only the production build.
+Preview builds (fixed 2026-10-26, with the owner's approval). Every push to a non-`main` branch builds that
+branch's own Cloudflare **Preview**, a separate Worker named after the branch, at
+`https://<branch>-sv-uvm-guide.rakesh-n99.workers.dev`. Its deploy command is `npx wrangler preview` (open beta), which
+needs a `previews` block in `wrangler.jsonc`; that block was missing, so every preview build failed after a good build.
+- Now `wrangler.jsonc` has `previews.vars` (APP_URL and NEXTAUTH_URL, both the production origin).
+- The build settings ("Previews Base" and the existing `curriculum-quality-program` Preview) carry the production
+  build variables: NODE_VERSION=22, SKIP_DEPENDENCY_INSTALL=1, NEXT_TELEMETRY_DISABLED=1, APP_URL.
+- Do not use `npx opennextjs-cloudflare upload` there. It uploads a version to `sv-uvm-guide` itself, and Wrangler
+  rejects that from a Preview build ("name ... must match the name of your Worker").
+- Previews have no NEXTAUTH_SECRET. Lesson pages work, but `/api/auth/*` would throw. No-login mode does not call it.
+
+Production (`main`) still deploys with `npx opennextjs-cloudflare deploy`. checkpoint-release.sh checks only the
+production build.
 
 The working tree is clean except for `.claude/`. There is no unreviewed work, so no backup branch was needed.
 
