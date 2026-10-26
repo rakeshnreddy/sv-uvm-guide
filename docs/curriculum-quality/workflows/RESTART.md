@@ -290,11 +290,13 @@ The pause started at 61 % of the weekly limit, because two parallel workflows we
 - 6b closure sweep, round 2 fixes (648bd15b). Every file passed its independent check or was repaired after one.
   Spot check: the live A-UVM-8 scoreboard declares `int unsigned n_match, n_mismatch;`.
 
-Note: every push to `curriculum-quality-program` also starts a Cloudflare *preview* build, and it always fails,
-because the non-production deploy command is not set up. Builds of `main` are the ones that deploy, and they succeed.
-To turn previews into working branch URLs, the owner can set the non-production deploy command to
-`npx opennextjs-cloudflare upload` in the Workers Builds settings. checkpoint-release.sh checks only the production
-build.
+Preview builds (fixed 2026-10-26, with the owner's approval). Every push to `curriculum-quality-program` also starts
+a Cloudflare *preview* build. These failed because the "Previews Base" deploy command was `npx wrangler preview`, an
+open-beta command that requires a `previews` block in wrangler.jsonc. The "Previews Base" build settings now use
+`npx opennextjs-cloudflare upload`, with the same build variables as production (NODE_VERSION=22,
+SKIP_DEPENDENCY_INSTALL=1, NEXT_TELEMETRY_DISABLED=1, APP_URL). A branch push now uploads a version with a preview URL
+under `*-sv-uvm-guide.rakesh-n99.workers.dev`, and the live site is untouched. Production (`main`) still deploys with
+`npx opennextjs-cloudflare deploy`. checkpoint-release.sh checks only the production build.
 
 The working tree is clean except for `.claude/`. There is no unreviewed work, so no backup branch was needed.
 
