@@ -292,8 +292,10 @@ The pause started at 61 % of the weekly limit, because two parallel workflows we
 
 Preview builds (fixed 2026-10-26, with the owner's approval). Every push to `curriculum-quality-program` also starts
 a Cloudflare *preview* build. These failed because the "Previews Base" deploy command was `npx wrangler preview`, an
-open-beta command that requires a `previews` block in wrangler.jsonc. The "Previews Base" build settings now use
-`npx opennextjs-cloudflare upload`, with the same build variables as production (NODE_VERSION=22,
+open-beta command that requires a `previews` block in wrangler.jsonc. Each branch has its own Preview, whose build
+settings are copied from "Previews Base" when the Preview is first created. So both of these now use
+`npx opennextjs-cloudflare upload`: "Previews Base" (for new branches) and the existing `curriculum-quality-program`
+Preview. Both have the same build variables as production (NODE_VERSION=22,
 SKIP_DEPENDENCY_INSTALL=1, NEXT_TELEMETRY_DISABLED=1, APP_URL). A branch push now uploads a version with a preview URL
 under `*-sv-uvm-guide.rakesh-n99.workers.dev`, and the live site is untouched. Production (`main`) still deploys with
 `npx opennextjs-cloudflare deploy`. checkpoint-release.sh checks only the production build.
