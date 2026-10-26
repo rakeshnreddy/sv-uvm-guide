@@ -257,6 +257,22 @@ Status, 2026-10-18: every wave is integrated and deployed. The owner set the ord
    - **Output:** a list of new interactive components that lessons need, which feeds a component-build workflow.
    - Run it in batches with args, for example `{ "tiers": ["T1_Foundational"] }`, then T2, T3 and T4. Integrate each batch
      in a clean worktree and deploy at each checkpoint.
+   - **New interactive components (owner question, 2026-10-25: "is the flow adding 2D/3D and interactive
+     visualizations instead of large text blocks?").** The author step above embeds only components that exist, and
+     lists the rest as requests; nothing built them. `docs/curriculum-quality/workflows/visual-components.js` now does,
+     ahead of 6a and in parallel with lesson work, because it only edits `src/`, `tests/` and the two lazy-interactive
+     registry files:
+     1. **Catalog:** inventory the existing visuals.
+     2. **Audit:** for each of the 112 lessons, find the text-heavy stretches (about 300 words or more with no
+        visual) and the interactive each core concept needs, in 2D or (only where space carries meaning) 3D.
+     3. **Backlog:** merge the needs into ranked component specs with source-cited model rules and disjoint files. A
+        critic checks the backlog, then a final revision.
+     4. **Build and review:** for each component, a pure model plus a component plus tests, then an accuracy lens and
+        a learning/UX lens, with up to 2 fix rounds.
+     5. **Integrate:** one agent registers every component.
+
+     Its per-lesson plans, including the static diagrams and tables to add, feed the 6a author step, which then
+     embeds the new components. First run: `wf_d75ad03e-524`.
    - **6a extras (owner, 2026-10-25), run with `docs/curriculum-quality/workflows/phase6a-extras.js`:**
      - **Hidden pages:** bring back the five hidden pages with real, verified content: /resources (a checked link
        library), /history (a cited timeline of SV and UVM), /projects (milestone M0–M8 capstone briefs), /knowledge-hub (a

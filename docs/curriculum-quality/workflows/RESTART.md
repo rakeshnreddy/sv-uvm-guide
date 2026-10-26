@@ -228,3 +228,11 @@ and the working tree was clean.
   The 6b sweep stopped at the session limit: 109 agents failed, including 17 round-1 fixers, most checks, and every
   round-2 and round-3 critic. Its "two dry rounds" were not real. It was resumed with `resumeFromRunId` (task
   `wno3tqlqk`); cached agents replay and the failed ones rerun. Round 1 had already edited 12 files in the tree.
+- 2026-10-25: The 6b sweep was resumed again (task `w0cd0g5b8`) after an expired login token failed every round-2
+  and round-3 critic. Round 1 is fully done: 27 lessons, 7 lab files, 3 decks and the UVM interview bank are edited
+  in the tree, not yet integrated.
+- 2026-10-25: The owner asked whether the flow adds 2D/3D and interactive visualizations. It did not yet: 6a only
+  embeds existing components. `visual-components.js` (run `wf_d75ad03e-524`, task `wfbmi7tpo`) now audits all 112
+  lessons, builds the backlog, builds and reviews each new interactive, and registers them. It edits only `src/` and
+  `tests/` (plus the two registry files), so it runs alongside 6b. Save its `lessonPlans` output for the 6a author
+  step.
