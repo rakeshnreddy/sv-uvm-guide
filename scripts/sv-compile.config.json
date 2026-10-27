@@ -16,12 +16,12 @@
       "reason": "Verilator 5.052: Unsupported: RHS of ==? or !=? is fourstate but not a constant."
     },
     "T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index#4": {
-      "kind": "to-verify",
-      "reason": "Check against IEEE 1800-2023: %Error: block.sv:15:11: Writing to an output automatic variable of a task after a timing control is not allowed (IEEE 1800-2023 13.2.2) (lesson line "
+      "kind": "verilator-limitation",
+      "reason": "Legal code: the Kata B worked solution's `task automatic xfer(..., output bit timed_out)` writes its output argument with a blocking assignment after `#40` inside a nested fork. IEEE 1800-2023 §13.3 says an output is copied out when the task ends, and its Example 2 (task light) writes an output after an event control. §13.3.2 forbids only nonblocking or procedural continuous assignments to automatic task variables, their use in intra-assignment event controls of NBAs, and tracing them with $monitor/$dumpvars. §9.3.2 restricts only ref arguments in join_any/join_none. Verilator 5.052 rejects the write and cites 'IEEE 1800-2023 13.2.2', a subclause that does not exist (§13.2 has no subclauses)."
     },
     "T1_Foundational/F3A_Simulation_Semantics/index#4": {
-      "kind": "to-verify",
-      "reason": "Check against IEEE 1800-2023: %Error: block.sv:25:26: syntax error, unexpected ')', expecting '.' (lesson line 563)"
+      "kind": "verilator-limitation",
+      "reason": "Verilator 5.052 rejects `$printtimescale($root);` (lesson line 563) because its parser accepts `$root` only as the start of a hierarchical name (`$root.x`). IEEE 1800-2023 §20.4.2 makes it legal: Syntax 20-4 takes a hierarchical_identifier, the clause says that with the argument `$root` the task displays the simulation time unit (§3.14.3), and the standard's own example calls `$printtimescale($root);`."
     },
     "T1_Foundational/F3B_Scheduling_Regions/index#1": {
       "kind": "verilator-limitation",
@@ -84,8 +84,8 @@
       "reason": "Verilator 5.052 crashes on this unit: Internal: Unexpected Call"
     },
     "T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/multi-clocking#1": {
-      "kind": "to-verify",
-      "reason": "Check against IEEE 1800-2023: %Error: block.sv:69:21: syntax error, unexpected '@', expecting IDENTIFIER-for-type (lesson line 425)"
+      "kind": "verilator-limitation",
+      "reason": "Verilator 5.052 does not parse a clocking event inside a property or sequence expression. It rejects `src_pulse |=> @(posedge dst_clk) ##[0:3] dst_pulse` (assert) and `src_pulse ##1 @(posedge dst_clk) ##[0:3] dst_pulse` (cover) with \"unexpected '@'\", and in a named sequence it reports \"Unsupported: clocking event inside sequence expression\". IEEE 1800-2023 makes both legal: §16.13.2 defines multiclocked `|=>` (wait for the nearest strictly later tick of the consequent clock), §16.13.1 defines multiclocked sequences joined by `##1`, and §16.7 gives `sequence_expr ::= clocking_event sequence_expr`."
     },
     "T2_Intermediate/I-SV-4C_Checkers/index#1": {
       "kind": "verilator-limitation",
@@ -96,72 +96,40 @@
       "reason": "Verilator 5.052: Unsupported: checker port variable default value."
     },
     "T2_Intermediate/I-SV-4C_Checkers/index#5": {
-      "kind": "to-verify",
-      "reason": "Check against IEEE 1800-2023: %Error: block.sv:5:11: syntax error, unexpected IDENTIFIER-:: (lesson line 474)"
-    },
-    "T2_Intermediate/I-SV-4C_Checkers/index#7": {
-      "kind": "to-verify",
-      "reason": "Check against IEEE 1800-2023: %Error: block.sv:5:11: syntax error, unexpected IDENTIFIER-:: (lesson line 827)"
+      "kind": "verilator-limitation",
+      "reason": "Verilator 5.052 rejects three legal bind forms: a package-scoped checker name (`bind fifo fifo_chk_pkg::fifo_chk u_chk (...)`), a hierarchical instance list (`bind fifo : tb_top.u_rx, tb_top.u_tx ...`) and a hierarchical single-instance target (`bind tb_top.u_dbg fifo_logger u_log (...)`). All three are legal under IEEE 1800-2023 §23.11 Syntax 23-9 (bind_target_instance ::= hierarchical_identifier constant_bit_select; bind_instantiation includes checker_instantiation) and §17.3 Syntax 17-2 (ps_checker_identifier ::= [package_scope] checker_identifier). The unit is complete: fifo, fifo_chk_pkg, fifo_logger and tb_top with u_rx, u_tx and u_dbg are all compile blocks in the lesson."
     },
     "T2_Intermediate/I-SV-5_Synchronization_and_IPC/events#2": {
-      "kind": "to-verify",
-      "reason": "Check against IEEE 1800-2023: %Error-UNSUPPORTED: block.sv:18:11: Assignment to and from event in statically scheduled context. (lesson line 225)"
+      "kind": "verilator-limitation",
+      "reason": "Verilator 5.052 rejects assigning one event variable to another in a module (\"Assignment to and from event in statically scheduled context\"). IEEE 1800-2023 §6.17 lets an event variable be assigned another event variable, and §15.5.5 and §15.5.5.1 (merging events) show module-level assignments like `E2 = E1;`; this example is adapted from the one in §15.5.5.1."
     },
     "T2_Intermediate/I-SV-5_Synchronization_and_IPC/events#3": {
       "kind": "verilator-limitation",
       "reason": "Verilator 5.052: Unsupported: wait_order."
     },
     "T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes#5": {
-      "kind": "to-verify",
-      "reason": "Check against IEEE 1800-2023: %Error: block.sv:19:11: Writing to an output automatic variable of a task after a timing control is not allowed (IEEE 1800-2023 13.2.2) (lesson line"
+      "kind": "verilator-limitation",
+      "reason": "In the kata solution, the automatic task get_with_timeout makes a blocking write to its output formal (`ok = 1'b1;`, lesson line 960) after `gen2drv.get(t)` blocks, inside a nested fork. This is legal in IEEE 1800-2023: §13.3 copies outputs back when the task completes, and its traffic_lights example writes an output after `@(posedge clock)`. §13.3.2 and §6.21 forbid only nonblocking, continuous and procedural continuous writes to automatic variables, plus $monitor/$dumpvars tracing, and §6.21 makes a fork-join block's lifetime cover all its spawned processes. The §9.3.2 fork-join_any rule covers only ref formals. Verilator's cited clause '13.2.2' does not exist (13.2 Overview has no subclauses)."
     },
     "T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/index#4": {
-      "kind": "content-bug",
-      "reason": "The block includes tb_defines.svh, but no block is tagged // compile: tb_defines.svh, so the unit is not complete as tagged."
-    },
-    "T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/index#6": {
-      "kind": "content-bug",
-      "reason": "The block includes tb_defines.svh, but no block is tagged // compile: tb_defines.svh, so the unit is not complete as tagged."
-    },
-    "T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/index#7": {
-      "kind": "content-bug",
-      "reason": "The block includes tb_defines.svh, but no block is tagged // compile: tb_defines.svh, so the unit is not complete as tagged."
-    },
-    "T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/index#9": {
-      "kind": "to-verify",
-      "reason": "Check against IEEE 1800-2023: %Error: block.sv:41:6: Can't find definition of variable: 'clk' (lesson line 1097)"
+      "kind": "harness",
+      "reason": "Kata 1's worked solution uses module `link` from the kata's Given block (lesson line 1031). Spine §5.2 item 1 allows that, and the code is legal: IEEE 1800-2023 §23.11 resolves the bind's actuals `.clk, .rst_n, .valid(lane_valid), .data(lane_data)` and `#(.N(LANES))` from the viewpoint of the target link instance. Compiled after the Given block, it has 0 errors. Run alone, Verilator 5.052 stops at the bind's 'Can't find definition of variable: clk/rst_n' before it reports MODMISSING for link, so the harness never borrows the Given block. Known entry: id ...index#4, kind harness. The old #9 id no longer exists."
     },
     "T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index#bench-2": {
       "kind": "verilator-limitation",
       "reason": "Verilator 5.052: Unsupported: Timing controls inside DPI-exported tasks."
     },
-    "T2_Intermediate/I-UVM-2B_TLM_Connections/index#1": {
-      "kind": "content-bug",
-      "reason": "A variable is named matches, a reserved keyword (IEEE 1800-2023 Annex B); rename it (the printed text can stay matches=N)."
-    },
-    "T3_Advanced/A-UVM-4A_RAL_Fundamentals/index#bench": {
-      "kind": "content-bug",
-      "reason": "Mixed time scales: i2c_reg_pkg.sv:2 has no time unit while other design elements in the unit do; IEEE 1800-2023 3.14.2.3 makes that an error (Verilator only warns, TIMESCALEMOD). Give every element the same timeunit/timeprecision or `timescale."
-    },
     "T3_Advanced/B-AHB-2_AHB_Pitfalls_and_Deadlocks/index#1": {
       "kind": "verilator-limitation",
       "reason": "Verilator 5.052: Unsupported: $past expr2 and/or clock arguments."
     },
-    "T3_Advanced/B-AHB-3_AHB_Verification/index#3": {
-      "kind": "harness",
-      "reason": "The B-AHB-3 bench blocks are tagged // compile (part of the bench), so each compiles alone; tag them // compile: <file>.sv so they form one bench."
-    },
-    "T3_Advanced/B-AHB-3_AHB_Verification/index#4": {
+    "T3_Advanced/B-AHB-3_AHB_Verification/index#bench": {
       "kind": "verilator-limitation",
-      "reason": "Verilator 5.052: Unsupported: $past expr2 and/or clock arguments."
-    },
-    "T3_Advanced/B-AHB-3_AHB_Verification/index#6": {
-      "kind": "content-bug",
-      "reason": "A variable is named matches, a reserved keyword (IEEE 1800-2023 Annex B); rename it (the printed text can stay matches=N)."
+      "reason": "Verilator 5.052: Unsupported: $past expr2 and/or clock arguments. The checker's $past(expr, 1, beat_accepted) in a_seq_ctrl_matches, a_seq_addr_increments and a_incr_no_1kb_cross (lesson lines 990, 996, 1004) is legal: IEEE 1800-2023 16.9.3 defines expression2 as a gating expression for the clocking event."
     },
     "T4_Expert/E-PWR-1_Power_Aware_Verification/index#bench": {
-      "kind": "content-bug",
-      "reason": "A variable is named matches, a reserved keyword (IEEE 1800-2023 Annex B); rename it (the printed text can stay matches=N)."
+      "kind": "verilator-limitation",
+      "reason": "Verilator 5.052 with --timing hits an internal error (V3Ast.h:1115, 'AstNode is not of expected type ... ENUMITEMREF') on any enum constant used in a coverpoint transition bin, such as bins down_order = (CLK_OFF => ISO_ON => SAVE => PWR_OFF) in pwr_cov (lesson line 1270). Enum names are constant covergroup_expressions in a trans_range_list, which IEEE 1800-2023 19.5.2 allows; the old 'matches' keyword bug is already fixed (the counter is n_match)."
     },
     "labs/ahb_checker/lab1_monitor_checker#solution": {
       "kind": "verilator-limitation",
@@ -179,14 +147,6 @@
       "kind": "verilator-limitation",
       "reason": "Verilator 5.052 rejects @(bus.mst_cb) through a modport that lists the clocking block; legal per IEEE 1800-2023 14.10 and 25.5.5."
     },
-    "labs/arbiter#reference": {
-      "kind": "content-bug",
-      "reason": "common/rtl/arbiter.sv names a variable priority, a reserved keyword (IEEE 1800-2023 Annex B); rename it. The arbiter lab also ships no DUT of its own. Phase 6a rebuilds these coming-soon labs."
-    },
-    "labs/common#reference": {
-      "kind": "content-bug",
-      "reason": "common/rtl/arbiter.sv names a variable priority, a reserved keyword (IEEE 1800-2023 Annex B); rename it. The arbiter lab also ships no DUT of its own. Phase 6a rebuilds these coming-soon labs."
-    },
     "labs/coverage_advanced/lab1_closure_loop#solution": {
       "kind": "verilator-limitation",
       "reason": "Verilator 5.052 stops resolving the implicit std::process import (IEEE 1800-2023 9.7, 26.7) after a covergroup; std::process works around it, then a covergroup limitation follows."
@@ -194,30 +154,6 @@
     "labs/coverage_advanced/lab1_closure_loop#starter": {
       "kind": "verilator-limitation",
       "reason": "Verilator 5.052 stops resolving the implicit std::process import (IEEE 1800-2023 9.7, 26.7) after a covergroup; std::process works around it, then a covergroup limitation follows."
-    },
-    "labs/scoreboard/lab1_reference_model#solution": {
-      "kind": "content-bug",
-      "reason": "module tb_top has no endmodule at the end of the file (IEEE 1800-2023 23.2.1)."
-    },
-    "labs/scoreboard/lab1_reference_model#solution-mut_drop": {
-      "kind": "content-bug",
-      "reason": "module tb_top has no endmodule at the end of the file (IEEE 1800-2023 23.2.1)."
-    },
-    "labs/scoreboard/lab1_reference_model#solution-mut_extra": {
-      "kind": "content-bug",
-      "reason": "module tb_top has no endmodule at the end of the file (IEEE 1800-2023 23.2.1)."
-    },
-    "labs/scoreboard/lab1_reference_model#solution-mut_sub": {
-      "kind": "content-bug",
-      "reason": "module tb_top has no endmodule at the end of the file (IEEE 1800-2023 23.2.1)."
-    },
-    "labs/scoreboard/lab1_reference_model#starter": {
-      "kind": "content-bug",
-      "reason": "module tb_top has no endmodule at the end of the file (IEEE 1800-2023 23.2.1)."
-    },
-    "labs/scoreboard/lab1_reference_model#starter-mut_sub": {
-      "kind": "content-bug",
-      "reason": "module tb_top has no endmodule at the end of the file (IEEE 1800-2023 23.2.1)."
     }
   }
 }

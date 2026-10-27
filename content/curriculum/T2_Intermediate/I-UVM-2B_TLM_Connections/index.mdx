@@ -559,7 +559,7 @@ package tlm_demo_pkg;
     uvm_analysis_export   #(bus_item) act_export;  // actual items enter here
     uvm_tlm_analysis_fifo #(bus_item) exp_fifo;    // unbounded, never blocks a writer
     uvm_tlm_analysis_fifo #(bus_item) act_fifo;
-    int unsigned matches, mismatches;
+    int unsigned n_match, n_mismatch;   // not "matches": a reserved keyword
 
     function new(string name, uvm_component parent);
       super.new(name, parent);
@@ -587,9 +587,9 @@ package tlm_demo_pkg;
         void'(exp_fifo.try_get(exp_item));  // only now consume the expected item
         if (!$cast(pred, exp_item.clone())) `uvm_fatal("SCB", "clone failed")
         pred.data = exp_item.data + 8'd1;   // the prediction, made on a copy
-        if (act_item.compare(pred)) matches++;
+        if (act_item.compare(pred)) n_match++;
         else begin
-          mismatches++;
+          n_mismatch++;
           `uvm_error("SCB_MISMATCH", $sformatf("expected %s, got %s",
                      pred.convert2string(), act_item.convert2string()))
         end
@@ -598,17 +598,17 @@ package tlm_demo_pkg;
 
     // Lets the test wait until n pairs have been checked.
     task wait_checked(int unsigned n);
-      wait (matches + mismatches >= n);
+      wait (n_match + n_mismatch >= n);
     endtask
 
     function void check_phase(uvm_phase phase);
       int unsigned pending = exp_fifo.used() + act_fifo.used();
       if (pending != 0)
         `uvm_error("SCB_PENDING", $sformatf("%0d items were never compared", pending))
-      if (matches + mismatches == 0)
+      if (n_match + n_mismatch == 0)
         `uvm_error("SCB_IDLE", "no item was checked: is every stream connected?")
       `uvm_info("SCB", $sformatf("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
-                matches, mismatches, pending), UVM_LOW)
+                n_match, n_mismatch, pending), UVM_LOW)
     endfunction
   endclass
 
@@ -690,6 +690,7 @@ package tlm_demo_pkg;
 endpackage
 
 module tb_top;
+  timeunit 1ns; timeprecision 1ps;     // same as the package (mixing is an error)
   import uvm_pkg::*;
   import tlm_demo_pkg::*;
   initial run_test("tlm_test");
@@ -1018,7 +1019,7 @@ class bridge_scoreboard extends uvm_scoreboard;
   uvm_analysis_imp_exp #(bus_item, bridge_scoreboard) exp_imp;
   uvm_analysis_imp_act #(bus_item, bridge_scoreboard) act_imp;
   bus_item     exp_q[$];
-  int unsigned matches, mismatches;
+  int unsigned n_match, n_mismatch;   // not "matches": a reserved keyword
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -1041,13 +1042,13 @@ class bridge_scoreboard extends uvm_scoreboard;
     if (exp_q.size() == 0) begin
       `uvm_error("SCB_UNEXPECTED",
                  $sformatf("nothing expected, got %s", t.convert2string()))
-      mismatches++;
+      n_mismatch++;
       return;
     end
     e = exp_q.pop_front();
-    if (t.compare(e)) matches++;
+    if (t.compare(e)) n_match++;
     else begin
-      mismatches++;
+      n_mismatch++;
       `uvm_error("SCB_MISMATCH", $sformatf("expected %s, got %s",
                  e.convert2string(), t.convert2string()))
     end
@@ -1057,10 +1058,10 @@ class bridge_scoreboard extends uvm_scoreboard;
     int unsigned pending = exp_q.size();
     if (pending != 0)
       `uvm_error("SCB_PENDING", $sformatf("%0d expected items never arrived", pending))
-    if (matches + mismatches == 0)
+    if (n_match + n_mismatch == 0)
       `uvm_error("SCB_IDLE", "no item was checked: is act_imp connected?")
     `uvm_info("SCB", $sformatf("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
-              matches, mismatches, pending), UVM_LOW)
+              n_match, n_mismatch, pending), UVM_LOW)
   endfunction
 endclass
 

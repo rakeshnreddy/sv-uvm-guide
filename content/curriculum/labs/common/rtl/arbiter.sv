@@ -32,9 +32,9 @@ module arbiter #(
     always_comb begin
       gnt = '0;
       for (int i = 0; i < NUM_REQUESTORS; i++) begin
-        int priority = (i + $clog2(NUM_REQUESTORS)'(last_gnt)) % NUM_REQUESTORS;
-        if (req[priority]) begin
-          gnt[priority] = 1'b1;
+        automatic int idx = (i + $clog2(NUM_REQUESTORS)'(last_gnt)) % NUM_REQUESTORS;
+        if (req[idx]) begin
+          gnt[idx] = 1'b1;
           break;
         end
       end

@@ -484,3 +484,4 @@ module tb_top;
     uvm_config_db#(virtual alu_if)::set(null, "uvm_test_top.env.*", "vif", alu_if0);
     run_test("alu_test");                // +UVM_TESTNAME=<test> overrides this
   end
+endmodule
