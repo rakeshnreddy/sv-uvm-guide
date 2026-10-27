@@ -20,6 +20,10 @@ try {
 const nextConfig = {
   // Add your Next.js config options here
   output: 'standalone',
+  // /curriculum/expert-index parses every lesson at build time. On a slow Cloudflare
+  // build machine it exceeded the default 60 s per page three times and failed the
+  // deploy (build ea57fd7b, 2026-10-27), so allow 5 minutes per page.
+  staticPageGenerationTimeout: 300,
   eslint: {
     ignoreDuringBuilds: false,
   },
