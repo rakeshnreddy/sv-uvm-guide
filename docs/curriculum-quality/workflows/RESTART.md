@@ -328,3 +328,31 @@ the wind-down at about 62 %.
 4. **Phase 6a.** Run visual-enrichment.js per tier, embedding the new components and adding the static visuals from
    the lesson plans. Run phase6a-extras.js for the hidden pages and labs. Release after each tier.
 5. **Closure checks** (plan §5 item 4).
+
+## Weekly pause, 2026-10-27 (owner: "work till 75% weekly usage")
+
+The pause started at 71 % weekly. Both workflows were stopped while only read-only agents were running, so no edit was cut off.
+
+**Burn rates measured this week:**
+- Two workflows in parallel used about 3 % weekly per 10 minutes.
+- One workflow alone used about 1 % per 9 minutes.
+
+Plan next week's runs for that, and run one workflow at a time when the budget is tight.
+
+**Released:**
+- `main` = the pause checkpoint. It carries the two checked round-2 wording fixes (F4C and I-SV-3B), the
+  `previews` block, and `staticPageGenerationTimeout: 300`.
+- That timeout fixes failed production build ea57fd7b. There, `/curriculum/expert-index` passed the 60 s
+  per-page limit on a slow Cloudflare builder.
+
+**Resume next week, in this order:**
+1. **6b sweep, round 3 onward** (run `wf_010d0167-550`).
+   - The session copy of the script has `MAX_ROUNDS = 3`. Raise it to 5 first. Then resume with `resumeFromRunId`:
+     rounds 1 and 2 and the finished round-3 critics replay from cache.
+   - In a new session, rerun `docs/curriculum-quality/workflows/phase6-closure-sweep.js` (MAX_ROUNDS 5) fresh.
+2. **Interactive components** (run `wf_d75ad03e-524`). It was stopped after 76 of 112 lesson audits, all cached.
+   - Resume it with `resumeFromRunId` and `args = visual-components-args.json`.
+   - The session copy builds only the top 8 components (`BUILD_CAP = 8`); raise the cap if the budget allows. The
+     docs copy `visual-components.js` has no cap.
+   - Start it only after 6b, or alone, because of the burn rate.
+3. Compile-fix pass, then phase 6a, then closure checks. These are unchanged from the 2026-10-26 pause notes.
