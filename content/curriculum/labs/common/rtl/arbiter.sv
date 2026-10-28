@@ -19,20 +19,25 @@ module arbiter #(
       end
     end
   end else begin: round_robin
-    logic [NUM_REQUESTORS-1:0] last_gnt;
+    // Index of the requester granted last; the search starts one past it, so every
+    // requester waits at most NUM_REQUESTORS - 1 grants.
+    localparam int IW = (NUM_REQUESTORS > 1) ? $clog2(NUM_REQUESTORS) : 1;
+    logic [IW-1:0] last_idx;
 
     always_ff @(posedge clk or negedge rst_n) begin
       if (!rst_n) begin
-        last_gnt <= '1; // Start with lowest priority
-      end else if (|gnt) begin
-        last_gnt <= gnt;
+        last_idx <= IW'(NUM_REQUESTORS - 1); // so requester 0 is checked first after reset
+      end else begin
+        for (int i = 0; i < NUM_REQUESTORS; i++) begin
+          if (gnt[i]) last_idx <= IW'(i);    // gnt is one-hot or zero
+        end
       end
     end
 
     always_comb begin
       gnt = '0;
-      for (int i = 0; i < NUM_REQUESTORS; i++) begin
-        automatic int idx = (i + $clog2(NUM_REQUESTORS)'(last_gnt)) % NUM_REQUESTORS;
+      for (int i = 1; i <= NUM_REQUESTORS; i++) begin
+        automatic int idx = (int'(last_idx) + i) % NUM_REQUESTORS;
         if (req[idx]) begin
           gnt[idx] = 1'b1;
           break;
