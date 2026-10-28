@@ -83,12 +83,29 @@ always_comb y2 = a;      // also runs once at time 0
 initial #10 a = 1'b0;
 ```
 
+**Predict first.** The simulator runs this listing. Before you step, decide `y1` and `y2` at t = 0 (once time 0 settles) and at t = 10 ns. Then run every order of the ready processes, switch *a falls* to *a static*, and open *Show advanced* to start `a` with `initial a = 1'b1;` instead of the initializer.
+
+<ProceduralBlocksSimulator scenario="comb-vs-star" scenarios={["comb-vs-star"]} />
+
+What the trace showed:
+
 | Time | `a` | `y1` (`always @*`) | `y2` (`always_comb`) | Why |
 |---|---|---|---|---|
 | 0 | 1 | x | 1 | The initializer happened before any procedure was waiting, so `@*` never saw a change (§6.8). `always_comb` runs once at time 0. |
 | 10 | 0 | 0 | 0 | The change of `a` wakes both. |
 
-The other four differences: `always_comb` also reacts to variables read inside functions it calls (`@*` sees only their arguments); it forbids other writers to its outputs; it forbids blocking timing controls and forks; and it reacts to expressions in immediate assertions inside the functions it calls (§9.2.2.2.2).
+- With *a static*, `a` never changes after its initializer, so `always @*` never runs: `y1` stays x for the whole run, while `y2` is 1 (§9.2.2.2.2).
+- With `initial a = 1'b1;`, `y1` depends on whether the `@*` block starts before that `initial` (§9.2). `y2` ends time 0 at 1 in every order: `always_comb` is sensitive to `a` (§9.2.2.2.1), so even a write that lands after its time-zero run wakes it again.
+
+Time 0 is only one difference. `always_comb` and `always @*` differ in four more ways, and the table puts all five side by side (§9.2.2.2.2):
+
+| Difference | `always @*` | `always_comb` |
+|---|---|---|
+| Time 0 | waits for the first change in its inferred list | runs once at time 0, after every `initial` and `always` has started (§9.2.2.2) |
+| Variables read inside a called function | sees only the function's arguments | also sees the variables the function reads |
+| Other processes writing its outputs | allowed | not allowed, including variables written by the functions it calls; independent elements whose longest static prefixes do not overlap are the exception (§9.2.2.2) |
+| Statements that block, blocking timing or event controls, fork-join | allowed: it is a general-purpose `always` | not allowed |
+| Expressions in immediate assertions | sensitive only to those in the procedure itself | also sensitive to those in the functions it calls |
 
 #### When you really want a latch
 
@@ -99,6 +116,34 @@ The other four differences: `always_comb` also reacts to variables read inside f
 always_latch
   if (en) q <= d;        // transparent while en is 1; q holds while en is 0
 ```
+
+<figure>
+  <svg viewBox="0 0 340 152" role="img" aria-label="Waveform of always_latch if (en) q <= d, with time running left to right and no clock. At the start en is 0: the latch is closed, and q is still unknown (x) because nothing has assigned it yet. While en is 1, the latch is open: q follows d, falling and rising each time d does. When en falls to 0, the latch closes and q holds its last value, 1, even when d falls afterwards." style={{ width: "100%", maxWidth: 400 }}>
+    <defs>
+      <pattern id="f2c-latch-x" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="rgb(244,63,94)" strokeWidth="2" strokeOpacity="0.6" />
+      </pattern>
+    </defs>
+    <rect x="112" y="6" width="108" height="112" fill="currentColor" fillOpacity="0.08" />
+    <line x1="112" y1="6" x2="112" y2="118" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="3 3" />
+    <line x1="220" y1="6" x2="220" y2="118" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="3 3" />
+    <text x="8" y="32" fontSize="11" fill="currentColor">en</text>
+    <path d="M40,38 H112 V18 H220 V38 H328" fill="none" stroke="currentColor" strokeWidth="1.6" />
+    <text x="8" y="66" fontSize="11" fill="currentColor">d</text>
+    <path d="M40,72 H76 V52 H148 V72 H184 V52 H256 V72 H328" fill="none" stroke="currentColor" strokeWidth="1.6" />
+    <text x="8" y="100" fontSize="11" fill="currentColor">q</text>
+    <rect x="40" y="86" width="72" height="20" fill="url(#f2c-latch-x)" stroke="rgb(244,63,94)" strokeWidth="1" />
+    <text x="76" y="100" fontSize="11" textAnchor="middle" fill="currentColor">x</text>
+    <path d="M112,86 H148 V106 H184 V86 H328" fill="none" stroke="currentColor" strokeWidth="2.4" />
+    <text x="76" y="134" fontSize="11" textAnchor="middle" fill="currentColor">closed</text>
+    <text x="76" y="148" fontSize="11" textAnchor="middle" fill="currentColor">q still x</text>
+    <text x="166" y="134" fontSize="11" textAnchor="middle" fill="currentColor">open (en = 1)</text>
+    <text x="166" y="148" fontSize="11" textAnchor="middle" fill="currentColor">q follows d</text>
+    <text x="274" y="134" fontSize="11" textAnchor="middle" fill="currentColor">closed</text>
+    <text x="274" y="148" fontSize="11" textAnchor="middle" fill="currentColor">q holds 1</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">**The latch above, over time.** Time runs left to right; there is no clock. In the shaded window `en` is 1, so the latch is open (transparent) and `q` copies every change of `d`. Outside it the latch is closed and `q` keeps its last value, even when `d` changes. Before the latch first opens, nothing has assigned `q`, so it is still x (hatched).</figcaption>
+</figure>
 
 A latch can also appear by accident. An `always_comb` that leaves a variable unassigned on some path must remember the old value, and remembering is a latch; tools should warn about it (§9.2.2.2). Assign every output at the top of an `always_comb` block, as the state machine below does, and no path can leave it unassigned.
 
@@ -160,6 +205,41 @@ The rules that follow from this picture:
 - **`=` is right for values local to one process:** combinational logic in `always_comb`, and a testbench's own counters and temporaries.
 
 F3C traces this race region by region with an interactive scheduler: [Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index).
+
+<VisualRecap
+  title="Blocking = versus nonblocking <="
+  rule="= writes before the next statement runs. <= reads its right-hand side now and writes in the NBA region of the same time slot, so every process that runs before then still reads the old value."
+  code={`// t = 10 ns, a = 1, b = 2
+a <= b; b <= a;   // both right-hand sides read now
+$display(a, b);   // 1 2: Active, nothing updated yet
+$strobe(a, b);    // 2 1: Postponed, same t = 10 ns
+// with =, a = b; b = a; prints 2 2: no swap`}
+  mistake="Thinking that <= updates at a later simulation time, or writing flops and testbench drives with =, so the result depends on which process runs first (§4.7)."
+  inTestbench="Until F4C, flops, a time-0 reset and testbench writes to design inputs use <=; the bench's own counters and temporaries use =."
+>
+  <svg viewBox="0 0 320 206" role="img" aria-label="One time slot at t = 10 ns, drawn as three rungs from top to bottom, starting with a = 1 and b = 2. Active: a <= b; b <= a; reads both right-hand sides, and $display prints 1 2 because nothing has been updated yet. NBA: a becomes 2 and b becomes 1. Postponed, a read-only region: $strobe prints 2 1, still at t = 10 ns. With blocking assignments instead, a = b; b = a; prints 2 2 and there is no swap." style={{ width: "100%", maxWidth: 360, fontVariantLigatures: "none" }}>
+    <defs>
+      <marker id="f2c-rung-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+      </marker>
+    </defs>
+    <text x="8" y="14" fontSize="11" fill="currentColor" fillOpacity="0.8">One time slot: t = 10 ns, a = 1, b = 2</text>
+    <rect x="8" y="22" width="304" height="56" rx="8" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="18" y="38" fontSize="12" fontWeight="600" fill="currentColor">Active</text>
+    <text x="74" y="38" fontSize="11" fontFamily="ui-monospace, monospace" fill="currentColor">{"a <= b; b <= a;"}</text>
+    <text x="18" y="54" fontSize="11" fill="currentColor">▼ reads b = 2 and a = 1</text>
+    <text x="18" y="70" fontSize="11" fontFamily="ui-monospace, monospace" fill="currentColor">{"$display → 1 2"}</text>
+    <line x1="160" y1="78" x2="160" y2="92" stroke="currentColor" strokeWidth="1.4" markerEnd="url(#f2c-rung-arrow)" />
+    <rect x="8" y="94" width="304" height="34" rx="8" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="18" y="115" fontSize="12" fontWeight="600" fill="currentColor">NBA</text>
+    <text x="74" y="115" fontSize="11" fill="currentColor">◆ a becomes 2, b becomes 1</text>
+    <line x1="160" y1="128" x2="160" y2="142" stroke="currentColor" strokeWidth="1.4" markerEnd="url(#f2c-rung-arrow)" />
+    <rect x="8" y="144" width="304" height="34" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.55" strokeDasharray="4 3" />
+    <text x="18" y="165" fontSize="12" fontWeight="600" fill="currentColor">Postponed</text>
+    <text x="104" y="165" fontSize="11" fontFamily="ui-monospace, monospace" fill="currentColor">{"$strobe → 2 1"}</text>
+    <text x="8" y="198" fontSize="11" fill="currentColor" fillOpacity="0.8">{"With = instead: a = b; b = a; prints 2 2"}</text>
+  </svg>
+</VisualRecap>
 
 ### Timing controls: #, @ and wait
 
@@ -254,6 +334,17 @@ Details you will need in real code:
 - **Local variables.** Declarations at the top of a block are local to it. In a module's `initial` or `always`, they are static, one copy shared by every pass, unless you write `automatic`. A declaration with an initializer there needs an explicit `static` or `automatic` (§6.21).
 - **What creates a process.** Each `initial`, `always`, `always_comb`, `always_ff`, `always_latch` and `final` procedure, each statement of a fork, and each dynamic process (§9.5). A `begin … end` does **not**: it runs inside the process that reaches it. `fork begin s1; s2; end join` is one child process that runs two statements in order.
 
+Blocks and processes at a glance:
+
+| Construct | Creates a process? | Its statements start | Delays count from |
+|---|---|---|---|
+| `begin … end` | **No**: §9.5 does not list it, so it runs inside the process that reaches it | when that process reaches it | the previous statement (§9.3.1) |
+| `fork … join`, `join_any` or `join_none` | **Yes**: one child process per statement (§9.5) | only once the parent blocks or terminates, whatever the join keyword (§9.3.2) | the moment the fork is entered (§9.3.2) |
+| `fork begin s1; s2; end join` | **Yes**: one child, which runs `s1` then `s2` (§9.3.2) | only once the parent blocks or terminates | inside the child, the previous statement |
+| `initial`, `always` | **Yes**: one process per procedure (§9.5) | at time 0, in no promised order (§9.2) | as in the statement that forms its body, usually a `begin … end` |
+
+The row to remember is the first one: a `begin … end` gives you ordering, never a new process. That is why the timeout wrapper below needs `fork begin … end join`.
+
 ### Fork and join
 
 The keyword that closes a fork decides when the **parent**, the process that executed the fork, continues (§9.3.2, Table 9-1):
@@ -306,6 +397,50 @@ What the lanes showed:
 - With the isolation wrapper, `disable fork` runs inside a new parent whose only descendants are the response and the timer, so the monitor survives.
 - `disable guard` with two concurrent calls ends both activations of the block, so the second call never prints its response.
 - `wait fork` returns at 20 ns, when the last immediate child ends. It does not wait for the grandchild G.
+
+The two pictures below freeze the first scenario at 15 ns, the moment the response wins, as a **process tree**: each process sits under the process that forked it. The lanes add the transfer's id to the names (`rsp 1`, `timer 1`, `wrapper 1`). `disable fork` reaches everything below the process that calls it.
+
+<ArchitectureDiagram
+  title="Without the wrapper: disable fork reaches every descendant of test"
+  caption="Each line joins a parent (above) to a process it forked (below), at 15 ns. test forked the monitor earlier with join_none, then raced rsp against timer with join_any. disable fork runs in test itself, so it kills every descendant of test (§9.6.3): the losing timer, and also the monitor, which goes silent with no error."
+  cellWidth={104}
+  gapX={28}
+  spreadAnchors
+  legend={false}
+  nodes={[
+    { id: "test", label: "test", sublabel: "forked all three", col: 1, row: 0, state: "active", badge: "disable fork" },
+    { id: "monitor", label: "monitor", sublabel: "join_none, earlier", col: 0, row: 1, state: "error", badge: "killed" },
+    { id: "rsp", label: "rsp", sublabel: "won at 15 ns", col: 1, row: 1, state: "dim", badge: "finished" },
+    { id: "timer", label: "timer", sublabel: "#40, lost", col: 2, row: 1, state: "error", badge: "killed" }
+  ]}
+  edges={[
+    { from: "test", to: "monitor", style: "structural" },
+    { from: "test", to: "rsp", style: "structural" },
+    { from: "test", to: "timer", style: "structural" }
+  ]}
+/>
+
+<ArchitectureDiagram
+  title="With the wrapper: disable fork reaches only the race"
+  caption="Each line joins a parent (above) to a process it forked (below), at 15 ns. The wrapper, fork begin … end join, is a new parent whose only descendants are rsp and timer. Its disable fork kills the timer and cannot reach the monitor, a child of test (§9.3.2, §9.6.3). A begin … end alone creates no process (§9.5), so it could not play the wrapper's part."
+  cellWidth={104}
+  gapX={28}
+  spreadAnchors
+  legend={false}
+  nodes={[
+    { id: "test", label: "test", sublabel: "forked both", col: 1, row: 0 },
+    { id: "monitor", label: "monitor", sublabel: "join_none, earlier", col: 0, row: 1, state: "ok", badge: "survives" },
+    { id: "wrapper", label: "wrapper", sublabel: "fork begin … end join", col: 2, row: 1, state: "active", badge: "disable fork" },
+    { id: "rsp", label: "rsp", sublabel: "won at 15 ns", col: 1, row: 2, state: "dim", badge: "finished" },
+    { id: "timer", label: "timer", sublabel: "#40, lost", col: 2, row: 2, state: "error", badge: "killed" }
+  ]}
+  edges={[
+    { from: "test", to: "monitor", style: "structural" },
+    { from: "test", to: "wrapper", style: "structural" },
+    { from: "wrapper", to: "rsp", style: "structural" },
+    { from: "wrapper", to: "timer", style: "structural" }
+  ]}
+/>
 
 The safe per-transaction timeout gives the race its own parent process, so `disable fork` has nothing else to reach:
 
@@ -475,6 +610,17 @@ What to notice:
 - `#` waits for time, `@` for a change or edge that happens while you wait, and `wait` for a level.
 - Forked children start when the parent blocks. `join`, `join_any` and `join_none` decide when the parent continues. Isolate each timeout with `fork begin fork … join_any; disable fork; end join`.
 
+**One glance: each rule and the picture that shows it.** Cover the right-hand column, picture each visual, and say its rule before you read it.
+
+| Picture on this page | The rule it shows |
+|---|---|
+| The `y1`/`y2` trace in [Choosing an RTL procedure](#choosing-an-rtl-procedure-always_comb-always_ff-always_latch): x and 1 at t = 0 | `always_comb` runs once at time 0; `always @*` waits for a change |
+| The three-rung recap in [Blocking and nonblocking assignments](#blocking-and-nonblocking-assignments): `$display` 1 2, `$strobe` 2 1 | `<=` reads now and writes in the NBA region of the same time slot |
+| The shift-register waveform in the same section: `q2 A→B` loses a stage | Flops written with `=` race; with `<=` every stage reads the old value |
+| The edge-versus-level lanes in [Timing controls](#timing-controls---and-wait): only `wait (ready)` gets through | `@` needs a change while you wait; `wait` checks a level |
+| The join-variants lanes in [Fork and join](#fork-and-join): the parent prints at 0, 10 or 30 ns | `join_none` resumes at once, `join_any` at the first child's end, `join` at the last; children start only once the parent blocks |
+| The two process trees in [Waiting for and cleaning up threads](#waiting-for-and-cleaning-up-threads): the monitor dies without the wrapper | `disable fork` kills every descendant of its caller; the wrapper limits it to the race |
+
 ## Make It Work
 
 ### Worked example: a self-checking bench with a guarded watchdog
@@ -595,6 +741,40 @@ monitor counted 3 detections
 PASS=8 FAIL=0
 ```
 
+The bench's processes, and the order in which they fork, run and end, before the step-by-step walk-through:
+
+<SequenceDiagram
+  title="The worked bench: who forks whom, and who ends first"
+  caption="Each lifeline is one process of tb_top; the clock and the DUT's two procedures are not drawn. A solid arrow with a filled head is a fork whose join its sender waits at. An open head is a fork nobody waits for (join_none), or the kill. A dashed arrow is a child ending, which lets its parent's join return. Times are simulation times; the clock's rising edges are at 5, 15, 25 … 95 ns."
+  columnWidth={136}
+  participants={[
+    { id: "mon", label: "monitor", sublabel: "forever @(posedge clk)" },
+    { id: "test", label: "test", sublabel: "initial begin … end" },
+    { id: "wrap", label: "wrapper", sublabel: "fork begin … end join" },
+    { id: "drive", label: "drive_and_check()", sublabel: "race branch 1" },
+    { id: "wdog", label: "watchdog", sublabel: "race branch 2: #1us" }
+  ]}
+  messages={[
+    { kind: "async", from: "test", to: "mon", label: "fork … join_none" },
+    { from: "test", to: "wrap", label: "fork begin … end join" },
+    { kind: "note", from: "mon", to: "wrap", label: "t = 0: neither child starts until test blocks at the wrapper's join (§9.3.2)." },
+    { from: "wrap", to: "drive", label: "fork … join_any" },
+    { from: "wrap", to: "wdog", label: "same fork" },
+    { kind: "note", from: "drive", to: "wdog", label: "Both start when the wrapper blocks at join_any." },
+    { kind: "self", from: "drive", label: "rst_n <= 0; din <= 0 at t = 0" },
+    { kind: "divider", label: "posedges at 5 and 15 ns" },
+    { kind: "self", from: "drive", label: "rst_n <= 1 at 15 ns" },
+    { kind: "divider", label: "8 bits: posedges at 25 to 95 ns" },
+    { kind: "self", from: "drive", label: "din <= next bit; check detected with !==" },
+    { kind: "self", from: "mon", label: "counts detected === 1 at each posedge" },
+    { kind: "return", from: "drive", to: "wrap", label: "returns at 95 ns: join_any resumes" },
+    { kind: "async", from: "wrap", to: "wdog", tone: "error", label: "disable fork kills it" },
+    { kind: "return", from: "wrap", to: "test", label: "join completes at 95 ns" },
+    { kind: "self", from: "test", label: "@(negedge clk) at 100 ns, then $finish" },
+    { kind: "note", from: "mon", to: "wdog", label: "final prints the summary in zero time. The monitor, a child of test and not of the wrapper, ran until $finish." }
+  ]}
+/>
+
 How it works, step by step:
 
 1. **The DUT is two processes.** The `always_ff` is the only writer of `state` and uses `<=`. The `always_comb` seeds its outputs, then decodes with a `unique case` that has no `default`.
@@ -610,9 +790,17 @@ How it works, step by step:
 1. Save the code as `seq_detect_tb.sv`.
 2. Compile and elaborate it with `tb_top` as the top module, using any simulator that supports IEEE 1800 SystemVerilog. On EDA Playground, pick a simulator listed with SystemVerilog support.
 3. Run until the bench calls `$finish`, and compare the log with Expected output.
-4. Break it on purpose, one change at a time, and explain what changes:
-   - Change `din <= PATTERN[i];` to `din = PATTERN[i];`. The new bit is now written in the Active region of the edge's time slot, where the DUT's flop may or may not have read `state_next` yet, so the result depends on process order, and a simulator is free to print FAIL lines.
-   - Delete the outer `fork begin … end join` around the watchdog race. `disable fork` now runs in the test process itself and kills the monitor at 95 ns. Whether the monitor counted the detection at 95 ns first depends on process order, so it reports 2 or 3.
+4. Break it on purpose, one change at a time, and explain what changes. Predict first: which lines of the log can change, and why? For the second change, picture the two process trees in [Waiting for and cleaning up threads](#waiting-for-and-cleaning-up-threads).
+   - Change `din <= PATTERN[i];` to `din = PATTERN[i];`.
+   - Delete the outer `fork begin … end join` around the watchdog race.
+
+<details>
+<summary>Check your predictions</summary>
+
+- **`din = PATTERN[i];`** The new bit is now written in the Active region of the edge's time slot, where the DUT's flop may or may not have read `state_next` yet, so the result depends on process order, and a simulator is free to print FAIL lines.
+- **No wrapper.** `disable fork` now runs in the test process itself and kills the monitor at 95 ns. Whether the monitor counted the detection at 95 ns first depends on process order, so it reports 2 or 3.
+
+</details>
 
 ### Debug: the monitor that went silent
 
@@ -626,12 +814,12 @@ A test forks a coverage monitor, then runs a transfer with a timeout. The monito
 |---|---|---|
 | The run never gets past time 0, with no output | An `always` or `forever` with no timing control (§9.2.2.1, §12.7.6) | Add `@(...)` or `#d`, or use `always_comb` for logic |
 | A flop sometimes captures the value driven on the same edge: the result changes between simulators or after unrelated edits | A blocking write at the active edge, in a flop or a testbench drive (§4.7) | `<=` in flops and in testbench drives |
-| An `always @*` output stays x until an input first changes | `always @*` does not run at time 0 (§9.2.2.2.2) | Use `always_comb` |
-| A monitor stops printing after the first transfer, with no error | `disable fork` in the process that forked the monitor (§9.6.3) | Add the isolation wrapper |
+| An `always @*` output stays x until an input first changes | `always @*` does not run at time 0 (§9.2.2.2.2) | Use `always_comb` (try both in the [`always_comb` versus `@*` simulator](#choosing-an-rtl-procedure-always_comb-always_ff-always_latch)) |
+| A monitor stops printing after the first transfer, with no error | `disable fork` in the process that forked the monitor (§9.6.3) | Add the isolation wrapper (compare the two [process trees](#waiting-for-and-cleaning-up-threads)) |
 | Every forked thread reports the same loop value | A fork in a loop reads the shared loop variable (§9.3.2) | Declare `automatic int k = i;` in the fork |
 | With two transfers in flight, one response is lost | Disabling a named block ended both activations (§9.6.2) | Use the isolation wrapper and `disable fork` |
 | The test hangs at `wait fork` | A child that never ends, such as a monitor (§9.6.1) | Give the bounded threads, and the `wait fork`, their own parent |
-| Flops ignore a reset applied at time 0 until the first clock | A blocking `rst_n = 0` ran before the flops were waiting for the negedge (§9.2) | Drive the time-0 reset with `<=` |
+| Flops ignore a reset applied at time 0 until the first clock | A blocking `rst_n = 0` ran before the flops were waiting for the negedge (§9.2) | Drive the time-0 reset with `<=` (compare the three forms in [Expert: Time zero and initialization order](#expert-time-zero-and-initialization-order)) |
 | A `$strobe` in a `final` procedure prints nothing | No scheduled event runs after the final procedures (§9.2.3) | Use `$display` in `final` |
 
 **Checklist before moving on:**
@@ -646,11 +834,25 @@ A test forks a coverage monitor, then runs a transfer with a timeout. The monito
 
 ### Expert: Time zero and initialization order
 
+**Predict first.** The simulator builds a flop with `always_ff @(posedge clk or negedge rst_n)`, a clock with `always #5 clk = ~clk;`, and a bench that applies reset at time 0. Does `state` become `S_IDLE` at t = 0? Answer for `=` and run every order of the ready processes, then switch the reset line to `<=` and to the declaration initializer.
+
+<ProceduralBlocksSimulator scenario="time0-reset" scenarios={["time0-reset"]} />
+
+The rules behind what you just saw:
+
 - **No order at time 0.** `initial` and `always` procedures start in no implied order (§9.2). A bench that runs `rst_n = 0;` with a blocking assignment at time 0 may run before the DUT's `always_ff @(posedge clk or negedge rst_n)` has reached its event control. The flop then misses the x → 0 negedge, and `state` stays x until the first clock edge with reset low.
 - **The fix is `<=`.** A nonblocking update at time 0 lands in the NBA region, after every procedure started at time 0 has run up to its first timing control (§4.5). The standard's own `forever` clock example initializes its clocks with `<=` (§12.7.6).
 - **Declaration initializers run before any procedure waits.** `logic clk = 1'b0;` is set before any `initial` or `always` procedure starts (§6.8, §10.5). No process is waiting on `clk` yet, so none of them sees a change. That is right for a clock's starting value and wrong for a reset that flops must react to. In IEEE 1364-2005 such an initializer behaved like an assignment from an `initial` procedure after simulation had started (§6.8, NOTE), so legacy code may rely on an event that no longer happens.
 - **`always_comb` runs once at time 0**, after all `initial` and `always` procedures have started (§9.2.2.2), so its outputs match its inputs from the first moment.
 - **Interleaving.** A simulator may suspend a process between statements and run others (§4.7). Only the order of statements inside one `begin … end` is guaranteed (§4.6).
+
+What the outcome groups showed (`clk` starts at 0, so the first posedge is at 5 ns):
+
+| How the bench applies reset | `state` at t = 0 | `state` at 5 ns | Why |
+|---|---|---|---|
+| `rst_n = 1'b0;` in an `initial` | `S_IDLE` or x: the start order decides | `S_IDLE` | No start order is promised (§9.2). x → 0 is a negedge (Table 9-2), but only a flop that is already waiting sees it |
+| `rst_n <= 1'b0;` in an `initial` | `S_IDLE` in every order | `S_IDLE` | The update lands in the NBA region, after every procedure has reached its first timing control (§4.5, §10.4.2) |
+| `logic rst_n = 1'b0;` (declaration initializer) | x in every order | `S_IDLE`: the posedge sees `rst_n` low | Set before any procedure starts, so there is no change to see (§6.8) |
 
 ### Expert: Nonblocking order, intra-assignment delays and lifetimes
 
@@ -658,6 +860,17 @@ A test forks a coverage monitor, then runs a transfer with a timeout. The monito
 - **Intra-assignment timing.** A timing control inside an assignment evaluates the right-hand side now and assigns later (§9.4.5). `a = #5 b;` writes after 5 time units and blocks the process meanwhile. `q <= #1 d;` schedules the update one time unit later without blocking: the one case where a nonblocking update really lands at a later time. `a <= repeat (3) @(posedge clk) d;` writes after three rising edges. The standard's race-free swap is `fork a = #5 b; b = #5 a; join`.
 - **No nonblocking writes to automatic variables** (§6.21, §10.4.2). In a `task automatic` driver, `<=` to a task-local variable is a compile error; `<=` to module or interface signals is fine.
 - **Two writers still race with `<=`.** If two processes write one variable at the same edge, the last update performed wins, and which one is last depends on process order. `always_ff` and `always_comb` turn a second writer into an error (§9.2.2.2, §9.2.2.4).
+
+Where the timing control sits decides when the right-hand side is read, when the variable is written, and whether the process waits. Each statement below starts at time t:
+
+| Statement | Right-hand side read at | Variable written at | Does the process wait? |
+|---|---|---|---|
+| `#5 a = b;` | t + 5: the delay comes before the whole statement (§9.4.1) | t + 5 | Yes, 5 time units, before it reads `b` |
+| `a = #5 b;` | t | t + 5 | Yes: the next statement runs at t + 5 (§9.4.5, Table 9-3) |
+| `a <= b;` | t | t, in the NBA region of the same time slot (§10.4.2) | No |
+| `q <= #1 d;` | t | t + 1, in the NBA region of that later time slot (§4.4.2.4) | No |
+| `a <= repeat (3) @(posedge clk) d;` | t | after three rising edges of `clk` (§9.4.5) | No |
+| `fork a = #5 b; b = #5 a; join` | t, both right-hand sides | t + 5, both: `a` and `b` swap | The parent waits at `join` until t + 5 (§9.4.5) |
 
 ### Expert: Fork corner cases
 
@@ -668,6 +881,71 @@ A test forks a coverage monitor, then runs a transfer with a timeout. The monito
 - **No jumps across a fork.** `break` and `continue` cannot control a loop outside the fork (§12.8).
 - **Children outlive their parent.** When a parent with `join_none` children ends, the children start and run to completion. Only `disable fork`, `disable`, `process::kill()` or the end of the simulation stops them.
 
+**Check yourself: will it compile?** For each fragment, decide whether it is legal and, if it is, what it prints. Fragments (a), (b), (c) and (e) sit in a module's `initial` procedure; (d) and (f) are tasks declared in a module.
+
+```systemverilog
+// snippet
+// (a)
+for (int i = 0; i < 3; i++)
+  fork
+    int k = i;
+    $display("k = %0d", k);
+  join_none
+
+// (b)
+for (int i = 0; i < 3; i++)
+  fork
+    automatic int k = i;
+    $display("k = %0d", k);
+  join_none
+
+// (c)
+for (int i = 0; i < 3; i++)
+  fork
+    begin
+      automatic int m = i;
+      $display("m = %0d", m);
+    end
+  join_none
+
+// (d)
+task automatic send();
+  fork
+    #10 $display("sent");
+    return;
+  join_none
+endtask
+
+// (e)
+for (int i = 0; i < 3; i++)
+  fork
+    if (i == 1) break;
+  join_none
+
+// (f)
+task automatic watch(ref logic sig);
+  fork
+    @(posedge sig) $display("rose");
+  join_none
+endtask
+```
+
+<details>
+<summary>Check your answers</summary>
+
+| Fragment | Legal? | Why |
+|---|---|---|
+| (a) `int k = i;` in the fork | **No** | In a static block, a declaration with an initializer must say `static` or `automatic` (§6.21) |
+| (b) `automatic int k = i;` in the fork | **Yes**: the children print 0, 1 and 2, in no promised order | Fork-local variables are initialized before any child is spawned, so each child gets its own copy (§9.3.2) |
+| (c) `automatic int m = i;` inside the child's `begin … end` | **Yes, but** every child prints 3 | `m` is initialized when the child starts, after the loop has ended and `i` is 3 (§9.3.2) |
+| (d) `return` inside the fork | **No**: a compilation error | The forked statement runs in another process, so it cannot return from the task (§9.3.2) |
+| (e) `break` inside the fork | **No** | `break` and `continue` cannot control a loop outside the fork (§12.8) |
+| (f) `ref` argument used inside `join_none` | **No** | Inside `join_any` or `join_none`, a `ref` argument may be used only to initialize fork-local variables, unless it is declared `ref static` (§9.3.2) |
+
+(c) is the dangerous one: it compiles, runs and prints wrong values. (a) at least fails loudly.
+
+</details>
+
 ### Expert: disable in depth
 
 - **Every activation.** Disabling a task or a named block ends all of its activations, including every concurrent execution of an automatic task (§9.6.2).
@@ -675,6 +953,17 @@ A test forks a coverage monitor, then runs a transfer with a timeout. The monito
 - **Unspecified leftovers.** After a task is disabled, its `output` and `inout` results, its scheduled but not yet performed nonblocking assignments, and its procedural continuous assignments are unspecified (§9.6.2). Never rely on the outputs of a disabled task.
 - **Descendants of finished children.** `disable fork` also kills the descendants of children that have already finished (§9.6.3).
 - **`process::kill()`** kills a process and all of its descendants, even if the process itself has finished (§9.7). I-SV-5 teaches the `process` class: [Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index).
+
+The four ways to wait for or stop threads, side by side:
+
+| Statement | Reaches | Effect | The trap |
+|---|---|---|---|
+| `wait fork;` (§9.6.1) | the immediate children of the calling process, not their descendants | blocks until they have all ended | a child that never ends, such as a monitor, blocks it forever |
+| `disable fork;` (§9.6.3) | every descendant of the calling process, including descendants of children that have already finished | kills them | it also kills a monitor that the same process forked earlier |
+| `disable name;` (§9.6.2) | every process executing the named block or task, whoever forked it | ends the block or task; execution resumes after it | one call's cleanup ends a concurrent call's work; the outputs of a disabled task are unspecified |
+| `p.kill();` (§9.7) | the process `p` and all of its descendants, even if `p` has finished | kills them | you need a handle first, for example from `process::self()` run in the target process |
+
+`wait fork` and `disable fork` follow the dynamic parent-child tree, the one the process-tree pictures above draw. `disable name` follows the static name in the source, which is why it ignores which call started the block (§9.6, §9.6.1, §9.6.2, §9.6.3).
 
 ### Expert: final procedures and the end of the run
 
@@ -684,12 +973,32 @@ A test forks a coverage monitor, then runs a transfer with a timeout. The monito
 - `$finish` inside a `final` ends the simulation at once (§9.2.3). `$stop` only suspends the run (§20.2); `final` procedures run when the run really ends.
 - In UVM benches, the end-of-test summary belongs in `report_phase`: [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index).
 
+F2D draws the end of a run as a sequence diagram, including what `$error`, `$fatal` and `$stop` do to the `final` procedures: [Ending the run: $finish, $stop and final](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index#ending-the-run-finish-stop-and-final).
+
 ### Expert: Sensitivity lists in detail
 
 - `always_comb` leaves out variables declared inside the block and variables the block writes (§9.2.2.2.1). `always @*` includes written variables: the standard's example `always @* begin tmp1 = a & b; tmp2 = c & d; y = tmp1 | tmp2; end` is sensitive to `tmp1` and `tmp2` as well as to `a`, `b`, `c` and `d` (§9.4.2.2).
 - `always @*` sees only the arguments of a function it calls; `always_comb` also sees the variables the function reads (§9.2.2.2.2).
 - An edge event is detected on the least significant bit only, and a change in an operand that leaves the expression's value unchanged is no event (§9.4.2). `@(posedge bus)` on a vector watches `bus[0]`.
 - In `@(a iff en)`, the guard is evaluated when `a` changes, not when `en` changes (§9.4.2.3).
+
+<TimingDiagram
+  title="A clocked iff guard: the procedure wakes only at edges where en is 1"
+  caption="Code: always @(posedge clk iff en) count <= count + 1; with int count starting at 0. Column k is rising edge k. en changes just after an edge, like a flop output, so its value at edge k is the one drawn just before that edge. The procedure wakes only at edges where en is 1 (✓: edges 0, 2, 3 and 5), and count steps up just after each of them, reaching 4 after edge 5. At edges 1, 4 and 6 en is 0, so count holds. en rising just after edge 1 wakes nothing: the guard is evaluated when clk rises, not when en changes (§9.4.2.3)."
+  edges={7}
+  cycleWidth={38}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "en", kind: "bit", values: [1, 0, 1, 1, 0, 1, 0] },
+    { name: "count", kind: "bus", values: [0, 1, 1, 2, 3, 3, 4] }
+  ]}
+  markers={[
+    { edge: 0, tone: "pass", label: "en is 1: the procedure wakes and count becomes 1" },
+    { edge: 2, tone: "pass", label: "en is 1: the procedure wakes and count becomes 2" },
+    { edge: 3, tone: "pass", label: "en is 1: the procedure wakes and count becomes 3" },
+    { edge: 5, tone: "pass", label: "en is 1: the procedure wakes and count becomes 4, just after this edge" }
+  ]}
+/>
 
 ### Expert: Thread hygiene at scale and in UVM
 

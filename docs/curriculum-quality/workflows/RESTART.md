@@ -565,3 +565,25 @@ it at 88 % weekly, to stay under the owner's 90 %.
 - Both drafts are on `backup/wip-2026-10-28-f2c-6a` (`bd809b05`), for reference only, and the main tree was
   reverted. Next week, rerun 6a on F2C from `main` with the same `extraContext`; do not merge the branch.
 - Final usage this session: 88 % weekly. Nothing is running, and the working tree is clean apart from `.claude/`.
+
+**Finished on the owner's request ("let's finish this and put it on live site"), 2026-10-28, run `wf_6ea29fba-343`.**
+- **ScenarioSorter is clean** after 2 rounds. Six accuracy reviewers each checked one deck group card by card, and
+  every reviewer listed the cards and clauses it checked. A learning/UX reviewer covered the rest.
+  - Round 1 found 5 serious accuracy issues, in verification-methods, sv-features and ipc-tools, and 4 UX issues:
+    answer-by-streak card orders, a correct option always listed first, and a malformed partial-credit line.
+  - The fixer resolved all of them; round 2 passed every scope.
+  - It is registered as an MDX interactive and embedded in F1B (`deck="verification-methods"`, end of "How the
+    methods combine"). F2B's PacketSorterGame now wraps the containers deck.
+  - `tests/lib/scenario-sorter-decks.test.ts` pins the embed list. Each later lesson that embeds a deck (F1C, F2D,
+    F2E, F2B) must add its entry there.
+  - Open S3s from the in-context check, for 6a:
+    - the mixed-traffic card needs its own emulation feedback;
+    - the async-fifo card is graded on a CDC fact F1B never teaches;
+    - the no-starvation card versus the taxonomy row at F1B:699;
+    - the boot-os card repeats the methods tour's question.
+- **F2C is clean** on both lessons (index: 16 additions; flow-control: 18). The time-0 ProceduralBlocksSimulator
+  presets are now embedded.
+- Both were released together as checkpoint 7. The backup branches `backup/wip-2026-10-28-scenario-sorter` and
+  `backup/wip-2026-10-28-f2c-6a` are superseded; delete them when convenient.
+- Final usage: about 92 % weekly. Next week's order is unchanged, except that F1B, F2C and the ScenarioSorter
+  are done.

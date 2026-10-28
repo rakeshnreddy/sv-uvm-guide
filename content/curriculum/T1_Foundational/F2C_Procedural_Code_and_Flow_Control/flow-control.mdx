@@ -39,10 +39,56 @@ An `if` runs its first statement only when the condition is **true**, which mean
 
 `if (!a)` does not rescue you: `!x` is x, which is not true either (§11.4.7). The conditional operator `?:` behaves differently. With an unknown condition it evaluates both results and merges them bit by bit, so bits that disagree become x and the unknown stays visible (§11.4.11).
 
+A traced merge, for `y = a ? 4'b1100 : 4'b1010;` with `a` = x:
+
+| Value | bit 3 | bit 2 | bit 1 | bit 0 |
+|---|---|---|---|---|
+| first result, `4'b1100` | 1 | 1 | 0 | 0 |
+| second result, `4'b1010` | 1 | 0 | 1 | 0 |
+| `y` | 1 | x | x | 0 |
+
+Bits that are 0 in both results or 1 in both keep that value; every other bit becomes x (Table 11-20), so `y` = 4'b1xx0. An `if (a)` choosing between the same two values would have assigned 4'b1010, a clean value that hides the unknown.
+
 Two more rules:
 
 - An `else` belongs to the nearest earlier `if` that has no `else`. Use `begin … end` to attach it elsewhere (§12.4).
 - In an `if`–`else if` chain the conditions are tested in order and the first true one wins. A final `else` catches everything left (§12.4.1).
+
+**Predict the dangling `else`.** This is the standard's own example (§12.4), re-indented here to mislead. `result` starts at 0, `rega` = 5 and `regb` = 9. What is `result` when `index` = 0, and when `index` = 1?
+
+```systemverilog
+// snippet
+if (index > 0)
+  if (rega > regb)
+    result = rega;
+else                 // indented as if it belonged to if (index > 0)
+  result = regb;
+```
+
+<details>
+<summary>Check your prediction</summary>
+
+The `else` belongs to the inner `if (rega > regb)`, the closest earlier `if` without an `else` (§12.4).
+
+| `index` | What runs | `result` |
+|---|---|---|
+| 0 | nothing: the outer `if` is false and has no `else` of its own | stays 0 |
+| 1 | `rega > regb` is false, so the inner `else` runs | 9 |
+
+To give the `else` to the outer `if`, close the inner `if` in `begin … end`, which is also the standard's fix:
+
+```systemverilog
+// snippet
+if (index > 0) begin
+  if (rega > regb)
+    result = rega;
+end else             // now the else belongs to if (index > 0)
+  result = regb;
+```
+
+Now `index` = 0 gives `result` = 9, and `index` = 1 leaves `result` at 0. This is the bug behind the debugging-table row "An `else` runs for the wrong `if`".
+
+</details>
 
 **Predict first.** The explorer below is F2A's four-state model. Open the **if / case with x** tab, keep `a` at x, and predict `y` for `if (a)`, then `if (!a)`, then `a ? 1 : 0`.
 
@@ -129,14 +175,14 @@ Rules that follow:
 
 - **A `default` silences the no-match check.** It matches every leftover value, so "no match" can never happen (§12.5.3, NOTE). Leave it out when an unmatched value is a bug, and seed the outputs at the top of the block instead, so that no path infers a latch.
 - **Not just a synthesis hint.** Simulators must report violations. The wording and severity of the report are tool-specific.
-- **Reports wait for the time slot to settle.** The check runs when the statement executes, but the report is held until the Observed region of that time slot, and is discarded if the procedure runs again first (§12.4.2.1, §12.5.3.1). So a zero-delay glitch that makes an `always_comb` run again within the time slot is not reported, while a bad select seen by the procedure's last run in that time slot is.
+- **Reports wait for the time slot to settle.** The check runs when the statement executes, but the report is held until the Observed region of that time slot, and is discarded if the procedure runs again first (§12.4.2.1, §12.5.3.1). So a zero-delay glitch that makes an `always_comb` run again within the time slot is not reported, while a bad select seen by the procedure's last run in that time slot is. [Make It Work](#worked-example-a-traffic-light-controller-and-its-self-checking-bench) traces this rule on its worked bench: at time 0 both decoders queue a report, then the reset changes `state`, which makes them run again and discards both reports (see the sequence diagram after *How it works*).
 
-When to use which:
+**When to use which: choose with two questions.** Would two matching items be a bug? Would no matching item be a bug? The answers pick one cell (§12.4.2, §12.5.3):
 
-- `unique` for decoders where exactly one item must match: state decoders and one-hot selects.
-- `unique0` where "nothing matches" is legal but two matches would be a bug, such as optional enables.
-- `priority` where order matters and overlaps are expected, but "nothing matches" is a bug: priority encoders.
-- Plain `case` with a `default` where every leftover value has a sensible meaning.
+| If… | Two matches would be a bug | Overlaps are expected: order matters, and the first match wins |
+|---|---|---|
+| **Nothing matching is a bug** | `unique`, for decoders where exactly one item must match: state decoders and one-hot selects | `priority`: priority encoders |
+| **Nothing matching is legal** | `unique0`, such as optional enables | plain `case`, with a `default` where every leftover value has a sensible meaning |
 
 ```systemverilog
 // snippet
@@ -234,6 +280,22 @@ The wildcards are **asymmetric** (§11.4.6). An x, z or `?` in an **item** is a 
 | `2'bx1` | `2'b11` runs | no match | no match |
 | `2'bxx` | `2'b10` runs (both items match) | no match | no match |
 
+**Which bits count?** One bit of the select against the same bit of an item, for all four forms:
+
+| Bit in the select | Bit in the item | `case` | `casez` | `casex` | `case inside` |
+|---|---|---|---|---|---|
+| 0 or 1 | the same value | ✓ match | ✓ match | ✓ match | ✓ match |
+| 0 or 1 | the other value | ✕ no match | ✕ no match | ✕ no match | ✕ no match |
+| 0 or 1 | z or `?` | ✕ no match | ✓ skipped | ✓ skipped | ✓ wildcard |
+| 0 or 1 | x | ✕ no match | ✕ no match | ✓ skipped | ✓ wildcard |
+| x | 0 or 1 | ✕ no match | ✕ no match | ✓ skipped | ✕ unknown: no match |
+| z | 0 or 1 | ✕ no match | ✓ skipped | ✓ skipped | ✕ unknown: no match |
+| x | x | ✓ match | ✓ match | ✓ skipped | ✓ wildcard |
+| z | z or `?` | ✓ match | ✓ skipped | ✓ skipped | ✓ wildcard |
+| x | z or `?` (or z against x) | ✕ no match | ✓ skipped | ✓ skipped | ✓ wildcard |
+
+An item matches only if every bit is ✓, and ✕ means no match. *Skipped*: a don't-care bit, left out of the comparison, in the select or in the item (§12.5.1). *Wildcard*: an x, z or `?` in a `case inside` item, which matches any value (§11.4.6). *Unknown*: an x or z in the select meeting a fixed item bit, so the item can never return 1, and `case inside` counts 1'bx like 1'b0, as no match (§12.5.4). Compare `casex` and `case inside` in the two rows where an x or z in the select meets a 0 or 1: `casex` accepts the unknown, `case inside` refuses it.
+
 This is why style guides prefer `case … inside` to `casex`: the don't-care bits stay where you wrote them, in the items. F2A's sub-lesson on operators covers `inside` and `==?` as expressions: [Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions).
 
 ### Loops
@@ -246,6 +308,29 @@ This is why style guides prefer `case … inside` to `casex`: the don't-care bit
 | `do … while (cond);` | one or more times | The condition is tested after each pass (§12.7.5). |
 | `foreach (arr[i])` | once per element | Loop variables are automatic and read-only, typed like the index. Do not resize the array inside the loop (§12.7.3). |
 | `forever` | until disabled or the run ends | Needs a timing control, or simulated time stops (§12.7.6). |
+
+<ArchitectureDiagram
+  title="Where a for loop goes next, including continue and break"
+  caption="Each dashed arrow is the next step the loop takes. The initialization runs once; then the test runs before every pass. A false test ends the loop, and an x or z test counts as false (§12.7.1). continue jumps to the end of the body, so the step i++ still runs before the next test; break leaves the loop at once and skips the step (§12.8). Follow the trace table below on this picture: pass 2 takes the continue arrow and pass 4 the break arrow, so i is still 3 when the loop ends."
+  cellWidth={88}
+  gapX={52}
+  legend={false}
+  nodes={[
+    { id: "init", label: "int i = 0", sublabel: "runs once", col: 1, row: 0 },
+    { id: "exit", label: "loop ends", col: 0, row: 1 },
+    { id: "test", label: "i < 5 ?", sublabel: "the test", col: 1, row: 1 },
+    { id: "step", label: "i++", sublabel: "the step", col: 2, row: 1 },
+    { id: "body", label: "loop body", sublabel: "ifs, $display", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "init", to: "test", style: "causal", label: "start" },
+    { from: "test", to: "body", style: "causal", label: "true" },
+    { from: "test", to: "exit", style: "causal", label: "false" },
+    { from: "body", to: "step", style: "causal", label: "end, continue", via: [[2, 2]] },
+    { from: "step", to: "test", style: "causal", label: "again" },
+    { from: "body", to: "exit", style: "causal", label: "break", via: [[0, 2]] }
+  ]}
+/>
 
 A traced example with both jumps:
 
@@ -264,13 +349,24 @@ end
 | 2 | 1 | yes: `continue` | not tested | nothing |
 | 3 | 2 | no | no | `i = 2` |
 | 4 | 3 | no | yes: `break` | nothing |
-| none | 4 | not reached | not reached | the loop has ended |
+| none | stays 3: `break` skipped `i++` | not reached | not reached | the loop has ended |
 
-Three more one-line traces to remember:
+**Predict first.** Three more one-line traces to remember. How many passes does each one make?
+
+1. `repeat (n)` while `n` is still x.
+2. `while (0) …`, and then `do … while (0);`.
+3. `forever x = ~x;` with no timing control.
+
+<details>
+<summary>Check your prediction</summary>
 
 - `repeat (n)` while `n` is still x: zero passes, and no message.
 - `while (0) …` runs zero passes; `do … while (0);` runs exactly one.
 - `forever x = ~x;` with no timing control loops forever at one simulation time, so time never advances.
+
+The count of `repeat` is evaluated once, before the first pass (§12.7.2); `while` tests before each pass and `do … while` after it (§12.7.4, §12.7.5); `forever` has no test at all (§12.7.6).
+
+</details>
 
 ### break, continue and return
 
@@ -278,6 +374,29 @@ Three more one-line traces to remember:
 - In a multi-dimensional `foreach`, `break` leaves the whole loop, not just the innermost dimension, and `continue` moves to the next combination of indices (§12.8).
 - Neither can reach a loop outside a `fork … join`: a child process cannot break its parent's loop (§12.8).
 - `return` leaves a task or function, not a loop. F2D covers it: [Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions).
+
+Predict what this two-index `foreach` prints before you choose an answer:
+
+```systemverilog
+// snippet
+int m [2][3];
+foreach (m[r, c]) begin
+  if (c == 0) continue;
+  if (r == 0 && c == 2) break;
+  $display("r=%0d c=%0d", r, c);
+end
+```
+
+<InterviewQuestionPlayground
+  title="Predict: break in a two-index foreach"
+  question="What does the loop above print?"
+  options={[
+    { text: "One line: r=0 c=1", isCorrect: true, feedback: "Right. r is the outer loop and c the inner one, so the passes run (0,0), (0,1), (0,2). (0,0) continues, (0,1) prints, and at (0,2) break leaves the whole foreach, not just the c dimension (§12.7.3, §12.8)." },
+    { text: "Three lines: r=0 c=1, r=1 c=1, r=1 c=2", isCorrect: false, feedback: "That would be a break that leaves only the c dimension and lets r move on to 1. In a multi-dimensional foreach, break jumps out of the entire loop (§12.8)." },
+    { text: "Two lines: r=0 c=1, r=1 c=1", isCorrect: false, feedback: "That order has c, the rightmost index, changing slowest. Outer loops correspond to the leftmost (lower-cardinality) index, so r is the outer loop and c changes fastest (§12.7.3)." },
+    { text: "Nothing: the first pass already leaves the loop", isCorrect: false, feedback: "The first pass, (0,0), runs continue, which skips only the rest of that pass. The next pass, (0,1), prints before the break at (0,2) (§12.8)." }
+  ]}
+/>
 
 ### Testbench patterns
 
@@ -310,7 +429,42 @@ initial begin                       // visit every expected value in a queue
 end
 ```
 
-`wait_ready` polls a level once per clock and gives up after `max_cycles`, so a DUT that never answers ends the loop instead of hanging the test. When you wait for an event instead of polling a level, use the isolation wrapper from the previous lesson. Queues and dynamic arrays are F2B's topic: [Dynamic Data Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index).
+`wait_ready` polls a level once per clock and gives up after `max_cycles`, so a DUT that never answers ends the loop instead of hanging the test.
+
+<TimingDiagram
+  title="wait_ready(4, ok): a DUT that answers, and one that never does"
+  caption="x-axis: rising edges 0 to 3 of clk. ready is a DUT register output written with <=, so when the loop resumes at edge k, n++ runs and the test reads the value drawn at edge k, from before that edge's own update. The list below walks the edges."
+  edges={4}
+  cycleWidth={56}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "ready A", kind: "bit", values: [0, 0, 1, 1] },
+    { name: "ready B", kind: "bit", values: [0, 0, 0, 0] }
+  ]}
+  markers={[
+    { edge: 0, tone: "sample", short: "poll 1", label: "edge 0: n becomes 1; both runs read ready = 0 and wait for the next edge" },
+    { edge: 1, tone: "sample", short: "poll 2", label: "edge 1: n becomes 2; both runs still read ready = 0. In run A the DUT sets ready at this edge, after the loop has read it" },
+    { edge: 2, tone: "pass", short: "A ends", label: "edge 2: n becomes 3. Run A reads ready = 1, so the loop ends with ok = 1. Run B reads 0 and waits again" },
+    { edge: 3, tone: "fail", short: "B ends", label: "edge 3: run B: n becomes 4, which is not below max_cycles = 4, so the loop ends with ok = (ready === 1'b1) = 0" }
+  ]}
+/>
+
+In both runs the bench calls `wait_ready(4, ok)` before edge 0, while `ready` is 0, so the loop is entered and waits for edge 0. Then, edge by edge:
+
+1. **Edge 0 (▼ poll 1):** `n` becomes 1, and both runs read `ready` = 0.
+2. **Edge 1 (▼ poll 2):** `n` becomes 2, and both runs still read 0. In run A the DUT sets `ready` at this edge, after the loop has read it.
+3. **Edge 2 (✓ A ends):** `n` becomes 3. Run A reads `ready` = 1, so its loop ends with `ok` = 1; run B reads 0 and waits again.
+4. **Edge 3 (✕ B ends):** run B's `ready` never becomes 1. `n` becomes 4, which is not below `max_cycles`, so the loop ends with `ok` = 0 instead of hanging the test.
+
+<details>
+<summary>Predict: ready is still x when wait_ready is called. What does the loop do, and what would it do if it tested ready != 1'b1 instead of ready !== 1'b1?</summary>
+
+- **With `!==`, as written.** `x !== 1'b1` is 1, so an x `ready` counts as "not ready yet" and the loop keeps polling, like run B, until `ready` becomes 1 or `n` reaches `max_cycles` (§11.4.5).
+- **With `!=`.** `x != 1'b1` is x (§11.4.5), so the whole condition `ready != 1'b1 && n < max_cycles` is x (§11.4.7). A `while` loop runs only while its condition is true (§12.7.4), so it ends at once, before any clock edge, and `ok = (ready === 1'b1)` gives `ok` = 0, so a caller that checks `ok` sees a timeout although the task never waited for an edge.
+
+</details>
+
+When you wait for an event instead of polling a level, use the isolation wrapper from the previous lesson. Queues and dynamic arrays are F2B's topic: [Dynamic Data Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index).
 
 ### Pitfalls and misconceptions
 
@@ -333,11 +487,75 @@ end
 - `case … inside` treats x and z as wildcards only in the items, so an unknown select does not match.
 - Count loop passes from the rules: `repeat` evaluates its count once, x gives zero passes, `do … while` runs at least once, and `forever` needs a timing control.
 
+<VisualRecap
+  title="What x and z do to each construct"
+  rule="An x or z condition is false, an x, z or negative repeat count gives zero passes, and a select that matches no item runs nothing (or the default), all without a message. casex skips x and z bits in the select; case inside accepts them only where the item has a wildcard. Of these constructs, only ?: keeps the x in its result, and only unique or priority without a default reports a missed match."
+  code={`if (a) y = 1; else y = 0;  // a = x: else runs, y = 0
+y = a ? 1'b1 : 1'b0;       // a = x: y = x, still visible
+repeat (n) count++;        // n = x: zero passes, no message
+casex (sel)                // sel = 2'bx1: the x is skipped,
+  2'b01: k = 1;            //   so this real item runs
+  2'b11: k = 2;
+endcase`}
+  mistake="Reading a clean-looking result as proof that the value was known. if takes the else branch, casex runs a real item, and case and repeat quietly do nothing. Only a check that looks for the unknown makes it visible: unique or priority without a default, === and !==, or $isunknown."
+  inTestbench="Monitors and scoreboards compare with !== and ===, DUT decoders use unique case with seeded outputs and no default, retry loops check their counts with $isunknown first, and checkers assert (!$isunknown(sel)) on DUT selects."
+>
+  <svg viewBox="0 0 330 266" role="img" aria-label="What an x or z input does to each construct. if (a): the else branch runs and looks clean. if (!a): not x is x, so else runs again. a ? 1 : 0: the result is x, so the unknown stays visible. for and while: an x condition is false, so the loop ends. repeat (n): zero passes, no message. For a select 2'bx1 against the items 2'b01 and 2'b11 with no default: case, no item matches; casez, the x is not skipped, so no item matches; casex, the x is skipped and the real item 2'b01 runs; case inside, the x meets a fixed bit, so no item matches; unique case, the miss is reported. Legend: warning sign, a clean-looking result; empty set, nothing runs and there is no message; check mark, the x stays visible; cross, a violation report." style={{ width: "100%", maxWidth: 380 }}>
+    <text x="8" y="14" fontSize="10" fill="currentColor" fillOpacity="0.85">{"construct"}</text>
+    <text x="118" y="14" fontSize="10" fill="currentColor" fillOpacity="0.85">{"with an x or z input"}</text>
+    <line x1="8" y1="21" x2="322" y2="21" stroke="currentColor" strokeOpacity="0.4" />
+    <text x="8" y="36" fontSize="10.5" fill="currentColor" fillOpacity="0.85">{"CONDITIONS AND COUNTS"}</text>
+    <text x="8" y="53" fontSize="10.5" fontFamily="ui-monospace, Menlo, monospace" fill="currentColor">{"if (a)"}</text>
+    <text x="118" y="53" fontSize="10" fontWeight="700" fill="currentColor">{"⚠ else runs"}</text>
+    <text x="8" y="70" fontSize="10.5" fontFamily="ui-monospace, Menlo, monospace" fill="currentColor">{"if (!a)"}</text>
+    <text x="118" y="70" fontSize="10" fontWeight="700" fill="currentColor">{"⚠ !x is x: else runs again"}</text>
+    <text x="8" y="87" fontSize="10.5" fontFamily="ui-monospace, Menlo, monospace" fill="currentColor">{"a ? 1 : 0"}</text>
+    <text x="118" y="87" fontSize="10" fill="currentColor">{"✓ the result is x"}</text>
+    <text x="8" y="104" fontSize="10.5" fontFamily="ui-monospace, Menlo, monospace" fill="currentColor">{"for, while"}</text>
+    <text x="118" y="104" fontSize="10" fill="currentColor">{"∅ x is false: the loop ends"}</text>
+    <text x="8" y="121" fontSize="10.5" fontFamily="ui-monospace, Menlo, monospace" fill="currentColor">{"repeat (n)"}</text>
+    <text x="118" y="121" fontSize="10" fill="currentColor">{"∅ zero passes"}</text>
+    <line x1="8" y1="130" x2="322" y2="130" stroke="currentColor" strokeOpacity="0.15" />
+    <text x="8" y="146" fontSize="10.5" fill="currentColor" fillOpacity="0.85">{"SELECT 2'bx1, ITEMS 2'b01 AND 2'b11, NO DEFAULT"}</text>
+    <text x="8" y="163" fontSize="10.5" fontFamily="ui-monospace, Menlo, monospace" fill="currentColor">{"case"}</text>
+    <text x="118" y="163" fontSize="10" fill="currentColor">{"∅ x must match an x: no item"}</text>
+    <text x="8" y="180" fontSize="10.5" fontFamily="ui-monospace, Menlo, monospace" fill="currentColor">{"casez"}</text>
+    <text x="118" y="180" fontSize="10" fill="currentColor">{"∅ x is not skipped: no item"}</text>
+    <text x="8" y="197" fontSize="10.5" fontFamily="ui-monospace, Menlo, monospace" fill="currentColor">{"casex"}</text>
+    <text x="118" y="197" fontSize="10" fontWeight="700" fill="currentColor">{"⚠ x skipped: 2'b01 runs"}</text>
+    <text x="8" y="214" fontSize="10.5" fontFamily="ui-monospace, Menlo, monospace" fill="currentColor">{"case inside"}</text>
+    <text x="118" y="214" fontSize="10" fill="currentColor">{"∅ x meets a fixed bit: no item"}</text>
+    <text x="8" y="231" fontSize="10.5" fontFamily="ui-monospace, Menlo, monospace" fill="currentColor">{"unique case"}</text>
+    <text x="118" y="231" fontSize="10" fontWeight="700" fill="currentColor">{"✕ the miss is reported"}</text>
+    <text x="8" y="256" fontSize="10.5" fill="currentColor" fillOpacity="0.85">{"⚠ looks clean · ∅ silent · ✓ x visible · ✕ report"}</text>
+  </svg>
+</VisualRecap>
+
 ## Make It Work
 
 ### Worked example: a traffic-light controller and its self-checking bench
 
 The controller cycles red, green and yellow, holding each state for a number of clock edges set by a down-counter. Its decoders use `unique case` without a `default`, and the bench checks the light at every edge against an expected sequence. Read the code, then the walk-through.
+
+Before the code, the state machine as a picture:
+
+<ArchitectureDiagram
+  title="The traffic-light controller's three states"
+  caption="Each dashed arrow is a move taken at a rising clock edge where timer is 0; until then the state holds and timer counts down by one per edge. The asynchronous reset puts the controller in RED with timer = 3, and each move loads the new state's length (GREEN 2, YELLOW 0, RED 3), so a state lasts one edge more than the value loaded. state_t is 2 bits wide, so a select of x, or a corrupted 2'b11, matches no item of the unique case decoders: it is reported if it is still there when the time slot settles (§12.5.3.1), not decoded."
+  cellWidth={120}
+  gapX={88}
+  legend={false}
+  nodes={[
+    { id: "red", label: "RED", sublabel: "light 100, 4 edges", col: 0, row: 0 },
+    { id: "green", label: "GREEN", sublabel: "light 001, 3 edges", col: 1, row: 0 },
+    { id: "yellow", label: "YELLOW", sublabel: "light 010, 1 edge", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "red", to: "green", style: "causal", label: "timer == 0" },
+    { from: "green", to: "yellow", style: "causal", label: "timer == 0" },
+    { from: "yellow", to: "red", style: "causal", label: "timer == 0", via: [[0, 1]] }
+  ]}
+/>
 
 ```systemverilog
 // compile
@@ -479,14 +697,49 @@ How it works, step by step:
 6. **Logging.** `always @(light)` prints every change once reset is over: after edges 3, 6, 7 and 11, at 55, 85, 95 and 135 ns.
 7. **Ending.** After the last check, the bench waits for a falling edge so the change at 135 ns is printed, then calls `$finish`, and `final` prints the summary.
 
+Step 2, traced through time slot 0 in order:
+
+<SequenceDiagram
+  title="Time slot 0: why the reset leaves no violation report"
+  caption="Everything here happens at t = 0. The two notes at the top may come in either order: every initial and always procedure starts at time 0, and always_comb runs once after they have all started (§9.2.2.2). Either way, each decoder queues a pending report while state is x. The change of state is a flush point, so the decoders' queues are cleared and both run again with state = RED, which matches. In the Observed region nothing is pending, so nothing is reported (§12.5.3.1). Each NBA update wakes the processes waiting on it, and they run in the Active region again; the flop also loads timer <= 4'd3 in the same NBA update as state <= RED."
+  columnWidth={140}
+  participants={[
+    { id: "tb", label: "bench", sublabel: "initial block" },
+    { id: "ff", label: "flop", sublabel: "always_ff", kind: "dut" },
+    { id: "dec", label: "decoders", sublabel: "two always_comb", kind: "dut" }
+  ]}
+  messages={[
+    { kind: "divider", label: "t = 0, Active region" },
+    { kind: "note", from: "dec", label: "state is x, so no item matches and each queues a report" },
+    { kind: "note", from: "tb", label: "rst_n <= 1'b0 schedules an NBA update" },
+    { kind: "divider", label: "NBA: rst_n x → 0, then Active again" },
+    { kind: "async", from: "tb", to: "ff", label: "negedge rst_n" },
+    { kind: "self", from: "ff", label: "state <= RED;" },
+    { kind: "divider", label: "NBA: state x → RED, then Active again" },
+    { kind: "async", from: "ff", to: "dec", label: "state changes" },
+    { kind: "note", from: "ff", to: "dec", label: "flush point: both queues are cleared. Each decoder runs again, RED matches, and nothing is queued" },
+    { kind: "divider", label: "Observed region: nothing pending, no report" }
+  ]}
+/>
+
 ### Run it
 
 1. Save the code as `traffic_light_tb.sv`.
 2. Compile and elaborate it with `tb_top` as the top module, using any simulator that supports IEEE 1800 SystemVerilog. On EDA Playground, pick a simulator listed with SystemVerilog support.
 3. Run until the bench calls `$finish`, and compare the log with Expected output.
 4. Break it on purpose, then predict the log before you run it:
-   - Replace `rst_n <= 1'b0;` with a delayed reset, `#1 rst_n <= 1'b0;`. Now `state` is still x when time slot 0 ends, so both decoders report a no-match violation at t = 0, in your simulator's own wording. The rest of the log is unchanged.
-   - Keep the delayed reset and add `default: next_state = RED;` to the first decoder. Its time-0 report disappears, and so does its ability to catch a corrupted `state` later in the run; the output decoder still reports.
+   - Replace `rst_n <= 1'b0;` with a delayed reset, `#1 rst_n <= 1'b0;`. Predict: which decoders report at t = 0, and what happens to the rest of the log?
+   - Keep the delayed reset and add `default: next_state = RED;` to the first decoder. Predict: which time-0 reports remain, and what has the first decoder lost?
+
+<details>
+<summary>Check your predictions for the two changes</summary>
+
+- **The delayed reset.** Now `state` is still x when time slot 0 ends, so both decoders report a no-match violation at t = 0, in your simulator's own wording. The rest of the log is unchanged.
+- **The added `default`.** The first decoder's time-0 report disappears, and so does its ability to catch a corrupted `state` later in the run; the output decoder still reports.
+
+On the sequence diagram, the delayed reset moves the bench's `rst_n <= 1'b0` note and everything after it to t = 1 ns. Nothing makes the decoders run again in time slot 0, so their queued reports mature in its Observed region. The reset still comes before the first rising edge at 5 ns, so the checks and the log from then on are as before.
+
+</details>
 
 ### Debugging table
 
@@ -516,7 +769,7 @@ How it works, step by step:
 - **Per process.** A report belongs to the process that executed the check. A function containing a `unique if`, called by two `always_comb` blocks, can report twice in one time slot, once per caller (§12.4.2.2, §12.5.3.2).
 - **Compile time is allowed.** A tool may report a violation at compile time if it can already prove it; otherwise it reports at run time (§12.5.3).
 - **Controlling the reports.** The assertion control tasks also control these reports (§20.11). `$assertcontrol(4, 224)` turns reporting off for unique (32), unique0 (64) and priority (128) checks, and `$assertcontrol(3, 224)` turns it on again (Tables 20-5 and 20-6). `$assertoff` does **not** reach them: it is defined as `$assertcontrol(4, 15, 7)`, which covers concurrent and immediate assertions only.
-- **A time-0 corner.** At time 0, a decoder's `always_comb` runs after every `initial` procedure has started (§9.2.2.2). Started does not mean its first statement has run, though: the simulator may suspend a procedure at any point while it evaluates a statement and run other processes (§4.7), so the `$assertcontrol(4, 224)` call is not guaranteed to come before the decoder's first run. Off does not flush a violation report that is already queued: that report may still mature, and Off only keeps new reports out of the queue (§20.11). So if the decoder ran first and is not triggered again before the Observed region, its one report still appears. Every check after the call is silenced.
+- **A time-0 corner.** Switching the reports off at time 0 can come too late for a decoder's first check. *The time-0 corner, both orders*, below the `$assertcontrol` tables, explains why and traces both orders.
 - **Wording and severity are tool-specific.** Make your regression scripts treat the report as an error. Adding a `default` to silence it hides real bugs.
 
 ```systemverilog
@@ -528,6 +781,36 @@ initial begin
 end
 ```
 
+**Reading `$assertcontrol(4, 224)`.** The second argument, `assertion_type`, is a bit mask. Each type in Table 20-6 has its own bit, and OR-ing the values selects several types at once: 15 = 1 + 2 + 4 + 8, and 224 = 32 + 64 + 128. Leaving the argument out gives 255, every type (§20.11).
+
+| Value | Type it selects | In 15 (`$assertoff`) | In 224 | In 255 (the default) |
+|---|---|---|---|---|
+| 1 | concurrent assertions | yes | no | yes |
+| 2 | simple immediate assertions | yes | no | yes |
+| 4 | observed deferred immediate assertions | yes | no | yes |
+| 8 | final deferred immediate assertions | yes | no | yes |
+| 16 | `expect` statements | no | no | yes |
+| 32 | `unique` violation reports | no | yes | yes |
+| 64 | `unique0` violation reports | no | yes | yes |
+| 128 | `priority` violation reports | no | yes | yes |
+
+The first argument, `control_type`, says what happens to the selected types (Table 20-5). For violation reports (§20.11):
+
+| `control_type` | Name | Effect on `unique`, `unique0` and `priority` violation reports |
+|---|---|---|
+| 3 | On | reporting is enabled again |
+| 4 | Off | reporting is disabled: no new report joins the pending queue, but reports already queued are not flushed and may still mature |
+| 5 | Kill | reporting is aborted: queued reports that have not matured are flushed, and no new ones are queued until On |
+
+**The time-0 corner, both orders.** The `initial` block above and a decoder's `always_comb` both run at time 0. The decoder's `always_comb` runs after every `initial` procedure has started (§9.2.2.2). Started does not mean its first statement has run, though: the simulator may suspend a procedure at any point while it evaluates a statement and run other processes (§4.7), so the `$assertcontrol(4, 224)` call is not guaranteed to come before the decoder's first run. Off does not flush a violation report that is already queued: that report may still mature, and Off only keeps new reports out of the queue (§20.11).
+
+| Which runs first at time 0 | The decoder's first check, with `state` = x | Observed region of time slot 0 |
+|---|---|---|
+| the `initial` block's `$assertcontrol(4, 224)` | runs while reporting is Off, so no report is queued | no report |
+| the decoder's `always_comb` | queues a pending report, which the later Off does not flush (§20.11) | the report matures and appears, unless the decoder runs again first (a flush point) |
+
+In both orders, every check after the call is silenced. Kill closes the second row too: `$assertcontrol(5, 224)` at time 0 flushes a queued report that has not matured yet, and queues no new ones until On (§20.11).
+
 ### Expert: X and the case family
 
 - **Don't-cares on both sides.** `casez` and `casex` skip don't-care bits in the case expression as well as in the items (§12.5.1). So `unique casex (sel)` with `sel` = 2'b1x and the items 2'b10 and 2'b11 finds **two** matches: it runs the 2'b10 item and reports an overlap.
@@ -536,7 +819,58 @@ end
 - **Item evaluation order.** In `unique` and `unique0` forms, items may be evaluated and compared in any order, so item expressions with side effects give nondeterministic results (§12.5.3). One item that lists several expressions which all match is not an overlap.
 - **Synthesis is tool-dependent.** How synthesis tools read `unique`, `unique0` and `priority`, and the older `full_case` and `parallel_case` pragmas, is tool-dependent: the standard defines only the simulation checks. In intent, `unique` corresponds to both pragmas together, `unique0` to `parallel_case` alone and `priority` to `full_case` alone.
 
+The standard's `case inside` example, value by value (§12.5.4):
+
+```systemverilog
+// snippet
+logic [2:0] status;
+always @(posedge clock)
+  priority case (status) inside
+    1, 3          : task1;
+    3'b0?0, [4:7] : task2;
+  endcase
+```
+
+| `status` | Item that matches | What runs |
+|---|---|---|
+| 'b001, 'b011 | `1, 3` | `task1` |
+| 'b000, 'b010 | `3'b0?0` | `task2` |
+| 'b0x0, 'b0z0 | `3'b0?0`: the select's x or z sits where the item has `?` | `task2` |
+| 'b100, 'b101, 'b110, 'b111 | `[4:7]` | `task2` |
+| 'b00x, 'b01x, 'bxxx | none: every comparison gives 0 or x | nothing, and `priority` reports the missed match |
+
 ### Expert: Loop corner cases
+
+**Predict, then open.** Before you read the rules below, how many passes does each loop make?
+
+```systemverilog
+// snippet
+logic        [3:0] u = 4'b1101;    // unsigned
+logic signed [3:0] s = 4'b1101;    // signed
+logic        [3:0] n;              // never assigned
+int count_u, count_s, count_n;
+
+initial begin
+  repeat (u) count_u++;
+  repeat (s) count_s++;
+  for (int i = 0; i < n; i++) count_n++;
+end
+```
+
+<details>
+<summary>Check your prediction</summary>
+
+| Loop | Passes | Why |
+|---|---|---|
+| `repeat (u)` | 13 | `u` is unsigned, so 4'b1101 is 13 (§12.7.2) |
+| `repeat (s)` | 0 | `s` is signed, so 4'b1101 is −3, and a negative count runs zero times (§12.7.2) |
+| `for … i < n …` | 0 | `n` is 4'bxxxx, so `i < n` is x (§11.4.4); the loop treats an unknown test as zero and exits before the first pass (§12.7.1) |
+
+Neither zero-pass loop prints a message. The same bit pattern gives 13 passes or none, depending only on the declaration.
+
+</details>
+
+The rules behind those counts, and the other loop corner cases:
 
 - **for:** a variable declared in the header is automatic and lives in an implicit block around the loop. Declare either all or none of the control variables in the header. Two parallel loops that share one module-level control variable can corrupt each other's count, which header declarations prevent (§12.7.1).
 - **repeat:** the count is evaluated once; a negative, x or z count runs zero times (§12.7.2). Signedness decides what "negative" means: a 4-bit unsigned variable holding 4'b1101 is 13, not −3.
