@@ -555,3 +555,13 @@ It is on branch `backup/wip-2026-10-28-scenario-sorter` (`d173bb49`) and was rem
 **Burn rates this session:**
 - Component builds: about 1 % weekly per 10 minutes with 4 builders.
 - Single-agent backlog phases: about 0.3 % each, but 20–30 minutes each.
+
+**Addendum, after checkpoint 6 (`d8c282a9`, live).** F1B cost only about 1 %, so 6a on F2C was started (run
+`wf_a6a9e9ea-42c`, with the time-0 presets `time0-reset` and `comb-vs-star` in `extraContext`). The lead stopped
+it at 88 % weekly, to stay under the owner's 90 %.
+- `index.mdx` was authored (14 additions). Its round-1 review failed one lens with an S2 at line 368: the
+  always_comb / always_latch / always_ff row of the new "Blocks and processes at a glance" table.
+- The `flow-control.mdx` author was stopped mid-edit.
+- Both drafts are on `backup/wip-2026-10-28-f2c-6a` (`bd809b05`), for reference only, and the main tree was
+  reverted. Next week, rerun 6a on F2C from `main` with the same `extraContext`; do not merge the branch.
+- Final usage this session: 88 % weekly. Nothing is running, and the working tree is clean apart from `.claude/`.
