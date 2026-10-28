@@ -18,6 +18,7 @@ const ALL_LESSONS = [{"tier": "T1_Foundational", "module": "F1A_The_Cost_of_Bugs
 
 const pick = (l) => {
   if (typeof args === 'undefined' || !args) return true
+  if (args.skipFiles && args.skipFiles.includes(l.file)) return false // already enriched (data/progress.json)
   if (args.modules && args.modules.length) return args.modules.includes(l.module)
   if (args.tiers && args.tiers.length) return args.tiers.includes(l.tier)
   return true

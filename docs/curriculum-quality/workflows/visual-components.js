@@ -14,7 +14,11 @@ export const meta = {
 
 const ROOT = '/Users/Rakesh/Projects/sv-uvm-guide'
 const SRC = '/Users/Rakesh/.claude/projects/-Users-Rakesh-Projects-sv-uvm-guide/sources'
-const LESSONS = args
+// args: the lesson list (an array) for a full run; or { backlog, skip, buildCap } to build straight from a saved
+// backlog (docs/curriculum-quality/data/components-backlog-*.json, prepared by make-workflow-args.py), which
+// skips the Catalog, Audit and Backlog phases.
+const SAVED = args && !Array.isArray(args) && args.backlog ? args : null
+const LESSONS = Array.isArray(args) ? args : []
 
 const CONTEXT = `Repo ${ROOT}: Next.js 14 site teaching SystemVerilog, UVM and AMBA from junior to expert. Lessons are MDX under content/curriculum/ (rendered by src/app/(learning)/curriculum/[...slug]/page.tsx).
 Owner request: lessons are long blocks of text that bore learners. Add visual elements, 2D and 3D visualizations and interactive visualizations that make concepts easier to understand and remember and keep attention, without removing content.
@@ -119,7 +123,7 @@ const INTEGRATE_SCHEMA = {
 }
 
 phase('Catalog')
-const catalog = await agent(`${CONTEXT}
+const catalog = SAVED ? null : await agent(`${CONTEXT}
 
 ${READONLY} Build the catalog of every visual or interactive element a lesson can embed or link: src/components/mdx/lazy-mdx-interactives.ts and LazyMdxInteractive.tsx (the registered interactives and their source files), the kit (src/components/mdx/DiagramKit.tsx, src/components/visual-system/), ProtocolWaveform, and the practice/visualization/exercise pages (src/app/(learning)/practice/**, visualizations/**, exercises/**). For each component: MDX tag, kind (2D interactive, 3D interactive, animation, kit diagram, game, exercise), what it teaches, its useful props/presets, and which lesson files embed it (grep content/curriculum).`, { label: 'catalog', phase: 'Catalog', schema: CATALOG_SCHEMA })
 const catalogText = JSON.stringify(catalog || {}).slice(0, 60000)
@@ -133,7 +137,7 @@ ${READONLY} Audit ${l.file} (module ${l.module}, ${l.track} track). Read it full
 CATALOG: ${catalogText}`
 
 phase('Audit')
-const audits = await pipeline(LESSONS, (l) => agent(auditPrompt(l), { label: `audit:${l.module.split('_')[0]}/${l.lesson}`, phase: 'Audit', schema: AUDIT_SCHEMA }))
+const audits = SAVED ? [] : await pipeline(LESSONS, (l) => agent(auditPrompt(l), { label: `audit:${l.module.split('_')[0]}/${l.lesson}`, phase: 'Audit', schema: AUDIT_SCHEMA }))
 const auditsOk = audits.filter(Boolean)
 const failedAudits = LESSONS.filter((l, i) => !audits[i]).map((l) => l.file)
 if (failedAudits.length) log(`Audit missing for ${failedAudits.length} lessons: ${failedAudits.join(', ')}`)
@@ -149,30 +153,37 @@ ${extra}
 CATALOG: ${catalogText}
 AUDITS: ${needsText}`
 
-const draft = await agent(backlogPrompt(''), { label: 'backlog:draft', phase: 'Backlog', schema: BACKLOG_SCHEMA })
+const draft = SAVED ? null : await agent(backlogPrompt(''), { label: 'backlog:draft', phase: 'Backlog', schema: BACKLOG_SCHEMA })
 const critique = draft ? await agent(`${CONTEXT}
 
 ${READONLY} Critique this draft component backlog against the lesson audits and the catalog. Find high-value needs it drops or under-serves, items that duplicate an existing component, model rules that are wrong against the primary sources (check them), overlapping files, 3D without reason, and specs too vague to build.
 DRAFT: ${JSON.stringify(draft).slice(0, 80000)}
 CATALOG: ${catalogText}
 AUDITS: ${needsText.slice(0, 90000)}`, { label: 'backlog:critic', phase: 'Backlog', schema: CRITIC_SCHEMA }) : null
-const backlog = draft && critique && (critique.missing.length || critique.problems.length)
+const backlog = SAVED ? SAVED.backlog : (draft && critique && (critique.missing.length || critique.problems.length)
   ? await agent(backlogPrompt(`A critic reviewed your first draft. Produce the final backlog, resolving each point (or saying in deferred why not).
 FIRST DRAFT: ${JSON.stringify(draft).slice(0, 70000)}
 CRITIC: ${JSON.stringify(critique).slice(0, 20000)}`), { label: 'backlog:final', phase: 'Backlog', schema: BACKLOG_SCHEMA })
-  : draft
+  : draft)
 if (!backlog) return { error: 'no backlog', audits: auditsOk }
 
 // Guard against overlapping file ownership before parallel builders start.
 const owner = {}
 const items = []
 for (const c of [...backlog.components].sort((a, b) => a.priority - b.priority)) {
+  if (SAVED && (SAVED.skip || []).includes(c.id)) continue // already built
   const clash = c.files.find((f) => owner[f])
   if (clash) { log(`Skipping ${c.id}: ${clash} already belongs to ${owner[clash]}`); backlog.deferred.push(`${c.id}: file overlap with ${owner[clash]}`); continue }
   c.files.forEach((f) => { owner[f] = c.id })
   items.push(c)
 }
 log(`Backlog: ${items.length} components to build (${items.filter((c) => c.dimension === '3D').length} in 3D), ${backlog.deferred.length} deferred`)
+const BUILD_CAP = SAVED && SAVED.buildCap ? SAVED.buildCap : Infinity
+if (items.length > BUILD_CAP) {
+  const later = items.splice(BUILD_CAP)
+  log(`Building the top ${BUILD_CAP} now; ${later.length} stay in the backlog: ${later.map((c) => c.id).join(', ')}`)
+  later.forEach((c) => backlog.deferred.push(`${c.id}: not built in this run (priority ${c.priority})`))
+}
 
 const VALIDATE = (c) => `VALIDATE (only your files; other builders work in parallel, so ignore errors in files that are not yours):
 - NODE_OPTIONS='--require @prisma/client' npx vitest run ${c.files.filter((f) => f.startsWith('tests/')).join(' ') || '<your test files>'}

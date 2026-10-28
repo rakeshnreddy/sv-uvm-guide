@@ -3,6 +3,56 @@
 Written 2026-10-12, when the weekly usage limit paused the program. Read this first in the next session,
 then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASKS.md`.
 
+## Start here (state at the 2026-10-28 pause)
+
+**Live state:** `main` = `curriculum-quality-program`, with everything released through checkpoint 7 (`fad06fdc`).
+Nothing is running, the working tree is clean, and no backup branch holds pending work.
+
+**Done so far:**
+- the compile-fix pass;
+- four reviewed components: visual primitives, FirstBugHuntGame tally, ProceduralBlocksSimulator time-0, and
+  ScenarioSorter;
+- 6a on F1B and on F2C (index and flow-control).
+- Details are in the 2026-10-27 and 2026-10-28 pause sections at the end of this file.
+
+**Saved data, so no audit or backlog work is repeated** (in `docs/curriculum-quality/data/`):
+- `lesson-plans-2026-10-28.json`: one read-only visual audit per lesson, 112 lessons (text-heavy stretches,
+  needs, static visuals).
+- `components-backlog-2026-10-28.json`: the final ranked backlog, 48 components with full build specs, plus 29
+  deferred items with reasons.
+- `progress.json`: built components and enriched lessons, with their commits. **Update it after every release.**
+
+**Launch a run** (each command prints the Workflow `args` to paste verbatim):
+- **6a batch.** `python3 docs/curriculum-quality/workflows/make-workflow-args.py 6a <module> [<module> ...]`, then run
+  `visual-enrichment.js` with those args.
+  - The args carry each lesson's saved plan, the components on `main` that were planned for it, the components
+    not on `main`, and `skipFiles` for lessons already enriched.
+- **Components batch.** `python3 docs/curriculum-quality/workflows/make-workflow-args.py components 8`, then run
+  `visual-components.js`.
+  - It builds straight from the saved backlog, skipping the catalog, audits and backlog phases.
+- **Release** each batch with `checkpoint-release.sh`, as before.
+
+**Order:**
+1. 6a on the rest of T1, in small batches: F1A, F1C, F2A, F2B, F2D, F2E, F3A–F3C, F4A–F4C.
+   - Several new embeds are already planned: ScenarioSorter decks in F1C, F2D and F2E, and ProceduralBlocksSimulator
+     in F1C and F3A.
+2. The next components batch.
+3. 6a for T2–T4, plus `phase6a-extras.js`.
+4. A final 6b sweep, run fresh, then the closure checks.
+
+**Budget:** these figures are measured.
+- A one-lesson 6a run is about 1 % weekly; a two-lesson run about 2 %.
+- A component build with reviews is about 1 % each.
+- Pause at the owner's threshold, starting the wind-down about 3 % before it.
+
+**Lesson learned:** for a content-heavy component, give each data group (deck, preset set) its own accuracy
+reviewer. ScenarioSorter failed three rounds with one reviewer; with one reviewer per deck it was clean in two.
+
+**Primary sources** (private, never committed) are in `~/.claude/projects/-Users-Rakesh-Projects-sv-uvm-guide/sources/`:
+the IEEE 1800-2023 and 1800.2-2020 texts, AMBA AHB/APB/AXI/AXIS, and, new, Accellera PSS 3.0 and 2.0
+(`accellera_pss30.*`, `accellera_pss20.txt`) and Arm CHI E.b (`arm_chi_eb.*`). The uvm-core 2020.3.1 tree is in
+`/Users/Rakesh/Downloads/1800.2-2020.3.1`, and Verilator 5.052 in `~/.local/verilator`.
+
 ## Release cadence and pause procedure (owner, 2026-10-26)
 
 The owner wants work visible on the live site before each week's usage limit, and a clean pause that resumes
@@ -583,7 +633,7 @@ it at 88 % weekly, to stay under the owner's 90 %.
     - the boot-os card repeats the methods tour's question.
 - **F2C is clean** on both lessons (index: 16 additions; flow-control: 18). The time-0 ProceduralBlocksSimulator
   presets are now embedded.
-- Both were released together as checkpoint 7. The backup branches `backup/wip-2026-10-28-scenario-sorter` and
-  `backup/wip-2026-10-28-f2c-6a` are superseded; delete them when convenient.
+- Both were released together as checkpoint 7. The superseded backup branches
+  `backup/wip-2026-10-28-scenario-sorter` and `backup/wip-2026-10-28-f2c-6a` were deleted in the housekeeping.
 - Final usage: about 92 % weekly. Next week's order is unchanged, except that F1B, F2C and the ScenarioSorter
   are done.
