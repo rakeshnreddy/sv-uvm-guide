@@ -152,7 +152,9 @@ Summary lines, worked out with the same cycle model:
 | `smoke` | `PASS=3 FAIL=0` | `PASS=3 FAIL=0`, escapes | `PASS=0 FAIL=5` | `PASS=3 FAIL=0`, escapes |
 | `corners` | `PASS=7 FAIL=0` | `PASS=4 FAIL=3` | `PASS=5 FAIL=4` | `PASS=1 FAIL=6` |
 | `gaps` | `PASS=4 FAIL=0` | `PASS=4 FAIL=0`, escapes | `PASS=0 FAIL=9` | `PASS=4 FAIL=0`, escapes |
-| (none: all) | `PASS=14 FAIL=0` | `PASS=11 FAIL=3` | `PASS=4 FAIL=17` | `PASS=8 FAIL=6` |
+| (none: all) | `PASS=14 FAIL=0` | `PASS=11 FAIL=3` | `FAIL` > 0, tool-dependent (see below) | `PASS=8 FAIL=6` |
+
+One cell depends on the simulator. With `BUG=2` and every test, the DUT reports a result on an edge where `send` is also pushing the next expectation into an empty queue. The checker and `send` wake on the same rising edge and may run in either order (§4.7). If the checker runs first, it reports the result as unexpected; if `send` runs first, the checker pops the new expectation as a mismatch, and every later comparison shifts. The cycle model, with the checker first, gives `PASS=4 FAIL=17`; a simulator that runs `send` first reports other totals. Either way the bug is caught. In the other cells the order can change which error messages appear, but not the totals.
 
 `BUG=1` with `+TEST=corners`. Here `[error @ t]` stands for your simulator's own `$error` prefix, which includes the time, file and line:
 
