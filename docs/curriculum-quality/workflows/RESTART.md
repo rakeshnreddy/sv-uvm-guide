@@ -470,3 +470,88 @@ not wasted, because 6a adds content and removes none.
 4. **Closure checks** (plan §5 item 4).
 
 The compile-fix pass is finished; it no longer appears in the order.
+
+## Weekly pause, 2026-10-28 (owner: "resume and work till 90% usage for steps 1-3")
+
+Usage 78 % → about 87 %. Steps 1 and 2 of the order above are done; step 3 (6a) has started (F1B done).
+
+**Released** (each passed CI and was deployed; `main` = see the last checkpoint below):
+- **Checkpoint 3, `199b5185`: flaky test fixed and four review findings corrected.**
+  - `tests/fixtures/auth.ts` now confirms the session after test sign-in, and retries.
+    - Root cause: NextAuth answers a CSRF mismatch on a credentials sign-in with 200 and
+      `{url: ".../signin?csrf=true"}`, which the old fixture accepted.
+    - A page opened before sign-in (a `beforeEach` `goto`) can have an `/api/auth/*` request in flight with no
+      CSRF cookie; its response sets a new cookie, and the posted token no longer matches.
+    - The first CI run after the fix passed, account mode included.
+  - F1B cnt4 kata: Increment covers 0–14, the Wrap row's mutant is "Saturates: holds at 15", and a paragraph
+    explains that a wraps-at-14 mutant is the Increment row's catch.
+  - Interview bank:
+    - IEEE 1800-2023 §40.2.2 defines statement, toggle, FSM and assertion coverage, so they are not tool-defined.
+    - `!==` against a known expected value does flag X (§11.4.5).
+  - simple_dut README: the BUG=2 all-tests totals depend on process order on one edge (§4.7). Checked by hand:
+    `smoke` and `corners` never hit the race; `gaps` hits it, but its totals cannot change.
+- **Checkpoint 4, `235f8641`: round-robin arbiter fixed.**
+  - The arbiter now stores the winner's index and searches from one past it.
+  - `test_arbiter.sv` selects ROUND_ROBIN and checks rotation, wrap and alternation. It passes 7 of 7 in
+    Verilator 5.052, and it fails at 30 ns on the old RTL.
+- **Checkpoint 5, `79a0ab01`: three interactive components from the components track** (run `wf_d75ad03e-524`).
+  Each is clean on both lenses.
+  - **visual-system primitives:** OutcomeGroups, ReorderList, MutationMatrix and BitStrip. They are not MDX tags;
+    other components import them from `src/components/visual-system`.
+  - **FirstBugHuntGame:** a vacuous success is neither a pass nor a failure (§16.14.8). The game adds a tally,
+    and the AHB model's note uses the same wording. On the live F1B page the game renders, and "passes
+    vacuously" no longer appears.
+  - **ProceduralBlocksSimulator:** time-zero scenarios (`time0-reset`, `comb-vs-star`, `time0-race`,
+    `decl-init-ready`, `initialVariant`), with a new `src/lib/sv-event-control-model.ts`.
+  - The integrator ran the component, lib and render suites: 3296 tests passed; tsc and lint are clean.
+
+**Not released: ScenarioSorter, escalated.** Its three review rounds each found a new S1 in the deck feedback.
+It is on branch `backup/wip-2026-10-28-scenario-sorter` (`d173bb49`) and was removed from the main tree.
+- Open at the stop:
+  - **S1** `scenario-sorter-decks.ts:847`: the covergroup tile's uvm-core feedback says uvm-core uses
+    covergroups. It declares none: a grep of uvm-core 2020.3.1 finds no `covergroup`.
+  - **S3** `:442`: the summary promises "why the others do not". The reveal shows only the learner's pick and the
+    best choice.
+  - **S3** `:1159`: "How many keys does new() create?" reads as a question about the default, which is 0.
+  - **S3** `:1782`: `withBins()` does not filter the follow-up options.
+- Next: check out the branch, fix these, then run a fresh two-lens review before it goes anywhere near `main`.
+  Its `PacketSorterGame.tsx` change also changes the live F2B game, so review that too.
+
+**Components backlog** (in the final result of `wf_d75ad03e-524`):
+- 48 components were ranked; 4 were built this week (`BUILD_CAP = 4` in the session copy) and 29 are deferred
+  with reasons.
+- The final backlog flags that the F3C audit input was cut off. Rerun that one audit before building for F3C.
+- The full result (backlog, results, integration) is saved in the session scratchpad as `components-result.json`,
+  with `lesson-plans.json` (all 112 lesson audits). These are session files, not committed. In a new session,
+  rerun `visual-components.js`; its audits run again.
+- To build the next batch in this session: raise `BUILD_CAP` (for example to 8) and resume `wf_d75ad03e-524`. The
+  catalog, audits, backlog and the four finished builds replay from cache, and only new builds run.
+
+**6a started on F1B** (run `wf_db5144d5-6ef`, `visual-enrichment.js` with `args.modules = ['F1B_The_Verification_Mindset']`).
+- `visual-enrichment.js` now takes an optional `args.extraContext`. The lead used it to pass the new components'
+  status, "do not embed ScenarioSorter", and the components track's audit of the lesson.
+- F1B outcome: **clean** after three rounds. Accuracy passed in round 1. The learning lens caught two real
+  problems: an 899-character caption, and the rule "zero nonvacuous successes means a check never ran", which is
+  false because a failing check has none either.
+  - The run made 16 additions: the six questions as predict-then-check; the four silent failures as a card grid; a
+    `|->`/`|=>`/`disable iff` timing diagram; a predict-then-check on X; a bug-hunt step 4 for the tally; a hunt
+    debrief table recomputed from `counter-bug-model`; and timing diagrams for the load-priority bug, the two-hot
+    state and the WRAP_AT(6) mutant.
+  - It also added: a code versus functional coverage table; `$onehot` and vacuity truth tables; an
+    assert/assume/cover/restrict table; and a VisualRecap.
+  - The lead also fixed "passes vacuously" in the cnt4 kata paragraph. This was the lead's own wording from
+    checkpoint 3.
+  - F1B was released as checkpoint 6, together with these notes. Usage at the pause was about 87 %.
+  - The run asked for two new components: BenchMutationLab (high value) and MethodBudgetExplorer. Add them to
+    the backlog.
+
+**Resume next week, in this order:**
+1. Finish 6a on T1, in small module batches. Include the components track's lesson plans in `extraContext`,
+   and never embed a component that is not on `main`.
+2. Fix and re-review the ScenarioSorter branch; build the next components batch (raise `BUILD_CAP`).
+3. Phase 6a for T2–T4, plus `phase6a-extras.js` (hidden pages, coming-soon labs; the arbiter RTL is now fixed).
+4. Final 6b sweep, run fresh, then closure checks.
+
+**Burn rates this session:**
+- Component builds: about 1 % weekly per 10 minutes with 4 builders.
+- Single-agent backlog phases: about 0.3 % each, but 20–30 minutes each.

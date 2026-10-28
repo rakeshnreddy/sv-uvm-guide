@@ -68,9 +68,9 @@ The most important tool in verification is not a language; it is a mindset.
 
 <Card className="my-6 border-l-4 border-l-purple-500">
   <CardHeader>
-    <CardTitle className="text-lg text-purple-700 dark:text-purple-300">The conflict of interest</CardTitle>
+    <p className="my-0 text-lg font-semibold leading-none tracking-tight text-purple-700 dark:text-purple-300">The conflict of interest</p>
   </CardHeader>
-  <CardContent className="grid gap-4 md:grid-cols-2">
+  <CardContent className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
     <div>
       <h4 className="mb-2 font-semibold text-sky-700 dark:text-sky-300">Designer's view</h4>
       <p className="text-sm text-muted-foreground">"The spec says the burst length is 4, 8 or 16. I implemented logic for those."</p>
@@ -91,7 +91,10 @@ When you are handed any feature or block, ask these six questions in order:
 5. **What are the reset and power-on behaviours?** Does the block come up clean, and does reset work in the middle of activity?
 6. **What does the spec not say?** Unspecified behaviour is where bugs breed.
 
-Here are the six questions traced on the 3-bit counter from the bug hunt below. Its spec: after reset, `count` goes up by 1 on every rising clock edge, and 7 wraps to 0.
+Try the six questions on the 3-bit counter from the bug hunt below. Its spec: after reset, `count` goes up by 1 on every rising clock edge, and 7 wraps to 0. Write one answer per question, then compare yours with the answers traced on the counter.
+
+<details>
+<summary>Check your answers: the six questions traced on the counter</summary>
 
 | Question | Answer for the counter |
 |---|---|
@@ -101,6 +104,8 @@ Here are the six questions traced on the 3-bit counter from the bug hunt below. 
 | Concurrent interactions | Reset asserted in the same cycle as the wrap |
 | Reset and power-on | `count` is X until the first reset edge; reset in the middle of counting |
 | What the spec does not say | The value before reset, and whether reset is synchronous (the RTL makes it synchronous: write that into the spec) |
+
+</details>
 
 > [!TIP]
 > **In interviews:** when asked "How would you verify X?", walk through these six questions. It shows systematic thinking instead of a list of random tests.
@@ -115,36 +120,125 @@ A **self-checking test** compares every output with an expected value from a ref
 > - `A |=> B`: at every edge where `A` is true, `B` must be true **at the next rising edge**.
 > - `disable iff (rst)`: while `rst` is 1, attempts are disabled, so reset cannot cause failures.
 > - `cover property (A)`: counts the edges where `A` matches; it never fails.
+>
+> To try `|->` and `|=>` on a trace you can edit, open the [SVA Trace Lab](/practice/visualizations/assertion-builder).
+
+Here are the four pieces in a worked example on a correct counter; the bug hunt then asks you to transfer them to its own checks:
+
+<TimingDiagram
+  title="Reading same-edge and next-edge implication, disable iff and cover on the counter"
+  caption={<>x-axis: rising edges 0 to 5 of <code>clk</code>; each value is the one sampled at that edge. Checks: <code>{"disable iff (rst) count == 3'd2 |-> count == 3'd3"}</code>, and the same with <code>{"|=>"}</code>. Markers: ⊘ disabled by <code>rst</code>, ○ vacuous success, ✕ <code>{"|->"}</code> fails, ✓ <code>{"|=>"}</code> passes. The <code>cover</code> row is 1 where <code>{"cover property (count == 3'd2)"}</code> matches. Shading: the <code>rst</code> window at edge 0, and the <code>{"|=>"}</code> attempt from edge 3 to edge 4.</>}
+  edges={6}
+  cycleWidth={36}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst", kind: "bit", values: [1, 0, 0, 0, 0, 0] },
+    { name: "count", kind: "bus", values: [undefined, 0, 1, 2, 3, 4] },
+    { name: "cover", kind: "bit", values: [0, 0, 0, 1, 0, 0] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", glyph: "⊘", label: "edge 0: rst is 1, so disable iff (rst) disables both attempts" },
+    { edge: 1, tone: "vacuous", label: "edge 1: count is 0, so the antecedent count == 2 is false: both attempts are vacuous successes" },
+    { edge: 2, tone: "vacuous", label: "edge 2: count is 1, so the antecedent is false: both attempts are vacuous successes" },
+    { edge: 3, tone: "fail", label: "edge 3: count == 2 matches; |-> checks count == 3 at this same edge, where count is 2: it fails" },
+    { edge: 4, tone: "pass", label: "edge 4: |=> checks count == 3 one edge after the match, and count is 3: it passes" },
+    { edge: 5, tone: "vacuous", label: "edge 5: count is 4, so the antecedent is false: both attempts are vacuous successes" }
+  ]}
+  highlights={[
+    { from: 0, to: 0, tone: "info", label: "rst = 1: attempts disabled" },
+    { from: 3, to: 4, tone: "attempt", label: "the |=> attempt that starts at edge 3 and checks at edge 4" }
+  ]}
+/>
+
+Predict before you open the walk-through: the counter is correct, so why does `|->` fail at edge 3?
+
+<details>
+<summary>Edge by edge</summary>
+
+The two checks are `assert property (@(posedge clk) disable iff (rst) count == 3'd2 |-> count == 3'd3)` and the same with `|=>`, one marker per edge. As in the bug hunt, `rst` changes away from the clock edges, so `disable iff` sees the value drawn at each edge.
+
+1. **Edge 0 (⊘):** `rst` is 1, so both attempts are disabled: neither a success nor a failure.
+2. **Edge 3 (✕):** `count` is 2, so the antecedent matches. `|->` checks `count == 3` at edge 3 itself and fails, because `count` cannot be 2 and 3 at once: a false alarm on a correct design.
+3. **Edge 4 (✓):** `|=>` checks `count == 3` at edge 4, where `count` is 3, and passes.
+4. **Edges 1, 2 and 5 (○):** the antecedent is false, as it is for the attempts that start at edge 4: vacuous successes, which card 2 below explains. `cover property (@(posedge clk) count == 3'd2)` would count one match, at edge 3: the `cover` row.
+
+</details>
 
 There are four common ways a check silently never fails. Each has a symptom, a cause and a fix:
 
-1. **The compare is missing or disabled.**
-   - Symptom: everything passes, even after you break the DUT on purpose.
-   - Cause: the compare was commented out, sits behind a flag that is off, or compares the DUT with a copy of its own output.
-   - Fix: inject a known bug and confirm that the test fails.
-2. **The trigger never happens (a vacuous success).**
-   - Symptom: an assertion such as `count == 3'd7 |=> count == 3'd0` never fails, and nothing shows that it ever checked anything.
-   - Cause: an implication whose left side (the **antecedent**) never matches succeeds without checking its right side (IEEE 1800-2023 §16.12.7). Such an attempt is a **vacuous success**: neither a pass nor a failure (§16.14.8).
-   - Fix: add a `cover property` on the antecedent. A count of 0 means the check never ran.
-3. **The check is a tautology, or it is only a `cover`.**
-   - Symptom: it never fails on any design.
-   - Cause: `count <= 3'd7` on a 3-bit counter is true for every known value. A `cover property` only counts matches; it never fails.
-   - Fix: check behaviour the spec constrains, with `assert`.
-4. **The compare is blind to X.**
-   - Symptom: an output stuck at X still passes.
-   - Cause: `count != expected` gives `1'bx` when `count` is X (§11.4.5), and an `if` whose condition is x does not run its first statement (§12.4). The failure branch is skipped.
-   - Fix: compare with `!==`, which treats X as a value and returns 1 or 0 (§11.4.5).
+<Card className="my-6">
+  <CardHeader>
+    <p className="my-0 text-lg font-semibold leading-none tracking-tight text-brand-text-primary">Four ways a check silently never fails</p>
+  </CardHeader>
+  <CardContent className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))]">
+    <div className="min-w-0 rounded-lg border border-border p-3">
+      <h4 className="mb-2 mt-0 text-base font-semibold"><span aria-hidden="true" className="mr-1 font-mono">{"✂︎"}</span>1. The compare is missing or disabled.</h4>
+      <p className="my-1 text-sm"><strong>Symptom:</strong> everything passes, even after you break the DUT on purpose.</p>
+      <p className="my-1 text-sm"><strong>Cause:</strong> the compare was commented out, sits behind a flag that is off, or compares the DUT with a copy of its own output.</p>
+      <p className="my-1 text-sm"><strong>Fix:</strong> inject a known bug and confirm that the test fails.</p>
+    </div>
+    <div className="min-w-0 rounded-lg border border-border p-3">
+      <h4 className="mb-2 mt-0 text-base font-semibold"><span aria-hidden="true" className="mr-1 font-mono">○</span>2. The trigger never happens (a vacuous success).</h4>
+      <p className="my-1 text-sm"><strong>Symptom:</strong> an assertion such as <code>{"count == 3'd7 |=> count == 3'd0"}</code> never fails, and nothing shows that it ever checked anything.</p>
+      <p className="my-1 text-sm"><strong>Cause:</strong> an implication whose left side (the <strong>antecedent</strong>) never matches succeeds without checking its right side (IEEE 1800-2023 §16.12.7). Such an attempt is a <strong>vacuous success</strong>: neither a pass nor a failure (§16.14.8).</p>
+      <p className="my-1 text-sm"><strong>Fix:</strong> add a <code>{"cover property"}</code> on the antecedent. A count of 0 means the check never ran.</p>
+      <p className="my-1 text-xs text-muted-foreground">Step 4 of the bug hunt counts these.</p>
+    </div>
+    <div className="min-w-0 rounded-lg border border-border p-3">
+      <h4 className="mb-2 mt-0 text-base font-semibold"><span aria-hidden="true" className="mr-1 font-mono">≡</span>3. The check is a tautology, or it is only a <code>{"cover"}</code>.</h4>
+      <p className="my-1 text-sm"><strong>Symptom:</strong> it never fails on any design.</p>
+      <p className="my-1 text-sm"><strong>Cause:</strong> <code>{"count <= 3'd7"}</code> on a 3-bit counter is true for every known value. A <code>{"cover property"}</code> only counts matches; it never fails.</p>
+      <p className="my-1 text-sm"><strong>Fix:</strong> check behaviour the spec constrains, with <code>{"assert"}</code>.</p>
+    </div>
+    <div className="min-w-0 rounded-lg border border-border p-3">
+      <h4 className="mb-2 mt-0 text-base font-semibold"><span aria-hidden="true" className="mr-1 inline-block rounded px-1 font-mono text-rose-700 dark:text-rose-300" style={{ backgroundImage: "repeating-linear-gradient(45deg, rgba(244,63,94,0.35) 0 2px, transparent 2px 6px)" }}>X</span>4. The compare is blind to X.</h4>
+      <p className="my-1 text-sm"><strong>Symptom:</strong> an output stuck at X still passes.</p>
+      <p className="my-1 text-sm"><strong>Cause:</strong> <code>{"count != expected"}</code> gives <code>{"1'bx"}</code> when <code>{"count"}</code> is X (§11.4.5), and an <code>{"if"}</code> whose condition is x does not run its first statement (§12.4). The failure branch is skipped.</p>
+      <p className="my-1 text-sm"><strong>Fix:</strong> compare with <code>{"!=="}</code>, which treats X as a value and returns 1 or 0 (§11.4.5).</p>
+    </div>
+  </CardContent>
+</Card>
+
+Check yourself: `count` is stuck at X and `expected` is 3. What does each of these lines count? Card 4 answers lines 1 and 3; line 2 is the new one: with an `else` branch, what does a stuck X count as?
+
+1. `if (count != expected) fail_cnt++;`
+2. `if (count != expected) fail_cnt++; else pass_cnt++;`
+3. `if (count !== expected) fail_cnt++;`
+
+<details>
+<summary>Check your answers</summary>
+
+| Line | The condition is | What runs |
+|---|---|---|
+| `if (count != expected) fail_cnt++;` | `1'bx` (§11.4.5) | Nothing: an x condition counts as false, so the failure is skipped (§12.4) |
+| `if (count != expected) fail_cnt++; else pass_cnt++;` | `1'bx` | The `else`: the stuck X is counted as a pass (§12.4) |
+| `if (count !== expected) fail_cnt++;` | `1'b1` (§11.4.5) | `fail_cnt++`: the X fails |
+
+The Make It Work bench has that `else` branch, which is why it compares with `!==`: with `!=`, a stuck-X `count` would print `PASS=20 FAIL=0`. To try `==`, `!=`, `===` and `!==` on X and Z bits yourself, see [F2A: Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions).
+
+</details>
 
 Now be the verifier. The designer has handed you a 3-bit up counter and a one-line spec. Work in this order:
 1. Compare the spec with the waveform before you look at the code, and find the first edge that is wrong.
 2. Find the line of RTL that caused it.
 3. Before you choose an assertion, predict which of the offered ones can never fail on this counter, and why. Then pick the one that would have caught the bug.
+4. Ask whether a check that never fails ever ran: predict how many nonvacuous successes it collects, then read its tally of nonvacuous successes, vacuous successes, failures and attempts disabled by `rst`.
 
 <FirstBugHuntGame />
 
-What the hunt showed:
+What the hunt showed. The game's model scores each assertion over its 12 edges, with `rst` high at edge 0; the first three carry `disable iff (rst)`. ✓ is a nonvacuous success, ○ a vacuous success, ⊘ an attempt disabled by `rst`, ✕ a failure:
+
+| Assertion | Buggy counter (wraps at 6) | Fixed counter |
+|---|---|---|
+| `count == 3'd6 \|=> count == 3'd7` | ✕ fails at edge 8 | ✓ 1 nonvacuous success; never fails |
+| `count == 3'd7 \|=> count == 3'd0` | ○ never fails, and never checks: 0 nonvacuous successes (11 vacuous, 1 ⊘) | ✓ 1 nonvacuous success; never fails |
+| `count <= 3'd7` | ✓ 11 nonvacuous successes; never fails | ✓ 11 nonvacuous successes; never fails |
+| `count == 3'd6 \|-> count == 3'd7` | ✕ fails at edge 7 | ✕ fails at edge 7 |
+
+Read the tally and the failures together. Zero nonvacuous successes and zero failures mean a check never ran (a cover on its antecedent reads 0). Many nonvacuous successes still do not prove that a check can fail: a property that is a plain sequence, such as the boolean `count <= 3'd7`, is always nonvacuous (§16.14.8), yet it holds on every design whose `count` is known. Only a design that breaks the rule can show that a check can fail.
+
 - **The debug workflow** is always the same: spec, then the first divergent sample, then the line that caused it, then a check that would have failed. Debug from the first divergence: every later value is wrong too, but only the first one points at the cause.
-- **Two of the four assertions can never fail** on the buggy counter. The wrap check `count == 3'd7 |=> count == 3'd0` is a vacuous success at every attempt, because the counter never reaches 7. `count <= 3'd7` is a tautology.
+- **Two of the four assertions can never fail** on the buggy counter. The wrap check `count == 3'd7 |=> count == 3'd0` never fails: every attempt that `rst` does not disable is a vacuous success, because the counter never reaches 7. `count <= 3'd7` is a tautology.
 - **One assertion is a false alarm:** `count == 3'd6 |-> count == 3'd7` checks the same cycle, so it fails even on a correct counter.
 - **Only `count == 3'd6 |=> count == 3'd7`** fails on the bug and stays silent on the fix. "Apply the fix" is the mutation idea in reverse: a good check separates the broken design from the fixed one.
 
@@ -163,6 +257,39 @@ There are three ways to look for bugs, and each explores a different part of the
    - Weaknesses: a proof holds only under its input assumptions, and an over-constrained assumption hides real bugs. Large designs can exceed tool capacity, so a run can end with a bounded or inconclusive result (tool-dependent).
 
 To see what each method explores, take a counter slightly bigger than the bug hunt's. It has a synchronous reset, an increment enable `en`, and a load `ld` with data `d`: `count` becomes `d` when `ld` is 1 (load wins), otherwise `count + 1` when `en` is 1, otherwise it holds. The bug: when `ld` and `en` are both 1 while `count` is 7, the RTL increments to 0 instead of loading `d`. If `d` happens to be 0 the bug is invisible, because 7 + 1 also wraps to 0.
+
+<TimingDiagram
+  title="The load-priority bug: ld and en together at count 7"
+  caption="x-axis: rising edges 0 to 4 of clk; each value is the one sampled at that edge, so an update made at edge k shows at edge k + 1. expected is what the spec gives (load wins); count is the buggy RTL. ● ld and en together at count 7; ✕ the first divergence. Shading: the bug, from ld and en together at count 7 (edge 2) to the first divergence (edge 3)."
+  edges={5}
+  cycleWidth={42}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst", kind: "bit", values: [1, 0, 0, 0, 0] },
+    { name: "ld", kind: "bit", values: [0, 1, 1, 0, 0] },
+    { name: "en", kind: "bit", values: [0, 0, 1, 0, 0] },
+    { name: "d", kind: "bus", values: [0, 7, 3, 3, 3] },
+    { name: "expected", kind: "bus", values: [undefined, 0, 7, 3, 3] },
+    { name: "count", kind: "bus", values: [undefined, 0, 7, 0, 0] }
+  ]}
+  markers={[
+    { edge: 2, tone: "info", label: "edge 2: count is 7 with ld and en both 1 and d = 3: the spec says load wins" },
+    { edge: 3, tone: "fail", label: "edge 3: the spec gives 3, the RTL gives 0: the first divergence" }
+  ]}
+  highlights={[{ from: 2, to: 3, tone: "fail", label: "the bug: ld and en together at count 7" }]}
+/>
+
+<details>
+<summary>Edge by edge: how the bug shows up</summary>
+
+1. **Edge 0:** `rst` is 1, so both rows read 0 at edge 1.
+2. **Edge 1:** `ld` is 1 with `d` = 7, so both read 7 at edge 2.
+3. **Edge 2 (●):** `count` is 7, `ld` and `en` are both 1, and `d` is 3. The spec loads 3; the RTL increments 7 to 0.
+4. **Edge 3 (✕):** `count` is 0 where 3 was expected, the first divergence. With `ld` and `en` low the counter holds, so edge 4 still disagrees.
+
+With `d` = 0 at edge 2, both rows would read 0 and the bug would stay hidden.
+
+</details>
 
 The three directed tests a busy engineer might write are: count from 0 through the wrap back to 0; load 5 right after reset, then count on; and hold with `en` low right after reset. The random test draws `en` high half the time, `ld` high one cycle in ten, and `d` uniformly.
 
@@ -404,6 +531,15 @@ The cost column describes typical practice; it is not measured data.
 
 IEEE 1800-2023 §19.2 describes two kinds of coverage. **Code coverage** is extracted automatically from the design code. **Functional coverage** is user-defined: it measures how much of the design specification, as listed by features in the test plan, has been exercised. Both measure; neither checks. A test with 100% coverage and a disabled compare proves nothing.
 
+| Question | Code coverage | Functional coverage |
+|---|---|---|
+| Where does it come from? | Extracted automatically from the design code (§19.2) | Written by you, from the features in the test plan (§19.2) |
+| What does it see? | Which statements, branches, conditions, bits and FSM states of the RTL were exercised | Which planned features, scenarios and corner cases happened |
+| What is it blind to? | Behaviour that has no code, such as a missing handler | Features missing from the plan, and plan items nobody wrote a coverage item for |
+| Who defines the metric? | §40.2.2 defines statement, toggle and FSM coverage; branch and condition coverage are tool-defined | You do, with covergroups ([I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)) and `cover property` statements |
+| What does it cost up front? | Nothing to write: the tool extracts it | Someone has to write the coverage model (§19.2) |
+| Does it decide pass or fail? | No: it records what ran | No: it records what happened |
+
 The code-coverage metrics you will meet:
 
 | Metric | What it counts | What it misses |
@@ -445,6 +581,35 @@ Every line and branch ran, yet one planned feature, reset in the middle of count
 // snippet
 a_state_onehot: assert property (@(posedge clk) disable iff (!rst_n) $onehot(state));
 ```
+
+<TimingDiagram
+  title="An illegal two-hot state, flagged at the edge it appears"
+  caption="An illustration of the war story, not a recorded trace. x-axis: rising edges 0 to 3 of clk; each value is the one sampled at that edge, and state is shown in binary, one bit per flip-flop. ⊘ attempt disabled during reset; ✓ $onehot true; ✕ $onehot false, so a_state_onehot fails. Shading: the illegal two-hot state at edge 3."
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [0, 1, 1, 1] },
+    { name: "state", kind: "bus", values: [undefined, "0001", "0010", "0110"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", glyph: "⊘", label: "edge 0: rst_n is 0, so disable iff (!rst_n) disables the attempt" },
+    { edge: 1, tone: "pass", label: "edge 1: state 0001 has one bit set: $onehot is true" },
+    { edge: 2, tone: "pass", label: "edge 2: state 0010 has one bit set: $onehot is true" },
+    { edge: 3, tone: "fail", label: "edge 3: state 0110 has two bits set: $onehot is false, so a_state_onehot fails" }
+  ]}
+  highlights={[{ from: 3, to: 3, tone: "fail", label: "the illegal state: two bits set" }]}
+/>
+
+<details>
+<summary>Edge by edge: where the assertion fires</summary>
+
+1. **Edge 0 (⊘):** `rst_n` is 0 and `state` is still unknown, so `disable iff (!rst_n)` disables the attempt instead of letting it fail on X. Reset puts `state` at 0001.
+2. **Edges 1 and 2 (✓):** exactly one bit is set, so `a_state_onehot` passes.
+3. **Edge 3 (✕):** at edge 2 two next-state conditions are true together, so edge 3 samples two set bits, 0110. `$onehot(state)` is false and the assertion fails at the first edge the illegal state exists, in any simulation that reaches it.
+
+Code coverage shows nothing here, because no line of the RTL handles that state.
+
+</details>
 
 `$onehot` is a built-in system function (IEEE 1800-2023 §20.9), the assertion's clock is `@(posedge clk)`, and `disable iff (!rst_n)` stops it firing on the unknown state before reset. A formal tool, which explores every reachable state, would also have shown how to reach it. Had the cause been an unsynchronized asynchronous input instead, RTL simulation would not show it at all: that is the job of clock-domain-crossing (CDC) analysis.
 
@@ -538,6 +703,51 @@ Severity belongs to each bug, not to its category: any category can be critical 
 - Directed tests find what you imagine, random stimulus finds what is probable, and formal finds what is possible within its assumptions. Real projects combine them.
 - Coverage measures; only checks decide. Code coverage cannot see missing features, and functional coverage is only as complete as the plan.
 - A plan row names a feature, a scenario, a check, a coverage item and a method.
+
+<VisualRecap
+  title="A check counts only if it can fail"
+  rule="A check counts only if it can fail: an injected bug (a mutant) must turn PASS into FAIL, and reverting it must give PASS again. Coverage measures what happened; only checks decide pass or fail."
+  code={`if (count !== expected) fail_cnt++;            // an X fails too
+cover property (@(posedge clk) count == 3'd7);  // did the wrap check ever trigger?`}
+  mistake="Comparing with !=, so a stuck X skips the failure branch; or reading 100% code coverage as done, while features with no code and checks that never ran stay invisible."
+  inTestbench="Every compare uses !== against an independent model, every important implication has a cover on its antecedent, a few injected bugs (mutants) stay in the regression, and sign-off reads functional coverage against the plan next to code coverage."
+>
+  <svg viewBox="0 0 300 200" role="img" aria-label="Inject the bug hunt's bug, then remove it: with the bug injected, so the counter wraps at 6, the test must report FAIL, and with the bug removed, so it wraps at 7, it must report PASS again. Below, the four ways a check never fails: the compare is missing or disabled, the antecedent never matches, the check is a tautology or only a cover, and a != compare is blind to X. Coverage counts; it never decides." style={{ width: "100%", maxWidth: 360 }}>
+    <defs>
+      <pattern id="f1b-recap-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="6" height="6" fill="rgba(244,63,94,0.10)" />
+        <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(244,63,94,0.6)" strokeWidth="2" />
+      </pattern>
+    </defs>
+    <text x="4" y="13" fontSize="11" fontWeight="600" fill="currentColor">{"Inject the bug hunt's bug, then remove it"}</text>
+    <rect x="4" y="22" width="146" height="24" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="77" y="38" fontSize="10.5" textAnchor="middle" fill="currentColor">{"bug injected: wraps at 6"}</text>
+    <line x1="152" y1="34" x2="185" y2="34" stroke="currentColor" strokeWidth="1.4" />
+    <path d="M185,30 L191,34 L185,38 z" fill="currentColor" />
+    <text x="171" y="28" fontSize="9.5" textAnchor="middle" fill="currentColor">{"run test"}</text>
+    <rect x="194" y="22" width="102" height="24" rx="12" fill="rgba(244,63,94,0.14)" stroke="rgb(225,29,72)" />
+    <text x="245" y="38" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">{"✕ FAIL expected"}</text>
+    <rect x="4" y="54" width="146" height="24" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="77" y="70" fontSize="10.5" textAnchor="middle" fill="currentColor">{"bug removed: wraps at 7"}</text>
+    <line x1="152" y1="66" x2="185" y2="66" stroke="currentColor" strokeWidth="1.4" />
+    <path d="M185,62 L191,66 L185,70 z" fill="currentColor" />
+    <text x="171" y="60" fontSize="9.5" textAnchor="middle" fill="currentColor">{"run test"}</text>
+    <rect x="194" y="54" width="102" height="24" rx="12" fill="rgba(16,185,129,0.14)" stroke="rgb(5,150,105)" />
+    <text x="245" y="70" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">{"✓ PASS again"}</text>
+    <text x="4" y="102" fontSize="11" fontWeight="600" fill="currentColor">{"Four ways a check never fails"}</text>
+    <rect x="4" y="110" width="144" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="12" y="126" fontSize="10.5" fill="currentColor">{"✂︎ compare missing"}</text>
+    <rect x="152" y="110" width="144" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="160" y="126" fontSize="10.5" fill="currentColor">{"○ vacuous antecedent"}</text>
+    <rect x="4" y="140" width="144" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="12" y="156" fontSize="10.5" fill="currentColor">{"≡ tautology or cover"}</text>
+    <rect x="152" y="140" width="144" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <rect x="158" y="144" width="16" height="16" rx="3" fill="url(#f1b-recap-hatch)" />
+    <text x="166" y="156" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">{"X"}</text>
+    <text x="180" y="156" fontSize="10.5" fill="currentColor">{"!= blind to X"}</text>
+    <text x="4" y="188" fontSize="10.5" fill="currentColor">{"Coverage counts what ran; it never decides."}</text>
+  </svg>
+</VisualRecap>
 
 ## Make It Work
 
@@ -636,7 +846,33 @@ PASS=7 FAIL=13
 COVERAGE seen_max=0
 ```
 
-The first seven checks pass (0 to 6). The first failure is the check at 80 ns, where 7 was expected, and every later check fails because the counter is now out of step with the model. Coverage agrees from a different angle: `seen_max=0` says the wrap scenario never happened. `$error` reports and lets the run continue, so you see every failure. A real simulator adds its own prefix to each `$error` line, with the severity, file, line, scope and time; that format is tool-specific (IEEE 1800-2023 §20.10).
+<TimingDiagram
+  title="Checks 0 to 11: the WRAP_AT(6) mutant against the model, check by check"
+  caption="x-axis: check number k, from 0 to 11. Each check is taken at the falling edge of clk after a rising edge, at t = 10 + 10k ns, when count is stable; no clock is drawn, so each dashed line is one check. count is the mutant DUT and expected is the reference model. ✓ match (checks 0 to 6); ✕ mismatch (checks 7 to 11); shading marks the first divergence, check 7 at 80 ns. In the data table, edge k means check k."
+  edges={12}
+  cycleWidth={18}
+  signals={[
+    { name: "count", kind: "bus", values: [0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4] },
+    { name: "expected", kind: "bus", values: [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3] }
+  ]}
+  markers={[
+    { edge: 0, tone: "pass", label: "check 0: count 0, expected 0" },
+    { edge: 1, tone: "pass", label: "check 1: count 1, expected 1" },
+    { edge: 2, tone: "pass", label: "check 2: count 2, expected 2" },
+    { edge: 3, tone: "pass", label: "check 3: count 3, expected 3" },
+    { edge: 4, tone: "pass", label: "check 4: count 4, expected 4" },
+    { edge: 5, tone: "pass", label: "check 5: count 5, expected 5" },
+    { edge: 6, tone: "pass", label: "check 6: count 6, expected 6" },
+    { edge: 7, tone: "fail", label: "check 7 at 80 ns: count 0, expected 7: the first failure" },
+    { edge: 8, tone: "fail", label: "check 8: count 1, expected 0" },
+    { edge: 9, tone: "fail", label: "check 9: count 2, expected 1" },
+    { edge: 10, tone: "fail", label: "check 10: count 3, expected 2" },
+    { edge: 11, tone: "fail", label: "check 11: count 4, expected 3" }
+  ]}
+  highlights={[{ from: 7, to: 7, tone: "fail", label: "first divergence: check 7 at 80 ns" }]}
+/>
+
+The first seven checks pass (0 to 6). The first failure is the check at 80 ns, where 7 was expected, and every later check fails because the counter is now out of step with the model. In the diagram that is check 7 (shaded): the model expects 7, but the mutant has already wrapped to 0. Checks 12 to 19, not drawn, fail the same way, as the log shows. Coverage agrees from a different angle: `seen_max=0` says the wrap scenario never happened, because 7 never appears in `count`. `$error` reports and lets the run continue, so you see every failure. A real simulator adds its own prefix to each `$error` line, with the severity, file, line, scope and time; that format is tool-specific (IEEE 1800-2023 §20.10).
 
 **How to do it on any block:**
 1. Write the plan row: feature, scenario, check, coverage item, method.
@@ -664,6 +900,15 @@ To run it, compile both modules with an IEEE 1800-compliant simulator and make `
 - When X must fail too, add `!$isunknown(state)`. §20.9 itself shows a one-hot check built from `$countones(v) == 1` and `$countbits(v, 'x, 'z) == 0` for the same reason.
 - `$onehot` returns type `bit`, so it never returns X itself.
 
+Traced on four values of a 4-bit `state` (§20.9):
+
+| `state` | `$onehot(state)` | `$onehot(state) && !$isunknown(state)` |
+|---|---|---|
+| `4'b0100` | 1: exactly one bit is 1 | 1 |
+| `4'b0110` | 0: two bits are 1 | 0 |
+| `4'b01x0` | 1: one bit is 1, and the X is not counted | 0: `$isunknown` is 1 |
+| `4'bxxxx` (before reset) | 0: no bit is 1 | 0 |
+
 ```systemverilog
 // snippet
 a_state_onehot_known: assert property (@(posedge clk) disable iff (!rst_n)
@@ -678,6 +923,15 @@ a_state_onehot_known: assert property (@(posedge clk) disable iff (!rst_n)
 - How a simulator lists vacuous successes in logs and coverage reports is tool-dependent.
 - Practice: give every important implication a `cover property` on its antecedent, and review the "never triggered" list before sign-off.
 
+The four ways one attempt can end, with the glyphs the bug hunt uses:
+
+| Attempt ends as | What happened | Action block, by default | In `cover property` results (§16.14.3) |
+|---|---|---|---|
+| ✓ Nonvacuous success | The antecedent matched and the consequent held: a pass | Pass statements (§16.14.1) | Counted as succeeded |
+| ○ Vacuous success | The antecedent did not match, so the consequent was never checked (§16.12.7): neither a pass nor a failure (§16.14.8) | Pass statements too, unless `$assertvacuousoff` stops them (§20.11) | Counted as succeeded because of vacuity |
+| ✕ Failure | The antecedent matched and the consequent did not hold | Fail statements, or `$error` when there is no `else` (§16.14.1) | Counted as attempted only |
+| ⊘ Disabled | The `disable iff` condition was true during the attempt: no success or failure (§16.12) | None (§16.14.1) | Counted as attempted only |
+
 ### Expert: A proof is only as good as its assumptions
 
 - For formal analysis, `assume` properties are hypotheses: a formal tool is not obliged to verify that they hold. A simulator must check them and report failures, like assertions (§16.14.2, §16.2).
@@ -685,6 +939,15 @@ a_state_onehot_known: assert property (@(posedge clk) disable iff (!rst_n)
 - Over-constraint hides bugs. In the methods figure, assuming `!(ld && en)` made the proof pass with the bug inside.
 - Two guards: write `cover` properties for scenarios that must stay reachable and confirm the tool can still cover them under the assumptions; and run the same assumptions as checks in simulation, where a violation shows an environment that breaks them.
 - Bounded proofs, inconclusive results and capacity limits are tool-dependent. [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index) covers formal flows next to UVM.
+
+The four assertion statements side by side:
+
+| Statement | In simulation | In formal analysis |
+|---|---|---|
+| `assert` | Checked: a failure runs the fail statements (§16.14.1) | An obligation to verify (§16.2): proved, or a counterexample |
+| `assume` | Checked and reported if it fails, like an assertion (§16.14.2) | A hypothesis that constrains the inputs; the tool need not verify it (§16.2, §16.14.2) |
+| `cover` | Counts attempts, successes and vacuous successes; never fails (§16.14.3) | Monitors the property for coverage (§16.2): the reachability guard against over-constraint above; how tools report it is tool-dependent |
+| `restrict` | Not checked (§16.2) | A constraint on the analysis (§16.2) |
 
 ### Expert: Qualifying the testbench
 
@@ -860,7 +1123,7 @@ Answer each one before you look at the feedback.
         { text: "|=> checks the consequent in the same cycle, where count is still 7", correct: false, feedback: "|=> checks one cycle later; |-> checks the same cycle. And count never reaches 7 here." },
         { text: "disable iff (rst) abandons every attempt, so no failure can be reported", correct: false, feedback: "It only abandons attempts while rst is 1. After reset the property is live." },
         { text: "The property is not legal SystemVerilog, so the tool silently ignores it", correct: false, feedback: "It is legal, and it states a real spec rule. It just never triggers on this counter." },
-        { text: "Its antecedent never matches, so every attempt is a vacuous success", correct: true, feedback: "Right (§16.12.7, §16.14.8): a vacuous success is neither a pass nor a failure. Pair it with a cover property on count == 3'd7 to see that it never ran." }
+        { text: "Its antecedent never matches, so every attempt that rst does not disable is a vacuous success", correct: true, feedback: "Right (§16.12.7, §16.14.8): a vacuous success is neither a pass nor a failure. Pair it with a cover property on count == 3'd7 to see that it never ran." }
       ],
       explanation: "No antecedent match means the implication succeeds without checking the consequent (§16.12.7); IEEE 1800-2023 calls that a vacuous success (§16.14.8). A check that never triggers proves nothing."
     },
@@ -899,7 +1162,7 @@ Write a verification plan for this spec excerpt. Aim for at least six rows. For 
 
 Two habits to notice. Every check compares with a model written from the spec, never with the DUT's own output. And the load-priority row is the one a hand-written test list usually forgets, which is exactly where the methods figure's bug lived.
 
-One mutant is easy to file under the wrong row. A counter that wraps at 14 never reaches 15 by counting, so the Wrap row's check never triggers and passes vacuously; only its coverage item, still at 0, shows the hole. The Increment row catches it, because 14 is followed by 0 instead of 15. F2E builds the bench for a plan like this one.
+One mutant is easy to file under the wrong row. A counter that wraps at 14 never reaches 15 by counting, so the Wrap row's check never triggers: every attempt is a vacuous success, which counts as neither a pass nor a failure (§16.14.8), and only its coverage item, still at 0, shows the hole. The Increment row catches it, because 14 is followed by 0 instead of 15. F2E builds the bench for a plan like this one.
 
 </details>
 
@@ -916,7 +1179,7 @@ All of these run against the bug hunt's buggy counter (it wraps at 6). Which one
 <details>
 <summary>Worked solution</summary>
 
-1. **Never fails: vacuous.** The counter never reaches 7, so the antecedent never matches and every attempt is a vacuous success (§16.12.7, §16.14.8). A cover on `count == 3'd7` would show 0 hits.
+1. **Never fails: vacuous.** The counter never reaches 7, so the antecedent never matches and every attempt that `rst` does not disable is a vacuous success (§16.12.7, §16.14.8). A cover on `count == 3'd7` would show 0 hits.
 2. **Never fails: a tautology.** A 3-bit value is at most 7 whenever it is known, so the property checks nothing. Without the `disable iff (rst)` gate it would fire only on the unknown value before reset: an X compared with `<=` gives x, and an assertion treats x as false (§11.4.4, §16.6).
 3. **Never fails: it is a cover.** A cover counts matches; it reports 0 here, which is useful information, but it never fails.
 4. **Never fails: X-blind.** `!=` gives `1'bx` when `count` is X (§11.4.5), and the `if` skips its statement (§12.4). Use `!==`.
