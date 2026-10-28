@@ -16,8 +16,12 @@
  * - §16.6: an assertion boolean that evaluates to x/z is false.
  * - §16.12.7: no antecedent match → the implication succeeds (vacuously);
  *   `|->` checks the consequent at the same tick, `|=>` at the next tick.
- * - §16.14.8: an attempt whose antecedent is false is a vacuous success.
+ * - §16.14.8: an attempt whose antecedent is false is a vacuous success, and
+ *   an assertion of such a property "is not considered a pass or a failure".
  * - §16.12 / §16.15: `disable iff (rst)` abandons an attempt while rst is 1.
+ * - §16.14.3: `cover property` results are counts (attempts, successes,
+ *   vacuous successes); the attempt counter includes disabled attempts, the
+ *   success counters do not. `tallyAttempts` uses the same convention.
  */
 
 export type CounterSample = number | "X";
@@ -377,9 +381,126 @@ export function gradeAssertion(a: CounterAssertion, stimulus: CounterStimulus = 
   };
 }
 
-/** One-line, learner-facing summary of an evaluation. */
+/**
+ * What a grade's result on the buggy counter means. A failure on the buggy
+ * design is not the same as catching the bug: it must also stay silent on the
+ * fixed one (`catchesBug`).
+ * - "catches": fails on the bug, silent on the fix.
+ * - "misses": never fails on the buggy counter.
+ * - "fires-off-bug": fails first at an edge whose sample the spec accepts
+ *   ("match") or does not specify ("unspecified"), so the failure is not the bug.
+ * - "fires-on-both": fails first at a mismatching edge, but fails on the fixed
+ *   counter too, so it is not specific to the bug.
+ */
+export type BugCatchOutcome =
+  | { kind: "catches"; edge: number }
+  | { kind: "misses" }
+  | { kind: "fires-off-bug"; edge: number; sample: CounterSample; check: "match" | "unspecified" }
+  | { kind: "fires-on-both"; edge: number };
+
+export function bugCatchOutcome(g: AssertionGrade, stimulus: CounterStimulus = DEFAULT_STIMULUS): BugCatchOutcome {
+  const edge = g.onBuggy.firstFailure;
+  if (g.onBuggy.verdict !== "fails" || edge === null) return { kind: "misses" };
+  if (g.catchesBug) return { kind: "catches", edge };
+  const buggy = simulateCounter(BUGGY_COUNTER, stimulus);
+  const check = compareWithSpec(buggy).checks[edge];
+  if (check === "mismatch") return { kind: "fires-on-both", edge };
+  return { kind: "fires-off-bug", edge, sample: buggy.count[edge], check };
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * One-line, learner-facing summary of an evaluation. A vacuous success is
+ * never called a pass (§16.14.8): it is reported as what it is.
+ */
 export function describeEvaluation(e: AssertionEvaluation): string {
   if (e.verdict === "fails") return `fails at edge ${e.firstFailure}`;
-  if (e.verdict === "vacuous") return `never fails, but every attempt passed vacuously (${e.vacuous} vacuous, 0 real checks)`;
+  if (e.verdict === "vacuous") {
+    const t = tallyAttempts(e);
+    const parts = [plural(t.vacuous, "vacuous success", "vacuous successes")];
+    if (t.disabled > 0) parts.push(`${t.disabled} disabled`);
+    if (t.pending > 0) parts.push(`${t.pending} still open`);
+    return `never fails, but no attempt completed a real check (${parts.join(", ")}, 0 nonvacuous)`;
+  }
   return `never fails (${e.nonvacuousPasses} real check${e.nonvacuousPasses === 1 ? "" : "s"} passed)`;
+}
+
+// ---------------------------------------------------------------------------
+// Attempt tally and antecedent cover: did the check ever actually run?
+// ---------------------------------------------------------------------------
+
+/**
+ * How the attempts of one assertion on one trace ended. Every edge starts one
+ * attempt, so `attempts` = trace edges and the other fields add up to it.
+ */
+export interface AttemptTally {
+  /** All attempts, disabled ones included (the §16.14.3 attempt-counter convention). */
+  attempts: number;
+  /** Antecedent matched (or no implication) and the consequent held. */
+  nonvacuous: number;
+  /** Antecedent false: a vacuous success, not a pass or a failure (§16.14.8). */
+  vacuous: number;
+  failures: number;
+  /** Abandoned by `disable iff (rst)`: counted as attempts, never as successes. */
+  disabled: number;
+  /** Antecedent matched, but the run ended before the consequent's tick. */
+  pending: number;
+}
+
+/** Tally derived only from the `AttemptResult` statuses of `evaluateAssertion`. */
+export function tallyAttempts(evaluation: AssertionEvaluation): AttemptTally {
+  const count = (status: AttemptStatus) => evaluation.attempts.filter((t) => t.status === status).length;
+  return {
+    attempts: evaluation.attempts.length,
+    nonvacuous: count("pass"),
+    vacuous: count("vacuous"),
+    failures: count("fail"),
+    disabled: count("disabled"),
+    pending: count("pending"),
+  };
+}
+
+export interface CounterCover {
+  id: string;
+  /** SystemVerilog text shown to the learner. */
+  source: string;
+  predicate: CountPredicate;
+}
+
+/** `cover property (@(posedge clk) <antecedent>);`, or null for a property with no antecedent. */
+export function antecedentCover(a: CounterAssertion): CounterCover | null {
+  if (!a.antecedent) return null;
+  return {
+    id: `${a.id}-antecedent`,
+    source: `cover property (@(posedge clk) ${predText(a.antecedent)});`,
+    predicate: a.antecedent,
+  };
+}
+
+/**
+ * Edges at which a `cover property` on a boolean succeeds: the predicate is
+ * sampled exactly as `evaluateAssertion` samples it (x is false, §16.6). A
+ * boolean property is always nonvacuous (§16.14.8), and property coverage
+ * counts at most one success per attempt (§16.14.3), so the hit count is the
+ * length of this list.
+ */
+export function coverHits(trace: CounterTrace, predicate: CountPredicate): number[] {
+  const hits: number[] = [];
+  for (let k = 0; k < trace.stimulus.edges; k += 1) {
+    if (evalPredicate(predicate, trace.count[k])) hits.push(k);
+  }
+  return hits;
+}
+
+/** Answers offered for "how many nonvacuous successes on the buggy counter?". */
+export type NonvacuousPredictionId = "zero" | "same-as-fixed" | "every-attempt";
+
+export const NONVACUOUS_PREDICTION_IDS: NonvacuousPredictionId[] = ["zero", "same-as-fixed", "every-attempt"];
+
+/** Whether a prediction about the buggy counter's nonvacuous successes is true for these tallies. */
+export function nonvacuousPredictionHolds(id: NonvacuousPredictionId, onBuggy: AttemptTally, onFixed: AttemptTally): boolean {
+  if (id === "zero") return onBuggy.nonvacuous === 0;
+  if (id === "same-as-fixed") return onBuggy.nonvacuous === onFixed.nonvacuous;
+  return onBuggy.nonvacuous === onBuggy.attempts;
 }

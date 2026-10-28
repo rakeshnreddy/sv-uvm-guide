@@ -29,6 +29,12 @@ const CONTEXT = `Repo ${ROOT}: Next.js curriculum site teaching SystemVerilog, U
 Visual system rules: docs/visual-learning/visual-language.md (kit components ArchitectureDiagram / TimingDiagram / SequenceDiagram, the §7 checklist, §9 layout warnings) and docs/curriculum-quality/README.md (brief) and plan.md §4. Every visual must be accurate (verify facts against the primary sources in ${SRC}/: t1_lrm_clean.txt IEEE 1800-2023, uvm_lrm.txt IEEE 1800.2-2020, ahb5.txt IHI0033C, arm_ahb.txt IHI0033B.b, arm_axi.txt IHI0022E, arm_apb.txt IHI0024C, arm_axis.txt IHI0051A; search with Python, they are long single lines), titled and captioned, accessible (role/name, text alternative), readable at 390 px, and must teach, not decorate. Prefer: a picture of every core concept; a diagram before a long explanation; timing diagrams for anything clocked; sequence diagrams for call/handshake flows; comparison tables; step-by-step reveals (<details>) and predict-then-check prompts tied to a visual; embedding an existing interactive visualizer (with the right preset/props) where it fits; recall aids (a one-glance summary visual near Practice & Reinforce).
 Never run git add/commit/stash/checkout/reset, generators, builds or servers. Other agents edit other lessons in parallel.`
 
+// args.extraContext (optional): notes the lead passes in, such as the new interactive components the
+// components track just registered, their MDX usage and the lesson sections each one was built for.
+const EXTRA = typeof args !== 'undefined' && args && args.extraContext ? `\n${args.extraContext}` : ''
+
+const CONTEXT_FULL = CONTEXT + EXTRA
+
 const CATALOG_SCHEMA = {
   type: 'object',
   properties: {
@@ -52,7 +58,7 @@ const CATALOG_SCHEMA = {
 }
 
 phase('Catalog')
-const catalog = await agent(`${CONTEXT}
+const catalog = await agent(`${CONTEXT_FULL}
 
 READ-ONLY. Build the catalog of every visual or interactive element a lesson can use: read the MDX components map (src/components/mdx/, including lazy interactives), the kit (src/components/mdx/DiagramKit.tsx and src/components/visual-system/), visualizers (src/components/visualizers/, src/components/visuals/, src/components/curriculum/interactives/), exercises and practice pages (src/app/(learning)/practice/**, src/app/(learning)/exercises/**). For each component give the MDX tag, what it teaches, its useful props/presets, and which lesson files already embed it (grep content/curriculum).`, { label: 'catalog', phase: 'Catalog', schema: CATALOG_SCHEMA })
 const catalogText = JSON.stringify(catalog || {}).slice(0, 45000)
@@ -97,20 +103,20 @@ const REVIEW_SCHEMA = {
 
 const VALIDATE = (file) => `VALIDATE: node scripts/check-mdx.mjs --render ${file} (0 errors, 0 template warnings); DIAGRAM_KIT_REPORT=1 NODE_OPTIONS='--require @prisma/client' npx vitest run tests/lib/diagram-kit-content.test.ts shows NO finding in ${file}; git diff HEAD -- ${file} shows no removed facts, examples, code, quiz questions or links (only additions and re-flow).`
 
-const auditPrompt = (l) => `${CONTEXT}
+const auditPrompt = (l) => `${CONTEXT_FULL}
 
 READ-ONLY. Audit ${l.file} (module ${l.module}, ${l.track}). Read it fully, its spine card in docs/curriculum-quality/curriculum-spine.md, and its neighbours in the manifest for context.
 Find the text-heavy stretches (long prose with no visual, code, table or interactive) and every core concept that has no picture. Plan specific additions: first reuse what exists (catalog below: embed an interactive with the right preset, or link a practice page), then new kit diagrams, tables, step reveals, predict-then-check prompts and a summary visual. Aim for a visual or interactive element at least every few paragraphs in teaching sections, without cluttering. Do not plan removals.
 CATALOG: ${catalogText}`
 
-const authorPrompt = (l, plan) => `${CONTEXT}
+const authorPrompt = (l, plan) => `${CONTEXT_FULL}
 
 You are the visual author for ${l.file}. Edit ONLY this file. Implement the plan below (you may improve it), keeping every existing fact, example, code block, quiz question, link, heading anchor that other pages link to, the template structure and pinned elements (spine §3.5). Verify every fact a new visual shows against the primary sources or the lesson's own verified text. If an addition would need a component that does not exist, skip it and list it.
 PLAN: ${JSON.stringify(plan).slice(0, 12000)}
 ${VALIDATE(l.file)}
 RETURN file, added (one line per visual), skipped (with reason), validation.`
 
-const reviewPrompt = (l, lens, author) => `${CONTEXT}
+const reviewPrompt = (l, lens, author) => `${CONTEXT_FULL}
 
 READ-ONLY. You review the visuals just added to ${l.file} (git diff HEAD -- ${l.file}). Author's report: ${JSON.stringify(author).slice(0, 3000)}
 ${lens === 'accuracy'
@@ -118,7 +124,7 @@ ${lens === 'accuracy'
   : 'LENS pedagogy and quality: each new element must help understanding or memory at that point (not decoration or repetition), be placed before or beside the text it explains, have an accurate title/caption that does not give away a prediction, be accessible, and read well at 390 px; check-mdx --render and the diagram-kit check must be clean; the page must not become cluttered.'}
 RETURN pass=true only if no S1/S2 problem remains; findings as "Sev line - problem -> fix".`
 
-const fixPrompt = (l, findings, round) => `${CONTEXT}
+const fixPrompt = (l, findings, round) => `${CONTEXT_FULL}
 
 Fix round ${round} for ${l.file}. Edit ONLY this file. Resolve every finding below without removing content.
 FINDINGS:

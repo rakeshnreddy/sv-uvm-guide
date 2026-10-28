@@ -657,7 +657,7 @@ export interface PropertyResult {
   id: AhbPropertyId;
   attempts: PropertyAttempt[];
   failures: PropertyAttempt[];
-  /** No attempt ever started: the property holds vacuously on this trace. */
+  /** The antecedent never matched: every attempt was a vacuous success (§16.14.8). */
   vacuous: boolean;
 }
 
@@ -1140,8 +1140,8 @@ export function buildPrediction(presetId: AhbPresetId, config: AhbConfig, trace:
       const answer = nf && ff ? "both" : nf ? "naive" : ff ? "fixed" : "neither";
       const errEdge = trace.cycles.find((c) => c.hresp === "ERROR" && c.hready === 1)?.cycle ?? 0;
       const naiveNote = naive.vacuous
-        ? "p_error_first_then_second needs HRESP high with HREADY low to start. A one-cycle ERROR never has HREADY low, so the property never starts an attempt and passes vacuously."
-        : "p_error_first_then_second starts at the first ERROR cycle and sees the second one, so it passes.";
+        ? "p_error_first_then_second needs HRESP high with HREADY low to match its antecedent. A one-cycle ERROR never has HREADY low, so the antecedent never matches and every attempt is a vacuous success: not a pass or a failure (§16.14.8)."
+        : "p_error_first_then_second matches its antecedent at the first ERROR cycle and sees the second one, so it passes.";
       const fixedNote = ff
         ? `p_error_second_needs_first fails at edge ${errEdge}: HRESP and HREADY are high, but edge ${errEdge - 1} had no ERROR with HREADY low (§5.1.3).`
         : `p_error_second_needs_first passes: edge ${errEdge - 1} was the first ERROR cycle.`;
