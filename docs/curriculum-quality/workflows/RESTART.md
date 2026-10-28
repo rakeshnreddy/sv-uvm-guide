@@ -433,21 +433,40 @@ was stopped at 78 % weekly, with 98 of 112 audits cached and 14 left. No build a
 - Probe pass (17 groups, 35 agents): about 1.5 %.
 - 22 lesson audits: about 2 %, roughly 1 % per 10 minutes.
 
+**Order changed (owner, 2026-10-28): defer the 6b sweep until after 6a.** This goes back to the owner's
+2026-10-18 order. 6a adds new text and visuals to every lesson, and those need the same review. One sweep after 6a
+covers old and new together; sweeping now as well would pay for the critics twice. The two finished rounds are
+not wasted, because 6a adds content and removes none.
+- Rounds 1 and 2: about 100 file fixes. Raw S1 findings fell from 9 to 7, and the skeptics confirmed 91 % of
+  findings in round 1 but 57 % in round 2.
+- The 7 round-3 critics that finished cover only T1 and raised no S1. They raised 4 S2 findings, which no skeptic
+  has checked yet. Check each by hand before fixing; it is quick, and 6a then does not build on them:
+  - `content/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index.mdx:897`: the cnt4 kata solution pairs
+    the Wrap row with the mutant "Wraps at 14", which reportedly does not satisfy "only that row's check would
+    catch".
+  - `content/interview-questions/systemverilog.json:1134`: the `sv-functional-vs-code-coverage` answer says
+    coverage metrics are tool-defined, not defined by IEEE 1800, which contradicts F1B (§40.2.1).
+  - `content/interview-questions/systemverilog.json:112`: the `sv-equality-operators-x` rubric grades as weak the
+    `===` X check that the mapped lessons teach.
+  - `content/curriculum/labs/simple_dut/README.md:155`: the Step 7 table gives the all-tests BUG=2 run a single
+    result, which reportedly does not match what lab.json Step 7 asks the learner to compare.
+- **Do not resume `wf_010d0167-550` after 6a.** Its cache keys hash the prompts, which name files but not their
+  contents, so a resume would replay critic results for the pre-6a text. Run
+  `docs/curriculum-quality/workflows/phase6-closure-sweep.js` fresh, with MAX_ROUNDS 5.
+
 **Resume next week, in this order.** Pause at the owner's threshold, and start the wind-down about 3 % before it.
-0. **Fix the flaky account-mode test above**, so that releases stop depending on reruns.
-1. **6b sweep, round 3 onward** (run `wf_010d0167-550`).
-   - The session copy has `MAX_ROUNDS = 3`. Raise it to 5, then resume with `resumeFromRunId`. Rounds 1 and 2, and
-     the round-3 critics for G01–G03 (both lenses) and G04 completeness, replay from cache.
-   - In a new session, rerun `docs/curriculum-quality/workflows/phase6-closure-sweep.js` fresh, with MAX_ROUNDS 5.
-2. **Interactive components** (run `wf_d75ad03e-524`, args `visual-components-args.json`).
+0. **Fix the flaky account-mode test above**, so that releases stop depending on reruns. Then check the 4 S2
+   findings above by hand.
+1. **Interactive components** (run `wf_d75ad03e-524`, args `visual-components-args.json`). It edits only `src/`,
+   `tests/` and `docs/visual-learning/`, never lessons.
    - In this session's copy, set `STOP_AFTER_AUDITS = false`, then resume. The catalog and 98 audits replay, and 14
      audits run live. Then come the Backlog phase, Build (`BUILD_CAP = 8`; raise it if the budget allows), Review
      and Integrate.
    - In a new session, run `docs/curriculum-quality/workflows/visual-components.js`. It has no stop flag and no cap,
      and all its audits run again.
-   - Run it after 6b, or alone, because of the burn rate.
-3. **Phase 6a.** Run visual-enrichment.js per tier and phase6a-extras.js. Include the arbiter and lab fixes listed
+2. **Phase 6a.** Run visual-enrichment.js per tier and phase6a-extras.js. Include the arbiter and lab fixes listed
    above. Release after each tier.
+3. **Phase 6b: final closure sweep** over the enriched lessons. Run it fresh (see above), with MAX_ROUNDS 5.
 4. **Closure checks** (plan §5 item 4).
 
 The compile-fix pass is finished; it no longer appears in the order.
