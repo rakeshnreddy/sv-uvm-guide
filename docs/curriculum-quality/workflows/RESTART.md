@@ -356,3 +356,98 @@ Plan next week's runs for that, and run one workflow at a time when the budget i
      docs copy `visual-components.js` has no cap.
    - Start it only after 6b, or alone, because of the burn rate.
 3. Compile-fix pass, then phase 6a, then closure checks. These are unchanged from the 2026-10-26 pause notes.
+
+## Weekly pause, 2026-10-27, second session (owner: "work till 80% usage")
+
+The owner restarted at 72 % weekly with a new limit of 80 %. This session ran the compile-fix pass, which was
+step 3 of the earlier order and the work most likely to finish and deploy within the budget, then used the rest
+of the budget on read-only lesson audits.
+
+**Released** (both passed CI and were deployed; `main` = `04627c0c`, production build succeeded):
+- **Checkpoint 1, `9f66e67a`: compile-fix pass on 24 failing units in 13 groups.** Each unit had one fixer, then
+  an independent check.
+  - I-UVM-2B: the scoreboard counter `matches` was a reserved keyword; it is now `n_match`/`n_mismatch`. The
+    printed text is unchanged.
+  - I-UVM-2B and A-UVM-4A: mixed time scales fixed by adding `timeunit`/`timeprecision` to the package.
+  - B-AHB-3 and I-SV-6: multi-file benches now tag every file (`// compile: ahb_if.sv (file 1 of 6)` and so on).
+  - The arbiter lab RTL now compiles with a sized round-robin index. That was a compile fix only; the pointer logic
+    is still wrong (see the hidden bugs below). Both lab1_reference_model files gained their missing `endmodule`.
+- **Checkpoint 2, `04627c0c`: limitation probe pass over the other 25 units.** It found that every one is legal
+  IEEE 1800-2023 code that Verilator 5.052 rejects or crashes on. Each `known` entry in
+  `scripts/sv-compile.config.json` now cites the LRM clause and gives the probe result: the construct, worked
+  around in a copy, lints clean. The F2A index and operators-and-expressions "Run it" notes said the bench runs
+  on Verilator with only its `x` checks failing. Verilator rejects both files at compile time, and the notes now
+  say so.
+
+**Compile check now:** 260 of 297 units compile (it was 254 of 307 before the pass; stale units are gone).
+There are 37 known failures:
+- 36 are Verilator limitations, each with its LRM clause. The main groups are:
+  - coverpoint and cross member access, `cg.cp.get_inst_coverage()` (§19.8): 8 lesson units and 2 lab units;
+  - `randomize(null)` (§18.11.1);
+  - program blocks nested in modules (§24.3);
+  - a 4-state right operand of `==?` or `inside` (§11.4.6, §11.4.13);
+  - `$past` with gating (§16.9.3);
+  - timing controls in DPI-exported tasks (§35.5.1.5);
+  - clocking blocks reached through a modport (§25.5.5);
+  - several internal errors (crashes).
+- 1 is a harness case: the I-SV-6 kata solution uses a module from its Given block.
+
+A unit in this list is not a content bug, and there is nothing left for a compile-fix pass to do. Revisit it only
+when Verilator is upgraded (`--prune-known` lists any that start to compile).
+
+**Hidden bugs recorded for phase 6a (not fixed; behaviour, not compile):**
+- `content/curriculum/labs/common/rtl/arbiter.sv` ROUND_ROBIN: `last_gnt <= gnt` stores the one-hot grant, and
+  `$clog2(N)'(last_gnt)` keeps its low bits instead of encoding it. With N = 4, grant `0100` gives a start offset
+  of 0, not 2. Encode the one-hot grant (or keep a binary pointer), and start the search one past the last winner.
+- `labs/arbiter/lab1_simple_tb/test_arbiter.sv` leaves `ARBITRATION_SCHEME` at its default, `"FIXED_PRIORITY"`, but
+  `lab.json` says "Verify a synchronous round-robin arbiter". Make them agree, after the RTL fix.
+- `labs/ahb_checker/lab1_monitor_checker` starters: the monitor instance in `tb_top` ships commented out, as a
+  learner TODO, so `ahb_monitor` becomes a second top-level module with an unconnected interface port (§23.3.3.4).
+  Verilator only warns. README Part 1 step 3 tells the learner to uncomment it, so leave it unless 6a changes the
+  lab flow.
+
+**Flaky account-mode e2e test: fix it first next week.** `tests/e2e/navigation.spec.ts:329`, "opens the account
+and notification menus for a signed-in learner", failed in CI attempts 1 and 2 on `04627c0c`. Attempt 3 passed
+and released the checkpoint. The same code passed twice on `9f66e67a`, on 10-27 and again at the pause. The
+diff between the two is content only (two MDX prose lines and the compile config), so this is a flaky test, not
+a regression. A flaky gate can hold back any release, so fix it before the next one.
+- The snapshot from the failure (CI artifact `test-results`) shows the open account panel with "Not signed in" and a
+  "Sign in" link. The session came back unauthenticated; it was not still loading, so a longer timeout will not help.
+- The other signed-in tests in the same run passed. Those sign in before their first page load. This test's
+  `beforeEach` loads `/curriculum` first, then it calls `authenticateTestLearner(page)` and `page.reload()`.
+- Likely cause: on the cold `next dev` server, the client's first `/api/auth/session` request after the reload
+  fails or races the on-demand route compile, and NextAuth then settles on unauthenticated. The other suspects
+  are a stale status kept across the reload (`useSessionAccountSession` in `src/lib/persistence/target.ts`) and
+  the sign-in cookie not reaching the page (`tests/fixtures/auth.ts`).
+- Fix: sign in before the first `goto`, as the passing tests do. Alternatively, wait for a 200 from
+  `/api/auth/session` after the reload, then assert "Sign out". Run the spec about 10 times in accounts mode
+  (`--repeat-each`) to confirm the fix.
+- Production runs in no-login mode (accounts off), so the live site is not affected.
+
+**Interactive components (run `wf_d75ad03e-524`).** This session resumed it for its read-only lesson audits only.
+The session copy of the script gained `STOP_AFTER_AUDITS = true`, which returns right after the Audit phase. It
+was stopped at 78 % weekly, with 98 of 112 audits cached and 14 left. No build agent ran, and no file was edited.
+
+**Usage this session:** 72 % → 78 %.
+- Compile-fix pass (13 groups, 35 agents): about 2 %.
+- Probe pass (17 groups, 35 agents): about 1.5 %.
+- 22 lesson audits: about 2 %, roughly 1 % per 10 minutes.
+
+**Resume next week, in this order.** Pause at the owner's threshold, and start the wind-down about 3 % before it.
+0. **Fix the flaky account-mode test above**, so that releases stop depending on reruns.
+1. **6b sweep, round 3 onward** (run `wf_010d0167-550`).
+   - The session copy has `MAX_ROUNDS = 3`. Raise it to 5, then resume with `resumeFromRunId`. Rounds 1 and 2, and
+     the round-3 critics for G01–G03 (both lenses) and G04 completeness, replay from cache.
+   - In a new session, rerun `docs/curriculum-quality/workflows/phase6-closure-sweep.js` fresh, with MAX_ROUNDS 5.
+2. **Interactive components** (run `wf_d75ad03e-524`, args `visual-components-args.json`).
+   - In this session's copy, set `STOP_AFTER_AUDITS = false`, then resume. The catalog and 98 audits replay, and 14
+     audits run live. Then come the Backlog phase, Build (`BUILD_CAP = 8`; raise it if the budget allows), Review
+     and Integrate.
+   - In a new session, run `docs/curriculum-quality/workflows/visual-components.js`. It has no stop flag and no cap,
+     and all its audits run again.
+   - Run it after 6b, or alone, because of the burn rate.
+3. **Phase 6a.** Run visual-enrichment.js per tier and phase6a-extras.js. Include the arbiter and lab fixes listed
+   above. Release after each tier.
+4. **Closure checks** (plan §5 item 4).
+
+The compile-fix pass is finished; it no longer appears in the order.
