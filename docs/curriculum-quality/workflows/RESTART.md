@@ -3,55 +3,74 @@
 Written 2026-10-12, when the weekly usage limit paused the program. Read this first in the next session,
 then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASKS.md`.
 
-## Start here (state at the 2026-10-28 pause)
+## Start here (state at the 2026-11-01 pause)
 
-**Live state:** `main` = `curriculum-quality-program`, with everything released through checkpoint 7 (`fad06fdc`).
-Nothing is running, the working tree is clean, and no backup branch holds pending work.
+**Live state:** everything reviewed is released through checkpoint 9 (`37e53ff8`, production build succeeded). The
+working tree is clean. Nothing is running.
 
 **Done so far:**
 - the compile-fix pass;
-- four reviewed components: visual primitives, FirstBugHuntGame tally, ProceduralBlocksSimulator time-0, and
-  ScenarioSorter;
-- 6a on F1B and on F2C (index and flow-control).
-- Details are in the 2026-10-27 and 2026-10-28 pause sections at the end of this file.
+- four reviewed components: visual primitives, FirstBugHuntGame tally, ProceduralBlocksSimulator time-0, ScenarioSorter;
+- 6a on 8 lessons: F1A, F1B, F1C, the three F2A lessons, and the two F2C lessons.
 
-**Saved data, so no audit or backlog work is repeated** (in `docs/curriculum-quality/data/`):
-- `lesson-plans-2026-10-28.json`: one read-only visual audit per lesson, 112 lessons (text-heavy stretches,
-  needs, static visuals).
-- `components-backlog-2026-10-28.json`: the final ranked backlog, 48 components with full build specs, plus 29
-  deferred items with reasons.
-- `progress.json`: built components and enriched lessons, with their commits. **Update it after every release.**
+**Not released, safe on `backup/wip-2026-11-01` (`ba9dbe7a`):** 7 components, built and reviewed three rounds, all
+escalated with open findings. Do not merge the branch as it is. Every file was verified byte for byte against the
+branch before the main tree was restored. Findings per component are in
+`docs/curriculum-quality/data/components-batch2-open-findings-2026-11-01.json`.
 
-**Launch a run** (each command prints the Workflow `args` to paste verbatim):
-- **6a batch.** `python3 docs/curriculum-quality/workflows/make-workflow-args.py 6a <module> [<module> ...]`, then run
-  `visual-enrichment.js` with those args.
-  - The args carry each lesson's saved plan, the components on `main` that were planned for it, the components
-    not on `main`, and `skipFiles` for lessons already enriched.
-- **Components batch.** `python3 docs/curriculum-quality/workflows/make-workflow-args.py components 8`, then run
-  `visual-components.js`.
-  - It builds straight from the saved backlog, skipping the catalog, audits and backlog phases.
-- **Release** each batch with `checkpoint-release.sh`, as before.
+| Component | Open S1 | Open S2 | Note |
+|---|---|---|---|
+| expression-lab-extensions (OperatorExplorer, SignednessVisualizer) | 0 | 1 | Closest to done |
+| decision-lab | 0 | 2 | Accuracy passed in round 3 |
+| selfcheck-bench-lab | 0 | 2 | |
+| timescale-lab | 0 | 3 | |
+| subroutine-lab | 1 | 5 | |
+| packed-layout-explorer | 1 | 7 | |
+| scheduler-model-v2 | 3 | 7 | Its round-2 fixer died when the Mac slept, so 25 of its own tests fail on the branch. Fix those first. |
 
-**Order:**
-1. 6a on the rest of T1, in small batches: F1A, F1C, F2A, F2B, F2D, F2E, F3A–F3C, F4A–F4C.
-   - Several new embeds are already planned: ScenarioSorter decks in F1C, F2D and F2E, and ProceduralBlocksSimulator
-     in F1C and F3A.
-2. The next components batch.
-3. 6a for T2–T4, plus `phase6a-extras.js`.
-4. A final 6b sweep, run fresh, then the closure checks.
+**Order for the next resume:**
+1. **Finish the 7 components, smallest first.** Check out their files from the backup branch, one fixer per component
+   working from its findings, then re-review with one accuracy reviewer per data group, which is what made
+   ScenarioSorter converge. Register each and release it when clean, then move its id from `componentsHeldOnBackup`
+   to `componentsBuilt` in `progress.json`. Check cross-imports first: later builds may import
+   `sv-expression-model.ts` additions. `time-slot-trace-presets` waits for scheduler-model-v2.
+2. **6a on the rest of T1:** F2B and F2E first, then F2D, F3A–F3C, F4A–F4C. The F2B/F2E run (`wf_ac40a627-5d1`) stopped
+   before any author wrote a file. In this session, resume it with
+   `scratchpad/visual-enrichment-batch2-embedded.js`; otherwise regenerate its arguments with the helper.
+   Authors should embed the finished components where the backlog planned them, so do step 1 first where you can.
+3. **The next components batch**, then 6a for T2–T4 plus `phase6a-extras.js`.
+4. **A final 6b sweep, run fresh**, then the closure checks.
 
-**Budget:** these figures are measured.
-- A one-lesson 6a run is about 1 % weekly; a two-lesson run about 2 %.
-- A component build with reviews is about 1 % each.
-- Pause at the owner's threshold, starting the wind-down about 3 % before it.
+**Launch a run** (each command prints the Workflow `args`):
+- `python3 docs/curriculum-quality/workflows/make-workflow-args.py 6a <module> [<module> ...]`, for `visual-enrichment.js`.
+- `python3 docs/curriculum-quality/workflows/make-workflow-args.py components 8`, for `visual-components.js`. It builds from
+  the saved backlog and skips anything built or held on the backup branch.
+- Release each batch with `checkpoint-release.sh`, and update `progress.json` after every release.
 
-**Lesson learned:** for a content-heavy component, give each data group (deck, preset set) its own accuracy
-reviewer. ScenarioSorter failed three rounds with one reviewer; with one reviewer per deck it was clean in two.
+**Saved data** (`docs/curriculum-quality/data/`): `lesson-plans-2026-10-28.json` (112 lesson audits),
+`components-backlog-2026-10-28.json` (48 ranked components with specs), `progress.json`, and the open findings above.
+
+**Lessons from this week:**
+- **Check the model before a long run.** A workflow stays on the model it launched with, even after `/model`. On Fable
+  the all-models window rose about 5 % per 10 minutes and the Fable window about 11 %; on Opus 5.5 about 1 % per 10
+  minutes. To switch a running workflow: stop it and resume; finished agents replay from cache.
+- **Resume without retyping arguments:** write a copy of the script with the arguments embedded. Prompts do not change,
+  so the cache stays valid. Do not resume after reverting files, because cached authors do not re-apply their edits.
+- **Keep the machine awake** (`request_keep_awake` with `session_idle`) before a long run. A sleep killed one fixer and
+  stalled the rest for about 5 hours.
+- **Check embeds against committed code.** Lesson authors can see unreleased component code in the shared tree.
+- **zsh traps:** an unquoted `$VAR` holding several paths is not split, so a check can pass while testing nothing
+  (use an array); and `$C:refs/...` is read as a path modifier (use `${C}:`).
+- **Budget per 6a lesson on Opus 5.5:** about 1 % weekly. Three review rounds were not enough for any of these
+  components, so expect a finish pass or per-data-group reviewers from the start.
 
 **Primary sources** (private, never committed) are in `~/.claude/projects/-Users-Rakesh-Projects-sv-uvm-guide/sources/`:
-the IEEE 1800-2023 and 1800.2-2020 texts, AMBA AHB/APB/AXI/AXIS, and, new, Accellera PSS 3.0 and 2.0
-(`accellera_pss30.*`, `accellera_pss20.txt`) and Arm CHI E.b (`arm_chi_eb.*`). The uvm-core 2020.3.1 tree is in
+the IEEE 1800-2023 and 1800.2-2020 texts, AMBA AHB/APB/AXI/AXIS, Accellera PSS 3.0 and 2.0 (`accellera_pss30.*`,
+`accellera_pss20.txt`) and Arm CHI E.b (`arm_chi_eb.*`). The uvm-core 2020.3.1 tree is in
 `/Users/Rakesh/Downloads/1800.2-2020.3.1`, and Verilator 5.052 in `~/.local/verilator`.
+
+**Weekly pause threshold:** the owner sets it at each resume. For the week of 2026-11-01 it was "work till 50% before
+winding down". The pause procedure is below.
 
 ## Release cadence and pause procedure (owner, 2026-10-26)
 

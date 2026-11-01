@@ -60,8 +60,9 @@ def enrichment_args(modules):
 
 
 def components_args(cap):
-    todo = [c for c in BACKLOG["components"] if c["id"] not in BUILT][:cap]
-    return {"backlog": {"components": todo, "deferred": []}, "skip": sorted(BUILT), "buildCap": cap}
+    held = set(PROGRESS.get("componentsHeldOnBackup", {}).get("ids", []))  # built, awaiting the finish pass
+    todo = [c for c in BACKLOG["components"] if c["id"] not in BUILT and c["id"] not in held][:cap]
+    return {"backlog": {"components": todo, "deferred": []}, "skip": sorted(BUILT | held), "buildCap": cap}
 
 
 if __name__ == "__main__":
