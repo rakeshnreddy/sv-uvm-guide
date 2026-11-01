@@ -28,12 +28,41 @@ branch before the main tree was restored. Findings per component are in
 | packed-layout-explorer | 1 | 7 | |
 | scheduler-model-v2 | 3 | 7 | Its round-2 fixer died when the Mac slept, so 25 of its own tests fail on the branch. Fix those first. |
 
+**Why it paused:** the owner's 50 % line was reached at 53 %. A Mac sleep of about 5 hours during the run killed one
+fixer (`fix:scheduler-model-v2:r2`), but no work was lost. Every workflow is stopped, so nothing resumes by itself.
+
+**Work left, estimated in % of a weekly limit on Opus 5.5:**
+
+| Work | Left | Cost |
+|---|---|---|
+| Lesson enrichment | 104 of 112 lessons | ~105 % |
+| Finish the held components | 7 | ~5 % |
+| Other planned components | 37 of 48 | ~45 % |
+| Extras: hidden pages, coming-soon labs, M5 lab | 12 | ~20 % |
+| Final review sweep, run fresh | All | ~35 % |
+| Closure checks | All | ~5 % |
+| **Total** | | **~215 %** |
+
+The lesson figure rests on few Opus measurements, and the component and sweep figures are judgement. Treat all of them
+as rough, and re-measure after the first batch.
+
+**First steps on resume:**
+1. Ask the owner for this week's pause threshold.
+2. Confirm the session model is Opus 5.5, because a workflow keeps the model it launched with.
+3. Request keep-awake (`session_idle`), and keep the lid open.
+4. Run `git status`, and confirm `main` = `curriculum-quality-program`.
+
+**Session-only files:** the scratchpad under `/private/tmp` keeps only the two embedded workflow scripts and two status
+scripts. macOS can clear it, and nothing needed lives only there: the helper regenerates the arguments, and the same-session
+cache only saves re-running finished agents. `.claude/launch.json` is a local preview config, excluded through
+`.git/info/exclude`, so a clean `git status` prints nothing.
+
 **Order for the next resume:**
 1. **Finish the 7 components, smallest first.** Check out their files from the backup branch, one fixer per component
    working from its findings, then re-review with one accuracy reviewer per data group, which is what made
    ScenarioSorter converge. Register each and release it when clean, then move its id from `componentsHeldOnBackup`
    to `componentsBuilt` in `progress.json`. Check cross-imports first: later builds may import
-   `sv-expression-model.ts` additions. `time-slot-trace-presets` waits for scheduler-model-v2.
+   `sv-expression-model.ts` additions. `time-slot-trace-presets` waits for scheduler-model-v2, and the helper holds it back until then.
 2. **6a on the rest of T1:** F2B and F2E first, then F2D, F3A–F3C, F4A–F4C. The F2B/F2E run (`wf_ac40a627-5d1`) stopped
    before any author wrote a file. In this session, resume it with
    `scratchpad/visual-enrichment-batch2-embedded.js`; otherwise regenerate its arguments with the helper.

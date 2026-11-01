@@ -61,7 +61,9 @@ def enrichment_args(modules):
 
 def components_args(cap):
     held = set(PROGRESS.get("componentsHeldOnBackup", {}).get("ids", []))  # built, awaiting the finish pass
-    todo = [c for c in BACKLOG["components"] if c["id"] not in BUILT and c["id"] not in held][:cap]
+    # time-slot-trace-presets builds on the scheduler model, so it waits until that component is released.
+    blocked = {"time-slot-trace-presets"} if "scheduler-model-v2" not in BUILT else set()
+    todo = [c for c in BACKLOG["components"] if c["id"] not in BUILT | held | blocked][:cap]
     return {"backlog": {"components": todo, "deferred": []}, "skip": sorted(BUILT | held), "buildCap": cap}
 
 
