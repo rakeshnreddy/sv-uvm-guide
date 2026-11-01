@@ -6,15 +6,20 @@
  * IEEE 1800-2023 clause it implements; tests in
  * tests/lib/sv-expression-model.test.ts pin each one.
  *
- * - §5.7.1  integer literals: sized/unsized, the `s` designator, x/z/? digits, padding
+ * - §5.7.1  integer literals: sized/unsized, the `s` designator, x/z/? digits, padding,
+ *           the fill literals '0 '1 'x 'z, and x/z-led unsized literals padding to their context
  * - §6.11.2 4-state → 2-state conversion turns x/z into 0
  * - §6.24.1 size casts `N'(e)`, sign casts `signed'(e)`, type casts `int'(e)`
  * - §10.7   assignment extension and truncation (MSBs discarded)
  * - §11.4   operator semantics, including the 4-state truth tables
+ * - §11.4.11 the conditional operator and Table 11-20 (x/z condition merges the branches)
+ * - §11.4.12 concatenation as an assignment target; §11.4.12.1 zero replication
  * - §11.6.1 Table 11-21: context-determined vs self-determined bit lengths
  * - §11.7   `$signed` / `$unsigned`
  * - §11.8.1 expression type; §11.8.2 evaluation steps; §11.8.3 assignment;
  *           §11.8.4 x/z in signed expressions
+ * - §12.4   `if` treats an x/z condition as false (contrast with ?:)
+ * - §20.9   bit vector system functions $countbits, $countones, $onehot, $onehot0, $isunknown
  *
  * Values are BigInt pairs in the VPI aval/bval encoding:
  * 0 = (0,0), 1 = (1,0), z = (0,1), x = (1,1).
@@ -177,7 +182,20 @@ export interface ParsedLiteral {
   value: SvValue;
   /** False for unsized numbers such as `12` or `'hF` (at least 32 bits). */
   sized: boolean;
+  /**
+   * Set for the unbased unsized literals '0 '1 'x 'z (§5.7.1): every bit of the
+   * containing expression takes this value; self-determined, the literal is 1 bit.
+   */
+  fill?: Bit4;
+  /**
+   * Set for an unsized based literal whose leftmost digit is x or z, such as 'hx
+   * (§5.7.1): the literal is extended with this bit to the size of the containing
+   * expression, even beyond 32 bits ('hx into an 85-bit variable gives 85 x bits).
+   */
+  pad?: Bit4;
 }
+
+const FILL_LITERAL = /^'([01xXzZ])$/;
 
 const BITS_PER_DIGIT: Record<string, number> = { b: 1, o: 3, h: 4 };
 
@@ -193,6 +211,13 @@ function bitLength(n: bigint): number {
 
 export function parseLiteral(raw: string): ParsedLiteral {
   const text = raw.replace(/\s+/g, "");
+  const fillMatch = FILL_LITERAL.exec(text);
+  if (fillMatch) {
+    // Unbased unsized literal (§5.7.1): all bits of the containing expression are
+    // set to this value; in a self-determined context it is 1 bit wide. Unsigned.
+    const fill = fillMatch[1].toLowerCase() as Bit4;
+    return { value: fromBits([fill], false), sized: false, fill };
+  }
   if (/^\d[\d_]*$/.test(text)) {
     // Simple decimal number: signed, at least 32 bits (§5.7.1).
     const n = BigInt(text.replace(/_/g, ""));
@@ -237,14 +262,17 @@ export function parseLiteral(raw: string): ParsedLiteral {
   }
 
   const width = sized ? Number(m[1].replace(/_/g, "")) : Math.max(32, bits.length);
+  const leftXz: Bit4 | undefined = bits[0] === "x" || bits[0] === "z" ? bits[0] : undefined;
   if (bits.length > width) {
     bits = bits.slice(bits.length - width); // truncated from the left
   } else if (bits.length < width) {
     // Pad left with 0, or with x/z when the leftmost digit is x/z (§5.7.1).
-    const fill: Bit4 = bits[0] === "x" || bits[0] === "z" ? bits[0] : "0";
-    bits = [...Array<Bit4>(width - bits.length).fill(fill), ...bits];
+    bits = [...Array<Bit4>(width - bits.length).fill(leftXz ?? "0"), ...bits];
   }
-  return { value: fromBits(bits, signed), sized };
+  // An unsized literal led by x or z keeps padding with that digit up to the size
+  // of the expression that contains it (§5.7.1, example 4: 'hx → {85{1'hx}}).
+  const pad = !sized && leftXz ? leftXz : undefined;
+  return { value: fromBits(bits, signed), sized, ...(pad ? { pad } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +376,7 @@ export type SvErrorCode =
   | "stream-in-expression"
   | "stream-wider-than-target"
   | "select-out-of-range"
+  | "zero-replication-alone"
   | "unsupported";
 
 export class SvExpressionError extends Error {
@@ -378,8 +407,13 @@ export type CastKind = { kind: "size"; width: number } | { kind: "sign"; signed:
 
 export type InsideItem = { kind: "value"; expr: ExprNode } | { kind: "range"; lo: ExprNode; hi: ExprNode };
 
+/** System functions the model evaluates: §11.7 sign conversions and the §20.9 bit vector functions. */
+export type SysFn = "$signed" | "$unsigned" | "$countbits" | "$countones" | "$onehot" | "$onehot0" | "$isunknown";
+
+export const BIT_VECTOR_FUNCTIONS: readonly SysFn[] = ["$countbits", "$countones", "$onehot", "$onehot0", "$isunknown"];
+
 export type ExprNode = { text: string } & (
-  | { kind: "num"; value: SvValue; sized: boolean }
+  | { kind: "num"; value: SvValue; sized: boolean; fill?: Bit4; pad?: Bit4 }
   | { kind: "ref"; name: string }
   | { kind: "select"; name: string; msb: number; lsb: number }
   | { kind: "paren"; inner: ExprNode }
@@ -389,7 +423,7 @@ export type ExprNode = { text: string } & (
   | { kind: "concat"; parts: ExprNode[] }
   | { kind: "repl"; count: number; parts: ExprNode[] }
   | { kind: "stream"; dir: "<<" | ">>"; slice: number; parts: ExprNode[] }
-  | { kind: "sysfn"; fn: "$signed" | "$unsigned"; arg: ExprNode }
+  | { kind: "sysfn"; fn: SysFn; arg: ExprNode; /** $countbits control bits, each read at its LSB (§20.9). */ controls?: ExprNode[] }
   | { kind: "cast"; cast: CastKind; arg: ExprNode }
   | { kind: "inside"; left: ExprNode; items: InsideItem[] }
 );
@@ -453,6 +487,8 @@ interface Token {
 function tokenize(src: string): Token[] {
   const tokens: Token[] = [];
   const based = /\d[\d_]*\s*'[sS]?[bBoOdDhH]\s*[0-9a-fA-FxXzZ?_]+|'[sS]?[bBoOdDhH]\s*[0-9a-fA-FxXzZ?_]+/y;
+  // Unbased unsized literal: '0 '1 'x 'z (§5.7.1). Not followed by another digit or letter.
+  const fill = /'[01xXzZ](?![0-9A-Za-z_?])/y;
   const decimal = /\d[\d_]*/y;
   const sys = /\$[A-Za-z_][A-Za-z0-9_$]*/y;
   const id = /[A-Za-z_][A-Za-z0-9_$]*/y;
@@ -469,6 +505,7 @@ function tokenize(src: string): Token[] {
     }
     let text: string | null;
     if ((text = tryRe(based))) tokens.push({ kind: "num", text, start: i, end: i + text.length });
+    else if ((text = tryRe(fill))) tokens.push({ kind: "num", text, start: i, end: i + text.length });
     else if ((text = tryRe(decimal))) tokens.push({ kind: "num", text, start: i, end: i + text.length });
     else if ((text = tryRe(sys))) tokens.push({ kind: "sys", text, start: i, end: i + text.length });
     else if ((text = tryRe(id))) tokens.push({ kind: "id", text, start: i, end: i + text.length });
@@ -593,17 +630,38 @@ class Parser {
         return { kind: "cast", cast: { kind: "size", width }, arg, text: this.textFrom(start) };
       }
       const lit = parseLiteral(t.text);
-      return { kind: "num", value: lit.value, sized: lit.sized, text: t.text };
+      return {
+        kind: "num",
+        value: lit.value,
+        sized: lit.sized,
+        text: t.text,
+        ...(lit.fill ? { fill: lit.fill } : {}),
+        ...(lit.pad ? { pad: lit.pad } : {}),
+      };
     }
     if (t.kind === "sys") {
       this.next();
-      if (t.text !== "$signed" && t.text !== "$unsigned") {
-        throw new SvExpressionError("unsupported", `${t.text} is not part of this model (only $signed and $unsigned).`, "§11.7");
+      const fn = t.text as SysFn;
+      if (fn !== "$signed" && fn !== "$unsigned" && !BIT_VECTOR_FUNCTIONS.includes(fn)) {
+        throw new SvExpressionError(
+          "unsupported",
+          `${t.text} is not part of this model (only $signed, $unsigned and the §20.9 bit vector functions $countbits, $countones, $onehot, $onehot0 and $isunknown).`,
+          "§11.7, §20.9",
+        );
       }
       this.expectOp("(");
       const arg = this.expr(0);
+      const controls: ExprNode[] = [];
+      while (this.isOp(",")) {
+        if (fn !== "$countbits") this.unexpected(this.peek(), `${fn} takes one argument`);
+        this.next();
+        controls.push(this.expr(0));
+      }
       this.expectOp(")");
-      return { kind: "sysfn", fn: t.text, arg, text: this.textFrom(start) };
+      if (fn === "$countbits" && controls.length === 0) {
+        throw new SvExpressionError("syntax", "$countbits needs at least one control bit, e.g. $countbits(e, '1).", "§20.9");
+      }
+      return { kind: "sysfn", fn, arg, text: this.textFrom(start), ...(controls.length ? { controls } : {}) };
     }
     if (t.kind === "id") {
       this.next();
@@ -750,9 +808,10 @@ function children(n: ExprNode): ExprNode[] {
     case "paren":
       return [n.inner];
     case "unary":
-    case "sysfn":
     case "cast":
       return [n.arg];
+    case "sysfn":
+      return [n.arg, ...(n.controls ?? [])];
     case "binary":
       return [n.left, n.right];
     case "cond":
@@ -769,6 +828,67 @@ function children(n: ExprNode): ExprNode[] {
 }
 
 const unwrap = (n: ExprNode): ExprNode => (n.kind === "paren" ? unwrap(n.inner) : n);
+
+/**
+ * The variables an expression reads (`ref` and `select` nodes), in source order:
+ * `int'(w)` reads w, `8'(12'hABC)` reads nothing. Used to decide which operand
+ * editors apply to a code variant. An expression that does not parse falls back
+ * to a plain identifier scan, so an editor is shown rather than hidden.
+ */
+export function expressionIdentifiers(src: string): Set<string> {
+  const out = new Set<string>();
+  const walk = (n: ExprNode): void => {
+    switch (n.kind) {
+      case "ref":
+      case "select":
+        out.add(n.name);
+        break;
+      case "num":
+        break;
+      case "paren":
+        walk(n.inner);
+        break;
+      case "unary":
+      case "cast":
+        walk(n.arg);
+        break;
+      case "binary":
+        walk(n.left);
+        walk(n.right);
+        break;
+      case "cond":
+        walk(n.cond);
+        walk(n.then);
+        walk(n.otherwise);
+        break;
+      case "concat":
+      case "repl":
+      case "stream":
+        n.parts.forEach(walk);
+        break;
+      case "sysfn":
+        walk(n.arg);
+        (n.controls ?? []).forEach(walk);
+        break;
+      case "inside":
+        walk(n.left);
+        n.items.forEach((it) => {
+          if (it.kind === "value") walk(it.expr);
+          else {
+            walk(it.lo);
+            walk(it.hi);
+          }
+        });
+        break;
+    }
+  };
+  try {
+    walk(parseExpression(src));
+  } catch {
+    for (const m of src.matchAll(/(?<![\w$'])[A-Za-z_]\w*/g)) out.add(m[0]);
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Four-state operator primitives (§11.4)
@@ -855,6 +975,147 @@ export function streamBlocks(bits: Bit4[], dir: "<<" | ">>", slice: number): { i
 const not1 = (b: Bit4) => notBit(b);
 const oneBit = (b: Bit4) => fromBits([b], false);
 
+/**
+ * Table 11-20 (§11.4.11): how one bit of each branch combines when the
+ * condition of `?:` is x or z. A bit survives only where both branches hold
+ * the same known value (0 with 0, 1 with 1); every other pair, including x
+ * with x and z with z, is x.
+ */
+export function conditionalMergeBit(thenBit: Bit4, elseBit: Bit4): Bit4 {
+  return thenBit === elseBit && !isUnknownBit(thenBit) ? thenBit : "x";
+}
+
+export interface ConditionalMergeRow {
+  index: number;
+  then: Bit4;
+  otherwise: Bit4;
+  /** The Table 11-20 cell for this pair (what the merge would give). */
+  cell: Bit4;
+  /** The bit the operator actually returns: the chosen branch's bit, or `cell` when the condition is ambiguous. */
+  result: Bit4;
+}
+
+export interface ConditionalDetail {
+  /** Truth value of the condition (§11.4.7): 1, 0, or x for an ambiguous condition. */
+  truth: Bit4;
+  /** `then == otherwise` (§11.4.5), the logical-equivalence test §11.4.11 applies first. */
+  equivalent: Bit4;
+  /** True when the condition is x/z and the branches were merged bit by bit. */
+  merged: boolean;
+  rows: ConditionalMergeRow[];
+  /** `cond ? then : otherwise` at the common width (unsigned here: the caller supplies the sign). */
+  result: SvValue;
+  /** What `if (cond) y = then; else y = otherwise;` stores (§12.4: an x/z condition is false). */
+  ifElse: SvValue;
+  ifTakes: "then" | "else";
+}
+
+/**
+ * The conditional operator on already-sized branches (§11.4.11), row by row,
+ * next to the if/else statement on the same condition (§12.4).
+ */
+export function conditionalDetail(cond: SvValue, thenValue: SvValue, elseValue: SvValue): ConditionalDetail {
+  const W = Math.max(thenValue.width, elseValue.width);
+  const S = thenValue.signed && elseValue.signed;
+  const t = resize(thenValue, W, S, S);
+  const e = resize(elseValue, W, S, S);
+  const truth = truthOf(cond);
+  const equivalent = logicalEquality(t, e);
+  const merged = truth === "x" && equivalent !== "1";
+  const rows: ConditionalMergeRow[] = [];
+  for (let i = W - 1; i >= 0; i -= 1) {
+    const tb = bitAt(t, i);
+    const eb = bitAt(e, i);
+    const cell = conditionalMergeBit(tb, eb);
+    rows.push({ index: i, then: tb, otherwise: eb, cell, result: truth === "1" ? tb : truth === "0" ? eb : cell });
+  }
+  const result = fromBits(rows.map((r) => r.result), S);
+  const ifTakes = truth === "1" ? "then" : "else";
+  return { truth, equivalent, merged, rows, result, ifElse: ifTakes === "then" ? t : e, ifTakes };
+}
+
+// ---------------------------------------------------------------------------
+// Bit vector system functions (§20.9)
+// ---------------------------------------------------------------------------
+
+/**
+ * $countbits(e, control bits): the number of bits of `e` whose value is one of
+ * the control values. A control listed twice counts once. x and z bits never
+ * match '1 or '0.
+ */
+export function countbits(v: SvValue, ...controls: Bit4[]): number {
+  const wanted = new Set(controls);
+  return bitsOf(v).filter((b) => wanted.has(b)).length;
+}
+
+/** $countones(e) = $countbits(e, '1); returns int. */
+export function countones(v: SvValue): number {
+  return countbits(v, "1");
+}
+
+/** $onehot(e): $countbits(e, '1) == 1; returns bit. */
+export function onehot(v: SvValue): boolean {
+  return countbits(v, "1") === 1;
+}
+
+/** $onehot0(e): $countbits(e, '1) <= 1; returns bit. */
+export function onehot0(v: SvValue): boolean {
+  return countbits(v, "1") <= 1;
+}
+
+/** $isunknown(e): $countbits(e, 'x, 'z) != 0; returns bit. */
+export function isunknown(v: SvValue): boolean {
+  return countbits(v, "x", "z") !== 0;
+}
+
+export interface BitVectorFnReport {
+  fn: "$countones" | "$onehot" | "$onehot0" | "$isunknown";
+  /** The $countbits identity the function is defined by (§20.9). */
+  definition: string;
+  /** The arithmetic on this vector, e.g. `$countbits(state, '1) = 1, and 1 == 1`. */
+  arithmetic: string;
+  /** Result as SV source: a decimal for int, 1'b0 / 1'b1 for bit. */
+  result: string;
+  returnType: "int" | "bit";
+}
+
+/** The four convenience functions of §20.9 on one vector, with their $countbits arithmetic. */
+export function bitVectorReport(v: SvValue, name = "e"): BitVectorFnReport[] {
+  const ones = countbits(v, "1");
+  const xz = countbits(v, "x", "z");
+  const bit = (b: boolean) => (b ? "1'b1" : "1'b0");
+  return [
+    {
+      fn: "$countones",
+      definition: `$countbits(${name}, '1)`,
+      arithmetic: `$countbits(${name}, '1) = ${ones}`,
+      result: String(ones),
+      returnType: "int",
+    },
+    {
+      fn: "$onehot",
+      definition: `$countbits(${name}, '1) == 1`,
+      arithmetic: `$countbits(${name}, '1) = ${ones}, and ${ones} == 1 is ${ones === 1 ? "true" : "false"}`,
+      result: bit(ones === 1),
+      returnType: "bit",
+    },
+    {
+      fn: "$onehot0",
+      definition: `$countbits(${name}, '1) <= 1`,
+      arithmetic: `$countbits(${name}, '1) = ${ones}, and ${ones} <= 1 is ${ones <= 1 ? "true" : "false"}`,
+      result: bit(ones <= 1),
+      returnType: "bit",
+    },
+    {
+      fn: "$isunknown",
+      definition: `$countbits(${name}, 'x, 'z) != 0`,
+      arithmetic: `$countbits(${name}, 'x, 'z) = ${xz}, and ${xz} != 0 is ${xz !== 0 ? "true" : "false"}`,
+      result: bit(xz !== 0),
+      returnType: "bit",
+    },
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // Evaluation trace
 // ---------------------------------------------------------------------------
@@ -876,7 +1137,8 @@ export type ExprStep =
       text: string;
       from: SvValue;
       to: SvValue;
-      mode: "sign" | "zero" | "same";
+      /** `fill`: a '0/'1/'x/'z literal, or an x/z-led unsized literal, fills the context (§5.7.1). */
+      mode: "sign" | "zero" | "same" | "fill";
       why: string;
       clause: string;
       surprising: boolean;
@@ -901,9 +1163,14 @@ export interface EvalOptions {
   swapRightShifts?: boolean;
   /** Misconception model: x/z operand bits are read as 0. */
   xAsZero?: boolean;
+  /** Misconception model: casts, $signed and $unsigned are ignored (the operand passes through unchanged). */
+  ignoreCasts?: boolean;
+  /** Misconception model: a part-select inherits the signedness of its variable (the LRM says unsigned, §11.8.1). */
+  selectKeepsSign?: boolean;
 }
 
 const signWord = (s: boolean) => (s ? "signed" : "unsigned");
+const SELECT_UNSIGNED = "unsigned even when it covers the entire vector (§11.8.1)";
 const isLeaf = (n: ExprNode) => n.kind === "num" || n.kind === "ref" || n.kind === "select";
 
 /** True for nodes whose operands inherit the surrounding context (Table 11-21). */
@@ -919,6 +1186,21 @@ function isContextNode(n: ExprNode): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * The context sentence for an assignment whose RHS has no operands to resize: a
+ * simple operand, or a node whose own operands are sized separately (a cast, a
+ * concatenation, a comparison). Only the RHS as a whole meets the target (§11.8.3).
+ */
+function standaloneRhsWhy(rhs: ExprNode, name: string, tw: number, rw: number, rs: boolean): string {
+  if (rhs.kind === "num" && (rhs.fill || rhs.pad) && tw > rw) {
+    return `\`${rhs.text}\` is ${bitsWord(rw)} on its own, but §5.7.1 extends it with its own digit (${rhs.fill ?? rhs.pad}) to the ${tw}-bit ${name}.`;
+  }
+  const lead = isLeaf(rhs) ? `The RHS is ${bitsWord(rw)}, ${signWord(rs)}` : `\`${rhs.text}\` is ${bitsWord(rw)}, ${signWord(rs)} (its own operands are sized separately)`;
+  if (tw > rw) return `${lead}; §11.8.3 extends it to the ${tw}-bit ${name}, with ${rs ? "copies of its sign bit" : "zeros"} because it is ${signWord(rs)}.`;
+  if (tw < rw) return `${lead}; the ${tw}-bit ${name} keeps only its low ${bitsWord(tw)} (§10.7).`;
+  return `${lead}, the same width as the ${tw}-bit ${name}.`;
 }
 
 /** Binary up to 8 bits, hex (when the nibbles allow) for wider values. */
@@ -984,8 +1266,12 @@ class Evaluator {
       case "repl":
         return n.count * n.parts.reduce((s, p) => s + this.size(p), 0);
       case "sysfn":
+        // §20.9: $countbits/$countones return int (32 bits); $onehot/$onehot0/$isunknown return bit.
+        if (n.fn === "$countbits" || n.fn === "$countones") return 32;
+        if (n.fn === "$onehot" || n.fn === "$onehot0" || n.fn === "$isunknown") return 1;
         return this.size(n.arg);
       case "cast":
+        if (this.opts.ignoreCasts) return this.size(n.arg);
         if (n.cast.kind === "size") return n.cast.width;
         if (n.cast.kind === "type") return TYPE_SIZES[n.cast.type];
         return this.size(n.arg);
@@ -1002,7 +1288,7 @@ class Evaluator {
       case "ref":
         return this.lookup(n.name).type.signed;
       case "select":
-        return false; // bit- and part-selects are unsigned
+        return this.opts.selectKeepsSign ? this.lookup(n.name).type.signed : false; // bit- and part-selects are unsigned
       case "paren":
         return this.sign(n.inner);
       case "unary":
@@ -1018,8 +1304,11 @@ class Evaluator {
       case "stream":
         return false;
       case "sysfn":
-        return n.fn === "$signed";
+        if (this.opts.ignoreCasts && (n.fn === "$signed" || n.fn === "$unsigned")) return this.sign(n.arg);
+        // int results are signed; bit results and $unsigned are unsigned.
+        return n.fn === "$signed" || n.fn === "$countbits" || n.fn === "$countones";
       case "cast":
+        if (this.opts.ignoreCasts) return this.sign(n.arg);
         if (n.cast.kind === "sign") return n.cast.signed;
         if (n.cast.kind === "type") return INTEGER_TYPES[n.cast.type].signed;
         return this.sign(n.arg);
@@ -1106,12 +1395,11 @@ class Evaluator {
         const c = truthOf(this.evalSelf(n.cond));
         const t = this.evalCtx(n.then, W, S);
         const e = this.evalCtx(n.otherwise, W, S);
-        const r =
-          c === "1" ? t : c === "0" ? e : mapBits(W, S, (i) => (bitAt(t, i) === bitAt(e, i) && !isUnknownBit(bitAt(t, i)) ? bitAt(t, i) : "x"));
+        const r = c === "1" ? t : c === "0" ? e : mapBits(W, S, (i) => conditionalMergeBit(bitAt(t, i), bitAt(e, i)));
         const why =
           c === "x"
-            ? "The condition is unknown, so both branches are combined bit by bit: equal known bits survive, the rest become x (Table 11-20)."
-            : `The condition is ${c}, so the ${c === "1" ? "first" : "second"} branch is the result, already sized to ${W} bits.`;
+            ? `The condition is x/z, so both branches are evaluated and compared (§11.4.5): ${logicalEquality(t, e) === "1" ? "they are equal, so either one is the result" : "they differ, so they are combined bit by bit with Table 11-20: a bit survives only where the branches agree on 0 or 1; every other pair, including x with x and z with z, becomes x"}.`
+            : `The condition is ${c}, so the ${c === "1" ? "first" : "second"} branch is the result, already sized to ${W} bits; the other branch is not evaluated.`;
         this.push({ kind: "op", text: n.text, op: "?:", inputs: [t, e], result: r, why, clause: "§11.4.11", surprising: c === "x" });
         return r;
       }
@@ -1123,6 +1411,17 @@ class Evaluator {
 
   /** A simple operand meets its context: extend (sign only if the propagated type is signed). */
   private convert(n: ExprNode, v: SvValue, W: number, S: boolean): SvValue {
+    if (n.kind === "num" && (n.fill || n.pad) && W > v.width) {
+      // §5.7.1: a fill literal sets every bit of the containing expression; an
+      // x/z-led unsized literal is extended with that digit to the expression size.
+      const digit = (n.fill ?? n.pad) as Bit4;
+      const to = fromBits([...Array<Bit4>(W - v.width).fill(digit), ...bitsOf(v)], S);
+      const why = n.fill
+        ? `\`${n.text}\` is an unbased unsized literal: every one of the ${W} bits of the containing expression becomes ${digit} (§5.7.1). On its own it would be 1 bit.`
+        : `\`${n.text}\` is unsized and its leftmost digit is ${digit}, so it is padded with ${digit} to the ${W}-bit expression, not with 0 (§5.7.1).`;
+      this.push({ kind: "extend", text: n.text, from: v, to, mode: "fill", why, clause: "§5.7.1", surprising: isUnknownBit(digit) });
+      return to;
+    }
     const to = resize(v, W, S, S);
     const leaf = isLeaf(n);
     if (!leaf && v.width === W && v.signed === S) return to;
@@ -1139,6 +1438,12 @@ class Evaluator {
       if (ownSigned && msb !== "0") {
         surprising = true;
         why = `\`${n.text}\` ${leaf ? "is declared" : "is"} signed, but the expression is unsigned, so it is zero-extended: ${formatCompact(v)} becomes ${formatCompact(to)}, which is ${formatValue(to)}, not ${formatValue(v)}.`;
+      } else if (n.kind === "select" && this.lookup(n.name).type.signed) {
+        // §11.8.1: the select is unsigned whatever its variable is, so a set top bit is not copied.
+        surprising = msb !== "0";
+        why =
+          `\`${n.text}\` selects from the signed ${n.name}, but ${n.msb === n.lsb ? "a bit-select is unsigned (§11.8.1)" : `a part-select is ${SELECT_UNSIGNED}`}, so it is zero-extended from ${v.width} to ${W} bits` +
+          `${surprising ? `: ${formatCompact(v)} becomes ${formatCompact(to)}, which is ${formatValue(to)}` : ""}.`;
       } else {
         why = `\`${n.text}\` is zero-extended from ${v.width} to ${W} bits (unsigned expression).`;
       }
@@ -1320,7 +1625,7 @@ class Evaluator {
         }
         const w = n.msb - n.lsb + 1;
         const base = this.readLeaf(v.value);
-        return makeValue(w, false, base.aval >> big(n.lsb), base.bval >> big(n.lsb));
+        return makeValue(w, this.opts.selectKeepsSign ? v.type.signed : false, base.aval >> big(n.lsb), base.bval >> big(n.lsb));
       }
       case "unary": {
         // Reductions and logical NOT: operand self-determined, 1-bit unsigned result.
@@ -1359,6 +1664,15 @@ class Evaluator {
       }
       case "concat":
       case "repl": {
+        if (n.kind === "repl" && n.count === 0) {
+          // §11.4.12.1: a zero replication has size zero and is legal only inside a
+          // concatenation with a positive-size operand; the concat case handles that.
+          throw new SvExpressionError(
+            "zero-replication-alone",
+            `\`${n.text}\` replicates zero times, so it has no bits. A zero replication may only appear inside a concatenation that also has an operand of positive size.`,
+            "§11.4.12.1",
+          );
+        }
         const vals = n.parts.map((p) => {
           if (p.kind === "num" && !p.sized) {
             throw new SvExpressionError(
@@ -1366,6 +1680,18 @@ class Evaluator {
               `\`${p.text}\` is an unsized number; concatenation operands must be sized (write e.g. 1'b1).`,
               "§11.4.12",
             );
+          }
+          const inner = unwrap(p);
+          if (inner.kind === "repl" && inner.count === 0) {
+            const others = n.parts.filter((q) => q !== p);
+            if (!others.some((q) => this.size(q) > 0)) {
+              throw new SvExpressionError(
+                "zero-replication-alone",
+                `\`${p.text}\` has size zero, and no other operand of the concatenation has a positive size.`,
+                "§11.4.12.1",
+              );
+            }
+            return makeValue(0, false, ZERO);
           }
           return this.evalSelf(p);
         });
@@ -1411,20 +1737,25 @@ class Evaluator {
       }
       case "sysfn": {
         const v = this.evalSelf(n.arg);
-        const res = reinterpret(v, n.fn === "$signed");
-        this.push({
-          kind: "op",
-          text: n.text,
-          op: n.fn,
-          inputs: [v],
-          result: res,
-          why: `${n.fn} returns the same ${bitsWord(v.width)}, now ${signWord(res.signed)}: ${formatCompact(reinterpret(v, false))} reads as ${formatValue(res)}.`,
-          clause: "§11.7",
-          surprising: false,
-        });
-        return res;
+        if (n.fn === "$signed" || n.fn === "$unsigned") {
+          if (this.opts.ignoreCasts) return v;
+          const res = reinterpret(v, n.fn === "$signed");
+          this.push({
+            kind: "op",
+            text: n.text,
+            op: n.fn,
+            inputs: [v],
+            result: res,
+            why: `${n.fn} returns the same ${bitsWord(v.width)}, now ${signWord(res.signed)}: ${formatCompact(reinterpret(v, false))} reads as ${formatValue(res)}.`,
+            clause: "§11.7",
+            surprising: false,
+          });
+          return res;
+        }
+        return this.bitVectorFn(n, v);
       }
       case "cast": {
+        if (this.opts.ignoreCasts) return this.evalSelf(n.arg);
         if (n.cast.kind === "sign") {
           const v = this.evalSelf(n.arg);
           const res = reinterpret(v, n.cast.signed);
@@ -1462,6 +1793,44 @@ class Evaluator {
         break;
     }
     throw new SvExpressionError("unsupported", `\`${n.text}\` is not supported by this model.`, "—");
+  }
+
+  /** §20.9: the argument is self-determined; x/z bits never count as 1. */
+  private bitVectorFn(n: ExprNode & { kind: "sysfn" }, v: SvValue): SvValue {
+    const shown = formatCompact(reinterpret(v, false));
+    let controls: Bit4[];
+    let label: string;
+    if (n.fn === "$countbits") {
+      // Each control is a 1-bit logic value; a wider value contributes only its LSB.
+      controls = Array.from(new Set((n.controls ?? []).map((c) => bitAt(this.evalSelf(c), 0))));
+      label = controls.map((c) => `'${c}`).join(", ");
+    } else if (n.fn === "$isunknown") {
+      controls = ["x", "z"];
+      label = "'x, 'z";
+    } else {
+      controls = ["1"];
+      label = "'1";
+    }
+    const count = countbits(v, ...controls);
+    const xz = countbits(v, "x", "z");
+    const unknownNote = xz > 0 && !controls.some(isUnknownBit) ? ` The ${xz} x/z bit${xz === 1 ? "" : "s"} match${xz === 1 ? "es" : ""} none of the control values, so ${xz === 1 ? "it" : "they"} count${xz === 1 ? "s" : ""} as 0, not as 1.` : "";
+    let res: SvValue;
+    let why: string;
+    if (n.fn === "$countbits" || n.fn === "$countones") {
+      res = fromBigInt(big(count), 32, true);
+      why = `${n.fn} counts the bits of ${shown} equal to ${label}: $countbits(${n.arg.text}, ${label}) = ${count}. It returns an int (32 bits, signed).${unknownNote}`;
+    } else if (n.fn === "$onehot") {
+      res = oneBit(count === 1 ? "1" : "0");
+      why = `$onehot is $countbits(${n.arg.text}, '1) == 1: ${count} == 1 is ${count === 1 ? "true" : "false"}, so it returns 1'b${count === 1 ? "1" : "0"} (a bit, never x).${unknownNote}`;
+    } else if (n.fn === "$onehot0") {
+      res = oneBit(count <= 1 ? "1" : "0");
+      why = `$onehot0 is $countbits(${n.arg.text}, '1) <= 1: ${count} <= 1 is ${count <= 1 ? "true" : "false"}, so it returns 1'b${count <= 1 ? "1" : "0"} (a bit, never x).${unknownNote}`;
+    } else {
+      res = oneBit(count !== 0 ? "1" : "0");
+      why = `$isunknown is $countbits(${n.arg.text}, 'x, 'z) != 0: ${count} != 0 is ${count !== 0 ? "true" : "false"}, so it returns 1'b${count !== 0 ? "1" : "0"}.`;
+    }
+    this.push({ kind: "op", text: n.text, op: n.fn, inputs: [v], result: res, why, clause: "§20.9", surprising: xz > 0 && n.fn !== "$isunknown" && n.fn !== "$countbits" });
+    return res;
   }
 
   private insideMatch(left: ExprNode, item: InsideItem): Bit4 {
@@ -1525,8 +1894,8 @@ class Evaluator {
         ? `${name} is ${bitsWord(tw)} and \`${rhs.text}\` is ${bitsWord(rw)} on its own, so the right-hand side is evaluated in max(${tw}, ${rw}) = ${bitsWord(W)}` +
           `${tw > rw ? ": the LHS widens the context, so operands are extended BEFORE the operation" : ""}. ` +
           `Its type is ${signWord(rs)} because ${this.typeReason(this.contextOperands(rhs), rs)}; the LHS never changes the type.`
-        : `\`${rhs.text}\` is a self-determined ${rw}-bit ${signWord(rs)} result (its own operands are sized separately), stored into the ${tw}-bit ${name}.`,
-      clause: "§11.6.1, §11.8.1",
+        : standaloneRhsWhy(rhs, name, tw, rw, rs),
+      clause: isContextNode(rhs) ? "§11.6.1, §11.8.1" : "§11.6.1, §11.8.1, §11.8.3",
       surprising: (tw > rw && isContextNode(rhs)) || (!rs && this.contextOperands(rhs).some((o) => this.sign(o))),
     });
     const v = this.evalCtx(rhs, W, rs);
@@ -1676,6 +2045,7 @@ function collectOperands(n: ExprNode, env: SvEnv, role: OperandRole, ev: Evaluat
       return;
     case "sysfn":
       collectOperands(n.arg, env, "self", ev, out);
+      (n.controls ?? []).forEach((c) => collectOperands(c, env, "self", ev, out));
       return;
     case "cast":
       collectOperands(n.arg, env, n.cast.kind === "sign" ? "self" : "cast", ev, out);
@@ -1750,6 +2120,176 @@ export function evaluateAssignment(decls: SvDecl[], target: SvDecl, expr: string
 }
 
 // ---------------------------------------------------------------------------
+// Per-node annotations (ExpressionTreeExplorer, LiteralDecoder)
+// ---------------------------------------------------------------------------
+
+export interface NodeAnnotation {
+  /** Stable path id: "r" for the root, "r.0", "r.0.1" for children. */
+  id: string;
+  kind: ExprNode["kind"];
+  text: string;
+  /** Self-determined width and type (Table 11-21, §11.8.1). */
+  selfWidth: number;
+  selfSigned: boolean;
+  /** The context the node is evaluated in (§11.8.2); the same as selfWidth/selfSigned for self-determined nodes. */
+  width: number;
+  signed: boolean;
+  /** How the node reached its context: inherited (context), on its own (self), sized against a compare operand, or by a cast. */
+  role: OperandRole;
+  /** The node's value at its context width. */
+  value: SvValue;
+  /** For leaves: the same record `evaluateExpression` lists in `operands`. */
+  operand?: OperandInfo;
+  children: NodeAnnotation[];
+}
+
+/**
+ * Annotate every node of a parsed expression with its value, width, signedness
+ * and operand role. `targetWidth` is the LHS width when the expression is the
+ * right-hand side of an assignment (§11.6.1: the LHS is part of the context).
+ * Throws SvExpressionError for an undeclared identifier or an illegal construct.
+ */
+export function annotateTree(ast: ExprNode, env: SvEnv, targetWidth?: number): NodeAnnotation {
+  const ev = new Evaluator(env, {});
+  const operands: OperandInfo[] = [];
+  collectOperands(ast, env, "context", new Evaluator(env, {}), operands);
+  const leafInfo = (n: ExprNode, role: OperandRole) => operands.find((o) => o.text === n.text && o.role === role) ?? operands.find((o) => o.text === n.text);
+
+  const annotate = (n: ExprNode, id: string, role: OperandRole, W: number, S: boolean): NodeAnnotation => {
+    const selfWidth = ev.size(n);
+    const selfSigned = ev.sign(n);
+    const value = n.kind === "stream" ? ev.evalPrimary(n) : ev.evalCtx(n, W, S);
+    const kids: NodeAnnotation[] = [];
+    const child = (c: ExprNode, r: OperandRole, w: number, s: boolean) => kids.push(annotate(c, `${id}.${kids.length}`, r, w, s));
+    const self = (c: ExprNode) => child(c, "self", ev.size(c), ev.sign(c));
+    // §11.4.12.1: a zero replication has size zero and is ignored. Its parent's evaluation has
+    // already checked that it is legal there; on its own it would throw, so it is not evaluated.
+    const member = (c: ExprNode) => {
+      const inner = unwrap(c);
+      if (inner.kind === "repl" && inner.count === 0) {
+        kids.push({ id: `${id}.${kids.length}`, kind: c.kind, text: c.text, selfWidth: 0, selfSigned: false, width: 0, signed: false, role: "self", value: makeValue(0, false, ZERO), children: [] });
+      } else {
+        self(c);
+      }
+    };
+    const compare = (l: ExprNode, r: ExprNode) => {
+      const w = Math.max(ev.size(l), ev.size(r));
+      const s = ev.sign(l) && ev.sign(r);
+      child(l, "compare", w, s);
+      child(r, "compare", w, s);
+    };
+    switch (n.kind) {
+      case "paren":
+        child(n.inner, role, W, S);
+        break;
+      case "unary":
+        if (isContextNode(n)) child(n.arg, role, W, S);
+        else self(n.arg);
+        break;
+      case "binary":
+        if (ARITH.has(n.op) || BITWISE.has(n.op)) {
+          child(n.left, role, W, S);
+          child(n.right, role, W, S);
+        } else if (SHIFTS.has(n.op) || n.op === "**") {
+          child(n.left, role, W, S);
+          self(n.right);
+        } else if (LOGICAL.has(n.op)) {
+          self(n.left);
+          self(n.right);
+        } else {
+          compare(n.left, n.right);
+        }
+        break;
+      case "cond":
+        self(n.cond);
+        child(n.then, role, W, S);
+        child(n.otherwise, role, W, S);
+        break;
+      case "concat":
+      case "repl":
+      case "stream":
+        n.parts.forEach(member);
+        break;
+      case "sysfn":
+        self(n.arg);
+        (n.controls ?? []).forEach(self);
+        break;
+      case "cast": {
+        if (n.cast.kind === "sign") {
+          self(n.arg);
+        } else {
+          const N = n.cast.kind === "size" ? n.cast.width : TYPE_SIZES[n.cast.type];
+          child(n.arg, "cast", Math.max(N, ev.size(n.arg)), ev.sign(n.arg));
+        }
+        break;
+      }
+      case "inside": {
+        const items = n.items.flatMap((it) => (it.kind === "value" ? [it.expr] : [it.lo, it.hi]));
+        const w = Math.max(ev.size(n.left), ...items.map((it) => ev.size(it)));
+        child(n.left, "compare", w, ev.sign(n.left) && items.every((it) => ev.sign(it)));
+        items.forEach((it) => child(it, "compare", Math.max(ev.size(n.left), ev.size(it)), ev.sign(n.left) && ev.sign(it)));
+        break;
+      }
+      default:
+        break;
+    }
+    const operand = isLeaf(n) ? leafInfo(n, role) : undefined;
+    return { id, kind: n.kind, text: n.text, selfWidth, selfSigned, width: W, signed: S, role, value, ...(operand ? { operand } : {}), children: kids };
+  };
+
+  const root = unwrap(ast);
+  const rootWidth = root.kind === "stream" ? ev.size(root) : Math.max(targetWidth ?? 0, ev.size(ast));
+  return annotate(ast, "r", "context", rootWidth, ev.sign(ast));
+}
+
+// ---------------------------------------------------------------------------
+// Concatenation as an assignment target (§11.4.12)
+// ---------------------------------------------------------------------------
+
+export interface ConcatTargetMember {
+  name: string;
+  width: number;
+}
+
+export interface ConcatTargetPart extends ConcatTargetMember {
+  /** Bit numbers of this member inside the concatenation, [hi:lo], MSB first. */
+  hi: number;
+  lo: number;
+  value: SvValue;
+}
+
+export interface ConcatTargetSplit {
+  /** Sum of the member widths: the width of the concatenation as a packed vector. */
+  total: number;
+  /** The right-hand side after it is resized to `total` bits (§10.7 / §11.8.3). */
+  resized: SvValue;
+  /** Number of RHS MSBs discarded (RHS wider than the concatenation). */
+  dropped: number;
+  /** Number of bits added on the left (RHS narrower than the concatenation): sign bits when the RHS is signed, else 0. */
+  extended: number;
+  parts: ConcatTargetPart[];
+}
+
+/**
+ * `{m0, m1, …} = rhs;` — the concatenation is a packed vector of the summed
+ * widths; its first member takes the most significant bits (§11.4.12). The RHS
+ * is resized to that vector exactly as for any assignment (§11.8.3, §10.7), then
+ * cut by member width, MSB first. Replications may not be targets (§11.4.12.1).
+ */
+export function splitConcatTarget(members: ConcatTargetMember[], rhs: SvValue): ConcatTargetSplit {
+  const total = members.reduce((s, m) => s + m.width, 0);
+  const resized = resize(rhs, total, rhs.signed, false);
+  const parts: ConcatTargetPart[] = [];
+  let hi = total - 1;
+  for (const m of members) {
+    const lo = hi - m.width + 1;
+    parts.push({ ...m, hi, lo, value: makeValue(m.width, false, resized.aval >> big(lo), resized.bval >> big(lo)) });
+    hi = lo - 1;
+  }
+  return { total, resized, dropped: Math.max(0, rhs.width - total), extended: Math.max(0, total - rhs.width), parts };
+}
+
+// ---------------------------------------------------------------------------
 // Misconception models (used to build diagnostic prediction options)
 // ---------------------------------------------------------------------------
 
@@ -1760,7 +2300,8 @@ export function evaluateAssignment(decls: SvDecl[], target: SvDecl, expr: string
  */
 export function mathIntuition(expr: string, env: SvEnv): bigint | null {
   const node = parseExpression(expr);
-  const ev = new Evaluator(env, { xAsZero: true });
+  // In "ordinary math" a slice of a signed variable is still that signed number.
+  const ev = new Evaluator(env, { xAsZero: true, selectKeepsSign: true });
   const go = (n: ExprNode): bigint | null => {
     switch (n.kind) {
       case "num":
@@ -1895,6 +2436,8 @@ export interface TrapScenario {
   editable: EditableOperand[];
   /** What the author of the code meant; compared with the real result. */
   intent?: string;
+  /** The rule the scenario teaches. It answers the prediction, so it is shown only in the reveal; `title` and `summary` must not state it. */
+  rule?: string;
 }
 
 export const trapScenarios: TrapScenario[] = [
@@ -1960,6 +2503,7 @@ export const trapScenarios: TrapScenario[] = [
       { id: "sum9", label: "9-bit s = a8 + b8", expr: "a8 + b8", target: { name: "s", type: "logic", width: 9 }, role: "fix" },
       { id: "avg8", label: "s = (a8 + b8) >> 1", expr: "(a8 + b8) >> 1", role: "trap" },
       { id: "avg-fix", label: "s = (a8 + b8 + 0) >> 1", expr: "(a8 + b8 + 0) >> 1", role: "fix" },
+      { id: "size-cast", label: "s = (9'(a8) + b8) >> 1", expr: "(9'(a8) + b8) >> 1", role: "fix" },
     ],
     editable: [
       { name: "a8", min: 0, max: 255 },
@@ -2003,6 +2547,73 @@ export const trapScenarios: TrapScenario[] = [
     ],
     editable: [],
   },
+  {
+    id: "casts",
+    title: "size, sign and type casts",
+    summary: "The same few bits go through a size cast, a sign cast and a type cast. Which bits survive each one, and how are they read afterwards?",
+    decls: [{ name: "w", type: "logic", width: 8, init: "8'hF0" }],
+    target: { name: "v", type: "logic", width: 8 },
+    variants: [
+      { id: "size-cast", label: "logic [7:0] v = 8'(12'hABC)", expr: "8'(12'hABC)", role: "contrast" },
+      { id: "sign-cast", label: "logic signed [7:0] v = signed'(4'b1100)", expr: "signed'(4'b1100)", target: { name: "v", type: "logic", signed: true, width: 8 }, role: "contrast" },
+      { id: "sysfn", label: "logic signed [7:0] v = $signed(4'b1100)", expr: "$signed(4'b1100)", target: { name: "v", type: "logic", signed: true, width: 8 }, role: "contrast" },
+      { id: "type-cast", label: "int v = int'(w)", expr: "int'(w)", target: { name: "v", type: "int" }, role: "trap" },
+      { id: "type-cast-signed", label: "int v = int'(signed'(w))", expr: "int'(signed'(w))", target: { name: "v", type: "int" }, role: "fix" },
+    ],
+    editable: [{ name: "w", min: 0, max: 255 }],
+    rule: "A size cast pads or truncates and keeps the signedness; a sign cast keeps the bits and changes how they are read; a type cast behaves like an assignment to that type (§6.24.1).",
+  },
+  {
+    id: "part-select",
+    title: "whole-vector part-select",
+    summary: "sb is -8. Does selecting all of its bits change what a wider signed w holds?",
+    decls: [{ name: "sb", type: "logic", signed: true, width: 8, init: "-8" }],
+    target: { name: "w", type: "logic", signed: true, width: 16 },
+    variants: [
+      { id: "whole", label: "w = sb", expr: "sb", role: "contrast" },
+      { id: "select", label: "w = sb[7:0]", expr: "sb[7:0]", role: "trap" },
+      { id: "fix", label: "w = $signed(sb[7:0])", expr: "$signed(sb[7:0])", role: "fix" },
+    ],
+    editable: [{ name: "sb", min: -128, max: 127 }],
+    intent: "sb copied as a signed number",
+    rule: "A part-select is unsigned even when it covers the whole of a signed vector, so it is zero-extended into a wider target; the signed target does not help (§11.8.1).",
+  },
+  {
+    id: "literal-sign",
+    title: "literal signedness",
+    summary: "Minus twelve divided by three, written four ways. Does the way the literal is written change the quotient?",
+    decls: [],
+    target: { name: "q", type: "int" },
+    variants: [
+      { id: "decimal", label: "q = -12 / 3", expr: "-12 / 3", role: "fix" },
+      { id: "based", label: "q = -'d12 / 3", expr: "-'d12 / 3", role: "trap" },
+      { id: "based-signed", label: "q = -'sd12 / 3", expr: "-'sd12 / 3", role: "fix" },
+      { id: "sized-signed", label: "q = -4'sd12 / 3", expr: "-4'sd12 / 3", role: "trap" },
+    ],
+    editable: [],
+    intent: "minus twelve divided by three",
+    rule: "A simple decimal is signed; a based literal is unsigned unless it carries an s (§11.8.1). A sized literal holds only its declared bits, so with s the pattern is read as a two's-complement number (§5.7.1, §11.3.3).",
+  },
+  {
+    id: "ashr-unsigned-context",
+    title: ">>> inside an unsigned context",
+    summary: "An arithmetic right shift of a signed operand, inside an expression that an unsigned operand or a part-select turns unsigned. Which bit fills the vacated position?",
+    decls: [
+      { name: "s", type: "logic", signed: true, width: 8, init: "-8" },
+      { name: "u", type: "logic", width: 8, init: "8'd1" },
+    ],
+    target: { name: "r", type: "logic", signed: true, width: 8 },
+    variants: [
+      { id: "trap", label: "r = (s >>> 1) + u", expr: "(s >>> 1) + u", role: "trap" },
+      { id: "fix", label: "r = (s >>> 1) + $signed(u)", expr: "(s >>> 1) + $signed(u)", role: "fix" },
+      { id: "select", label: "r = s[7:0] >>> 1", expr: "s[7:0] >>> 1", role: "trap" },
+    ],
+    editable: [
+      { name: "s", min: -128, max: 127 },
+      { name: "u", min: 0, max: 127 },
+    ],
+    intent: "halve s and keep its sign",
+  },
 ];
 
 export interface TrapPredictionOption {
@@ -2010,7 +2621,38 @@ export interface TrapPredictionOption {
   label: string;
   correct: boolean;
   feedback: string;
-  misconception: "model" | "math" | "saturate" | "ignore-lhs" | "swap-shift" | "optimistic-x" | "opposite-sign" | "plain";
+  misconception:
+    | "model"
+    | "math"
+    | "saturate"
+    | "ignore-lhs"
+    | "swap-shift"
+    | "optimistic-x"
+    | "opposite-sign"
+    | "cast-ignored"
+    | "cast-extend"
+    | "keep-msbs"
+    | "select-signed"
+    | "literal-face-value"
+    | "plain";
+}
+
+/**
+ * Sized decimal literals whose digits do not fit their size, rewritten as the
+ * plain decimal the digits spell (the "face value" misconception): `4'sd12`
+ * holds 1100, which reads as -4, but a learner may read it as twelve.
+ */
+function faceValueRewrite(expr: string): string | null {
+  let changed = false;
+  const out = expr.replace(/(\d[\d_]*)\s*'([sS]?)[dD]\s*(\d[\d_]*)/g, (m, size: string, s: string, digits: string) => {
+    const N = Number(size.replace(/_/g, ""));
+    const n = BigInt(digits.replace(/_/g, ""));
+    const limit = s ? ONE << big(N - 1) : ONE << big(N);
+    if (n < limit) return m;
+    changed = true;
+    return digits.replace(/_/g, "");
+  });
+  return changed ? out : null;
 }
 
 /** How the learner sees a value of the target type in an option. */
@@ -2036,6 +2678,16 @@ export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: str
   };
   const correctLabel = formatTargetValue(name, real.final);
   cands.push({ id: "model", label: correctLabel, correct: true, feedback: real.insight, misconception: "model" });
+
+  if (/\[\s*\d+\s*(:\s*\d+\s*)?\]/.test(expr)) {
+    const signedSelect = evaluateAssignment(decls, target, expr, { selectKeepsSign: true });
+    if (signedSelect.ok) {
+      // Say only what this code does: the insight names a zero extension when one happens, and >>> appears only when it is written.
+      const rule = real.insight.includes(SELECT_UNSIGNED) ? "" : ` A part-select is ${SELECT_UNSIGNED}.`;
+      const fill = expr.includes(">>>") && !real.insight.includes(">>>") ? " >>> in an unsigned expression fills with 0 (§11.4.10)." : "";
+      add(formatTargetValue(name, signedSelect.final), "select-signed", `That treats the part-select as signed.${rule}${fill} ${real.insight}`);
+    }
+  }
 
   const math = mathIntuition(expr, env);
   if (math !== null) {
@@ -2076,6 +2728,55 @@ export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: str
         "swap-shift",
         "That is the other right shift. >> always fills the vacated bits with 0; >>> copies the sign bit, and only when the expression is signed (§11.4.10).",
       );
+    }
+  }
+
+  const faceValue = faceValueRewrite(expr);
+  if (faceValue !== null) {
+    const face = mathIntuition(faceValue, env);
+    if (face !== null) {
+      add(
+        `${name} = ${face.toString()}`,
+        "literal-face-value",
+        `That reads a sized literal by its digits. A literal holds only its declared number of bits (§5.7.1): the digits are truncated from the left, and with s the pattern is read as a two's-complement number (§11.3.3). ${real.insight}`,
+      );
+    }
+  }
+
+  if (/'\(|\$signed|\$unsigned/.test(expr)) {
+    const stripped = evaluateAssignment(decls, target, expr, { ignoreCasts: true });
+    if (stripped.ok) {
+      add(
+        formatTargetValue(name, stripped.final),
+        "cast-ignored",
+        `That ignores the cast. A size cast pads or truncates to its size before the rest of the expression is evaluated, and a sign cast or $signed changes how the bits are read (§6.24.1, §11.7). ${real.insight}`,
+      );
+    }
+    // Casts the learner might expect to behave the other way round (§6.24.1).
+    const root = unwrap(parseExpression(expr));
+    if (root.kind === "cast" && root.cast.kind !== "sign") {
+      const N = root.cast.kind === "size" ? root.cast.width : TYPE_SIZES[root.cast.type];
+      const innerEval = evaluateExpression(root.arg.text, env);
+      if (innerEval.ok) {
+        const inner = innerEval.value;
+        if (inner.width > N) {
+          const kept = makeValue(N, inner.signed, inner.aval >> big(inner.width - N), inner.bval >> big(inner.width - N));
+          add(
+            formatTargetValue(name, resize(kept, type.width, kept.signed, type.signed)),
+            "keep-msbs",
+            `That keeps the top ${N} bits. A size cast returns what an ${N}-bit variable would hold after assignment, so the LOW ${N} bits survive and the ${inner.width - N} MSBs are discarded (§6.24.1, §10.7).`,
+          );
+        } else if (inner.width < N) {
+          const other = resize(inner, N, !inner.signed, root.cast.kind === "size" ? inner.signed : INTEGER_TYPES[root.cast.type].signed);
+          add(
+            formatTargetValue(name, resize(other, type.width, other.signed, type.signed)),
+            "cast-extend",
+            inner.signed
+              ? `That zero-extends. The expression inside the cast is signed, so it is sign-extended to ${N} bits (§6.24.1, §11.8.2).`
+              : `That sign-extends. The cast ${root.cast.kind === "type" ? "type is signed, but the extension follows the expression inside the cast, which" : "keeps the signedness of the expression inside, which"} is unsigned, so it is zero-extended to ${N} bits (§6.24.1, §11.8.2).`,
+          );
+        }
+      }
     }
   }
 
@@ -2127,28 +2828,47 @@ export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: str
   return cands.sort((a, b) => key(a.label) - key(b.label) || a.label.localeCompare(b.label));
 }
 
-/** The value the author of a scenario meant (ordinary integer math), for the EXP/ACT comparison. */
+/**
+ * The value the author of a scenario meant, for the EXP/ACT comparison: ordinary
+ * integer math on the literals as written, so `4'sd12` means twelve even though it
+ * holds the pattern for -4.
+ */
 export function intendedValue(decls: SvDecl[], expr: string): bigint | null {
-  return mathIntuition(expr, buildEnv(decls));
+  return mathIntuition(faceValueRewrite(expr) ?? expr, buildEnv(decls));
 }
 
 // ---------------------------------------------------------------------------
 // Operator explorer catalog and details (OperatorExplorer)
 // ---------------------------------------------------------------------------
 
-export type OperatorFamily = "bitwise" | "reduction" | "logical" | "equality" | "inside" | "shift" | "concat" | "stream";
+export type OperatorFamily = "bitwise" | "reduction" | "logical" | "equality" | "inside" | "conditional" | "shift" | "concat" | "bitcount" | "stream";
 export type OperandSlot = "a" | "b" | "c" | "n";
 
 export interface OperatorSpec {
   id: string;
   family: OperatorFamily;
-  /** SV source evaluated by the model, using operands a, b, c, n. */
+  /**
+   * SV source evaluated by the model, written with the operand display names
+   * (`slotName`). `R` stands for the editable replication count
+   * (`OperatorInputs.repl`); `operatorTemplate` resolves it.
+   */
   template: string;
   operands: OperandSlot[];
   rule: string;
   clause: string;
   /** Code that looks plausible but is illegal or means something else. */
   trap?: string;
+  /** Display names for slots whose lesson spelling differs from the slot letter, e.g. `{ a: "state" }`. */
+  names?: Partial<Record<OperandSlot, string>>;
+  /** Operand values (and replication count) loaded when this operator is selected. */
+  defaults?: Partial<OperatorInputs>;
+  /**
+   * The template is an assignment whose left-hand side is a concatenation of
+   * the operands: this is its right-hand side (§11.4.12, a concatenation as a target).
+   */
+  targetRhs?: string;
+  /** Default replication count for templates that contain `R`. */
+  replDefault?: number;
 }
 
 export const operatorFamilies: { id: OperatorFamily; label: string }[] = [
@@ -2157,10 +2877,27 @@ export const operatorFamilies: { id: OperatorFamily; label: string }[] = [
   { id: "logical", label: "Logical" },
   { id: "equality", label: "Equality" },
   { id: "inside", label: "inside" },
+  { id: "conditional", label: "?:" },
   { id: "shift", label: "Shift" },
   { id: "concat", label: "Concat" },
+  { id: "bitcount", label: "$countbits" },
   { id: "stream", label: "Streaming" },
 ];
+
+/** The replication count a template with `R` uses: the inputs' count, else the spec's default, else 2. */
+export function replCount(spec: OperatorSpec, inputs: Pick<OperatorInputs, "repl">): number {
+  return inputs.repl ?? spec.replDefault ?? 2;
+}
+
+/** The template with the replication placeholder `R` resolved to its count. */
+export function operatorTemplate(spec: OperatorSpec, inputs: Pick<OperatorInputs, "repl">): string {
+  return spec.template.replace(/\bR\b/g, String(replCount(spec, inputs)));
+}
+
+/** The name a slot is declared under for this operator (`a`, or e.g. `state`). */
+export function slotName(spec: OperatorSpec, slot: OperandSlot): string {
+  return spec.names?.[slot] ?? slot;
+}
 
 export const operatorCatalog: OperatorSpec[] = [
   { id: "and", family: "bitwise", template: "a & b", operands: ["a", "b"], rule: "Bit by bit: a 0 on either side forces 0.", clause: "§11.4.8, Table 11-11" },
@@ -2205,8 +2942,60 @@ export const operatorCatalog: OperatorSpec[] = [
   { id: "shr", family: "shift", template: "a >> n", operands: ["a", "n"], rule: "Logical right shift: always fill with 0.", clause: "§11.4.10" },
   { id: "ashl", family: "shift", template: "a <<< n", operands: ["a", "n"], rule: "Same as <<.", clause: "§11.4.10" },
   { id: "ashr", family: "shift", template: "a >>> n", operands: ["a", "n"], rule: "Fill with the sign bit only if the expression is signed.", clause: "§11.4.10" },
+  {
+    id: "cond",
+    family: "conditional",
+    template: "sel ? a : b",
+    operands: ["c", "a", "b"],
+    names: { c: "sel" },
+    rule: "A known condition picks one branch. An x/z condition evaluates both and merges them bit by bit: a bit survives only where the branches agree on 0 or 1; every other pair, including x with x and z with z, is x.",
+    clause: "§11.4.11, Table 11-20",
+    defaults: { c: ["x"], a: ["1", "1", "0", "0"], b: ["1", "0", "1", "0"] },
+  },
+  {
+    id: "cond-z",
+    family: "conditional",
+    template: "en ? data : 'z",
+    operands: ["c", "a"],
+    names: { c: "en", a: "data" },
+    rule: "'z fills every bit of the else branch. With en unknown, each data bit merges with z, and Table 11-20 makes every such pair x.",
+    clause: "§11.4.11, Table 11-20, §5.7.1",
+    defaults: { c: ["x"], a: ["1", "0", "1", "0"] },
+    trap: "a tri-state model drives x, not z, when en is unknown",
+  },
   { id: "concat", family: "concat", template: "{a, b}", operands: ["a", "b"], rule: "Operands are self-determined and joined MSB first; the result is unsigned.", clause: "§11.4.12" },
-  { id: "repl", family: "concat", template: "{2{a}}", operands: ["a"], rule: "Copies the concatenation; the multiplier is a constant.", clause: "§11.4.12.1" },
+  {
+    id: "repl-n",
+    family: "concat",
+    template: "{R{a}}",
+    operands: ["a"],
+    rule: "R copies of a, side by side. A zero replication on its own has no bits and is illegal; inside a concatenation with a positive-size operand it is legal and ignored.",
+    clause: "§11.4.12.1",
+    replDefault: 2,
+    defaults: { repl: 2 },
+  },
+  {
+    id: "concat-target",
+    family: "concat",
+    template: "{hi, lo} = 16'hBEEF",
+    targetRhs: "16'hBEEF",
+    operands: ["a", "b"],
+    names: { a: "hi", b: "lo" },
+    rule: "A concatenation may be an assignment target: the value is cut by member width, the first member taking the most significant bits. A replication may not be a target.",
+    clause: "§11.4.12, §11.4.12.1",
+    defaults: { a: bitsOf(parseLiteral("8'h12").value), b: bitsOf(parseLiteral("8'h34").value) },
+  },
+  {
+    id: "sign-extend",
+    family: "concat",
+    template: "{{R{n[3]}}, n}",
+    operands: ["a"],
+    names: { a: "n" },
+    rule: "Sign extension by hand: replicate the sign bit n[3] in front of n. The replication count is a constant; with 0 copies the replication has no bits and only n remains.",
+    clause: "§11.4.12.1, §11.8.1",
+    replDefault: 4,
+    defaults: { a: ["1", "0", "1", "0"], repl: 4 },
+  },
   {
     id: "concat-unsized",
     family: "concat",
@@ -2215,6 +3004,52 @@ export const operatorCatalog: OperatorSpec[] = [
     rule: "Unsized numbers are not allowed in a concatenation because their size is unknown.",
     clause: "§11.4.12",
     trap: "unsized literal in {}",
+  },
+  {
+    id: "countones",
+    family: "bitcount",
+    template: "$countones(state)",
+    operands: ["a"],
+    names: { a: "state" },
+    rule: "$countbits(state, '1): the number of bits that are exactly 1. x and z bits never count. Returns an int.",
+    clause: "§20.9",
+  },
+  {
+    id: "onehot",
+    family: "bitcount",
+    template: "$onehot(state)",
+    operands: ["a"],
+    names: { a: "state" },
+    rule: "$countbits(state, '1) == 1. An x bit is not a 1, so 01x0 passes. Returns a bit, never x.",
+    clause: "§20.9",
+    trap: "passes with an x bit",
+  },
+  {
+    id: "onehot0",
+    family: "bitcount",
+    template: "$onehot0(state)",
+    operands: ["a"],
+    names: { a: "state" },
+    rule: "$countbits(state, '1) <= 1: zero or one bit set. Returns a bit.",
+    clause: "§20.9",
+  },
+  {
+    id: "isunknown",
+    family: "bitcount",
+    template: "$isunknown(state)",
+    operands: ["a"],
+    names: { a: "state" },
+    rule: "$countbits(state, 'x, 'z) != 0: true when any bit is x or z. Returns a bit.",
+    clause: "§20.9",
+  },
+  {
+    id: "onehot-guarded",
+    family: "bitcount",
+    template: "$onehot(state) && !$isunknown(state)",
+    operands: ["a"],
+    names: { a: "state" },
+    rule: "The guard an assertion needs: exactly one 1 AND no x/z. $onehot alone accepts 01x0.",
+    clause: "§20.9, §11.4.7",
   },
   { id: "stream-bits", family: "stream", template: "{<< {a}}", operands: ["a"], rule: "Reverse the order of 1-bit slices: a bit reversal.", clause: "§11.4.14.2" },
   { id: "stream-nibble", family: "stream", template: "{<< 4 {a}}", operands: ["a"], rule: "Reverse the order of 4-bit slices; bits inside a slice keep their order.", clause: "§11.4.14.2" },
@@ -2229,14 +3064,43 @@ export interface OperatorInputs {
   n: Bit4[];
   /** Declare `a` as `logic signed`. */
   signedA: boolean;
+  /** Constant replication count for templates with `R` (0–8). */
+  repl?: number;
 }
+
+/** A named starting point for one lesson use: an operator plus its operand values. */
+export interface OperatorPreset {
+  id: string;
+  family: OperatorFamily;
+  specId: string;
+  label: string;
+  /** What the learner should notice. */
+  note: string;
+  inputs: Partial<OperatorInputs>;
+}
+
+const B = (s: string) => s.split("") as Bit4[];
+
+export const operatorPresets: OperatorPreset[] = [
+  { id: "cond-x-sel", family: "conditional", specId: "cond", label: "sel = x: 1100 vs 1010", note: "Only the bits that differ become x: 1xx0. if/else would give 1010.", inputs: { c: B("x"), a: B("1100"), b: B("1010") } },
+  { id: "cond-equal", family: "conditional", specId: "cond", label: "sel = x: equal branches", note: "Both branches hold the same known bits, so no x appears.", inputs: { c: B("x"), a: B("1010"), b: B("1010") } },
+  { id: "cond-tristate", family: "conditional", specId: "cond-z", label: "en = x: data vs 'z", note: "x?z, 0?z, 1?z and z?z are all x: the bus drives x, not z.", inputs: { c: B("x"), a: B("1010") } },
+  { id: "bitcount-legal", family: "bitcount", specId: "countones", label: "0100 (legal one-hot)", note: "One bit set, nothing unknown.", inputs: { a: B("0100") } },
+  { id: "bitcount-two-hot", family: "bitcount", specId: "onehot", label: "0110 (two-hot)", note: "$onehot fails, $onehot0 fails too: two bits are set.", inputs: { a: B("0110") } },
+  { id: "bitcount-x", family: "bitcount", specId: "onehot", label: "01x0 (one 1 and one x)", note: "$onehot passes: the x is not a 1. Only $isunknown sees it.", inputs: { a: B("01x0") } },
+  { id: "bitcount-x-guarded", family: "bitcount", specId: "onehot-guarded", label: "01x0 with the guard", note: "$onehot alone passes this vector; the $isunknown term is what rejects it.", inputs: { a: B("01x0") } },
+  { id: "bitcount-reset", family: "bitcount", specId: "onehot0", label: "xxxx (before reset)", note: "No bit is 1, so $onehot0 passes while every bit is unknown.", inputs: { a: B("xxxx") } },
+  { id: "concat-target", family: "concat", specId: "concat-target", label: "{hi, lo} = 16'hBEEF", note: "hi takes the top byte, lo the bottom byte.", inputs: { a: bitsOf(parseLiteral("8'h12").value), b: bitsOf(parseLiteral("8'h34").value) } },
+  { id: "concat-sign-extend", family: "concat", specId: "sign-extend", label: "{{4{n[3]}}, n} with n = 1010", note: "Four copies of the sign bit in front: 8'hFA, still -6.", inputs: { a: B("1010"), repl: 4 } },
+  { id: "concat-unsized", family: "concat", specId: "concat-unsized", label: "{a, 1}: unsized constant", note: "A compile error: 1 has no defined width.", inputs: {} },
+];
 
 /** Declarations for the operands a spec uses, with literal initialisers. */
 export function operatorDecls(spec: OperatorSpec, inputs: OperatorInputs): SvDecl[] {
   // Hex from 8 bits up when every nibble allows it (keeps code lines short), binary otherwise.
   const lit = (bits: Bit4[]) => (bits.length >= 8 ? formatHexLiteral(fromBits(bits)) : `${bits.length}'b${formatBits(fromBits(bits))}`);
   return spec.operands.map((slot) => ({
-    name: slot,
+    name: slotName(spec, slot),
     type: "logic" as const,
     signed: slot === "a" ? inputs.signedA : undefined,
     width: inputs[slot].length,
@@ -2244,14 +3108,36 @@ export function operatorDecls(spec: OperatorSpec, inputs: OperatorInputs): SvDec
   }));
 }
 
+/**
+ * Evaluate the spec's template. For a concatenation-target spec the evaluation
+ * is of the right-hand side (self-determined); `concatTargetDetail` gives the split.
+ */
 export function runOperator(spec: OperatorSpec, inputs: OperatorInputs): ExpressionEvaluation | EvaluationFailure {
+  const template = operatorTemplate(spec, inputs);
   let env: SvEnv;
   try {
     env = buildEnv(operatorDecls(spec, inputs));
   } catch (e) {
-    return toFailure(spec.template, e);
+    return toFailure(template, e);
   }
-  return evaluateExpression(spec.template, env);
+  return evaluateExpression(spec.targetRhs ?? template, env);
+}
+
+export interface ConcatTargetEvaluation extends ConcatTargetSplit {
+  ok: true;
+  /** The right-hand side as evaluated on its own. */
+  rhs: SvValue;
+  /** Each member's value before the assignment. */
+  before: { name: string; value: SvValue }[];
+}
+
+/** `{hi, lo} = rhs;` for a concatenation-target spec: each member's bits before and after. */
+export function concatTargetDetail(spec: OperatorSpec, inputs: OperatorInputs): ConcatTargetEvaluation | EvaluationFailure {
+  const rhs = runOperator(spec, inputs);
+  if (!rhs.ok) return rhs;
+  const members = spec.operands.map((slot) => ({ name: slotName(spec, slot), width: inputs[slot].length }));
+  const before = spec.operands.map((slot) => ({ name: slotName(spec, slot), value: fromBits(inputs[slot]) }));
+  return { ok: true, rhs: rhs.value, before, ...splitConcatTarget(members, rhs.value) };
 }
 
 export interface BitwiseRow {
@@ -2350,6 +3236,22 @@ export function vectorLabel(v: SvValue): string {
 }
 
 /**
+ * A deterministic order that does not depend on how the options were built. A
+ * label sort is not enough where the correct answer also sorts first ($countones
+ * is rarely more than the other counts, >> always has the lowest bits), so the
+ * order comes from a hash (FNV-1a).
+ */
+function stableOrder(opts: OperatorOption[], seed: string): OperatorOption[] {
+  const hash = (text: string) => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i += 1) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+    return (h ^ (h >>> 15)) >>> 0;
+  };
+  const rank = new Map(opts.map((o) => [o.id, hash(`${seed}|${o.label}`)]));
+  return [...opts].sort((x, y) => (rank.get(x.id) as number) - (rank.get(y.id) as number) || x.label.localeCompare(y.label));
+}
+
+/**
  * Prediction options for an operator case. Wrong options come from named
  * misconceptions and say which rule they break.
  */
@@ -2365,6 +3267,7 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
     const r = evaluateExpression(src, env);
     return r.ok ? r.value : null;
   };
+  const shuffled = () => stableOrder(opts, [spec.id, inputs.a.join(""), inputs.b.join(""), inputs.repl ?? ""].join("|"));
 
   if (!real.ok) {
     add("Compile error", true, `${real.error.message} (${real.error.clause})`);
@@ -2380,10 +3283,52 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
       if (ok1) add(`${vectorLabel(ok1)} (1 treated as 1'b1)`, false, "An unsized 1 is at least 32 bits, so its size in the concatenation would be ambiguous. The LRM forbids it; write 1'b1.");
       if (ok32) add(`${ok32.width}-bit value (1 treated as 32'd1)`, false, "Unsized numbers are not allowed in concatenations at all (§11.4.12), so there is no 36-bit result.");
     }
-    return opts;
+    if (spec.id === "repl-n" && real.error.code === "zero-replication-alone") {
+      add("0-bit value (nothing)", false, "A zero replication has size zero, but it may only appear inside a concatenation that also has an operand of positive size, such as {{0{a}}, b}. Alone in braces it is illegal (§11.4.12.1).");
+      add(`${vectorLabel(fromBits(inputs.a))} (a unchanged)`, false, "Zero copies of a is not one copy. The replication has no bits at all, and on its own that is a compile error (§11.4.12.1).");
+    }
+    return shuffled();
+  }
+
+  if (spec.targetRhs) {
+    const det = concatTargetDetail(spec, inputs);
+    if (!det.ok) return opts;
+    const label = (parts: { name: string; value: SvValue }[]) => parts.map((p) => `${p.name} = ${vectorLabel(p.value)}`).join(", ");
+    const sizing =
+      det.dropped > 0
+        ? `The ${det.total}-bit concatenation keeps only the low ${det.total} bits of the ${det.rhs.width}-bit value; the ${det.dropped} MSB${det.dropped === 1 ? " is" : "s are"} discarded (§10.7). `
+        : det.extended > 0
+          ? `The ${det.rhs.width}-bit value is ${det.rhs.signed ? "sign" : "zero"}-extended to the ${det.total}-bit concatenation first (§11.8.3). `
+          : "";
+    add(label(det.parts), true, `${spec.rule} ${sizing}(${spec.clause})`);
+    const swapped = [...det.parts].reverse().map((p, i) => ({ name: det.parts[i].name, value: p.value }));
+    if (det.parts.length > 1 && det.parts.every((p) => p.width === det.parts[0].width)) {
+      add(label(swapped), false, "The first member of the concatenation takes the most significant bits, exactly as it does when the concatenation is a source (§11.4.12).");
+    }
+    add("Compile error", false, "A concatenation may be an assignment target; it is treated as a packed vector of the summed widths (§11.4.12). Only a replication, such as {2{hi}}, may not be a target (§11.4.12.1).");
+    add(label(det.before), false, "The assignment does store into the members: a concatenation on the left-hand side is a legal target (§11.4.12), so hi and lo change.");
+    return shuffled();
   }
 
   const value = real.value;
+  if (spec.family === "bitcount" && value.width === 32) {
+    // $countones returns an int: options are decimal counts.
+    const a = fromBits(inputs.a);
+    const ones = countbits(a, "1");
+    const xz = countbits(a, "x", "z");
+    const report = bitVectorReport(a, slotName(spec, "a"));
+    add(String(ones), true, `${report[0].arithmetic}. ${spec.rule} (${spec.clause})`);
+    if (xz > 0) {
+      add(String(ones + xz), false, `That counts the ${xz} x/z bit${xz === 1 ? "" : "s"} as 1. $countbits(e, '1) counts only bits that are exactly 1; an x or z matches neither '1 nor '0 (§20.9).`);
+      add("x (unknown)", false, "$countones returns an int, a 2-state type: it can never be x. Unknown bits simply do not match the control value '1 (§20.9).");
+    } else {
+      add(String(a.width - ones), false, "That counts the 0 bits. $countones is $countbits(e, '1): the bits that are exactly 1 (§20.9).");
+      add(String(a.width), false, "That counts every bit. $countones is $countbits(e, '1): only the bits that are exactly 1 (§20.9).");
+      add("x (unknown)", false, "Every bit is known, and $countones returns an int in any case: it can never be x (§20.9).");
+    }
+    return shuffled();
+  }
+
   if (value.width === 1) {
     const truth = bitAt(value, 0);
     (["0", "1", "x"] as Bit4[]).forEach((b) => add(`1'b${b}`, b === truth, oneBitFeedback(spec, inputs, b, truth)));
@@ -2431,9 +3376,49 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
   } else if (spec.family === "concat") {
     const rev = spec.id === "concat" ? val("{b, a}") : null;
     if (rev) add(vectorLabel(rev), false, "The first operand lands in the most significant bits: {a, b} puts a on the left.");
-    if (spec.id === "repl") {
-      const dbl = val("a + a");
-      if (dbl) add(vectorLabel(dbl), false, "Replication copies bits side by side; it does not multiply. {2{a}} is 2 × width(a) bits wide.");
+    if (spec.id === "sign-extend") {
+      const R = replCount(spec, inputs);
+      const n = fromBits(inputs.a);
+      const zeroExt = fromBits([...Array<Bit4>(R).fill("0"), ...inputs.a]);
+      if (!sameValue(reinterpret(zeroExt, false), reinterpret(value, false))) {
+        add(vectorLabel(zeroExt), false, `That zero-extends. The replication copies n[3], the sign bit (${bitAt(n, n.width - 1)}), ${R} time${R === 1 ? "" : "s"} in front of n, so the new bits are all ${bitAt(n, n.width - 1)} (§11.4.12.1).`);
+      }
+      if (R === 0) {
+        add("Compile error", false, "A zero replication is legal inside a concatenation whose other operand has a positive width: {{0{n[3]}}, n} is just n (§11.4.12.1).");
+      } else {
+        add(vectorLabel(n), false, `The replication adds ${R} bit${R === 1 ? "" : "s"}: the result is ${n.width + R} bits wide, not ${n.width}. Set the count to 0 to see the replication vanish.`);
+      }
+    }
+    if (spec.id === "repl-n") {
+      const R = replCount(spec, inputs);
+      add("Compile error", false, `${R} cop${R === 1 ? "y" : "ies"} of a is legal: the multiplier is a non-negative constant without x or z (§11.4.12.1). Only a zero replication on its own is illegal.`);
+      const mul = fromBigInt((toBigInt(reinterpret(a, false)) ?? ZERO) * big(R), value.width);
+      if (isKnown(a) && !sameValue(mul, reinterpret(value, false))) add(vectorLabel(mul), false, `Replication copies bits side by side; it does not multiply by ${R}.`);
+    }
+  } else if (spec.family === "conditional") {
+    const c = fromBits(inputs.c);
+    const truth = truthOf(c);
+    const t = evaluateExpression(slotName(spec, "a"), buildEnv(operatorDecls(spec, inputs)));
+    const thenValue = t.ok ? resize(t.value, value.width, false, false) : null;
+    const elseSrc = spec.id === "cond-z" ? `${value.width}'bz` : slotName(spec, "b");
+    const elseValue = val(elseSrc);
+    const same = (v: SvValue | null) => v !== null && sameValue(reinterpret(v, false), reinterpret(value, false));
+    if (truth === "x") {
+      const zKept = elseValue ? mapBits(value.width, false, (i) => (bitAt(elseValue, i) === "z" ? "z" : bitAt(value, i))) : null;
+      if (zKept && !same(zKept)) {
+        add(
+          vectorLabel(zKept),
+          false,
+          `Table 11-20 has no z result: z merged with anything, even with another z, gives x, so a tri-state model drives x, not z, when its enable is unknown.${elseValue && sameValue(zKept, elseValue) ? " An if/else would store this, because if treats an x condition as false (§12.4)." : ""}`,
+        );
+      }
+      if (!same(elseValue) && elseValue) add(vectorLabel(elseValue), false, "That is what if/else stores: if treats an x/z condition as false and runs the else branch (§12.4). The ?: operator evaluates both branches and merges them with Table 11-20 instead.");
+      if (!same(thenValue) && thenValue) add(vectorLabel(thenValue), false, "That treats the unknown condition as true. With an x/z condition, ?: evaluates both branches and combines them bit by bit (§11.4.11).");
+      if (!same(allX(value.width))) add(vectorLabel(allX(value.width)), false, "Only the bits where the branches disagree become x. Where both branches agree on 0 or 1, that bit survives (Table 11-20).");
+    } else {
+      const other = truth === "1" ? elseValue : thenValue;
+      if (other && !same(other)) add(vectorLabel(other), false, `The condition is ${truth}, so the ${truth === "1" ? "first" : "second"} branch is chosen and the other is not even evaluated (§11.4.11).`);
+      if (!same(allX(value.width))) add(vectorLabel(allX(value.width)), false, "A known condition picks one branch unchanged; nothing is merged. Only an x/z condition reaches Table 11-20.");
     }
   } else if (spec.family === "stream") {
     const same = val("{>> {a}}");
@@ -2445,7 +3430,16 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
     if (byteSwap) add(vectorLabel(byteSwap), false, "That swaps bytes (slice size 8). The slice size after << decides the block that moves.");
     if (nib) add(vectorLabel(nib), false, "That reverses 4-bit nibbles (slice size 4).");
   }
-  return opts.sort((x, y) => x.label.localeCompare(y.label));
+  // Editing can make every misconception coincide with the answer ({a, b} with a = b, a palindromic stream): keep a real choice.
+  if (opts.length < 2) {
+    add(vectorLabel(allX(value.width)), false, `Nothing here makes every bit x. ${spec.rule} (${spec.clause})`);
+    if (isKnown(value)) {
+      add(vectorLabel(mapBits(value.width, false, (i) => notBit(bitAt(value, i)))), false, `That is the result with every bit inverted. ${spec.rule} (${spec.clause})`);
+    } else if (opts.length < 2) {
+      add(vectorLabel(makeValue(value.width, false, ZERO)), false, `That reads the x bits as 0. An unknown bit stays unknown here. ${spec.rule} (${spec.clause})`);
+    }
+  }
+  return shuffled();
 }
 
 function oneBitFeedback(spec: OperatorSpec, inputs: OperatorInputs, chosen: Bit4, truth: Bit4): string {
@@ -2494,6 +3488,26 @@ function oneBitFeedback(spec: OperatorSpec, inputs: OperatorInputs, chosen: Bit4
       const det = insideDetail(a, members);
       const caseNote = det.ifCaseEquality !== det.result ? ` With === you would get ${det.ifCaseEquality}: inside is not case equality.` : "";
       return `${lead}inside compares a with each member using ==?, so x/z bits in a member are don't-cares; the result is 1 if any member matches, x if none match but some comparison is x (§11.4.13).${caseNote}`;
+    }
+    case "bitcount": {
+      const name = slotName(spec, "a");
+      const report = bitVectorReport(fromBits(inputs.a), name);
+      const xz = countbits(fromBits(inputs.a), "x", "z");
+      if (chosen === "x" && !right) {
+        return `${lead}${spec.id === "onehot-guarded" ? "&& of two bit results is 1'b0 or 1'b1 here" : "This function returns a bit, a 2-state type"}: it can never be x. Unknown bits either match the control value ('x, 'z for $isunknown) or they do not count (§20.9).`;
+      }
+      if (spec.id === "onehot-guarded") {
+        const oh = report[1];
+        const unk = report[3];
+        return `${lead}$onehot(${name}) is ${oh.result} (${oh.arithmetic}) and $isunknown(${name}) is ${unk.result} (${unk.arithmetic}), so the guard is ${truth === "1" ? "true: exactly one 1 and nothing unknown" : "false"}.${xz > 0 && oh.result === "1'b1" ? " $onehot alone would have passed; the $isunknown term is what rejects the x." : ""}`;
+      }
+      const item = report.find((r) => r.fn === spec.template.slice(0, spec.template.indexOf("(")));
+      return `${lead}${item ? `${item.fn} is ${item.definition}: ${item.arithmetic}, so it returns ${item.result} (type ${item.returnType}).` : spec.rule}${xz > 0 && item && item.fn !== "$isunknown" ? " An x or z bit is not a 1, so it does not count." : ""}`;
+    }
+    case "conditional": {
+      const c = fromBits(inputs.c);
+      const t = truthOf(c);
+      return `${lead}The condition is ${t === "x" ? "x/z, so both branches are merged with Table 11-20" : `${t}, so the ${t === "1" ? "first" : "second"} branch is returned`} (§11.4.11).`;
     }
     default:
       return `${lead}${spec.rule}`;
