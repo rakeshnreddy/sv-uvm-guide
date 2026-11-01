@@ -1341,7 +1341,12 @@ describe("content sweep: every ScenarioSorter in content/curriculum names a real
     expect(registered).toBe(true);
     // The embeds that exist today, by deck; add each new lesson's deck here.
     const decks = embeds.map((e) => `${e.where.replace(/:\d+$/, "")} ${String(e.props.deck)}`).sort();
-    expect(decks).toEqual([path.join("content", "curriculum", "T1_Foundational", "F1B_The_Verification_Mindset", "index.mdx") + " verification-methods"]);
+    expect(decks).toEqual([
+      "content/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index.mdx verification-methods",
+      "content/curriculum/T1_Foundational/F1C_Why_SystemVerilog/index.mdx sv-features",
+      "content/curriculum/T1_Foundational/F1C_Why_SystemVerilog/index.mdx uvm-compile-triage",
+      "content/curriculum/T1_Foundational/F1C_Why_SystemVerilog/index.mdx uvm-name-layers",
+    ]);
     // PacketSorterGame, the containers deck's wrapper, is registered and embedded in F2B today.
     expect(lazyMdxInteractiveNames).toContain("PacketSorterGame");
     const f2b = files.find((f) => f.includes("F2B_Dynamic_Structures"));

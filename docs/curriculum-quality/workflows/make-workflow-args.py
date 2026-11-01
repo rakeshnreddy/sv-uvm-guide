@@ -35,10 +35,15 @@ def enrichment_args(modules):
         uses = [u for u in c.get("lessons", []) if any(m in u for m in modules)]
         for u in uses:
             notes.append(f"  - {c['name']}: {u}")
-    unbuilt = sorted({names[c["id"]] for c in BACKLOG["components"] if c["id"] not in BUILT})
-    notes.append("- NOT on main, do not embed: " + ", ".join(unbuilt) + ".")
-    notes.append("- If a lesson embeds a ScenarioSorter deck, add the embed to the pin in "
-                 "tests/lib/scenario-sorter-decks.test.ts.")
+    new_unbuilt = sorted({names[c["id"]] for c in BACKLOG["components"]
+                          if c["id"] not in BUILT and c.get("kind") == "new"})
+    ext_unbuilt = sorted({names[c["id"]] for c in BACKLOG["components"]
+                          if c["id"] not in BUILT and c.get("kind") != "new"})
+    notes.append("- NOT on main, do not embed (planned but unbuilt): " + ", ".join(new_unbuilt) + ".")
+    notes.append("- These EXIST on main but their planned extensions are not built: " + ", ".join(ext_unbuilt)
+                 + ". Embed them only with props and presets that exist in their source today.")
+    notes.append("- If you embed a ScenarioSorter deck, do not edit any test; the lead updates the embed pin in "
+                 "tests/lib/scenario-sorter-decks.test.ts before release.")
     notes.append("- Earlier read-only audit of each lesson (verify each idea, keep only what teaches; line numbers "
                  "may have shifted):")
     for p in PLANS:
