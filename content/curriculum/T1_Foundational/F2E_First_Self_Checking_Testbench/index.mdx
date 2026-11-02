@@ -161,18 +161,18 @@ The initializer matters. A `logic` variable without one starts at x (§6.8, Tabl
 
 <TimingDiagram
   title="Clock and reset: edges 0 to 3"
-  caption={"Edge k is 5 + 10k ns. The second row, logic clk; with no initializer, starts at x and stays x forever because ~x is x (§6.8, §11.4.8). reset_dut() releases rst_n with <= just after edge 1 (15 ns), so the DUT first sees rst_n = 1 on edge 2 (25 ns)."}
+  caption={"Edge k is 5 + 10k ns. The second row, bad clk (logic clk; with no initializer), starts at x and stays x forever because ~x is x (§6.8, §11.4.8). At edge 0 (5 ns) the DUT sees rst_n = 0 and clears out_valid and sum (R1). reset_dut() releases rst_n with <= just after edge 1 (15 ns), so on edge 2 (25 ns) the DUT first sees rst_n = 1 and the checker starts comparing and guarding out_valid with $isunknown."}
   edges={4}
   signals={[
     { name: "clk", kind: "clock" },
-    { name: "logic clk; (no initializer)", kind: "bit", values: [undefined, undefined, undefined, undefined] },
+    { name: "bad clk", kind: "bit", values: [undefined, undefined, undefined, undefined] },
     { name: "rst_n", kind: "bit", values: [0, 0, 1, 1] },
     { name: "out_valid", kind: "bit", values: [undefined, 0, 0, 0] }
   ]}
   markers={[
-    { edge: 0, tone: "sample", label: "Edge 0 (5 ns): the DUT sees rst_n = 0 and clears out_valid and sum (R1)" },
-    { edge: 1, tone: "drive", label: "Edge 1 (15 ns): reset_dut() releases with rst_n <= 1" },
-    { edge: 2, tone: "info", label: "Edge 2 (25 ns): the DUT first sees rst_n = 1; the checker's if (rst_n) starts comparing and $isunknown guards out_valid" }
+    { edge: 0, tone: "sample", short: "R1 clear", label: "Edge 0 (5 ns): the DUT sees rst_n = 0 and clears out_valid and sum (R1)" },
+    { edge: 1, tone: "drive", short: "rst_n<=1", label: "Edge 1 (15 ns): reset_dut() releases with rst_n <= 1" },
+    { edge: 2, tone: "info", short: "rst_n=1", label: "Edge 2 (25 ns): the DUT first sees rst_n = 1; the checker's if (rst_n) starts comparing and $isunknown guards out_valid" }
   ]}
 />
 
@@ -181,31 +181,6 @@ The initializer matters. A `logic` variable without one starts at x (§6.8, Tabl
 **The rule:** drive DUT inputs with `<=` right after the clock edge, or with `=` at the opposite edge. Never use `=` at the edge the DUT samples on, its **active edge**.
 
 Here is why. The DUT's `always_ff` and the bench's `send()` both wake on the same rising edge, and the standard lets the simulator run processes woken by one event in any order (§4.7). A **blocking assignment** (`=`) changes the variable at once, so whether the flop reads the old or the new value depends on which process ran first: a **race condition** (§4.8). A **nonblocking assignment** (NBA, `<=`) computes the value now but schedules the update for later in the same **time slot** (all the activity at one simulation time), after every process woken by the edge has run (§4.9.4, §10.4.2).
-
-<figure className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4">
-  <div className="mb-2 text-sm font-semibold text-foreground">
-    Inside one rising-edge time slot: why `<=` separates writes from reads
-  </div>
-  <svg
-    viewBox="0 0 600 184"
-    className="w-full h-auto"
-    role="img"
-    aria-label="Two-rung time-slot ladder for one rising clock edge. Rung 1 is Active: the DUT always_ff reads a while a blocking send() with a = 9 writes immediately in an order left open by IEEE 1800-2023 section 4.7, causing a race. Rung 2 is NBA: nonblocking updates a <= 9 and sum <= next_sum land after every process woken by the edge has run (section 4.9.4)."
-  >
-    <rect x="8" y="8" width="584" height="78" rx="8" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
-    <text x="20" y="30" fontSize="12" fontWeight="700" fill="currentColor">1. Active (processes woken by @(posedge clk) run in any order, §4.7)</text>
-    <text x="20" y="52" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">{"▼ DUT always_ff reads a (expects 7)"}</text>
-    <text x="20" y="72" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">{"◆ If send() uses a = 9: writes a at once — order left open (§4.7, §4.8 race)"}</text>
-    <line x1="300" y1="86" x2="300" y2="102" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1.5" strokeDasharray="3 2" />
-    <rect x="8" y="102" width="584" height="74" rx="8" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.3" />
-    <text x="20" y="124" fontSize="12" fontWeight="700" fill="currentColor">2. NBA (after every process woken by the edge has run, §4.9.4)</text>
-    <text x="20" y="146" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">{"◆ send() with a <= 9 updates a here (every Active read already saw 7)"}</text>
-    <text x="20" y="164" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">{"◆ DUT always_ff updates out_valid <= ... and sum <= ... here (§10.4.2)"}</text>
-  </svg>
-  <figcaption className="mt-2 text-xs text-muted-foreground">
-    Within one simulation time slot, Active reads and blocking writes share the first rung, while nonblocking (<code>&lt;=</code>) updates wait for the second rung. <a href="/curriculum/T1_Foundational/F3B_Scheduling_Regions/index" className="underline">F3B</a> teaches the full scheduler ladder.
-  </figcaption>
-</figure>
 
 **Predict.** In `+TEST=gaps`, `a` is 7 just before the edge on which `send(9, 10)` runs. On that edge, `send()` drives `a` to 9 while the DUT's flop reads `a`. Which value does the flop capture with each drive style?
 
@@ -219,6 +194,33 @@ Here is why. The DUT's `always_ff` and the bench's `send()` both wake on the sam
 | `a <= a_val;` (nonblocking) | either order | 7: the update lands after every read |
 
 </details>
+
+<figure className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4">
+  <div className="mb-2 text-sm font-semibold text-foreground">
+    Inside one rising-edge time slot: why <code>&lt;=</code> separates writes from reads
+  </div>
+  <div className="overflow-x-auto">
+    <svg
+      viewBox="0 0 600 184"
+      className="w-full min-w-[600px] h-auto"
+      role="img"
+      aria-label="Two-rung time-slot ladder for one rising clock edge. Rung 1 is Active: the DUT always_ff reads a while a blocking send() with a = 9 writes immediately in an order left open by IEEE 1800-2023 section 4.7, causing a race. Rung 2 is NBA: nonblocking updates a <= 9 and sum <= next_sum land after every process woken by the edge has run (section 4.9.4)."
+    >
+      <rect x="8" y="8" width="584" height="78" rx="8" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
+      <text x="20" y="30" fontSize="12" fontWeight="700" fill="currentColor">1. Active (processes woken by @(posedge clk) run in any order, §4.7)</text>
+      <text x="20" y="52" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">{"▼ DUT always_ff reads a (expects 7)"}</text>
+      <text x="20" y="72" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">{"◆ If send() uses a = 9: writes a at once — order left open (§4.7, §4.8 race)"}</text>
+      <line x1="300" y1="86" x2="300" y2="102" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1.5" strokeDasharray="3 2" />
+      <rect x="8" y="102" width="584" height="74" rx="8" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.3" />
+      <text x="20" y="124" fontSize="12" fontWeight="700" fill="currentColor">2. NBA (after every process woken by the edge has run, §4.9.4)</text>
+      <text x="20" y="146" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">{"◆ send() with a <= 9 updates a here (every Active read already saw 7)"}</text>
+      <text x="20" y="164" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">{"◆ DUT always_ff updates out_valid <= ... and sum <= ... here (§10.4.2)"}</text>
+    </svg>
+  </div>
+  <figcaption className="mt-2 text-xs text-muted-foreground">
+    Within one simulation time slot, Active reads and blocking writes share the first rung, while nonblocking (<code>&lt;=</code>) updates wait for the second rung. <a href="/curriculum/T1_Foundational/F3B_Scheduling_Regions/index" className="underline">F3B</a> teaches the full scheduler ladder.
+  </figcaption>
+</figure>
 
 With blocking drives, the edge on which the DUT sees each input depends on an order the standard leaves open. The same bench can pass on one simulator and fail on another, or change behaviour after an unrelated edit. The reset release has the same problem: `rst_n = 1'b1;` right after `@(posedge clk)` lets the DUT leave reset on that edge or on the next, depending on the order.
 
@@ -270,10 +272,10 @@ Inputs then change mid-cycle, which reads well in a waveform. The style breaks w
     { name: "sum", kind: "bus", values: [undefined, "0", "0", "0", "10", "10"] }
   ]}
   markers={[
-    { edge: 1, tone: "drive", label: "Edge 1 (15 ns): reset_dut() releases reset with rst_n <= 1; the DUT first sees rst_n = 1 on edge 2" },
-    { edge: 2, tone: "drive", label: "Edge 2 (25 ns): send(5, 5) drives in_valid, a and b with <= and pushes the expectation 10 onto exp_q" },
-    { edge: 3, tone: "sample", label: "Edge 3 (35 ns): the DUT samples in_valid = 1, a = 5, b = 5 and schedules out_valid <= 1 and sum <= 10" },
-    { edge: 4, tone: "pass", label: "Edge 4 (45 ns): the checker reads out_valid = 1 and sum = 10, pops 10 from exp_q, and counts a pass" }
+    { edge: 1, tone: "drive", short: "rst_n<=1", label: "Edge 1 (15 ns): reset_dut() releases reset with rst_n <= 1; the DUT first sees rst_n = 1 on edge 2" },
+    { edge: 2, tone: "drive", short: "send(5,5)", label: "Edge 2 (25 ns): send(5, 5) drives in_valid, a and b with <= and pushes the expectation 10 onto exp_q" },
+    { edge: 3, tone: "sample", short: "sample", label: "Edge 3 (35 ns): the DUT samples in_valid = 1, a = 5, b = 5 and schedules out_valid <= 1 and sum <= 10" },
+    { edge: 4, tone: "pass", short: "CHK 10", label: "Edge 4 (45 ns): the checker reads out_valid = 1 and sum = 10, pops 10 from exp_q, and counts a pass" }
   ]}
 />
 
@@ -321,8 +323,8 @@ It is written differently from the RTL on purpose. The RTL relies on its 9-bit t
 | 10 (105 ns) | (draining) | `in_valid = 0` | `sum = 23`: pop 23 ✓ | `{}` |
 
 <TimingDiagram
-  title="exp_q over the whole +TEST=gaps run"
-  caption={"The exp_q row uses the same sampling convention as the other rows: the value at edge k is what edge k - 1 left behind, whereas the table's rightmost column shows exp_q after edge k. Thus the two in-flight expectations {15, 19} left after edge 6 appear at edge 7, right where the checker pops 15."}
+  title="exp_q over +TEST=gaps, edges 0 to 11"
+  caption={"The exp_q row uses the same sampling convention as the other rows: the value at edge k is what edge k - 1 left behind, whereas the table's rightmost column shows exp_q after edge k. The shaded band across edges 6 and 7 marks the two results in flight ({15, 19}), right where the checker pops 15 at edge 7 and 19 at edge 8."}
   edges={12}
   cycleWidth={52}
   signals={[
@@ -333,8 +335,8 @@ It is written differently from the RTL on purpose. The RTL relies on its 9-bit t
     { name: "exp_q", kind: "bus", values: ["{}", "{}", "{}", "{10}", "{10}", "{}", "{15}", "{15,19}", "{19}", "{23}", "{23}", "{}"] }
   ]}
   markers={[
-    { edge: 7, tone: "pass", label: "Edge 7 (75 ns): sum = 15, pop 15" },
-    { edge: 8, tone: "pass", label: "Edge 8 (85 ns): sum = 19, pop 19" }
+    { edge: 7, tone: "pass", short: "pop 15", label: "Edge 7 (75 ns): sum = 15, pop 15" },
+    { edge: 8, tone: "pass", short: "pop 19", label: "Edge 8 (85 ns): sum = 19, pop 19" }
   ]}
   highlights={[
     { from: 6, to: 7, tone: "attempt", label: "two results in flight" }
@@ -356,48 +358,80 @@ The checker compares with the **case inequality** operator `!==`, never with `!=
 
 <figure className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4">
   <div className="mb-2 text-sm font-semibold text-foreground">
-    Why `9&apos;b0_0000_101x != 9&apos;d10` is ambiguous (`x`) while `9&apos;b1_0000_101x != 9&apos;d10` is `1`
+    Why <code>9&apos;b0_0000_101x != 9&apos;d10</code> is ambiguous (<code>x</code>) while <code>9&apos;b1_0000_101x != 9&apos;d10</code> is <code>1</code>
   </div>
-  <svg
-    viewBox="0 0 640 198"
-    className="w-full h-auto"
-    role="img"
-    aria-label="Three 9-bit rows comparing expected 9'd10 (0_0000_1010) against two partially unknown actual values. For 9'b0_0000_101x, known bits 8 down to 1 match 10 and bit 0 is unknown X, so != returns x, if takes the else branch and increments pass_cnt (false pass), whereas !== returns 1 and increments fail_cnt. For 9'b1_0000_101x, bit 8 is 1 versus expected 0, so both != and !== return 1 and increment fail_cnt."
-  >
-    <defs>
-      <pattern id="f2e-x-hatch-cmp" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
-        <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" strokeOpacity="0.35" strokeWidth="2" />
-      </pattern>
-    </defs>
-    <text x="155" y="18" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[8]  [7]  [6]  [5]  [4]  [3]  [2]  [1]  [0]</text>
-    <text x="412" y="18" fontSize="10" fontWeight="700" fill="currentColor" opacity="0.8">!= 10 → if/else</text>
-    <text x="542" y="18" fontSize="10" fontWeight="700" fill="currentColor" opacity="0.8">!== 10</text>
+  <div className="overflow-x-auto">
+    <svg
+      viewBox="0 0 640 198"
+      className="w-full min-w-[600px] h-auto"
+      role="img"
+      aria-label="Three 9-bit rows comparing expected 9'd10 (0_0000_1010) against two partially unknown actual values. For 9'b0_0000_101x, known bits 8 down to 1 match 10 and bit 0 is unknown X, so != returns x, if takes the else branch and increments pass_cnt (false pass), whereas !== returns 1 and increments fail_cnt. For 9'b1_0000_101x, bit 8 is 1 versus expected 0, so both != and !== return 1 and increment fail_cnt."
+    >
+      <defs>
+        <pattern id="f2e-x-hatch-cmp" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" strokeOpacity="0.35" strokeWidth="2" />
+        </pattern>
+      </defs>
+      <text x="162" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[8]</text>
+      <text x="190" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[7]</text>
+      <text x="218" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[6]</text>
+      <text x="246" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[5]</text>
+      <text x="274" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[4]</text>
+      <text x="302" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[3]</text>
+      <text x="330" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[2]</text>
+      <text x="358" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[1]</text>
+      <text x="386" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[0]</text>
+      <text x="412" y="18" fontSize="11" fontWeight="700" fill="currentColor" opacity="0.8">!= 10 → if/else</text>
+      <text x="542" y="18" fontSize="11" fontWeight="700" fill="currentColor" opacity="0.8">!== 10</text>
 
-    <text x="10" y="48" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">Expected 9&apos;d10</text>
-    <rect x="148" y="30" width="248" height="26" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
-    <text x="156" y="47" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0    0    0    0    0    1    0    1    0</text>
-    <text x="412" y="47" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">0 → pass_cnt++ ✓</text>
-    <text x="542" y="47" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">0 → pass ✓</text>
+      <text x="10" y="48" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">Expected 9&apos;d10</text>
+      <rect x="148" y="30" width="252" height="26" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
+      <text x="162" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="190" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="218" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="246" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="274" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="302" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+      <text x="330" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="358" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+      <text x="386" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="412" y="47" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">0 → pass_cnt++ ✓</text>
+      <text x="542" y="47" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">0 → pass ✓</text>
 
-    <text x="10" y="102" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;b0_0000_101x</text>
-    <rect x="148" y="84" width="248" height="26" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
-    <text x="156" y="101" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0    0    0    0    0    1    0    1</text>
-    <rect x="368" y="86" width="24" height="22" rx="3" fill="url(#f2e-x-hatch-cmp)" stroke="currentColor" strokeOpacity="0.55" />
-    <text x="376" y="101" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">X</text>
-    <text x="152" y="124" fontSize="10" fill="currentColor" opacity="0.75">{"bits [8:1] match 10; bit [0] is X → relation is ambiguous (§11.4.5)"}</text>
-    <text x="412" y="101" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">x → pass_cnt++ ✕</text>
-    <text x="542" y="101" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1 → fail ✓</text>
+      <text x="10" y="102" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;b0_0000_101x</text>
+      <rect x="148" y="84" width="252" height="26" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
+      <text x="162" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="190" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="218" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="246" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="274" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="302" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+      <text x="330" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="358" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+      <rect x="374" y="86" width="24" height="22" rx="3" fill="url(#f2e-x-hatch-cmp)" stroke="currentColor" strokeOpacity="0.55" />
+      <text x="386" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">X</text>
+      <text x="152" y="124" fontSize="10.5" fill="currentColor" opacity="0.75">{"bits [8:1] match 10; bit [0] is X → relation is ambiguous (§11.4.5)"}</text>
+      <text x="412" y="101" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">x → pass_cnt++ ✕</text>
+      <text x="542" y="101" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1 → fail ✓</text>
 
-    <text x="10" y="160" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;b1_0000_101x</text>
-    <rect x="148" y="142" width="248" height="26" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
-    <rect x="150" y="144" width="24" height="22" rx="3" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.5" />
-    <text x="156" y="159" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1    0    0    0    0    1    0    1</text>
-    <rect x="368" y="144" width="24" height="22" rx="3" fill="url(#f2e-x-hatch-cmp)" stroke="currentColor" strokeOpacity="0.55" />
-    <text x="376" y="159" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">X</text>
-    <text x="152" y="182" fontSize="10" fill="currentColor" opacity="0.75">{"bit [8] differs (1 vs 0) → definitely unequal regardless of bit [0]"}</text>
-    <text x="412" y="159" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1 → fail_cnt++ ✓</text>
-    <text x="542" y="159" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1 → fail ✓</text>
-  </svg>
+      <text x="10" y="160" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;b1_0000_101x</text>
+      <rect x="148" y="142" width="252" height="26" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
+      <rect x="150" y="144" width="24" height="22" rx="3" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.5" />
+      <text x="162" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1</text>
+      <text x="190" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="218" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="246" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="274" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="302" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+      <text x="330" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <text x="358" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+      <rect x="374" y="144" width="24" height="22" rx="3" fill="url(#f2e-x-hatch-cmp)" stroke="currentColor" strokeOpacity="0.55" />
+      <text x="386" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">X</text>
+      <text x="152" y="182" fontSize="10.5" fill="currentColor" opacity="0.75">{"bit [8] differs (1 vs 0) → definitely unequal regardless of bit [0]"}</text>
+      <text x="412" y="159" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1 → fail_cnt++ ✓</text>
+      <text x="542" y="159" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1 → fail ✓</text>
+    </svg>
+  </div>
   <figcaption className="mt-2 text-xs text-muted-foreground">
     <code>!=</code> asks whether the two numbers could still be equal: in <code>9&apos;b0_0000_101x</code>, if bit 0 were 0 they would match, so <code>!=</code> yields <code>1&apos;bx</code> and <code>if</code> runs its <code>else</code> branch (§11.4.5, §12.4). <code>!==</code> compares bit patterns including <code>x</code> and <code>z</code> and returns <code>1&apos;b1</code> for both rows.
   </figcaption>
@@ -415,7 +449,7 @@ Two more ways X hides:
 - **In a control signal.** `if (out_valid)` with `out_valid` at x simply skips the compare: no failure, no pass, nothing. The checker therefore tests `$isunknown(out_valid)` first (§20.9).
 - **In a 2-state copy.** Copying `sum` into an `int` or a `bit` turns x into 0 before any compare ([F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/index)). Keep DUT values in 4-state `logic`.
 
-Set `a = 101x` and `b = 1010` in the explorer below and predict `a != b` before you reveal it; then flip the top bit of `a` to `1` and compare `!=` with `!==`.
+Choose `a != b` in the explorer below, set `a = 101x` and `b = 1010`, predict `a != b` and reveal; then cycle the top bit of `a` to `0` (`001x` versus `1010`: a known bit differs), and compare `!=` (`1`) with `!==` (`1`).
 
 <OperatorExplorer family="equality" />
 
@@ -467,34 +501,36 @@ The off-by-one is loud: every result is wrong. The stuck carry is quiet: `smoke`
 
 <figure className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4">
   <div className="mb-2 text-sm font-semibold text-foreground">
-    Why `smoke` misses `BUG=1` (`next_sum[8] = 0`) while `corners` catches it
+    Why <code>smoke</code> misses <code>BUG=1</code> (<code>next_sum[8] = 0</code>) while <code>corners</code> catches it
   </div>
-  <svg
-    viewBox="0 0 640 144"
-    className="w-full h-auto"
-    role="img"
-    aria-label="9-bit comparison of the largest sum in smoke (100 + 27 = 127, binary 0_0111_1111) versus the first carry sum in corners (255 + 1 = 256, binary 1_0000_0000). In smoke, carry bit 8 is already 0, so forcing bit 8 to 0 under BUG=1 leaves 127 unchanged and the bug escapes. In corners, bit 8 is 1, so BUG=1 turns 256 into 0 and fails CHK."
-  >
-    <text x="196" y="18" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">carry [8] | low byte [7:0]</text>
-    <text x="418" y="18" fontSize="10" fontWeight="700" fill="currentColor" opacity="0.8">BUG=0 (correct)</text>
-    <text x="528" y="18" fontSize="10" fontWeight="700" fill="currentColor" opacity="0.8">BUG=1 (bit 8 = 0)</text>
+  <div className="overflow-x-auto">
+    <svg
+      viewBox="0 0 640 144"
+      className="w-full min-w-[600px] h-auto"
+      role="img"
+      aria-label="9-bit comparison of the largest sum in smoke (100 + 27 = 127, binary 0_0111_1111) versus the first carry sum in corners (255 + 1 = 256, binary 1_0000_0000). In smoke, carry bit 8 is already 0, so forcing bit 8 to 0 under BUG=1 leaves 127 unchanged and the bug escapes. In corners, bit 8 is 1, so BUG=1 turns 256 into 0 and fails CHK."
+    >
+      <text x="196" y="18" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">carry [8] | low byte [7:0]</text>
+      <text x="412" y="18" fontSize="11" fontWeight="700" fill="currentColor" opacity="0.8">BUG=0 (correct)</text>
+      <text x="516" y="18" fontSize="11" fontWeight="700" fill="currentColor" opacity="0.8">BUG=1 (bit 8 = 0)</text>
 
-    <text x="10" y="54" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">smoke: 100 + 27</text>
-    <rect x="192" y="36" width="34" height="26" rx="4" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" />
-    <text x="205" y="54" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-    <rect x="232" y="36" width="168" height="26" rx="4" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
-    <text x="242" y="54" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0 1 1 1 1 1 1 1</text>
-    <text x="418" y="54" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">9&apos;d127</text>
-    <text x="528" y="54" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">9&apos;d127 (escapes)</text>
+      <text x="10" y="54" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">smoke: 100 + 27</text>
+      <rect x="192" y="36" width="34" height="26" rx="4" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" />
+      <text x="209" y="54" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+      <rect x="232" y="36" width="168" height="26" rx="4" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
+      <text x="242" y="54" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0 1 1 1 1 1 1 1</text>
+      <text x="412" y="54" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">9&apos;d127</text>
+      <text x="516" y="54" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">9&apos;d127 (escapes)</text>
 
-    <text x="10" y="106" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">corners: 255 + 1</text>
-    <rect x="192" y="88" width="34" height="26" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.5" />
-    <text x="205" y="106" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1</text>
-    <rect x="232" y="88" width="168" height="26" rx="4" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
-    <text x="242" y="106" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0 0 0 0 0 0 0 0</text>
-    <text x="418" y="106" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">9&apos;d256</text>
-    <text x="528" y="106" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;d0 (CHK fails ✓)</text>
-  </svg>
+      <text x="10" y="106" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">corners: 255 + 1</text>
+      <rect x="192" y="88" width="34" height="26" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.5" />
+      <text x="209" y="106" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1</text>
+      <rect x="232" y="88" width="168" height="26" rx="4" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
+      <text x="242" y="106" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0 0 0 0 0 0 0 0</text>
+      <text x="412" y="106" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">9&apos;d256</text>
+      <text x="516" y="106" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;d0 (fails ✓)</text>
+    </svg>
+  </div>
   <figcaption className="mt-2 text-xs text-muted-foreground">
     A stuck-at-0 fault on bit 8 is invisible until the stimulus demands a <code>1</code> on bit 8. In <code>smoke</code>, the largest sum is <code>127</code> (<code>9&apos;b0_0111_1111</code>); in <code>corners</code>, <code>255 + 1</code>, <code>255 + 255</code> and <code>128 + 128</code> all set bit 8 and expose <code>BUG=1</code>.
   </figcaption>
@@ -575,7 +611,7 @@ What to take from the race:
 | How the run goes | What prints | Which statement ends the run | Verdict a script reads |
 |---|---|---|---|
 | Normal run (`run` finishes first) | `TEST` lines, any `CHK` errors, then `PASS=n FAIL=m` | `disable fork` kills the watchdog, then `$finish` (§9.6.3, §20.2) | PASS if `^PASS=\d+ FAIL=0$`, else FAIL |
-| Blocked wait or dead clock (`clk` stays x) | `TEST` line(s), `PASS=n FAIL=m` (`m >= 1`), `WDOG` fatal | `$fatal` in `watchdog` implies `$finish` (§20.10) | FAIL (`FAIL>0`) |
+| Blocked wait or dead clock (`clk` stays x) | Any `TEST` lines reached before the hang (none for a dead clock, which hangs in `reset_dut()`), then `PASS=n FAIL=m` (`m >= 1`), then `WDOG` fatal | `$fatal` in `watchdog` implies `$finish` (§20.10) | FAIL (`FAIL>0`) |
 | `$finish` deleted after `report()` | Summary line prints, then nothing | Never ends: `always #5 clk = ~clk` keeps scheduling events (§9.6.1) and `disable fork` already killed the watchdog | Job hangs until killed by the runner |
 | Zero-delay loop (`while (exp_q.size() != 0);`) | Output up to the loop, then nothing | Never ends: simulation time stops advancing, so `#(TIMEOUT)` never arrives | Job hangs with no summary line (FAIL) |
 | Unknown `+TEST=` name | `TEST` line, then `TEST unknown test` fatal | `$fatal` in `run_one()` implies `$finish` (§20.10) | FAIL (no summary line) |
@@ -615,7 +651,7 @@ A **value change dump (VCD)** is the portable waveform format defined by the sta
 
 <TimingDiagram
   title="Debugging a CHK failure at 75 ns: look one and two edges earlier"
-  caption={"Column c is edge c + 4 (45 + 10c ns) of +TEST=corners with BUG=1. At 75 ns (column 3) the checker reports CHK a=255 b=1: sum=0, expected 256. Look one edge earlier (65 ns, column 2) to see the DUT sample a = 255 and b = 1, and two edges earlier (55 ns, column 1) to see send(255, 1) drive them with <=."}
+  caption={"Column c is edge c + 4 (45 + 10c ns) of +TEST=corners with BUG=1; the rose highlight spans the two edges from drive (column 1, 55 ns) to check (column 3, 75 ns). At column 3 (edge 7, 75 ns) the checker reports CHK a=255 b=1: sum=0, expected 256. Look one edge earlier (column 2, edge 6, 65 ns) to see the DUT sample a = 255 and b = 1, and two edges earlier (column 1, edge 5, 55 ns) to see send(255, 1) drive them with <=."}
   edges={5}
   cycleWidth={52}
   signals={[
@@ -624,13 +660,13 @@ A **value change dump (VCD)** is the portable waveform format defined by the sta
     { name: "a", kind: "bus", values: ["255", "0", "255", "255", "128"] },
     { name: "b", kind: "bus", values: ["0", "255", "1", "255", "128"] },
     { name: "out_valid", kind: "bit", values: [1, 1, 1, 1, 1] },
-    { name: "sum (BUG=1)", kind: "bus", values: ["0", "255", "255", "0", "254"] },
+    { name: "sum BUG=1", kind: "bus", values: ["0", "255", "255", "0", "254"] },
     { name: "expected", kind: "bus", values: ["0", "255", "255", "256", "510"] }
   ]}
   markers={[
-    { edge: 1, tone: "drive", label: "Edge 5 (55 ns): two edges earlier, send(255, 1) drives a <= 255 and b <= 1" },
-    { edge: 2, tone: "sample", label: "Edge 6 (65 ns): one edge earlier, the DUT samples 255 + 1; BUG=1 clears bit 8" },
-    { edge: 3, tone: "fail", label: "Edge 7 (75 ns): CHK error time — checker reads sum = 0 against expected 256" }
+    { edge: 1, tone: "drive", short: "drive", label: "Column 1 (edge 5, 55 ns): two edges earlier, send(255, 1) drives a <= 255 and b <= 1" },
+    { edge: 2, tone: "sample", short: "sample", label: "Column 2 (edge 6, 65 ns): one edge earlier, the DUT samples 255 + 1; BUG=1 clears bit 8" },
+    { edge: 3, tone: "fail", short: "CHK", label: "Column 3 (edge 7, 75 ns): CHK error time — checker reads sum = 0 against expected 256" }
   ]}
   highlights={[
     { from: 1, to: 3, tone: "fail", label: "2 edges from drive (55 ns) to check (75 ns)" }
@@ -678,29 +714,34 @@ if (sum !== e.sum) begin fail_cnt++; $error(...); end else pass_cnt++;`}
     viewBox="0 0 260 132"
     className="w-full h-auto"
     role="img"
-    aria-label="Compact diagram of the self-checking loop: send() feeds both DUT and model_add() -> exp_q, which meet at the !== checker to update pass_cnt and fail_cnt and print PASS=n FAIL=m."
+    aria-label="Compact diagram of the self-checking loop: send() feeds both DUT and model_add() -> exp_q, which meet at the sum !== e.sum checker to update pass_cnt and fail_cnt and print PASS=n FAIL=m."
   >
-    <rect x="8" y="42" width="56" height="32" rx="6" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
-    <text x="36" y="57" textAnchor="middle" fontSize="9.5" fontWeight="700" fill="currentColor">send()</text>
-    <text x="36" y="68" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.75">{"with <="}</text>
+    <defs>
+      <marker id="f2e-recap-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M 0 1 L 7 4 L 0 7 z" fill="currentColor" fillOpacity="0.65" />
+      </marker>
+    </defs>
+    <rect x="8" y="42" width="54" height="32" rx="6" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+    <text x="35" y="57" textAnchor="middle" fontSize="9.5" fontWeight="700" fill="currentColor">send()</text>
+    <text x="35" y="68" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.75">{"with <="}</text>
 
-    <rect x="88" y="10" width="76" height="30" rx="6" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
-    <text x="126" y="24" textAnchor="middle" fontSize="9" fontWeight="700" fill="currentColor">DUT (adder_reg)</text>
-    <text x="126" y="34" textAnchor="middle" fontSize="8" fill="currentColor" opacity="0.75">actual sum</text>
+    <rect x="82" y="10" width="72" height="30" rx="6" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+    <text x="118" y="24" textAnchor="middle" fontSize="9.5" fontWeight="700" fill="currentColor">DUT</text>
+    <text x="118" y="34" textAnchor="middle" fontSize="8" fill="currentColor" opacity="0.75">actual sum</text>
 
-    <rect x="88" y="76" width="76" height="30" rx="6" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
-    <text x="126" y="90" textAnchor="middle" fontSize="9" fontWeight="700" fill="currentColor">model → exp_q</text>
-    <text x="126" y="100" textAnchor="middle" fontSize="8" fill="currentColor" opacity="0.75">expected sum</text>
+    <rect x="82" y="76" width="72" height="30" rx="6" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+    <text x="118" y="90" textAnchor="middle" fontSize="8.5" fontWeight="700" fill="currentColor">model → exp_q</text>
+    <text x="118" y="100" textAnchor="middle" fontSize="8" fill="currentColor" opacity="0.75">expected sum</text>
 
-    <rect x="188" y="36" width="64" height="44" rx="6" fill="currentColor" fillOpacity="0.1" stroke="currentColor" strokeOpacity="0.45" />
-    <text x="220" y="52" textAnchor="middle" fontSize="9.5" fontWeight="700" fill="currentColor">{"sum !== e"}</text>
-    <text x="220" y="64" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">PASS=n</text>
-    <text x="220" y="74" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">FAIL=m</text>
+    <rect x="174" y="36" width="78" height="44" rx="6" fill="currentColor" fillOpacity="0.1" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="213" y="52" textAnchor="middle" fontSize="8.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">{"sum !== e.sum"}</text>
+    <text x="213" y="64" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">PASS=n</text>
+    <text x="213" y="74" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">FAIL=m</text>
 
-    <line x1="64" y1="50" x2="88" y2="26" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" />
-    <line x1="64" y1="66" x2="88" y2="90" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" />
-    <line x1="164" y1="26" x2="188" y2="50" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" />
-    <line x1="164" y1="90" x2="188" y2="66" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" />
+    <line x1="62" y1="50" x2="80" y2="26" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" markerEnd="url(#f2e-recap-arrow)" />
+    <line x1="62" y1="66" x2="80" y2="90" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" markerEnd="url(#f2e-recap-arrow)" />
+    <line x1="154" y1="26" x2="172" y2="50" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" markerEnd="url(#f2e-recap-arrow)" />
+    <line x1="154" y1="90" x2="172" y2="66" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" markerEnd="url(#f2e-recap-arrow)" />
     <text x="130" y="122" textAnchor="middle" fontSize="8" fill="currentColor" opacity="0.75">guards: leftovers • zero checks • watchdog • mutant</text>
   </svg>
 </VisualRecap>
@@ -986,18 +1027,21 @@ Without a local simulator, EDA Playground runs the bench in a browser: put `adde
 ### Prove it can fail
 
 1. Change `.BUG(0)` to `.BUG(1)` in `tb_top`: bit 8 of `sum` is now stuck at 0. **Predict** which tests will notice.
+2. Run `+TEST=smoke`.
+3. Run `+TEST=corners`.
+4. Set `.BUG(2)` (off by one) and run `+TEST=smoke`.
 
 <details>
-<summary>Check your prediction: the smoke and corners logs for BUG=1 and BUG=2</summary>
+<summary>Check your prediction: what steps 2–4 print for BUG=1 and BUG=2</summary>
 
-2. Run `+TEST=smoke`. The bug escapes:
+In step 2 (`+TEST=smoke` with `.BUG(1)`), the bug escapes:
 
 ```text
 15 ns TEST smoke
 PASS=3 FAIL=0
 ```
 
-3. Run `+TEST=corners`. The bench catches the bug. Here `[error @ t]` stands for your simulator's own `$error` prefix, which includes the time, file and line (§20.10):
+In step 3 (`+TEST=corners` with `.BUG(1)`), the bench catches the bug. Here `[error @ t]` stands for your simulator's own `$error` prefix, which includes the time, file and line (§20.10):
 
 ```text
 15 ns TEST corners
@@ -1007,7 +1051,7 @@ PASS=3 FAIL=0
 PASS=4 FAIL=3
 ```
 
-4. Set `.BUG(2)` (off by one) and run `+TEST=smoke`. Every result fails:
+In step 4 (`+TEST=smoke` with `.BUG(2)`), every result fails:
 
 ```text
 15 ns TEST smoke
@@ -1037,22 +1081,22 @@ These logs are illustrative too, derived from the same cycle model.
 
 ### Expert: X and Z in self-checks (`===` versus `==`)
 
-- **Where X hides.** `==` and `!=` return x only when the relation is ambiguous: the bits that are known agree, and at least one bit is x or z (§11.4.5). `9'b1_0000_101x != 9'd10` is 1, because bit 8 differs, while `9'b0_0000_101x != 9'd10` is x. A `!=` check therefore fails some X results loudly and passes others silently, which is the worst kind of check.
-- **Polarity.** An immediate assertion treats x as false and fails (§16.3), so `assert (sum == e.sum)` catches an X result, while `if (sum != e.sum) fail_cnt++;` passes it. Write every check so that an unknown lands on the failing side; `!==` and `===` do that whichever way round you test. Assertions arrive in [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index).
-- **X in the expectation.** `===` matches x against x. If the model is fed x (an undriven stimulus variable), an X result matches an X expectation and passes. Guard the model: `if ($isunknown(e.sum))` should be a bench error, never a comparison.
-- **Wildcards on purpose.** `==?` treats x and z in its right operand as don't-care bits (§11.4.6). Use it when the specification leaves bits undefined, for example `sum ==? 9'b0_0000_1xxx`. An x in the left operand, the DUT's value, is not a wildcard.
-- **2-state traps.** Assigning `sum` to an `int` or a `bit` turns x into 0 before any compare. Some simulators are 2-state throughout, so X checks cannot fire on them; run X-sensitive regressions on a 4-state simulator (tool-dependent).
-- **Interview angle:** "Why does `assert (a == b)` fail when `a` is x, while `if (a != b) err++;` lets it through?"
-
 | Checker form | When the DUT output has an x bit | Why (IEEE 1800-2023) |
 |---|---|---|
 | `if (sum != e.sum) fail_cnt++; else pass_cnt++;` | Counted as **pass** when the known bits agree | `!=` returns `1'bx` (§11.4.5); `if` takes `else` (§12.4) |
 | `if (sum !== e.sum) fail_cnt++; else pass_cnt++;` | Counted as **fail** | `!==` compares `x` and `z` as values and returns `1'b1` (§11.4.5) |
 | `assert (sum == e.sum)` | **Fails** (calls `$error` by default) | Immediate `assert` treats `x`, `z` or `0` as a failure (§16.3) |
 | `if (out_valid) check_result(sum);` (no `$isunknown`) | **Skipped** silently when `out_valid` is `x` | `if (1'bx)` is false, so neither counter moves (§12.4) |
-| `int s = sum; if (s !== e.sum) ...` | `x` bits become `0` before the compare | 2-state target converts `x` and `z` to `0` (§6.11, Table 6-8) |
+| `int s = sum; if (s !== e.sum) ...` | `x` bits become `0` before the compare | 2-state target converts `x` and `z` to `0` (§6.11.2) |
 | `if (sum === e.sum)` when `e.sum` is also `x` | Counted as **pass** | `===` matches `x` against `x` (§11.4.5); guard `e.sum` with `$isunknown` |
-| `(sum ==? 9'b0_0000_1xxx) !== 1'b1` | `x`/`z` in the **right** operand act as wildcards; `x` in `sum` still fails | `==?` wildcards only the right operand (§11.4.6) |
+| `(sum ==? 9'b0_0000_1xxx) !== 1'b1` | `x`/`z` in the **right** operand are wildcards, so an `x` in `sum` at a wildcard bit (here `[2:0]`) is masked and passes; an `x` at a non-wildcard bit gives `x`, and `!== 1'b1` flags it as **fail** | `==?` wildcards only the right operand; a wildcard bit matches `0`, `1`, `z` or `x` (§11.4.6) |
+
+- **Where X hides.** `==` and `!=` return x only when the relation is ambiguous: the bits that are known agree, and at least one bit is x or z (§11.4.5). `9'b1_0000_101x != 9'd10` is 1, because bit 8 differs, while `9'b0_0000_101x != 9'd10` is x. A `!=` check therefore fails some X results loudly and passes others silently, which is the worst kind of check.
+- **Polarity.** An immediate assertion treats x as false and fails (§16.3), so `assert (sum == e.sum)` catches an X result, while `if (sum != e.sum) fail_cnt++;` passes it. Write every check so that an unknown lands on the failing side; `!==` and `===` do that whichever way round you test. Assertions arrive in [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index).
+- **X in the expectation.** `===` matches x against x. If the model is fed x (an undriven stimulus variable), an X result matches an X expectation and passes. Guard the model: `if ($isunknown(e.sum))` should be a bench error, never a comparison.
+- **Wildcards on purpose.** `==?` treats x and z in its right operand as don't-care bits (§11.4.6). Use it when the specification leaves bits undefined, for example `sum ==? 9'b0_0000_1xxx`. An x in the left operand, the DUT's value, is not a wildcard.
+- **2-state traps.** Assigning `sum` to an `int` or a `bit` turns x into 0 before any compare. Some simulators are 2-state throughout, so X checks cannot fire on them; run X-sensitive regressions on a 4-state simulator (tool-dependent).
+- **Interview angle:** "Why does `assert (a == b)` fail when `a` is x, while `if (a != b) err++;` lets it through?"
 
 ### Expert: The cost of directed tests versus constrained-random
 
@@ -1074,7 +1118,7 @@ endtask
 
 | Operand width `W` | Input pairs (`2^(2W)`) | Simulated time at 10 ns/pair | Log₁₀(pairs) scale | Fits a simulation run? |
 |---|---|---|---|---|
-| `W = 8` | `65,536` (`2^16`) | `655.36 µs` | `████░░░░░░░░░░░░░░░░` (`~10^4.8`) | Yes (raise `TIMEOUT` above `655.36 µs`) |
+| `W = 8` | `65,536` (`2^16`) | `655.36 µs` | `█████░░░░░░░░░░░░░░░` (`~10^4.8`) | Yes (raise `TIMEOUT` above `655.36 µs`) |
 | `W = 16` | `4,294,967,296` (`2^32`, `~4.3 × 10^9`) | `~42.95 s` | `██████████░░░░░░░░░░` (`~10^9.6`) | Borderline (billions of cycles; wall-clock time is tool-dependent) |
 | `W = 32` | `~1.84 × 10^19` (`2^64`) | `~1.84 × 10^11 s` (~5,850 simulated years) | `████████████████████` (`~10^19.3`) | Impossible to exhaust in simulation |
 
@@ -1092,11 +1136,6 @@ endtask
 
 ### Expert: Race-free sampling, a preview
 
-- **Why this bench's sampling works.** The checker reads `out_valid` and `sum` right after `@(posedge clk)`. That is deterministic only because the DUT writes them with `<=`: the update lands after every process woken by the edge has read them (§4.9.4, §10.4.2). F3C proves it by running every legal order.
-- **When it breaks.** The read becomes order-dependent if the RTL writes its flops with `=`, or if an output is combinational logic of inputs that the bench changes with `=` on the same edge. In gate-level simulation with timing, outputs change a propagation delay after the edge instead of in the same time slot, so the delays, not the scheduler, decide what a read at the edge returns; clocking-block input skews (§14.4) make that sampling point an explicit part of the bench.
-- **The queue is shared, too.** `send()` pushes and the checker pops on the same edge, in either order. That is safe here: the expectation a result needs was pushed two edges earlier, and `push_back` and `pop_front` work on opposite ends of the queue. Only a result nobody expected can meet an empty queue at that moment, and it fails in either order, just with a different message. `drain()` sidesteps the question by reading the queue on the falling edge.
-- **What clocking blocks change.** By default a clocking block samples its inputs with a `1step` skew, which returns the value each signal had before the current time slot began, its Preponed value (§14.3, §14.13); it drives its outputs in the Re-NBA region, after the design's NBA updates (§14.16). This bench's `@(posedge clk); a <= a_val;` becomes `@(cb); cb.a <= a_val;`, and the timing rule moves from code review into a declaration. [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) teaches them, together with program blocks (§24.3), another way to separate the bench from the design.
-
 | How the signal is driven | What a read right after `@(posedge clk)` sees | Deterministic? |
 |---|---|---|
 | DUT flop written with `<=` | Value from before the edge | Yes: NBA update lands after Active reads (§4.9.4, §10.4.2) |
@@ -1104,6 +1143,11 @@ endtask
 | Combinational output of an input the bench drives with `=` on the same edge | Old or new value | No: depends on when the drive and `always_comb` run |
 | Gate-level netlist with propagation delays | Value before the propagation delay elapses | Depends on the timing model, not the scheduler |
 | Clocking-block input (`cb.sig`, default `#1step` skew) | Preponed value from before the time slot began | Yes (§14.3, §14.13) |
+
+- **Why this bench's sampling works.** The checker reads `out_valid` and `sum` right after `@(posedge clk)`. That is deterministic only because the DUT writes them with `<=`: the update lands after every process woken by the edge has read them (§4.9.4, §10.4.2). F3C proves it by running every legal order.
+- **When it breaks.** The read becomes order-dependent if the RTL writes its flops with `=`, or if an output is combinational logic of inputs that the bench changes with `=` on the same edge. In gate-level simulation with timing, outputs change a propagation delay after the edge instead of in the same time slot, so the delays, not the scheduler, decide what a read at the edge returns; clocking-block input skews (§14.4) make that sampling point an explicit part of the bench.
+- **The queue is shared, too.** `send()` pushes and the checker pops on the same edge, in either order. That is safe here: the expectation a result needs was pushed two edges earlier, and `push_back` and `pop_front` work on opposite ends of the queue. Only a result nobody expected can meet an empty queue at that moment, and it fails in either order, just with a different message. `drain()` sidesteps the question by reading the queue on the falling edge.
+- **What clocking blocks change.** By default a clocking block samples its inputs with a `1step` skew, which returns the value each signal had before the current time slot began, its Preponed value (§14.3, §14.13); it drives its outputs in the Re-NBA region, after the design's NBA updates (§14.16). This bench's `@(posedge clk); a <= a_val;` becomes `@(cb); cb.a <= a_val;`, and the timing rule moves from code review into a declaration. [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) teaches them, together with program blocks (§24.3), another way to separate the bench from the design.
 
 Step through one rising-edge time slot below to compare this bench's plain `<=` drive with a clocking block's `#1step` sampling and Re-NBA drive:
 
@@ -1113,19 +1157,19 @@ Step through one rising-edge time slot below to compare this bench's plain `<=` 
 
 ### Expert: What an in-order queue cannot see
 
+| Blind spot | Mutant or scenario that slips through | Why `exp_q` alone misses it | What to add |
+|---|---|---|---|
+| Fixed latency | One extra pipeline stage in `adder_reg` | `exp_q` matches values and order whenever `out_valid` is 1 | Store `time sent` in `exp_t` and check `$time - e.sent == 20ns` |
+| Late or extra result at the end | A duplicate result arriving after the last pop | `report()` would run as soon as `exp_q.size() == 0` | `drain()` waits for an empty queue plus two quiet edges |
+| Out-of-order completion | Multi-ID DUT that answers ID 1 before ID 0 | FIFO `pop_front` compares against the oldest expectation | A queue per key: `exp_t exp_q[int][$]` ([F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index), [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)) |
+| Mid-test reset | Reset asserted while expectations are in `exp_q` | Discarded in-flight transactions stay in `exp_q` as false leftovers | Flush `exp_q.delete()` on reset ([A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index)) |
+| Equivalent mutant | `a + b` changed to `b + a` | Addition commutes: outputs are identical for every input | Excluded from the mutation-score denominator |
+
 - **Latency.** The queue matches values and order, not timing. A mutant with one extra pipeline stage passes every test on this page. If the specification fixes the latency, add a `time sent;` field to `exp_t`, store `$time` in `send()`, and fail in `check_result()` when `$time - e.sent` differs from 20 ns, the two edges from drive to check.
 - **The end of the run.** A result that arrives after the summary is never checked. That is why `drain()` waits for an empty queue and then watches two more edges, so a late or duplicated result still fails.
 - **Reordering.** A DUT that may answer out of order (several IDs or channels) needs keyed matching: a queue per key in an associative array ([F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index)), then the scoreboards of [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).
 - **Reset in the middle of traffic.** Expectations for transactions that a reset discards must be flushed, or they are reported as missing; [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) handles this in a UVM bench.
 - **Equivalent mutants.** Swapping `a` and `b` in the RTL changes the code but never the behaviour, because addition commutes, so no test can kill that mutant. A **mutation score** (killed mutants divided by non-equivalent mutants) measures how much a bench really checks; commercial mutation-analysis tools automate it (tool-dependent).
-
-| Blind spot | Mutant or scenario that slips through | Why `exp_q` alone misses it | What to add |
-|---|---|---|---|
-| Fixed latency | One extra pipeline stage in `adder_reg` | `exp_q` matches values and order whenever `out_valid` is 1 | Store `time sent` in `exp_t` and check `$time - e.sent == 20ns` |
-| Late or extra result at the end | A duplicate result arriving after the last pop | `report()` would run as soon as `exp_q.size() == 0` | `drain()` waits for an empty queue plus two quiet edges |
-| Out-of-order completion | Multi-ID DUT that answers ID 1 before ID 0 | FIFO `pop_front` compares against the oldest expectation | Keyed queues `exp_q[id][$]` ([F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index), [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)) |
-| Mid-test reset | Reset asserted while expectations are in `exp_q` | Discarded in-flight transactions stay in `exp_q` as false leftovers | Flush `exp_q.delete()` on reset ([A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index)) |
-| Equivalent mutant | `a + b` changed to `b + a` | Addition commutes: outputs are identical for every input | Excluded from the mutation-score denominator |
 
 - **Interview angle:** "Your scoreboard passes, but the designers say latency went from one cycle to two. Why did your bench not catch it, and what would you add?"
 
@@ -1383,7 +1427,7 @@ The result 7 is checked at 45 ns. The mutant samples the invalid pair 50 and 60 
 
 <TimingDiagram
   title="+TEST=hold: correct DUT (BUG=0) versus mutant 3 (BUG=3), edges 2 to 7"
-  caption={"Column c is edge c + 2 (25 + 10c ns). After send(3, 4) produces sum = 7 at 45 ns (column 2), send_invalid(50, 60) and send_invalid(70, 80) drive new operands with in_valid = 0. The correct DUT (BUG=0) holds sum = 7; mutant 3 (BUG=3) updates sum to 110 at 55 ns and 150 at 65 and 75 ns."}
+  caption={"Column c is edge c + 2 (25 + 10c ns). After send(3, 4) produces sum = 7 at column 2 (edge 4, 45 ns), send_invalid(50, 60) and send_invalid(70, 80) drive new operands with in_valid = 0. The correct DUT (sum BUG=0) holds sum = 7; mutant 3 (sum BUG=3) updates sum to 110 at column 3 (edge 5, 55 ns) and 150 at columns 4 and 5 (edges 6 and 7, 65 and 75 ns)."}
   edges={6}
   cycleWidth={52}
   signals={[
@@ -1392,14 +1436,14 @@ The result 7 is checked at 45 ns. The mutant samples the invalid pair 50 and 60 
     { name: "a", kind: "bus", values: ["0", "3", "50", "70", "70", "70"] },
     { name: "b", kind: "bus", values: ["0", "4", "60", "80", "80", "80"] },
     { name: "out_valid", kind: "bit", values: [0, 0, 1, 0, 0, 0] },
-    { name: "sum (BUG=0)", kind: "bus", values: ["0", "0", "7", "7", "7", "7"] },
-    { name: "sum (BUG=3)", kind: "bus", values: ["0", "0", "7", "110", "150", "150"] }
+    { name: "sum BUG=0", kind: "bus", values: ["0", "0", "7", "7", "7", "7"] },
+    { name: "sum BUG=3", kind: "bus", values: ["0", "0", "7", "110", "150", "150"] }
   ]}
   markers={[
-    { edge: 2, tone: "pass", label: "Edge 4 (45 ns): out_valid = 1, sum = 7 passes; last_sum becomes 7" },
-    { edge: 3, tone: "fail", label: "Edge 5 (55 ns): out_valid = 0, BUG=3 sum = 110 !== last_sum (7)" },
-    { edge: 4, tone: "fail", label: "Edge 6 (65 ns): out_valid = 0, BUG=3 sum = 150 !== last_sum (7)" },
-    { edge: 5, tone: "fail", label: "Edge 7 (75 ns): out_valid = 0, BUG=3 sum = 150 !== last_sum (7)" }
+    { edge: 2, tone: "pass", short: "CHK 7", label: "Column 2 (edge 4, 45 ns): out_valid = 1, sum = 7 passes; last_sum becomes 7" },
+    { edge: 3, tone: "fail", short: "110!=7", label: "Column 3 (edge 5, 55 ns): out_valid = 0, BUG=3 sum = 110 !== last_sum (7)" },
+    { edge: 4, tone: "fail", short: "150!=7", label: "Column 4 (edge 6, 65 ns): out_valid = 0, BUG=3 sum = 150 !== last_sum (7)" },
+    { edge: 5, tone: "fail", short: "150!=7", label: "Column 5 (edge 7, 75 ns): out_valid = 0, BUG=3 sum = 150 !== last_sum (7)" }
   ]}
 />
 
@@ -1437,7 +1481,7 @@ The flashcards below drill the anatomy, the `!==` rule, the drive rule and the e
 **Primary sources** (IEEE 1800-2023):
 - §3.14.2.1–§3.14.2.3: the `` `timescale `` directive, `timeunit` and `timeprecision`, and their precedence (mixing units is an error).
 - §4.7 nondeterminism, §4.8 race conditions, §4.9.4 nonblocking assignment scheduling; §10.4.2 nonblocking procedural assignments.
-- §6.8 variable declarations: initializers run before any procedure starts; Table 6-7 default initial values.
+- §6.8 variable declarations: initializers run before any procedure starts; Table 6-7 default initial values; §6.11.2 4-state to 2-state conversion of `x` and `z` to `0`.
 - §7.10.2 queue methods: §7.10.2.4 `pop_front()` on an empty queue, §7.10.2.7 `push_back()`.
 - §9.2.2.2 and §9.2.2.4: `always_comb` and `always_ff` writer restrictions.
 - §9.3.2 fork–join variants; §9.6.1 automatic termination of a simulation with no activity; §9.6.3 `disable fork`.
