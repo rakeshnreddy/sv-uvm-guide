@@ -29,14 +29,6 @@ sources:
 
 ### Processes need a way to coordinate
 
-SystemVerilog gives you three distinct tools to coordinate concurrent processes, each matching a simple mental picture:
-
-| Dimension | Named event (`event`) | Semaphore (`semaphore`) | Bounded mailbox (`mailbox #(T)`) |
-|---|---|---|---|
-| **Core job** | **Announce** that a milestone occurred | **Take turns** on a shared resource | **Pass data** from producer to consumer |
-| **Kitchen analogy** | Bell at the pass: rings once for everyone | Key to the walk-in fridge: take turns | Ticket rail: FIFO orders with capacity |
-| **SystemVerilog syntax** | `-> ev;` and `@(ev)` / `wait (ev.triggered)` | `bus.get(1);` and `bus.put(1);` | `mbx.put(item);` and `mbx.get(item);` |
-
 A **process** is code that the simulator runs concurrently with other code: each `initial` and `always` procedure, and each statement that a `fork` starts (IEEE 1800-2023 §9.2, §9.3.2). You met them in [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index); many engineers say **thread** for the same thing. A process **blocks** when it suspends itself to wait for time to pass or for something to happen, and it resumes when that wait is over.
 
 When several processes are ready in the same **time slot** (everything the simulator does at one simulation time), the standard does not say which runs first. There is no implied order between `initial` and `always` procedures (§9.2), and ready processes may run in any order (§4.7). So processes cannot coordinate by guessing the order. Polling a shared variable works, but badly:
@@ -50,24 +42,57 @@ while (!reset_done_flag) #1;
 @(reset_done);
 ```
 
-<TimingDiagram
-  title="Polling loop versus event wake-up"
-  caption="Columns represent 0.5 ns increments from 18.0 ns to 21.5 ns (bottom numbers are column indices). The row 'flag' represents reset_done_flag. The polling loop wakes every 1 ns (drawn as pulses in 'poll wake') to evaluate !reset_done_flag, consuming simulator cycles and detecting the flag at 21.0 ns (edge 6, 'poll sees flag'), a full 1 ns after it was set at 20.0 ns. By contrast, -> reset_done executes at 20.0 ns (edge 4, '-> reset_done') as a zero-width instant, waking the @(reset_done) waiter directly in that exact time slot without polling overhead or latency."
-  edges={8}
-  cycleWidth={36}
-  signals={[
-    { name: "time (ns)", kind: "bus", values: ["18.0", "18.5", "19.0", "19.5", "20.0", "20.5", "21.0", "21.5"] },
-    { name: "flag", kind: "bit", values: [0, 0, 0, 0, 1, 1, 1, 1] },
-    { name: "poll wake", kind: "bit", values: [1, 0, 1, 0, 1, 0, 1, 0] },
-    { name: "event wake", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0, 0] }
-  ]}
-  markers={[
-    { edge: 4, tone: "pass", label: "20.0 ns: -> reset_done instant wakes waiter directly; reset_done_flag set", short: "-> reset_done" },
-    { edge: 6, tone: "info", label: "21.0 ns: polling loop evaluates !reset_done_flag, sees flag high and exits", short: "poll sees flag" }
-  ]}
-/>
+<figure className="not-prose my-6">
+<svg viewBox="0 0 340 170" role="img" aria-labelledby="f2d-poll-title f2d-poll-desc" style={{ width: "100%", maxWidth: 520, height: "auto" }}>
+  <title id="f2d-poll-title">Polling loop versus event wake-up, 18 to 21 ns</title>
+  <desc id="f2d-poll-desc">Two lanes on a simulation-time axis. The flag is set and the event is triggered at t = 20.5 ns. The polling loop wakes at 18, 19 and 20 ns and finds the flag 0, then wakes at 21 ns, finds it 1 and exits, 0.5 ns late. The process in @(reset_done) has no wake-ups until it resumes at t = 20.5 ns.</desc>
+  <text x="4" y="12" fontSize="11" fontWeight="600" fill="currentColor">Polling versus event wake-up</text>
+  <line x1="274" y1="36" x2="274" y2="152" stroke="rgb(245,158,11)" strokeWidth="1.5" strokeDasharray="4 3" />
+  <text x="334" y="30" fontSize="10" fontWeight="600" textAnchor="end" fill="currentColor">t = 20.5 ns: flag set, -&gt; reset_done</text>
+  <text x="4" y="64" fontSize="10.5" fontWeight="600" fill="currentColor">poll</text>
+  <text x="4" y="76" fontSize="9.5" fill="currentColor">#1 loop</text>
+  <line x1="64" y1="66" x2="326" y2="66" stroke="currentColor" strokeOpacity="0.3" />
+  <line x1="64" y1="54" x2="64" y2="78" stroke="currentColor" strokeOpacity="0.7" strokeWidth="1.5" />
+  <line x1="148" y1="54" x2="148" y2="78" stroke="currentColor" strokeOpacity="0.7" strokeWidth="1.5" />
+  <line x1="232" y1="54" x2="232" y2="78" stroke="currentColor" strokeOpacity="0.7" strokeWidth="1.5" />
+  <line x1="316" y1="54" x2="316" y2="78" stroke="currentColor" strokeWidth="2.5" />
+  <text x="64" y="90" fontSize="9.5" textAnchor="middle" fill="currentColor">flag 0</text>
+  <text x="148" y="90" fontSize="9.5" textAnchor="middle" fill="currentColor">flag 0</text>
+  <text x="232" y="90" fontSize="9.5" textAnchor="middle" fill="currentColor">flag 0</text>
+  <text x="316" y="90" fontSize="9.5" fontWeight="600" textAnchor="middle" fill="currentColor">flag 1 ✓</text>
+  <line x1="276" y1="49" x2="314" y2="49" stroke="currentColor" strokeOpacity="0.7" />
+  <text x="295" y="45" fontSize="9.5" textAnchor="middle" fill="currentColor">+0.5 ns</text>
+  <text x="4" y="114" fontSize="10.5" fontWeight="600" fill="currentColor">event</text>
+  <text x="4" y="126" fontSize="9.5" fill="currentColor">sleeps</text>
+  <line x1="64" y1="116" x2="326" y2="116" stroke="currentColor" strokeOpacity="0.3" strokeDasharray="2 4" />
+  <text x="160" y="110" fontSize="9.5" textAnchor="middle" fill="currentColor">asleep: no wake-ups</text>
+  <line x1="274" y1="104" x2="274" y2="128" stroke="rgb(16,185,129)" strokeWidth="2.5" />
+  <text x="268" y="140" fontSize="9.5" fontWeight="600" textAnchor="end" fill="currentColor">wakes in this slot ✓</text>
+  <line x1="64" y1="152" x2="326" y2="152" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="64" y1="149" x2="64" y2="155" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="148" y1="149" x2="148" y2="155" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="232" y1="149" x2="232" y2="155" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="316" y1="149" x2="316" y2="155" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="4" y="156" fontSize="9.5" fill="currentColor">time</text>
+  <text x="64" y="166" fontSize="9.5" textAnchor="middle" fill="currentColor">18 ns</text>
+  <text x="148" y="166" fontSize="9.5" textAnchor="middle" fill="currentColor">19 ns</text>
+  <text x="232" y="166" fontSize="9.5" textAnchor="middle" fill="currentColor">20 ns</text>
+  <text x="316" y="166" fontSize="9.5" textAnchor="middle" fill="currentColor">21 ns</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Each tick is a zero-width instant on a simulation-time axis. The poll wakes every 1 ns, finds the flag 0 three times and sees the 20.5 ns set only at 21 ns (it can be up to 1 ns late), while <code>@(reset_done)</code> stays asleep and resumes in the 20.5 ns slot itself.</figcaption>
+</figure>
 
-The IPC tools give you **blocking with wake-up**. A call suspends the calling process until another process makes the call possible, and that other process's action resumes it. Nobody polls. The diagram shows where the three tools sit in the plain-SystemVerilog bench you will build in Make It Work.
+The IPC tools give you **blocking with wake-up**. A call suspends the calling process until another process makes the call possible, and that other process's action resumes it. Nobody polls.
+
+SystemVerilog gives you three distinct tools to coordinate concurrent processes, each matching a simple mental picture:
+
+| Dimension | Named event (`event`) | Semaphore (`semaphore`) | Bounded mailbox (`mailbox #(T)`) |
+|---|---|---|---|
+| **Core job** | **Announce** that a milestone occurred | **Take turns** on a shared resource | **Pass data** from producer to consumer |
+| **Kitchen analogy** | Bell at the pass: rings once for everyone | Key to the walk-in fridge: take turns | Ticket rail: FIFO orders with capacity |
+| **SystemVerilog syntax** | `-> ev;` and `@(ev)` / `wait (ev.triggered)` | `bus.get(1);` and `bus.put(1);` | `mbx.put(item);` and `mbx.get(item);` |
+
+The diagram shows where the three tools sit in the plain-SystemVerilog bench you will build in Make It Work.
 
 <ArchitectureDiagram
   title="Where events, semaphores and mailboxes sit in a plain-SystemVerilog testbench"
@@ -181,7 +206,7 @@ The mistakes everyone makes with events:
 wait (done.triggered);        // wakes at 10 ns ✓
 // Producer (at 10 ns):
 -> done;`}
-  mistake="The missed trigger: calling @(ev) after -> ev already executed in that time slot or at an earlier time. The process waits for the next trigger, which may never occur, and the simulation hangs quietly."
+  mistake="The missed trigger: calling @(ev) after -> ev already executed in that time slot or at an earlier time. The process waits for the next trigger, which may never occur, and the run ends or hangs quietly."
   inTestbench="Marking one-shot milestones between processes: reset released, configuration loaded, driver finished, or watchdog shutdown. In UVM, replaced by uvm_event or sequence-driver responses."
 >
   <svg viewBox="0 0 340 130" role="img" aria-label="Mini timeline at t = 10 ns. An early waiter blocked before the trigger wakes. A same-slot process using wait(done.triggered) passes because the triggered state persists through the time step. A later waiter arriving at 20 ns misses the trigger completely." style={{ width: "100%", maxWidth: 360 }}>
@@ -339,19 +364,19 @@ The mistakes everyone makes with mailboxes:
 <ArchitectureDiagram
   title="Shared object handle versus separate new() instances"
   caption="Top: declaring and constructing the mailbox at module scope creates one object; gen and drv share the same handle, so put() items reach get(). Bottom: two new() calls construct two separate objects. drv reads an empty mailbox and blocks forever."
-  cellWidth={140}
-  gapX={96}
-  gapY={36}
+  cellWidth={110}
+  gapX={64}
+  gapY={56}
   nodes={[
-    { id: "c1", label: "Shared handle: module-scope new(1)", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 1, container: true },
+    { id: "c1", label: "Shared handle: module-scope new(1)", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
     { id: "gen_ok", label: "gen", sublabel: "mbx handle", kind: "generic", col: 0, row: 0 },
-    { id: "mbx_ok", label: "mailbox #(int)", sublabel: "new(1): 1 object", kind: "fifo", col: 1, row: 0 },
-    { id: "drv_ok", label: "drv", sublabel: "mbx handle", kind: "driver", col: 2, row: 0 },
-    { id: "c2", label: "Separate new() calls: consumer blocks forever", kind: "generic", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
-    { id: "gen_bad", label: "gen", sublabel: "mbx_a handle", kind: "generic", col: 0, row: 1 },
-    { id: "mbx_a", label: "mailbox A", sublabel: "new(1): gen stalls when full", kind: "fifo", col: 1, row: 1 },
-    { id: "drv_bad", label: "drv", sublabel: "mbx_b handle", kind: "driver", col: 0, row: 2 },
-    { id: "mbx_b", label: "mailbox B", sublabel: "new(1): empty: hangs", kind: "fifo", col: 1, row: 2 }
+    { id: "mbx_ok", label: "mailbox #(int)", sublabel: "new(1): 1 object", kind: "fifo", col: 1, row: 0, rowSpan: 2 },
+    { id: "drv_ok", label: "drv", sublabel: "mbx handle", kind: "driver", col: 0, row: 1 },
+    { id: "c2", label: "Separate new() calls: consumer blocks forever", kind: "generic", col: 0, row: 2, colSpan: 2, rowSpan: 2, container: true },
+    { id: "gen_bad", label: "gen", sublabel: "mbx_a handle", kind: "generic", col: 0, row: 2 },
+    { id: "mbx_a", label: "mailbox A", sublabel: "gen stalls when full", kind: "fifo", col: 1, row: 2 },
+    { id: "drv_bad", label: "drv", sublabel: "mbx_b handle", kind: "driver", col: 0, row: 3 },
+    { id: "mbx_b", label: "mailbox B", sublabel: "empty: drv blocks", kind: "fifo", col: 1, row: 3 }
   ]}
   edges={[
     { from: "gen_ok", to: "mbx_ok", style: "data", label: "put(i)" },
@@ -442,35 +467,27 @@ IPC failures rarely print an error. Nothing in the standard reports a blocked pr
 
 <ArchitectureDiagram
   title="Triage funnel: diagnosing silent IPC failures from symptoms"
-  caption="When a testbench hangs or ends prematurely, first observe the symptom: if simulation time is frozen while the simulator stays busy, suspect a zero-delay loop spinning on a persistent triggered event. If the run ended early or time advances with no progress, identify which call is blocked using tool debug features or log prints (tool-dependent). Dotted lines are triage decisions. A process blocked at sem.get() indicates a leaked key, deadlock, or new() with 0 keys."
-  cellWidth={170}
-  gapX={128}
+  caption="When a testbench hangs or ends prematurely, first observe the symptom: if simulation time is frozen while the simulator stays busy, suspect a zero-delay loop spinning on a persistent triggered event. If the run ended early or time advances with no progress, identify which call is blocked using tool debug features or log prints (tool-dependent). Dotted lines are triage decisions. A process blocked at sem.get() indicates a leaked key, deadlock, or new() with 0 keys; one blocked at mbx.put() is the opposite of a starved consumer: the mailbox is full and its consumer stopped draining (§15.4.3)."
+  cellWidth={124}
+  gapX={60}
   gapY={48}
   legend={false}
   nodes={[
-    { id: "q1", label: "Time frozen, sim busy?", sublabel: "Check $time in log", kind: "generic", col: 0, row: 0 },
-    { id: "spin", label: "Spinning on triggered", sublabel: "Zero-delay loop (§15.5.3)", kind: "generic", col: 1, row: 0 },
-    { id: "q2", label: "Which call is blocked?", sublabel: "Tool debug or log prints", kind: "generic", col: 0, row: 1 },
-    { id: "miss", label: "Missed trigger", sublabel: "Blocked at @(ev) (§15.5.2)", kind: "generic", col: 1, row: 1 },
-    { id: "sem", label: "Leaked key / Deadlock", sublabel: "Blocked at get() (§15.3.3)", kind: "generic", col: 1, row: 2 },
-    { id: "starv", label: "Starved consumer", sublabel: "Blocked at mbx.get() (§15.4.5)", kind: "generic", col: 1, row: 3 }
+    { id: "q1", label: "Time frozen?", sublabel: "$time stuck, sim busy", kind: "generic", col: 0, row: 0 },
+    { id: "spin", label: "Spin on triggered", sublabel: "Zero-delay loop, §15.5.3", kind: "generic", col: 1, row: 0 },
+    { id: "q2", label: "Which call waits?", sublabel: "Tool debug or log prints", kind: "generic", col: 0, row: 1 },
+    { id: "miss", label: "Missed trigger", sublabel: "Waiter came late, §15.5.2", kind: "generic", col: 1, row: 1 },
+    { id: "sem", label: "Leak or deadlock", sublabel: "No free key, §15.3.3", kind: "generic", col: 1, row: 2 },
+    { id: "starv", label: "Starved consumer", sublabel: "No message, §15.4.5", kind: "generic", col: 0, row: 2 }
   ]}
   edges={[
     { from: "q1", to: "spin", style: "control", label: "yes" },
     { from: "q1", to: "q2", style: "control", label: "no" },
     { from: "q2", to: "miss", style: "control", label: "@(ev)" },
     { from: "q2", to: "sem", style: "control", label: "sem.get()" },
-    { from: "q2", to: "starv", style: "control", label: "mbx.get() / put()" }
+    { from: "q2", to: "starv", style: "control", label: "mbx.get()" }
   ]}
 />
-
-| Failure shape | What the log shows | Fix |
-|---|---|---|
-| **1. Missed trigger** | Line after `@(ev)` never prints; quiet end (no clock) or hang (with clock) | Wait before trigger, or `wait (ev.triggered)` in same slot |
-| **2. Spinning on `triggered`** | Time frozen at one timestamp; simulator busy; log may flood; never ends | Use `@(ev)` inside loops, never `wait (ev.triggered)` |
-| **3. Leaked key** | Initial transfers complete, then all callers stop in `get()`; quiet end (no clock) or hang (with clock) | Single exit path that guarantees `put()` runs |
-| **4. Circular wait (deadlock)** | Two processes halt permanently inside `get()`; quiet end (no clock) or watchdog timeout | Global acquisition order (e.g., `s1` then `s2`) |
-| **5. Starved consumer** | Consumer halts inside `mbx.get()` after last message; quiet end or watchdog timeout | Single shared count parameter; instantiate mailbox once |
 
 **1. The missed trigger.**
 - *Log:* the line after an `@(ev)` never prints. A bench with a free-running clock hangs; one without a clock ends early.
@@ -538,6 +555,16 @@ end
 - *Log:* a consumer stops inside `get()` after the last message.
 - *Cause:* it expects more messages than any producer sends, or it reads a different mailbox than the producer writes.
 - *Fix:* share one count (or an end marker) between producer and consumer, and create each mailbox once.
+
+The five shapes at a glance:
+
+| Failure shape | What the log shows | Fix |
+|---|---|---|
+| **1. Missed trigger** | Line after `@(ev)` never prints; quiet end (no clock) or hang (with clock) | Wait before trigger, or `wait (ev.triggered)` in same slot |
+| **2. Spinning on `triggered`** | Time frozen at one timestamp; simulator busy; log may flood; never ends | Use `@(ev)` inside loops, never `wait (ev.triggered)` |
+| **3. Leaked key** | Initial transfers complete, then all callers stop in `get()`; quiet end (no clock) or hang (with clock) | Single exit path that guarantees `put()` runs |
+| **4. Circular wait (deadlock)** | Two processes halt permanently inside `get()`; quiet end (no clock) or watchdog timeout | Global acquisition order (e.g., `s1` then `s2`) |
+| **5. Starved consumer** | Consumer halts inside `mbx.get()` after last message; quiet end or watchdog timeout | Single shared count parameter; instantiate mailbox once |
 
 ### Choosing the right tool
 
@@ -632,20 +659,17 @@ endmodule
 ```
 
 <SequenceDiagram
-  title="Execution trace of tb_top: mailbox backpressure, semaphore queueing and event wake-up"
-  caption="Trace of the Make It Work testbench across simulation time (showing one legal order within each time slot; the diagram scrolls horizontally on narrow screens). At 0 ns, chk waits on drv_done, gen fills the mailbox, and put(3) blocks until drv frees a slot at 10 ns (backpressure). At 25 ns, irq blocks in bus.get(1) until drv completes transfer 3 at 30 ns. At 30 ns, -> drv_done wakes chk to verify total items."
-  columnWidth={100}
+  title="tb_top trace, 0 to 10 ns: mailbox backpressure"
+  caption="One legal order within each time slot. gen fills the mailbox at 0 ns, and put(3) blocks until drv frees the slot at 10 ns: that wait is backpressure."
+  columnWidth={136}
   participants={[
-    { id: "gen", label: "gen", kind: "generic" },
-    { id: "mbx", label: "gen2drv", sublabel: "mailbox(1)", kind: "fifo" },
-    { id: "drv", label: "drv", kind: "driver" },
-    { id: "bus", label: "bus", sublabel: "sem(1)", kind: "generic" },
-    { id: "irq", label: "irq", kind: "generic" },
-    { id: "chk", label: "chk", kind: "scoreboard" }
+    { id: "gen", label: "gen", sublabel: "generator process", kind: "generic" },
+    { id: "mbx", label: "gen2drv", sublabel: "mailbox #(int), new(1)", kind: "fifo" },
+    { id: "drv", label: "drv", sublabel: "driver process", kind: "driver" },
+    { id: "bus", label: "bus", sublabel: "semaphore, new(1)", kind: "generic" }
   ]}
   messages={[
     { kind: "divider", label: "t = 0 ns" },
-    { kind: "self", from: "chk", label: "@(drv_done), waiting" },
     { from: "gen", to: "mbx", label: "put(1)" },
     { from: "drv", to: "mbx", label: "get(item)" },
     { kind: "return", from: "mbx", to: "drv", label: "item = 1" },
@@ -659,23 +683,42 @@ endmodule
     { from: "drv", to: "bus", label: "put(1)" },
     { from: "drv", to: "mbx", label: "get(item)" },
     { kind: "return", from: "mbx", to: "drv", label: "item = 2" },
-    { kind: "note", from: "mbx", to: "gen", label: "put(3) completes: backpressure freed" },
-    { from: "drv", to: "bus", label: "get(1): key granted, write 2 start" },
+    { kind: "note", from: "gen", to: "mbx", label: "put(3) completes: backpressure freed" },
+    { from: "drv", to: "bus", label: "get(1)" },
+    { kind: "return", from: "bus", to: "drv", label: "key granted" },
+    { kind: "self", from: "drv", label: "write 2 start" }
+  ]}
+/>
+
+<SequenceDiagram
+  title="tb_top trace, 20 to 40 ns: semaphore queueing and event wake-up"
+  caption="One legal order within each time slot, picking up after the trace above. irq blocks in bus.get(1) at 25 ns until drv returns the key at 30 ns, and -> drv_done then wakes chk, which has waited since 0 ns, to verify the total."
+  columnWidth={136}
+  participants={[
+    { id: "drv", label: "drv", sublabel: "driver process", kind: "driver" },
+    { id: "bus", label: "bus", sublabel: "semaphore, new(1)", kind: "generic" },
+    { id: "irq", label: "irq", sublabel: "interrupt process", kind: "generic" },
+    { id: "chk", label: "chk", sublabel: "checker process", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "t = 0 ns" },
+    { kind: "note", from: "chk", label: "chk waits in @(drv_done)" },
     { kind: "divider", label: "t = 20 ns" },
     { kind: "self", from: "drv", label: "write 2 end" },
     { from: "drv", to: "bus", label: "put(1)" },
-    { from: "drv", to: "mbx", label: "get(item)" },
-    { kind: "return", from: "mbx", to: "drv", label: "item = 3" },
-    { from: "drv", to: "bus", label: "get(1): key granted, write 3 start" },
+    { kind: "self", from: "drv", label: "gen2drv.get(item): 3" },
+    { from: "drv", to: "bus", label: "get(1)" },
+    { kind: "return", from: "bus", to: "drv", label: "key granted" },
+    { kind: "self", from: "drv", label: "write 3 start" },
     { kind: "divider", label: "t = 25 ns" },
     { from: "irq", to: "bus", label: "get(1): blocks", tone: "active" },
     { kind: "divider", label: "t = 30 ns" },
     { kind: "self", from: "drv", label: "write 3 end" },
     { from: "drv", to: "bus", label: "put(1)" },
-    { kind: "return", from: "bus", to: "irq", label: "key granted to irq" },
+    { kind: "return", from: "bus", to: "irq", label: "key granted" },
     { kind: "self", from: "irq", label: "write 99 start" },
     { kind: "async", from: "drv", to: "chk", label: "-> drv_done" },
-    { kind: "self", from: "chk", label: "chk: PASS, n_sent == 3" },
+    { kind: "note", from: "chk", label: "n_sent == 3, so chk prints PASS" },
     { kind: "divider", label: "t = 40 ns" },
     { kind: "self", from: "irq", label: "write 99 end; put(1)" }
   ]}
@@ -769,25 +812,26 @@ Three more things are not spelled out. The standard gives no order for several p
 | Question / Behavior | Promised by IEEE 1800-2023 | Not spelled out (open in standard) | Educational model convention | Practical testbench rule |
 |---|---|---|---|---|
 | **Different-time arrivals** | Arrival order strictly preserved in FIFO queue (§15.3.3, §15.4.5) | — | Oldest waiter is always resumed first | Reliable across all compliant simulators |
-| **Same-time arrivals** | None: simulator may order ready processes arbitrarily (§4.7, §15.3.3) | Order of processes calling `get()` or `put()` at the same timestamp | Stable deterministic tie-breaker | **Never** rely on who arrives first in a shared time slot |
+| **Same-time arrivals** | None: simulator may order ready processes arbitrarily (§4.7, §15.3.3) | Order of processes calling `get()` or `put()` at the same timestamp | Declaration order unless you pick another | **Never** rely on who arrives first in a shared time slot |
 | **Processes waiting in `put()`** | Callers suspend until space is available (§15.4.3) | Whether waiters for a full mailbox wake in FIFO or arbitrary order | FIFO queue for `put()` waiters | Do not rely on the order among blocked producers; use one producer per mailbox or tag messages |
-| **Immediate re-acquire vs waiter** | None | Whether a running thread can immediately re-acquire before a woken waiter runs | Woken waiter executes its grant | Do not let correctness depend on who gets the key next |
-| **Multi-key requests (`get(k)`)** | Waited until `k` keys are free (§15.3.3) | Head-of-line blocking: whether a large request blocks smaller requests behind it | Waiters are examined in FIFO order and every one whose request fits is served; a larger request does not hold back a smaller one behind it | Use `new(1)` semaphores for mutex to avoid multi-key ambiguity |
+| **Immediate re-acquire vs waiter** | None | Whether a running thread can immediately re-acquire before a woken waiter runs | A woken get/put completes at once, so no later caller can overtake it | Do not let correctness depend on who gets the key next |
+| **Multi-key requests (`get(k)`)** | Waits until `k` keys are free (§15.3.3) | Head-of-line blocking: whether a large request blocks smaller requests behind it | Waiters are examined in FIFO order and every one whose request fits is served; a larger request does not hold back a smaller one behind it | Use `new(1)` semaphores for mutex to avoid multi-key ambiguity |
 
 **Design rule:** never let correctness depend on who wins a same-time race for a key or a message. If the order matters, make it explicit, for example by letting one process own the resource and serve requests that arrive through a mailbox.
 
 <ArchitectureDiagram
   title="Making arbitration explicit: a request mailbox and one owner process"
   caption="Only bus_owner touches the bus, so transfers never overlap and the policy lives in one place. Same-slot put() calls still arrive in a simulator-chosen order (§4.7); if order matters, carry a priority or sequence number in req_t and let bus_owner decide."
-  cellWidth={115}
-  gapX={56}
+  cellWidth={120}
+  gapX={64}
   gapY={44}
+  spreadAnchors
   nodes={[
     { id: "drv", label: "drv", sublabel: "producer 1", kind: "driver", col: 0, row: 0 },
     { id: "req_mbx", label: "req_mbx", sublabel: "mailbox #(req_t)", kind: "fifo", col: 1, row: 0 },
-    { id: "arb", label: "bus_owner", sublabel: "arbiter", kind: "generic", col: 2, row: 0 },
     { id: "irq", label: "irq", sublabel: "producer 2", kind: "generic", col: 0, row: 1 },
-    { id: "bus", label: "physical bus", sublabel: "exclusive access", kind: "interface", col: 2, row: 1 }
+    { id: "arb", label: "bus_owner", sublabel: "arbiter", kind: "generic", col: 1, row: 1 },
+    { id: "bus", label: "physical bus", sublabel: "exclusive access", kind: "interface", col: 1, row: 2 }
   ]}
   edges={[
     { from: "drv", to: "req_mbx", style: "data", label: "req" },
@@ -841,20 +885,21 @@ A message can be any singular expression, "including object handles" (§15.4.3).
 <ArchitectureDiagram
   title="Mailbox handle aliasing: producer and consumer share one object"
   caption="Putting a class variable into a mailbox transfers a handle, not a copy (§15.4.3). Both the producer and the consumer hold handles to the same object. If the producer mutates tx after put(), the consumer's earlier item is corrupted under it. The fix is to construct a new object for each put()."
-  cellWidth={140}
-  gapX={80}
+  cellWidth={122}
+  gapX={64}
   gapY={60}
+  spreadAnchors
   nodes={[
     { id: "gen", label: "producer", sublabel: "re-uses tx handle", kind: "generic", col: 0, row: 0 },
     { id: "mbx", label: "mailbox #(Packet)", sublabel: "stores object handle", kind: "fifo", col: 1, row: 0 },
-    { id: "drv", label: "consumer", sublabel: "holds same handle", kind: "generic", col: 2, row: 0 },
-    { id: "obj", label: "Packet object", sublabel: "single object instance", kind: "generic", col: 1, row: 1 }
+    { id: "obj", label: "Packet object", sublabel: "single object instance", kind: "generic", col: 0, row: 1 },
+    { id: "drv", label: "consumer", sublabel: "holds same handle", kind: "generic", col: 1, row: 1 }
   ]}
   edges={[
     { from: "gen", to: "mbx", style: "data", label: "put(tx)" },
     { from: "mbx", to: "drv", style: "data", label: "get(rx)" },
-    { from: "mbx", to: "obj", style: "control", label: "ref" },
-    { from: "gen", to: "obj", style: "control", label: "mutates" },
+    { from: "mbx", to: "obj", style: "structural", label: "handle" },
+    { from: "gen", to: "obj", style: "data", label: "mutates" },
     { from: "obj", to: "drv", style: "data", label: "fields" }
   ]}
 />
@@ -869,10 +914,11 @@ UVM wraps these primitives in components:
 
 <ArchitectureDiagram
   title="Mapping SystemVerilog IPC primitives to UVM library constructs"
-  caption="mailbox #(T) is wrapped by uvm_tlm_fifo (default size 1) and uvm_tlm_analysis_fifo (unbounded, size 0); sequencer arbitration does the turn-taking; uvm_event (a uvm_object) carries notifications, and objections decide when the test ends."
-  cellWidth={165}
-  gapX={96}
+  caption="Each plain line pairs a primitive with the UVM construct that takes over its job; nothing flows along it. mailbox #(T) is wrapped by uvm_tlm_fifo (default size 1) and uvm_tlm_analysis_fifo (unbounded, size 0); sequencer arbitration does the turn-taking; uvm_event (a uvm_object) carries notifications, and objections decide when the test ends (IEEE 1800.2 §10.1, §10.5)."
+  cellWidth={140}
+  gapX={64}
   gapY={28}
+  legend={false}
   nodes={[
     { id: "c_sv", label: "SystemVerilog primitive", kind: "generic", col: 0, row: 0, colSpan: 1, rowSpan: 3, container: true },
     { id: "c_uvm", label: "UVM counterpart", kind: "generic", col: 1, row: 0, colSpan: 1, rowSpan: 3, container: true },
@@ -881,12 +927,12 @@ UVM wraps these primitives in components:
     { id: "sv_ev", label: "event", sublabel: "-> ev / @(ev)", kind: "generic", col: 0, row: 2 },
     { id: "uvm_fifo", label: "uvm_tlm_fifo #(T)", sublabel: "wraps mailbox #(T)", kind: "fifo", col: 1, row: 0 },
     { id: "uvm_sqr", label: "uvm_sequencer", sublabel: "sequence arbitration", kind: "sequencer", col: 1, row: 1 },
-    { id: "uvm_ev", label: "uvm_event / objection", sublabel: "1800.2 §10.1 / §10.5", kind: "generic", col: 1, row: 2 }
+    { id: "uvm_ev", label: "uvm_event", sublabel: "plus objections", kind: "generic", col: 1, row: 2 }
   ]}
   edges={[
-    { from: "sv_mbx", to: "uvm_fifo", style: "data", label: "wrapped" },
-    { from: "sv_sem", to: "uvm_sqr", style: "control", label: "arbitration" },
-    { from: "sv_ev", to: "uvm_ev", style: "control", label: "counterpart" }
+    { from: "sv_mbx", to: "uvm_fifo", style: "structural", label: "wraps" },
+    { from: "sv_sem", to: "uvm_sqr", style: "structural", label: "turns" },
+    { from: "sv_ev", to: "uvm_ev", style: "structural", label: "notify" }
   ]}
 />
 

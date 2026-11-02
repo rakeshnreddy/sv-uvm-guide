@@ -21,18 +21,6 @@ sources:
 - **Why it matters:** A testbench in a regression runs with nobody watching. It has to print what it saw, report each failure at the right severity, end itself, read its stimulus from files and take its options from the command line. Each of those jobs is a system task or function, and each one has a trap that makes the log lie.
 - **The Analogy:** System tasks are a car's dashboard and service ports. The gauges are `$display` and `$monitor`, the warning lights are `$warning` and `$error`, the ignition key is `$finish`, the fuel cap is files and plusargs, and the trip recorder is `$dumpvars`. *Where it breaks:* two gauges on this dashboard can show different values for the same instant, because `$display` and `$strobe` read at different points of one time slot. And the red warning light (`$error`) does not stop the car. Only `$fatal` does.
 
-| Family (Analogy) | Tools | Role in testbench |
-|---|---|---|
-| **Printing (Gauges)** | `$display`, `$write`, `$strobe`, `$monitor` | Print messages and track signal activity |
-| **Severity (Warning Lights)** | `$info`, `$warning`, `$error`, `$fatal` | Report check outcomes with file, line and scope |
-| **Control (Ignition Key)** | `$finish`, `$stop`, `final` (block) | Conclude or suspend simulation and run final checks |
-| **Time (Clock & Odometer)** | `$time`, `$realtime`, `%t` (specifier), `$timeformat` | Query simulation time and format timestamps |
-| **File I/O (Fuel Cap)** | `$fopen`, `$fclose`, `$fscanf`, `$fgets`, `$fdisplay` | Read input stimulus files and write execution logs |
-| **Memory Load (Preload)** | `$readmemh`, `$readmemb` | Initialize memory arrays with hex or binary vectors |
-| **Plusargs (Fuel Cap)** | `$test$plusargs`, `$value$plusargs` | Parse command-line flags and runtime parameters |
-| **Random (Noise Gen)** | `$urandom`, `$urandom_range` | Generate unsigned 32-bit random data and delays |
-| **Waveforms (Trip Recorder)** | `$dumpfile`, `$dumpvars`, `$dumpoff` | Record VCD signal activity for waveform debugging |
-
 **You will be able to:**
 
 1. **Predict** the text that `$display`, `$write`, `$strobe` and `$monitor` print, including the format specifiers `%0d`, `%h`, `%b`, `%s`, `%p`, `%m` and `%t`, and the point in the time slot at which each one prints.
@@ -94,6 +82,20 @@ The standard defines the `$` names in Clauses 20 and 21 (§20.1, §21.1), and a 
 The second row holds the rule that keeps logs honest. A system function that can fail reports the failure only through its return value, and the run carries on either way. `$fopen` returns 0 when it cannot open a file (§21.3.1), `$fscanf` returns -1 at the end of a file (§21.3.4.3), and `$value$plusargs` returns 0 when the option is absent (§21.6). Check every one. When you really mean to throw a value away, wrap the call in `void'(...)` so a reader can see that it was deliberate (§13.4.1).
 
 The families on this page are printing (§21.2), severity (§20.10), simulation control (§20.2), time (§20.3, §20.4), file I/O (§21.3), memory loading (§21.4), command-line input (§21.6), random numbers (§18.13) and waveform dumps (§21.7).
+
+Where a family has a part on the dashboard from the Quick Take, the table names it:
+
+| Family (dashboard part) | Tools | Role in testbench |
+|---|---|---|
+| **Printing** (gauges) | `$display`, `$write`, `$strobe`, `$monitor` | Print messages and track signal activity |
+| **Severity** (warning lights) | `$info`, `$warning`, `$error`, `$fatal` | Report check outcomes with file, line and scope |
+| **Control** (ignition key) | `$finish`, `$stop`, `final` (block) | Conclude or suspend simulation and run final checks |
+| **Time** | `$time`, `$realtime`, `%t` (specifier), `$timeformat` | Query simulation time and format timestamps |
+| **File I/O** (fuel cap) | `$fopen`, `$fclose`, `$fscanf`, `$fgets`, `$fdisplay` | Read input stimulus files and write execution logs |
+| **Memory load** | `$readmemh`, `$readmemb` | Initialize memory arrays with hex or binary vectors |
+| **Plusargs** (fuel cap) | `$test$plusargs`, `$value$plusargs` | Parse command-line flags and runtime parameters |
+| **Random** | `$urandom`, `$urandom_range` | Generate unsigned 32-bit random data and delays |
+| **Waveforms** (trip recorder) | `$dumpfile`, `$dumpvars`, `$dumpoff` | Record VCD signal activity for waveform debugging |
 
 ### Printing: $display, $write and format specifiers
 
@@ -198,35 +200,52 @@ endmodule
   title="The static initializer rule in procedural blocks"
   rule="Procedural block variables default to static lifetime: one persistent storage cell initialized once at time 0. IEEE 1800-2023 §6.21 forbids plain initializers on static block variables to prevent surprise time-0 bugs. for-loop index variables are automatic (§12.7.1)."
   code={`initial begin
-  for (int pass = 1; pass <= 3; pass++) begin
-    // int bad = 0;           // ILLEGAL: static initializer (§6.21)
-    static    int kept  = 0;   // 1 shared storage; initialized @ t=0
-    automatic int fresh = 0;   // new variable on every pass
+  for (int pass = 1; pass <= 3; pass++)
+  begin
+    // ILLEGAL static init (§6.21):
+    // int bad = 0;
+
+    // 1 shared storage; init @ t=0
+    static int kept = 0;
+
+    // new variable on every pass
+    automatic int fresh = 0;
   end
 end`}
   mistake="Declaring 'int count = 0;' in a block and expecting it to re-zero on each execution. In SV it fails to compile because a static variable with an initializer needs an explicit static or automatic (§6.21)."
   inTestbench="Declare local task variables 'automatic' to ensure concurrency safety. Use 'static' only for deliberate cross-invocation accumulators."
 >
-  <svg viewBox="0 0 320 120" role="img" aria-label="Static variable keeps one persistent memory cell from time 0; automatic variable allocates a fresh cell on each pass." style={{ width: "100%", maxWidth: 360 }}>
+  <svg viewBox="0 0 320 112" role="img" aria-label="Storage cells. Static kept: passes 1, 2 and 3 all use one shared cell, set to 0 at time 0, which counts 1, 2, 3. Automatic fresh: each pass gets a new cell of its own, which starts at 0 and ends at 1." style={{ width: "100%", maxWidth: 360 }}>
     <g transform="translate(10, 8)">
-      <rect x="0" y="0" width="140" height="98" rx="8" fill="rgba(6,182,212,0.08)" stroke="rgb(6,182,212)" strokeWidth="1.2" />
-      <text x="70" y="18" fontSize="10.5" textAnchor="middle" fill="currentColor" fontWeight="600">static int kept = 0</text>
-      <rect x="16" y="28" width="108" height="20" rx="4" fill="rgba(6,182,212,0.2)" />
-      <text x="70" y="42" fontSize="9.5" textAnchor="middle" fill="currentColor">Time 0: kept = 0</text>
-      <rect x="16" y="52" width="108" height="38" rx="4" fill="none" stroke="currentColor" strokeDasharray="3 2" strokeOpacity="0.4" />
-      <text x="70" y="66" fontSize="9.5" textAnchor="middle" fill="currentColor">Pass 1: 0 → 1</text>
-      <text x="70" y="77" fontSize="9.5" textAnchor="middle" fill="currentColor">Pass 2: 1 → 2</text>
-      <text x="70" y="88" fontSize="9.5" textAnchor="middle" fill="currentColor">Pass 3: 2 → 3</text>
+      <rect x="0" y="0" width="140" height="96" rx="8" fill="rgba(6,182,212,0.08)" stroke="rgb(6,182,212)" strokeWidth="1.2" />
+      <text x="70" y="15" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">static int kept = 0</text>
+      <text x="70" y="27" fontSize="9" textAnchor="middle" fill="currentColor">one cell, set at time 0</text>
+      <text x="8" y="45" fontSize="9.5" fill="currentColor">pass 1</text>
+      <text x="8" y="63" fontSize="9.5" fill="currentColor">pass 2</text>
+      <text x="8" y="81" fontSize="9.5" fill="currentColor">pass 3</text>
+      <path d="M 40 42 L 72 60 M 40 60 L 72 60 M 40 78 L 72 60" fill="none" stroke="currentColor" strokeWidth="1" strokeOpacity="0.7" />
+      <polygon points="71,56.5 77,60 71,63.5" fill="currentColor" />
+      <rect x="78" y="36" width="54" height="48" rx="4" fill="rgba(6,182,212,0.2)" stroke="rgb(6,182,212)" strokeWidth="0.8" />
+      <text x="105" y="56" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">kept</text>
+      <text x="105" y="71" fontSize="9" textAnchor="middle" fill="currentColor">1 → 2 → 3</text>
     </g>
     <g transform="translate(170, 8)">
-      <rect x="0" y="0" width="140" height="98" rx="8" fill="rgba(168,85,247,0.08)" stroke="rgb(168,85,247)" strokeWidth="1.2" />
-      <text x="70" y="18" fontSize="10.5" textAnchor="middle" fill="currentColor" fontWeight="600">automatic int fresh = 0</text>
-      <rect x="16" y="28" width="108" height="20" rx="4" fill="rgba(168,85,247,0.2)" />
-      <text x="70" y="42" fontSize="9.5" textAnchor="middle" fill="currentColor">Pass 1: alloc → 0 → 1</text>
-      <rect x="16" y="52" width="108" height="20" rx="4" fill="rgba(168,85,247,0.2)" />
-      <text x="70" y="66" fontSize="9.5" textAnchor="middle" fill="currentColor">Pass 2: alloc → 0 → 1</text>
-      <rect x="16" y="74" width="108" height="20" rx="4" fill="rgba(168,85,247,0.2)" />
-      <text x="70" y="88" fontSize="9.5" textAnchor="middle" fill="currentColor">Pass 3: alloc → 0 → 1</text>
+      <rect x="0" y="0" width="140" height="96" rx="8" fill="rgba(168,85,247,0.08)" stroke="rgb(168,85,247)" strokeWidth="1.2" />
+      <text x="70" y="15" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">automatic int fresh = 0</text>
+      <text x="70" y="27" fontSize="9" textAnchor="middle" fill="currentColor">a new cell every pass</text>
+      <text x="8" y="45" fontSize="9.5" fill="currentColor">pass 1</text>
+      <text x="8" y="63" fontSize="9.5" fill="currentColor">pass 2</text>
+      <text x="8" y="81" fontSize="9.5" fill="currentColor">pass 3</text>
+      <path d="M 40 42 L 54 42 M 40 60 L 54 60 M 40 78 L 54 78" fill="none" stroke="currentColor" strokeWidth="1" strokeOpacity="0.7" />
+      <polygon points="53,39 59,42 53,45" fill="currentColor" />
+      <polygon points="53,57 59,60 53,63" fill="currentColor" />
+      <polygon points="53,75 59,78 53,81" fill="currentColor" />
+      <rect x="60" y="34" width="72" height="16" rx="4" fill="rgba(168,85,247,0.2)" stroke="rgb(168,85,247)" strokeWidth="0.8" />
+      <text x="96" y="45" fontSize="9" textAnchor="middle" fill="currentColor">fresh 0 → 1</text>
+      <rect x="60" y="52" width="72" height="16" rx="4" fill="rgba(168,85,247,0.2)" stroke="rgb(168,85,247)" strokeWidth="0.8" />
+      <text x="96" y="63" fontSize="9" textAnchor="middle" fill="currentColor">fresh 0 → 1</text>
+      <rect x="60" y="70" width="72" height="16" rx="4" fill="rgba(168,85,247,0.2)" stroke="rgb(168,85,247)" strokeWidth="0.8" />
+      <text x="96" y="81" fontSize="9" textAnchor="middle" fill="currentColor">fresh 0 → 1</text>
     </g>
   </svg>
 </VisualRecap>
@@ -280,83 +299,94 @@ module tb_top;
 endmodule
 ```
 
-<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4">
-  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Trace Timeline: $monitor watch semantics across 60 ns</div>
-  <svg viewBox="0 0 340 310" role="img" aria-label="Timeline of $monitor execution: 0 to 39 ns monitors 'a', 40 to 60 ns switches to 'b'; changes to b at 30 ns produce no output; changes at 50 ns print only b." style={{ width: "100%", maxWidth: 360 }}>
-    {/* Left watch-list bracket indicators */}
-    <rect x="4" y="10" width="8" height="155" rx="3" fill="rgba(6,182,212,0.4)" />
-    <text x="18" y="20" fontSize="9.5" fill="currentColor" fontWeight="600">Active watch list: a ($monitor "t=%0d a=%0d")</text>
+<details className="my-4 rounded-xl border border-border/60 bg-muted/20 p-4">
+<summary className="font-semibold text-sm cursor-pointer">Predict, then open to check: what does this code print at 30 ns, and what at 50 ns?</summary>
 
-    <rect x="4" y="175" width="8" height="125" rx="3" fill="rgba(168,85,247,0.4)" />
-    <text x="18" y="185" fontSize="9.5" fill="currentColor" fontWeight="600">New watch list: b (new $monitor)</text>
+<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4" aria-labelledby="f2d-monitor-title">
+  <div id="f2d-monitor-title" className="mb-2 text-sm font-semibold text-foreground">Trace timeline: the <code>$monitor</code> watch list across 60 ns</div>
+  <svg viewBox="0 0 340 326" role="img" aria-label="Timeline of one $monitor replaced by another. Watching a: 0 ns prints t=0 a=0, 10 ns prints t=10 a=1, 20 ns prints t=20 a=3, and at 30 ns b changes but nothing prints. Watching b: the second $monitor call at 40 ns prints t=40 b=5, 50 ns prints t=50 b=6 and ignores a, and 60 ns is $finish." style={{ width: "100%", maxWidth: 360 }}>
+    {/* Column headers */}
+    <text x="46" y="11" fontSize="9" fontWeight="700" fill="currentColor" opacity="0.75">time</text>
+    <text x="86" y="11" fontSize="9" fontWeight="700" fill="currentColor" opacity="0.75">in the time slot</text>
+    <text x="276" y="11" fontSize="9" fontWeight="700" textAnchor="middle" fill="currentColor" opacity="0.75">prints at end of slot</text>
 
-    {/* Vertical timeline spine */}
-    <line x1="36" y1="28" x2="36" y2="295" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.4" />
+    <g transform="translate(0, 16)">
+      {/* Left watch-list bracket indicators */}
+      <rect x="4" y="10" width="8" height="155" rx="3" fill="rgba(6,182,212,0.4)" />
+      <text x="18" y="20" fontSize="9.5" fill="currentColor" fontWeight="600">Active watch list: a ($monitor "t=%0d a=%0d")</text>
 
-    {/* 0 ns */}
-    <g transform="translate(36, 35)">
-      <circle cx="0" cy="0" r="3.5" fill="currentColor" />
-      <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">0 ns</text>
-      <text x="50" y="4" fontSize="9.5" fill="currentColor">a=0 b=0</text>
-      <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(16,185,129,0.18)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
-      <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">t=0 a=0</text>
-    </g>
+      <rect x="4" y="175" width="8" height="125" rx="3" fill="rgba(168,85,247,0.4)" />
+      <text x="18" y="185" fontSize="9.5" fill="currentColor" fontWeight="600">New watch list: b (new $monitor)</text>
 
-    {/* 10 ns */}
-    <g transform="translate(36, 75)">
-      <circle cx="0" cy="0" r="3.5" fill="currentColor" />
-      <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">10 ns</text>
-      <text x="50" y="4" fontSize="9.5" fill="currentColor">a=1</text>
-      <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(16,185,129,0.18)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
-      <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">t=10 a=1</text>
-    </g>
+      {/* Vertical timeline spine, broken around the "New watch list" label */}
+      <line x1="36" y1="28" x2="36" y2="171" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.4" />
+      <line x1="36" y1="192" x2="36" y2="295" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.4" />
 
-    {/* 20 ns */}
-    <g transform="translate(36, 115)">
-      <circle cx="0" cy="0" r="3.5" fill="currentColor" />
-      <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">20 ns</text>
-      <text x="50" y="4" fontSize="9.5" fill="currentColor">a=2; a=3</text>
-      <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(16,185,129,0.18)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
-      <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">t=20 a=3</text>
-    </g>
+      {/* 0 ns */}
+      <g transform="translate(36, 35)">
+        <circle cx="0" cy="0" r="3.5" fill="currentColor" />
+        <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">0 ns</text>
+        <text x="50" y="4" fontSize="9.5" fill="currentColor">a=0 b=0</text>
+        <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(16,185,129,0.18)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">t=0 a=0</text>
+      </g>
 
-    {/* 30 ns */}
-    <g transform="translate(36, 155)">
-      <circle cx="0" cy="0" r="3.5" fill="currentColor" />
-      <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">30 ns</text>
-      <text x="50" y="4" fontSize="9.5" fill="currentColor">b=5</text>
-      <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(100,116,139,0.15)" stroke="currentColor" strokeOpacity="0.3" strokeWidth="0.8" />
-      <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontStyle="italic">(silent: b not watched)</text>
-    </g>
+      {/* 10 ns */}
+      <g transform="translate(36, 75)">
+        <circle cx="0" cy="0" r="3.5" fill="currentColor" />
+        <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">10 ns</text>
+        <text x="50" y="4" fontSize="9.5" fill="currentColor">a=1</text>
+        <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(16,185,129,0.18)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">t=10 a=1</text>
+      </g>
 
-    {/* 40 ns */}
-    <g transform="translate(36, 200)">
-      <circle cx="0" cy="0" r="3.5" fill="currentColor" />
-      <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">40 ns</text>
-      <text x="50" y="4" fontSize="9.5" fill="currentColor">new $monitor</text>
-      <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(168,85,247,0.18)" stroke="rgb(168,85,247)" strokeWidth="0.8" />
-      <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">t=40 b=5</text>
-    </g>
+      {/* 20 ns */}
+      <g transform="translate(36, 115)">
+        <circle cx="0" cy="0" r="3.5" fill="currentColor" />
+        <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">20 ns</text>
+        <text x="50" y="4" fontSize="9.5" fill="currentColor">a=2; a=3</text>
+        <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(16,185,129,0.18)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">t=20 a=3</text>
+      </g>
 
-    {/* 50 ns */}
-    <g transform="translate(36, 240)">
-      <circle cx="0" cy="0" r="3.5" fill="currentColor" />
-      <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">50 ns</text>
-      <text x="50" y="4" fontSize="9.5" fill="currentColor">a=4; b=6</text>
-      <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(16,185,129,0.18)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
-      <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">t=50 b=6 (a ignored)</text>
-    </g>
+      {/* 30 ns */}
+      <g transform="translate(36, 155)">
+        <circle cx="0" cy="0" r="3.5" fill="currentColor" />
+        <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">30 ns</text>
+        <text x="50" y="4" fontSize="9.5" fill="currentColor">b=5 (b not watched)</text>
+        <rect x="185" y="-10" width="110" height="20" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeWidth="0.8" strokeDasharray="3 2" />
+        <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontStyle="italic">nothing printed</text>
+      </g>
 
-    {/* 60 ns */}
-    <g transform="translate(36, 280)">
-      <circle cx="0" cy="0" r="3.5" fill="currentColor" />
-      <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">60 ns</text>
-      <text x="50" y="4" fontSize="9.5" fill="currentColor">$finish</text>
-      <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(244,63,94,0.15)" stroke="rgb(244,63,94)" strokeWidth="0.8" />
-      <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">sim ends</text>
+      {/* 40 ns */}
+      <g transform="translate(36, 200)">
+        <circle cx="0" cy="0" r="3.5" fill="currentColor" />
+        <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">40 ns</text>
+        <text x="50" y="4" fontSize="9.5" fill="currentColor">new $monitor</text>
+        <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(16,185,129,0.18)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">t=40 b=5</text>
+      </g>
+
+      {/* 50 ns */}
+      <g transform="translate(36, 240)">
+        <circle cx="0" cy="0" r="3.5" fill="currentColor" />
+        <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">50 ns</text>
+        <text x="50" y="4" fontSize="9.5" fill="currentColor">a=4; b=6 (a ignored)</text>
+        <rect x="185" y="-10" width="110" height="20" rx="4" fill="rgba(16,185,129,0.18)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">t=50 b=6</text>
+      </g>
+
+      {/* 60 ns */}
+      <g transform="translate(36, 280)">
+        <circle cx="0" cy="0" r="3.5" fill="currentColor" />
+        <text x="10" y="4" fontSize="10" fontWeight="700" fill="currentColor">60 ns</text>
+        <text x="50" y="4" fontSize="9.5" fill="currentColor">$finish</text>
+        <rect x="185" y="-10" width="110" height="20" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeWidth="0.8" strokeDasharray="3 2" />
+        <text x="240" y="4" fontSize="9.5" textAnchor="middle" fill="currentColor" fontStyle="italic">$finish report</text>
+      </g>
     </g>
   </svg>
-  <figcaption className="mt-2 text-xs text-muted-foreground">Only one list is active at a time. At 30 ns, `b` changes from 0 to 5, but `b` is not in the active watch list so nothing prints. At 40 ns, the second `$monitor` call replaces the first; subsequent changes to `a` at 50 ns are ignored.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Solid boxes on the right are the lines <code>$monitor</code> prints; dashed boxes are not <code>$monitor</code> output. Only one list is active at a time. At 30 ns, <code>b</code> changes from 0 to 5, but <code>b</code> is not in the active watch list so nothing prints. At 40 ns, the second <code>$monitor</code> call replaces the first; subsequent changes to <code>a</code> at 50 ns are ignored.</figcaption>
 </figure>
 
 | Time | What happens in the time slot | Line printed at its end |
@@ -369,15 +399,20 @@ endmodule
 | 50 | `a = 4` and `b = 6` | `t=50 b=6`: `a` is no longer watched |
 | 60 | `$finish` | the tool's `$finish` report |
 
+</details>
+
 `$monitoroff` pauses the watch and `$monitoron` resumes it, printing one line at once (§21.2.3). In a large bench a single global `$monitor` gets in the way, so most engineers print explicit `$display` lines at the events they care about.
 
 <VisualRecap
   title="Print now, or print when the time slot settles"
   rule="$display and $write print when their statement runs. $strobe and $monitor print at the end of the time slot, after nonblocking updates have landed."
   code={`always @(posedge clk) begin
-  q <= d;               // lands later in this time slot
-  $display("q=%0d", q); // prints 0: the old value
-  $strobe("q=%0d", q);  // prints 5: the settled value
+  // lands later in this time slot
+  q <= d;
+  // prints 0: the old value
+  $display("q=%0d", q);
+  // prints 5: the settled value
+  $strobe("q=%0d", q);
 end`}
   mistake="Debugging a flop with $display and concluding that the nonblocking update failed. It had not landed yet; $strobe shows the settled value."
   inTestbench="Use $display for event logs, because it shows what a process saw. Use $strobe for end-of-step snapshots, and $monitor only in small benches."
@@ -444,32 +479,35 @@ The run continued past the warning and the error, stopped inside `$fatal`, and s
   title="Severity reports; counters decide"
   rule="$info, $warning, and $error return immediately and simulation continues. The standard defines no error counter; on a failed check with $error you must increment n_fail. $fatal prints, calls $finish implicitly, and ends the run after final blocks (§20.10)."
   code={`if (actual !== expected) begin
-  n_fail++; // $error does not touch counters
-  $error("mismatch: got 8'h%h, exp 8'h%h", actual, expected);
+  // $error does not touch counters
+  n_fail++;
+  $error("got 8'h%h, exp 8'h%h",
+         actual, expected);
 end
 
 // Fatal error: cannot continue
-if (fd == 0) $fatal(1, "vector file missing");`}
+if (timed_out)
+  $fatal(1, "no response");`}
   mistake="Calling $error without incrementing an error counter in your testbench. The error appears in the transcript, but the summary line still prints FAIL=0 and the regression script declares the run passed."
   inTestbench="Never rely on $error alone to fail a test. Every check failure must increment n_fail. Derive the final verdict line strictly from bench counters."
 >
   <svg viewBox="0 0 320 120" role="img" aria-label="Severity tasks: $info, $warning, and $error return and continue; on a failed check with $error you add n_fail++; $fatal calls $finish and terminates." style={{ width: "100%", maxWidth: 360 }}>
     <g transform="translate(8, 8)">
       <rect x="0" y="0" width="145" height="102" rx="6" fill="rgba(6,182,212,0.08)" stroke="rgb(6,182,212)" strokeWidth="1" />
-      <text x="72" y="16" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">$info / $warning / $error</text>
+      <text x="72" y="16" fontSize="9" textAnchor="middle" fill="currentColor" fontWeight="600">$info / $warning / $error</text>
       <text x="72" y="34" fontSize="9.5" textAnchor="middle" fill="currentColor">Prints location & time</text>
       <rect x="12" y="44" width="121" height="20" rx="4" fill="rgba(16,185,129,0.15)" />
       <text x="72" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor">Returns: run continues</text>
       <rect x="8" y="68" width="129" height="28" rx="4" fill="rgba(244,63,94,0.15)" stroke="rgb(244,63,94)" strokeWidth="0.8" />
-      <text x="72" y="80" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">$error on failed check:</text>
-      <text x="72" y="92" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">you add n_fail++</text>
+      <text x="72" y="80" fontSize="9" textAnchor="middle" fill="currentColor" fontWeight="600">$error on failed check:</text>
+      <text x="72" y="92" fontSize="9" textAnchor="middle" fill="currentColor" fontWeight="600">you add n_fail++</text>
     </g>
     <g transform="translate(165, 8)">
       <rect x="0" y="0" width="145" height="102" rx="6" fill="rgba(244,63,94,0.08)" stroke="rgb(244,63,94)" strokeWidth="1" />
       <text x="72" y="16" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">$fatal(n, ...)</text>
       <text x="72" y="34" fontSize="9.5" textAnchor="middle" fill="currentColor">Prints Fatal message</text>
       <rect x="12" y="44" width="121" height="20" rx="4" fill="rgba(244,63,94,0.2)" />
-      <text x="72" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor">Calls $finish(n) implicitly</text>
+      <text x="72" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor">Calls $finish(n)</text>
       <rect x="12" y="68" width="121" height="28" rx="4" fill="rgba(6,182,212,0.15)" />
       <text x="72" y="80" fontSize="9" textAnchor="middle" fill="currentColor">Runs final block;</text>
       <text x="72" y="92" fontSize="9" textAnchor="middle" fill="currentColor">simulation ends</text>
@@ -485,6 +523,7 @@ if (fd == 0) $fatal(1, "vector file missing");`}
 
 <SequenceDiagram
   title="How $error, $fatal and $stop end, or do not end, a run"
+  columnWidth={130}
   caption="Read it top to bottom. $error returns, so the initial block carries on. $fatal never returns: its implicit $finish runs the final blocks and ends the run. Where the $finish report (time and location) appears among these lines is tool-specific."
   participants={[
     { id: "tb", label: "initial", sublabel: "in tb_top" },
@@ -512,9 +551,9 @@ if (fd == 0) $fatal(1, "vector file missing");`}
 - `%t` prints a time value in the units chosen with `$timeformat`, converting from the unit of the calling module. By default the unit is the smallest time precision of every `` `timescale `` in the design, with no fractional digits, no suffix and a minimum width of 20 characters (§20.4.3, Table 20-3).
 - `$timeformat(units, precision, suffix, min_width)` sets that format for every `%t` in the design until the next call. The units are powers of ten: -9 is 1 ns and -12 is 1 ps (Table 20-2).
 
-<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4">
-  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Conversion Chain: Simulation Time to Transcript Output</div>
-  <svg viewBox="0 0 340 250" role="img" aria-label="Conversion chain from simulation time (12.4 ns) to transcript output: integer $time rounds to 12 producing default %t output 12000 ps (width 20); real $realtime retains 12.4 producing default %t output 12400 ps (width 20). With $timeformat(-9, 0, ' ns', 8), time formats in 1 ns units with ' ns' suffix." style={{ width: "100%", maxWidth: 360 }}>
+<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4" aria-labelledby="f2d-time-title">
+  <div id="f2d-time-title" className="mb-2 text-sm font-semibold text-foreground">Conversion chain: simulation time to transcript output</div>
+  <svg viewBox="0 0 340 250" role="img" aria-label="Conversion chain from simulation time (12.4 ns) to transcript output: integer $time rounds to 12 producing default %t output 12000 ps (width 20); real $realtime retains 12.4 producing default %t output 12400 ps (width 20). With $timeformat(-9, 0, ' ns', 8), both branches print 12 ns, because precision 0 rounds 12.4 to 12." style={{ width: "100%", maxWidth: 360 }}>
     <defs>
       <marker id="f2d-arrow" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="5" markerHeight="5" orient="auto">
         <path d="M 0 0 L 6 3 L 0 6 z" fill="currentColor" />
@@ -527,7 +566,7 @@ if (fd == 0) $fatal(1, "vector file missing");`}
 
     {/* Left branch ($time) */}
     <path d="M 120 40 L 85 58" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
-    <text x="96" y="47" fontSize="9.5" fill="currentColor">int</text>
+    <text x="94" y="50" fontSize="9.5" textAnchor="end" fill="currentColor">integer</text>
     <rect x="8" y="60" width="154" height="40" rx="6" fill="rgba(99,102,241,0.12)" stroke="rgb(99,102,241)" strokeWidth="1" />
     <text x="85" y="75" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">$time (integer 1 ns)</text>
     <text x="85" y="90" fontSize="9.5" textAnchor="middle" fill="currentColor">rounds 12.4 → 12</text>
@@ -535,7 +574,7 @@ if (fd == 0) $fatal(1, "vector file missing");`}
     <path d="M 85 100 L 85 118" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
     <text x="95" y="112" fontSize="9.5" fill="currentColor">%t</text>
     <rect x="8" y="120" width="154" height="50" rx="6" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" strokeWidth="1" />
-    <text x="85" y="135" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">%t on $time (1 ps default)</text>
+    <text x="85" y="135" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">%t on $time</text>
     <text x="85" y="150" fontSize="9.5" textAnchor="middle" fill="currentColor" fontFamily="monospace" xmlSpace="preserve" style={{ whiteSpace: "pre" }}>{"[               12000]"}</text>
     <text x="85" y="162" fontSize="9.5" textAnchor="middle" fill="currentColor" opacity="0.8">12000 ps (width 20)</text>
 
@@ -548,7 +587,7 @@ if (fd == 0) $fatal(1, "vector file missing");`}
 
     {/* Right branch ($realtime) */}
     <path d="M 220 40 L 255 58" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
-    <text x="242" y="47" fontSize="9.5" fill="currentColor">real</text>
+    <text x="246" y="50" fontSize="9.5" fill="currentColor">real</text>
     <rect x="178" y="60" width="154" height="40" rx="6" fill="rgba(168,85,247,0.12)" stroke="rgb(168,85,247)" strokeWidth="1" />
     <text x="255" y="75" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">$realtime (real 1 ns)</text>
     <text x="255" y="90" fontSize="9.5" textAnchor="middle" fill="currentColor">keeps fraction → 12.4</text>
@@ -556,7 +595,7 @@ if (fd == 0) $fatal(1, "vector file missing");`}
     <path d="M 255 100 L 255 118" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
     <text x="265" y="112" fontSize="9.5" fill="currentColor">%t</text>
     <rect x="178" y="120" width="154" height="50" rx="6" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" strokeWidth="1" />
-    <text x="255" y="135" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">%t on $realtime (1 ps default)</text>
+    <text x="255" y="135" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">%t on $realtime</text>
     <text x="255" y="150" fontSize="9.5" textAnchor="middle" fill="currentColor" fontFamily="monospace" xmlSpace="preserve" style={{ whiteSpace: "pre" }}>{"[               12400]"}</text>
     <text x="255" y="162" fontSize="9.5" textAnchor="middle" fill="currentColor" opacity="0.8">12400 ps (width 20)</text>
 
@@ -565,9 +604,9 @@ if (fd == 0) $fatal(1, "vector file missing");`}
     <rect x="178" y="190" width="154" height="48" rx="6" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" strokeWidth="1" />
     <text x="255" y="205" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">$timeformat(-9,0," ns",8)</text>
     <text x="255" y="220" fontSize="9.5" textAnchor="middle" fill="currentColor" fontFamily="monospace" xmlSpace="preserve" style={{ whiteSpace: "pre" }}>{"[   12 ns]"}</text>
-    <text x="255" y="231" fontSize="9.5" textAnchor="middle" fill="currentColor" opacity="0.8">scaled to 1 ns, suffix</text>
+    <text x="255" y="231" fontSize="9" textAnchor="middle" fill="currentColor" opacity="0.8">precision 0 rounds 12.4 to 12</text>
   </svg>
-  <figcaption className="mt-2 text-xs text-muted-foreground">Default %t uses the design's smallest precision (1 ps here). When passed integer $time (rounded to 12), %t prints 12000 ps with 20-character space padding; only $realtime retains the fraction 12.4 to print 12400 ps.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Default %t uses the design's smallest precision (1 ps here). When passed integer $time (rounded to 12), %t prints 12000 ps with 20-character space padding; only $realtime retains the fraction 12.4 to print 12400 ps. After $timeformat(-9, 0, " ns", 8) both branches print 12 ns: precision 0 asks for no fractional digits, so the $realtime branch rounds 12.4 to 12 as well.</figcaption>
 </figure>
 
 ```systemverilog
@@ -637,17 +676,14 @@ $fclose(fd);
 Trace it on a file of two lines, `0a 05` and `ff 01`, each ending in a newline.
 
 <details className="my-4 rounded-xl border border-border/60 bg-muted/20 p-4">
-<summary className="font-semibold text-sm cursor-pointer">Predict: How many times does the loop body execute, and what does $feof return after the second read?</summary>
+<summary className="font-semibold text-sm cursor-pointer">Predict, then open to check: how many times is $fscanf called, and what does $feof(fd) return right after the second call?</summary>
 
-- `$fscanf` is called **3 times**; the `use x and y` part runs **2 times** (for `0a 05` and `ff 01`).
-- After the second `$fscanf`, `$feof(fd)` returns **0 (false)**! Because `$fscanf` matched the two fields and stopped, leaving the trailing newline unread in the buffer.
-- On the 3rd call, `$fscanf` consumes the newline, reaches EOF before finding any valid characters, returns **-1**, and assigns nothing to `x` or `y`. `code != 2` evaluates to true, breaking the loop cleanly.
-
-</details>
+- `$fscanf` is called **3 times**; the `use x and y` part runs **2 times**.
+- Watch `$feof`: it is still 0 after the last vector, because `$fscanf` leaves the final newline unread.
 
 <SequenceDiagram
   title="Safe file reading loop with return value checking"
-  caption="Follow each return value: the loop breaks on code != 2 when $fscanf returns -1 at EOF."
+  caption="Each dashed arrow is a return value. Follow them from top to bottom, then read the same run as a table below."
   columnWidth={170}
   numbered={true}
   participants={[
@@ -669,8 +705,6 @@ Trace it on a file of two lines, `0a 05` and `ff 01`, each ending in a newline.
   ]}
 />
 
-Watch `$feof`: it is still 0 after the last vector, because `$fscanf` leaves the final newline unread.
-
 | Step | Input consumed | Returns | `x`, `y` afterwards |
 |---|---|---|---|
 | `$fopen("in.txt", "r")` | none | a nonzero `fd` | X, X |
@@ -682,6 +716,8 @@ Watch `$feof`: it is still 0 after the last vector, because `$fscanf` leaves the
 
 That third call explains a classic bug (Debug it, case 3, below). A `while (!$feof(fd))` loop makes the third call, ignores the -1 and processes `ff 01` a second time.
 
+</details>
+
 **In a real testbench:** files carry golden vectors exported from a C, Python or MATLAB model, expected responses, and results for later analysis. The same calls appear inside UVM sequences and reference models later on.
 
 <VisualRecap
@@ -689,19 +725,21 @@ That third call explains a classic bug (Debug it, case 3, below). A `while (!$fe
   rule="System functions report failure only through return sentinels (0 or -1), never by halting simulation. The testbench must explicitly inspect every return value or cast it with void'(...)."
   code={`// 1. Mandatory check on file handle
 fd = $fopen("vectors.txt", "r");
-if (fd == 0) $fatal(1, "cannot open vectors.txt");
+if (fd == 0)
+  $fatal(1, "cannot open vectors.txt");
 
-// 2. Loop breaks on EOF (-1) vs bad input
+// 2. Break on EOF (-1) vs bad input
 code = $fscanf(fd, "%h %h", a, b);
-if (code == -1) break;                     // normal EOF
-if (code != 2) begin n_fail++; $error("bad format"); break; end
-
-// 3. Fallback when plusarg is absent
-if (!$value$plusargs("SEED=%d", seed)) seed = 1;`}
-  mistake="Ignoring the return value of $fopen or $value$plusargs. If vectors.txt is missing, $fopen returns 0 silently; subsequent reads fail, 0 checks run, and the bench falsely reports PASS at time 0."
+if (code == -1) break;  // normal EOF
+if (code != 2) begin
+  n_fail++;
+  $error("bad format");
+  break;
+end`}
+  mistake="Ignoring the return value of $fopen. If vectors.txt is missing, $fopen returns 0 silently; subsequent reads fail, 0 checks run, and the bench falsely reports PASS at time 0."
   inTestbench="Immediately abort with $fatal(1, ...) on critical missing files. Separate normal EOF (-1) from parse errors (0 to N-1 where N is expected fields). Wrap intentionally discarded returns in void'(...) to document intent."
 >
-  <svg viewBox="0 0 340 142" role="img" aria-label="System function return sentinels: $fopen returns 0 on error; $fscanf separates clean EOF (-1) from bad data (0 to N-1 where N = fields expected); $value$plusargs returns 0 when missing." style={{ width: "100%", maxWidth: 360 }}>
+  <svg viewBox="0 0 340 104" role="img" aria-label="System function return sentinels: $fopen returns 0 on error, which leads to $fatal; $fscanf separates clean EOF (-1), which breaks the loop, from bad data (0 to N-1 where N = fields expected), which leads to n_fail++ and $error." style={{ width: "100%", maxWidth: 360 }}>
     <rect x="6" y="8" width="94" height="28" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
     <text x="53" y="25" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">$fopen()</text>
     <path d="M 100 22 L 132 22" stroke="currentColor" strokeWidth="1.5" />
@@ -715,7 +753,7 @@ if (!$value$plusargs("SEED=%d", seed)) seed = 1;`}
     <text x="53" y="73" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">$fscanf()</text>
     <path d="M 100 56 L 132 56" stroke="currentColor" strokeWidth="1.2" />
     <rect x="134" y="42" width="70" height="24" rx="5" fill="rgba(100,116,139,0.15)" stroke="currentColor" strokeOpacity="0.4" />
-    <text x="169" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor">-1 (clean EOF)</text>
+    <text x="169" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor">-1 (EOF)</text>
     <path d="M 204 56 L 232 56" stroke="currentColor" strokeWidth="1.2" />
     <rect x="234" y="42" width="100" height="24" rx="5" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" />
     <text x="284" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor">break loop (clean)</text>
@@ -726,15 +764,6 @@ if (!$value$plusargs("SEED=%d", seed)) seed = 1;`}
     <path d="M 206 84 L 232 84" stroke="currentColor" strokeWidth="1.2" />
     <rect x="234" y="72" width="100" height="24" rx="5" fill="rgba(244,63,94,0.15)" stroke="rgb(244,63,94)" />
     <text x="284" y="88" fontSize="9.5" textAnchor="middle" fill="currentColor">n_fail++; $error</text>
-
-    <rect x="6" y="104" width="94" height="28" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
-    <text x="53" y="121" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">$value$plusargs</text>
-    <path d="M 100 118 L 132 118" stroke="currentColor" strokeWidth="1.5" />
-    <rect x="134" y="104" width="70" height="28" rx="6" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" />
-    <text x="169" y="121" fontSize="9.5" textAnchor="middle" fill="currentColor">0 (missing)</text>
-    <path d="M 204 118 L 232 118" stroke="currentColor" strokeWidth="1.5" />
-    <rect x="234" y="104" width="100" height="28" rx="6" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" />
-    <text x="284" y="121" fontSize="9.5" textAnchor="middle" fill="currentColor">keep default</text>
   </svg>
 </VisualRecap>
 
@@ -762,8 +791,8 @@ endmodule
 ff        // address 8
 ```
 
-<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4">
-  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Memory Layout: logic [7:0] rom [0:15] after $readmemh("rom.hex", rom)</div>
+<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4" aria-labelledby="f2d-rom-title">
+  <div id="f2d-rom-title" className="mb-2 text-sm font-semibold text-foreground">Memory layout: <code>logic [7:0] rom [0:15]</code> after <code>$readmemh("rom.hex", rom)</code></div>
   <svg viewBox="0 0 340 180" role="img" aria-label="16-cell memory 4x4 grid: cells 0 and 1 hold 12 and 34; cells 2 to 7 hold X; cell 8 holds ff; cells 9 to 15 hold X." style={{ width: "100%", maxWidth: 360 }}>
     <defs>
       <pattern id="f2d-hatch-x" width="6" height="6" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
@@ -861,7 +890,7 @@ ff        // address 8
 
     <text x="15" y="168" fontSize="9.5" fill="currentColor">@0 loads [0]=12, [1]=34 | @8 loads [8]=ff | rest hold 8'hxx</text>
   </svg>
-  <figcaption className="mt-2 text-xs text-muted-foreground"><strong>Hexadecimal address rule (§21.4):</strong> Address specifiers after <code>@</code> are always hexadecimal, even in <code>$readmemb</code>. An address written as <code>@10</code> directs the next word to address 16, not address 10. Untouched cells keep their old values (8'hxx if never written).</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Solid cells hold the numbers from the file. Hatched cells were never reached, so they keep their old values (8'hxx if never written).</figcaption>
 </figure>
 
 The run prints `12 34 xx ff`.
@@ -873,16 +902,16 @@ The run prints `12 34 xx ff`.
 | `12 34` | `rom[0]` becomes `8'h12`, `rom[1]` becomes `8'h34` |
 | `@8` | the next number goes to address 8 |
 | `ff` | `rom[8]` becomes `8'hff` |
-| (end of file) | `rom[2]` to `rom[7]` and `rom[9]` to `rom[15]` are untouched; unreached cells keep their old values (X if never written) |
+| (end of file) | `rom[2]` to `rom[7]` and `rom[9]` to `rom[15]` are untouched; never written, they still hold X |
 
 The full form is `$readmemh(file, mem, start, finish)`, and both addresses are optional (§21.4). They pick where loading starts and which way it moves. Here `data.hex` holds four numbers and no `@` lines:
 
-| Call on `logic [7:0] rom [0:15]` | Addresses loaded, in order | Direction rule |
-|---|---|---|
-| `$readmemh("data.hex", rom)` | `[0] → [1] → [2] → [3]` | lowest address upward |
-| `$readmemh("data.hex", rom, 4)` | `[4] → [5] → [6] → [7]` | start address upward, toward 15 |
-| `$readmemh("data.hex", rom, 4, 7)` | `[4] → [5] → [6] → [7]` | start &lt; finish: loads upward (→) |
-| `$readmemh("data.hex", rom, 7, 4)` | `[7] → [6] → [5] → [4]` | start &gt; finish: loads downward (←) |
+| Call on `logic [7:0] rom [0:15]` | Addresses loaded, in order |
+|---|---|
+| `$readmemh("data.hex", rom)` | 0, 1, 2, 3: from the lowest address upward |
+| `$readmemh("data.hex", rom, 4)` | 4, 5, 6, 7: from the start address upward, toward 15 |
+| `$readmemh("data.hex", rom, 4, 7)` | 4, 5, 6, 7 |
+| `$readmemh("data.hex", rom, 7, 4)` | 7, 6, 5, 4: a start above the finish loads downward |
 
 The direction holds even after an `@` line in the file. Two more details matter when you pass both addresses. If the file has no `@` lines and its word count differs from the range, the tool issues a warning. An `@` address outside the range is an error that stops the load (§21.4). **In a real testbench:** `$readmemh` preloads memory models and ROM images and loads tables of expected values.
 
@@ -926,23 +955,20 @@ The run prints `vectors=vectors_bad.txt seed=1 verbose=1`. Printing the effectiv
 <VisualRecap
   title="Plusargs: prefix matching and command-line order"
   rule="Plusargs match by prefix in command-line order (§21.6): the provided string must match the beginning of a plusarg, and the first match wins. Misses leave variables unchanged without warning."
-  code={`string vec_file = "vectors.txt"; // 1. Set explicit default
-int    seed     = 1;
-bit    verbose;
+  code={`// default first
+int seed = 1;
 
-initial begin
-  // 2. Query plusargs: miss keeps the default
-  void'($value$plusargs("VECTORS=%s", vec_file));
-  void'($value$plusargs("SEED=%d", seed));
-  verbose = ($test$plusargs("VERBOSE") != 0);
+// "=" in the query; a miss keeps 1
+void'($value$plusargs(
+  "SEED=%d", seed));
 
-  // 3. Print resolved configuration at time 0
-  $display("vectors=%s seed=%0d verbose=%0b", vec_file, seed, verbose);
-end`}
-  mistake={"Using a short prefix like $test$plusargs(\"V\") or assuming misspelled plusargs produce an error. Short prefixes match unexpectedly (+V matches +VECTORS=...), and typos like +SEDD=5 silently leave seed at its default."}
+// Or: fallback when plusarg is absent
+if (!$value$plusargs("SEED=%d", seed))
+  seed = 1;`}
+  mistake={"Using a short prefix like $test$plusargs(\"V\") or assuming misspelled plusargs produce an error. Short prefixes match unexpectedly (the query \"V\" matches +VECTORS=...), and typos like +SEDD=5 silently leave seed at its default."}
   inTestbench="Always print the resolved configuration at time 0. Use '=' in value queries (e.g. 'SEED=') to prevent partial key collisions."
 >
-  <svg viewBox="0 0 340 130" role="img" aria-label="CLI token prefix matching: sim +VECTORS=vectors_bad.txt +VERBOSE. +VECTORS matches VECTORS=%s updating vec_file; omitted +SEED returns 0 keeping default seed=1; short prefix V matches +VECTORS unintentionally." style={{ width: "100%", maxWidth: 360 }}>
+  <svg viewBox="0 0 340 130" role="img" aria-label="Prefix matching on the command line sim +VECTORS=vectors_bad.txt +VERBOSE. The query VECTORS=%s matches +VECTORS=vectors_bad.txt, updating vec_file; the query SEED=%d finds no +SEED, returns 0 and keeps the default seed=1; the short query V matches +VECTORS unintentionally." style={{ width: "100%", maxWidth: 360 }}>
     <rect x="6" y="8" width="328" height="26" rx="5" fill="rgba(6,182,212,0.08)" stroke="currentColor" strokeOpacity="0.3" />
     <text x="14" y="24" fontSize="9.5" fontFamily="monospace" fill="currentColor">sim +VECTORS=vectors_bad.txt +VERBOSE</text>
 
@@ -955,7 +981,7 @@ end`}
     <g transform="translate(118, 42)">
       <rect x="0" y="0" width="104" height="42" rx="4" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" strokeWidth="0.8" />
       <text x="52" y="16" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">"SEED=%d" (miss)</text>
-      <text x="52" y="32" fontSize="9.5" textAnchor="middle" fill="currentColor">keeps default: seed=1</text>
+      <text x="52" y="32" fontSize="9.5" textAnchor="middle" fill="currentColor">keeps seed=1</text>
     </g>
 
     <g transform="translate(230, 42)">
@@ -987,24 +1013,30 @@ repeat ($urandom_range(3, 1)) @(posedge clk);   // 1 to 3 idle cycles
 
 Older code often calls `$random` instead. It returns a **signed** 32-bit value, so `$random % 10` can be anything from -9 to 9 (§20.14.1). Used as an array index, that reads outside the array; used as a delay, a negative value is read as a huge unsigned one and the run seems to hang (§9.4.1). `$urandom_range(9)` can never go below 0.
 
-<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4">
-  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Range Comparison: $random % 10 vs $urandom_range(9)</div>
-  <svg viewBox="0 0 340 120" role="img" aria-label="Two number lines comparing ranges: signed $random % 10 ranges from -9 to +9 with dangerous negative numbers; unsigned $urandom_range(9) ranges safely from 0 to 9." style={{ width: "100%", maxWidth: 360 }}>
+<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4" aria-labelledby="f2d-random-title">
+  <div id="f2d-random-title" className="mb-2 text-sm font-semibold text-foreground">Range comparison: <code>$random % 10</code> vs <code>$urandom_range(9)</code></div>
+  <svg viewBox="0 0 340 134" role="img" aria-label="Two bars on the same number line from -9 to +9. Signed $random % 10 covers the whole line, and its part from -9 to -1 is negative. Unsigned $urandom_range(9) covers only 0 to 9 and is never negative." style={{ width: "100%", maxWidth: 360 }}>
     <text x="8" y="16" fontSize="9.5" fontWeight="600" fill="currentColor">$random % 10 (signed 32-bit % 10): range -9 to +9</text>
-    <line x1="12" y1="46" x2="328" y2="46" stroke="currentColor" strokeWidth="1.2" />
     <rect x="12" y="20" width="154" height="24" rx="3" fill="rgba(244,63,94,0.18)" stroke="rgb(244,63,94)" strokeWidth="0.8" />
-    <text x="89" y="36" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">[-9..-1]: negative delay/index!</text>
+    <text x="89" y="36" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">-9..-1: negative!</text>
     <rect x="172" y="20" width="156" height="24" rx="3" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
-    <text x="250" y="36" fontSize="9.5" textAnchor="middle" fill="currentColor">[0..+9]: positive</text>
+    <text x="250" y="36" fontSize="9.5" textAnchor="middle" fill="currentColor">0..9: not negative</text>
+    <line x1="12" y1="46" x2="328" y2="46" stroke="currentColor" strokeWidth="1.2" />
     <text x="14" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor">-9</text>
     <text x="169" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor">0</text>
     <text x="325" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor">+9</text>
 
     <text x="8" y="80" fontSize="9.5" fontWeight="600" fill="currentColor">$urandom_range(9) (unsigned): range 0 to 9</text>
-    <rect x="172" y="88" width="156" height="24" rx="3" fill="rgba(16,185,129,0.22)" stroke="rgb(16,185,129)" strokeWidth="1" />
-    <text x="250" y="104" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">[0..9]: safe for delays & arrays</text>
+    <rect x="12" y="84" width="154" height="24" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 2" />
+    <text x="89" y="100" fontSize="9.5" textAnchor="middle" fill="currentColor" fontStyle="italic" opacity="0.8">never here</text>
+    <rect x="172" y="84" width="156" height="24" rx="3" fill="rgba(16,185,129,0.22)" stroke="rgb(16,185,129)" strokeWidth="1" />
+    <text x="250" y="100" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">0..9: safe</text>
+    <line x1="12" y1="110" x2="328" y2="110" stroke="currentColor" strokeWidth="1.2" />
+    <text x="14" y="122" fontSize="9.5" textAnchor="middle" fill="currentColor">-9</text>
+    <text x="169" y="122" fontSize="9.5" textAnchor="middle" fill="currentColor">0</text>
+    <text x="325" y="122" fontSize="9.5" textAnchor="middle" fill="currentColor">+9</text>
   </svg>
-  <figcaption className="mt-2 text-xs text-muted-foreground">Range comparison: signed $random % 10 can yield negative values (causing delays to be interpreted as huge unsigned numbers and hanging simulation), whereas $urandom_range(9) guarantees safe, non-negative results.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">On one number line, signed $random % 10 can yield negative values (an array index then reads outside the array, and a delay is interpreted as a huge unsigned number, so the run seems to hang), whereas $urandom_range(9) guarantees safe, non-negative results for delays and arrays.</figcaption>
 </figure>
 
 The same seed gives the same sequence, and each thread draws from its own generator, so the values a thread gets do not depend on the order in which threads run (§18.14.2). Use these functions for random gaps and simple random data. Constrained stimulus uses class `randomize()`, taught in [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index); seeds are in Push Further.
@@ -1022,7 +1054,7 @@ The same seed gives the same sequence, and each thread draws from its own genera
 
 <ArchitectureDiagram
   title="$dumpvars(1, tb_top): dump top-level scope only"
-  caption="Level 1 dumps only the named scope (tb_top), not instances below it like u_dut. Automatic variables are never dumped (§13.3.2)."
+  caption="$dumpvars(1, tb_top): level 1 dumps only the named scope (tb_top), not instances below it like u_dut. Automatic variables are never dumped (§13.3.2)."
   legend={false}
   cellWidth={130}
   gapX={32}
@@ -1036,7 +1068,7 @@ The same seed gives the same sequence, and each thread draws from its own genera
 
 <ArchitectureDiagram
   title="$dumpvars(0, tb_top): dump scope and all hierarchy below"
-  caption="Level 0 dumps tb_top and recurses through all child instances, including u_dut. Automatic variables remain excluded (§13.3.2)."
+  caption="$dumpvars(0, tb_top): level 0 dumps tb_top and recurses through all child instances, including u_dut. Automatic variables remain excluded (§13.3.2)."
   legend={false}
   cellWidth={130}
   gapX={32}
@@ -1147,6 +1179,39 @@ Timestamp: 0, Data: aabbccdd
 ### Worked example: a plusarg-selected, file-driven test
 
 This is the bench from the picture at the top of the page. It reads its options, opens its vector file, drives an 8-bit adder, checks every result and ends with a summary line that a regression script can trust.
+
+<SequenceDiagram
+  title="Execution flow of a file-driven self-checking test"
+  caption="Read it top to bottom beside the code below. The testbench reads its options, opens the file, drives stimulus, checks the DUT output with !==, guards against bad input and an empty file, and prints a summary a script can trust."
+  numbered={false}
+  columnWidth={130}
+  participants={[
+    { id: "tb", label: "tb_top", sublabel: "initial block", kind: "generic" },
+    { id: "fs", label: "file system", sublabel: "vec_file", kind: "generic" },
+    { id: "dut", label: "u_dut", sublabel: "adder8", kind: "dut" }
+  ]}
+  messages={[
+    { kind: "self", from: "tb", label: "read the plusargs" },
+    { kind: "self", from: "tb", label: "print the options" },
+    { from: "tb", to: "fs", label: "$fopen(vec_file, \"r\")" },
+    { from: "fs", to: "tb", kind: "return", label: "fd (if 0: $fatal)" },
+    { kind: "divider", label: "repeat for each vector until code != 3" },
+    { from: "tb", to: "fs", label: "$fscanf(...)" },
+    { from: "fs", to: "tb", kind: "return", label: "code == 3, else break" },
+    { from: "tb", to: "dut", label: "a <= a_v, b <= b_v" },
+    { kind: "divider", label: "#1: the adder settles" },
+    { from: "dut", to: "tb", kind: "return", label: "sum" },
+    { kind: "self", from: "tb", label: "sum !== exp_v?" },
+    { kind: "self", from: "tb", label: "$error, n_fail++" },
+    { kind: "self", from: "tb", label: "else n_pass++" },
+    { kind: "divider", label: "after the loop" },
+    { kind: "self", from: "tb", label: "code != -1: $error, n_fail++" },
+    { from: "tb", to: "fs", label: "$fclose(fd)" },
+    { kind: "self", from: "tb", label: "no vectors: $error, n_fail++" },
+    { kind: "self", from: "tb", label: "print PASS=n FAIL=m" },
+    { kind: "self", from: "tb", label: "$finish" }
+  ]}
+/>
 
 ```systemverilog
 // compile
@@ -1282,37 +1347,6 @@ In run 3, `$fscanf` assigned `ff` and `01`, then stopped at `g`, so it returned 
 > [!NOTE]
 > **Run it.** Put `tb_top.sv` and the three vector files in one directory. Compile `tb_top.sv` with your simulator's SystemVerilog option, then run the compiled model four times, with `+VECTORS=vectors.txt`, `+VECTORS=vectors_bad.txt`, `+VECTORS=vectors_garbled.txt` and `+VECTORS=nope.txt`. Simulators pass `+name` arguments to `$test$plusargs` and `$value$plusargs`; where they go on the command line is tool-specific, so check your simulator's manual.
 
-<SequenceDiagram
-  title="Execution flow of a file-driven self-checking test"
-  caption="The testbench reads options, opens files, drives stimulus, checks DUT outputs with !==, guards against bad input or empty files, and prints a trusted summary."
-  columnWidth={120}
-  numbered={false}
-  participants={[
-    { id: "cli", label: "CLI / args", sublabel: "+VECTORS, +DUMP", kind: "generic" },
-    { id: "tb", label: "tb_top", sublabel: "initial block", kind: "generic" },
-    { id: "fs", label: "file system", sublabel: "vectors.txt", kind: "generic" },
-    { id: "dut", label: "u_dut", sublabel: "adder8", kind: "dut" }
-  ]}
-  messages={[
-    { from: "tb", to: "cli", label: "Read options ($value$plusargs, $test$plusargs)" },
-    { from: "cli", to: "tb", kind: "return", label: "options (or defaults)" },
-    { kind: "self", from: "tb", label: "Print resolved config at t=0" },
-    { from: "tb", to: "fs", label: "Open file: fd = $fopen(vec_file, \"r\")" },
-    { from: "fs", to: "tb", kind: "return", label: "fd (if fd==0, call $fatal)" },
-    { kind: "divider", label: "repeat for each vector until code != 3" },
-    { from: "tb", to: "fs", label: "Read vector: code = $fscanf(fd, \"%h %h %h\", ...)" },
-    { from: "fs", to: "tb", kind: "return", label: "code == 3 (if != 3, break)" },
-    { from: "tb", to: "dut", label: "Drive inputs: a <= a_v, b <= b_v" },
-    { kind: "divider", label: "#1 delay: adder settles" },
-    { from: "dut", to: "tb", kind: "return", label: "sum" },
-    { kind: "self", from: "tb", label: "Check sum !== exp_v: update n_pass/n_fail, $error on mismatch" },
-    { kind: "divider", label: "after the loop" },
-    { kind: "self", from: "tb", label: "code != -1 or no vectors: n_fail++, $error" },
-    { from: "tb", to: "fs", label: "Close file: $fclose(fd)" },
-    { kind: "self", from: "tb", label: "Print summary PASS=n FAIL=m; call $finish" }
-  ]}
-/>
-
 **How to build a test like this:**
 
 1. List what the test needs from outside the simulation: which files and which options. Give every option a default.
@@ -1370,7 +1404,7 @@ At 40 ns another process called `$monitor("t=%0d b=%0d", $time, b)`. Only one `$
 
 ```systemverilog
 // snippet: the bug
-fd = $fopen("vectros.txt", "r");    // misspelt file name
+fd = $fopen("vectros.txt", "r");                       // misspelt file name
 while ($fscanf(fd, "%h %h %h", a_v, b_v, exp_v) == 3) begin
   // drive and check
 end
@@ -1477,20 +1511,9 @@ These sections are for practitioners who run regressions and for interview prepa
 
 - `$fatal(n, ...)` takes the same 0, 1 or 2 as `$finish` and ends the run through an implicit `$finish`, which still runs `final` blocks (§20.10, §9.2.3).
 - §20.10 says that `$fatal` ends the run with an error code, but not what exit status the shell sees, and it defines no code at all for `$error`. The simulator's exit status after `$error` or `$fatal` is therefore tool-dependent, so do not rely on it alone. A regression script should require the bench's own summary line with `FAIL=0` and also scan the log for error and fatal messages. A missing summary line means the run died, and `PASS=0 FAIL=0` means it tested nothing; treat both as failures.
-- Assertions report through the same tasks. An assertion with no `else` branch calls `$error` when it fails (§20.10), so assertion failures do not stop the run either ([I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)).
-- Elaboration severity tasks (§20.10.1) run outside procedural code, typically under a generate `if`, to reject bad parameters before the simulation starts. An elaboration-time `$error` lets elaboration finish, but the simulation does not start.
 
-```systemverilog
-// snippet
-module fifo #(parameter int DEPTH = 8) ();
-  if (DEPTH < 2) $error("DEPTH=%0d: a FIFO needs at least 2 entries", DEPTH);
-endmodule
-```
-
-- In UVM the report server counts `UVM_ERROR` and `UVM_FATAL` messages and prints the end-of-test summary (IEEE 1800.2-2020 §6.5). T2 teaches it.
-
-<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4">
-  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Regression Verdict Decision Pipeline</div>
+<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4" aria-labelledby="f2d-verdict-title">
+  <div id="f2d-verdict-title" className="mb-2 text-sm font-semibold text-foreground">Regression verdict decision pipeline</div>
   <svg viewBox="0 0 340 330" role="img" aria-label="Decision flow for regression verdict: four sequential checks (summary line exists, checks ran, zero failures, log clean); failure at any check branches to FAIL; passing all four leads to PASS." style={{ width: "100%", maxWidth: 360 }}>
     <defs>
       <marker id="f2d-arr-green" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="5" markerHeight="5" orient="auto">
@@ -1509,7 +1532,7 @@ endmodule
     </g>
     <path d="M 92 52 L 92 76" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
     <text x="102" y="66" fontSize="9.5" fill="rgb(5,150,105)" fontWeight="700">yes</text>
-    <path d="M 175 31 L 240 31 L 240 122" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
+    <path d="M 175 31 L 240 31 L 240 144" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
     <text x="195" y="27" fontSize="9.5" fill="rgb(225,29,72)" fontWeight="600">no</text>
 
     {/* Step 2 */}
@@ -1520,7 +1543,7 @@ endmodule
     </g>
     <path d="M 92 120 L 92 144" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
     <text x="102" y="134" fontSize="9.5" fill="rgb(5,150,105)" fontWeight="700">yes</text>
-    <path d="M 175 99 L 240 99 L 240 122" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
+    <path d="M 175 99 L 240 99 L 240 144" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
     <text x="195" y="95" fontSize="9.5" fill="rgb(225,29,72)" fontWeight="600">no</text>
 
     {/* Step 3 */}
@@ -1531,7 +1554,7 @@ endmodule
     </g>
     <path d="M 92 188 L 92 212" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
     <text x="102" y="202" fontSize="9.5" fill="rgb(5,150,105)" fontWeight="700">yes</text>
-    <path d="M 175 167 L 240 167 L 240 164" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
+    <path d="M 175 167 L 228 167" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
     <text x="195" y="163" fontSize="9.5" fill="rgb(225,29,72)" fontWeight="600">no</text>
 
     {/* Step 4 */}
@@ -1543,7 +1566,7 @@ endmodule
     <path d="M 92 256 L 92 280" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
     <text x="102" y="270" fontSize="9.5" fill="rgb(5,150,105)" fontWeight="700">yes</text>
     {/* Dashed red path from box 4 to FAIL */}
-    <path d="M 175 235 L 240 235 L 240 164" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
+    <path d="M 175 235 L 240 235 L 240 190" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
     <text x="195" y="231" fontSize="9.5" fill="rgb(225,29,72)" fontWeight="600">no</text>
 
     {/* PASS box */}
@@ -1553,13 +1576,25 @@ endmodule
     </g>
 
     {/* FAIL box */}
-    <g transform="translate(230, 122)">
+    <g transform="translate(230, 146)">
       <rect x="0" y="0" width="95" height="42" rx="6" fill="rgba(244,63,94,0.2)" stroke="rgb(244,63,94)" strokeWidth="1.5" />
       <text x="47" y="25" fontSize="11" textAnchor="middle" fill="currentColor" fontWeight="700">✕ FAIL</text>
     </g>
   </svg>
-  <figcaption className="mt-2 text-xs text-muted-foreground">Shell exit status after $error or $fatal is simulator-dependent (§20.10). A robust regression parser checks that the summary line exists, verifies FAIL=0 and non-zero total checks, and asserts that no tool severity messages bypassed testbench counters.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Shell exit status after $error or $fatal is simulator-dependent (§20.10). A robust regression parser checks that the summary line exists, verifies FAIL=0 and non-zero total checks, and asserts that no tool severity messages bypassed testbench counters.</figcaption>
 </figure>
+
+- Assertions report through the same tasks. An assertion with no `else` branch calls `$error` when it fails (§20.10), so assertion failures do not stop the run either ([I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)).
+- Elaboration severity tasks (§20.10.1) run outside procedural code, typically under a generate `if`, to reject bad parameters before the simulation starts. An elaboration-time `$error` lets elaboration finish, but the simulation does not start.
+
+```systemverilog
+// snippet
+module fifo #(parameter int DEPTH = 8) ();
+  if (DEPTH < 2) $error("DEPTH=%0d: a FIFO needs at least 2 entries", DEPTH);
+endmodule
+```
+
+- In UVM the report server counts `UVM_ERROR` and `UVM_FATAL` messages and prints the end-of-test summary (IEEE 1800.2-2020 §6.5). T2 teaches it.
 
 ### Expert: File descriptors and multichannel descriptors
 
@@ -1578,35 +1613,35 @@ initial begin
 end
 ```
 
-<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4">
-  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Descriptor Layout: File Descriptors (FD) vs Multichannel Descriptors (MCD)</div>
-  <svg viewBox="0 0 340 175" role="img" aria-label="Comparison of 32-bit File Descriptor (bit 31 is 1) and Multichannel Descriptor (bit 31 is 0, bit 0 is STDOUT, individual bits 1 to 30 represent open files)." style={{ width: "100%", maxWidth: 360 }}>
+<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4" aria-labelledby="f2d-desc-title">
+  <div id="f2d-desc-title" className="mb-2 text-sm font-semibold text-foreground">Descriptor layout: file descriptors (fd) vs multichannel descriptors (mcd)</div>
+  <svg viewBox="0 0 340 160" role="img" aria-label="Comparison of a 32-bit file descriptor, where bit 31 is 1 and the other bits hold a small file number, and a multichannel descriptor, where bit 31 is 0, bit 0 is standard output and bits 30 to 1 each stand for one file." style={{ width: "100%", maxWidth: 360 }}>
     {/* File Descriptor */}
     <g transform="translate(10, 8)">
-      <text x="0" y="10" fontSize="9.5" fontWeight="600" fill="currentColor">File Descriptor (FD): $fopen("file", "w") — bit 31 set</text>
+      <text x="0" y="10" fontSize="9.5" fontWeight="600" fill="currentColor">File descriptor (fd): $fopen("file", "w"), bit 31 set</text>
       <rect x="0" y="16" width="38" height="24" rx="3" fill="rgba(6,182,212,0.25)" stroke="rgb(6,182,212)" />
       <text x="19" y="32" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="700">1</text>
       <text x="19" y="50" fontSize="9.5" textAnchor="middle" fill="currentColor">b31</text>
       <rect x="42" y="16" width="278" height="24" rx="3" fill="rgba(6,182,212,0.08)" stroke="currentColor" strokeOpacity="0.3" />
-      <text x="181" y="32" fontSize="9.5" textAnchor="middle" fill="currentColor">Bits 30..0: 31-bit descriptor index</text>
-      <text x="160" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor" opacity="0.85">STDIN: 8000_0000 | STDOUT: 8000_0001</text>
+      <text x="181" y="32" fontSize="9.5" textAnchor="middle" fill="currentColor">Bits 30..0: a small number for the open file</text>
+      <text x="175" y="60" fontSize="9" textAnchor="middle" fill="currentColor" opacity="0.85">STDIN 8000_0000 | STDOUT 8000_0001 | STDERR 8000_0002</text>
     </g>
 
     {/* Multichannel Descriptor */}
     <g transform="translate(10, 84)">
-      <text x="0" y="10" fontSize="9.5" fontWeight="600" fill="currentColor">Multichannel Descriptor (MCD): $fopen("file") — bit 31 is 0</text>
+      <text x="0" y="10" fontSize="9.5" fontWeight="600" fill="currentColor">Multichannel descriptor (mcd): $fopen("file"), bit 31 is 0</text>
       <rect x="0" y="16" width="38" height="24" rx="3" fill="rgba(100,116,139,0.2)" stroke="currentColor" strokeOpacity="0.4" />
       <text x="19" y="32" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="700">0</text>
       <text x="19" y="50" fontSize="9.5" textAnchor="middle" fill="currentColor">b31</text>
       <rect x="42" y="16" width="206" height="24" rx="3" fill="rgba(168,85,247,0.12)" stroke="rgb(168,85,247)" />
-      <text x="145" y="32" fontSize="9.5" textAnchor="middle" fill="currentColor">Bits 30..1: channels 2..31 (one bit set)</text>
+      <text x="145" y="32" fontSize="9.5" textAnchor="middle" fill="currentColor">Bits 30..1: one bit per file</text>
       <rect x="252" y="16" width="68" height="24" rx="3" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" />
       <text x="286" y="32" fontSize="9.5" textAnchor="middle" fill="currentColor">STDOUT</text>
-      <text x="286" y="50" fontSize="9.5" textAnchor="middle" fill="currentColor">b0 = STDOUT</text>
-      <text x="160" y="58" fontSize="9" textAnchor="middle" fill="currentColor" opacity="0.85">one bit set for file; OR with 1 (run_log | 1) to add STDOUT</text>
+      <text x="286" y="50" fontSize="9.5" textAnchor="middle" fill="currentColor">b0</text>
+      <text x="160" y="66" fontSize="9" textAnchor="middle" fill="currentColor" opacity="0.85">one bit set for a file; OR with 1 (run_log | 1) to add STDOUT</text>
     </g>
   </svg>
-  <figcaption className="mt-2 text-xs text-muted-foreground">Descriptor layout: Bit 31 set distinguishes 32-bit file descriptors (FD) from 32-bit multichannel descriptors (MCD), where bit 0 is standard output, bits 1–30 are the other channels; 31 channels in all (§21.3.1).</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Bit 31 set distinguishes 32-bit file descriptors (fd) from 32-bit multichannel descriptors (mcd), where bit 0 is standard output and bits 1 to 30 are the other channels; 31 channels in all (§21.3.1).</figcaption>
 </figure>
 
 `$fclose` cancels any `$fmonitor` or `$fstrobe` on that descriptor, and later `$fopen` calls reuse closed channels (§21.3.1). `$fflush` writes buffered output out at once (§21.3.6), which helps before a step that might crash the simulator. How many files can be open at once depends on the operating system.
@@ -1634,31 +1669,35 @@ end
 - The values a thread draws therefore depend on the order in which threads are created and numbers are drawn, not on the order in which threads run (§18.14.2). Add new threads and new random calls at the end of a block, so that earlier values stay the same from run to run.
 - `$urandom(seed)` seeds the generator and returns a number (§18.13.1). Manual seeding of processes and objects is covered with class randomization in [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index).
 
-<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4">
-  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Hierarchical Seeding and Creation Order (§18.14.1, §18.14.2)</p>
-  <svg viewBox="0 0 340 145" role="img" aria-label="Hierarchical seeding: parent process seeds child threads in creation order. Appending a thread preserves earlier draws; inserting a thread at the beginning alters subsequent seeds." style={{ width: "100%", maxWidth: 360 }}>
-    <rect x="90" y="8" width="160" height="28" rx="6" fill="rgba(6,182,212,0.15)" stroke="rgb(6,182,212)" strokeWidth="1" />
-    <text x="170" y="26" fontSize="10.5" textAnchor="middle" fill="currentColor" fontWeight="600">Parent Thread (Seed S0)</text>
+<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4" aria-labelledby="f2d-seed-title">
+  <div id="f2d-seed-title" className="mb-2 text-sm font-semibold text-foreground">Hierarchical seeding and creation order (§18.14.1, §18.14.2)</div>
+  <svg viewBox="0 0 340 166" role="img" aria-label="A parent thread's generator hands out seeds r1, r2, r3 in creation order. Appending new thread C after A and B: A keeps r1 and B keeps r2, and C gets r3. Inserting new thread N first: N takes r1, so A changes to r2 and B changes to r3." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="50" y="6" width="240" height="26" rx="6" fill="rgba(6,182,212,0.15)" stroke="rgb(6,182,212)" strokeWidth="1" />
+    <text x="170" y="23" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">Parent thread's generator: r1, r2, r3, ...</text>
 
-    <path d="M 130 36 L 59 68" stroke="currentColor" strokeWidth="1.2" />
-    <path d="M 170 36 L 170 68" stroke="currentColor" strokeWidth="1.2" />
-    <path d="M 210 36 L 281 68" stroke="currentColor" strokeWidth="1.2" strokeDasharray="3 2" />
+    <text x="10" y="50" fontSize="9.5" fill="currentColor" fontWeight="600">Append a new thread last: earlier seeds stay the same</text>
+    <rect x="10" y="56" width="98" height="38" rx="5" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" strokeWidth="1" />
+    <text x="59" y="71" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">Thread A</text>
+    <text x="59" y="86" fontSize="9.5" textAnchor="middle" fill="currentColor">seed r1 ✓ same</text>
+    <rect x="121" y="56" width="98" height="38" rx="5" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" strokeWidth="1" />
+    <text x="170" y="71" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">Thread B</text>
+    <text x="170" y="86" fontSize="9.5" textAnchor="middle" fill="currentColor">seed r2 ✓ same</text>
+    <rect x="232" y="56" width="98" height="38" rx="5" fill="rgba(99,102,241,0.12)" stroke="rgb(99,102,241)" strokeWidth="1" strokeDasharray="3 2" />
+    <text x="281" y="71" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">Thread C (new)</text>
+    <text x="281" y="86" fontSize="9.5" textAnchor="middle" fill="currentColor">seed r3</text>
 
-    <rect x="10" y="68" width="98" height="44" rx="5" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" strokeWidth="1" />
-    <text x="59" y="85" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">Child 1: Thread A</text>
-    <text x="59" y="101" fontSize="9.5" textAnchor="middle" fill="currentColor">Seed S_A (stable)</text>
-
-    <rect x="121" y="68" width="98" height="44" rx="5" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" strokeWidth="1" />
-    <text x="170" y="85" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">Child 2: Thread B</text>
-    <text x="170" y="101" fontSize="9.5" textAnchor="middle" fill="currentColor">Seed S_B (stable)</text>
-
-    <rect x="232" y="68" width="98" height="44" rx="5" fill="rgba(99,102,241,0.12)" stroke="rgb(99,102,241)" strokeWidth="1" />
-    <text x="281" y="85" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">Child 3: Thread C</text>
-    <text x="281" y="101" fontSize="9.5" textAnchor="middle" fill="currentColor">Appended last</text>
-
-    <text x="170" y="132" fontSize="9.5" textAnchor="middle" fill="currentColor">Parent seeds children in creation order; append new threads at end</text>
+    <text x="10" y="114" fontSize="9.5" fill="currentColor" fontWeight="600">Insert a new thread first: later seeds shift</text>
+    <rect x="10" y="120" width="98" height="38" rx="5" fill="rgba(99,102,241,0.12)" stroke="rgb(99,102,241)" strokeWidth="1" strokeDasharray="3 2" />
+    <text x="59" y="135" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">Thread N (new)</text>
+    <text x="59" y="150" fontSize="9.5" textAnchor="middle" fill="currentColor">seed r1</text>
+    <rect x="121" y="120" width="98" height="38" rx="5" fill="rgba(244,63,94,0.12)" stroke="rgb(244,63,94)" strokeWidth="1" />
+    <text x="170" y="135" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">Thread A</text>
+    <text x="170" y="150" fontSize="9.5" textAnchor="middle" fill="currentColor">seed r2 ✕ changed</text>
+    <rect x="232" y="120" width="98" height="38" rx="5" fill="rgba(244,63,94,0.12)" stroke="rgb(244,63,94)" strokeWidth="1" />
+    <text x="281" y="135" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">Thread B</text>
+    <text x="281" y="150" fontSize="9.5" textAnchor="middle" fill="currentColor">seed r3 ✕ changed</text>
   </svg>
-  <figcaption className="mt-2 text-xs text-muted-foreground">Each thread receives its RNG seed from its parent based on creation order (§18.14.1, §18.14.2). Adding new threads at the end preserves existing sequence draws (kept S_A, S_B); inserting a thread at the beginning shifts all subsequent child seeds.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Each new thread takes the next random value from its parent as its seed (§18.14.1), so the order of creation decides every seed (§18.14.2). Adding new threads at the end keeps the values A and B draw; inserting a thread earlier shifts the seeds of all the threads created after it.</figcaption>
 </figure>
 
 ### Expert: What to dump and what it costs
@@ -1668,12 +1707,12 @@ end
 - `$dumplimit(bytes)` stops recording when the file reaches that size, and notes it in the file (§21.7.1.5).
 - Standard VCD has no memories and no signal strengths (§21.7.2.1). Vendor formats record more; their options, file sizes and simulation slowdown are tool-dependent, so measure before you dump everything in a regression.
 
-<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4">
-  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Windowed Waveform Dumping: $dumpoff and $dumpon (§21.7.1.3)</p>
-  <svg viewBox="0 0 340 98" role="img" aria-label="Waveform dumping timeline: $dumpvars starts recording; $dumpoff checkpoints variables to X and pauses recording; $dumpon writes live values and resumes dumping during the failure window." style={{ width: "100%", maxWidth: 360 }}>
+<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4" aria-labelledby="f2d-dump-title">
+  <div id="f2d-dump-title" className="mb-2 text-sm font-semibold text-foreground">Windowed waveform dumping: <code>$dumpoff</code> and <code>$dumpon</code> (§21.7.1.3)</div>
+  <svg viewBox="0 0 340 112" role="img" aria-label="Waveform dumping timeline: $dumpvars starts recording; $dumpoff checkpoints variables to X and pauses recording; $dumpon writes live values and resumes dumping during the failure window." style={{ width: "100%", maxWidth: 360 }}>
     {/* Stage 1 */}
     <rect x="8" y="24" width="86" height="38" rx="5" fill="rgba(6,182,212,0.15)" stroke="rgb(6,182,212)" strokeWidth="1" />
-    <text x="51" y="40" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">Dumping active</text>
+    <text x="51" y="40" fontSize="9" textAnchor="middle" fill="currentColor" fontWeight="600">Dumping active</text>
     <text x="51" y="54" fontSize="9.5" textAnchor="middle" fill="currentColor">t=0: $dumpvars</text>
 
     {/* Transition to Divider 1 */}
@@ -1690,7 +1729,7 @@ end
 
     {/* Stage 2 (Paused) */}
     <rect x="110" y="28" width="94" height="30" rx="4" fill="rgba(100,116,139,0.12)" stroke="currentColor" strokeWidth="1" strokeDasharray="3 2" opacity="0.8" />
-    <text x="157" y="47" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">Recording paused</text>
+    <text x="157" y="47" fontSize="9" textAnchor="middle" fill="currentColor" fontWeight="600">Recording paused</text>
 
     {/* Transition from Stage 2 to Divider 2 */}
     <line x1="204" y1="43" x2="212" y2="43" stroke="currentColor" strokeWidth="1.2" />
@@ -1706,15 +1745,15 @@ end
 
     {/* Stage 3 */}
     <rect x="220" y="24" width="112" height="38" rx="5" fill="rgba(6,182,212,0.15)" stroke="rgb(6,182,212)" strokeWidth="1" />
-    <text x="276" y="40" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">Dumping resumed</text>
+    <text x="276" y="40" fontSize="9" textAnchor="middle" fill="currentColor" fontWeight="600">Dumping resumed</text>
     <text x="276" y="54" fontSize="9.5" textAnchor="middle" fill="currentColor">failure window</text>
 
     {/* Timeline base arrow */}
     <line x1="8" y1="92" x2="324" y2="92" stroke="currentColor" strokeWidth="1" strokeDasharray="3 3" opacity="0.35" />
     <polygon points="324,89 332,92 324,95" fill="currentColor" opacity="0.5" />
-    <text x="170" y="91" fontSize="9" textAnchor="middle" fill="currentColor" opacity="0.6">Simulation time</text>
+    <text x="170" y="106" fontSize="9" textAnchor="middle" fill="currentColor" opacity="0.75">Simulation time</text>
   </svg>
-  <figcaption className="mt-2 text-xs text-muted-foreground">Windowed waveform dumping: $dumpoff checkpoints variables to X and pauses recording to keep files small; $dumpon records live values and resumes dumping during the suspected failure window.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">$dumpoff checkpoints variables to X and pauses recording to keep files small; $dumpon records live values and resumes dumping during the suspected failure window.</figcaption>
 </figure>
 
 ### Interview angles
@@ -1750,48 +1789,6 @@ Three more questions to answer aloud, each followed by the section that answers 
 - Adding one thread to a test changed the random values that another thread drew. What does the standard promise, and how do you keep runs reproducible? (Expert: Random stability and seeds)
 
 ## Practice & Reinforce
-
-<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4">
-  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">F2D Core Rules At A Glance: System Tasks & Verification Traps</p>
-  <svg viewBox="0 0 340 226" role="img" aria-label="One-glance summary of key F2D rules: $display vs $strobe scheduling regions, $error non-termination, $fscanf return code checking, command-line plusarg prefix matching, $timeformat unpadded %0t timestamps, and random stability via thread append order." style={{ width: "100%", maxWidth: 400 }}>
-    {/* Card 1: Display vs Strobe */}
-    <rect x="6" y="6" width="161" height="68" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" strokeWidth="1" />
-    <text x="14" y="24" fontSize="10.5" fontWeight="700" fill="currentColor">$display vs $strobe</text>
-    <text x="14" y="44" fontSize="9.5" fill="currentColor">• $display: Active (pre-NBA)</text>
-    <text x="14" y="60" fontSize="9.5" fill="currentColor">• $strobe: Postponed (settled)</text>
-
-    {/* Card 2: Error vs Fatal */}
-    <rect x="173" y="6" width="161" height="68" rx="6" fill="rgba(244,63,94,0.12)" stroke="rgb(244,63,94)" strokeWidth="1" />
-    <text x="181" y="24" fontSize="10.5" fontWeight="700" fill="currentColor">$error vs $fatal</text>
-    <text x="181" y="44" fontSize="9.5" fill="currentColor">• $error: runs on (add n_fail++)</text>
-    <text x="181" y="60" fontSize="9.5" fill="currentColor">• $fatal: stops run (§20.10)</text>
-
-    {/* Card 3: $fscanf Return Code */}
-    <rect x="6" y="80" width="161" height="68" rx="6" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" strokeWidth="1" />
-    <text x="14" y="98" fontSize="10.5" fontWeight="700" fill="currentColor">$fscanf Return Code</text>
-    <text x="14" y="118" fontSize="9.5" fill="currentColor">• N: matched | -1: EOF</text>
-    <text x="14" y="134" fontSize="9.5" fill="currentColor">• Never while(!$feof) loop</text>
-
-    {/* Card 4: Command Plusargs */}
-    <rect x="173" y="80" width="161" height="68" rx="6" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" strokeWidth="1" />
-    <text x="181" y="98" fontSize="10.5" fontWeight="700" fill="currentColor">Command Plusargs</text>
-    <text x="181" y="118" fontSize="9.5" fill="currentColor">• Prefix match (+V fits +VEC)</text>
-    <text x="181" y="134" fontSize="9.5" fill="currentColor">• 1st CLI match wins (§21.6)</text>
-
-    {/* Card 5: Time & Formatting */}
-    <rect x="6" y="154" width="161" height="68" rx="6" fill="rgba(59,130,246,0.12)" stroke="rgb(59,130,246)" strokeWidth="1" />
-    <text x="14" y="172" fontSize="10.5" fontWeight="700" fill="currentColor">Time & Formatting</text>
-    <text x="14" y="192" fontSize="9.5" fill="currentColor">• $timeformat: set at time 0</text>
-    <text x="14" y="208" fontSize="9.5" fill="currentColor">• %0t unpadded; plain %t=20w</text>
-
-    {/* Card 6: Random Stability */}
-    <rect x="173" y="154" width="161" height="68" rx="6" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" strokeWidth="1" />
-    <text x="181" y="172" fontSize="10.5" fontWeight="700" fill="currentColor">Random Stability</text>
-    <text x="181" y="192" fontSize="9.5" fill="currentColor">• $urandom_range: unsigned</text>
-    <text x="181" y="208" fontSize="9.5" fill="currentColor">• Append threads to keep seeds</text>
-  </svg>
-  <figcaption className="mt-2 text-xs text-muted-foreground">Quick recall card: verify print regions, track failures on $error, parse $fscanf return codes, use specific plusarg names, unpad time with %0t, and preserve random stability by appending child threads.</figcaption>
-</figure>
 
 ### Quiz
 
@@ -2147,6 +2144,139 @@ endmodule
 - `{a, b} <= ab_mem[i]` splits the 16-bit word into the two 8-bit inputs: the upper byte goes to `a`.
 
 </details>
+
+### Recall card
+
+Use this after the quiz and the katas, not before them. Cover the words, say each rule from its picture, then check yourself.
+
+<figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4" aria-labelledby="f2d-recall-title">
+  <div id="f2d-recall-title" className="mb-2 text-sm font-semibold text-foreground">F2D traps at a glance: check yourself afterwards</div>
+  <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
+    <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-card/60 p-3">
+      <svg viewBox="0 0 72 44" width="72" height="44" aria-hidden="true" className="shrink-0" style={{ flex: "none" }}>
+        <text x="36" y="15" fontSize="9" textAnchor="middle" fontFamily="monospace" fill="currentColor">int x = 0</text>
+        <line x1="8" y1="12" x2="64" y2="12" stroke="rgb(244,63,94)" strokeWidth="1.5" />
+        <text x="36" y="35" fontSize="9" textAnchor="middle" fontFamily="monospace" fill="currentColor">automatic</text>
+        <rect x="4" y="24" width="64" height="16" rx="3" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+      </svg>
+      <div className="min-w-0 text-sm text-foreground">
+        <div className="font-semibold">Static initializer</div>
+        <div>Inside an <code>initial</code> block, <code>int x = 0;</code> does not compile. Write <code>static</code> or <code>automatic</code>.</div>
+      </div>
+    </div>
+    <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-card/60 p-3">
+      <svg viewBox="0 0 72 44" width="72" height="44" aria-hidden="true" className="shrink-0" style={{ flex: "none" }}>
+        <text x="14" y="11" fontSize="9" textAnchor="middle" fill="currentColor">q=0</text>
+        <text x="58" y="11" fontSize="9" textAnchor="middle" fill="currentColor">q=5</text>
+        <rect x="4" y="16" width="64" height="12" rx="3" fill="rgba(6,182,212,0.15)" stroke="rgb(6,182,212)" strokeWidth="0.8" />
+        <line x1="14" y1="13" x2="14" y2="28" stroke="currentColor" strokeWidth="1.2" />
+        <line x1="58" y1="13" x2="58" y2="28" stroke="currentColor" strokeWidth="1.2" />
+        <text x="36" y="40" fontSize="9" textAnchor="middle" fill="currentColor">one time slot</text>
+      </svg>
+      <div className="min-w-0 text-sm text-foreground">
+        <div className="font-semibold">Print now, or when settled</div>
+        <div><code>$display</code> prints when its statement runs, so it can show the old value. <code>$strobe</code> prints at the end of the time slot, after the updates.</div>
+      </div>
+    </div>
+    <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-card/60 p-3">
+      <svg viewBox="0 0 72 44" width="72" height="44" aria-hidden="true" className="shrink-0" style={{ flex: "none" }}>
+        <rect x="4" y="3" width="64" height="16" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.45" strokeDasharray="3 2" />
+        <text x="36" y="14" fontSize="9" textAnchor="middle" fontFamily="monospace" fill="currentColor">$monitor a</text>
+        <line x1="8" y1="11" x2="64" y2="11" stroke="rgb(244,63,94)" strokeWidth="1.5" />
+        <rect x="4" y="24" width="64" height="16" rx="3" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <text x="36" y="35" fontSize="9" textAnchor="middle" fontFamily="monospace" fill="currentColor">$monitor b</text>
+      </svg>
+      <div className="min-w-0 text-sm text-foreground">
+        <div className="font-semibold">One <code>$monitor</code> list</div>
+        <div>Only one <code>$monitor</code> list is active. A second call replaces the first without a message.</div>
+      </div>
+    </div>
+    <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-card/60 p-3">
+      <svg viewBox="0 0 72 44" width="72" height="44" aria-hidden="true" className="shrink-0" style={{ flex: "none" }}>
+        <text x="4" y="9" fontSize="9" fontFamily="monospace" fill="currentColor">$error</text>
+        <line x1="4" y1="15" x2="62" y2="15" stroke="currentColor" strokeWidth="1.2" />
+        <polygon points="62,12 68,15 62,18" fill="currentColor" />
+        <text x="4" y="31" fontSize="9" fontFamily="monospace" fill="currentColor">$fatal</text>
+        <line x1="4" y1="37" x2="38" y2="37" stroke="currentColor" strokeWidth="1.2" />
+        <line x1="40" y1="31" x2="40" y2="43" stroke="rgb(244,63,94)" strokeWidth="2.5" />
+      </svg>
+      <div className="min-w-0 text-sm text-foreground">
+        <div className="font-semibold"><code>$error</code> or <code>$fatal</code></div>
+        <div><code>$error</code> prints and the run continues, so add <code>n_fail++</code> yourself. <code>$fatal</code> ends the run, and <code>final</code> blocks still run.</div>
+      </div>
+    </div>
+    <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-card/60 p-3">
+      <svg viewBox="0 0 72 44" width="72" height="44" aria-hidden="true" className="shrink-0" style={{ flex: "none" }}>
+        <text x="4" y="9" fontSize="9" fill="currentColor">$fscanf:</text>
+        <rect x="4" y="14" width="20" height="20" rx="3" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <text x="14" y="28" fontSize="10" textAnchor="middle" fill="currentColor">2</text>
+        <rect x="26" y="14" width="20" height="20" rx="3" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <text x="36" y="28" fontSize="10" textAnchor="middle" fill="currentColor">2</text>
+        <rect x="48" y="14" width="20" height="20" rx="3" fill="rgba(244,63,94,0.15)" stroke="rgb(244,63,94)" strokeWidth="0.8" />
+        <text x="58" y="28" fontSize="10" textAnchor="middle" fill="currentColor">-1</text>
+      </svg>
+      <div className="min-w-0 text-sm text-foreground">
+        <div className="font-semibold">Reading a file</div>
+        <div>Loop on the value <code>$fscanf</code> returns: -1 means the end of the file. A <code>while (!$feof(fd))</code> loop checks the last vector twice.</div>
+      </div>
+    </div>
+    <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-card/60 p-3">
+      <svg viewBox="0 0 72 44" width="72" height="44" aria-hidden="true" className="shrink-0" style={{ flex: "none" }}>
+        <rect x="10.5" y="4" width="7" height="34" rx="2" fill="rgba(245,158,11,0.25)" stroke="rgb(245,158,11)" strokeWidth="0.8" />
+        <text x="6" y="15" fontSize="9" fontFamily="monospace" fill="currentColor">+VECTORS=</text>
+        <text x="11.4" y="33" fontSize="9" fontFamily="monospace" fill="currentColor">V</text>
+        <text x="24" y="33" fontSize="9" fill="currentColor">matches</text>
+      </svg>
+      <div className="min-w-0 text-sm text-foreground">
+        <div className="font-semibold">Plusargs match by prefix</div>
+        <div>The string <code>"V"</code> also matches <code>+VECTORS=...</code>, so use long names. The first match on the command line wins.</div>
+      </div>
+    </div>
+    <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-card/60 p-3">
+      <svg viewBox="0 0 72 44" width="72" height="44" aria-hidden="true" className="shrink-0" style={{ flex: "none" }}>
+        <text x="2" y="15" fontSize="9" fontFamily="monospace" fill="currentColor">%t</text>
+        <text x="20" y="15" fontSize="9" fontFamily="monospace" fill="currentColor" xmlSpace="preserve" style={{ whiteSpace: "pre" }}>{"[  10000]"}</text>
+        <text x="2" y="35" fontSize="9" fontFamily="monospace" fill="currentColor">%0t</text>
+        <text x="20" y="35" fontSize="9" fontFamily="monospace" fill="currentColor">[10000]</text>
+      </svg>
+      <div className="min-w-0 text-sm text-foreground">
+        <div className="font-semibold">Printing time</div>
+        <div>Call <code>$timeformat</code> once, at time 0. Plain <code>%t</code> pads to at least 20 characters; <code>%0t</code> drops the padding.</div>
+      </div>
+    </div>
+    <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-card/60 p-3">
+      <svg viewBox="0 0 72 44" width="72" height="44" aria-hidden="true" className="shrink-0" style={{ flex: "none" }}>
+        <rect x="4" y="4" width="30" height="11" rx="2" fill="rgba(244,63,94,0.2)" stroke="rgb(244,63,94)" strokeWidth="0.8" />
+        <rect x="38" y="4" width="30" height="11" rx="2" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <rect x="4" y="19" width="30" height="11" rx="2" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 2" />
+        <rect x="38" y="19" width="30" height="11" rx="2" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <text x="36" y="41" fontSize="9" textAnchor="middle" fill="currentColor">0</text>
+        <text x="4" y="41" fontSize="9" fill="currentColor">-9</text>
+        <text x="68" y="41" fontSize="9" textAnchor="end" fill="currentColor">+9</text>
+      </svg>
+      <div className="min-w-0 text-sm text-foreground">
+        <div className="font-semibold">Random range</div>
+        <div><code>$random % 10</code> can be negative. <code>$urandom_range(9)</code> stays between 0 and 9.</div>
+      </div>
+    </div>
+    <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-card/60 p-3">
+      <svg viewBox="0 0 72 44" width="72" height="44" aria-hidden="true" className="shrink-0" style={{ flex: "none" }}>
+        <text x="4" y="9" fontSize="9" fill="currentColor">creation order</text>
+        <rect x="4" y="14" width="20" height="20" rx="3" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <text x="14" y="28" fontSize="10" textAnchor="middle" fill="currentColor">A</text>
+        <rect x="26" y="14" width="20" height="20" rx="3" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" strokeWidth="0.8" />
+        <text x="36" y="28" fontSize="10" textAnchor="middle" fill="currentColor">B</text>
+        <rect x="48" y="14" width="20" height="20" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="3 2" />
+        <text x="58" y="27" fontSize="9" textAnchor="middle" fill="currentColor">new</text>
+      </svg>
+      <div className="min-w-0 text-sm text-foreground">
+        <div className="font-semibold">Random stability</div>
+        <div>Add new threads at the end of a block, so earlier threads keep their random values.</div>
+      </div>
+    </div>
+  </div>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Nine rules from this page, one small picture each. If a rule does not come back to you, reread its section.</figcaption>
+</figure>
 
 ### Lab
 
