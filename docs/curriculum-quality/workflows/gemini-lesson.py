@@ -7,6 +7,7 @@ checkpoint-release.sh remains the only way to main. Each lesson runs on the pilo
 driver commits and pushes after every stage so no work is lost.
 
   gemini-lesson.py author --worktree W --base COMMIT --plans plans.json --extra extra.txt --out DIR [--catalog catalog.json]
+  gemini-lesson.py polish --worktree W --base COMMIT --plans plans.json --extra extra.txt --out DIR  (the model reviews and fixes its own work)
   gemini-lesson.py fix    --worktree W --base COMMIT --findings findings.json --round N --extra extra.txt --out DIR
 
 plans.json maps lesson file -> audit plan; findings.json maps lesson file -> list of "Sev line - problem -> fix".
@@ -41,6 +42,12 @@ ARGON_LESSONS = """KNOWN WEAK SPOTS, check each before you finish:
 - A predict-then-check prompt must not be answered by the title, caption, table or figure above it. Put the reveal after the prompt.
 - Recall cards and tables must be exact: do not mix 4-state and 2-state results, and show what the code in the lesson really produces.
 - A new element must teach something at that point. Do not repeat a table the lesson already has, and keep the page uncluttered."""
+SELF_REVIEW = """Go through every element you added, one at a time:
+1. ACCURACY. Open the primary source for every fact a visual, table, caption or recall card states, and compare the words. Check that code in a figure would really produce what the figure shows, that numbers and strings match the lesson's own worked examples, that names match the lesson's variables, and that nothing claims more than the standard says.
+2. SVG. Every path that is a line needs fill="none". Lines must not run through text. Text must fit inside its box and the viewBox, and stay readable at 390 px. Repeated spaces collapse in SVG text. Arrows must start and end where the flow does.
+3. DIAGRAM KIT. numbered sequence diagrams must not also carry hand-written numbers. Edge labels and node kinds must mean what the visual language says, and a decision needs all its outcomes.
+4. TEACHING. A prediction must not be answered by anything visible before its reveal, and must give all the facts needed to answer it. A quiz's correct option must not always come first or be the longest. Drop nothing, but merge or move any element that only repeats a nearby one.
+5. KEEP. Every original comment, line of code, log line and fact stays exactly as it was; do not add annotations inside literal logs."""
 AUDIT = ("First audit the lesson: read it fully, its spine card in docs/curriculum-quality/curriculum-spine.md and its "
          "neighbours for context. Find the text-heavy stretches (long prose with no visual, code, table or interactive) "
          "and every core concept with no picture. Then make the additions: first reuse what exists (catalog below: embed "
@@ -74,7 +81,9 @@ def gates(worktree, file):
     code, out = run(["npx", "vitest", "run", "tests/lib/diagram-kit-content.test.ts"], worktree,
                     {"DIAGRAM_KIT_REPORT": "1", "NODE_OPTIONS": "--require @prisma/client"})
     hits = [line for line in out.splitlines() if file in line]
-    if code != 0 or hits:
+    # Lessons edit in parallel, so a finding in another lesson must not fail this one.
+    other_lesson_only = code != 0 and not hits and "new diagram finding" in out
+    if (code != 0 and not other_lesson_only) or hits:
         failures.append("diagram-kit check reports:\n" + ("\n".join(hits)[:2500] or out[-2000:]))
     return failures
 
@@ -143,7 +152,7 @@ def commit_and_push(args, files, message):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["author", "fix"])
+    parser.add_argument("mode", choices=["author", "polish", "fix"])
     parser.add_argument("--worktree", required=True)
     parser.add_argument("--base", required=True)
     parser.add_argument("--extra", required=True)
@@ -173,6 +182,13 @@ def main():
                 "fact a new visual shows against the primary sources or the lesson's own verified text. If an addition "
                 "would need a component that does not exist, skip it and list it.\n"
                 f"{audit}\nPLAN: {json.dumps(plan)[:18000]}{catalog}\n{no_shell}")
+    elif args.mode == "polish":
+        stage = "polish"
+        for file in json.loads(Path(args.plans).read_text()):
+            prompts[file] = (
+                f"{context}\n\nSelf-review for {file}, which you changed since commit {args.base}. Read the whole file as a "
+                "strict reviewer who assumes the author made mistakes, then fix what you find. Edit ONLY this file and "
+                "remove no content.\n" + SELF_REVIEW + f"\n{no_shell}")
     else:
         stage = f"fix-r{args.round}"
         for file, findings in json.loads(Path(args.findings).read_text()).items():

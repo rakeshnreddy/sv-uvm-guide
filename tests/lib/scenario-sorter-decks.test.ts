@@ -1346,6 +1346,9 @@ describe("content sweep: every ScenarioSorter in content/curriculum names a real
       "content/curriculum/T1_Foundational/F1C_Why_SystemVerilog/index.mdx sv-features",
       "content/curriculum/T1_Foundational/F1C_Why_SystemVerilog/index.mdx uvm-compile-triage",
       "content/curriculum/T1_Foundational/F1C_Why_SystemVerilog/index.mdx uvm-name-layers",
+      "content/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc.mdx ipc-tools",
+      "content/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions.mdx function-body",
+      "content/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions.mdx task-or-function",
       "content/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index.mdx regression-log",
     ]);
     // PacketSorterGame, the containers deck's wrapper, is registered and embedded in F2B today.
