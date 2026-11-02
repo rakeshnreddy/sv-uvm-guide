@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  OPCODE_E,
+  enumCast,
+  enumInitialValue,
   enumMemberReadout,
   enumName,
   formatH,
@@ -73,6 +76,9 @@ describe("struct presets: one per lesson use, each prediction agreeing with the 
   it("ctrl_reg_t: the three writes give the lesson's 32'h0000_0641", () => {
     const p = structPreset("ctrl_reg_t");
     expect(formatSizedHex(runStructStatements(p, 3))).toBe("32'h0000_0641");
+    // The note names the variable on the learner's screen, not the lesson's wdata.
+    expect(p.statements[2].note).toMatch(/ctrl reads 32'h0000_0641/);
+    expect(p.statements[2].note).not.toMatch(/wdata/);
     expect(memberRanges(p.members).map((r) => `${r.name}${r.hi}:${r.lo}`)).toEqual(["rsvd31:16", "prescale15:12", "thresh11:4", "mode3:2", "irq_en1:1", "en0:0"]);
     // The gated question is the register after the thresh write.
     expect(correctOf(p.statements[2].prediction!.options)).toBe(formatSizedHex(runStructStatements(p, 3)));
@@ -104,6 +110,9 @@ describe("struct presets: one per lesson use, each prediction agreeing with the 
     expect(p.varName).toBe("hdr");
     expect(p.statements[0].code).toMatch(/^hdr = /);
     expect(p.statements[1]).toMatchObject({ varName: "rx" });
+    // The unpacked view prints a statement's code in a compile-error card, so the packed-only explanation lives in the note.
+    expect(p.statements[1].code).toBe("rx = 32'hC1FF_0000;");
+    expect(p.statements[1].note).toMatch(/rx\.kind is not type-checked \(derived from §7\.2\.1: the struct is one vector\)/);
     expect([currentVarName(p, 0), currentVarName(p, 1), currentVarName(p, 2)]).toEqual(["hdr", "hdr", "rx"]);
     const hdr = runStructStatements(p, 1);
     expect(formatH(hdr)).toBe("4540cafe");
@@ -148,6 +157,10 @@ describe("struct presets: one per lesson use, each prediction agreeing with the 
     const readout = enumMemberReadout(p.members, c1, "op");
     expect(readout.name).toBe("");
     expect(correctOf(p.statements[0].prediction!.options)).toBe('"" (empty string)');
+    // §6.19.3 names only an explicit cast and a union member; the struct back door is derived, and says so even in a wrong option's feedback.
+    const compileError = p.statements[0].prediction!.options.find((o) => o.id === "error")!.feedback;
+    expect(compileError).toMatch(/derived from §7\.2\.1: the struct is one vector/);
+    expect(compileError).not.toMatch(/bypassed/);
     const c2 = runStructStatements(p, 2);
     expect(enumMemberReadout(p.members, c2, "op").name).toBe("OP_WRITE");
   });
@@ -225,11 +238,35 @@ describe("union presets", () => {
     expect(correctOf(p.statements[1].prediction!.options)).toBe("32'hAAAA_1234");
   });
 
+  it("a preset's summary and label name nothing the controls can change, so neither contradicts the status line", () => {
+    for (const p of UNION_PRESETS) {
+      expect(`${p.label} ${p.summary}`, p.id).not.toMatch(/hard packed|soft|\d+-bit|\d+ bits|narrow|wide|uneven/i);
+    }
+    for (const p of STRUCT_PRESETS) expect(`${p.label} ${p.summary}`, p.id).not.toMatch(/uneven|narrow(est|er)|widest/i);
+    expect(unionPreset("nest_u").summary).toMatch(/Where does a write to n\.inner\.b4 land\?/);
+    expect(structPreset("cmd_t").summary).not.toMatch(/\d+-bit/);
+    expect(structPreset("narrow-assign").summary).not.toMatch(/\d+-bit/);
+  });
+
+  it("cmd_u: bytes[3] on top is labelled derived and cites the §7.3.1 example, which is what supports it; §7.4.4 does not state it", () => {
+    const options = unionPreset("cmd_u").statements[0].prediction!.options;
+    const right = options.find((o) => o.correct)!.feedback;
+    expect(right).toMatch(/derived from the range/);
+    expect(right).toMatch(/§7\.3\.1 example, where byte_slice\[51\] is bit_slice\[415:408\]/);
+    for (const o of options) expect(o.feedback, o.id).not.toMatch(/§7\.4\.4/);
+  });
+
   it("nest_u: the nested write lands at bit 0 of the whole union", () => {
     const p = unionPreset("nest_u");
     let n = svHex(12, "0");
     for (const s of p.statements) n = writeUnionPath(p.union, n, s.path, s.value).value;
     expect(correctOf(p.statements[1].prediction!.options)).toBe(formatSizedHex(readUnionPath(p.union, n, "a")));
+  });
+
+  it("the label beside a typedef is in the learner's words: no file name, true on any page that embeds the explorer", () => {
+    for (const p of [...STRUCT_PRESETS, ...UNION_PRESETS]) expect(p.source, p.id).not.toMatch(/\.mdx/);
+    expect(structPreset("cmd_t").source).toBe("Structs, Unions and Enums: Packed structs");
+    expect(unionPreset("nest_u").source).toMatch(/^our own example/);
   });
 
   it("the narrowing control targets a vector member of each preset", () => {
@@ -242,24 +279,28 @@ describe("union presets", () => {
 
 describe("tagged preset", () => {
   it("a button's statement is the log's statement, in the same radix", () => {
-    expect(taggedAssignStatement(VINT_THIRD_MEMBER)).toBe("v = tagged Small (8'hA5);");
-    expect(taggedAssignValue(VINT_THIRD_MEMBER)).toBe(0xa5);
+    expect(taggedAssignStatement(VINT_THIRD_MEMBER)).toBe("v = tagged Small (8'h5A);");
+    expect(taggedAssignValue(VINT_THIRD_MEMBER)).toBe(0x5a);
     expect(VINT.members.map(taggedAssignStatement)).toEqual(["v = tagged Invalid;", "v = tagged Valid (23);"]);
     expect(VINT.members.map(taggedAssignValue)).toEqual([undefined, 23]);
   });
 
   it("VInt is the standard's example; the third member is ours and 8 bits wide", () => {
     expect(VINT.members.map((m) => m.name)).toEqual(["Invalid", "Valid"]);
-    expect(VINT_THIRD_MEMBER).toMatchObject({ name: "Small", width: 8 });
+    expect(VINT_THIRD_MEMBER).toMatchObject({ name: "Small", width: 8, signed: false });
+    expect(VINT.members.find((m) => m.name === "Valid")).toMatchObject({ typeText: "int", signed: true });
   });
 
   it("the read prediction is 'legal' when the tag matches, a run-time error for another defined tag, and undefined before any assignment (§11.9)", () => {
     expect(correctOf(TAGGED_READ_PREDICTION("v.Valid", "Valid").options)).toBe("Legal: prints the value");
     expect(correctOf(TAGGED_READ_PREDICTION("v.Valid", "Invalid").options)).toBe("Run-time error: the tag is another member");
-    // §11.9 defines the run-time error only for a read inconsistent with a defined tag; an uninitialized union, tag included, is undefined.
+    expect(TAGGED_READ_PREDICTION("v.Valid", "Invalid").options.find((o) => o.id === "error")!.feedback).toMatch(/The tag changes only through a tagged expression \(§7\.3\.2\)/);
+    // §11.9 says "inconsistent with the tag" and separately makes an uninitialized union's tag bits undefined; "no defined result" is an inference and says so.
     const undefinedRead = TAGGED_READ_PREDICTION("v.Valid", null);
-    expect(correctOf(undefinedRead.options)).toBe("Undefined: never assigned, no defined result (§11.9)");
-    expect(undefinedRead.options.find((o) => o.id === "error")!.feedback).toMatch(/no defined result rather than a defined error/);
+    expect(correctOf(undefinedRead.options)).toBe("Undefined: never assigned, so no defined result (derived from §11.9)");
+    expect(undefinedRead.options.find((o) => o.id === "error")!.feedback).toMatch(/Derived: §11\.9 makes the tag bits undefined, so whether the check fires is not defined/);
+    expect(undefinedRead.options.find((o) => o.id === "error")!.feedback).not.toMatch(/defined tag/);
+    for (const o of undefinedRead.options) expect(o.feedback, o.id).toMatch(/[Dd]erived/);
     expect(TAGGED_READ_PREDICTION("v.Valid", "Valid").options.find((o) => o.id === "undefined")!.feedback).toMatch(/the read is legal/);
   });
 });
@@ -306,8 +347,10 @@ describe("debug clinic: the model regenerates the log, so a wrong fix keeps the 
   it("IDLE without reset: the int base starts at 0 = IDLE; a logic base starts at x with an empty name (Table 6-7)", () => {
     const s = clinicScenario("idle-without-reset");
     expect(logOf(s, null)).toMatch(/state\.name\(\) = "IDLE" \(value 0\)/);
-    expect(logOf(s, "logic-base")).toMatch(/state\.name\(\) = "" \(value 'bxx\)/);
+    expect(logOf(s, "logic-base")).toMatch(/state\.name\(\) = "" \(value x\)/);
     expect(logOf(s, "reorder")).toMatch(/state\.name\(\) = "IDLE"/);
+    // The log's own format comes from the $display on screen.
+    expect(s.lines.find((l) => l.text.startsWith("$display"))!.text).toBe('$display("@%0t state.name() = \\"%s\\" (value %0d)", $time, state.name(), state);');
   });
 
   it("IDLE without reset: the post-edge line comes from the code shown, so nothing moves to RUN and x stays x (§6.19.5.6)", () => {
@@ -315,7 +358,7 @@ describe("debug clinic: the model regenerates the log, so a wrong fix keeps the 
     expect(logOf(s, null)).not.toMatch(/RUN/);
     expect(logOf(s, "logic-base")).not.toMatch(/RUN/);
     expect(logOf(s, null)).toMatch(/@10 posedge clk: rst_n = 1, so nothing assigns state; state\.name\(\) = "IDLE"/);
-    expect(logOf(s, "logic-base")).toMatch(/@10 posedge clk: rst_n = 1, so nothing assigns state; state\.name\(\) = "" \(value 'bxx\)/);
+    expect(logOf(s, "logic-base")).toMatch(/@10 posedge clk: rst_n = 1, so nothing assigns state; state\.name\(\) = "" \(value x\)/);
   });
 
   it("empty name: the static cast stores 7; $cast rejects it and leaves op unchanged (§6.19.4, §6.24.2)", () => {
@@ -323,7 +366,60 @@ describe("debug clinic: the model regenerates the log, so a wrong fix keeps the 
     expect(logOf(s, null)).toMatch(/op = $/m);
     expect(logOf(s, "cast-check")).toMatch(/ERROR: bad opcode 7 \(\$cast returned 0\)/);
     expect(logOf(s, "cast-check")).toMatch(/op = OP_NOP \(unchanged\)/);
-    expect(enumName).toBeTypeOf("function");
+  });
+
+  it("empty name, both forms: 7 is a known value, so the base has nothing to do with the symptom (§6.19.5.6)", () => {
+    // What the claim would have to survive: a 2-state copy of the enum, with the same word.
+    const bitBase = { ...OPCODE_E, baseDecl: "bit [3:0]", states: 2 as const };
+    const cast = enumCast(bitBase, enumInitialValue(bitBase), 7, "static");
+    expect(formatSizedHex(cast.after)).toBe("4'h7");
+    expect(enumName(bitBase, cast.after)).toBe("");
+    for (const id of ["empty-name", "empty-name-struct"] as const) {
+      const s = clinicScenario(id);
+      const texts = [s.lines[0].whenPicked, s.fixFeedback["logic-base"]];
+      for (const text of texts) {
+        expect(text, id).not.toMatch(/made the bad value visible|why the empty name was visible|already 4-state/);
+        expect(text, id).toMatch(/§6\.19\.5\.6/);
+      }
+      expect(s.lines[0].whenPicked, id).toMatch(/A 4-state base only exposes a never-assigned variable \(Table 6-7\)/);
+      expect(s.fixFeedback["logic-base"], id).toMatch(/The symptom stays\.$/);
+    }
+  });
+
+  it("empty name: the 'never assigned' option describes what the code shown prints, a name and no bits (§6.19.5.6)", () => {
+    const unset = clinicScenario("empty-name").causes.find((c) => c.id === "unset")!.feedback;
+    expect(unset).not.toMatch(/x bits/);
+    expect(unset).toMatch(/would print an empty name too \(Table 6-7, §6\.19\.5\.6\)/);
+    expect(unset).toMatch(/op holds 7/);
+  });
+
+  it("every as-found log line that starts a clinic listing's output comes from a $display in the listing", () => {
+    const emptyName = clinicScenario("empty-name");
+    expect(emptyName.run(null).log[0]).toBe("raw = 7abc0042");
+    expect(emptyName.lines.map((l) => l.text)).toContain('$display("raw = %h", raw);');
+    const struct = clinicScenario("empty-name-struct");
+    expect(struct.run(null).log[0]).toBe("[mon] bus_word = 7abc0042");
+    expect(struct.lines.map((l) => l.text)).toContain('$display("[mon] bus_word = %h", bus_word);');
+    expect(struct.lines.find((l) => l.key === "l6")!.text).toMatch(/^\$display\("\[mon\] op = %s, addr = %h, data = %h"/);
+  });
+
+  it("the struct back door is labelled derived wherever it is explained, and the check $cast makes is §6.24.2, not §6.19.3", () => {
+    const s = clinicScenario("empty-name-struct");
+    expect(s.lines.find((l) => l.key === "l5")!.whenPicked).toMatch(/derived from §7\.2\.1/);
+    const compile = s.causes.find((c) => c.id === "compile")!.feedback;
+    expect(compile).toMatch(/not to its containing struct \(derived from §7\.2\.1: the struct is one vector\)/);
+    expect(s.fixFeedback["cast-check"]).toMatch(/\$cast checks the value/);
+    expect(s.fixFeedback["cast-check"]).toMatch(/§6\.24\.2/);
+    expect(s.fixFeedback["cast-check"]).not.toMatch(/§6\.19\.3/);
+    // The readout the scenario leans on holds for a 2-state base too.
+    const bitOp = { id: "op", name: "op", width: 4, type: { kind: "enum" as const, spec: { ...OPCODE_E, baseDecl: "bit [3:0]", states: 2 as const } } };
+    expect(enumMemberReadout([bitOp], svHex(4, "7"), "op").name).toBe("");
+  });
+
+  it("swapped fields: op's line is the other half of the ordering bug and counts as the suspect, with the first member first", () => {
+    const s = clinicScenario("swapped-fields");
+    expect(s.suspectKeys).toEqual(["l2", "l4"]);
+    expect(s.lines.find((l) => l.key === "l4")!.whenPicked).toMatch(/other half of the same ordering bug/);
   });
 
   it("empty name: the fix gives op a known default before the $cast, since a failed $cast does not assign and op would otherwise stay x (§6.24.2, Table 6-7)", () => {
@@ -380,9 +476,34 @@ describe("debug clinic: the model regenerates the log, so a wrong fix keeps the 
 
   it("two typedefs: a compile error until one typedef lives in a package (§6.22.1)", () => {
     const s = clinicScenario("two-typedefs");
-    expect(logOf(s, null)).toMatch(/compile error.*incompatible types: mon\.cmd_rec_t to scb\.cmd_rec_t/);
+    expect(logOf(s, null)).toMatch(/compile error.*cannot assign mon\.cmd_rec_t to scb\.cmd_rec_t/);
+    // Not the standard's "type incompatible" (§6.22.5): a bit-stream cast is defined for these structs (§6.24.3), so they are cast compatible (§6.22.4).
+    expect(logOf(s, null)).toMatch(/not assignment compatible: §6\.22\.3; no match under §6\.22\.1 \(d\), not equivalent under §6\.22\.2/);
+    expect(logOf(s, null)).not.toMatch(/incompatible/);
     expect(logOf(s, "package-typedef")).toMatch(/compile: ok/);
-    expect(logOf(s, "cast-check")).toMatch(/compile error/);
+    expect(s.fixFeedback["package-typedef"]).toMatch(/always matches itself, regardless of the scope it is imported into \(§6\.22\.1 h\)/);
+    expect(s.fixFeedback["package-typedef"]).not.toMatch(/every scope|§6\.22\.1 d/);
+  });
+
+  it("two typedefs + $cast: it compiles, because $cast as a function never issues a compile error, and fails at run time without copying (§6.24.2)", () => {
+    const s = clinicScenario("two-typedefs");
+    const run = s.run("cast-check");
+    expect(run.log).toEqual(["compile: ok ($cast as a function never issues a compile error, §6.24.2)", "run: $cast returned 0", "ERROR: cast failed; scb.expected unchanged"]);
+    expect(run.fixed).toBe(false);
+    expect(run.moved).toBe(true);
+    expect(run.verdict).toMatch(/makes no assignment and returns 0 \(§6\.24\.2\)/);
+    expect(s.fixFeedback["cast-check"]).toMatch(/compile error goes away/);
+    expect(s.fixFeedback["cast-check"]).toMatch(/still does not happen/);
+    expect(s.fixFeedback["cast-check"]).toMatch(/moves to run time/);
+    // Every other wrong fix leaves the compile error as it was.
+    for (const f of ["reorder", "logic-base", "rand-whole"] as const) {
+      expect(s.run(f).log[0], f).toMatch(/^compile error/);
+      expect(s.run(f).moved, f).toBeUndefined();
+    }
+  });
+
+  it("only that combination moves the symptom: everywhere else a wrong fix keeps it", () => {
+    for (const s of CLINIC_SCENARIOS) for (const f of fixIds) expect(Boolean(s.run(f).moved), `${s.id}/${f}`).toBe(s.id === "two-typedefs" && f === "cast-check");
   });
 
   it("two typedefs: both typedef lines count as the suspect and each names the other; the citation is §6.22.1 (d), not §6.22.2 (b)", () => {
@@ -399,5 +520,15 @@ describe("debug clinic: the model regenerates the log, so a wrong fix keeps the 
     expect(logOf(s, null)).toMatch(/compile error: rand logic \[3:0\] op;/);
     expect(s.run(null).verdict).toMatch(/footnote 20/);
     expect(logOf(s, "rand-whole")).toMatch(/randomize\(\) returned 1/);
+  });
+
+  it("rand: the log names the member as the fix declares it, and the option marked right does not forbid rand in a class (§18.4)", () => {
+    const s = clinicScenario("rand-packed-member");
+    expect(s.fixCode["logic-base"]).toMatch(/rand opcode_e op;/);
+    expect(logOf(s, "logic-base")).toMatch(/compile error: rand opcode_e op;/);
+    expect(correctOf(s.causes)).toBe("Among struct members, rand is legal only in unpacked structs");
+    const logicOption = s.causes.find((c) => c.id === "logic")!.feedback;
+    expect(logicOption).not.toMatch(/treats them as 2-state/);
+    expect(logicOption).toMatch(/§18\.4/);
   });
 });

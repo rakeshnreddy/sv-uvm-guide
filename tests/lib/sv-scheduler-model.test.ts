@@ -205,45 +205,83 @@ import {
   assertionSampledSignals,
   exprNames,
   findRaceHazards,
+  runsOnce,
   slotTimeLabel,
   withInterleaveNba,
+  type Statement,
   type SvScenario,
   type SvValue,
+  type TraceStep,
 } from "@/lib/sv-scheduler-model";
-import { programReactiveScenario, regionMapScenarioPresets } from "@/lib/sv-scheduler-scenarios";
+import { combAfterNbaScenario, programReactiveScenario, regionMapScenarioPresets, zeroDelayPrintsScenario } from "@/lib/sv-scheduler-scenarios";
+import { programWatcherScenario } from "@/lib/sv-region-map-scenarios-extra";
 
 const hash16 = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 
-/** Every legal ordering's trace of a scenario, hashed. */
+/** What a trace does, without its narration: rewording `what` and `why` can neither break nor fake the opt-in proof below. */
+const structure = (trace: TraceStep[]) =>
+  trace.map((s) => ({
+    index: s.index,
+    kind: s.kind,
+    region: s.region,
+    sourceRegion: s.sourceRegion,
+    delta: s.delta,
+    processId: s.processId,
+    stmtId: s.stmtId,
+    values: s.values,
+    changed: s.changed,
+    queues: s.queues,
+    log: s.log,
+    choice: s.choice,
+  }));
+
+/** Every legal ordering's trace structure of a scenario, hashed. */
 const traceSetHash = (scenario: SvScenario) =>
   hash16(
     exploreOrderings(scenario)
       .outcomes.flatMap((o) => o.runs)
-      .map((r) => simulateTimeSlot(scenario, r.choices).trace),
+      .map((r) => structure(simulateTimeSlot(scenario, r.choices).trace)),
   );
 
 describe("sv-scheduler-model: additions are opt-in, so existing traces are unchanged", () => {
-  // Hashes of every preset's full trace set, computed with the model as it was
-  // before inv/resume/slotTime/assertions/finish/check/interleaveNba existed.
+  // Hashes of `structure` over every preset's trace set, computed by running the
+  // model and scenarios of commit ba9dbe7a^, from before inv/resume/slotTime/
+  // assertions/finish/check/interleaveNba existed. Do not recompute them from the
+  // current model: that would prove nothing. Narration is pinned separately below.
   const BASELINE: Record<string, string> = {
-    "shift-blocking": "882e8eac82f79f09",
-    "shift-nba": "d092e0757e6d3bee",
-    "tb-blocking-drive": "455a40033a6c22e4",
-    "tb-nba-drive": "4475be1c0c439984",
-    "tb-clocking-block": "3cfe14b26578a8c7",
-    "display-vs-strobe": "ba0cf7a52032098a",
-    "comb-after-nba": "e830aa7592fd7c89",
-    "zero-delay-prints": "2bc9ed90fd6b6553",
-    "program-reactive": "192cbbf8c44691d2",
+    "shift-blocking": "a7e14d80f1a3e6dd",
+    "shift-nba": "9fb23c1aaf9c27f6",
+    "tb-blocking-drive": "3448772ce32d034a",
+    "tb-nba-drive": "8cccd05fdcec4f84",
+    "tb-clocking-block": "1a79df39e1aa1c8d",
+    "display-vs-strobe": "54a412a8f1f7f74a",
+    "comb-after-nba": "48f8b99ef7a45404",
+    "zero-delay-prints": "1c70726b12aa71fc",
+    "program-reactive": "32e6930ba95b45b3",
   };
 
-  it.each([...schedulerScenarioPresets, ...regionMapScenarioPresets].map((p) => [p.id, p] as const))("%s: every legal ordering produces the trace it did before the extension", (id, preset) => {
+  it.each([...schedulerScenarioPresets, ...regionMapScenarioPresets].map((p) => [p.id, p] as const))("%s: every legal ordering does what it did before the extension", (id, preset) => {
     expect(traceSetHash(preset.build())).toBe(BASELINE[id]);
   });
 
   it("the #0 variants the region quiz uses are unchanged too", () => {
-    expect(hash16(simulateTimeSlot(withZeroDelay(shiftRegisterScenario("blocking"), "B", true)).trace)).toBe("4aff938999a1fe32");
-    expect(hash16(simulateTimeSlot(withZeroDelay(programReactiveScenario(), "TB", true)).trace)).toBe("3142098ff4f28af0");
+    expect(hash16(structure(simulateTimeSlot(withZeroDelay(shiftRegisterScenario("blocking"), "B", true)).trace))).toBe("472d96496e5d6d5d");
+    expect(hash16(structure(simulateTimeSlot(withZeroDelay(programReactiveScenario(), "TB", true)).trace))).toBe("48798c6a8b899e5a");
+  });
+
+  it("at slot time 0 the sample is `initial`, which stands for static-variable declaration initializers (§16.5.1; the file header states the limit)", () => {
+    const scenario: SvScenario = {
+      id: "time-zero",
+      title: "assertion at time 0",
+      clock: "clk",
+      slotTime: 0,
+      initial: { clk: 0, y: 1 },
+      watch: ["clk", "y"],
+      processes: [{ id: "A", label: "a_y", owner: "design", context: "module", kind: "assertion", header: "a_y: assert property", trigger: { kind: "posedge", signal: "clk" }, body: [], assertion: { property: { kind: "var", name: "y" }, pass: [{ kind: "display", id: "a1", signals: [], label: "PASS" }] } }],
+    };
+    const run = simulateTimeSlot(scenario);
+    expect(run.slotTime).toBe(0);
+    expect(run.trace.find((s) => s.assertion?.phase === "evaluate")?.assertion?.outcome).toBe("pass");
   });
 
   it("the slot time defaults to 10 ns and is reported on the result", () => {
@@ -252,6 +290,113 @@ describe("sv-scheduler-model: additions are opt-in, so existing traces are uncha
     expect(run.finished).toBeUndefined();
     expect(slotTimeLabel({})).toBe("t = 10 ns");
     expect(slotTimeLabel({ slotTime: 5 })).toBe("t = 5 ns");
+  });
+});
+
+describe("sv-scheduler-model: narration (pinned apart from the structure, because these sentences teach)", () => {
+  const stepOf = (scenario: SvScenario, find: (s: TraceStep) => boolean) => {
+    const step = simulateTimeSlot(scenario).trace.find(find);
+    if (!step) throw new Error("no such step");
+    return step;
+  };
+
+  it("a continuous assignment is narrated as one, not as a blocking statement (§4.9.1)", () => {
+    const comb = stepOf(combAfterNbaScenario(), (s) => s.stmtId === "ca1" && s.kind === "statement");
+    expect(comb.what).toBe("assign y = q; reads q = 1 and updates y.");
+    expect(comb.why).toBe("A continuous assignment re-evaluates when its source changes and updates its target through an active update event (§4.9.1); the change wakes always_comb. Any process that reads y later in this slot sees 1.");
+    for (const scenario of [programReactiveScenario(), programWatcherScenario()]) {
+      const led = stepOf(scenario, (s) => s.kind === "statement" && s.changed.includes("led"));
+      expect(led.what).toMatch(/^assign led = cmd; reads cmd = 1 and updates led\.$/);
+      expect(led.why).toMatch(/^A continuous assignment re-evaluates/);
+      expect(led.why).not.toMatch(/blocking|next statement/);
+    }
+  });
+
+  it("always_comb and procedural code keep the blocking-assignment narration", () => {
+    const comb = stepOf(combAfterNbaScenario(), (s) => s.stmtId === "cb1" && s.kind === "statement");
+    expect(comb.what).toBe("z = y; reads y = 1 and writes z immediately.");
+    expect(comb.why).toBe("A blocking assignment updates its target before the next statement runs. Any process that reads z later in this slot sees 1.");
+  });
+
+  it("a print names what is really pending: an NBA update when one is queued (§4.4.2.4)", () => {
+    const first = stepOf(zeroDelayPrintsScenario(), (s) => s.kind === "print");
+    expect(first.queues.nba.length).toBeGreaterThan(0);
+    expect(first.why).toBe("$display prints the values visible at this instant — pending NBA updates are not yet applied.");
+  });
+
+  it("a print with no update pending says nothing about NBA, and names the process Active still holds (§4.5)", () => {
+    const watcher = stepOf(programWatcherScenario(), (s) => s.kind === "print");
+    expect(watcher.queues.nba).toEqual([]);
+    expect(watcher.queues.reNba).toEqual([]);
+    expect(watcher.queues.active.map((q) => q.label)).toEqual(["run assign led"]);
+    expect(watcher.why).toBe("$display prints the values visible now. Active still holds run assign led, which waits until the reactive set has drained (§4.5), so its effect does not show yet.");
+  });
+
+  it("no print of any preset claims a pending update the queues do not hold", () => {
+    for (const preset of [...schedulerScenarioPresets, ...regionMapScenarioPresets]) {
+      for (const step of simulateTimeSlot(preset.build()).trace) {
+        if (step.kind !== "print" || step.region === "postponed") continue;
+        if (/pending NBA/.test(step.why)) expect(step.queues.nba.length).toBeGreaterThan(0);
+        if (/pending Re-NBA/.test(step.why)) expect(step.queues.reNba.length).toBeGreaterThan(0);
+        if (step.queues.nba.length) expect(step.why).toMatch(/pending NBA/);
+        if (step.queues.reNba.length) expect(step.why).toMatch(/Re-NBA updates/);
+      }
+    }
+  });
+
+  it("a clocking drive lands in Re-NBA after the active set drains, with no claim about the rest of the slot (§14.16, §4.5)", () => {
+    const drive = stepOf(testbenchDriveScenario("clocking"), (s) => s.stmtId === "tb1" && s.kind === "statement");
+    expect(drive.why).toBe("A synchronous drive through a clocking block is applied in Re-NBA, after the active set has drained, so design logic triggered by this edge has already captured the old value (§14.16).");
+    expect(drive.why).not.toMatch(/all design NBA/);
+  });
+
+  it("a move says 'this loop', because Observed is in neither region set (§4.4.1)", () => {
+    const moves = simulateTimeSlot(testbenchDriveScenario("clocking")).trace.filter((s) => s.kind === "move");
+    expect(moves.map((m) => m.region)).toContain("observed");
+    for (const move of moves) expect(move.why).toMatch(/every earlier region of this loop is empty/);
+    expect(moves[0].what).toBe("Active is empty. 1 NBA event moves to Active: q ← 3.");
+  });
+
+  it("a move names Δ as the model's count, not as a term of the standard", () => {
+    const [move] = simulateTimeSlot(combAfterNbaScenario()).trace.filter((s) => s.kind === "move");
+    expect(move.why).toBe("The scheduler only advances to NBA once every earlier region of this loop is empty. Moving events back adds one to the model's Δ count; simulation time does not change.");
+    for (const preset of [...schedulerScenarioPresets, ...regionMapScenarioPresets]) {
+      for (const step of simulateTimeSlot(preset.build()).trace) expect(`${step.what} ${step.why}`).not.toMatch(/delta/i);
+    }
+  });
+
+  it("slot start says what reads the Preponed samples: a procedural read of cb.q does, a plain read of a variable does not (§14.13, §16.9.3)", () => {
+    const run = simulateTimeSlot(testbenchDriveScenario("clocking"));
+    expect(run.trace[0].why).toBe(
+      "Preponed samples every value before anything in this slot changes. Clocking-block inputs (#1step), concurrent assertions and $sampled() return these samples; a plain read of a variable returns its current value.",
+    );
+    // The driver's procedural `seen = cb.q;` gets the sample while q already holds its new value.
+    const read = run.trace.find((s) => s.stmtId === "tb2");
+    expect(read?.values).toMatchObject({ q: 3, seen: 1 });
+  });
+
+  it("an edge wakes processes but only schedules Observed events, and the narration keeps the two apart (§14.10, §4.4.2.5)", () => {
+    const clocking = simulateTimeSlot(testbenchDriveScenario("clocking")).trace.find((s) => s.kind === "update" && s.changed.includes("clk"));
+    expect(clocking?.why).toBe("The clock generator drives clk high. The change wakes DUT flop and schedules the @(cb) clocking event in Observed.");
+    const both: SvScenario = {
+      id: "edge-narration",
+      title: "edge narration",
+      clock: "clk",
+      clockings: [{ name: "cb", clock: "clk" }],
+      initial: { clk: 0, ok: 1 },
+      watch: ["clk"],
+      processes: [
+        { id: "F", label: "flop", owner: "design", context: "module", header: "always_ff @(posedge clk)", trigger: { kind: "posedge", signal: "clk" }, body: [{ kind: "assign", id: "f1", op: "nba", target: "ok", expr: { kind: "const", value: 0 } }] },
+        { id: "G", label: "logger", owner: "design", context: "module", header: "always @(posedge clk)", trigger: { kind: "posedge", signal: "clk" }, body: [{ kind: "display", id: "g1", signals: ["ok"] }] },
+        { id: "A", label: "a_ok", owner: "design", context: "module", kind: "assertion", header: "a_ok: assert property", trigger: { kind: "posedge", signal: "clk" }, body: [], assertion: { property: { kind: "var", name: "ok" } } },
+      ],
+    };
+    const edge = simulateTimeSlot(both).trace.find((s) => s.kind === "update" && s.changed.includes("clk"));
+    expect(edge?.why).toBe("The clock generator drives clk high. The change wakes flop and logger and schedules the @(cb) clocking event and the evaluation of a_ok in Observed.");
+    const scheduledOnly: SvScenario = { ...both, processes: both.processes.filter((p) => p.id === "A") };
+    expect(simulateTimeSlot(scheduledOnly).trace.find((s) => s.kind === "update" && s.changed.includes("clk"))?.why).toBe(
+      "The clock generator drives clk high. The change schedules the @(cb) clocking event and the evaluation of a_ok in Observed.",
+    );
   });
 });
 
@@ -314,6 +459,10 @@ describe("sv-scheduler-model: inv and eq (IEEE 1800-2023 §11.4.8 bitwise negati
     expect(run.finalValues).toMatchObject({ n: "X", e: "X" });
     const eq0 = simulateTimeSlot(invScenario(0), [0]);
     expect(eq0.finalValues.e).toBe(1);
+  });
+
+  it("~ of a multi-bit value is outside the model and throws rather than invent X (§11.4.8)", () => {
+    expect(() => simulateTimeSlot(invScenario(5))).toThrow(/~ is modelled for single-bit values only, not 5/);
   });
 
   it("renders ~q, q == 0 and ~(a == b) as source", () => {
@@ -391,7 +540,7 @@ describe("sv-scheduler-model: resume trigger and slot time (IEEE 1800-2023 §4.5
     expect(firstActive?.why).toMatch(/Ready at the start of the slot: #5 books t = 10/);
     const edge = run.trace.find((s) => s.kind === "statement" && s.stmtId === "k1");
     expect(edge?.changed).toEqual(["clk"]);
-    expect(edge?.why).toMatch(/wakes always_ff, initial/);
+    expect(edge?.why).toMatch(/; the change wakes always_ff and initial\. /);
     // No implicit clock update event exists when the scenario drives its own clock.
     expect(run.trace.some((s) => s.kind === "update" && s.changed.includes("clk"))).toBe(false);
     expect(run.finalValues).toMatchObject({ clk: 1, q: 1, q_n: 0 });
@@ -425,6 +574,137 @@ describe("sv-scheduler-model: resume trigger and slot time (IEEE 1800-2023 §4.5
     const run = simulateTimeSlot(oneEdgeScenario(), [0]);
     const done = run.trace.find((s) => s.processId === "CLK" && /finishes and waits/.test(s.what));
     expect(done?.why).toBe("Its next delay (#5 books t = 10) expires in a later time slot.");
+  });
+
+  /** One `resume` process that drives clk, with whatever header, note and slot time a test wants. */
+  const startScenario = (opts: { header: string; note?: string; slotTime?: number; context?: "module" | "program" }): SvScenario => ({
+    id: "start",
+    title: "start",
+    clock: "clk",
+    clockSource: "process",
+    ...(opts.slotTime === undefined ? {} : { slotTime: opts.slotTime }),
+    initial: { clk: 0 },
+    watch: ["clk"],
+    processes: [
+      {
+        id: "GEN",
+        label: "gen",
+        owner: "testbench",
+        context: opts.context ?? "module",
+        header: opts.header,
+        trigger: { kind: "resume", ...(opts.note ? { note: opts.note } : {}) },
+        body: [{ kind: "assign", id: "g1", op: "blocking", target: "clk", expr: { kind: "const", value: 1 } }],
+      },
+    ],
+  });
+  const ended = (run: ReturnType<typeof simulateTimeSlot>) => run.trace.findLast((s) => s.processId === "GEN" && s.kind === "statement");
+
+  it("an initial at time 0 starts there and then ends: no delay expired, and none comes next (§9.2.1)", () => {
+    const run = simulateTimeSlot(startScenario({ header: "initial", slotTime: 0 }));
+    expect(run.trace.find((s) => s.kind === "wake")?.why).toBe("Ready at the start of the slot: the procedure starts at time 0.");
+    expect(ended(run)).toMatchObject({
+      what: "gen finishes: the procedure has ended.",
+      why: "An initial procedure executes once, and its activity then ceases (§9.2.1). Nothing runs it again.",
+    });
+    for (const step of run.trace) expect(`${step.what} ${step.why}`).not.toMatch(/delay expired|next delay|waits for its next trigger/);
+  });
+
+  it("an initial whose delay expired later still ends, with or without a note, in module or program code", () => {
+    const expired = simulateTimeSlot(startScenario({ header: "initial" }));
+    expect(expired.trace.find((s) => s.kind === "wake")?.why).toBe("Ready at the start of the slot: its delay expired at this time.");
+    expect(ended(expired)?.what).toBe("gen finishes: the procedure has ended.");
+    const noted = simulateTimeSlot(startScenario({ header: "initial", note: "#5 expired" }));
+    expect(ended(noted)?.what).toBe("gen finishes: the procedure has ended.");
+    expect(ended(noted)?.why).not.toMatch(/next delay/);
+    const program = simulateTimeSlot(startScenario({ header: "initial", context: "program" }));
+    expect(ended(program)).toMatchObject({ region: "reactive", what: "gen finishes: the procedure has ended." });
+  });
+
+  it("an always keeps the delay narration, at time 0 too", () => {
+    const zero = simulateTimeSlot(startScenario({ header: "always #5", slotTime: 0 }));
+    expect(zero.trace.find((s) => s.kind === "wake")?.why).toBe("Ready at the start of the slot: the procedure starts at time 0.");
+    expect(ended(zero)).toMatchObject({ what: "gen finishes and waits for its next trigger.", why: "Its next delay expires in a later time slot." });
+  });
+
+  it("runsOnce reads the source the learner sees: forever and a trailing wait keep a thread alive", () => {
+    expect(runsOnce({ header: "initial" })).toBe(true);
+    expect(runsOnce({ header: "initial @(posedge clk)" })).toBe(true);
+    expect(runsOnce({ header: "initial forever @(posedge clk)" })).toBe(false);
+    expect(runsOnce({ header: "initial @(posedge clk)", sourceTail: ["@(posedge clk);"] })).toBe(false);
+    expect(runsOnce({ header: "always #5" })).toBe(false);
+    expect(runsOnce({ header: "always_ff @(posedge clk)" })).toBe(false);
+  });
+
+  it("a finished initial is not re-armed: a second edge in the slot wakes the always but not the initial", () => {
+    const flop = (id: string, header: string): SvScenario["processes"][number] => ({
+      id,
+      label: id,
+      owner: "testbench",
+      context: "module",
+      header,
+      trigger: { kind: "posedge", signal: "clk" },
+      body: [{ kind: "display", id: `${id}1`, signals: ["clk"], label: id }],
+    });
+    const run = simulateTimeSlot({
+      id: "two-edges",
+      title: "two edges",
+      clock: "clk",
+      clockSource: "process",
+      initial: { clk: 0 },
+      watch: ["clk"],
+      processes: [
+        {
+          id: "GEN",
+          label: "gen",
+          owner: "testbench",
+          context: "module",
+          header: "initial",
+          trigger: { kind: "resume" },
+          body: [
+            { kind: "assign", id: "g1", op: "blocking", target: "clk", expr: { kind: "const", value: 1 } },
+            { kind: "delay0", id: "g2" },
+            { kind: "assign", id: "g3", op: "blocking", target: "clk", expr: { kind: "const", value: 0 } },
+            { kind: "delay0", id: "g4" },
+            { kind: "assign", id: "g5", op: "blocking", target: "clk", expr: { kind: "const", value: 1 } },
+          ],
+        },
+        flop("ONCE", "initial @(posedge clk)"),
+        flop("LOOP", "always @(posedge clk)"),
+      ],
+    });
+    const wakes = (id: string) => run.trace.filter((s) => s.kind === "wake" && s.processId === id).length;
+    expect(wakes("LOOP")).toBe(2);
+    expect(wakes("ONCE")).toBe(1);
+  });
+
+  it("program context: a process ready at slot start wakes in Reactive, not Active (§24.3.1)", () => {
+    const run = simulateTimeSlot(startScenario({ header: "always #5", note: "#5 books t = 15", context: "program" }));
+    const wake = run.trace.find((s) => s.kind === "wake" && s.processId === "GEN");
+    expect(wake).toMatchObject({ region: "reactive", why: "Ready at the start of the slot: #5 books t = 15." });
+    expect(wake?.sourceRegion).toBeUndefined();
+    expect(run.trace.filter((s) => s.region === "active")).toEqual([]);
+    expect(run.finalValues.clk).toBe(1);
+  });
+
+  it("the time-0 sample is the default sampled value, not a Preponed read (§16.5.1)", () => {
+    const assertion = (slotTime?: number): SvScenario => ({
+      ...startScenario({ header: "always #5", ...(slotTime === undefined ? {} : { slotTime }) }),
+      initial: { clk: 0, y: 1 },
+      processes: [
+        ...startScenario({ header: "always #5" }).processes,
+        { id: "A", label: "a_y", owner: "design", context: "module", kind: "assertion", header: "a_y: assert property", trigger: { kind: "posedge", signal: "clk" }, body: [], assertion: { property: { kind: "var", name: "y" } } },
+      ],
+    });
+    const sampleOf = (run: ReturnType<typeof simulateTimeSlot>) => run.trace.find((s) => s.kind === "sample");
+    const evalOf = (run: ReturnType<typeof simulateTimeSlot>) => run.trace.find((s) => s.assertion?.phase === "evaluate");
+    const zero = simulateTimeSlot(assertion(0));
+    expect(sampleOf(zero)?.why).toBe(
+      "At time 0 a concurrent assertion reads default sampled values (§16.5.1). The model's start values stand for static-variable declaration initializers, which is what those defaults are. $sampled() returns the same values later in the slot (§16.9.3). The property itself is not evaluated until Observed.",
+    );
+    expect(evalOf(zero)?.why).toMatch(/^Property expressions are evaluated in the Observed region, after the active set has settled, but on the values sampled in Preponed: at time 0, the default sampled values \(§4\.4\.2\.5, §16\.5\.1\)\./);
+    const later = simulateTimeSlot(assertion());
+    expect(sampleOf(later)?.why).toMatch(/^A concurrent assertion reads sampled values: the values its signals had in Preponed/);
+    expect(evalOf(later)?.why).toMatch(/but on the values sampled in Preponed \(§4\.4\.2\.5, §16\.5\.1\)\./);
   });
 });
 
@@ -575,7 +855,8 @@ describe("sv-scheduler-model: concurrent assertions (IEEE 1800-2023 §16.5.1 sam
     expect(failing.log).toContain("$error: 5 FAIL $sampled(q)=1");
     const unknown = simulateTimeSlot(workedExample({ initialQ: "X" }), [0]);
     expect(unknown.trace.find((s) => s.assertion?.phase === "evaluate")?.assertion?.outcome).toBe("fail");
-    expect(unknown.log).toContain("$error: 5 FAIL $sampled(q)=X");
+    // %0d shows a lowercase x when every bit is unknown (§21.2.1.3).
+    expect(unknown.log).toContain("$error: 5 FAIL $sampled(q)=x");
   });
 
   it("reproduces the F3B worked example: ACTIVE, INACT, then REACT and ACTION in either order (§4.7), then POSTP", () => {
@@ -587,6 +868,65 @@ describe("sv-scheduler-model: concurrent assertions (IEEE 1800-2023 §16.5.1 sam
       expect(log.slice(2, 4).sort()).toEqual(["$display: 5 ACTION $sampled(q)=0 q=1", "$display: 5 REACT q=1 y=1"]);
       expect(log[4]).toBe("$strobe: 5 POSTP q=1 y=1");
     }
+  });
+
+  /** A failing assertion with no else clause: `y` is sampled low, and it has no action blocks at all. */
+  const noElseScenario = (): SvScenario => ({
+    id: "no-else",
+    title: "no else clause",
+    clock: "clk",
+    initial: { clk: 0, y: 0 },
+    watch: ["clk", "y"],
+    processes: [{ id: "A", label: "a_y", owner: "design", context: "module", kind: "assertion", header: "a_y: assert property", trigger: { kind: "posedge", signal: "clk" }, body: [], assertion: { property: { kind: "var", name: "y" } } }],
+  });
+
+  it("a failing assertion with no else clause calls $error by default (§16.14.1): fail in Observed, then the print in Reactive", () => {
+    const run = simulateTimeSlot(noElseScenario());
+    const evaluation = run.trace.find((s) => s.assertion?.phase === "evaluate");
+    expect(evaluation).toMatchObject({ sourceRegion: "observed", assertion: { phase: "evaluate", outcome: "fail" }, what: "a_y evaluates y on the sampled values (y = 0): it fails." });
+    expect(evaluation?.why).toBe(
+      "Property expressions are evaluated in the Observed region, after the active set has settled, but on the values sampled in Preponed (§4.4.2.5, §16.5.1). It has no else clause, so the tool calls $error by default, unless $assertcontrol suppresses it (§16.14.1). The model runs that call with the fail code, which §4.4.2.5 schedules in the Reactive region.",
+    );
+    const action = run.trace.find((s) => s.assertion?.phase === "action" && s.kind === "wake");
+    expect(action).toMatchObject({ region: "reactive", what: "a_y has no else clause, so its default $error runs." });
+    expect(action?.why).toBe(
+      "With the else clause omitted, the tool calls $error when the assertion fails, unless $assertcontrol suppresses it (§16.14.1). The model does not apply $assertcontrol, and a real tool words the message its own way. The model runs the call with the fail code, in the Reactive region (§4.4.2.5).",
+    );
+    expect(run.log).toEqual(["$error: a_y failed"]);
+  });
+
+  it("the default $error reports only the label, so its narration says nothing about values being visible", () => {
+    const print = simulateTimeSlot(noElseScenario()).trace.find((s) => s.kind === "print");
+    expect(print).toMatchObject({ region: "reactive", what: "Prints a_y failed immediately." });
+    expect(print?.why).toBe("The tool reports the failure; its wording is tool-specific, and the model prints only the assertion's label, so no signal value is read here.");
+  });
+
+  it("the default $error is the model's: the source shows no else clause and no $error line", () => {
+    const text = scenarioToSource(noElseScenario()).map((l) => l.text);
+    expect(text).toEqual(["a_y: assert property (@(posedge clk) y);"]);
+  });
+
+  it("a passing assertion with no action block schedules nothing and prints nothing", () => {
+    const run = simulateTimeSlot({ ...noElseScenario(), initial: { clk: 0, y: 1 } });
+    expect(run.trace.find((s) => s.assertion?.phase === "evaluate")?.why).toMatch(/It has no pass action block, so nothing more is scheduled\.$/);
+    expect(run.log).toEqual([]);
+    expect(run.trace.some((s) => s.region === "reactive")).toBe(false);
+  });
+
+  it("a constant property samples nothing: no sample step, and no empty list of sampled values", () => {
+    const constant = (pass?: Statement[]): SvScenario => ({
+      ...noElseScenario(),
+      processes: [{ id: "A", label: "a_c", owner: "design", context: "module", kind: "assertion", header: "a_c: assert property", trigger: { kind: "posedge", signal: "clk" }, body: [], assertion: { property: { kind: "const", value: 1 }, pass } }],
+    });
+    const run = simulateTimeSlot(constant());
+    expect(run.trace.some((s) => s.kind === "sample")).toBe(false);
+    const evaluation = run.trace.find((s) => s.assertion?.phase === "evaluate");
+    expect(evaluation?.what).toBe("a_c evaluates 1: it passes.");
+    expect(evaluation?.why).toBe("Property expressions are evaluated in the Observed region, after the active set has settled (§4.4.2.5). This one reads no signal, so no sample matters. It has no pass action block, so nothing more is scheduled.");
+    // A $sampled() in its action block still takes a sample.
+    const sampling = simulateTimeSlot(constant([{ kind: "display", id: "a1", signals: [], args: [{ label: "y", expr: { kind: "sampledFn", name: "y" } }] }]));
+    expect(sampling.trace.find((s) => s.kind === "sample")?.what).toBe("a_c samples y = 0.");
+    expect(sampling.trace.find((s) => s.assertion?.phase === "evaluate")?.what).toBe("a_c evaluates 1: it passes.");
   });
 
   it("renders the assertion with its clock, property and action blocks, and the program's trailing wait", () => {
@@ -616,6 +956,8 @@ describe("sv-scheduler-model: $finish (IEEE 1800-2023 §20.2, §9.2.3) and the i
     // The NBA update of q was still queued when the run ended.
     expect(run.finalValues.q).toBe(0);
     expect(run.trace.at(-1)).toMatchObject({ kind: "slot-end", endedBy: "finish" });
+    // The closing step is no event of Inactive, though the $finish that ended the run was.
+    expect(run.trace.at(-1)!.sourceRegion).toBeUndefined();
     expect(run.trace.at(-1)!.why).toMatch(/never execute/);
     expect(run.trace.some((s) => s.region === "postponed")).toBe(false);
   });
@@ -780,6 +1122,39 @@ describe("sv-scheduler-model: interleaveNba (IEEE 1800-2023 §4.5 'any event', �
     expect(run.finalValues.b).toBe(0);
   });
 
+  it("on: an Active choice is narrated as moved NBA events", () => {
+    const run = simulateTimeSlot(withInterleaveNba(gclkScenario(), true), [0, 1]);
+    const choice = run.trace.find((s) => s.kind === "choice" && s.choice?.options[0].startsWith("apply"));
+    expect(choice?.what).toBe('Active holds 1 pending NBA update and 1 woken process: apply a ← 1, run always @(posedge gclk). This run picks "run always @(posedge gclk)" first.');
+    expect(choice?.why).toBe(
+      "Once NBA events have moved to Active, the loop may take any event from the region (§4.5): the updates keep their order among themselves (§4.6), but a process woken by one of them may run before the rest are applied. Code whose result depends on this is a race.",
+    );
+  });
+
+  /** The same batch in program code: the updates land in Re-NBA and execute in Reactive. */
+  const programGclkScenario = (): SvScenario => {
+    const base = gclkScenario();
+    return {
+      ...base,
+      id: "program-gclk-interleave",
+      processes: base.processes.map((p) => ({ ...p, context: "program" as const, owner: "testbench" as const, label: p.label.replace(/^always/, "initial forever"), header: p.header.replace(/^always/, "initial forever") })),
+    };
+  };
+
+  it("on, in program code: the choice is among Re-NBA events moved to Reactive, and the words say so (§4.4.2.8, §4.5)", () => {
+    const scenario = withInterleaveNba(programGclkScenario(), true);
+    const first = simulateTimeSlot(scenario, [0, 1]);
+    const choice = first.trace.find((s) => s.kind === "choice" && s.choice?.options[0].startsWith("apply"));
+    expect(choice).toMatchObject({ region: "reactive", choice: { options: ["apply a ← 1", "run initial forever @(posedge gclk)"], picked: "run initial forever @(posedge gclk)" } });
+    expect(choice?.what).toBe('Reactive holds 1 pending Re-NBA update and 1 woken process: apply a ← 1, run initial forever @(posedge gclk). This run picks "run initial forever @(posedge gclk)" first.');
+    expect(choice?.why).toBe(
+      "Once Re-NBA events have moved to Reactive, the loop may take any event from the region (§4.4.2.8, §4.5): the updates keep their order among themselves (§4.6), but a process woken by one of them may run before the rest are applied. Code whose result depends on this is a race.",
+    );
+    expect(first.finalValues.b).toBe(0);
+    expect(simulateTimeSlot(scenario, [0, 0]).finalValues.b).toBe(1);
+    expect(exploreOrderings(programGclkScenario()).deterministic).toBe(true);
+  });
+
   it("keeps NBA updates in execution order among themselves and adds no choice when nothing wakes between them", () => {
     for (const preset of [...schedulerScenarioPresets, ...regionMapScenarioPresets]) {
       const off = exploreOrderings(preset.build());
@@ -791,7 +1166,19 @@ describe("sv-scheduler-model: interleaveNba (IEEE 1800-2023 §4.5 'any event', �
 });
 
 describe("sv-scheduler-model: posedge follows Table 9-2 (IEEE 1800-2023 §9.4.2)", () => {
-  it("isPosedge: 0 to anything else and X to 1 are edges; everything else is not", () => {
+  it("isPosedge reads the LSB of a multi-bit value (§9.4.2)", () => {
+    expect(isPosedge(0, 2)).toBe(false);
+    expect(isPosedge(2, 4)).toBe(false);
+    expect(isPosedge(1, 3)).toBe(false);
+    expect(isPosedge(0, 3)).toBe(true);
+    expect(isPosedge(2, 3)).toBe(true);
+    expect(isPosedge(2, "X")).toBe(true);
+    expect(isPosedge("X", 3)).toBe(true);
+    expect(isPosedge("X", 2)).toBe(false);
+    expect(isPosedge(3, 2)).toBe(false);
+  });
+
+  it("isPosedge: Table 9-2 on 0, 1 and X", () => {
     expect(isPosedge(0, 1)).toBe(true);
     expect(isPosedge(0, "X")).toBe(true);
     expect(isPosedge("X", 1)).toBe(true);

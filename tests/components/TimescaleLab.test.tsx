@@ -2,8 +2,8 @@ import React from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import TimescaleLab from "@/components/visuals/TimescaleLab";
-import { READ_TIME_PRESETS, ROUNDING_PRESETS, readTimeOptions, roundDelayText, roundingOptions, runReadTime } from "@/lib/sv-timescale-model";
+import TimescaleLab, { TIMESCALE_ASSUMPTIONS } from "@/components/visuals/TimescaleLab";
+import { READ_TIME_PRESETS, ROUNDING_PRESETS, globalPrecisionDesign, gradeCrossScopeSuspects, readTimeOptions, roundDelayText, roundingOptions, runReadTime } from "@/lib/sv-timescale-model";
 
 /** Picks an option and locks in the prediction of the prompt that owns it (a page may hold several prompts). */
 const lockIn = (optionText: RegExp | string) => {
@@ -26,7 +26,16 @@ const lockInWithin = (question: RegExp, optionText: RegExp) => {
   fireEvent.click(within(fieldset).getByLabelText(optionText));
   fireEvent.click(within(fieldset.parentElement as HTMLElement).getByRole("button", { name: /lock in prediction/i }));
 };
-const chooseTimeformat = (name: RegExp) => fireEvent.click(within(screen.getByRole("radiogroup", { name: "$timeformat before the code runs" })).getByRole("radio", { name }));
+const openAdvanced = () => {
+  const button = screen.queryByRole("button", { name: /^Show advanced/ });
+  if (button) fireEvent.click(button);
+};
+const chooseTimeformat = (name: RegExp) => {
+  openAdvanced();
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "$timeformat before the code runs" })).getByRole("radio", { name }));
+};
+/** cross-scope, wait_t(5ns): the trace and the fixes wait for the hunt. */
+const skipHunt = () => fireEvent.click(screen.getByRole("button", { name: /Skip the hunt/ }));
 
 describe("TimescaleLab · rounding", () => {
   it("hides the wake time until the learner commits, then shows the ruler and the §3.14.1 steps", () => {
@@ -66,11 +75,11 @@ describe("TimescaleLab · rounding", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/coarser than the unit.*§3\.14/);
     expect(screen.queryByRole("button", { name: /lock in prediction/i })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Time precision"), { target: { value: "100ps" } });
-    fireEvent.change(delayInput(), { target: { value: "#(x)" } });
+    fireEvent.change(delayInput(), { target: { value: "#(1'bx)" } });
     lockIn(/^0 ns$/);
     expect(shown(/Correct\./)).toBeInTheDocument();
     expect(allShown(/interpreted as zero delay \(§9\.4\.1\)/).length).toBeGreaterThan(0);
-    expect(screen.getByRole("img", { name: /snaps to 0 ns/ })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /interpreted as zero, so the statement wakes at 0 ns/ })).toBeInTheDocument();
   });
 
   it("a time literal in a 1 ps module waits 5000 ps (§5.8)", () => {
@@ -137,7 +146,7 @@ describe("TimescaleLab · two modules", () => {
   it("rescales the axis so a large delay still shows both modules", () => {
     render(<TimescaleLab mode="two-modules" />);
     fireEvent.change(delayInput(), { target: { value: "#60" } });
-    expect(screen.getByRole("img", { name: /Time axis 0 to 2 us; the wake markers appear/ })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /its scale and the wake markers appear after both predictions/ })).toBeInTheDocument();
     lockIn(/^60 ns$/);
     lockIn(/^600 ns, then 1200 ns$/);
     const axis = screen.getByRole("img", { name: /^Time axis 0 to 2 us\. tb_top \(1ns\/100ps\) wakes at 60 ns; u_slow \(10ns\/1ns\) wakes at 600 ns, then 1\.2 us/ });
@@ -153,7 +162,9 @@ describe("TimescaleLab · two modules", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reveal without predicting" }));
     const axis = screen.getByRole("img", { name: /tb_top \(1ns\/100ps\) wakes at/ });
     expect(axis.querySelectorAll("circle")).toHaveLength(1);
-    expect(axis.querySelectorAll("path")).toHaveLength(2);
+    // A second copy would pass 64 bits of time, for which the sources give no rule: only the first wake is drawn.
+    expect(axis.querySelectorAll("path")).toHaveLength(1);
+    expect(shown(/Only the first wake is shown/)).toBeInTheDocument();
     for (const marker of Array.from(axis.querySelectorAll("circle"))) {
       expect(Number(marker.getAttribute("cx"))).toBeLessThanOrEqual(360);
     }
@@ -163,14 +174,14 @@ describe("TimescaleLab · two modules", () => {
 describe("TimescaleLab · read-time", () => {
   const log = () => screen.getByLabelText("Printed log");
 
-  it("§20.3.1 preset: each moment has its own prediction: $time 2 / $realtime 1.6, then $time 3 / 3.2", () => {
+  it("§20.3.1 preset: each print has its own prediction, of the line as the code prints it", () => {
     render(<TimescaleLab mode="read-time" />);
     expect(screen.queryByTestId("read-time-reveal")).not.toBeInTheDocument();
     const slider = screen.getByRole("slider", { name: "Moment" });
-    expect(slider).toHaveAttribute("aria-valuetext", "Moment 1 of 2: test wakes from its 1st delay, not yet predicted");
+    expect(slider).toHaveAttribute("aria-valuetext", "Moment 1 of 2: test prints after its 1st delay, not yet predicted");
     expect(log()).toHaveTextContent("predict moment 1 to reveal this line");
 
-    lockIn(/^\$time=2 \$realtime=1\.6 %0t=16$/);
+    lockIn(/^\$time=2 \$realtime=1\.6 %t=.*then 16$/);
     expect(shown(/Correct\./)).toBeInTheDocument();
     expect(within(screen.getByTestId("read-time-reveal")).getByRole("img", { name: /Absolute time 16 ns; in 10ns units that is 1\.6; \$time rounds it to 2/ })).toBeInTheDocument();
     expect(log()).toHaveTextContent("$time=2 $realtime=1.6");
@@ -179,11 +190,11 @@ describe("TimescaleLab · read-time", () => {
     // Scrubbing on re-arms the prediction: the answer stays hidden until this moment is committed too.
     fireEvent.click(screen.getByRole("button", { name: "Next moment" }));
     expect(screen.queryByTestId("read-time-reveal")).not.toBeInTheDocument();
-    expect(slider).toHaveAttribute("aria-valuetext", "Moment 2 of 2: test wakes from its 2nd delay, not yet predicted");
+    expect(slider).toHaveAttribute("aria-valuetext", "Moment 2 of 2: test prints after its 2nd delay, not yet predicted");
     expect(screen.getByRole("button", { name: /lock in prediction/i })).toBeDisabled();
-    lockIn(/^\$time=3 \$realtime=3\.2 %0t=32$/);
+    lockIn(/^\$time=3 \$realtime=3\.2 %t=.*then 32$/);
     expect(within(screen.getByTestId("read-time-reveal")).getByRole("img", { name: /Absolute time 32 ns.*\$time rounds it to 3/ })).toBeInTheDocument();
-    expect(slider).toHaveAttribute("aria-valuetext", "Moment 2 of 2: test wakes from its 2nd delay, at 32 ns");
+    expect(slider).toHaveAttribute("aria-valuetext", "Moment 2 of 2: test prints after its 2nd delay, at 32 ns");
 
     // Going back keeps the first answer instead of asking again.
     fireEvent.click(screen.getByRole("button", { name: "Previous moment" }));
@@ -193,17 +204,17 @@ describe("TimescaleLab · read-time", () => {
 
   it("diagnoses counting in precision steps", () => {
     render(<TimescaleLab mode="read-time" />);
-    lockIn(/^\$time=16 \$realtime=16 /);
+    lockIn(/^\$time=16 \$realtime=16\.0 /);
     expect(shown(/That counts in 1ns precision steps/)).toBeInTheDocument();
   });
 
-  it("make-it-work preset asks about u_slow's own moment, where $realtime is 1.3 but %t prints 13.0 ns", () => {
+  it("make-it-work preset asks about u_slow's own line, where $realtime is 1.3 but %t prints 13.0 ns", () => {
     render(<TimescaleLab mode="read-time" preset="make-it-work" />);
     skip(); // tb_top's moment
     fireEvent.click(screen.getByRole("button", { name: "Next moment" }));
-    const prompt = screen.getByRole("group", { name: /u_slow .*wakes from its 1st delay/ });
-    expect(within(prompt).getByText(/1\.26/)).toBeInTheDocument();
-    lockIn(/^\$time=1 \$realtime=1\.3 %0t=13\.0 ns$/);
+    const prompt = screen.getByRole("group", { name: /u_slow .*after its 1st delay/ });
+    expect(within(prompt.querySelector("legend") as HTMLElement).getByText("#1.26")).toBeInTheDocument();
+    lockIn(/^slow_gen \$time=1 \$realtime=1\.30 %t=13\.0 ns$/);
     expect(shown(/Correct\./)).toBeInTheDocument();
     expect(log()).toHaveTextContent("slow_gen $time=1 $realtime=1.30 %t=13.0 ns");
     expect(log()).toHaveTextContent("predict moment 3 to reveal this line");
@@ -222,13 +233,17 @@ describe("TimescaleLab · read-time", () => {
     expect(screen.queryByRole("button", { name: "Reveal every moment" })).not.toBeInTheDocument();
   });
 
-  it("toggling the %t argument after the reveal changes what the moment prints", () => {
+  it("toggling the %t argument after the reveal rewrites the code, the moment and the log", () => {
     render(<TimescaleLab mode="read-time" />);
-    lockIn(/^\$time=2 \$realtime=1\.6 %0t=16$/);
-    const printed = () => within(screen.getByTestId("read-time-reveal")).getByText(/^Prints/).closest("p") as HTMLElement;
-    expect(printed()).toHaveTextContent("%0t=16");
+    lockIn(/^\$time=2 \$realtime=1\.6 %t=.*then 16$/);
+    const printed = () => screen.getByTestId("moment-prints");
+    const code = () => screen.getByRole("list", { name: "The code this run executes" });
+    expect(printed()).toHaveTextContent(/%t=.*padded with 18 spaces, then 16/);
+    expect(code()).toHaveTextContent('%%t=%t", $time, $realtime, $realtime);');
     fireEvent.click(within(screen.getByRole("radiogroup", { name: "%t argument" })).getByRole("radio", { name: "%t of $time" }));
-    expect(printed()).toHaveTextContent("%0t=20");
+    expect(printed()).toHaveTextContent(/%t=.*padded with 18 spaces, then 20/);
+    expect(log()).toHaveTextContent("%t= 20");
+    expect(code()).toHaveTextContent('%%t=%t", $time, $realtime, $time);');
     expect(shown(/Correct\./)).toBeInTheDocument();
   });
 
@@ -255,8 +270,10 @@ describe("TimescaleLab · read-time", () => {
   it("a custom caller under timeunit only shows tool-dependent %t until $timeformat is called", () => {
     render(<TimescaleLab mode="read-time" />);
     fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "custom" } });
-    expect(shown(/Default units here:/)).toHaveTextContent("tool-dependent");
+    openAdvanced();
+    expect(screen.queryByText(/Default units here:/, onScreen)).not.toBeInTheDocument();
     revealEveryMoment();
+    expect(shown(/Default units here:/)).toHaveTextContent("tool-dependent");
     expect(log()).toHaveTextContent("⟨tool-dependent⟩");
     chooseTimeformat(/called with/);
     revealEveryMoment();
@@ -265,6 +282,7 @@ describe("TimescaleLab · read-time", () => {
 
   it("$timeformat is a plain choice: the four arguments appear under 'called with…' and changing one re-arms the prediction", () => {
     render(<TimescaleLab mode="read-time" />);
+    openAdvanced();
     const group = screen.getByRole("radiogroup", { name: "$timeformat before the code runs" });
     expect(within(group).getByRole("radio", { name: /not called \(Table 20-3 defaults\)/ })).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByLabelText("units_number")).not.toBeInTheDocument();
@@ -289,7 +307,7 @@ describe("TimescaleLab · read-time", () => {
     fireEvent.change(screen.getByLabelText("Caller's time precision"), { target: { value: "1ns" } });
     fireEvent.change(screen.getByLabelText("Delay sequence"), { target: { value: "#3" } });
     expect(screen.getAllByRole("radio", { name: /\$time=/ }).length).toBeGreaterThanOrEqual(2);
-    lockIn(/^\$time=3 \$realtime=3 %0t=⟨tool-dependent⟩$/);
+    lockIn(/^\$time=3 \$stime=3 \$realtime=3\.000 %t=⟨tool-dependent⟩$/);
     expect(shown(/Correct\./)).toBeInTheDocument();
   });
 });
@@ -345,15 +363,18 @@ describe("TimescaleLab · global-precision", () => {
     render(<TimescaleLab mode="global-precision" />);
     lockIn(/is 100ps \/ 100ps/);
     expect(shown(/Correct\./)).toBeInTheDocument();
+    lockIn(/^Tool-dependent/);
+    expect(allShown(/Correct\./)).toHaveLength(2);
     fireEvent.click(screen.getByLabelText(/Add vendor_model\.sv/));
     expect(screen.getByRole("button", { name: /lock in prediction/i })).toBeDisabled();
     lockIn(/is 1fs \/ 1fs/);
-    expect(shown(/Correct\./)).toBeInTheDocument();
+    lockIn(/^1fs$/);
+    expect(allShown(/Correct\./)).toHaveLength(2);
     const rows = screen.getAllByRole("row");
     const rowText = rows.map((r) => r.textContent ?? "");
     expect(rowText.find((t) => t.startsWith("$printtimescale"))).toMatch(/100ps \/ 100ps.*1fs \/ 1fs.*changed/);
     expect(rowText.find((t) => t.startsWith("1step"))).toMatch(/100 ps1 fs.*changed/);
-    expect(rowText.find((t) => t.startsWith("default %t units"))).toMatch(/tool-dependent.*1fs.*changed/);
+    expect(rowText.find((t) => t.startsWith("default %t units"))).toMatch(/Table 20-3 does not define it.*1fs.*changed/);
     expect(rowText.find((t) => t.includes("tb_top runs #1.26"))).toMatch(/1\.3 ns1\.3 nsunchanged/);
     expect(rowText.find((t) => t.includes("slow_gen runs #1.26"))).toMatch(/13 ns13 nsunchanged/);
   });
@@ -372,6 +393,7 @@ describe("TimescaleLab · cross-scope", () => {
     expect(screen.queryByTestId("cross-scope-reveal")).not.toBeInTheDocument();
     lockIn(/^5 ps$/);
     expect(shown(/Correct\./)).toBeInTheDocument();
+    skipHunt();
     const chip = screen.getByTestId("crossing-chip");
     expect(chip).toHaveAttribute("data-lane", "caller");
     expect(chip).toHaveTextContent("5.01ns");
@@ -399,13 +421,19 @@ describe("TimescaleLab · cross-scope", () => {
     expect(screen.getByText("expected 5 ns, woke at 5.000 ns")).toBeInTheDocument();
     fireEvent.click(within(forms).getByRole("radio", { name: "repeat (5) @(posedge clk);" }));
     lockIn(/^5 ns$/);
-    expect(shown(/no time unit takes part/)).toBeInTheDocument();
+    expect(shown(/The repeat line counts edges and has no unit \(§9\.4\.2\)/)).toBeInTheDocument();
   });
 
   it("grades suspects: #t is the culprit, $timeformat is a decoy; grades fixes by recomputation; three hints", () => {
     render(<TimescaleLab mode="cross-scope" />);
     expect(screen.queryAllByRole("button", { name: /^Suspect line:/ })).toHaveLength(0);
     skip();
+    // Three hints fade while the hunt is on.
+    fireEvent.click(screen.getByRole("button", { name: /Need a hint\?/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Another hint/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Another hint/ }));
+    expect(screen.getAllByRole("listitem").filter((li) => /§5\.8|package boundary|§3\.14/.test(li.textContent ?? "")).length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByRole("button", { name: /Another hint/ })).not.toBeInTheDocument();
     // Code order: #t (util_pkg), then tb_top's timeunit, $timeformat and the call.
     const suspectButtons = screen.getAllByRole("button", { name: /^Suspect line:/ });
     expect(suspectButtons).toHaveLength(4);
@@ -426,22 +454,16 @@ describe("TimescaleLab · cross-scope", () => {
     expect(screen.getByRole("table", { name: "Wake time by caller unit" })).toHaveTextContent("5 us");
     fireEvent.click(screen.getByRole("button", { name: /Scale inside the package/ }));
     expect(shown(/Robust:/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /Need a hint\?/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Another hint/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Another hint/ }));
-    expect(screen.getAllByRole("listitem").filter((li) => /§5\.8|package boundary|§3\.14/.test(li.textContent ?? "")).length).toBeGreaterThanOrEqual(3);
-    expect(screen.queryByRole("button", { name: /Another hint/ })).not.toBeInTheDocument();
   });
 
-  it("names each suspect button after its code line, with a touch-sized target and the verdict as its description", () => {
+  it("names each suspect button after its code line, with a 40 px target and the verdict as its description", () => {
     render(<TimescaleLab mode="cross-scope" />);
     skip();
     expect(screen.getByRole("button", { name: "Suspect line: #t;" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Suspect line: timeunit 1ns; timeprecision 1ps;" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Suspect line: \$timeformat\(-9, 3, " ns", 0\);/ })).toBeInTheDocument();
     const call = screen.getByRole("button", { name: /^Suspect line: util_pkg::wait_t\(5ns\);/ });
-    expect(call.className).toContain("min-h-7");
+    expect(call.className).toContain("min-h-10");
     expect(call).not.toHaveAttribute("aria-describedby");
     fireEvent.click(call);
     expect(call).toHaveAttribute("aria-pressed", "true");
@@ -475,7 +497,7 @@ describe("TimescaleLab · persistent live region", () => {
   const cases: { mode: "rounding" | "two-modules" | "read-time" | "which-unit" | "global-precision"; pick: RegExp; says: RegExp }[] = [
     { mode: "rounding", pick: /^2\.8 ns$/, says: /^Correct\./ },
     { mode: "two-modules", pick: /^1\.3 ns$/, says: /^Correct\./ },
-    { mode: "read-time", pick: /^\$time=2 \$realtime=1\.6 %0t=16$/, says: /^Correct\..*Prints \$time=2/ },
+    { mode: "read-time", pick: /^\$time=2 \$realtime=1\.6 %t=.*then 16$/, says: /^Correct\..*Prints \$time=2/ },
     { mode: "which-unit", pick: /1ns, from a\.sv's `timescale/, says: /^Correct\./ },
     { mode: "global-precision", pick: /is 100ps \/ 100ps/, says: /^Correct\./ },
   ];
@@ -553,8 +575,8 @@ describe("TimescaleLab · nothing outside the options reveals the answer before 
     it(`read-time, ${p.id}`, () => {
       const { container } = render(<TimescaleLab mode="read-time" preset={p.id} />);
       const trace = runReadTime(p.callers, p.build, null);
-      const firstMomentAnswer = readTimeOptions(trace.snapshots[0], p.build, p.arg).find((o) => o.correct)?.label as string;
-      expectAbsent(container, [firstMomentAnswer, p.outcome, ...trace.lines.filter((l) => l.momentIndex !== null).map((l) => l.text)]);
+      const firstMomentAnswer = readTimeOptions(trace.snapshots[0], p.build).find((o) => o.correct)?.label as string;
+      expectAbsent(container, [firstMomentAnswer, p.outcome, ...trace.lines.map((l) => l.text)]);
       revealEveryMoment();
       expect(screen.getByTestId("preset-outcome")).toHaveTextContent(p.outcome);
     });
@@ -608,6 +630,9 @@ describe("TimescaleLab · global-precision keeps the vendor column for its own p
     expectAbsent(container, ["1fs / 1fs"]);
     lockIn(/is 100ps \/ 100ps/);
     expectAbsent(container, ["1fs / 1fs"]);
+    expect(screen.queryByTestId("global-precision-reveal")).not.toBeInTheDocument();
+    lockIn(/^Tool-dependent/);
+    expectAbsent(container, ["1fs / 1fs"]);
     const table = within(screen.getByTestId("global-precision-reveal"));
     expect(table.getByRole("columnheader", { name: "Without vendor model" })).toBeInTheDocument();
     expect(table.queryByRole("columnheader", { name: /With `timescale/ })).not.toBeInTheDocument();
@@ -621,20 +646,24 @@ describe("TimescaleLab · global-precision keeps the vendor column for its own p
   it("ticking the box hides the first table and asks the headline prediction with the answer still unseen", () => {
     const { container } = render(<TimescaleLab mode="global-precision" />);
     lockIn(/is 100ps \/ 100ps/);
+    lockIn(/^Tool-dependent/);
     fireEvent.click(screen.getByLabelText(/Add vendor_model\.sv/));
     expect(screen.queryByTestId("global-precision-reveal")).not.toBeInTheDocument();
     expectAbsent(container, ["1fs / 1fs"]);
   });
 
-  it("the comparison opens on that commit, and toggling back does not hide it again", () => {
+  it("the comparison opens once both predictions are made, and toggling back does not hide it again", () => {
     render(<TimescaleLab mode="global-precision" />);
     const box = screen.getByLabelText(/Add vendor_model\.sv/);
     fireEvent.click(box);
     lockIn(/is 1fs \/ 1fs/);
+    expect(screen.queryByRole("columnheader", { name: "Changed?" })).not.toBeInTheDocument();
+    lockIn(/^1fs$/);
     expect(screen.getByRole("columnheader", { name: "Changed?" })).toBeInTheDocument();
     fireEvent.click(box);
     expect(screen.queryByTestId("global-precision-reveal")).not.toBeInTheDocument();
     lockIn(/is 100ps \/ 100ps/);
+    lockIn(/^Tool-dependent/);
     expect(screen.getByRole("columnheader", { name: /With `timescale/ })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Changed?" })).toBeInTheDocument();
   });
@@ -642,6 +671,7 @@ describe("TimescaleLab · global-precision keeps the vendor column for its own p
   it("revealing without predicting opens the comparison too", () => {
     render(<TimescaleLab mode="global-precision" />);
     fireEvent.click(screen.getByLabelText(/Add vendor_model\.sv/));
+    skip();
     skip();
     expect(screen.getByRole("columnheader", { name: "Changed?" })).toBeInTheDocument();
   });
@@ -674,7 +704,7 @@ describe("TimescaleLab · cross-scope code follows the call form", () => {
     render(<TimescaleLab mode="cross-scope" />);
     chooseForm("repeat (5) @(posedge clk);");
     expect(code()).toHaveTextContent("logic clk = 1;");
-    expect(code()).toHaveTextContent("always #0.5 clk = ~clk;");
+    expect(code()).toHaveTextContent("always #0.5ns clk = ~clk;");
     expect(code()).toHaveTextContent("period 1 ns");
     skip();
     expect(currentLine()).toContain("repeat (5) @(posedge clk);");
@@ -685,6 +715,7 @@ describe("TimescaleLab · cross-scope code follows the call form", () => {
   it("wait_t(5ns) and wait_t(1.5ns) execute the task's own lines, each with its own intent", () => {
     render(<TimescaleLab mode="cross-scope" />);
     skip();
+    skipHunt();
     expect(currentLine()).toContain("util_pkg::wait_t(5ns);");
     next();
     expect(currentLine()).toContain("task automatic wait_t(time t);");
@@ -798,11 +829,13 @@ describe("TimescaleLab · prefers-reduced-motion", () => {
     mock(false);
     const first = render(<TimescaleLab mode="cross-scope" />);
     skip();
+    skipHunt();
     expect(screen.getByTestId("crossing-chip").className).toContain("transition-[left]");
     first.unmount();
     mock(true);
     render(<TimescaleLab mode="cross-scope" />);
     skip();
+    skipHunt();
     const chip = screen.getByTestId("crossing-chip");
     expect(chip.className).not.toContain("transition");
     fireEvent.click(screen.getByRole("button", { name: "Next step" }));
@@ -822,9 +855,11 @@ describe("TimescaleLab · sideways scrolling and touch targets", () => {
     "global-precision": () => {
       fireEvent.click(screen.getByLabelText(/Add vendor_model\.sv/));
       skip();
+      skip();
     },
     "cross-scope": () => {
       skip();
+      skipHunt();
       fireEvent.click(screen.getByRole("button", { name: /Scale inside the package/ }));
     },
   };
@@ -857,7 +892,8 @@ describe("TimescaleLab · sideways scrolling and touch targets", () => {
 describe("TimescaleLab · ruler labels stay inside the viewBox", () => {
   const WIDTH_PER_CHAR = 4.7;
   it("the 'now' label anchors away from the nearer edge at every moment of every preset", () => {
-    for (const p of READ_TIME_PRESETS) {
+    // The $stime preset runs too long to draw as a ruler and says so instead.
+    for (const p of READ_TIME_PRESETS.filter((x) => x.id !== "stime-wrap")) {
       const { unmount } = render(<TimescaleLab mode="read-time" preset={p.id} />);
       revealEveryMoment();
       const slider = screen.getByRole("slider", { name: "Moment" });
@@ -873,10 +909,10 @@ describe("TimescaleLab · ruler labels stay inside the viewBox", () => {
     }
   });
 
-  it("F2D's second moment, near the right edge, ends at the marker; a small value starts at it", () => {
+  it("F2D's last line, near the right edge, ends at the marker; a small value starts at it", () => {
     const { unmount } = render(<TimescaleLab mode="read-time" preset="f2d-printing-time" />);
     revealEveryMoment();
-    fireEvent.change(screen.getByRole("slider", { name: "Moment" }), { target: { value: "1" } });
+    fireEvent.change(screen.getByRole("slider", { name: "Moment" }), { target: { value: "4" } });
     expect(screen.getByTestId("now-label")).toHaveAttribute("text-anchor", "end");
     unmount();
     render(<TimescaleLab mode="read-time" preset="make-it-work" />);
@@ -905,14 +941,14 @@ describe("TimescaleLab · ruler labels stay inside the viewBox", () => {
 });
 
 describe("TimescaleLab · the question after a %t toggle, and the delay inputs", () => {
-  it("an answered moment keeps asking about the argument the verdict refers to", () => {
+  it("an answered moment keeps asking about the statement the verdict refers to", () => {
     render(<TimescaleLab mode="read-time" />);
-    lockIn(/^\$time=2 \$realtime=1\.6 %0t=16$/);
-    expect(screen.getByTestId("reveal-heading")).toHaveTextContent("%0t of $realtime show?");
+    lockIn(/^\$time=2 \$realtime=1\.6 %t=.*then 16$/);
+    expect(screen.getByTestId("reveal-heading")).toHaveTextContent('$time, $realtime, $realtime);');
     fireEvent.click(within(screen.getByRole("radiogroup", { name: "%t argument" })).getByRole("radio", { name: "%t of $time" }));
-    expect(screen.getByTestId("reveal-heading")).toHaveTextContent("%0t of $realtime show?");
+    expect(screen.getByTestId("reveal-heading")).toHaveTextContent('$time, $realtime, $realtime);');
     fireEvent.click(screen.getByRole("button", { name: "Next moment" }));
-    expect(screen.getByRole("group", { name: /%0t of \$time show\?/ })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /\$time, \$realtime, \$time\);/ })).toBeInTheDocument();
   });
 
   it("the visible label names the delay input, including its hint", () => {
@@ -951,5 +987,1057 @@ describe("TimescaleLab · the question after a %t toggle, and the delay inputs",
   it("the printed log is a named region, since a bare <pre> takes no name", () => {
     render(<TimescaleLab mode="read-time" />);
     expect(screen.getByRole("region", { name: "Printed log" }).tagName).toBe("PRE");
+  });
+});
+
+describe("TimescaleLab · the value's unit at every step of every call form", () => {
+  const forms: { name: string; steps: { state: string; chip: string; sentence: string }[] }[] = [
+    {
+      name: "util_pkg::wait_t(5ns);",
+      steps: [
+        { state: "tagged", chip: "1ns", sentence: "value 5.0 understood in 1ns" },
+        { state: "dropped", chip: "unit tag dropped", sentence: "value 5, its unit tag dropped" },
+        { state: "tagged", chip: "1ps", sentence: "value 5 understood in 1ps" },
+        { state: "resolved-time", chip: "wake time", sentence: "wake time 5 ps" },
+      ],
+    },
+    {
+      name: "util_pkg::wait_t(1.5ns);",
+      steps: [
+        { state: "tagged", chip: "1ns", sentence: "value 1.5 understood in 1ns" },
+        { state: "dropped", chip: "unit tag dropped", sentence: "value 2, its unit tag dropped" },
+        { state: "tagged", chip: "1ps", sentence: "value 2 understood in 1ps" },
+        { state: "resolved-time", chip: "wake time", sentence: "wake time 2 ps" },
+      ],
+    },
+    {
+      name: "util_pkg::wait_ns(5);",
+      steps: [
+        { state: "never-had", chip: "plain number", sentence: "plain number 5" },
+        { state: "never-had", chip: "plain number", sentence: "plain number 5.0" },
+        { state: "tagged", chip: "1ps", sentence: "value 5000 understood in 1ps" },
+        { state: "resolved-time", chip: "wake time", sentence: "wake time 5 ns" },
+      ],
+    },
+    {
+      name: "repeat (5) @(posedge clk);",
+      steps: [
+        { state: "count", chip: "clock edges", sentence: "5 clock edges" },
+        { state: "resolved-time", chip: "wake time", sentence: "wake time 5 ns" },
+      ],
+    },
+  ];
+  for (const { name, steps } of forms) {
+    it(name, () => {
+      render(<TimescaleLab mode="cross-scope" />);
+      fireEvent.click(within(screen.getByRole("radiogroup", { name: "Call form" })).getByRole("radio", { name }));
+      skip();
+      if (name === "util_pkg::wait_t(5ns);") skipHunt();
+      steps.forEach((expected, i) => {
+        if (i > 0) fireEvent.click(screen.getByRole("button", { name: "Next step" }));
+        const chip = screen.getByTestId("crossing-chip");
+        expect(chip, `step ${i + 1}`).toHaveAttribute("data-unit-state", expected.state);
+        expect(chip, `step ${i + 1}`).toHaveTextContent(expected.chip);
+        expect(chip.querySelector(".line-through") !== null, `step ${i + 1} strike`).toBe(expected.state === "dropped");
+        const heading = within(screen.getByTestId("crossing-step")).getByText(new RegExp(`^Step ${i + 1}:`));
+        expect(heading.textContent, `step ${i + 1}`).toContain(`— ${expected.sentence}`);
+        expect(heading.textContent, `step ${i + 1}`).not.toContain("with no unit");
+        expect(screen.getByTestId("lane-state")).toHaveTextContent(expected.sentence);
+        if (i > 0) expect(screen.getByTestId("lab-live")).toHaveTextContent(expected.sentence);
+      });
+    });
+  }
+
+  it("only the wait_t boundary says the tag was dropped", () => {
+    for (const { steps } of forms) {
+      for (const step of steps) expect(step.chip === "unit tag dropped").toBe(step.state === "dropped");
+    }
+    expect(forms.flatMap((f) => f.steps).filter((x) => x.state === "dropped")).toHaveLength(2);
+  });
+
+  it("the lane panel is not an empty tab stop: its region holds the state as text", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    skipHunt();
+    const region = screen.getByRole("region", { name: "The value moving through the scopes" });
+    expect(within(region).getByTestId("lane-state")).toHaveTextContent("Now in tb_top (1ns): value 5.0 understood in 1ns.");
+    expect(within(region).getByTestId("lane-state").closest("[aria-hidden]")).toBeNull();
+  });
+});
+
+describe("TimescaleLab · the answer's slot moves with the state", () => {
+  /** The slot of the option whose label matches, among the prompt's own radios. */
+  const slotOf = (label: RegExp) => {
+    const radios = Array.from(document.querySelectorAll<HTMLElement>('fieldset input[type="radio"]'));
+    return radios.findIndex((r) => label.test(r.closest("label")?.textContent ?? ""));
+  };
+  const move = (file: string) => fireEvent.click(screen.getByRole("button", { name: `Move up: ${file}` }));
+
+  it("which-unit: across compile orders and groupings the correct option does not sit in one slot", () => {
+    const answer1ns = /1ns, from a\.sv/;
+    const answerDefault = /tool's default/;
+    const answer1us = /1us, from the compilation-unit/;
+    const slots: number[] = [];
+    const record = (setup: () => void, answer: RegExp) => {
+      const { unmount } = render(<TimescaleLab mode="which-unit" />);
+      setup();
+      slots.push(slotOf(answer));
+      lockIn(answer);
+      expect(shown(/Correct\./)).toBeInTheDocument();
+      unmount();
+    };
+    const group = (name: string) => fireEvent.click(within(screen.getByRole("radiogroup", { name: "Compilation units" })).getByRole("radio", { name }));
+    record(() => undefined, answer1ns);
+    record(() => group("each file its own"), answerDefault);
+    record(() => move("b.sv"), answerDefault);
+    record(() => fireEvent.click(screen.getByLabelText(/include a `resetall file/)), answerDefault);
+    record(() => {
+      fireEvent.click(screen.getByLabelText(/include a compilation-unit timeunit/));
+      move("b.sv");
+    }, answer1us);
+    record(() => move("pkg.sv"), answer1ns);
+    expect(new Set(slots).size, `slots ${slots.join(",")}`).toBeGreaterThanOrEqual(3);
+  });
+
+  it("global-precision: the correct option moves when the vendor model is added", () => {
+    render(<TimescaleLab mode="global-precision" />);
+    const without = slotOf(/is 100ps \/ 100ps/);
+    fireEvent.click(screen.getByLabelText(/Add vendor_model\.sv/));
+    expect(slotOf(/is 1fs \/ 1fs/)).not.toBe(without);
+  });
+
+  it("cross-scope and read-time: the correct option is not always first", () => {
+    const firsts: boolean[] = [];
+    for (const name of ["util_pkg::wait_t(5ns);", "util_pkg::wait_t(1.5ns);", "util_pkg::wait_ns(5);", "repeat (5) @(posedge clk);"]) {
+      const { unmount } = render(<TimescaleLab mode="cross-scope" />);
+      fireEvent.click(within(screen.getByRole("radiogroup", { name: "Call form" })).getByRole("radio", { name }));
+      lockFirst();
+      firsts.push(screen.queryAllByText(/Correct\./, onScreen).length > 0);
+      unmount();
+    }
+    expect(firsts).toContain(false);
+  });
+});
+
+describe("TimescaleLab · cross-scope: the hunt comes before the trace", () => {
+  const code = () => screen.getByRole("list", { name: "util_pkg and tb_top" });
+
+  it("the verdict sits with the suspect buttons, and the code panel holds no controls", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    expect(within(code()).queryAllByRole("button")).toHaveLength(0);
+    const button = screen.getByRole("button", { name: "Suspect line: #t;" });
+    fireEvent.click(button);
+    const block = button.closest("ul")?.parentElement as HTMLElement;
+    expect(within(block).getByTestId("suspect-verdict")).toBeInTheDocument();
+    expect(button.closest("ul")?.nextElementSibling).toBe(screen.getByTestId("suspect-verdict"));
+  });
+
+  it("holds the trace, the line highlight and the fixes until the culprit is found, even after a wrong suspect", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    lockIn(/^5 ps$/);
+    const held = () => {
+      expect(screen.queryByTestId("crossing-chip")).not.toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: "Fixes" })).not.toBeInTheDocument();
+      expect(document.querySelector('[aria-current="step"]')).toBeNull();
+    };
+    held();
+    fireEvent.click(screen.getByRole("button", { name: /^Suspect line: \$timeformat/ }));
+    held();
+    fireEvent.click(screen.getByRole("button", { name: /^Suspect line: util_pkg::wait_t/ }));
+    held();
+    fireEvent.click(screen.getByRole("button", { name: "Suspect line: #t;" }));
+    expect(screen.getByTestId("crossing-chip")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Fixes" })).toBeInTheDocument();
+    expect(document.querySelector('[aria-current="step"]')).not.toBeNull();
+  });
+
+  it("nothing on screen names the mechanism before the hunt: the verdict stops at the symptom and the comment on #t waits", () => {
+    for (const option of [/^5 ps$/, /^5 ns$/, /^5000 ns$/, /A compile error/]) {
+      const { unmount } = render(<TimescaleLab mode="cross-scope" />);
+      lockIn(option);
+      const prompt = (document.querySelector("fieldset") as HTMLElement).parentElement as HTMLElement;
+      const text = [prompt.textContent, screen.getByTestId("cross-scope-reveal").textContent, screen.getByTestId("lab-live").textContent, screen.getByRole("list", { name: "util_pkg and tb_top" }).textContent].join("\n");
+      expect(text, String(option)).not.toMatch(/§3\.14|§5\.8|in util_pkg's|THIS package's|bare number/);
+      unmount();
+    }
+  });
+
+  it("the skip button opens the trace, restores the lesson's exact code, and moves the focus", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    expect(code()).not.toHaveTextContent("THIS package's time unit");
+    skip();
+    expect(code()).not.toHaveTextContent("THIS package's time unit");
+    skipHunt();
+    expect(code()).toHaveTextContent("waits t units of THIS package's time unit");
+    expect(document.activeElement).toBe(screen.getByTestId("trace-heading"));
+    expect(screen.queryByRole("button", { name: /Skip the hunt/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Need a hint/ })).not.toBeInTheDocument();
+  });
+
+  it("titles the blocks in words, not in a second numbering beside 'Step 4: Wake'", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    expect(screen.getByTestId("reveal-heading")).toHaveTextContent("Find the line");
+    skipHunt();
+    expect(shown(/^Choose a fix\./)).toBeInTheDocument();
+    expect(screen.getByTestId("cross-scope-reveal").textContent).not.toMatch(/Step 1 —|Step 2 —/);
+  });
+});
+
+describe("TimescaleLab · read-time shows the code it runs and asks about each line", () => {
+  const log = () => screen.getByLabelText("Printed log");
+  const code = () => screen.getByRole("list", { name: "The code this run executes" });
+  const currentLine = () => document.querySelector('[aria-current="step"]')?.textContent ?? "";
+  const next = () => fireEvent.click(screen.getByRole("button", { name: "Next moment" }));
+
+  it("every preset's code panel holds the $display of the current moment, highlighted, with the delay as context", () => {
+    for (const p of READ_TIME_PRESETS) {
+      const { unmount } = render(<TimescaleLab mode="read-time" preset={p.id} />);
+      expect(code(), p.id).toHaveTextContent("initial begin");
+      expect(currentLine(), p.id).toContain("$display(");
+      unmount();
+    }
+    render(<TimescaleLab mode="read-time" preset="f2d-printing-time" />);
+    expect(code()).toHaveTextContent("`timescale 1ns/1ps");
+    expect(code()).toHaveTextContent('$timeformat(-9, 0, " ns", 8);');
+    expect(code()).toHaveTextContent('$display("e: %0d %.1f", $time, $realtime);');
+  });
+
+  it("each preset's moments ask about the specifier its code uses, and 'Prints' is the log's own line", () => {
+    const expected: Record<string, RegExp> = { "20.3.1": /%%t=%t/, "make-it-work": /%%t=%t/, "uvm-stamp": /@ %0t:/, "f2d-printing-time": /a: %0d/, "stime-wrap": /\$stime=%0d/ };
+    for (const p of READ_TIME_PRESETS) {
+      const { unmount } = render(<TimescaleLab mode="read-time" preset={p.id} />);
+      expect(screen.getByRole("group", { name: expected[p.id] }), p.id).toBeInTheDocument();
+      skip();
+      const prints = screen.getByTestId("moment-prints").getAttribute("data-line") ?? "";
+      expect(prints, p.id).not.toBe("");
+      expect(log().textContent, p.id).toContain(prints);
+      unmount();
+    }
+  });
+
+  it("the $timeformat control is behind 'Show advanced' and pushes nothing above the question", () => {
+    render(<TimescaleLab mode="read-time" />);
+    expect(screen.queryByRole("radiogroup", { name: "$timeformat before the code runs" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "%t argument" })).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: /^Show advanced/ });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(button);
+    expect(screen.getByRole("button", { name: /^Hide advanced/ })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("radiogroup", { name: "$timeformat before the code runs" })).toBeInTheDocument();
+    // The toggle sits below the moment table, after the prediction.
+    const fieldset = document.querySelector("fieldset") as HTMLElement;
+    expect(fieldset.compareDocumentPosition(screen.getByRole("radiogroup", { name: "%t argument" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("make-it-work offers no $timeformat control, because the code's own call at time 0 replaces it", () => {
+    render(<TimescaleLab mode="read-time" preset="make-it-work" />);
+    expect(screen.queryByRole("button", { name: /Show advanced/ })).not.toBeInTheDocument();
+    skip();
+    expect(screen.getByTestId("read-time-reveal")).toBeInTheDocument();
+  });
+
+  it("F2D's control stays, because lines a to c print before the code's own call", () => {
+    render(<TimescaleLab mode="read-time" preset="f2d-printing-time" />);
+    expect(screen.getByRole("button", { name: /^Show advanced/ })).toBeInTheDocument();
+  });
+
+  it("a $timeformat set beforehand appears in the code", () => {
+    render(<TimescaleLab mode="read-time" />);
+    expect(code()).not.toHaveTextContent("$timeformat");
+    chooseTimeformat(/called with/);
+    expect(code()).toHaveTextContent('$timeformat(-9, 3, " ns", 0);');
+  });
+
+  it("the %t toggle is not offered where no line uses %t", () => {
+    render(<TimescaleLab mode="read-time" preset="stime-wrap" />);
+    expect(screen.queryByRole("radiogroup", { name: "%t argument" })).not.toBeInTheDocument();
+  });
+
+  it("F2D: each of the five lines is its own moment, with a What and a Why, and only its own line appears", () => {
+    render(<TimescaleLab mode="read-time" preset="f2d-printing-time" />);
+    expect(screen.getByRole("slider", { name: "Moment" })).toHaveAttribute("max", "4");
+    const explained = () => screen.getByTestId("moment-explanation");
+
+    lockIn(/^a: 10$/);
+    expect(log()).toHaveTextContent("a: 10");
+    expect(log()).not.toHaveTextContent("b: [");
+    expect(explained()).toHaveTextContent(/\$time is 10 in the caller's unit/);
+
+    next();
+    expect(currentLine()).toContain('"b: [%t]"');
+    lockIn(/^b: \[.*padded with 15 spaces, then 10000\]$/);
+    expect(log()).toHaveTextContent("b: [ 10000]");
+    expect(log()).not.toHaveTextContent("c: [");
+    expect(explained()).toHaveTextContent(/%t of \$time writes 10 ns in 1ps units with 0 decimals, no suffix, padded to at least 20 characters/);
+    expect(explained()).toHaveTextContent(/No \$timeformat has run yet, so Table 20-3 applies/);
+
+    next();
+    lockIn(/^c: \[10000\]$/);
+    expect(explained()).toHaveTextContent(/the 0 drops the padding/);
+
+    next();
+    expect(currentLine()).toContain('"d: [%t]"');
+    lockIn(/^d: \[.*padded with 3 spaces, then 10 ns\]$/);
+    expect(shown(/Correct\./)).toBeInTheDocument();
+    expect(log()).toHaveTextContent("d: [ 10 ns]");
+    expect(explained()).toHaveTextContent(/%t of \$time writes 10 ns in 1ns units with 0 decimals, the suffix " ns", padded to at least 8 characters/);
+    expect(explained()).toHaveTextContent(/The last \$timeformat call governs every %t/);
+
+    next();
+    lockIn(/^e: 12 12\.4$/);
+    expect(explained()).toHaveTextContent(/\$time rounds 12\.4 to 12/);
+    expect(explained()).toHaveTextContent(/\$realtime keeps the fraction: 12\.4/);
+    expect(screen.getByTestId("preset-outcome")).toBeInTheDocument();
+  });
+
+  it("F2D's line d tempts with the unpadded text, the default width and the ignored call", () => {
+    render(<TimescaleLab mode="read-time" preset="f2d-printing-time" />);
+    fireEvent.change(screen.getByRole("slider", { name: "Moment" }), { target: { value: "3" } });
+    lockIn(/^d: \[10 ns\]$/);
+    expect(shown(/A plain %t pads to the minimum field width in force, 8/)).toBeInTheDocument();
+  });
+
+  it("stime-wrap: the lesson's Expert value, predicted with $stime in the options", () => {
+    render(<TimescaleLab mode="read-time" preset="stime-wrap" />);
+    expect(screen.getAllByRole("radio", { name: /\$stime=/ }).length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByRole("radio", { name: /\$stime=5000000000$/ })).toBeInTheDocument();
+    lockIn(/^\$time=5000000000 \$stime=705032704$/);
+    expect(shown(/Correct\./)).toBeInTheDocument();
+    expect(log()).toHaveTextContent("$time=5000000000 $stime=705032704");
+    expect(screen.getByTestId("moment-explanation")).toHaveTextContent(/the low 32 bits of 5000000000/);
+    expect(screen.getByRole("region", { name: "Time readings of every moment" })).toHaveTextContent("705032704 (wrapped)");
+  });
+
+  it("the $stime misconception gets its own diagnosis", () => {
+    render(<TimescaleLab mode="read-time" preset="stime-wrap" />);
+    lockIn(/\$stime=5000000000$/);
+    expect(shown(/A time that does not fit gives its low 32 bits/)).toBeInTheDocument();
+  });
+
+  it("an empty delay sequence says what to do; a coarse pair reports its error once; a half tick is a note, not an error", () => {
+    render(<TimescaleLab mode="read-time" />);
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("Delay sequence"), { target: { value: "" } });
+    expect(screen.getByTestId("empty-delays")).toHaveTextContent(/at least one delay/);
+    fireEvent.change(screen.getByLabelText("Delay sequence"), { target: { value: "#1, #2, #3" } });
+    expect(screen.queryByTestId("empty-delays")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Caller's time precision"), { target: { value: "100ns" } });
+    expect(within(screen.getByTestId("input-error")).getAllByRole("listitem")).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText("Caller's time precision"), { target: { value: "1ns" } });
+    fireEvent.change(screen.getByLabelText("Caller's time unit"), { target: { value: "1ns" } });
+    fireEvent.change(screen.getByLabelText("Delay sequence"), { target: { value: "#2.5, #2.5" } });
+    expect(screen.queryByTestId("input-error")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("run-notes")).not.toBeInTheDocument();
+    skip();
+    expect(within(screen.getByTestId("run-notes")).getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByTestId("run-notes").className).not.toContain("rose");
+  });
+
+  it("the log's time prefixes and its gate text use a colour that meets AA on the dark panel", () => {
+    render(<TimescaleLab mode="read-time" />);
+    skip();
+    expect(log().innerHTML).not.toContain("text-slate-500");
+    expect(log().innerHTML).toContain("text-slate-400");
+  });
+});
+
+describe("TimescaleLab · touch targets and rendered text size", () => {
+  const COARSE = "[@media(pointer:coarse)]:[&_button]:min-h-10";
+
+  it("the segmented controls get the 40 px wrapper class", () => {
+    render(<TimescaleLab mode="which-unit" />);
+    expect(screen.getByRole("radiogroup", { name: "Compilation units" }).className).toContain(COARSE);
+    expect(screen.getByLabelText(/include a `resetall file/).closest("label")?.className).toContain("[@media(pointer:coarse)]:min-h-10");
+    expect(screen.getByLabelText(/include a compilation-unit timeunit/).closest("label")?.className).toContain("[@media(pointer:coarse)]:min-h-10");
+  });
+
+  it("cross-scope: the call form and the hint ladder too, and the scrubber grows on touch", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    expect(screen.getByRole("radiogroup", { name: "Call form" }).className).toContain(COARSE);
+    skip();
+    expect(screen.getByRole("button", { name: /Need a hint/ }).parentElement?.className).toContain(COARSE);
+    skipHunt();
+    expect(screen.getByRole("slider", { name: "Crossing step" }).className).toContain("[@media(pointer:coarse)]:h-10");
+  });
+
+  const svgOf = (name: RegExp) => screen.getByRole("img", { name });
+  const expectReadable = (svg: HTMLElement) => {
+    const width = Number(svg.getAttribute("viewBox")?.split(" ")[2]);
+    const minW = Number(/min-w-\[(\d+)px\]/.exec(svg.getAttribute("class") ?? "")?.[1]);
+    expect(minW).toBeGreaterThanOrEqual(width);
+    for (const text of Array.from(svg.querySelectorAll("text"))) expect(Number(text.getAttribute("font-size"))).toBeGreaterThanOrEqual(9);
+  };
+
+  it("the three rulers never shrink below their viewBox, so every label renders at 9 px or more", () => {
+    const rounding = render(<TimescaleLab mode="rounding" />);
+    skip();
+    expectReadable(svgOf(/Ruler of/));
+    rounding.unmount();
+    const modules = render(<TimescaleLab mode="two-modules" />);
+    expectReadable(svgOf(/Time axis/));
+    modules.unmount();
+    render(<TimescaleLab mode="read-time" />);
+    skip();
+    expectReadable(svgOf(/Three rulers/));
+  });
+
+  it("the axis caption's descenders fit inside its viewBox", () => {
+    render(<TimescaleLab mode="two-modules" />);
+    const svg = svgOf(/Time axis/);
+    const height = Number(svg.getAttribute("viewBox")?.split(" ")[3]);
+    const lastY = Math.max(...Array.from(svg.querySelectorAll("text")).map((t) => Number(t.getAttribute("y"))));
+    expect(height - lastY).toBeGreaterThanOrEqual(9 * 0.25);
+  });
+});
+
+describe("TimescaleLab · two-modules wording", () => {
+  const revealBoth = () => {
+    fireEvent.click(screen.getAllByRole("button", { name: "Reveal without predicting" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Reveal without predicting" }));
+  };
+
+  it("x/z and negative delays have no 'then every' clause, and cite §9.4.1", () => {
+    for (const delay of ["#(1'bx)", "#(-1)"]) {
+      const { unmount, container } = render(<TimescaleLab mode="two-modules" />);
+      fireEvent.change(delayInput(), { target: { value: delay } });
+      revealBoth();
+      expect(container.textContent, delay).not.toMatch(/then every/);
+      expect(container.textContent, delay).toContain("§9.4.1");
+      unmount();
+    }
+  });
+
+  it("an ordinary delay keeps the clause", () => {
+    render(<TimescaleLab mode="two-modules" />);
+    revealBoth();
+    expect(shown(/then every 13 ns more/)).toBeInTheDocument();
+  });
+});
+
+describe("TimescaleLab · start over", () => {
+  it("read-time: forgets the answers and returns to the first moment", () => {
+    render(<TimescaleLab mode="read-time" />);
+    revealEveryMoment();
+    fireEvent.click(screen.getByRole("button", { name: "Next moment" }));
+    const button = screen.getByRole("button", { name: "Start over" });
+    fireEvent.click(button);
+    expect(screen.queryByTestId("read-time-reveal")).not.toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Moment" })).toHaveValue("0");
+    expect(screen.getByRole("button", { name: /lock in prediction/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start over" })).toBe(button);
+  });
+
+  it("which-unit: restores the default order and grouping and arms the prediction again", () => {
+    render(<TimescaleLab mode="which-unit" />);
+    fireEvent.click(screen.getByRole("button", { name: "Move up: b.sv" }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Compilation units" })).getByRole("radio", { name: "each file its own" }));
+    fireEvent.click(screen.getByLabelText(/include a `resetall file/));
+    skip();
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(screen.queryByTestId("which-unit-reveal")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("radiogroup", { name: "Compilation units" })).getByRole("radio", { name: "one compilation unit" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByLabelText(/include a `resetall file/)).not.toBeChecked();
+    lockIn(/1ns, from a\.sv's `timescale/);
+    expect(shown(/Correct\./)).toBeInTheDocument();
+  });
+
+  it("which-unit: starting over from the default order still arms the prediction", () => {
+    render(<TimescaleLab mode="which-unit" />);
+    skip();
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(screen.queryByTestId("which-unit-reveal")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /lock in prediction/i })).toBeDisabled();
+  });
+
+  it("cross-scope: clears the suspect, the fix and the trace", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    fireEvent.click(screen.getByRole("button", { name: "Suspect line: #t;" }));
+    fireEvent.click(screen.getByRole("button", { name: /Scale inside the package/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(screen.queryByTestId("cross-scope-reveal")).not.toBeInTheDocument();
+    skip();
+    expect(screen.queryByTestId("suspect-verdict")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("crossing-chip")).not.toBeInTheDocument();
+  });
+
+  it("rounding, two-modules and global-precision offer it too", () => {
+    for (const mode of ["rounding", "two-modules", "global-precision"] as const) {
+      const { unmount } = render(<TimescaleLab mode={mode} />);
+      fireEvent.click(screen.getAllByRole("button", { name: "Reveal without predicting" })[0]);
+      fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+      expect(screen.getAllByRole("button", { name: /lock in prediction/i })[0], mode).toBeDisabled();
+      unmount();
+    }
+  });
+
+  it("the suspects come from the model, in code order", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    const names = screen.getAllByRole("button", { name: /^Suspect line:/ }).map((b) => b.getAttribute("aria-label"));
+    expect(names).toHaveLength(gradeCrossScopeSuspects().length);
+    expect(names[0]).toBe("Suspect line: #t;");
+  });
+});
+
+describe("TimescaleLab · the delay field takes only what compiles", () => {
+  const noPrompt = () => {
+    expect(screen.queryByRole("button", { name: /lock in prediction/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId("input-error")).toBeInTheDocument();
+  };
+  for (const [text, reason] of [
+    ["#(x)", /#\(1'bx\)/],
+    ["#x", /#\(1'bx\)/],
+    ["#5 ns", /no space before its unit/],
+    ["-1", /no unary minus/],
+    ["#1'bz", /needs parentheses/],
+    ["_1", /Write a delay/],
+    ["#(-99999999999999999999)", /does not fit a 64-bit/],
+  ] as const) {
+    it(`rounding: ${text} is rejected with its reason and never rendered as code`, () => {
+      render(<TimescaleLab mode="rounding" />);
+      fireEvent.change(delayInput(), { target: { value: text } });
+      noPrompt();
+      expect(screen.getByTestId("input-error")).toHaveTextContent(reason);
+      expect(delayInput()).toHaveAttribute("aria-invalid", "true");
+    });
+  }
+
+  it("the x/z preset shows a based literal in its question and its label", () => {
+    render(<TimescaleLab mode="rounding" preset="xz" />);
+    expect(screen.getByRole("option", { name: "#(1'bx) at 1ns/100ps" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /runs #\(1'bx\) at t = 0/ })).toBeInTheDocument();
+    lockIn(/^0 ns$/);
+    expect(shown(/Correct\./)).toBeInTheDocument();
+  });
+});
+
+describe("TimescaleLab · the tick ruler says what happened", () => {
+  const ruler = () => screen.getByRole("img", { name: /^Ruler of/ });
+
+  it("a delay on a tick stays there: no 'between ticks', no snapping, no rounding caption", () => {
+    render(<TimescaleLab mode="rounding" preset="table-2.5" />);
+    skip();
+    expect(ruler()).toHaveAccessibleName("Ruler of 1ns ticks. The scaled delay 25 ns is already on a tick, so it stays at 25 ns.");
+    expect(ruler()).toHaveTextContent("scaled: 25 ns");
+    expect(ruler()).toHaveTextContent("already on a tick: nothing to round (§3.14.1)");
+    expect(ruler()).not.toHaveTextContent("rounds to the nearest tick");
+    expect(ruler()).not.toHaveTextContent("written:");
+    const rows = within(screen.getByTestId("rounding-reveal"));
+    expect(rows.getByText("Wake time")).toBeInTheDocument();
+    expect(rows.queryByText("Rounded to the precision")).not.toBeInTheDocument();
+  });
+
+  it("an x/z delay is interpreted as zero, not scaled and not written as 0 ns", () => {
+    render(<TimescaleLab mode="rounding" preset="xz" />);
+    skip();
+    expect(ruler()).toHaveAccessibleName("Ruler of 100ps ticks. An x or z delay is interpreted as zero, so the statement wakes at 0 ns.");
+    expect(ruler()).toHaveTextContent("x/z is treated as 0");
+    expect(ruler()).not.toHaveTextContent("scaled:");
+    const rows = within(screen.getByTestId("rounding-reveal"));
+    expect(rows.getByText("Interpreted as zero")).toBeInTheDocument();
+    expect(rows.queryByText("Scaled by the unit")).not.toBeInTheDocument();
+  });
+
+  it("a rounding delay still snaps, its marker names the scaled value, and a literal is converted rather than scaled", () => {
+    render(<TimescaleLab mode="rounding" preset="table-1.26-10ns" />);
+    skip();
+    expect(ruler()).toHaveAccessibleName("Ruler of 1ns ticks. The scaled delay 12.6 ns sits between ticks and snaps to 13 ns.");
+    expect(ruler()).toHaveTextContent("scaled: 12.6 ns");
+    expect(within(screen.getByTestId("rounding-reveal")).getByText("Rounded to the precision")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "literal-2.1ns" } });
+    skip();
+    expect(within(screen.getByTestId("rounding-reveal")).getByText("Converted to the current unit")).toBeInTheDocument();
+  });
+
+  it("the caption sits below the axis, clear of the dashed snap lines", () => {
+    render(<TimescaleLab mode="rounding" />);
+    skip();
+    const texts = Array.from(ruler().querySelectorAll("text"));
+    const caption = texts.find((t) => /half tick/.test(t.textContent ?? "")) as SVGTextElement;
+    const lowestTickLabel = Math.max(...texts.filter((t) => t !== caption).map((t) => Number(t.getAttribute("y"))));
+    expect(Number(caption.getAttribute("y"))).toBeGreaterThan(lowestTickLabel);
+    expect(Number(caption.getAttribute("y"))).toBeLessThan(Number(ruler().getAttribute("viewBox")?.split(" ")[3]));
+  });
+});
+
+describe("TimescaleLab · two-modules gives nothing away before both predictions", () => {
+  const axis = () => screen.getByTestId("two-modules-axis");
+  const revealBoth = () => {
+    fireEvent.click(screen.getAllByRole("button", { name: "Reveal without predicting" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Reveal without predicting" }));
+  };
+
+  for (const delay of ["#5", "#60", "#(-1)"]) {
+    it(`${delay}: the axis has no scale until both predictions are made`, () => {
+      render(<TimescaleLab mode="two-modules" />);
+      fireEvent.change(delayInput(), { target: { value: delay } });
+      const svg = within(axis()).getByRole("img");
+      expect(svg).toHaveAccessibleName("Time axis; its scale and the wake markers appear after both predictions.");
+      const labels = () => Array.from(svg.querySelectorAll("text")).map((t) => t.textContent ?? "");
+      expect(labels()).toEqual(["● tb_top: timeunit 1ns; timeprecision 100ps;", "◆ u_slow: timeunit 10ns; timeprecision 1ns;", "simulation time"]);
+      fireEvent.click(screen.getAllByRole("button", { name: "Reveal without predicting" })[0]);
+      expect(labels()).toHaveLength(3);
+    });
+  }
+
+  it("#5: the scale appears with the markers, ending at u_slow's wake", () => {
+    render(<TimescaleLab mode="two-modules" />);
+    fireEvent.change(delayInput(), { target: { value: "#5" } });
+    fireEvent.change(screen.getByLabelText("u_slow runs it"), { target: { value: "1" } });
+    revealBoth();
+    expect(within(axis()).getByRole("img", { name: /^Time axis 0 to 50 ns\./ })).toBeInTheDocument();
+  });
+
+  it("the global-precision footer waits too, since it rules out a distractor", () => {
+    render(<TimescaleLab mode="two-modules" />);
+    expect(screen.queryByText(/global precision is/, onScreen)).not.toBeInTheDocument();
+    revealBoth();
+    expect(shown(/global precision is/)).toHaveTextContent("100 ps");
+  });
+
+  it("the summary does not say the unit scales a time literal", () => {
+    const summary = () => screen.getByRole("region", { name: "Timescale lab: one delay, two modules" }).textContent ?? "";
+    render(<TimescaleLab mode="two-modules" />);
+    expect(summary()).toContain("The unit scales it differently");
+    fireEvent.change(delayInput(), { target: { value: "#2.1ns" } });
+    expect(summary()).not.toContain("The unit scales it differently");
+    expect(summary()).toContain("A time literal is the same value before rounding in both (§5.8)");
+    lockInWithin(/tb_top \(/, /^2 ns$/);
+    expect(shown(/only each module's own precision differs/)).toBeInTheDocument();
+  });
+
+  it("a negative delay run twice stops at its first wake and says why", () => {
+    render(<TimescaleLab mode="two-modules" />);
+    fireEvent.change(delayInput(), { target: { value: "#(-1)" } });
+    revealBoth();
+    expect(within(screen.getByRole("list", { name: "Wake times" })).getAllByRole("listitem")[1].textContent).not.toContain("then");
+    expect(shown(/would pass the 64 bits of a time variable/)).toBeInTheDocument();
+  });
+});
+
+describe("TimescaleLab · read-time keeps its prose true to the code on screen", () => {
+  const summary = () => screen.getByTestId("preset-summary");
+  const toggleToTime = () => fireEvent.click(within(screen.getByRole("radiogroup", { name: "%t argument" })).getByRole("radio", { name: "%t of $time" }));
+  const log = () => screen.getByLabelText("Printed log");
+
+  it("make-it-work with %t of $time: the log prints the rounded times, and the outcome that says otherwise is gone", () => {
+    render(<TimescaleLab mode="read-time" preset="make-it-work" />);
+    revealEveryMoment();
+    expect(screen.getByTestId("preset-outcome")).toHaveTextContent("1.3 ns and 13.0 ns");
+    toggleToTime();
+    expect(log()).toHaveTextContent("%t=1.0 ns");
+    expect(log()).toHaveTextContent("%t=10.0 ns");
+    expect(log()).toHaveTextContent("%t=30.0 ns");
+    expect(screen.queryByTestId("preset-outcome")).not.toBeInTheDocument();
+    expect(screen.getByTestId("preset-changed")).toHaveTextContent("3 of 3 log lines print differently");
+    expect(summary()).toHaveTextContent("every %t now reads $time instead of $realtime");
+    // Undoing the change brings the preset's own prose back.
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "%t argument" })).getByRole("radio", { name: "%t of $realtime" }));
+    expect(screen.getByTestId("preset-outcome")).toBeInTheDocument();
+    expect(summary()).toHaveTextContent("No `timescale anywhere");
+  });
+
+  it("uvm-stamp with $timeformat called: neither 'reads 15000' nor 'Nobody called $timeformat' stays on screen", () => {
+    render(<TimescaleLab mode="read-time" preset="uvm-stamp" />);
+    expect(summary()).toHaveTextContent("Nobody called $timeformat");
+    chooseTimeformat(/called with/);
+    revealEveryMoment();
+    expect(log()).toHaveTextContent("@ 15.000 ns:");
+    expect(summary()).not.toHaveTextContent("Nobody called");
+    expect(summary()).toHaveTextContent('$timeformat(-9, 3, " ns", 0); now runs first');
+    expect(screen.queryByTestId("preset-outcome")).not.toBeInTheDocument();
+    expect(screen.getByTestId("preset-changed")).toHaveTextContent("1 of 1 log lines");
+  });
+
+  it("f2d with $timeformat called: lines b and c print the called format, and the Table 20-3 outcome is gone", () => {
+    render(<TimescaleLab mode="read-time" preset="f2d-printing-time" />);
+    chooseTimeformat(/called with/);
+    revealEveryMoment();
+    expect(log()).toHaveTextContent("b: [10.000 ns]");
+    expect(log()).toHaveTextContent("c: [10.000 ns]");
+    expect(screen.queryByTestId("preset-outcome")).not.toBeInTheDocument();
+    expect(screen.getByTestId("preset-changed")).toHaveTextContent("2 of 5 log lines");
+  });
+
+  it("the toggle's explanation waits for the reveal: it would rule out the 'unrounded' distractor", () => {
+    render(<TimescaleLab mode="read-time" />);
+    expect(screen.getByRole("radiogroup", { name: "%t argument" })).toBeInTheDocument();
+    expect(screen.queryByTestId("percent-t-note")).not.toBeInTheDocument();
+    expect(screen.queryByText(/has already lost the fraction/, onScreen)).not.toBeInTheDocument();
+    skip();
+    expect(screen.getByTestId("percent-t-note")).toHaveTextContent("has already lost the fraction");
+    fireEvent.click(screen.getByRole("button", { name: "Next moment" }));
+    expect(screen.queryByTestId("percent-t-note")).not.toBeInTheDocument();
+  });
+
+  for (const id of ["f2d-printing-time", "uvm-stamp"]) {
+    it(`${id}: no toggle, because both arguments print the same; once revealed the lab says so`, () => {
+      render(<TimescaleLab mode="read-time" preset={id} />);
+      expect(screen.queryByRole("radiogroup", { name: "%t argument" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("percent-t-note")).not.toBeInTheDocument();
+      skip();
+      expect(screen.getByTestId("percent-t-note")).toHaveTextContent("print the same text here, so there is nothing to toggle");
+    });
+  }
+
+  it("a toggle in force stays available even where it has stopped mattering, so it can be undone", () => {
+    render(<TimescaleLab mode="read-time" />);
+    toggleToTime();
+    chooseTimeformat(/called with/);
+    fireEvent.change(screen.getByLabelText("units_number"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("precision_number"), { target: { value: "0" } });
+    expect(screen.getByRole("radiogroup", { name: "%t argument" })).toBeInTheDocument();
+  });
+
+  it("after the toggle, the answered moment says the printed line changed", () => {
+    render(<TimescaleLab mode="read-time" />);
+    lockIn(/^\$time=2 \$realtime=1\.6 %t=.*then 16$/);
+    expect(screen.queryByTestId("asked-changed")).not.toBeInTheDocument();
+    toggleToTime();
+    expect(screen.getByTestId("asked-changed")).toHaveTextContent("The %t toggle has changed the code since");
+    expect(screen.getByTestId("moment-prints")).toHaveAttribute("data-line", expect.stringContaining("20"));
+  });
+
+  it("says on screen that the table leaves out the padding the log shows", () => {
+    render(<TimescaleLab mode="read-time" />);
+    expect(shown(/The %t columns leave out any padding/)).toBeInTheDocument();
+  });
+});
+
+describe("TimescaleLab · read-time source that cannot run", () => {
+  const custom = () => fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "custom" } });
+  const cannotRun = () => {
+    expect(document.querySelector('fieldset input[type="radio"]')).toBeNull();
+    expect(screen.queryByRole("slider", { name: "Moment" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Printed log")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "%t argument" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Time readings of every moment" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show advanced/ })).not.toBeInTheDocument();
+    expect(screen.getByTestId("input-error")).toBeInTheDocument();
+  };
+
+  it("a precision coarser than the unit asks no question and prints nothing (§3.14)", () => {
+    render(<TimescaleLab mode="read-time" />);
+    custom();
+    fireEvent.change(screen.getByLabelText("Caller's time unit"), { target: { value: "1ps" } });
+    fireEvent.change(screen.getByLabelText("Caller's time precision"), { target: { value: "1ns" } });
+    cannotRun();
+    expect(screen.getByTestId("input-error")).toHaveTextContent("§3.14");
+    expect(screen.getByRole("list", { name: "The code, which cannot run" })).toHaveTextContent("timeunit 1ps; timeprecision 1ns;");
+  });
+
+  it("an unparseable delay beside a good one asks no question either", () => {
+    render(<TimescaleLab mode="read-time" />);
+    custom();
+    fireEvent.change(screen.getByLabelText("Delay sequence"), { target: { value: "abc, #2" } });
+    cannotRun();
+    expect(screen.getByLabelText("Delay sequence")).toHaveAttribute("aria-invalid", "true");
+  });
+
+  for (const delay of ["#-5", "#x"]) {
+    it(`${delay} is not accepted as source`, () => {
+      render(<TimescaleLab mode="read-time" />);
+      custom();
+      fireEvent.change(screen.getByLabelText("Delay sequence"), { target: { value: delay } });
+      cannotRun();
+    });
+  }
+
+  it("a tool-dependent half tick is said only in the reveal of the moments it affects", () => {
+    render(<TimescaleLab mode="read-time" />);
+    custom();
+    fireEvent.change(screen.getByLabelText("Caller's time unit"), { target: { value: "1ns" } });
+    fireEvent.change(screen.getByLabelText("Caller's time precision"), { target: { value: "100ps" } });
+    fireEvent.change(screen.getByLabelText("Delay sequence"), { target: { value: "#1, #2.85" } });
+    expect(screen.queryByTestId("run-notes")).not.toBeInTheDocument();
+    skip();
+    expect(screen.queryByTestId("run-notes")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next moment" }));
+    expect(screen.queryByTestId("run-notes")).not.toBeInTheDocument();
+    skip();
+    expect(screen.getByTestId("run-notes")).toHaveTextContent("#2.85 sits on a tool-dependent half tick");
+  });
+});
+
+describe("TimescaleLab · moving between moments", () => {
+  const live = () => screen.getByTestId("lab-live");
+  const nextButton = () => screen.getByRole("button", { name: "Next moment" });
+
+  it("the arrow at the end stays focused and does nothing, so the focus does not fall out of the lab", () => {
+    render(<TimescaleLab mode="read-time" />);
+    const next = nextButton();
+    const previous = screen.getByRole("button", { name: "Previous moment" });
+    expect(previous).toHaveAttribute("aria-disabled", "true");
+    expect(previous).not.toBeDisabled();
+    next.focus();
+    fireEvent.click(next);
+    expect(document.activeElement).toBe(next);
+    expect(next).toHaveAttribute("aria-disabled", "true");
+    expect(next).not.toBeDisabled();
+    expect(previous).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(next);
+    expect(screen.getByRole("slider", { name: "Moment" })).toHaveValue("1");
+  });
+
+  it("the cross-scope arrows behave the same way", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    skipHunt();
+    const previous = screen.getByRole("button", { name: "Previous step" });
+    expect(previous).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(previous);
+    expect(screen.getByRole("slider", { name: "Crossing step" })).toHaveValue("0");
+  });
+
+  it("landing on an unanswered moment is announced, and the region stays empty until the learner moves", () => {
+    render(<TimescaleLab mode="read-time" preset="make-it-work" />);
+    expect(live()).toBeEmptyDOMElement();
+    fireEvent.click(nextButton());
+    expect(live()).toHaveTextContent("Moment 2 of 3: predict what u_slow prints.");
+    fireEvent.change(screen.getByRole("slider", { name: "Moment" }), { target: { value: "2" } });
+    expect(live()).toHaveTextContent("Moment 3 of 3: predict what u_slow prints.");
+  });
+
+  it("the reveal ends with a way on, which moves the focus to the next question", () => {
+    render(<TimescaleLab mode="read-time" />);
+    skip();
+    const onward = within(screen.getByTestId("read-time-reveal")).getByRole("button", { name: "Predict moment 2" });
+    fireEvent.click(onward);
+    expect(screen.getByRole("slider", { name: "Moment" })).toHaveValue("1");
+    expect(document.activeElement).toBe(screen.getByTestId("moment-prompt"));
+    expect(live()).toHaveTextContent("Moment 2 of 2");
+    skip();
+    expect(within(screen.getByTestId("read-time-reveal")).queryByRole("button", { name: /^Predict moment/ })).not.toBeInTheDocument();
+  });
+
+  it("the way on goes back to a skipped moment when none is left after this one", () => {
+    render(<TimescaleLab mode="read-time" />);
+    fireEvent.click(nextButton());
+    skip();
+    expect(within(screen.getByTestId("read-time-reveal")).getByRole("button", { name: "Predict moment 1" })).toBeInTheDocument();
+  });
+
+  it("the current row of the moment table has a marker and aria-current, not only a colour", () => {
+    render(<TimescaleLab mode="read-time" preset="make-it-work" />);
+    const table = screen.getByRole("region", { name: "Time readings of every moment" });
+    const current = () => table.querySelector('tr[aria-current="true"]') as HTMLElement;
+    expect(current()).toHaveTextContent("▶ 1");
+    fireEvent.click(nextButton());
+    expect(current()).toHaveTextContent("▶ 2");
+    expect(table.querySelectorAll('tr[aria-current="true"]')).toHaveLength(1);
+  });
+});
+
+describe("TimescaleLab · padded options sound and look different", () => {
+  const momentOptions = () => Array.from(document.querySelectorAll<HTMLInputElement>('fieldset input[type="radio"]'));
+
+  it("F2D line b: options that differ only in padding have different accessible names", () => {
+    render(<TimescaleLab mode="read-time" preset="f2d-printing-time" />);
+    fireEvent.change(screen.getByRole("slider", { name: "Moment" }), { target: { value: "1" } });
+    expect(screen.getByRole("radio", { name: "b: [ padded with 15 spaces, then 10000]" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "b: [10000]" })).toBeInTheDocument();
+  });
+
+  for (const moment of [1, 2, 3]) {
+    it(`F2D moment ${moment + 1}: every option's name is distinct once whitespace collapses, as a screen reader hears it`, () => {
+      render(<TimescaleLab mode="read-time" preset="f2d-printing-time" />);
+      fireEvent.change(screen.getByRole("slider", { name: "Moment" }), { target: { value: String(moment) } });
+      const names = momentOptions().map((radio) => (radio.closest("label")?.textContent ?? "").replace(/·/g, "").replace(/\s+/g, " "));
+      expect(new Set(names).size).toBe(names.length);
+    });
+  }
+
+  it("the padding is drawn as hidden glyphs with a key, and the line in the reveal does the same", () => {
+    render(<TimescaleLab mode="read-time" preset="f2d-printing-time" />);
+    fireEvent.change(screen.getByRole("slider", { name: "Moment" }), { target: { value: "1" } });
+    const glyphs = Array.from(document.querySelectorAll('fieldset [aria-hidden="true"]')).filter((el) => /^·+$/.test(el.textContent ?? ""));
+    expect(glyphs.map((g) => g.textContent?.length)).toContain(15);
+    expect(screen.getByText(/· is one padding space/)).toBeInTheDocument();
+    lockIn(/^b: \[.*padded with 15 spaces, then 10000\]$/);
+    expect(screen.getByTestId("moment-prints")).toHaveAttribute("data-line", `b: [${"10000".padStart(20)}]`);
+    expect(screen.getByTestId("moment-prints")).toHaveTextContent(/·{15}padded with 15 spaces, then 10000/);
+  });
+
+  it("the template's own alignment is not called padding", () => {
+    render(<TimescaleLab mode="read-time" preset="make-it-work" />);
+    lockIn(/^tb_top \$time=1 \$realtime=1\.30 %t=1\.3 ns$/);
+    expect(screen.getByTestId("moment-prints").textContent).not.toContain("padded");
+  });
+});
+
+describe("TimescaleLab · global precision says what this design does", () => {
+  const box = () => screen.getByLabelText(/Add vendor_model\.sv/);
+
+  it("the labels name the constructs: tb.sv has timeunit and timeprecision, and vendor_model has neither", () => {
+    render(<TimescaleLab mode="global-precision" />);
+    expect(screen.getByRole("list", { name: "tb.sv (timeunit and timeprecision, no `timescale)" })).toBeInTheDocument();
+    expect(box().closest("label")).toHaveTextContent("slow_gen and tb_top keep their own timeunit and timeprecision; vendor_model takes both from the directive.");
+    expect(box().closest("label")).not.toHaveTextContent("Every module keeps");
+  });
+
+  it("the code panels come from the model's design, and the vendor model is instantiated", () => {
+    render(<TimescaleLab mode="global-precision" />);
+    const tb = () => screen.getByRole("list", { name: /^tb\.sv/ });
+    const vendor = () => screen.getByRole("list", { name: "vendor_model.sv" });
+    for (const [on, files] of [[false, globalPrecisionDesign(false)], [true, globalPrecisionDesign(true)]] as const) {
+      if (on) fireEvent.click(box());
+      expect(within(tb()).getAllByRole("listitem").map((li) => li.querySelector("code")?.textContent)).toEqual([...files[0].code]);
+    }
+    expect(tb()).toHaveTextContent("vendor_model u_vendor ();");
+    expect(within(vendor()).getAllByRole("listitem").map((li) => li.querySelector("code")?.textContent)).toEqual(["`timescale 1ns/1fs", "module vendor_model; endmodule"]);
+  });
+
+  it("the reveal does not call the 1 fs directive unused: vendor_model runs on it", () => {
+    render(<TimescaleLab mode="global-precision" />);
+    fireEvent.click(box());
+    lockIn(/is 1fs \/ 1fs/);
+    expect(allShown(/slow_gen and tb_top declare their own, and only vendor_model takes it/).length).toBeGreaterThan(0);
+    lockIn(/^1fs$/);
+    const reveal = screen.getByTestId("global-precision-reveal");
+    expect(reveal).toHaveTextContent("The directive counts toward the global precision even though tb.sv's modules do not use it (they declare their own timeunit and timeprecision). Only vendor_model does (§3.14.3).");
+    expect(reveal).not.toHaveTextContent("no module uses it");
+    expect(reveal).toHaveTextContent("vendor_model takes its unit and precision from the directive (rule b)");
+  });
+
+  it("predicts the default %t units too, and each prediction takes the focus in turn", () => {
+    render(<TimescaleLab mode="global-precision" />);
+    lockIn(/is 100ps \/ 100ps/);
+    expect(document.activeElement).toBe(screen.getByTestId("reveal-heading"));
+    expect(screen.getByRole("group", { name: /which units does %t default to/ })).toBeInTheDocument();
+    lockIn(/^100ps$/);
+    expect(shown(/Table 20-3 looks only at the precision arguments/)).toBeInTheDocument();
+    expect(document.activeElement).toBe(screen.getByTestId("comparison-heading"));
+    expect(screen.getByTestId("lab-live")).toHaveTextContent(/^Not quite\..*does not define this case/);
+    expect(screen.getAllByRole("row").find((r) => r.textContent?.startsWith("default %t units"))).toHaveTextContent("Table 20-3 does not define it");
+  });
+});
+
+describe("TimescaleLab · cross-scope", () => {
+  const chooseForm = (name: string) => fireEvent.click(within(screen.getByRole("radiogroup", { name: "Call form" })).getByRole("radio", { name }));
+  const code = () => screen.getByRole("list", { name: "util_pkg and tb_top" });
+
+  for (const form of ["util_pkg::wait_t(1.5ns);", "util_pkg::wait_ns(5);", "repeat (5) @(posedge clk);"]) {
+    it(`${form}: the comment that explains the result waits for the prediction`, () => {
+      render(<TimescaleLab mode="cross-scope" />);
+      chooseForm(form);
+      expect(code()).not.toHaveTextContent("THIS package's time unit");
+      skip();
+      expect(code()).toHaveTextContent("THIS package's time unit");
+      fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+      expect(code()).not.toHaveTextContent("THIS package's time unit");
+    });
+  }
+
+  it("a culprit found before visiting another form does not bring the comment back while that form is armed", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    fireEvent.click(screen.getByRole("button", { name: "Suspect line: #t;" }));
+    expect(code()).toHaveTextContent("THIS package's time unit");
+    chooseForm("util_pkg::wait_t(1.5ns);");
+    expect(code()).not.toHaveTextContent("THIS package's time unit");
+  });
+
+  it("start over returns to the first call form", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    chooseForm("util_pkg::wait_ns(5);");
+    skip();
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(within(screen.getByRole("radiogroup", { name: "Call form" })).getByRole("radio", { name: "util_pkg::wait_t(5ns);" })).toHaveAttribute("aria-checked", "true");
+    expect(code()).toHaveTextContent("util_pkg::wait_t(5ns);");
+  });
+
+  it("each step names the line it runs, generated from the code panel's own lines", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    skipHunt();
+    const line = () => screen.getByTestId("crossing-line").textContent;
+    expect(line()).toBe("Line 12: util_pkg::wait_t(5ns);");
+    fireEvent.click(screen.getByRole("button", { name: "Next step" }));
+    expect(line()).toBe("Line 3: task automatic wait_t(time t);");
+    fireEvent.click(screen.getByRole("button", { name: "Next step" }));
+    expect(line()).toBe("Line 4: #t;");
+    const listed = within(code()).getAllByRole("listitem");
+    expect(listed[3]).toHaveAttribute("aria-current", "step");
+  });
+
+  it("the chip clears the lane titles at the phone width's wrap", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    skipHunt();
+    const chip = screen.getByTestId("crossing-chip");
+    expect(chip.className).toContain("top-11");
+    expect(chip.parentElement?.innerHTML).toContain("min-h-[110px]");
+  });
+
+  it("the chosen fix is marked in words and named in its verdict; the cycle count is graded from its clock line", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    skipHunt();
+    const fix = screen.getByRole("button", { name: /Pass a cycle count/ });
+    expect(fix).not.toHaveTextContent("Chosen");
+    fireEvent.click(fix);
+    expect(fix).toHaveTextContent("Chosen");
+    const verdict = screen.getByTestId("fix-verdict");
+    expect(verdict).toHaveTextContent("Chosen fix: Pass a cycle count");
+    expect(verdict).toHaveTextContent("always #0.5ns clk = ~clk;");
+    expect(verdict).toHaveTextContent("With a bare #0.5, a caller in 10ns would wake at 50 ns.");
+    expect(within(verdict).getByRole("table").querySelectorAll("td")).toHaveLength(9);
+    expect(within(verdict).getByRole("table")).not.toHaveTextContent("✕");
+  });
+});
+
+describe("TimescaleLab · start over restores the first state", () => {
+  it("read-time: the advanced panel closes, and Custom comes back with its first values", () => {
+    render(<TimescaleLab mode="read-time" />);
+    chooseTimeformat(/called with/);
+    fireEvent.change(screen.getByLabelText("suffix_string"), { target: { value: " zz" } });
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("Caller's time unit"), { target: { value: "1ns" } });
+    fireEvent.change(screen.getByLabelText("Caller's time precision"), { target: { value: "1ps" } });
+    fireEvent.change(screen.getByLabelText("Delay sequence"), { target: { value: "#3" } });
+    fireEvent.click(screen.getByLabelText(/the build has a `timescale/));
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(screen.getByLabelText("Preset")).toHaveValue("20.3.1");
+    expect(screen.getByRole("button", { name: /^Show advanced/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("radiogroup", { name: "$timeformat before the code runs" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "custom" } });
+    expect(screen.getByLabelText("Caller's time unit")).toHaveValue("10ns");
+    expect(screen.getByLabelText("Caller's time precision")).toHaveValue("1ns");
+    expect(screen.getByLabelText("Delay sequence")).toHaveValue("#1.55, #1.55");
+    expect(screen.getByLabelText(/the build has a `timescale/)).not.toBeChecked();
+    chooseTimeformat(/called with/);
+    expect(screen.getByLabelText("suffix_string")).toHaveValue(" ns");
+  });
+
+  it("read-time: the live region is empty again after moving and starting over", () => {
+    render(<TimescaleLab mode="read-time" />);
+    fireEvent.click(screen.getByRole("button", { name: "Next moment" }));
+    expect(screen.getByTestId("lab-live")).not.toBeEmptyDOMElement();
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(screen.getByTestId("lab-live")).toBeEmptyDOMElement();
+  });
+});
+
+describe("TimescaleLab · which-unit marks the element the question asked about", () => {
+  it("module b's row has a marker and aria-current, not only a colour", () => {
+    render(<TimescaleLab mode="which-unit" />);
+    skip();
+    const rows = screen.getByTestId("which-unit-reveal").querySelectorAll('tr[aria-current="true"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("▶ module b");
+  });
+});
+
+describe("TimescaleLab · the stated assumptions", () => {
+  it("list every clause the labs rely on and the readings the sources leave open", () => {
+    const text = TIMESCALE_ASSUMPTIONS.join("\n");
+    for (const clause of ["§3.12.1", "§20.4.1", "§20.4.2", "§20.4.3", "§22.3", "§22.7"]) expect(text, clause).toContain(clause);
+    expect(text).toMatch(/\$stime keeps the low 32 bits of the value already scaled/);
+    expect(text).toMatch(/an exact decimal tie rounds up/);
+    expect(text).toMatch(/Table 20-3 names only the smallest `timescale precision and does not define this case/);
+    expect(text).toMatch(/after a `resetall, a compilation-unit timeunit still decides by rule \(c\)/);
   });
 });

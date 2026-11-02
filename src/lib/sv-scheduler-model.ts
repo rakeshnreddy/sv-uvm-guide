@@ -30,14 +30,30 @@
  * - Concurrent assertions (process kind 'assertion') sample in Preponed
  *   (§16.5.1), are evaluated in Observed on their clock edge (§4.4.2.5) and
  *   run their pass/fail action blocks in Reactive (§4.4.2.6). A failure with
- *   no else clause runs the default $error there (§16.14.1).
+ *   no else clause calls $error (§16.14.1); the standard does not say where
+ *   that implicit call runs, so the model runs it with the fail code, in
+ *   Reactive.
  * - `$finish` (§20.2) and the implicit `$finish` when the last program
  *   thread ends (§24.3) stop the run at once: no later region of the slot,
  *   Postponed included, executes (§9.2.3).
  *
+ * - Slot time 0: `initial` stands for static-variable declaration initializers
+ *   there, so the Preponed sample equals the default sampled value §16.5.1
+ *   requires at time 0. Any other variable or net, `wire y = 1` included, is
+ *   outside the model: its default sampled value would be its type's default
+ *   (Table 6-7), and the model still samples `initial`.
+ * - Edges follow Table 9-2 on the LSB of the value (§9.4.2). The model has one
+ *   unknown value, X, standing for x and z alike on an edge. Printed output
+ *   covers only all-x: `%0d` of an all-z value prints z (§21.2.1.3), which the
+ *   model never produces.
+ * - `~` is defined here for single-bit values only: a real ~ negates each bit
+ *   of a multi-bit value (§11.4.8), and the model throws on one rather than
+ *   invent a result.
+ *
  * Every addition beyond the original model is opt-in scenario data, so
- * scenarios that do not use it produce exactly the traces they always did
- * (pinned by hash in tests/lib/sv-scheduler-model.test.ts).
+ * scenarios that do not use it produce the same structure they always did
+ * (regions, deltas, queues, values and log, pinned by hash in
+ * tests/lib/sv-scheduler-model.test.ts). The narration may be reworded.
  */
 
 export type SvValue = number | "X";
@@ -88,9 +104,9 @@ export const DEFAULT_TIME_UNIT = "ns";
 export type Expr =
   | { kind: "const"; value: SvValue }
   | { kind: "var"; name: string }
-  /** Clocking-block input: the value sampled in Preponed (#1step skew). Always this slot's sample; the file header states the limit. */
+  /** Clocking-block input: the value sampled in Preponed (#1step skew, §14.13, §4.4.2.1). Always this slot's sample; the file header states the limit. */
   | { kind: "sampled"; name: string; clocking: string }
-  /** `~e` (§11.4.8): 0 → 1, 1 → 0, X → X. Defined for single-bit values; any other value yields X. */
+  /** `~e` (§11.4.8): 0 → 1, 1 → 0, X → X. Single-bit values only; any other value throws (see the file header). */
   | { kind: "inv"; expr: Expr }
   /** `a == b` (§11.4.5, Table 11-9): 1 or 0, or X when either side is X. */
   | { kind: "eq"; left: Expr; right: Expr }
@@ -167,9 +183,11 @@ export type ProcessTrigger =
   | { kind: "clocking"; clocking: string }
   /**
    * Ready when the slot starts, in Active, or Reactive for program context
-   * (§24.3.1): a `#d` from an earlier slot that expired at this time, or a
-   * time-0 start. Models `always #5 clk = ~clk` running inside the slot.
-   * `note` names the next booking, e.g. "#5 books t = 10".
+   * (§24.3.1): a `#d` from an earlier slot that expired at this time, or, at
+   * slot time 0, the start of the procedure. Models `always #5 clk = ~clk`
+   * running inside the slot. `note` names the next booking, e.g.
+   * "#5 books t = 10". An `initial` that runs once has no next delay; see
+   * `runsOnce`.
    */
   | { kind: "resume"; note?: string };
 
@@ -232,7 +250,7 @@ export interface SvScenario {
   clockings?: ClockingBlock[];
   /** Signals to show in value and waveform panels, in display order. */
   watch: string[];
-  /** Simulation time of the modelled slot, used by `$time` and labels. Default 10. */
+  /** Simulation time of the modelled slot, used by `$time` and labels. Default 10. At 0, `initial` stands for static-variable declaration initializers (file header, §16.5.1). */
   slotTime?: number;
   /** Unit shown next to the slot time. Default "ns". */
   timeUnit?: string;
@@ -336,6 +354,10 @@ export interface ExplorationResult {
   runCount: number;
 }
 
+/** Slot-start narration: what reads the Preponed samples (§14.13, §4.4.2.1, §16.5.1, §16.9.3). Also the answer text of the region quiz's cb-sample question. */
+export const SLOT_START_WHY =
+  "Preponed samples every value before anything in this slot changes. Clocking-block inputs (#1step), concurrent assertions and $sampled() return these samples; a plain read of a variable returns its current value.";
+
 const MAX_STEPS = 400;
 const MAX_RUNS = 256;
 
@@ -344,7 +366,7 @@ export function formatValue(value: SvValue | undefined): string {
   return String(value);
 }
 
-/** What `%0d` prints for a value: an all-unknown value prints as a lowercase x (§21.2.1.3). */
+/** What `%0d` prints for a value: an all-x value prints as a lowercase x (§21.2.1.3). The model produces no all-z output (file header). */
 export function formatPrintValue(value: SvValue | undefined): string {
   return value === undefined || value === "X" ? "x" : String(value);
 }
@@ -474,8 +496,10 @@ export function assertionSampledSignals(process: SvProcess): string[] {
  * model prints the assertion's label. Only called when `spec.fail` is empty,
  * so these statements never appear in the scenario's source.
  */
+const defaultErrorId = (process: SvProcess) => `${process.id}-default-error`;
+
 function defaultFailAction(process: SvProcess): Statement[] {
-  return [{ kind: "display", id: `${process.id}-default-error`, signals: [], task: "error", label: `${process.label} failed` }];
+  return [{ kind: "display", id: defaultErrorId(process), signals: [], task: "error", label: `${process.label} failed` }];
 }
 
 const usesDefaultError = (spec: AssertionSpec, outcome: AssertionOutcome) => outcome === "fail" && !spec.fail?.length;
@@ -564,19 +588,43 @@ function describeEvent(event: SchedulerEvent, processes: Map<string, SvProcess>)
   }
 }
 
+/** The bit an edge event looks at: the LSB of the value (§9.4.2). X has an unknown LSB. */
+function edgeBit(value: SvValue): 0 | 1 | "X" {
+  if (value === "X") return "X";
+  return value % 2 === 0 ? 0 : 1;
+}
+
 /**
- * Table 9-2 (§9.4.2): a posedge is any transition from 0 to something else, or
- * from an unknown value to 1. The model has one unknown value, X, standing for
- * x and z alike. Any other transition, X → 0 included, is not a posedge.
+ * Table 9-2 (§9.4.2), on the LSB: a posedge is a transition from 0 to something
+ * else, or from an unknown value to 1. The model has one unknown value, X,
+ * standing for x and z alike. Any other transition is not a posedge, X → 0
+ * included, and so is 0 → 2, whose LSB does not move.
  */
 export function isPosedge(oldValue: SvValue, newValue: SvValue): boolean {
-  return (oldValue === 0 && newValue !== 0) || (oldValue === "X" && newValue === 1);
+  const from = edgeBit(oldValue);
+  const to = edgeBit(newValue);
+  return (from === 0 && to !== 0) || (from === "X" && to === 1);
+}
+
+/** A continuous assignment (§4.9.1), modelled as a process sensitive to its source, not a procedural statement. */
+export function isContinuousAssign(process: Pick<SvProcess, "header">): boolean {
+  return process.header === "assign";
+}
+
+/**
+ * An `initial` with no `forever` and no trailing wait in the source shown: it
+ * executes once and its activity then ceases (§9.2.1), so nothing re-arms it.
+ * Read from what the learner sees, so the narration cannot disagree with it.
+ */
+export function runsOnce(process: Pick<SvProcess, "header" | "sourceTail">): boolean {
+  return /^initial\b/.test(process.header) && !/\bforever\b/.test(process.header) && !process.sourceTail?.length;
 }
 
 function invert(value: SvValue): SvValue {
+  if (value === "X") return "X";
   if (value === 0) return 1;
   if (value === 1) return 0;
-  return "X";
+  throw new Error(`~ is modelled for single-bit values only, not ${value}: a real ~ negates each bit (§11.4.8)`);
 }
 
 function evaluateExpr(expr: Expr, values: Record<string, SvValue>, sampled: Record<string, SvValue>): SvValue {
@@ -603,6 +651,10 @@ function evaluateExpr(expr: Expr, values: Record<string, SvValue>, sampled: Reco
 /** §16.6 / §12.4: a condition is false when it is 0 or X, true otherwise. */
 function isTrue(value: SvValue): boolean {
   return value !== "X" && value !== 0;
+}
+
+function joinWithAnd(items: string[]): string {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
 function formatSignals(signals: string[], values: Record<string, SvValue>): string {
@@ -713,22 +765,28 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
       .filter((cb) => cb.clock === signal)
       .forEach((cb) => {
         queues.observed.push({ kind: "clockingEvent", clocking: cb.name });
-        out.push(`the @(${cb.name}) clocking event (scheduled in Observed)`);
+        out.push(`the @(${cb.name}) clocking event`);
       });
     for (const process of scenario.processes) {
       if (!isAssertion(process) || process.trigger.kind !== "posedge" || process.trigger.signal !== signal) continue;
       queues.observed.push({ kind: "assertEval", processId: process.id });
-      out.push(`the evaluation of ${process.label} (scheduled in Observed)`);
+      out.push(`the evaluation of ${process.label}`);
     }
     return out;
+  };
+
+  /** A change wakes processes at once, but only schedules Observed events: "wakes A and B and schedules C in Observed". */
+  const changeEffects = (signal: string, oldValue: SvValue, newValue: SvValue): string => {
+    const woken = wakeSensitive(signal, oldValue, newValue);
+    const scheduled = scheduleEdgeEffects(signal, oldValue, newValue);
+    return [...(woken.length ? [`wakes ${joinWithAnd(woken)}`] : []), ...(scheduled.length ? [`schedules ${joinWithAnd(scheduled)} in Observed`] : [])].join(" and ");
   };
 
   const applyUpdate = (event: Extract<SchedulerEvent, { kind: "update" }>, region: RegionId) => {
     const oldValue = values[event.target] ?? "X";
     values[event.target] = event.value;
     const changed = oldValue !== event.value;
-    const woken = changed ? wakeSensitive(event.target, oldValue, event.value) : [];
-    if (changed) woken.push(...scheduleEdgeEffects(event.target, oldValue, event.value));
+    const effects = changed ? changeEffects(event.target, oldValue, event.value) : "";
     push({
       kind: "update",
       region,
@@ -736,10 +794,24 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
       processId: event.from,
       what: `${event.target} updates ${formatValue(oldValue)} → ${formatValue(event.value)}.`,
       why: changed
-        ? `${event.reason}${woken.length ? ` The change wakes ${woken.join(", ")}.` : ""}`
+        ? `${event.reason}${effects ? ` The change ${effects}.` : ""}`
         : `${event.reason} The value is unchanged, so no process wakes.`,
       changed: changed ? [event.target] : [],
     });
+  };
+
+  /**
+   * Why an immediate print shows what it shows, read from the queues at that
+   * moment: only updates and processes actually waiting are named.
+   */
+  const printWhy = (task: string, region: RegionId): string => {
+    const moved = [...queues.active, ...queues.reactive].flatMap((e) => (e.kind === "update" && isMovedNba(e) ? [origin.get(e) as RegionId] : []));
+    const pending = (["nba", "reNba"] as RegionId[]).filter((r) => queues[r].length > 0 || moved.includes(r)).map((r) => REGION_LABELS[r]);
+    const base = pending.length ? `${task} prints the values visible at this instant — pending ${pending.join(" and ")} updates are not yet applied.` : `${task} prints the values visible now.`;
+    const waiting = region === "reactive" ? queues.active.map((e) => describeEvent(e, processes).label) : [];
+    if (waiting.length === 0) return base;
+    const one = waiting.length === 1;
+    return `${base} Active still holds ${waiting.join(", ")}, which ${one ? "waits" : "wait"} until the reactive set has drained (§4.5), so ${one ? "its effect does" : "their effects do"} not show yet.`;
   };
 
   type BodyOutcome = "done" | "suspended" | "ended";
@@ -762,17 +834,21 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
             const oldValue = values[stmt.target] ?? "X";
             values[stmt.target] = value;
             const changed = oldValue !== value;
-            const woken = changed ? [...wakeSensitive(stmt.target, oldValue, value), ...scheduleEdgeEffects(stmt.target, oldValue, value)] : [];
+            const effects = changed ? changeEffects(stmt.target, oldValue, value) : "";
+            const wakes = effects ? `; the change ${effects}` : "";
+            const readers = `Any process that reads ${stmt.target} later in this slot sees ${formatValue(value)}.`;
+            const continuous = isContinuousAssign(process);
+            const source = `${continuous ? "assign " : ""}${statementToSource(stmt)}`;
+            const write = continuous ? `updates ${stmt.target}` : `writes ${stmt.target} immediately`;
             push({
               kind: "statement",
               region,
               processId: process.id,
               stmtId: stmt.id,
-              what:
-                stmt.expr.kind === "const"
-                  ? `${statementToSource(stmt)} writes ${stmt.target} immediately.`
-                  : `${statementToSource(stmt)} reads ${exprToSource(stmt.expr)} = ${formatValue(value)} and writes ${stmt.target} immediately.`,
-              why: `A blocking assignment updates its target before the next statement runs${woken.length ? `; the change wakes ${woken.join(", ")}` : ""}. Any process that reads ${stmt.target} later in this slot sees ${formatValue(value)}.`,
+              what: stmt.expr.kind === "const" ? `${source} ${write}.` : `${source} reads ${exprToSource(stmt.expr)} = ${formatValue(value)} and ${write}.`,
+              why: continuous
+                ? `A continuous assignment re-evaluates when its source changes and updates its target through an active update event (§4.9.1)${wakes}. ${readers}`
+                : `A blocking assignment updates its target before the next statement runs${wakes}. ${readers}`,
               changed: changed ? [stmt.target] : [],
             });
           } else {
@@ -815,7 +891,7 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
             processId: process.id,
             stmtId: stmt.id,
             what: `${statementToSource(stmt)} schedules ${stmt.target} ← ${formatValue(value)} in Re-NBA.`,
-            why: "A synchronous drive through a clocking block is applied after all design NBA updates of this slot, so design logic triggered by this edge has already captured the old value.",
+            why: "A synchronous drive through a clocking block is applied in Re-NBA, after the active set has drained, so design logic triggered by this edge has already captured the old value (§14.16).",
           });
           break;
         }
@@ -842,7 +918,10 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
             processId: process.id,
             stmtId: stmt.id,
             what: `Prints ${formatted} immediately.`,
-            why: `$${stmt.task ?? "display"} prints the values visible at this instant — pending NBA updates are not yet applied.`,
+            why:
+              stmt.id === defaultErrorId(process)
+                ? "The tool reports the failure; its wording is tool-specific, and the model prints only the assertion's label, so no signal value is read here."
+                : printWhy(`$${stmt.task ?? "display"}`, region),
           });
           break;
         }
@@ -937,6 +1016,16 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
       });
       return;
     }
+    if (runsOnce(process)) {
+      push({
+        kind: "statement",
+        region,
+        processId: process.id,
+        what: `${process.label} finishes: the procedure has ended.`,
+        why: "An initial procedure executes once, and its activity then ceases (§9.2.1). Nothing runs it again.",
+      });
+      return;
+    }
     waiting.add(process.id);
     push({
       kind: "statement",
@@ -965,15 +1054,18 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
     const sampledText = exprNames(spec.property, "sampled")
       .map((n) => `${n} = ${formatValue(sampled[n])}`)
       .join(", ");
+    const whenEvaluated = sampledText
+      ? `Property expressions are evaluated in the Observed region, after the active set has settled, but on the values sampled in ${slotTime === 0 ? "Preponed: at time 0, the default sampled values" : "Preponed"} (§4.4.2.5, §16.5.1).`
+      : "Property expressions are evaluated in the Observed region, after the active set has settled (§4.4.2.5). This one reads no signal, so no sample matters.";
     push({
       kind: "statement",
       region,
       processId: process.id,
       assertion: { phase: "evaluate", outcome },
-      what: `${process.label} evaluates ${exprToSource(spec.property)} on the sampled values (${sampledText}): it ${holds ? "passes" : "fails"}.`,
-      why: `Property expressions are evaluated in the Observed region, after the active set has settled, but on the values sampled in Preponed (§4.4.2.5, §16.5.1). ${
+      what: `${process.label} evaluates ${exprToSource(spec.property)}${sampledText ? ` on the sampled values (${sampledText})` : ""}: it ${holds ? "passes" : "fails"}.`,
+      why: `${whenEvaluated} ${
         usesDefaultError(spec, outcome)
-          ? "It has no else clause, so the tool calls $error by default, unless $assertcontrol suppresses it (§16.14.1). That default action is scheduled in the Reactive region (§4.4.2.5)."
+          ? "It has no else clause, so the tool calls $error by default, unless $assertcontrol suppresses it (§16.14.1). The model runs that call with the fail code, which §4.4.2.5 schedules in the Reactive region."
           : actions.length
             ? `Its ${outcome} action block is scheduled in the Reactive region (§4.4.2.5).`
             : "It has no pass action block, so nothing more is scheduled."
@@ -999,7 +1091,7 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
           ? `${process.label}'s ${event.outcome} action block runs.`
           : `${process.label}'s ${event.outcome} action block resumes after #0.`,
       why: defaultError
-        ? "With the else clause omitted, the tool calls $error when the assertion fails, unless $assertcontrol suppresses it (§16.14.1). The model does not apply $assertcontrol, and a real tool words the message its own way. Pass/fail code runs in the Reactive region (§4.4.2.5)."
+        ? "With the else clause omitted, the tool calls $error when the assertion fails, unless $assertcontrol suppresses it (§16.14.1). The model does not apply $assertcontrol, and a real tool words the message its own way. The model runs the call with the fail code, in the Reactive region (§4.4.2.5)."
         : event.pc === 0
           ? "Action blocks of concurrent assertions run in the Reactive region (§4.4.2.6), after the design's active set has settled. Plain reads here see current values; $sampled() still returns the Preponed sample (§16.9.3)."
           : "#0 in the reactive set resumes in Re-Inactive (§4.4.2.7).",
@@ -1034,7 +1126,9 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
     if (interleaveNba && head.kind === "update" && isMovedNba(head)) {
       const ready = queue.map((event, position) => ({ event, position })).filter((r) => isReady(r.event)) as { event: Extract<SchedulerEvent, { kind: "evaluate" | "assertAction" }>; position: number }[];
       if (ready.length > 0) {
-        const pendingUpdates = queue.filter((e) => e.kind === "update" && isMovedNba(e)).length;
+        const movedFrom = origin.get(head) as RegionId;
+        const updateRegion = REGION_LABELS[movedFrom];
+        const pendingUpdates = queue.filter((e) => e.kind === "update" && origin.get(e) === movedFrom).length;
         const options = [`apply ${describeEvent(head, processes).label}`, ...ready.map((r) => `run ${readyLabel(r.event)}`)];
         const choicePoint = usedChoices.length;
         const requested = choices[choicePoint] ?? 0;
@@ -1047,8 +1141,8 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
           kind: "choice",
           region,
           processId: chosen.kind === "update" ? chosen.from : chosen.processId,
-          what: `${REGION_LABELS[region]} holds ${pendingUpdates} pending NBA update${pendingUpdates === 1 ? "" : "s"} and ${ready.length} woken process${ready.length === 1 ? "" : "es"}: ${options.join(", ")}. This run picks "${options[pick]}" first.`,
-          why: "Once NBA events have moved to Active, the loop may take any event from the region (§4.5): the updates keep their order among themselves (§4.6), but a process woken by one of them may run before the rest are applied. Code whose result depends on this is a race.",
+          what: `${REGION_LABELS[region]} holds ${pendingUpdates} pending ${updateRegion} update${pendingUpdates === 1 ? "" : "s"} and ${ready.length} woken process${ready.length === 1 ? "" : "es"}: ${options.join(", ")}. This run picks "${options[pick]}" first.`,
+          why: `Once ${updateRegion} events have moved to ${REGION_LABELS[region]}, the loop may take any event from the region (${movedFrom === "reNba" ? "§4.4.2.8, " : ""}§4.5): the updates keep their order among themselves (§4.6), but a process woken by one of them may run before the rest are applied. Code whose result depends on this is a race.`,
           choice: { options, picked: options[pick] },
         });
         if (pick === 0) return queue.shift() as SchedulerEvent;
@@ -1159,7 +1253,7 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
           kind: "move",
           region: next,
           what: `${REGION_LABELS[home]} is empty. ${moved.length} ${REGION_LABELS[next]} event${moved.length === 1 ? " moves" : "s move"} to ${REGION_LABELS[home]}: ${moved.join(", ")}.`,
-          why: `The scheduler only advances to ${REGION_LABELS[next]} once every earlier region of the set is empty. Moving events back is one more delta iteration of the same simulation time.`,
+          why: `The scheduler only advances to ${REGION_LABELS[next]} once every earlier region of this loop is empty. Moving events back adds one to the model's Δ count; simulation time does not change.`,
         });
         queues[next].forEach((e) => origin.set(e, next));
         queues[home].push(...queues[next]);
@@ -1173,23 +1267,27 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
   push({
     kind: "slot-start",
     what: `Time slot begins. ${formatSignals(scenario.watch, values)}.`,
-    why: "Preponed samples every value before anything in this slot changes. Clocking-block inputs (#1step) and concurrent assertions read these samples; procedural code does not.",
+    why: SLOT_START_WHY,
   });
 
   // Concurrent assertions take their samples here (§16.5.1).
   for (const process of scenario.processes) {
     if (!isAssertion(process)) continue;
     const names = assertionSampledSignals(process);
+    if (names.length === 0) continue;
     push({
       kind: "sample",
       processId: process.id,
       assertion: { phase: "sample" },
       what: `${process.label} samples ${names.map((n) => `${n} = ${formatValue(sampled[n])}`).join(", ")}.`,
-      why: "A concurrent assertion reads sampled values: the values its signals had in Preponed, before anything in this slot changes (§16.5.1). $sampled() returns the same values later in the slot (§16.9.3). The property itself is not evaluated until Observed.",
+      why:
+        slotTime === 0
+          ? "At time 0 a concurrent assertion reads default sampled values (§16.5.1). The model's start values stand for static-variable declaration initializers, which is what those defaults are. $sampled() returns the same values later in the slot (§16.9.3). The property itself is not evaluated until Observed."
+          : "A concurrent assertion reads sampled values: the values its signals had in Preponed, before anything in this slot changes (§16.5.1). $sampled() returns the same values later in the slot (§16.9.3). The property itself is not evaluated until Observed.",
     });
   }
 
-  // Processes ready at slot start, a #d that expired at this time or a time-0 start (§4.5): in Active, or Reactive for program context (§24.3.1).
+  // Processes ready at slot start, a #d that expired at this time or a procedure starting at time 0 (§4.5): in Active, or Reactive for program context (§24.3.1).
   for (const process of scenario.processes) {
     if (isAssertion(process) || process.trigger.kind !== "resume") continue;
     waiting.delete(process.id);
@@ -1197,7 +1295,11 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
       kind: "evaluate",
       processId: process.id,
       pc: 0,
-      reason: process.trigger.note ? `Ready at the start of the slot: ${process.trigger.note}.` : "Ready at the start of the slot: its delay expired at this time.",
+      reason: process.trigger.note
+        ? `Ready at the start of the slot: ${process.trigger.note}.`
+        : slotTime === 0
+          ? "Ready at the start of the slot: the procedure starts at time 0."
+          : "Ready at the start of the slot: its delay expired at this time.",
     });
   }
 
@@ -1227,6 +1329,8 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
   }
 
   if (ended) {
+    // The closing step is no event of any region; without this it inherits the source region of the event that ended the run.
+    currentSource = undefined;
     const pending = REGION_ORDER.reduce((n, r) => n + queues[r].length, 0);
     push({
       kind: "slot-end",

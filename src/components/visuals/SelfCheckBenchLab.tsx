@@ -16,11 +16,12 @@ import { VisualFrame } from "@/components/visual-system/VisualFrame";
 import {
   ALL_TEST_IDS,
   ANATOMY_EDGES,
+  BASE_TESTS,
   ANATOMY_NODES,
   CLINIC_CASES,
   MATRIX_MUTANTS,
+  PLAN_MUTANTS,
   PRESETS,
-  TESTS,
   benchSource,
   buildMatrix,
   clinicCase,
@@ -29,15 +30,20 @@ import {
   dutSource,
   edgePrediction,
   explainEscape,
+  formatBit,
   formatDec,
   formatLogLine,
   formatTime,
   gradeFix,
+  holdCheckPrediction,
   mutantInfo,
+  passWithoutMatch,
+  predictionKey,
   presetConfig,
   queuePrediction,
   runBench,
   suspectKeys,
+  testsRule,
   waveValue,
   type Bug1Outcome,
   type ClinicCaseId,
@@ -46,6 +52,7 @@ import {
   type Expectation,
   type LogLine,
   type MutantId,
+  type PredictionSpec,
   type PresetId,
   type RunResult,
   type Step,
@@ -55,7 +62,7 @@ import { cn } from "@/lib/utils";
 
 export const SELFCHECK_MODEL_ASSUMPTIONS = [
   "Edge k is the rising edge at 5 + 10k ns. Every value shown at edge k is the one sampled there: what the flops and the checker read before that edge's nonblocking updates land (IEEE 1800-2023 §4.9.4, §10.4.2).",
-  "The checker, the DUT and the bench tasks all read pre-edge values. The model runs them in a fixed order (checker, DUT, tasks); the lesson's bench does not depend on that order, because its only shared blocking state is exp_q, pushed and popped at opposite ends.",
+  "The checker, the DUT and the bench tasks all read pre-edge values. The model runs them in a fixed order (checker, DUT, tasks); the lesson's bench does not depend on that order, because its only shared blocking state is exp_q, pushed and popped at opposite ends. Counters and verdicts are the same in every order, but lines printed at the same time by different processes may appear in either order in a simulator (§4.7).",
   "Rules implemented: pop_front on an empty queue (§7.10.2.4), != and if with x (§11.4.5, §12.4), immediate assertions (§16.3), 2-state copies (§6.11.2), $error/$fatal/$finish/$stop (§20.10, §20.2), a run with no activity (§9.6.1), join_any and disable fork (§9.3.2, §9.6.3), uninitialised logic (§6.8) and ~x (§11.4.8).",
   "Error lines use [error @ t] for the simulator's own prefix. Lines marked (model @ t) and 'still running at the horizon' are this model's notes, not simulator messages.",
 ];
@@ -71,6 +78,17 @@ interface Props {
   bug?: MutantId | string | number;
   /** "anatomy": step mode shows only the anatomy pane, the narration and the code. */
   focus?: "anatomy";
+  /**
+   * Step mode: ask only this question, for an embed right after the lesson's own
+   * Predict line. "edge" gates the outputs; "queue" gates exp_q with the outputs
+   * already open. By default both are asked, the queue after the edge.
+   */
+  ask?: "edge" | "queue";
+  /**
+   * Matrix mode: "plan" keeps to what a learner has met at the test-plan section:
+   * smoke, corners and gaps against BUG=1 and BUG=2, with no hold row or toggle.
+   */
+  scope?: "plan";
 }
 
 const MUTANT_OPTIONS: { value: string; mutant: MutantId; label: string; advanced?: boolean }[] = [
@@ -84,9 +102,7 @@ const MUTANT_OPTIONS: { value: string; mutant: MutantId; label: string; advanced
 
 function normalizeMutant(bug: Props["bug"]): MutantId {
   const text = String(bug ?? "0");
-  const found = MUTANT_OPTIONS.find((o) => o.value === text);
-  if (found) return found.mutant;
-  return text === "x-carry" ? "x-carry" : 0;
+  return MUTANT_OPTIONS.find((o) => o.value === text)?.mutant ?? 0;
 }
 
 const isPreset = (p: unknown): p is PresetId => typeof p === "string" && (PRESETS as readonly string[]).includes(p);
@@ -96,16 +112,83 @@ const isPreset = (p: unknown): p is PresetId => typeof p === "string" && (PRESET
  * which run the gate was opened for. The parent compares that key with the
  * current one, so no render shows a new run through a gate opened for an old one.
  */
-function RevealSignal({ gateKey, onChange }: { gateKey: string; onChange: (key: string | null) => void }) {
+function RevealSignal({ gateKey, onChange, onMount }: { gateKey: string; onChange: (key: string | null) => void; onMount: () => void }) {
   useEffect(() => {
     onChange(gateKey);
     return () => onChange(null);
   }, [gateKey, onChange]);
+  useEffect(() => {
+    onMount();
+  }, [onMount]);
   return null;
 }
 
 const toOptions = (spec: { options: { id: string; label: string; correct: boolean; feedback: string }[] } | null): PredictionOption[] =>
   spec ? spec.options.map((o) => ({ id: o.id, label: <span className="font-mono [font-variant-ligatures:none]">{o.label}</span>, correct: o.correct, feedback: o.feedback })) : [];
+
+/**
+ * One prediction gate. The parent keys it by predictionKey, so it starts over
+ * only when the question or its answer changes. PredictionPrompt's buttons
+ * unmount on reveal, which would drop keyboard focus to the page: focus moves to
+ * the feedback they uncover. An answered gate folds to one line, so the transport
+ * below it comes back within reach on a phone.
+ */
+function GatedPrompt({ spec, gateKey, onReveal, onAnswer, children }: { spec: PredictionSpec; gateKey: string; onReveal: (key: string | null) => void; onAnswer?: (id: string) => void; children: React.ReactNode }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const unfoldRef = useRef<HTMLButtonElement>(null);
+  const hasFolded = useRef(false);
+  const [folded, setFolded] = useState(false);
+  // Kept as committed: a run with the same key can drop this option (the extra stage's distractors collapse), and the learner still said it.
+  const [chosen, setChosen] = useState<{ label: string; correct: boolean } | null>(null);
+  const focusFeedback = useCallback(() => {
+    const feedback = wrapRef.current?.querySelector<HTMLElement>('[aria-live="polite"]');
+    if (!feedback) return;
+    feedback.tabIndex = -1;
+    feedback.focus();
+  }, []);
+  useEffect(() => {
+    if (folded) unfoldRef.current?.focus();
+    else if (hasFolded.current) focusFeedback();
+  }, [folded, focusFeedback]);
+  const answer = spec.options.find((o) => o.correct);
+  const summary = !chosen ? `Answer: ${answer?.label}.` : chosen.correct ? `✓ You said ${chosen.label}.` : `✕ You said ${chosen.label}; the answer is ${answer?.label}.`;
+  return (
+    <div ref={wrapRef}>
+      {folded ? (
+        <button
+          ref={unfoldRef}
+          type="button"
+          aria-expanded={false}
+          onClick={() => setFolded(false)}
+          className="flex min-h-10 w-full flex-wrap items-center justify-between gap-x-3 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="font-mono text-foreground [font-variant-ligatures:none]">{summary}</span>
+          <span className="text-xs text-muted-foreground underline underline-offset-2">Show the feedback</span>
+        </button>
+      ) : null}
+      <div hidden={folded}>
+        <PredictionPrompt question={spec.question} options={toOptions(spec)} onCommit={(id, correct) => {
+            setChosen({ label: spec.options.find((o) => o.id === id)?.label ?? "", correct });
+            onAnswer?.(id);
+          }}>
+          <RevealSignal gateKey={gateKey} onChange={onReveal} onMount={focusFeedback} />
+          {children}
+          <button
+            type="button"
+            aria-expanded
+            onClick={() => {
+              hasFolded.current = true;
+              setFolded(true);
+            }}
+            className="mt-1 inline-flex min-h-10 items-center text-xs text-muted-foreground underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Fold this prediction to one line
+          </button>
+        </PredictionPrompt>
+      </div>
+    </div>
+  );
+}
 
 const shortLabel = (step: Step): string =>
   step.kind === "edge" ? `Edge ${step.edge} (${formatTime(step.time)})` : step.kind === "end" ? `Run ends (${formatTime(step.time)})` : step.kind === "wdog" ? `Watchdog (${formatTime(step.time)})` : step.kind === "stop" ? `$stop (${formatTime(step.time)})` : `Still running (${formatTime(step.time)})`;
@@ -129,10 +212,11 @@ function waveMarkers(run: RunResult, showOutputs: boolean, showQueue: boolean): 
     const c = step.checker;
     const t = formatTime(step.time);
     if (showOutputs && (c.kind === "pass" || c.kind === "x-pass")) {
+      const noMatch = passWithoutMatch(c);
       markers.push({
         edge: step.edge,
-        tone: c.kind === "pass" ? "pass" : "vacuous",
-        label: `Edge ${step.edge} (${t}): ${c.kind === "pass" ? `checker matches sum = ${formatDec(c.actual)}` : `an X result (${formatDec(c.actual)}) counted as a pass by !=`}`,
+        tone: noMatch ? "vacuous" : "pass",
+        label: `Edge ${step.edge} (${t}): ${noMatch ? `an X result (${formatDec(c.actual)}) counted as a pass` : `checker matches sum = ${formatDec(c.actual)}`}`,
         short: formatDec(c.actual),
       });
     } else if (showOutputs && (c.kind === "fail" || c.kind === "unexpected" || c.kind === "hold-fail" || c.kind === "x-out-valid")) {
@@ -159,12 +243,15 @@ function BenchWaveform({
   showQueue = true,
   onSelectEdge,
   explainCause = true,
+  shownPane,
 }: {
   run: RunResult;
   cursor?: number;
   showOutputs: boolean;
   showQueue?: boolean;
   onSelectEdge?: (edge: number) => void;
+  /** The phone pane on show: a pane hidden by CSS has no size, so it can only scroll once shown. */
+  shownPane?: string;
   /** The dead clock's explanation names its cause, so the clinic holds it back until the culprit is found. */
   explainCause?: boolean;
 }) {
@@ -177,7 +264,7 @@ function BenchWaveform({
     const left = box.scrollLeft + WAVE_LABEL_W;
     const right = box.scrollLeft + box.clientWidth - WAVE_CYCLE_W;
     if (x < left || x > right) box.scrollLeft = Math.max(0, x - box.clientWidth / 2);
-  }, [cursor, run.edges]);
+  }, [cursor, run.edges, shownPane]);
   if (run.clock === "x" || run.edges === 0) {
     return (
       <div role="img" aria-label="Waveform: clk stays x, so there is no rising edge to sample at" className="rounded-xl border border-rose-500/40 bg-rose-500/[0.05] p-3 text-sm">
@@ -202,7 +289,7 @@ function BenchWaveform({
         cursor={cursor}
         onSelectEdge={onSelectEdge}
         cycleWidth={WAVE_CYCLE_W}
-        caption={`x-axis: rising edges of clk; edge k is at ${formatTime(5)} + 10k ns and each value is the one sampled at that edge. ◆ a drive by the bench, ▼ the DUT sampling a valid input, ✓/✕ the checker's verdict, ○ an X result that != counted as a pass.${
+        caption={`x-axis: rising edges of clk; edge k is at ${formatTime(5)} + 10k ns and each value is the one sampled at that edge. ◆ a drive by the bench, ▼ the DUT sampling a valid input, ✓/✕ the checker's verdict, ○ an X result counted as a pass.${
           showOutputs ? "" : " out_valid and sum are hidden until you predict."
         }`}
       />
@@ -214,19 +301,29 @@ function BenchWaveform({
 /* Queue strip, counters, log                                           */
 /* ------------------------------------------------------------------ */
 
-function ExpChip({ exp, state }: { exp: Expectation; state: "held" | "pushed" | "popped-pass" | "popped-fail" }) {
+/** Keyframes for the queue's chips, used through motion-safe: so reduced motion leaves them static. */
+const CHIP_KEYFRAMES =
+  "@keyframes selfcheck-push{from{opacity:0;transform:translateX(16px) scale(.85)}to{opacity:1;transform:none}}" +
+  "@keyframes selfcheck-pop{from{transform:translateX(24px)}to{transform:none}}";
+
+type ChipState = "held" | "pushed" | "popped-pass" | "popped-x" | "popped-fail";
+const CHIP_TAG: Record<ChipState, string> = { held: "EXP", pushed: "push_back", "popped-pass": "pop_front ✓", "popped-x": "pop_front ○", "popped-fail": "pop_front ✕" };
+const CHIP_SPOKEN: Record<ChipState, string> = { held: "", pushed: ", just pushed", "popped-pass": ", popped and matched", "popped-x": ", popped, counted as a pass", "popped-fail": ", popped, mismatch" };
+
+function ExpChip({ exp, state }: { exp: Expectation; state: ChipState }) {
   const label = `${formatDec(exp.a)} + ${formatDec(exp.b)} → ${formatDec(exp.sum)}`;
-  const tag = state === "pushed" ? "push_back" : state === "popped-pass" ? "pop_front ✓" : state === "popped-fail" ? "pop_front ✕" : "EXP";
+  const tag = CHIP_TAG[state];
   return (
     <li
       className={cn(
         "flex shrink-0 flex-col rounded-lg border px-2 py-1 font-mono text-xs transition-all duration-300 motion-reduce:transition-none [font-variant-ligatures:none]",
         state === "held" && "border-dashed border-teal-500/70 text-teal-800 dark:text-teal-200",
-        state === "pushed" && "border-teal-500 bg-teal-500/10 text-teal-900 ring-2 ring-cyan-400 dark:text-teal-100",
-        state === "popped-pass" && "border-emerald-500/60 bg-emerald-500/10 text-emerald-800 opacity-80 dark:text-emerald-200",
-        state === "popped-fail" && "border-rose-500/60 bg-rose-500/10 text-rose-800 opacity-80 dark:text-rose-200",
+        state === "pushed" && "border-teal-500 bg-teal-500/10 text-teal-900 ring-2 ring-cyan-400 motion-safe:animate-[selfcheck-push_320ms_ease-out] dark:text-teal-100",
+        state === "popped-pass" && "border-emerald-500/60 bg-emerald-500/10 text-emerald-800 motion-safe:animate-[selfcheck-pop_320ms_ease-out] dark:text-emerald-200",
+        state === "popped-x" && "border-amber-500/60 bg-amber-500/10 text-amber-900 motion-safe:animate-[selfcheck-pop_320ms_ease-out] dark:text-amber-100",
+        state === "popped-fail" && "border-rose-500/60 bg-rose-500/10 text-rose-800 motion-safe:animate-[selfcheck-pop_320ms_ease-out] dark:text-rose-200",
       )}
-      aria-label={`${label}${state === "pushed" ? ", just pushed" : state === "popped-pass" ? ", popped and matched" : state === "popped-fail" ? ", popped, mismatch" : ""}`}
+      aria-label={`${label}${CHIP_SPOKEN[state]}`}
     >
       <span className="text-[11px] font-sans font-bold uppercase tracking-wider opacity-80">
         {tag}
@@ -240,18 +337,19 @@ function ExpChip({ exp, state }: { exp: Expectation; state: "held" | "pushed" | 
   );
 }
 
-function QueueStrip({ step }: { step: Step }) {
+export function QueueStrip({ step }: { step: Step }) {
   const edge = step.kind === "edge" ? step : null;
   const popped = edge?.popped ?? null;
-  const poppedState = edge && popped ? (edge.checker.kind === "pass" || edge.checker.kind === "x-pass" ? "popped-pass" : "popped-fail") : null;
+  const poppedState: ChipState | null = edge && popped ? (passWithoutMatch(edge.checker) ? "popped-x" : edge.checker.kind === "pass" ? "popped-pass" : "popped-fail") : null;
   const pushedIds = new Set(edge?.pushed.map((e) => e.id) ?? []);
   return (
     <div className="min-w-0 rounded-xl border border-border/70 bg-background/40 p-2">
+      <style>{CHIP_KEYFRAMES}</style>
       <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-        exp_q[$] <span className="normal-case tracking-normal">· oldest first · {step.queueAfter.length} waiting</span>
+        exp_q[$] <span className="normal-case tracking-normal">· oldest first · after this {edge ? "edge" : "step"} · {step.queueAfter.length} waiting</span>
       </p>
       <ol aria-label={`exp_q after this step, oldest first: ${step.queueAfter.length ? step.queueAfter.map((e) => formatDec(e.sum)).join(", ") : "empty"}`} className="flex min-h-12 items-stretch gap-2 overflow-x-auto pb-1">
-        {popped && poppedState ? <ExpChip exp={popped} state={poppedState} /> : null}
+        {popped && poppedState ? <ExpChip key={`popped-${popped.id}`} exp={popped} state={poppedState} /> : null}
         {popped ? <li aria-hidden className="self-center text-muted-foreground">│</li> : null}
         {step.queueAfter.length === 0 ? <li className="self-center text-xs text-muted-foreground">{"{}"} empty</li> : null}
         {step.queueAfter.map((e) => (
@@ -277,14 +375,14 @@ function Counters({ step }: { step: Step }) {
   );
 }
 
-function LogPanel({ lines, label = "Simulation log" }: { lines: LogLine[]; label?: string }) {
+function LogPanel({ lines, label = "Simulation log", shownPane }: { lines: LogLine[]; label?: string; shownPane?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const count = lines.length;
   useEffect(() => {
     // Follow the newest line inside this panel only: wrapped errors would otherwise push the summary below the fold.
     const box = ref.current;
     if (box) box.scrollTop = box.scrollHeight;
-  }, [count]);
+  }, [count, shownPane]);
   return (
     <div className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
       <p className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</p>
@@ -327,19 +425,28 @@ function BenchCode({
   contextKeys,
   renderLineControl,
   label = "tb_top (generated from the model's data)",
+  shownPane,
+  foldDut = false,
 }: {
   run: RunResult;
   activeKey?: string;
   contextKeys?: string[];
   renderLineControl?: (line: CodeTraceLine) => React.ReactNode;
   label?: string;
+  shownPane?: string;
+  /** Keep the DUT behind a disclosure, so tb_top and its controls open at the top of the scroller. */
+  foldDut?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const dutLines = useMemo<CodeTraceLine[]>(() => dutSource(run.config.mutant).map((l) => ({ text: l.text, key: l.key, owner: l.owner })), [run.config.mutant]);
   const lines = useMemo<CodeTraceLine[]>(() => {
-    const dut = dutSource(run.config.mutant).map((l) => ({ text: l.text, key: l.key, owner: l.owner }));
     const tb = benchSource(run.config).map((l) => ({ text: l.text, key: l.key, owner: l.owner }));
-    return [...dut, { text: "" }, ...tb];
-  }, [run.config]);
+    return foldDut ? tb : [...dutLines, { text: "" }, ...tb];
+  }, [run.config, dutLines, foldDut]);
+  // A new bench opens at its first line, not wherever the last one was left.
+  useEffect(() => {
+    if (foldDut && ref.current) ref.current.scrollTop = 0;
+  }, [foldDut, run.config]);
   useEffect(() => {
     // Scroll only this panel. scrollIntoView would also move every ancestor scroll box, the page included,
     // and at phone widths the code sits below the controls the learner is pressing.
@@ -350,16 +457,26 @@ function BenchCode({
     const lineRect = line.getBoundingClientRect();
     if (lineRect.top >= boxRect.top && lineRect.bottom <= boxRect.bottom) return; // already in view
     box.scrollTop += lineRect.top - boxRect.top - (box.clientHeight - lineRect.height) / 2;
-  }, [activeKey]);
+  }, [activeKey, shownPane]);
   return (
-    <div
-      ref={ref}
-      className="min-w-0 max-h-[30rem] overflow-y-auto rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      // With no line controls nothing inside takes focus, so the scroller itself must, for keyboard users.
-      {...(renderLineControl ? {} : { role: "region", tabIndex: 0, "aria-label": `Scrollable code: ${label}` })}
-    >
-      <CodeTrace label={label} lines={lines} activeKey={activeKey} contextKeys={contextKeys} renderLineControl={renderLineControl} />
-    </div>
+    <>
+      {foldDut ? (
+        <details className="mb-2 min-w-0 rounded-lg border border-border/60 p-2 text-xs text-muted-foreground">
+          <summary className="cursor-pointer py-3 font-medium text-foreground">Source of the DUT, adder_reg</summary>
+          <div className="mt-2">
+            <CodeTrace label="adder_reg (generated from the model's data)" lines={dutLines} />
+          </div>
+        </details>
+      ) : null}
+      <div
+        ref={ref}
+        className="min-w-0 max-h-[30rem] overflow-y-auto rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        // With no line controls nothing inside takes focus, so the scroller itself must, for keyboard users.
+        {...(renderLineControl ? {} : { role: "region", tabIndex: 0, "aria-label": `Scrollable code: ${label}` })}
+      >
+        <CodeTrace label={label} lines={lines} activeKey={activeKey} contextKeys={contextKeys} renderLineControl={renderLineControl} />
+      </div>
+    </>
   );
 }
 
@@ -395,8 +512,8 @@ function gateStep(step: Step, showOutputs: boolean, showQueue: boolean): Step {
   const activeKey = keys.find((k) => BENCH_ACTIVE_KEYS.includes(k)) ?? "";
   const contextKeys = keys.filter((k) => k !== activeKey && (BENCH_CONTEXT_KEYS.has(k) || k.startsWith("test-")));
   const node = BENCH_NODE_OF[activeKey] ?? "";
-  if (step.kind === "edge") return { ...step, tokens: [], activeKey, contextKeys, node, checker: { kind: "absent" } };
-  return { ...step, tokens: [], activeKey, contextKeys, node };
+  if (step.kind === "edge") return { ...step, tokens: [], activeKey, contextKeys, node, alsoNodes: [], checker: { kind: "absent" } };
+  return { ...step, tokens: [], activeKey, contextKeys, node, alsoNodes: [] };
 }
 
 /** Narration of a non-edge step while the first gate is closed: the ending without report()'s counters. */
@@ -414,16 +531,17 @@ function stepNarration(step: Step, showOutputs: boolean, showQueue: boolean): st
 
 function AnatomyDiagram({ step, selectedId, onSelect, hidden }: { step: Step; selectedId?: string; onSelect: (nodeId: string) => void; hidden?: "outputs" | "queue" }) {
   const failing = step.kind === "edge" && (step.checker.kind === "fail" || step.checker.kind === "unexpected" || step.checker.kind === "hold-fail" || step.checker.kind === "x-out-valid");
-  const passing = step.kind === "edge" && (step.checker.kind === "pass" || step.checker.kind === "x-pass");
+  const passing = step.kind === "edge" && (step.checker.kind === "pass" || step.checker.kind === "x-pass") && !passWithoutMatch(step.checker);
   const activeEdges = new Set(step.tokens.map((t) => t.edgeId));
   const nodes: DiagramNode[] = ANATOMY_LAYOUT.nodes.map((n) => ({
     ...n,
-    state: n.id === step.node ? (n.id === "chk" && failing ? "error" : n.id === "chk" && passing ? "ok" : "active") : "normal",
+    state: n.id === step.node ? (n.id === "chk" && failing ? "error" : n.id === "chk" && passing ? "ok" : "active") : step.alsoNodes.includes(n.id) ? "active" : "normal",
   }));
   const edges: DiagramEdge[] = ANATOMY_LAYOUT.edges.map((e) => ({ ...e, state: activeEdges.has(e.id) ? "active" : "normal" }));
   const tokens: DiagramToken[] = step.tokens.map((t) => ({ edgeId: t.edgeId, t: t.t, label: t.label, tone: "data" }));
   const nodeLabel = step.node ? (ANATOMY_NODES.find((n) => n.id === step.node)?.label ?? step.node) : "";
-  const activity = nodeLabel ? `${nodeLabel} is active` : "the bench is waiting on this edge; the DUT and the checker are hidden until you predict";
+  const others = step.alsoNodes.map((id) => ANATOMY_NODES.find((n) => n.id === id)?.label ?? id);
+  const activity = nodeLabel ? `${nodeLabel} is active${others.length ? `, along with ${others.join(" and ")}` : ""}` : "the bench is waiting on this edge; the DUT and the checker are hidden until you predict";
   return (
     <div className="min-w-0 space-y-1">
       <BlockDiagram
@@ -442,8 +560,8 @@ function AnatomyDiagram({ step, selectedId, onSelect, hidden }: { step: Step; se
         {hidden === "outputs"
           ? "The lit block is the part of the bench acting at this step. The DUT's and the checker's blocks, and the tokens, open when you predict. Select a block to jump to its code."
           : hidden === "queue"
-            ? "The lit block is the part of tb_top acting at this step. Tokens carry each transaction's a+b to the DUT; the expected sums travelling through exp_q open with the second prediction. Select a block to jump to its code."
-            : "The lit block is the part of tb_top acting at this step. Tokens carry each transaction along both paths: a+b to the DUT and the expected sum through model_add() into exp_q. Select a block to jump to its code."}
+            ? "The lit blocks are the parts of tb_top acting at this step. Tokens carry each transaction's a+b to the DUT; the expected sums travelling through exp_q open with the second prediction. Select a block to jump to its code."
+            : "The lit blocks are the parts of tb_top acting at this step. Tokens carry each transaction along both paths: a+b to the DUT and the expected sum through model_add() into exp_q, until actual meets expected at the checker. Select a block to jump to its code."}
       </p>
     </div>
   );
@@ -460,34 +578,86 @@ interface StepViewProps {
   showOutputs: boolean;
   showQueue: boolean;
   focus?: "anatomy";
+  /** Comparing DUTs: when only the mutant changes, stay on the same edge number instead of opening at `initialIndex`. */
+  keepEdgeAcrossDuts?: boolean;
 }
 
-function StepView({ run, initialIndex = 0, showOutputs, showQueue, focus }: StepViewProps) {
+/** The step of `run` at the same edge number as `step`; a step that is not an edge maps to the run's last step. */
+function sameEdgeIndex(run: RunResult, step: Step): number {
+  const index = step.kind === "edge" ? run.steps.findIndex((s) => s.kind === "edge" && s.edge === step.edge) : -1;
+  return index >= 0 ? index : run.steps.length - 1;
+}
+
+type Pane = "wave" | "log" | "anatomy" | "code";
+const FULL_PANES: { value: Pane; label: string }[] = [
+  { value: "wave", label: "Waveform" },
+  { value: "log", label: "Log" },
+  { value: "anatomy", label: "Anatomy" },
+  { value: "code", label: "Code" },
+];
+const ANATOMY_PANES = FULL_PANES.filter((p) => p.value === "anatomy" || p.value === "code");
+
+function StepView({ run, initialIndex = 0, showOutputs, showQueue, focus, keepEdgeAcrossDuts = false }: StepViewProps) {
   const runKey = JSON.stringify(run.config);
+  const benchKey = JSON.stringify({ ...run.config, mutant: null });
   const playback = usePlayback(run.steps.length, runKey);
   const [pinnedKey, setPinnedKey] = useState<string | null>(null);
   const [pinnedNode, setPinnedNode] = useState<string | null>(null);
-  const seek = playback.seek;
+  const [pane, setPane] = useState<Pane>(focus === "anatomy" ? "anatomy" : "wave");
+  const [pausedAt, setPausedAt] = useState<number | null>(null);
+  const wasPlaying = useRef(false);
+  const { isPlaying, index: playIndex } = playback;
   useEffect(() => {
-    seek(initialIndex);
+    if (isPlaying) {
+      wasPlaying.current = true;
+      setPausedAt(null);
+    } else if (wasPlaying.current) {
+      wasPlaying.current = false;
+      setPausedAt(playIndex);
+    }
+  }, [isPlaying, playIndex]);
+  const seek = playback.seek;
+  const fullStep = run.steps[Math.min(playback.index, run.steps.length - 1)];
+  // What was last on screen. This effect must run before the one below records this render.
+  const lastShown = useRef<{ benchKey: string; step: Step } | null>(null);
+  useEffect(() => {
+    const last = lastShown.current;
+    seek(keepEdgeAcrossDuts && last?.benchKey === benchKey ? sameEdgeIndex(run, last.step) : initialIndex);
+    // Only a new run moves the stepper: `run` and `benchKey` follow `runKey`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runKey, initialIndex, seek]);
+  useEffect(() => {
+    lastShown.current = { benchKey, step: fullStep };
+  });
   useEffect(() => {
     setPinnedKey(null);
     setPinnedNode(null);
   }, [playback.index]);
 
-  const fullStep = run.steps[Math.min(playback.index, run.steps.length - 1)];
   // The anatomy and the code panes see only what the open gates allow (the waveform, log and narration gate themselves).
   const step = gateStep(fullStep, showOutputs, showQueue);
   const hidden = !showOutputs ? "outputs" : !showQueue ? "queue" : undefined;
   const cursor = step.kind === "edge" ? step.edge : undefined;
   const visibleLog = run.log.slice(0, step.logCount).filter((l) => showOutputs || l.kind === "test");
   const narration = stepNarration(fullStep, showOutputs, showQueue);
+  const anatomyPaneRef = useRef<HTMLDivElement>(null);
+  const codePaneRef = useRef<HTMLDivElement>(null);
+  const [nodeSelections, setNodeSelections] = useState(0);
   const onSelectNode = useCallback((nodeId: string) => {
     const spec = ANATOMY_NODES.find((n) => n.id === nodeId);
     setPinnedNode(nodeId);
     setPinnedKey(spec?.codeKey ?? null);
+    // At phone width the code is another pane: show it. From md up every pane shows and this changes nothing.
+    setPane("code");
+    setNodeSelections((n) => n + 1);
   }, []);
+  // Runs once the code pane is showing. A hidden block cannot keep focus, so focus follows the jump on a phone; from md up the block stays and the code is brought into view.
+  useEffect(() => {
+    if (nodeSelections === 0) return;
+    const code = codePaneRef.current;
+    if (anatomyPaneRef.current?.offsetParent === null) code?.querySelector<HTMLElement>('[role="region"]')?.focus();
+    else code?.scrollIntoView?.({ block: "nearest" });
+  }, [nodeSelections]);
   const onSelectEdge = useCallback(
     (edge: number) => {
       // Step index and edge number differ once a moment step (e.g. the horizon) sits between edges.
@@ -497,11 +667,19 @@ function StepView({ run, initialIndex = 0, showOutputs, showQueue, focus }: Step
     [run.steps, seek],
   );
   const anatomy = focus === "anatomy";
+  // At phone width only the chosen pane shows, so the highlighted line or block sits right under the transport. From md up all of them do.
+  const onPhoneOnlyIf = (p: Pane) => (pane === p ? undefined : "max-md:hidden");
+  const anatomyPane = <AnatomyDiagram step={step} selectedId={pinnedNode ?? undefined} onSelect={onSelectNode} hidden={hidden} />;
+  const codePane = <BenchCode run={run} activeKey={pinnedKey ?? (step.activeKey || undefined)} contextKeys={pinnedKey ? [] : step.contextKeys} shownPane={pane} />;
 
   return (
     <div className="space-y-3">
       <PlaybackControls playback={playback} stepCount={run.steps.length} stepNoun="Step" describeStep={(i) => (run.steps[i] ? shortLabel(run.steps[i]) : "")} />
-      <div role="status" aria-live="polite" className="rounded-lg border border-border/60 bg-background/50 p-3 text-sm">
+      {/* During Play a step lasts 0.7 to 2.8 s, too short to read out, so the narration is silent and the step playback stops at is announced once. */}
+      <p role="status" className="sr-only">
+        {pausedAt === playback.index && !playback.isPlaying ? `Stopped at ${shortLabel(step)}. ${narration}` : ""}
+      </p>
+      <div role="status" aria-live={playback.isPlaying ? "off" : "polite"} className="rounded-lg border border-border/60 bg-background/50 p-3 text-sm">
         <p className="font-semibold text-foreground">{shortLabel(step)}</p>
         <p className="mt-1 text-foreground/90">{narration}</p>
         {showOutputs ? (
@@ -512,30 +690,41 @@ function StepView({ run, initialIndex = 0, showOutputs, showQueue, focus }: Step
         ) : null}
       </div>
 
+      <SegmentedControl label="Pane shown on a phone" className="md:hidden" options={anatomy ? ANATOMY_PANES : FULL_PANES} value={pane} onChange={setPane} />
+
       {anatomy ? (
         <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,420px),1fr))]">
-          <AnatomyDiagram step={step} selectedId={pinnedNode ?? undefined} onSelect={onSelectNode} hidden={hidden} />
-          <BenchCode run={run} activeKey={pinnedKey ?? (step.activeKey || undefined)} contextKeys={pinnedKey ? [] : step.contextKeys} />
+          <div ref={anatomyPaneRef} className={cn("min-w-0", onPhoneOnlyIf("anatomy"))}>
+            {anatomyPane}
+          </div>
+          <div ref={codePaneRef} className={cn("min-w-0", onPhoneOnlyIf("code"))}>
+            {codePane}
+          </div>
         </div>
       ) : (
         <>
-          <BenchWaveform run={run} cursor={cursor} showOutputs={showOutputs} showQueue={showQueue} onSelectEdge={onSelectEdge} />
-          {showQueue && showOutputs && run.config.checkStyle === "queue" ? <QueueStrip step={step} /> : null}
-          {showOutputs ? (
-            <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,420px),1fr))]">
-              <div className="min-w-0 space-y-2">
-                <Counters step={step} />
-                <LogPanel lines={visibleLog} />
-              </div>
-              <AnatomyDiagram step={step} selectedId={pinnedNode ?? undefined} onSelect={onSelectNode} hidden={hidden} />
+          <div className={cn("min-w-0 space-y-3", onPhoneOnlyIf("wave"))}>
+            <BenchWaveform run={run} cursor={cursor} showOutputs={showOutputs} showQueue={showQueue} onSelectEdge={onSelectEdge} shownPane={pane} />
+            {showQueue && showOutputs && run.config.checkStyle === "queue" ? <QueueStrip step={step} /> : null}
+          </div>
+          <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,420px),1fr))]">
+            <div className={cn("min-w-0 space-y-2", onPhoneOnlyIf("log"))}>
+              {showOutputs ? (
+                <>
+                  <Counters step={step} />
+                  <LogPanel lines={visibleLog} shownPane={pane} />
+                </>
+              ) : (
+                <LogPanel lines={visibleLog} label="Simulation log (TEST lines only until you predict)" shownPane={pane} />
+              )}
             </div>
-          ) : (
-            <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,420px),1fr))]">
-              <LogPanel lines={visibleLog} label="Simulation log (TEST lines only until you predict)" />
-              <AnatomyDiagram step={step} selectedId={pinnedNode ?? undefined} onSelect={onSelectNode} hidden={hidden} />
+            <div ref={anatomyPaneRef} className={cn("min-w-0", onPhoneOnlyIf("anatomy"))}>
+              {anatomyPane}
             </div>
-          )}
-          <BenchCode run={run} activeKey={pinnedKey ?? (step.activeKey || undefined)} contextKeys={pinnedKey ? [] : step.contextKeys} />
+          </div>
+          <div ref={codePaneRef} className={cn("min-w-0", onPhoneOnlyIf("code"))}>
+            {codePane}
+          </div>
         </>
       )}
     </div>
@@ -546,7 +735,7 @@ function StepView({ run, initialIndex = 0, showOutputs, showQueue, focus }: Step
 /* Step mode                                                            */
 /* ------------------------------------------------------------------ */
 
-function StepLab({ preset: initialPreset, bug, focus }: { preset: PresetId; bug: MutantId; focus?: "anatomy" }) {
+function StepLab({ preset: initialPreset, bug, focus, ask }: { preset: PresetId; bug: MutantId; focus?: "anatomy"; ask?: "edge" | "queue" }) {
   const [preset, setPreset] = useState<PresetId>(initialPreset);
   const [mutant, setMutant] = useState<MutantId>(bug);
   const [showAdvanced, setShowAdvanced] = useState(() => MUTANT_OPTIONS.some((o) => o.mutant === bug && o.advanced) || initialPreset === "hold");
@@ -556,12 +745,14 @@ function StepLab({ preset: initialPreset, bug, focus }: { preset: PresetId; bug:
 
   const effectiveHold = holdCheck || preset === "hold";
   const run = useMemo(() => runBench(presetConfig(preset, mutant, effectiveHold)), [preset, mutant, effectiveHold]);
-  const key = `${preset}|${String(mutant)}|${effectiveHold}`;
-  const edgeQ = useMemo(() => edgePrediction(run), [run]);
-  const queueQ = useMemo(() => queuePrediction(run), [run]);
   const anatomy = focus === "anatomy";
-  const showOutputs = anatomy || edgeRevealedKey === key || !edgeQ;
-  const showQueue = anatomy || queueRevealedKey === key || !queueQ;
+  const edgeQ = useMemo(() => (anatomy || ask === "queue" ? null : edgePrediction(run)), [run, anatomy, ask]);
+  const queueQ = useMemo(() => (anatomy || ask === "edge" ? null : queuePrediction(run)), [run, anatomy, ask]);
+  // A gate's key is its question and answer: comparing BUG=0 with BUG=1 asks nothing new, a new test or an extra stage does.
+  const edgeKey = predictionKey(edgeQ);
+  const queueKey = predictionKey(queueQ);
+  const showOutputs = !edgeQ || edgeRevealedKey === edgeKey;
+  const showQueue = !queueQ || queueRevealedKey === queueKey;
   const mutantOptions = MUTANT_OPTIONS.filter((o) => showAdvanced || !o.advanced || o.mutant === mutant);
 
   return (
@@ -574,7 +765,8 @@ function StepLab({ preset: initialPreset, bug, focus }: { preset: PresetId; bug:
           <>Step through one run and watch a transaction travel from send() through the DUT and through model_add() into exp_q, until the checker pops it. Select a block to see its code.</>
         ) : (
           <>
-            send() drives with <span className="font-mono">&lt;=</span>, the DUT samples one edge later, and the checker reads the registered result one edge after that. Predict first; the outputs, the queue and the log open when you commit.
+            send() drives with <span className="font-mono">&lt;=</span>, the DUT samples one edge later, and the checker reads the registered result one edge after that.{" "}
+            {ask === "queue" ? "Predict first; the exp_q strip opens when you commit." : ask === "edge" ? "Predict first; the outputs, the queue and the log open when you commit." : "Predict first; the outputs and the log open when you commit, and then a second question opens the queue."}
           </>
         )
       }
@@ -624,24 +816,22 @@ function StepLab({ preset: initialPreset, bug, focus }: { preset: PresetId; bug:
         </p>
       ) : null}
       <p className="text-xs text-muted-foreground">
-        <span className="font-semibold text-foreground">{mutantInfo(mutant).label}:</span> {mutantInfo(mutant).change}. {TESTS[preset === "all" ? "smoke" : preset].rule}
-        {preset === "all" ? ", then corners and gaps" : ""}.
+        <span className="font-semibold text-foreground">{mutantInfo(mutant).label}:</span> {mutantInfo(mutant).change}. {testsRule(run.config.tests)}.
       </p>
 
-      {!anatomy && edgeQ ? (
-        <PredictionPrompt question={edgeQ.question} options={toOptions(edgeQ)} resetKey={key}>
-          <RevealSignal gateKey={key} onChange={setEdgeRevealedKey} />
+      {edgeQ ? (
+        <GatedPrompt key={edgeKey} spec={edgeQ} gateKey={edgeKey} onReveal={setEdgeRevealedKey}>
           <p className="text-sm text-muted-foreground">out_valid, sum, the checker&apos;s verdicts and the log are now shown. Step to the edges the options named and read the narration.</p>
-        </PredictionPrompt>
+        </GatedPrompt>
       ) : null}
-      {!anatomy && queueQ ? (
-        <PredictionPrompt question={queueQ.question} options={toOptions(queueQ)} resetKey={key}>
-          <RevealSignal gateKey={key} onChange={setQueueRevealedKey} />
+      {/* Asked after the edge question: its answers name edges and pops, which would give the first answer away. */}
+      {queueQ && showOutputs ? (
+        <GatedPrompt key={queueKey} spec={queueQ} gateKey={queueKey} onReveal={setQueueRevealedKey}>
           <p className="text-sm text-muted-foreground">The exp_q strip is now shown: a chip is pushed on every send() and the oldest one is popped on every result.</p>
-        </PredictionPrompt>
+        </GatedPrompt>
       ) : null}
 
-      <StepView run={run} showOutputs={showOutputs} showQueue={showQueue} focus={focus} />
+      <StepView run={run} showOutputs={showOutputs} showQueue={showQueue} focus={focus} keepEdgeAcrossDuts />
     </VisualFrame>
   );
 }
@@ -650,19 +840,25 @@ function StepLab({ preset: initialPreset, bug, focus }: { preset: PresetId; bug:
 /* Matrix mode                                                          */
 /* ------------------------------------------------------------------ */
 
-function MatrixLab() {
+function MatrixLab({ scope }: { scope?: "plan" }) {
+  const plan = scope === "plan";
+  const testIds = plan ? BASE_TESTS : ALL_TEST_IDS;
+  const mutants = plan ? PLAN_MUTANTS : MATRIX_MUTANTS;
   const [holdCheck, setHoldCheck] = useState(false);
   const [predictions, setPredictions] = useState<Record<string, MutationPrediction>>({});
   const [revealed, setRevealed] = useState(false);
   const [selected, setSelected] = useState<{ test: TestId; mutant: MutantId } | null>(null);
   const [selectCount, setSelectCount] = useState(0);
-  const holdToggleRef = useRef<HTMLInputElement>(null);
+  const [holdAnswerId, setHoldAnswerId] = useState<string | null>(null);
+  const [holdGateOpen, setHoldGateOpen] = useState<string | null>(null);
+  const holdGateRef = useRef<HTMLDivElement>(null);
+  const planNoteRef = useRef<HTMLDivElement>(null);
   const detailHeadingRef = useRef<HTMLParagraphElement>(null);
   const escapeId = useId();
 
-  // The reveal button unmounts when pressed: hand focus to the control that replaces it.
+  // The reveal button unmounts when pressed: hand focus to what replaces it.
   useEffect(() => {
-    if (revealed) holdToggleRef.current?.focus();
+    if (revealed) (holdGateRef.current?.querySelector<HTMLElement>("input") ?? planNoteRef.current)?.focus();
   }, [revealed]);
   // The detail panel opens below the matrix, usually off-screen at phone width: focus also scrolls it into view.
   useEffect(() => {
@@ -670,23 +866,40 @@ function MatrixLab() {
   }, [selectCount]);
 
   const matrix = useMemo(() => buildMatrix(holdCheck), [holdCheck]);
-  const rows = ALL_TEST_IDS.map((t) => ({ id: t, label: `+TEST=${t}` }));
-  const columns = MATRIX_MUTANTS.map((m) => ({ id: columnId(m), label: mutantInfo(m).label }));
+  const rows = testIds.map((t) => ({ id: t, label: `+TEST=${t}` }));
+  const columns = mutants.map((m) => ({ id: columnId(m), label: mutantInfo(m).label }));
   const cells = useMemo(() => {
     const out: Record<string, MutationCell> = {};
-    ALL_TEST_IDS.forEach((t) =>
-      MATRIX_MUTANTS.forEach((m) => {
+    testIds.forEach((t) =>
+      mutants.forEach((m) => {
         const c = matrix.cells[t][columnId(m)];
         out[cellKey(t, columnId(m))] = { state: c.state, summary: c.summary };
       }),
     );
     return out;
-  }, [matrix]);
+  }, [matrix, testIds, mutants]);
+
+  const holdQuestion = useMemo(() => holdCheckPrediction(), []);
+  // Only +TEST=hold against BUG=3 changes with the hold check, so the other predictions still apply. The BUG=3 column is graded on the
+  // answer the learner gave for this bench; that one cell has no prediction if they skipped the question.
+  const shownPredictions = useMemo(() => {
+    if (!holdCheck) return predictions;
+    const out = { ...predictions };
+    const bug3 = columnId(3);
+    const answer = holdQuestion.options.find((o) => o.id === holdAnswerId);
+    if (answer) {
+      testIds.forEach((t) => {
+        out[cellKey(t, bug3)] = answer.catchers.includes(t) ? "catch" : "miss";
+      });
+    } else delete out[cellKey("hold", bug3)];
+    return out;
+  }, [holdCheck, predictions, holdAnswerId, holdQuestion, testIds]);
 
   const selectedCell = selected ? matrix.cells[selected.test][columnId(selected.mutant)] : null;
   const selectedKey = selected ? cellKey(selected.test, columnId(selected.mutant)) : undefined;
   const swapId = columnId("swap-ab");
-  const bug3Caught = ALL_TEST_IDS.filter((t) => matrix.cells[t][columnId(3)].state === "caught");
+  const bug3Caught = testIds.filter((t) => matrix.cells[t][columnId(3)]?.state === "caught");
+  const caughtBy = (m: MutantId) => testIds.filter((t) => matrix.cells[t][columnId(m)].state === "caught").map((t) => `+TEST=${t}`);
 
   return (
     <VisualFrame
@@ -694,15 +907,17 @@ function MatrixLab() {
       eyebrow="Predict, then reveal"
       title="Which test kills which mutant?"
       summary={
-        <>
-          Each cell is one run of the Make It Work bench by the model. Predict every cell, reveal, then select a cell to step through the first failing edge or read why the mutant escaped.
-        </>
+        plan ? (
+          <>Each cell is one run of this lesson&apos;s bench by the model; its complete code is in Make It Work. Predict every cell, reveal, then select a cell to step through the first failing edge or read why the mutant escaped.</>
+        ) : (
+          <>Each cell is one run of the Make It Work bench by the model (the hold row adds the kata&apos;s test). Predict every cell, reveal, then select a cell to step through the first failing edge or read why the mutant escaped.</>
+        )
       }
       fidelity="model"
       assumptions={SELFCHECK_MODEL_ASSUMPTIONS}
     >
       <ul className="grid gap-1 text-xs text-muted-foreground grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))]">
-        {MATRIX_MUTANTS.map((m) => (
+        {mutants.map((m) => (
           <li key={String(m)}>
             <span className="font-semibold text-foreground">{mutantInfo(m).label}:</span> {mutantInfo(m).change}
             {mutantInfo(m).equivalent ? " (equivalent: behaviour unchanged)" : ""}.
@@ -714,11 +929,11 @@ function MatrixLab() {
         rows={rows}
         columns={columns}
         cells={cells}
-        predictions={holdCheck ? {} : predictions}
+        predictions={shownPredictions}
         onPredict={holdCheck ? undefined : (r, c, v) => setPredictions((p) => ({ ...p, [cellKey(r, c)]: v }))}
         revealed={revealed}
         onCellSelect={(r, c) => {
-          setSelected({ test: r as TestId, mutant: MATRIX_MUTANTS.find((m) => columnId(m) === c) ?? 1 });
+          setSelected({ test: r as TestId, mutant: mutants.find((m) => columnId(m) === c) ?? 1 });
           setSelectCount((n) => n + 1);
         }}
         selectedCell={selectedKey}
@@ -733,20 +948,38 @@ function MatrixLab() {
           >
             Reveal the runs
           </button>
-        ) : (
-          <label className="flex min-h-10 items-center gap-2 text-sm text-foreground">
-            <input ref={holdToggleRef} type="checkbox" checked={holdCheck} onChange={(e) => setHoldCheck(e.target.checked)} className="accent-cyan-500" />
-            Add the kata&apos;s hold check to the checker (and register <span className="font-mono">test_hold</span>)
-          </label>
+        ) : plan ? null : (
+          <div ref={holdGateRef} className="w-full space-y-2">
+            {/* Predict first: the toggle is the reveal for this question, and it stays in reach when the question is folded. */}
+            <GatedPrompt spec={holdQuestion} gateKey="hold-check" onReveal={setHoldGateOpen} onAnswer={setHoldAnswerId}>
+              <p className="text-sm text-muted-foreground">Add the check below and compare the BUG=3 column with your answer.</p>
+            </GatedPrompt>
+            {holdGateOpen ? (
+              <label className="flex min-h-10 items-center gap-2 text-sm text-foreground">
+                <input type="checkbox" checked={holdCheck} onChange={(e) => setHoldCheck(e.target.checked)} className="accent-cyan-500" />
+                Add the kata&apos;s hold check to the checker (and register <span className="font-mono">test_hold</span>)
+              </label>
+            ) : null}
+          </div>
         )}
       </div>
       <div aria-live="polite" className="space-y-2 text-sm empty:!mt-0">
-        {revealed ? (
+        {revealed && plan ? (
+          <div ref={planNoteRef} tabIndex={-1} className="space-y-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            {mutants.map((m) => (
+              <p key={String(m)} className="text-foreground">
+                <span className="font-semibold">{mutantInfo(m).label}: </span>
+                {caughtBy(m).length === testIds.length ? "every test catches it" : `caught by ${caughtBy(m).join(", ")}, and no other test`}.
+              </p>
+            ))}
+          </div>
+        ) : null}
+        {revealed && !plan ? (
           <>
             <p className="text-foreground">
               <span className="font-semibold">BUG=3: </span>
               {holdCheck
-                ? `with the hold check, ${bug3Caught.length ? bug3Caught.map((t) => `+TEST=${t}`).join(", ") : "no test"} catches it: only the hold test changes a and b on idle cycles. The mutant needs both the new stimulus and the new check.`
+                ? `with the hold check, ${bug3Caught.length ? bug3Caught.map((t) => `+TEST=${t}`).join(", ") : "no test"} catches it: only the hold test changes a and b on idle cycles. The mutant needs both the new stimulus and the new check. Your predictions carry over, because no other cell changes with the check; the BUG=3 column is graded on your answer above.`
                 : "no test catches it, however the stimulus looks: the checker never looks at sum while out_valid is 0. The hold row is the kata's stimulus against the original checker: send_invalid() changes a and b on idle cycles, and nothing reads sum there. Add the hold check to see what changes."}
             </p>
             <p className="text-muted-foreground">
@@ -805,10 +1038,18 @@ const BUG1_TONE: Record<Bug1Outcome, string> = {
 function DebugClinic() {
   const [caseId, setCaseId] = useState<ClinicCaseId>(CLINIC_CASES[0].id);
   const [suspect, setSuspect] = useState<string | null>(null);
+  const [pickedFixId, setPickedFixId] = useState<string | null>(null);
   const [fixId, setFixId] = useState<string | null>(null);
+  const [waveEdge, setWaveEdge] = useState<number | null>(null);
   const [solved, setSolved] = useState<ReadonlySet<ClinicCaseId>>(() => new Set());
   const [waveMount, setWaveMount] = useState(0);
   const caseHeadingRef = useRef<HTMLParagraphElement>(null);
+  const diagnosisRef = useRef<HTMLDivElement>(null);
+
+  // The feedback sits below the scroller, up to a screen away from the pressed line on a phone. Reduced motion is unaffected: this does not animate.
+  useEffect(() => {
+    if (suspect) diagnosisRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [suspect]);
 
   const kase = clinicCase(caseId);
   const run = useMemo(() => runBench(kase.config), [kase]);
@@ -826,12 +1067,17 @@ function DebugClinic() {
   const pick = (id: ClinicCaseId) => {
     setCaseId(id);
     setSuspect(null);
+    setPickedFixId(null);
     setFixId(null);
+    setWaveEdge(null);
   };
-  const chooseFix = (f: ClinicFix) => {
+  // Choosing only selects, so arrowing through the radios neither grades a fix nor solves a case by accident.
+  const rerunFix = (f: ClinicFix) => {
     setFixId(f.id);
     if (gradeFix(kase, f).accepted) setSolved((s) => new Set(s).add(kase.id));
   };
+  const pickedFix = kase.fixes.find((f) => f.id === pickedFixId) ?? null;
+  const readout = waveEdge === null ? null : run.steps.find((s): s is EdgeStep => s.kind === "edge" && s.edge === waveEdge);
 
   return (
     <VisualFrame
@@ -889,15 +1135,22 @@ function DebugClinic() {
           <details className="rounded-lg border border-border/60 p-2" onToggle={() => setWaveMount((n) => n + 1)}>
             <summary className="cursor-pointer py-3 font-medium text-foreground">Waveform of this run</summary>
             <div className="mt-2">
-              <BenchWaveform key={waveMount} run={run} cursor={run.firstFailEdge ?? undefined} showOutputs explainCause={found} />
+              {/* The edge selectors also give keyboard users a way to pan this scroller. */}
+              <BenchWaveform key={waveMount} run={run} cursor={waveEdge ?? run.firstFailEdge ?? undefined} showOutputs explainCause={found} onSelectEdge={setWaveEdge} />
+              <p aria-live="polite" className="mt-1 font-mono text-[11px] text-foreground [font-variant-ligatures:none]">
+                {readout
+                  ? `Edge ${readout.edge} (${formatTime(readout.time)}): rst_n=${formatBit(readout.sampled.rst_n)} in_valid=${formatBit(readout.sampled.in_valid)} a=${formatDec(readout.sampled.a)} b=${formatDec(readout.sampled.b)} out_valid=${formatBit(readout.sampled.out_valid)} sum=${formatDec(readout.sampled.sum)}`
+                  : null}
+              </p>
             </div>
           </details>
         </div>
       </div>
 
       <div>
-        <p className="mb-2 text-sm font-semibold text-foreground">Step 1 — select the tb_top line that causes the symptom</p>
+        <p className="mb-2 text-sm font-semibold text-foreground">Step 1 — select the tb_top line that causes the symptom, or the line where something is missing</p>
         <BenchCode
+          foldDut
           run={run}
           label="The broken bench (tb_top, generated from the model's data)"
           activeKey={suspect ?? undefined}
@@ -909,6 +1162,7 @@ function DebugClinic() {
                 aria-label={`Suspect line: ${line.text.trim()}`}
                 onClick={() => {
                   setSuspect(line.key as string);
+                  setPickedFixId(null);
                   setFixId(null);
                 }}
                 className={cn(
@@ -921,7 +1175,7 @@ function DebugClinic() {
             ) : null
           }
         />
-        <div aria-live="polite" className="mt-2 text-sm">
+        <div ref={diagnosisRef} aria-live="polite" className="mt-2 text-sm">
           {diagnosis ? (
             <p className={found ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>
               <strong>{found ? "" : "Not this one. "}</strong>
@@ -937,12 +1191,29 @@ function DebugClinic() {
           <legend className="mb-2 text-sm font-semibold text-foreground">Step 2 — choose a fix; the model reruns the bench</legend>
           <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
             {kase.fixes.map((f) => (
-              <label key={f.id} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", fixId === f.id ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
-                <input type="radio" name={`fix-${caseId}`} checked={fixId === f.id} onChange={() => chooseFix(f)} className="mt-1 accent-cyan-500" />
+              <label key={f.id} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", pickedFixId === f.id ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
+                <input
+                  type="radio"
+                  name={`fix-${caseId}`}
+                  checked={pickedFixId === f.id}
+                  onChange={() => {
+                    setPickedFixId(f.id);
+                    setFixId(null);
+                  }}
+                  className="mt-1 accent-cyan-500"
+                />
                 <span className="font-mono text-[13px] [font-variant-ligatures:none]">{f.label}</span>
               </label>
             ))}
           </div>
+          <button
+            type="button"
+            disabled={!pickedFix}
+            onClick={() => pickedFix && rerunFix(pickedFix)}
+            className="mt-3 inline-flex h-10 items-center rounded-lg bg-cyan-700 px-4 text-sm font-semibold text-white hover:bg-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Rerun with this fix
+          </button>
           <div aria-live="polite">
             {grade && fix ? (
               <div className={cn("mt-3 space-y-2 rounded-xl border p-3 text-sm", grade.accepted ? "border-emerald-500/50 bg-emerald-500/10" : "border-amber-500/50 bg-amber-500/10")}>
@@ -975,7 +1246,7 @@ function DebugClinic() {
                         pick(nextCase.id);
                         caseHeadingRef.current?.focus();
                       }}
-                      className="inline-flex h-10 items-center rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="inline-flex h-10 items-center rounded-lg bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       Next case
                     </button>
@@ -1002,10 +1273,10 @@ function DebugClinic() {
  * against every mutant, and debug mode reads broken benches' logs back to their
  * cause.
  */
-export default function SelfCheckBenchLab({ mode = "step", preset, bug, focus }: Props) {
+export default function SelfCheckBenchLab({ mode = "step", preset, bug, focus, ask, scope }: Props) {
   // The lesson's trace and both its Predict prompts use +TEST=gaps; the anatomy embed reads best on the shorter smoke run.
   const initialPreset: PresetId = isPreset(preset) ? preset : focus === "anatomy" ? "smoke" : "gaps";
-  if (mode === "matrix") return <MatrixLab />;
+  if (mode === "matrix") return <MatrixLab scope={scope === "plan" ? "plan" : undefined} />;
   if (mode === "debug") return <DebugClinic />;
-  return <StepLab preset={initialPreset} bug={normalizeMutant(bug)} focus={focus === "anatomy" ? "anatomy" : undefined} />;
+  return <StepLab preset={initialPreset} bug={normalizeMutant(bug)} focus={focus === "anatomy" ? "anatomy" : undefined} ask={ask === "edge" || ask === "queue" ? ask : undefined} />;
 }

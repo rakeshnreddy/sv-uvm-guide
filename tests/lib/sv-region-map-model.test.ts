@@ -16,7 +16,7 @@ import {
   testbenchDriveScenario,
   zeroDelayPrintsScenario,
 } from "@/lib/sv-scheduler-scenarios";
-import { programWatcherScenario } from "@/lib/sv-region-map-scenarios-extra";
+import { allRegionMapScenarioPresets, getAnyRegionMapPreset, programWatcherScenario } from "@/lib/sv-region-map-scenarios-extra";
 
 describe("sv-region-map-model: landings come from the trace", () => {
   it("records moved events under the region they were scheduled in (§4.5), with their delta", () => {
@@ -24,6 +24,9 @@ describe("sv-region-map-model: landings come from the trace", () => {
     const landings = regionLandings(scenario, simulateTimeSlot(scenario));
     const byRegion = groupLandingsByRegion(landings);
     expect(byRegion.preponed.map((l) => l.kind)).toEqual(["sample"]);
+    // A continuous assignment is labelled as one (§4.9.1); an always_comb's blocking write is not.
+    expect(byRegion.active.filter((l) => l.kind === "statement" && l.processId === "CA").map((l) => l.label)).toEqual(["assign y = q; updates now"]);
+    expect(byRegion.active.filter((l) => l.kind === "statement" && l.processId === "COMB").map((l) => l.label)).toEqual(["z = y; writes now"]);
     expect(byRegion.nba.map((l) => l.label)).toEqual(["q ← 1 (q <= d;)"]);
     const runs = byRegion.active.filter((l) => l.kind === "run").map((l) => [l.processId, l.delta]);
     expect(runs).toEqual([
@@ -147,12 +150,17 @@ import { createHash } from "node:crypto";
 
 import { type SvScenario } from "@/lib/sv-scheduler-model";
 import {
+  DELTA_DEFINITION,
   NEXT_REGION_OPTIONS,
   decisionFeedback,
   decisionQuestion,
+  decisionRecap,
   explainDecision,
   isDecisionAnswer,
   nextRegionOptions,
+  predictionCommitNote,
+  predictionDiagnoses,
+  predictionVerdict,
   regionDecisions,
   type NextRegionAnswer,
 } from "@/lib/sv-region-map-model";
@@ -216,8 +224,21 @@ describe("sv-region-map-model: assertion and finish landings", () => {
     expect(landings.every((l) => l.stepIndex <= (finish?.stepIndex ?? -1))).toBe(true);
   });
 
-  it("leaves the quiz answer key exactly as it was before the model was extended", () => {
-    expect(hash16(buildRegionQuiz())).toBe("0eccade3e4fce898");
+  it("leaves the quiz answer key as it was before the model was extended", () => {
+    // Computed by running the quiz of commit ba9dbe7a^, before the extension. Only ids and answers enter it, so rewording cannot trip it.
+    const key = buildRegionQuiz().map((q) => (q.type === "region" ? { id: q.id, answer: q.answer, delta: q.delta } : { id: q.id, answer: q.options.filter((o) => o.correct).map((o) => o.label) }));
+    expect(hash16(key)).toBe("9f390e82728b4a1d");
+  });
+
+  it("the quiz's clocking questions show the clocking declaration, and its reasons stay what they say", () => {
+    const quiz = buildRegionQuiz();
+    const text = (id: string) => quiz.find((q) => q.id === id)?.code.map((l) => l.text) ?? [];
+    for (const id of ["cb-sample", "cb-event", "cb-drive"]) {
+      expect(text(id)).toEqual(expect.arrayContaining(["clocking cb @(posedge clk);", "  input q;  // default skew #1step", "  output din;  // default skew #0", "endclocking"]));
+    }
+    const why = (id: string) => quiz.find((q) => q.id === id)?.why;
+    expect(why("blocking-write")).toMatch(/^A blocking assignment updates its target before the next statement runs/);
+    expect(why("comb-after-nba")).toMatch(/^q updates 0 → 1\./);
   });
 });
 
@@ -251,7 +272,7 @@ describe("sv-region-map-model: a run ended by $finish (§20.2, §24.3, §9.2.3)"
     expect(decisionFeedback(decision, "nba", run)).toMatch(/^NBA still holds events, but they never execute/);
     expect(decisionFeedback(decision, "inactive", run)).toMatch(/^\$finish ended the run/);
     expect(decisionFeedback(decision, "end", run)).toBe(explainDecision(decision, run));
-    expect(nextRegionOptions(run).find((o) => o.id === "end")?.label).toBe("Nothing more runs: the simulation ends");
+    expect(nextRegionOptions(run).find((o) => o.id === "end")?.label).toBe("No scheduled event runs: the simulation ends");
   });
 
   it("with nothing queued in Postponed, says Postponed does not run", () => {
@@ -339,7 +360,7 @@ describe("sv-region-map-model: next-region decisions read from the trace (IEEE 1
     expect(back).toMatchObject({ from: "reactive", alsoCorrect: "active" });
     expect(isDecisionAnswer(back, "active")).toBe(true);
     expect(run.trace[back.index - 1].queues.active).toHaveLength(0);
-    expect(explainDecision(back, run)).toMatch(/Active itself holds nothing, so Observed, the first region of that set with events, moves into Active/);
+    expect(explainDecision(back, run)).toMatch(/returns to the active set and Observed in the same time slot\. Active itself holds nothing, so Observed, the first of those regions with events, moves into Active/);
     expect(explainDecision(back, run)).not.toMatch(/woke design processes/);
   });
 
@@ -365,7 +386,9 @@ describe("sv-region-map-model: next-region decisions read from the trace (IEEE 1
     const run = simulateTimeSlot(programReactiveScenario());
     for (const decision of regionDecisions(run)) {
       const text = explainDecision(decision, run);
-      expect(text).toMatch(/Δ is now \d+: the model's count of moves back into Active or Reactive/);
+      expect(text).toMatch(/Δ (is now|stays at) \d+/);
+      // The definition lives once, under the region map: the owner's complaint is long blocks of text.
+      expect(text).not.toContain(DELTA_DEFINITION);
       expect(text).not.toMatch(/first nonempty region|move events in R|execute_region|any region in \[/);
     }
   });
@@ -375,7 +398,7 @@ describe("sv-region-map-model: next-region decisions read from the trace (IEEE 1
     const [nba, end] = regionDecisions(run);
     const say = (d: typeof nba, option: NextRegionAnswer) => decisionFeedback(d, option, run);
     expect(say(nba, "inactive")).toMatch(/Inactive holds no events at this point/);
-    expect(say(nba, "active")).toMatch(/Active is the region that just ran dry/);
+    expect(say(nba, "active")).toBe("Active is the region that just ran dry; this inner loop (Active through Observed, §4.5) looks for its first later region that still holds events, which is NBA.");
     expect(say(nba, "reactive-set")).toMatch(/reactive set starts only once .* NBA still holds events/);
     expect(say(nba, "postponed")).toMatch(/Postponed runs only once every region from Active to Re-NBA is empty; NBA still holds events/);
     expect(say(nba, "end")).toMatch(/cannot end while NBA still holds events/);
@@ -403,7 +426,7 @@ describe("sv-region-map-model: next-region decisions read from the trace (IEEE 1
   });
 
   it("the reactive set offered from an empty active set: the reason is the empty reactive set, not a pending region", () => {
-    const expected = "The active set is empty, but so is the whole reactive set: nothing is queued in Reactive, Re-Inactive or Re-NBA, so that loop has nothing to run (§4.5).";
+    const expected = "The active set and Observed are empty, but so is the whole reactive set: nothing is queued in Reactive, Re-Inactive or Re-NBA, so that loop has nothing to run (§4.5).";
     const comb = simulateTimeSlot(combAfterNbaScenario());
     expect(decisionFeedback(regionDecisions(comb)[1], "reactive-set", comb)).toBe(expected);
     const prints = simulateTimeSlot(zeroDelayPrintsScenario());
@@ -418,6 +441,95 @@ describe("sv-region-map-model: next-region decisions read from the trace (IEEE 1
     const [inactive, nba] = regionDecisions(prints);
     expect(decisionFeedback(inactive, "reactive-set", prints)).toMatch(/all empty; Inactive and NBA still hold events \(§4\.5\)\.$/);
     expect(decisionFeedback(nba, "reactive-set", prints)).toMatch(/all empty; NBA still holds events \(§4\.5\)\.$/);
+  });
+
+  it("never calls Observed part of a region set (§4.4.1), at any decision of any preset, right option or wrong", () => {
+    for (const preset of allRegionMapScenarioPresets) {
+      const run = simulateTimeSlot(preset.build());
+      for (const decision of regionDecisions(run)) {
+        for (const option of NEXT_REGION_OPTIONS) {
+          const text = decisionFeedback(decision, option.id, run);
+          expect(text).not.toMatch(/of the set|whole active set/);
+          // "That set" may only ever be the reactive set.
+          if (/of that set/.test(text)) expect(text).toMatch(/turned to the reactive set/);
+        }
+      }
+    }
+    const run = simulateTimeSlot(testbenchDriveScenario("clocking"));
+    const observed = regionDecisions(run)[1];
+    expect(observed.answer).toBe("observed");
+    expect(decisionFeedback(observed, "active", run)).toMatch(/this inner loop \(Active through Observed, §4\.5\) looks for its first later region that still holds events, which is Observed\.$/);
+    expect(decisionFeedback(regionDecisions(run)[0], "observed", run)).toBe("NBA comes first: this inner loop (Active through Observed, §4.5) takes its earliest region that still holds events.");
+    const prints = simulateTimeSlot(zeroDelayPrintsScenario());
+    expect(decisionFeedback(regionDecisions(prints)[0], "nba", prints)).toBe("Inactive comes first: this inner loop (Active through Observed, §4.5) takes its earliest region that still holds events.");
+  });
+
+  it("the closing recap counts what was answered, so skipping never reads as wrong", () => {
+    const decisions = regionDecisions(simulateTimeSlot(combAfterNbaScenario()));
+    expect(decisionRecap(decisions, 2)).toBe("2 of 2 right; the loop went Active → NBA → slot end.");
+    expect(decisionRecap(decisions, 1, 2)).toBe("1 of 2 right; the loop went Active → NBA → slot end.");
+    expect(decisionRecap(decisions, 1, 1)).toBe("1 of 1 answered right, 1 revealed without predicting; the loop went Active → NBA → slot end.");
+    expect(decisionRecap(decisions, 0, 0)).toBe("No decision answered; the loop went Active → NBA → slot end.");
+  });
+
+  it("the verdict of a preset's predictions names the answers, and scores only what was committed", () => {
+    const comb = combAfterNbaScenario();
+    const single = [regionMapPrediction(comb, simulateTimeSlot(comb))];
+    const answer = "Answer: Back in Active, in a second pass of the same time slot.";
+    expect(predictionVerdict(single, { 0: true })).toBe(`Your prediction was right. ${answer}`);
+    expect(predictionVerdict(single, { 0: false })).toBe(`Your prediction was not right. ${answer}`);
+    expect(predictionVerdict(single, {})).toBe(answer);
+    const preset = getAnyRegionMapPreset("clocking-drive");
+    const scenario = preset.build();
+    const both = preset.predictions(scenario, simulateTimeSlot(scenario));
+    const answers = "Answers: Re-NBA, after the design NBA updates queued for this edge; 1: the Preponed sample (#1step).";
+    expect(predictionVerdict(both, { 0: true, 1: false })).toBe(`1 of 2 predictions right. ${answers}`);
+    expect(predictionVerdict(both, { 1: true })).toBe(`1 of 1 answered predictions right. ${answers}`);
+    expect(predictionVerdict(both, {})).toBe(answers);
+  });
+
+  it("diagnoses each wrong pick for the line that stays in view; a right pick or a skip has nothing to diagnose", () => {
+    const preset = getAnyRegionMapPreset("clocking-drive");
+    const scenario = preset.build();
+    const both = preset.predictions(scenario, simulateTimeSlot(scenario));
+    const wrong = both[1].options.find((o) => o.id === "new");
+    expect(predictionDiagnoses(both, { 0: "reNba", 1: "new" })).toEqual([`Your pick "${wrong?.label}": ${wrong?.feedback}`]);
+    expect(predictionDiagnoses(both, { 0: "reNba", 1: "sample" })).toEqual([]);
+    expect(predictionDiagnoses(both, {})).toEqual([]);
+  });
+
+  it("says what one prompt of several settled, for right, wrong and revealed", () => {
+    const preset = getAnyRegionMapPreset("clocking-drive");
+    const scenario = preset.build();
+    const both = preset.predictions(scenario, simulateTimeSlot(scenario));
+    const option = (id: string) => both[0].options.find((o) => o.id === id);
+    const answer = option("reNba")?.feedback;
+    expect(predictionCommitNote(both, 0, "reNba")).toBe(`Prediction 1 of 2: correct. ${answer}`);
+    expect(predictionCommitNote(both, 0, "nba")).toBe(`Prediction 1 of 2: not quite. ${option("nba")?.feedback} ${answer}`);
+    expect(predictionCommitNote(both, 0)).toBe(`Prediction 1 of 2 revealed. ${answer}`);
+    // It settles only its own prompt: nothing about the second question's sample.
+    expect(predictionCommitNote(both, 0, "nba")).not.toMatch(/sample|Preponed/);
+  });
+
+  it("the quiz's cb-sample answer says a procedural read of cb.q gets the sample, and only a plain read does not", () => {
+    const question = buildRegionQuiz().find((q) => q.id === "cb-sample");
+    expect(question?.type).toBe("region");
+    expect(question?.type === "region" && question.answer).toBe("preponed");
+    expect(question?.why).toBe(
+      "Preponed samples every value before anything in this slot changes. Clocking-block inputs (#1step), concurrent assertions and $sampled() return these samples; a plain read of a variable returns its current value.",
+    );
+  });
+
+  it("the program block's 'old value' feedback cites both the sampling clause and the region clause (§14.13, §4.4.2.1)", () => {
+    const scenario = programReactiveScenario();
+    const prediction = regionMapPrediction(scenario, simulateTimeSlot(scenario));
+    expect(prediction.options.find((o) => o.id === "old")?.feedback).toBe("That is what a clocking-block input (cb.q) would return: it reads the Preponed sample (§14.13, §4.4.2.1). A plain read in program code sees the current value.");
+  });
+
+  it("the comb-after-nba feedback does not use 'delta' as if the standard defined it", () => {
+    const scenario = combAfterNbaScenario();
+    const prediction = regionMapPrediction(scenario, simulateTimeSlot(scenario));
+    expect(prediction.options.find((o) => o.id === "next-slot")?.feedback).toBe("Combinational logic does not wait for a clock: y follows q in the same time slot, only on a later pass of the loop (§4.5). A waveform viewer draws it at the same instant.");
   });
 
   it("names regions, not option labels, in its sentences, and says why Active is pending", () => {

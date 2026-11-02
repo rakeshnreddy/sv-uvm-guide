@@ -3,10 +3,17 @@ import { describe, expect, it } from "vitest";
 import { c as pc, now as pnow, simulateProcesses, v as pv, type ProcessScenario } from "@/lib/sv-process-model";
 import {
   DEFAULT_DIRECTIONS,
+  DIR_ACTUALS,
+  DIR_ADDS,
+  DIR_FORMALS,
+  DIR_INITIAL,
   FORMAL_SIGNATURES,
   KATA_BUGGY_LOG,
   KATA_EXPECTED_LOG,
+  KATA_FIXES,
+  KATA_FIX_LABELS,
   KATA_SOLUTION,
+  KATA_SUBS,
   KATA_SUSPECTS,
   KATA_SYMPTOMS,
   NO_KATA_FIXES,
@@ -27,6 +34,7 @@ import {
   exploreBench,
   factBench,
   factorial,
+  formalRulesClause,
   formatDisplay,
   gradeKata,
   kataBench,
@@ -38,6 +46,7 @@ import {
   recursionTable,
   resolveFormals,
   resolveReturnType,
+  stableOptionOrder,
   sendBench,
   sendVerdict,
   showDirsBench,
@@ -48,6 +57,7 @@ import {
   v,
   waitCyclesEffect,
   type Bench,
+  type DirName,
   type Direction,
 } from "@/lib/sv-subroutine-model";
 
@@ -308,7 +318,21 @@ describe("Functions cite the function clauses", () => {
     expect(auto?.why).not.toMatch(/outputs included/);
     const shared = simulateBench(factBench({ lifetime: "static", n: 2 })).trace.find((s) => s.kind === "enter");
     expect(shared?.clause).toBe("§13.4.2");
-    expect(simulateBench(factBench({ lifetime: "static", n: 2 })).trace.find((s) => s.kind === "return")?.clause).toBe("§13.3, §13.4.2");
+    expect(simulateBench(factBench({ lifetime: "static", n: 2 })).trace.find((s) => s.kind === "return")?.clause).toBe("§13.4, §13.4.2, §6.21");
+  });
+
+  it("every function return cites §13.4, which states function directions, and never the tasks clause §13.3", () => {
+    functionBenches.forEach((bench) =>
+      simulateBench(bench).trace.forEach((s) => {
+        expect(s.clause ?? "").not.toMatch(/§13\.3(?![.\d])/);
+        if (s.kind === "return") expect(s.clause).toMatch(/^§13\.4, /);
+      }),
+    );
+  });
+
+  it("the formal rules are §13.3 for a task and §13.4 for a function", () => {
+    expect(formalRulesClause(FORMAL_SIGNATURES.split.kind)).toBe("§13.3");
+    expect(formalRulesClause(FORMAL_SIGNATURES.add.kind)).toBe("§13.4");
   });
 
   it("task steps still cite §13.3.2", () => {
@@ -316,6 +340,134 @@ describe("Functions cite the function clauses", () => {
     expect(run.trace.find((s) => s.kind === "enter")?.clause).toBe("§13.3.2, §13.3");
     expect(run.trace.find((s) => s.kind === "print")?.clause).toBe("§13.3.2");
     expect(run.trace.find((s) => s.kind === "return")?.clause).toBe("§13.3, §13.3.2");
+  });
+});
+
+describe("§13.5.2 a ref formal is not the subroutine's own storage", () => {
+  const stepOf = (bench: Parameters<typeof simulateBench>[0], kind: string) => simulateBench(bench).trace.find((s) => s.kind === kind);
+  const pulseRef = pulseBench({ lifetime: "automatic", direction: "ref" });
+
+  it("pulse(busy) with ref has no storage of its own, and the Why does not say otherwise", () => {
+    const enter = stepOf(pulseRef, "enter");
+    expect(enter?.what).toMatch(/has no storage of its own: flag is busy \(ref: no copy\)/);
+    expect(enter?.what).not.toMatch(/gets its own storage/);
+    expect(enter?.why).not.toMatch(/Nothing another activation does can reach/);
+    expect(enter?.why).not.toMatch(/allocates its variables/);
+    expect(enter?.why).toMatch(/flag has no copy here: it is a reference to the caller's busy/);
+    expect(enter?.why).toMatch(/another activation included/);
+    expect(enter?.clause).toBe("§13.5.2");
+  });
+
+  it("its box holds the binding and no variables", () => {
+    const box = stepOf(pulseRef, "enter")?.boxes.find((b) => b.sub === "pulse");
+    expect(box?.vars).toEqual([]);
+    expect(box?.refs).toEqual([{ name: "flag", target: "busy", direction: "ref" }]);
+  });
+
+  it("its return copies nothing and frees no storage", () => {
+    const done = stepOf(pulseRef, "return");
+    expect(done?.what).toMatch(/nothing is copied out; its references end/);
+    expect(done?.why).not.toMatch(/Output and inout values reach/);
+    expect(done?.why).not.toMatch(/Automatic storage is deallocated/);
+    expect(done?.why).toMatch(/A ref formal has nothing to copy out/);
+    expect(done?.clause).toBe("§13.5.2");
+  });
+
+  it("show_dirs separates its own a, b, c from its ref d", () => {
+    const bench = showDirsBench({ lifetime: "automatic", directions: DEFAULT_DIRECTIONS });
+    const enter = stepOf(bench, "enter");
+    expect(enter?.what).toMatch(/gets its own storage for a, b, c:/);
+    expect(enter?.what).toMatch(/d is v_ref \(ref: no copy\)/);
+    expect(enter?.why).toMatch(/Nothing another activation does can reach those copies\./);
+    expect(enter?.why).toMatch(/d has no copy here: it is a reference to the caller's v_ref/);
+    expect(enter?.clause).toBe("§13.3.2, §13.3, §13.5.2");
+    const done = stepOf(bench, "return");
+    expect(done?.why).toMatch(/Output and inout values reach the caller's variables once/);
+    expect(done?.why).toMatch(/A ref formal has nothing to copy out/);
+    expect(done?.clause).toBe("§13.3, §13.5.2, §13.3.2");
+  });
+
+  it("a formal with no ref keeps the plain wording", () => {
+    const enter = stepOf(sendBench({ lifetime: "automatic", secondCallAt: 2 }), "enter");
+    expect(enter?.what).toMatch(/gets its own storage: id ← 1/);
+    expect(enter?.why).toMatch(/can reach them\.$/);
+    expect(enter?.why).not.toMatch(/no copy here/);
+  });
+
+  it("what the Why claims happens: another process writing the variable reaches the ref formal", () => {
+    const bench: Parameters<typeof simulateBench>[0] = {
+      id: "ref-reach",
+      title: "ref reach",
+      globals: [{ name: "busy", type: "logic", init: 0 }],
+      subs: [
+        {
+          name: "peek",
+          kind: "task",
+          lifetime: "automatic",
+          formals: [{ name: "flag", direction: "ref", type: "logic" }],
+          locals: [],
+          body: [{ kind: "delay", amount: c(5), then: { kind: "display", format: "t=%0d flag=%b", args: [now, v("flag")] } }],
+        },
+      ],
+      processes: [
+        { id: "a", label: "a", body: [{ kind: "call", sub: "peek", args: [v("busy")] }] },
+        { id: "b", label: "b", body: [{ kind: "delay", amount: c(2), then: { kind: "assign", target: "busy", expr: c(1) } }] },
+      ],
+    };
+    expect(simulateBench(bench).log.map((l) => l.text)).toEqual(["t=5 flag=1"]);
+  });
+
+  it("names what may be passed by reference as the standard lists it: only an unpacked structure's members", () => {
+    const [issue] = literalCallIssues("add", [{ name: "a", direction: "ref" }], [2]);
+    expect(issue.message).toContain("a member of an unpacked structure");
+    expect(issue.message).not.toMatch(/structure member/);
+  });
+
+  it("tags each write issue with the control that can cure it", () => {
+    const causes = (direction: Direction, nba: boolean) => compileBench(pulseBench({ lifetime: "automatic", direction, nba })).map((i) => i.cause);
+    expect(causes("const ref", false)).toEqual(["const-ref-write", "const-ref-write"]);
+    expect(causes("const ref", true)).toEqual(["const-ref-write", "nba", "const-ref-write", "nba"]);
+    expect(causes("ref", true)).toEqual(["nba", "nba"]);
+    expect(causes("output", true)).toEqual(["nba", "nba"]);
+    expect(compileBench(pulseBench({ lifetime: "static", direction: "ref" })).map((i) => [i.key, i.cause])).toEqual([["formal:pulse:flag", undefined]]);
+  });
+});
+
+describe("Sources and labels follow the lesson", () => {
+  it("the debug prints use the lesson's separate #10; and $display lines", () => {
+    const lines = benchSource(sendBench({ lifetime: "static", secondCallAt: 2, debugPrints: true }), { comments: false }).map((l) => l.text.trim());
+    const at = lines.indexOf('$display("t=%0d enter id=%0d", $time, id);');
+    expect(at).toBeGreaterThan(-1);
+    expect(lines[at + 1]).toBe("#10;");
+    expect(lines[at + 2]).toBe('$display("t=%0d use   id=%0d", $time, id);');
+  });
+
+  it("the preset's pulse puts flag on its own line; the kata's keeps the lesson's one line", () => {
+    const source = benchSource(pulseBench({ lifetime: "automatic", direction: "output" })).map((l) => l.text);
+    expect(source).toContain("  task automatic pulse(");
+    expect(source).toContain("    output logic flag");
+    expect(benchSource(kataBench()).map((l) => l.text)).toContain("  task automatic pulse(output logic flag);");
+  });
+
+  it("the ref fix is named for what it does on every subroutine, not only on pulse", () => {
+    expect(KATA_FIX_LABELS.ref).toBe("pass by ref");
+    expect(kataBench({ ...NO_KATA_FIXES, sum_to: "ref" }).subs.find((s) => s.name === "sum_to")?.formals[0].direction).toBe("ref");
+  });
+});
+
+describe("stableOptionOrder", () => {
+  const keys = ["input logic lo", "output logic lo", "input int lo", "output int lo"];
+
+  it("depends only on the keys, not on the order they arrive in", () => {
+    const once = stableOptionOrder(keys, (k) => k);
+    expect(stableOptionOrder([...keys].reverse(), (k) => k)).toEqual(once);
+    expect(stableOptionOrder([keys[2], keys[0], keys[3], keys[1]], (k) => k)).toEqual(once);
+    expect([...once].sort()).toEqual([...keys].sort());
+  });
+
+  it("does not sort alphabetically, so a shared prefix does not group the options", () => {
+    const many = Array.from({ length: 40 }, (_, i) => `input logic x${i}`);
+    expect(stableOptionOrder(many, (k) => k)).not.toEqual([...many].sort());
   });
 });
 
@@ -327,6 +479,50 @@ describe("§6.21 initializers in static subroutines", () => {
     expect(checkInitializer("automatic", "none")).toMatchObject({ ok: true });
     expect(checkInitializer("static", "static").message).toMatch(/once, at time 0/);
     expect(checkInitializer("static", "automatic").message).toMatch(/every call/);
+  });
+
+  it("an automatic task accepts both qualifiers, each with its own meaning", () => {
+    expect(checkInitializer("automatic", "static")).toMatchObject({ ok: true, clause: "§6.21", source: "static int calls = 0;" });
+    expect(checkInitializer("automatic", "static").message).toMatch(/runs once, at time 0/);
+    expect(checkInitializer("automatic", "automatic")).toMatchObject({ ok: true, clause: "§6.21", source: "automatic int calls = 0;" });
+    expect(checkInitializer("automatic", "automatic").message).toMatch(/runs again at the start of every call/);
+  });
+
+  it("the start step narrates a static initializer as an initializer (§6.8, §6.21), not as a default", () => {
+    const start = simulateBench(countCallsBench()).trace[0];
+    expect(start.what).toContain("total = 0 (static initializer, run once before any process starts)");
+    expect(start.what).not.toMatch(/default/);
+    expect(start.why).toMatch(/set once, before any initial or always procedure starts/);
+    expect(start.clause).toBe("§13.3.2, §6.21, §6.8");
+  });
+
+  it("a non-zero static initializer shows its own value, which no type default could give", () => {
+    const bench = countCallsBench();
+    bench.subs[0].locals[0] = { ...bench.subs[0].locals[0], init: c(5) };
+    const run = simulateBench(bench);
+    expect(run.trace[0].what).toContain("total = 5 (static initializer, run once before any process starts)");
+    expect(run.trace[0].what).not.toMatch(/default/);
+    expect(run.log.map((l) => l.text)).toEqual(["total=6 this_call=1", "total=7 this_call=1", "total=8 this_call=1"]);
+  });
+
+  it("the start step keeps 'type default' for variables with no initializer, and names only clauses that say so", () => {
+    const task = simulateBench(sendBench({ lifetime: "static", secondCallAt: 2 })).trace[0];
+    expect(task.what).toContain("id = 0 (no initializer, so the type default)");
+    expect(task.what).not.toMatch(/static initializer/);
+    expect(task.clause).toBe("§13.3.2, §6.8");
+    // §13.3.2's per-instance wording is about tasks, so a function's start step neither says it nor cites it.
+    const fn = simulateBench(countOnesBench("static")).trace[0];
+    expect(fn.what).toContain("v = x, n = 0 (no initializer, so the type default)");
+    expect(fn.why).not.toMatch(/module instance/);
+    expect(fn.clause).toBe("§13.4.2, §6.21, §6.8");
+    expect(simulateBench(kataBench()).trace[0].what).toContain('delay_ns = 0, msg = "", n = 0, partial = 0 (no initializer, so the type default)');
+  });
+
+  it("with no static storage the start step says nothing about static variables", () => {
+    const start = simulateBench(sendBench({ lifetime: "automatic", secondCallAt: 2 })).trace[0];
+    expect(start.what).toContain("no subroutine has static storage");
+    expect(start.why).not.toMatch(/static/i);
+    expect(start.clause).toBe("§13.3.2");
   });
 
   it("the compile check flags the same declaration inside a bench", () => {
@@ -357,6 +553,16 @@ describe("§13.3.2 two callers, one shared variable (the lesson's send bench)", 
     expect(exploration.deterministic).toBe(false);
     expect(sendVerdict(exploration)).toBe("either");
     expect(exploration.outcomes.reduce((n, o) => n + o.runs.length, 0)).toBe(exploration.runCount);
+  });
+
+  it("static #10 with the debug prints: the exact log of each of the two orders", () => {
+    const exploration = exploreBench(sendBench({ lifetime: "static", secondCallAt: 10, debugPrints: true }));
+    const logs = exploration.outcomes.map((o) => o.result.log.map((l) => l.text)).sort((x, y) => x[1].localeCompare(y[1]));
+    expect(logs).toEqual([
+      ["t=0 enter id=1", "t=10 enter id=2", "t=10 use   id=2", "t=20 use   id=2"],
+      ["t=0 enter id=1", "t=10 use   id=1", "t=10 enter id=2", "t=20 use   id=2"],
+    ]);
+    expect(sendVerdict(exploration)).toBe("either");
   });
 
   it("call 1's print is read from call 1's own line, in every lifetime, start time and debug setting", () => {
@@ -510,6 +716,63 @@ describe("§13.4.2 recursion needs automatic", () => {
     expect(rows.map((r) => r.traceIndex)).toEqual([...rows.map((r) => r.traceIndex)].sort((a, b) => a - b));
   });
 
+  it("the table for fact_auto(4): each level keeps its own n and rest", () => {
+    const rows = recursionTable(simulateBench(factBench({ lifetime: "automatic", n: 4 })));
+    expect(rows.map((r) => [r.running, r.does, r.nAfter, r.restAfter])).toEqual([
+      ["fact_auto(4)", "copies 4 into n, calls fact_auto(3)", "4", "0"],
+      ["fact_auto(3)", "copies 3 into n, calls fact_auto(2)", "3", "0"],
+      ["fact_auto(2)", "copies 2 into n, calls fact_auto(1)", "2", "0"],
+      ["fact_auto(1)", "copies 1 into n; the base case returns 1", "1", "0"],
+      ["fact_auto(2)", "rest = 1, returns rest * n = 1 * 2 = 2", "2", "1"],
+      ["fact_auto(3)", "rest = 2, returns rest * n = 2 * 3 = 6", "3", "2"],
+      ["fact_auto(4)", "rest = 6, returns rest * n = 6 * 4 = 24", "4", "6"],
+    ]);
+  });
+
+  it("the table for sum_to(3) in both lifetimes: the base case is n <= 0", () => {
+    const table = (lifetime: "static" | "automatic") => recursionTable(simulateBench(sumToBench({ lifetime, n: 3 }))).map((r) => [r.running, r.does, r.nAfter, r.restAfter]);
+    const entries = (restN: string[]) => [
+      ["sum_to(3)", "copies 3 into n, calls sum_to(2)", restN[0], "0"],
+      ["sum_to(2)", "copies 2 into n, calls sum_to(1)", restN[1], "0"],
+      ["sum_to(1)", "copies 1 into n, calls sum_to(0)", restN[2], "0"],
+      ["sum_to(0)", "copies 0 into n; the base case returns 0", "0", "0"],
+    ];
+    expect(table("static")).toEqual([
+      ...entries(["3", "2", "1"]),
+      ["sum_to(1)", "partial = 0, returns partial + n = 0 + 0 = 0", "0", "0"],
+      ["sum_to(2)", "partial = 0, returns partial + n = 0 + 0 = 0", "0", "0"],
+      ["sum_to(3)", "partial = 0, returns partial + n = 0 + 0 = 0", "0", "0"],
+    ]);
+    expect(table("automatic")).toEqual([
+      ...entries(["3", "2", "1"]),
+      ["sum_to(1)", "partial = 0, returns partial + n = 0 + 1 = 1", "1", "0"],
+      ["sum_to(2)", "partial = 1, returns partial + n = 1 + 2 = 3", "2", "1"],
+      ["sum_to(3)", "partial = 3, returns partial + n = 3 + 3 = 6", "3", "3"],
+    ]);
+  });
+
+  it("a row that assigns and returns starts at the assignment, the step after the inner call returned", () => {
+    const run = simulateBench(factBench({ lifetime: "static", n: 3 }));
+    const rows = recursionTable(run);
+    const assignment = run.trace.find((s) => s.lineKey === "fact-recurse") as (typeof run.trace)[number];
+    expect(assignment.what).toMatch(/fact_static\(2\): rest = fact_static\(n - 1\) = 1/);
+    expect(rows.find((r) => r.traceIndex === assignment.index)?.running).toBe("fact_static(2)");
+    expect(run.trace[assignment.index - 1].kind).toBe("return");
+  });
+
+  it("on every exec or return step the current row is the activation that is running", () => {
+    const benches = [factBench({ lifetime: "static", n: 4 }), factBench({ lifetime: "automatic", n: 4 }), factBench({ lifetime: "static", n: 1 }), sumToBench({ lifetime: "static", n: 3 }), sumToBench({ lifetime: "automatic", n: 3 })];
+    benches.forEach((bench) => {
+      const run = simulateBench(bench);
+      const rows = recursionTable(run);
+      run.trace.forEach((step) => {
+        if ((step.kind !== "exec" && step.kind !== "return") || step.activationId === undefined) return;
+        const current = rows.filter((r) => r.traceIndex <= step.index).pop();
+        expect(current?.running).toBe(run.activations.find((a) => a.id === step.activationId)?.label);
+      });
+    });
+  });
+
   it("sum_to(3) returns 0 when static and 6 when automatic", () => {
     expect(logOf(sumToBench({ lifetime: "static", n: 3 }))).toEqual(["sum_to(3) = 0"]);
     expect(logOf(sumToBench({ lifetime: "automatic", n: 3 }))).toEqual(["sum_to(3) = 6"]);
@@ -546,22 +809,39 @@ describe("§13.3, §13.3.2, §13.5.2 argument directions (the lesson's show_dirs
     expect(refWrite.clause).toBe("§13.5.2");
   });
 
-  it("every direction on every formal gives the values §13.3 and §13.5.2 predict", () => {
-    const expectations: Record<Direction, { during: number; after: number }> = {
-      input: { during: 5, after: 5 },
-      output: { during: 5, after: 20 },
-      inout: { during: 5, after: 35 },
-      ref: { during: 45, after: 45 },
-      "const ref": { during: 5, after: 5 },
-    };
-    (["input", "output", "inout", "ref"] as Direction[]).forEach((direction) => {
-      const directions = { ...DEFAULT_DIRECTIONS, b: direction };
-      const summary = directionsSummary(simulateBench(showDirsBench({ lifetime: "automatic", directions })));
-      const adds = direction === "output" ? 20 : direction === "inout" ? 20 : direction === "ref" ? 20 : 0;
-      expect(summary.after.v_out).toBe(direction === "input" ? 5 : direction === "output" ? 20 : 5 + adds);
-      expect(summary.during.v_out).toBe(direction === "ref" ? 25 : 5);
+  /** What the caller sees for one formal, from §13.3 (copies) and §13.5.2 (ref). */
+  const predicted = (f: DirName, direction: Direction) => {
+    const add = DIR_ADDS[f];
+    switch (direction) {
+      case "input":
+        return { during: DIR_INITIAL, after: DIR_INITIAL };
+      case "output":
+        return { during: DIR_INITIAL, after: add };
+      case "inout":
+        return { during: DIR_INITIAL, after: DIR_INITIAL + add };
+      default:
+        return { during: DIR_INITIAL + add, after: DIR_INITIAL + add };
+    }
+  };
+  const expectValues = (lifetime: "static" | "automatic", directions: Record<DirName, Direction>) => {
+    const summary = directionsSummary(simulateBench(showDirsBench({ lifetime, directions })));
+    DIR_FORMALS.forEach((f) => {
+      expect(summary.during[DIR_ACTUALS[f]]).toBe(predicted(f, directions[f]).during);
+      expect(summary.after[DIR_ACTUALS[f]]).toBe(predicted(f, directions[f]).after);
     });
-    expect(expectations.ref.during).toBe(45);
+  };
+
+  it("every direction on every formal gives the values §13.3 and §13.5.2 predict", () => {
+    DIR_FORMALS.forEach((f) => {
+      (["input", "output", "inout", "ref"] as Direction[]).forEach((direction) => expectValues("automatic", { ...DEFAULT_DIRECTIONS, [f]: direction }));
+    });
+    (["input", "output", "inout", "ref"] as Direction[]).forEach((direction) => expectValues("automatic", { a: direction, b: direction, c: direction, d: direction }));
+  });
+
+  it("a static task's first call gives the same values for every direction it allows", () => {
+    DIR_FORMALS.forEach((f) => {
+      (["input", "output", "inout"] as Direction[]).forEach((direction) => expectValues("static", { ...DEFAULT_DIRECTIONS, d: "inout", [f]: direction }));
+    });
   });
 
   it("a static task called twice keeps its output from the previous call (§13.3.2)", () => {
@@ -651,6 +931,32 @@ describe("§13.3, §13.5.2, §9.4.2 pulse(busy): output versus ref", () => {
     expect(compileBench(pulseBench({ lifetime: "automatic", direction: "const ref", nba: true })).map((i) => i.clause)).toEqual(["§13.5.2", "§13.5.2", "§13.5.2", "§13.5.2"]);
     expect(compileBench(pulseBench({ lifetime: "automatic", direction: "output", nba: true })).map((i) => i.clause)).toEqual(["§13.3.2", "§13.3.2"]);
   });
+
+  it("a const ref is never offered a cure that does not work: neither = nor ref static makes the write legal (§13.5.2)", () => {
+    const benches = [pulseBench({ lifetime: "automatic", direction: "const ref", nba: true }), showDirsBench({ lifetime: "automatic", directions: { ...DEFAULT_DIRECTIONS, b: "const ref" }, nbaOnB: true })];
+    benches.forEach((bench) => {
+      const issues = compileBench(bench);
+      expect(issues.some((i) => i.cause === "nba" && /const ref, so the write itself is the error/.test(i.message))).toBe(true);
+      issues.forEach((issue) => expect(issue.message).not.toMatch(/Use =|ref static/));
+    });
+  });
+
+  it("a task with a return type does not compile, and the source shows what was written (§13.3)", () => {
+    const fixes = { ...NO_KATA_FIXES, pulse: "return-type" as const };
+    expect(compileBench(kataBench(fixes))).toEqual([expect.objectContaining({ key: "sub:pulse", sub: "pulse", clause: "§13.3", message: expect.stringMatching(/a task declaration has no return type, so this does not compile/) })]);
+    expect(benchSource(kataBench(fixes)).find((l) => l.key === "sub:pulse")?.text).toBe("  task automatic int pulse(output logic flag);");
+    expect(benchSource(kataBench({ ...NO_KATA_FIXES, log_after: "return-type" })).find((l) => l.key === "sub:log_after")?.text).toBe("  task int log_after(input int delay_ns, input string msg);");
+    expect(benchSource(kataBench({ ...NO_KATA_FIXES, sum_to: "return-type" })).find((l) => l.key === "sub:sum_to")?.text).toBe("  function int sum_to(input int n);");
+  });
+
+  it("names why an actual cannot be passed by reference: a literal is a literal and an expression is an expression (§13.5.2)", () => {
+    const [literal] = literalCallIssues("add", [{ name: "a", direction: "ref" }], [2]);
+    expect(literal.message).toMatch(/a literal cannot\.$/);
+    const messages = compileBench(kataBench({ ...NO_KATA_FIXES, sum_to: "ref" })).map((i) => i.message);
+    expect(messages.some((m) => /^sum_to\(\.\.\., n - 1, \.\.\.\).*ref formal n; an expression such as n - 1 cannot\.$/.test(m))).toBe(true);
+    expect(messages.some((m) => /^sum_to\(\.\.\., 3, \.\.\.\).*ref formal n; a literal cannot\.$/.test(m))).toBe(true);
+    expect(messages.some((m) => /n - 1.*a literal cannot/.test(m))).toBe(false);
+  });
 });
 
 describe("Kata: fix the bench that lies", () => {
@@ -686,6 +992,47 @@ describe("Kata: fix the bench that lies", () => {
     expect(kataFixNote("pulse", "automatic")).toMatch(/already automatic/);
     expect(kataFixNote("log_after", "automatic")).toBeUndefined();
     expect(gradeKata({ ...KATA_SOLUTION, sum_to: "return-type" }).notes).toHaveLength(1);
+    expect(kataFixNote("log_after", "nba")).toMatch(/assigns nothing/);
+  });
+
+  it("a return type on a task is a compile error, not a no-op: no note says nothing changes", () => {
+    (["log_after", "pulse"] as const).forEach((sub) => {
+      expect(kataFixNote(sub, "return-type")).toBeUndefined();
+      const grade = gradeKata({ ...KATA_SOLUTION, [sub]: "return-type" });
+      expect(grade.issues.map((i) => i.clause)).toEqual(["§13.3"]);
+      expect(grade.passed).toBe(false);
+      expect(grade.log).toEqual([]);
+      expect(grade.notes).toEqual([]);
+    });
+  });
+
+  it("<= on sum_to is legal in a static function and still logs 0; ref on sum_to does not compile (§13.5.2)", () => {
+    const nba = gradeKata({ ...NO_KATA_FIXES, sum_to: "nba" });
+    expect(nba.issues).toEqual([]);
+    expect(nba.log).toContain("sum_to(3) = 0");
+    const ref = gradeKata({ ...NO_KATA_FIXES, sum_to: "ref" });
+    expect(ref.issues.map((i) => i.clause)).toEqual(["§13.5.2", "§13.5.2", "§13.5.2"]);
+    expect(ref.passed).toBe(false);
+  });
+
+  it("of all 125 fix combinations, only the three one-word fixes pass", () => {
+    const passing: string[] = [];
+    KATA_FIXES.forEach((log_after) => {
+      KATA_FIXES.forEach((sum_to) => {
+        KATA_FIXES.forEach((pulse) => {
+          if (gradeKata({ log_after, sum_to, pulse }).passed) passing.push(`${log_after},${sum_to},${pulse}`);
+        });
+      });
+    });
+    expect(passing).toEqual([KATA_SUBS.map((sub) => KATA_SOLUTION[sub]).join(",")]);
+  });
+
+  it("each symptom cites the clause its sentence relies on", () => {
+    const secondTwice = KATA_SYMPTOMS.find((k) => k.id === "second-twice");
+    expect(secondTwice?.clause).toBe("§13.3.1, §13.3.2");
+    expect(secondTwice?.why).toMatch(/no lifetime keyword, so it is static/);
+    // The base call returns the literal 0; only the levels above it compute 0 + 0.
+    expect(KATA_SYMPTOMS.find((k) => k.id === "sum-zero")?.why).toMatch(/every level above it returns 0 \+ 0/);
   });
 
   it("every symptom names a declaration line that exists in the source, and every decoy line has a diagnosis for each symptom", () => {
@@ -698,6 +1045,25 @@ describe("Kata: fix the bench that lies", () => {
         else expect(line.feedback[s.id]).toBeUndefined();
       });
     });
+  });
+});
+
+describe("Narration names a forked print by its branch, not its format string", () => {
+  it("show_dirs: the process label stays short and the code panel keeps the whole line", () => {
+    const bench = showDirsBench({ lifetime: "automatic", directions: DEFAULT_DIRECTIONS });
+    const run = simulateBench(bench);
+    const advance = run.trace.find((s) => s.kind === "advance" && s.time === 5);
+    expect(advance?.what).toBe("Time advances to t = 5 ns: the #5 $display branch wakes.");
+    run.trace.forEach((s) => {
+      if (s.kind !== "print") expect(s.what).not.toContain('$display("');
+    });
+    expect(run.trace.find((s) => s.kind === "fork")?.what).toMatch(/\(show_dirs\(v_in, v_out, v_io, v_ref\); the #5 \$display branch\)/);
+    expect(benchSource(bench).some((l) => l.text.includes('#5 $display("t=%0d  during:'))).toBe(true);
+  });
+
+  it("a branch that calls a task keeps its call", () => {
+    const run = simulateBench(sendBench({ lifetime: "static", secondCallAt: 2 }));
+    expect(run.trace.find((s) => s.kind === "fork")?.what).toMatch(/\(send\(1\); #2 send\(2\)\)/);
   });
 });
 

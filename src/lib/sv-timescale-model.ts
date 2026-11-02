@@ -13,7 +13,8 @@
  *   the same compilation unit until the next `timescale or a `resetall.
  * - 3.12.1: how files map to compilation units is tool-specific; tools offer
  *   "all files one unit" and "each file its own unit".
- * - 3.14.2.2: timeunit and timeprecision keywords (one of each per time scope).
+ * - 3.14.2.2: timeunit and timeprecision keywords (one of each per time scope,
+ *   before any other item; a later repeat shall match the first).
  * - 3.14.2.3: precedence (a) nested elements inherit from the enclosing module or
  *   interface; (b) the last earlier `timescale in the compilation unit; (c) a
  *   compilation-unit timeunit; (d) the implementation default. It is an error
@@ -26,6 +27,10 @@
  *   rounds away from zero.
  * - 9.4.1: an x/z delay is zero; a negative delay is a two's-complement
  *   unsigned integer of the size of a time variable (64 bits).
+ * - 9.4, A.6.5, A.8.7: delay_control is # delay_value or # ( mintypmax_expression ).
+ *   delay_value has no unary minus and no based number, and an x or z digit exists
+ *   only inside a based number, so #(-1) and #(1'bx) need their parentheses and a
+ *   bare x is an identifier.
  * - 20.3.1, 20.3.2, 20.3.3: $time (64-bit integer in the caller's unit,
  *   rounded), $stime (low 32 bits), $realtime (keeps the fraction).
  * - 20.4.2: $printtimescale($root) prints the global precision as unit and
@@ -210,38 +215,65 @@ export type ParsedDelay =
   | { kind: "number"; text: string; digits: bigint; den: bigint }
   /** `#2.1ns`: a time literal, converted to the current unit where it is written (5.8). */
   | { kind: "literal"; text: string; digits: bigint; den: bigint; literalUnit: TimeUnitName }
-  /** `#(x)`: an unknown or high-impedance delay is zero (9.4.1). */
+  /** `#(1'bx)`: a delay expression that evaluates to x or z is zero (9.4.1). */
   | { kind: "xz"; text: string }
   /** `#(-1)`: a negative delay is a 64-bit two's-complement unsigned integer (9.4.1). */
   | { kind: "negative"; text: string; written: bigint; asUnsigned: bigint }
   | { kind: "invalid"; text: string; reason: string };
 
-const stripDelaySyntax = (text: string): string => {
+const OUTSIDE_64_BITS = "That delay is at least 2^64 time units, more than a 64-bit time variable can count. The sources give no rule for it, so it is outside this lab.";
+
+/** The delay without its # and parentheses, and whether it was parenthesised: the grammar allows less without them. */
+const stripDelaySyntax = (text: string): { body: string; parenthesised: boolean } => {
   let t = text.trim();
   if (t.startsWith("#")) t = t.slice(1).trim();
-  if (t.startsWith("(") && t.endsWith(")")) t = t.slice(1, -1).trim();
-  return t.replace(/_/g, "");
+  const parenthesised = t.startsWith("(") && t.endsWith(")");
+  if (parenthesised) t = t.slice(1, -1).trim();
+  // An underscore may follow a digit only: `_1` is an identifier, because unsigned_number starts with a digit (A.8.7).
+  return { body: t.replace(/(\d)_+/g, "$1"), parenthesised };
 };
 
-/** Parses "#2.75", "2.1ns", "#(x)", "#(-1)". Decimal digits only; nothing is converted to a float. */
+/** A based number whose digits are all x or z (A.8.7: x_digit and z_digit, with ? a z_digit). A decimal base takes one such digit. */
+const BASED_UNKNOWN = /^(?:[1-9]\d*)?'[sS]?(?:[bBoOhH][xXzZ?][xXzZ?_]*|[dD][xXzZ?]_*)$/;
+/** unbased_unsized_literal 'x or 'z (Syntax 5-2). */
+const UNBASED_UNKNOWN = /^'[xXzZ]$/;
+/** The largest magnitude a 64-bit two's-complement value holds; §9.4.1 sizes the result like a time variable. */
+const TWO_POW_63 = pow2(63);
+
+/**
+ * Parses "#2.75", "2.1ns", "#(1'bx)", "#('z)", "#(-1)". Decimal digits only;
+ * nothing is converted to a float. Forms the grammar does not accept are invalid
+ * with a reason, because the lab would otherwise render them as code.
+ */
 export function parseDelay(text: string): ParsedDelay {
-  const t = stripDelaySyntax(text);
-  if (/^(?:\d*'[bBoOdDhH]?)?[xXzZ?]+$/.test(t)) return { kind: "xz", text };
+  const { body: t, parenthesised } = stripDelaySyntax(text);
+  const invalid = (reason: string): ParsedDelay => ({ kind: "invalid", text, reason });
+  if (BASED_UNKNOWN.test(t) || UNBASED_UNKNOWN.test(t)) {
+    if (!parenthesised) return invalid(`A delay_value cannot be a based literal, so this one needs parentheses (§9.4, A.6.5): write #(${t}).`);
+    return { kind: "xz", text };
+  }
+  if (/^[xXzZ?]+$/.test(t)) {
+    return invalid(`A bare ${t} is not an unknown value. x and z digits exist only inside a based number (A.8.7), so here it would name an identifier. Write #(1'bx).`);
+  }
   const neg = /^-\s*(\d+)$/.exec(t);
   if (neg) {
+    if (!parenthesised) return invalid("A delay_value has no unary minus, so a negative delay needs parentheses (§9.4, A.6.5): write #(-1).");
     const written = BigInt(neg[1]);
     if (written === ZERO) return { kind: "number", text, digits: ZERO, den: ONE };
+    if (written > TWO_POW_63) return invalid("That magnitude does not fit a 64-bit two's-complement value, so it is outside this lab (§9.4.1 sizes the result like a time variable).");
     return { kind: "negative", text, written: -written, asUnsigned: TWO_POW_64 - written };
   }
-  const m = /^(\d+)(?:\.(\d+))?\s*(s|ms|us|ns|ps|fs)?$/.exec(t);
+  const m = /^(\d+)(?:\.(\d+))?(s|ms|us|ns|ps|fs)?$/.exec(t);
   if (!m) {
-    if (/^-/.test(t)) return { kind: "invalid", text, reason: "A negative delay with a fraction is outside this lab; 9.4.1 reinterprets negative integer values as unsigned 64-bit numbers." };
-    return { kind: "invalid", text, reason: "Write a delay as #d (for example #2.75), a time literal (#2.1ns), #(x) or #(-1)." };
+    if (/^\d+(?:\.\d+)?\s+(?:s|ms|us|ns|ps|fs)$/.test(t)) return invalid("A time literal has no space before its unit (§5.8): write it as 5ns, not 5 ns.");
+    if (/^-/.test(t)) return invalid("A negative real or time-literal delay is outside this lab. §9.4.1 reinterprets a delay expression that evaluates to a negative value, but the lab shows that only for whole numbers such as #(-1).");
+    return invalid("Write a delay as #d (for example #2.75), a time literal (#2.1ns), #(1'bx) or #(-1).");
   }
   const frac = m[2] ?? "";
   const digits = BigInt(`${m[1]}${frac}`);
   const den = pow10(frac.length);
   if (m[3]) return { kind: "literal", text, digits, den, literalUnit: m[3] as TimeUnitName };
+  if (digits >= TWO_POW_64 * den) return invalid(OUTSIDE_64_BITS);
   return { kind: "number", text, digits, den };
 }
 
@@ -365,6 +397,8 @@ export function roundDelay(input: ParsedDelay, unit: TimeScale, precision: TimeS
   // number or literal
   const literalFs = input.kind === "literal" ? scaleToFs(scale(1, input.literalUnit)) : unitFs;
   const scaledFs = normalizeRational({ num: input.digits * literalFs, den: input.den });
+  // A literal's size in units depends on the unit, so parseDelay cannot check it.
+  if (scaledFs.num >= TWO_POW_64 * unitFs * scaledFs.den) return { ...base, error: OUTSIDE_64_BITS };
   const scaledInUnits = rationalToDecimal({ num: scaledFs.num, den: scaledFs.den * unitFs });
   const scaledText = `${rationalToDecimal({ num: scaledFs.num, den: scaledFs.den * baseUnitFs })} ${unit.unit}`;
   const t = ticksOf(scaledFs, precisionFs);
@@ -391,7 +425,7 @@ export function roundDelay(input: ParsedDelay, unit: TimeScale, precision: TimeS
     steps.push(`${tickText} ticks of the ${formatScale(precision)} precision: exactly half way between ${t.down.toString()} and ${(t.down + ONE).toString()}.`);
     if (tie.agree) {
       steps.push(
-        `Half away from zero gives ${awayFromZero.toString()}; half to even also gives ${toEven.toString()}: every common tie rule agrees. Wake at ${show(candidates[0])} (§3.14.1; the standard's own example rounds 2.75 ns to 2.8 ns the same way).`,
+        `Half away from zero gives ${awayFromZero.toString()}; half to even also gives ${toEven.toString()}: both rules this lab computes agree. Wake at ${show(candidates[0])} (§3.14.1; the standard's own example rounds 2.75 ns to 2.8 ns the same way).`,
       );
     } else {
       steps.push(
@@ -418,7 +452,7 @@ export function roundDelay(input: ParsedDelay, unit: TimeScale, precision: TimeS
   );
   steps.push(
     wake === ZERO
-      ? `Wake at 0: the statement runs in the same time slot (§3.14.1). A finer precision elsewhere in the design does not change this.`
+      ? `Wake at 0 (§3.14.1). With no time left to wait, the statement runs in the same time slot. A finer precision elsewhere in the design does not change this.`
       : `Wake at ${show(wake)}${precision.unit === unit.unit ? "" : ` = ${formatFsIn(wake, precision.unit)}`}. A finer precision elsewhere in the design does not change this (§3.14.1).`,
   );
   return { ...base, scaledFs, scaledInUnits, scaledText, ticks: { down: t.down, up: t.down + ONE, exactHalf: false }, candidatesFs: [wake], wakeFs: wake, steps };
@@ -439,14 +473,28 @@ export function wakeText(r: RoundedDelay, unit: TimeUnitName = r.unit.unit): str
 }
 
 /**
+ * The clause after a first wake time when the delay runs again: nothing for a
+ * delay that is zero or effectively forever, and no number for a tool-dependent
+ * tie, because neither has a sensible "every N more".
+ */
+export function thenEveryText(r: RoundedDelay, repeats: number): string {
+  if (repeats <= 1 || r.special || r.wakeFs === ZERO) return "";
+  if (r.wakeFs === null) return ", then the same delay again";
+  return `, then every ${wakeText(r)} more`;
+}
+
+/**
  * Wake times of `repeats` consecutive copies of the same delay from t = 0.
  * Each delay is rounded on its own (3.14.1), so the k-th wake is k times the
- * rounded delay; with a tool-dependent tie both candidates are listed.
+ * rounded delay; with a tool-dependent tie both candidates are listed. A negative
+ * delay lists its first wake only: a second copy would pass the 64 bits of a time
+ * variable, and the sources give no rule for time beyond that.
  */
 export function repeatedWakes(r: RoundedDelay, repeats: number): { k: number; candidatesFs: bigint[] }[] {
   const out: { k: number; candidatesFs: bigint[] }[] = [];
   if (r.error || r.candidatesFs.length === 0) return out;
-  for (let k = 1; k <= repeats; k += 1) out.push({ k, candidatesFs: r.candidatesFs.map((c) => c * BigInt(k)) });
+  const last = r.input.kind === "negative" ? Math.min(repeats, 1) : repeats;
+  for (let k = 1; k <= last; k += 1) out.push({ k, candidatesFs: r.candidatesFs.map((c) => c * BigInt(k)) });
   return out;
 }
 
@@ -469,6 +517,34 @@ const dedupe = (options: LabOption[]): LabOption[] => {
     return true;
   });
 };
+
+/** True when the scaled delay is already a whole number of precision ticks, so nothing is rounded. */
+const onTick = (r: RoundedDelay): boolean => r.ticks !== null && !r.ticks.exactHalf && r.ticks.down === r.ticks.up;
+
+/** "2.75 × 1ns", or "5ns = 5000 × 1ps" for a time literal, which the unit does not scale but converts (5.8). */
+const valueTimesUnit = (r: RoundedDelay): string => {
+  const product = `${r.scaledInUnits} × ${formatScale(r.unit)}`;
+  return r.input.kind === "literal" ? `${rationalToDecimal({ num: r.input.digits, den: r.input.den })}${r.input.literalUnit} = ${product}` : product;
+};
+
+/** Why the correct wake time holds, without claiming a rounding that did not happen. */
+const roundedFeedback = (r: RoundedDelay): string => {
+  const precName = formatScale(r.precision);
+  if (r.wakeFs === ZERO) {
+    return onTick(r)
+      ? `${valueTimesUnit(r)} is zero, so there is nothing to wait for and the statement runs in the same time slot.`
+      : `${valueTimesUnit(r)} rounds to 0 at the ${precName} precision (§3.14.1). With no time left to wait, the statement runs in the same time slot.`;
+  }
+  return onTick(r)
+    ? `${valueTimesUnit(r)} is ${r.scaledText}, already on a tick of the ${precName} precision, so no rounding is needed (§3.14.1).`
+    : `${valueTimesUnit(r)} is rounded to the element's own ${precName} precision (§3.14.1).`;
+};
+
+/** How the time unit and the precision act on this delay: a time literal is converted once, not scaled by the number. */
+const oneScaling = (r: RoundedDelay): string =>
+  r.input.kind === "literal"
+    ? `A time literal is converted to the current unit once (§5.8) and the ${formatScale(r.precision)} precision only rounds it (§3.14.1); nothing multiplies the result by ten.`
+    : `The ${formatScale(r.unit)} unit scales the number once and the ${formatScale(r.precision)} precision only rounds it (§3.14, §3.14.1); nothing multiplies the result by ten.`;
 
 /** Prediction options for one rounded delay: the model's answer plus distractors built from common misconceptions. */
 export function roundingOptions(r: RoundedDelay): LabOption[] {
@@ -527,10 +603,7 @@ export function roundingOptions(r: RoundedDelay): LabOption[] {
       id: "rounded",
       label: wakeText(r),
       correct: true,
-      feedback:
-        r.wakeFs === ZERO
-          ? `${r.scaledInUnits} ${unitName} rounds to 0 at the ${precName} precision, so the statement runs in the same time slot (§3.14.1).`
-          : `${r.scaledInUnits} ${unitName} is rounded to the element's own ${precName} precision (§3.14.1).`,
+      feedback: roundedFeedback(r),
     });
   }
   const scaledIsWhole = r.scaledFs.den === ONE;
@@ -587,7 +660,7 @@ export function roundingOptions(r: RoundedDelay): LabOption[] {
         id: "unit-ignored",
         label: text,
         correct: false,
-        feedback: `A time literal carries its own unit and is converted to the current unit where it is written (§5.8), so ${rationalToDecimal({ num: r.input.digits, den: r.input.den })}${r.input.literalUnit} means the same time in every module.`,
+        feedback: `A time literal carries its own unit and is converted to the current unit where it is written (§5.8), so ${rationalToDecimal({ num: r.input.digits, den: r.input.den })}${r.input.literalUnit} is the same value before rounding in every module; each module's own precision then rounds it (§3.14.1).`,
       },
       misread.den === ONE ? misread.num : undefined,
     );
@@ -599,7 +672,7 @@ export function roundingOptions(r: RoundedDelay): LabOption[] {
   const pads: { fs: bigint | null; option: LabOption }[] = [
     { fs: ZERO, option: { id: "same-slot", label: `0 ${pUnit}`, correct: false, feedback: `Only a delay below half a ${precName} tick rounds to 0 (§3.14.1); ${r.scaledText} does not.` } },
     { fs: wakeRef + precFs, option: { id: "step-later", label: formatFsIn(wakeRef + precFs, pUnit), correct: false, feedback: `The precision is the grid the delay is rounded to, not a step added to it (§3.14.1). ${r.scaledText} rounds to the nearest ${precName} tick.` } },
-    { fs: wakeRef * TEN, option: { id: "ten-x", label: formatFsIn(wakeRef * TEN, pUnit), correct: false, feedback: `The ${unitName} unit scales the number once and the ${precName} precision only rounds it (§3.14, §3.14.1); nothing multiplies the result by ten.` } },
+    { fs: wakeRef * TEN, option: { id: "ten-x", label: formatFsIn(wakeRef * TEN, pUnit), correct: false, feedback: oneScaling(r) } },
     { fs: wakeRef - precFs, option: { id: "step-earlier", label: formatFsIn(wakeRef > precFs ? wakeRef - precFs : ZERO, pUnit), correct: false, feedback: `The precision is the grid the delay is rounded to, not a step taken from it (§3.14.1). ${r.scaledText} rounds to the nearest ${precName} tick.` } },
     { fs: null, option: { id: "error", label: "A compile error", correct: false, feedback: "It compiles. A delay is any number of time units, and §3.14.1 says how it is rounded to the precision." } },
   ];
@@ -630,7 +703,9 @@ export function wakeSequenceOptions(r: RoundedDelay, repeats: number, contrast?:
       id: "rounded",
       label: seq(r.wakeFs),
       correct: true,
-      feedback: `#${rationalToDecimal({ num: r.input.digits, den: r.input.den })} is ${r.scaledText}; the module's own ${precName} precision rounds it to ${formatFsIn(r.wakeFs, unit)} each time (§3.14.1).`,
+      feedback: onTick(r)
+        ? `#${r.input.text.trim().replace(/^#/, "")} is ${r.scaledText}, already on a tick of the module's own ${precName} precision, so no rounding is needed (§3.14.1).`
+        : `#${r.input.text.trim().replace(/^#/, "")} is ${r.scaledText}; the module's own ${precName} precision rounds it to ${formatFsIn(r.wakeFs, unit)} each time (§3.14.1).`,
     });
   }
   const used = new Set<string>(r.candidatesFs.map((c) => c.toString()));
@@ -655,7 +730,10 @@ export function wakeSequenceOptions(r: RoundedDelay, repeats: number, contrast?:
           id: "other-module",
           label: seq(other.wakeFs),
           correct: false,
-          feedback: `That is what the same delay becomes in ${contrast.name} (${formatScale(contrast.unit)}/${formatScale(contrast.precision)}). The unit scales the number and the module's own precision rounds it (§3.14, §3.14.1).`,
+          feedback:
+            r.input.kind === "literal"
+              ? `That is what the same delay becomes in ${contrast.name} (${formatScale(contrast.unit)}/${formatScale(contrast.precision)}). A time literal is the same value before rounding in both modules (§5.8); only each module's own precision differs (§3.14.1).`
+              : `That is what the same delay becomes in ${contrast.name} (${formatScale(contrast.unit)}/${formatScale(contrast.precision)}). The unit scales the number and the module's own precision rounds it (§3.14, §3.14.1).`,
         },
         other.wakeFs,
       );
@@ -665,7 +743,7 @@ export function wakeSequenceOptions(r: RoundedDelay, repeats: number, contrast?:
   const wakeRef = r.candidatesFs[r.candidatesFs.length - 1];
   const pads: { fs: bigint; option: LabOption }[] = [
     { fs: wakeRef + precFs, option: { id: "step-later", label: seq(wakeRef + precFs), correct: false, feedback: `The precision is the grid the delay is rounded to, not a step added to it (§3.14.1).` } },
-    { fs: wakeRef * TEN, option: { id: "ten-x", label: seq(wakeRef * TEN), correct: false, feedback: `The ${unitName} unit scales the number once and the ${precName} precision only rounds it (§3.14, §3.14.1); nothing multiplies the result by ten.` } },
+    { fs: wakeRef * TEN, option: { id: "ten-x", label: seq(wakeRef * TEN), correct: false, feedback: oneScaling(r) } },
     { fs: wakeRef - precFs, option: { id: "step-earlier", label: seq(wakeRef > precFs ? wakeRef - precFs : ZERO), correct: false, feedback: `The precision is the grid the delay is rounded to, not a step taken from it (§3.14.1).` } },
   ];
   for (const pad of pads) {
@@ -679,18 +757,28 @@ export function wakeSequenceOptions(r: RoundedDelay, repeats: number, contrast?:
 }
 
 /**
- * Places the correct option at a position derived from the option labels, so it
- * is not always first. Deterministic, so the server and client renders agree
- * and a lesson shows the same order on every visit.
+ * Orders the options by a shuffle seeded from their labels, which one is
+ * correct, and `seed` (pass the prompt's reset key). Labels alone are constant
+ * in the which-unit and global-precision labs, so the answer would sit in one
+ * slot whatever the state. Every option moves, not only the correct one, so no
+ * option stands out as the one out of its usual order. Deterministic, so the
+ * server and client renders agree.
  */
-export function arrangeOptions<T extends { label: string; correct: boolean }>(options: readonly T[]): T[] {
-  const correct = options.find((o) => o.correct);
-  if (!correct || options.length < 2) return [...options];
-  let hash = 0;
-  for (const ch of options.map((o) => o.label).join("|")) hash = (hash * 31 + ch.charCodeAt(0)) % 1009;
-  const others = options.filter((o) => o !== correct);
-  const at = hash % options.length;
-  return [...others.slice(0, at), correct, ...others.slice(at)];
+export function arrangeOptions<T extends { id: string; label: string; correct: boolean }>(options: readonly T[], seed = ""): T[] {
+  const out = [...options];
+  if (out.length < 2) return out;
+  const key = `${out.map((o) => o.label).join("|")}#${out.find((o) => o.correct)?.id ?? ""}#${seed}`;
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i += 1) h = Math.imul(h ^ key.charCodeAt(i), 16777619) >>> 0;
+  // Spread a change in the seed's last characters over every bit before the shuffle draws from them.
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
+    const j = (h >>> 16) % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
 }
 
 const NS_FS = scaleToFs(scale(1, "ns"));
@@ -753,7 +841,7 @@ export const ROUNDING_PRESETS: readonly RoundingPreset[] = [
   { id: "spine-1.55", label: "#1.55 at 1ns/100ps", delay: "#1.55", unit: scale(1, "ns"), precision: scale(100, "ps"), source: "The lesson's assessment item.", note: "15.5 ticks: both tie rules give 16, so 1.6 ns." },
   { id: "literal-2.1ns", label: "#2.1ns at 10ns/1ns", delay: "#2.1ns", unit: scale(10, "ns"), precision: scale(1, "ns"), source: "A time literal in a module with a coarser unit (§5.8).", note: "0.21 units, rounded to 2 ns." },
   { id: "tie-2.85", label: "#2.85 at 1ns/100ps", delay: "#2.85", unit: scale(1, "ns"), precision: scale(100, "ps"), source: "From the lesson's Expert note on delay values.", note: "28.5 ticks: half away from zero says 29, half to even says 28." },
-  { id: "xz", label: "#(x) at 1ns/100ps", delay: "#(x)", unit: scale(1, "ns"), precision: scale(100, "ps"), source: "An unknown delay value.", note: "x or z delays are zero (§9.4.1)." },
+  { id: "xz", label: "#(1'bx) at 1ns/100ps", delay: "#(1'bx)", unit: scale(1, "ns"), precision: scale(100, "ps"), source: "A delay expression that evaluates to x.", note: "x or z delays are zero (§9.4.1)." },
   { id: "negative", label: "#(-1) at 1ns/100ps", delay: "#(-1)", unit: scale(1, "ns"), precision: scale(100, "ps"), source: "A negative delay value.", note: "A negative delay becomes an unsigned 64-bit value (§9.4.1)." },
 ];
 
@@ -841,26 +929,43 @@ export type ReadTimeStep =
 /** One argument of a $display: which function and which format specifier consumes it. */
 export interface DisplayArg {
   fn: "time" | "stime" | "realtime";
-  /** "%0d", "%d", "%t", "%0t" or "%.Nf". */
-  spec: string;
+  /** The specifiers the lab prints. A plain %d is left out: §21.2.1.2 sizes it from the expression, and no line here uses it. */
+  spec: "%0d" | "%t" | "%0t" | `%.${number}f`;
 }
 
 export interface ReadTimeCaller {
+  /** The instance or scope name used in the prompts and the log. */
   name: string;
+  /** The name in the generated code, when it differs from `name`. */
+  moduleName?: string;
+  /** A comment on the generated module line. */
+  moduleComment?: string;
+  /** Lines of the module body before its initial block, for example an instantiation. */
+  body?: readonly string[];
   unit: TimeScale;
   precision: TimeScale;
   steps: readonly ReadTimeStep[];
 }
 
+/** One moment is one $display: what the learner predicts, a line of the log. */
 export interface ReadTimeSnapshot {
   caller: string;
   unit: TimeScale;
-  afterDelay: RoundedDelay;
-  /** 1 for the caller's first delay, 2 for its second, and so on. */
+  precision: TimeScale;
+  /** The caller's last delay, or null for a print before any delay. */
+  afterDelay: RoundedDelay | null;
+  /** 1 after the caller's first delay, 2 after its second, and so on. */
   delayOrdinal: number;
   readings: TimeReadings;
   /** The $timeformat in force at this moment (null: never called). */
   format: TimeFormat | null;
+  template: string;
+  args: readonly DisplayArg[];
+  /** The line of readTimeCode that prints at this moment, and the delay line that led to it. */
+  lineKey: string;
+  delayKey: string | null;
+  /** What the run did not settle on the way to this moment, such as a tool-dependent half tick. Shown only in its reveal. */
+  notes: string[];
 }
 
 export interface ReadTimeLine {
@@ -869,14 +974,17 @@ export interface ReadTimeLine {
   text: string;
   /** %t had no format and the build has no `timescale: the units are tool-dependent. */
   toolDependent: boolean;
-  /** Index into `snapshots` of the caller's last wake before this print (null: printed before any delay). */
-  momentIndex: number | null;
+  /** Index into `snapshots` of the moment that prints this line. */
+  momentIndex: number;
 }
 
 export interface ReadTimeTrace {
   snapshots: ReadTimeSnapshot[];
   lines: ReadTimeLine[];
+  /** What stops the source from running: then there are no moments and no log. Each message once. */
   errors: string[];
+  /** Every moment's notes. Each message once. */
+  notes: string[];
 }
 
 /** The effective $timeformat: the last call, else Table 20-3 defaults (null when the units are tool-dependent). */
@@ -889,41 +997,54 @@ export function effectiveFormat(format: TimeFormat | null, build: Build): TimeFo
 
 const TOOL_DEPENDENT = "<tool-dependent>";
 
-/** Renders one $display template with the readings of the moment. Unknown specifiers are left as written. */
-export function renderDisplay(template: string, args: readonly DisplayArg[], readings: TimeReadings, unit: TimeScale, format: TimeFormat | null, build: Build): { text: string; toolDependent: boolean } {
+/** How each format specifier of a $display fills in. The distractors override one of these. */
+interface DisplayValues {
+  int: (fn: DisplayArg["fn"]) => string;
+  fixed: (fn: DisplayArg["fn"], digits: number) => string;
+  t: (fn: DisplayArg["fn"], zeroWidth: boolean) => string;
+}
+
+const fnFs = (readings: TimeReadings, unit: TimeScale, fn: DisplayArg["fn"]): bigint =>
+  fn === "realtime" ? readings.absFs : (fn === "time" ? readings.time : readings.stime) * scaleToFs(unit);
+
+function trueValues(readings: TimeReadings, unit: TimeScale, fmt: TimeFormat | null): DisplayValues {
+  return {
+    int: (fn) => (fn === "time" ? readings.time : fn === "stime" ? readings.stime : realToInteger(readings.realtime).value).toString(),
+    fixed: (fn, digits) => rationalToDecimal(fn === "realtime" ? readings.realtime : { num: fn === "time" ? readings.time : readings.stime, den: ONE }, digits),
+    t: (fn, zeroWidth) => (fmt ? formatPercentT(fnFs(readings, unit, fn), fmt, zeroWidth) : TOOL_DEPENDENT),
+  };
+}
+
+/** Fills a $display template. Unknown specifiers stay as written. */
+function fillTemplate(template: string, args: readonly DisplayArg[], values: DisplayValues): string {
   let i = 0;
-  let toolDependent = false;
-  const fmt = effectiveFormat(format, build);
-  const text = template.replace(/%%|%0?[dt]|%\.\d+f/g, (spec) => {
+  return template.replace(/%%|%0d|%0?t|%\.\d+f/g, (spec) => {
     if (spec === "%%") return "%";
     const arg = args[i];
     i += 1;
     if (!arg) return spec;
-    if (spec === "%t" || spec === "%0t") {
-      if (!fmt) {
-        toolDependent = true;
-        return TOOL_DEPENDENT;
-      }
-      const fs = arg.fn === "realtime" ? readings.absFs : (arg.fn === "time" ? readings.time : readings.stime) * scaleToFs(unit);
-      return formatPercentT(fs, fmt, spec === "%0t");
-    }
+    if (spec === "%t" || spec === "%0t") return values.t(arg.fn, spec === "%0t");
     const f = /^%\.(\d+)f$/.exec(spec);
-    if (f) {
-      const r = arg.fn === "realtime" ? readings.realtime : { num: arg.fn === "time" ? readings.time : readings.stime, den: ONE };
-      return rationalToDecimal(r, Number(f[1]));
-    }
-    // %0d / %d (a %d width is tool-sized; the model prints the minimum width)
-    const v = arg.fn === "time" ? readings.time : arg.fn === "stime" ? readings.stime : realToInteger(readings.realtime).value;
-    return v.toString();
+    if (f) return values.fixed(arg.fn, Number(f[1]));
+    return values.int(arg.fn);
   });
-  return { text, toolDependent };
 }
+
+/** Renders one $display template with the readings of the moment. */
+export function renderDisplay(template: string, args: readonly DisplayArg[], readings: TimeReadings, unit: TimeScale, format: TimeFormat | null, build: Build): { text: string; toolDependent: boolean } {
+  const text = fillTemplate(template, args, trueValues(readings, unit, effectiveFormat(format, build)));
+  return { text, toolDependent: text.includes(TOOL_DEPENDENT) };
+}
+
+const isPercentT = (arg: DisplayArg) => arg.spec === "%t" || arg.spec === "%0t";
 
 /**
  * Runs every caller's script from t = 0 and merges the events by time. The
  * $timeformat state is global (20.4.3: one call governs every %t in the design
  * until the next call). At equal times, callers run in array order, which is a
- * choice of this model, not a rule of the standard.
+ * choice of this model, not a rule of the standard. Each $display is one moment.
+ * Source with an error cannot run, so it has no moments and no log, however many
+ * of its lines are fine.
  */
 export function runReadTime(callers: readonly ReadTimeCaller[], build: Build, initialFormat: TimeFormat | null = null): ReadTimeTrace {
   interface Event {
@@ -932,150 +1053,322 @@ export function runReadTime(callers: readonly ReadTimeCaller[], build: Build, in
     callerIndex: number;
     step: ReadTimeStep;
     afterDelay: RoundedDelay | null;
+    notes: string[];
   }
   const events: Event[] = [];
-  const errors: string[] = [];
+  const errors = new Set<string>();
+  const notes = new Set<string>();
   callers.forEach((caller, callerIndex) => {
     let now = ZERO;
     let lastDelay: RoundedDelay | null = null;
+    const notesSoFar: string[] = [];
     caller.steps.forEach((step, order) => {
       if (step.kind === "delay") {
         const r = roundDelayText(step.delay, caller.unit, caller.precision);
         if (r.error) {
-          errors.push(`${caller.name}: ${r.error}`);
+          errors.add(`${caller.name}: ${r.error}`);
           return;
         }
         if (r.wakeFs === null) {
-          errors.push(`${caller.name}: #${step.delay.replace(/^#/, "")} sits on a tool-dependent half tick; the lab uses the half-to-even value for the timeline.`);
+          const note = `${caller.name}: #${step.delay.replace(/^#/, "")} sits on a tool-dependent half tick; the lab uses the half-to-even value for the timeline.`;
+          notes.add(note);
+          if (!notesSoFar.includes(note)) notesSoFar.push(note);
           now += r.candidatesFs[0];
         } else now += r.wakeFs;
+        if (readTime(now, caller.unit).time >= TWO_POW_64) errors.add(`${caller.name}: this run passes the 64 bits of a time variable. The sources give no rule for time beyond that, so it is outside this lab.`);
         lastDelay = r;
-        events.push({ atFs: now, order, callerIndex, step, afterDelay: r });
-      } else events.push({ atFs: now, order, callerIndex, step, afterDelay: lastDelay });
+        events.push({ atFs: now, order, callerIndex, step, afterDelay: r, notes: [...notesSoFar] });
+      } else events.push({ atFs: now, order, callerIndex, step, afterDelay: lastDelay, notes: [...notesSoFar] });
     });
   });
+  if (errors.size > 0) return { snapshots: [], lines: [], errors: Array.from(errors), notes: [] };
   events.sort((a, b) => (a.atFs === b.atFs ? (a.callerIndex === b.callerIndex ? a.order - b.order : a.callerIndex - b.callerIndex) : a.atFs < b.atFs ? -1 : 1));
   let format = initialFormat;
   const snapshots: ReadTimeSnapshot[] = [];
   const lines: ReadTimeLine[] = [];
-  const lastMoment: (number | null)[] = callers.map(() => null);
   const delaysSoFar: number[] = callers.map(() => 0);
+  const lastDelayKey: (string | null)[] = callers.map(() => null);
   for (const e of events) {
     const caller = callers[e.callerIndex];
     if (e.step.kind === "timeformat") {
       format = e.step.format;
       continue;
     }
-    const readings = readTime(e.atFs, caller.unit);
-    if (e.step.kind === "delay" && e.afterDelay) {
+    if (e.step.kind === "delay") {
       delaysSoFar[e.callerIndex] += 1;
-      snapshots.push({ caller: caller.name, unit: caller.unit, afterDelay: e.afterDelay, delayOrdinal: delaysSoFar[e.callerIndex], readings, format });
-      lastMoment[e.callerIndex] = snapshots.length - 1;
+      lastDelayKey[e.callerIndex] = `${e.callerIndex}:${e.order}`;
+      continue;
     }
-    if (e.step.kind === "display") {
-      const r = renderDisplay(e.step.template, e.step.args, readings, caller.unit, format, build);
-      lines.push({ caller: caller.name, absFs: e.atFs, text: r.text, toolDependent: r.toolDependent, momentIndex: lastMoment[e.callerIndex] });
-    }
+    const readings = readTime(e.atFs, caller.unit);
+    const r = renderDisplay(e.step.template, e.step.args, readings, caller.unit, format, build);
+    snapshots.push({
+      caller: caller.name,
+      unit: caller.unit,
+      precision: caller.precision,
+      afterDelay: e.afterDelay,
+      delayOrdinal: delaysSoFar[e.callerIndex],
+      readings,
+      format,
+      template: e.step.template,
+      args: e.step.args,
+      lineKey: `${e.callerIndex}:${e.order}`,
+      delayKey: lastDelayKey[e.callerIndex],
+      notes: e.notes,
+    });
+    lines.push({ caller: caller.name, absFs: e.atFs, text: r.text, toolDependent: r.toolDependent, momentIndex: snapshots.length - 1 });
   }
-  return { snapshots, lines, errors };
+  return { snapshots, lines, errors: Array.from(errors), notes: Array.from(notes) };
+}
+
+/** The same scripts with every %t and %0t reading `arg`: the toggle changes the code, so the code, the log and the options stay one thing. */
+export function withPercentTArg(callers: readonly ReadTimeCaller[], arg: "time" | "realtime"): ReadTimeCaller[] {
+  return callers.map((c) => ({
+    ...c,
+    steps: c.steps.map((step) => (step.kind === "display" ? { ...step, args: step.args.map((a) => (isPercentT(a) ? { ...a, fn: arg } : a)) } : step)),
+  }));
+}
+
+/** True when any line of the scripts prints with %t or %0t. */
+export function usesPercentT(callers: readonly ReadTimeCaller[]): boolean {
+  return callers.some((c) => c.steps.some((step) => step.kind === "display" && step.args.some(isPercentT)));
+}
+
+/** True when the code's own $timeformat runs before its first print: a format set beforehand then changes nothing (20.4.3). */
+export function setsFormatBeforeFirstPrint(callers: readonly ReadTimeCaller[], build: Build): boolean {
+  const { snapshots } = runReadTime(callers, build, null);
+  return snapshots.length > 0 && snapshots.every((s) => s.format !== null);
+}
+
+/** True when %t of $time and %t of $realtime print different text somewhere in this run: otherwise a toggle between them shows nothing. */
+export function percentTArgMatters(callers: readonly ReadTimeCaller[], build: Build, initialFormat: TimeFormat | null = null): boolean {
+  const printed = (arg: "time" | "realtime") => runReadTime(withPercentTArg(callers, arg), build, initialFormat).lines.map((l) => l.text);
+  const asTime = printed("time");
+  return printed("realtime").some((text, i) => text !== asTime[i]);
+}
+
+export interface OutputPart {
+  text: string;
+  /** How many spaces of %t padding this part stands for; 0 for text as printed. */
+  padding: number;
 }
 
 /**
- * Prediction options for one snapshot: what $time, $realtime and %t show.
- * Distractors are deduplicated by their text, and enough of them do not
- * depend on the input (padding, a truncated $time, the default-format or
- * tool-dependent %t, a tenfold miscount) that at least three options survive
- * whenever the time is not zero. The caller should fall back to a plain
- * explanation when fewer than two remain.
+ * Splits a printed line so its %t padding can be shown and named. Padding is the
+ * run of spaces before a %t's digits, less any spaces the template itself has
+ * there; other spaces, such as the alignment in "tb_top   $time", stay text.
  */
-export function readTimeOptions(snapshot: ReadTimeSnapshot, build: Build, arg: "time" | "realtime"): LabOption[] {
-  const { readings, unit, format } = snapshot;
-  const fmt = effectiveFormat(format, build);
-  const argFs = argumentFs(readings, arg, unit);
-  const correctT = fmt ? formatPercentT(argFs, fmt, true) : TOOL_DEPENDENT;
-  const line = (time: string, realtime: string, t: string) => `$time=${time} $realtime=${realtime} %0t=${t}`;
-  const timeText = readings.time.toString();
-  const realtimeText = rationalToDecimal(readings.realtime);
-  const unitName = formatScale(unit);
-  const options: LabOption[] = [
-    {
-      id: "model",
-      label: line(timeText, realtimeText, correctT),
-      correct: true,
-      feedback: `$time and $realtime are in the caller's ${unitName} unit: $time rounds to an integer (§20.3.1), $realtime keeps the fraction (§20.3.3). %t converts its argument to the $timeformat units (§20.4.3).`,
-    },
-  ];
-  const precUnits = normalizeRational({ num: readings.absFs, den: scaleToFs(snapshot.afterDelay.precision) });
-  options.push({
-    id: "precision-units",
-    label: line(rationalToDecimal(precUnits, 0), rationalToDecimal(precUnits), correctT),
-    correct: false,
-    feedback: `That counts in ${formatScale(snapshot.afterDelay.precision)} precision steps. $time and $realtime report in the calling element's time unit, ${unitName} (§20.3.1, §20.3.3).`,
-  });
-  options.push({
-    id: "unrounded",
-    label: line(realtimeText, realtimeText, correctT),
-    correct: false,
-    feedback: "$time returns an integer (§20.3.1); only $realtime keeps the fraction (§20.3.3).",
-  });
-  if (readings.realtime.den !== ONE) {
-    options.push({
-      id: "truncated",
-      label: line((readings.realtime.num / readings.realtime.den).toString(), realtimeText, correctT),
-      correct: false,
-      feedback: "$time rounds to the nearest integer, it does not truncate: §20.3.1's own example reads 2 at 16 ns in a 10 ns unit, not 1.",
+export function splitPadding(text: string, template: string): OutputPart[] {
+  const literal = /( *)%0?t/.exec(template);
+  if (!literal) return [{ text, padding: 0 }];
+  const literalSpaces = literal[1].length;
+  const parts: OutputPart[] = [];
+  const run = / +(?=\d)/g;
+  let from = 0;
+  for (let m = run.exec(text); m; m = run.exec(text)) {
+    const padding = m[0].length - literalSpaces;
+    if (padding <= 0) continue;
+    parts.push({ text: text.slice(from, m.index + literalSpaces), padding: 0 }, { text: "", padding });
+    from = m.index + m[0].length;
+  }
+  parts.push({ text: text.slice(from), padding: 0 });
+  return parts.filter((p) => p.padding > 0 || p.text !== "");
+}
+
+export const timeformatCode = (f: TimeFormat): string => `$timeformat(${f.units}, ${f.precision}, ${JSON.stringify(f.suffix)}, ${f.minWidth});`;
+
+/** The $display statement of one moment, as source text. */
+export function displayCode(template: string, args: readonly DisplayArg[]): string {
+  return `$display(${JSON.stringify(template)}${args.map((a) => `, $${a.fn}`).join("")});`;
+}
+
+export interface ReadTimeCodeLine {
+  key: string;
+  text: string;
+}
+
+/**
+ * The source the run executes, generated from the same steps (visual-language
+ * principle 1), with keys that match each snapshot's lineKey and delayKey.
+ * Only what the steps model is listed. A build with a `timescale gets the
+ * directive; otherwise the module declares timeunit and timeprecision.
+ */
+export function readTimeCode(callers: readonly ReadTimeCaller[], build: Build, initialFormat: TimeFormat | null = null): ReadTimeCodeLine[] {
+  const lines: ReadTimeCodeLine[] = [];
+  const directive = build.timescalePrecisions.length > 0;
+  callers.forEach((caller, ci) => {
+    if (ci > 0) lines.push({ key: `${ci}:blank`, text: "" });
+    if (directive) lines.push({ key: `${ci}:timescale`, text: `\`timescale ${formatScale(caller.unit)}/${formatScale(caller.precision)}` });
+    lines.push({ key: `${ci}:module`, text: `module ${caller.moduleName ?? caller.name};${caller.moduleComment ? `  // ${caller.moduleComment}` : ""}` });
+    if (!directive) lines.push({ key: `${ci}:timeunit`, text: `  timeunit ${formatScale(caller.unit)}; timeprecision ${formatScale(caller.precision)};` });
+    (caller.body ?? []).forEach((text, i) => lines.push({ key: `${ci}:body${i}`, text: `  ${text}` }));
+    lines.push({ key: `${ci}:initial`, text: "  initial begin" });
+    if (ci === 0 && initialFormat) lines.push({ key: "initial-format", text: `    ${timeformatCode(initialFormat)}  // from the control above` });
+    caller.steps.forEach((step, order) => {
+      const key = `${ci}:${order}`;
+      if (step.kind === "delay") lines.push({ key, text: `    #${step.delay.trim().replace(/^#/, "")};` });
+      else if (step.kind === "timeformat") lines.push({ key, text: `    ${timeformatCode(step.format)}` });
+      else lines.push({ key, text: `    ${displayCode(step.template, step.args)}` });
     });
+    lines.push({ key: `${ci}:end`, text: "  end" }, { key: `${ci}:endmodule`, text: "endmodule" });
+  });
+  return lines;
+}
+
+const fnName = (fn: DisplayArg["fn"]) => `$${fn}`;
+
+/**
+ * What one line prints and why, written from its own specifiers and the format
+ * in force at that moment, so a preset's explanation cannot drift from its log.
+ */
+export function explainLine(snapshot: ReadTimeSnapshot, build: Build): { what: string; why: string } {
+  const { readings, unit, format, args } = snapshot;
+  const fmt = effectiveFormat(format, build);
+  const unitName = formatScale(unit);
+  const realText = rationalToDecimal(readings.realtime);
+  const what: string[] = [`t = ${formatFsAuto(readings.absFs)} is ${realText} of ${snapshot.caller}'s ${unitName} units.`];
+  const why: string[] = [];
+  const addWhy = (text: string) => {
+    if (!why.includes(text)) why.push(text);
+  };
+  for (const arg of args) {
+    if (isPercentT(arg)) {
+      if (!fmt) {
+        what.push(`${arg.spec} of ${fnName(arg.fn)} has no units to convert to.`);
+        addWhy("No $timeformat was called and the source has no `timescale, so Table 20-3 gives no default units: the text is tool-dependent (§20.4.3).");
+        continue;
+      }
+      const target = scaleFromExponent(fmt.units) as TimeScale;
+      const argFs = fnFs(readings, unit, arg.fn);
+      const zero = arg.spec === "%0t";
+      const padding = zero ? ", and the 0 drops the padding" : fmt.minWidth > 0 ? `, padded to at least ${fmt.minWidth} characters` : "";
+      const suffix = fmt.suffix ? `, the suffix ${JSON.stringify(fmt.suffix)}` : ", no suffix";
+      const rounded = arg.fn !== "realtime" && argFs !== readings.absFs ? ` (${fnName(arg.fn)} has already rounded ${formatFsAuto(readings.absFs)})` : "";
+      what.push(`${arg.spec} of ${fnName(arg.fn)} writes ${formatFsAuto(argFs)}${rounded} in ${formatScale(target)} units with ${fmt.precision} decimal${fmt.precision === 1 ? "" : "s"}${suffix}${padding}.`);
+      addWhy(
+        format
+          ? "The last $timeformat call governs every %t in the design until the next call (§20.4.3)."
+          : `No $timeformat has run yet, so Table 20-3 applies: units = the smallest \`timescale precision (${formatScale(target)}), 0 decimals, no suffix, width 20 (§20.4.3).`,
+      );
+      if (zero) addWhy("A field width of 0 asks for the minimum width (§21.2.1.2); this lab takes that to drop the padding (see its stated assumptions).");
+    } else if (arg.fn === "time") {
+      const half = readings.timeExactHalf ? ", an exact half: §20.3.1 states no tie rule, and the §6.12.1 real-to-integer rule rounds it away from zero" : "";
+      what.push(readings.realtime.den === ONE ? `$time is ${readings.time.toString()} in the caller's unit.` : `$time rounds ${realText} to ${readings.time.toString()}${half}.`);
+      addWhy(`$time is an integer scaled to the caller's ${unitName} unit, rounded (§20.3.1).`);
+    } else if (arg.fn === "stime") {
+      what.push(readings.stimeWrapped ? `$stime is ${readings.stime.toString()}, the low 32 bits of ${readings.time.toString()}.` : `$stime is ${readings.stime.toString()}: the value fits in 32 bits.`);
+      addWhy("$stime is a 32-bit unsigned integer in the caller's unit; a time that does not fit gives its low 32 bits (§20.3.2).");
+    } else {
+      what.push(`$realtime keeps the fraction: ${realText}.`);
+      addWhy(`$realtime is a real number in the caller's ${unitName} unit (§20.3.3).`);
+    }
+  }
+  return { what: what.join(" "), why: why.join(" ") };
+}
+
+/**
+ * Prediction options for one moment: the whole line as it prints. Each
+ * distractor changes one thing a learner might get wrong; deduplicating by text
+ * drops the ones this line cannot show. A padded %0t is offered only under the
+ * Table 20-3 default width, which the lessons settle: once $timeformat sets a
+ * width, how %0t interacts with it is one of the lab's stated assumptions.
+ */
+export function readTimeOptions(snapshot: ReadTimeSnapshot, build: Build): LabOption[] {
+  const { readings, unit, format, template, args } = snapshot;
+  const fmt = effectiveFormat(format, build);
+  const unitName = formatScale(unit);
+  const precName = formatScale(snapshot.precision);
+  const base = trueValues(readings, unit, fmt);
+  const render = (over: Partial<DisplayValues>) => fillTemplate(template, args, { ...base, ...over });
+  const explanation = explainLine(snapshot, build);
+  const options: LabOption[] = [{ id: "model", label: render({}), correct: true, feedback: explanation.why }];
+  const push = (id: string, over: Partial<DisplayValues>, feedback: string) => options.push({ id, label: render(over), correct: false, feedback });
+
+  if (readings.stimeWrapped) {
+    push("stime-unwrapped", { int: (fn) => (fn === "realtime" ? base.int(fn) : readings.time.toString()) }, "$stime is 32 bits wide. A time that does not fit gives its low 32 bits, not the whole value (§20.3.2).");
+    push("stime-saturated", { int: (fn) => (fn === "stime" ? (TWO_POW_32 - ONE).toString() : base.int(fn)) }, "$stime does not stop at its largest value. It returns the low 32 bits of the time (§20.3.2).");
+  }
+
+  const precUnits = normalizeRational({ num: readings.absFs, den: scaleToFs(snapshot.precision) });
+  const precInt = realToInteger(precUnits).value;
+  push(
+    "precision-units",
+    { int: (fn) => (fn === "stime" ? precInt % TWO_POW_32 : precInt).toString(), fixed: (_fn, digits) => rationalToDecimal(precUnits, digits) },
+    `That counts in ${precName} precision steps. $time and $realtime report in the calling element's time unit, ${unitName} (§20.3.1, §20.3.3).`,
+  );
+
+  /** The value a %t argument stands for, written with the format's digits and suffix but not converted. */
+  const rawT = (fn: DisplayArg["fn"], zeroWidth: boolean, f: TimeFormat) => {
+    const raw = fn === "realtime" ? readings.realtime : { num: fn === "time" ? readings.time : readings.stime, den: ONE };
+    const body = `${rationalToDecimal(raw, f.precision)}${f.suffix}`;
+    return zeroWidth ? body : body.padStart(f.minWidth, " ");
+  };
+  if (fmt) {
+    push("raw-t", { t: (fn, zeroWidth) => rawT(fn, zeroWidth, fmt) }, `%t does not print the raw number. It treats the value as a time in the caller's ${unitName} unit and converts it to the $timeformat units (§20.4.3).`);
+    if (fmt.minWidth > 0) {
+      push(
+        "unpadded-t",
+        { t: (fn, zeroWidth) => (zeroWidth ? base.t(fn, true) : formatPercentT(fnFs(readings, unit, fn), fmt, true)) },
+        `A plain %t pads to the minimum field width in force, ${fmt.minWidth} (${format ? "the last $timeformat call" : "Table 20-3's default"}; §20.4.3). Only %0t asks for no padding.`,
+      );
+    }
+    if (!format) {
+      push(
+        "padded-t",
+        { t: (fn, zeroWidth) => formatPercentT(fnFs(readings, unit, fn), zeroWidth ? { ...fmt, minWidth: TIMEFORMAT_DEFAULTS.minWidth } : fmt, false) },
+        "A field width of 0 asks for the minimum width (§21.2.1.2), and this lab assumes that drops the padding (see its stated assumptions). Only a plain %t pads to Table 20-3's default width of 20.",
+      );
+    }
+  }
+  const written = snapshot.afterDelay?.input;
+  if (written && written.kind === "number" && snapshot.delayOrdinal === 1) {
+    const asWritten = { num: written.digits, den: written.den };
+    push("written-delay", { fixed: (fn, digits) => (fn === "realtime" ? rationalToDecimal(asWritten, digits) : base.fixed(fn, digits)) }, "The delay was rounded to the caller's precision before it was used (§3.14.1), and $realtime reports the time at which the process actually woke.");
+  }
+  push("unrounded", { int: (fn) => (fn === "time" ? rationalToDecimal(readings.realtime) : base.int(fn)) }, "$time returns an integer (§20.3.1); only $realtime keeps the fraction (§20.3.3).");
+  if (readings.realtime.den !== ONE) {
+    push(
+      "truncated",
+      { int: (fn) => (fn === "time" ? (readings.realtime.num / readings.realtime.den).toString() : base.int(fn)) },
+      "$time rounds to the nearest integer, it does not truncate: §20.3.1's own example reads 2 at 16 ns in a 10 ns unit, not 1.",
+    );
   }
   if (fmt) {
-    options.push({
-      id: "raw-t",
-      label: line(timeText, realtimeText, `${rationalToDecimal(arg === "time" ? { num: readings.time, den: ONE } : readings.realtime, fmt.precision)}${fmt.suffix}`),
-      correct: false,
-      feedback: `%t does not print the raw number. It treats the value as a time in the caller's ${unitName} unit and converts it to the $timeformat units (§20.4.3).`,
-    });
-    const paddedWidth = fmt.minWidth > 0 ? fmt.minWidth : TIMEFORMAT_DEFAULTS.minWidth;
-    options.push({
-      id: "padded-t",
-      label: line(timeText, realtimeText, formatPercentT(argFs, { ...fmt, minWidth: paddedWidth }, false)),
-      correct: false,
-      feedback: `A field width of 0 asks for the minimum width (§21.2.1.2), and this lab assumes that drops the padding (see its stated assumptions). A plain %t pads to the minimum_field_width in force (${fmt.minWidth}; Table 20-3's default is 20).`,
-    });
+    if (format && fmt.minWidth !== TIMEFORMAT_DEFAULTS.minWidth) {
+      push(
+        "default-width",
+        { t: (fn, zeroWidth) => (zeroWidth ? base.t(fn, true) : formatPercentT(fnFs(readings, unit, fn), { ...fmt, minWidth: TIMEFORMAT_DEFAULTS.minWidth })) },
+        `20 is Table 20-3's default. This $timeformat call sets a minimum field width of ${fmt.minWidth}, which replaces it for every %t until the next call (§20.4.3).`,
+      );
+    }
     const def = effectiveFormat(null, build);
     const defUnits = def ? scaleFromExponent(def.units) : null;
     if (format) {
-      options.push({
-        id: "format-ignored",
-        label: line(timeText, realtimeText, def ? formatPercentT(argFs, def, true) : TOOL_DEPENDENT),
-        correct: false,
-        feedback: def && defUnits
+      push(
+        "format-ignored",
+        { t: (fn, zeroWidth) => (def ? formatPercentT(fnFs(readings, unit, fn), def, zeroWidth) : TOOL_DEPENDENT) },
+        def && defUnits
           ? `That is Table 20-3's default (units ${formatScale(defUnits)}, 0 digits, no suffix). But $timeformat was called, and one call governs every %t in the design until the next (§20.4.3).`
           : "Without $timeformat the units would indeed be tool-dependent here: the source has no `timescale, so Table 20-3 gives none. But $timeformat was called, and it governs every %t until the next call (§20.4.3).",
-      });
+      );
     }
-    options.push({
-      id: "tool-dependent",
-      label: line(timeText, realtimeText, TOOL_DEPENDENT),
-      correct: false,
-      feedback: format
+    push(
+      "tool-dependent",
+      { t: () => TOOL_DEPENDENT },
+      format
         ? "The units are settled: $timeformat was called, and it governs every %t in the design until the next call (§20.4.3)."
         : `The units are settled without a $timeformat call: Table 20-3 takes them from the smallest \`timescale precision in the source, ${defUnits ? formatScale(defUnits) : "shown above"}.`,
-    });
+    );
   } else {
-    options.push({
-      id: "numeric-guess",
-      label: line(timeText, realtimeText, rationalToDecimal(precUnits, 0)),
-      correct: false,
-      feedback: "A number needs units. No $timeformat was called and the source has no `timescale, so Table 20-3 gives no default units: the text is tool-dependent (§20.4.3).",
-    });
+    push("numeric-guess", { t: () => rationalToDecimal(precUnits, 0) }, "A number needs units. No $timeformat was called and the source has no `timescale, so Table 20-3 gives no default units: the text is tool-dependent (§20.4.3).");
   }
   if (readings.absFs !== ZERO) {
     const tenTimes = normalizeRational({ num: readings.realtime.num * TEN, den: readings.realtime.den });
-    options.push({
-      id: "ten-x",
-      label: line(realToInteger(tenTimes).value.toString(), rationalToDecimal(tenTimes), correctT),
-      correct: false,
-      feedback: `$time and $realtime report in the calling element's time unit, ${unitName} (§20.3.1, §20.3.3); nothing rescales them.`,
-    });
+    const tenInt = realToInteger(tenTimes).value;
+    push(
+      "ten-x",
+      { int: (fn) => (fn === "stime" ? tenInt % TWO_POW_32 : tenInt).toString(), fixed: (_fn, digits) => rationalToDecimal(tenTimes, digits) },
+      `$time and $realtime report in the calling element's time unit, ${unitName} (§20.3.1, §20.3.3); nothing rescales them.`,
+    );
   }
   return dedupe(options).slice(0, 5);
 }
@@ -1118,6 +1411,25 @@ export const READ_TIME_PRESETS: readonly ReadTimePreset[] = [
     ],
   },
   {
+    id: "stime-wrap",
+    label: "$stime: a long run at 1ps/1ps",
+    summary: "`timescale 1ps/1ps, one module: #5ms, then one print of $time and $stime.",
+    outcome: "$time still reads 5000000000, but $stime is 32 bits wide, so it returns the low 32 bits of that value: 705032704 (§20.3.2). Use $time or $realtime for long runs.",
+    build: { timescalePrecisions: [scale(1, "ps")] },
+    arg: "time",
+    callers: [
+      {
+        name: "tb_top",
+        unit: scale(1, "ps"),
+        precision: scale(1, "ps"),
+        steps: [
+          { kind: "delay", delay: "#5ms" },
+          { kind: "display", template: "$time=%0d $stime=%0d", args: [{ fn: "time", spec: "%0d" }, { fn: "stime", spec: "%0d" }] },
+        ],
+      },
+    ],
+  },
+  {
     id: "make-it-work",
     label: "Make It Work: tb_top and u_slow",
     summary: "tb_top (1ns/100ps) sets $timeformat(-9, 1, \" ns\", 0) at time 0; both modules print after the same #1.26. No `timescale anywhere, only timeunit.",
@@ -1127,6 +1439,7 @@ export const READ_TIME_PRESETS: readonly ReadTimePreset[] = [
     callers: [
       {
         name: "tb_top",
+        body: ["slow_gen u_slow ();"],
         unit: scale(1, "ns"),
         precision: scale(100, "ps"),
         steps: [
@@ -1137,6 +1450,7 @@ export const READ_TIME_PRESETS: readonly ReadTimePreset[] = [
       },
       {
         name: "u_slow",
+        moduleName: "slow_gen",
         unit: scale(10, "ns"),
         precision: scale(1, "ns"),
         steps: [
@@ -1158,6 +1472,8 @@ export const READ_TIME_PRESETS: readonly ReadTimePreset[] = [
     callers: [
       {
         name: "uvm_pkg",
+        moduleName: "uvm_stamp_sketch",
+        moduleComment: "stands in for uvm_report_server, compiled in uvm_pkg",
         unit: scale(1, "ns"),
         precision: scale(1, "ps"),
         steps: [
@@ -1194,6 +1510,23 @@ export const READ_TIME_PRESETS: readonly ReadTimePreset[] = [
   },
 ];
 
+/**
+ * What differs from the preset's own code, or null when nothing does. A preset's
+ * summary and outcome describe its own code, so they stand only while this is null.
+ */
+export function presetChangeText(preset: ReadTimePreset, arg: "time" | "realtime", initialFormat: TimeFormat | null): string | null {
+  const changes: string[] = [];
+  if (arg !== preset.arg) changes.push(`every %t now reads $${arg} instead of $${preset.arg}`);
+  if (initialFormat) changes.push(`${timeformatCode(initialFormat)} now runs first`);
+  return changes.length ? `You changed this preset's code: ${changes.join(", and ")}. The code panel shows what runs now.` : null;
+}
+
+/** How many lines of the log differ from what the preset's own code prints. */
+export function linesChangedFromPreset(preset: ReadTimePreset, lines: readonly ReadTimeLine[]): number {
+  const own = runReadTime(preset.callers, preset.build, null).lines;
+  return lines.filter((l, i) => l.text !== own[i]?.text).length;
+}
+
 /** A custom caller: every delay in `delays` is followed by a full print. */
 export function customReadTimeCaller(unit: TimeScale, precision: TimeScale, delays: readonly string[]): ReadTimeCaller {
   const steps: ReadTimeStep[] = [];
@@ -1219,20 +1552,24 @@ export function customReadTimeCaller(unit: TimeScale, precision: TimeScale, dela
 
 export type ElementKind = "module" | "interface" | "program" | "package";
 
+export interface SourceElement {
+  kind: "element";
+  name: string;
+  elementKind: ElementKind;
+  timeunit?: TimeScale;
+  /** The second argument of the timeunit declaration: timeunit 1ms / 1us; (3.14.3 lists it apart from timeprecision). */
+  timeunitPrecision?: TimeScale;
+  timeprecision?: TimeScale;
+  /** Nested modules or interfaces (3.14.2.3 rule a). Only design elements: `timescale and `resetall are illegal inside one (22.3, 22.7). */
+  nested?: readonly SourceElement[];
+}
+
 export type SourceItem =
   | { kind: "timescale"; unit: TimeScale; precision: TimeScale }
   | { kind: "resetall" }
   /** timeunit at compilation-unit scope, outside every design element (3.14.2.3 rule c). */
   | { kind: "cu-timeunit"; unit: TimeScale; precision?: TimeScale }
-  | {
-      kind: "element";
-      name: string;
-      elementKind: ElementKind;
-      timeunit?: TimeScale;
-      timeprecision?: TimeScale;
-      /** Nested modules or interfaces (3.14.2.3 rule a). */
-      nested?: readonly SourceItem[];
-    };
+  | SourceElement;
 
 export interface SourceFile {
   id: string;
@@ -1306,7 +1643,7 @@ export function resolveTimeScopes(files: readonly SourceFile[], grouping: Groupi
     let cuUnit: { unit: TimeScale; precision?: TimeScale; source: string } | null = null;
     let sawItem = false;
 
-    const resolveElement = (item: Extract<SourceItem, { kind: "element" }>, file: SourceFile, enclosing: ResolvedElement | null) => {
+    const resolveElement = (item: SourceElement, file: SourceFile, enclosing: ResolvedElement | null) => {
       let unit: TimeScale | null;
       let precision: TimeScale | null;
       let unitRule: PrecedenceRule;
@@ -1335,11 +1672,13 @@ export function resolveTimeScopes(files: readonly SourceFile[], grouping: Groupi
         unitRule = "d";
         unitSource = "implementation-specific default";
       }
-      const declaredPrecision = item.timeprecision;
+      const declaredPrecision = item.timeprecision ?? item.timeunitPrecision;
       if (declaredPrecision) {
         precision = declaredPrecision;
         precisionRule = "declared";
-        precisionSource = `timeprecision ${formatScale(declaredPrecision)} in ${path}`;
+        precisionSource = item.timeprecision
+          ? `timeprecision ${formatScale(declaredPrecision)} in ${path}`
+          : `timeunit ${formatScale(item.timeunit as TimeScale)} / ${formatScale(declaredPrecision)} in ${path}`;
         precisions.push({ scale: declaredPrecision, source: precisionSource });
       } else if (enclosing) {
         precision = enclosing.precision;
@@ -1380,9 +1719,7 @@ export function resolveTimeScopes(files: readonly SourceFile[], grouping: Groupi
         specified: unitRule !== "d" && precisionRule !== "d" && unit !== null && precision !== null,
       };
       elements.push(resolved);
-      (item.nested ?? []).forEach((n) => {
-        if (n.kind === "element") resolveElement(n, file, resolved);
-      });
+      (item.nested ?? []).forEach((n) => resolveElement(n, file, resolved));
     };
 
     cuFiles.forEach((file) => {
@@ -1397,20 +1734,23 @@ export function resolveTimeScopes(files: readonly SourceFile[], grouping: Groupi
           directive = null;
         } else if (item.kind === "cu-timeunit") {
           if (cuUnit) {
-            errors.push({ message: `${file.label}: a second timeunit for the compilation-unit scope (the first was ${cuUnit.source}).`, clause: "IEEE 1800-2023 §3.14.2.2", toolNote: "an error per the standard" });
+            // A later repeat is legal as long as it matches the first (3.14.2.2). A repeat that leaves out the precision states nothing different.
+            const differs = !sameScale(cuUnit.unit, item.unit) || (cuUnit.precision !== undefined && item.precision !== undefined && !sameScale(cuUnit.precision, item.precision));
+            if (differs) errors.push({ message: `${file.label}: this compilation-unit timeunit does not match the first (${cuUnit.source}).`, clause: "IEEE 1800-2023 §3.14.2.2", toolNote: "an error per the standard" });
           } else if (sawItem) {
             errors.push({
               message: `${file.label}: the compilation-unit timeunit comes after other items of its compilation unit; a time scope's timeunit shall precede any other item.`,
               clause: "IEEE 1800-2023 §3.14.2.2",
-              toolNote: "an error per the standard; some tools only warn",
+              toolNote: "an error per the standard",
             });
           }
           if (!cuUnit) cuUnit = { unit: item.unit, precision: item.precision, source: `compilation-unit timeunit ${formatScale(item.unit)}${item.precision ? ` / ${formatScale(item.precision)}` : ""} in ${file.label}` };
           if (item.precision) precisions.push({ scale: item.precision, source: `compilation-unit timeunit precision in ${file.label}` });
         } else {
           resolveElement(item, file, null);
+          // Only a description counts as an item before the timeunit: source_text is [ timeunits_declaration ] { description }, and a directive is not a description.
+          sawItem = true;
         }
-        sawItem = true;
       });
     });
   });
@@ -1495,7 +1835,7 @@ export const WHICH_UNIT_FILES: readonly SourceFile[] = [
         name: "outer",
         elementKind: "module",
         timeunit: scale(1, "ms"),
-        timeprecision: scale(1, "us"),
+        timeunitPrecision: scale(1, "us"),
         nested: [{ kind: "element", name: "inner", elementKind: "module" }],
       },
     ],
@@ -1553,17 +1893,39 @@ export function whichUnitOptions(resolution: Resolution): LabOption[] {
 // Global precision and 1step (3.14.3, 20.4.2, Table 20-3)
 // ---------------------------------------------------------------------------
 
-/** The Make It Work bench as source files, with an optional vendor model compiled under `timescale 1ns/1fs. */
+/** tb_top and the instance u_slow of slow_gen: the two modules of the F3A figure and of the Make It Work bench. */
+export const TB_TOP_SCOPE = { name: "tb_top", unit: scale(1, "ns"), precision: scale(100, "ps") } as const;
+export const U_SLOW_SCOPE = { name: "u_slow", moduleName: "slow_gen", unit: scale(10, "ns"), precision: scale(1, "ns") } as const;
+
+export const timeunitLine = (s: { unit: TimeScale; precision: TimeScale }): string => `timeunit ${formatScale(s.unit)}; timeprecision ${formatScale(s.precision)};`;
+
+/** The precision of the two-modules figure's design: the finer of its two modules (3.14.3). */
+export function twoModulesGlobalPrecision(): TimeScale | null {
+  return resolveTimeScopes(globalPrecisionDesign(false), "one").globalPrecision;
+}
+
+/**
+ * The Make It Work bench as source files, with an optional vendor model compiled
+ * under `timescale 1ns/1fs. tb_top instantiates the vendor model, so it is in the
+ * design under any choice of top (3.14.3 counts what is in the design, 23.3.1).
+ */
 export function globalPrecisionDesign(withVendorModel: boolean): SourceFile[] {
+  const element = (s: { unit: TimeScale; precision: TimeScale }, name: string): SourceItem => ({ kind: "element", name, elementKind: "module", timeunit: s.unit, timeprecision: s.precision });
   const files: SourceFile[] = [
     {
       id: "tb",
       label: "tb.sv",
-      items: [
-        { kind: "element", name: "slow_gen", elementKind: "module", timeunit: scale(10, "ns"), timeprecision: scale(1, "ns") },
-        { kind: "element", name: "tb_top", elementKind: "module", timeunit: scale(1, "ns"), timeprecision: scale(100, "ps") },
+      items: [element(U_SLOW_SCOPE, U_SLOW_SCOPE.moduleName), element(TB_TOP_SCOPE, TB_TOP_SCOPE.name)],
+      code: [
+        `module ${U_SLOW_SCOPE.moduleName};`,
+        `  ${timeunitLine(U_SLOW_SCOPE)}`,
+        "endmodule",
+        `module ${TB_TOP_SCOPE.name};`,
+        `  ${timeunitLine(TB_TOP_SCOPE)}`,
+        `  ${U_SLOW_SCOPE.moduleName} ${U_SLOW_SCOPE.name} ();`,
+        ...(withVendorModel ? ["  vendor_model u_vendor ();"] : []),
+        "endmodule",
       ],
-      code: ["module slow_gen;", "  timeunit 10ns; timeprecision 1ns;", "endmodule", "module tb_top;", "  timeunit 1ns; timeprecision 100ps;", "  slow_gen u_slow ();", "endmodule"],
     },
   ];
   if (withVendorModel) {
@@ -1614,11 +1976,37 @@ export function globalPrecisionOptions(withVendorModel: boolean): LabOption[] {
   const correct = report.printtimescaleRoot;
   const mk = (id: string, text: string, feedback: string): LabOption => ({ id, label: text, correct: text === correct, feedback });
   return dedupe([
-    mk("1fs", "Time scale of ($root) is 1fs / 1fs", withVendorModel ? "Right. The precision of every `timescale directive counts toward the global precision, even when every module overrides the directive with its own timeunit (§3.14.3). $root shows it as both unit and precision (§20.4.2)." : "There is no 1 fs precision anywhere in this design yet. Add the vendor model to see it."),
+    mk("1fs", "Time scale of ($root) is 1fs / 1fs", withVendorModel ? "Right. The smallest `timescale precision counts toward the global precision whether or not other modules use that directive (§3.14.3): slow_gen and tb_top declare their own, and only vendor_model takes it. $root shows it as both unit and precision (§20.4.2)." : "There is no 1 fs precision anywhere in this design yet. Add the vendor model to see it."),
     mk("100ps", "Time scale of ($root) is 100ps / 100ps", withVendorModel ? "That was the answer before the vendor model. Its `timescale 1ns/1fs adds a 1 fs precision to the design, and the global precision is the minimum of all of them (§3.14.3)." : "Right. The finest precision in the design is tb_top's 100 ps (§3.14.3), shown as both unit and precision (§20.4.2)."),
     mk("1ns-1fs", "Time scale of ($root) is 1ns / 1fs", "$root reports the simulation time unit, and its unit and precision are always identical (§20.4.2). 1ns / 1fs is the vendor model's own setting."),
     mk("1ns-100ps", "Time scale of ($root) is 1ns / 100ps", "That is tb_top's own setting. $root reports the global precision as both unit and precision (§20.4.2)."),
   ]);
+}
+
+/** Prediction options for the default %t units (Table 20-3), which move from undefined to 1 fs with one directive. */
+export function defaultUnitsOptions(withVendorModel: boolean): LabOption[] {
+  const units = globalPrecisionReport(withVendorModel).defaultPercentTUnits;
+  const mk = (id: string, label: string, correct: boolean, feedback: string): LabOption => ({ id, label, correct, feedback });
+  return [
+    mk(
+      "smallest",
+      "1fs",
+      units !== null && sameScale(units, scale(1, "fs")),
+      withVendorModel
+        ? "Right. Table 20-3 takes the default units from the smallest `timescale precision in the source, and the vendor model's directive is the only one there."
+        : "That is the vendor model's precision, and it is not in this build. Without it the source has no `timescale at all.",
+    ),
+    mk("timeprecision", "100ps", false, "100ps comes from tb_top's timeprecision statement. Table 20-3 looks only at the precision arguments of `timescale directives."),
+    mk("timeunit", "1ns", false, "1ns is a time unit, tb_top's. Table 20-3 takes the default from a precision argument, and only one of a `timescale directive."),
+    mk(
+      "undefined",
+      "Tool-dependent: Table 20-3 does not define it",
+      units === null,
+      withVendorModel
+        ? "The vendor model's `timescale is in the source now, so Table 20-3 names the units."
+        : "Right. Table 20-3 names only the smallest `timescale precision, and this source has none: only timeunit and timeprecision. It does not define this case, so the lab calls it tool-dependent.",
+    ),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -1634,8 +2022,6 @@ export interface CrossScopeConfig {
   calleePrecision: TimeScale;
   /** tb_top's $timeformat. */
   format: TimeFormat;
-  /** The clock used by the repeat form: it rises every period, first at one period. */
-  clockPeriodFs: bigint;
 }
 
 export const CROSS_SCOPE_DEFAULT: CrossScopeConfig = {
@@ -1644,8 +2030,31 @@ export const CROSS_SCOPE_DEFAULT: CrossScopeConfig = {
   calleeUnit: scale(1, "ps"),
   calleePrecision: scale(1, "ps"),
   format: timeformat(-9, 3, " ns", 0),
-  clockPeriodFs: scaleToFs(scale(1, "ns")),
 };
+
+/** The half period in the repeat form's clock line. A time literal, so tb_top's unit only rescales it (5.8). */
+const CLOCK_HALF_PERIOD = "#0.5ns";
+
+/**
+ * The period of the repeat form's clock, read through the model the way tb_top
+ * reads its own line. `halfPeriod` defaults to that line; a bare number shows what
+ * the period would be if the clock generator took tb_top's unit.
+ */
+export function clockPeriodFs(config: CrossScopeConfig = CROSS_SCOPE_DEFAULT, halfPeriod: string = CLOCK_HALF_PERIOD): bigint {
+  const half = roundDelayText(halfPeriod, config.callerUnit, config.callerPrecision);
+  if (half.wakeFs === null) throw new Error(`${halfPeriod} has no single value at ${formatScale(config.callerUnit)}/${formatScale(config.callerPrecision)}`);
+  return half.wakeFs * TWO;
+}
+
+/**
+ * What the value's unit is at one beat:
+ * - tagged: read in the named time unit;
+ * - count: a count of something else, here clock edges, so no time unit applies;
+ * - dropped: it was understood in the caller's unit; as a plain number in the callee, that unit no longer applies;
+ * - never-had: a plain number from the start;
+ * - resolved-time: an absolute wake time, whose unit is part of the value.
+ */
+export type UnitState = "tagged" | "count" | "dropped" | "never-had" | "resolved-time";
 
 export interface CrossScopeStep {
   /** Where the value is at this beat. */
@@ -1655,8 +2064,9 @@ export interface CrossScopeStep {
   title: string;
   /** The value as the code sees it, e.g. "5.0" or "5". */
   value: string;
-  /** The unit the value is understood in, or null for a bare number. */
+  /** The unit the value is understood in, or null when `unitState` says why it has none. */
   unitTag: string | null;
+  unitState: UnitState;
   what: string;
   why: string;
 }
@@ -1688,9 +2098,10 @@ export function traceCrossScope(form: CallForm, config: CrossScopeConfig = CROSS
   const steps: CrossScopeStep[] = [];
 
   if (form === "repeat_posedge") {
-    const wake = config.clockPeriodFs * BigInt(5);
-    steps.push({ scope: "caller", lineKey: "tb-call", title: "In tb_top", value: "5", unitTag: "clock edges", what: "repeat (5) @(posedge clk) counts five rising edges of clk.", why: "An event control waits for a value change, not for a time (§9.4.2). No time unit is involved." });
-    steps.push({ scope: "log", lineKey: "tb-display", title: "Wake", value: formatFsAuto(wake), unitTag: null, what: `With clk rising every ${formatFsAuto(config.clockPeriodFs)}, the fifth edge is at ${formatFsAuto(wake)}.`, why: "The wait is defined by the clock, so it is the same in every time unit. Cycle counts are the unit-free way to express a wait." });
+    const period = clockPeriodFs(config);
+    const wake = period * BigInt(5);
+    steps.push({ scope: "caller", lineKey: "tb-call", title: "In tb_top", value: "5", unitTag: "clock edges", unitState: "count", what: "repeat (5) @(posedge clk) counts five rising edges of clk.", why: "An event control waits for a value change, not for a time (§9.4.2). This line has no time unit." });
+    steps.push({ scope: "log", lineKey: "tb-display", title: "Wake", value: formatFsAuto(wake), unitTag: null, unitState: "resolved-time", what: `With clk rising every ${formatFsAuto(period)}, the fifth edge is at ${formatFsAuto(wake)}.`, why: `The clock generator's own delay sets how long those edges take. It is the literal ${CLOCK_HALF_PERIOD}, scaled to the current unit (§5.8), so the period stays ${formatFsAuto(period)} in any unit tb_top uses.` });
     return { form, callText: CALL_FORM_TEXT[form], steps, wakeFs: wake, printed: print(wake), unitFree: true };
   }
 
@@ -1699,10 +2110,10 @@ export function traceCrossScope(form: CallForm, config: CrossScopeConfig = CROSS
     const product = normalizeRational({ num: BigInt(5) * literalInCallee.num, den: literalInCallee.den });
     const rounded = roundDelay({ kind: "number", text: rationalToDecimal(product), digits: product.num, den: product.den }, config.calleeUnit, config.calleePrecision);
     const wake = rounded.wakeFs ?? rounded.candidatesFs[0];
-    steps.push({ scope: "caller", lineKey: "tb-call", title: "In tb_top", value: "5", unitTag: null, what: "wait_ns(5) passes the plain number 5.", why: "The argument is a realtime: a number with no unit (§6.12). The task's name says it is nanoseconds; the language does not." });
-    steps.push({ scope: "boundary", lineKey: "pkg-task", title: "Crossing into util_pkg", value: "5.0", unitTag: null, what: "The number 5.0 arrives in util_pkg unchanged.", why: "Nothing converts a number when it crosses from one scope into another." });
-    steps.push({ scope: "callee", lineKey: "pkg-delay", title: "In util_pkg", value: rationalToDecimal(product), unitTag: calleeUnitText, what: `#(delay_ns * 1ns): the literal 1ns is converted in util_pkg's ${calleeUnitText} unit to ${rationalToDecimal(literalInCallee)}, so the delay is 5.0 × ${rationalToDecimal(literalInCallee)} = ${rationalToDecimal(product)} ${calleeUnitText} units.`, why: "A time literal is scaled to the current time unit where it is written (§5.8), and here it is written inside the package." });
-    steps.push({ scope: "log", lineKey: "tb-display", title: "Wake", value: formatFsAuto(wake), unitTag: null, what: `The process wakes at ${formatFsIn(wake, "ps")} = ${formatFsAuto(wake)}; tb_top prints "${print(wake)}".`, why: "The scaling happened in the callee, so the result is right whatever unit the caller uses." });
+    steps.push({ scope: "caller", lineKey: "tb-call", title: "In tb_top", value: "5", unitTag: null, unitState: "never-had", what: "wait_ns(5) passes the plain number 5.", why: "The argument is a realtime: a number with no unit (§6.12). The task's name says it is nanoseconds; the language does not." });
+    steps.push({ scope: "boundary", lineKey: "pkg-task", title: "Crossing into util_pkg", value: "5.0", unitTag: null, unitState: "never-had", what: "The number 5.0 arrives in util_pkg unchanged.", why: "Nothing converts a number when it crosses from one scope into another." });
+    steps.push({ scope: "callee", lineKey: "pkg-delay", title: "In util_pkg", value: rationalToDecimal(product), unitTag: calleeUnitText, unitState: "tagged", what: `#(delay_ns * 1ns): the literal 1ns is converted in util_pkg's ${calleeUnitText} unit to ${rationalToDecimal(literalInCallee)}, so the delay is 5.0 × ${rationalToDecimal(literalInCallee)} = ${rationalToDecimal(product)} ${calleeUnitText} units.`, why: "A time literal is scaled to the current time unit where it is written (§5.8), and here it is written inside the package." });
+    steps.push({ scope: "log", lineKey: "tb-display", title: "Wake", value: formatFsAuto(wake), unitTag: null, unitState: "resolved-time", what: `The process wakes at ${formatFsIn(wake, "ps")} = ${formatFsAuto(wake)}; tb_top prints "${print(wake)}".`, why: "The scaling happened in the callee, so the result is right whatever unit the caller uses." });
     return { form, callText: CALL_FORM_TEXT[form], steps, wakeFs: wake, printed: print(wake), unitFree: false };
   }
 
@@ -1720,6 +2131,7 @@ export function traceCrossScope(form: CallForm, config: CrossScopeConfig = CROSS
     title: "In tb_top",
     value: rationalToDecimal(inCaller, inCaller.den === ONE ? 1 : undefined),
     unitTag: callerUnitText,
+    unitState: "tagged",
     what: `The literal ${literalText} is converted where it is written, in tb_top's ${callerUnitText} unit: the real number ${rationalToDecimal(inCaller, inCaller.den === ONE ? 1 : undefined)}.`,
     why: "A time literal is interpreted as a realtime value scaled to the current time unit (§5.8).",
   });
@@ -1729,6 +2141,7 @@ export function traceCrossScope(form: CallForm, config: CrossScopeConfig = CROSS
     title: "Crossing into util_pkg",
     value: asTime.value.toString(),
     unitTag: null,
+    unitState: "dropped",
     what: `Passing it to the time argument t makes it the integer ${asTime.value.toString()}${asTime.exactHalf ? ` (${rationalToDecimal(inCaller)} is an exact half, rounded away from zero)` : inCaller.den !== ONE ? ` (${rationalToDecimal(inCaller)} rounded to the nearest integer)` : ""}. The unit tag is gone: t is a number.`,
     why: asTime.exactHalf || inCaller.den !== ONE ? "A real assigned to an integer rounds to the nearest integer; an exact .5 rounds away from zero (§6.12.1). A time variable holds a plain number." : "A time variable holds a plain number. Nothing converts it when it crosses into another scope.",
   });
@@ -1738,6 +2151,7 @@ export function traceCrossScope(form: CallForm, config: CrossScopeConfig = CROSS
     title: "In util_pkg",
     value: asTime.value.toString(),
     unitTag: calleeUnitText,
+    unitState: "tagged",
     what: `#t means ${asTime.value.toString()} of util_pkg's ${calleeUnitText} units: ${formatFsIn(wake, "ps")}.`,
     why: `A delay is a number of the enclosing element's time units (§3.14), and util_pkg's unit is ${calleeUnitText}.`,
   });
@@ -1747,10 +2161,41 @@ export function traceCrossScope(form: CallForm, config: CrossScopeConfig = CROSS
     title: "Wake",
     value: formatFsAuto(wake),
     unitTag: null,
+    unitState: "resolved-time",
     what: `The process wakes at ${formatFsAuto(wake)}; tb_top prints "${print(wake)}".`,
     why: "$timeformat(-9, 3, \" ns\", 0) prints %t in nanoseconds with three decimals (§20.4.3). It changes the text, never the delay.",
   });
   return { form, callText: CALL_FORM_TEXT[form], steps, wakeFs: wake, printed: print(wake), unitFree: false };
+}
+
+/** The second line of the crossing chip. */
+export function unitChipText(step: CrossScopeStep): string {
+  switch (step.unitState) {
+    case "dropped":
+      return "unit tag dropped";
+    case "never-had":
+      return "plain number";
+    case "resolved-time":
+      return "wake time";
+    default:
+      return step.unitTag ?? "";
+  }
+}
+
+/** One step's value in words, for the step heading and the live region. */
+export function unitSentence(step: CrossScopeStep): string {
+  switch (step.unitState) {
+    case "tagged":
+      return `value ${step.value} understood in ${step.unitTag}`;
+    case "count":
+      return `${step.value} ${step.unitTag}`;
+    case "dropped":
+      return `value ${step.value}, its unit tag dropped`;
+    case "never-had":
+      return `plain number ${step.value}`;
+    case "resolved-time":
+      return `wake time ${step.value}`;
+  }
 }
 
 /** Prediction options for the wake time of one call form. */
@@ -1760,31 +2205,41 @@ export function crossScopeOptions(form: CallForm, config: CrossScopeConfig = CRO
   const mk = (id: string, label: string, feedback: string): LabOption => ({ id, label, correct: label === correct, feedback });
   if (form === "repeat_posedge") {
     return [
-      mk("5ns", correct, "Right. Five rising edges of a clock with a 1 ns period: the wait is defined by the clock, and no time unit takes part (§9.4.2)."),
+      mk("5ns", correct, `Right. Five rising edges of a clock with a 1 ns period. The repeat line counts edges and has no unit (§9.4.2); the clock line's literal ${CLOCK_HALF_PERIOD} sets how long they take (§5.8).`),
       mk("5ps", "5 ps", "An event control counts edges, not time units. The package's 1 ps unit plays no part (§9.4.2)."),
       mk("5000ns", "5000 ns", "No conversion happens: five edges of a 1 ns clock take 5 ns."),
     ];
   }
   const integerPassed = trace.steps[1]?.value ?? "";
+  /** wait_t(5ns) is followed by the hunt for the line, so its feedback stops at the symptom: naming the mechanism here would answer the hunt. */
+  const hunted = form === "wait_t_5ns";
   const options: LabOption[] = [
     mk(
       "model",
       correct,
-      form === "wait_ns_5"
-        ? `Right. 1ns is converted inside util_pkg to ${rationalToDecimal(normalizeRational({ num: scaleToFs(scale(1, "ns")), den: scaleToFs(config.calleeUnit) }))} of its ${formatScale(config.calleeUnit)} units (§5.8), so the task waits 5 ns.`
-        : `Right. The literal becomes a real in tb_top's unit (§5.8), the time argument makes it the integer ${integerPassed}${form === "wait_t_1p5ns" ? " (an exact half rounds away from zero, §6.12.1)" : ""}, and #t reads that number in util_pkg's ${formatScale(config.calleeUnit)} unit (§3.14).`,
+      hunted
+        ? `The process wakes after ${correct}, so the log reads "${trace.printed}": 1000 times shorter than the bench intended. Next, find the line that did it.`
+        : form === "wait_ns_5"
+          ? `Right. 1ns is converted inside util_pkg to ${rationalToDecimal(normalizeRational({ num: scaleToFs(scale(1, "ns")), den: scaleToFs(config.calleeUnit) }))} of its ${formatScale(config.calleeUnit)} units (§5.8), so the task waits 5 ns.`
+          : `Right. The literal becomes a real in tb_top's unit (§5.8), the time argument makes it the integer ${integerPassed}${form === "wait_t_1p5ns" ? " (an exact half rounds away from zero, §6.12.1)" : ""}, and #t reads that number in util_pkg's ${formatScale(config.calleeUnit)} unit (§3.14).`,
     ),
-    mk("expected", form === "wait_t_1p5ns" ? "1.5 ns" : "5 ns", "That is the intent, not the result. The literal was converted in tb_top (§5.8) and #t reads the bare number in util_pkg's 1 ps unit (§3.14)."),
+    mk(
+      "expected",
+      form === "wait_t_1p5ns" ? "1.5 ns" : "5 ns",
+      hunted
+        ? "That is the intent, not the result. The call and the print look consistent, yet the log reads 0.005 ns."
+        : "That is the intent, not the result. The literal was converted in tb_top (§5.8) and #t reads the bare number in util_pkg's 1 ps unit (§3.14).",
+    ),
   ];
   if (form === "wait_t_1p5ns") {
     options.push(mk("1ps", "1 ps", "1.5 passed to a time argument rounds to the nearest integer, and an exact half rounds away from zero: 2, not 1 (§6.12.1)."));
-    options.push(mk("1.5ps", "1.5 ps", "A time variable is an integer type; the fraction cannot survive the call (§6.12.1)."));
-  } else if (form === "wait_t_5ns") {
-    options.push(mk("5000ns", "5000 ns", "The conversion goes the other way: the number is small (5) and util_pkg's unit is small (1 ps), so the wait is 5 ps."));
+    options.push(mk("1.5ps", "1.5 ps", "A time variable is an integer type (§6.11), so the fraction cannot survive the call (§6.12.1)."));
+  } else if (hunted) {
+    options.push(mk("5000ns", "5000 ns", "The wait comes up shorter than the bench intended, not longer: the log reads 0.005 ns."));
   } else {
     options.push(mk("5ps", "5 ps", "That is wait_t's bug. wait_ns multiplies by the literal 1ns inside the package, where 1ns is 1000.0 of the 1 ps units (§5.8)."));
   }
-  options.push(mk("error", "A compile error: units do not match", "It compiles. Numbers carry no unit, so the language has nothing to check; the mismatch is silent."));
+  options.push(mk("error", "A compile error: units do not match", "It compiles and runs without a message. The mismatch is silent, and only the log shows it."));
   return dedupe(options);
 }
 
@@ -1799,20 +2254,27 @@ export interface CrossScopeSuspect {
   feedback: string;
 }
 
-/** Suspects, each graded by recomputing the wake time with the suspect's scope changed. */
+/**
+ * The four suspect lines. The verdict is the lesson's judgement of the line; the
+ * evidence is recomputed with that line changed, so it can be checked against it.
+ */
 export function gradeCrossScopeSuspects(config: CrossScopeConfig = CROSS_SCOPE_DEFAULT): CrossScopeSuspect[] {
   const base = traceCrossScope("wait_t_5ns", config);
   const baseWake = base.wakeFs as bigint;
-  const calleeInCallerUnit = traceCrossScope("wait_t_5ns", { ...config, calleeUnit: config.callerUnit, calleePrecision: config.callerPrecision });
+  // #t rewritten as #(t * 1ns): t is the integer the call passed, and 1ns is converted in the package (5.8).
+  const t = BigInt(base.steps[1].value);
+  const scaledT = normalizeRational({ num: t * scaleToFs(scale(1, "ns")), den: scaleToFs(config.calleeUnit) });
+  const scaledHashT = roundDelay({ kind: "number", text: rationalToDecimal(scaledT), digits: scaledT.num, den: scaledT.den }, config.calleeUnit, config.calleePrecision);
   const callerInCalleeUnit = traceCrossScope("wait_t_5ns", { ...config, callerUnit: config.calleeUnit, callerPrecision: config.calleePrecision });
   const otherFormat = traceCrossScope("wait_t_5ns", { ...config, format: timeformat(-12, 0, " ps", 0) });
+  const literalInCallee = roundDelayText("#5ns", config.calleeUnit, config.calleePrecision);
   return [
     {
       id: "hash-t",
       lineKey: "pkg-delay",
       label: "#t; in util_pkg",
       verdict: "culprit",
-      evidence: `Recomputed with util_pkg in ${formatScale(config.callerUnit)}: the same call wakes at ${formatFsAuto(calleeInCallerUnit.wakeFs as bigint)} instead of ${formatFsAuto(baseWake)}.`,
+      evidence: `Recomputed with #t rewritten as #(t * 1ns), so the package says which unit it means: the same call wakes at ${wakeText(scaledHashT, "ns")} instead of ${formatFsAuto(baseWake)}.`,
       feedback: "Yes. #t reads t as a number of util_pkg's own 1 ps units (§3.14). The task promised to wait t without saying in which unit, and a bare number has none.",
     },
     {
@@ -1820,7 +2282,7 @@ export function gradeCrossScopeSuspects(config: CrossScopeConfig = CROSS_SCOPE_D
       lineKey: "tb-call",
       label: "util_pkg::wait_t(5ns); in tb_top",
       verdict: "contributes",
-      evidence: `Recomputed with the literal written inside util_pkg instead: 5ns there would be 5000 units and wake at 5 ns.`,
+      evidence: `Recomputed with the literal written inside util_pkg instead: 5ns there is ${literalInCallee.scaledInUnits} units and wakes at ${wakeText(literalInCallee, "ns")} instead of ${formatFsAuto(baseWake)}.`,
       feedback: "Half right. This is where 5ns becomes the bare number 5, because a literal is converted where it is written (§5.8). The real defect is the package's #t, which gives that number a different unit.",
     },
     {
@@ -1867,6 +2329,8 @@ export function gradeCrossScopeFixes(config: CrossScopeConfig = CROSS_SCOPE_DEFA
       return { callerUnit, wake: formatFsAuto(wake), ok: wake === FIVE_NS_FS };
     });
   const finePrecision = (unit: TimeScale) => (scaleToFs(unit) < scaleToFs(config.callerPrecision) ? unit : config.callerPrecision);
+  const coarseCaller = { ...config, callerUnit: scale(10, "ns"), callerPrecision: finePrecision(scale(10, "ns")) };
+  const bareClockWake = formatFsAuto(clockPeriodFs(coarseCaller, "#0.5") * BigInt(5));
   const fixes: Omit<CrossScopeFix, "correctHere" | "robust">[] = [
     {
       id: "wait-ns",
@@ -1885,9 +2349,9 @@ export function gradeCrossScopeFixes(config: CrossScopeConfig = CROSS_SCOPE_DEFA
     {
       id: "cycles",
       label: "Pass a cycle count: repeat (n) @(posedge clk);",
-      code: "repeat (5) @(posedge clk);   // in tb_top: five clock edges, no unit",
+      code: `always ${CLOCK_HALF_PERIOD} clk = ~clk;   // a literal: the same period in any unit\nrepeat (5) @(posedge clk);   // in tb_top: five clock edges; this line has no unit`,
       results: run("repeat_posedge", (callerUnit) => ({ ...config, callerUnit, callerPrecision: finePrecision(callerUnit) })),
-      review: "Accepted where a clock exists: an event control needs no unit (§9.4.2). It changes the API from a time to a cycle count, so callers must agree on the clock.",
+      review: `Accepted where a clock exists: an event control needs no unit (§9.4.2). It changes the API from a time to a cycle count, so callers must agree on the clock. These results assume the clock line above, whose literal ${CLOCK_HALF_PERIOD} gives the same period in every caller unit (§5.8). With a bare #0.5, a caller in 10ns would wake at ${bareClockWake}.`,
     },
   ];
   return fixes.map((f) => ({ ...f, correctHere: f.results[0].ok, robust: f.results.every((r) => r.ok) }));
@@ -1923,33 +2387,39 @@ export const CROSS_SCOPE_CODE: readonly { key: string; text: string; owner?: "te
  * The code that actually runs for one call form, with line keys that match the
  * steps of traceCrossScope. wait_ns is the lesson's fix, and its comment leaves
  * out the lesson's "= 5 ns" because the learner sees this before predicting.
- * The repeat form declares its clock: the initializer runs before any procedure
- * starts (§6.8), so there is no edge at time 0; clk falls at 0.5 ns and first
- * rises at 1 ns, which is CROSS_SCOPE_DEFAULT.clockPeriodFs.
+ * The repeat form declares its clock with a literal, so the period does not depend
+ * on tb_top's unit: the initializer runs before any procedure starts (§6.8), so
+ * there is no edge at time 0; clk falls at 0.5 ns and first rises at 1 ns.
+ *
+ * `withholdMechanism` leaves out the comment on the package's delay line, which
+ * explains the result, while the learner is still predicting or hunting for the
+ * guilty line. The lesson's exact code returns once they are done.
  */
-export function crossScopeCode(form: CallForm): readonly { key: string; text: string; owner?: "testbench" }[] {
+export function crossScopeCode(form: CallForm, withholdMechanism = false): readonly { key: string; text: string; owner?: "testbench" }[] {
   const swap = (changes: Readonly<Record<string, string>>) => CROSS_SCOPE_CODE.map((l) => (l.key in changes ? { ...l, text: changes[l.key] } : l));
+  const hashT: Readonly<Record<string, string>> = withholdMechanism ? { "pkg-delay": "    #t;" } : {};
   switch (form) {
     case "wait_t_5ns":
-      return CROSS_SCOPE_CODE;
+      return withholdMechanism ? swap(hashT) : CROSS_SCOPE_CODE;
     case "wait_t_1p5ns":
       return swap({
+        ...hashT,
         "tb-call": "    util_pkg::wait_t(1.5ns);         // intent: wait 1.5 ns",
         "tb-display": '    $display("expected 1.5 ns, woke at %t", $realtime);',
       });
     case "wait_ns_5":
       return swap({
         "pkg-task": "  task automatic wait_ns(realtime delay_ns);",
-        "pkg-delay": "    #(delay_ns * 1ns);               // 1ns is converted in THIS package's time unit",
+        "pkg-delay": withholdMechanism ? "    #(delay_ns * 1ns);" : "    #(delay_ns * 1ns);               // 1ns is converted in THIS package's time unit",
         "tb-call": "    util_pkg::wait_ns(5);",
       });
     case "repeat_posedge":
-      return swap({ "tb-call": "    repeat (5) @(posedge clk);" }).flatMap((l) =>
+      return swap({ ...hashT, "tb-call": "    repeat (5) @(posedge clk);" }).flatMap((l) =>
         l.key === "tb-timeunit"
           ? [
               l,
               { key: "tb-clk", text: "  logic clk = 1;                     // set before any procedure starts: no edge at 0", owner: "testbench" as const },
-              { key: "tb-clk-gen", text: "  always #0.5 clk = ~clk;            // falls at 0.5 ns, rises at 1 ns, period 1 ns", owner: "testbench" as const },
+              { key: "tb-clk-gen", text: `  always ${CLOCK_HALF_PERIOD} clk = ~clk;          // falls at 0.5 ns, rises at 1 ns, period 1 ns`, owner: "testbench" as const },
             ]
           : [l],
       );

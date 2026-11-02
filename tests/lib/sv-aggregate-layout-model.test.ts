@@ -12,6 +12,7 @@ import {
   assignWhole,
   assignmentLegality,
   changedLogLines,
+  changedReadsText,
   enumCast,
   enumInitialValue,
   enumMemberReadout,
@@ -19,6 +20,7 @@ import {
   enumNext,
   failingChecks,
   fillWhole,
+  formatB,
   formatD,
   formatH,
   formatHexGroups,
@@ -46,9 +48,12 @@ import {
   structVectorCards,
   svHex,
   tagWidth,
+  taggedPReading,
   taggedPackedBits,
   taggedPackedLayout,
+  taggedTypedef,
   unionInitialValue,
+  unionPathStates,
   unionProblems,
   unionRows,
   unionStates,
@@ -66,7 +71,7 @@ import {
   type UnionType,
 } from "@/lib/sv-aggregate-layout-model";
 import { callEnumMethod, type EnumTypeModel } from "@/lib/sv-enum-string-model";
-import { bitsOf } from "@/lib/sv-expression-model";
+import { bitsOf, fromBigInt } from "@/lib/sv-expression-model";
 
 const PKT_LIKE: PackedMember[] = [
   { id: "kind", name: "kind", width: 2, type: { kind: "logic" } },
@@ -140,7 +145,7 @@ describe("packed struct layout (§7.2.1, §20.6.2)", () => {
     expect(setMemberWidth(CMD_T_ENUM, "op", 9)[0].width).toBe(4);
   });
 
-  it("the struct is 4-state when any member is 4-state; a 2-state member converts x to 0 on write (§7.2.1)", () => {
+  it("the struct is 4-state when any member is 4-state; a 2-state member converts x to 0 on write (§6.11.2)", () => {
     expect(structStates(cmdT)).toBe(4);
     const mixed: PackedMember[] = [{ id: "a", name: "a", width: 4, type: { kind: "bit" } }, { id: "b", name: "b", width: 4, type: { kind: "logic" } }];
     expect(structStates(mixed)).toBe(4);
@@ -149,10 +154,40 @@ describe("packed struct layout (§7.2.1, §20.6.2)", () => {
     const x = writeXInMember(cmdT, svHex(32, "5ABC_0042"), "op");
     expect(bitsOf(x.value).slice(0, 4)).toEqual(["x", "x", "x", "x"]);
     expect(x.structStates).toBe(4);
-    expect(x.note).toMatch(/whole struct.*4-state/);
+    // State-ness comes from the declared types, so the note must not say the x made the struct 4-state, or that every member can carry x.
+    expect(x.note).toBe("op is a 4-state member, so the struct is a 4-state vector whether or not any bit is x (§7.2.1); read as one vector it now shows x in bits [31:28].");
     const twoState = writeXInMember(mixed, svHex(8, "00"), "a");
     expect(bitsOf(twoState.value)).toEqual(["0", "0", "0", "0", "0", "0", "0", "0"]);
     expect(twoState.note).toMatch(/2-state member/);
+    // §7.2.1 only says a conversion happens; x becoming 0 is §6.11.2.
+    expect(twoState.note).toMatch(/x converts to 0 on the way in \(§6\.11\.2\)/);
+    expect(twoState.note).not.toMatch(/§7\.2\.1/);
+  });
+
+  it("a signed source is sign-extended, in the value and in the note, for a member and for the whole struct (§10.7)", () => {
+    const signed8 = fromBigInt(BigInt(-128), 8, true);
+    const member = writeMember(cmdT, svHex(32, "0000_0000"), "data", signed8);
+    expect(formatSizedHex(member.value)).toBe("32'h0000_FF80");
+    expect(member.note).toMatch(/The 8-bit source is sign-extended to 16 bits \(§10\.7\)\.$/);
+    const unsigned = writeMember(cmdT, svHex(32, "0000_0000"), "data", svHex(8, "80"));
+    expect(formatSizedHex(unsigned.value)).toBe("32'h0000_0080");
+    expect(unsigned.note).toMatch(/The 8-bit source is zero-extended to 16 bits \(§10\.7\)\.$/);
+    const whole = assignWhole(cmdT, signed8);
+    expect(formatSizedHex(whole.value)).toBe("32'hFFFF_FF80");
+    expect(whole.note).toMatch(/sign-extended to 32 bits: bits \[31:8\] are filled with the sign bit/);
+  });
+
+  it("a 2-state enum in a 4-state struct: the part-select the explorer offers stores x, and only a read through the member gives 0 (derived from §7.2.1, §6.11.2)", () => {
+    const bitOp: EnumSpec = { ...OPCODE_E, baseDecl: "bit [3:0]", states: 2 };
+    const members: PackedMember[] = [{ id: "op", name: "op", width: 4, type: { kind: "enum", spec: bitOp } }, ...cmdT.slice(1)];
+    expect(xWriteOffer("c", members, "op")).toEqual({ label: "c[31:28] = 4'bx;", partSelect: true });
+    const w = writeXInMember(members, svHex(32, "2ABC_0042"), "op");
+    expect(formatSizedHex(w.value)).toBe("32'hxABC_0042");
+    expect(formatSizedHex(readMember(members, w.value, "op"))).toBe("4'h0");
+    expect(w.note).toMatch(/the bits hold x; a read through the 2-state member op converts them to 0 \(derived from §7\.2\.1, §6\.11\.2\)/);
+    // With no 4-state member the struct is a 2-state vector, so even the part-select cannot store x.
+    const allTwoState: PackedMember[] = [{ id: "op", name: "op", width: 4, type: { kind: "enum", spec: bitOp } }, { id: "d", name: "d", width: 4, type: { kind: "bit" } }];
+    expect(bitsOf(writeXInMember(allTwoState, svHex(8, "2A"), "op").value).slice(0, 4)).toEqual(["0", "0", "0", "0"]);
   });
 
   it("hex overlay: only members on 4-bit boundaries read straight off the hex; kind and seq of pkt_hdr_t share digit 7", () => {
@@ -229,6 +264,22 @@ describe("packed struct layout (§7.2.1, §20.6.2)", () => {
     expect(unpacked[0].message).toMatch(/normally matching the C compiler \(§7\.2\.1\)/);
   });
 
+  it("the comparison card uses a known literal of the struct's live width, and warns about x only while the struct holds it (§11.4.5)", () => {
+    const known = structVectorCards("c", cmdT, true, svHex(32, "5ABC_0042"));
+    expect(known[1].message).not.toMatch(/1'bx/);
+    const allX = structVectorCards("c", cmdT, true, structInitialValue(cmdT));
+    expect(allX[1].code).toBe("c == 32'h0000_0000");
+    expect(allX[1].message).toMatch(/== gives 1'bx; === compares x and z exactly \(§11\.4\.5\)/);
+    const partly = structVectorCards("c", cmdT, true, svHex(32, "xABC_0042"));
+    expect(partly[1].code).toBe("c == 32'h0ABC_0042");
+
+    const wide = setMemberWidth(cmdT, "op", 8);
+    const unpacked = structVectorCards("c", wide, false, svHex(36, "0_5ABC_0042"));
+    expect(unpacked[1].code).toBe("c == 36'h0_5ABC_0042");
+    expect(unpacked[1].message).toMatch(/a 36-bit literal/);
+    expect(unpacked[1].message).not.toMatch(/32-bit/);
+  });
+
   it("a whole-vector statement on an unpacked struct is a compile error: no implicit cast from an integral value (§6.22.3)", () => {
     const card = unpackedWholeAssignCard("cmd_t", "c = 32'h5ABC_0042;");
     expect(card).toMatchObject({ legal: false, clause: "§6.22.3", code: "c = 32'h5ABC_0042;" });
@@ -241,6 +292,9 @@ describe("packed struct layout (§7.2.1, §20.6.2)", () => {
     expect(randMemberCard(true, "op").legal).toBe(false);
     expect(randMemberCard(true, "op").clause).toMatch(/footnote 20/);
     expect(randMemberCard(false, "op").legal).toBe(true);
+    // The card shows the member as declared.
+    expect(randMemberCard(true, "op").code).toBe("rand logic [3:0] op;");
+    expect(randMemberCard(true, "op", "opcode_e")).toMatchObject({ code: "rand opcode_e op;", legal: false });
   });
 
   it("an assignment pattern by name writes each member whatever the declaration order (§10.9.2)", () => {
@@ -268,8 +322,21 @@ describe("enums with explicit values (Table 6-7, §6.19.3–§6.19.5, §6.24.2)"
     expect(enumName(OPCODE_E, enumNext(OPCODE_E, svHex(4, "F")))).toBe("OP_NOP");
     expect(enumName(OPCODE_E, enumNext(OPCODE_E, svHex(4, "2")))).toBe("OP_IRQ");
     expect(bitsOf(enumNext(OPCODE_E, svHex(4, "7")))).toEqual(["x", "x", "x", "x"]);
+    // The 2-state branch: the default is 0, which here is OP_NOP (Table 6-7).
+    const bitBase = mutate(BASE_TB, "bit-base").opcode;
+    expect(formatSizedHex(enumNext(bitBase, svHex(4, "7")))).toBe("4'h0");
+    expect(enumName(bitBase, enumNext(bitBase, svHex(4, "7")))).toBe("OP_NOP");
     const withSync = mutate(BASE_TB, "op-sync").opcode;
     expect(enumName(withSync, enumNext(withSync, svHex(4, "F")))).toBe("OP_SYNC");
+  });
+
+  it("a 2-state base holds a non-member just the same: name() is \"\" whatever the base (§6.19.4, §6.19.5.6)", () => {
+    const bitBase = mutate(BASE_TB, "bit-base").opcode;
+    const cast = enumCast(bitBase, enumInitialValue(bitBase), 7, "static");
+    expect(formatSizedHex(cast.after)).toBe("4'h7");
+    expect(enumName(bitBase, cast.after)).toBe("");
+    const members = mutate(BASE_TB, "bit-base").cmd;
+    expect(enumMemberReadout(members, svHex(32, "7ABC_0042"), "op").name).toBe("");
   });
 
   it("agrees with sv-enum-string-model for an enum with consecutive values", () => {
@@ -299,6 +366,28 @@ describe("enums with explicit values (Table 6-7, §6.19.3–§6.19.5, §6.24.2)"
     expect(d.castReturn).toBe(0);
     expect(formatD(d.after)).toBe("2");
     expect(enumCast(OPCODE_E, before, 2, "dynamic")).toMatchObject({ castReturn: 1 });
+  });
+
+  it("$cast tests the value itself, so an integer too wide for the base does not pass as the member it would wrap to (§6.24.2)", () => {
+    const before = svHex(4, "1");
+    const d = enumCast(OPCODE_E, before, 18, "dynamic");
+    expect(d.castReturn).toBe(0);
+    expect(formatSizedHex(d.after)).toBe("4'h1");
+    expect(d.why).toMatch(/no member with value 18/);
+    // A static cast has no check, so it keeps what fits the 4-bit base, and says that it did.
+    const s = enumCast(OPCODE_E, before, 18, "static");
+    expect(enumName(OPCODE_E, s.after)).toBe("OP_WRITE");
+    expect(s.why).toMatch(/18 does not fit the 4-bit base type, so 2 is what is held/);
+    const s7 = enumCast(OPCODE_E, before, 23, "static");
+    expect(s7.why).toMatch(/op now holds 7, which is not a member/);
+  });
+
+  it("the readout cites §6.19.5.6 for name(), and the back door's basis only for a non-member", () => {
+    expect(enumMemberReadout(CMD_T_ENUM, svHex(32, "2ABC_0042"), "op", "struct", "member-write").citation).toBe("§6.19.5.6");
+    expect(enumMemberReadout(CMD_T_ENUM, svHex(32, "2ABC_0042"), "op", "struct", "member-write").note).not.toMatch(/derived/);
+    expect(enumMemberReadout(CMD_T_ENUM, svHex(32, "7ABC_0042"), "op").citation).toBe("derived from §7.2.1, §6.19.5.6");
+    expect(enumMemberReadout(CMD_T_ENUM, svHex(32, "7ABC_0042"), "op", "union").citation).toBe("§6.19.3, §6.19.5.6");
+    expect(enumMemberReadout(CMD_T_ENUM, structInitialValue(CMD_T_ENUM), "op", "struct", "never-assigned").citation).toBe("Table 6-7, §6.19.5.6");
   });
 
   it("a whole-vector write into a struct stores a non-member opcode, so name() returns \"\" (derived from §7.2.1, §6.19.5.6)", () => {
@@ -341,14 +430,15 @@ describe("type matching and equivalence (§6.22.1, §6.22.2)", () => {
   it("two local typedefs of an unpacked struct are different, non-matching types: the assignment is a compile error (§6.22.1 d; no rule of §6.22.2 applies)", () => {
     const r = assignmentLegality(unpackedA, unpackedB);
     expect(r.legal).toBe(false);
-    expect(r.relation).toBe("incompatible");
+    // Not the standard's "type incompatible": §6.22.5 keeps that for types with no casting rule, and these have the bit-stream cast (§6.24.3).
+    expect(r.relation).toBe("not-assignment-compatible");
     // §6.22.2 (b) covers only anonymous types, so it is not the rule that excludes two named typedefs.
-    expect(r.clause).toBe("§6.22.1 (d), §6.22.2, §6.22.3");
+    expect(r.clause).toBe("§6.22.3; no match under §6.22.1 (d), not equivalent under §6.22.2");
     expect(r.clause).not.toMatch(/\(b\)/);
     expect(r.message).toMatch(/\(c\) covers only packed types/);
   });
 
-  it("one typedef in a package matches itself everywhere (§6.22.1 d)", () => {
+  it("one typedef in a package matches itself wherever it is imported (§6.22.1 h)", () => {
     const pkg: TypeRef = { ...unpackedA, declId: "bus_pkg.cmd_rec_t", display: "bus_pkg::cmd_rec_t" };
     expect(assignmentLegality(pkg, pkg)).toMatchObject({ legal: true, relation: "matching" });
   });
@@ -368,7 +458,7 @@ describe("type matching and equivalence (§6.22.1, §6.22.2)", () => {
   it("a packed and an unpacked struct do not assign, and the message does not call both unpacked (§6.22.3)", () => {
     const a: TypeRef = { declId: "a", display: "a_t", packed: true, bits: 32, states: 4, signed: false };
     const r = assignmentLegality(a, unpackedA);
-    expect(r).toMatchObject({ legal: false, relation: "incompatible", clause: "§6.22.3" });
+    expect(r).toMatchObject({ legal: false, relation: "not-assignment-compatible", clause: "§6.22.3" });
     expect(r.message).toMatch(/only one of a_t and mon\.cmd_rec_t is packed/);
   });
 });
@@ -392,7 +482,7 @@ const wordU: UnionType = {
   ],
 };
 
-describe("packed untagged unions (§7.3.1, §7.4.1, §7.4.4)", () => {
+describe("packed untagged unions (§7.3.1, §7.4.1)", () => {
   it("every member names the same bits: a write through raw is read through f and bytes (§7.3.1)", () => {
     const u = writeUnionPath(cmdU, svHex(32, "0"), "raw", svHex(32, "1ABC_0042")).value;
     expect(formatSizedHex(readUnionPath(cmdU, u, "f.addr"))).toBe("12'hABC");
@@ -409,7 +499,7 @@ describe("packed untagged unions (§7.3.1, §7.4.1, §7.4.4)", () => {
     expect(formatSizedHex(readUnionPath(cmdU, u, "raw"))).toBe("32'hFABC_0099");
   });
 
-  it("the bytes row lays element 3 at the top: [3:0][7:0] is one vector with bytes[3] = [31:24] (§7.4.1, §7.4.4)", () => {
+  it("the bytes row lays element 3 at the top: [3:0][7:0] is one vector with bytes[3] = [31:24] (§7.4.1; derived from the range, as in the §7.3.1 example)", () => {
     const row = unionRows(cmdU).find((r) => r.path === "bytes")!;
     expect(row.pieces.map((p) => `${p.label}${p.hi}:${p.lo}`)).toEqual(["bytes[3]31:24", "bytes[2]23:16", "bytes[1]15:8", "bytes[0]7:0"]);
     expect(unionRows(cmdU).map((r) => [r.packing, r.shape])).toEqual([
@@ -437,6 +527,73 @@ describe("packed untagged unions (§7.3.1, §7.4.1, §7.4.4)", () => {
     const soft = writeUnionPath({ ...narrow, packing: "soft" }, u, "raw", svHex(16, "1234"));
     expect(soft.unaffected[0]).toBe(31);
     expect(soft.note).toMatch(/^raw is right-justified in bits \[15:0\]; bits \[31:16\] are unaffected by the write \(§7\.3\.1\)\.$/);
+  });
+
+  it("a full-width member of a soft union says which rows are narrower: only equal widths earn 'every other member' (§7.3.1)", () => {
+    const word = writeUnionPath(wordU, svHex(32, "0"), "word", svHex(32, "AAAA_BBBB"));
+    expect(word.note).toBe("word names bits [31:0]; half is narrower and reads only its own low bits (§7.3.1).");
+    expect(word.note).not.toMatch(/every other/);
+    const nested: UnionType = {
+      name: "nest_u",
+      packing: "soft",
+      members: [
+        { id: "a", name: "a", width: 12, states: 4, shape: { kind: "vector" } },
+        {
+          id: "inner",
+          name: "inner",
+          width: 8,
+          states: 4,
+          shape: {
+            kind: "union",
+            packing: "soft",
+            members: [
+              { id: "b8", name: "b8", width: 8, states: 4, shape: { kind: "vector" } },
+              { id: "b4", name: "b4", width: 4, states: 4, shape: { kind: "vector" } },
+            ],
+          },
+        },
+      ],
+    };
+    expect(writeUnionPath(nested, svHex(12, "0"), "a", svHex(12, "ABC")).note).toBe("a names bits [11:0]; inner, inner.b8 and inner.b4 are narrower and read only their own low bits (§7.3.1).");
+    // A soft union whose members all have one width is the case the old sentence was true of.
+    const equal: UnionType = { ...cmdU, packing: "soft" };
+    expect(writeUnionPath(equal, svHex(32, "0"), "raw", svHex(32, "1")).note).toBe("raw names bits [31:0]; every other member reads the same bits (§7.3.1).");
+  });
+
+  it("a part-select names the rows that cannot read all of its bits; 'every view' only when every row contains them (§7.3.1)", () => {
+    const narrow: UnionType = { ...cmdU, packing: "soft", members: cmdU.members.map((m) => (m.name === "raw" ? { ...m, width: 16 } : m)) };
+    const u = svHex(32, "1ABC_0042");
+    const op = writeUnionPath(narrow, u, "f.op", svHex(4, "F"));
+    expect(op.note).toBe("f.op is bits [31:28] of f, so only those bits change (§7.2.1); raw [15:0] is narrower and does not read all of those bits (§7.3.1).");
+    expect(formatSizedHex(readUnionPath(narrow, op.value, "raw"))).toBe("16'h0042");
+    expect(writeUnionPath(narrow, u, "bytes[3]", svHex(8, "99")).note).toBe("bytes[3] is bits [31:24] of bytes, so only those bits change (§7.4.5); raw [15:0] is narrower and does not read all of those bits (§7.3.1).");
+    // Bits every row contains: the sentence holds again, soft or not.
+    expect(writeUnionPath(narrow, u, "bytes[0]", svHex(8, "99")).note).toBe("bytes[0] is bits [7:0] of bytes, so only those bits change (§7.4.5); every view reads the same bits (§7.3.1).");
+    expect(writeUnionPath(narrow, u, "f.data", svHex(16, "1")).note).toMatch(/every view reads the same bits/);
+    // Part of a field out of a row's reach: raw 20 bits wide reads [19:16] of addr but not [27:20].
+    const twenty: UnionType = { ...narrow, members: cmdU.members.map((m) => (m.name === "raw" ? { ...m, width: 20 } : m)) };
+    expect(writeUnionPath(twenty, u, "f.addr", svHex(12, "1")).note).toMatch(/raw \[19:0\] is narrower and does not read all of those bits/);
+  });
+
+  it("openNote, shown while a prediction about the narrower rows is open, says nothing about them", () => {
+    const word = writeUnionPath(wordU, svHex(32, "0"), "word", svHex(32, "AAAA_BBBB"));
+    expect(word.openNote).toBe("word names bits [31:0].");
+    expect(writeUnionPath(wordU, svHex(32, "0"), "word", svHex(16, "BBBB")).openNote).toBe("word names bits [31:0]. The 16-bit source is zero-extended to 32 bits (§10.7).");
+    // A narrower row's position is the very thing being asked.
+    expect(writeUnionPath(wordU, svHex(32, "0"), "half", svHex(16, "1234")).openNote).toBe("half is written.");
+    expect(writeUnionPath(cmdU, svHex(32, "0"), "f.op", svHex(4, "F")).openNote).toBe("f.op is written.");
+  });
+
+  it("a signed source is sign-extended when written through a union path, and the note says so (§10.7)", () => {
+    const w = writeUnionPath(wordU, svHex(32, "AAAA_BBBB"), "half", fromBigInt(BigInt(-128), 8, true));
+    expect(formatSizedHex(readUnionPath(wordU, w.value, "word"))).toBe("32'hAAAA_FF80");
+    expect(w.note).toMatch(/The 8-bit source is sign-extended to 16 bits \(§10\.7\)\.$/);
+  });
+
+  it("the typedef of a declaration that does not compile claims no width or state-ness (§7.3.1)", () => {
+    const narrow: UnionType = { ...cmdU, members: cmdU.members.map((m) => (m.name === "raw" ? { ...m, width: 16 } : m)) };
+    expect(unionTypedef(narrow)).toMatch(/} cmd_u;  \/\/ does not compile$/);
+    expect(unionTypedef({ ...narrow, packing: "soft" })).toMatch(/} cmd_u;  \/\/ 32 bits, 4-state$/);
   });
 
   it("a short source is zero-extended and a long one truncated to the path's width; the note says by how much (§10.7)", () => {
@@ -517,6 +674,52 @@ describe("packed untagged unions (§7.3.1, §7.4.1, §7.4.4)", () => {
     expect(rows.map((r) => r.packing)).toEqual(["soft", "soft", "soft", "soft"]);
   });
 
+  it("a 2-state member reads and writes x as 0 (§6.11.2), while the union's 4-state view keeps the x (§7.3.1)", () => {
+    const mixed: UnionType = {
+      name: "mix_u",
+      packing: "packed",
+      members: [
+        { id: "l", name: "l", width: 8, states: 4, shape: { kind: "vector" } },
+        { id: "b", name: "b", width: 8, states: 2, shape: { kind: "vector" } },
+      ],
+    };
+    expect(unionPathStates(mixed, "b")).toBe(2);
+    const v = svHex(8, "xF");
+    expect(formatSizedHex(readUnionPath(mixed, v, "l"))).toBe("8'hxF");
+    expect(formatSizedHex(readUnionPath(mixed, v, "b"))).toBe("8'h0F");
+    const written = writeUnionPath(mixed, svHex(8, "00"), "b", svHex(8, "x1")).value;
+    expect(formatSizedHex(written)).toBe("8'h01");
+    expect(formatSizedHex(writeUnionPath(mixed, svHex(8, "00"), "l", svHex(8, "x1")).value)).toBe("8'hx1");
+  });
+
+  it("a 2-state field of a struct member converts on read too, and a 4-state one does not (§7.2.1, §7.3.1)", () => {
+    const withBit: UnionType = {
+      name: "fld_u",
+      packing: "packed",
+      members: [
+        {
+          id: "f",
+          name: "f",
+          width: 8,
+          states: 4,
+          shape: {
+            kind: "struct",
+            typeName: "fld_t",
+            members: [
+              { id: "hi", name: "hi", width: 4, type: { kind: "bit" } },
+              { id: "lo", name: "lo", width: 4, type: { kind: "logic" } },
+            ],
+          },
+        },
+        { id: "raw", name: "raw", width: 8, states: 4, shape: { kind: "vector" } },
+      ],
+    };
+    const v = svHex(8, "xx");
+    expect(formatSizedHex(readUnionPath(withBit, v, "f.hi"))).toBe("4'h0");
+    expect(formatSizedHex(readUnionPath(withBit, v, "f.lo"))).toBe("4'hx");
+    expect(formatSizedHex(readUnionPath(withBit, v, "raw"))).toBe("8'hxx");
+  });
+
   it("a 2-state member plus a 4-state member makes the union 4-state (§7.3.1)", () => {
     const mixed: UnionType = {
       name: "m_u",
@@ -550,17 +753,42 @@ describe("defaults of unions (Table 6-7, §7.3.1)", () => {
 const vint: TaggedUnionType = {
   name: "VInt",
   members: [
-    { name: "Invalid", width: null, typeText: "void" },
-    { name: "Valid", width: 32, typeText: "int" },
+    { name: "Invalid", width: null, typeText: "void", signed: false },
+    { name: "Valid", width: 32, typeText: "int", signed: true },
   ],
 };
 
 describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
-  it("the tag changes only through a tagged expression; reading the matching member is legal (§11.9)", () => {
+  it("a tagged expression sets the tag and the value together (§7.3.2); reading the matching member is legal (§11.9)", () => {
+    const invalid = makeTagged(vint, "Invalid");
+    expect(invalid).toEqual({ tagIndex: 0, value: null });
     const v = makeTagged(vint, "Valid", 23);
+    expect(v.tagIndex).toBe(1);
+    expect(formatD(v.value!)).toBe("23");
     const read = readTagged(vint, v, "Valid");
     expect(read.ok).toBe(true);
     if (read.ok) expect(formatD(read.value)).toBe("23");
+  });
+
+  it("a member's signedness comes from its type: int prints -1, bit [7:0] prints 255 (§6.11, Table 6-8)", () => {
+    const minusOne = makeTagged(vint, "Valid", -1);
+    const read = readTagged(vint, minusOne, "Valid");
+    expect(read.ok && formatD(read.value)).toBe("-1");
+    expect(read.ok && read.note).toMatch(/returns -1 \(§11\.9\)/);
+    expect(formatTaggedP(vint, minusOne)).toBe("Valid:-1");
+    const three: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false }] };
+    const small = makeTagged(three, "Small", -1);
+    expect(small.value?.signed).toBe(false);
+    expect(formatTaggedP(three, small)).toBe("Small:255");
+    // An SvValue source takes the member's signedness too.
+    expect(makeTagged(vint, "Valid", fromBigInt(BigInt(-1), 8, true)).value?.signed).toBe(true);
+    expect(formatD(makeTagged(vint, "Valid", fromBigInt(BigInt(-1), 8, true)).value!)).toBe("-1");
+    expect(formatD(makeTagged(vint, "Valid", svHex(8, "FF")).value!)).toBe("255");
+  });
+
+  it("the typedef text follows Syntax 7-2 and the §7.3.2 VInt example, unpacked and packed", () => {
+    expect(taggedTypedef(vint)).toBe("typedef union tagged {\n  void  Invalid;\n  int   Valid;\n} VInt;");
+    expect(taggedTypedef(vint, true)).toBe("typedef union tagged packed {\n  void  Invalid;\n  int   Valid;\n} VInt;");
   });
 
   it("reading a member that does not match the tag is a run-time error (§11.9)", () => {
@@ -596,7 +824,7 @@ describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
   });
 
   it("a third member grows the tag to 2 bits and leaves the bits between tag and a narrower member undefined (§7.3.2)", () => {
-    const three: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]" }] };
+    const three: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false }] };
     expect(tagWidth(3)).toBe(2);
     expect(tagWidth(5)).toBe(3);
     expect(tagWidth(8)).toBe(3);
@@ -609,9 +837,54 @@ describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
     expect(small.undefinedBits).toHaveLength(24);
   });
 
+  it("the note credits the tag's code to Figures 7-2 and 7-3, not §7.3.2, and calls a third member's code our own extension", () => {
+    const two = taggedPackedBits(vint, makeTagged(vint, "Valid", 23)).note;
+    expect(two).toMatch(/Tag \[32\] = 1 \(Valid\): the code follows the numbering of Figures 7-2 and 7-3\. Valid is right-justified in \[31:0\] \(§7\.3\.2\)\./);
+    expect(two).not.toMatch(/extension/);
+    const three: TaggedUnionType = { name: "VInt", members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false }] };
+    const small = taggedPackedBits(three, makeTagged(three, "Small", 0x5a)).note;
+    expect(small).toMatch(/Tag \[33:32\] = 2 \(Small\): the code follows the numbering of Figures 7-2 and 7-3, and code 2 for a third member is our own extension of it\./);
+    expect(small).toMatch(/the 24 bits between are undefined \(§7\.3\.2\)/);
+  });
+
+  it("a read of a never-assigned tagged union labels 'no defined result' as derived (§11.9)", () => {
+    const r = readTagged(vint, UNDEFINED_TAGGED, "Valid");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/tag bits are undefined \(§11\.9\)/);
+      expect(r.error).toMatch(/Derived from that, whether the check fires is not defined/);
+    }
+  });
+
   it("%p prints tag:value for the valid member (§21.2.1.6)", () => {
     expect(formatTaggedP(vint, makeTagged(vint, "Valid", 23))).toBe("Valid:23");
     expect(formatTaggedP(vint, makeTagged(vint, "Invalid"))).toBe("Invalid");
+  });
+
+  it("%p of a never-assigned variable states no printed string; 'not defined' is labelled derived from §11.9", () => {
+    expect(formatTaggedP(vint, UNDEFINED_TAGGED)).toBeNull();
+    for (const packed of [false, true]) {
+      const r = taggedPReading(vint, UNDEFINED_TAGGED, packed);
+      expect(r).toMatchObject({ text: null, basis: "derived", citation: "derived from §11.9" });
+      expect(r.sentence).toMatch(/not defined.*tag bits included.*derived from §11\.9/);
+      expect(r.sentence).not.toMatch(/21\.2\.1\.6|prints/);
+    }
+  });
+
+  it("%p when packed is a reading that tools can differ on, void or not: a packed union is singular (§6.4, §6.11.1)", () => {
+    for (const member of ["Valid", "Invalid"] as const) {
+      const r = taggedPReading(vint, makeTagged(vint, member, member === "Valid" ? 23 : undefined), true);
+      expect(r.basis, member).toBe("tool-dependent");
+      expect(r.citation, member).toBe("a reading of §21.2.1.6 that tools can implement differently");
+    }
+    expect(taggedPReading(vint, makeTagged(vint, "Valid", 23), true).sentence).toBe("%p prints Valid:23 (a reading of §21.2.1.6 that tools can implement differently).");
+  });
+
+  it("%p when unpacked is stated for a member with a value, and derived for a void one, on which §21.2.1.6 is silent", () => {
+    expect(taggedPReading(vint, makeTagged(vint, "Valid", 23), false)).toEqual({ text: "Valid:23", basis: "stated", citation: "tag:value, §21.2.1.6", sentence: "%p prints Valid:23 (tag:value, §21.2.1.6)." });
+    const v = taggedPReading(vint, makeTagged(vint, "Invalid"), false);
+    expect(v).toMatchObject({ text: "Invalid", basis: "derived" });
+    expect(v.citation).toMatch(/^derived: .*§21\.2\.1\.6.*§7\.3\.2$/);
   });
 });
 
@@ -637,12 +910,38 @@ describe("formatting (§21.2.1.3, §5.7.1)", () => {
     expect(formatH(svHex(5, "1F"))).toBe("1f");
   });
 
+  it("a literal narrower than its size pads with 0, or with x or z when its leftmost digit is x or z; a wider one truncates from the left (§5.7.1)", () => {
+    expect(formatB(svHex(8, "1"))).toBe("00000001");
+    expect(formatB(svHex(8, "x"))).toBe("xxxxxxxx");
+    expect(formatB(svHex(8, "z"))).toBe("zzzzzzzz");
+    expect(formatB(svHex(8, "x1"))).toBe("xxxx0001");
+    expect(formatB(svHex(12, "x1"))).toBe("xxxxxxxx0001");
+    expect(formatB(svHex(12, "z1"))).toBe("zzzzzzzz0001");
+    expect(formatB(svHex(12, "1x"))).toBe("00000001xxxx");
+    expect(formatB(svHex(4, "1F"))).toBe("1111");
+  });
+
+  it("changedReadsText names only what changed, and the whole value when too many reads did", () => {
+    const whole = { name: "c", value: svHex(32, "50FF_0042") };
+    const read = (name: string, before: string, after: string, width = 4) => ({ name, before: svHex(width, before), after: svHex(width, after) });
+    expect(changedReadsText([read("op", "5", "5"), read("addr", "ABC", "0FF", 12)], whole)).toBe("addr = 12'h0FF");
+    expect(changedReadsText([read("op", "5", "5")], whole)).toBe("");
+    expect(changedReadsText([read("a", "1", "2"), read("b", "1", "2"), read("c", "1", "2"), read("d", "1", "2")], whole)).toBe("c = 32'h50FF_0042");
+    // x is a change, though both read as "not a number".
+    expect(changedReadsText([read("op", "5", "x")], whole)).toBe("op = 4'hx");
+  });
+
   it("%h prints one lower-case digit per nibble, x for an all-x nibble and X for a mixed one", () => {
     expect(formatH(svHex(32, "2123_BEEF"))).toBe("2123beef");
     expect(formatH(svHex(12, "042"))).toBe("042");
     expect(formatH(svHex(8, "x1"))).toBe("x1");
     const mixed = writeXInMember([{ id: "a", name: "a", width: 2, type: { kind: "logic" } }, { id: "b", name: "b", width: 6, type: { kind: "logic" } }], svHex(8, "00"), "a").value;
     expect(formatH(mixed)).toBe("X0");
+  });
+
+  it("%0d of a signed value prints it as signed (§21.2.1.3)", () => {
+    expect(formatD(fromBigInt(BigInt(-1), 32, true))).toBe("-1");
+    expect(formatD(fromBigInt(BigInt(-1), 32, false))).toBe("4294967295");
   });
 
   it("%0d prints decimal, or x when every bit is unknown", () => {

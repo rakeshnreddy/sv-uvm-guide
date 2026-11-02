@@ -22,6 +22,7 @@ import {
   isunknown,
   mathIntuition,
   notBit,
+  numericInit,
   onehot,
   onehot0,
   operatorCatalog,
@@ -34,19 +35,23 @@ import {
   optimisticX,
   parseExpression,
   parseLiteral,
+  predictionVerdict,
   reductionFold,
   replCount,
   runOperator,
   splitConcatTarget,
+  stepBadges,
   streamBlocks,
   toBigInt,
   trapPredictionOptions,
   trapScenarios,
+  valueRange,
   type Bit4,
   type NodeAnnotation,
   type OperatorInputs,
   type SvDecl,
   type SvValue,
+  type TrapScenario,
 } from "@/lib/sv-expression-model";
 
 // ---- helpers -------------------------------------------------------------
@@ -264,6 +269,25 @@ describe("§11.4.10 shifts", () => {
     expect(lit(expr(decls, "s >>> 2").value)).toBe("4'b1110");
     // LRM Example 1: 4'b0001 << 2 = 4'b0100.
     expect(lit(expr([d("st", "logic", 4, "4'd1")], "st << 2").value)).toBe("4'b0100");
+  });
+
+  it("§11.4.10: an unsigned count leaves s >>> n signed, so it still copies the sign bit", () => {
+    const decls = [d("s", "logic", 8, "-8", true), d("n", "logic", 3, "3'd1"), d("u", "logic", 8, "8'd1")];
+    const r8 = d("r", "logic", 8, undefined, true);
+    for (const src of ["s >>> n", "s >>> 3'd1", "s >>> u", "s >>> u[0:0]"]) {
+      expect(dec(assign(decls, r8, src).final), src).toBe("-4");
+      expect(expr(decls, src).signed, src).toBe(true);
+    }
+  });
+
+  it("the explanation prints the real count; only the computation clamps it to the width", () => {
+    const decls = [d("s", "logic", 8, "-8", true)];
+    const why = (src: string) => expr(decls, src).steps.find((x) => x.kind === "op" && x.text === src)?.why;
+    expect(why("s >>> 100")).toMatch(/^Arithmetic right shift by 100:/);
+    expect(why("s >> 100")).toMatch(/^Logical right shift by 100:/);
+    expect(why("s << 100")).toMatch(/^Left shift by 100:/);
+    expect(dec(expr(decls, "s >>> 100").value)).toBe("-1");
+    expect(dec(expr(decls, "s >> 100").value)).toBe("0");
   });
 
   it("<<< is identical to <<", () => {
@@ -910,6 +934,10 @@ describe("scenario text never answers the prediction", () => {
     casts: /pads|truncat|keeps the|changes how|behaves like/i,
     "part-select": /unsigned|zero-extend|does not help/i,
     "literal-sign": /unsigned|signed;|carries an s/i,
+    "ashr-unsigned-context": /unsigned|fills with|makes the/i,
+    "lost-carry": /LHS|context|extended|lost/i,
+    "signed-compare": /decides|signed only|one unsigned/i,
+    "int-vs-logic": /is signed|is not|one unsigned/i,
   };
   for (const [id, leak] of Object.entries(leaks)) {
     it(`${id}: the title and summary hold no rule; the rule field does`, () => {
@@ -919,6 +947,80 @@ describe("scenario text never answers the prediction", () => {
       expect(sc.rule).toMatch(/§/);
     });
   }
+});
+
+describe("each scenario's rule: its clauses and the sentences that carry it", () => {
+  const clauses = Object.fromEntries(trapScenarios.map((s) => [s.id, s.rule?.match(/§[\d.]+/g) ?? []]));
+  const rule = (id: string) => trapScenarios.find((s) => s.id === id)?.rule ?? "";
+
+  it("cites exactly these clauses", () => {
+    expect(clauses).toEqual({
+      "mixed-add": [],
+      "signed-compare": ["§11.4.4", "§11.8.1"],
+      "shift-fill": [],
+      "lost-carry": ["§11.6.1"],
+      "int-vs-logic": ["§6.11", "§11.4.4", "§11.8.1"],
+      "x-arith": [],
+      casts: ["§6.24.1"],
+      "part-select": ["§11.8.1"],
+      "literal-sign": ["§11.8.1", "§5.7.1", "§11.3.3"],
+      "ashr-unsigned-context": ["§11.4.10", "§11.8.1"],
+    });
+  });
+  it("lost-carry: the context is set by context-determined operands; a shift count does not count", () => {
+    expect(rule("lost-carry")).toContain("the widest of the LHS and the context-determined operands; a shift count is self-determined and does not count");
+    expect(rule("lost-carry")).toContain("Table 11-21");
+    expect(rule("lost-carry")).not.toMatch(/widest of the LHS and the operands/);
+  });
+  it("ashr-unsigned-context: only a context-determined operand makes the expression unsigned", () => {
+    expect(rule("ashr-unsigned-context")).toBe(
+      "An unsigned context-determined operand, including a bare part-select, makes the expression unsigned, so >>> fills with 0 (§11.4.10, §11.8.1). Self-determined operands do not count: the shift count and a ?: condition never affect the sign (Table 11-21). If the shifted value and every other context-determined operand are signed, >>> copies the sign bit.",
+    );
+  });
+  it("§11.8.1 and Table 11-21: a self-determined operand leaves the sign fill in place, as the rule says", () => {
+    const sc = trapScenarios.find((s) => s.id === "ashr-unsigned-context")!;
+    const decls = [...sc.decls, { name: "t", type: "logic" as const, signed: true, width: 8, init: "-2" }];
+    const r8 = sc.target;
+    const unsigned8 = { name: "r", type: "logic" as const, width: 8 };
+    // The ?: condition u is unsigned, and the branches are signed.
+    expect(assign(decls, r8, "u ? (s >>> 1) : t").rhsSigned).toBe(true);
+    expect(dec(assign(decls, r8, "u ? (s >>> 1) : t").final)).toBe("-4");
+    expect(dec(assign(decls, unsigned8, "u ? (s >>> 1) : s").final)).toBe("252");
+    // Inside a concatenation, each member is self-determined.
+    expect(lit(assign(decls, { name: "w", type: "logic", width: 16 }, "{u, s >>> 1}").final)).toBe("16'b0000_0001_1111_1100");
+    // The exponent is self-determined too.
+    expect(dec(assign(decls, r8, "(s >>> 1) ** u").final)).toBe("-4");
+    // The count is self-determined.
+    expect(dec(assign(decls, r8, "s >>> u").final)).toBe("-4");
+    // A part-select inside a cast is self-determined; a bare one is not.
+    expect(dec(assign(decls, r8, "$signed(s[7:0]) >>> 1").final)).toBe("-4");
+    expect(assign(decls, r8, "$signed(s[7:0]) >>> 1").rhsSigned).toBe(true);
+    expect(dec(assign(decls, r8, "s[7:0] >>> 1").final)).toBe("124");
+    expect(assign(decls, r8, "s[7:0] >>> 1").rhsSigned).toBe(false);
+  });
+  it("the other rules keep their deciding sentences", () => {
+    expect(rule("signed-compare")).toContain("A comparison is signed only when both operands are signed");
+    expect(rule("signed-compare")).toContain("A plain decimal and a literal with s are signed; 4'd0 is not");
+    expect(rule("casts")).toContain("a type cast behaves like an assignment to that type");
+    expect(rule("literal-sign")).toContain("A sized literal holds only its declared bits, so with s the pattern is read as a two's-complement number");
+    expect(rule("lost-carry")).toContain("The carry survives only when the target, a cast or a wider context-determined operand makes the context wider than the sum's 8 bits");
+    expect(rule("int-vs-logic")).toContain("int is signed and logic [31:0] is not");
+    expect(rule("casts")).toContain("A size cast pads or truncates and keeps the signedness; a sign cast keeps the bits");
+    expect(rule("part-select")).toContain("A part-select is unsigned even when it covers the whole of a signed vector");
+    expect(rule("literal-sign")).toContain("A simple decimal is signed; a based literal is unsigned unless it carries an s");
+  });
+  it("the casts summary does not claim one bit pattern passes through all three casts", () => {
+    expect(trapScenarios.find((s) => s.id === "casts")?.summary).toMatch(/^A few bit patterns go through/);
+  });
+  it("the carry takeaway behind (a8 + b8 + 0) >> 1 cites the LRM's own example", () => {
+    const fix = trapScenarios.find((s) => s.id === "lost-carry")?.variants.find((v) => v.id === "avg-fix");
+    expect(fix?.takeaway).toContain("(§11.6.1, §11.6.2)");
+  });
+  it("the rule's claim holds: the 1 in >> 1 leaves the context at 8 bits, the 0 in + 0 widens it to 32", () => {
+    const sc = trapScenarios.find((s) => s.id === "lost-carry")!;
+    expect(assign(sc.decls, sc.target, "(a8 + b8) >> 1").contextWidth).toBe(8);
+    expect(assign(sc.decls, sc.target, "(a8 + b8 + 0) >> 1").contextWidth).toBe(32);
+  });
 });
 
 describe("§11.3.3 literal signedness scenario", () => {
@@ -1166,5 +1268,628 @@ describe("operator prediction options: order and a real choice", () => {
     const p = operatorPresets.find((x) => x.id === "bitcount-x-guarded")!;
     expect(p.specId).toBe("onehot-guarded");
     expect(p.inputs.a?.join("")).toBe("01x0");
+  });
+});
+
+describe("insightOf: a >>> question gets its fill in the feedback", () => {
+  const sc = trapScenarios.find((s) => s.id === "ashr-unsigned-context")!;
+  const correct = (expr: string, decls = sc.decls) => trapPredictionOptions(decls, sc.target, expr).find((o) => o.correct);
+
+  it("(s >>> 1) + u: the correct answer names the zero fill as well as the unsigned context", () => {
+    const feedback = correct("(s >>> 1) + u")?.feedback;
+    expect(feedback).toMatch(/one unsigned context-determined operand makes the whole expression unsigned/);
+    expect(feedback).toMatch(/>>> on an unsigned expression fills with 0/);
+  });
+  it("every distractor that quotes the insight carries the fill too", () => {
+    const options = trapPredictionOptions(sc.decls, sc.target, "(s >>> 1) + u");
+    expect(options.find((o) => o.label === "r = -3")?.feedback).toMatch(/fills with 0/);
+  });
+  it("(s >>> 1) + $signed(u): nothing is surprising, and the answer still names the sign fill", () => {
+    expect(correct("(s >>> 1) + $signed(u)")?.feedback).toMatch(/vacated bits copy the sign bit \(1\)/);
+  });
+  it("the shift sentence is not repeated when the shift is the last operation", () => {
+    const feedback = correct("s[7:0] >>> 1")?.feedback ?? "";
+    expect(feedback.split(">>> on an unsigned expression").length - 1).toBe(1);
+    const arith = assign([], d("r", "logic", 4, undefined, true), "-4'sd1 >>> 1").insight;
+    expect(arith.split("Arithmetic right shift").length - 1).toBe(1);
+  });
+  it("an expression without a shift keeps its first two surprising steps", () => {
+    const mixed = trapScenarios.find((s) => s.id === "mixed-add")!;
+    const r = assign(mixed.decls, mixed.target, "a + u");
+    const surprising = r.steps.filter((s) => s.surprising);
+    expect(r.insight).toBe(surprising.slice(0, 2).map((s) => s.why).join(" "));
+  });
+});
+
+describe("TrapVariant: fixes name their trap, and takeaways reach the correct answer", () => {
+  it("every fix variant names a trap variant of its own scenario, and nothing else names one", () => {
+    for (const sc of trapScenarios) {
+      for (const v of sc.variants) {
+        if (v.role !== "fix") {
+          expect(v.contrast, `${sc.id}/${v.id}`).toBeUndefined();
+          continue;
+        }
+        expect(sc.variants.find((x) => x.id === v.contrast)?.role, `${sc.id}/${v.id}`).toBe("trap");
+      }
+    }
+  });
+  it("the size-cast contrast is (a8 + b8) >> 1 = 22 against 150", () => {
+    const sc = trapScenarios.find((s) => s.id === "lost-carry")!;
+    const fix = sc.variants.find((v) => v.id === "size-cast")!;
+    const contrast = sc.variants.find((v) => v.id === fix.contrast)!;
+    expect(contrast.expr).toBe("(a8 + b8) >> 1");
+    expect(dec(assign(sc.decls, sc.target, contrast.expr).final)).toBe("22");
+    expect(dec(assign(sc.decls, sc.target, fix.expr).final)).toBe("150");
+  });
+  it("a takeaway is added to the correct answer only, and it says the wider context keeps the carry", () => {
+    const sc = trapScenarios.find((s) => s.id === "lost-carry")!;
+    const fix = sc.variants.find((v) => v.id === "size-cast")!;
+    const opts = trapPredictionOptions(sc.decls, sc.target, fix.expr, fix.takeaway);
+    expect(opts.find((o) => o.correct)?.feedback).toMatch(/9-bit context keeps the carry/);
+    for (const o of opts.filter((x) => !x.correct)) expect(o.feedback).not.toMatch(/keeps the carry/);
+    const avg = sc.variants.find((v) => v.id === "avg-fix")!;
+    expect(trapPredictionOptions(sc.decls, sc.target, avg.expr, avg.takeaway).find((o) => o.correct)?.feedback).toMatch(/32-bit context keeps the carry/);
+  });
+  it("the carry a takeaway claims is really kept at the extreme operands", () => {
+    const sc = trapScenarios.find((s) => s.id === "lost-carry")!;
+    for (const [x, y] of [[255, 255], [255, 1], [128, 128], [0, 0]]) {
+      const decls = [d("a8", "logic", 8, `8'd${x}`), d("b8", "logic", 8, `8'd${y}`)];
+      for (const id of ["size-cast", "avg-fix"]) {
+        const v = sc.variants.find((q) => q.id === id)!;
+        expect(dec(assign(decls, sc.target, v.expr).final), `${id} ${x} ${y}`).toBe(String((x + y) >> 1));
+      }
+    }
+  });
+});
+
+describe("the article before a width", () => {
+  const widen = (N: number) => assign([d("a", "logic", 4, "4'd1")], d("t", "logic", 32), `${N}'(a)`).steps.find((s) => s.kind === "context" && s.scope === "cast")?.why;
+  it.each([
+    [8, "an"],
+    [11, "an"],
+    [18, "an"],
+    [9, "a"],
+    [16, "a"],
+    [12, "a"],
+  ])("%i-bit takes %s", (N, article) => {
+    expect(widen(N)).toContain(`what ${article} ${N}-bit variable`);
+  });
+  it("the keep-msbs distractor picks its article from N too", () => {
+    const keep = (expr: string) => trapPredictionOptions([], d("v", "logic", 8), expr).find((o) => o.misconception === "keep-msbs")?.feedback;
+    expect(keep("8'(12'hABC)")).toMatch(/what an 8-bit variable/);
+    expect(keep("9'(12'hABC)")).toMatch(/what a 9-bit variable/);
+  });
+});
+
+describe("predictionVerdict", () => {
+  const options = [
+    { id: "a", label: "r = 1", correct: false },
+    { id: "b", label: "r = 2", correct: true },
+  ];
+  it("says whether the prediction held, and always gives the answer", () => {
+    expect(predictionVerdict(options, "b")).toBe("Your prediction is right. The answer is r = 2.");
+    expect(predictionVerdict(options, "a")).toBe("Your prediction is wrong. The answer is r = 2.");
+    expect(predictionVerdict(options, null)).toBe("Answer revealed without a prediction. The answer is r = 2.");
+  });
+  it("code that does not compile reads as a sentence", () => {
+    const specs = operatorCatalog.filter((s) => s.id === "binary-nand" || s.id === "concat-unsized");
+    expect(specs).toHaveLength(2);
+    for (const s of specs) {
+      const opts = operatorPredictionOptions(s, { a: ["1", "0", "1", "0"], b: ["0", "1", "1", "0"], c: ["0"], n: ["0"], signedA: false });
+      expect(opts.find((o) => o.correct)?.label).toBe("Compile error");
+      expect(predictionVerdict(opts, opts.find((o) => o.correct)?.id ?? null)).toBe("Your prediction is right. The answer is a compile error.");
+      expect(predictionVerdict(opts, null)).toBe("Answer revealed without a prediction. The answer is a compile error.");
+    }
+  });
+});
+
+describe("fixedAnswer: the operators whose answer ignores the operands", () => {
+  const variations: Partial<OperatorInputs>[] = [
+    { a: ["0", "0", "0", "0"], b: ["1", "1", "1", "1"] },
+    { a: ["1", "x", "z", "0"], b: ["z", "z", "x", "x"] },
+  ];
+  it("exactly three operators are flagged; the two compile errors stay compile errors whatever the operand values", () => {
+    expect(operatorCatalog.filter((s) => s.fixedAnswer).map((s) => s.id).sort()).toEqual(["binary-nand", "concat-target", "concat-unsized"]);
+    for (const id of ["binary-nand", "concat-unsized"]) {
+      const spec = operatorCatalog.find((s) => s.id === id)!;
+      for (const v of variations) {
+        const inputs: OperatorInputs = { a: ["1", "1", "0", "0"], b: ["0", "0", "1", "1"], c: ["0"], n: ["0", "0", "1"], signedA: false, ...v };
+        expect(operatorPredictionOptions(spec, inputs).find((o) => o.correct)?.label, id).toBe("Compile error");
+      }
+    }
+  });
+  it("{hi, lo} = 16'hBEEF stores the same members whatever hi and lo held", () => {
+    const spec = operatorCatalog.find((s) => s.id === "concat-target")!;
+    const answer = (a: Bit4[], b: Bit4[]) => operatorPredictionOptions(spec, { a, b, c: ["0"], n: ["0"], signedA: false }).find((o) => o.correct)?.label;
+    const ones = Array<Bit4>(8).fill("1");
+    const xs = Array<Bit4>(8).fill("x");
+    expect(answer(ones, xs)).toBe("hi = 8'hBE, lo = 8'hEF");
+    expect(answer(xs, ones)).toBe("hi = 8'hBE, lo = 8'hEF");
+  });
+});
+
+describe("shift prediction options name the fill, even where a rotation gives the same bits", () => {
+  const LOGICAL = "That is a logical shift. With a declared signed, >>> copies the sign bit into the vacated positions.";
+  const ZERO_FILL = "a is unsigned, so the expression is unsigned and >>> fills with 0, just like >>.";
+  const ALWAYS_LOGICAL = ">> is always logical: it fills with 0 even when a is signed. Only >>> sign-fills.";
+  const ROTATE = "Shifts do not rotate: bits shifted out are lost and the vacated positions are filled (§11.4.10).";
+  const spec = (id: string) => operatorCatalog.find((s) => s.id === id)!;
+  const B = (x: string) => x.split("") as Bit4[];
+  const inputs = (a: string, n: string, signedA: boolean): OperatorInputs => ({ a: B(a), b: B("0000"), c: B("0"), n: B(n), signedA });
+  const feedback = (id: string, a: string, n: string, signedA: boolean, label: string) => operatorPredictionOptions(spec(id), inputs(a, n, signedA)).find((o) => o.label === label)?.feedback;
+
+  it("signed a = 1000 >>> 1: 4'b0100 is both the zero fill and the rotation, and it is diagnosed as the zero fill", () => {
+    expect(feedback("ashr", "1000", "001", true, "4'b0100")).toBe(LOGICAL);
+  });
+  it("unsigned a = 1001 >>> 1: 4'b1100 is both the sign fill and the rotation, and it is diagnosed as the sign fill", () => {
+    expect(feedback("ashr", "1001", "001", false, "4'b1100")).toBe(ZERO_FILL);
+  });
+  it(">> on a = 1001: the same bits get the >> diagnosis", () => {
+    expect(feedback("shr", "1001", "001", false, "4'b1100")).toBe(ALWAYS_LOGICAL);
+  });
+  it("a true rotation that is neither fill keeps the rotate text", () => {
+    expect(feedback("ashr", "1010", "001", true, "4'b0101")).toBe(LOGICAL);
+    expect(feedback("ashr", "1001", "010", true, "4'b0110")).toBe(ROTATE);
+  });
+  it("sweep: for every 4-bit negative a and n = 1..3 each fill option carries the fill diagnosis", () => {
+    for (let v = 8; v < 16; v += 1) {
+      const a = v.toString(2);
+      for (const n of ["001", "010", "011"]) {
+        const count = parseInt(n, 2);
+        const zero = `4'b${(v >> count).toString(2).padStart(4, "0")}`;
+        const sign = `4'b${((((v - 16) >> count) + 16) & 15).toString(2).padStart(4, "0")}`;
+        expect(feedback("ashr", a, n, true, zero), `signed ${a} >>> ${n}`).toBe(LOGICAL);
+        expect(feedback("ashr", a, n, false, sign), `unsigned ${a} >>> ${n}`).toBe(ZERO_FILL);
+        expect(feedback("shr", a, n, false, sign), `${a} >> ${n}`).toBe(ALWAYS_LOGICAL);
+      }
+    }
+  });
+});
+
+/** Every combination of a scenario's edge values, the way the lab's operand editors reach them. */
+function operandGrid(sc: TrapScenario): SvDecl[][] {
+  let grid: SvDecl[][] = [sc.decls];
+  for (const ed of sc.editable) {
+    const next: SvDecl[][] = [];
+    for (const decls of grid) {
+      for (const width of ed.widths ?? [undefined]) {
+        const decl = decls.find((x) => x.name === ed.name)!;
+        const sized = { ...decl, width: width ?? decl.width };
+        const range = valueRange(sized);
+        const lo = Math.max(range.min, ed.min ?? range.min);
+        const hi = Math.min(range.max, ed.max ?? range.max);
+        const values = Array.from(new Set([lo, -8, -1, 0, 1, 7, 8, 63, 127, hi].filter((x) => x >= lo && x <= hi)));
+        for (const value of values) next.push(decls.map((x) => (x.name === ed.name ? { ...sized, init: numericInit(sized, value) } : x)));
+      }
+    }
+    grid = next;
+  }
+  return grid;
+}
+
+describe("insightOf: every state of a >>> question names its fill", () => {
+  const sc = trapScenarios.find((s) => s.id === "ashr-unsigned-context")!;
+  const FILL = />>> on an unsigned expression fills with 0|vacated bits copy the sign bit/;
+  const withValues = (s: number, u: number) => sc.decls.map((x) => ({ ...x, init: x.name === "s" ? String(s) : `8'd${u}` }));
+  const correct = (expression: string, s: number, u: number) => trapPredictionOptions(withValues(s, u), sc.target, expression).find((o) => o.correct)?.feedback;
+
+  it("(s >>> 1) + u with s >= 0 names the zero fill (s = 8, u = 1)", () => {
+    expect(correct("(s >>> 1) + u", 8, 1)).toMatch(/>>> on an unsigned expression fills with 0/);
+  });
+  it("an overflow does not crowd out the fill on either variant (s = 127, u = 127)", () => {
+    expect(correct("(s >>> 1) + u", 127, 127)).toMatch(/>>> on an unsigned expression fills with 0/);
+    const fix = correct("(s >>> 1) + $signed(u)", 127, 127);
+    expect(fix).toMatch(/vacated bits copy the sign bit \(0\)/);
+    expect(fix).toMatch(/only the low 8 bits survive/);
+  });
+  it("sweep: all three variants at every s and a spread of u", () => {
+    for (let s = -128; s <= 127; s += 1) {
+      for (const u of [0, 1, 2, 63, 64, 100, 127]) {
+        for (const v of sc.variants) expect(correct(v.expr, s, u), `${v.expr} s=${s} u=${u}`).toMatch(FILL);
+      }
+    }
+  });
+  it("the sentences keep the order of the steps", () => {
+    const r = assign(withValues(127, 127), sc.target, "(s >>> 1) + $signed(u)");
+    const order = r.steps.filter((x) => r.insight.includes(x.why)).map((x) => x.kind);
+    expect(order).toEqual(["op", "op"]);
+    expect(r.insight.indexOf("Arithmetic right shift")).toBeLessThan(r.insight.indexOf("only the low 8 bits"));
+  });
+  it("s[7:0] >>> 1: the correct answer says why the expression is unsigned, at any s", () => {
+    const select = sc.variants.find((v) => v.id === "select")!;
+    for (const s of [-8, 8]) {
+      const feedback = trapPredictionOptions(withValues(s, 1), sc.target, select.expr, select.takeaway).find((o) => o.correct)?.feedback;
+      expect(feedback).toMatch(/s\[7:0\] is a part-select, and a part-select is unsigned even when it covers the entire vector \(§11\.8\.1\), so this expression is unsigned\./);
+    }
+  });
+});
+
+describe("?: wording follows Table 11-20: agreement on 0 or 1, not mere agreement", () => {
+  const spec = (id: string) => operatorCatalog.find((s) => s.id === id)!;
+  const B = (x: string) => x.split("") as Bit4[];
+  const cond = (c: string, a: string, b: string): OperatorInputs => ({ a: B(a), b: B(b), c: B(c), n: B("001"), signedA: false });
+  const allX = (inputs: OperatorInputs) => operatorPredictionOptions(spec("cond"), inputs).find((o) => o.label === "4'bxxxx");
+
+  it.each([
+    ["x with x", "x", "1x10", "1x10"],
+    ["z with z", "z", "1z10", "1z10"],
+    ["both on one vector", "x", "xz10", "xz10"],
+  ])("%s: the 4'bxxxx feedback does not say disagreement is what makes an x", (_name, c, a, b) => {
+    const feedback = allX(cond(c, a, b))?.feedback;
+    expect(feedback).toBe("A bit becomes x unless both branches agree on 0 or 1. At least one pair agrees here, so that bit survives (Table 11-20).");
+    expect(feedback).not.toMatch(/disagree/);
+  });
+  it("the ?: step does not call logically non-equal branches 'different' when the comparison is x", () => {
+    const decls = [d("sel", "logic", 1, "1'bx"), d("a", "logic", 4, "4'b1x10"), d("b", "logic", 4, "4'b1x10")];
+    const r = expr(decls, "sel ? a : b");
+    expect(lit(r.value)).toBe("4'b1x10");
+    const why = r.steps.find((x) => x.kind === "op" && x.op === "?:")?.why;
+    expect(why).toMatch(/the comparison is not 1 \(it is 0 or x\), so they are combined bit by bit/);
+    expect(why).not.toMatch(/they differ/);
+  });
+  it("en = z with data vs 'z: the feedback covers a z condition too (§12.4)", () => {
+    const inputs: OperatorInputs = { a: B("1010"), b: B("0000"), c: B("z"), n: B("001"), signedA: false };
+    const z = operatorPredictionOptions(spec("cond-z"), inputs).find((o) => o.label === "4'bzzzz");
+    expect(z?.feedback).toContain("if treats an x/z condition as false (§12.4)");
+  });
+  it("the preset notes avoid ?: notation for a table pair, and read a sign-extended value as signed", () => {
+    const note = (id: string) => operatorPresets.find((p) => p.id === id)?.note ?? "";
+    expect(note("cond-tristate")).toBe("x with z, 0 with z, 1 with z and z with z are all x: the bus drives x, not z.");
+    expect(note("concat-sign-extend")).toBe("Set n[3] to 0 and the same braces add zeros: the new bits always copy the sign bit.");
+    expect(note("concat-unsized")).toBe("The same 1 is legal in a + 1. Only a concatenation needs its size up front.");
+    expect(note("cond-x-sel")).toBe("The two middle bits differ, so they become x: 1xx0. if/else would give 1010.");
+  });
+});
+
+describe("operator feedback: widths and the rule", () => {
+  const spec = (id: string) => operatorCatalog.find((s) => s.id === id)!;
+  const B = (x: string) => x.split("") as Bit4[];
+  const inputs = (a: string, b = "0110", c = "x", n = "001", repl?: number): OperatorInputs => ({ a: B(a), b: B(b), c: B(c), n: B(n), signedA: false, ...(repl === undefined ? {} : { repl }) });
+
+  it.each([
+    ["1010", "36"],
+    ["10101010", "40"],
+  ])("{a, 1} with a = %s: the 32'd1 option's label and feedback name the same width, %s bits", (a, width) => {
+    const option = operatorPredictionOptions(spec("concat-unsized"), inputs(a)).find((o) => o.label.endsWith("(1 treated as 32'd1)"));
+    expect(option?.label).toBe(`${width}-bit value (1 treated as 32'd1)`);
+    expect(option?.feedback).toContain(`there is no ${width}-bit result`);
+  });
+  it("binary ~&: the bitwise-NAND option leaves the rule to the compiler message in the correct answer", () => {
+    const opts = operatorPredictionOptions(spec("binary-nand"), inputs("1010"));
+    expect(opts.find((o) => o.label.endsWith("(bitwise NAND)"))?.feedback).toBe("That is ~(a & b). SystemVerilog has no binary ~&, so this code does not compile.");
+  });
+
+  const vectors = [
+    ["default 4-bit", inputs("10xz", "0110", "x", "001", 2)],
+    ["all known", inputs("1010", "1010", "1", "001", 2)],
+    ["palindromes", inputs("1001", "1001", "0", "000", 1)],
+    ["1-bit z", inputs("z", "z", "z", "0", 1)],
+    ["1-bit 0", inputs("0", "0", "0", "0", 1)],
+  ] as const;
+  it("no wrong option repeats the rule: the reveal shows it beside the correct option's feedback", () => {
+    for (const s of operatorCatalog) {
+      for (const [name, input] of vectors) {
+        const usable = s.id === "sign-extend" ? { ...input, a: B("1010") } : input;
+        for (const o of operatorPredictionOptions(s, usable).filter((x) => !x.correct)) {
+          expect(o.feedback, `${s.id} ${name} ${o.label}`).not.toContain(s.rule);
+        }
+      }
+    }
+  });
+  it("every operator has exactly one correct option at width 1, with each of 0, 1, x and z on its operands", () => {
+    const values: Bit4[] = ["0", "1", "x", "z"];
+    for (const s of operatorCatalog) {
+      for (const a of values) {
+        for (const b of values) {
+          for (const c of values) {
+            const one: OperatorInputs = { a: s.id === "sign-extend" ? B(`${a}${a}${a}${a}`) : [a], b: [b], c: [c], n: ["0"], signedA: false, repl: 1 };
+            const correct = operatorPredictionOptions(s, one).filter((o) => o.correct);
+            expect(correct, `${s.id} a=${a} b=${b} c=${c}`).toHaveLength(1);
+          }
+        }
+      }
+    }
+  });
+  it("a 1-bit z result is offered and marked correct: en = 0 selects 'z", () => {
+    const opts = operatorPredictionOptions(spec("cond-z"), { a: B("1"), b: B("0"), c: B("0"), n: B("0"), signedA: false });
+    expect(opts.find((o) => o.correct)?.label).toBe("1'bz");
+    expect(predictionVerdict(opts, opts.find((o) => !o.correct)?.id ?? null)).toBe("Your prediction is wrong. The answer is 1'bz.");
+  });
+  it("a 1-bit result that is not z offers no z option", () => {
+    const opts = operatorPredictionOptions(spec("cond-z"), { a: B("1"), b: B("0"), c: B("1"), n: B("0"), signedA: false });
+    expect(opts.map((o) => o.label).sort()).toEqual(["1'b0", "1'b1", "1'bx"]);
+  });
+});
+
+describe("the reveal never answers the next question", () => {
+  it("no variant's contrast names a variant later in the Next order", () => {
+    for (const sc of trapScenarios) {
+      sc.variants.forEach((v, i) => {
+        if (!v.contrast) return;
+        expect(sc.variants.findIndex((x) => x.id === v.contrast), `${sc.id}/${v.id}`).toBeLessThan(i);
+      });
+    }
+  });
+  it("literal-sign opens on a plain control that shows no contrast", () => {
+    const decimal = trapScenarios.find((s) => s.id === "literal-sign")?.variants[0];
+    expect(decimal?.id).toBe("decimal");
+    expect(decimal?.role).toBe("contrast");
+    expect(decimal?.contrast).toBeUndefined();
+  });
+});
+
+describe("stepBadges: a badge marks the step that decides the result", () => {
+  const scenario = (id: string) => trapScenarios.find((s) => s.id === id)!;
+  const variant = (sc: TrapScenario, id: string) => sc.variants.find((v) => v.id === id)!;
+  const badged = (id: string, variantId: string, decls?: SvDecl[]) => {
+    const sc = scenario(id);
+    const v = variant(sc, variantId);
+    const r = assign(decls ?? sc.decls, v.target ?? sc.target, v.expr);
+    const badges = stepBadges(v, r.steps);
+    return { steps: r.steps.filter((_, i) => badges[i]), badges: badges.filter(Boolean), final: r.final };
+  };
+
+  it("every fix marks its curing step at the default values", () => {
+    const cures: [string, string, RegExp][] = [
+      ["mixed-add", "fix", /every context-determined operand is signed/],
+      ["signed-compare", "fix-unsized", /compared as signed/],
+      ["signed-compare", "fix-signed", /compared as signed/],
+      ["shift-fill", "arith", /vacated bits copy the sign bit/],
+      ["lost-carry", "sum9", /the LHS widens the context/],
+      ["lost-carry", "avg-fix", /evaluated in max\(8, 32\) = 32 bits/],
+      ["lost-carry", "size-cast", /evaluated in max\(9, 8\) = 9 bits/],
+      ["int-vs-logic", "fix", /compared as signed/],
+      ["int-vs-logic", "fix-cast", /compared as signed/],
+      ["casts", "type-cast-signed", /evaluated in max\(32, 8\) = 32 bits/],
+      ["part-select", "fix", /\$signed returns the same 8 bits, now signed/],
+      ["literal-sign", "based-signed", /every context-determined operand is signed/],
+      ["ashr-unsigned-context", "fix", /every context-determined operand is signed/],
+    ];
+    const listed = new Set(cures.map(([s, v]) => `${s}/${v}`));
+    for (const sc of trapScenarios) for (const v of sc.variants) if (v.role === "fix") expect(listed.has(`${sc.id}/${v.id}`), `${sc.id}/${v.id}`).toBe(true);
+    for (const [s, v, why] of cures) {
+      const { steps, badges } = badged(s, v);
+      expect(badges, `${s}/${v}`).toEqual(["key"]);
+      expect(steps[0].why, `${s}/${v}`).toMatch(why);
+    }
+  });
+  it("sweep: at every reachable edge value a fix has a key step and no trap", () => {
+    for (const sc of trapScenarios) {
+      for (const v of sc.variants.filter((x) => x.role === "fix")) {
+        for (const decls of operandGrid(sc)) {
+          const badges = stepBadges(v, assign(decls, v.target ?? sc.target, v.expr).steps);
+          expect(badges, `${sc.id}/${v.id}`).toContain("key");
+          expect(badges, `${sc.id}/${v.id}`).not.toContain("trap");
+        }
+      }
+    }
+  });
+  it("sweep: a trap variant shows a trap exactly when its result differs from the author's intent", () => {
+    let matching = 0;
+    let differing = 0;
+    for (const sc of trapScenarios) {
+      if (!sc.intent) continue;
+      for (const v of sc.variants.filter((x) => x.role === "trap")) {
+        for (const decls of operandGrid(sc)) {
+          const r = assign(decls, v.target ?? sc.target, v.expr);
+          const at = `${sc.id}/${v.id} ${decls.map((x) => x.init)}`;
+          // The same comparison the component makes.
+          const matchesIntent = toBigInt(r.final) === intendedValue(decls, v.expr);
+          const badges = stepBadges(v, r.steps, matchesIntent);
+          if (!matchesIntent) {
+            differing += 1;
+            expect(badges, at).toContain("trap");
+            continue;
+          }
+          matching += 1;
+          expect(badges.filter(Boolean), at).toEqual([]);
+          // Only a value at the very edge of the type still has a surprising step: the context itself decides nothing.
+          if (r.steps.some((s) => s.surprising)) expect(r.steps.some((s) => s.kind === "context" && s.surprising), at).toBe(false);
+        }
+      }
+    }
+    expect(matching).toBeGreaterThan(50);
+    expect(differing).toBeGreaterThan(50);
+  });
+  it("mixed-add with a = -128, u = 0: the bits read 128 on the way and -128 at the end, which is what the author meant", () => {
+    const sc = scenario("mixed-add");
+    const decls = sc.decls.map((x) => (x.name === "a" ? { ...x, width: 8, init: "-128" } : { ...x, init: "8'd0" }));
+    const r = assign(decls, sc.target, "a + u");
+    expect(dec(r.final)).toBe("-128");
+    expect(stepBadges(variant(sc, "trap"), r.steps, true).filter(Boolean)).toEqual([]);
+    // A fix is not silenced: its badge marks the cure, whatever the values.
+    expect(stepBadges(variant(sc, "fix"), assign(decls, sc.target, "a + $signed(u)").steps, true)).toContain("key");
+  });
+  it("mixed operands are a trap only when the unsigned reading changes the result", () => {
+    const value = (name: string, init: string, decl: SvDecl) => (decl.name === name ? { ...decl, init } : decl);
+    const mixed = scenario("mixed-add");
+    expect(badged("mixed-add", "trap", mixed.decls.map((x) => value("a", "7", value("u", "8'd0", x)))).badges).toEqual([]);
+    expect(badged("mixed-add", "trap").badges).toContain("trap");
+    const compare = scenario("signed-compare");
+    expect(badged("signed-compare", "trap", compare.decls.map((x) => value("a", "7", x))).badges).toEqual([]);
+    expect(badged("signed-compare", "trap").badges).toContain("trap");
+    const ints = scenario("int-vs-logic");
+    expect(badged("int-vs-logic", "trap", ints.decls.map((x) => value("i", "1000", value("w", "32'd0", x)))).badges).toEqual([]);
+    expect(badged("int-vs-logic", "trap").badges).toContain("trap");
+    const ashr = scenario("ashr-unsigned-context");
+    expect(badged("ashr-unsigned-context", "trap", ashr.decls.map((x) => value("s", "127", value("u", "8'd0", x)))).badges).toEqual([]);
+    expect(badged("ashr-unsigned-context", "trap").badges).toContain("trap");
+  });
+  it("a widening cast is a trap only when its extension changes the bits", () => {
+    const casts = scenario("casts");
+    expect(badged("casts", "type-cast").badges).toEqual(["trap"]);
+    expect(badged("casts", "type-cast", casts.decls.map((x) => ({ ...x, init: "8'd15" }))).badges).toEqual([]);
+  });
+  it("-4'sd12 / 3: the sized literal that does not fit carries the trap and says what it holds", () => {
+    const { steps, badges } = badged("literal-sign", "sized-signed");
+    expect(badges).toEqual(["trap"]);
+    const step = steps[0];
+    expect(step.kind === "extend" && step.text).toBe("4'sd12");
+    expect(step.why).toContain("`4'sd12` holds only its 4 bits, 4'b1100, which reads as -4, not 12 (§5.7.1, §11.3.3).");
+    expect(step.clause).toBe("§5.7.1, §11.8.2");
+  });
+  it("a sized literal that fits is not flagged, and -'sd12 / 3 keeps its key step", () => {
+    expect(assign([], d("q", "int"), "-4'sd7 / 3").steps.every((s) => !s.surprising)).toBe(true);
+    expect(badged("literal-sign", "based-signed").badges).toEqual(["key"]);
+  });
+  it("int r = -4'sd1 >> 1 is the trap at 32 bits: the logical shift carries a trap badge there too", () => {
+    const sc = scenario("shift-fill");
+    expect(variant(sc, "int-target").role).toBe("trap");
+    const { steps, badges } = badged("shift-fill", "int-target");
+    expect(badges.every((b) => b === "trap")).toBe(true);
+    expect(steps.some((s) => s.kind === "op" && s.op === ">>")).toBe(true);
+    expect(dec(badged("shift-fill", "int-target").final)).toBe("2147483647");
+  });
+  it("a surprising step in a fix stays a key step: it is not the trap that fix cures", () => {
+    const sc = scenario("ashr-unsigned-context");
+    const decls = sc.decls.map((x) => ({ ...x, init: x.name === "s" ? "127" : "8'd127" }));
+    expect(badged("ashr-unsigned-context", "fix", decls).badges).toEqual(["key", "key"]);
+  });
+});
+
+describe("expression wording pins: every sentence a reviewer checked against the LRM", () => {
+  const spec = (id: string) => operatorCatalog.find((s) => s.id === id)!;
+  const B = (x: string) => x.split("") as Bit4[];
+  const inputs = (a: string, b = "0000", c = "x", repl?: number): OperatorInputs => ({ a: B(a), b: B(b), c: B(c), n: B("001"), signedA: false, ...(repl === undefined ? {} : { repl }) });
+  const feedbackOf = (id: string, input: OperatorInputs, label: string) => operatorPredictionOptions(spec(id), input).find((o) => o.label === label)?.feedback;
+
+  it.each([
+    ["cond", "A known condition picks one branch. An x/z condition evaluates both and compares them with == (§11.4.5). If that gives 1, either one is returned. Otherwise they merge bit by bit: a bit survives only where the branches agree on 0 or 1; every other pair, including x with x and z with z, is x.", "§11.4.11, Table 11-20"],
+    ["cond-z", "'z fills every bit of the else branch. With en unknown, each data bit merges with z, and Table 11-20 makes every such pair x.", "§11.4.11, Table 11-20, §5.7.1"],
+    ["concat", "Operands are self-determined and joined MSB first; the result is unsigned.", "§11.4.12, §11.8.1"],
+    ["concat-target", "A concatenation may be an assignment target: the value is cut by member width, the first member taking the most significant bits, as in a source concatenation. A replication such as {2{hi}} may not be a target.", "§11.4.12, §11.4.12.1"],
+    ["sign-extend", "Sign extension by hand: replicate the sign bit n[3] in front of n. The replication count is a constant; with 0 copies the replication has no bits and only n remains.", "§11.4.12.1, §11.8.1"],
+    ["concat-unsized", "Unsized numbers are not allowed in a concatenation because their size is unknown.", "§11.4.12"],
+    ["binary-nand", "~& exists only as the unary reduction NAND. Bitwise NAND is ~(a & b).", "§11.4.9, Table 11-1"],
+  ])("%s: the rule and clause are exact", (id, rule, clause) => {
+    expect(spec(id).rule).toBe(rule);
+    expect(spec(id).clause).toBe(clause);
+  });
+
+  it("no spec but a ?: one says what the §11.4.5 comparison does", () => {
+    expect(operatorCatalog.filter((s) => s.rule.includes("§11.4.5")).map((s) => s.id)).toEqual(["cond"]);
+  });
+
+  it("?: distractors at a known and at an x/z condition", () => {
+    const x = inputs("1100", "1010", "x");
+    expect(feedbackOf("cond", inputs("1100", "1010", "1"), "4'b1010")).toBe("The condition is 1, so the first branch is chosen and the other is not even evaluated (§11.4.11).");
+    expect(feedbackOf("cond", inputs("1100", "1010", "0"), "4'b1100")).toBe("The condition is 0, so the second branch is chosen and the other is not even evaluated (§11.4.11).");
+    expect(feedbackOf("cond", inputs("1100", "1010", "1"), "4'bxxxx")).toBe("A known condition picks one branch unchanged; nothing is merged. Only an x/z condition reaches Table 11-20.");
+    expect(feedbackOf("cond", x, "4'b1100")).toBe("That treats the unknown condition as true. With an x/z condition, ?: evaluates both branches and combines them bit by bit (§11.4.11).");
+    expect(feedbackOf("cond", x, "4'b1010")).toBe("That is what if/else stores: if treats an x/z condition as false and runs the else branch (§12.4). The ?: operator evaluates both branches and merges them with Table 11-20 instead.");
+  });
+
+  const EQUAL = "Both branches are compared first (§11.4.5). They are equal, so ?: returns either one and no bit becomes x; Table 11-20 is not reached (§11.4.11).";
+  it("§11.4.11: equal known branches return one of them, so the feedback never cites Table 11-20 as the path", () => {
+    expect(feedbackOf("cond", inputs("1010", "1010", "x"), "4'bxxxx")).toBe(EQUAL);
+    expect(feedbackOf("cond", inputs("1010", "1010", "z"), "4'bxxxx")).toBe(EQUAL);
+  });
+  it("§11.4.11: branches with an x bit compare as x, so they do reach the table", () => {
+    expect(feedbackOf("cond", inputs("1x10", "1x10", "x"), "4'bxxxx")).toBe("A bit becomes x unless both branches agree on 0 or 1. At least one pair agrees here, so that bit survives (Table 11-20).");
+  });
+  it.each([
+    ["1", "1", "x", "1'b1"],
+    ["0", "0", "z", "1'b0"],
+  ])("1-bit: c = %s with a = b: the same path in the 1-bit feedback", (a, b, c, label) => {
+    expect(feedbackOf("cond", inputs(a, b, c), label)).toBe(EQUAL);
+    expect(feedbackOf("cond", inputs(a, b, c), "1'bx")).toBe(`Not this one. ${EQUAL}`);
+  });
+  it("1-bit: the branches that do reach the table say so, and 'z is never equal to data", () => {
+    const merged = "The condition is x/z, and comparing the branches does not give 1, so they are merged with Table 11-20 (§11.4.11).";
+    expect(feedbackOf("cond", inputs("1", "0", "x"), "1'bx")).toBe(merged);
+    expect(feedbackOf("cond", inputs("x", "x", "x"), "1'bx")).toBe(merged);
+    expect(feedbackOf("cond-z", inputs("1", "0", "x"), "1'bx")).toBe(merged);
+    expect(feedbackOf("cond-z", inputs("z", "0", "x"), "1'bx")).toBe(merged);
+  });
+
+  it("§11.4.12.1: the target distractor names a replication without calling it the only illegal form", () => {
+    expect(feedbackOf("concat-target", { ...inputs("00010010", "00110100"), c: B("0") }, "Compile error")).toBe(
+      "A concatenation may be an assignment target; it is treated as a packed vector of the summed widths (§11.4.12). A replication, such as {2{hi}}, may not be a target (§11.4.12.1).",
+    );
+  });
+  it("§11.4.12.1: {R{a}} limits its 'only' to the counts on offer", () => {
+    expect(feedbackOf("repl-n", inputs("1010", "0000", "0", 2), "Compile error")).toBe(
+      "2 copies of a is legal: the multiplier is a non-negative constant without x or z (§11.4.12.1). Of the counts here, only 0 is illegal, because a zero replication alone in braces has no bits.",
+    );
+  });
+  it("§11.4.12: the unsized message gives the LRM's reason and the fix", () => {
+    const r = runOperator(spec("concat-unsized"), inputs("1010"));
+    expect(!r.ok && r.error.message).toBe("`1` is an unsized number, and a concatenation needs the size of every operand to work out its own size. Write e.g. 1'b1.");
+  });
+  it("only R = 0 makes an operand-driven operator stop compiling, so an editor hides only there", () => {
+    const fixed = operatorCatalog.filter((s) => s.fixedAnswer).map((s) => s.id);
+    for (const s of operatorCatalog.filter((x) => !fixed.includes(x.id))) {
+      for (const bits of ["1010", "x0z1", "xxxx", "zzzz"]) {
+        for (const c of ["0", "1", "x", "z"]) {
+          for (const repl of [0, 1, 8]) {
+            const r = runOperator(s, { ...inputs(bits, bits, c, repl), c: s.family === "conditional" ? B(c) : B(`${c}${c}${c}${c}`) });
+            expect(r.ok, `${s.id} ${bits} ${c} R=${repl}`).toBe(!(s.id === "repl-n" && repl === 0));
+          }
+        }
+      }
+    }
+  });
+
+  describe("the type sentence counts only the operands that decide the type (§11.8.1, Table 11-21)", () => {
+    const decls = [d("s", "logic", 8, "-8", true), d("t", "logic", 8, "-2", true), d("u", "logic", 8, "8'd1")];
+    const r8 = d("r", "logic", 8, undefined, true);
+    const contextWhy = (src: string) => assign(decls, r8, src).steps.find((x) => x.kind === "context" && x.scope === "assignment")?.why;
+
+    it("a ?: condition and a shift count do not count", () => {
+      expect(contextWhy("u ? (s >>> 1) : t")).toContain("Its type is signed because every context-determined operand is signed");
+      expect(contextWhy("(s >>> u) + $signed(u)")).toContain("Its type is signed because every context-determined operand is signed");
+    });
+    it("an unsigned one that does count is named as context-determined", () => {
+      expect(contextWhy("(s >>> 1) + u")).toContain("`u` is unsigned, and one unsigned context-determined operand makes the whole expression unsigned");
+    });
+    it("a comparison has exactly two operands and says so", () => {
+      const why = (src: string) => assign(decls, d("b", "bit"), src).steps.find((x) => x.kind === "context" && x.scope === "comparison")?.why;
+      expect(why("s < t")).toContain("compared as signed because both operands are signed");
+      expect(why("s < u")).toContain("`u` is unsigned, and one unsigned operand makes the comparison unsigned");
+    });
+  });
+
+  it("§11.4.10: a shift by 0 vacates nothing, and says so for every shift", () => {
+    const decls = [d("s", "logic", 8, "-8", true)];
+    for (const op of ["<<", "<<<", ">>", ">>>"]) {
+      const r = assign(decls, d("r", "logic", 8, undefined, true), `s ${op} 0`);
+      const why = r.steps.find((x) => x.kind === "op" && x.op === op)?.why;
+      expect(dec(r.final), op).toBe("-8");
+      expect(why, op).toBe("A shift by 0 vacates no bit, so the value is unchanged. The count is self-determined and read as unsigned.");
+    }
+  });
+
+  it("§6.24.1: a widening cast's step states the sign that decides the new bits; a narrowing one does not", () => {
+    const decls = [d("w", "logic", 8, "8'hF0"), d("v", "logic", 12, "12'hABC")];
+    const castWhy = (src: string, target = d("x", "int")) => assign(decls, target, src).steps.find((x) => x.kind === "context" && x.scope === "cast")?.why;
+    expect(castWhy("int'(w)")).toContain("evaluated in max(32, 8) = 32 bits. `w` is unsigned, so it extends with zeros.");
+    expect(castWhy("int'(signed'(w))")).toContain("evaluated in max(32, 8) = 32 bits. `signed'(w)` is signed, so it extends with copies of the sign bit.");
+    expect(castWhy("9'(w + w)")).toContain("`w + w` is unsigned, so its operands extend with zeros.");
+    expect(castWhy("8'(v)")).toBe("A cast returns what an 8-bit variable would hold after being assigned the expression, so `v` is evaluated in max(8, 12) = 12 bits.");
+  });
+
+  describe("the math and saturate distractors name the range, not a width that fits", () => {
+    const sc = trapScenarios.find((s) => s.id === "ashr-unsigned-context")!;
+    const at = (s: string, u: string) => sc.decls.map((x) => ({ ...x, init: x.name === "s" ? s : u }));
+    const opts = () => trapPredictionOptions(at("2", "8'd127"), sc.target, "(s >>> 1) + u");
+
+    it("s = 2, u = 127: 128 fits in 8 bits, so the text speaks of r's signed range", () => {
+      const math = opts().find((o) => o.misconception === "math");
+      expect(math?.label).toBe("r = 128");
+      expect(math?.feedback).toContain("It is not even in range: r holds -128 to 127. ");
+      expect(math?.feedback).not.toContain("cannot even fit");
+    });
+    it("the saturate answer is told what an assignment does, whether or not a bit is lost", () => {
+      const saturate = opts().find((o) => o.misconception === "saturate");
+      expect(saturate?.label).toBe("r = 127");
+      expect(saturate?.feedback).toContain("SystemVerilog never saturates. An assignment checks no range: r keeps the low 8 bits and reads them as signed (§10.7).");
+      expect(saturate?.feedback).not.toContain("do not fit");
+    });
+  });
+
+  it("the cast takeaways say what the trace does not", () => {
+    const v = (id: string) => trapScenarios.find((s) => s.id === "casts")?.variants.find((x) => x.id === id)?.takeaway;
+    expect(v("type-cast")).toBe("int being signed does not change that: the extension follows the expression inside the cast, not the cast type (§6.24.1).");
+    expect(v("type-cast-signed")).toBe("The sign cast is what changes the extension: int'(w) alone always adds zeros (§6.24.1).");
   });
 });

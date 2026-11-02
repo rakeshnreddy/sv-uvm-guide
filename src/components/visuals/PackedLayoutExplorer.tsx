@@ -12,19 +12,17 @@ import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
 import { ValueChip } from "@/components/visual-system/ValueChip";
 import { VisualFrame } from "@/components/visual-system/VisualFrame";
 import {
-  LESSON_EXPECTED_FAILURES,
   MAX_MEMBER_WIDTH,
   MIN_MEMBER_WIDTH,
   MUTATIONS,
   TB_CHECKS,
   UNDEFINED_TAGGED,
   changedLogLines,
+  changedReadsText,
   enumDeclarationText,
   enumMemberReadout,
-  failingChecks,
   formatD,
   formatSizedHex,
-  formatTaggedP,
   formatUnionP,
   hexAligned,
   lessonHexDigits,
@@ -47,6 +45,7 @@ import {
   structTypedef,
   structVectorCards,
   svHex,
+  taggedPReading,
   taggedPackedBits,
   taggedPackedLayout,
   taggedTypedef,
@@ -63,6 +62,7 @@ import {
   xWriteOffer,
   type EnumArrival,
   type MutationId,
+  type NamedRead,
   type PackedMember,
   type RuleCard,
   type TaggedMember,
@@ -195,39 +195,73 @@ function useHorizontalOverflow<T extends HTMLElement>() {
 }
 
 /**
+ * Scrolls a strip panel sideways, and only sideways, until a bit is in view. The
+ * panel opens at the MSB end, so at phone width a write to the low bits would
+ * otherwise happen off screen. The bit is found by the number BitStrip draws above it.
+ */
+function scrollBitIntoView(panel: HTMLElement, bit: number) {
+  const cell = Array.from(panel.querySelectorAll<HTMLElement>('span[aria-hidden="true"]')).find((el) => el.childElementCount === 0 && el.textContent === String(bit));
+  if (!cell || typeof panel.scrollTo !== "function") return;
+  const box = panel.getBoundingClientRect();
+  const rect = cell.getBoundingClientRect();
+  if (rect.left >= box.left && rect.right <= box.right) return;
+  const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  panel.scrollTo({ left: panel.scrollLeft + rect.left - box.left - 16, behavior: reduced ? "auto" : "smooth" });
+}
+
+/**
  * Strips never wrap: they scroll inside this panel, so the page itself never
  * scrolls sideways. When it overflows the panel takes focus, so a keyboard can
- * reach the low bits in browsers that do not make scrollers focusable.
+ * reach the low bits in browsers that do not make scrollers focusable. `reveal`
+ * lists the bits a write just changed, most significant first; the panel brings
+ * the first one into view.
+ *
+ * Only the strips go in `children`: that box is as wide as its widest line, so a
+ * sentence in it would never wrap. Legends and notes go in `footer`, outside the
+ * scroller, where they wrap to the panel and stay put while the bits scroll.
  */
-function StripPanel({ children, label, className }: { children: React.ReactNode; label: string; className?: string }) {
+function StripPanel({ children, footer, label, className, reveal }: { children: React.ReactNode; footer?: React.ReactNode; label: string; className?: string; reveal?: readonly number[] }) {
   const [ref, overflowing] = useHorizontalOverflow<HTMLDivElement>();
+  useEffect(() => {
+    if (ref.current && reveal?.length) scrollBitIntoView(ref.current, reveal[0]);
+  }, [ref, reveal]);
   return (
-    <div
-      ref={ref}
-      role="region"
-      aria-label={overflowing ? `${label} (scrolls sideways)` : label}
-      tabIndex={overflowing ? 0 : undefined}
-      className={cn("min-w-0 overflow-x-auto rounded-xl border border-border/70 bg-background/50 p-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", className)}
-    >
-      <div className="w-max min-w-full">{children}</div>
+    <div className={cn("min-w-0 rounded-xl border border-border/70 bg-background/50 p-2", className)}>
+      {/* The padding is on the scroller, so a cell's ring at the edge is not clipped by it. */}
+      <div
+        ref={ref}
+        role="region"
+        aria-label={overflowing ? `${label} (scrolls sideways)` : label}
+        tabIndex={overflowing ? 0 : undefined}
+        className="min-w-0 overflow-x-auto p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <div className="w-max min-w-full" data-testid="strip-scroll">
+          {children}
+        </div>
+      </div>
+      {footer ? <div className="mt-1 space-y-2 px-1 pb-1">{footer}</div> : null}
     </div>
   );
 }
 
 /**
- * A width field that commits on blur or Enter, not on every keystroke, so
- * backspacing through "16" does not pass through width 1 and cut the vector.
+ * A width field that commits typed text on blur or Enter, not on every
+ * keystroke, so backspacing through "16" does not pass through width 1 and cut
+ * the vector. A step is a finished choice, so the arrow keys and the spinner
+ * commit at once.
  */
 function WidthInput({ value, min, max, disabled, label, onCommit }: { value: number; min: number; max: number; disabled?: boolean; label: string; onCommit: (width: number) => void }) {
   const [draft, setDraft] = useState(String(value));
   const [lastValue, setLastValue] = useState(value);
+  /** The text when a press on the field began: if a press changes it without a key, the press was on the spinner. */
+  const textAtPress = useRef<string | null>(null);
   if (value !== lastValue) {
     setLastValue(value);
     setDraft(String(value));
   }
-  const commit = () => {
-    const n = Number(draft);
-    if (draft.trim() === "" || !Number.isFinite(n)) {
+  const commit = (text: string) => {
+    const n = Number(text);
+    if (text.trim() === "" || !Number.isFinite(n)) {
       setDraft(String(value));
       return;
     }
@@ -244,11 +278,22 @@ function WidthInput({ value, min, max, disabled, label, onCommit }: { value: num
       disabled={disabled}
       aria-label={label}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
+      onBlur={(e) => commit(e.target.value)}
+      onPointerDown={(e) => {
+        textAtPress.current = e.currentTarget.value;
+      }}
+      onPointerUp={(e) => {
+        if (textAtPress.current !== null && textAtPress.current !== e.currentTarget.value) commit(e.currentTarget.value);
+        textAtPress.current = null;
+      }}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           e.preventDefault();
-          commit();
+          commit(draft);
+        } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+          e.preventDefault();
+          const typed = draft.trim() === "" || !Number.isFinite(Number(draft)) ? value : Number(draft);
+          commit(String(typed + (e.key === "ArrowUp" ? 1 : -1)));
         }
       }}
       className="h-10 w-20 rounded-lg border border-border/70 bg-background px-2 text-right font-mono text-sm text-foreground disabled:opacity-50"
@@ -256,11 +301,31 @@ function WidthInput({ value, min, max, disabled, label, onCommit }: { value: num
   );
 }
 
+const WIDTH_HINT = "Type a width, then press Enter or leave the field; the arrows apply at once.";
+
+/**
+ * Moves focus to the feedback of a revealed PredictionPrompt, its polite region.
+ * That region mounts together with its text, which screen readers announce
+ * unreliably, and the diagnosis is the point of predict-then-reveal, so a learner
+ * must not be moved past it. Tab then goes on to the next control. Returns false
+ * when `container` holds no revealed prompt.
+ */
+function focusPromptFeedback(container: Element | null | undefined): boolean {
+  const feedback = container?.querySelector<HTMLElement>('[aria-live="polite"]');
+  if (!feedback) return false;
+  feedback.tabIndex = -1;
+  feedback.focus();
+  return true;
+}
+
+const feedbackFocusRing = "[&_[aria-live=polite]:focus-visible]:outline-none [&_[aria-live=polite]:focus-visible]:ring-2 [&_[aria-live=polite]:focus-visible]:ring-ring";
+
 /**
  * The control that ran a statement unmounts with it, so focus would fall back
- * to the page. After a step it moves to what comes next: the next statement's
- * "Run it" or first prediction radio, or the statement that just ran when the
- * sequence is over. A reset lowers `applied` and leaves focus where it is.
+ * to the page. After a step answered by a prediction it moves to that prompt's
+ * feedback. After a plain "Run it" it moves to what comes next: the next
+ * statement's "Run it" or first prediction radio, or the statement that just ran
+ * when the sequence is over. A reset lowers `applied` and leaves focus where it is.
  */
 function useStatementFocus(applied: number) {
   const listRef = useRef<HTMLOListElement>(null);
@@ -270,7 +335,8 @@ function useStatementFocus(applied: number) {
     previous.current = applied;
     if (!advanced) return;
     const item = (index: number) => listRef.current?.querySelector<HTMLElement>(`[data-statement="${index}"]`);
-    const target = item(applied)?.querySelector<HTMLElement>('[data-testid="run-statement"], input[type="radio"]:not(:disabled)') ?? item(applied - 1);
+    if (focusPromptFeedback(item(applied - 1))) return;
+    const target = item(applied)?.querySelector<HTMLElement>('[data-run-statement], input[type="radio"]:not(:disabled)') ?? item(applied - 1);
     target?.focus();
   }, [applied]);
   return listRef;
@@ -286,6 +352,36 @@ function Status({ text, testId }: { text: string; testId: string }) {
   );
 }
 
+/**
+ * The full value map stays on screen as plain text. Only what changed, plus the
+ * note, goes to the live region, so a six-member register is not read out in
+ * full on every step, over the prompt's feedback.
+ */
+function StatusWithAnnouncement({ text, announcement, testId }: { text: string; announcement: string; testId: string }) {
+  return (
+    <>
+      <p data-testid={testId} className="text-sm text-foreground">
+        {text}
+      </p>
+      <p role="status" aria-live="polite" data-testid={`${testId}-live`} className="sr-only">
+        {announcement}
+      </p>
+    </>
+  );
+}
+
+/** The one caveat behind every packed %p reading, folded so the output itself stays short. */
+function WhyToolsDiffer({ children }: { children: React.ReactNode }) {
+  return (
+    <details className="mt-1 text-muted-foreground">
+      <summary className="cursor-pointer text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Why tools can differ</summary>
+      <p className="mt-1">{children}</p>
+    </details>
+  );
+}
+
+const announcementOf = (changed: string, note: string): string => [changed ? `${changed}.` : "No value changed.", note].filter(Boolean).join(" ");
+
 // ---------------------------------------------------------------------------
 // Struct mode
 // ---------------------------------------------------------------------------
@@ -299,10 +395,21 @@ interface StructRunState {
   changed: number[];
   extendedFrom?: number;
   droppedFrom?: number;
-  layoutEdited: boolean;
+  /**
+   * Why the preset's predictions and notes no longer hold: a typedef edit, or a
+   * write outside the sequence. Null while the run is still the preset's own.
+   */
+  voided: "layout" | "write" | null;
+  /** Whether anything has written the variable: a statement, an x write or an unpacked member write. A typedef edit alone does not. */
+  wrote: boolean;
   /** How the enum member's current value got there, so the readout can name the path. */
   enumArrival: EnumArrival;
+  /** About the statement that ran last; shown under it. */
   note: string;
+  /** About a change made outside the sequence; shown beside the control that made it. */
+  experiment: { source: "x" | "layout" | "unpacked"; text: string } | null;
+  /** The live region's text: what the last action changed. */
+  announcement: string;
 }
 
 const initialStructState = (p: StructPreset): StructRunState => ({
@@ -311,10 +418,16 @@ const initialStructState = (p: StructPreset): StructRunState => ({
   varName: currentVarName(p, 0),
   applied: 0,
   changed: [],
-  layoutEdited: false,
+  voided: null,
+  wrote: false,
   enumArrival: "never-assigned",
   note: "",
+  experiment: null,
+  announcement: "",
 });
+
+const memberReads = (members: readonly PackedMember[], before: SvValue, after: SvValue): NamedRead[] =>
+  members.map((m) => ({ name: m.name, before: readMember(members, before, m.name), after: readMember(members, after, m.name) }));
 
 function StructMode({ preset: presetId }: { preset?: string }) {
   const [presetKey, setPresetKey] = useState(structPreset(presetId).id);
@@ -327,7 +440,7 @@ function StructMode({ preset: presetId }: { preset?: string }) {
 
   const choosePreset = (id: string) => {
     setPresetKey(structPreset(id).id);
-    setRun(initialStructState(structPreset(id)));
+    setRun({ ...initialStructState(structPreset(id)), announcement: "Reset: nothing has run yet." });
     setPacked(true);
     setGen((g) => g + 1);
   };
@@ -338,16 +451,17 @@ function StructMode({ preset: presetId }: { preset?: string }) {
   const states = structStates(members);
   // Until the first gated statement is answered, the bit ranges would answer it, so they appear on commit.
   const firstGate = preset.statements.findIndex((s) => s.prediction);
-  const rangesHidden = firstGate >= 0 && applied <= firstGate && !run.layoutEdited;
+  const rangesHidden = firstGate >= 0 && applied <= firstGate && !run.voided;
   const segments: BitSegment[] = rangesHidden ? [] : ranges.map((r) => ({ hi: r.hi, lo: r.lo, label: r.name }));
   const overlay = useMemo(() => nibbleOverlay(members, value), [members, value]);
   const cards = useMemo(() => structVectorCards(varName, members, packed, value), [varName, members, packed, value]);
   // The first card is the part-select, which names the first member's range.
   const shownCards = rangesHidden ? cards.slice(1) : cards;
+  const hasWrite = run.wrote;
   const enumMember = members.find((m) => m.type.kind === "enum");
   const enumDeclarations = Array.from(new Set(members.flatMap((m) => (m.type.kind === "enum" ? [enumDeclarationText(m.type.spec)] : []))));
   // The readout explains the vector back door, which only a packed struct has. Before a statement runs it would show "" and give away the enum-field prediction.
-  const enumReadout = packed && enumMember && applied > 0 ? enumMemberReadout(members, value, enumMember.name, "struct", run.enumArrival) : null;
+  const enumReadout = packed && enumMember && hasWrite ? enumMemberReadout(members, value, enumMember.name, "struct", run.enumArrival) : null;
   const hasX = bitsOf(value).some((b) => b === "x" || b === "z");
 
   const applyStatement = useCallback(
@@ -360,15 +474,17 @@ function StructMode({ preset: presetId }: { preset?: string }) {
         let changed: number[] = [];
         let extendedFrom: number | undefined;
         let droppedFrom: number | undefined;
-        // A preset's own note describes the preset's layout, so after a layout edit only the model's note is true.
-        const presetNote = prev.layoutEdited ? "" : (s.note ?? "");
+        // A preset's own note describes the preset's own run, so once the run has left it only the model's note is true.
+        const presetNote = prev.voided ? "" : (s.note ?? "");
+        // The model's member-write note names the bit range, which would answer a prediction that is still open.
+        const rangesStillHidden = !prev.voided && firstGate >= 0 && index + 1 <= firstGate;
         let note = presetNote;
         let enumArrival: EnumArrival = prev.enumArrival;
         if (s.action.kind === "member") {
           const written = s.action.member;
           const w = writeMember(prev.members, prev.value, written, s.action.value);
           changed = w.changed;
-          note = `${w.note} ${presetNote}`.trim();
+          note = `${rangesStillHidden ? `${written} is written; the other members keep their bits (§7.2.1).` : w.note} ${presetNote}`.trim();
           if (prev.members.find((m) => m.name === written)?.type.kind === "enum") enumArrival = "member-write";
         } else if (s.action.kind === "whole") {
           const a = runWholeAction(prev.members, s.action);
@@ -376,29 +492,35 @@ function StructMode({ preset: presetId }: { preset?: string }) {
           droppedFrom = a.droppedFrom;
           enumArrival = "whole-vector";
           // Truncation marks nothing on the strip (the discarded bits are the source's, above the MSB), so the note carries it.
-          if (prev.layoutEdited || a.droppedFrom !== undefined) note = `${a.note} ${presetNote}`.trim();
+          if (prev.voided || a.droppedFrom !== undefined) note = `${a.note} ${presetNote}`.trim();
         } else {
           enumArrival = "member-write";
-          if (prev.layoutEdited) note = "An assignment pattern by member name writes every member (§10.9.2).";
+          if (prev.voided) note = "An assignment pattern by member name writes every member (§10.9.2).";
         }
-        return { ...prev, value: next, varName: currentVarName(preset, index + 1), applied: index + 1, changed, extendedFrom, droppedFrom, enumArrival, note };
+        const varNext = currentVarName(preset, index + 1);
+        const changedText = changedReadsText(memberReads(prev.members, prev.value, next), { name: varNext, value: next });
+        return { ...prev, value: next, varName: varNext, applied: index + 1, changed, extendedFrom, droppedFrom, wrote: true, enumArrival, note, experiment: null, announcement: announcementOf(changedText, note) };
       });
     },
-    [preset],
+    [preset, firstGate],
   );
 
   const editLayout = (nextMembers: PackedMember[]) => {
     setRun((prev) => {
+      const text = "Layout edited: the vector keeps its bits and the member names move over it.";
+      const bits = structBits(nextMembers);
       return {
         ...prev,
         members: nextMembers,
-        value: rewidthVector(prev.value, structBits(nextMembers), structStates(nextMembers)),
+        value: rewidthVector(prev.value, bits, structStates(nextMembers)),
         changed: [],
         extendedFrom: undefined,
         droppedFrom: undefined,
-        layoutEdited: true,
+        voided: "layout",
         enumArrival: prev.enumArrival === "never-assigned" ? "never-assigned" : "layout-edit",
-        note: "Layout edited: the vector keeps its bits and the member names move over it.",
+        note: "",
+        experiment: { source: "layout", text },
+        announcement: `${text} $bits is ${bits}.`,
       };
     });
   };
@@ -407,17 +529,35 @@ function StructMode({ preset: presetId }: { preset?: string }) {
     setRun((prev) => {
       const w = writeXInMember(prev.members, prev.value, name);
       const enumArrival: EnumArrival = xWriteOffer(prev.varName, prev.members, name).partSelect ? "part-select" : prev.enumArrival;
-      return { ...prev, value: w.value, changed: w.changed, extendedFrom: undefined, droppedFrom: undefined, enumArrival, note: w.note };
+      const changedText = changedReadsText(memberReads(prev.members, prev.value, w.value), { name: prev.varName, value: w.value });
+      return {
+        ...prev,
+        value: w.value,
+        changed: w.changed,
+        extendedFrom: undefined,
+        droppedFrom: undefined,
+        voided: prev.voided ?? "write",
+        wrote: true,
+        enumArrival,
+        // A statement's note describes the values it left, which this write has just changed.
+        note: "",
+        experiment: { source: "x", text: w.note },
+        announcement: announcementOf(changedText, w.note),
+      };
     });
   };
 
   /** The packed/unpacked what-if view keeps the members' values but drops the vector-level marks and note. */
   const togglePacked = () => {
     setPacked((p) => !p);
-    setRun((prev) => ({ ...prev, changed: [], extendedFrom: undefined, droppedFrom: undefined, note: "" }));
+    setRun((prev) => ({ ...prev, changed: [], extendedFrom: undefined, droppedFrom: undefined, note: "", experiment: null, announcement: packed ? "Unpacked view: members by name, no bit numbering." : "Packed view: one vector." }));
   };
 
-  /** In the unpacked view a member write or an assignment pattern runs on its own; the sequence and its predictions belong to the packed layout. */
+  /**
+   * In the unpacked view a member write or an assignment pattern runs on its own.
+   * It is outside the sequence, and it may put a gated statement's answer on the
+   * strip, so it voids the predictions as any other free write does.
+   */
   const runUnpacked = (s: StructStatement) => {
     setRun((prev) => {
       if (s.action.kind === "whole") return prev;
@@ -426,13 +566,28 @@ function StructMode({ preset: presetId }: { preset?: string }) {
         s.action.kind === "member"
           ? `${s.action.member} is written by name; the other members keep their values (§7.2).`
           : "An assignment pattern by member name writes every member (§10.9.2).";
-      return { ...prev, value: next, varName: s.varName ?? preset.varName, changed: [], extendedFrom: undefined, droppedFrom: undefined, enumArrival: "member-write", note };
+      const changedText = changedReadsText(memberReads(prev.members, prev.value, next), { name: s.varName ?? preset.varName, value: next });
+      return {
+        ...prev,
+        value: next,
+        varName: s.varName ?? preset.varName,
+        changed: [],
+        extendedFrom: undefined,
+        droppedFrom: undefined,
+        voided: prev.voided ?? "write",
+        wrote: true,
+        enumArrival: "member-write",
+        note: "",
+        experiment: { source: "unpacked", text: note },
+        announcement: announcementOf(changedText, note),
+      };
     });
   };
 
   const fieldText = ranges.map((r) => `${r.name} ${rangeText(r)} = ${formatSizedHex(readMember(members, value, r.name))}`).join(", ");
   const memberText = ranges.map((r) => `${r.name} = ${formatSizedHex(readMember(members, value, r.name))}`).join(", ");
-  const noteText = run.note ? ` ${run.note}` : "";
+  const shownNote = run.experiment?.text ?? run.note;
+  const noteText = shownNote ? ` ${shownNote}` : "";
   // An unpacked struct is not a vector: no literal for the whole, no bit ranges, no signing (§7.2.1) and no vector state-ness; $bits still counts its members (§20.6.2).
   const statusText = packed
     ? `${varName} = ${formatSizedHex(value)}; $bits(${preset.typeName}) = ${width}; ${states}-state, unsigned. ${rangesHidden ? memberText : fieldText}.${noteText}`
@@ -444,7 +599,7 @@ function StructMode({ preset: presetId }: { preset?: string }) {
   ) as BitLegendItem[];
 
   const nextStatement = preset.statements[applied];
-  const gated = Boolean(nextStatement?.prediction) && !run.layoutEdited;
+  const gated = Boolean(nextStatement?.prediction) && !run.voided;
 
   return (
     <VisualFrame
@@ -474,7 +629,22 @@ function StructMode({ preset: presetId }: { preset?: string }) {
       </div>
 
       {packed ? (
-        <StripPanel label={`Bits of ${varName}`}>
+        <StripPanel
+          label={`Bits of ${varName}`}
+          reveal={run.changed}
+          footer={
+            legend.length || rangesHidden ? (
+              <>
+                {legend.length ? <BitStripLegend items={legend} /> : null}
+                {rangesHidden ? (
+                  <p className="text-xs text-muted-foreground" data-testid="ranges-hidden">
+                    The member bit ranges appear once you answer the question below.
+                  </p>
+                ) : null}
+              </>
+            ) : null
+          }
+        >
           <BitStrip
             bits={toBits(value)}
             label={`${varName}, ${preset.typeName}`}
@@ -484,12 +654,6 @@ function StructMode({ preset: presetId }: { preset?: string }) {
             extendedFrom={run.extendedFrom}
             droppedFrom={run.droppedFrom}
           />
-          {legend.length ? <BitStripLegend items={legend} className="mt-2" /> : null}
-          {rangesHidden ? (
-            <p className="mt-2 text-xs text-muted-foreground" data-testid="ranges-hidden">
-              The member bit ranges appear once you answer the question below.
-            </p>
-          ) : null}
         </StripPanel>
       ) : (
         <div className="space-y-3" data-testid="struct-unpacked-view">
@@ -508,11 +672,126 @@ function StructMode({ preset: presetId }: { preset?: string }) {
         </div>
       )}
 
-      <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
-        {shownCards.map((c) => (
-          <RuleCardView key={c.code} card={c} />
-        ))}
-      </div>
+      <section aria-label="Statements" className="space-y-2">
+        <p className="text-sm font-semibold text-foreground">Statements</p>
+        {/* Hidden, not unmounted, in the unpacked view: an unmounted prompt would come back unanswered for a statement that has already run. */}
+        <ol ref={statementsRef} className="space-y-2" hidden={!packed}>
+          {preset.statements.map((s, i) => {
+            const done = i < applied;
+            const current = i === applied;
+            return (
+              <li key={s.code} data-statement={i} tabIndex={-1} className={cn("rounded-lg border p-3", statementItemFocus, feedbackFocusRing, done ? "border-emerald-500/40 bg-emerald-500/[0.04]" : current ? "border-amber-500/40" : "border-dashed border-border/60 opacity-60")}>
+                <p className="flex flex-wrap items-center gap-2 text-sm">
+                  <span aria-hidden className="text-xs text-muted-foreground">
+                    {i + 1}.
+                  </span>
+                  <code className={codeChip}>{s.code}</code>
+                  {done ? <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">run</span> : null}
+                </p>
+                {done && i === applied - 1 && run.note ? <p className="mt-1 text-xs text-muted-foreground">{run.note}</p> : null}
+                {current && !gated ? (
+                  <button type="button" onClick={() => applyStatement(i)} className={cn(primaryButton, "mt-2")} data-testid="run-statement" data-run-statement>
+                    Run it
+                  </button>
+                ) : null}
+                {/* The prompt stays mounted for the statement it just ran, so its feedback remains readable; `gen` remounts it re-armed on a reset. */}
+                {s.prediction && !run.voided && (current || i === applied - 1) ? (
+                  <PredictionPrompt key={`${preset.id}-${gen}-${i}`} question={s.prediction.question} options={toOptions(s.prediction.options)} resetKey={`${preset.id}-${gen}-${i}`} className="mt-2">
+                    <OnReveal onReveal={() => applyStatement(i)} />
+                    <p className="text-sm text-muted-foreground">
+                      The strip above now shows <code className={codeChip}>{varName} = {formatSizedHex(value)}</code>.
+                    </p>
+                  </PredictionPrompt>
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
+        {!packed ? (
+          <ol className="space-y-2" data-testid="unpacked-statements">
+            {preset.statements.map((s, i) =>
+              s.action.kind === "whole" ? (
+                <li key={s.code}>
+                  <RuleCardView card={unpackedWholeAssignCard(preset.typeName, s.code)} />
+                </li>
+              ) : (
+                <li key={s.code} className="rounded-lg border border-border/70 p-3">
+                  <p className="flex flex-wrap items-center gap-2 text-sm">
+                    <span aria-hidden className="text-xs text-muted-foreground">
+                      {i + 1}.
+                    </span>
+                    <code className={codeChip}>{s.code}</code>
+                    <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                      Legal: {s.action.kind === "member" ? "a member is written by name (§7.2)" : "an assignment pattern by member name (§10.9.2)"}
+                    </span>
+                  </p>
+                  <button type="button" onClick={() => runUnpacked(s)} className={cn(secondaryButton, "mt-2")} data-testid={`run-unpacked-${i}`}>
+                    Run it
+                  </button>
+                </li>
+              ),
+            )}
+          </ol>
+        ) : null}
+        {!packed && run.experiment?.source === "unpacked" ? (
+          <p data-testid="experiment-note" className="text-xs text-muted-foreground">
+            {run.experiment.text}
+          </p>
+        ) : null}
+        {!packed ? (
+          <p className="text-xs text-muted-foreground">
+            Unpacked view: whole-vector statements do not compile and member writes run on their own.{" "}
+            {run.voided ? "A write outside the sequence turned the predictions off, so statements run directly when you switch back." : "The predictions, written for the packed layout, wait until you switch back."}
+          </p>
+        ) : null}
+        {packed && run.voided && preset.statements.some((s) => s.prediction) ? (
+          <p className="text-xs text-muted-foreground" data-testid="predictions-voided">
+            {run.voided === "layout" ? "Layout edited: the predictions were written for the preset layout, so statements now run directly." : "You wrote outside the sequence: the predictions were written for the values the statements leave, so statements now run directly."}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => choosePreset(preset.id)} className={secondaryButton}>
+            Reset preset
+          </button>
+        </div>
+        {/* Folded away: one stray press would end the predictions, so an experiment has to be asked for. */}
+        {packed ? (
+          <details className="rounded-lg border border-border/70 p-3" data-testid="x-experiments">
+            <summary className="cursor-pointer text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Experiment: write an x into a member</summary>
+            <p className="mt-2 text-xs text-muted-foreground">A write here is outside the sequence, so it turns the predictions off until you reset the preset.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {members.map((m) => {
+                const offer = xWriteOffer(varName, members, m.name);
+                // An enum member's x goes through a part-select, whose text names the range, so it waits for the ranges.
+                if (offer.partSelect && rangesHidden) return null;
+                return (
+                  <button key={m.id} type="button" onClick={() => writeX(m.name)} className={secondaryButton} data-testid={`write-x-${m.id}`}>
+                    {offer.partSelect ? <code className="font-mono [font-variant-ligatures:none]">{offer.label}</code> : offer.label}
+                  </button>
+                );
+              })}
+            </div>
+          </details>
+        ) : null}
+        {packed && run.experiment?.source === "x" ? (
+          <p data-testid="experiment-note" className="text-xs text-muted-foreground">
+            {run.experiment.text}
+          </p>
+        ) : null}
+      </section>
+
+      {enumReadout ? (
+        <div role="note" data-testid="enum-readout" className={cn("rounded-lg border p-3 text-sm", enumReadout.isMember ? "border-border/70" : "border-amber-500/60 bg-amber-500/[0.06]")}>
+          <p>
+            <code className={codeChip}>
+              {varName}.{enumMember?.name}.name()
+            </code>{" "}
+            returns <code className={codeChip}>&quot;{enumReadout.name}&quot;</code>
+            <span className="ml-2 text-xs text-muted-foreground">({enumReadout.citation})</span>
+          </p>
+          <p className="mt-1 text-muted-foreground">{enumReadout.note}</p>
+        </div>
+      ) : null}
 
       {packed && applied > 0 && !rangesHidden ? (
         <div className="space-y-2" data-testid="hex-overlay">
@@ -551,105 +830,26 @@ function StructMode({ preset: presetId }: { preset?: string }) {
         </div>
       ) : null}
 
-      {enumReadout ? (
-        <div role="note" data-testid="enum-readout" className={cn("rounded-lg border p-3 text-sm", enumReadout.isMember ? "border-border/70" : "border-amber-500/60 bg-amber-500/[0.06]")}>
-          <p>
-            <code className={codeChip}>
-              {varName}.{enumMember?.name}.name()
-            </code>{" "}
-            returns <code className={codeChip}>&quot;{enumReadout.name}&quot;</code>
-            <span className="ml-2 text-xs text-muted-foreground">({enumReadout.basis})</span>
-          </p>
-          <p className="mt-1 text-muted-foreground">{enumReadout.note}</p>
+      {/* A vector rule says little about a value nothing has written, so in the packed view the cards wait for the first write. */}
+      {!packed || hasWrite ? (
+        <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]" data-testid="struct-cards">
+          {shownCards.map((c) => (
+            <RuleCardView key={c.code} card={c} />
+          ))}
         </div>
       ) : null}
 
-      <section aria-label="Statements" className="space-y-2">
-        <p className="text-sm font-semibold text-foreground">Statements</p>
-        {/* Hidden, not unmounted, in the unpacked view: an unmounted prompt would come back unanswered for a statement that has already run. */}
-        <ol ref={statementsRef} className="space-y-2" hidden={!packed}>
-          {preset.statements.map((s, i) => {
-            const done = i < applied;
-            const current = i === applied;
-            return (
-              <li key={s.code} data-statement={i} tabIndex={-1} className={cn("rounded-lg border p-3", statementItemFocus, done ? "border-emerald-500/40 bg-emerald-500/[0.04]" : current ? "border-amber-500/40" : "border-dashed border-border/60 opacity-60")}>
-                <p className="flex flex-wrap items-center gap-2 text-sm">
-                  <span aria-hidden className="text-xs text-muted-foreground">
-                    {i + 1}.
-                  </span>
-                  <code className={codeChip}>{s.code}</code>
-                  {done ? <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">run</span> : null}
-                </p>
-                {done && i === applied - 1 && run.note ? <p className="mt-1 text-xs text-muted-foreground">{run.note}</p> : null}
-                {current && !gated ? (
-                  <button type="button" onClick={() => applyStatement(i)} className={cn(primaryButton, "mt-2")} data-testid="run-statement">
-                    Run it
-                  </button>
-                ) : null}
-                {/* The prompt stays mounted for the statement it just ran, so its feedback remains readable; `gen` remounts it re-armed on a reset. */}
-                {s.prediction && !run.layoutEdited && (current || i === applied - 1) ? (
-                  <PredictionPrompt key={`${preset.id}-${gen}-${i}`} question={s.prediction.question} options={toOptions(s.prediction.options)} resetKey={`${preset.id}-${gen}-${i}`} className="mt-2">
-                    <OnReveal onReveal={() => applyStatement(i)} />
-                    <p className="text-sm text-muted-foreground">The strip above now shows the result.</p>
-                  </PredictionPrompt>
-                ) : null}
-              </li>
-            );
-          })}
-        </ol>
-        {!packed ? (
-          <ol className="space-y-2" data-testid="unpacked-statements">
-            {preset.statements.map((s, i) =>
-              s.action.kind === "whole" ? (
-                <li key={s.code}>
-                  <RuleCardView card={unpackedWholeAssignCard(preset.typeName, s.code)} />
-                </li>
-              ) : (
-                <li key={s.code} className="rounded-lg border border-border/70 p-3">
-                  <p className="flex flex-wrap items-center gap-2 text-sm">
-                    <span aria-hidden className="text-xs text-muted-foreground">
-                      {i + 1}.
-                    </span>
-                    <code className={codeChip}>{s.code}</code>
-                    <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                      Legal: {s.action.kind === "member" ? "a member is written by name (§7.2)" : "an assignment pattern by member name (§10.9.2)"}
-                    </span>
-                  </p>
-                  <button type="button" onClick={() => runUnpacked(s)} className={cn(secondaryButton, "mt-2")} data-testid={`run-unpacked-${i}`}>
-                    Run it
-                  </button>
-                </li>
-              ),
-            )}
-          </ol>
-        ) : null}
-        {!packed ? (
-          <p className="text-xs text-muted-foreground">Unpacked view: whole-vector statements do not compile, member writes run on their own, and the predictions, written for the packed layout, wait until you switch back.</p>
-        ) : null}
-        {packed && run.layoutEdited && preset.statements.some((s) => s.prediction) ? (
-          <p className="text-xs text-muted-foreground">Layout edited: the predictions were written for the preset layout, so statements now run directly.</p>
-        ) : null}
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => choosePreset(preset.id)} className={secondaryButton}>
-            Reset preset
-          </button>
-          {packed
-            ? members.map((m) => {
-                const offer = xWriteOffer(varName, members, m.name);
-                // An enum member's x goes through a part-select, whose text names the range, so it waits for the ranges.
-                if (offer.partSelect && rangesHidden) return null;
-                return (
-                  <button key={m.id} type="button" onClick={() => writeX(m.name)} className={secondaryButton} data-testid={`write-x-${m.id}`}>
-                    {offer.partSelect ? <code className="font-mono [font-variant-ligatures:none]">{offer.label}</code> : offer.label}
-                  </button>
-                );
-              })
-            : null}
-        </div>
-      </section>
-
       <details className="rounded-xl border border-border/70 p-3">
         <summary className="cursor-pointer text-sm font-semibold text-foreground">Edit the layout: member order and widths</summary>
+        {/* The strip is out of sight from here, so this line follows the edits, under the site header. */}
+        <p data-testid="layout-live" className="sticky top-16 z-10 mt-3 rounded-md border border-border/70 bg-background px-2 py-1 font-mono text-xs text-foreground [font-variant-ligatures:none]">
+          {rangesHidden ? members.map((m) => `${m.name} (${m.width})`).join(" | ") : ranges.map((r) => `${r.name} ${rangeText(r)}`).join(" | ")}; $bits = {width}
+        </p>
+        {run.experiment?.source === "layout" ? (
+          <p data-testid="experiment-note" className="mt-2 text-xs text-muted-foreground">
+            {run.experiment.text}
+          </p>
+        ) : null}
         <div className="mt-3 grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
           <ReorderList
             label={rangesHidden ? "Member order" : "Member order (first = most significant)"}
@@ -674,11 +874,12 @@ function StructMode({ preset: presetId }: { preset?: string }) {
               </label>
             ))}
             {enumMember ? <p className="text-xs text-muted-foreground">An enum member keeps the width of its base type.</p> : null}
+            <p className="text-xs text-muted-foreground">{WIDTH_HINT}</p>
           </div>
         </div>
       </details>
 
-      <Status text={statusText} testId="struct-status" />
+      <StatusWithAnnouncement text={statusText} announcement={run.announcement} testId="struct-status" />
     </VisualFrame>
   );
 }
@@ -691,17 +892,52 @@ const CELL = 16;
 const NIBBLE = CELL * 4 + 3;
 const NIBBLE_GAP = 4;
 
-function UnionRowView({ row, value, width, changed, unaffected, varName }: { row: UnionRow; value: SvValue; width: number; changed: readonly number[]; unaffected: readonly number[]; varName: string }) {
+function UnionRowView({
+  row,
+  value,
+  width,
+  changed,
+  unaffected,
+  varName,
+  positionHidden,
+}: {
+  row: UnionRow;
+  value: SvValue;
+  width: number;
+  changed: readonly number[];
+  unaffected: readonly number[];
+  varName: string;
+  /** While the first gated statement is open a narrower row, a field or a lane would answer it, so only whole-width rows are drawn, and those without their pieces. */
+  positionHidden: boolean;
+}) {
+  // Above the strip and stuck to the panel's left edge, so the name stays readable while the bits scroll under it.
+  const name = (
+    <span className="sticky left-0 block w-fit font-mono text-xs text-muted-foreground [font-variant-ligatures:none]" style={{ paddingLeft: row.depth * 8 }}>
+      {varName}.{row.path}
+    </span>
+  );
+  if (positionHidden) {
+    return (
+      <div className="space-y-1" data-testid={`union-row-${row.path}`}>
+        {name}
+        {row.width === width ? (
+          <div className="flex justify-end">
+            <BitStrip bits={toBits(slice(value, row.hi, row.lo))} label={`${varName}.${row.path}`} msbIndex={row.hi} bitNumbers changed={changed} />
+          </div>
+        ) : (
+          <p className="sticky left-0 w-fit rounded-[3px] border border-dashed border-slate-400/60 px-2 py-1 text-xs text-muted-foreground">{row.width} bits: where they sit appears once you answer</p>
+        )}
+      </div>
+    );
+  }
   const missing = Math.ceil((width - row.width) / 4);
   const placeholderWidth = missing > 0 ? missing * NIBBLE + (missing - 1) * NIBBLE_GAP : 0;
   // Only the bits beyond the written member are unaffected (§7.3.1), so a narrower row may claim its whole gap only when every bit of the gap was left alone.
   const highlightsUnaffected = row.unaffectedAbove.length > 0 && row.unaffectedAbove.every((b) => unaffected.includes(b));
   return (
-    <div className="flex items-end justify-end gap-1" data-testid={`union-row-${row.path}`} style={{ paddingLeft: row.depth * 8 }}>
-      <span className="mr-2 shrink-0 self-start pt-3 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
-        {varName}.{row.path}
-      </span>
-      <div className="flex items-end gap-1">
+    <div className="space-y-1" data-testid={`union-row-${row.path}`}>
+      {name}
+      <div className="flex items-end justify-end gap-1">
         {missing > 0 ? (
           <span
             role="note"
@@ -736,8 +972,32 @@ interface UnionRunState {
   applied: number;
   changed: number[];
   unaffected: number[];
+  /** About the statement that ran last; shown under it. */
   note: string;
+  /** About a write through the free control; shown beside that control. */
+  experiment: string;
+  /** The live region's text: what the last action changed. */
+  announcement: string;
 }
+
+const initialUnionRun = (u: UnionType, announcement = ""): UnionRunState => ({ value: unionInitialValue(u), applied: 0, changed: [], unaffected: [], note: "", experiment: "", announcement });
+
+/** The preset's union with the chosen packing and the narrowing control's width. */
+const unionVariant = (preset: UnionPreset, packing: UnionPacking, narrowWidth: number): UnionType => ({
+  ...preset.union,
+  packing,
+  members: preset.union.members.map((m) => (m.id === preset.narrowMember ? { ...m, width: narrowWidth } : m)),
+});
+
+/** What a union write changed: every row that reads differently, or only the whole-width rows while positions are hidden. */
+const unionChangedText = (u: UnionType, varName: string, before: SvValue, after: SvValue, positionHidden: boolean): string => {
+  const width = unionWidth(u);
+  const rows = unionRows(u).filter((r) => !positionHidden || r.width === width);
+  return changedReadsText(
+    rows.map((r) => ({ name: `${varName}.${r.path}`, before: readUnionPath(u, before, r.path), after: readUnionPath(u, after, r.path) })),
+    { name: varName, value: after },
+  );
+};
 
 function UnionMode({ preset: presetId }: { preset?: string }) {
   const [presetKey, setPresetKey] = useState(unionPreset(presetId).id);
@@ -745,9 +1005,9 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
   const [packing, setPacking] = useState<UnionPacking>(preset.union.packing);
   const narrowBase = preset.union.members.find((m) => m.id === preset.narrowMember)!;
   const [narrowWidth, setNarrowWidth] = useState(narrowBase.width);
-  /** Set by a width edit, cleared by a reset: the predictions were written for the preset's widths, as in struct mode. */
-  const [widthEdited, setWidthEdited] = useState(false);
-  const [run, setRun] = useState<UnionRunState>({ value: unionInitialValue(preset.union), applied: 0, changed: [], unaffected: [], note: "" });
+  /** Set by a width edit or a free write, cleared by a reset: the predictions were written for the preset's widths and values, as in struct mode. */
+  const [voided, setVoided] = useState<"width" | "write" | null>(null);
+  const [run, setRun] = useState<UnionRunState>(() => initialUnionRun(preset.union));
   const [path, setPath] = useState<string>(preset.statements[0]?.path ?? preset.union.members[0].name);
   const [hexInput, setHexInput] = useState("");
   const [inputError, setInputError] = useState("");
@@ -761,18 +1021,15 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
     setPresetKey(p.id);
     setPacking(p.union.packing);
     setNarrowWidth(p.union.members.find((m) => m.id === p.narrowMember)!.width);
-    setWidthEdited(false);
-    setRun({ value: unionInitialValue(p.union), applied: 0, changed: [], unaffected: [], note: "" });
+    setVoided(null);
+    setRun(initialUnionRun(p.union, "Reset: nothing has run yet."));
     setPath(p.statements[0]?.path ?? p.union.members[0].name);
     setHexInput("");
     setInputError("");
     setGen((g) => g + 1);
   };
 
-  const union: UnionType = useMemo(
-    () => ({ ...preset.union, packing, members: preset.union.members.map((m) => (m.id === preset.narrowMember ? { ...m, width: narrowWidth } : m)) }),
-    [preset, packing, narrowWidth],
-  );
+  const union: UnionType = useMemo(() => unionVariant(preset, packing, narrowWidth), [preset, packing, narrowWidth]);
   const width = unionWidth(union);
   const states = unionStates(union);
   const value = rewidthVector(run.value, width, states);
@@ -783,14 +1040,19 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
   // Unequal hard packed members do not compile (§7.3.1), so nothing can run until the declaration is legal again.
   const blocked = problems.length > 0;
 
+  // Until the first gated statement is answered, a narrower row, a field or a lane would answer it, as the ranges would in struct mode.
+  const firstGate = preset.statements.findIndex((st) => st.prediction);
+  const positionHidden = firstGate >= 0 && run.applied <= firstGate && voided === null;
+
   const write = useCallback(
-    (targetPath: string, src: SvValue, note?: string) => {
+    (targetPath: string, src: SvValue) => {
       setRun((prev) => {
-        const w = writeUnionPath(union, rewidthVector(prev.value, width, states), targetPath, src);
-        return { ...prev, value: w.value, changed: w.changed, unaffected: w.unaffected, note: `${w.note}${note ? ` ${note}` : ""}` };
+        const before = rewidthVector(prev.value, width, states);
+        const w = writeUnionPath(union, before, targetPath, src);
+        return { ...prev, value: w.value, changed: w.changed, unaffected: w.unaffected, note: "", experiment: w.note, announcement: announcementOf(unionChangedText(union, preset.varName, before, w.value, false), w.note) };
       });
     },
-    [union, width, states],
+    [union, width, states, preset.varName],
   );
 
   const applyStatement = useCallback(
@@ -799,11 +1061,16 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
         if (prev.applied !== index) return prev;
         const s = preset.statements[index];
         if (!s) return prev;
-        const w = writeUnionPath(union, rewidthVector(prev.value, width, states), s.path, s.value);
-        return { value: w.value, applied: index + 1, changed: w.changed, unaffected: w.unaffected, note: `${w.note}${s.note ? ` ${s.note}` : ""}` };
+        const before = rewidthVector(prev.value, width, states);
+        const w = writeUnionPath(union, before, s.path, s.value);
+        const stillHidden = firstGate >= 0 && index + 1 <= firstGate && voided === null;
+        // A preset's own note describes the preset's own run, so once a width edit or a free write has left it only the model's note is true, as in struct mode.
+        const presetNote = voided ? "" : (s.note ?? "");
+        const note = `${stillHidden ? w.openNote : w.note} ${presetNote}`.trim();
+        return { value: w.value, applied: index + 1, changed: w.changed, unaffected: w.unaffected, note, experiment: "", announcement: announcementOf(unionChangedText(union, preset.varName, before, w.value, stillHidden), note) };
       });
     },
-    [preset, union, width, states],
+    [preset, union, width, states, firstGate, voided],
   );
 
   const submitWrite = () => {
@@ -815,15 +1082,46 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
       return;
     }
     setInputError("");
+    setVoided((v) => v ?? "write");
     // The entry is a sized literal of one nibble per digit; the model's write resizes it to the member (§10.7) and says so in its note.
     write(path, svHex(digits.length * 4, digits));
   };
 
-  const nextStatement = preset.statements[run.applied];
-  const gated = Boolean(nextStatement?.prediction) && !widthEdited;
+  /**
+   * A declaration edit. The last write's note and marks describe the old
+   * declaration, so they go, and the live region says what the edit did, since
+   * the status line is not live. The value takes the new width for good: bits
+   * cut off by a shrink do not come back when the width grows again (`rewidthVector`).
+   */
+  const announceDeclaration = (next: UnionType) => {
+    const problem = unionProblems(next)[0];
+    const text = problem ? problem.message : `${next.name} is now ${unionWidth(next)} bits, ${next.packing === "soft" ? "soft packed" : "hard packed"}.`;
+    setRun((prev) => ({ ...prev, value: rewidthVector(prev.value, unionWidth(next), unionStates(next)), changed: [], unaffected: [], note: "", experiment: "", announcement: text }));
+  };
 
-  const rowText = rows.map((r) => `${preset.varName}.${r.path} ${rangeText(r)} = ${formatSizedHex(readUnionPath(union, value, r.path))}`).join("; ");
-  const statusText = `${union.name} is ${width} bits, ${states}-state, ${packing === "soft" ? "soft packed" : "hard packed"}. ${rowText}.${run.note ? ` ${run.note}` : ""}`;
+  const choosePacking = (next: UnionPacking) => {
+    setPacking(next);
+    announceDeclaration(unionVariant(preset, next, narrowWidth));
+  };
+
+  const commitNarrowWidth = (w: number) => {
+    setNarrowWidth(w);
+    setVoided((v) => (v === "write" ? v : "width"));
+    announceDeclaration(unionVariant(preset, packing, w));
+  };
+
+  const nextStatement = preset.statements[run.applied];
+  const gated = Boolean(nextStatement?.prediction) && !voided;
+
+  const rowText = positionHidden
+    ? rows
+        .filter((r) => r.width === width)
+        .map((r) => `${preset.varName}.${r.path} = ${formatSizedHex(readUnionPath(union, value, r.path))}`)
+        .join("; ")
+    : rows.map((r) => `${preset.varName}.${r.path} ${rangeText(r)} = ${formatSizedHex(readUnionPath(union, value, r.path))}`).join("; ");
+  const shownNote = run.experiment || run.note;
+  // A declaration that does not compile has no width, state-ness or values to report.
+  const statusText = blocked ? `${union.name} does not compile. ${problems[0].message}` : `${union.name} is ${width} bits, ${states}-state, ${packing === "soft" ? "soft packed" : "hard packed"}. ${rowText}.${shownNote ? ` ${shownNote}` : ""}`;
 
   return (
     <VisualFrame label="Packed union explorer" eyebrow="Predict, then experiment" title="One storage, several names" summary={preset.summary} fidelity="model" assumptions={PACKED_LAYOUT_ASSUMPTIONS}>
@@ -839,7 +1137,7 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
             { value: "soft", label: "union soft" },
           ]}
           value={packing}
-          onChange={setPacking}
+          onChange={choosePacking}
           mono
         />
         <label className="flex items-center gap-2 text-sm">
@@ -851,15 +1149,17 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
             min={1}
             max={64}
             label={`Width of ${preset.narrowMember} in bits`}
-            onCommit={(w) => {
-              setNarrowWidth(w);
-              setWidthEdited(true);
-            }}
+            onCommit={commitNarrowWidth}
           />
         </label>
-        <ValueChip name="width" value={width} />
-        <ValueChip name="states" value={`${states}-state`} />
+        {blocked ? null : (
+          <>
+            <ValueChip name="width" value={width} />
+            <ValueChip name="states" value={`${states}-state`} />
+          </>
+        )}
       </div>
+      <p className="text-xs text-muted-foreground">{WIDTH_HINT}</p>
 
       {problems.length ? (
         <div className="space-y-2" data-testid="union-problems">
@@ -869,13 +1169,12 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
         </div>
       ) : null}
 
-      <StripPanel label={`Rows of ${preset.varName}`}>
+      <StripPanel label={`Rows of ${preset.varName}`} reveal={run.changed} footer={run.changed.length ? <BitStripLegend items={["changed"]} /> : null}>
         <div className="space-y-3">
           {rows.map((r) => (
-            <UnionRowView key={r.path} row={r} value={value} width={width} changed={run.changed} unaffected={run.unaffected} varName={preset.varName} />
+            <UnionRowView key={r.path} row={r} value={value} width={width} changed={run.changed} unaffected={run.unaffected} varName={preset.varName} positionHidden={positionHidden} />
           ))}
         </div>
-        {run.changed.length ? <BitStripLegend items={["changed"]} className="mt-3" /> : null}
       </StripPanel>
 
       <section aria-label="Statements" className="space-y-2">
@@ -885,7 +1184,7 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
             const done = i < run.applied;
             const current = i === run.applied;
             return (
-              <li key={s.code} data-statement={i} tabIndex={-1} className={cn("rounded-lg border p-3", statementItemFocus, done ? "border-emerald-500/40 bg-emerald-500/[0.04]" : current ? "border-amber-500/40" : "border-dashed border-border/60 opacity-60")}>
+              <li key={s.code} data-statement={i} tabIndex={-1} className={cn("rounded-lg border p-3", statementItemFocus, feedbackFocusRing, done ? "border-emerald-500/40 bg-emerald-500/[0.04]" : current ? "border-amber-500/40" : "border-dashed border-border/60 opacity-60")}>
                 <p className="flex flex-wrap items-center gap-2 text-sm">
                   <span aria-hidden className="text-xs text-muted-foreground">
                     {i + 1}.
@@ -895,16 +1194,18 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
                 </p>
                 {done && i === run.applied - 1 && run.note ? <p className="mt-1 text-xs text-muted-foreground">{run.note}</p> : null}
                 {current && !gated && !blocked ? (
-                  <button type="button" onClick={() => applyStatement(i)} className={cn(primaryButton, "mt-2")} data-testid="run-statement">
+                  <button type="button" onClick={() => applyStatement(i)} className={cn(primaryButton, "mt-2")} data-testid="run-statement" data-run-statement>
                     Run it
                   </button>
                 ) : null}
                 {/* The prompt stays mounted for the statement it just ran, so its feedback remains readable; hidden, not unmounted, while the declaration does not compile, so its answer survives. */}
-                {s.prediction && !widthEdited && (current || i === run.applied - 1) ? (
+                {s.prediction && !voided && (current || i === run.applied - 1) ? (
                   <div hidden={blocked}>
                     <PredictionPrompt key={`${preset.id}-${gen}-${i}`} question={s.prediction.question} options={toOptions(s.prediction.options)} resetKey={`${preset.id}-${gen}-${i}`} className="mt-2">
                       <OnReveal onReveal={() => applyStatement(i)} />
-                      <p className="text-sm text-muted-foreground">Every row above now shows the new bits.</p>
+                      <p className="text-sm text-muted-foreground">
+                        The rows above now read the new bits: <code className={codeChip}>{formatSizedHex(value)}</code>.
+                      </p>
                     </PredictionPrompt>
                   </div>
                 ) : null}
@@ -913,8 +1214,10 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
           })}
         </ol>
         {blocked ? <p className="text-xs text-muted-foreground">This declaration does not compile, so nothing can run: make the widths equal, or switch to union soft.</p> : null}
-        {widthEdited && !blocked && preset.statements.some((s) => s.prediction) ? (
-          <p className="text-xs text-muted-foreground">Width edited: the predictions were written for the preset widths, so statements now run directly.</p>
+        {voided && !blocked && preset.statements.some((s) => s.prediction) ? (
+          <p className="text-xs text-muted-foreground" data-testid="predictions-voided">
+            {voided === "width" ? "Width edited: the predictions were written for the preset widths, so statements now run directly." : "You wrote outside the sequence: the predictions were written for the values the statements leave, so statements now run directly."}
+          </p>
         ) : null}
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => choosePreset(preset.id)} className={secondaryButton}>
@@ -958,21 +1261,25 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
             {inputError}
           </p>
         ) : null}
+        {run.experiment ? (
+          <p data-testid="experiment-note" className="text-xs text-muted-foreground">
+            {run.experiment}
+          </p>
+        ) : null}
       </section>
 
-      <div role="note" className="rounded-lg border border-border/70 p-3 text-sm" data-testid="union-p">
-        <code className={codeChip}>$display(&quot;%p&quot;, {preset.varName});</code> prints <code className={codeChip}>{pView.text}</code>
-        <p className="mt-1 text-muted-foreground">This is the first-declared-member reading of §21.2.1.6, here {pView.member}.</p>
-        <details className="mt-1 text-muted-foreground">
-          <summary className="cursor-pointer text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Why tools can differ</summary>
-          <p className="mt-1">
-            The standard states that rule for unions in its paragraph on aggregates, while its rules for singular values name only packed structures, and a packed union is a singular integral value, so packed-union %p output is tool-dependent. Print the member you
-            need, or the raw view with %h.
-          </p>
-        </details>
-      </div>
+      {blocked ? null : (
+        <div role="note" className="rounded-lg border border-border/70 p-3 text-sm" data-testid="union-p">
+          <code className={codeChip}>$display(&quot;%p&quot;, {preset.varName});</code> prints <code className={codeChip}>{pView.text}</code>
+          <p className="mt-1 text-muted-foreground">This is the first-declared-member reading of §21.2.1.6, here {pView.member}.</p>
+          <WhyToolsDiffer>
+            The standard states that rule for unions in its paragraph on aggregates, while its rules for singular values name only packed structures, and a packed union is a singular integral value, so packed-union %p output is tool-dependent. Print the member you need,
+            or the raw view with %h.
+          </WhyToolsDiffer>
+        </div>
+      )}
 
-      <Status text={statusText} testId="union-status" />
+      <StatusWithAnnouncement text={statusText} announcement={run.announcement} testId="union-status" />
     </VisualFrame>
   );
 }
@@ -990,12 +1297,19 @@ function TaggedMode() {
   const [pShown, setPShown] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const readResultRef = useRef<HTMLParagraphElement>(null);
+  const readPromptRef = useRef<HTMLDivElement>(null);
 
   const type: TaggedUnionType = useMemo(() => ({ ...VINT, members: third ? [...VINT.members, VINT_THIRD_MEMBER] : VINT.members }), [third]);
   const tagName = v.tagIndex === null ? null : type.members[v.tagIndex].name;
   const layout = taggedPackedLayout(type);
   const picture = useMemo(() => taggedPackedBits(type, v), [type, v]);
   const read = pendingRead ? readTagged(type, v, pendingRead) : null;
+  const readPrediction = pendingRead ? TAGGED_READ_PREDICTION(`v.${pendingRead}`, tagName) : null;
+
+  // The read button stays where it is and the question mounts further down, so focus goes to the question's first answer.
+  useEffect(() => {
+    if (readCount > 0) readPromptRef.current?.querySelector<HTMLElement>('input[type="radio"]')?.focus();
+  }, [readCount]);
 
   const assign = (member: TaggedMember) => {
     setV(makeTagged(type, member.name, taggedAssignValue(member)));
@@ -1023,7 +1337,9 @@ function TaggedMode() {
   };
 
   const valueText = v.tagIndex === null ? "undefined" : v.value ? formatSizedHex(v.value) : "(void: no value)";
-  const statusText = `v: tag ${tagName ?? "undefined"}, value ${valueText}. ${packed ? picture.note : `Tag width ${layout.tagBits} bit${layout.tagBits === 1 ? "" : "s"} for ${type.members.length} members (§7.3.2).`}`;
+  const layoutText = packed ? picture.note : `If declared packed, the tag would be ${layout.tagBits} bit${layout.tagBits === 1 ? "" : "s"} (§7.3.2); an unpacked tagged union has no required representation (§7.3).`;
+  const pReading = taggedPReading(type, v, packed);
+  const statusText = `v: tag ${tagName ?? "undefined"}, value ${valueText}. ${layoutText}${pShown ? ` ${pReading.sentence}` : ""}`;
 
   return (
     <VisualFrame
@@ -1066,39 +1382,69 @@ function TaggedMode() {
         </button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-start gap-2">
         <ValueChip name="tag" value={tagName ?? "undefined"} changed={false} />
         <span data-testid="tagged-value" className="inline-flex items-center gap-1.5 rounded-md border border-indigo-400/60 bg-indigo-500/10 px-2 py-0.5 font-mono text-sm text-indigo-800 dark:text-indigo-100">
           <span className="text-xs opacity-90">value</span>
           <span className="font-semibold">{valueText}</span>
         </span>
         {pShown ? (
-          <span data-testid="tagged-p" className="text-sm">
-            <code className={codeChip}>%p</code> prints <code className={codeChip}>{formatTaggedP(type, v)}</code> <span className="text-xs text-muted-foreground">(tag:value, §21.2.1.6)</span>
-          </span>
+          <div data-testid="tagged-p" className="min-w-0 text-sm">
+            {pReading.text === null ? (
+              <>
+                <code className={codeChip}>%p</code> output is not defined: the variable was never assigned, so its value, tag bits included, is undefined <span className="text-xs text-muted-foreground">({pReading.citation})</span>
+              </>
+            ) : (
+              <>
+                <code className={codeChip}>%p</code> prints <code className={codeChip}>{pReading.text}</code> <span className="text-xs text-muted-foreground">({pReading.citation})</span>
+              </>
+            )}
+            {pReading.basis === "tool-dependent" ? (
+              <WhyToolsDiffer>
+                The standard states tag:value in its paragraph on aggregates, while its rules for singular values name only packed structures, and a packed tagged union is a singular integral value, so its %p output is tool-dependent. Print the member you need by name.
+              </WhyToolsDiffer>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
-      {pendingRead ? (
-        <PredictionPrompt key={readCount} question={TAGGED_READ_PREDICTION(`v.${pendingRead}`, tagName).question} options={toOptions(TAGGED_READ_PREDICTION(`v.${pendingRead}`, tagName).options)} resetKey={String(readCount)}>
-          <OnReveal onReveal={() => readResultRef.current?.focus()} />
-          {read ? (
-            <p ref={readResultRef} tabIndex={-1} data-testid="tagged-read-result" className={cn("text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", read.ok ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
-              <span aria-hidden>{read.ok ? "✓ " : "✕ "}</span>
-              {/* The statement is %0d, so the printed text is decimal (§21.2.1.3); the value chip above keeps the sized hex. */}
-              {read.ok ? `$display prints ${read.value.width === 0 ? "nothing" : formatD(read.value)}. ${read.note}` : read.error}
-            </p>
-          ) : null}
-        </PredictionPrompt>
+      {readPrediction ? (
+        <div ref={readPromptRef}>
+          <PredictionPrompt key={readCount} question={readPrediction.question} options={toOptions(readPrediction.options)} resetKey={String(readCount)}>
+            {({ committed }) => {
+              const chosen = readPrediction.options.find((o) => o.id === committed);
+              return (
+                <>
+                  <OnReveal onReveal={() => readResultRef.current?.focus()} />
+                  {read ? (
+                    <p ref={readResultRef} tabIndex={-1} data-testid="tagged-read-result" className={cn("text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", read.ok ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
+                      {/* Focus lands here, past the prompt's feedback, so the verdict on the prediction travels with the result. */}
+                      {chosen ? <span className="sr-only">{chosen.correct ? "Your prediction was right. " : "Your prediction was wrong. "}</span> : null}
+                      <span aria-hidden>{read.ok ? "✓ " : "✕ "}</span>
+                      {/* The statement is %0d, so the printed text is decimal (§21.2.1.3); the value chip above keeps the sized hex. */}
+                      {read.ok ? `$display prints ${read.value.width === 0 ? "nothing" : formatD(read.value)}. ${read.note}` : read.error}
+                    </p>
+                  ) : null}
+                </>
+              );
+            }}
+          </PredictionPrompt>
+        </div>
       ) : null}
 
       {packed ? (
-        <StripPanel label="Packed bits of v">
+        <StripPanel
+          label="Packed bits of v"
+          footer={
+            <>
+              <BitStripLegend items={["undefined"]} />
+              <p className="text-sm text-muted-foreground" data-testid="tagged-layout-note">
+                {layout.width} bits: tag {rangeText({ hi: layout.tagHi, lo: layout.tagLo })} ({layout.tagBits} bit{layout.tagBits === 1 ? "" : "s"} for {type.members.length} members). {picture.note}
+              </p>
+            </>
+          }
+        >
           <BitStrip bits={picture.bits} label={`v, ${type.name} packed`} bitNumbers segments={picture.segments} undefinedBits={picture.undefinedBits} />
-          <BitStripLegend items={["undefined"]} className="mt-2" />
-          <p className="mt-2 text-sm text-muted-foreground" data-testid="tagged-layout-note">
-            {layout.width} bits: tag {rangeText({ hi: layout.tagHi, lo: layout.tagLo })} ({layout.tagBits} bit{layout.tagBits === 1 ? "" : "s"} for {type.members.length} members). {picture.note}
-          </p>
         </StripPanel>
       ) : null}
 
@@ -1156,11 +1502,7 @@ function MutationMode() {
   const selectedCell = board.cells[cellKey(selected.row, selected.col)];
   const failLine = selectedRun.log.indexOf(`FAIL: ${selectedCheck.label}`);
   const diff = changedLogLines(board.baseline, selectedRun);
-  const agreement = MUTATIONS.map((m) => {
-    const got = failingChecks(board.runs[m.id]);
-    const expected = [...LESSON_EXPECTED_FAILURES[m.id]];
-    return { id: m.id, label: m.label, agrees: got.length === expected.length && got.every((id, i) => id === expected[i]), got, expected };
-  });
+  const selectedExpr = board.baseline.checks.find((c) => c.id === selected.row)?.expr ?? "";
 
   return (
     <VisualFrame
@@ -1186,6 +1528,17 @@ function MutationMode() {
           </div>
         ))}
       </div>
+
+      <details className="rounded-lg border border-border/70 p-3 text-sm" data-testid="mutation-checks">
+        <summary className="cursor-pointer font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">What each check tests</summary>
+        <ul className="mt-2 space-y-1">
+          {board.baseline.checks.map((c) => (
+            <li key={c.id}>
+              <span className="text-foreground">{c.label}</span>: <code className={codeChip}>{c.expr}</code>
+            </li>
+          ))}
+        </ul>
+      </details>
 
       <MutationMatrix
         label="Checks against mutations"
@@ -1242,7 +1595,7 @@ function MutationMode() {
           )}
           <SegmentedControl<MutationId> label="Show the log of" options={MUTATIONS.map((m) => ({ value: m.id, label: m.label }))} value={selected.col} onChange={(col) => setSelected((prev) => ({ ...prev, col }))} />
           <p className="text-sm text-muted-foreground" data-testid="mutation-selected">
-            {selectedCheck.label} against {selectedMutation.label}: {selectedCell.summary}.{" "}
+            {selectedCheck.label} (<code className={codeChip}>{selectedExpr}</code>) against {selectedMutation.label}: {selectedCell.summary}.{" "}
             {failLine >= 0 ? "Its FAIL line is highlighted below." : "This check passed here, so it has no FAIL line."}
           </p>
           <div className="rounded-lg border border-border/70 p-3 text-sm">
@@ -1267,15 +1620,6 @@ function MutationMode() {
             activeKey={failLine >= 0 ? `fail${failLine}` : undefined}
             contextKeys={selectedRun.log.map((t, i) => (t.startsWith("FAIL:") ? `fail${i}` : "")).filter(Boolean)}
           />
-          <ul className="space-y-1 text-xs" data-testid="lesson-agreement">
-            {agreement.map((a) => (
-              <li key={a.id} className={a.agrees ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>
-                <span aria-hidden>{a.agrees ? "✓ " : "✕ "}</span>
-                {a.label}: the lesson expects {a.expected.map((id) => TB_CHECKS.find((c) => c.id === id)?.label).join(", ")} to fail
-                {a.agrees ? "; the model agrees." : `; the model got ${a.got.join(", ") || "none"}. Report this to the lesson's maintainer.`}
-              </li>
-            ))}
-          </ul>
         </div>
       ) : null}
     </VisualFrame>
@@ -1292,11 +1636,13 @@ function DebugMode({ preset: presetId }: { preset?: string }) {
   const [causeRevealed, setCauseRevealed] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
   const [suspectShown, setSuspectShown] = useState(false);
+  /** Latched by the first suspect pick: every line invites a click, and reading another one must not take away the fix section or the rerun. */
+  const [suspectFound, setSuspectFound] = useState(false);
   const [fix, setFix] = useState<FixId | null>(null);
   const [rerun, setRerun] = useState<{ fix: FixId; result: ClinicRun } | null>(null);
   /** Bumped on every scenario choice and reset, so the prompt and the hints remount re-armed. */
   const [gen, setGen] = useState(0);
-  const linesHeadingRef = useRef<HTMLHeadingElement>(null);
+  const causePromptRef = useRef<HTMLDivElement>(null);
   const suspectLineRef = useRef<HTMLButtonElement>(null);
 
   const choose = (id: string) => {
@@ -1305,19 +1651,21 @@ function DebugMode({ preset: presetId }: { preset?: string }) {
     setCauseRevealed(false);
     setPicked(null);
     setSuspectShown(false);
+    setSuspectFound(false);
     setFix(null);
     setRerun(null);
   };
 
   const asFound = useMemo(() => scenario.run(null), [scenario]);
   const isSuspectLine = (key: string | null) => key !== null && scenario.suspectKeys.includes(key);
-  const found = isSuspectLine(picked) || suspectShown;
-  const pickedLine = scenario.lines.find((l) => l.key === picked);
+  const found = suspectFound || suspectShown;
+  // The learner who asks to be shown still gets the reason, until they pick a line themselves.
+  const feedbackLine = scenario.lines.find((l) => l.key === picked) ?? (suspectShown ? scenario.lines.find((l) => l.key === scenario.suspectKeys[0]) : undefined);
   const onCauseReveal = useCallback(() => setCauseRevealed(true), []);
 
-  // The control pressed unmounts in each of these steps, so focus moves to what it opened.
+  // The control pressed unmounts in each of these steps. The cause's feedback comes first, because the diagnosis is the point; Tab goes on to the lines.
   useEffect(() => {
-    if (causeRevealed) linesHeadingRef.current?.focus();
+    if (causeRevealed) focusPromptFeedback(causePromptRef.current);
   }, [causeRevealed]);
   useEffect(() => {
     if (suspectShown) suspectLineRef.current?.focus();
@@ -1326,7 +1674,7 @@ function DebugMode({ preset: presetId }: { preset?: string }) {
   const verdict = rerun
     ? rerun.result.fixed
       ? `Fixed. ${scenario.fixFeedback[rerun.fix]}`
-      : `The symptom is still there. ${scenario.fixFeedback[rerun.fix]}`
+      : `${rerun.result.moved ? "The symptom moved." : "The symptom is still there."} ${scenario.fixFeedback[rerun.fix]}`
     : "";
 
   return (
@@ -1342,16 +1690,16 @@ function DebugMode({ preset: presetId }: { preset?: string }) {
 
       <CodeTrace label="Log, as found" lines={asFound.log.map((t, i) => ({ text: t, key: `a${i}` }))} />
 
-      <PredictionPrompt key={`${scenario.id}-${gen}`} question="What is the root cause?" options={toOptions(scenario.causes, "prose")} resetKey={`${scenario.id}-${gen}`}>
-        <OnReveal onReveal={onCauseReveal} />
-        <p className="text-sm text-muted-foreground">Now find the declaration that causes it.</p>
-      </PredictionPrompt>
+      <div ref={causePromptRef} className={feedbackFocusRing}>
+        <PredictionPrompt key={`${scenario.id}-${gen}`} question="What is the root cause?" options={toOptions(scenario.causes, "prose")} resetKey={`${scenario.id}-${gen}`}>
+          <OnReveal onReveal={onCauseReveal} />
+          <p className="text-sm text-muted-foreground">Now find the declaration that causes it.</p>
+        </PredictionPrompt>
+      </div>
 
       {causeRevealed ? (
         <section aria-label="Declarations" className="space-y-2" data-testid="clinic-lines">
-          <h4 ref={linesHeadingRef} tabIndex={-1} className="text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            Click the suspect declaration line
-          </h4>
+          <h4 className="text-sm font-semibold text-foreground">Click the suspect declaration line</h4>
           <ol className="overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 py-2 font-mono text-[12px] leading-6 text-slate-100 [font-variant-ligatures:none]">
             {scenario.lines.map((l, i) => {
               const isPicked = picked === l.key;
@@ -1362,11 +1710,14 @@ function DebugMode({ preset: presetId }: { preset?: string }) {
                   <button
                     ref={l.key === scenario.suspectKeys[0] ? suspectLineRef : undefined}
                     type="button"
-                    onClick={() => setPicked(l.key)}
+                    onClick={() => {
+                      setPicked(l.key);
+                      if (isSuspect) setSuspectFound(true);
+                    }}
                     aria-pressed={isPicked}
                     aria-label={`Line ${i + 1}: ${l.text.trim()}${mark ? (isSuspect ? ", the suspect" : ", not the suspect") : ""}`}
                     className={cn(
-                      "flex w-full items-start gap-2 border-l-2 px-2 text-left transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400 motion-reduce:transition-none",
+                      "flex w-full items-start gap-2 border-l-2 px-2 py-1.5 text-left transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400 motion-reduce:transition-none",
                       isPicked || (suspectShown && isSuspect) ? (isSuspect ? "border-emerald-400 bg-emerald-400/10" : "border-rose-400 bg-rose-400/10") : "border-transparent",
                     )}
                   >
@@ -1382,14 +1733,24 @@ function DebugMode({ preset: presetId }: { preset?: string }) {
               );
             })}
           </ol>
-          {pickedLine ? (
-            <p data-testid="clinic-line-feedback" className={cn("text-sm", isSuspectLine(pickedLine.key) ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
-              <span aria-hidden>{isSuspectLine(pickedLine.key) ? "✓ " : "✕ "}</span>
-              {pickedLine.whenPicked}
-            </p>
-          ) : null}
+          {/* Always mounted, so a screen reader hears the explanation when a line is picked. */}
+          <p role="status" aria-live="polite" data-testid="clinic-line-feedback" className={cn("text-sm", feedbackLine ? (isSuspectLine(feedbackLine.key) ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300") : "")}>
+            {feedbackLine ? (
+              <>
+                <span aria-hidden>{isSuspectLine(feedbackLine.key) ? "✓ " : "✕ "}</span>
+                {feedbackLine.whenPicked}
+              </>
+            ) : null}
+          </p>
           {!found ? (
-            <button type="button" onClick={() => setSuspectShown(true)} className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <button
+              type="button"
+              onClick={() => {
+                setPicked(null);
+                setSuspectShown(true);
+              }}
+              className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
               Show the suspect
             </button>
           ) : null}

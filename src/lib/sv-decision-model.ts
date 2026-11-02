@@ -15,8 +15,10 @@
  *   ranges `[lo:hi]` and bit-selects `sel[i]`. Everything is unsigned.
  * - `$` bounds, tolerance ranges, strings, unpacked arrays in a range list
  *   and side effects in item expressions are not modelled.
- * - A violation is reported as a ticket. A simulator holds the report until
- *   the Observed region and words it in its own way (§12.4.2.1, §12.5.3.1).
+ * - A violation is reported as a ticket. At run time a simulator holds the
+ *   report until the Observed region and words it in its own way (§12.4.2.1,
+ *   §12.5.3.1). §12.5.3 also allows a case violation to be reported at compile
+ *   time when it can be determined then; the lab shows the run-time path.
  * - One execution of the statement is modelled. A pending report is discarded
  *   if the procedure reaches a flush point before the Observed region of that
  *   time step, for example when an always_comb runs again (§12.4.2.1,
@@ -24,6 +26,7 @@
  */
 
 import {
+  bitsToString,
   caseItemMatches,
   compare,
   formatLiteral,
@@ -105,7 +108,9 @@ export interface DecisionConfig {
 
 /**
  * unique and priority report when no item matches and there is no default
- * (no final else); unique0 does not (§12.5.3; §12.4.2 for if chains).
+ * (no final else); unique0 does not (§12.5.3; §12.4.2 for if chains). A default
+ * or else does not match anything: no item matches, the catch-all runs, and the
+ * report is not issued (see `noMatchClause` for what each clause says).
  */
 export const reportsNoMatch = (qualifier: Qualifier): boolean => qualifier === "unique" || qualifier === "priority";
 
@@ -125,6 +130,27 @@ export const catchAllWord = (form: DecisionForm): "default" | "else" => (isIfCha
 /** The clause that defines the qualifier checks for this form. */
 export const qualifierClause = (form: DecisionForm): string => (isIfChain(form) ? "§12.4.2" : "§12.5.3");
 
+/**
+ * What to cite for "a catch-all removes the no-match report". §12.4.2 states
+ * the exception in words. §12.5.3 only says "if no case_item matches": for a
+ * case the exception follows from §12.5 (the default is not part of the search,
+ * and runs when all comparisons fail) together with the grammar, where default
+ * is a form of case_item. So a case cites both clauses.
+ */
+export const noMatchClause = (form: DecisionForm): string => (isIfChain(form) ? "§12.4.2" : "§12.5, §12.5.3");
+
+/** The catch-all with its article: "a default", "an else". */
+const catchAllPhrase = (form: DecisionForm): string => (isIfChain(form) ? "an else" : "a default");
+
+/** Names the form in a sentence that compare mode could show in both columns. An if chain never appears there. */
+const underForm = (form: DecisionForm): string => (isIfChain(form) ? "" : ` under ${FORM_LABELS[form]}`);
+
+/**
+ * `case`, as against casez and casex. Not "a plain case": the lab uses plain for
+ * the unqualified statement, and this rule holds under every qualifier (§12.5).
+ */
+const LITERAL_CASE = "case (not casez or casex)";
+
 /** The word for one alternative in this form. */
 export const itemWord = (form: DecisionForm): "case item" | "condition" => (isIfChain(form) ? "condition" : "case item");
 
@@ -141,9 +167,6 @@ const DEFERRED_CLAUSES = "§12.4.2.1, §12.5.3.1";
 
 /** The ticket's timing line. */
 export const DEFERRED_REPORT_NOTE = `checked now, reported in the Observed region (${DEFERRED_CLAUSES})`;
-
-/** The same fact as a full sentence, for feedback prose. */
-const DEFERRED_SENTENCE = `The check runs now; the report waits for the Observed region (${DEFERRED_CLAUSES}).`;
 
 /* ------------------------------------------------------------------ */
 /* Literals and bit-selects                                            */
@@ -396,18 +419,28 @@ export function orReduce(results: readonly Bit4[]): Bit4 {
 
 const bitList = (chips: readonly BitChip[]) => chips.map((c) => c.index).join(", ");
 
+/**
+ * Names the select's skipped bits by their value. x and z are different values
+ * to these statements: casez skips only z, casex skips both (§12.5.1).
+ */
+function skippedSelectClause(kind: CaseKind, skipped: readonly BitChip[]): string {
+  const fromSelect = skipped.filter((c) => (kind === "casex" ? isUnknownBit(c.left) : c.left === "z"));
+  if (fromSelect.length === 0) return "";
+  const values = (["x", "z"] as const).filter((value) => fromSelect.some((c) => c.left === value));
+  return `, including the ${values.join(" and ")} bit${fromSelect.length > 1 ? "s" : ""} of the select itself`;
+}
+
 function describeCaseChips(kind: CaseKind, chips: BitChip[], literal: string, matched: boolean): string {
   if (matched) {
     const skipped = chips.filter((c) => c.verdict === "skip");
     if (skipped.length === 0) return `${literal} matches bit for bit (§12.5).`;
-    const fromSelect = skipped.some((c) => (kind === "casex" ? isUnknownBit(c.left) : c.left === "z"));
-    return `${literal} matches: ${kind} skips bit${skipped.length > 1 ? "s" : ""} ${bitList(skipped)}${fromSelect ? ", including the unknown bit of the select itself" : ""} (§12.5.1).`;
+    return `${literal} matches: ${kind} skips bit${skipped.length > 1 ? "s" : ""} ${bitList(skipped)}${skippedSelectClause(kind, skipped)} (§12.5.1).`;
   }
   const bad = chips.find((c) => c.verdict === "0");
   if (!bad) return `${literal} does not match.`;
   const note =
     kind === "case" && (isUnknownBit(bad.left) || isUnknownBit(bad.right))
-      ? " A plain case compares x and z literally (§12.5)."
+      ? ` ${LITERAL_CASE} compares x and z literally (§12.5).`
       : kind === "casez" && bad.left === "x"
         ? " casez skips only z, so an x must match exactly (§12.5.1)."
         : "";
@@ -483,14 +516,15 @@ function evaluateCaseTerm(kind: CaseKind, expr: readonly Bit4[], term: Term, con
   const right = term.kind === "literal" ? parseLiteral(term.text, expr.length) : [bitAt(config.select, term.index)];
   const matched = caseItemMatches(kind, expr, right);
   const chips = caseBitChips(kind, expr, right);
-  if (term.kind === "literal") return { term, text, result: matched ? "1" : "0", chips, why: describeCaseChips(kind, chips, text, matched) };
+  // A bit-select listed beside literals is compared with the select itself, like a literal: the case expression is 1'b1 only when every item is a bit-select.
+  if (term.kind === "literal" || !usesConstantExpression(config.items)) return { term, text, result: matched ? "1" : "0", chips, why: describeCaseChips(kind, chips, text, matched) };
   // A bit-select item against the constant case expression 1'b1 (§12.5.2).
   const b = right[0];
   let why: string;
   if (matched && chips[0].verdict === "skip") why = `${text} is ${b}: ${kind} treats it as a don't-care, so it matches the case expression 1'b1 (§12.5.1).`;
   else if (matched) why = `${text} is 1, which matches the case expression 1'b1 (§12.5.2).`;
   else {
-    const note = isUnknownBit(b) ? (kind === "case" ? "; a plain case compares x and z literally (§12.5)" : "; casez skips only z, so x must match exactly (§12.5.1)") : "";
+    const note = isUnknownBit(b) ? (kind === "case" ? `; ${LITERAL_CASE} compares x and z literally (§12.5)` : "; casez skips only z, so x must match exactly (§12.5.1)") : "";
     why = `${text} is ${b}, not 1, so it does not match the case expression 1'b1 (§12.5.2)${note}.`;
   }
   return { term, text, result: matched ? "1" : "0", chips, why };
@@ -508,7 +542,7 @@ function evaluateInsideTerm(expr: readonly Bit4[], term: Term, config: DecisionC
     // case (1'b1) inside: the item is the bit-select, so it is the RIGHT operand of ==? and its x or z is a wildcard (§11.4.6).
     const b = right[0];
     const why = isUnknownBit(b)
-      ? `${text} is ${b}; as the right operand of ==? ${b === "x" ? "an x" : "a z"} bit is a wildcard, so the constant 1'b1 matches (§11.4.6). A plain case would compare the ${b} literally and not match (§12.5).`
+      ? `${text} is ${b}; as the right operand of ==? ${b === "x" ? "an x" : "a z"} bit is a wildcard, so the constant 1'b1 matches (§11.4.6). ${LITERAL_CASE} would compare the ${b} literally and not match (§12.5).`
       : b === "1"
         ? `${text} is 1, so 1'b1 ==? ${text} is 1: the constant case expression matches (§11.4.6, §12.5.2).`
         : `${text} is 0, so 1'b1 ==? ${text} is 0: the constant case expression does not match (§11.4.6).`;
@@ -631,8 +665,10 @@ export interface DecisionResult {
    * preset; when not empty the decision leaves those items out and says so.
    */
   unsupported: string[];
-  /** Text alternative for the whole outcome. */
+  /** Text alternative for the whole outcome, for the live line. */
   summary: string;
+  /** Only what ran, for the visible outcome line: the ticket and the feedback carry the rest. */
+  ranLine: string;
 }
 
 function evaluateItem(config: DecisionConfig, expr: readonly Bit4[], item: DecisionItem, index: number): Omit<ItemVerdict, "status"> {
@@ -674,6 +710,27 @@ export function itemMissLine(v: ItemVerdict): string {
   return t.term.kind === "range" ? "outside the range" : "does not match";
 }
 
+/** Why one match stays silent, in terms of the checks this qualifier has (§12.5.3, §12.4.2). */
+function oneMatchSilence(qualifier: Qualifier, word: string, formWord: string, plainClause: string, clause: string): string {
+  if (qualifier === "plain") return `Exactly one ${word} matches, and a plain ${formWord} has no checks, so nothing is reported (${plainClause}).`;
+  const missing = reportsNoMatch(qualifier);
+  const overlap = reportsOverlap(qualifier);
+  const nothingToReport = missing && overlap ? "neither a missing match nor an overlap" : missing ? "no missing match" : "no overlap";
+  return `Exactly one ${word} matches, so ${qualifier} has ${nothingToReport} to report (${clause}).`;
+}
+
+/**
+ * Why a statement that fell through to its catch-all reports nothing. The
+ * catch-all does not match anything (§12.5, §12.4.2); only a qualifier with a
+ * missing-match check loses something to it.
+ */
+function catchAllSilence(qualifier: Qualifier, form: DecisionForm): string {
+  const catchWord = catchAllWord(form);
+  if (reportsNoMatch(qualifier)) return `No ${itemWord(form)} matches, but there is ${catchAllPhrase(form)}: it runs, and ${qualifier} reports a missing match only when there is no ${catchWord} (${noMatchClause(form)}).`;
+  if (qualifier === "unique0") return `The ${catchWord} runs, and unique0 has no check for a missing match (${qualifierClause(form)}).`;
+  return `The ${catchWord} runs, and a plain ${isIfChain(form) ? "if" : FORM_LABELS[form]} has no check for a missing match (${isIfChain(form) ? "§12.4" : "§12.5"}).`;
+}
+
 export function evaluateDecision(config: DecisionConfig): DecisionResult {
   const { form, qualifier, catchAll } = config;
   const items = normalizeItems(form, config.items, config.select.length);
@@ -696,16 +753,16 @@ export function evaluateDecision(config: DecisionConfig): DecisionResult {
   let silentBecause: string | null = null;
 
   if (column === "none") {
-    if (catchAll) silentBecause = `The ${catchWord} is itself an alternative that matches every leftover value, so "no match" cannot happen and nothing is reported (${clause}).`;
+    if (catchAll) silentBecause = catchAllSilence(qualifier, form);
     else if (reportsNoMatch(qualifier)) {
       report = {
         kind: "no-match",
         clause,
         title: `${qualifier} ${formWord}: no ${word} matches`,
-        detail: `${qualifier} reports when no ${word} matches and there is no ${catchWord} (${clause}). Nothing runs.`,
+        detail: `${qualifier} reports when no ${word} matches and there is no ${catchWord} (${noMatchClause(form)}).`,
         deferred: DEFERRED_REPORT_NOTE,
       };
-    } else if (qualifier === "unique0") silentBecause = `unique0 does not report a missing match; it checks only for overlap (${clause}). Nothing runs, silently.`;
+    } else if (qualifier === "unique0") silentBecause = `unique0 does not report a missing match; it checks only for overlap (${clause}).`;
     else silentBecause = isIfChain(form) ? "No condition is true and there is no else, so nothing runs and nothing is reported (§12.4)." : "No item matches and there is no default, so nothing runs and nothing is reported (§12.5).";
   } else if (column === "many") {
     const names = matching.map((v) => v.text).join(", ");
@@ -714,13 +771,13 @@ export function evaluateDecision(config: DecisionConfig): DecisionResult {
         kind: "overlap",
         clause,
         title: `${qualifier} ${formWord}: ${matchCount} ${word}s match`,
-        detail: `${qualifier} asserts that the ${word}s do not overlap (${clause}). ${names} all match, so it reports a violation and still runs the first one, ${verdicts[firstIndex].text}.`,
+        detail: `${qualifier} asserts that the ${word}s do not overlap (${clause}). ${names} all match, so it reports a violation.`,
         deferred: DEFERRED_REPORT_NOTE,
       };
     } else if (qualifier === "priority") silentBecause = `priority allows overlap: it acts on the first match only, ${verdicts[firstIndex].text}, and reports nothing (${clause}).`;
     else silentBecause = `A plain ${formWord} has no check: ${names} all match, the first one, ${verdicts[firstIndex].text}, runs, and nothing is reported (${isIfChain(form) ? "§12.4.1" : "§12.5"}).`;
   } else {
-    silentBecause = `Exactly one ${word} matches, so neither check fires: ${verdicts[firstIndex].text} runs and nothing is reported.`;
+    silentBecause = oneMatchSilence(qualifier, word, formWord, isIfChain(form) ? "§12.4" : "§12.5", clause);
   }
 
   const runsSentence =
@@ -734,6 +791,7 @@ export function evaluateDecision(config: DecisionConfig): DecisionResult {
   const unsupported = verdicts.flatMap((v) => v.terms.filter((t) => t.unsupported).map((t) => t.why));
   const caveat = unsupported.length > 0 ? `Caveat: ${unsupported.length} ${word}${unsupported.length > 1 ? "s" : ""} could not be compared in this form and ${unsupported.length > 1 ? "were" : "was"} left out of the decision.` : "";
   const summary = [runsSentence, matchSentence, reportSentence, caveat].filter(Boolean).join(" ");
+  const ranLine = runs.kind === "item" ? `${capitalize(itemRef(verdicts[runs.index], form))} runs.` : runs.kind === "catch-all" ? `The ${catchWord} runs.` : "Nothing runs.";
 
   return {
     config,
@@ -748,7 +806,19 @@ export function evaluateDecision(config: DecisionConfig): DecisionResult {
     silentBecause,
     unsupported,
     summary,
+    ranLine,
   };
+}
+
+/**
+ * The badge of a later item that also fits the select. unique and unique0 keep
+ * comparing after the first match (§12.5.3, §12.4.2), so they do find it. A plain
+ * or priority statement stops at the first match (§12.5, §12.4.1), so it never
+ * compares that item.
+ */
+export function laterMatchBadge(form: DecisionForm, qualifier: Qualifier): string {
+  if (reportsOverlap(qualifier)) return "matches, not run (the first match wins)";
+  return isIfChain(form) ? "would also match; the chain ended at the first match (§12.4.1)" : "would also match; the search stopped at the first match (§12.5)";
 }
 
 /** Key of the generated source line that runs, for highlighting. */
@@ -829,7 +899,7 @@ function nothingRunsRule(result: DecisionResult): string {
   if (form === "casez") return "Every case item fails: casez skips only z and ? bits, and each item still differs at another bit (§12.5.1), so nothing runs.";
   if (form === "casex") return "Every case item fails: casex skips only x, z and ? bits, and each item still differs at a known bit (§12.5.1), so nothing runs.";
   const literal = result.items.some((v) => v.terms.some((t) => (t.chips ?? []).some((c) => isUnknownBit(c.left) || isUnknownBit(c.right))));
-  return literal ? "Every case item fails: a plain case compares x and z literally (§12.5), so nothing runs." : "Every case item fails: none equals the case expression bit for bit (§12.5), so nothing runs.";
+  return literal ? `Every case item fails: ${LITERAL_CASE} compares x and z literally (§12.5), so nothing runs.` : "Every case item fails: none equals the case expression bit for bit (§12.5), so nothing runs.";
 }
 
 /**
@@ -841,16 +911,17 @@ export function explainRunChoice(result: DecisionResult, choice: RunOutcome): { 
   const word = itemWord(form);
   const catchWord = catchAllWord(form);
   const first = result.runs.kind === "item" ? result.items[result.runs.index] : null;
-  const whyFirst = first ? first.terms.filter((t) => t.result === "1").map((t) => t.why).join(" ") : "";
+  const whyFirst = first ? distinctSentences(first.terms.filter((t) => t.result === "1").map((t) => t.why)) : "";
   const orderClause = isIfChain(form) ? "§12.4.1" : "§12.5";
 
   if (sameOutcome(choice, result.runs)) {
     if (first) {
       // Qualifier-independent on purpose: no qualifier ever changes which item runs (§12.5.3, §12.4.2).
-      const also = result.matchCount > 1 ? ` ${result.matchCount} ${word}s match, and the first one in source order wins (${orderClause}); no qualifier changes that.` : "";
+      // Names the form, because compare mode shows this sentence for both columns.
+      const also = result.matchCount > 1 ? ` ${result.matchCount} ${isIfChain(form) ? "conditions" : `${FORM_LABELS[form]} items`} match, and the first one in source order wins (${orderClause}); no qualifier changes that.` : "";
       return { correct: true, feedback: `${whyFirst}${also}`.trim() || `${first.text} matches first (${orderClause}).` };
     }
-    if (choice.kind === "catch-all") return { correct: true, feedback: `No ${word} matches, so the ${catchWord} runs (${orderClause}).` };
+    if (choice.kind === "catch-all") return { correct: true, feedback: `No ${isIfChain(form) ? word : `${FORM_LABELS[form]} item`} matches, so the ${catchWord} runs (${orderClause}).` };
     return { correct: true, feedback: nothingRunsRule(result) };
   }
 
@@ -858,20 +929,20 @@ export function explainRunChoice(result: DecisionResult, choice: RunOutcome): { 
     const v = result.items[choice.index];
     if (!v.matches) {
       const stamp = v.result === "x" ? (form === "case-inside" ? " An inside result of x is no match (§12.5.4)." : " An x condition is false (§12.4).") : "";
-      return { correct: false, feedback: `${v.text} does not match. ${v.terms.map((t) => t.why).join(" ")}${stamp}` };
+      return { correct: false, feedback: distinctSentences([`${v.text} does not match${underForm(form)}.`, ...v.terms.map((t) => t.why), stamp]) };
     }
     // §12.5.3 / §12.4.2: the first match executes under every qualifier. A plain statement has no qualifier to ask about, and compare mode is always plain.
     const next = qualifier === "plain" ? "" : "; the next question asks what it reports";
     return {
       correct: false,
-      feedback: `${v.text} does match, but ${first?.text} matches earlier in source order and the first match wins (${orderClause}). No qualifier ever changes which ${branchWord(form)} runs (${qualifierClause(form)})${next}.`,
+      feedback: `${v.text} does match${underForm(form)}, but ${first?.text} matches earlier in source order${next}.`,
     };
   }
-  if (choice.kind === "catch-all") {
-    return { correct: false, feedback: `The ${catchWord} runs only when no ${word} matches. Here ${first?.text} matches: ${whyFirst}` };
-  }
-  if (first) return { correct: false, feedback: `${first.text} matches, so it runs: ${whyFirst}` };
-  return { correct: false, feedback: `No ${word} matches, but the ${catchWord} catches every leftover value, so it runs (${orderClause}).` };
+  // The correct option's feedback is always shown beside a wrong one, so a wrong one only names the misconception.
+  // Each names the form: compare mode can show the same wrong pick in both columns' prompts.
+  if (choice.kind === "catch-all") return { correct: false, feedback: `The ${catchWord} runs only when no ${isIfChain(form) ? word : `${FORM_LABELS[form]} item`} matches, and one does here.` };
+  if (first) return { correct: false, feedback: `Something does run${underForm(form)}, because ${first.text} matches.` };
+  return { correct: false, feedback: `With ${catchAllPhrase(form)} in place, ${isIfChain(form) ? "an if chain" : `a ${FORM_LABELS[form]} statement`} always runs something.` };
 }
 
 export function reportChoiceLabel(kind: ReportKind): string {
@@ -883,30 +954,32 @@ export function explainReportChoice(result: DecisionResult, choice: ReportKind):
   const { form, qualifier, catchAll } = result.config;
   const clause = qualifierClause(form);
   const word = itemWord(form);
-  const catchWord = catchAllWord(form);
   const actual = result.reportKind;
 
-  if (choice === actual) {
-    if (result.report) return { correct: true, feedback: `${result.report.detail} ${DEFERRED_SENTENCE}` };
-    return { correct: true, feedback: result.silentBecause ?? "Nothing is reported." };
-  }
+  // The correct option's feedback is always on screen, and the ticket carries the clause and the timing. A wrong option only names the misconception.
+  if (choice === actual) return { correct: true, feedback: result.report ? result.report.detail : (result.silentBecause ?? "Nothing is reported.") };
 
   if (choice === "no-match") {
-    if (result.matchCount > 0) return { correct: false, feedback: `${result.items[result.runs.kind === "item" ? result.runs.index : 0].text} matches, so there is no missing match to report.${actual === "overlap" ? ` The problem is the opposite one: ${result.matchCount} ${word}s match, which ${qualifier} reports as an overlap (${clause}).` : ""}` };
-    if (catchAll) return { correct: false, feedback: `A ${catchWord} is itself an alternative that matches every leftover value, so "no match" can never happen (${clause}). It also silences the check you may have wanted.` };
-    if (qualifier === "unique0") return { correct: false, feedback: `unique0 reports overlaps only; a missing match is legal and silent (${clause}).` };
-    return { correct: false, feedback: `A plain ${isIfChain(form) ? "if" : FORM_LABELS[form]} has no check. No ${word} matches, nothing runs, and nothing is reported (${isIfChain(form) ? "§12.4" : "§12.5"}).` };
+    if (result.matchCount > 0) return { correct: false, feedback: `${result.items[result.runs.kind === "item" ? result.runs.index : 0].text} matches, so there is no missing match to report.${actual === "overlap" ? " The problem is the opposite one." : ""}` };
+    if (catchAll) {
+      // Only a qualifier that has the check can lose it to a catch-all (§12.5.3, §12.4.2).
+      if (reportsNoMatch(qualifier)) return { correct: false, feedback: `${capitalize(catchAllPhrase(form))} silences the missing-match check, which may be the check you wanted.` };
+      const who = qualifier === "unique0" ? "unique0" : `A plain ${isIfChain(form) ? "if chain" : FORM_LABELS[form]}`;
+      return { correct: false, feedback: `${who} reports no missing match, with or without ${catchAllPhrase(form)}.` };
+    }
+    if (qualifier === "unique0") return { correct: false, feedback: "unique0 has no check for a missing match." };
+    return { correct: false, feedback: `A plain ${isIfChain(form) ? "if chain" : FORM_LABELS[form]} has no check, so a missing match goes unreported.` };
   }
 
   if (choice === "overlap") {
-    if (result.matchCount <= 1) return { correct: false, feedback: `${result.matchCount === 0 ? `No ${word} matches` : `Exactly one ${word} matches`}, so there is no overlap.${actual === "no-match" ? ` ${qualifier} reports the opposite problem: no ${word} matched and there is no ${catchWord} (${clause}).` : ""}` };
-    if (qualifier === "priority") return { correct: false, feedback: `priority allows overlap: it acts on the first match only and reports nothing (${clause}).` };
-    return { correct: false, feedback: `A plain ${isIfChain(form) ? "if chain" : FORM_LABELS[form]} has no check: the first match runs and nothing is reported (${isIfChain(form) ? "§12.4.1" : "§12.5"}).` };
+    if (result.matchCount <= 1) return { correct: false, feedback: `${result.matchCount === 0 ? `No ${word} matches` : `Exactly one ${word} matches`}, so there is no overlap.${actual === "no-match" ? " The problem is the opposite one." : ""}` };
+    if (qualifier === "priority") return { correct: false, feedback: "priority has no check for overlap." };
+    return { correct: false, feedback: `A plain ${isIfChain(form) ? "if chain" : FORM_LABELS[form]} has no check for overlap.` };
   }
 
   // choice === "nothing", but something is reported
-  if (actual === "no-match") return { correct: false, feedback: `${qualifier} reports when no ${word} matches and there is no ${catchWord} (${clause}). Nothing runs, but the miss is not silent. ${DEFERRED_SENTENCE}` };
-  return { correct: false, feedback: `${qualifier} asserts that no two ${word}s match. ${result.matchCount} do, so it reports an overlap while still running the first one (${clause}). ${DEFERRED_SENTENCE}` };
+  if (actual === "no-match") return { correct: false, feedback: `The miss is not silent: ${qualifier} checks for it.` };
+  return { correct: false, feedback: `${qualifier} checks for this: ${result.matchCount} ${word}s match, and running the first one (${clause}) does not hide the overlap.` };
 }
 
 /* ------------------------------------------------------------------ */
@@ -918,8 +991,14 @@ export interface DecisionPreset {
   title: string;
   /** Shown before the learner commits: what the statement is and which values to try. Never an outcome. */
   summary: string;
-  /** Shown inside the reveal, and only while the statement is still the preset's: what the preset demonstrates. */
-  afterReveal: string;
+  /**
+   * Shown inside the reveal while the statement is still the preset's: what this
+   * one select value demonstrates, by literal body. A line never states the
+   * outcome of another listed value, because the learner has yet to predict it.
+   */
+  valueNotes: Readonly<Record<string, string>>;
+  /** The whole preset's lesson, shown only once every listed value has been revealed. */
+  wrapUp: string;
   config: DecisionConfig;
   /** Select values worth trying, as literal bodies (MSB first). The first is the preset's start value. */
   selectOptions: string[];
@@ -946,11 +1025,12 @@ const LRM_A_ITEMS: DecisionItem[] = [
 /** Added to the §12.5.3 presets: the standard declares `bit [2:0] a`, which cannot hold x. */
 const LOGIC_NOTE = "The standard declares bit [2:0] a; the lab uses logic so x can be tried.";
 
-const preset = (id: string, title: string, summary: string, afterReveal: string, config: Omit<DecisionConfig, "select"> & { select?: Bit4[] }, selectOptions: string[]): DecisionPreset => ({
+const preset = (id: string, title: string, summary: string, valueNotes: Record<string, string>, wrapUp: string, config: Omit<DecisionConfig, "select"> & { select?: Bit4[] }, selectOptions: string[]): DecisionPreset => ({
   id,
   title,
   summary,
-  afterReveal,
+  valueNotes,
+  wrapUp,
   config: { ...config, select: parseBits(selectOptions[0]) },
   selectOptions,
 });
@@ -959,8 +1039,15 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
   preset(
     "lesson-decoder",
     "Lesson decoder: unique case (sel), no default",
-    "The traced decoder. Try sel = 01, 11 and xx under each qualifier, then add the default.",
-    "sel = 01 runs its item silently. 11 and xx match no item, so nothing runs: unique and priority report that, unique0 and plain do not, and a default removes the report (§12.5, §12.5.3).",
+    "The traced decoder. Try sel = 01, 11 and xx, then try each qualifier and the default under Change the statement.",
+    {
+      "01": "The decoder's normal path: a known value with its own item.",
+      "11": "A known value the decoder never listed: this is a real hole in the decoder, and the report is how you find it.",
+      "xx": "The report is your early warning of an unknown select: without it, the x would pass unseen.",
+      "00": "Another known value with its own item. Next, try a qualifier or the default under Change the statement.",
+      "10": "Another known value with its own item. Next, try a qualifier or the default under Change the statement.",
+    },
+    "A value with its own item runs silently. A value with no item runs nothing: unique and priority report that, unique0 and plain do not, and a default removes the report (§12.5, §12.5.3).",
     { form: "case", qualifier: "unique", catchAll: false, catchAllAction: "y = 4'b0000;", selectName: "sel", items: LESSON_DECODER_ITEMS },
     ["01", "11", "xx", "00", "10"],
   ),
@@ -968,7 +1055,13 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "casez-overlap",
     "Two wildcard items: casez 2'b1? and 2'b?1",
     "Each item leaves one bit as a don't-care. Try sel = 11, 10, 01 and 00 under each qualifier.",
-    "With sel = 11 both items match. Every qualifier runs the first; only unique and unique0 report the overlap (§12.5.3).",
+    {
+      "11": "Each pattern's fixed bit agrees with this value, so the don't-care bit lets both through.",
+      "10": "Bit 0 rules out 2'b?1, so 2'b1? is alone here.",
+      "01": "Bit 1 rules out 2'b1?, so a later item runs with no overlap to report.",
+      "00": "Each pattern fixes one bit to 1, and this value has neither.",
+    },
+    "When both patterns accept a value, every qualifier runs the first; only unique and unique0 report the overlap (§12.5.3).",
     {
       form: "casez",
       qualifier: "unique",
@@ -985,7 +1078,13 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "unique-if",
     "unique if (req[0]) … else if (req[1])",
     "The same checks on an if chain, where a final else plays the part of default (§12.4.2).",
-    "req = 11 makes both conditions true: the first branch runs, and unique and unique0 report the overlap. req = 00 makes neither true: unique and priority report that unless a final else is added (§12.4.2).",
+    {
+      "10": "One true condition: the result does not depend on the order, and unique may evaluate its conditions in any order (§12.4.2).",
+      "11": "unique says the conditions are mutually exclusive, and this value breaks that promise (§12.4.2).",
+      "00": "A final else would catch this value and remove the report (§12.4.2). Try it under Change the statement.",
+      "01": "Only the first condition holds, so the chain has one branch to take.",
+    },
+    "With both conditions true, the first branch runs, and unique and unique0 report the overlap. With neither true, unique and priority report that unless a final else is added (§12.4.2).",
     {
       form: "if-else-if",
       qualifier: "unique",
@@ -1003,7 +1102,14 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "one-hot",
     "One-hot select: unique case (1'b1)",
     "A constant case expression (§12.5.2): the items are the bits of gnt. Try gnt = 011, 010 and 000.",
-    "gnt = 011 lights two items: the first runs and unique reports the overlap (§12.5.3).",
+    {
+      "011": "Two grant bits are set, which a one-hot select must never allow: this is the bug the qualifier guards against.",
+      "010": "Properly one-hot: one bit set, one item chosen.",
+      "100": "Properly one-hot, so the order of the items makes no difference.",
+      "000": "No grant at all. If an idle gnt were legal, unique0 or a default would keep this quiet (§12.5, §12.5.3).",
+      "0x1": "gnt[1] is compared literally with 1'b1 and fails (§12.5), so the unknown grant bit goes unnoticed.",
+    },
+    "A one-hot case (1'b1) checks the grant vector: two bits set light two items, the first runs, and unique reports the overlap (§12.5.3).",
     {
       form: "case",
       qualifier: "unique",
@@ -1022,7 +1128,13 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "priority-encoder",
     "Priority encoder: priority casez (req)",
     "A priority encoder written with casez: each item tests one bit of req. Try req = 0110 and 0000.",
-    "The items overlap on purpose and the lowest set bit wins, so priority stays quiet for 0110. req = 0000 matches no item: that is the bug this qualifier catches (§12.5.3).",
+    {
+      "0110": "The items overlap on purpose: source order is the priority order, and the lowest set bit wins.",
+      "0000": "No bit is set, so no item can accept it: this is the bug this qualifier catches (§12.5.3).",
+      "1000": "Only bit 3 is set, so the search reaches the last item.",
+      "1111": "Every item accepts this value, and priority acts on the first match only (§12.5.3).",
+    },
+    "priority lets the items overlap and reports when no item matches (§12.5.3). Here that is the thing this encoder must not do: see a request with no bit set.",
     {
       form: "casez",
       qualifier: "priority",
@@ -1042,6 +1154,16 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "lrm-unique-case",
     "Standard example: unique case (a) with items 0,1 / 2 / 4",
     `From IEEE 1800-2023 §12.5.3. ${LOGIC_NOTE} Try each value of a.`,
+    {
+      "011": "The standard names this value among those that cause a violation report (§12.5.3).",
+      "101": "The standard names this value among those that cause a violation report (§12.5.3).",
+      "110": "The standard names this value among those that cause a violation report (§12.5.3).",
+      "111": "The standard names this value among those that cause a violation report (§12.5.3).",
+      "000": "The first item lists two expressions. A single item with two expressions is not an overlap (§12.5.3).",
+      "001": "The first item lists two expressions. A single item with two expressions is not an overlap (§12.5.3).",
+      "010": "One item holds this value, so the check has nothing to report.",
+      "100": "One item holds this value, so the check has nothing to report.",
+    },
     "IEEE 1800-2023 §12.5.3: values 3, 5, 6 and 7 cause a violation report.",
     { form: "case", qualifier: "unique", catchAll: false, selectName: "a", items: LRM_A_ITEMS },
     ["011", "101", "110", "111", "000", "001", "010", "100"],
@@ -1050,6 +1172,12 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "lrm-priority-casez",
     "Standard example: priority casez (a) with 3'b00? / 3'b0??",
     `From IEEE 1800-2023 §12.5.3. ${LOGIC_NOTE} Try each value of a.`,
+    {
+      "100": "Both items need bit 2 to be 0. The standard names this value among those that cause a violation report (§12.5.3).",
+      "111": "Both items need bit 2 to be 0. The standard names this value among those that cause a violation report (§12.5.3).",
+      "000": "Both items accept this value, and priority acts on the first match only (§12.5.3).",
+      "011": "3'b00? needs bit 1 to be 0, so 3'b0?? is the only item left.",
+    },
     "IEEE 1800-2023 §12.5.3: values 4 to 7 cause a violation report; 0 and 1 match both items and run the first.",
     {
       form: "casez",
@@ -1067,6 +1195,13 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "lrm-unique0-case",
     "Standard example: unique0 case (a) with items 0,1 / 2 / 4",
     `From IEEE 1800-2023 §12.5.3. ${LOGIC_NOTE} Try each value of a.`,
+    {
+      "011": "The same statement under unique would report this value; the standard says unique0 does not (§12.5.3).",
+      "101": "The same statement under unique would report this value; the standard says unique0 does not (§12.5.3).",
+      "110": "The same statement under unique would report this value; the standard says unique0 does not (§12.5.3).",
+      "111": "The same statement under unique would report this value; the standard says unique0 does not (§12.5.3).",
+      "000": "One item accepts this value, and unique0 is still watching for overlap (§12.5.3).",
+    },
     "IEEE 1800-2023 §12.5.3: values 3, 5, 6 and 7 do not cause a violation report.",
     { form: "case", qualifier: "unique0", catchAll: false, selectName: "a", items: LRM_A_ITEMS },
     ["011", "101", "110", "111", "000"],
@@ -1075,7 +1210,11 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "kata-c-1",
     "Kata C step 1: unique case (sel) at t = 0, sel = xx",
     "always_comb runs once at time 0 while sel is still x. Predict both answers.",
-    "A plain comparison treats x literally, so sel = xx matches no item: nothing runs and unique reports the miss (§12.5, §12.5.3).",
+    {
+      "xx": "In the kata this happens at time 0, before anything has driven sel.",
+      "01": "By t = 10 ns sel is known, and one item covers it.",
+    },
+    "case compares x literally, so an unknown select matches no item, and unique turns the miss into a report (§12.5, §12.5.3).",
     { form: "case", qualifier: "unique", catchAll: false, catchAllAction: "y = 4'b0000;", selectName: "sel", items: KATA_ITEMS },
     ["xx", "01"],
   ),
@@ -1083,7 +1222,11 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "kata-c-2",
     "Kata C step 2: add default",
     "Same decoder with default: y = 4'b0000. Predict what the default changes.",
-    "With a default every value matches something, so there is no no-match violation. The report disappears, and so does your detector for an unknown select (§12.5.3).",
+    {
+      "xx": "The report is gone, and so is your detector for an unknown select (§12.5, §12.5.3).",
+      "01": "With a known select that has its own item, the default is not reached.",
+    },
+    "A quiet statement is not proof that the select was known: the default takes the x and says nothing.",
     { form: "case", qualifier: "unique", catchAll: true, catchAllAction: "y = 4'b0000;", selectName: "sel", items: KATA_ITEMS },
     ["xx", "01"],
   ),
@@ -1091,7 +1234,11 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "kata-c-3",
     "Kata C step 3: unique0, no default",
     "Remove the default and change unique to unique0.",
-    "unique0 never reports a missing match, so sel = xx runs nothing and stays silent. It would still report an overlap (§12.5.3).",
+    {
+      "xx": "The unknown select passes unseen here: nothing tells you it happened.",
+      "01": "One item accepts this value, so there is no overlap for unique0 to see.",
+    },
+    "unique0 gives up the no-match check and keeps the overlap check, so an unknown select needs another detector (§12.5.3).",
     { form: "case", qualifier: "unique0", catchAll: false, catchAllAction: "y = 4'b0000;", selectName: "sel", items: KATA_ITEMS },
     ["xx", "01"],
   ),
@@ -1099,7 +1246,13 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "kata-c-4",
     "Kata C step 4: unique case (sel) inside with 2'b0? / 2'b1?",
     "sel = 1x at 10 ns, then x1 at 20 ns. Predict both answers for each value.",
-    "sel = 1x matches 2'b1?: the item's ? makes bit 0 a wildcard, so the select's x there is accepted, silently. sel = x1 has x against a fixed bit in both items: both give x, x is no match, and unique reports (§11.4.6, §12.5.4).",
+    {
+      "1x": "The item's ? makes bit 0 a wildcard, so the select's x there is accepted, silently (§11.4.6).",
+      "x1": "Bit 1 is x against a fixed bit in both items: both give x, and x is no match (§11.4.6, §12.5.4).",
+      "xx": "The wildcards cover bit 0, but bit 1 is x against a fixed bit in both items (§11.4.6).",
+      "01": "A known select falls under one pattern; its ? accepts whatever bit 0 holds.",
+    },
+    "An x under an item's wildcard is accepted silently. An x against a fixed bit gives x, x is no match, and unique reports the miss (§11.4.6, §12.5.4).",
     {
       form: "case-inside",
       qualifier: "unique",
@@ -1117,6 +1270,16 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
     "lrm-priority-inside",
     "Standard example: priority case (status) inside",
     "From IEEE 1800-2023 §12.5.4. Try status = 'b0x0, 'b00x and 'bxxx.",
+    {
+      "0x0": "The standard lists this value under 3'b0?0: the ? covers the x (§12.5.4).",
+      "00x": "The x sits at bit 0, which 3'b0?0 fixes, so no comparison succeeds. The standard lists this value as a failure (§12.5.4).",
+      "xxx": "The standard's own failing example: an all-unknown select gives x from the range and from every literal (§11.4.4, §11.4.6, §12.5.4).",
+      "0z0": "The standard lists this value under 3'b0?0: the ? covers a z in the select as well (§12.5.4).",
+      "001": "This value equals the first expression of the first item (§12.5.4).",
+      "011": "This value equals the second expression of the first item: one item can list several (§12.5.4).",
+      "010": "The ? in 3'b0?0 covers bit 1, so this known value is accepted too (§12.5.4).",
+      "101": "The range [4:7] holds this value: it is compared with <= and >= (§11.4.13).",
+    },
     "IEEE 1800-2023 §12.5.4: 3'b0?0 matches 'b000, 'b010, 'b0x0 and 'b0z0; 'b00x and 'bxxx match nothing and are reported.",
     {
       form: "case-inside",
@@ -1134,8 +1297,15 @@ export const DECISION_PRESETS: readonly DecisionPreset[] = [
 
 export const DEFAULT_PRESET_ID = DECISION_PRESETS[0].id;
 
+/** An MDX typo must not pass unseen: the fallback content would look like the right content. */
+function warnUnknownId(kind: string, id: string, ids: readonly string[]) {
+  if (process.env.NODE_ENV !== "production") console.warn(`DecisionLab: unknown ${kind} "${id}", using "${ids[0]}". Known: ${ids.join(", ")}.`);
+}
+
 export function findPreset(id: string | undefined): DecisionPreset {
-  return DECISION_PRESETS.find((p) => p.id === id) ?? DECISION_PRESETS[0];
+  const found = DECISION_PRESETS.find((p) => p.id === id);
+  if (!found && id !== undefined) warnUnknownId("preset", id, DECISION_PRESETS.map((p) => p.id));
+  return found ?? DECISION_PRESETS[0];
 }
 
 /** True once the learner has changed what the preset's text describes. A different select value is still the preset's statement. */
@@ -1151,6 +1321,66 @@ export function withSelect(config: DecisionConfig, body: string): DecisionConfig
   return { ...config, select: parseBits(body) };
 }
 
+/** For a value the learner built bit by bit: it is on no list, so no list's line applies. */
+export const OWN_VALUE_NOTE = "This value is not on the list, so it does not count toward the values to try. Everything here is computed from the statement shown.";
+
+/** The note for one select value under the preset's own statement. */
+export const presetValueNote = (preset: DecisionPreset, body: string): string => preset.valueNotes[body] ?? OWN_VALUE_NOTE;
+
+/* ------------------------------------------------------------------ */
+/* The walk through a preset's values                                  */
+/* ------------------------------------------------------------------ */
+
+export interface TriedProgress {
+  count: number;
+  total: number;
+  complete: boolean;
+}
+
+/** How many listed values have been revealed. A value on no list does not count. */
+export function triedProgress(options: readonly string[], tried: readonly string[]): TriedProgress {
+  const count = options.filter((body) => tried.includes(body)).length;
+  return { count, total: options.length, complete: count === options.length };
+}
+
+/** The value after `current` in list order, preferring one not yet tried. A value on no list starts from the top. */
+export function nextSelectValue(options: readonly string[], current: string, tried: readonly string[] = []): string {
+  const at = options.indexOf(current);
+  const order = [...options.slice(at + 1), ...options.slice(0, at + 1)].filter((body) => body !== current);
+  return order.find((body) => !tried.includes(body)) ?? order[0] ?? current;
+}
+
+/* ------------------------------------------------------------------ */
+/* One statement of each fact                                          */
+/* ------------------------------------------------------------------ */
+
+/** Splits prose into sentences. Clause numbers survive: the dots in §12.5.3 have no space after them. A ? is an operand or the ==? operator here, never an ending. */
+export const splitSentences = (text: string): string[] =>
+  text
+    .replace(/\.\s+/g, ".\u0000")
+    .split("\u0000")
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+/** Joins explanations into one paragraph, keeping each sentence once: several terms of one item can give the same reason. */
+export const distinctSentences = (texts: readonly string[]): string => Array.from(new Set(texts.flatMap(splitSentences))).join(" ");
+
+/**
+ * Each term's explanation without the sentences already on screen: the prompts'
+ * feedback, the caveat line and earlier cards. Returned per item, per term; a
+ * term whose explanation was fully told gets "".
+ */
+export function freshWhys(result: DecisionResult, told: readonly string[]): string[][] {
+  const seen = new Set([...told, ...result.unsupported].flatMap(splitSentences));
+  return result.items.map((v) =>
+    v.terms.map((t) => {
+      const fresh = splitSentences(t.why).filter((sentence) => !seen.has(sentence));
+      fresh.forEach((sentence) => seen.add(sentence));
+      return fresh.join(" ");
+    }),
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Compare mode: casex (or casez) beside case inside                   */
 /* ------------------------------------------------------------------ */
@@ -1162,8 +1392,10 @@ export interface CompareSet {
   title: string;
   /** Shown before the learner commits. Never an outcome. */
   summary: string;
-  /** Shown inside the reveal: what the set demonstrates. */
-  afterReveal: string;
+  /** Lines for the casex column at one select value, by literal body. Any other case is computed by compareValueNote. Never an outcome for another listed value. */
+  valueNotes: Readonly<Record<string, string>>;
+  /** What the set shows under casex, once every listed value has been revealed. compareWrapUp computes the casez line. */
+  wrapUp: string;
   selectName: string;
   items: DecisionItem[];
   catchAll: boolean;
@@ -1176,8 +1408,13 @@ export const COMPARE_SETS: readonly CompareSet[] = [
   {
     id: "casex-vs-inside",
     title: "Items 2'b10 and 2'b11",
-    summary: "The lesson's table. Try sel = 1x, x1 and xx in both columns.",
-    afterReveal: "In the lesson's table, sel = 1x, x1 and xx run a real branch under casex and match nothing under case inside.",
+    summary: "The table from the Flow Control lesson. Try sel = 1x, x1 and xx in both columns.",
+    valueNotes: {
+      "1x": "A row of the Flow Control table: under casex both items accept this value, and the first one runs.",
+      x1: "A row of the Flow Control table: under casex the x is skipped, so bit 0 alone picks the item.",
+      xx: "A row of the Flow Control table: under casex both items accept this value, and the first one runs.",
+    },
+    wrapUp: "In the Flow Control table, sel = 1x, x1 and xx run a real branch under casex and match nothing under case inside.",
     selectName: "sel",
     items: [
       { terms: [lit("2'b10")], action: "branch = 1;" },
@@ -1190,7 +1427,11 @@ export const COMPARE_SETS: readonly CompareSet[] = [
     id: "wildcard-item",
     title: "One item, 2'b1?",
     summary: "One item with a don't-care in bit 0. Try sel = 1x and x1 in both columns.",
-    afterReveal: "The don't-care now sits in the item, where both forms accept it. case inside accepts a select x only there; casex accepts it at every bit (§12.5.1).",
+    valueNotes: {
+      "1x": "The select's x sits under the item's ?, the one place where both forms accept it.",
+      x1: "casex skips a select x at every bit, even against the item's fixed 1 (§12.5.1).",
+    },
+    wrapUp: "The don't-care now sits in the item, where both forms accept it, and casex alone goes further.",
     selectName: "sel",
     items: [{ terms: [lit("2'b1?")], action: "branch = 1;" }],
     catchAll: false,
@@ -1199,8 +1440,11 @@ export const COMPARE_SETS: readonly CompareSet[] = [
   {
     id: "opcode-decoder",
     title: "Opcode decoder (operators lesson)",
-    summary: "The lesson's case (op) inside decoder beside the same items written for casex. A range is legal only in case inside, so casex lists its three values.",
-    afterReveal: "3'b0x0 is the hazard: it runs NOP under casex and reaches default under case inside, where a testbench can report it (§12.5.1, §12.5.4).",
+    summary: "The operators lesson's case (op) inside decoder beside the same items written for casex. A range is legal only in case inside, so casex lists its three values.",
+    valueNotes: {
+      "0x0": "This is the operators lesson's hazard value: a corrupted opcode quietly takes a real branch under casex (§12.5.1, §12.5.4).",
+    },
+    wrapUp: "An unknown opcode can take a real branch under casex; under case inside it reaches default unless an item's wildcard covers it, and a testbench can report that (§12.5.1, §12.5.4).",
     selectName: "op",
     items: [
       { terms: [lit("3'b000")], action: "cls = NOP;", label: "NOP" },
@@ -1215,7 +1459,9 @@ export const COMPARE_SETS: readonly CompareSet[] = [
 ];
 
 export function findCompareSet(id: string | undefined): CompareSet {
-  return COMPARE_SETS.find((s) => s.id === id) ?? COMPARE_SETS[0];
+  const found = COMPARE_SETS.find((s) => s.id === id);
+  if (!found && id !== undefined) warnUnknownId("compare set", id, COMPARE_SETS.map((s) => s.id));
+  return found ?? COMPARE_SETS[0];
 }
 
 export interface CompareResult {
@@ -1239,4 +1485,35 @@ export function compareDecisions(set: CompareSet, select: Bit4[], leftKind: Comp
     right: evaluateDecision(compareConfig(set, select, "case-inside")),
     leftExpanded: set.items.some((item) => item.terms.some((t) => t.kind === "range")),
   };
+}
+
+/**
+ * What one select value shows across the two columns. Computed from the two
+ * results, so it holds for a value built bit by bit and under the casez toggle,
+ * and it can only speak about this value. A set's own line replaces it for casex.
+ */
+export function compareValueNote(set: CompareSet, select: Bit4[], leftKind: CompareLeftKind): string {
+  const own = leftKind === "casex" ? set.valueNotes[bitsToString(select)] : undefined;
+  if (own) return own;
+  const value = formatLiteral(select);
+  if (!hasUnknown(select)) return `Every bit of ${value} is known, so both columns reach the same outcome.`;
+  const { left, right } = compareDecisions(set, select, leftKind);
+  if (runOutcomeId(left.runs) !== runOutcomeId(right.runs)) {
+    // The rule for case inside follows in WILDCARD_ASYMMETRY_NOTE, in the same paragraph.
+    return `The columns differ on ${value}: ${leftKind} skips every ${leftKind === "casez" ? "z" : "x or z"} bit of the select, at every item.`;
+  }
+  if (right.runs.kind === "item") return `Both columns run the same item for ${value}: its unknown bit sits under the item's own wildcard.`;
+  return `Neither column finds a matching item for ${value}.`;
+}
+
+/** The set's closing line for the left column in use, once every listed value has been revealed. */
+export function compareWrapUp(set: CompareSet, leftKind: CompareLeftKind): string {
+  if (leftKind === "casex") return set.wrapUp;
+  const differ = set.selectOptions.filter((body) => {
+    const { left, right } = compareDecisions(set, parseBits(body), "casez");
+    return runOutcomeId(left.runs) !== runOutcomeId(right.runs);
+  });
+  if (differ.length === 0) return "Under casez every listed value lands in the same place in both columns: casez skips only z, and no listed value has a z in the select (§12.5.1).";
+  // Scoped to the list, like the branch above: a z at any other bit makes the columns differ too, and the bit editor can build one (§12.5.1).
+  return `Of the listed values, under casez the columns differ only for ${differ.map((body) => `${set.selectName} = ${formatLiteral(parseBits(body))}`).join(" and ")}: casez skips a z in the case expression too (§12.5.1).`;
 }

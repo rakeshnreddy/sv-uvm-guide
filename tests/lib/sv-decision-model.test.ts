@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   BIT4_VALUES,
@@ -15,12 +15,15 @@ import {
   DEFERRED_REPORT_NOTE,
   CODE_LINE_FIT,
   MATCH_COLUMNS,
+  OWN_VALUE_NOTE,
   QUALIFIERS,
   RANGE_LIST_LIMIT,
   bitAt,
   branchWord,
   caseBitChips,
   compareDecisions,
+  compareValueNote,
+  compareWrapUp,
   decisionSource,
   editedPresetNote,
   evaluateDecision,
@@ -29,15 +32,19 @@ import {
   explainRunChoice,
   findCompareSet,
   findPreset,
+  freshWhys,
   gridCell,
   isPlainMiss,
   isPresetEdited,
   itemMissLine,
+  laterMatchBadge,
   matchColumnLabel,
+  nextSelectValue,
   normalizeItems,
   orReduce,
   outcomeGrid,
   parseLiteral,
+  presetValueNote,
   rangeContains,
   rangeListingProblem,
   reportsNoMatch,
@@ -45,6 +52,8 @@ import {
   runChoices,
   runOutcomeId,
   runningLineKey,
+  splitSentences,
+  triedProgress,
   wildcardBitChips,
   withSelect,
   type DecisionConfig,
@@ -679,11 +688,10 @@ describe("sv-decision-model: prediction choices and feedback", () => {
     expect(explainRunChoice(r, { kind: "item", index: 0 }).feedback).toMatch(/first one in source order wins \(§12\.5\); no qualifier changes that\./);
     const second = explainRunChoice(r, { kind: "item", index: 1 });
     expect(second.correct).toBe(false);
-    expect(second.feedback).toMatch(/first match wins/);
-    expect(second.feedback).toMatch(/No qualifier ever changes which case item runs \(§12\.5\.3\); the next question asks what it reports\.$/);
+    expect(second.feedback).toBe("2'b?1 does match under casez, but 2'b1? matches earlier in source order; the next question asks what it reports.");
     const nothing = explainRunChoice(r, { kind: "nothing" });
     expect(nothing.correct).toBe(false);
-    expect(nothing.feedback).toMatch(/2'b1\? matches, so it runs/);
+    expect(nothing.feedback).toBe("Something does run under casez, because 2'b1? matches.");
   });
 
   it("which item runs: an item that does not match is explained bit by bit; case inside stamps 'x is no match'", () => {
@@ -701,33 +709,34 @@ describe("sv-decision-model: prediction choices and feedback", () => {
     expect(explainRunChoice(hit, { kind: "catch-all" }).feedback).toMatch(/default runs only when no case item matches/);
     const miss = evaluateDecision(withSelect(decoder("unique", true), "11"));
     expect(explainRunChoice(miss, { kind: "catch-all" })).toMatchObject({ correct: true });
-    expect(explainRunChoice(miss, { kind: "nothing" }).feedback).toMatch(/catches every leftover value/);
+    expect(explainRunChoice(miss, { kind: "nothing" }).feedback).toBe("With a default in place, a case statement always runs something.");
   });
 
   it("what is reported: correct answers restate the rule; wrong answers name the misconception", () => {
     const miss = evaluateDecision(withSelect(decoder("unique"), "11"));
     expect(explainReportChoice(miss, "no-match")).toMatchObject({ correct: true });
-    expect(explainReportChoice(miss, "no-match").feedback).toMatch(/Observed region/);
+    expect(explainReportChoice(miss, "no-match").feedback).toBe("unique reports when no case item matches and there is no default (§12.5, §12.5.3).");
     expect(explainReportChoice(miss, "nothing").feedback).toMatch(/not silent/);
     expect(explainReportChoice(miss, "overlap").feedback).toMatch(/No case item matches, so there is no overlap/);
 
     const withDefault = evaluateDecision(withSelect(decoder("unique", true), "11"));
     expect(explainReportChoice(withDefault, "nothing")).toMatchObject({ correct: true });
-    expect(explainReportChoice(withDefault, "no-match").feedback).toMatch(/can never happen/);
+    expect(explainReportChoice(withDefault, "no-match").feedback).toBe("A default silences the missing-match check, which may be the check you wanted.");
 
     const unique0 = evaluateDecision(withSelect(decoder("unique0"), "11"));
-    expect(explainReportChoice(unique0, "no-match").feedback).toMatch(/unique0 reports overlaps only/);
+    expect(explainReportChoice(unique0, "no-match").feedback).toBe("unique0 has no check for a missing match.");
 
     const plain = evaluateDecision(withSelect(decoder("plain"), "11"));
     expect(explainReportChoice(plain, "no-match").feedback).toMatch(/has no check/);
 
     const overlap = evaluateDecision(findPreset("casez-overlap").config);
     expect(explainReportChoice(overlap, "overlap")).toMatchObject({ correct: true });
-    expect(explainReportChoice(overlap, "nothing").feedback).toMatch(/reports an overlap while still running the first/);
+    expect(explainReportChoice(overlap, "nothing").feedback).toBe("unique checks for this: 2 case items match, and running the first one (§12.5.3) does not hide the overlap.");
     expect(explainReportChoice(overlap, "no-match").feedback).toMatch(/opposite one/);
 
     const priority = evaluateDecision({ ...findPreset("casez-overlap").config, qualifier: "priority" });
-    expect(explainReportChoice(priority, "overlap").feedback).toMatch(/priority allows overlap: it acts on the first match only/);
+    expect(explainReportChoice(priority, "overlap").feedback).toBe("priority has no check for overlap.");
+    expect(explainReportChoice(priority, "nothing").feedback).toMatch(/priority allows overlap: it acts on the first match only/);
     const plainMany = evaluateDecision({ ...findPreset("casez-overlap").config, qualifier: "plain" });
     expect(explainReportChoice(plainMany, "overlap").feedback).toMatch(/has no check/);
     const one = evaluateDecision(decoder("unique"));
@@ -748,7 +757,6 @@ describe("sv-decision-model: presets are well-formed", () => {
       }
     }
     expect(new Set(DECISION_PRESETS.map((p) => p.id)).size).toBe(DECISION_PRESETS.length);
-    expect(findPreset("not-a-preset").id).toBe(DECISION_PRESETS[0].id);
     expect(findPreset(undefined).id).toBe("lesson-decoder");
   });
 
@@ -757,7 +765,6 @@ describe("sv-decision-model: presets are well-formed", () => {
       expect(() => compareDecisions(s, bits(body), "casex")).not.toThrow();
       expect(() => compareDecisions(s, bits(body), "casez")).not.toThrow();
     }
-    expect(findCompareSet("missing").id).toBe("casex-vs-inside");
   });
 
   it("every preset's select options have the preset's width", () => {
@@ -792,18 +799,19 @@ describe("sv-decision-model: feedback never claims a qualifier changes which ite
     }
   });
 
-  it("a later matching item: 'No qualifier ever changes which case item runs', and the qualifier's report is left to the next question", () => {
+  it("a later matching item says it comes later and leaves the report to the next question; the correct answer beside it carries 'no qualifier changes that'", () => {
     const base = findPreset("casez-overlap").config; // 2'b1? then 2'b?1, sel = 11
     const later = (qualifier: Qualifier) => explainRunChoice(evaluateDecision({ ...base, qualifier }), { kind: "item", index: 1 });
     for (const q of ["unique", "unique0", "priority"] as Qualifier[]) {
       expect(later(q).correct, q).toBe(false);
-      expect(later(q).feedback, q).toMatch(/first match wins \(§12\.5\)\. No qualifier ever changes which case item runs \(§12\.5\.3\); the next question asks what it reports\.$/);
+      expect(later(q).feedback, q).toBe("2'b?1 does match under casez, but 2'b1? matches earlier in source order; the next question asks what it reports.");
     }
     // A plain statement has no qualifier to ask about, and compare mode (always plain) has no report question at all.
-    expect(later("plain").feedback).toMatch(/No qualifier ever changes which case item runs \(§12\.5\.3\)\.$/);
-    // An if chain cites §12.4.1 and §12.4.2, and says that a branch runs.
-    const ifLater = explainRunChoice(evaluateDecision(withSelect(findPreset("unique-if").config, "11")), { kind: "item", index: 1 });
-    expect(ifLater.feedback).toMatch(/first match wins \(§12\.4\.1\)\. No qualifier ever changes which branch runs \(§12\.4\.2\); the next question asks what it reports\./);
+    expect(later("plain").feedback).toBe("2'b?1 does match under casez, but 2'b1? matches earlier in source order.");
+    // An if chain says conditions and cites §12.4.1 in the correct answer.
+    const chain = evaluateDecision(withSelect(findPreset("unique-if").config, "11"));
+    expect(explainRunChoice(chain, { kind: "item", index: 1 }).feedback).toMatch(/matches earlier in source order; the next question asks what it reports\.$/);
+    expect(explainRunChoice(chain, chain.runs).feedback).toMatch(/first one in source order wins \(§12\.4\.1\); no qualifier changes that\./);
   });
 });
 
@@ -868,7 +876,7 @@ describe("sv-decision-model: one-hot case (1'b1) inside words the bit-select as 
   it("gnt = 3'b0x1: gnt[1] = x is a wildcard on the right, so 1'b1 matches; gnt[0] = 1 matches, gnt[2] = 0 does not; unique reports the overlap", () => {
     const r = evaluateDecision({ ...withSelect(findPreset("one-hot").config, "0x1"), form: "case-inside" });
     expect(r.items.map((v) => v.result)).toEqual(["1", "1", "0"]);
-    expect(r.items[1].terms[0].why).toMatch(/^gnt\[1\] is x; as the right operand of ==\? an x bit is a wildcard, so the constant 1'b1 matches \(§11\.4\.6\)\. A plain case would compare the x literally and not match \(§12\.5\)\./);
+    expect(r.items[1].terms[0].why).toMatch(/^gnt\[1\] is x; as the right operand of ==\? an x bit is a wildcard, so the constant 1'b1 matches \(§11\.4\.6\)\. case \(not casez or casex\) would compare the x literally and not match \(§12\.5\)\./);
     expect(r.items[0].terms[0].why).toMatch(/^gnt\[0\] is 1, so 1'b1 ==\? gnt\[0\] is 1: the constant case expression matches \(§11\.4\.6, §12\.5\.2\)\./);
     expect(r.items[2].terms[0].why).toMatch(/^gnt\[2\] is 0, so 1'b1 ==\? gnt\[2\] is 0: the constant case expression does not match \(§11\.4\.6\)\./);
     expect(r.matchCount).toBe(2);
@@ -909,9 +917,9 @@ describe("sv-decision-model: nothing is given away before the reveal (visual-lan
     }
   });
 
-  it("every preset and item set has an after-reveal line", () => {
-    for (const p of DECISION_PRESETS) expect(p.afterReveal.length, p.id).toBeGreaterThan(20);
-    for (const s of COMPARE_SETS) expect(s.afterReveal.length, s.id).toBeGreaterThan(20);
+  it("every preset and item set has a closing line for the end of its walk", () => {
+    for (const p of DECISION_PRESETS) expect(p.wrapUp.length, p.id).toBeGreaterThan(20);
+    for (const s of COMPARE_SETS) expect(s.wrapUp.length, s.id).toBeGreaterThan(20);
   });
 
   it("the first prompt's feedback never answers the second prompt, for any option in any reachable configuration", () => {
@@ -931,7 +939,7 @@ describe("sv-decision-model: nothing is given away before the reveal (visual-lan
     const r = evaluateDecision(findPreset("kata-c-1").config);
     const { correct, feedback } = explainRunChoice(r, { kind: "nothing" });
     expect(correct).toBe(true);
-    expect(feedback).toBe("Every case item fails: a plain case compares x and z literally (§12.5), so nothing runs.");
+    expect(feedback).toBe("Every case item fails: case (not casez or casex) compares x and z literally (§12.5), so nothing runs.");
     sweep((name, res) => {
       if (res.runs.kind !== "nothing") return;
       const text = explainRunChoice(res, { kind: "nothing" }).feedback;
@@ -954,7 +962,7 @@ describe("sv-decision-model: nothing is given away before the reveal (visual-lan
 describe("sv-decision-model: preset text stays true", () => {
   it("wildcard-item: the select's x is scoped to case inside, because casex skips it at any bit (§12.5.1, §11.4.6)", () => {
     const set = findCompareSet("wildcard-item");
-    expect(set.afterReveal).toMatch(/case inside accepts a select x only there; casex accepts it at every bit \(§12\.5\.1\)/);
+    expect(compareValueNote(set, bits("x1"), "casex")).toBe("casex skips a select x at every bit, even against the item's fixed 1 (§12.5.1).");
     const r = compareDecisions(set, bits("x1"), "casex");
     expect(runOutcomeId(r.left.runs)).toBe("item-0");
     expect(r.left.items[0].terms[0].chips?.[0]).toMatchObject({ left: "x", right: "1", verdict: "skip" });
@@ -963,7 +971,7 @@ describe("sv-decision-model: preset text stays true", () => {
 
   it("casez-overlap names qualifiers, not forms: a plain case compares the ? literally, so with sel = 11 nothing runs (§12.5)", () => {
     const p = findPreset("casez-overlap");
-    expect(p.afterReveal).toMatch(/Every qualifier runs the first/);
+    expect(p.wrapUp).toMatch(/every qualifier runs the first/);
     for (const q of QUALIFIERS) expect(runOutcomeId(evaluateDecision({ ...p.config, qualifier: q }).runs), q).toBe("item-0");
     expect(outcome({ ...p.config, form: "case", qualifier: "unique" }, "11")).toEqual(["nothing", "no-match"]);
     expect(outcome({ ...p.config, form: "case", qualifier: "unique0" }, "11")).toEqual(["nothing", "nothing"]);
@@ -989,14 +997,14 @@ describe("sv-decision-model: preset text stays true", () => {
 });
 
 describe("sv-decision-model: readable prose", () => {
-  it("the report feedback and the outcome line read as sentences, not a spliced note (§12.4.2.1, §12.5.3.1)", () => {
+  it("the timing is told once, on the ticket: no feedback repeats it, and the live summary keeps it for a screen reader (§12.4.2.1, §12.5.3.1)", () => {
     const miss = evaluateDecision(withSelect(decoder("unique"), "11"));
-    expect(explainReportChoice(miss, "no-match").feedback).toMatch(/ The check runs now; the report waits for the Observed region \(§12\.4\.2\.1, §12\.5\.3\.1\)\.$/);
+    expect(miss.report?.deferred).toBe(DEFERRED_REPORT_NOTE);
     expect(miss.summary).toContain("unique case: no case item matches. Violation reported in the Observed region (§12.5.3, §12.4.2.1, §12.5.3.1).");
-    expect(explainReportChoice(miss, "nothing").feedback).toMatch(/not silent\. The check runs now/);
+    expect(explainReportChoice(miss, "nothing").feedback).toMatch(/not silent/);
     sweep((name, r) => {
       expect(r.summary, name).not.toMatch(/, checked now/);
-      for (const kind of ["nothing", "no-match", "overlap"] as ReportKind[]) expect(explainReportChoice(r, kind).feedback, name).not.toMatch(/the report is checked/);
+      for (const kind of ["nothing", "no-match", "overlap"] as ReportKind[]) expect(explainReportChoice(r, kind).feedback, name).not.toMatch(/Observed/);
     });
   });
 
@@ -1046,5 +1054,552 @@ describe("sv-decision-model: readable prose", () => {
       // A row that does not fit means no row is padded: past the indent, no run of spaces is left.
       if (rows.some((l) => l.length > CODE_LINE_FIT)) for (const row of rows) expect(row.trimStart(), name).not.toMatch(/ {2}/);
     });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe("sv-decision-model: an unknown id is not silent", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("an unknown preset falls back to the first one and warns outside production", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(findPreset("not-a-preset").id).toBe(DECISION_PRESETS[0].id);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toMatch(/unknown preset "not-a-preset", using "lesson-decoder"/);
+  });
+
+  it("a qualifier id used in compare mode warns too; it names the compare sets", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(findCompareSet("one-hot").id).toBe("casex-vs-inside");
+    expect(warn.mock.calls[0][0]).toMatch(/unknown compare set "one-hot", using "casex-vs-inside".*opcode-decoder/);
+  });
+
+  it("a known id and no id at all do not warn", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    findPreset("one-hot");
+    findPreset(undefined);
+    findCompareSet("opcode-decoder");
+    findCompareSet(undefined);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("production stays quiet", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubEnv("NODE_ENV", "production");
+    expect(findPreset("not-a-preset").id).toBe(DECISION_PRESETS[0].id);
+    vi.unstubAllEnvs();
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("sv-decision-model: why one match stays silent is worded per qualifier (§12.5.3, §12.4.2)", () => {
+  const one = (qualifier: Qualifier, form: DecisionForm = "case") => evaluateDecision({ ...decoder(qualifier, false, form) }).silentBecause;
+
+  it("each qualifier names the checks it has, and a plain statement says it has none", () => {
+    expect(one("plain")).toBe("Exactly one case item matches, and a plain case has no checks, so nothing is reported (§12.5).");
+    expect(one("unique")).toBe("Exactly one case item matches, so unique has neither a missing match nor an overlap to report (§12.5.3).");
+    expect(one("unique0")).toBe("Exactly one case item matches, so unique0 has no overlap to report (§12.5.3).");
+    expect(one("priority")).toBe("Exactly one case item matches, so priority has no missing match to report (§12.5.3).");
+    expect(one("plain", "if-else-if")).toBe("Exactly one condition matches, and a plain if has no checks, so nothing is reported (§12.4).");
+    expect(one("unique", "if-else-if")).toMatch(/\(§12\.4\.2\)\.$/);
+  });
+
+  it("no reachable statement says a check fires when it has none", () => {
+    sweep((name, r) => {
+      expect(r.silentBecause ?? "", name).not.toMatch(/neither check fires/);
+      if (r.config.qualifier === "plain" && r.column === "one") expect(r.silentBecause, name).toMatch(/has no checks/);
+    });
+  });
+});
+
+describe("sv-decision-model: each listed value gets its own note, and it speaks only about that value", () => {
+  /** True when the note names `other`, as a body, a literal, or (from three bits up) its decimal value. */
+  const naming = (note: string, other: string, width: number): boolean => {
+    if (note.includes(`'b${other}`)) return true;
+    const bare = note
+      .replace(/§[\d.]+/g, "")
+      .replace(/\d*'[bdh][\w?]+/g, "")
+      .replace(/\[[^\]]*\]/g, "")
+      .replace(/\bbit \d( to be \d)?/g, "")
+      .replace(/t = \d+ ns/g, "");
+    const escaped = other.replace(/[?]/g, "\\?");
+    if (new RegExp(`(^|[^\\w'])${escaped}($|[^\\w])`).test(bare)) return true;
+    return width >= 3 && /^[01]+$/.test(other) && new RegExp(`(^|[^\\w'])${Number.parseInt(other, 2)}($|[^\\w])`).test(bare);
+  };
+
+  it("the helper catches what it is there for", () => {
+    expect(naming("sel = x1 has x against a fixed bit", "x1", 2)).toBe(true);
+    expect(naming("values 3, 5, 6 and 7 cause a report", "101", 3)).toBe(true);
+    expect(naming("it matches 'b00x and nothing else", "00x", 3)).toBe(true);
+    expect(naming("3'b00? needs bit 1 to be 0 (§12.5.3)", "000", 3)).toBe(false);
+    expect(naming("the item 2'b1? is listed", "11", 2)).toBe(false);
+  });
+
+  it("every preset has a line for each listed value and none for a value it does not list", () => {
+    for (const p of DECISION_PRESETS) {
+      expect(Object.keys(p.valueNotes).sort(), p.id).toEqual([...p.selectOptions].sort());
+      for (const body of p.selectOptions) expect(presetValueNote(p, body), `${p.id} ${body}`).not.toBe(OWN_VALUE_NOTE);
+    }
+  });
+
+  it("a value built bit by bit gets the generic line", () => {
+    expect(presetValueNote(findPreset("lesson-decoder"), "zz")).toBe(OWN_VALUE_NOTE);
+  });
+
+  it("a preset's note at value V states no outcome for any other listed value", () => {
+    for (const p of DECISION_PRESETS) for (const body of p.selectOptions) for (const other of p.selectOptions) {
+      if (other === body) continue;
+      expect(naming(presetValueNote(p, body), other, body.length), `${p.id}: the note for ${body} names ${other}: ${presetValueNote(p, body)}`).toBe(false);
+    }
+  });
+
+  it("a compare note at value V states no outcome for any other listed value, under casex and under casez", () => {
+    for (const s of COMPARE_SETS) for (const kind of ["casex", "casez"] as const) for (const body of s.selectOptions) for (const other of s.selectOptions) {
+      if (other === body) continue;
+      const note = compareValueNote(s, bits(body), kind);
+      expect(naming(note, other, body.length), `${s.id} ${kind}: the note for ${body} names ${other}: ${note}`).toBe(false);
+    }
+  });
+
+  it("the whole-preset line never repeats a sentence of a value's line, since both can be on screen", () => {
+    for (const p of DECISION_PRESETS) for (const body of p.selectOptions) {
+      const wrap = new Set(splitSentences(p.wrapUp));
+      for (const sentence of splitSentences(presetValueNote(p, body))) expect(wrap.has(sentence), `${p.id} ${body}: ${sentence}`).toBe(false);
+    }
+    for (const s of COMPARE_SETS) for (const kind of ["casex", "casez"] as const) for (const body of s.selectOptions) {
+      const wrap = new Set(splitSentences(compareWrapUp(s, kind)));
+      for (const sentence of splitSentences(compareValueNote(s, bits(body), kind))) expect(wrap.has(sentence), `${s.id} ${kind} ${body}: ${sentence}`).toBe(false);
+    }
+  });
+
+  it("the notes' claims hold in the model: each is checked against the value it is written for", () => {
+    const on = (id: string, body: string) => evaluateDecision(withSelect(findPreset(id).config, body));
+    // The standard's example comments (§12.5.3).
+    for (const body of ["011", "101", "110", "111"]) {
+      expect(presetValueNote(findPreset("lrm-unique-case"), body)).toMatch(/among those that cause a violation report/);
+      expect(on("lrm-unique-case", body).reportKind, body).toBe("no-match");
+      expect(presetValueNote(findPreset("lrm-unique0-case"), body)).toMatch(/unique0 does not/);
+      expect(on("lrm-unique0-case", body).reportKind, body).toBe("nothing");
+    }
+    for (const body of ["100", "111"]) expect(on("lrm-priority-casez", body).reportKind, body).toBe("no-match");
+    expect(on("lrm-priority-casez", "000").matchCount).toBe(2);
+    expect(on("lrm-priority-casez", "011").items.map((v) => v.matches)).toEqual([false, true]);
+    // One item listing two matching-candidate expressions is one match, not an overlap (§12.5.3).
+    for (const body of ["000", "001"]) expect(on("lrm-unique-case", body).reportKind, body).toBe("nothing");
+    // The standard's §12.5.4 comments, including 'b00x and 'bxxx failing.
+    for (const body of ["0x0", "0z0", "010"]) expect(runOutcomeId(on("lrm-priority-inside", body).runs), body).toBe("item-1");
+    for (const body of ["00x", "xxx"]) expect(on("lrm-priority-inside", body).reportKind, body).toBe("no-match");
+    for (const body of ["001", "011"]) expect(runOutcomeId(on("lrm-priority-inside", body).runs), body).toBe("item-0");
+    expect(runOutcomeId(on("lrm-priority-inside", "101").runs)).toBe("item-1");
+    // Lesson and kata.
+    expect(on("lesson-decoder", "11").reportKind).toBe("no-match");
+    expect(on("lesson-decoder", "xx").reportKind).toBe("no-match");
+    expect(on("kata-c-2", "xx").runs).toEqual({ kind: "catch-all" });
+    expect(on("kata-c-2", "01").runs).toEqual({ kind: "item", index: 1 });
+    expect(on("kata-c-3", "xx").reportKind).toBe("nothing");
+    expect(runOutcomeId(on("kata-c-4", "1x").runs)).toBe("item-1");
+    expect(on("kata-c-4", "x1").items.map((v) => v.result)).toEqual(["x", "x"]);
+    expect(on("kata-c-4", "xx").items.map((v) => v.result)).toEqual(["x", "x"]);
+    // Wildcards, one-hot and the encoder.
+    expect(on("casez-overlap", "11").matchCount).toBe(2);
+    expect(on("casez-overlap", "10").items.map((v) => v.matches)).toEqual([true, false]);
+    expect(on("casez-overlap", "01").items.map((v) => v.matches)).toEqual([false, true]);
+    expect(on("casez-overlap", "00").matchCount).toBe(0);
+    expect(on("one-hot", "011").reportKind).toBe("overlap");
+    expect(on("one-hot", "0x1").items[1].matches).toBe(false);
+    expect(on("one-hot", "0x1").reportKind).toBe("nothing");
+    expect(evaluateDecision({ ...withSelect(findPreset("one-hot").config, "000"), qualifier: "unique0" }).reportKind).toBe("nothing");
+    expect(evaluateDecision({ ...withSelect(findPreset("one-hot").config, "000"), catchAll: true }).reportKind).toBe("nothing");
+    expect(on("priority-encoder", "0110").reportKind).toBe("nothing");
+    expect(on("priority-encoder", "0000").reportKind).toBe("no-match");
+    expect(runOutcomeId(on("priority-encoder", "1000").runs)).toBe("item-3");
+    expect(on("priority-encoder", "1111").matchCount).toBe(4);
+    expect(evaluateDecision({ ...withSelect(findPreset("unique-if").config, "00"), catchAll: true }).reportKind).toBe("nothing");
+    expect(on("unique-if", "11").reportKind).toBe("overlap");
+    // The Flow Control table's casex column.
+    const table = (body: string) => compareDecisions(findCompareSet("casex-vs-inside"), bits(body), "casex");
+    expect(table("1x").left.matchCount).toBe(2);
+    expect(table("xx").left.matchCount).toBe(2);
+    expect(runOutcomeId(table("x1").left.runs)).toBe("item-1");
+    for (const body of ["1x", "x1", "xx"]) expect(table(body).right.runs, body).toEqual({ kind: "nothing" });
+    const hazard = compareDecisions(findCompareSet("opcode-decoder"), bits("0x0"), "casex");
+    expect(runOutcomeId(hazard.left.runs)).toBe("item-0");
+  });
+
+  it("a computed compare note agrees with the two columns for every select value of every set", () => {
+    for (const s of COMPARE_SETS) {
+      const width = s.selectOptions[0].length;
+      const values = Array.from({ length: BIT4_VALUES.length ** width }, (_, n) => Array.from({ length: width }, (_, i) => BIT4_VALUES[Math.floor(n / BIT4_VALUES.length ** i) % BIT4_VALUES.length]));
+      for (const select of values) for (const kind of ["casex", "casez"] as const) {
+        const { left, right } = compareDecisions(s, select, kind);
+        const same = runOutcomeId(left.runs) === runOutcomeId(right.runs);
+        const name = `${s.id} ${kind} ${select.join("")}`;
+        if (s.valueNotes[select.join("")] && kind === "casex") continue;
+        const note = compareValueNote(s, select, kind);
+        if (select.every((b) => b === "0" || b === "1")) {
+          expect(same, name).toBe(true);
+          expect(note, name).toMatch(/is known, so both columns reach the same outcome/);
+        } else if (!same) {
+          expect(note, name).toMatch(/The columns differ on/);
+          // Every disagreement comes from the left column skipping a select bit that case inside would not.
+          expect(left.runs.kind, name).toBe("item");
+        } else if (right.runs.kind === "item") {
+          expect(note, name).toMatch(/under the item's own wildcard/);
+          const v = right.items[right.runs.index];
+          expect(v.terms.some((t) => t.chips?.every((c) => !(c.left === "x" || c.left === "z") || c.wildcard)), name).toBe(true);
+        } else {
+          expect(note, name).toMatch(/Neither column finds a matching item/);
+          expect(left.matchCount, name).toBe(0);
+          expect(right.matchCount, name).toBe(0);
+        }
+      }
+    }
+  });
+
+  it("the casez closing line is computed: only 1z differs in the Flow Control set, and no listed value differs in the others", () => {
+    expect(compareWrapUp(findCompareSet("casex-vs-inside"), "casez")).toBe("Of the listed values, under casez the columns differ only for sel = 2'b1z: casez skips a z in the case expression too (§12.5.1).");
+    for (const id of ["wildcard-item", "opcode-decoder"]) {
+      const s = findCompareSet(id);
+      expect(compareWrapUp(s, "casez"), id).toMatch(/lands in the same place in both columns/);
+      expect(s.selectOptions.every((b) => !b.includes("z")), id).toBe(true);
+    }
+    for (const s of COMPARE_SETS) expect(compareWrapUp(s, "casex"), s.id).toBe(s.wrapUp);
+  });
+
+  it("the sets offered on the operators page do not point at a table that page lacks", () => {
+    for (const s of COMPARE_SETS) {
+      const text = [s.summary, s.wrapUp, ...Object.values(s.valueNotes)].join(" ");
+      expect(text, s.id).not.toMatch(/the lesson's/i);
+    }
+    expect(findCompareSet("casex-vs-inside").summary).toMatch(/Flow Control/);
+    expect(findCompareSet("casex-vs-inside").wrapUp).toMatch(/Flow Control/);
+  });
+});
+
+describe("sv-decision-model: the walk through a preset's values", () => {
+  it("counts listed values only", () => {
+    expect(triedProgress(["01", "11", "xx"], [])).toEqual({ count: 0, total: 3, complete: false });
+    expect(triedProgress(["01", "11", "xx"], ["11", "zz"])).toEqual({ count: 1, total: 3, complete: false });
+    expect(triedProgress(["01", "11", "xx"], ["xx", "01", "11"])).toEqual({ count: 3, total: 3, complete: true });
+  });
+
+  it("the next value follows list order, skips what has been tried, and wraps", () => {
+    const options = ["01", "11", "xx"];
+    expect(nextSelectValue(options, "01")).toBe("11");
+    expect(nextSelectValue(options, "xx")).toBe("01");
+    expect(nextSelectValue(options, "01", ["01", "11"])).toBe("xx");
+    expect(nextSelectValue(options, "xx", ["01", "11", "xx"])).toBe("01");
+    // A value on no list starts from the top of the list.
+    expect(nextSelectValue(options, "zz")).toBe("01");
+    expect(nextSelectValue(options, "zz", ["01"])).toBe("11");
+    expect(nextSelectValue(["01"], "01")).toBe("01");
+  });
+
+  it("repeated Try next reaches every listed value of every preset and item set", () => {
+    for (const options of [...DECISION_PRESETS.map((p) => p.selectOptions), ...COMPARE_SETS.map((s) => s.selectOptions)]) {
+      const tried = [options[0]];
+      let current = options[0];
+      for (let i = 1; i < options.length; i += 1) {
+        current = nextSelectValue(options, current, tried);
+        tried.push(current);
+      }
+      expect(triedProgress(options, tried).complete, options.join()).toBe(true);
+    }
+  });
+});
+
+describe("sv-decision-model: one statement of each fact", () => {
+  it("splitSentences keeps clause numbers whole", () => {
+    expect(splitSentences("A matches (§12.5.3). B runs. ")).toEqual(["A matches (§12.5.3).", "B runs."]);
+    expect(splitSentences("sel ==? 2'b1? is 1: it matches.")).toEqual(["sel ==? 2'b1? is 1: it matches."]);
+    expect(splitSentences("")).toEqual([]);
+  });
+
+  it("freshWhys drops what the prompts told, and tells a repeated sentence once across the cards", () => {
+    const r = evaluateDecision(withSelect(decoder("plain"), "xx"));
+    const repeated = "case (not casez or casex) compares x and z literally (§12.5).";
+    expect(r.items.every((v) => v.terms[0].why.endsWith(repeated))).toBe(true);
+    const fresh = freshWhys(r, []);
+    expect(fresh[0][0]).toContain(repeated);
+    expect(fresh[1][0]).not.toContain(repeated);
+    expect(fresh[2][0]).not.toContain(repeated);
+    // A term the feedback already explained has nothing left to say.
+    const hit = evaluateDecision(decoder("plain"));
+    const told = explainRunChoice(hit, hit.runs).feedback;
+    expect(freshWhys(hit, [told])[1][0]).toBe("");
+    expect(freshWhys(hit, [])[1][0]).toBe(hit.items[1].terms[0].why);
+  });
+
+  it("the ran line says only what ran", () => {
+    expect(evaluateDecision(decoder("unique")).ranLine).toBe("Item 2 (2'b01) runs.");
+    expect(evaluateDecision(withSelect(decoder("unique"), "xx")).ranLine).toBe("Nothing runs.");
+    expect(evaluateDecision(withSelect(decoder("unique", true), "xx")).ranLine).toBe("The default runs.");
+    expect(evaluateDecision(findPreset("unique-if").config).ranLine).toBe("Branch 2 (req[1]) runs.");
+    sweep((name, r) => expect(r.ranLine, name).not.toMatch(/report|violation|match/i));
+  });
+
+  it("the correct and the chosen feedback share no sentence, in any reachable configuration, for either prompt", () => {
+    sweep((name, r) => {
+      const runRight = explainRunChoice(r, r.runs).feedback;
+      const reportRight = explainReportChoice(r, r.reportKind).feedback;
+      const right = new Set([...splitSentences(runRight), ...splitSentences(reportRight), r.ranLine]);
+      expect(right.size, `${name}: ${runRight} | ${reportRight} | ${r.ranLine}`).toBe(splitSentences(runRight).length + splitSentences(reportRight).length + 1);
+      for (const choice of runChoices(r)) {
+        if (runOutcomeId(choice) === runOutcomeId(r.runs)) continue;
+        for (const sentence of splitSentences(explainRunChoice(r, choice).feedback)) expect(right.has(sentence), `${name} ${runOutcomeId(choice)}: ${sentence}`).toBe(false);
+      }
+      for (const kind of ["nothing", "no-match", "overlap"] as ReportKind[]) {
+        if (kind === r.reportKind) continue;
+        for (const sentence of splitSentences(explainReportChoice(r, kind).feedback)) expect(right.has(sentence), `${name} ${kind}: ${sentence}`).toBe(false);
+      }
+    });
+  });
+
+  it("a wrong run choice does not paste the correct answer's explanation", () => {
+    sweep((name, r) => {
+      const whyRight = r.runs.kind === "item" ? r.items[r.runs.index].terms.filter((t) => t.result === "1").map((t) => t.why) : [];
+      for (const choice of runChoices(r)) {
+        if (runOutcomeId(choice) === runOutcomeId(r.runs)) continue;
+        const { feedback } = explainRunChoice(r, choice);
+        for (const why of whyRight) expect(feedback.includes(why), `${name} ${runOutcomeId(choice)}`).toBe(false);
+      }
+    });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+const allSelects = (width: number): Bit4[][] => Array.from({ length: BIT4_VALUES.length ** width }, (_, n) => Array.from({ length: width }, (_, i) => BIT4_VALUES[Math.floor(n / BIT4_VALUES.length ** i) % BIT4_VALUES.length]));
+
+/** Every text a statement can show about its own outcome, for sweeps over the wording. */
+const allTexts = (r: ReturnType<typeof evaluateDecision>): string[] => [
+  r.silentBecause ?? "",
+  r.report?.detail ?? "",
+  r.summary,
+  ...runChoices(r).map((c) => explainRunChoice(r, c).feedback),
+  ...(["nothing", "no-match", "overlap"] as const).map((k) => explainReportChoice(r, k).feedback),
+  ...r.items.flatMap((v) => v.terms.map((t) => t.why)),
+];
+
+describe("sv-decision-model: a skipped select bit is named by its value (§12.5.1)", () => {
+  const whys = (form: "casez" | "casex", select: string, items: string[]) =>
+    evaluateDecision({ form, qualifier: "plain", catchAll: false, selectName: "sel", select: bits(select), items: items.map(lit) }).items.map((v) => v.terms[0].why);
+
+  it("casez skips z, so it says z", () => {
+    expect(whys("casez", "1z", ["2'b10"])[0]).toBe("2'b10 matches: casez skips bit 0, including the z bit of the select itself (§12.5.1).");
+    expect(whys("casez", "z1", ["2'b11"])[0]).toBe("2'b11 matches: casez skips bit 1, including the z bit of the select itself (§12.5.1).");
+    expect(whys("casez", "zz", ["2'b11"])[0]).toBe("2'b11 matches: casez skips bits 1, 0, including the z bits of the select itself (§12.5.1).");
+  });
+
+  it("casex skips x and z, and says which one it met", () => {
+    expect(whys("casex", "1x", ["2'b10"])[0]).toBe("2'b10 matches: casex skips bit 0, including the x bit of the select itself (§12.5.1).");
+    expect(whys("casex", "1z", ["2'b10"])[0]).toBe("2'b10 matches: casex skips bit 0, including the z bit of the select itself (§12.5.1).");
+    expect(whys("casex", "xz", ["2'b10"])[0]).toBe("2'b10 matches: casex skips bits 1, 0, including the x and z bits of the select itself (§12.5.1).");
+  });
+
+  it("a don't-care that sits only in the item says nothing about the select", () => {
+    expect(whys("casez", "10", ["2'b1?"])[0]).toBe("2'b1? matches: casez skips bit 0 (§12.5.1).");
+    // The select's x is not what casez skipped here: the item's ? is.
+    expect(whys("casez", "1x", ["2'b1?"])[0]).toBe("2'b1? matches: casez skips bit 0 (§12.5.1).");
+  });
+
+  it("no skip explanation ever calls the skipped bit unknown, on any select of any preset", () => {
+    for (const p of DECISION_PRESETS) for (const form of ["casez", "casex"] as const) for (const select of allSelects(p.config.select.length)) {
+      const r = evaluateDecision({ ...p.config, form, select });
+      for (const t of allTexts(r)) expect(t, `${p.id} ${form} ${select.join("")}`).not.toMatch(/unknown bit of the select/);
+    }
+  });
+});
+
+describe("sv-decision-model: a catch-all does not match; it runs when nothing else does (§12.4.2, §12.5)", () => {
+  const miss = (qualifier: Qualifier, form: DecisionForm = "case") => evaluateDecision(withSelect(decoder(qualifier, true, form), "11"));
+
+  it("the reason stated depends on whether the qualifier has a missing-match check", () => {
+    expect(miss("unique").silentBecause).toBe("No case item matches, but there is a default: it runs, and unique reports a missing match only when there is no default (§12.5, §12.5.3).");
+    expect(miss("priority").silentBecause).toBe("No case item matches, but there is a default: it runs, and priority reports a missing match only when there is no default (§12.5, §12.5.3).");
+    expect(miss("unique0").silentBecause).toBe("The default runs, and unique0 has no check for a missing match (§12.5.3).");
+    expect(miss("plain").silentBecause).toBe("The default runs, and a plain case has no check for a missing match (§12.5).");
+    expect(miss("unique", "if-else-if").silentBecause).toBe("No condition matches, but there is an else: it runs, and unique reports a missing match only when there is no else (§12.4.2).");
+    expect(miss("priority", "if-else-if").silentBecause).toBe("No condition matches, but there is an else: it runs, and priority reports a missing match only when there is no else (§12.4.2).");
+    expect(miss("unique0", "if-else-if").silentBecause).toBe("The else runs, and unique0 has no check for a missing match (§12.4.2).");
+    expect(miss("plain", "if-else-if").silentBecause).toBe("The else runs, and a plain if has no check for a missing match (§12.4).");
+  });
+
+  it("the wrong pick 'a no-match violation' says silences only where there is a check to silence", () => {
+    const pick = (qualifier: Qualifier, form: DecisionForm = "case") => explainReportChoice(miss(qualifier, form), "no-match").feedback;
+    expect(pick("unique")).toBe("A default silences the missing-match check, which may be the check you wanted.");
+    expect(pick("priority", "if-else-if")).toBe("An else silences the missing-match check, which may be the check you wanted.");
+    expect(pick("unique0")).toBe("unique0 reports no missing match, with or without a default.");
+    expect(pick("unique0", "if-else-if")).toBe("unique0 reports no missing match, with or without an else.");
+    expect(pick("plain")).toBe("A plain case reports no missing match, with or without a default.");
+    expect(pick("plain", "if-else-if")).toBe("A plain if chain reports no missing match, with or without an else.");
+  });
+
+  it("a report's detail cites §12.5 with §12.5.3 for a case and §12.4.2 for an if chain; the ticket keeps the qualifier's own clause", () => {
+    const report = (form: DecisionForm) => evaluateDecision(withSelect(decoder("unique", false, form), "11")).report;
+    expect(report("case")?.clause).toBe("§12.5.3");
+    expect(report("case")?.detail).toBe("unique reports when no case item matches and there is no default (§12.5, §12.5.3).");
+    expect(report("if-else-if")?.clause).toBe("§12.4.2");
+    expect(report("if-else-if")?.detail).toBe("unique reports when no condition matches and there is no else (§12.4.2).");
+  });
+
+  it("no reachable text says a catch-all matches, that no match cannot happen, or that a check it lacks was silenced", () => {
+    sweep((name, r) => {
+      const qualifierHasCheck = reportsNoMatch(r.config.qualifier);
+      for (const t of allTexts(r)) {
+        expect(t, name).not.toMatch(/matches every leftover|itself an alternative|cannot happen|can never happen|With a else|a else\b/);
+        if (!qualifierHasCheck) expect(t, name).not.toMatch(/silences/);
+      }
+      // What the text says agrees with the numbers: the catch-all ran because nothing matched.
+      if (r.runs.kind === "catch-all") expect(r.matchCount, name).toBe(0);
+    });
+  });
+});
+
+describe("sv-decision-model: a later fitting item, by qualifier (§12.5, §12.5.3, §12.4.1, §12.4.2)", () => {
+  it("unique and unique0 keep comparing, so they find it; plain and priority stop at the first match", () => {
+    expect(laterMatchBadge("casez", "unique")).toBe("matches, not run (the first match wins)");
+    expect(laterMatchBadge("casez", "unique0")).toBe("matches, not run (the first match wins)");
+    expect(laterMatchBadge("casez", "plain")).toBe("would also match; the search stopped at the first match (§12.5)");
+    expect(laterMatchBadge("case-inside", "priority")).toBe("would also match; the search stopped at the first match (§12.5)");
+    expect(laterMatchBadge("if-else-if", "priority")).toBe("would also match; the chain ended at the first match (§12.4.1)");
+    expect(laterMatchBadge("if-else-if", "unique")).toBe("matches, not run (the first match wins)");
+  });
+});
+
+describe("sv-decision-model: a bit-select listed beside literals (§12.5, §12.5.2)", () => {
+  const mixed = (select: string): DecisionConfig => ({ form: "case", qualifier: "plain", catchAll: false, selectName: "s", select: bits(select), items: [{ terms: [{ kind: "bit", index: 0 }] }, { terms: [{ kind: "literal", text: "2'b01" }] }] });
+
+  it("the expression is the select, and the text says what is compared", () => {
+    const r = evaluateDecision(mixed("01"));
+    expect(r.constantExpression).toBe(false);
+    expect(r.expression).toEqual(bits("01"));
+    expect(decisionSource(mixed("01")).map((l) => l.text)).toContain("case (s)");
+    // s[0] is 1, extended to 2'b01, which equals s.
+    expect(r.items[0].matches).toBe(true);
+    expect(r.items[0].terms[0].why).toBe("s[0] matches bit for bit (§12.5).");
+    for (const select of allSelects(2)) for (const form of ["case", "casez", "casex"] as const) {
+      for (const v of evaluateDecision({ ...mixed("00"), form, select }).items) for (const t of v.terms) expect(t.why, `${form} ${select.join("")}`).not.toMatch(/case expression 1'b1/);
+    }
+  });
+
+  it("when every item is a bit-select, the text still speaks of the constant 1'b1", () => {
+    const r = evaluateDecision({ ...mixed("01"), items: [{ terms: [{ kind: "bit", index: 0 }] }, { terms: [{ kind: "bit", index: 1 }] }] });
+    expect(r.constantExpression).toBe(true);
+    expect(r.items[0].terms[0].why).toBe("s[0] is 1, which matches the case expression 1'b1 (§12.5.2).");
+  });
+});
+
+describe("sv-decision-model: outcomes pinned one by one, independent of the report predicates", () => {
+  const p = (id: string) => findPreset(id).config;
+
+  it("preset values the sweeps only compare with each other", () => {
+    expect(outcome(p("unique-if"), "01")).toEqual(["item-0", "nothing"]);
+    expect(outcome(p("kata-c-3"), "01")).toEqual(["item-1", "nothing"]);
+    expect(outcome(p("lesson-decoder"), "00")).toEqual(["item-0", "nothing"]);
+    expect(outcome(p("lesson-decoder"), "10")).toEqual(["item-2", "nothing"]);
+  });
+
+  it("a default or else does not hide an overlap: it removes only the no-match report (§12.4.2, §12.5.3)", () => {
+    expect(outcome({ ...p("unique-if"), catchAll: true }, "11")).toEqual(["item-0", "overlap"]);
+    expect(outcome({ ...p("unique-if"), catchAll: true, qualifier: "unique0" }, "11")).toEqual(["item-0", "overlap"]);
+    expect(outcome({ ...p("casez-overlap"), catchAll: true }, "11")).toEqual(["item-0", "overlap"]);
+    expect(outcome({ ...p("casez-overlap"), catchAll: true, qualifier: "unique0" }, "11")).toEqual(["item-0", "overlap"]);
+    expect(outcome({ ...p("unique-if"), catchAll: true }, "00")).toEqual(["catch-all", "nothing"]);
+    expect(outcome({ ...p("lesson-decoder"), catchAll: true }, "11")).toEqual(["catch-all", "nothing"]);
+  });
+
+  it("the priority-encoder closing line keeps its design claim to this encoder, and uncited", () => {
+    const { wrapUp } = findPreset("priority-encoder");
+    expect(wrapUp).toBe("priority lets the items overlap and reports when no item matches (§12.5.3). Here that is the thing this encoder must not do: see a request with no bit set.");
+    expect(outcome(p("priority-encoder"), "xxxx")).toEqual(["nothing", "no-match"]);
+  });
+
+  it("the literal rule is not worded as if it applied only without a qualifier", () => {
+    const r = evaluateDecision(withSelect(findPreset("lesson-decoder").config, "xx"));
+    expect(r.config.qualifier).toBe("unique");
+    sweep((name, v) => {
+      for (const t of allTexts(v)) expect(t, name).not.toMatch(/a plain case (compares|would compare)/i);
+    });
+    expect(explainRunChoice(r, { kind: "nothing" }).feedback).toMatch(/case \(not casez or casex\) compares x and z literally/);
+  });
+});
+
+describe("sv-decision-model: compare notes hold beyond the listed values (§12.5.1)", () => {
+  const differing = (id: string, kind: "casex" | "casez") => {
+    const s = findCompareSet(id);
+    return allSelects(s.selectOptions[0].length).filter((select) => {
+      const { left, right } = compareDecisions(s, select, kind);
+      return runOutcomeId(left.runs) !== runOutcomeId(right.runs);
+    }).map((select) => select.join(""));
+  };
+
+  it("in the Flow Control set under casez the columns differ on exactly the values with a z", () => {
+    expect(differing("casex-vs-inside", "casez").sort()).toEqual(["1z", "z0", "z1", "zz"]);
+  });
+
+  it("every select that differs under casez holds a z, and under casex an x or z, in all three sets", () => {
+    for (const s of COMPARE_SETS) {
+      for (const body of differing(s.id, "casez")) expect(body, s.id).toContain("z");
+      for (const body of differing(s.id, "casex")) expect(body, s.id).toMatch(/[xz]/);
+    }
+  });
+
+  it("the casez closing line never claims more than the listed values, so a value built by hand cannot contradict it", () => {
+    for (const s of COMPARE_SETS) {
+      const line = compareWrapUp(s, "casez");
+      const unlisted = differing(s.id, "casez").filter((body) => !s.selectOptions.includes(body));
+      if (unlisted.length > 0) expect(line, s.id).toMatch(/^(Of the listed values|Under casez every listed value)/);
+    }
+    expect(differing("casex-vs-inside", "casez")).toContain("z1");
+    expect(compareValueNote(findCompareSet("casex-vs-inside"), bits("z1"), "casez")).toMatch(/^The columns differ on 2'bz1/);
+  });
+
+  it("the differ note counts the bits right and leaves the case inside rule to the asymmetry note", () => {
+    const flow = findCompareSet("casex-vs-inside");
+    const wild = findCompareSet("wildcard-item");
+    expect(compareValueNote(flow, bits("1z"), "casez")).toBe("The columns differ on 2'b1z: casez skips every z bit of the select, at every item.");
+    expect(compareValueNote(wild, bits("zx"), "casex")).toBe("The columns differ on 2'bzx: casex skips every x or z bit of the select, at every item.");
+    for (const s of COMPARE_SETS) for (const select of allSelects(s.selectOptions[0].length)) for (const kind of ["casex", "casez"] as const) {
+      expect(compareValueNote(s, select, kind), `${s.id} ${kind} ${select.join("")}`).not.toMatch(/accepts? (one|a select x) only under/);
+    }
+  });
+
+  it("a known select's note holds where nothing runs in either column", () => {
+    const flow = findCompareSet("casex-vs-inside");
+    const { left, right } = compareDecisions(flow, bits("00"), "casex");
+    expect([left.runs.kind, right.runs.kind]).toEqual(["nothing", "nothing"]);
+    expect(compareValueNote(flow, bits("00"), "casex")).toBe("Every bit of 2'b00 is known, so both columns reach the same outcome.");
+  });
+});
+
+describe("sv-decision-model: one paragraph says each thing once", () => {
+  it("no feedback repeats a sentence, for every run choice and report choice", () => {
+    sweep((name, r) => {
+      const texts = [...runChoices(r).map((c) => explainRunChoice(r, c).feedback), ...(["nothing", "no-match", "overlap"] as const).map((k) => explainReportChoice(r, k).feedback)];
+      for (const t of texts) {
+        const sentences = splitSentences(t);
+        expect(new Set(sentences).size, `${name}: ${t}`).toBe(sentences.length);
+      }
+    });
+  });
+
+  it("the multi-term repeats that used to reach the screen are gone", () => {
+    const once = (text: string, sentence: string) => expect(text.split(sentence).length - 1, text).toBe(1);
+    const inside = evaluateDecision(withSelect(findPreset("lrm-priority-inside").config, "xxx"));
+    once(explainRunChoice(inside, { kind: "item", index: 0 }).feedback, "An x or z on the left is not a wildcard (§11.4.6).");
+    const op = (body: string) => compareDecisions(findCompareSet("opcode-decoder"), bits(body), "casez").left;
+    once(explainRunChoice(op("0x0"), { kind: "item", index: 1 }).feedback, "casez skips only z, so an x must match exactly (§12.5.1).");
+    once(explainRunChoice(op("1x0"), { kind: "item", index: 2 }).feedback, "casez skips only z, so an x must match exactly (§12.5.1).");
+  });
+
+  it("the same pick in both compare columns never prints the same sentence in both prompts", () => {
+    for (const s of COMPARE_SETS) for (const select of allSelects(s.selectOptions[0].length)) for (const kind of ["casex", "casez"] as const) {
+      const { left, right } = compareDecisions(s, select, kind);
+      const sentences = (r: typeof left) => new Set(runChoices(r).flatMap((c) => splitSentences(explainRunChoice(r, c).feedback)));
+      const inRight = sentences(right);
+      for (const sentence of sentences(left)) expect(inRight.has(sentence), `${s.id} ${kind} ${select.join("")}: ${sentence}`).toBe(false);
+    }
   });
 });

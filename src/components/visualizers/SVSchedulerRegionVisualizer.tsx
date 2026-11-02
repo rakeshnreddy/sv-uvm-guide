@@ -12,17 +12,20 @@ import { usePlayback, type PlaybackApi } from "@/components/visual-system/usePla
 import { RegionLadder } from "@/components/visuals/scheduler/RegionLadder";
 import { TraceNarration } from "@/components/visuals/scheduler/TraceNarration";
 import { regionGuideById } from "@/components/visuals/scheduler/region-guide";
-import { REGION_LABELS, REGION_ORDER, simulateTimeSlot, slotTimeLabel, type RegionId, type TraceStep } from "@/lib/sv-scheduler-model";
+import { REACTIVE_SET, REGION_LABELS, REGION_ORDER, simulateTimeSlot, slotTimeLabel, type RegionId, type TraceStep } from "@/lib/sv-scheduler-model";
 import {
   DELTA_DEFINITION,
+  DELTA_LABEL,
   REGION_CLAUSES,
-  decisionDeltaSummary,
   decisionFeedback,
   decisionQuestion,
   decisionRecap,
   groupLandingsByRegion,
   isDecisionAnswer,
   nextRegionOptions,
+  predictionCommitNote,
+  predictionDiagnoses,
+  predictionVerdict,
   regionDecisions,
   regionLandings,
   regionMapSource,
@@ -31,15 +34,30 @@ import {
 import { allRegionMapScenarioPresets, getAnyRegionMapPreset, type AnyRegionMapScenarioId } from "@/lib/sv-region-map-scenarios-extra";
 import { cn } from "@/lib/utils";
 
+const ASSUMPTION_SLOT = `One time slot at a rising clock edge (t = 10 ns unless the scenario states another slot time), following the region loop of IEEE 1800-2023 §4.5. Steps count scheduler work, not nanoseconds; Δ is the model's own count, defined under the region map (the standard defines no delta count).`;
+const ASSUMPTION_COMB = "Continuous assignments are modelled as processes sensitive to their right-hand side (§4.9.1); always_comb likewise (§9.2.2.2).";
+const ASSUMPTION_PROCESSES = "Processes are small structured programs generated from the code shown, not parsed SystemVerilog.";
+const ASSUMPTION_NEXT_REGION = "Next-region mode pauses whenever the executing region runs dry, and when Active and Reactive both hold work, and asks where the loop goes; the answer is read from the same trace, and the explanation paraphrases §4.5.";
+
 export const REGION_MAP_ASSUMPTIONS = [
-  `One time slot at a rising clock edge (t = 10 ns unless the scenario states another slot time), following the region loop of IEEE 1800-2023 §4.5. Steps count scheduler work, not nanoseconds; Δ is ${DELTA_DEFINITION} (the standard defines no delta count).`,
+  ASSUMPTION_SLOT,
   "Each event is filed under the region it was scheduled in (§4.4.2). Events from Inactive, NBA, Observed, Re-Inactive and Re-NBA are moved to Active or Reactive and executed there, as §4.5 describes.",
-  "Continuous assignments are modelled as processes sensitive to their right-hand side (§4.9.1); always_comb likewise (§9.2.2.2).",
+  ASSUMPTION_COMB,
   "Program-block code runs in the reactive region set and its `<=` updates land in Re-NBA (§24.3.1). The program/endprogram lines are generated from the model's context flag.",
-  "Clocking blocks use the defaults (§14.3): #1step input skew samples in Preponed (§14.13), the @(cb) event triggers in Observed (§14.10) and #0 output skew drives in Re-NBA (§14.16).",
+  "Clocking blocks use the defaults (§14.3): #1step input skew samples in Preponed (§14.13, §4.4.2.1), the @(cb) event triggers in Observed (§14.10) and #0 output skew drives in Re-NBA (§14.16).",
   "Clocking limits: the model treats every cb.sig <= v as coincident with its clocking event and every cb.sig read as this slot's Preponed sample. A drive away from the clocking event acts at the next one (§14.16), and a read after @(posedge clk) rather than @(cb) may see the old or the new sample (§14.13); no scenario here does either.",
-  "Processes are small structured programs generated from the code shown, not parsed SystemVerilog. These scenarios have one legal order each, so no scheduler choice appears.",
-  "Next-region mode pauses whenever the executing region runs dry, and when Active and Reactive both hold work, and asks where the loop goes; the answer is read from the same trace, and the explanation paraphrases §4.5.",
+  ASSUMPTION_PROCESSES,
+  "These scenarios have one legal order each, so no scheduler choice appears.",
+  ASSUMPTION_NEXT_REGION,
+];
+
+/** The others say where events land or that no order choice exists, which would answer a prediction, so they wait for the reveal. */
+export const REGION_MAP_ASSUMPTIONS_BEFORE_REVEAL = [
+  ASSUMPTION_SLOT,
+  ASSUMPTION_COMB,
+  ASSUMPTION_PROCESSES,
+  ASSUMPTION_NEXT_REGION,
+  "The assumptions that say where events land appear once you commit your prediction.",
 ];
 
 export type SchedulerRegionMode = "log" | "next-region";
@@ -61,11 +79,25 @@ function GateRevealSignal({ onChange }: { onChange: (revealed: boolean) => void 
   return null;
 }
 
+/** Mounted only when a gate was revealed without an answer, so a later answer at that gate cannot score. */
+function GateSkipSignal({ decision, onSkip }: { decision: number; onSkip: (decision: number, result: null) => void }) {
+  useEffect(() => {
+    onSkip(decision, null);
+  }, [decision, onSkip]);
+  return null;
+}
+
 /** Shown instead of the step's explanation while a decision is open, because the explanation can name the answer. */
 const GATE_HIDDEN_WHY = "Answer the decision below first; the explanation of this step appears once you commit.";
 
 /** At 390 px the nine options sit in two compact columns, so the queues and the question stay on one screen. */
 const COMPACT_GATE_OPTIONS = "max-sm:p-3 max-sm:[&_fieldset>div]:grid-cols-2 max-sm:[&_fieldset>div]:gap-1.5 max-sm:[&_label]:min-h-10 max-sm:[&_label]:p-2 max-sm:[&_label]:text-xs";
+
+/** Moves focus to the Next button of the transport, or to the scrubber when Next is disabled. */
+function focusTransport(group: HTMLElement | null) {
+  const nextButton = group?.querySelector<HTMLButtonElement>('button[aria-label^="Next"]');
+  (nextButton && !nextButton.disabled ? nextButton : group?.querySelector<HTMLInputElement>('input[type="range"]'))?.focus();
+}
 
 /** Renders `code` spans of a prompt as inline code. */
 function PromptText({ text }: { text: string }) {
@@ -81,6 +113,30 @@ function PromptText({ text }: { text: string }) {
         ),
       )}
     </>
+  );
+}
+
+const FAMILY_NAME_CLASS: Record<string, string> = {
+  readOnly: "border-dashed border-slate-400/60 text-slate-700 dark:text-slate-300",
+  activeSet: "border-cyan-600/70 text-cyan-900 dark:border-cyan-400/70 dark:text-cyan-100",
+  observed: "border-sky-600/70 text-sky-900 dark:border-sky-400/70 dark:text-sky-100",
+  reactiveSet: "border-violet-600/70 text-violet-900 dark:border-violet-400/70 dark:text-violet-100",
+};
+
+/**
+ * The regions by name, in order, for use before the reveal. The full ladder tags
+ * each rung with what lands there ("clocking drives · program <="), which would
+ * answer a prediction, and at 390 px it would part the code from the question.
+ */
+function RegionNames() {
+  return (
+    <ol aria-label="Regions of one time slot, in order" className="flex flex-wrap gap-1.5">
+      {REGION_ORDER.map((region) => (
+        <li key={region} className={cn("rounded-md border px-2 py-1 text-xs font-semibold", FAMILY_NAME_CLASS[regionGuideById[region].family])}>
+          {REGION_LABELS[region]}
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -165,9 +221,9 @@ function LandingMap({
 }
 
 /** What is queued on every rung at the current step: the facts a learner needs to say where the loop goes next. */
-function QueueChips({ step }: { step: TraceStep }) {
+function QueueChips({ step, className }: { step: TraceStep; className?: string }) {
   return (
-    <ol aria-label="Queued events by region" className="space-y-1 rounded-lg border border-border/70 bg-background/40 p-2 text-[11px]">
+    <ol aria-label="Queued events by region" className={cn("space-y-1 rounded-lg border border-border/70 bg-background/40 p-2 text-[11px]", className)}>
       {REGION_ORDER.filter((r) => r !== "preponed").map((region) => {
         const items = step.queues[region];
         return (
@@ -218,10 +274,12 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
   const [scenarioId, setScenarioId] = useState<AnyRegionMapScenarioId>(initial);
   const [committed, setCommitted] = useState<number[]>([]);
   const [answered, setAnswered] = useState(0);
-  /** First answer given at each decision, by decision number. "Reveal without predicting" records nothing. */
-  const [decisionResults, setDecisionResults] = useState<Record<number, boolean>>({});
+  /** First outcome of each decision, by decision number: right, wrong, or null for "Reveal without predicting". The first one stands, so an answer given after a reveal scores nothing. */
+  const [decisionResults, setDecisionResults] = useState<Record<number, boolean | null>>({});
   const [gateRevealed, setGateRevealed] = useState(false);
   const [showLockedPredictions, setShowLockedPredictions] = useState(false);
+  /** The option each committed prediction picked, by prediction number. "Reveal without predicting" records nothing. */
+  const [predictionChoices, setPredictionChoices] = useState<Record<number, string>>({});
   const preset = getAnyRegionMapPreset(scenarioId);
   const scenario = useMemo(() => preset.build(), [preset]);
   const run = useMemo(() => simulateTimeSlot(scenario), [scenario]);
@@ -232,6 +290,10 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
   const lines: CodeTraceLine[] = useMemo(() => source.map((l) => ({ text: l.text, key: l.key, owner: l.owner })), [source]);
   const decisions = useMemo(() => (mode === "next-region" ? regionDecisions(run) : []), [mode, run]);
   const revealed = committed.length >= predictions.length;
+  const predictionResults = useMemo(
+    () => Object.fromEntries(Object.entries(predictionChoices).map(([i, id]) => [i, Boolean(predictions[Number(i)]?.options.find((o) => o.id === id)?.correct)])),
+    [predictionChoices, predictions],
+  );
 
   // Next-region gate: playback may not pass the step before the pending decision.
   const pending = decisions[answered];
@@ -257,6 +319,8 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
   const focusAfterContinue = useRef(false);
   const gateQuestionId = useId();
   const predictionsId = useId();
+  const gateVerdictId = useId();
+  const predictionsRef = useRef<HTMLDivElement>(null);
   const openGateKey = revealed && atGate && pending ? `${scenarioId}:${answered}` : null;
 
   useEffect(() => {
@@ -267,17 +331,33 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
     if (!focusAfterContinue.current) return;
     focusAfterContinue.current = false;
     if (gateRef.current) return;
-    const group = playbackRef.current;
-    const nextButton = group?.querySelector<HTMLButtonElement>('button[aria-label^="Next"]');
-    (nextButton && !nextButton.disabled ? nextButton : group?.querySelector<HTMLInputElement>('input[type="range"]'))?.focus();
+    focusTransport(playbackRef.current);
   }, [answered]);
+
+  // Committing a prediction (or skipping it) unmounts the button that had focus: go on to the next open prompt, or to the transport the last one reveals.
+  const committedCount = committed.length;
+  useEffect(() => {
+    if (committedCount === 0) return;
+    if (revealed) {
+      if (!gateRef.current) focusTransport(playbackRef.current);
+    } else {
+      predictionsRef.current?.querySelector<HTMLInputElement>('fieldset:not([disabled]) input[type="radio"]')?.focus();
+    }
+  }, [committedCount, revealed]);
+
+  // Reaching the last step or Reset disables the button that had focus, and a disabled button takes no keys. After the gate's effect, so an opening gate wins.
+  useEffect(() => {
+    const group = playbackRef.current;
+    const focused = document.activeElement;
+    if (group && focused instanceof HTMLButtonElement && focused.disabled && group.contains(focused)) focusTransport(group);
+  }, [shownIndex, limit, playback.isPlaying]);
 
   const onReveal = useCallback((index: number) => setCommitted((prev) => (prev.includes(index) ? prev : [...prev, index])), []);
 
   // Locking in an answer (or revealing without one) unmounts the button that had focus. Continue mounts in the same commit, so it takes over.
   const focusOnMount = useCallback((button: HTMLButtonElement | null) => button?.focus(), []);
 
-  const recordDecision = (decision: number, correct: boolean) => setDecisionResults((prev) => (decision in prev ? prev : { ...prev, [decision]: correct }));
+  const recordDecision = useCallback((decision: number, result: boolean | null) => setDecisionResults((prev) => (decision in prev ? prev : { ...prev, [decision]: result })), []);
 
   const changeScenario = (id: AnyRegionMapScenarioId) => {
     setScenarioId(id);
@@ -285,6 +365,7 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
     setAnswered(0);
     setDecisionResults({});
     setShowLockedPredictions(false);
+    setPredictionChoices({});
     // In the same batch as the scenario, or the clamp above would seek the new scenario to the old index.
     playback.reset();
   };
@@ -343,15 +424,26 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
   const gateOpen = revealed && atGate && Boolean(pending);
   const narratedStep = gateOpen && !gateRevealed ? { ...step, why: GATE_HIDDEN_WHY } : step;
   const decisionsDone = nextRegion && revealed && decisions.length > 0 && !pending;
-  const correctDecisions = Object.values(decisionResults).filter(Boolean).length;
+  const correctDecisions = Object.values(decisionResults).filter((r) => r === true).length;
+  const answeredDecisions = Object.values(decisionResults).filter((r) => r !== null).length;
   const predictionWord = predictions.length === 1 ? "prediction" : "predictions";
   // The locked cards step aside once the learner has moved on; before that they hold the feedback being read.
   const movedOn = revealed && (playback.index > 0 || gateOpen);
   const predictionsCollapsed = movedOn && !showLockedPredictions;
+  // An open gate can ask what a prediction already asked, so the answers step aside until it is settled.
+  const verdictShown = revealed && !(gateOpen && !gateRevealed);
+  const lastCommitted = committed[committed.length - 1];
 
   const decisionOptions = pending
     ? nextRegionOptions(run).map((o) => ({ id: o.id, label: o.label, correct: isDecisionAnswer(pending, o.id), feedback: decisionFeedback(pending, o.id, run) }))
     : [];
+  /** What the gate's feedback says, as the description of the Continue button that takes focus: its live region mounts with its content, so it may not be announced. */
+  const gateVerdict = (committedOption: string | null) => {
+    const chosen = decisionOptions.find((o) => o.id === committedOption);
+    if (chosen?.correct) return `Correct. ${chosen.feedback}`;
+    const answer = decisionOptions.find((o) => o.correct)?.feedback ?? "";
+    return chosen ? `Not quite. ${chosen.feedback} ${answer}` : answer;
+  };
 
   return (
     <VisualFrame
@@ -366,13 +458,13 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
           </>
         ) : (
           <>
-            Read the code, predict, then step through the slot. Every event is filed under the region it was <em>scheduled</em> in; watch the ladder return to Active whenever a
-            later region creates new work.
+            Read the code, predict, then step through the slot. Every event is filed under the region it was <em>scheduled</em> in
+            {revealed ? "; watch the ladder return to Active whenever a later region creates new work." : "."}
           </>
         )
       }
       fidelity="model"
-      assumptions={REGION_MAP_ASSUMPTIONS}
+      assumptions={revealed ? REGION_MAP_ASSUMPTIONS : REGION_MAP_ASSUMPTIONS_BEFORE_REVEAL}
     >
       <div data-testid="scheduler-visualizer" className="space-y-4">
         {presets.length > 1 ? (
@@ -384,23 +476,45 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
             onChange={changeScenario}
           />
         ) : null}
-        <p className="text-sm text-muted-foreground">{preset.summary}</p>
+        <p className="text-sm text-muted-foreground">{revealed ? preset.summary : (preset.setup ?? preset.summary)}</p>
 
         <div className="grid items-start gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))]">
           <div className="min-w-0">
             <CodeTrace label={scenario.title} lines={lines} activeKey={revealed ? step.stmtId : undefined} contextKeys={contextKeys} />
           </div>
           <div className="flex min-w-0 flex-col gap-2">
-            <div className="w-full overflow-x-auto">
-              <RegionLadder currentRegion={currentRegion} sourceRegion={revealed ? step.sourceRegion : undefined} counts={revealed ? counts : {}} className="mx-auto" />
-            </div>
-            <p className="text-center text-[11px] text-muted-foreground">
-              {revealed
-                ? `Badges count queued events. ▶ marks the region executing now${step.sourceRegion ? `; ↺ marks ${REGION_LABELS[step.sourceRegion]}, where this event was scheduled` : ""}.`
-                : "Solid rungs repeat until empty; dashed rungs are read-only. Predict first, then step through."}
+            {revealed ? (
+              <div className="w-full overflow-x-auto">
+                <RegionLadder currentRegion={currentRegion} sourceRegion={step.sourceRegion} counts={counts} className="mx-auto" />
+              </div>
+            ) : (
+              <RegionNames />
+            )}
+            <p className={cn("text-[11px] text-muted-foreground", revealed && "text-center")}>
+              {!revealed
+                ? "Solid boxes repeat until empty; dashed boxes are read-only. Predict first, then step through."
+                : step.kind === "move"
+                  ? `The queues show the moment before this move. ▶ marks ${REGION_LABELS[step.region]}, whose events are moving up to ${REACTIVE_SET.includes(step.region) ? "Reactive" : "Active"}.`
+                  : `Badges count queued events. ▶ marks the region executing now${step.sourceRegion ? `; ↺ marks ${REGION_LABELS[step.sourceRegion]}, where this event was scheduled` : ""}.`}
             </p>
-            {revealed && nextRegion && !gateOpen ? <QueueChips step={step} /> : null}
+            {/* Between decisions the ladder's badges carry the counts; below sm the full chips wait for the gate, so the rung, narration and transport fit one screen. */}
+            {revealed && nextRegion && !gateOpen ? <QueueChips step={step} className="max-sm:hidden" /> : null}
           </div>
+        </div>
+
+        {/* Stays mounted so the reveal is announced, and sits where the prompt was, because the transport below pushes the prompt's own feedback down. */}
+        <div role="status" className="empty:absolute">
+          {!revealed && lastCommitted !== undefined ? <p className="sr-only">{predictionCommitNote(predictions, lastCommitted, predictionChoices[lastCommitted])}</p> : null}
+          {verdictShown ? (
+            <>
+              <p className="text-sm font-medium text-foreground">{predictionVerdict(predictions, predictionResults)}</p>
+              {predictionDiagnoses(predictions, predictionChoices).map((diagnosis) => (
+                <p key={diagnosis} className="mt-1 text-sm text-muted-foreground">
+                  {diagnosis}
+                </p>
+              ))}
+            </>
+          ) : null}
         </div>
 
         {/* Narration, values and the transport stay together under the ladder, so Next never changes content out of view. */}
@@ -424,7 +538,7 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
               <p className="text-sm text-muted-foreground">{`Playback pauses at each point where the loop has to choose its next region (${decisions.length} decision${decisions.length === 1 ? "" : "s"} in this slot); predict where it goes, then continue.`}</p>
             ) : null}
             {nextRegion ? (
-              <div role="status">{decisionsDone ? <p className="text-sm font-medium text-foreground">{decisionRecap(decisions, correctDecisions)}</p> : null}</div>
+              <div role="status">{decisionsDone ? <p className="text-sm font-medium text-foreground">{decisionRecap(decisions, correctDecisions, answeredDecisions)}</p> : null}</div>
             ) : null}
             {decisionsDone ? (
               <button
@@ -437,6 +551,32 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
             ) : null}
           </div>
         ) : null}
+
+        {movedOn ? (
+          <button
+            type="button"
+            aria-expanded={!predictionsCollapsed}
+            aria-controls={predictionsId}
+            onClick={() => setShowLockedPredictions((shown) => !shown)}
+            className="inline-flex min-h-10 items-center text-sm text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {predictionsCollapsed ? `Show your ${predictionWord}` : `Hide your ${predictionWord}`}
+          </button>
+        ) : null}
+        {/* Below the transport, so collapsing the cards on the first step never moves Next from under the learner. */}
+        <div ref={predictionsRef} id={predictionsId} hidden={predictionsCollapsed} className="space-y-4">
+          {predictions.map((prediction, i) => (
+            <PredictionPrompt
+              key={`${scenarioId}:${i}`}
+              resetKey={`${scenarioId}:${i}`}
+              question={<PromptText text={prediction.question} />}
+              options={prediction.options}
+              onCommit={(optionId) => setPredictionChoices((prev) => ({ ...prev, [i]: optionId }))}
+            >
+              <RevealSignal index={i} onReveal={onReveal} />
+            </PredictionPrompt>
+          ))}
+        </div>
 
         {gateOpen && pending ? (
           <div
@@ -455,18 +595,25 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
               options={decisionOptions}
               onCommit={(_, correct) => recordDecision(answered, correct)}
             >
-              <GateRevealSignal onChange={setGateRevealed} />
-              <p className="text-sm text-muted-foreground">
-                Δ <span className="font-mono text-foreground">{pending.delta}</span>: {decisionDeltaSummary(pending)}.
-              </p>
-              <button
-                ref={focusOnMount}
-                type="button"
-                onClick={continueStepping}
-                className="mt-2 inline-flex h-10 items-center rounded-lg border border-cyan-500/50 bg-cyan-500/10 px-4 text-sm font-semibold text-foreground transition-colors hover:bg-cyan-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
-              >
-                Continue stepping
-              </button>
+              {({ committed: committedOption }) => (
+                <>
+                  <GateRevealSignal onChange={setGateRevealed} />
+                  {committedOption === null ? <GateSkipSignal decision={answered} onSkip={recordDecision} /> : null}
+                  <p className="text-xs text-muted-foreground">{DELTA_LABEL}</p>
+                  <span id={gateVerdictId} hidden>
+                    {gateVerdict(committedOption)}
+                  </span>
+                  <button
+                    ref={focusOnMount}
+                    type="button"
+                    aria-describedby={gateVerdictId}
+                    onClick={continueStepping}
+                    className="mt-2 inline-flex h-10 items-center rounded-lg border border-cyan-500/50 bg-cyan-500/10 px-4 text-sm font-semibold text-foreground transition-colors hover:bg-cyan-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+                  >
+                    Continue stepping
+                  </button>
+                </>
+              )}
             </PredictionPrompt>
           </div>
         ) : null}
@@ -476,25 +623,6 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
             {step.log.length === 0 ? <span className="text-slate-400">(no output yet)</span> : step.log.map((l, i) => <div key={i}>{l}</div>)}
           </div>
         ) : null}
-
-        {movedOn ? (
-          <button
-            type="button"
-            aria-expanded={!predictionsCollapsed}
-            aria-controls={predictionsId}
-            onClick={() => setShowLockedPredictions((shown) => !shown)}
-            className="inline-flex min-h-10 items-center text-sm text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {predictionsCollapsed ? `Show your ${predictionWord}` : `Hide your ${predictionWord}`}
-          </button>
-        ) : null}
-        <div id={predictionsId} hidden={predictionsCollapsed} className="space-y-4">
-          {predictions.map((prediction, i) => (
-            <PredictionPrompt key={`${scenarioId}:${i}`} resetKey={`${scenarioId}:${i}`} question={<PromptText text={prediction.question} />} options={prediction.options}>
-              <RevealSignal index={i} onReveal={onReveal} />
-            </PredictionPrompt>
-          ))}
-        </div>
 
         {revealed ? (
           <div>

@@ -18,23 +18,33 @@ import {
   ROUNDING_PRESETS,
   WHICH_UNIT_DEFAULT_ORDER,
   WHICH_UNIT_FILES,
+  TB_TOP_SCOPE,
+  U_SLOW_SCOPE,
   argumentFs,
   arrangeOptions,
   axisForWakes,
+  checkScalePair,
   crossScopeCode,
   crossScopeOptions,
   customReadTimeCaller,
+  defaultUnitsOptions,
+  displayCode,
   effectiveFormat,
+  explainLine,
   formatFsAuto,
   formatPercentT,
   formatScale,
   fsToDecimal,
+  globalPrecisionDesign,
   globalPrecisionOptions,
   globalPrecisionReport,
   gradeCrossScopeFixes,
   gradeCrossScopeSuspects,
-  parseDelay,
+  linesChangedFromPreset,
+  percentTArgMatters,
+  presetChangeText,
   rationalToDecimal,
+  readTimeCode,
   readTimeOptions,
   repeatedWakes,
   resolveTimeScopes,
@@ -45,10 +55,19 @@ import {
   scaleFromExponent,
   scaleText,
   scaleToFs,
+  setsFormatBeforeFirstPrint,
+  splitPadding,
+  thenEveryText,
+  timeunitLine,
   traceCrossScope,
+  twoModulesGlobalPrecision,
+  unitChipText,
+  unitSentence,
+  usesPercentT,
   wakeSequenceOptions,
   wakeText,
   whichUnitOptions,
+  withPercentTArg,
   type Build,
   type CallForm,
   type Grouping,
@@ -59,6 +78,7 @@ import {
   type SourceFile,
   type TimeFormat,
   type TimeScale,
+  type UnitState,
 } from "@/lib/sv-timescale-model";
 import { cn } from "@/lib/utils";
 
@@ -71,31 +91,79 @@ export interface TimescaleLabProps {
 }
 
 export const TIMESCALE_ASSUMPTIONS = [
-  "Every value is computed by the sv-timescale-model from IEEE 1800-2023 §3.14 (units, precision, rounding, precedence, global precision), §5.8 (time literals), §6.12.1 (real to integer), §9.4.1 (x/z and negative delays), §20.3 ($time, $stime, $realtime) and §20.4.3 ($timeformat, Tables 20-2 and 20-3).",
+  "Every value is computed by the sv-timescale-model from IEEE 1800-2023 §3.12.1 (compilation units), §3.14 (units, precision, rounding, precedence, global precision), §5.8 (time literals), §6.12.1 (real to integer), §9.4.1 (x/z and negative delays), §20.3 ($time, $stime, $realtime), §20.4.1 (Table 20-2), §20.4.2 ($printtimescale), §20.4.3 ($timeformat, Table 20-3), §22.3 (`resetall) and §22.7 (`timescale).",
   "Arithmetic is exact: delays are decimal strings turned into integer femtoseconds (BigInt), so a half tick is detected exactly. §3.14.1 states no tie rule, so at an exact half tick both round-half-away-from-zero and round-half-to-even are computed and both values are shown when they disagree.",
   "The implementation default unit and precision (§3.14.2.3 rule d) are always shown as 'implementation-specific', never as a number.",
   "Assumption: %0t drops the padding. §20.4.3 and §21.2.1.2 do not settle how a %0t field width interacts with $timeformat's minimum_field_width.",
+  "Assumption: $stime keeps the low 32 bits of the value already scaled to the caller's unit. §20.3.2 says the low 32 bits of the current simulation time, without saying whether that means scaled or unscaled time.",
+  "Assumption: printed digits (%.Nf and %t) come from the exact decimal value, and an exact decimal tie rounds up. A real number is held in binary and the text of §20.4.3 and §21.2.1 states no rounding rule, so a tool may print the last digit differently at such a tie.",
+  "Assumption: with no `timescale anywhere in the source, the lab calls the default %t units tool-dependent. Table 20-3 names only the smallest `timescale precision and does not define this case.",
+  "Reading: after a `resetall, a compilation-unit timeunit still decides by rule (c). §3.14.2.3 does not mention `resetall, and §22.7 treats it like having no `timescale specified, where rule (c) applies.",
 ];
 
 const selectClass = "h-10 min-w-0 rounded-md border border-border/70 bg-background/60 px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const inputClass =
   "h-10 min-w-0 rounded-md border border-border/70 bg-background/60 px-2 font-mono text-xs text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const buttonClass =
-  "inline-flex min-h-10 items-center justify-center rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
+  "inline-flex min-h-10 items-center justify-center rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 motion-reduce:transition-none";
 const mono = "font-mono [font-variant-ligatures:none]";
 const panel = "rounded-xl border border-border/70 bg-background/50 p-3";
-/** The shared prompt's "Reveal without predicting" is bare text: size its buttons for touch from here. */
-const promptClass = "[@media(pointer:coarse)]:[&_button]:min-h-10";
+/** The shared primitives size some buttons below 40 px (text links, min-h-9 segments): size them for touch from here. */
+const touchButtons = "[@media(pointer:coarse)]:[&_button]:min-h-10";
+const promptClass = touchButtons;
+const checkLabelClass = "flex items-center gap-2 text-xs text-foreground [@media(pointer:coarse)]:min-h-10";
+const scrubberClass = "h-2 min-w-[120px] flex-1 cursor-pointer accent-cyan-500 [@media(pointer:coarse)]:h-10";
+const textButtonClass = "inline-flex items-center text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-10";
 
-const toPredictionOptions = (options: LabOption[]): PredictionOption[] => arrangeOptions(options).map((o) => ({ id: o.id, label: o.label, correct: o.correct, feedback: o.feedback }));
+const toPredictionOptions = (options: LabOption[], seed: string): PredictionOption[] => arrangeOptions(options, seed).map((o) => ({ id: o.id, label: o.label, correct: o.correct, feedback: o.feedback }));
 
 const showToolDependent = (text: string) => text.replace(/<tool-dependent>/g, "⟨tool-dependent⟩");
 
-/** Options that are program output: code font, and runs of spaces (a padded %t) kept visible. */
-const toOutputOptions = (options: LabOption[]): PredictionOption[] =>
-  arrangeOptions(options).map((o) => ({
+const PADDING_GLYPH = "·";
+
+/**
+ * A printed line with its %t padding drawn as glyphs. A screen reader does not
+ * speak a run of spaces, and at 390 px a wrapped run hangs off the line end, so
+ * two lines that differ only in padding would otherwise read the same.
+ */
+function OutputText({ text, template }: { text: string; template: string }) {
+  return (
+    <>
+      {splitPadding(showToolDependent(text), template).map((part, i) =>
+        part.padding > 0 ? (
+          <React.Fragment key={i}>
+            <span aria-hidden className="text-muted-foreground">
+              {PADDING_GLYPH.repeat(part.padding)}
+            </span>
+            <span className="sr-only">padded with {part.padding} spaces, then </span>
+          </React.Fragment>
+        ) : (
+          <React.Fragment key={i}>{part.text}</React.Fragment>
+        ),
+      )}
+    </>
+  );
+}
+
+const hasPadding = (text: string, template: string) => splitPadding(text, template).some((part) => part.padding > 0);
+
+function PaddingKey() {
+  return (
+    <span aria-hidden className="ml-1 font-sans text-[11px] font-normal text-muted-foreground">
+      ({PADDING_GLYPH} is one padding space)
+    </span>
+  );
+}
+
+/** Options that are program output: code font, with the %t padding drawn and named. */
+const toOutputOptions = (options: LabOption[], seed: string, template: string): PredictionOption[] =>
+  arrangeOptions(options, seed).map((o) => ({
     id: o.id,
-    label: <span className={cn(mono, "whitespace-pre-wrap break-words text-xs")}>{showToolDependent(o.label)}</span>,
+    label: (
+      <span className={cn(mono, "whitespace-pre-wrap break-words text-xs")}>
+        <OutputText text={o.label} template={template} />
+      </span>
+    ),
     correct: o.correct,
     feedback: o.feedback,
   }));
@@ -140,13 +208,13 @@ function RevealSignal({ onChange }: { onChange: (revealed: boolean) => void }) {
 }
 
 /** Takes the focus when it mounts, which is when a reveal opens: the button that had the focus has just gone. */
-function RevealHeading({ children }: { children: React.ReactNode }) {
+function RevealHeading({ children, testId = "reveal-heading" }: { children: React.ReactNode; testId?: string }) {
   const ref = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     ref.current?.focus();
   }, []);
   return (
-    <h4 ref={ref} tabIndex={-1} data-testid="reveal-heading" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+    <h4 ref={ref} tabIndex={-1} data-testid={testId} className="text-xs font-semibold uppercase tracking-wider text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       {children}
     </h4>
   );
@@ -157,6 +225,26 @@ function ScrollRegion({ label, className, children }: { label: string; className
   return (
     <div role="region" aria-label={label} tabIndex={0} className={cn("overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", className)}>
       {children}
+    </div>
+  );
+}
+
+/** ← or → of a scrubber. At the end it stays focusable and does nothing: a button that disables itself drops the focus out of the lab. */
+function StepButton({ label, atEnd, onClick, children }: { label: string; atEnd: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button type="button" className={buttonClass} aria-label={label} aria-disabled={atEnd || undefined} onClick={atEnd ? undefined : onClick}>
+      {children}
+    </button>
+  );
+}
+
+/** Back to this lab's first state, with the prediction armed again. Stays mounted, so the focus does not fall out of the lab. */
+function StartOver({ onClick }: { onClick: () => void }) {
+  return (
+    <div>
+      <button type="button" className={buttonClass} onClick={onClick}>
+        Start over
+      </button>
     </div>
   );
 }
@@ -238,10 +326,26 @@ function TickRuler({ rounded }: { rounded: RoundedDelay }) {
   const xOfTick = (k: bigint) => pad + Number(k - firstTick) * step;
   const scaledPos = pad + (ratio(rounded.scaledFs.num, rounded.scaledFs.den * precFs) - Number(firstTick)) * step;
   const targets = rounded.candidatesFs.map((fs) => fs / precFs);
-  const label = `Ruler of ${formatScale(rounded.precision)} ticks. The written delay ${rounded.scaledText} sits ${rounded.ticks.exactHalf ? "exactly half way between two ticks" : "between ticks"} and snaps to ${wakeText(rounded)}.`;
+  const isXz = rounded.input.kind === "xz";
+  const stays = !rounded.ticks.exactHalf && rounded.ticks.down === rounded.ticks.up;
+  const movement = isXz
+    ? `An x or z delay is interpreted as zero, so the statement wakes at ${wakeText(rounded)}.`
+    : stays
+      ? `The scaled delay ${rounded.scaledText} is already on a tick, so it stays at ${wakeText(rounded)}.`
+      : `The scaled delay ${rounded.scaledText} sits ${rounded.ticks.exactHalf ? "exactly half way between two ticks" : "between ticks"} and snaps to ${wakeText(rounded)}.`;
+  const label = `Ruler of ${formatScale(rounded.precision)} ticks. ${movement}`;
+  const caption = rounded.ticks.exactHalf
+    ? rounded.toolDependent
+      ? "exact half tick: both rules shown (tool-dependent)"
+      : "exact half tick: both rules agree"
+    : isXz
+      ? "x/z is interpreted as zero (§9.4.1)"
+      : stays
+        ? "already on a tick: nothing to round (§3.14.1)"
+        : "rounds to the nearest tick (§3.14.1)";
   return (
     <ScrollRegion label="Tick ruler">
-      <svg viewBox={`0 0 ${W} 112`} role="img" aria-label={label} className="h-auto min-w-[320px] w-full max-w-[520px] text-foreground">
+      <svg viewBox={`0 0 ${W} 126`} role="img" aria-label={label} className="h-auto min-w-[360px] w-full max-w-[520px] text-foreground">
         <line x1={pad} y1={78} x2={W - pad} y2={78} stroke="currentColor" strokeOpacity="0.7" />
         {Array.from({ length: tickCount }, (_, i) => firstTick + BigInt(i)).map((k) => {
           const x = xOfTick(k);
@@ -261,10 +365,10 @@ function TickRuler({ rounded }: { rounded: RoundedDelay }) {
         ))}
         <circle cx={scaledPos} cy={34} r={5.5} fill="rgb(245,158,11)" stroke="currentColor" />
         <text x={Math.min(Math.max(scaledPos, 70), W - 70)} y={20} fontSize="9.5" textAnchor="middle" fill="currentColor">
-          written: {rounded.scaledText}
+          {isXz ? "x/z is treated as 0" : `scaled: ${rounded.scaledText}`}
         </text>
-        <text x={W / 2} y={60} fontSize="9" textAnchor="middle" fill="currentColor" fillOpacity="0.85">
-          {rounded.ticks.exactHalf ? (rounded.toolDependent ? "exact half tick: both rules shown (tool-dependent)" : "exact half tick: both rules agree") : rounded.input.kind === "xz" ? "x/z delay is zero (§9.4.1)" : "rounds to the nearest tick (§3.14.1)"}
+        <text x={W / 2} y={116} fontSize="9" textAnchor="middle" fill="currentColor" fillOpacity="0.85">
+          {caption}
         </text>
       </svg>
     </ScrollRegion>
@@ -278,8 +382,9 @@ function RoundingLab({ preset }: { preset?: string }) {
   const [unit, setUnit] = useState<TimeScale>(initial.unit);
   const [precision, setPrecision] = useState<TimeScale>(initial.precision);
   const rounded = useMemo(() => roundDelayText(delayText, unit, precision), [delayText, unit, precision]);
-  const options = useMemo(() => toPredictionOptions(roundingOptions(rounded)), [rounded]);
-  const resetKey = `${delayText}|${formatScale(unit)}|${formatScale(precision)}`;
+  const [attempt, setAttempt] = useState(0);
+  const resetKey = `${attempt}|${delayText}|${formatScale(unit)}|${formatScale(precision)}`;
+  const options = useMemo(() => toPredictionOptions(roundingOptions(rounded), resetKey), [rounded, resetKey]);
   const current = ROUNDING_PRESETS.find((p) => p.id === presetId);
   const [said, setSaid] = useState("");
   const [editingDelay, setEditingDelay] = useState(false);
@@ -320,7 +425,7 @@ function RoundingLab({ preset }: { preset?: string }) {
         </Field>
         <ScaleSelect label="Time unit" value={unit} onChange={custom(setUnit)} />
         <ScaleSelect label="Time precision" value={precision} onChange={custom(setPrecision)} />
-        <DelayField label="Delay (#d or a time literal)" value={delayText} onChange={custom(setDelayText)} invalid={rounded.input.kind === "invalid"} errorId={errorId} onEditing={setEditingDelay} />
+        <DelayField label="Delay (#d or a time literal)" value={delayText} onChange={custom(setDelayText)} invalid={Boolean(rounded.error) && !checkScalePair(unit, precision)} errorId={errorId} onEditing={setEditingDelay} />
       </div>
       {current ? <p className="text-xs text-muted-foreground">{current.source}</p> : null}
 
@@ -354,11 +459,11 @@ function RoundingLab({ preset }: { preset?: string }) {
                   <dd className={mono}>#{delayText.replace(/^#/, "")}</dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Scaled by the unit</dt>
+                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{rounded.input.kind === "xz" ? "Interpreted as zero" : rounded.input.kind === "literal" ? "Converted to the current unit" : "Scaled by the unit"}</dt>
                   <dd className={mono}>{rounded.scaledText}</dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Rounded to the precision</dt>
+                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{rounded.ticks && rounded.ticks.down !== rounded.ticks.up ? "Rounded to the precision" : "Wake time"}</dt>
                   <dd className={cn(mono, "font-semibold")}>{wakeText(rounded)}</dd>
                 </div>
               </dl>
@@ -377,6 +482,12 @@ function RoundingLab({ preset }: { preset?: string }) {
           )}
         </PredictionPrompt>
       )}
+      <StartOver
+        onClick={() => {
+          applyPreset(initial.id);
+          setAttempt((n) => n + 1);
+        }}
+      />
     </VisualFrame>
   );
 }
@@ -401,8 +512,9 @@ function placeMarkerLabels(marks: { key: string; x: number; text: string }[], W:
   });
 }
 
-const TB_TOP = { name: "tb_top", unit: scale(1, "ns"), precision: scale(100, "ps") };
-const U_SLOW = { name: "u_slow", unit: scale(10, "ns"), precision: scale(1, "ns") };
+const TB_TOP = TB_TOP_SCOPE;
+const U_SLOW = U_SLOW_SCOPE;
+const scopeText = (s: { unit: TimeScale; precision: TimeScale }) => `${formatScale(s.unit)}/${formatScale(s.precision)}`;
 
 function AbsoluteAxis({ fast, slow, showMarkers }: { fast: { k: number; candidatesFs: bigint[] }[]; slow: { k: number; candidatesFs: bigint[] }[]; showMarkers: boolean }) {
   const all = [...fast, ...slow].flatMap((w) => w.candidatesFs);
@@ -410,13 +522,15 @@ function AbsoluteAxis({ fast, slow, showMarkers }: { fast: { k: number; candidat
   const axis = axisForWakes(maxFs);
   const axisUnit = scale(1, axis.unit);
   const endText = `${fsToDecimal(axis.endFs, axisUnit)} ${axis.unit}`;
+  /** The scale grows with the wake times, so before both predictions it would give them away: #5 would end at u_slow's wake. */
+  const majors = showMarkers ? axis.majorsFs : [];
   const W = 360;
   const pad = 24;
   const xOf = (fs: bigint) => pad + ratio(fs, axis.endFs) * (W - 2 * pad);
   const describe = (ws: { k: number; candidatesFs: bigint[] }[]) => ws.map((w) => w.candidatesFs.map((c) => formatFsAuto(c)).join(" or ")).join(", then ");
   const label = showMarkers
-    ? `Time axis 0 to ${endText}. tb_top (1ns/100ps) wakes at ${describe(fast)}; u_slow (10ns/1ns) wakes at ${describe(slow)}.`
-    : `Time axis 0 to ${endText}; the wake markers appear after both predictions.`;
+    ? `Time axis 0 to ${endText}. ${TB_TOP.name} (${scopeText(TB_TOP)}) wakes at ${describe(fast)}; ${U_SLOW.name} (${scopeText(U_SLOW)}) wakes at ${describe(slow)}.`
+    : "Time axis; its scale and the wake markers appear after both predictions.";
   const marks = (ws: { k: number; candidatesFs: bigint[] }[], prefix: string) =>
     placeMarkerLabels(
       ws.flatMap((w) => w.candidatesFs.map((fs, ci) => ({ key: `${prefix}${w.k}-${ci}`, x: xOf(fs), text: formatFsAuto(fs) }))),
@@ -424,13 +538,13 @@ function AbsoluteAxis({ fast, slow, showMarkers }: { fast: { k: number; candidat
     );
   return (
     <ScrollRegion label="Absolute time axis">
-      <svg viewBox={`0 0 ${W} 150`} role="img" aria-label={label} className="h-auto min-w-[340px] w-full max-w-[560px] text-foreground">
+      <svg viewBox={`0 0 ${W} 154`} role="img" aria-label={label} className="h-auto min-w-[360px] w-full max-w-[560px] text-foreground">
         <text x={pad} y={14} fontSize="10" fontWeight="600" fill="currentColor">
-          ● tb_top: timeunit 1ns; timeprecision 100ps;
+          ● {TB_TOP.name}: {timeunitLine(TB_TOP)}
         </text>
         <line x1={pad} y1={36} x2={W - pad} y2={36} stroke="currentColor" strokeOpacity="0.3" strokeDasharray="2 3" />
         <text x={pad} y={64} fontSize="10" fontWeight="600" fill="currentColor">
-          ◆ u_slow: timeunit 10ns; timeprecision 1ns;
+          ◆ {U_SLOW.name}: {timeunitLine(U_SLOW)}
         </text>
         <line x1={pad} y1={86} x2={W - pad} y2={86} stroke="currentColor" strokeOpacity="0.3" strokeDasharray="2 3" />
         {showMarkers
@@ -460,7 +574,7 @@ function AbsoluteAxis({ fast, slow, showMarkers }: { fast: { k: number; candidat
             ))
           : null}
         <line x1={pad} y1={122} x2={W - pad} y2={122} stroke="currentColor" strokeOpacity="0.7" />
-        {axis.majorsFs.map((m) => (
+        {majors.map((m) => (
           <g key={m.toString()}>
             <line x1={xOf(m)} y1={118} x2={xOf(m)} y2={126} stroke="currentColor" strokeOpacity="0.7" />
             <text x={xOf(m)} y={138} fontSize="9.5" textAnchor="middle" fill="currentColor">
@@ -469,7 +583,7 @@ function AbsoluteAxis({ fast, slow, showMarkers }: { fast: { k: number; candidat
           </g>
         ))}
         <text x={W / 2} y={149} fontSize="9" textAnchor="middle" fill="currentColor" fillOpacity="0.85">
-          simulation time ({axis.unit}){axis.unit !== "ns" ? ": the axis grew to fit the wake times" : ""}
+          {showMarkers ? `simulation time (${axis.unit})${axis.unit !== "ns" ? ": the axis grew to fit the wake times" : ""}` : "simulation time"}
         </text>
       </svg>
     </ScrollRegion>
@@ -488,27 +602,35 @@ function TwoModulesLab() {
   const slow = useMemo(() => roundDelayText(delayText, U_SLOW.unit, U_SLOW.precision), [delayText]);
   const fastWakes = useMemo(() => repeatedWakes(fast, fastRepeats), [fast, fastRepeats]);
   const slowWakes = useMemo(() => repeatedWakes(slow, slowRepeats), [slow, slowRepeats]);
-  const fastOptions = useMemo(() => toPredictionOptions(wakeSequenceOptions(fast, fastRepeats, U_SLOW)), [fast, fastRepeats]);
-  const slowOptions = useMemo(() => toPredictionOptions(wakeSequenceOptions(slow, slowRepeats, TB_TOP)), [slow, slowRepeats]);
-  const global = useMemo(() => resolveTimeScopes([{ id: "d", label: "design", code: [], items: [{ kind: "element", name: "tb_top", elementKind: "module", timeunit: TB_TOP.unit, timeprecision: TB_TOP.precision }, { kind: "element", name: "slow_gen", elementKind: "module", timeunit: U_SLOW.unit, timeprecision: U_SLOW.precision }] }], "one").globalPrecision, []);
-  const key = `${delayText}|${fastRepeats}|${slowRepeats}`;
+  const [attempt, setAttempt] = useState(0);
+  const key = `${attempt}|${delayText}|${fastRepeats}|${slowRepeats}`;
+  const fastOptions = useMemo(() => toPredictionOptions(wakeSequenceOptions(fast, fastRepeats, U_SLOW), `fast|${key}`), [fast, fastRepeats, key]);
+  const slowOptions = useMemo(() => toPredictionOptions(wakeSequenceOptions(slow, slowRepeats, TB_TOP), `slow|${key}`), [slow, slowRepeats, key]);
+  const global = useMemo(() => twoModulesGlobalPrecision(), []);
   const [said, setSaid] = useState("");
   const d = delayText.replace(/^#/, "");
   const [editingDelay, setEditingDelay] = useState(false);
   const errorId = useId();
   const times = (n: number) => (n === 1 ? "once" : n === 2 ? "twice" : `${n} times`);
+  const bothRevealed = fastRevealed && slowRevealed;
+  const summary =
+    fast.input.kind === "literal"
+      ? "tb_top and u_slow run the same #d from t = 0. A time literal is the same value before rounding in both (§5.8), and each module's own precision rounds it (§3.14.1)."
+      : fast.input.kind === "xz"
+        ? "tb_top and u_slow run the same #d from t = 0. Predict when each one wakes."
+        : "tb_top and u_slow run the same #d from t = 0. The unit scales it differently and each module's own precision rounds it (§3.14.1).";
 
   return (
     <VisualFrame
       label="Timescale lab: one delay, two modules"
       eyebrow="Experiment · predict then reveal"
       title="One delay, two modules"
-      summary="tb_top and u_slow run the same #d from t = 0. The unit scales it differently and each module's own precision rounds it (§3.14.1)."
+      summary={summary}
       fidelity="model"
       assumptions={TIMESCALE_ASSUMPTIONS}
     >
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,150px),1fr))]">
-        <DelayField label="Delay (#d, run in both modules)" value={delayText} onChange={setDelayText} invalid={fast.input.kind === "invalid"} errorId={errorId} onEditing={setEditingDelay} />
+        <DelayField label="Delay (#d, run in both modules)" value={delayText} onChange={setDelayText} invalid={Boolean(fast.error)} errorId={errorId} onEditing={setEditingDelay} />
         <Field label="tb_top runs it">
           <select className={selectClass} value={fastRepeats} onChange={(e) => setFastRepeats(Number(e.target.value))}>
             {[1, 2, 3].map((n) => (
@@ -554,7 +676,7 @@ function TwoModulesLab() {
                   <RevealHeading>tb_top&apos;s wake time</RevealHeading>
                   <p className="mt-1 text-sm text-foreground">
                     {fast.scaledText} → <strong>{wakeText(fast)}</strong>
-                    {fastRepeats > 1 ? `, then every ${wakeText(fast)} more` : ""} (§3.14.1).
+                    {thenEveryText(fast, fastRepeats)} ({fast.special ? "§9.4.1" : "§3.14.1"}).
                   </p>
                 </>
               )}
@@ -576,16 +698,16 @@ function TwoModulesLab() {
                   <RevealHeading>u_slow&apos;s wake time</RevealHeading>
                   <p className="mt-1 text-sm text-foreground">
                     {slow.scaledText} → <strong>{wakeText(slow)}</strong>
-                    {slowRepeats > 1 ? `, then every ${wakeText(slow)} more` : ""} (§3.14.1).
+                    {thenEveryText(slow, slowRepeats)} ({slow.special ? "§9.4.1" : "§3.14.1"}).
                   </p>
                 </>
               )}
             </PredictionPrompt>
           </div>
           <div className={panel} data-testid="two-modules-axis">
-            {!(fastRevealed && slowRevealed) ? <p className="mb-2 text-xs text-muted-foreground">Lock in both predictions to reveal the wake markers.</p> : null}
-            <AbsoluteAxis fast={fastWakes} slow={slowWakes} showMarkers={fastRevealed && slowRevealed} />
-            {fastRevealed && slowRevealed ? (
+            {!bothRevealed ? <p className="mb-2 text-xs text-muted-foreground">Lock in both predictions to reveal the axis scale and the wake markers.</p> : null}
+            <AbsoluteAxis fast={fastWakes} slow={slowWakes} showMarkers={bothRevealed} />
+            {bothRevealed ? (
               <ul className="mt-2 space-y-1 text-sm" aria-label="Wake times">
                 <li>
                   <span aria-hidden>● </span>tb_top: {fastWakes.map((w) => w.candidatesFs.map((c) => formatFsAuto(c)).join(" or ")).join(", then ")}
@@ -596,11 +718,22 @@ function TwoModulesLab() {
               </ul>
             ) : null}
           </div>
-          <p className="text-xs text-muted-foreground">
-            The design&apos;s global precision is <strong>{global ? `${global.magnitude} ${global.unit}` : "implementation-specific"}</strong>, the finer of the two (§3.14.3). It does not help u_slow: each module rounds with its own precision (§3.14.1).
-          </p>
+          {bothRevealed ? (
+            <p className="text-xs text-muted-foreground">
+              The design&apos;s global precision is <strong>{global ? `${global.magnitude} ${global.unit}` : "implementation-specific"}</strong>, the finer of the two (§3.14.3). It does not help u_slow: each module rounds with its own precision (§3.14.1).
+              {fast.input.kind === "negative" && Math.max(fastRepeats, slowRepeats) > 1 ? " Only the first wake is shown: a second copy of this delay would pass the 64 bits of a time variable, and the sources give no rule for that." : ""}
+            </p>
+          ) : null}
         </>
       )}
+      <StartOver
+        onClick={() => {
+          setDelayText("#1.26");
+          setFastRepeats(1);
+          setSlowRepeats(2);
+          setAttempt((n) => n + 1);
+        }}
+      />
     </VisualFrame>
   );
 }
@@ -636,7 +769,7 @@ function TripleRuler({ absFs, unit, precision, time }: { absFs: bigint; unit: Ti
   const pastMiddle = marker > W / 2;
   return (
     <ScrollRegion label="Three time rulers">
-      <svg viewBox={`0 0 ${W} 150`} role="img" aria-label={label} className="h-auto min-w-[380px] w-full max-w-[640px] text-foreground">
+      <svg viewBox={`0 0 ${W} 150`} role="img" aria-label={label} className="h-auto min-w-[420px] w-full max-w-[640px] text-foreground">
         {rows.map((row) => (
           <g key={row.name}>
             <text x={pad} y={row.y - 14} fontSize="9" fill="currentColor" fillOpacity="0.85">
@@ -647,7 +780,7 @@ function TripleRuler({ absFs, unit, precision, time }: { absFs: bigint; unit: Ti
               <g key={u}>
                 <line x1={xOfUnits(u)} y1={row.y - 5} x2={xOfUnits(u)} y2={row.y + 5} stroke="currentColor" strokeOpacity="0.7" />
                 {u % unitStep === 0 ? (
-                  <text x={xOfUnits(u)} y={row.y + 15} fontSize="8.5" textAnchor="middle" fill="currentColor">
+                  <text x={xOfUnits(u)} y={row.y + 15} fontSize="9" textAnchor="middle" fill="currentColor">
                     {row.labelOf(u)}
                   </text>
                 ) : null}
@@ -671,7 +804,7 @@ function TripleRuler({ absFs, unit, precision, time }: { absFs: bigint; unit: Ti
             <g key={`b${k}`}>
               <rect x={x0} y={112} width={Math.max(0, x1 - x0)} height={14} fill={hit ? "rgb(16,185,129)" : "currentColor"} fillOpacity={hit ? 0.55 : k % 2 ? 0.14 : 0.06} stroke="currentColor" strokeOpacity="0.3" />
               {k % unitStep === 0 ? (
-                <text x={(x0 + x1) / 2} y={138} fontSize="8.5" textAnchor="middle" fill="currentColor" fontWeight={hit ? 700 : 400}>
+                <text x={(x0 + x1) / 2} y={138} fontSize="9" textAnchor="middle" fill="currentColor" fontWeight={hit ? 700 : 400}>
                   {k}
                 </text>
               ) : null}
@@ -693,13 +826,14 @@ const UNITS_OPTIONS = Array.from({ length: 18 }, (_, i) => 2 - i);
 
 type FormatMode = "default" | "called";
 
-function TimeFormatControls({ mode, setMode, format, setFormat, build, overriddenAtZero }: { mode: FormatMode; setMode: (m: FormatMode) => void; format: TimeFormat; setFormat: (f: TimeFormat) => void; build: Build; overriddenAtZero: boolean }) {
+function TimeFormatControls({ mode, setMode, format, setFormat, build, showDefaults }: { mode: FormatMode; setMode: (m: FormatMode) => void; format: TimeFormat; setFormat: (f: TimeFormat) => void; build: Build; showDefaults: boolean }) {
   const def = effectiveFormat(null, build);
   return (
     <div className={cn(panel, "space-y-2")}>
       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">$timeformat in force before the code runs</p>
       <SegmentedControl<FormatMode>
         label="$timeformat before the code runs"
+        className={touchButtons}
         value={mode}
         onChange={setMode}
         options={[
@@ -707,7 +841,9 @@ function TimeFormatControls({ mode, setMode, format, setFormat, build, overridde
           { value: "called", label: "called with…" },
         ]}
       />
-      {mode === "default" ? (
+      {mode === "default" && !showDefaults ? (
+        <p className="text-xs text-muted-foreground">The Table 20-3 defaults apply. Predict this moment to see what they are here.</p>
+      ) : mode === "default" ? (
         <p className="text-xs text-muted-foreground">
           Table 20-3: units = the smallest `timescale precision in the source, 0 digits, no suffix, minimum width 20. Default units here:{" "}
           {def ? <strong className={mono}>{formatScale(scaleFromExponent(def.units) as TimeScale)}</strong> : <strong>tool-dependent</strong>}
@@ -735,86 +871,111 @@ function TimeFormatControls({ mode, setMode, format, setFormat, build, overridde
           </Field>
         </div>
       )}
-      {overriddenAtZero ? <p className="text-xs text-muted-foreground">This code calls $timeformat itself at time 0, which replaces whatever was in force (§20.4.3).</p> : null}
     </div>
   );
 }
 
 const ordinal = (n: number) => (n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`);
 
-/** What the learner did at one moment: the option they locked in, or null for "revealed without predicting". */
+/** What the learner did at one moment, kept as it was then: the %t toggle later changes the code. */
 interface MomentAnswer {
+  /** Null for "revealed without predicting". */
   optionId: string | null;
-  arg: "time" | "realtime";
+  correct: boolean | null;
+  feedback: string | null;
+  /** The $display the learner was asked about. */
+  asked: string;
 }
 
-function momentSentence(snapshot: ReadTimeSnapshot): string {
-  const realtime = rationalToDecimal(snapshot.readings.realtime);
-  return `${snapshot.caller} at t = ${formatFsAuto(snapshot.readings.absFs)}: in its ${formatScale(snapshot.unit)} unit that is ${realtime}, so $realtime = ${realtime} and $time = ${snapshot.readings.time.toString()}${
-    snapshot.readings.timeExactHalf ? " (an exact half: §20.3.1 states no tie rule; the §6.12.1 real-to-integer rule rounds it away from zero)" : ""
-  }.`;
-}
+/** "tb_top prints after its 1st delay", for the scrubber. */
+const momentName = (s: ReadTimeSnapshot) => `${s.caller} prints ${s.delayOrdinal > 0 ? `after its ${ordinal(s.delayOrdinal)} delay` : "before any delay"}`;
+
+/** What the custom caller starts with, and what Start over returns to. */
+const CUSTOM_DEFAULT = { unit: scale(10, "ns"), precision: scale(1, "ns"), delays: "#1.55, #1.55" };
+const INITIAL_FORMAT: TimeFormat = { units: -9, precision: 3, suffix: " ns", minWidth: 0 };
 
 function ReadTimeLab({ preset }: { preset?: string }) {
   const initial = READ_TIME_PRESETS.find((p) => p.id === preset) ?? READ_TIME_PRESETS[0];
   const [presetId, setPresetId] = useState<string>(initial.id);
-  const [unit, setUnit] = useState<TimeScale>(scale(10, "ns"));
-  const [precision, setPrecision] = useState<TimeScale>(scale(1, "ns"));
-  const [delaysText, setDelaysText] = useState("#1.55, #1.55");
+  const [unit, setUnit] = useState<TimeScale>(CUSTOM_DEFAULT.unit);
+  const [precision, setPrecision] = useState<TimeScale>(CUSTOM_DEFAULT.precision);
+  const [delaysText, setDelaysText] = useState(CUSTOM_DEFAULT.delays);
   const [customTimescale, setCustomTimescale] = useState(false);
   const [formatMode, setFormatMode] = useState<FormatMode>("default");
-  const [format, setFormat] = useState<TimeFormat>({ units: -9, precision: 3, suffix: " ns", minWidth: 0 });
+  const [format, setFormat] = useState<TimeFormat>(INITIAL_FORMAT);
   const [arg, setArg] = useState<"realtime" | "time">(initial.arg);
   const [snapshotIndex, setSnapshotIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, MomentAnswer>>({});
   const [editingDelays, setEditingDelays] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  /** The learner has moved between moments, so the live region names the one they landed on. */
+  const [moved, setMoved] = useState(false);
   const errorId = useId();
+  const advancedId = useId();
   const revealHeading = useRef<HTMLHeadingElement>(null);
+  const promptArea = useRef<HTMLDivElement>(null);
+  const pendingPromptFocus = useRef(false);
   /** Set by the three actions that open a reveal, so scrubbing back to an answered moment leaves the focus on the scrubber. */
   const pendingRevealFocus = useRef(false);
 
   const current = READ_TIME_PRESETS.find((p) => p.id === presetId);
-  const callers: readonly ReadTimeCaller[] = useMemo(() => (current ? current.callers : [customReadTimeCaller(unit, precision, delaysText.split(/[,\s]+/).filter(Boolean))]), [current, unit, precision, delaysText]);
+  const delayTokens = useMemo(() => delaysText.split(/[,\s]+/).filter(Boolean), [delaysText]);
+  const presetCallers: readonly ReadTimeCaller[] = useMemo(() => (current ? current.callers : [customReadTimeCaller(unit, precision, delayTokens)]), [current, unit, precision, delayTokens]);
   const build: Build = useMemo(() => (current ? current.build : { timescalePrecisions: customTimescale ? [precision] : [] }), [current, customTimescale, precision]);
-  const trace = useMemo(() => runReadTime(callers, build, formatMode === "called" ? format : null), [callers, build, formatMode, format]);
-
-  // Any change to the code or its $timeformat changes the answers: forget the predictions and return to the first moment.
-  const experimentKey = `${presetId}|${formatScale(unit)}|${formatScale(precision)}|${delaysText}|${customTimescale}|${formatMode}|${JSON.stringify(format)}`;
+  /** The code's own call before its first print replaces anything set beforehand (§20.4.3), so the control would do nothing. */
+  const formatControlDead = useMemo(() => setsFormatBeforeFirstPrint(presetCallers, build), [presetCallers, build]);
+  const initialFormat = formatMode === "called" && !formatControlDead ? format : null;
+  const callers = useMemo(() => withPercentTArg(presetCallers, arg), [presetCallers, arg]);
+  const trace = useMemo(() => runReadTime(callers, build, initialFormat), [callers, build, initialFormat]);
+  const code = useMemo(() => readTimeCode(callers, build, initialFormat), [callers, build, initialFormat]);
+  const hasPercentT = useMemo(() => usesPercentT(presetCallers), [presetCallers]);
+  const argMatters = useMemo(() => percentTArgMatters(presetCallers, build, initialFormat), [presetCallers, build, initialFormat]);
+  /** A preset's summary and outcome describe its own code: while this is set they would contradict the code on screen. */
+  const changeText = useMemo(() => (current ? presetChangeText(current, arg, initialFormat) : null), [current, arg, initialFormat]);
+  // Any change to the code or its $timeformat changes the answers: forget the predictions and return to the first moment. The %t toggle is a comparison, so it keeps them.
+  const experimentKey = `${attempt}|${presetId}|${formatScale(unit)}|${formatScale(precision)}|${delaysText}|${customTimescale}|${JSON.stringify(initialFormat)}`;
   const [lastExperimentKey, setLastExperimentKey] = useState(experimentKey);
   if (experimentKey !== lastExperimentKey) {
     setLastExperimentKey(experimentKey);
     setAnswers({});
     setSnapshotIndex(0);
+    setMoved(false);
   }
 
   const count = trace.snapshots.length;
   const idx = count ? Math.min(snapshotIndex, count - 1) : 0;
   const snapshot: ReadTimeSnapshot | undefined = trace.snapshots[idx];
   const isRevealed = (i: number) => Boolean(answers[i]);
-  const options = useMemo(() => (snapshot ? readTimeOptions(snapshot, build, arg) : []), [snapshot, build, arg]);
+  const promptKey = `${experimentKey}|${idx}|${arg}`;
+  const options = useMemo(() => (snapshot ? readTimeOptions(snapshot, build) : []), [snapshot, build]);
+  const template = snapshot?.template ?? "";
+  const predictionOptions = useMemo(() => toOutputOptions(options, promptKey, template), [options, promptKey, template]);
   const answer = answers[idx];
-  const recorded = useMemo(() => (snapshot && answer ? readTimeOptions(snapshot, build, answer.arg) : options), [snapshot, answer, build, options]);
-  const chosen = answer?.optionId ? recorded.find((o) => o.id === answer.optionId) : undefined;
-  const correctOption = recorded.find((o) => o.correct);
-  /** What this moment prints for the %t argument selected now: toggling it after the reveal shows the fraction disappear. */
-  const printsOption = options.find((o) => o.correct);
-  const scriptCallsFormat = callers.some((c) => c.steps.some((s) => s.kind === "timeformat"));
+  /** What this moment prints now: the log's own line, so the two can never differ. */
+  const printedLine = trace.lines.find((l) => l.momentIndex === idx);
+  const explanation = useMemo(() => (snapshot ? explainLine(snapshot, build) : null), [snapshot, build]);
   const allRevealed = trace.snapshots.every((_, i) => isRevealed(i));
   const announcement =
-    snapshot && isRevealed(idx)
+    snapshot && answer
       ? [
-          chosen ? `${chosen.correct ? "Correct." : "Not quite."} ${chosen.feedback}` : "Revealed without predicting.",
-          printsOption ? `Prints ${showToolDependent(printsOption.label)}.` : "",
-          momentSentence(snapshot),
+          answer.optionId ? `${answer.correct ? "Correct." : "Not quite."} ${answer.feedback}` : "Revealed without predicting.",
+          printedLine ? `Prints ${showToolDependent(printedLine.text)}.` : "",
+          explanation?.what ?? "",
+          explanation?.why ?? "",
         ].join(" ")
-      : "";
+      : snapshot && moved
+        ? `Moment ${idx + 1} of ${count}: predict what ${snapshot.caller} prints.`
+        : "";
+  const askedNow = snapshot ? displayCode(snapshot.template, snapshot.args) : "";
 
   const record = useCallback(
     (optionId: string | null) => {
       pendingRevealFocus.current = true;
-      setAnswers((a) => (a[idx] ? a : { ...a, [idx]: { optionId, arg } }));
+      const option = options.find((o) => o.id === optionId);
+      setAnswers((a) => (a[idx] ? a : { ...a, [idx]: { optionId, correct: option?.correct ?? null, feedback: option?.feedback ?? null, asked: askedNow } }));
     },
-    [idx, arg],
+    [idx, options, askedNow],
   );
   const onSkip = useCallback(
     (revealed: boolean) => {
@@ -824,7 +985,9 @@ function ReadTimeLab({ preset }: { preset?: string }) {
   );
   const revealAll = () => {
     pendingRevealFocus.current = true;
-    setAnswers((a) => Object.fromEntries(trace.snapshots.map((_, i) => [i, a[i] ?? { optionId: null, arg }])));
+    setAnswers((a) =>
+      Object.fromEntries(trace.snapshots.map((s, i) => [i, a[i] ?? { optionId: null, correct: null, feedback: null, asked: displayCode(s.template, s.args) }])),
+    );
   };
   useEffect(() => {
     if (pendingRevealFocus.current && revealHeading.current) {
@@ -832,27 +995,49 @@ function ReadTimeLab({ preset }: { preset?: string }) {
       revealHeading.current.focus();
     }
   }, [answers]);
+  const goToMoment = (i: number) => {
+    setSnapshotIndex(i);
+    setMoved(true);
+  };
+  /** The next moment still to predict, after this one first. */
+  const nextToPredict = useMemo(() => {
+    const unanswered = trace.snapshots.map((_, i) => i).filter((i) => !answers[i]);
+    return unanswered.find((i) => i > idx) ?? unanswered[0] ?? null;
+  }, [trace.snapshots, answers, idx]);
+  useEffect(() => {
+    if (pendingPromptFocus.current && promptArea.current) {
+      pendingPromptFocus.current = false;
+      promptArea.current.focus();
+    }
+  }, [idx]);
 
   const choosePreset = (id: string) => {
     setPresetId(id);
+    setFormatMode("default");
     const p = READ_TIME_PRESETS.find((x) => x.id === id);
     if (p) setArg(p.arg);
   };
 
-  const questionFor = (asked: "time" | "realtime") => (snapshot ? (
+  const questionFor = (s: ReadTimeSnapshot, statement: string, withKey = false) => (
     <>
-      <code className={mono}>{snapshot.caller}</code> (<code className={mono}>{formatScale(snapshot.unit)}</code> unit, <code className={mono}>{formatScale(snapshot.afterDelay.precision)}</code> precision) wakes from its {ordinal(snapshot.delayOrdinal)} delay,{" "}
-      <code className={mono}>#{snapshot.afterDelay.input.text.replace(/^#/, "")}</code>, and prints. What do $time, $realtime and %0t of {asked === "time" ? "$time" : "$realtime"} show?
+      <code className={mono}>{s.caller}</code> (<code className={mono}>{formatScale(s.unit)}</code> unit, <code className={mono}>{formatScale(s.precision)}</code> precision){s.afterDelay ? (
+        <>
+          , after its {ordinal(s.delayOrdinal)} delay, <code className={mono}>#{s.afterDelay.input.text.replace(/^#/, "")}</code>,
+        </>
+      ) : null}{" "}
+      runs <code className={cn(mono, "break-words")}>{statement}</code> What does it print?
+      {withKey && paddedOption ? <PaddingKey /> : null}
     </>
-  ) : null);
-  const delaysInvalid = !current && delaysText.split(/[,\s]+/).filter(Boolean).some((d) => parseDelay(d).kind === "invalid");
+  );
+  const delaysInvalid = !current && !checkScalePair(unit, precision) && delayTokens.some((d) => roundDelayText(d, unit, precision).error);
+  const paddedOption = options.some((o) => hasPadding(o.label, template));
 
   return (
     <VisualFrame
       label="Timescale lab: reading the time"
       eyebrow="Experiment · predict then reveal"
       title="$time, $stime, $realtime and %t"
-      summary="All three functions report in the caller's time unit (§20.3). %t converts to the $timeformat units (§20.4.3). Predict each print, moment by moment; the log fills in as you go."
+      summary="All three functions report in the caller's time unit (§20.3). %t converts to the $timeformat units (§20.4.3). Predict each line of the code, one print at a time; the log fills in as you go."
       fidelity="model"
       assumptions={TIMESCALE_ASSUMPTIONS}
     >
@@ -872,27 +1057,38 @@ function ReadTimeLab({ preset }: { preset?: string }) {
             <ScaleSelect label="Caller's time unit" value={unit} onChange={setUnit} />
             <ScaleSelect label="Caller's time precision" value={precision} onChange={setPrecision} />
             <DelayField label="Delay sequence" value={delaysText} onChange={setDelaysText} invalid={delaysInvalid} errorId={errorId} onEditing={setEditingDelays} />
-            <label className="flex items-center gap-2 self-end text-xs text-foreground">
+            <label className={cn(checkLabelClass, "self-end")}>
               <input type="checkbox" checked={customTimescale} onChange={(e) => setCustomTimescale(e.target.checked)} className="h-4 w-4 accent-cyan-500" />
               the build has a `timescale with this precision
             </label>
           </>
         ) : null}
       </div>
-      {current ? <p className="text-xs text-muted-foreground">{current.summary}</p> : null}
+      {current ? (
+        <p className="text-xs text-muted-foreground" data-testid="preset-summary">
+          {changeText ?? current.summary}
+        </p>
+      ) : null}
 
-      <TimeFormatControls mode={formatMode} setMode={setFormatMode} format={format} setFormat={setFormat} build={build} overriddenAtZero={scriptCallsFormat} />
+      {snapshot ? <CodeTrace label="The code this run executes" lines={code} activeKey={snapshot.lineKey} contextKeys={snapshot.delayKey ? [snapshot.delayKey] : []} /> : null}
+      {!snapshot && trace.errors.length ? <CodeTrace label="The code, which cannot run" lines={code} /> : null}
 
-      <SegmentedControl<"realtime" | "time">
-        label="%t argument"
-        mono
-        value={arg}
-        onChange={setArg}
-        options={[
-          { value: "realtime", label: "%t of $realtime" },
-          { value: "time", label: "%t of $time" },
-        ]}
-      />
+      {!current && delayTokens.length === 0 ? (
+        <p className={cn(panel, "text-sm text-muted-foreground")} data-testid="empty-delays">
+          Type at least one delay above, such as <code className={mono}>#1.55</code>, to give the code something to run.
+        </p>
+      ) : null}
+
+      {!formatControlDead && !trace.errors.length ? (
+        <div className="space-y-2">
+          <button type="button" className={textButtonClass} aria-expanded={showAdvanced} aria-controls={advancedId} onClick={() => setShowAdvanced((v) => !v)}>
+            {showAdvanced ? "Hide advanced" : "Show advanced"}: set $timeformat before the code runs
+          </button>
+          <div id={advancedId} hidden={!showAdvanced}>
+            {showAdvanced ? <TimeFormatControls mode={formatMode} setMode={setFormatMode} format={format} setFormat={setFormat} build={build} showDefaults={isRevealed(idx)} /> : null}
+          </div>
+        </div>
+      ) : null}
 
       {trace.errors.length ? (
         <InputError id={errorId} settled={!editingDelays}>
@@ -909,46 +1105,45 @@ function ReadTimeLab({ preset }: { preset?: string }) {
       {snapshot ? (
         <>
           <div role="group" aria-label="Moment scrubber" className="flex flex-wrap items-center gap-2">
-            <button type="button" className={buttonClass} disabled={idx <= 0} onClick={() => setSnapshotIndex(Math.max(0, idx - 1))} aria-label="Previous moment">
+            <StepButton label="Previous moment" atEnd={idx <= 0} onClick={() => goToMoment(idx - 1)}>
               ←
-            </button>
+            </StepButton>
             <input
               type="range"
               min={0}
               max={Math.max(0, count - 1)}
               value={idx}
-              onChange={(e) => setSnapshotIndex(Number(e.target.value))}
+              onChange={(e) => goToMoment(Number(e.target.value))}
               aria-label="Moment"
-              aria-valuetext={`Moment ${idx + 1} of ${count}: ${snapshot.caller} wakes from its ${ordinal(snapshot.delayOrdinal)} delay${isRevealed(idx) ? `, at ${formatFsAuto(snapshot.readings.absFs)}` : ", not yet predicted"}`}
-              className="h-2 min-w-[120px] flex-1 cursor-pointer accent-cyan-500"
+              aria-valuetext={`Moment ${idx + 1} of ${count}: ${momentName(snapshot)}${isRevealed(idx) ? `, at ${formatFsAuto(snapshot.readings.absFs)}` : ", not yet predicted"}`}
+              className={scrubberClass}
             />
-            <button type="button" className={buttonClass} disabled={idx >= count - 1} onClick={() => setSnapshotIndex(Math.min(count - 1, idx + 1))} aria-label="Next moment">
+            <StepButton label="Next moment" atEnd={idx >= count - 1} onClick={() => goToMoment(idx + 1)}>
               →
-            </button>
+            </StepButton>
             <span className="font-mono text-xs tabular-nums text-muted-foreground" aria-hidden>
               {idx + 1}/{count}
             </span>
             {!allRevealed ? (
-              <button type="button" onClick={revealAll} className="inline-flex items-center text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-10">
+              <button type="button" onClick={revealAll} className={textButtonClass}>
                 Reveal every moment
               </button>
             ) : null}
           </div>
 
           {!isRevealed(idx) ? (
-            <PredictionPrompt
-              key={`${experimentKey}|${idx}|${arg}`}
-              resetKey={`${experimentKey}|${idx}|${arg}`}
-              className={promptClass}
-              question={questionFor(arg)}
-              options={toOutputOptions(options)}
-              onCommit={(optionId) => {
-                pendingRevealFocus.current = true;
-                setAnswers((a) => ({ ...a, [idx]: { optionId, arg } }));
-              }}
-            >
-              <RevealSignal onChange={onSkip} />
-            </PredictionPrompt>
+            <div ref={promptArea} tabIndex={-1} data-testid="moment-prompt" className="rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <PredictionPrompt
+                key={promptKey}
+                resetKey={promptKey}
+                className={promptClass}
+                question={questionFor(snapshot, askedNow, true)}
+                options={predictionOptions}
+                onCommit={(optionId) => record(optionId)}
+              >
+                <RevealSignal onChange={onSkip} />
+              </PredictionPrompt>
+            </div>
           ) : null}
 
           {isRevealed(idx) ? (
@@ -957,37 +1152,67 @@ function ReadTimeLab({ preset }: { preset?: string }) {
                 <h4 ref={revealHeading} tabIndex={-1} data-testid="reveal-heading" className="text-sm font-normal text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <span className="mr-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-200">Moment {idx + 1}</span>
                   {/* The question the verdict below answers, even after the %t argument is toggled. */}
-                  {questionFor(answer?.arg ?? arg)}
+                  {questionFor(snapshot, answer?.asked ?? askedNow)}
                 </h4>
-                {chosen ? (
-                  <p className={cn("text-sm", chosen.correct ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
-                    <strong>{chosen.correct ? "Correct. " : "Not quite. "}</strong>
-                    {chosen.feedback}
+                {answer?.optionId ? (
+                  <p className={cn("text-sm", answer.correct ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
+                    <strong>{answer.correct ? "Correct." : "Not quite. "}</strong>
+                    {answer.correct ? null : answer.feedback}
                   </p>
                 ) : (
                   <p className="text-sm text-muted-foreground">Revealed without predicting.</p>
                 )}
-                {correctOption && (!chosen || !chosen.correct) ? (
-                  <p className="text-sm text-muted-foreground">
-                    <strong className="text-foreground">Why the answer holds: </strong>
-                    {correctOption.feedback}
+                {answer && answer.asked !== askedNow ? (
+                  <p className="text-sm text-muted-foreground" data-testid="asked-changed">
+                    Your answer was for the statement above. The %t toggle has changed the code since, so this line now prints:
                   </p>
                 ) : null}
-                {printsOption ? (
-                  <p className={cn("text-sm text-foreground", mono, "whitespace-pre-wrap break-words")}>
+                {printedLine ? (
+                  <p className={cn("text-sm text-foreground", mono, "whitespace-pre-wrap break-words")} data-testid="moment-prints" data-line={printedLine.text}>
                     <span className="font-sans text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prints </span>
-                    {showToolDependent(printsOption.label)}
+                    <OutputText text={printedLine.text} template={snapshot.template} />
+                    {hasPadding(printedLine.text, snapshot.template) ? <PaddingKey /> : null}
                   </p>
                 ) : null}
-                <TripleRuler absFs={snapshot.readings.absFs} unit={snapshot.unit} precision={snapshot.afterDelay.precision} time={snapshot.readings.time} />
-                <p className="text-sm text-foreground">{momentSentence(snapshot)}</p>
+                <TripleRuler absFs={snapshot.readings.absFs} unit={snapshot.unit} precision={snapshot.precision} time={snapshot.readings.time} />
+                {explanation ? (
+                  <div className="space-y-1 text-sm" data-testid="moment-explanation">
+                    <p className="text-foreground">
+                      <strong>What: </strong>
+                      {explanation.what}
+                    </p>
+                    <p className="text-muted-foreground">
+                      <strong className="text-foreground">Why: </strong>
+                      {explanation.why}
+                    </p>
+                  </div>
+                ) : null}
+                {snapshot.notes.length ? (
+                  <ul className="space-y-1 rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100" aria-label="Notes on this run" data-testid="run-notes">
+                    {snapshot.notes.map((n, i) => (
+                      <li key={i}>{n}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {nextToPredict !== null ? (
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    onClick={() => {
+                      pendingPromptFocus.current = true;
+                      goToMoment(nextToPredict);
+                    }}
+                  >
+                    Predict moment {nextToPredict + 1}
+                  </button>
+                ) : null}
               </>
             </div>
           ) : null}
 
           <ScrollRegion label="Time readings of every moment">
             <table className="w-full min-w-[560px] text-left text-xs">
-              <caption className="sr-only">Every moment with its time readings; moments you have not predicted yet are hidden</caption>
+              <caption className="sr-only">Every moment with its time readings, %t shown without its padding; moments you have not predicted yet are hidden</caption>
               <thead className="text-[11px] uppercase tracking-wider text-muted-foreground">
                 <tr>
                   <th className="py-1 pr-2">Moment</th>
@@ -996,8 +1221,12 @@ function ReadTimeLab({ preset }: { preset?: string }) {
                   <th className="py-1 pr-2">$time</th>
                   <th className="py-1 pr-2">$stime</th>
                   <th className="py-1 pr-2">$realtime</th>
-                  <th className={cn("py-1 pr-2", arg === "time" && "text-foreground")}>%0t of $time</th>
-                  <th className={cn("py-1 pr-2", arg === "realtime" && "text-foreground")}>%0t of $realtime</th>
+                  {hasPercentT ? (
+                    <>
+                      <th className={cn("py-1 pr-2", arg === "time" && "text-foreground")}>%t of $time</th>
+                      <th className={cn("py-1 pr-2", arg === "realtime" && "text-foreground")}>%t of $realtime</th>
+                    </>
+                  ) : null}
                 </tr>
               </thead>
               <tbody className={mono}>
@@ -1005,8 +1234,11 @@ function ReadTimeLab({ preset }: { preset?: string }) {
                   const fmt = effectiveFormat(s.format, build);
                   const t = (which: "time" | "realtime") => (fmt ? formatPercentT(argumentFs(s.readings, which, s.unit), fmt, true) : "tool-dependent");
                   return (
-                    <tr key={i} className={cn("border-t border-border/50", i === idx && "bg-cyan-500/10")}>
-                      <td className="py-1 pr-2">{i + 1}</td>
+                    <tr key={i} aria-current={i === idx ? "true" : undefined} className={cn("border-t border-border/50", i === idx && "bg-cyan-500/10")}>
+                      <td className="py-1 pr-2">
+                        {i === idx ? <span aria-hidden>▶ </span> : null}
+                        {i + 1}
+                      </td>
                       <td className="py-1 pr-2">{s.caller}</td>
                       {isRevealed(i) ? (
                         <>
@@ -1017,11 +1249,15 @@ function ReadTimeLab({ preset }: { preset?: string }) {
                             {s.readings.stimeWrapped ? " (wrapped)" : ""}
                           </td>
                           <td className="py-1 pr-2">{rationalToDecimal(s.readings.realtime)}</td>
-                          <td className={cn("py-1 pr-2", arg === "time" && "font-semibold")}>{t("time")}</td>
-                          <td className={cn("py-1 pr-2", arg === "realtime" && "font-semibold")}>{t("realtime")}</td>
+                          {hasPercentT ? (
+                            <>
+                              <td className={cn("py-1 pr-2", arg === "time" && "font-semibold")}>{t("time")}</td>
+                              <td className={cn("py-1 pr-2", arg === "realtime" && "font-semibold")}>{t("realtime")}</td>
+                            </>
+                          ) : null}
                         </>
                       ) : (
-                        <td colSpan={6} className="py-1 pr-2 font-sans text-muted-foreground">
+                        <td colSpan={hasPercentT ? 6 : 4} className="py-1 pr-2 font-sans text-muted-foreground">
                           predict moment {i + 1} to reveal it
                         </td>
                       )}
@@ -1031,38 +1267,82 @@ function ReadTimeLab({ preset }: { preset?: string }) {
               </tbody>
             </table>
           </ScrollRegion>
-          <p className="text-xs text-muted-foreground">
-            %t of $time has already lost the fraction (§20.3.1); %t of $realtime keeps it (§20.3.3). Compare the last two columns.
-          </p>
+          {hasPercentT ? <p className="text-xs text-muted-foreground">The %t columns leave out any padding; the log below shows it.</p> : null}
+          {hasPercentT && (argMatters || arg !== (current?.arg ?? "realtime")) ? (
+            <div className="space-y-2">
+              <SegmentedControl<"realtime" | "time">
+                label="%t argument"
+                mono
+                className={touchButtons}
+                value={arg}
+                onChange={setArg}
+                options={[
+                  { value: "realtime", label: "%t of $realtime" },
+                  { value: "time", label: "%t of $time" },
+                ]}
+              />
+              {isRevealed(idx) ? (
+                <p className="text-xs text-muted-foreground" data-testid="percent-t-note">
+                  %t of $time has already lost the fraction (§20.3.1); %t of $realtime keeps it (§20.3.3). The toggle rewrites the code and the log, and the last two columns compare both.
+                </p>
+              ) : null}
+            </div>
+          ) : hasPercentT && isRevealed(idx) ? (
+            <p className="text-xs text-muted-foreground" data-testid="percent-t-note">
+              {trace.lines.some((l) => l.toolDependent)
+                ? "%t of $time and %t of $realtime print the same text here, because the %t units are tool-dependent either way, so there is nothing to toggle."
+                : "%t of $time and %t of $realtime print the same text here, so there is nothing to toggle: every %t line runs at a whole number of the caller's units, or its format's digits hide the fraction."}
+            </p>
+          ) : null}
           <figure className="overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
             <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Log, as the code prints it</figcaption>
             <pre role="region" tabIndex={0} aria-label="Printed log" className={cn("overflow-x-auto p-3 text-xs leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", mono)}>
               {trace.lines.map((l, i) =>
-                l.momentIndex === null || isRevealed(l.momentIndex) ? (
+                isRevealed(l.momentIndex) ? (
                   <div key={i}>
-                    <span className="text-slate-500">{`t = ${formatFsAuto(l.absFs)}`.padEnd(14)}</span>
+                    <span className="text-slate-400">{`t = ${formatFsAuto(l.absFs)}`.padEnd(14)}</span>
                     {showToolDependent(l.text)}
                   </div>
                 ) : (
-                  <div key={i} className="text-slate-500">
-                    {`t = ?`.padEnd(14)}⟨{l.caller}: predict moment {(l.momentIndex as number) + 1} to reveal this line⟩
+                  <div key={i} className="text-slate-400">
+                    {`t = ?`.padEnd(14)}⟨{l.caller}: predict moment {l.momentIndex + 1} to reveal this line⟩
                   </div>
                 ),
               )}
             </pre>
           </figure>
-          {trace.lines.some((l) => l.toolDependent && (l.momentIndex === null || isRevealed(l.momentIndex))) ? (
+          {trace.lines.some((l) => l.toolDependent && isRevealed(l.momentIndex)) ? (
             <p className="text-xs text-amber-900 dark:text-amber-100">
               ⟨tool-dependent⟩: no $timeformat was called and the source has no `timescale, so Table 20-3 gives no default units. Call $timeformat once at time 0.
             </p>
           ) : null}
-          {current && allRevealed ? (
+          {current && allRevealed && !changeText ? (
             <p className="text-sm text-foreground" data-testid="preset-outcome">
               {current.outcome}
             </p>
           ) : null}
+          {current && allRevealed && changeText ? (
+            <p className="text-sm text-foreground" data-testid="preset-changed">
+              {linesChangedFromPreset(current, trace.lines)} of {trace.lines.length} log lines print differently from the preset&apos;s own code.
+            </p>
+          ) : null}
         </>
       ) : null}
+      <StartOver
+        onClick={() => {
+          setAttempt((n) => n + 1);
+          setArg(initial.arg);
+          setFormatMode("default");
+          setFormat(INITIAL_FORMAT);
+          setShowAdvanced(false);
+          setUnit(CUSTOM_DEFAULT.unit);
+          setPrecision(CUSTOM_DEFAULT.precision);
+          setDelaysText(CUSTOM_DEFAULT.delays);
+          setCustomTimescale(false);
+          setMoved(false);
+          setPresetId(initial.id);
+        }}
+      />
     </VisualFrame>
   );
 }
@@ -1080,8 +1360,9 @@ function WhichUnitLab() {
   const includeReset = order.includes("reset");
   const files = useMemo(() => order.map((id) => WHICH_UNIT_FILES.find((f) => f.id === id)).filter((f): f is SourceFile => Boolean(f)), [order]);
   const resolution = useMemo(() => resolveTimeScopes(files, grouping), [files, grouping]);
-  const options = useMemo(() => toPredictionOptions(whichUnitOptions(resolution)), [resolution]);
-  const resetKey = `${order.join(",")}|${grouping}`;
+  const [attempt, setAttempt] = useState(0);
+  const resetKey = `${attempt}|${order.join(",")}|${grouping}`;
+  const options = useMemo(() => toPredictionOptions(whichUnitOptions(resolution), resetKey), [resolution, resetKey]);
   const [said, setSaid] = useState("");
   const items = files.map((f) => ({
     id: f.id,
@@ -1112,6 +1393,7 @@ function WhichUnitLab() {
       <div className="flex flex-wrap items-center gap-4">
         <SegmentedControl<Grouping>
           label="Compilation units"
+          className={touchButtons}
           value={grouping}
           onChange={setGrouping}
           options={[
@@ -1119,11 +1401,11 @@ function WhichUnitLab() {
             { value: "each", label: "each file its own" },
           ]}
         />
-        <label className="flex items-center gap-2 text-xs text-foreground">
+        <label className={checkLabelClass}>
           <input type="checkbox" checked={includeReset} onChange={(e) => toggleReset(e.target.checked)} className="h-4 w-4 accent-cyan-500" />
           include a `resetall file
         </label>
-        <label className="flex items-center gap-2 text-xs text-foreground">
+        <label className={checkLabelClass}>
           <input type="checkbox" checked={includeCu} onChange={(e) => toggleCu(e.target.checked)} className="h-4 w-4 accent-cyan-500" />
           include a compilation-unit timeunit (kept first: §3.14.2.2)
         </label>
@@ -1164,8 +1446,9 @@ function WhichUnitLab() {
               </thead>
               <tbody>
                 {resolution.elements.map((e) => (
-                  <tr key={e.id} className={cn("border-t border-border/50 align-top", e.path === "b" && "bg-cyan-500/10")}>
+                  <tr key={e.id} aria-current={e.path === "b" ? "true" : undefined} className={cn("border-t border-border/50 align-top", e.path === "b" && "bg-cyan-500/10")}>
                     <td className={cn("py-1 pr-2", mono)}>
+                      {e.path === "b" ? <span aria-hidden>▶ </span> : null}
                       {e.elementKind} {e.path}
                     </td>
                     <td className={cn("py-1 pr-2", mono, !e.unit && "text-amber-800 dark:text-amber-200")}>{scaleText(e.unit)}</td>
@@ -1206,6 +1489,13 @@ function WhichUnitLab() {
           </p>
         </div>
       ) : null}
+      <StartOver
+        onClick={() => {
+          setOrder([...WHICH_UNIT_DEFAULT_ORDER]);
+          setGrouping("one");
+          setAttempt((n) => n + 1);
+        }}
+      />
     </VisualFrame>
   );
 }
@@ -1214,16 +1504,16 @@ function WhichUnitLab() {
 // Global precision and 1step
 // ---------------------------------------------------------------------------
 
-const TB_SOURCE = ["module slow_gen;", "  timeunit 10ns; timeprecision 1ns;", "endmodule", "module tb_top;", "  timeunit 1ns; timeprecision 100ps;", "  slow_gen u_slow ();", "endmodule"];
-
 function GlobalPrecisionLab() {
   const [withVendor, setWithVendor] = useState(false);
   const [revealed, setRevealed] = useState(false);
-  /** The vendor column answers the headline prediction, so it stays hidden until that prediction is made; toggling back does not hide it again. */
+  const [unitsRevealed, setUnitsRevealed] = useState(false);
+  /** The vendor column answers both predictions, so it stays hidden until both are made; toggling back does not hide it again. */
   const [vendorRevealed, setVendorRevealed] = useState(false);
-  const onReveal = useCallback(
+  const onReveal = useCallback((v: boolean) => setRevealed(v), []);
+  const onUnitsReveal = useCallback(
     (v: boolean) => {
-      setRevealed(v);
+      setUnitsRevealed(v);
       if (v && withVendor) setVendorRevealed(true);
     },
     [withVendor],
@@ -1231,9 +1521,15 @@ function GlobalPrecisionLab() {
   const before = useMemo(() => globalPrecisionReport(false), []);
   const after = useMemo(() => globalPrecisionReport(true), []);
   const report = withVendor ? after : before;
-  const options = useMemo(() => toPredictionOptions(globalPrecisionOptions(withVendor)), [withVendor]);
+  const [attempt, setAttempt] = useState(0);
+  const resetKey = `${attempt}|${withVendor}`;
+  const options = useMemo(() => toPredictionOptions(globalPrecisionOptions(withVendor), resetKey), [withVendor, resetKey]);
+  const unitsOptions = useMemo(() => toPredictionOptions(defaultUnitsOptions(withVendor), `units|${resetKey}`), [withVendor, resetKey]);
+  const design = useMemo(() => globalPrecisionDesign(withVendor), [withVendor]);
+  const tbFile = design.find((f) => f.id === "tb");
+  const vendorFile = design.find((f) => f.id === "vendor");
   const [said, setSaid] = useState("");
-  const unitsText = (s: TimeScale | null) => (s ? formatScale(s) : "tool-dependent (no `timescale in the source)");
+  const unitsText = (s: TimeScale | null) => (s ? formatScale(s) : "tool-dependent: Table 20-3 does not define it with no `timescale in the source");
   const rows: { label: string; clause: string; before: string; after: string }[] = [
     { label: "$printtimescale($root)", clause: "§20.4.2", before: before.printtimescaleRoot, after: after.printtimescaleRoot },
     { label: "1step", clause: "§3.14.3", before: before.oneStep, after: after.oneStep },
@@ -1251,20 +1547,20 @@ function GlobalPrecisionLab() {
       assumptions={TIMESCALE_ASSUMPTIONS}
     >
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
-        <CodeTrace label="tb.sv (timeunit only)" lines={TB_SOURCE.map((text) => ({ text }))} />
+        <CodeTrace label="tb.sv (timeunit and timeprecision, no `timescale)" lines={(tbFile?.code ?? []).map((text) => ({ text }))} />
         <div className="space-y-2">
           <label className={cn(panel, "flex cursor-pointer items-start gap-2 text-sm text-foreground")}>
             <input type="checkbox" checked={withVendor} onChange={(e) => setWithVendor(e.target.checked)} className="mt-1 h-4 w-4 accent-cyan-500" />
             <span>
-              Add <code className={mono}>vendor_model.sv</code>, compiled under <code className={mono}>`timescale 1ns/1fs</code>. Every module keeps its own timeunit.
+              Add <code className={mono}>vendor_model.sv</code>, compiled under <code className={mono}>`timescale 1ns/1fs</code>. slow_gen and tb_top keep their own timeunit and timeprecision; vendor_model takes both from the directive.
             </span>
           </label>
-          <CodeTrace label="vendor_model.sv" lines={withVendor ? [{ text: "`timescale 1ns/1fs" }, { text: "module vendor_model; endmodule" }] : [{ text: "// not in the build" }]} />
+          <CodeTrace label="vendor_model.sv" lines={vendorFile ? vendorFile.code.map((text) => ({ text })) : [{ text: "// not in the build" }]} />
         </div>
       </div>
       <PredictionPrompt
         className={promptClass}
-        resetKey={String(withVendor)}
+        resetKey={resetKey}
         question={<>{withVendor ? "With the vendor model in the build" : "Without the vendor model"}, what does <code className={mono}>$printtimescale($root)</code> print?</>}
         options={options}
       >
@@ -1277,8 +1573,26 @@ function GlobalPrecisionLab() {
       </PredictionPrompt>
       <LiveAnnouncement text={said} />
       {revealed ? (
+        <div className="space-y-2">
+          <RevealHeading>Now the default %t units</RevealHeading>
+          <PredictionPrompt
+            className={promptClass}
+            resetKey={`units|${resetKey}`}
+            question={<>Nobody calls <code className={mono}>$timeformat</code>. {withVendor ? "With the vendor model in the build" : "Without the vendor model"}, which units does <code className={mono}>%t</code> default to?</>}
+            options={unitsOptions}
+          >
+            {({ committed }) => (
+              <>
+                <RevealSignal onChange={onUnitsReveal} />
+                <VerdictSignal options={unitsOptions} committed={committed} onSay={setSaid} />
+              </>
+            )}
+          </PredictionPrompt>
+        </div>
+      ) : null}
+      {revealed && unitsRevealed ? (
         <div className="space-y-2" data-testid="global-precision-reveal">
-          <RevealHeading>{vendorRevealed ? "What the vendor model changes" : "The design without the vendor model"}</RevealHeading>
+          <RevealHeading testId="comparison-heading">{vendorRevealed ? "What the vendor model changes" : "The design without the vendor model"}</RevealHeading>
           <ScrollRegion label={vendorRevealed ? "What the vendor model changes" : "The design without the vendor model"}>
             <table className="w-full min-w-[520px] text-left text-xs">
               <caption className="sr-only">{vendorRevealed ? "What the vendor model changes" : "The design without the vendor model"}</caption>
@@ -1314,13 +1628,20 @@ function GlobalPrecisionLab() {
           </ScrollRegion>
           {vendorRevealed ? (
             <p className="text-xs text-muted-foreground">
-              The directive counts toward the global precision even though no module uses it (§3.14.3). Each module still rounds to its own precision (§3.14.1), and an explicit $timeformat still fixes %t (§20.4.3). {report.resolution.errors.length ? "" : "No mixed specification: vendor_model takes its unit from the directive (rule b)."}
+              The directive counts toward the global precision even though tb.sv&apos;s modules do not use it (they declare their own timeunit and timeprecision). Only vendor_model does (§3.14.3). Each module still rounds to its own precision (§3.14.1), and an explicit $timeformat still fixes %t (§20.4.3). {report.resolution.errors.length ? "" : "No mixed specification: vendor_model takes its unit and precision from the directive (rule b)."}
             </p>
           ) : (
-            <p className="text-xs text-muted-foreground">Now add the vendor model above and predict again: the comparison opens once you have.</p>
+            <p className="text-xs text-muted-foreground">Now add the vendor model above and predict again: the comparison opens once you have made both predictions.</p>
           )}
         </div>
       ) : null}
+      <StartOver
+        onClick={() => {
+          setWithVendor(false);
+          setVendorRevealed(false);
+          setAttempt((n) => n + 1);
+        }}
+      />
     </VisualFrame>
   );
 }
@@ -1331,26 +1652,47 @@ function GlobalPrecisionLab() {
 
 const SCOPE_ORDER = ["caller", "boundary", "callee", "log"] as const;
 
+const CHIP_CAPTION_CLASS: Readonly<Record<UnitState, string>> = {
+  tagged: "text-amber-900 dark:text-amber-100",
+  count: "text-amber-900 dark:text-amber-100",
+  dropped: "text-muted-foreground line-through",
+  "never-had": "text-muted-foreground",
+  "resolved-time": "text-emerald-800 dark:text-emerald-200",
+};
+
+const codeOnly = (text: string) => text.replace(/\s*\/\/.*$/, "").trim();
+
+/** The first form of the debug challenge, and what Start over returns to. */
+const FIRST_FORM: CallForm = "wait_t_5ns";
+
 function CrossScopeLab() {
   const reduced = usePrefersReducedMotion();
-  const [form, setForm] = useState<CallForm>("wait_t_5ns");
+  const [form, setForm] = useState<CallForm>(FIRST_FORM);
   const [stepIndex, setStepIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [suspectId, setSuspectId] = useState<string | null>(null);
+  const [huntSkipped, setHuntSkipped] = useState(false);
   const [fixId, setFixId] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   /** What the persistent live region should read next: the last thing the learner changed. */
   const [lastAction, setLastAction] = useState<"step" | "suspect" | "fix" | null>(null);
   const [said, setSaid] = useState("");
   const suspectVerdictId = useId();
+  const traceHeading = useRef<HTMLHeadingElement>(null);
+  const focusTraceHeading = useRef(false);
   const onReveal = useCallback((v: boolean) => setRevealed(v), []);
+  const promptKey = `${attempt}|${form}`;
   const trace = useMemo(() => traceCrossScope(form), [form]);
-  const options = useMemo(() => toPredictionOptions(crossScopeOptions(form)), [form]);
+  const options = useMemo(() => toPredictionOptions(crossScopeOptions(form), promptKey), [form, promptKey]);
   const suspects = useMemo(() => gradeCrossScopeSuspects(), []);
   const fixes = useMemo(() => gradeCrossScopeFixes(), []);
   const stepNumber = Math.min(stepIndex, trace.steps.length - 1);
   const step = trace.steps[stepNumber];
   const suspect = suspects.find((s) => s.id === suspectId) ?? null;
   const fix = fixes.find((f) => f.id === fixId) ?? null;
+  const hasHunt = form === FIRST_FORM;
+  /** The hunt comes first: the trace, the highlighted line and the fixes would all answer it. */
+  const hunting = hasHunt && suspect?.verdict !== "culprit" && !huntSkipped;
   const goToStep = (i: number) => {
     setStepIndex(Math.max(0, Math.min(trace.steps.length - 1, i)));
     setLastAction("step");
@@ -1365,12 +1707,44 @@ function CrossScopeLab() {
         : lastAction === "fix" && fix
           ? `${fixVerdictWord(fix)} ${fix.label}. ${fix.review} ${fix.results.map((r) => `Caller in ${formatScale(r.callerUnit)} wakes at ${r.wake}${r.ok ? "" : ", not 5 ns"}`).join("; ")}.`
           : lastAction === "step"
-            ? `Step ${stepNumber + 1} of ${trace.steps.length}: ${step.title}. Value ${step.value} ${step.unitTag ? `understood in ${step.unitTag}` : "with no unit"}. ${step.what} ${step.why}`
+            ? `Step ${stepNumber + 1} of ${trace.steps.length}: ${step.title}. ${unitSentence(step)}. ${step.what} ${step.why}`
             : said;
-  const lines = useMemo(() => crossScopeCode(form).map((l) => ({ key: l.key, owner: l.owner, text: l.text })), [form]);
+  /** A comment that explains the result waits for the prediction, and in wait_t(5ns) for the hunt too. */
+  const lines = useMemo(() => crossScopeCode(form, hunting || !revealed).map((l) => ({ key: l.key, owner: l.owner, text: l.text })), [form, hunting, revealed]);
+  const activeLineNumber = step ? lines.findIndex((l) => l.key === step.lineKey) : -1;
+  const suspectRows = useMemo(
+    () =>
+      suspects
+        .map((s) => {
+          const lineNumber = lines.findIndex((l) => l.key === s.lineKey);
+          return { suspect: s, lineNumber: lineNumber + 1, code: codeOnly(lines[lineNumber]?.text ?? ""), scope: lines[lineNumber]?.owner ? "tb_top" : "util_pkg" };
+        })
+        .sort((a, b) => a.lineNumber - b.lineNumber),
+    [suspects, lines],
+  );
   const chooseForm = (f: CallForm) => {
     setForm(f);
     setStepIndex(0);
+    setLastAction(null);
+  };
+  const skipHunt = () => {
+    focusTraceHeading.current = true;
+    setHuntSkipped(true);
+    setStepIndex(0);
+  };
+  useEffect(() => {
+    if (focusTraceHeading.current && traceHeading.current) {
+      focusTraceHeading.current = false;
+      traceHeading.current.focus();
+    }
+  }, [huntSkipped]);
+  const startOver = () => {
+    setAttempt((n) => n + 1);
+    setForm(FIRST_FORM);
+    setStepIndex(0);
+    setSuspectId(null);
+    setHuntSkipped(false);
+    setFixId(null);
     setLastAction(null);
   };
   const lanes: { id: (typeof SCOPE_ORDER)[number]; title: string }[] = [
@@ -1380,56 +1754,107 @@ function CrossScopeLab() {
     { id: "log", title: "wake / log" },
   ];
   const laneIndex = step ? SCOPE_ORDER.indexOf(step.scope) : 0;
+  const logLine = <p className={cn("rounded-lg border border-border/70 bg-slate-950/90 px-3 py-2 text-xs text-slate-100", mono)}>{trace.printed}</p>;
+
+  const followTheValue =
+    step && !hunting ? (
+      <div className="space-y-3">
+        <div role="group" aria-label="Crossing step controls" className="flex flex-wrap items-center gap-2">
+          <StepButton label="Previous step" atEnd={stepNumber <= 0} onClick={() => goToStep(stepNumber - 1)}>
+            ←
+          </StepButton>
+          <input
+            type="range"
+            min={0}
+            max={trace.steps.length - 1}
+            value={stepNumber}
+            onChange={(e) => goToStep(Number(e.target.value))}
+            aria-label="Crossing step"
+            aria-valuetext={`Step ${stepNumber + 1} of ${trace.steps.length}: ${step.title}`}
+            className={scrubberClass}
+          />
+          <StepButton label="Next step" atEnd={stepNumber >= trace.steps.length - 1} onClick={() => goToStep(stepNumber + 1)}>
+            →
+          </StepButton>
+          <span className="font-mono text-xs tabular-nums text-muted-foreground" aria-hidden>
+            {stepNumber + 1}/{trace.steps.length}
+          </span>
+        </div>
+        <ScrollRegion label="The value moving through the scopes" className={panel}>
+          <p className="sr-only" data-testid="lane-state">
+            Now in {lanes[laneIndex].title}: {unitSentence(step)}.
+          </p>
+          <div className="relative min-w-[360px]" aria-hidden>
+            <div className="grid grid-cols-4 gap-2">
+              {lanes.map((lane, i) => (
+                <div
+                  key={lane.id}
+                  className={cn(
+                    "min-h-[110px] rounded-lg border p-2 text-[11px] font-semibold uppercase tracking-wider",
+                    lane.id === "boundary" ? "border-dashed border-border" : "border-border/70",
+                    i === laneIndex ? "bg-cyan-500/10 text-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {lane.title}
+                </div>
+              ))}
+            </div>
+            <div
+              data-testid="crossing-chip"
+              data-lane={step.scope}
+              data-unit-state={step.unitState}
+              className={cn("pointer-events-none absolute top-11 w-1/4 px-2", reduced ? "" : "transition-[left] duration-300 motion-reduce:transition-none")}
+              style={{ left: `${laneIndex * 25}%` }}
+            >
+              <div className="mx-auto w-fit max-w-full rounded-lg border border-amber-500/70 bg-amber-500/15 px-2 py-1 text-center">
+                <div className={cn("text-sm font-semibold text-foreground", mono)}>{step.value}</div>
+                <div className={cn("text-[10px]", CHIP_CAPTION_CLASS[step.unitState])}>{unitChipText(step)}</div>
+              </div>
+            </div>
+          </div>
+        </ScrollRegion>
+        <div className="space-y-1 text-sm" data-testid="crossing-step">
+          <p className="font-semibold text-foreground">
+            Step {stepNumber + 1}: {step.title} — {unitSentence(step)}
+          </p>
+          {activeLineNumber >= 0 ? (
+            <p className={cn("text-xs text-muted-foreground", mono)} data-testid="crossing-line">
+              Line {activeLineNumber + 1}: {codeOnly(lines[activeLineNumber].text)}
+            </p>
+          ) : null}
+          <p className="text-foreground">
+            <strong>What: </strong>
+            {step.what}
+          </p>
+          <p className="text-muted-foreground">
+            <strong className="text-foreground">Why: </strong>
+            {step.why}
+          </p>
+        </div>
+      </div>
+    ) : null;
 
   return (
     <VisualFrame
       label="Timescale lab: a time value crosses a scope"
-      eyebrow="Debug it · predict, trace, fix"
+      eyebrow="Debug it · predict, find, fix"
       title="The 1000× delay"
-      summary="A package written in picoseconds exports wait_t(time t). A nanosecond bench calls it. Predict the wake time, watch the value cross the boundary, then find the line and the fix."
+      summary="A package written in picoseconds exports wait_t(time t). A nanosecond bench calls it. Predict the wake time, find the line that loses the factor of 1000, then follow the value across the boundary and choose a fix."
       fidelity="model"
       assumptions={TIMESCALE_ASSUMPTIONS}
     >
       <SegmentedControl<CallForm>
         label="Call form"
         mono
+        className={touchButtons}
         value={form}
         onChange={chooseForm}
         options={(Object.keys(CALL_FORM_TEXT) as CallForm[]).map((f) => ({ value: f, label: CALL_FORM_TEXT[f] }))}
       />
-      <CodeTrace
-        label="util_pkg and tb_top"
-        lines={lines}
-        activeKey={revealed && step ? step.lineKey : undefined}
-        renderLineControl={(line) => {
-          // Suspects and their verdicts belong to the buggy wait_t(5ns) form only.
-          if (form !== "wait_t_5ns") return null;
-          const s = suspects.find((x) => x.lineKey === line.key);
-          if (!s || !revealed) return null;
-          const pressed = suspectId === s.id;
-          return (
-            <button
-              type="button"
-              onClick={() => {
-                setSuspectId(s.id);
-                setLastAction("suspect");
-              }}
-              aria-pressed={pressed}
-              aria-label={`Suspect line: ${line.text.replace(/\s*\/\/.*$/, "").trim()}`}
-              aria-describedby={pressed ? suspectVerdictId : undefined}
-              className={cn(
-                "min-h-7 rounded-md border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-10",
-                pressed ? "border-amber-400 bg-amber-500/30 text-amber-100" : "border-white/20 text-slate-300 hover:bg-white/10",
-              )}
-            >
-              {pressed ? "Suspected" : "Suspect"}
-            </button>
-          );
-        }}
-      />
+      <CodeTrace label="util_pkg and tb_top" lines={lines} activeKey={revealed && step && !hunting ? step.lineKey : undefined} />
       <PredictionPrompt
         className={promptClass}
-        resetKey={form}
+        resetKey={promptKey}
         question={
           <>
             tb_top runs <code className={mono}>{CALL_FORM_TEXT[form]}</code> at t = 0. When does the process wake?
@@ -1449,77 +1874,42 @@ function CrossScopeLab() {
 
       {revealed && step ? (
         <div className="space-y-3" data-testid="cross-scope-reveal">
-          <RevealHeading>Follow the value across the scope</RevealHeading>
-          <div role="group" aria-label="Crossing step controls" className="flex flex-wrap items-center gap-2">
-            <button type="button" className={buttonClass} disabled={stepNumber <= 0} onClick={() => goToStep(stepNumber - 1)} aria-label="Previous step">
-              ←
-            </button>
-            <input
-              type="range"
-              min={0}
-              max={trace.steps.length - 1}
-              value={stepNumber}
-              onChange={(e) => goToStep(Number(e.target.value))}
-              aria-label="Crossing step"
-              aria-valuetext={`Step ${stepNumber + 1} of ${trace.steps.length}: ${step.title}`}
-              className="h-2 min-w-[120px] flex-1 cursor-pointer accent-cyan-500"
-            />
-            <button type="button" className={buttonClass} disabled={stepNumber >= trace.steps.length - 1} onClick={() => goToStep(stepNumber + 1)} aria-label="Next step">
-              →
-            </button>
-            <span className="font-mono text-xs tabular-nums text-muted-foreground" aria-hidden>
-              {Math.min(stepIndex, trace.steps.length - 1) + 1}/{trace.steps.length}
-            </span>
-          </div>
-          <ScrollRegion label="The value moving through the scopes" className={panel}>
-            <div className="relative min-w-[360px]">
-              <div className="grid grid-cols-4 gap-2" aria-hidden>
-                {lanes.map((lane, i) => (
-                  <div
-                    key={lane.id}
-                    className={cn(
-                      "min-h-[88px] rounded-lg border p-2 text-[11px] font-semibold uppercase tracking-wider",
-                      lane.id === "boundary" ? "border-dashed border-border" : "border-border/70",
-                      i === laneIndex ? "bg-cyan-500/10 text-foreground" : "text-muted-foreground",
-                    )}
-                  >
-                    {lane.title}
-                  </div>
-                ))}
-              </div>
-              <div
-                aria-hidden
-                data-testid="crossing-chip"
-                data-lane={step.scope}
-                className={cn("pointer-events-none absolute top-8 w-1/4 px-2", reduced ? "" : "transition-[left] duration-300 motion-reduce:transition-none")}
-                style={{ left: `${laneIndex * 25}%` }}
-              >
-                <div className="mx-auto w-fit max-w-full rounded-lg border border-amber-500/70 bg-amber-500/15 px-2 py-1 text-center">
-                  <div className={cn("text-sm font-semibold text-foreground", mono)}>{step.value}</div>
-                  <div className={cn("text-[10px]", step.unitTag ? "text-amber-900 dark:text-amber-100" : "text-muted-foreground line-through")}>{step.unitTag ?? "unit tag dropped"}</div>
-                </div>
-              </div>
-            </div>
-          </ScrollRegion>
-          <div className="space-y-1 text-sm" data-testid="crossing-step">
-            <p className="font-semibold text-foreground">
-              Step {stepNumber + 1}: {step.title} — value <code className={mono}>{step.value}</code> {step.unitTag ? `understood in ${step.unitTag}` : "with no unit"}
-            </p>
-            <p className="text-foreground">
-              <strong>What: </strong>
-              {step.what}
-            </p>
-            <p className="text-muted-foreground">
-              <strong className="text-foreground">Why: </strong>
-              {step.why}
-            </p>
-          </div>
-          <p className={cn("rounded-lg border border-border/70 bg-slate-950/90 px-3 py-2 text-xs text-slate-100", mono)}>{trace.printed}</p>
-
-          {form === "wait_t_5ns" ? (
+          {hasHunt ? (
             <>
+              <RevealHeading>Find the line</RevealHeading>
+              {logLine}
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-foreground">Step 1 — which line turns 5 ns into 5 ps? Press Suspect beside a line in the code above.</p>
+                <p className="text-sm font-semibold text-foreground">Which line turns 5 ns into 5 ps?</p>
+                <ul className="space-y-2" aria-label="Suspect lines">
+                  {suspectRows.map((row) => {
+                    const pressed = suspectId === row.suspect.id;
+                    return (
+                      <li key={row.suspect.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSuspectId(row.suspect.id);
+                            setLastAction("suspect");
+                          }}
+                          aria-pressed={pressed}
+                          aria-label={`Suspect line: ${row.code}`}
+                          aria-describedby={pressed ? suspectVerdictId : undefined}
+                          className={cn(buttonClass, "w-full justify-between gap-3", pressed && "border-amber-500 bg-amber-500/15")}
+                        >
+                          <span className="min-w-0">
+                            <span className="block text-[11px] font-normal text-muted-foreground">
+                              line {row.lineNumber}, {row.scope}
+                            </span>
+                            <code className={cn("block break-words text-xs", mono)}>{row.code}</code>
+                          </span>
+                          <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" aria-hidden>
+                            {pressed ? "Suspected" : "Suspect"}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
                 {suspect ? (
                   <div
                     id={suspectVerdictId}
@@ -1536,61 +1926,84 @@ function CrossScopeLab() {
                     <p className="text-xs text-muted-foreground">Model check: {suspect.evidence}</p>
                   </div>
                 ) : null}
-                <HintLadder hints={[...CROSS_SCOPE_HINTS]} resetKey={form} />
-              </div>
-              <div className="space-y-2">
-                <p className="text-sm font-semibold text-foreground">Step 2 — choose a fix. The model recomputes the wake time for callers in 1 ns, 1 ps and 10 ns.</p>
-                <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))]" role="group" aria-label="Fixes">
-                  {fixes.map((f) => (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => {
-                        setFixId(f.id);
-                        setLastAction("fix");
-                      }}
-                      aria-pressed={fixId === f.id}
-                      className={cn(buttonClass, fixId === f.id && "border-cyan-500 bg-cyan-500/10")}
-                    >
-                      {f.label}
+                {hunting ? (
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <HintLadder hints={[...CROSS_SCOPE_HINTS]} resetKey={promptKey} className={cn("min-w-0 flex-1", touchButtons)} />
+                    <button type="button" className={textButtonClass} onClick={skipHunt}>
+                      Skip the hunt and show the trace
                     </button>
-                  ))}
-                </div>
-                {fix ? (
-                  <div data-testid="fix-verdict" className={cn("space-y-2 rounded-lg border p-3 text-sm", fix.robust ? "border-emerald-500/50 bg-emerald-500/10" : "border-amber-500/50 bg-amber-500/10")}>
-                    <pre role="region" tabIndex={0} aria-label="Code of this fix" className={cn("overflow-x-auto rounded bg-slate-950/90 p-2 text-xs text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", mono)}>{fix.code}</pre>
-                    <table className="w-full text-left text-xs">
-                      <caption className="sr-only">Wake time by caller unit</caption>
-                      <thead className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                        <tr>
-                          <th className="py-1 pr-2">Caller unit</th>
-                          <th className="py-1 pr-2">Wakes at</th>
-                          <th className="py-1 pr-2">5 ns?</th>
-                        </tr>
-                      </thead>
-                      <tbody className={mono}>
-                        {fix.results.map((r) => (
-                          <tr key={formatScale(r.callerUnit)} className="border-t border-border/50">
-                            <td className="py-1 pr-2">{formatScale(r.callerUnit)}</td>
-                            <td className="py-1 pr-2">{r.wake}</td>
-                            <td className={cn("py-1 pr-2", r.ok ? "text-emerald-800 dark:text-emerald-200" : "text-rose-800 dark:text-rose-200")}>{r.ok ? "✓" : "✕"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <p className="text-foreground">
-                      <strong>{fixVerdictWord(fix)} </strong>
-                      {fix.review}
-                    </p>
                   </div>
                 ) : null}
               </div>
+              {followTheValue ? (
+                <>
+                  <h4 ref={traceHeading} tabIndex={-1} data-testid="trace-heading" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    Follow the value across the scope
+                  </h4>
+                  {followTheValue}
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold text-foreground">Choose a fix. The model recomputes the wake time for callers in 1 ns, 1 ps and 10 ns.</p>
+                    <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))]" role="group" aria-label="Fixes">
+                      {fixes.map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => {
+                            setFixId(f.id);
+                            setLastAction("fix");
+                          }}
+                          aria-pressed={fixId === f.id}
+                          className={cn(buttonClass, "flex-wrap justify-between gap-2", fixId === f.id && "border-cyan-500 bg-cyan-500/10")}
+                        >
+                          <span className="min-w-0">{f.label}</span>
+                          {fixId === f.id ? <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Chosen</span> : null}
+                        </button>
+                      ))}
+                    </div>
+                    {fix ? (
+                      <div data-testid="fix-verdict" className={cn("space-y-2 rounded-lg border p-3 text-sm", fix.robust ? "border-emerald-500/50 bg-emerald-500/10" : "border-amber-500/50 bg-amber-500/10")}>
+                        <p className="font-semibold text-foreground">Chosen fix: {fix.label}</p>
+                        <pre role="region" tabIndex={0} aria-label="Code of this fix" className={cn("overflow-x-auto rounded bg-slate-950/90 p-2 text-xs text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", mono)}>{fix.code}</pre>
+                        <table className="w-full text-left text-xs">
+                          <caption className="sr-only">Wake time by caller unit</caption>
+                          <thead className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                            <tr>
+                              <th className="py-1 pr-2">Caller unit</th>
+                              <th className="py-1 pr-2">Wakes at</th>
+                              <th className="py-1 pr-2">5 ns?</th>
+                            </tr>
+                          </thead>
+                          <tbody className={mono}>
+                            {fix.results.map((r) => (
+                              <tr key={formatScale(r.callerUnit)} className="border-t border-border/50">
+                                <td className="py-1 pr-2">{formatScale(r.callerUnit)}</td>
+                                <td className="py-1 pr-2">{r.wake}</td>
+                                <td className={cn("py-1 pr-2", r.ok ? "text-emerald-800 dark:text-emerald-200" : "text-rose-800 dark:text-rose-200")}>{r.ok ? "✓" : "✕"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <p className="text-foreground">
+                          <strong>{fixVerdictWord(fix)} </strong>
+                          {fix.review}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
             </>
           ) : (
-            <p className="text-xs text-muted-foreground">Switch the call form back to {CALL_FORM_TEXT.wait_t_5ns} to hunt for the suspect line and grade the fixes.</p>
+            <>
+              <RevealHeading>Follow the value across the scope</RevealHeading>
+              {followTheValue}
+              {logLine}
+              <p className="text-xs text-muted-foreground">Switch the call form back to {CALL_FORM_TEXT.wait_t_5ns} to hunt for the suspect line and grade the fixes.</p>
+            </>
           )}
         </div>
       ) : null}
+      <StartOver onClick={startOver} />
     </VisualFrame>
   );
 }

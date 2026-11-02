@@ -1,5 +1,6 @@
 import React from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import PackedLayoutExplorer from "@/components/visuals/PackedLayoutExplorer";
@@ -255,12 +256,12 @@ describe("PackedLayoutExplorer: struct mode (default, cmd_t)", () => {
     expect(status).not.toMatch(/0641/);
   });
 
-  it("writing x into one member makes the whole struct 4-state, and a partly-x hex digit is shown in binary", () => {
+  it("writing x into a 4-state member: the struct was 4-state already, and the vector now shows the x", () => {
     render(<PackedLayoutExplorer />);
     lockIn("4'h5");
     fireEvent.click(screen.getByTestId("write-x-op"));
     expect(stripLabel("c, cmd_t")).toMatch(/bits 31 to 28 unknown \(X\)/);
-    expect(screen.getByTestId("struct-status").textContent).toMatch(/whole struct, read as one vector, is 4-state/);
+    expect(screen.getByTestId("struct-status").textContent).toMatch(/op is a 4-state member, so the struct is a 4-state vector whether or not any bit is x \(§7\.2\.1\); read as one vector it now shows x in bits \[31:28\]/);
     expect(screen.getByTestId("struct-status").textContent).toMatch(/^c = 32'hxABC_0042;/);
     fireEvent.click(screen.getByTestId("write-x-data"));
     expect(screen.getByTestId("struct-status").textContent).toMatch(/^c = 32'hxABC_xxxx;/);
@@ -381,20 +382,49 @@ describe("PackedLayoutExplorer: struct mode (default, cmd_t)", () => {
     expect(screen.getByRole("button", { name: "Unpacked view" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("after a step focus moves to the next statement's Run button or first prediction radio, not to the page", () => {
+  it("after a prediction focus moves to its feedback, not past it; after a plain run it moves to the next control", () => {
     render(<PackedLayoutExplorer preset="pkt_hdr_t" />);
-    lockIn("4540cafe");
-    expect(document.activeElement).toBe(screen.getByTestId("run-statement"));
+    lockIn("1540cafe");
+    expect(document.activeElement?.getAttribute("aria-live")).toBe("polite");
+    expect(document.activeElement?.textContent).toMatch(/^Not quite\. That gives kind a whole hex digit/);
     fireEvent.click(screen.getByTestId("run-statement"));
     // The sequence is over, so focus lands on the statement that just ran.
     expect(document.activeElement?.getAttribute("data-statement")).toBe("1");
     expect(document.activeElement).not.toBe(document.body);
   });
 
-  it("focus moves to the next statement's first radio, and a reset leaves it where it is", () => {
+  it("a plain run moves focus to the next Run button, then to the next statement's first radio", () => {
+    render(<PackedLayoutExplorer preset="ctrl_reg_t" />);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(document.activeElement).toBe(screen.getByTestId("run-statement"));
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(document.activeElement).toBe(screen.getByLabelText("32'h0000_0641"));
+  });
+
+  it("'Reveal without predicting' also lands on the explanation", () => {
+    render(<PackedLayoutExplorer />);
+    fireEvent.click(screen.getByRole("button", { name: "Reveal without predicting" }));
+    expect(document.activeElement?.textContent).toMatch(/^Why the answer holds:/);
+  });
+
+  it("a keyboard runs a prediction end to end: pick, lock in, hear the feedback, Tab to the next question", async () => {
+    const user = userEvent.setup();
+    render(<PackedLayoutExplorer />);
+    screen.getByLabelText("4'h5").focus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByLabelText("4'h2")).toBeChecked();
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /lock in prediction/i }));
+    await user.keyboard("{Enter}");
+    expect(document.activeElement?.textContent).toMatch(/^Not quite\. That reads bits \[3:0\]/);
+    expect(screen.getByTestId("struct-status").textContent).toMatch(/^c = 32'h5ABC_0042;/);
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByLabelText("32'h50FF_0042"));
+  });
+
+  it("a reset leaves focus where it is", () => {
     render(<PackedLayoutExplorer />);
     lockIn("4'h5");
-    expect(document.activeElement).toBe(screen.getByLabelText("32'h50FF_0042"));
     const reset = screen.getByRole("button", { name: "Reset preset" });
     reset.focus();
     fireEvent.click(reset);
@@ -414,6 +444,183 @@ describe("PackedLayoutExplorer: struct mode (default, cmd_t)", () => {
     }
   });
 
+  it("a free x write voids the open prediction, whose marked answer would no longer be true", () => {
+    render(<PackedLayoutExplorer />);
+    lockIn("4'h5");
+    expect(lockInButtons()).toHaveLength(1);
+    fireEvent.click(screen.getByTestId("write-x-op"));
+    expect(lockInButtons()).toHaveLength(0);
+    // The answered prompt goes too: its "keeps its value" text described the value before the x.
+    expect(screen.queryByText(/Correct\./)).not.toBeInTheDocument();
+    expect(screen.getByTestId("predictions-voided").textContent).toMatch(/You wrote outside the sequence.*statements now run directly/);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    const status = screen.getByTestId("struct-status").textContent ?? "";
+    expect(status).toMatch(/^c = 32'hx0FF_0042;/);
+    expect(status).toMatch(/addr is bits \[27:16\], so only those bits can change/);
+    // The preset's own note describes its own run.
+    expect(status).not.toMatch(/▲/);
+    // A reset restores the gate.
+    fireEvent.click(screen.getByRole("button", { name: "Reset preset" }));
+    expect(lockInButtons()).toHaveLength(1);
+    expect(screen.queryByTestId("predictions-voided")).not.toBeInTheDocument();
+  });
+
+  it("a member write run in the unpacked view voids the gate, since its answer is already on the strip", () => {
+    render(<PackedLayoutExplorer />);
+    lockIn("4'h5");
+    fireEvent.click(screen.getByTestId("struct-unpacked-toggle"));
+    fireEvent.click(screen.getByTestId("run-unpacked-1"));
+    expect(screen.getByText(/A write outside the sequence turned the predictions off/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("struct-unpacked-toggle"));
+    expect(lockInButtons()).toHaveLength(0);
+    expect(screen.getByTestId("predictions-voided")).toBeInTheDocument();
+    expect(screen.getByTestId("struct-status").textContent).toMatch(/^c = 32'h50FF_0042;/);
+  });
+
+  it("the reveal happens beside the strip: Statements follow it directly, and the cards, overlay and readout come after", () => {
+    render(<PackedLayoutExplorer preset="enum-field" />);
+    lockIn('"" (empty string)');
+    const order = (a: Element, b: Element) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING;
+    const strip = screen.getByRole("region", { name: "Bits of c" });
+    const statements = screen.getByRole("region", { name: "Statements" });
+    // The region is the strip's scroller; the panel around it, with its legend, is what Statements follows.
+    expect(strip.parentElement?.nextElementSibling).toBe(statements);
+    for (const after of [screen.getByTestId("enum-readout"), screen.getByTestId("hex-overlay"), screen.getByTestId("struct-cards")]) expect(order(statements, after)).toBeTruthy();
+    // The revealed area carries the value itself too.
+    expect(within(statements).getByText("c = 32'h7ABC_0042")).toBeInTheDocument();
+  });
+
+  it("the layout editor shows a live map of the members, so an edit is visible away from the strip", () => {
+    render(<PackedLayoutExplorer />);
+    // No ranges while the first prediction is open.
+    expect(screen.getByTestId("layout-live").textContent).toBe("op (4) | addr (12) | data (16); $bits = 32");
+    fireEvent.click(screen.getByRole("button", { name: "Move down: op" }));
+    expect(screen.getByTestId("layout-live").textContent).toBe("addr [31:20] | op [19:16] | data [15:0]; $bits = 32");
+    setWidth("Width of data in bits", "8");
+    expect(screen.getByTestId("layout-live").textContent).toBe("addr [23:12] | op [11:8] | data [7:0]; $bits = 24");
+  });
+
+  it("the vector cards wait for the first write in the packed view; the unpacked view shows them with a known literal", () => {
+    render(<PackedLayoutExplorer />);
+    expect(screen.queryByTestId("struct-cards")).not.toBeInTheDocument();
+    expect(screen.queryByText(/xxxx_xxxx$/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("struct-unpacked-toggle"));
+    expect(screen.getByTestId("struct-cards")).toBeInTheDocument();
+    expect(screen.getByText("c == 32'h0000_0000")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("struct-unpacked-toggle"));
+    lockIn("4'h5");
+    expect(screen.getByTestId("struct-cards")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("write-x-op"));
+    const cards = screen.getByTestId("struct-cards");
+    expect(within(cards).getByText("c == 32'h0ABC_0042")).toBeInTheDocument();
+    expect(cards.textContent).toMatch(/== gives 1'bx/);
+  });
+
+  it("after a width edit the unpacked compare card names the live width", () => {
+    render(<PackedLayoutExplorer />);
+    lockIn("4'h5");
+    setWidth("Width of op in bits", "8");
+    fireEvent.click(screen.getByTestId("struct-unpacked-toggle"));
+    const cards = screen.getByTestId("struct-cards");
+    expect(cards.textContent).toMatch(/a 36-bit literal/);
+    expect(cards.textContent).not.toMatch(/32-bit/);
+  });
+
+  it("an x write's note stands beside its control, never under a statement it does not describe", () => {
+    render(<PackedLayoutExplorer />);
+    fireEvent.click(screen.getByTestId("write-x-data"));
+    expect(screen.getByTestId("experiment-note").textContent).toMatch(/data is a 4-state member/);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(screen.queryByTestId("experiment-note")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("write-x-data"));
+    const note = screen.getByTestId("experiment-note");
+    expect(note.textContent).toMatch(/data is a 4-state member/);
+    const statements = screen.getByRole("region", { name: "Statements" }).querySelector('[data-statement="0"]');
+    expect(statements?.textContent).not.toMatch(/4-state member/);
+  });
+
+  it("the enum readout cites the back door only for a non-member; a type-checked write cites name() alone (§6.19.5.6)", () => {
+    render(<PackedLayoutExplorer preset="enum-field" />);
+    lockIn('"" (empty string)');
+    expect(screen.getByTestId("enum-readout").textContent).toMatch(/\(derived from §7\.2\.1, §6\.19\.5\.6\)/);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    const readout = screen.getByTestId("enum-readout").textContent ?? "";
+    expect(readout).toMatch(/returns "OP_WRITE"/);
+    expect(readout).toMatch(/\(§6\.19\.5\.6\)/);
+    expect(readout).not.toMatch(/derived/);
+  });
+
+  it("the live region says what changed plus the note, while the full map stays visible as plain text", () => {
+    render(<PackedLayoutExplorer preset="ctrl_reg_t" />);
+    const live = () => screen.getByTestId("struct-status-live").textContent ?? "";
+    expect(screen.getByTestId("struct-status")).not.toHaveAttribute("aria-live");
+    expect(screen.getByTestId("struct-status-live")).toHaveAttribute("aria-live", "polite");
+    expect(live()).toBe("");
+    // Six members changed from x, so it reports the whole value instead of listing them.
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(live()).toBe("ctrl = 32'h0000_0000.");
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(live()).toBe("en = 1'h1. en is written; the other members keep their bits (§7.2.1).");
+    expect(screen.getByTestId("struct-status").textContent).toMatch(/rsvd = 16'h0000, prescale = 4'h0, thresh = 8'h00, mode = 2'h0, irq_en = 1'h0, en = 1'h1/);
+    // The bit range of en would help answer the open question about thresh, so no text names it yet.
+    expect(screen.getByTestId("struct-status").textContent).not.toMatch(/\[0\]/);
+  });
+
+  it("a width field applies arrow keys and the spinner at once, and says typed text needs Enter", () => {
+    render(<PackedLayoutExplorer />);
+    lockIn("4'h5");
+    const input = screen.getByLabelText("Width of data in bits");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(screen.getByTestId("struct-status").textContent).toMatch(/\$bits\(cmd_t\) = 31/);
+    expect(input).toHaveValue(15);
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(screen.getByTestId("struct-status").textContent).toMatch(/\$bits\(cmd_t\) = 32/);
+    // At the limit a step does nothing.
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(input).toHaveValue(16);
+    // A press that changes the text without a key is the spinner.
+    fireEvent.pointerDown(input);
+    fireEvent.change(input, { target: { value: "14" } });
+    fireEvent.pointerUp(input);
+    expect(screen.getByTestId("struct-status").textContent).toMatch(/\$bits\(cmd_t\) = 30/);
+    // A press that changes nothing commits nothing, so a half-typed width stays a draft.
+    fireEvent.change(input, { target: { value: "1" } });
+    fireEvent.pointerDown(input);
+    fireEvent.pointerUp(input);
+    expect(screen.getByTestId("struct-status").textContent).toMatch(/\$bits\(cmd_t\) = 30/);
+    expect(screen.getByText(/Type a width, then press Enter or leave the field/)).toBeInTheDocument();
+  });
+
+  it("a write brings the first changed bit into view, sideways only, and with no smooth scroll under reduced motion", () => {
+    const scrollTo = vi.fn();
+    const original = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
+    const rects = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const isPanel = this.getAttribute("role") === "region";
+      return { left: isPanel ? 0 : 500, right: isPanel ? 360 : 516, top: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    });
+    const media = window.matchMedia;
+    try {
+      window.matchMedia = ((q: string) => ({ matches: q.includes("reduce"), media: q, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
+      const { unmount } = render(<PackedLayoutExplorer />);
+      lockIn("4'h5");
+      expect(scrollTo).not.toHaveBeenCalled();
+      lockIn("32'h50FF_0042");
+      expect(scrollTo).toHaveBeenLastCalledWith({ left: 484, behavior: "auto" });
+      unmount();
+
+      window.matchMedia = ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
+      render(<PackedLayoutExplorer mode="union" preset="word_u" />);
+      fireEvent.click(screen.getByTestId("run-statement"));
+      lockIn("32'hAAAA_1234");
+      expect(scrollTo).toHaveBeenLastCalledWith({ left: 484, behavior: "smooth" });
+    } finally {
+      HTMLElement.prototype.scrollTo = original;
+      rects.mockRestore();
+      window.matchMedia = media;
+    }
+  });
+
   it("presets are a keyboard radio group; frame_t asks the interview question", () => {
     render(<PackedLayoutExplorer />);
     radio("Struct preset", "frame_t");
@@ -430,7 +637,7 @@ describe("PackedLayoutExplorer: union mode", () => {
     expect(screen.getByRole("region", { name: "Packed union explorer" })).toBeInTheDocument();
     for (const path of ["f", "raw", "bytes"]) expect(screen.getByTestId(`union-row-${path}`)).toBeInTheDocument();
     // Never assigned and 4-state: all x, in the status and in %p (Table 6-7).
-    expect(screen.getByTestId("union-status").textContent).toMatch(/u\.raw \[31:0\] = 32'hxxxx_xxxx/);
+    expect(screen.getByTestId("union-status").textContent).toMatch(/u\.raw = 32'hxxxx_xxxx/);
     expect(screen.getByTestId("union-p").textContent).toMatch(/'\{f:'\{op:x, addr:x, data:x\}\}/);
     lockIn("12'h042 and 8'h42");
     expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
@@ -491,13 +698,13 @@ describe("PackedLayoutExplorer: union mode", () => {
     lockIn("12'hABC and 8'h1A");
     expect(screen.getByText(/Correct\./)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Reset preset" }));
-    expect(screen.getByTestId("union-status").textContent).toMatch(/u\.raw \[31:0\] = 32'hxxxx_xxxx/);
+    expect(screen.getByTestId("union-status").textContent).toMatch(/u\.raw = 32'hxxxx_xxxx/);
     expect(screen.queryByText(/Correct\./)).not.toBeInTheDocument();
     expect(lockInButtons()).toHaveLength(1);
 
     lockIn("12'hABC and 8'h1A");
-    radio("Union preset", "cmd_u (hard packed)");
-    expect(screen.getByTestId("union-status").textContent).toMatch(/u\.raw \[31:0\] = 32'hxxxx_xxxx/);
+    radio("Union preset", "cmd_u");
+    expect(screen.getByTestId("union-status").textContent).toMatch(/u\.raw = 32'hxxxx_xxxx/);
     expect(lockInButtons()).toHaveLength(1);
     lockIn("12'hABC and 8'h1A");
     expect(screen.getByTestId("union-status").textContent).toMatch(/u\.raw \[31:0\] = 32'h1ABC_0042/);
@@ -592,12 +799,117 @@ describe("PackedLayoutExplorer: union mode", () => {
   it("word_u: the prediction gate diagnoses the cleared-upper-bits answer and shows AAAA_1234", () => {
     render(<PackedLayoutExplorer mode="union" preset="word_u" />);
     fireEvent.click(screen.getByTestId("run-statement"));
-    expect(screen.getByTestId("union-status").textContent).toMatch(/w\.word \[31:0\] = 32'hAAAA_BBBB/);
+    expect(screen.getByTestId("union-status").textContent).toMatch(/w\.word = 32'hAAAA_BBBB/);
     lockIn("32'h0000_1234");
     expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
     expect(screen.getByText(/does not clear the bits above it/)).toBeInTheDocument();
     expect(screen.getByTestId("union-status").textContent).toMatch(/w\.word \[31:0\] = 32'hAAAA_1234; w\.half \[15:0\] = 16'h1234/);
     expect(within(screen.getByTestId("union-row-half")).getByText("[31:16] unaffected")).toBeInTheDocument();
+  });
+
+  it("word_u: until the question is answered the half row has no position, no value and no bit numbers, so the picture does not answer it", () => {
+    render(<PackedLayoutExplorer mode="union" preset="word_u" />);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    const half = screen.getByTestId("union-row-half");
+    expect(half.textContent).toMatch(/16 bits: where they sit appears once you answer/);
+    expect(half.textContent).not.toMatch(/\[15:0\]|\[31:16\]/);
+    expect(stripLabel("w.half")).toBe("");
+    const status = screen.getByTestId("union-status").textContent ?? "";
+    expect(status).not.toMatch(/\[15:0\]|w\.half/);
+    expect(screen.getByTestId("union-status-live").textContent).not.toMatch(/half/);
+    // Reading half would give BBBB, which is the answer in hex.
+    expect(status).not.toMatch(/16'hBBBB/);
+
+    lockIn("32'hAAAA_1234");
+    expect(stripLabel("w.half")).not.toBe("");
+    expect(screen.getByTestId("union-status").textContent).toMatch(/w\.half \[15:0\] = 16'h1234/);
+  });
+
+  it("cmd_u: until the question is answered f and bytes are one strip each, with no field or lane ranges", () => {
+    render(<PackedLayoutExplorer mode="union" />);
+    expect(stripLabel("u.f.addr")).toBe("");
+    expect(stripLabel("u.bytes[3]")).toBe("");
+    expect(stripLabel("u.f")).toMatch(/^u\.f: 32-bit value/);
+    for (const row of ["f", "bytes"]) expect(screen.getByTestId(`union-row-${row}`).textContent).not.toMatch(/\[27:16\]|\[31:24\]|addr|bytes\[3\]/);
+    expect(screen.getByTestId("union-status").textContent).not.toMatch(/\[\d+:\d+\]/);
+    lockIn("12'hABC and 8'h1A");
+    expect(stripLabel("u.f.addr")).not.toBe("");
+    expect(stripLabel("u.bytes[3]")).not.toBe("");
+  });
+
+  it("nest_u: the narrow rows have no position until the question is answered", () => {
+    render(<PackedLayoutExplorer mode="union" preset="nest_u" />);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    for (const row of ["inner", "inner.b8", "inner.b4"]) expect(screen.getByTestId(`union-row-${row}`).textContent).toMatch(/where they sit appears once you answer/);
+    expect(screen.getByTestId("union-status").textContent).not.toMatch(/inner/);
+    lockIn("12'hABF");
+    expect(stripLabel("n.inner.b4")).toMatch(/bits? 3 to 0|n\.inner\.b4/);
+  });
+
+  it("a free write voids the open prediction: its marked answer would be false after word = DEAD", () => {
+    render(<PackedLayoutExplorer mode="union" preset="word_u" />);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(lockInButtons()).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText("Member"), { target: { value: "word" } });
+    fireEvent.change(screen.getByLabelText("Hex value"), { target: { value: "DEAD" } });
+    fireEvent.click(screen.getByTestId("union-write"));
+    expect(lockInButtons()).toHaveLength(0);
+    expect(screen.getByTestId("predictions-voided").textContent).toMatch(/You wrote outside the sequence/);
+    expect(screen.getByTestId("union-status").textContent).toMatch(/w\.word \[31:0\] = 32'h0000_DEAD/);
+    // The note stands beside the control, not under the statement that ran.
+    expect(screen.getByTestId("experiment-note").textContent).toMatch(/The 16-bit source is zero-extended to 32 bits/);
+    expect(document.querySelector('[data-statement="0"]')?.textContent).not.toMatch(/zero-extended/);
+
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(screen.queryByText(/Correct\./)).not.toBeInTheDocument();
+    expect(screen.getByTestId("union-status").textContent).toMatch(/w\.word \[31:0\] = 32'h0000_1234/);
+    expect(screen.queryByTestId("experiment-note")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset preset" }));
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(lockInButtons()).toHaveLength(1);
+  });
+
+  it("a prediction's feedback takes focus in union mode too", () => {
+    render(<PackedLayoutExplorer mode="union" preset="word_u" />);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    lockIn("32'h1234_BBBB");
+    expect(document.activeElement?.textContent).toMatch(/^Not quite\. That places the narrow member at the MSB end/);
+  });
+
+  it("row names sit above their strips and stick to the panel's edge, so they stay readable while the bits scroll", () => {
+    render(<PackedLayoutExplorer mode="union" preset="word_u" />);
+    const name = within(screen.getByTestId("union-row-word")).getByText("w.word");
+    expect(name.className).toMatch(/sticky left-0/);
+  });
+
+  it("the live region announces a declaration change, and its compile error", () => {
+    render(<PackedLayoutExplorer mode="union" preset="word_u" />);
+    const live = () => screen.getByTestId("union-status-live").textContent ?? "";
+    radio("Packing", "union packed (hard)");
+    expect(live()).toMatch(/^Compile error: members of a hard packed union/);
+    radio("Packing", "union soft");
+    expect(live()).toBe("word_u is now 32 bits, soft packed.");
+  });
+
+  it("a declaration edit drops the last write's note, which described the old declaration", () => {
+    render(<PackedLayoutExplorer mode="union" preset="word_u" />);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    lockIn("32'hAAAA_1234");
+    expect(screen.getByTestId("union-status").textContent).toMatch(/right-justified in bits \[15:0\]/);
+    setWidth("Width of half in bits", "8");
+    const status = screen.getByTestId("union-status").textContent ?? "";
+    expect(status).toMatch(/w\.half \[7:0\]/);
+    expect(status).not.toMatch(/\[15:0\]/);
+    expect(screen.getByTestId("union-status-live").textContent).toBe("word_u is now 32 bits, soft packed.");
+  });
+
+  it("the summary does not claim a packing the Packing control can change", () => {
+    render(<PackedLayoutExplorer mode="union" />);
+    radio("Packing", "union soft");
+    expect(screen.getByTestId("union-status").textContent).toMatch(/soft packed/);
+    const header = screen.getByRole("region", { name: "Packed union explorer" }).querySelector("header");
+    expect(header?.textContent).not.toMatch(/[Hh]ard packed/);
   });
 
   it("rejects a non-hex write and names the nested example as ours", () => {
@@ -637,9 +949,55 @@ describe("PackedLayoutExplorer: tagged mode", () => {
   it("reading before any assignment: 'undefined' is the correct prediction and the result agrees (§11.9)", () => {
     render(<PackedLayoutExplorer mode="tagged" />);
     fireEvent.click(screen.getByRole("button", { name: '$display("%0d", v.Valid);' }));
-    lockIn("Undefined: never assigned, no defined result (§11.9)");
+    lockIn("Undefined: never assigned, so no defined result (derived from §11.9)");
     expect(screen.getByText(/Correct\./)).toBeInTheDocument();
     expect(screen.getByTestId("tagged-read-result").textContent).toMatch(/Undefined: the variable was never assigned/);
+    expect(screen.getByTestId("tagged-read-result").textContent).toMatch(/Derived from that/);
+  });
+
+  it("the unpacked status does not state a tag width as fact: that rule is for the packed representation (§7.3, §7.3.2)", () => {
+    render(<PackedLayoutExplorer mode="tagged" />);
+    const status = () => screen.getByTestId("tagged-status").textContent ?? "";
+    expect(status()).toMatch(/If declared packed, the tag would be 1 bit \(§7\.3\.2\); an unpacked tagged union has no required representation \(§7\.3\)\./);
+    expect(status()).not.toMatch(/Tag width/);
+    fireEvent.click(screen.getByTestId("tagged-third"));
+    expect(status()).toMatch(/the tag would be 2 bits/);
+    fireEvent.click(screen.getByTestId("tagged-packed"));
+    expect(status()).not.toMatch(/If declared packed/);
+  });
+
+  it("a read button moves focus to the question's first answer, and the result tells a screen reader how the prediction went", () => {
+    render(<PackedLayoutExplorer mode="tagged" />);
+    fireEvent.click(screen.getByRole("button", { name: "v = tagged Valid (23);" }));
+    fireEvent.click(screen.getByRole("button", { name: '$display("%0d", v.Valid);' }));
+    expect(document.activeElement).toBe(screen.getByLabelText("Legal: prints the value"));
+    lockIn("Run-time error: the tag is another member");
+    expect(document.activeElement).toBe(screen.getByTestId("tagged-read-result"));
+    expect(screen.getByTestId("tagged-read-result").textContent).toMatch(/^Your prediction was wrong\. /);
+    // A second read asks again, with focus back on the question.
+    fireEvent.click(screen.getByRole("button", { name: '$display("%0d", v.Valid);' }));
+    expect(document.activeElement).toBe(screen.getByLabelText("Legal: prints the value"));
+    lockIn("Legal: prints the value");
+    expect(screen.getByTestId("tagged-read-result").textContent).toMatch(/^Your prediction was right\. /);
+  });
+
+  it("%p reaches the live status, not only the screen", () => {
+    render(<PackedLayoutExplorer mode="tagged" />);
+    fireEvent.click(screen.getByRole("button", { name: "v = tagged Valid (23);" }));
+    expect(screen.getByTestId("tagged-status").textContent).not.toMatch(/%p prints/);
+    fireEvent.click(screen.getByRole("button", { name: '$display("%p", v);' }));
+    expect(screen.getByTestId("tagged-status").textContent).toMatch(/%p prints Valid:23 \(tag:value, §21\.2\.1\.6\)\./);
+    expect(screen.getByTestId("tagged-status")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("the third member's tag code is labelled as our own extension of Figures 7-2 and 7-3", () => {
+    render(<PackedLayoutExplorer mode="tagged" />);
+    fireEvent.click(screen.getByTestId("tagged-third"));
+    fireEvent.click(screen.getByTestId("tagged-packed"));
+    fireEvent.click(screen.getByRole("button", { name: "v = tagged Small (8'h5A);" }));
+    expect(screen.getByTestId("tagged-layout-note").textContent).toMatch(/code 2 for a third member is our own extension/);
+    fireEvent.click(screen.getByRole("button", { name: "v = tagged Valid (23);" }));
+    expect(screen.getByTestId("tagged-layout-note").textContent).toMatch(/follows the numbering of Figures 7-2 and 7-3\. Valid/);
   });
 
   it("the typedef label credits the standard for its two-member VInt and calls the three-member one ours", () => {
@@ -663,19 +1021,23 @@ describe("PackedLayoutExplorer: tagged mode", () => {
 
     fireEvent.click(screen.getByTestId("tagged-third"));
     expect(screen.getByTestId("tagged-layout-note").textContent).toMatch(/34 bits: tag \[33:32\] \(2 bits for 3 members\)/);
-    fireEvent.click(screen.getByRole("button", { name: "v = tagged Small (8'hA5);" }));
+    fireEvent.click(screen.getByRole("button", { name: "v = tagged Small (8'h5A);" }));
     expect(stripLabel("v, VInt packed")).toMatch(/bits 31 to 8 undefined/);
     expect(screen.getByTestId("tagged-layout-note").textContent).toMatch(/the 24 bits between are undefined/);
     fireEvent.click(screen.getByRole("button", { name: '$display("%p", v);' }));
-    expect(screen.getByTestId("tagged-p").textContent).toMatch(/prints Small:165/);
+    expect(screen.getByTestId("tagged-p").textContent).toMatch(/prints Small:90/);
+    // Packed, VInt is a singular integral value, so tag:value is a reading tools can differ on: the same caveat as a packed untagged union.
+    expect(screen.getByTestId("tagged-p").textContent).toMatch(/a reading of §21\.2\.1\.6 that tools can implement differently/);
+    expect(screen.getByTestId("tagged-p").querySelector("details")?.textContent).toMatch(/Why tools can differ.*packed tagged union is a singular integral value.*tool-dependent/);
+    expect(screen.getByTestId("tagged-status").textContent).toMatch(/%p prints Small:90 \(a reading of §21\.2\.1\.6 that tools can implement differently\)\./);
   });
 
   it("the log prints the statement exactly as its button shows it", () => {
     render(<PackedLayoutExplorer mode="tagged" />);
     fireEvent.click(screen.getByRole("button", { name: "Third member (bit [7:0] Small)" }));
-    fireEvent.click(screen.getByRole("button", { name: "v = tagged Small (8'hA5);" }));
-    expect(screen.getByRole("list", { name: "Statements run" }).textContent).toMatch(/v = tagged Small \(8'hA5\);/);
-    expect(screen.getByRole("list", { name: "Statements run" }).textContent).not.toMatch(/165/);
+    fireEvent.click(screen.getByRole("button", { name: "v = tagged Small (8'h5A);" }));
+    expect(screen.getByRole("list", { name: "Statements run" }).textContent).toMatch(/v = tagged Small \(8'h5A\);/);
+    expect(screen.getByRole("list", { name: "Statements run" }).textContent).not.toMatch(/90/);
   });
 
   it("toggles keep one label with aria-pressed, 'Reset v' clears the value and the log, and focus moves to the read result", () => {
@@ -726,9 +1088,9 @@ describe("PackedLayoutExplorer: mutation mode", () => {
     const results = screen.getByTestId("mutation-results");
     expect(results.textContent).toMatch(/- c = 2123beef, \$bits\(cmd_t\) = 32\+ c = 2beef123, \$bits\(cmd_t\) = 32/);
     expect(results.textContent).toMatch(/FAIL: layout/);
-    const agreement = screen.getByTestId("lesson-agreement");
-    expect(within(agreement).getAllByRole("listitem")).toHaveLength(3);
-    expect(within(agreement).getAllByText(/the model agrees\./)).toHaveLength(3);
+    // The lesson's own table is pinned in tests/lib/sv-aggregate-layout-model.test.ts; a maintainer's check is not for the learner.
+    expect(screen.queryByTestId("lesson-agreement")).not.toBeInTheDocument();
+    expect(results.textContent).not.toMatch(/the model agrees|maintainer/);
 
     radio("Show the log of", "opcode_e base to bit [3:0]");
     expect(screen.getByTestId("mutation-results").textContent).toMatch(/never_set = 0000, name\(\) = "OP_NOP"/);
@@ -810,7 +1172,7 @@ describe("PackedLayoutExplorer: debug clinic", () => {
     pickFix("4-state enum base");
     fireEvent.click(screen.getByTestId("clinic-rerun"));
     expect(screen.getByTestId("clinic-verdict").textContent).toMatch(/Fixed\./);
-    expect(screen.getByText(/@0 state\.name\(\) = "" \(value 'bxx\)/)).toBeInTheDocument();
+    expect(screen.getByText(/@0 state\.name\(\) = "" \(value x\)/)).toBeInTheDocument();
   });
 
   it("the struct back-door scenario: the whole-vector write is the suspect, and $cast on the decoded field removes the empty name (derived from §7.2.1, §6.24.2)", () => {
@@ -819,7 +1181,7 @@ describe("PackedLayoutExplorer: debug clinic", () => {
     lockIn('A static cast opcode_e\'(7) stored the value');
     expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
     expect(screen.getByText(/There is no cast in this monitor/)).toBeInTheDocument();
-    fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 5:/ }));
+    fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 6:/ }));
     expect(screen.getByTestId("clinic-line-feedback").textContent).toMatch(/^✓ This is it: assigning the word to the packed struct/);
     pickFix("4-state enum base");
     fireEvent.click(screen.getByTestId("clinic-rerun"));
@@ -834,13 +1196,45 @@ describe("PackedLayoutExplorer: debug clinic", () => {
 
   it("the two-typedefs scenario compiles only with one package typedef", () => {
     render(<PackedLayoutExplorer mode="debug" preset="two-typedefs" />);
-    expect(screen.getByText(/incompatible types: mon\.cmd_rec_t to scb\.cmd_rec_t/)).toBeInTheDocument();
+    expect(screen.getByText(/cannot assign mon\.cmd_rec_t to scb\.cmd_rec_t/)).toBeInTheDocument();
+    expect(screen.getByText(/not assignment compatible: §6\.22\.3/)).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Log, as found" }).textContent).not.toMatch(/incompatible/);
     lockIn("Two separate typedef statements are two different types, however alike their text");
     fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 5:/ }));
     pickFix("One typedef in a package");
     fireEvent.click(screen.getByTestId("clinic-rerun"));
     expect(screen.getByText("compile: ok")).toBeInTheDocument();
-    expect(screen.getByTestId("clinic-verdict").textContent).toMatch(/matches itself in every scope/);
+    expect(screen.getByTestId("clinic-verdict").textContent).toMatch(/regardless of the scope it is imported into \(§6\.22\.1 h\)/);
+  });
+
+  it("two typedefs + $cast: the log shows it compiles and fails at run time, and the verdict says the symptom moved (§6.24.2)", () => {
+    render(<PackedLayoutExplorer mode="debug" preset="two-typedefs" />);
+    lockIn("Two separate typedef statements are two different types, however alike their text");
+    fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 5:/ }));
+    pickFix("$cast with a check");
+    fireEvent.click(screen.getByTestId("clinic-rerun"));
+    const log = screen.getByRole("list", { name: 'Log after rerun with "$cast with a check"' }).textContent ?? "";
+    expect(log).toMatch(/compile: ok \(\$cast as a function never issues a compile error, §6\.24\.2\)/);
+    expect(log).toMatch(/run: \$cast returned 0/);
+    expect(log).toMatch(/ERROR: cast failed; scb\.expected unchanged/);
+    expect(log).not.toMatch(/compile error \(assign_rec\)/);
+    const verdict = screen.getByTestId("clinic-verdict").textContent ?? "";
+    expect(verdict).toMatch(/The symptom moved\./);
+    expect(verdict).not.toMatch(/still there/);
+    expect(verdict).not.toMatch(/^✓|Fixed\./);
+  });
+
+  it("the picked line's explanation is in a live region that is mounted before the pick; line buttons have room to tap", () => {
+    render(<PackedLayoutExplorer mode="debug" />);
+    lockIn("The members are declared in the wrong order: the first member is the MSB end");
+    const feedback = screen.getByTestId("clinic-line-feedback");
+    expect(feedback).toHaveAttribute("aria-live", "polite");
+    expect(feedback.textContent).toBe("");
+    const line = within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 3:/ });
+    expect(line.className).toMatch(/py-1\.5/);
+    fireEvent.click(line);
+    expect(screen.getByTestId("clinic-line-feedback")).toBe(feedback);
+    expect(feedback.textContent).toMatch(/addr is 12 bits/);
   });
 
   it("two-typedefs: either typedef line unlocks the fix, and its feedback names the other line", () => {
@@ -855,7 +1249,7 @@ describe("PackedLayoutExplorer: debug clinic", () => {
   it("the empty-name fix gives op a known default, so the rerun's OP_NOP comes from code on screen", () => {
     render(<PackedLayoutExplorer mode="debug" preset="empty-name" />);
     lockIn("A static cast stored a value that is not a member, so name() returns \"\"");
-    fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 3:/ }));
+    fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 4:/ }));
     pickFix("$cast with a check");
     expect(screen.getByRole("list", { name: "Change" }).textContent).toMatch(/op = OP_NOP;[\s\S]*\$cast\(op, raw\[31:28\]\)/);
     fireEvent.click(screen.getByTestId("clinic-rerun"));
@@ -867,7 +1261,7 @@ describe("PackedLayoutExplorer: debug clinic", () => {
     const log = screen.getByRole("list", { name: "Log, as found" }).textContent ?? "";
     expect(log).toMatch(/rand not allowed on this member/);
     expect(log).not.toMatch(/unpacked|class/);
-    lockIn("rand is legal only on members of unpacked structs");
+    lockIn("Among struct members, rand is legal only in unpacked structs");
     fireEvent.click(screen.getByRole("button", { name: "Show the suspect" }));
     pickFix("One typedef in a package");
     expect(screen.getByRole("list", { name: "Change" }).textContent).toMatch(/rand logic \[3:0\] op/);
@@ -889,7 +1283,9 @@ describe("PackedLayoutExplorer: debug clinic", () => {
     lockIn("The reset branch ran before time 0");
     expect(screen.getByText(/Source: IEEE 1800-2023 Table 6-7/)).toBeInTheDocument();
     expect(screen.getByTestId("clinic-lines")).toBeInTheDocument();
-    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Click the suspect declaration line" }));
+    // Focus stops at the diagnosis, and Tab goes on to the first declaration line.
+    expect(document.activeElement?.textContent).toMatch(/^Not quite\. Nothing executes before time 0/);
+    expect(screen.getByRole("heading", { name: "Click the suspect declaration line" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Show the suspect" }));
     expect(document.activeElement?.getAttribute("aria-label")).toMatch(/^Line 1:.*, the suspect$/);
@@ -908,6 +1304,279 @@ describe("PackedLayoutExplorer: debug clinic", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show the suspect" }));
     pickFix("4-state enum base");
     fireEvent.click(screen.getByTestId("clinic-rerun"));
-    expect(screen.getByText(/@10 posedge clk: rst_n = 1, so nothing assigns state; state\.name\(\) = "" \(value 'bxx\)/)).toBeInTheDocument();
+    expect(screen.getByText(/@10 posedge clk: rst_n = 1, so nothing assigns state; state\.name\(\) = "" \(value x\)/)).toBeInTheDocument();
+  });
+});
+
+/** The statement's own list item, where its note is printed. */
+const statementItem = (index: number) => document.querySelector<HTMLElement>(`[data-statement="${index}"]`)!;
+
+describe("PackedLayoutExplorer: an x write takes the statement's note with it", () => {
+  it("reversed: 'data now reads 16'hABC0' is gone once addr holds x", () => {
+    render(<PackedLayoutExplorer preset="reversed" />);
+    lockIn("12'h042");
+    expect(statementItem(0).textContent).toMatch(/data now reads 16'hABC0 and addr 12'h042/);
+    fireEvent.click(screen.getByTestId("write-x-addr"));
+    expect(statementItem(0).textContent).not.toMatch(/data now reads|shifted, not garbage/);
+    expect(screen.getByTestId("struct-status").textContent).toMatch(/addr \[11:0\] = 12'hxxx/);
+    expect(screen.getByTestId("struct-status").textContent).not.toMatch(/data now reads/);
+    expect(screen.getByTestId("experiment-note").textContent).toMatch(/addr is a 4-state member/);
+  });
+
+  it("ctrl_reg_t: 'ctrl reads 32'h0000_0641' is gone once thresh holds x", () => {
+    render(<PackedLayoutExplorer preset="ctrl_reg_t" />);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    fireEvent.click(screen.getByTestId("run-statement"));
+    lockIn("32'h0000_0641");
+    expect(statementItem(2).textContent).toMatch(/ctrl reads 32'h0000_0641/);
+    fireEvent.click(screen.getByTestId("write-x-thresh"));
+    expect(statementItem(2).textContent).not.toMatch(/ctrl reads 32'h0000_0641/);
+    expect(screen.getByTestId("struct-status").textContent).toMatch(/^ctrl = 32'h0000_0xx1;/);
+  });
+
+  it("pkt_hdr_t: 'len = 8'hFF = 255' is gone once len holds x", () => {
+    render(<PackedLayoutExplorer preset="pkt_hdr_t" />);
+    lockIn("4540cafe");
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(statementItem(1).textContent).toMatch(/len = 8'hFF = 255/);
+    fireEvent.click(screen.getByTestId("write-x-len"));
+    expect(statementItem(1).textContent).not.toMatch(/len = 8'hFF = 255/);
+    expect(screen.getByTestId("struct-status").textContent).toMatch(/^rx = 32'hC1xx_0000;/);
+  });
+
+  it("cmd_t: '5 | ABC | 0042' is gone once op holds x", () => {
+    render(<PackedLayoutExplorer />);
+    lockIn("4'h5");
+    expect(statementItem(0).textContent).toMatch(/5 \| ABC \| 0042/);
+    fireEvent.click(screen.getByTestId("write-x-op"));
+    expect(statementItem(0).textContent).not.toMatch(/5 \| ABC \| 0042/);
+  });
+});
+
+describe("PackedLayoutExplorer: experiments", () => {
+  it("the x writes sit in a closed disclosure, so a stray press cannot end the first question", () => {
+    render(<PackedLayoutExplorer />);
+    const box = screen.getByTestId("x-experiments");
+    expect(box.tagName).toBe("DETAILS");
+    expect(box).not.toHaveAttribute("open");
+    expect(within(box).getByTestId("write-x-data")).toBeInTheDocument();
+    expect(within(box).getByText(/turns the predictions off until you reset/)).toBeInTheDocument();
+  });
+
+  it("the enum readout follows any write, whatever order it and a layout edit come in", () => {
+    render(<PackedLayoutExplorer preset="enum-field" />);
+    expect(screen.queryByTestId("enum-readout")).not.toBeInTheDocument();
+    // A layout edit alone writes nothing, and the readout would give the prediction away.
+    fireEvent.click(screen.getByRole("button", { name: "Move down: op" }));
+    expect(screen.queryByTestId("enum-readout")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("struct-cards")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("write-x-op"));
+    expect(screen.getByTestId("enum-readout").textContent).toMatch(/part-select wrote these bits/);
+    expect(screen.getByTestId("struct-cards")).toBeInTheDocument();
+  });
+
+  it("a layout edit after an x write keeps the readout", () => {
+    render(<PackedLayoutExplorer preset="enum-field" />);
+    fireEvent.click(screen.getByTestId("write-x-addr"));
+    expect(screen.getByTestId("enum-readout")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Move down: op" }));
+    expect(screen.getByTestId("enum-readout").textContent).toMatch(/never assigned/);
+  });
+
+  it("the 'Run it' focus hook is its own attribute, not a test id", () => {
+    render(<PackedLayoutExplorer preset="ctrl_reg_t" />);
+    const button = screen.getByTestId("run-statement");
+    expect(button).toHaveAttribute("data-run-statement");
+    fireEvent.click(button);
+    expect(document.activeElement).toBe(screen.getByTestId("run-statement"));
+  });
+});
+
+describe("PackedLayoutExplorer: only the strips scroll", () => {
+  const scroller = () => screen.getByTestId("strip-scroll");
+  const legend = () => screen.getByText(/^Legend:/).closest("p")!;
+
+  it("struct: the legend and the ranges hint wrap to the panel instead of scrolling with the bits", () => {
+    render(<PackedLayoutExplorer />);
+    // The box that must not hold a sentence is the one sized to its widest line, and the strip is in it.
+    expect(scroller()).toHaveClass("w-max");
+    expect(scroller().querySelector('[role="img"]')).not.toBeNull();
+    expect(screen.getByTestId("ranges-hidden").closest(".w-max")).toBeNull();
+    expect(screen.getByTestId("ranges-hidden").closest("[role='region'][aria-label^='Bits of']")).toBeNull();
+    lockIn("4'h5");
+    fireEvent.click(screen.getByTestId("write-x-op"));
+    expect(legend().textContent).toMatch(/just changed/);
+    expect(legend().closest(".w-max")).toBeNull();
+    expect(legend().closest("[role='region'][aria-label^='Bits of']")).toBeNull();
+  });
+
+  it("tagged: the long layout note and the legend are outside the scrolling box", () => {
+    render(<PackedLayoutExplorer mode="tagged" />);
+    fireEvent.click(screen.getByTestId("tagged-packed"));
+    const note = screen.getByTestId("tagged-layout-note");
+    expect(note.closest(".w-max")).toBeNull();
+    expect(note.closest('[role="region"][aria-label^="Packed bits"]')).toBeNull();
+    expect(legend().closest(".w-max")).toBeNull();
+  });
+
+  it("union: the legend is outside the scrolling box", () => {
+    render(<PackedLayoutExplorer mode="union" preset="word_u" />);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(legend().textContent).toMatch(/just changed/);
+    expect(legend().closest(".w-max")).toBeNull();
+    expect(legend().closest("[role='region'][aria-label^='Rows of']")).toBeNull();
+  });
+});
+
+describe("PackedLayoutExplorer: union notes follow what the rows can read (§7.3.1)", () => {
+  it("word_u: while the question is open the note says nothing about the half; once answered it stays true", () => {
+    render(<PackedLayoutExplorer mode="union" preset="word_u" />);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(statementItem(0).textContent).toMatch(/word names bits \[31:0\]\./);
+    expect(statementItem(0).textContent).not.toMatch(/every other|narrower|low bits|half/);
+    expect(screen.getByTestId("union-status").textContent).not.toMatch(/every other|narrower|low bits/);
+    expect(screen.getByTestId("union-status-live").textContent).not.toMatch(/narrower|low bits/);
+  });
+
+  it("word_u: with the prediction out of the way, the same write names the narrower row", () => {
+    render(<PackedLayoutExplorer mode="union" preset="word_u" />);
+    setWidth("Width of half in bits", "8");
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(statementItem(0).textContent).toMatch(/word names bits \[31:0\]; half is narrower and reads only its own low bits \(§7\.3\.1\)\./);
+  });
+
+  it("cmd_u soft with raw 16: a field write says raw cannot read it, and the preset's 'every view' note is dropped", () => {
+    render(<PackedLayoutExplorer mode="union" />);
+    radio("Packing", "union soft");
+    setWidth("Width of raw in bits", "16");
+    fireEvent.click(screen.getByTestId("run-statement"));
+    fireEvent.click(screen.getByTestId("run-statement"));
+    const note = statementItem(1).textContent ?? "";
+    expect(note).toMatch(/f\.op is bits \[31:28\] of f, so only those bits change \(§7\.2\.1\); raw \[15:0\] is narrower and does not read all of those bits \(§7\.3\.1\)\./);
+    expect(note).not.toMatch(/every view/);
+    expect(screen.getByTestId("union-status").textContent).not.toMatch(/every view/);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(statementItem(2).textContent).toMatch(/every view reads the same bits/);
+    expect(statementItem(2).textContent).not.toMatch(/A byte write writes/);
+  });
+
+  it("a free write ends the preset's own notes for the statements still to run", () => {
+    render(<PackedLayoutExplorer mode="union" />);
+    fireEvent.change(screen.getByLabelText("Hex value"), { target: { value: "DEAD" } });
+    fireEvent.click(screen.getByTestId("union-write"));
+    fireEvent.click(screen.getByTestId("run-statement"));
+    fireEvent.click(screen.getByTestId("run-statement"));
+    expect(statementItem(1).textContent).not.toMatch(/A field write through f/);
+  });
+
+  it("a shrink is for good: nest_u with n.a = ABF, a at 8, then a at 12 has lost the A, and the new bits are x (Table 6-7)", () => {
+    render(<PackedLayoutExplorer mode="union" preset="nest_u" />);
+    fireEvent.click(screen.getByTestId("run-statement"));
+    lockIn("12'hABF");
+    expect(screen.getByTestId("union-status").textContent).toMatch(/n\.a \[11:0\] = 12'hABF/);
+    setWidth("Width of a in bits", "8");
+    expect(screen.getByTestId("union-status").textContent).toMatch(/n\.a \[7:0\] = 8'hBF/);
+    setWidth("Width of a in bits", "12");
+    expect(screen.getByTestId("union-status").textContent).toMatch(/n\.a \[11:0\] = 12'hxBF/);
+  });
+
+  it("a declaration that does not compile reports no width, state-ness, values or %p", () => {
+    render(<PackedLayoutExplorer mode="union" preset="word_u" />);
+    expect(screen.getByTestId("union-status").textContent).toMatch(/^word_u is 32 bits/);
+    expect(screen.getByTestId("union-p")).toBeInTheDocument();
+    radio("Packing", "union packed (hard)");
+    const status = screen.getByTestId("union-status").textContent ?? "";
+    expect(status).toMatch(/^word_u does not compile\. Compile error: members of a hard packed union/);
+    expect(status).not.toMatch(/32 bits, 4-state|w\.word/);
+    expect(screen.queryByTestId("union-p")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^states$/)).not.toBeInTheDocument();
+    expect(screen.getByRole("list", { name: /^typedef/ }).textContent).toMatch(/does not compile/);
+    expect(screen.getByRole("list", { name: /^typedef/ }).textContent).not.toMatch(/4-state/);
+    radio("Packing", "union soft");
+    expect(screen.getByTestId("union-status").textContent).toMatch(/^word_u is 32 bits/);
+    expect(screen.getByTestId("union-p")).toBeInTheDocument();
+  });
+
+  it("the typedef's label is in the learner's words, with no file name", () => {
+    render(<PackedLayoutExplorer />);
+    expect(screen.getByRole("list", { name: "typedef (Structs, Unions and Enums: Packed structs)" })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/\.mdx/);
+  });
+});
+
+describe("PackedLayoutExplorer: %p of a tagged union says only what the standard supports", () => {
+  it("before any assignment no printed string is stated: the output is not defined, derived from §11.9", () => {
+    render(<PackedLayoutExplorer mode="tagged" />);
+    fireEvent.click(screen.getByRole("button", { name: '$display("%p", v);' }));
+    const chip = screen.getByTestId("tagged-p").textContent ?? "";
+    expect(chip).toMatch(/output is not defined/);
+    expect(chip).toMatch(/derived from §11\.9/);
+    expect(chip).not.toMatch(/prints|\(undefined\)|§21\.2\.1\.6/);
+    const status = screen.getByTestId("tagged-status").textContent ?? "";
+    expect(status).toMatch(/%p output is not defined: the variable was never assigned, so its value, tag bits included, is undefined \(derived from §11\.9\)\./);
+    expect(status).not.toMatch(/%p prints/);
+  });
+
+  it("a void member's bare tag is labelled derived, and only a packed union carries the tools caveat", () => {
+    render(<PackedLayoutExplorer mode="tagged" />);
+    fireEvent.click(screen.getByRole("button", { name: "v = tagged Invalid;" }));
+    fireEvent.click(screen.getByRole("button", { name: '$display("%p", v);' }));
+    expect(screen.getByTestId("tagged-p").textContent).toMatch(/prints Invalid \(derived: §21\.2\.1\.6 gives tag:value, and a void member has no value, §7\.3\.2\)/);
+    expect(screen.getByTestId("tagged-p").querySelector("details")).toBeNull();
+    fireEvent.click(screen.getByTestId("tagged-packed"));
+    expect(screen.getByTestId("tagged-p").querySelector("details")).not.toBeNull();
+  });
+});
+
+describe("PackedLayoutExplorer: mutation checks say what they test", () => {
+  it("a disclosure above the matrix lists every check's expression, and the selected cell repeats it", () => {
+    render(<PackedLayoutExplorer mode="mutation" />);
+    const box = screen.getByTestId("mutation-checks");
+    expect(box).not.toHaveAttribute("open");
+    expect(within(box).getAllByRole("listitem")).toHaveLength(11);
+    expect(box.textContent).toMatch(/no name: never_set\.name\(\) == ""/);
+    expect(box.textContent).toMatch(/byte 3: u\.bytes\[3\] === 8'h1A/);
+    expect(box.compareDocumentPosition(screen.getByRole("table")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(screen.getByTestId("mutation-skip"));
+    expect(screen.getByTestId("mutation-selected").textContent).toMatch(/^layout \(c === 32'h2123_BEEF\) against Reverse addr and data:/);
+  });
+});
+
+describe("PackedLayoutExplorer: finding the suspect stays found", () => {
+  it("reading another line keeps the fix section, the rerun log and the verdict", () => {
+    render(<PackedLayoutExplorer mode="debug" />);
+    lockIn("The members are declared in the wrong order: the first member is the MSB end");
+    fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 2:/ }));
+    pickFix("Reorder the members");
+    fireEvent.click(screen.getByTestId("clinic-rerun"));
+    const verdict = screen.getByTestId("clinic-verdict").textContent;
+    expect(verdict).toMatch(/Fixed\./);
+    fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 3:/ }));
+    expect(screen.getByTestId("clinic-line-feedback").textContent).toMatch(/^✕ addr is 12 bits/);
+    expect(screen.getByTestId("clinic-fix")).toBeInTheDocument();
+    expect(screen.getByTestId("clinic-verdict").textContent).toBe(verdict);
+    expect(screen.queryByRole("button", { name: "Show the suspect" })).not.toBeInTheDocument();
+    // A reset really does start over.
+    fireEvent.click(screen.getByRole("button", { name: "Reset scenario" }));
+    expect(screen.queryByTestId("clinic-fix")).not.toBeInTheDocument();
+  });
+
+  it("'Show the suspect' gives the reason and replaces the learner's wrong pick", () => {
+    render(<PackedLayoutExplorer mode="debug" />);
+    lockIn("The members are declared in the wrong order: the first member is the MSB end");
+    fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 3:/ }));
+    expect(screen.getByTestId("clinic-line-feedback").textContent).toMatch(/^✕ addr is 12 bits/);
+    fireEvent.click(screen.getByRole("button", { name: "Show the suspect" }));
+    expect(screen.getByTestId("clinic-line-feedback").textContent).toMatch(/^✓ This is it: the first member of a packed struct is the most significant/);
+    expect(within(screen.getByTestId("clinic-lines")).queryByRole("button", { name: /^Line 3:.*not the suspect$/ })).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 2:.*, the suspect$/ })).toBeInTheDocument();
+  });
+
+  it("swapped fields: op's line counts, as the other half of the order", () => {
+    render(<PackedLayoutExplorer mode="debug" />);
+    lockIn("The members are declared in the wrong order: the first member is the MSB end");
+    fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 4:/ }));
+    expect(screen.getByTestId("clinic-line-feedback").textContent).toMatch(/^✓ Yes, this is the other half of the same ordering bug/);
+    expect(screen.getByTestId("clinic-fix")).toBeInTheDocument();
   });
 });

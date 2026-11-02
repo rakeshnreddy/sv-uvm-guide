@@ -20,9 +20,11 @@
  * - §6.11.2: assigning to a 2-state type turns x bits into 0.
  * - §20.10: $error continues; $fatal implies $finish. §20.2: $finish ends the
  *   run, $stop only suspends it.
- * - §9.6.1: a run ends by itself only when no activity remains; a free-running
- *   clock is activity forever, so a missing $finish never ends ("still
- *   running at the horizon" is this model's label, not a simulator message).
+ * - §9.6.1: a run ends by itself when no activity of any kind remains (the
+ *   clause also names one other case, all program blocks finished; this bench
+ *   has none). A free-running clock is activity forever, so a missing $finish
+ *   never ends ("still running at the horizon" is this model's label, not a
+ *   simulator message).
  * - §9.3.2 join_any and §9.6.3 disable fork: the watchdog branch is killed when
  *   the run branch ends first.
  * - §9.2.2.2, §9.2.2.4: the checker is a plain always because always_ff and
@@ -153,6 +155,14 @@ export function testsFor(preset: PresetId, holdRegistered: boolean): TestId[] {
   return [preset];
 }
 
+/** The plan row a run of these tests follows: the first test's rule, then the names of the others. */
+export function testsRule(tests: readonly TestId[]): string {
+  const [first, ...rest] = tests;
+  if (!rest.length) return TESTS[first].rule;
+  const names = rest.length === 1 ? rest[0] : `${rest.slice(0, -1).join(", ")} and ${rest[rest.length - 1]}`;
+  return `${TESTS[first].rule}, then ${names}`;
+}
+
 /** Number of results a correct DUT returns for these tests (one per send). */
 export function expectedResultCount(tests: readonly TestId[]): number {
   return tests.reduce((n, id) => n + TESTS[id].stimulus.filter((s) => s.kind === "send").length, 0);
@@ -192,6 +202,8 @@ export const MUTANTS: Record<string, MutantInfo> = {
 };
 
 export const MATRIX_MUTANTS: readonly MutantId[] = [1, 2, 3, "extra-stage", "swap-ab"];
+/** The columns a learner can read at the lesson's test-plan section, before the kata and the expert mutants. */
+export const PLAN_MUTANTS: readonly MutantId[] = [1, 2];
 
 export const mutantInfo = (m: MutantId): MutantInfo => MUTANTS[String(m)];
 
@@ -235,7 +247,7 @@ export function dutStep(mutant: MutantId, state: DutState, inputs: DutInputs): {
   if (ifBranch([notRst]) === "then") {
     const next: DutState = { outValid: zeros(1), sum: zeros(SUM_W) };
     if (mutant === "extra-stage") next.stage = { outValid: zeros(1), sum: zeros(SUM_W) };
-    return { next, note: mutant === "extra-stage" ? "rst_n = 0: R1 clears out_valid, sum and the extra stage (ov_q, sum_q)" : "rst_n = 0: R1 clears out_valid and sum" };
+    return { next, note: mutant === "extra-stage" ? "sees rst_n = 0: R1 clears out_valid, sum and the extra stage (ov_q, sum_q)" : "sees rst_n = 0: R1 clears out_valid and sum" };
   }
   const nextSum = dutNextSum(mutant, inputs.a, inputs.b);
   const validTruth = truthOf(inputs.inValid);
@@ -447,8 +459,10 @@ interface StepBase {
   /** tb_top line executing (CodeTrace key) and the lines also active this step. */
   activeKey: string;
   contextKeys: string[];
-  /** Anatomy node lit at this step. */
+  /** Anatomy node lit at this step: the one `activeKey` and `why` describe. */
   node: string;
+  /** Other anatomy nodes acting at the same step: on back-to-back traffic the bench, the DUT and the checker all act on one edge. */
+  alsoNodes: string[];
   tokens: AnatomyToken[];
   what: string;
   why: string;
@@ -723,6 +737,7 @@ export function runBench(config: BenchConfig): RunResult {
       activeKey: "main-wdog",
       contextKeys: ["clk-decl", "clk-always"],
       node: "wdog",
+      alsoNodes: [],
       tokens: [],
       what: `No rising edge ever happens: logic clk starts at x and ~x is x, so always #5 clk = ~clk; keeps writing x (§6.8, §11.4.8; Table 9-2: no edge). reset_dut() waits forever; at ${formatTime(config.timeoutNs)} the watchdog counts the hang, prints the summary and calls $fatal.`,
       why: "$fatal ends the run through an implicit $finish (§20.10). Without the watchdog this run would never end and never print a verdict.",
@@ -849,7 +864,26 @@ export function runBench(config: BenchConfig): RunResult {
     return { action: { kind: "fail", exp, actual }, popped };
   };
 
+  // The watchdog wins the race when #(TIMEOUT) expires while the run branch is still busy: it counts the hang,
+  // reports and calls $fatal (§20.10). On a tie with an edge this model lets the edge's work go first.
+  const fireWatchdog = () => {
+    failCnt += 1;
+    rawPass = passCnt;
+    rawFail = failCnt;
+    report(config.timeoutNs);
+    log.push({ time: config.timeoutNs, kind: "fatal", text: `WDOG test '${config.testName}' still running at ${formatTime(config.timeoutNs)}` });
+    steps.push(momentStep("wdog", steps.length, config.timeoutNs, [...betweenEvents, { kind: "watchdog-fired", time: config.timeoutNs }, { kind: "report", time: config.timeoutNs }], queue, passCnt, failCnt, log.length, config));
+    betweenEvents = [];
+  };
+
   for (let edge = 0; edge < MAX_EDGES && !ended; edge += 1) {
+    if (!programDone && edgeTime(edge) > config.timeoutNs) {
+      fireWatchdog();
+      ended = true;
+      endReason = "fatal";
+      endTime = config.timeoutNs;
+      break;
+    }
     currentEdge = edge;
     const time = edgeTime(edge);
     const sampled: Sampled = { rst_n: vars.rst_n, in_valid: vars.in_valid, a: vars.a, b: vars.b, out_valid: dut.outValid, sum: dut.sum };
@@ -891,6 +925,7 @@ export function runBench(config: BenchConfig): RunResult {
       activeKey: "",
       contextKeys: [],
       node: "",
+      alsoNodes: [],
       tokens: [],
       what: "",
       why: "",
@@ -901,6 +936,13 @@ export function runBench(config: BenchConfig): RunResult {
 
     // Falling edge: drain() reads the queue here, when the checker is not running.
     const negTime = negedgeTime(edge);
+    if (!programDone && negTime > config.timeoutNs) {
+      fireWatchdog();
+      ended = true;
+      endReason = "fatal";
+      endTime = config.timeoutNs;
+      break;
+    }
     if (!programDone && waiting === "negedge") {
       stepEvents = []; // a fresh array: the edge step above keeps its own events
       advance({ time: negTime, queueSize: queue.length });
@@ -929,7 +971,7 @@ export function runBench(config: BenchConfig): RunResult {
         endTime = negTime;
         steps.push(momentStep("stop", steps.length, negTime, endEvents, queue, passCnt, failCnt, log.length, config));
       } else {
-        log.push({ time: negTime, kind: "note", text: "no $finish: the summary printed, but the free-running clock keeps the simulation busy (§9.6.1)" });
+        log.push({ time: negTime, kind: "note", text: "the summary printed, but the free-running clock keeps the simulation busy (§9.6.1)" });
         steps.push(momentStep("horizon", steps.length, negTime, endEvents, queue, passCnt, failCnt, log.length, config));
         horizonLeft = HORIZON_EDGES;
         endTime = negTime;
@@ -940,18 +982,6 @@ export function runBench(config: BenchConfig): RunResult {
         ended = true;
         endReason = "horizon";
       }
-    }
-    if (!ended && !programDone && edgeTime(edge + 1) > config.timeoutNs) {
-      // The watchdog wins the race: it counts the hang, reports and calls $fatal (§20.10).
-      failCnt += 1;
-      rawPass = passCnt;
-      rawFail = failCnt;
-      report(config.timeoutNs);
-      log.push({ time: config.timeoutNs, kind: "fatal", text: `WDOG test '${config.testName}' still running at ${formatTime(config.timeoutNs)}` });
-      ended = true;
-      endReason = "fatal";
-      endTime = config.timeoutNs;
-      steps.push(momentStep("wdog", steps.length, config.timeoutNs, [{ kind: "watchdog-fired", time: config.timeoutNs }, { kind: "report", time: config.timeoutNs }], queue, passCnt, failCnt, log.length, config));
     }
   }
   if (!ended) {
@@ -966,7 +996,7 @@ export function runBench(config: BenchConfig): RunResult {
 
   // Backfill anatomy tokens now that every expectation knows when it was checked.
   steps.forEach((s) => {
-    if (s.kind === "edge") s.tokens = tokensAt(s.edge, expectations, config);
+    if (s.kind === "edge") s.tokens = tokensAt(s.edge, expectations, config, s.sampled.sum);
   });
 
   const summaryLine = log.find((l) => l.kind === "summary");
@@ -1000,7 +1030,9 @@ export const chkMessage = (exp: Expectation, actual: Val): string => `CHK a=${fo
  * - `!=` is x when known bits agree and some bit is x; `if (x)` takes the else
  *   branch (§12.4), so the X result is counted as a pass ("x-pass").
  * - `assert (actual == exp)`: an x expression fails the assertion (§16.3).
- * - `int s = actual; if (s != exp)`: x bits become 0 first (§6.11.2).
+ * - `int s = actual; if (s != exp)`: x bits in actual become 0 first (§6.11.2).
+ *   A compare that is still x (an x in the expected value) also takes the else
+ *   branch, so it too is counted as a pass ("x-pass").
  */
 export function judge(op: CompareOp, actual: Val, expected: Val): "pass" | "fail" | "x-pass" {
   switch (op) {
@@ -1015,15 +1047,20 @@ export function judge(op: CompareOp, actual: Val, expected: Val): "pass" | "fail
       return compare("==", actual, expected).result === "1" ? "pass" : "fail";
     case "int-copy": {
       const copied = assignToIntegral(actual, { states: 2, width: 32 }).bits;
-      return compare("!=", copied, expected).result === "1" ? "fail" : "pass";
+      const r = compare("!=", copied, expected).result;
+      if (r === "1") return "fail";
+      return r === "x" ? "x-pass" : "pass";
     }
     default:
       return "fail";
   }
 }
 
+/** pass_cnt moved on a result with an unknown bit, or on a compare that came out x: nothing showed the result to be right. */
+export const passWithoutMatch = (c: CheckerAction): boolean => c.kind === "x-pass" || (c.kind === "pass" && hasUnknown(c.actual));
+
 function momentStep(kind: MomentStep["kind"], index: number, time: number, events: BenchEvent[], queue: Expectation[], passCnt: number, failCnt: number, logCount: number, config: BenchConfig): MomentStep {
-  const base = { index, time, events, queueAfter: [...queue], passCnt, failCnt, logCount, contextKeys: [] as string[], tokens: [] as AnatomyToken[] };
+  const base = { index, time, events, queueAfter: [...queue], passCnt, failCnt, logCount, contextKeys: [] as string[], alsoNodes: [] as string[], tokens: [] as AnatomyToken[] };
   const drained = events.find((e) => e.kind === "drain-quiet" || e.kind === "drain-check");
   const drainText = drained ? "drain() finished its quiet cycles, so the run branch ended. " : "";
   switch (kind) {
@@ -1055,7 +1092,7 @@ function momentStep(kind: MomentStep["kind"], index: number, time: number, event
         contextKeys: ["clk-always"],
         node: "rpt",
         what: `${formatTime(time)}: report() printed PASS=${passCnt} FAIL=${failCnt}, and then nothing ends the run: there is no $finish, and disable fork already killed the watchdog. The clock keeps toggling: still running at the horizon (a model label).`,
-        why: "A simulation ends by itself only when no activity of any kind remains (§9.6.1). always #5 clk = ~clk; is activity forever.",
+        why: "A simulation ends by itself when no activity of any kind remains (§9.6.1; this bench has no program blocks, the other case that clause names). always #5 clk = ~clk; is activity forever.",
       };
     default:
       return {
@@ -1065,7 +1102,7 @@ function momentStep(kind: MomentStep["kind"], index: number, time: number, event
         contextKeys: ["main-report"],
         node: "wdog",
         what: `${formatTime(time)}: the watchdog's #(TIMEOUT) expired first: fail_cnt++, report() printed PASS=${passCnt} FAIL=${failCnt}, and $fatal ended the run with the WDOG message (test '${config.testName}').`,
-        why: "$fatal prints a fatal error and implies $finish (§20.10), so even a hung run ends with a verdict line.",
+        why: "$fatal prints a fatal error and implies $finish (§20.10), so a run that outlasts TIMEOUT still ends with a verdict line.",
       };
   }
 }
@@ -1167,20 +1204,38 @@ function describeEdge(step: EdgeStep, config: BenchConfig, nextDut: DutState): v
   const benchText = parts.join(" ");
   const benchNoQueue = noQueueParts.join(" ");
 
-  // The DUT.
+  // Whichever part acts next takes over the highlight; the part it displaces stays lit beside it.
+  const alsoNodes = new Set<string>();
+  const takeOver = (nextActive: string, nextNode: string, nextWhy: string) => {
+    if (active) context.add(active);
+    if (node) alsoNodes.add(node);
+    active = nextActive;
+    node = nextNode;
+    why = nextWhy;
+  };
+
+  // The DUT: it acts when it samples a valid input, when BUG=3 recomputes on an idle cycle, and when an extra stage moves a result to its outputs.
   const dutLine = `The DUT ${step.dutNote}.`;
   say(dutLine);
   const extraStage = config.mutant === "extra-stage";
-  if (!active && truthOf(sampled.in_valid) === "true") {
-    active = extraStage ? "dut-ff-ov" : "dut-ff-sum";
-    node = "dut";
-    why = extraStage
-      ? "The flops read a and b as they were before this edge and schedule ov_q and sum_q with <=. out_valid and sum take those values one edge later, and the checker reads them one edge after that (§4.9.4, §10.4.2)."
-      : "The flop reads a and b as they were before this edge and schedules the result with <=; the checker reads it one edge later (§4.9.4, §10.4.2).";
-  } else if (!active && extraStage && truthOf(nextDut.outValid) === "true") {
-    active = "dut-ff-sum";
-    node = "dut";
-    why = "The second stage copies ov_q and sum_q to out_valid and sum with <=; the checker reads them on the next edge (§4.9.4, §10.4.2).";
+  const samplesValid = step.dutNote.startsWith("samples in_valid = 1");
+  const movesOnIdle = config.mutant === 3 && step.dutNote.includes("BUG=3 still schedules");
+  const secondStage = extraStage && truthOf(nextDut.outValid) === "true";
+  if (samplesValid || movesOnIdle || secondStage) {
+    const dutKey = extraStage && samplesValid ? "dut-ff-ov" : "dut-ff-sum";
+    const dutWhy = movesOnIdle
+      ? "R4 says sum holds while in_valid is 0; BUG=3 recomputes it anyway. Only a check that reads sum while out_valid is 0 can see that."
+      : extraStage && samplesValid
+        ? "The flops read a and b as they were before this edge and schedule ov_q and sum_q with <=. out_valid and sum take those values one edge later, and the checker reads them one edge after that (§4.9.4, §10.4.2)."
+        : extraStage
+          ? "The second stage copies ov_q and sum_q to out_valid and sum with <=; the checker reads them on the next edge (§4.9.4, §10.4.2)."
+          : "The flop reads a and b as they were before this edge and schedules the result with <=; the checker reads it one edge later (§4.9.4, §10.4.2).";
+    if (inline) {
+      // The inline check reads on this same edge, so it keeps the highlight and the DUT is lit beside it.
+      alsoNodes.add("dut");
+      context.add(dutKey);
+    } else takeOver(dutKey, "dut", dutWhy);
+    if (extraStage && samplesValid && secondStage) context.add("dut-ff-sum");
   }
 
   // The checker.
@@ -1190,11 +1245,8 @@ function describeEdge(step: EdgeStep, config: BenchConfig, nextDut: DutState): v
   if (chk.key) context.add(chk.key);
   step.narration = { bench: benchText, dut: dutLine, checker: chk.text, benchNoQueue, checkerNoQueue, queueHidden: noQueueParts.join(" ") };
   const checkerDecides = checker.kind === "pass" || checker.kind === "fail" || checker.kind === "x-pass" || checker.kind === "unexpected" || checker.kind === "hold-fail" || checker.kind === "x-out-valid";
-  if (checkerDecides) {
-    active = chk.key;
-    node = "chk";
-    why = chk.why;
-  } else if (!active) {
+  if (checkerDecides) takeOver(chk.key, "chk", chk.why);
+  else if (!active) {
     active = chk.key || "chk-always";
     node = checker.kind === "in-reset" || checker.kind === "guard-x" ? "chk" : node || "chk";
     why = why || chk.why;
@@ -1203,8 +1255,35 @@ function describeEdge(step: EdgeStep, config: BenchConfig, nextDut: DutState): v
   step.activeKey = active;
   step.contextKeys = [...context].filter((k) => k !== active);
   step.node = node || "chk";
+  alsoNodes.delete(step.node);
+  step.alsoNodes = [...alsoNodes];
   step.what = parts.join(" ");
   step.why = why || "Every process woken by this edge reads the values from before it; the nonblocking updates land afterwards (§4.9.4).";
+}
+
+/** A counted pass, in words that are true of the operator that counted it (§11.4.5, §16.3, §6.11.2). */
+function passWords(op: CompareOp, actual: Val): { verdict: string; note: string } {
+  const unknown = hasUnknown(actual);
+  switch (op) {
+    case "!=":
+      return { verdict: "a match, pass_cnt++", note: "!= is 0 only when every bit is known and equal (§11.4.5)." };
+    case "assert-eq":
+      return { verdict: "a match: the assertion holds and its pass statement runs pass_cnt++", note: "An immediate assertion reads its expression like an if condition, and only a nonzero known value holds (§16.3)." };
+    case "int-copy":
+      return unknown
+        ? { verdict: "the X itself is no match, but its 2-state copy matched, so pass_cnt++", note: "s = actual turned every x bit into 0 before the compare (§6.11.2), so the x was lost." }
+        : { verdict: "a match, pass_cnt++", note: "s = actual changes nothing when every bit is known (§6.11.2)." };
+    default:
+      return { verdict: unknown ? "equal as values (x matches x), pass_cnt++" : "a match, pass_cnt++", note: "!== returns 0 or 1 whatever the bits (§11.4.5)." };
+  }
+}
+
+/** A counted failure, in the same terms. */
+function failWords(op: CompareOp, actual: Val): string {
+  const unknown = hasUnknown(actual);
+  if (op === "assert-eq") return unknown ? "== gives x, so the assertion fails: fail_cnt++ and $error" : "a mismatch: the assertion fails, fail_cnt++ and $error";
+  if (op === "int-copy" && unknown) return "its 2-state copy differs: fail_cnt++ and $error";
+  return "a mismatch, fail_cnt++ and $error";
 }
 
 function describeChecker(action: CheckerAction, s: Sampled, config: BenchConfig): { text: string; key: string; why: string; noQueueText?: string } {
@@ -1236,24 +1315,28 @@ function describeChecker(action: CheckerAction, s: Sampled, config: BenchConfig)
         key: "chk-hold",
         why: "R4: sum must keep its value while in_valid is 0. !== compares every bit, so any change is a mismatch (§11.4.5).",
       };
-    case "pass":
+    case "pass": {
+      const words = passWords(config.compareOp, action.actual);
       return {
-        text: `The checker reads out_valid = 1 and sum = ${formatDec(action.actual)}${against(action.exp)}: a match, pass_cnt++.`,
-        noQueueText: `The checker reads out_valid = 1 and sum = ${formatDec(action.actual)}${againstHidden(action.exp)}: a match, pass_cnt++.`,
+        text: `The checker reads out_valid = 1 and sum = ${formatDec(action.actual)}${against(action.exp)}: ${words.verdict}.`,
+        noQueueText: `The checker reads out_valid = 1 and sum = ${formatDec(action.actual)}${againstHidden(action.exp)}: ${words.verdict}.`,
         key: "check-cmp",
-        why: "The checker reads out_valid and sum as they were before this edge: the DUT writes them with <=, after every process woken by the edge has run (§4.9.4). !== returns 0 or 1 whatever the bits (§11.4.5).",
+        why: `The checker reads out_valid and sum as they were before this edge: the DUT writes them with <=, after every process woken by the edge has run (§4.9.4). ${words.note}`,
       };
-    case "x-pass":
+    }
+    case "x-pass": {
+      const cause = config.compareOp === "int-copy" ? "the 2-state copy is known but the expected value has x bits, so s != e.sum gives x" : "the known bits agree and some bit is x, so != gives x";
       return {
-        text: `The checker reads sum = ${formatDec(action.actual)} against ${formatDec(action.exp.sum)}: the known bits agree and one bit is x, so != gives x, the if takes the else branch, and pass_cnt++ counts the X result as a pass.`,
-        noQueueText: `The checker reads sum = ${formatDec(action.actual)} against the oldest expectation (the queue is hidden until you predict): the known bits agree and one bit is x, so != gives x, the if takes the else branch, and pass_cnt++ counts the X result as a pass.`,
+        text: `The checker reads sum = ${formatDec(action.actual)} against ${formatDec(action.exp.sum)}: ${cause}, the if takes the else branch, and pass_cnt++ counts the result as a pass.`,
+        noQueueText: `The checker reads sum = ${formatDec(action.actual)} against the oldest expectation (the queue is hidden until you predict): ${cause}, the if takes the else branch, and pass_cnt++ counts the result as a pass.`,
         key: "check-cmp",
-        why: "== and != return x when the relation is ambiguous (§11.4.5); an if treats x as false and runs its else (§12.4). Only a case compare (!==/===) or an assertion (§16.3) puts an X on the failing side.",
+        why: "== and != return x when the relation is ambiguous (§11.4.5); an if treats x as false and runs its else (§12.4), and this bench puts the pass there. To make an unknown fail, use !==/===, which never return x, or put the pass on the true branch of an if (==) or assertion (§16.3), so x falls to the failing side.",
       };
+    }
     case "fail":
       return {
-        text: `The checker reads out_valid = 1 and sum = ${formatDec(action.actual)}${against(action.exp)}: a mismatch, fail_cnt++ and $error.`,
-        noQueueText: `The checker reads out_valid = 1 and sum = ${formatDec(action.actual)}${againstHidden(action.exp)}: a mismatch, fail_cnt++ and $error.`,
+        text: `The checker reads out_valid = 1 and sum = ${formatDec(action.actual)}${against(action.exp)}: ${failWords(config.compareOp, action.actual)}.`,
+        noQueueText: `The checker reads out_valid = 1 and sum = ${formatDec(action.actual)}${againstHidden(action.exp)}: ${failWords(config.compareOp, action.actual)}.`,
         key: "check-cmp",
         why: "$error reports and lets the run continue (§20.10), so one run shows every failure.",
       };
@@ -1268,8 +1351,15 @@ function describeChecker(action: CheckerAction, s: Sampled, config: BenchConfig)
   }
 }
 
-/** Anatomy edge ids (see ANATOMY_EDGES) for the tokens of the transactions in flight at this edge. */
-function tokensAt(edge: number, expectations: readonly Expectation[], config: BenchConfig): AnatomyToken[] {
+/**
+ * Anatomy edge ids (see ANATOMY_EDGES) for the tokens of the transactions in
+ * flight at this edge, kept in step with the other panes:
+ * - sent: a+b is on its way to the DUT, the expected sum on its way into exp_q;
+ * - before the check: a+b is at the DUT (sampled, or still in its registers) and
+ *   the expected sum waits in exp_q, on no wire;
+ * - checked: actual (the sum the checker read) meets expected on the checker's two inputs.
+ */
+function tokensAt(edge: number, expectations: readonly Expectation[], config: BenchConfig, sampledSum: Val): AnatomyToken[] {
   const tokens: AnatomyToken[] = [];
   const inFlight = expectations.filter((e) => e.sentAtEdge <= edge && (e.checkedAtEdge === null ? edge - e.sentAtEdge <= 3 : edge <= e.checkedAtEdge)).slice(-3);
   for (const e of inFlight) {
@@ -1281,13 +1371,12 @@ function tokensAt(edge: number, expectations: readonly Expectation[], config: Be
       tokens.push({ edgeId: "stim-dut", t: 0.55, label: dataLabel });
       if (config.checkStyle === "queue") tokens.push({ edgeId: "model-q", t: 0.8, label: expLabel });
       else if (config.checkStyle === "single-expected") tokens.push({ edgeId: "stim-model", t: 0.7, label: expLabel });
-    } else if (age >= checkAge) {
-      tokens.push({ edgeId: "dut-chk", t: 0.92, label: dataLabel });
+    } else if (age < checkAge) {
+      // The extra stage's second edge has the result leaving the DUT; the checker still reads it one edge later.
+      tokens.push(age === checkAge - 1 && checkAge > 2 ? { edgeId: "dut-chk", t: 0.08, label: dataLabel } : { edgeId: "stim-dut", t: 0.92, label: dataLabel });
+    } else if (e.checkedAtEdge !== null) {
+      tokens.push({ edgeId: "dut-chk", t: 0.92, label: formatDec(sampledSum) });
       if (config.checkStyle === "queue") tokens.push({ edgeId: "q-chk", t: 0.88, label: expLabel });
-    } else {
-      const frac = checkAge > 1 ? age / checkAge : 0.5;
-      tokens.push({ edgeId: "dut-chk", t: 0.2 + 0.5 * frac, label: dataLabel });
-      if (config.checkStyle === "queue") tokens.push({ edgeId: "q-chk", t: 0.15 + 0.3 * frac, label: expLabel });
     }
   }
   return tokens;
@@ -1412,12 +1501,12 @@ export function benchSource(config: BenchConfig): SourceLine[] {
   lines.push(t("  typedef struct { logic [W-1:0] a, b; logic [W:0] sum; } exp_t;"));
   if (config.checkStyle === "single-expected") lines.push(t("  exp_t expected;", "exp-decl"));
   else if (config.checkStyle === "live-model") lines.push(t("  // no expectation storage: the checker recomputes from a and b", "exp-decl"));
-  else lines.push(t("  exp_t exp_q[$];                   // one expectation per transaction, oldest first", "exp-decl"));
+  else lines.push(t(config.checkStyle === "queue" ? "  exp_t exp_q[$];                   // one expectation per transaction, oldest first" : "  exp_t exp_q[$];", "exp-decl"));
   lines.push(t("  int pass_cnt = 0, fail_cnt = 0;", "cnt-decl"));
   if (config.holdCheck) lines.push(t("  logic [W:0] last_sum;             // the last result the DUT reported", "last-sum-decl"));
   lines.push(t(`  adder_reg #(.W(W), .BUG(${bugParam})) dut (.clk(clk), .rst_n(rst_n), .in_valid(in_valid),`, "dut-inst"));
   lines.push(t("    .a(a), .b(b), .out_valid(out_valid), .sum(sum));"));
-  lines.push(t("  always #5 clk = ~clk;              // rising edges at 5, 15, 25 ns ...", "clk-always"));
+  lines.push(t(config.clockInit === "zero" ? "  always #5 clk = ~clk;              // rising edges at 5, 15, 25 ns ..." : "  always #5 clk = ~clk;", "clk-always"));
   lines.push(t("  function automatic logic [W:0] model_add(input logic [W-1:0] op_a, op_b);", "model-add"));
   lines.push(t("    return {1'b0, op_a} + {1'b0, op_b};   // widen first: the carry is kept"));
   lines.push(t("  endfunction"));
@@ -1495,7 +1584,9 @@ export function benchSource(config: BenchConfig): SourceLine[] {
   if (usesQueue(config)) {
     lines.push(t(`  task automatic drain(input int max_cycles = ${DRAIN_MAX_CYCLES});`, "drain-task"));
     lines.push(t(config.drainDrivesIdle ? "    repeat (max_cycles) begin @(negedge clk); in_valid <= 1'b0; if (exp_q.size() == 0) break; end" : "    repeat (max_cycles) begin @(negedge clk); if (exp_q.size() == 0) break; end", "drain"));
-    lines.push(t(`    repeat (${DRAIN_QUIET_CYCLES}) @(negedge clk);           // two quiet cycles: a late result still fails`, "drain-quiet"));
+    // An inline check has no always checker for a late result to reach, so the comment says only what the line does.
+    const inlineCheck = config.checkStyle === "early-inline" || config.checkStyle === "early-inline-sig";
+    lines.push(t(`    repeat (${DRAIN_QUIET_CYCLES}) @(negedge clk);           // two quiet cycles${inlineCheck ? "" : ": time for a late result to reach the checker"}`, "drain-quiet"));
   } else {
     // No queue to wait for: the model's drain() is one falling edge plus the quiet ones.
     lines.push(t("  task automatic drain();", "drain-task"));
@@ -1533,7 +1624,7 @@ export function benchSource(config: BenchConfig): SourceLine[] {
 function compareLine(op: CompareOp): string {
   switch (op) {
     case "!==":
-      return "    if (actual !== e.sum) begin        // !== : an x or z bit is a mismatch";
+      return "    if (actual !== e.sum) begin        // !== : x and z compare as values, so an x bit against a known bit is a mismatch";
     case "!=":
       return "    if (actual != e.sum) begin";
     case "assert-eq":
@@ -1751,6 +1842,61 @@ export function queuePrediction(run: RunResult, atEdge = QUEUE_QUESTION_EDGE): P
   return { question: `In +TEST=${run.config.testName}, what does exp_q hold after edge ${atEdge}?`, options };
 }
 
+/**
+ * Identity of a prediction: its question and its answer. A gate opened for one
+ * key stays open for any run with the same key (BUG=1 or a/b swapped does not
+ * move a result), and re-arms when the question or the answer changes.
+ */
+export function predictionKey(spec: PredictionSpec | null): string {
+  return spec ? `${spec.question}|${spec.options.find((o) => o.correct)?.label ?? ""}` : "";
+}
+
+export interface HoldCheckChoice extends PredictionChoice {
+  /** The rows this answer says catch BUG=3. */
+  catchers: readonly TestId[];
+}
+
+/**
+ * "With the hold check on, which rows catch BUG=3?", asked before the toggle
+ * shows it. The correct answer and the summaries come from the runs.
+ */
+export function holdCheckPrediction(matrix: MutationMatrixData = buildMatrix(true)): { question: string; options: HoldCheckChoice[] } {
+  const bug3 = columnId(3);
+  const actual = matrix.rows.filter((t) => matrix.cells[t][bug3].state === "caught");
+  const summary = (t: TestId) => matrix.cells[t][bug3].summary;
+  const answers: { id: string; label: string; catchers: readonly TestId[]; feedback: string }[] = [
+    {
+      id: "none",
+      label: "No row",
+      catchers: [],
+      feedback: `The hold check does fire. In +TEST=hold, send_invalid() moves a and b while out_valid is 0, and BUG=3 moves sum with them: ${summary("hold")}.`,
+    },
+    {
+      id: "hold",
+      label: "+TEST=hold only",
+      catchers: ["hold"],
+      feedback: `Only test_hold drives new a and b on idle cycles, so only there does BUG=3's recomputed sum differ from the value held, and only the hold check reads sum on those cycles: ${summary("hold")}. The mutant needs both the stimulus and the check.`,
+    },
+    {
+      id: "gaps-hold",
+      label: "+TEST=gaps and +TEST=hold",
+      catchers: ["gaps", "hold"],
+      feedback: `+TEST=gaps has idle cycles, but idle() leaves a and b as they were, so BUG=3 recomputes the value sum already holds: ${summary("gaps")}.`,
+    },
+    {
+      id: "every",
+      label: "Every row",
+      catchers: matrix.rows,
+      feedback: `The check is in every test's bench, but smoke, corners and gaps never change a or b on an idle cycle, so BUG=3 recomputes the value sum already holds and nothing fails (+TEST=smoke: ${summary("smoke")}).`,
+    },
+  ];
+  const sameRows = (rows: readonly TestId[]) => rows.length === actual.length && rows.every((t) => actual.includes(t));
+  return {
+    question: "With the hold check on, which rows catch BUG=3?",
+    options: answers.map((a) => ({ ...a, correct: sameRows(a.catchers) })),
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Debug clinic: broken benches, suspects, fixes and grading             */
 /* ------------------------------------------------------------------ */
@@ -1777,13 +1923,16 @@ export interface ClinicCase {
   command: string;
   /** The plusargs alone, with nothing about any DUT: the label for a rerun against another DUT. */
   runArgs: string;
-  /** CodeTrace key of the line that causes the symptom. For a deleted statement, the real line beside the gap; `found` names what is missing. */
+  /** CodeTrace key of the line that causes the symptom. For a deleted statement, the real line beside the gap; `found` says what that leaves undone. */
   culprit: string;
-  /** Feedback when the culprit is chosen. */
+  /** Other lines that point at the same fault, accepted as the culprit. */
+  alsoCulprits?: readonly string[];
+  /** Feedback when the culprit is chosen: the cause only. The fixes are offered right after it, so the remedy belongs in the accepted fix's `review`. */
   found: string;
   /** Diagnostic feedback for wrong suspects, by key; `LINE_FACTS` covers the rest. */
   wrong: Partial<Record<string, string>>;
   hints: [string, string, string];
+  /** Rendered in this order, which must not give the answer away: the accepted fix sits at a different position from case to case. */
   fixes: ClinicFix[];
 }
 
@@ -1793,7 +1942,7 @@ const broken = (preset: PresetId, overrides: Partial<BenchConfig>): BenchConfig 
 export const LINE_FACTS: Record<string, string> = {
   "clk-decl": "The clock variable's declaration decides whether the clock ever toggles: with an initializer it starts at 0 and always #5 flips it; without one it starts at x and ~x stays x (§6.8, §11.4.8).",
   "clk-always": "always #5 clk = ~clk; toggles a known clock every 5 ns. It is only as good as clk's initial value.",
-  "model-add": "model_add() widens each operand before adding, so the carry is kept. It is written from the specification, and the log shows the expected values it produced.",
+  "model-add": "model_add() widens each operand before adding, so the carry is kept. It is written from the specification.",
   "reset-task": "reset_dut() drives every DUT input to a known value, holds rst_n low for two edges and releases it with <=.",
   "reset-release": "rst_n <= 1 right after an edge is race-free: the DUT sees the release on the next edge in every simulator (§4.9.4).",
   "send-drive": "send() drives in_valid, a and b with <= right after the edge, so the DUT samples them on the next edge. The drive is race-free.",
@@ -1831,13 +1980,14 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
     runArgs: "no plusargs (all tests)",
     culprit: "main-run-all",
     found:
-      "Found it. The run branch goes straight to the tests: nothing calls reset_dut() before this line. Without reset_dut(), rst_n is never driven and stays at its initial x (§6.8, Table 6-7). The checker's if (rst_n) treats x as false (§12.4), so it compares nothing: the raw counters were PASS=0 FAIL=0, a vacuous pass. report()'s guards turned the 14 leftovers into failures.",
+      "Found it. The run branch goes straight to the tests: nothing drives rst_n before this line, so it stays at its initial x (§6.8, Table 6-7). The checker's if (rst_n) treats x as false (§12.4), so it compares nothing: the raw counters were PASS=0 FAIL=0, a vacuous pass. report()'s guards turned the 14 leftovers into failures.",
     wrong: {
       "chk-guard": "Close: this guard is where the x bites, but the guard is correct. Ask why rst_n is x at every edge: who was supposed to drive it?",
       "send-drive": "send() drove every transaction: the DUT produced results (out_valid rose), the checker just never looked. The TEST lines show the tests ran on time.",
       "model-add": "model_add() produced 14 expectations; the queue holds all of them at the end. Nothing was wrong with the expected values; nothing was compared.",
       report: "report() did its job: it turned 14 leftovers into FAIL=14 instead of printing PASS=0 FAIL=0. The cause is upstream.",
       "clk-decl": "The clock toggled: the TEST lines carry advancing times, and the run ended at a falling edge.",
+      drain: "drain() did what it could: exp_q never empties in this run, so it ran out its 20-cycle bound and then its two quiet cycles, which is why the run ends at 410 ns. Nothing compared a result in that time either. Ask why the queue never emptied.",
     },
     hints: [
       "PASS=0 FAIL=14 with 14 leftovers means the checker never compared a single result. What condition sits around every compare?",
@@ -1845,13 +1995,6 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
       "Who drives rst_n in this bench? Look for a write to it before the first test runs.",
     ],
     fixes: [
-      {
-        id: "restore-reset",
-        label: "Restore reset_dut() at the start of the run branch",
-        apply: (c) => ({ ...c, reset: "normal" }),
-        reviewOk: true,
-        review: "Accepted. rst_n is 0 for two edges and then released with <=, so R1 happens and the checker's guard opens on edge 2.",
-      },
       {
         id: "init-high",
         label: "Initialise the variable: logic rst_n = 1'b1; (no reset task)",
@@ -1866,6 +2009,13 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
         reviewOk: false,
         review: "Rejected. The guard was not the bug. Without it the checker sees the x outputs of a DUT nobody reset and fails $isunknown on the first edges, and later it compares against a DUT that may never have been cleared.",
       },
+      {
+        id: "restore-reset",
+        label: "Restore reset_dut() at the start of the run branch",
+        apply: (c) => ({ ...c, reset: "normal" }),
+        reviewOk: true,
+        review: "Accepted. rst_n is 0 for two edges and then released with <=, so R1 happens and the checker's guard opens on edge 2.",
+      },
     ],
   },
   {
@@ -1876,7 +2026,7 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
     runArgs: "+TEST=corners",
     culprit: "check-cmp",
     found:
-      "Found it. actual != e.sum is x when the known bits agree and one bit is x (§11.4.5), and an if treats x as false and runs its else branch (§12.4): pass_cnt++. Every X result was counted as a pass. !== compares x and z as values and always returns 0 or 1.",
+      "Found it. actual != e.sum is x when the known bits agree and one bit is x (§11.4.5), and an if treats x as false and runs its else branch (§12.4): pass_cnt++. Every X result was counted as a pass.",
     wrong: {
       "chk-isunknown": "$isunknown guards out_valid, the control signal, and out_valid was a clean 1 on every result. The x is in sum, which this line never looks at.",
       "model-add": "The expected values are right: 0, 255, 255, 256, 510, 256, 255. The question is why an actual value with an x bit was counted as equal to them.",
@@ -1891,11 +2041,18 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
     ],
     fixes: [
       {
+        id: "int-copy",
+        label: "Copy sum into an int first: int s = actual; if (s != e.sum)",
+        apply: (c) => ({ ...c, compareOp: "int-copy" }),
+        reviewOk: false,
+        review: "Rejected. A 2-state copy turns every x bit into 0 before the compare (§6.11.2): results whose carry should be 0 now pass silently, and only the ones whose carry should be 1 fail. The fact that the bit was unknown is lost.",
+      },
+      {
         id: "case-neq",
         label: "Compare with !== instead of !=",
         apply: (c) => ({ ...c, compareOp: "!==" }),
         reviewOk: true,
-        review: "Accepted. !== compares x and z as values (§11.4.5): every X result is now a failure, printed as sum=X (§21.2.1.3).",
+        review: "Accepted. !== compares x and z as values and always returns 0 or 1 (§11.4.5): every X result is now a failure, printed as sum=X (§21.2.1.3).",
       },
       {
         id: "assert",
@@ -1903,13 +2060,6 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
         apply: (c) => ({ ...c, compareOp: "assert-eq" }),
         reviewOk: true,
         review: "Accepted. An immediate assertion treats x as false and fails (§16.3), so the X lands on the failing side. The lesson keeps if/else with !== until assertions are taught; either way, write every check so an unknown fails.",
-      },
-      {
-        id: "int-copy",
-        label: "Copy sum into an int first: int s = actual; if (s != e.sum)",
-        apply: (c) => ({ ...c, compareOp: "int-copy" }),
-        reviewOk: false,
-        review: "Rejected. A 2-state copy turns every x bit into 0 before the compare (§6.11.2): results whose carry should be 0 now pass silently, and only the ones whose carry should be 1 fail. The fact that the bit was unknown is lost.",
       },
     ],
   },
@@ -1921,32 +2071,33 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
     runArgs: "+TEST=smoke",
     culprit: "send-check",
     found:
-      "Found it. On the second edge the DUT is only sampling a and b: it schedules sum <= a + b with <=, and that update lands after send() has read sum (§4.9.4). The check therefore reads the result of the previous transaction. Matching results on out_valid with a queue never counts edges.",
+      "Found it. On the second edge the DUT is only sampling a and b: it schedules sum <= a + b with <=, and that update lands after send() has read sum (§4.9.4). So the check reads sum from before this result: R1's 0 on the first check, and the previous transaction's result on every check after it.",
     wrong: {
       "send-drive": "The drive is right: <= right after the edge, so the DUT samples the new inputs on the next edge. The problem is when the result is read, not when the inputs are driven.",
       "model-add": "The expected values 3, 30 and 127 are correct; it is the actual values that are one transaction behind.",
-      "dut-inst": "The DUT is fine: each sum is the right answer for the previous inputs, which is exactly its one-cycle latency.",
+      "dut-inst": "The DUT is fine: after the reset value 0 on the first check, each sum is the right answer for the previous inputs, which is exactly its one-cycle latency.",
       "clk-always": "The clock is fine: the error times advance by 20 ns per transaction, two edges each.",
+      drain: "drain() has nothing to wait for: nothing is pushed onto exp_q in this bench, so it finds the queue empty at its first falling edge, and all three errors came from inside send() before it started.",
     },
     hints: [
-      "Each actual is the right answer to the previous question. Is the DUT late, or is the bench early?",
+      "After the first check, each actual is the right answer to the previous question. Is the DUT late, or is the bench early?",
       "The DUT samples the inputs on the edge after send() drives them, and updates sum with <=. When does that update become visible?",
       "The lesson's checker never counts edges: it waits for out_valid and pops the oldest expectation.",
     ],
     fixes: [
-      {
-        id: "queue",
-        label: "Match results on out_valid with the queue (restore the always checker)",
-        apply: (c) => ({ ...c, checkStyle: "queue" }),
-        reviewOk: true,
-        review: "Accepted, preferred. The checker fires when out_valid is 1 and pops the oldest expectation, whatever the latency.",
-      },
       {
         id: "live-sig",
         label: "Compare with model_add(a, b) of the signals instead of model_add(a_val, b_val)",
         apply: (c) => ({ ...c, checkStyle: "early-inline-sig" }),
         reviewOk: false,
         review: "Rejected. a and b already hold a_val and b_val at that edge, so the expectation does not change; the actual value is still read one edge too early.",
+      },
+      {
+        id: "queue",
+        label: "Match results on out_valid with the queue (restore the always checker)",
+        apply: (c) => ({ ...c, checkStyle: "queue" }),
+        reviewOk: true,
+        review: "Accepted, preferred. Matching results on out_valid with a queue never counts edges: the checker fires when out_valid is 1 and pops the oldest expectation, whatever the latency.",
       },
       {
         id: "idle-each",
@@ -1965,7 +2116,7 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
     runArgs: "+TEST=smoke",
     culprit: "send-push",
     found:
-      "Found it. One expected variable cannot hold results in flight: with back-to-back sends the next send() overwrites it before the earlier result arrives, so each result is compared with the expectation of the transaction after it. A queue keeps them in order: push_back per send, pop_front per result.",
+      "Found it. One expected variable cannot hold results in flight: with back-to-back sends the next send() overwrites it before the earlier result arrives, so each result except the last is compared with the expectation of the transaction after it.",
     wrong: {
       "check-cmp": "The compare is right (!== on the value it was given). The value it was given is the wrong expectation.",
       "send-drive": "The drive is race-free and on time. Look at what else send() records, and how many of them can exist at once.",
@@ -1986,7 +2137,7 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
         label: "Use a queue: exp_q.push_back() in send(), pop_front() in the checker",
         apply: (c) => ({ ...c, checkStyle: "queue" }),
         reviewOk: true,
-        review: "Accepted. Expectations are kept in order and consumed one per result; back-to-back traffic is fine.",
+        review: "Accepted. A queue keeps expectations in order, push_back per send and pop_front per result, so back-to-back traffic is fine.",
       },
       {
         id: "idle-each",
@@ -2000,7 +2151,7 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
         label: "Compare against model_add(a, b) of the signals in the checker",
         apply: (c) => ({ ...c, checkStyle: "live-model" }),
         reviewOk: false,
-        review: "Rejected. When the result arrives, a and b already hold the next transaction's operands, so the checker compares each result with the wrong sum.",
+        review: "Rejected. With back-to-back sends, a and b already hold the next transaction's operands when a result arrives, so those results are compared with the wrong sum; only the last result, with nothing sent after it, matches.",
       },
     ],
   },
@@ -2012,7 +2163,7 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
     runArgs: "no plusargs (all tests)",
     culprit: "clk-decl",
     found:
-      "Found it. logic clk; without an initializer starts at x (§6.8, Table 6-7), and ~x is x (§11.4.8), so always #5 clk = ~clk; writes x forever and no posedge is ever detected (Table 9-2). reset_dut() waits for an edge that never comes, and the watchdog ends the run with $fatal (§20.10).",
+      "Found it. logic clk; starts at x (§6.8, Table 6-7), and ~x is x (§11.4.8), so always #5 clk = ~clk; writes x forever and no posedge is ever detected (Table 9-2). reset_dut() waits for an edge that never comes, and the watchdog ends the run with $fatal (§20.10).",
     wrong: {
       "clk-always": "The always block is the usual one. It can only toggle a clock that starts at a known value: ~x is x (§11.4.8). Look at the declaration it toggles.",
       "main-wdog": "The watchdog did exactly its job: it turned a silent hang into a verdict line and a WDOG message. It is the messenger.",
@@ -2021,6 +2172,7 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
       drain: "drain() never ran: the run branch is still inside reset_dut(). No TEST line was printed.",
       "main-run-all": "The run branch never reached this line: no TEST line was printed, because reset_dut() never returned.",
       "main-report": "main never reached this line, because the run branch never ended. The summary in the log came from the watchdog's own report() call.",
+      "chk-always": "The checker's body never ran: it is waiting at @(posedge clk), and no rising edge ever comes. Ask why.",
     },
     hints: [
       "No TEST line means run_one() never ran, so reset_dut() never returned. What does it wait for?",
@@ -2028,13 +2180,6 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
       "Compare the clock's declaration with the lesson's: logic clk = 1'b0;",
     ],
     fixes: [
-      {
-        id: "init-zero",
-        label: "Initialise the clock: logic clk = 1'b0;",
-        apply: (c) => ({ ...c, clockInit: "zero" }),
-        reviewOk: true,
-        review: "Accepted. clk starts known (§6.8) and toggles every 5 ns, so rising edges happen at 5, 15, 25 ns ...",
-      },
       {
         id: "timeout",
         label: "Raise TIMEOUT to 100us",
@@ -2049,6 +2194,13 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
         reviewOk: false,
         review: "Rejected. !x is also x (§11.4.7): the clock still never leaves x and the watchdog still ends the run.",
       },
+      {
+        id: "init-zero",
+        label: "Initialise the clock: logic clk = 1'b0;",
+        apply: (c) => ({ ...c, clockInit: "zero" }),
+        reviewOk: true,
+        review: "Accepted. With an initializer clk starts known (§6.8) and toggles every 5 ns, so rising edges happen at 5, 15, 25 ns ...",
+      },
     ],
   },
   {
@@ -2058,12 +2210,14 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
     command: "+TEST=smoke",
     runArgs: "+TEST=smoke",
     culprit: "test-smoke",
+    alsoCulprits: ["test-smoke-2"],
     found:
-      "Found it. test_smoke() ends without idle(1), so in_valid stays 1 with a = 100 and b = 27 on the bus. The DUT keeps sampling a valid input on every edge and reports 127 again and again; the checker finds exp_q empty and counts each extra result as a failure, which is exactly what the size() guard is for.",
+      "Found it. test_smoke() ends on its last send(), and nothing drives in_valid back to 0, so it stays 1 with a = 100 and b = 27 on the bus. The DUT keeps sampling a valid input on every edge and reports 127 again and again; the checker finds exp_q empty and counts each extra result as a failure, which is exactly what the size() guard is for.",
     wrong: {
       "check-guard": "This guard is the messenger: it turned a result nobody expected into a failure. Ask why the DUT produced extra results at 75 and 85 ns.",
       "send-drive": "send() drives in_valid <= 1 as it should. Something has to drive it back to 0 after the last send, and look at who did not.",
       drain: "drain() waited for the queue to empty and two quiet cycles, as designed; the extra results arrived during that window, which is why they were caught.",
+      idle: "Close: the task itself is right, but nothing in this run calls it. Look at what should have.",
       "dut-inst": "The DUT is behaving: it sees in_valid = 1 on every edge and answers every one. Look at the stimulus that left in_valid high.",
       "chk-outvalid": "The checker matched on out_valid correctly. The problem is that out_valid stayed 1 after the last expected result.",
     },
@@ -2074,18 +2228,18 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
     ],
     fixes: [
       {
-        id: "restore-idle",
-        label: "End test_smoke() with idle(1)",
-        apply: (c) => ({ ...c, dropFinalIdle: null }),
-        reviewOk: true,
-        review: "Accepted. in_valid returns to 0 after the last send, so the DUT produces exactly one result per transaction.",
-      },
-      {
         id: "drop-guard",
         label: "Delete the exp_q.size() == 0 guard in check_result()",
         apply: (c) => ({ ...c, unexpectedGuard: false }),
         reviewOk: false,
         review: "Rejected. The extra results are still there: pop_front() on an empty queue returns an exp_t with every member x (§7.10.2.4), the compare fails anyway, and the message now says expected x instead of naming the real cause.",
+      },
+      {
+        id: "restore-idle",
+        label: "End test_smoke() with idle(1)",
+        apply: (c) => ({ ...c, dropFinalIdle: null }),
+        reviewOk: true,
+        review: "Accepted. idle(1) drives in_valid back to 0 after the last send, so the DUT produces exactly one result per transaction.",
       },
       {
         id: "drain-idle",
@@ -2104,11 +2258,11 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
     runArgs: "no plusargs (all tests)",
     culprit: "main-report",
     found:
-      "Found it. This report() call is the last statement of main, and nothing ends the run after it: a simulation ends by itself only when no activity of any kind remains (§9.6.1), the free-running clock is activity forever, and disable fork has already killed the watchdog, so the regression would have to kill the job. End main with $finish (§20.2).",
+      "Found it. This report() call is the last statement of main, and nothing ends the run after it: a simulation ends by itself when no activity of any kind remains (§9.6.1; this bench has no program blocks, the other case that clause names), the free-running clock is activity forever, and disable fork has already killed the watchdog, so the regression would have to kill the job.",
     wrong: {
       "main-wdog": "The watchdog cannot help: disable fork killed it when the run branch finished, and that is correct, or every clean run would end with a fatal.",
-      "clk-always": "The clock is doing what a clock does. It is the reason the simulation stays alive, not a bug; something must call $finish.",
-      drain: "drain() returned: the summary printed right after it. The run branch is finished; main is what never ends.",
+      "clk-always": "The clock is doing what a clock does. It is the reason the simulation stays alive, not a bug; something else has to end the run.",
+      drain: "drain() returned: the summary printed right after it. The run branch is finished and main has no statements left; the simulation goes on because the clock is still active (§9.6.1).",
       report: "report() ran once and printed the right line. What should follow it?",
     },
     hints: [
@@ -2144,19 +2298,90 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
 
 export const clinicCase = (id: ClinicCaseId): ClinicCase => CLINIC_CASES.find((c) => c.id === id) as ClinicCase;
 
-/** The lines a learner may suspect: the keys of the broken bench's source that have a diagnosis. */
+/** A stimulus line inside a test task: test-<id>-<n>. */
+const STIM_LINE = /^test-(smoke|corners|gaps|hold)-\d+$/;
+
+/**
+ * The lines a learner may suspect: the keys of the broken bench's source that
+ * have a diagnosis. Every stimulus line of every test is one, so that a suspect
+ * control on the line beside a deleted statement says nothing.
+ */
 export function suspectKeys(source: readonly SourceLine[], kase: ClinicCase): string[] {
-  const keys = new Set<string>([kase.culprit, ...Object.keys(kase.wrong), ...Object.keys(LINE_FACTS)]);
-  return source.map((l) => l.key).filter((k): k is string => Boolean(k) && keys.has(k as string));
+  const keys = new Set<string>([kase.culprit, ...(kase.alsoCulprits ?? []), ...Object.keys(kase.wrong), ...Object.keys(LINE_FACTS)]);
+  return source.map((l) => l.key).filter((k): k is string => Boolean(k) && (keys.has(k as string) || STIM_LINE.test(k as string)));
 }
 
-/** Feedback for a suspect line: the case's own diagnosis, else the line's facts. */
+/**
+ * Whether a line of the bench executed in this run, read from the run's own
+ * events and checker actions. Lines not listed here (declarations, the clock,
+ * the DUT instance, the watchdog's start) run in every run.
+ */
+export function lineRan(run: RunResult, key: string): boolean {
+  const events = run.steps.flatMap((s) => s.events);
+  const has = (kind: BenchEvent["kind"]) => events.some((e) => e.kind === kind);
+  const started = new Set(events.flatMap((e) => (e.kind === "test-start" ? [e.test as string] : [])));
+  const kinds = new Set(run.steps.flatMap((s) => (s.kind === "edge" ? [s.checker.kind as string] : [])));
+  const compared = kinds.has("pass") || kinds.has("x-pass") || kinds.has("fail");
+  const test = /^test-(smoke|corners|gaps|hold)(-\d+)?$/.exec(key);
+  if (test) return started.has(test[1]);
+  switch (key) {
+    case "reset-task":
+    case "main-reset-call":
+      return has("reset-drive");
+    case "reset-release":
+      return has("reset-release");
+    case "send-drive":
+    case "send-push":
+    case "model-add":
+      return has("send");
+    case "send-check":
+      return has("inline-check");
+    case "idle":
+      return has("idle");
+    case "check-guard":
+      return compared || kinds.has("unexpected");
+    case "check-pop":
+    case "check-cmp":
+      return compared;
+    case "chk-always":
+    case "chk-guard":
+      return run.edges > 0;
+    case "chk-isunknown":
+      return compared || kinds.has("unexpected") || kinds.has("no-result") || kinds.has("x-out-valid") || kinds.has("hold-fail");
+    case "chk-outvalid":
+      return compared || kinds.has("unexpected") || kinds.has("no-result") || kinds.has("hold-fail");
+    case "chk-hold":
+      return kinds.has("no-result") || kinds.has("hold-fail");
+    case "run-one":
+    case "main-run-all":
+      return started.size > 0;
+    case "drain":
+      return has("drain-check");
+    case "report":
+      return has("report");
+    case "main-report":
+      return has("watchdog-killed");
+    case "main-finish":
+      return has("finish") || has("stop");
+    default:
+      return true;
+  }
+}
+
+/** Feedback for a suspect line: the case's own diagnosis, else the line's facts and whether it ran. */
 export function diagnoseSuspect(kase: ClinicCase, key: string): { culprit: boolean; text: string } {
-  if (key === kase.culprit) return { culprit: true, text: kase.found };
+  if (key === kase.culprit || kase.alsoCulprits?.includes(key)) return { culprit: true, text: kase.found };
   const specific = kase.wrong[key];
   if (specific) return { culprit: false, text: specific };
-  const fact = LINE_FACTS[key];
-  return { culprit: false, text: fact ? `${fact} It behaves as written in this run; the cause is elsewhere.` : "This line behaves as written in this run; the cause is elsewhere." };
+  const stim = STIM_LINE.exec(key);
+  const fact = stim ? `This is one stimulus step of test_${stim[1]}(), as the lesson writes it.` : LINE_FACTS[key];
+  const testId = /^test-(smoke|corners|gaps|hold)/.exec(key)?.[1];
+  const verdict = lineRan(runBench(kase.config), key)
+    ? "It behaves as written in this run; the cause is elsewhere."
+    : testId && !(kase.config.tests as string[]).includes(testId)
+      ? `+TEST=${kase.config.testName} does not select this test, so it never ran and is not the cause.`
+      : "This line never ran in this run, so it is not the cause: ask what kept the run from reaching it.";
+  return { culprit: false, text: fact ? `${fact} ${verdict}` : verdict };
 }
 
 /**

@@ -1,9 +1,10 @@
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CycleSignal } from "@/components/visual-system/CycleWaveform";
-import SelfCheckBenchLab from "@/components/visuals/SelfCheckBenchLab";
+import SelfCheckBenchLab, { QueueStrip } from "@/components/visuals/SelfCheckBenchLab";
+import { clinicCase, runBench, type EdgeStep } from "@/lib/selfcheck-bench-model";
 
 // Records what every render passed to the waveform, so a test can see a state that lasts for one commit only.
 const waveRenders = vi.hoisted(() => [] as { title: string; signals: string[] }[]);
@@ -135,9 +136,75 @@ describe("SelfCheckBenchLab step mode", () => {
     expect(screen.queryByLabelText(/^(15|19) on (push_back|pop_front)$/)).not.toBeInTheDocument();
     expect(screen.getByText(/expected sums travelling through exp_q open with the second prediction/)).toBeInTheDocument();
     lockIn("{15, 19}", 0);
-    expect(screen.getByRole("group", { name: /Anatomy of tb_top at Edge 6 \(65 ns\).*; 4 tokens in flight/ })).toBeInTheDocument();
+    // 19 is on its way in; 15 waits in exp_q, on no wire, as the strip below shows.
+    expect(screen.getByRole("group", { name: /Anatomy of tb_top at Edge 6 \(65 ns\).*; 3 tokens in flight/ })).toBeInTheDocument();
     expect(screen.getByLabelText("19 on push_back")).toBeInTheDocument();
+    expect(screen.queryByLabelText("15 on pop_front")).not.toBeInTheDocument();
+    // At the check, 15 leaves the queue and the sampled sum meets it.
+    stepTo(7);
     expect(screen.getByLabelText("15 on pop_front")).toBeInTheDocument();
+    expect(screen.getByLabelText("15 on out_valid, sum")).toBeInTheDocument();
+  });
+
+  it("a committed answer stays on the fold line when a run under the same key drops that option", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" ask="queue" />);
+    lockIn("{19}", 0);
+    expect(screen.getByLabelText("your answer, incorrect")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show advanced" }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "DUT" })).getByRole("radio", { name: "extra stage" }));
+    // Same question, same answer: the gate stays open. {19} is no longer an option for this DUT, and the learner still said it.
+    expect(screen.queryByRole("button", { name: /lock in prediction/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("{19}")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Fold this prediction to one line" }));
+    expect(screen.getByRole("button", { name: /You said \{19\}; the answer is \{15, 19\}/ })).toBeInTheDocument();
+  });
+
+  it("comparing DUTs keeps the edge; a new test starts over", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" />);
+    revealEdge();
+    revealEdge();
+    stepTo(7);
+    expect(status()).toMatch(/Edge 7 \(75 ns\)/);
+    const dut = () => within(screen.getByRole("radiogroup", { name: "DUT" }));
+    fireEvent.click(dut().getByRole("radio", { name: "BUG=2" }));
+    expect(status()).toMatch(/Edge 7 \(75 ns\)/);
+    expect(status()).toMatch(/a mismatch/);
+    fireEvent.click(dut().getByRole("radio", { name: "BUG=0" }));
+    expect(status()).toMatch(/Edge 7 \(75 ns\)/);
+    // The end of a run is no edge: comparing there stays at the end.
+    stepTo(Number(scrubber().getAttribute("max")));
+    fireEvent.click(dut().getByRole("radio", { name: "BUG=1" }));
+    expect(status()).toMatch(/Run ends \(130 ns\)/);
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Test" })).getByRole("radio", { name: "smoke" }));
+    expect(status()).toMatch(/Edge 0 \(5 ns\)/);
+  });
+
+  it("the strip says its state is the one after this edge", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" ask="edge" />);
+    lockIn("Edge 4 (45 ns)");
+    stepTo(6);
+    expect(screen.getByText(/oldest first · after this edge · 2 waiting/)).toBeInTheDocument();
+    stepTo(Number(scrubber().getAttribute("max")));
+    expect(screen.getByText(/oldest first · after this step · 0 waiting/)).toBeInTheDocument();
+  });
+
+  it("a popped chip keeps its text at full opacity: only the tag and operands are muted, once", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" ask="edge" />);
+    lockIn("Edge 4 (45 ns)");
+    stepTo(7);
+    const chip = screen.getByRole("listitem", { name: /→ 15, popped and matched/ });
+    expect(chip.className).not.toMatch(/opacity-/);
+    expect(document.querySelector("style")?.textContent).not.toMatch(/opacity:\.8/);
+  });
+
+  it("an X result popped and counted is labelled as counted, with its own glyph, not as matched", () => {
+    const run = runBench(clinicCase("neq").config);
+    const step = run.steps.find((s): s is EdgeStep => s.kind === "edge" && s.checker.kind === "x-pass") as EdgeStep;
+    render(<QueueStrip step={step} />);
+    const chip = screen.getByRole("listitem", { name: /popped, counted as a pass/ });
+    expect(chip).toHaveTextContent("pop_front ○");
+    expect(chip).not.toHaveTextContent("✓");
+    expect(screen.queryByRole("listitem", { name: /popped and matched/ })).not.toBeInTheDocument();
   });
 
   it("+TEST=hold shows a note that the kata's bench is running, and its code carries the kata's additions", () => {
@@ -149,13 +216,193 @@ describe("SelfCheckBenchLab step mode", () => {
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
-  it("changing the test or the DUT re-arms both predictions and reruns the model", () => {
+  it("a new test re-arms the gates; the queue question waits for the edge answer again", () => {
     render(<SelfCheckBenchLab mode="step" preset="smoke" />);
     lockIn("Edge 4 (45 ns)");
-    expect(screen.getAllByRole("button", { name: /lock in prediction/i })).toHaveLength(1);
+    lockIn("{}", 0);
+    expect(screen.queryByRole("button", { name: /lock in prediction/i })).not.toBeInTheDocument();
     fireEvent.click(within(screen.getByRole("radiogroup", { name: "Test" })).getByRole("radio", { name: "corners" }));
-    expect(screen.getAllByRole("button", { name: /lock in prediction/i })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /lock in prediction/i })).toHaveLength(1);
     expect(screen.getByText(/send\(0, 0\) runs on edge 2/)).toBeInTheDocument();
+    expect(screen.queryByText(/what does exp_q hold/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("rowheader", { name: "sum" })).not.toBeInTheDocument();
+  });
+
+  it("a DUT that moves no result keeps both gates open; the extra stage changes the answers, so it re-arms them", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" />);
+    lockIn("Edge 4 (45 ns)");
+    lockIn("{15, 19}", 0);
+    const dut = within(screen.getByRole("radiogroup", { name: "DUT" }));
+    fireEvent.click(dut.getByRole("radio", { name: "BUG=1" }));
+    expect(screen.queryByRole("button", { name: /lock in prediction/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("rowheader", { name: "sum" })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: /exp_q after this step/ })).toBeInTheDocument();
+    fireEvent.click(dut.getByRole("radio", { name: "BUG=2" }));
+    expect(screen.queryByRole("button", { name: /lock in prediction/i })).not.toBeInTheDocument();
+    // The open prompt's feedback follows the current run.
+    expect(screen.getByText(/The expected value is 10 and the actual value is 11/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show advanced" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /kata hold check/ }));
+    expect(screen.queryByRole("button", { name: /lock in prediction/i })).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "DUT" })).getByRole("radio", { name: "extra stage" }));
+    expect(screen.getAllByRole("button", { name: /lock in prediction/i })).toHaveLength(1);
+    expect(screen.queryByRole("rowheader", { name: "sum" })).not.toBeInTheDocument();
+  });
+
+  it("the exp_q question stays out of the page until the edge question is answered, so its feedback cannot give that answer away", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" />);
+    expect(screen.getAllByRole("button", { name: /lock in prediction/i })).toHaveLength(1);
+    expect(screen.queryByText(/what does exp_q hold/)).not.toBeInTheDocument();
+    revealEdge();
+    expect(screen.getByText(/what does exp_q hold after edge 6\?/)).toBeInTheDocument();
+    expect(screen.queryByText(/exp_q strip is now shown/)).not.toBeInTheDocument();
+  });
+
+  it("ask='edge' asks only the edge question; the strip opens with the outputs", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" ask="edge" />);
+    expect(screen.queryByRole("list", { name: /exp_q after this step/ })).not.toBeInTheDocument();
+    expect(status()).toMatch(/hidden until you predict/);
+    lockIn("Edge 4 (45 ns)");
+    expect(screen.queryByText(/what does exp_q hold/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /lock in prediction/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("list", { name: /exp_q after this step/ })).toBeInTheDocument();
+  });
+
+  it("ask='queue' opens the outputs and asks only about exp_q, whose answer stays hidden until committed", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" ask="queue" />);
+    expect(screen.queryByText(/On which edge does the checker see/)).not.toBeInTheDocument();
+    expect(screen.getByRole("rowheader", { name: "sum" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /exp_q after this step/ })).not.toBeInTheDocument();
+    stepTo(6);
+    expect(status()).toMatch(/the queue is hidden until you predict/);
+    expect(document.body.textContent).not.toMatch(/pushes 19/);
+    lockIn("{15, 19}", 0);
+    expect(screen.getByRole("list", { name: /exp_q after this step, oldest first: 15, 19/ })).toBeInTheDocument();
+  });
+
+  it("keyboard focus lands on the feedback when a prediction is locked in or skipped, not on the page", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" />);
+    lockIn("Edge 4 (45 ns)");
+    const edgeFeedback = document.activeElement as HTMLElement;
+    expect(edgeFeedback).not.toBe(document.body);
+    expect(edgeFeedback).toHaveAttribute("aria-live", "polite");
+    expect(edgeFeedback).toHaveAttribute("tabindex", "-1");
+    expect(edgeFeedback.textContent).toMatch(/^Correct\./);
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    const queueFeedback = document.activeElement as HTMLElement;
+    expect(queueFeedback).not.toBe(edgeFeedback);
+    expect(queueFeedback.textContent).toMatch(/Why the answer holds/);
+  });
+
+  it("an answered prediction folds to one line and unfolds to its feedback, with focus kept on both moves", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" />);
+    lockIn("Edge 3 (35 ns)");
+    const question = screen.getByText(/On which edge does the checker see/);
+    fireEvent.click(screen.getAllByRole("button", { name: "Fold this prediction to one line" })[0]);
+    const unfold = screen.getByRole("button", { name: /You said Edge 3 \(35 ns\); the answer is Edge 4 \(45 ns\)/ });
+    expect(document.activeElement).toBe(unfold);
+    expect(unfold).toHaveAttribute("aria-expanded", "false");
+    expect(question.closest("[hidden]")).not.toBeNull();
+    // The gate stays open while folded.
+    expect(screen.getByRole("rowheader", { name: "sum" })).toBeInTheDocument();
+    fireEvent.click(unfold);
+    expect(question.closest("[hidden]")).toBeNull();
+    expect((document.activeElement as HTMLElement).textContent).toMatch(/^Not quite\./);
+  });
+
+  it("the rule line names every test +TEST=all runs, including hold when the kata registers it", () => {
+    render(<SelfCheckBenchLab mode="step" preset="all" />);
+    expect(screen.getByText(/R3 for ordinary values, then corners and gaps\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show advanced" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /kata hold check/ }));
+    expect(screen.getByText(/R3 for ordinary values, then corners, gaps and hold\./)).toBeInTheDocument();
+  });
+
+  it("the model's assumptions say same-time lines from different processes may print in either order", () => {
+    render(<SelfCheckBenchLab mode="step" preset="all" />);
+    expect(screen.getByText(/may appear in either order in a simulator \(§4\.7\)/)).toBeInTheDocument();
+  });
+
+  it("the x-carry DUT is the clinic's alone: the bug prop falls back to BUG=0 rather than showing a DUT with no option", () => {
+    render(<SelfCheckBenchLab mode="step" preset="corners" bug="x-carry" />);
+    expect(within(screen.getByRole("radiogroup", { name: "DUT" })).getByRole("radio", { name: "BUG=0" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("group", { name: /tb_top waveform, \+TEST=corners, BUG=0/ })).toBeInTheDocument();
+  });
+
+  it("during Play the narration is not a live region; the step playback stops at is announced once", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SelfCheckBenchLab mode="step" preset="gaps" focus="anatomy" />);
+      const narration = screen.getAllByRole("status").find((el) => /Edge 0/.test(el.textContent ?? "")) as HTMLElement;
+      expect(narration).toHaveAttribute("aria-live", "polite");
+      const live = () => screen.getAllByRole("status").find((el) => el.className.includes("sr-only")) as HTMLElement;
+      expect(live()).toBeEmptyDOMElement();
+      fireEvent.click(screen.getByRole("button", { name: "Play" }));
+      expect(narration).toHaveAttribute("aria-live", "off");
+      act(() => {
+        vi.advanceTimersByTime(1400);
+      });
+      expect(narration.textContent).toMatch(/Edge 1 \(15 ns\)/);
+      expect(live()).toBeEmptyDOMElement();
+      fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+      expect(narration).toHaveAttribute("aria-live", "polite");
+      expect(live().textContent).toMatch(/^Stopped at Edge 1 \(15 ns\)\. /);
+      // Stepping by hand speaks through the narration again, so the pause line goes.
+      fireEvent.click(screen.getByRole("button", { name: /next step/i }));
+      expect(live()).toBeEmptyDOMElement();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("at phone width one pane shows, chosen beside the transport; from md up the chooser is hidden and every pane shows", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" />);
+    revealEdge();
+    const chooser = screen.getByRole("radiogroup", { name: "Pane shown on a phone" });
+    expect(chooser.className).toMatch(/md:hidden/);
+    const paneOf = (el: Element, cls = "max-md:hidden") => el.closest(`[class*="${cls}"]`);
+    const code = screen.getByRole("list", { name: /tb_top \(generated/ });
+    const wave = screen.getByRole("group", { name: /tb_top waveform/ });
+    expect(paneOf(wave)).toBeNull();
+    expect(paneOf(code)).not.toBeNull();
+    fireEvent.click(within(chooser).getByRole("radio", { name: "Code" }));
+    expect(paneOf(code)).toBeNull();
+    expect(paneOf(wave)).not.toBeNull();
+    // Keeps its place in the page: the chooser comes right after the narration, before any pane.
+    expect(chooser.compareDocumentPosition(wave) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("a code pane opened on a phone scrolls to the active line then, because a hidden pane has no size to scroll", () => {
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    let shown = false;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (!shown) return rect(0, 0);
+      return this.getAttribute("aria-current") === "step" ? rect(500, 24) : rect(0, 100);
+    });
+    stubLayout("clientHeight", 100);
+    render(<SelfCheckBenchLab mode="step" preset="gaps" focus="anatomy" />);
+    stepTo(2);
+    const panel = screen.getByRole("region", { name: /^Scrollable code: tb_top/ });
+    expect(panel.scrollTop).toBe(0);
+    shown = true;
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Pane shown on a phone" })).getByRole("radio", { name: "Code" }));
+    expect(panel.scrollTop).toBe(500 - (100 - 24) / 2);
+  });
+
+  it("queue chips animate on push and pop only under motion-safe, with keyframes on the page", () => {
+    render(<SelfCheckBenchLab mode="step" preset="gaps" />);
+    lockIn("Edge 4 (45 ns)");
+    lockIn("{15, 19}", 0);
+    expect(document.querySelector("style")?.textContent).toMatch(/@keyframes selfcheck-push.*@keyframes selfcheck-pop/);
+    stepTo(6);
+    const strip = screen.getByRole("list", { name: /exp_q after this step, oldest first: 15, 19/ });
+    const chip = (name: RegExp) => within(strip).getByRole("listitem", { name });
+    expect(chip(/19, just pushed|→ 19, just pushed/).className).toMatch(/motion-safe:animate-\[selfcheck-push/);
+    expect(chip(/→ 15$/).className).not.toMatch(/animate-/);
+    stepTo(7);
+    const after = screen.getByRole("list", { name: /exp_q after this step, oldest first: 19/ });
+    expect(within(after).getByRole("listitem", { name: /→ 15, popped and matched/ }).className).toMatch(/motion-safe:animate-\[selfcheck-pop/);
   });
 
   it("bug prop selects the mutant: corners against BUG=1 logs the three carry failures and ends PASS=4 FAIL=3", () => {
@@ -208,7 +455,7 @@ describe("SelfCheckBenchLab step mode", () => {
     corners.forEach((r) => expect(r.signals).not.toContain("sum"));
     fireEvent.click(tests.getByRole("radio", { name: "smoke" }));
     expect(screen.queryByRole("rowheader", { name: "sum" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /lock in prediction/i })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /lock in prediction/i })).toHaveLength(1);
   });
 
   it("the waveform's own box follows the cursor, and the page does not scroll", () => {
@@ -297,6 +544,52 @@ describe("SelfCheckBenchLab step mode", () => {
     expect(within(screen.getByRole("radiogroup", { name: "Test" })).getByRole("radio", { name: "smoke" })).toHaveAttribute("aria-checked", "true");
   });
 
+  it("anatomy: the DUT lights on the edge it samples, with the bench lit beside it, and the code highlights the flop", () => {
+    render(<SelfCheckBenchLab mode="step" preset="smoke" focus="anatomy" />);
+    stepTo(3);
+    const group = screen.getByRole("group", { name: /Anatomy of tb_top at Edge 3 \(35 ns\): dut is active, along with send\(\) \/ idle\(\)/ });
+    expect(within(group).getByRole("button", { name: /dut, adder_reg, active/ })).toBeInTheDocument();
+    expect(within(group).getByRole("button", { name: /send\(\) \/ idle\(\), drive with <=, active/ })).toBeInTheDocument();
+    expect(document.querySelector('[aria-current="step"]')?.textContent).toMatch(/if \(in_valid\) sum <= next_sum/);
+    expect(screen.getByText(/The lit blocks are the parts of tb_top acting at this step/)).toBeInTheDocument();
+  });
+
+  it("the gate still hides the DUT: before predicting, the sampling edge lights the bench alone", () => {
+    render(<SelfCheckBenchLab mode="step" preset="smoke" />);
+    stepTo(3);
+    const group = screen.getByRole("group", { name: /^Anatomy of tb_top at Edge 3 \(35 ns\): send\(\) \/ idle\(\) is active$/ });
+    expect(within(group).queryByRole("button", { name: /dut, adder_reg, active/ })).not.toBeInTheDocument();
+    expect(document.querySelector('[aria-current="step"]')?.textContent).toMatch(/in_valid <= 1'b1; a <= a_val; b <= b_val;/);
+  });
+
+  it("selecting a block on a phone opens the code pane and moves focus into it, because the block is now hidden", () => {
+    render(<SelfCheckBenchLab mode="step" preset="smoke" focus="anatomy" />);
+    const code = screen.getByRole("region", { name: /^Scrollable code: tb_top/ });
+    const paneOf = (el: Element) => el.closest('[class*="max-md:hidden"]');
+    expect(paneOf(code)).not.toBeNull();
+    const anatomy = screen.getByRole("group", { name: /^Anatomy of tb_top/ });
+    expect(paneOf(anatomy)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^REF model_add\(\)/ }));
+    expect(paneOf(code)).toBeNull();
+    expect(paneOf(anatomy)).not.toBeNull();
+    expect(within(screen.getByRole("radiogroup", { name: "Pane shown on a phone" })).getByRole("radio", { name: "Code" })).toHaveAttribute("aria-checked", "true");
+    // jsdom lays nothing out, so offsetParent is null, as for a pane hidden by CSS.
+    expect(document.activeElement).toBe(code);
+    expect(document.querySelector('[aria-current="step"]')?.textContent).toMatch(/function automatic logic \[W:0\] model_add/);
+  });
+
+  it("from md up the block stays on screen, so it keeps focus and the code is brought into view instead", () => {
+    const scrollSpy = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollSpy;
+    vi.spyOn(HTMLElement.prototype, "offsetParent", "get").mockReturnValue(document.body);
+    render(<SelfCheckBenchLab mode="step" preset="smoke" />);
+    revealEdge();
+    const before = document.activeElement;
+    fireEvent.click(screen.getByRole("button", { name: /^REF model_add\(\)/ }));
+    expect(document.activeElement).toBe(before);
+    expect(scrollSpy).toHaveBeenCalledWith({ block: "nearest" });
+  });
+
   it("anatomy focus: the active block follows the step and selecting a block jumps to its code line", () => {
     render(<SelfCheckBenchLab mode="step" preset="smoke" focus="anatomy" />);
     expect(screen.getByRole("region", { name: "Anatomy of the self-checking testbench, step by step" })).toBeInTheDocument();
@@ -354,12 +647,12 @@ describe("SelfCheckBenchLab matrix mode", () => {
     expect(within(code).queryByText(/last_sum/)).not.toBeInTheDocument();
   });
 
-  it("focus never drops: Reveal hands it to the toggle, and selecting a cell moves it to the detail panel, which describes the escape", () => {
+  it("focus never drops: Reveal hands it to the hold-check question, and selecting a cell moves it to the detail panel, which describes the escape", () => {
     render(<SelfCheckBenchLab mode="matrix" />);
     const live = screen.getAllByText((_, el) => el?.getAttribute("aria-live") === "polite" && el.textContent === "");
     expect(live.length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Reveal the runs" }));
-    expect(document.activeElement).toBe(screen.getByRole("checkbox", { name: /Add the kata's hold check/ }));
+    expect(document.activeElement).toBe(screen.getByRole("radio", { name: "No row" }));
     expect(live.some((el) => /no test catches it/.test(el.textContent ?? ""))).toBe(true);
 
     fireEvent.click(cell(/\+TEST=smoke against BUG=1, carry stuck at 0: survived/));
@@ -373,10 +666,90 @@ describe("SelfCheckBenchLab matrix mode", () => {
     expect(document.activeElement).not.toHaveAttribute("aria-describedby");
   });
 
+  it("the summary says the hold row is not part of the Make It Work bench", () => {
+    render(<SelfCheckBenchLab mode="matrix" />);
+    expect(screen.getByText(/one run of the Make It Work bench by the model \(the hold row adds the kata's test\)/)).toBeInTheDocument();
+  });
+
+  it("scope='plan' keeps to what the test-plan section has taught: three tests, BUG=1 and BUG=2, no hold, and focus still lands somewhere", () => {
+    render(<SelfCheckBenchLab mode="matrix" scope="plan" />);
+    expect(screen.queryByText(/\+TEST=hold/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/BUG=3/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/a\/b swapped/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/hold row/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reveal the runs" }));
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByText(/kata/)).not.toBeInTheDocument();
+    const note = document.activeElement as HTMLElement;
+    expect(note).toHaveAttribute("tabindex", "-1");
+    expect(note.textContent).toMatch(/BUG=1, carry stuck at 0: caught by \+TEST=corners, and no other test\./);
+    expect(note.textContent).toMatch(/BUG=2, off by one: every test catches it\./);
+    expect(cell(/\+TEST=corners against BUG=1, carry stuck at 0: caught, PASS=4 FAIL=3/)).toBeInTheDocument();
+    fireEvent.click(cell(/\+TEST=gaps against BUG=1, carry stuck at 0: survived/));
+    expect(screen.getByText(/No gaps result reaches 256/)).toBeInTheDocument();
+    fireEvent.click(cell(/\+TEST=smoke against BUG=2, off by one: caught/));
+    expect(status()).toMatch(/Edge 4 \(45 ns\)/);
+  });
+
+  it("the hold-check toggle waits behind a prediction, and committing one moves focus to its feedback", () => {
+    render(<SelfCheckBenchLab mode="matrix" />);
+    fireEvent.click(screen.getByRole("button", { name: "Reveal the runs" }));
+    expect(screen.getByText("With the hold check on, which rows catch BUG=3?")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    lockIn("Every row");
+    expect((document.activeElement as HTMLElement).textContent).toMatch(/^Not quite\. The check is in every test's bench, but smoke, corners and gaps never change a or b on an idle cycle/);
+    expect(screen.getByRole("checkbox", { name: /Add the kata's hold check/ })).toBeInTheDocument();
+    // Folding the question keeps the toggle in reach.
+    fireEvent.click(screen.getByRole("button", { name: "Fold this prediction to one line" }));
+    expect(screen.getByRole("checkbox", { name: /Add the kata's hold check/ }).closest("[hidden]")).toBeNull();
+  });
+
+  it("with the hold check on, the status grades the learner's own predictions, never 'Revealed without predictions'", () => {
+    render(<SelfCheckBenchLab mode="matrix" />);
+    fireEvent.click(cell(/\+TEST=corners against BUG=1, carry stuck at 0: no prediction yet/));
+    fireEvent.click(cell(/\+TEST=hold against BUG=3, sum moves on idle cycles: no prediction yet/));
+    fireEvent.click(cell(/\+TEST=hold against BUG=3, sum moves on idle cycles: predicted will catch/));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal the runs" }));
+    // Said "will miss" for hold x BUG=3 with the original checker, and that was right.
+    expect(screen.getByText(/You predicted 2 of 2 cells right\. 18 had no prediction\./)).toBeInTheDocument();
+    lockIn("+TEST=hold only");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Add the kata's hold check/ }));
+    expect(screen.queryByText(/Revealed without predictions/)).not.toBeInTheDocument();
+    // corners x BUG=1 carries over; the four BUG=3 cells are the answer above.
+    expect(screen.getByText(/You predicted 5 of 5 cells right\. 15 had no prediction\./)).toBeInTheDocument();
+    expect(cell(/\+TEST=hold against BUG=3, sum moves on idle cycles: caught, PASS=1 FAIL=3, you said will catch, prediction right/)).toBeInTheDocument();
+    expect(cell(/\+TEST=gaps against BUG=3, sum moves on idle cycles: survived, PASS=4 FAIL=0, you said will miss, prediction right/)).toBeInTheDocument();
+    expect(screen.getByText(/Your predictions carry over, because no other cell changes with the check/)).toBeInTheDocument();
+    // Off again: the first predictions are back.
+    fireEvent.click(screen.getByRole("checkbox", { name: /Add the kata's hold check/ }));
+    expect(screen.getByText(/You predicted 2 of 2 cells right\./)).toBeInTheDocument();
+  });
+
+  it("a wrong answer to the hold-check question is graded as wrong on the cells it covers", () => {
+    render(<SelfCheckBenchLab mode="matrix" />);
+    fireEvent.click(screen.getByRole("button", { name: "Reveal the runs" }));
+    lockIn("Every row");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Add the kata's hold check/ }));
+    expect(screen.getByText(/You predicted 1 of 4 cells right\. 16 had no prediction\./)).toBeInTheDocument();
+  });
+
+  it("skipping the hold-check question leaves the cell that flips ungraded and keeps the rest", () => {
+    render(<SelfCheckBenchLab mode="matrix" />);
+    fireEvent.click(cell(/\+TEST=hold against BUG=3, sum moves on idle cycles: no prediction yet/));
+    fireEvent.click(cell(/\+TEST=gaps against BUG=3, sum moves on idle cycles: no prediction yet/));
+    fireEvent.click(cell(/\+TEST=gaps against BUG=3, sum moves on idle cycles: predicted will catch/));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal the runs" }));
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Add the kata's hold check/ }));
+    expect(screen.getByText(/You predicted 1 of 1 cell right\. 19 had no prediction\./)).toBeInTheDocument();
+    expect(cell(/\+TEST=hold against BUG=3, sum moves on idle cycles: caught, PASS=1 FAIL=3$/)).toBeInTheDocument();
+  });
+
   it("the hold-check toggle shows BUG=3 needs both test_hold and the check", () => {
     render(<SelfCheckBenchLab mode="matrix" />);
     fireEvent.click(screen.getByRole("button", { name: "Reveal the runs" }));
     expect(screen.getByText(/no test catches it, however the stimulus looks/)).toBeInTheDocument();
+    lockIn("+TEST=hold only");
     fireEvent.click(screen.getByRole("checkbox", { name: /Add the kata's hold check/ }));
     expect(cell(/\+TEST=hold against BUG=3, sum moves on idle cycles: caught, PASS=1 FAIL=3/)).toBeInTheDocument();
     expect(cell(/\+TEST=gaps against BUG=3, sum moves on idle cycles: survived, PASS=4 FAIL=0/)).toBeInTheDocument();
@@ -387,6 +760,10 @@ describe("SelfCheckBenchLab matrix mode", () => {
 describe("SelfCheckBenchLab debug mode", () => {
   const pickCase = (n: number) => fireEvent.click(within(screen.getByRole("radiogroup", { name: "Case" })).getByRole("radio", { name: new RegExp(`^Case ${n}:`) }));
   const suspect = (name: RegExp) => fireEvent.click(screen.getByRole("button", { name }));
+  const rerun = (name: RegExp) => {
+    fireEvent.click(screen.getByRole("radio", { name }));
+    fireEvent.click(screen.getByRole("button", { name: "Rerun with this fix" }));
+  };
 
   it("case 1: the log and raw counters show a vacuous pass; a wrong suspect is diagnosed, hints fade in, the culprit unlocks the fixes", () => {
     render(<SelfCheckBenchLab mode="debug" />);
@@ -409,17 +786,85 @@ describe("SelfCheckBenchLab debug mode", () => {
 
     expect(screen.queryByText(/Step 2 — choose a fix/)).not.toBeInTheDocument();
     suspect(/Suspect line: if \(test_name == "all"\)/);
-    expect(screen.getByText(/nothing calls reset_dut\(\) before this line\. Without reset_dut\(\), rst_n is never driven/)).toBeInTheDocument();
+    expect(screen.getByText(/nothing drives rst_n before this line, so it stays at its initial x/)).toBeInTheDocument();
     expect(screen.getByText(/Step 2 — choose a fix/)).toBeInTheDocument();
+  });
+
+  it("every case opens on tb_top with its suspect controls in view: the DUT's source is behind a disclosure", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    [1, 2, 3, 4, 5, 6, 7].forEach((n) => {
+      pickCase(n);
+      const bench = screen.getByRole("list", { name: /^The broken bench/ });
+      const rows = within(bench).getAllByRole("listitem");
+      expect(rows[0]).toHaveTextContent("module tb_top;");
+      expect(within(bench).queryByText(/module adder_reg/)).not.toBeInTheDocument();
+      // The first control sits within the first few rows of the 480 px scroller.
+      expect(rows.slice(0, 8).some((r) => within(r).queryByRole("button", { name: /^Suspect line:/ }))).toBe(true);
+      const dut = screen.getByText("Source of the DUT, adder_reg").closest("details") as HTMLDetailsElement;
+      expect(dut.open).toBe(false);
+      expect(within(dut).getByText(/module adder_reg/)).toBeInTheDocument();
+    });
+  });
+
+  it("a new case opens at the top of its own scroller, wherever the last one was left", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    const scroller = () => screen.getByRole("list", { name: /^The broken bench/ }).closest('[class*="max-h-"]') as HTMLElement;
+    scroller().scrollTop = 300;
+    pickCase(2);
+    expect(scroller().scrollTop).toBe(0);
+  });
+
+  it("Step 1 is worded for a deleted statement too, in every case", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    expect(screen.getByText(/Step 1 — select the tb_top line that causes the symptom, or the line where something is missing/)).toBeInTheDocument();
+    pickCase(4);
+    expect(screen.getByText(/or the line where something is missing/)).toBeInTheDocument();
+  });
+
+  it("case 6: the last send() of test_smoke is accepted as the line where something is missing, and every stimulus line has a control", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    pickCase(6);
+    expect(screen.getAllByRole("button", { name: "Suspect line: send(8'd1, 8'd2);" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Suspect line: send(8'd10, 8'd20);" })).toBeInTheDocument();
+    suspect(/Suspect line: send\(8'd10, 8'd20\);/);
+    expect(screen.getByText(/Not this one\./)).toBeInTheDocument();
+    suspect(/Suspect line: send\(8'd100, 8'd27\);/);
+    expect(screen.getByText(/test_smoke\(\) ends on its last send\(\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Step 2 — choose a fix/)).toBeInTheDocument();
+  });
+
+  it("suspect feedback is scrolled into view without moving past it", () => {
+    const scrollSpy = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollSpy;
+    render(<SelfCheckBenchLab mode="debug" />);
+    expect(scrollSpy).not.toHaveBeenCalled();
+    suspect(/Suspect line: if \(rst_n\) begin/);
+    expect(scrollSpy).toHaveBeenCalledWith({ block: "nearest" });
+    expect(scrollSpy.mock.contexts[0] as HTMLElement).toHaveTextContent(/Not this one\./);
+  });
+
+  it("case 7's log gives the cause and not the remedy before a suspect is picked", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    pickCase(7);
+    const log = screen.getByRole("list", { name: "Simulation log" });
+    expect(within(log).getByText(/the free-running clock keeps the simulation busy \(§9\.6\.1\)/)).toBeInTheDocument();
+    expect(log.textContent).not.toMatch(/\$finish/);
+  });
+
+  it("case 5's code does not promise rising edges next to logic clk;", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    pickCase(5);
+    expect(screen.getByRole("button", { name: "Suspect line: always #5 clk = ~clk;" })).toBeInTheDocument();
+    expect(screen.queryByText(/rising edges at 5, 15, 25 ns/)).not.toBeInTheDocument();
   });
 
   it("case 1: the model reruns each fix: initialising rst_n high is rejected with its log, restoring reset_dut() is accepted", () => {
     render(<SelfCheckBenchLab mode="debug" />);
     suspect(/Suspect line: if \(test_name == "all"\)/);
-    fireEvent.click(screen.getByRole("radio", { name: /Initialise the variable/ }));
+    rerun(/Initialise the variable/);
     expect(screen.getByText(/Fix rejected by the model/)).toBeInTheDocument();
     expect(screen.getAllByText(/CHK out_valid is x after reset/).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("radio", { name: /Restore reset_dut\(\)/ }));
+    rerun(/Restore reset_dut\(\)/);
     expect(screen.getByText(/Fix accepted/)).toBeInTheDocument();
     expect(screen.getByText(/correct DUT, no plusargs \(all tests\): PASS=14 FAIL=0/)).toBeInTheDocument();
     expect(screen.getByText(/BUG=1 on \+TEST=corners: PASS=4 FAIL=3 — still caught/)).toBeInTheDocument();
@@ -431,10 +876,10 @@ describe("SelfCheckBenchLab debug mode", () => {
     expect(within(screen.getByRole("list", { name: "Simulation log" })).getByText("PASS=7 FAIL=0")).toBeInTheDocument();
     suspect(/Suspect line: if \(actual != e\.sum\)/);
     expect(screen.getByText(/pass_cnt\+\+\. Every X result was counted as a pass/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: /Copy sum into an int first/ }));
+    rerun(/Copy sum into an int first/);
     expect(screen.getByText(/Fix rejected by the model/)).toBeInTheDocument();
     expect(screen.getByText(/4 X result\(s\) still pass/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: /Compare with !== instead of !=/ }));
+    rerun(/Compare with !== instead of !=/);
     expect(screen.getByText(/Fix accepted/)).toBeInTheDocument();
     expect(screen.getByText(/every X result fails/)).toBeInTheDocument();
   });
@@ -462,23 +907,23 @@ describe("SelfCheckBenchLab debug mode", () => {
     render(<SelfCheckBenchLab mode="debug" />);
     pickCase(5);
     suspect(/Suspect line: logic clk;/);
-    fireEvent.click(screen.getByRole("radio", { name: /Raise TIMEOUT to 100us/ }));
+    rerun(/Raise TIMEOUT to 100us/);
     expect(screen.getByText(/△ BUG=1 on \+TEST=corners: PASS=0 FAIL=1 — run hung, BUG=1 never exercised/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: /Toggle with logical not/ }));
+    rerun(/Toggle with logical not/);
     expect(screen.getByText(/run hung, BUG=1 never exercised/)).toBeInTheDocument();
     expect(screen.queryByText(/still caught/)).not.toBeInTheDocument();
 
     pickCase(7);
     suspect(/Suspect line: report\(\);/);
-    fireEvent.click(screen.getByRole("radio", { name: /Add \$stop; after report\(\)/ }));
+    rerun(/Add \$stop; after report\(\)/);
     expect(screen.getByText(/△ BUG=1 on \+TEST=corners: PASS=4 FAIL=3 — caught, but \$stop leaves the run suspended/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: /Rely on the watchdog/ }));
+    rerun(/Rely on the watchdog/);
     expect(screen.getByText(/△ BUG=1 on \+TEST=corners: PASS=4 FAIL=3 — caught, but the run never ends/)).toBeInTheDocument();
     expect(screen.queryByText(/escapes/)).not.toBeInTheDocument();
 
     pickCase(3);
     suspect(/Suspect line: if \(sum !== model_add/);
-    fireEvent.click(screen.getByRole("radio", { name: /Compare with model_add\(a, b\)/ }));
+    rerun(/Compare with model_add\(a, b\)/);
     expect(screen.getByText(/✕ BUG=1 on \+TEST=corners: PASS=2 FAIL=5 — not caught: the correct DUT fails just as often/)).toBeInTheDocument();
   });
 
@@ -486,9 +931,47 @@ describe("SelfCheckBenchLab debug mode", () => {
     render(<SelfCheckBenchLab mode="debug" />);
     pickCase(2);
     suspect(/Suspect line: if \(actual != e\.sum\)/);
-    fireEvent.click(screen.getByRole("radio", { name: /Compare with !== instead of !=/ }));
+    rerun(/Compare with !== instead of !=/);
     expect(screen.getByText(/✓ correct DUT, \+TEST=corners: PASS=7 FAIL=0/)).toBeInTheDocument();
     expect(screen.queryByText(/correct DUT, .*against a DUT/)).not.toBeInTheDocument();
+  });
+
+  it("choosing a fix only selects it: arrowing through the options grades nothing and solves nothing until the rerun", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    suspect(/Suspect line: if \(test_name == "all"\)/);
+    const button = screen.getByRole("button", { name: "Rerun with this fix" });
+    expect(button).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: /Restore reset_dut\(\)/ }));
+    expect(screen.queryByText(/Fix accepted/)).not.toBeInTheDocument();
+    expect(screen.getByText("0 of 7 solved")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Initialise the variable/ }));
+    fireEvent.click(button);
+    expect(screen.getByText(/Fix rejected by the model/)).toBeInTheDocument();
+    // Choosing another fix withdraws the grade of the last one.
+    fireEvent.click(screen.getByRole("radio", { name: /Restore reset_dut\(\)/ }));
+    expect(screen.queryByText(/Fix rejected by the model/)).not.toBeInTheDocument();
+    fireEvent.click(button);
+    expect(screen.getByText(/Fix accepted/)).toBeInTheDocument();
+    expect(screen.getByText("1 of 7 solved")).toBeInTheDocument();
+  });
+
+  it("the next-case button meets AA contrast: white on emerald-700, not emerald-600", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    suspect(/Suspect line: if \(test_name == "all"\)/);
+    rerun(/Restore reset_dut\(\)/);
+    expect(screen.getByRole("button", { name: "Next case" }).className).toMatch(/bg-emerald-700/);
+  });
+
+  it("the clinic's waveform has edge selectors, which give the keyboard a way in, and each reads out what that edge sampled", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    pickCase(2);
+    const edge = screen.getByRole("button", { name: "Select edge 7" });
+    expect(edge).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(edge, { key: "Enter" });
+    expect(edge).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText(/^Edge 7 \(75 ns\): rst_n=1 in_valid=1 a=255 b=255 out_valid=1 sum=X$/, { selector: "p" })).toBeInTheDocument();
+    pickCase(3);
+    expect(screen.queryByText(/^Edge 7 \(75 ns\): rst_n=/, { selector: "p" })).not.toBeInTheDocument();
   });
 
   it("the grade arrives in a live region that was already mounted", () => {
@@ -496,7 +979,7 @@ describe("SelfCheckBenchLab debug mode", () => {
     suspect(/Suspect line: if \(test_name == "all"\)/);
     const region = screen.getByRole("group", { name: /Step 2/ }).querySelector('[aria-live="polite"]') as HTMLElement;
     expect(region).toBeEmptyDOMElement();
-    fireEvent.click(screen.getByRole("radio", { name: /Restore reset_dut\(\)/ }));
+    rerun(/Restore reset_dut\(\)/);
     expect(region).toHaveTextContent(/Fix accepted/);
     expect(region.isConnected).toBe(true);
   });
@@ -506,10 +989,10 @@ describe("SelfCheckBenchLab debug mode", () => {
     expect(screen.getByText("0 of 7 solved")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Next case" })).not.toBeInTheDocument();
     suspect(/Suspect line: if \(test_name == "all"\)/);
-    fireEvent.click(screen.getByRole("radio", { name: /Initialise the variable/ }));
+    rerun(/Initialise the variable/);
     expect(screen.queryByRole("button", { name: "Next case" })).not.toBeInTheDocument();
     expect(screen.getByText("0 of 7 solved")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: /Restore reset_dut\(\)/ }));
+    rerun(/Restore reset_dut\(\)/);
     expect(screen.getByText("1 of 7 solved")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /^Case 1: .*\(solved\)$/ })).toHaveTextContent("Case 1 ✓");
     fireEvent.click(screen.getByRole("button", { name: "Next case" }));
@@ -528,10 +1011,10 @@ describe("SelfCheckBenchLab debug mode", () => {
     pickCase(7);
     expect(screen.getByText(/never \(still running at the horizon\)/)).toBeInTheDocument();
     suspect(/Suspect line: report\(\);/);
-    fireEvent.click(screen.getByRole("radio", { name: /Add \$stop; after report\(\)/ }));
+    rerun(/Add \$stop; after report\(\)/);
     expect(screen.getByText(/Fix rejected by the model/)).toBeInTheDocument();
     expect(screen.getByText(/suspended by \$stop/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: /Add \$finish; after report\(\)/ }));
+    rerun(/Add \$finish; after report\(\)/);
     expect(screen.getByText(/Fix accepted/)).toBeInTheDocument();
     pickCase(5);
     expect(screen.queryByText(/Step 2 — choose a fix/)).not.toBeInTheDocument();

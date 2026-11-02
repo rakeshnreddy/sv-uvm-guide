@@ -36,6 +36,7 @@ import {
   findProcessStatement,
   formatPrintValue,
   formatValue,
+  isContinuousAssign,
   processStatements,
   scenarioToSource,
   simulateTimeSlot,
@@ -151,9 +152,11 @@ export function regionLandings(scenario: SvScenario, result: SimulationResult): 
         } else if (step.endedBy) {
           out.push({ ...base, kind: "finish", label: step.endedBy === "finish" ? "$finish" : `implicit $finish (${labelOf(scenario, step.processId)} was the last program thread)` });
         } else if (stmt) {
-          const src = statementToSource(stmt);
-          const note =
-            stmt.kind === "assign" && stmt.op === "nba"
+          const continuous = scenario.processes.some((p) => p.id === step.processId && isContinuousAssign(p));
+          const src = `${continuous ? "assign " : ""}${statementToSource(stmt)}`;
+          const note = continuous
+            ? "updates now"
+            : stmt.kind === "assign" && stmt.op === "nba"
               ? "reads RHS, schedules update"
               : stmt.kind === "cbDrive"
                 ? "schedules the drive"
@@ -189,8 +192,11 @@ export function groupLandingsByRegion(landings: RegionLanding[]): Record<RegionI
 // Where does the loop go next? (next-region mode)
 // ---------------------------------------------------------------------------
 
-/** What Δ counts. IEEE 1800-2023 defines no delta count, so this is the model's own measure. */
+/** What Δ counts. IEEE 1800-2023 defines no delta count, so this is the model's own measure. Shown once, under the region map. */
 export const DELTA_DEFINITION = "the model's count of times a later region's events (Inactive, NBA, Observed, Re-Inactive, Re-NBA) moved up into Active or Reactive";
+
+/** The label a revealed decision carries, so Δ never reads as a term of the standard. */
+export const DELTA_LABEL = "Δ is a model count of moves back to Active or Reactive, not a term of the standard.";
 
 /** Where the §4.5 loop can go once the region it was executing is empty. */
 export type NextRegionAnswer = "inactive" | "nba" | "observed" | "reactive-set" | "reInactive" | "reNba" | "active" | "postponed" | "end";
@@ -331,16 +337,11 @@ export function decisionMovesEvents(decision: RegionDecision): boolean {
 
 function deltaSentence(decision: RegionDecision): string {
   const n = decision.delta;
-  if (decisionMovesEvents(decision)) return `Δ is now ${n}: ${DELTA_DEFINITION} (IEEE 1800-2023 defines no delta count).`;
+  if (decisionMovesEvents(decision)) return `Δ is now ${n}.`;
   if (decision.priority) return `Δ stays at ${n}: Reactive already holds this work, so nothing moves.`;
   if (decision.answer === "reactive-set") return `Δ stays at ${n}: a set switch moves no events.`;
   if (decision.answer === "active") return `Δ stays at ${n}: Active already holds this work, so nothing moves.`;
   return `Δ stays at ${n}: nothing moves.`;
-}
-
-/** One line for the revealed decision: the number, and whether this decision changed it. */
-export function decisionDeltaSummary(decision: RegionDecision): string {
-  return decisionMovesEvents(decision) ? "up by one, because events moved" : "unchanged, because no events moved";
 }
 
 /** Paraphrase of the §4.5 step that produced `decision` (never the standard's wording). */
@@ -356,7 +357,7 @@ export function explainDecision(decision: RegionDecision, result: SimulationResu
     return `The active region set and Observed were all empty, so the scheduler turned to the reactive set. Reactive itself holds nothing, so ${REGION_LABELS[movedRegion]}, the first region of that set with events, moves into Reactive and executes there (${REGION_CLAUSES[movedRegion]}${movedRegion === "reNba" ? ", §14.16" : ""}, §4.5). ${deltaNote}`;
   }
   if (decision.alsoCorrect === "active" && movedRegion) {
-    return `The reactive set has drained, so the outer loop returns to the active set in the same time slot. Active itself holds nothing, so ${REGION_LABELS[movedRegion]}, the first region of that set with events, moves into Active and executes there (${REGION_CLAUSES[movedRegion]}, §4.5). ${deltaNote}`;
+    return `The reactive set has drained, so the outer loop returns to the active set and Observed in the same time slot. Active itself holds nothing, so ${REGION_LABELS[movedRegion]}, the first of those regions with events, moves into Active and executes there (${REGION_CLAUSES[movedRegion]}, §4.5). ${deltaNote}`;
   }
   switch (decision.answer) {
     case "inactive":
@@ -420,11 +421,11 @@ export function decisionFeedback(decision: RegionDecision, option: NextRegionAns
     if (decision.from === "reactive") {
       return `Reactive ran dry, but the reactive set is not finished: ${answerName} still holds events, and the loop only returns to Active once Reactive, Re-Inactive and Re-NBA are all empty (§4.5).`;
     }
-    return `Active is the region that just ran dry; the loop looks for the first later region of the set that still holds events, which is ${answerName} (§4.5).`;
+    return `Active is the region that just ran dry; this inner loop (Active through Observed, §4.5) looks for its first later region that still holds events, which is ${answerName}.`;
   }
   if (option === "reactive-set" && decision.from === "active") {
     if (activeSetPending.length === 0) {
-      return "The active set is empty, but so is the whole reactive set: nothing is queued in Reactive, Re-Inactive or Re-NBA, so that loop has nothing to run (§4.5).";
+      return "The active set and Observed are empty, but so is the whole reactive set: nothing is queued in Reactive, Re-Inactive or Re-NBA, so that loop has nothing to run (§4.5).";
     }
     return `The reactive set starts only once Active, Inactive, NBA and Observed are all empty; ${activeSetPending.join(" and ")} still ${activeSetPending.length === 1 ? "holds" : "hold"} events (§4.5).`;
   }
@@ -435,9 +436,9 @@ export function decisionFeedback(decision: RegionDecision, option: NextRegionAns
     return `${REGION_LABELS[region]} holds no events at this point. The loop only stops at a region that has something queued (§4.5).`;
   }
   if (region && REACTIVE_SET.includes(region) && decision.from === "active" && !(answerRegion && REACTIVE_SET.includes(answerRegion))) {
-    return `${REGION_LABELS[region]} belongs to the reactive set, which waits until the whole active set is empty; ${answerName} comes first (§4.5).`;
+    return `${REGION_LABELS[region]} belongs to the reactive set, which waits until the active set and Observed are empty; ${answerName} comes first (§4.5).`;
   }
-  return `${answerName} comes first: the loop takes the earliest region of the set that still holds events (§4.5).`;
+  return `${answerName} comes first: this inner loop (${decision.from === "active" ? "Active through Observed" : "Reactive through Re-NBA"}, §4.5) takes its earliest region that still holds events.`;
 }
 
 const DECISION_PATH_LABELS: Record<NextRegionAnswer, string> = {
@@ -457,9 +458,15 @@ export function decisionPath(decisions: RegionDecision[]): string {
   return ["Active", ...decisions.map((d) => DECISION_PATH_LABELS[d.answer])].join(" → ");
 }
 
-/** The closing line of next-region mode. */
-export function decisionRecap(decisions: RegionDecision[], correct: number): string {
-  return `${correct} of ${decisions.length} right; the loop went ${decisionPath(decisions)}.`;
+/**
+ * The closing line of next-region mode. A decision revealed without predicting
+ * was not answered, so it neither counts as wrong nor enters the score.
+ */
+export function decisionRecap(decisions: RegionDecision[], correct: number, answered: number = decisions.length): string {
+  const path = `the loop went ${decisionPath(decisions)}.`;
+  if (answered === 0) return `No decision answered; ${path}`;
+  if (answered < decisions.length) return `${correct} of ${answered} answered right, ${decisions.length - answered} revealed without predicting; ${path}`;
+  return `${correct} of ${decisions.length} right; ${path}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +621,50 @@ export function outputOrderOptions(scenario: SvScenario, result: SimulationResul
     .map((c) => ({ id: c.id, label: c.log.join("  →  "), correct: c.log.join("|") === actual.join("|"), feedback: c.feedback }));
 }
 
+/**
+ * One line naming the outcome of a preset's predictions, for the moment the
+ * trace is revealed. `results` holds the grade of each prediction the learner
+ * committed, by prediction number; one revealed without predicting has none.
+ */
+export function predictionVerdict(predictions: ModelPrediction[], results: Record<number, boolean>): string {
+  const answers = predictions.flatMap((p) => p.options.filter((o) => o.correct).map((o) => o.label));
+  const outcomes = Object.values(results);
+  const correct = outcomes.filter(Boolean).length;
+  if (predictions.length === 1) {
+    const opening = outcomes.length === 0 ? "" : correct === 1 ? "Your prediction was right. " : "Your prediction was not right. ";
+    return `${opening}Answer: ${answers[0]}.`;
+  }
+  const opening = outcomes.length === 0 ? "" : outcomes.length === predictions.length ? `${correct} of ${predictions.length} predictions right. ` : `${correct} of ${outcomes.length} answered predictions right. `;
+  return `${opening}Answers: ${answers.join("; ")}.`;
+}
+
+/**
+ * Why each wrong pick is wrong, by prediction number, for the line that stays
+ * in view after the reveal: the prompt's own feedback sits below the transport
+ * and collapses on the first step. `chosen` holds the option each committed
+ * prediction picked; a right pick or a skip has nothing to diagnose.
+ */
+export function predictionDiagnoses(predictions: ModelPrediction[], chosen: Record<number, string>): string[] {
+  return predictions.flatMap((prediction, i) => {
+    const option = prediction.options.find((o) => o.id === chosen[i]);
+    return option && !option.correct ? [`Your pick "${option.label}": ${option.feedback}`] : [];
+  });
+}
+
+/**
+ * What one prompt of several just settled, for screen readers: its feedback
+ * mounts with its content, which may not be announced, and focus moves on to
+ * the next prompt at once. `chosenId` is absent when it was revealed unanswered.
+ */
+export function predictionCommitNote(predictions: ModelPrediction[], index: number, chosenId?: string): string {
+  const prediction = predictions[index];
+  const head = `Prediction ${index + 1} of ${predictions.length}`;
+  const chosen = prediction.options.find((o) => o.id === chosenId);
+  const answer = prediction.options.find((o) => o.correct)?.feedback ?? "";
+  if (!chosen) return `${head} revealed. ${answer}`;
+  return chosen.correct ? `${head}: correct. ${chosen.feedback}` : `${head}: not quite. ${chosen.feedback} ${answer}`;
+}
+
 export function regionMapPrediction(scenario: SvScenario, result: SimulationResult): ModelPrediction {
   const landings = regionLandings(scenario, result);
   if (scenario.id === "comb-after-nba") {
@@ -638,7 +689,7 @@ export function regionMapPrediction(scenario: SvScenario, result: SimulationResu
           id: "next-slot",
           label: "At the next clock edge",
           correct: !run,
-          feedback: "Combinational logic does not wait for a clock: y follows q in the same time slot, only in a later delta. A waveform viewer draws it at the same instant.",
+          feedback: "Combinational logic does not wait for a clock: y follows q in the same time slot, only on a later pass of the loop (§4.5). A waveform viewer draws it at the same instant.",
         },
         {
           id: "observed",
@@ -667,7 +718,7 @@ export function regionMapPrediction(scenario: SvScenario, result: SimulationResu
           id: "old",
           label: `${formatValue(oldQ)}: the value before the edge`,
           correct: deterministic && seen === oldQ && newQ !== oldQ,
-          feedback: "That is what a clocking-block input (cb.q) would return: it reads the Preponed sample (§14.13). A plain read in program code sees the current value.",
+          feedback: "That is what a clocking-block input (cb.q) would return: it reads the Preponed sample (§14.13, §4.4.2.1). A plain read in program code sees the current value.",
         },
         {
           id: "race",
@@ -757,7 +808,7 @@ const REGION_TARGETS: RegionTarget[] = [
     build: () => testbenchDriveScenario("clocking"),
     prompt: "The driver reads `cb.q` (default input skew #1step). In which region was the value it gets sampled?",
     select: (ls, scenario) => {
-      // A clocking-block input reads the Preponed snapshot (§14.13); the model
+      // A clocking-block input reads the Preponed snapshot (§14.13, §4.4.2.1); the model
       // evaluates `sampled` expressions from that snapshot.
       const stmt = findStatement(scenario, "tb2");
       const reads = stmt && stmt.kind === "assign" && stmt.expr.kind === "sampled";

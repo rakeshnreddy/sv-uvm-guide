@@ -47,6 +47,9 @@ describe("program-watcher: the reactive set drains before Active resumes (IEEE 1
     expect(prediction.question).toMatch(/Which runs first\?/);
     expect(prediction.options.filter((o) => o.correct).map((o) => o.id)).toEqual(["watcher"]);
     expect(prediction.options).toHaveLength(4);
+    // §4.7 lists mid-process suspension too, so the race option must not claim same-region readiness is the only source.
+    expect(prediction.options.find((o) => o.id === "race")?.feedback).toBe("The watcher sits in Reactive and assign led in Active, so §4.5 fixes the order between them; a pair ready in one region could go either way (§4.7).");
+    expect(scenario.title).toBe("A second program thread waits on cmd");
   });
 });
 
@@ -76,6 +79,19 @@ describe("clocking-drive: the existing tb-clocking-block scenario with region qu
     // The DUT flop read the old din in Active: q is 3, not the driven 7.
     expect(run.finalValues.q).toBe(3);
     expect(region.options.find((o) => o.id === "reNba")?.feedback).toMatch(/read din = 3 in Active/);
+    // §14.16 places the drive in Re-NBA of this time step; §4.5 can still return to Active after it, so no text claims the last design NBA update of the slot.
+    expect(region.options.find((o) => o.id === "reNba")?.label).toBe("Re-NBA, after the design NBA updates queued for this edge");
+    expect(region.options.find((o) => o.id === "nba")?.feedback).toMatch(/after the design NBA updates already queued for this edge\.$/);
+    for (const option of region.options) expect(`${option.label} ${option.feedback}`).not.toMatch(/every design NBA|all design NBA/);
+    // §14.13 names the Postponed region of the prior time step; §4.4.2.1 makes that the Preponed sample, so every option cites both.
+    const feedback = (id: string) => sample.options.find((o) => o.id === id)?.feedback;
+    expect(feedback("sample")).toBe(
+      "A clocking-block input with the default #1step skew returns the value sampled in Preponed, before anything in the slot changed (§14.13, §4.4.2.1). The flop's NBA update happened between the sample and the read, and does not show.",
+    );
+    expect(feedback("new")).toBe(
+      "That is what a plain read of q would see: @(cb) triggers in Observed (§14.10), after NBA. But cb.q is the #1step sample taken in Preponed (§14.13, §4.4.2.1), so the pre-edge value comes back.",
+    );
+    expect(feedback("unknown")).toBe("The sample is taken at this clocking event, in Preponed (§14.13, §4.4.2.1), so it is valid as soon as the @(cb) process runs in the following Active pass.");
   });
 });
 
@@ -91,6 +107,20 @@ describe("the merged preset list", () => {
     expect(isExtraRegionMapScenarioId("program-watcher")).toBe(true);
     expect(isExtraRegionMapScenarioId("comb-after-nba")).toBe(false);
     expect(() => getAnyRegionMapPreset("nope" as never)).toThrow(/Unknown region-map scenario/);
+  });
+
+  it("what a preset shows before the reveal never names its answer", () => {
+    const before = (id: Parameters<typeof getAnyRegionMapPreset>[0]) => {
+      const preset = getAnyRegionMapPreset(id);
+      return preset.setup ?? preset.summary;
+    };
+    expect(before("comb-after-nba")).toBe("A flop's q feeds a continuous assignment, whose y feeds an always_comb.");
+    expect(before("comb-after-nba")).not.toMatch(/Active|second pass/);
+    // The summary keeps the point for after the reveal.
+    expect(getAnyRegionMapPreset("comb-after-nba").summary).toMatch(/runs again in Active/);
+    expect(before("clocking-drive")).not.toMatch(/Re-NBA|Preponed/);
+    expect(before("program-reactive")).not.toMatch(/Reactive|new q/);
+    expect(before("program-watcher")).not.toMatch(/drains/);
   });
 
   it("every preset has exactly one correct option per question and a replayable trace", () => {

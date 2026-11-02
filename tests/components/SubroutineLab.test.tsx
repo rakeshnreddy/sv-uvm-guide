@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import SubroutineLab from "@/components/visuals/SubroutineLab";
-import { compileBench, exploreBench, pulseBench, sendBench, sendVerdict, simulateBench, type Direction, type Lifetime, type SecondCallAt } from "@/lib/sv-subroutine-model";
+import { compileBench, exploreBench, factBench, pulseBench, recursionTable, sendBench, sendVerdict, simulateBench, sumToBench, type Direction, type Lifetime, type SecondCallAt } from "@/lib/sv-subroutine-model";
 
 const lockIn = (label: RegExp) => {
   fireEvent.click(screen.getByLabelText(label));
@@ -23,6 +23,12 @@ const onlyAnswer = () => {
   const marks = screen.getAllByLabelText("correct answer");
   expect(marks).toHaveLength(1);
   return (marks[0].closest("label") as HTMLElement).textContent ?? "";
+};
+
+/** Where the right answer sits among its prompt's options. Call after a reveal; `which` picks among revealed prompts. */
+const answerIndex = (which = 0) => {
+  const label = screen.getAllByLabelText("correct answer")[which].closest("label") as HTMLElement;
+  return [...(label.parentElement as HTMLElement).children].indexOf(label);
 };
 
 const scrubTo = (value: number) => {
@@ -111,7 +117,7 @@ describe("SubroutineLab · lifetime (send)", () => {
   it("adds the enter/use debug prints on request", () => {
     render(<SubroutineLab mode="lifetime" />);
     fireEvent.click(screen.getByRole("checkbox", { name: /debug prints/ }));
-    lockIn(/t=10 id=2/);
+    lockIn(/t=10 use\s+id=2/);
     scrubToEnd();
     const log = screen.getByTestId("log");
     expect(within(log).getByText("t=0 enter id=1")).toBeInTheDocument();
@@ -234,7 +240,7 @@ describe("SubroutineLab · recursion", () => {
     lockIn(/^2 \(2!\)/);
     expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
     expect(screen.getByText(/fact_static is static: one shared n, overwritten by every inner call/)).toBeInTheDocument();
-    expect(screen.getByText(/innermost call has set n to 1, so each return is rest × 1 = 1/)).toBeInTheDocument();
+    expect(screen.getByText(/innermost call has set n to 1, so each of those returns is rest × 1 = 1/)).toBeInTheDocument();
     scrubToEnd();
     expect(within(screen.getByTestId("log")).getByText("fact_static(2) = 1")).toBeInTheDocument();
 
@@ -289,7 +295,7 @@ describe("SubroutineLab · directions", () => {
 
     fireEvent.click(screen.getByRole("switch", { name: "show_dirs is automatic" }));
     fireEvent.change(screen.getByTestId("direction-d"), { target: { value: "const ref" } });
-    expect(screen.getByRole("alert")).toHaveTextContent(/const ref: the subroutine may read it but a write is a compile error/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/const ref: the subroutine may read it, but a write with = or <= is a compile error/);
 
     fireEvent.change(screen.getByTestId("direction-d"), { target: { value: "ref" } });
     fireEvent.click(screen.getByRole("switch", { name: "b uses a nonblocking assignment" }));
@@ -423,26 +429,104 @@ describe("SubroutineLab · formals", () => {
     expect(screen.getByTestId("resolved-lo")).toHaveTextContent(/type: the §13.3 default/);
   });
 
-  it("wait_cycles: n is a one-bit input logic, so 4 waits 0 cycles and 5 waits 1", () => {
+  it("wait_cycles: predicts n's type, then the cycles wait_cycles(5) waits, and only then shows the counts", () => {
     render(<SubroutineLab mode="formals" preset="wait_cycles" />);
+    expect(screen.queryByText(/How long does/)).not.toBeInTheDocument();
     lockIn(/^input logic n$/);
     expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByText(/How long does/)).toBeInTheDocument();
+    expect(screen.queryByTestId("wait-cycles-strip")).not.toBeInTheDocument();
+    lockIn(/^5 cycles$/);
+    expect(screen.getByText(/5 does not fit in a logic/)).toHaveTextContent("§10.7");
     const strip = screen.getByTestId("wait-cycles-strip");
     expect(strip).toHaveTextContent(/wait_cycles\(4\).*n = 0, so it waits 0 cycles/);
     expect(strip).toHaveTextContent(/wait_cycles\(5\).*n = 1, so it waits 1 cycle/);
-    fireEvent.click(screen.getByRole("radio", { name: "wait_cycles_ok" }));
-    lockIn(/^input int unsigned n$/);
+  });
+
+  it.each([
+    ["1 cycle", /^1 cycle$/, true, /stores 5 into the logic n: n = 1, so it waits 1 cycle/],
+    ["0 cycles", /^0 cycles$/, false, /wait_cycles\(4\) is the call that waits 0 cycles/],
+    ["a compile error", /^A compile error$/, false, /a formal too narrow for it is legal too/],
+  ] as const)("wait_cycles(5), predicting %s", (_name, pick, right, text) => {
+    render(<SubroutineLab mode="formals" preset="wait_cycles" />);
+    reveal();
+    lockIn(pick);
+    expect(screen.getByText(right ? /^Correct\./ : /^Not quite\./)).toBeInTheDocument();
+    expect(screen.getAllByText(text).length).toBeGreaterThan(0);
+  });
+
+  it("wait_cycles_ok: n is fully written, so the only question is the wait, and it is 5 cycles", () => {
+    render(<SubroutineLab mode="formals" preset="wait_cycles_ok" />);
+    expect(screen.queryByText(/What direction and type/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("resolved-n")).toHaveTextContent("input int unsigned n");
+    expect(screen.queryByTestId("wait-cycles-strip")).not.toBeInTheDocument();
+    lockIn(/^1 cycle$/);
+    expect(screen.getByText(/One cycle is what a one-bit n would give/)).toBeInTheDocument();
     expect(screen.getByTestId("wait-cycles-strip")).toHaveTextContent(/wait_cycles_ok\(5\).*waits 5 cycles/);
   });
 
-  it("add with no return type returns 1'b1 for add(2, 3)", () => {
+  it("add: the formals are written, so the prediction is what add(2, 3) returns, and it gates the result", () => {
     render(<SubroutineLab mode="formals" preset="add" />);
-    lockIn(/^input int b$/);
+    expect(screen.queryByText(/What direction and type/)).not.toBeInTheDocument();
+    expect(screen.getByText(/What does/)).toHaveTextContent("add(2, 3)");
+    expect(screen.getByTestId("resolved-b")).toHaveTextContent("input int b");
+    expect(screen.queryByTestId("return-type-strip")).not.toBeInTheDocument();
+    lockIn(/^5$/);
+    expect(screen.getByText(/^Not quite\./)).toBeInTheDocument();
+    expect(screen.getByText(/5 is what a \+ b computes/)).toHaveTextContent("§13.4");
     const strip = screen.getByTestId("return-type-strip");
     expect(strip).toHaveTextContent(/no return type written, so a one-bit logic, §13.4/);
     expect(strip).toHaveTextContent("1'b1");
-    fireEvent.change(screen.getByRole("combobox", { name: "Written return type" }), { target: { value: "int" } });
+    // The return type is a control outside the gate, so changing it keeps focus and asks again.
+    const select = screen.getByRole("combobox", { name: "Written return type" });
+    select.focus();
+    fireEvent.change(select, { target: { value: "int" } });
+    expect(document.activeElement).toBe(screen.getByRole("combobox", { name: "Written return type" }));
+    expect(screen.queryByTestId("return-type-strip")).not.toBeInTheDocument();
+    lockIn(/^5$/);
+    expect(screen.getByText(/^Correct\./)).toBeInTheDocument();
     expect(screen.getByTestId("return-type-strip")).toHaveTextContent(/returns 5/);
+  });
+
+  it.each([
+    [/^1'b1$/, true, /only its low bit comes back: 1'b1/],
+    [/^1'b0$/, false, /5 is odd, so 1'b1, not 1'b0/],
+    [/^A compile error$/, false, /A function with no return type is legal/],
+  ] as const)("add(2, 3) option %s has feedback generated from the call", (pick, right, text) => {
+    render(<SubroutineLab mode="formals" preset="add" />);
+    lockIn(pick);
+    expect(screen.getByText(right ? /^Correct\./ : /^Not quite\./)).toBeInTheDocument();
+    expect(screen.getAllByText(text).length).toBeGreaterThan(0);
+  });
+
+  it("a function's formal rules cite §13.4 in the feedback and in the strip; a task's cite §13.3", () => {
+    render(<SubroutineLab mode="formals" preset="add" />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Written type of b" }), { target: { value: "" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Written direction of b" }), { target: { value: "" } });
+    // b now inherits, so it is a question: a wrong direction is diagnosed, and every citation is §13.4.
+    lockIn(/^output int b$/);
+    const prompt = (screen.getByText(/^Not quite\./).parentElement as HTMLElement).parentElement as HTMLElement;
+    expect(prompt).toHaveTextContent("(§13.4)");
+    expect(prompt).not.toHaveTextContent("§13.3");
+    fireEvent.change(screen.getByRole("combobox", { name: "Written type of a" }), { target: { value: "" } });
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Formal to predict" })).getByRole("radio", { name: "a" }));
+    reveal();
+    expect(screen.getByTestId("resolved-a")).toHaveTextContent(/type: the §13.4 default/);
+    expect(screen.getByTestId("resolution-strip")).not.toHaveTextContent("§13.3");
+  });
+
+  it("only a formal with something unwritten is offered as a question", () => {
+    render(<SubroutineLab mode="formals" />);
+    expect(screen.queryByRole("radiogroup", { name: "Formal to predict" })).not.toBeInTheDocument();
+    expect(screen.getByText(/What direction and type/)).toHaveTextContent("lo");
+    fireEvent.change(screen.getByRole("combobox", { name: "Written type of hi" }), { target: { value: "" } });
+    const picker = screen.getByRole("radiogroup", { name: "Formal to predict" });
+    expect(within(picker).getAllByRole("radio").map((r) => r.getAttribute("aria-label") ?? r.textContent)).toEqual(["hi", "lo"]);
+    fireEvent.change(screen.getByRole("combobox", { name: "Written type of hi" }), { target: { value: "logic [7:0]" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Written direction of lo" }), { target: { value: "output" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Written type of lo" }), { target: { value: "int" } });
+    expect(screen.queryByText(/What direction and type/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("resolved-lo")).toHaveTextContent(/type: written/);
   });
 });
 
@@ -457,7 +541,7 @@ describe("SubroutineLab · debug (the kata)", () => {
     expect(within(first).getByText(/Not this one\./)).toBeInTheDocument();
     fireEvent.click(within(first).getByRole("button", { name: /^task log_after/ }));
     expect(within(first).getByText(/Found it\./)).toBeInTheDocument();
-    expect(within(first).getByText(/§13.3.2/)).toBeInTheDocument();
+    expect(within(first).getByText(/§13\.3\.1, §13\.3\.2/)).toBeInTheDocument();
     const third = screen.getByTestId("symptom-no-busy");
     fireEvent.click(within(third).getByRole("button", { name: /^#1 pulse/ }));
     expect(within(third).getByText(/The direction it is received with is the problem/)).toBeInTheDocument();
@@ -479,12 +563,16 @@ describe("SubroutineLab · debug (the kata)", () => {
     expect(grade).toHaveTextContent(/Does not compile/);
     expect(within(grade).getByTestId("grade-issues")).toHaveTextContent("§13.3.2");
 
-    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fix for pulse" })).getByRole("radio", { name: "ref instead of output" }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fix for pulse" })).getByRole("radio", { name: "pass by ref" }));
     fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fix for log_after" })).getByRole("radio", { name: "add a return type" }));
     fireEvent.click(screen.getByRole("button", { name: "Rerun and grade" }));
     grade = screen.getByTestId("grade");
-    expect(grade).toHaveTextContent(/A task has no return type. Nothing changes./);
-    expect(grade).toHaveTextContent(/Not yet/);
+    // §13.3: a task declaration has no place for a return type, so this decoy stops the bench compiling.
+    expect(grade).toHaveTextContent(/Does not compile/);
+    expect(within(grade).getByTestId("grade-issues")).toHaveTextContent(/§13\.3\).*a task declaration has no return type, so this does not compile/);
+    expect(grade).not.toHaveTextContent(/Nothing changes/);
+    expect(screen.getByTestId("bench-issues")).toHaveTextContent("§13.3");
+    expect(screen.getByRole("list", { name: /The bench, with your fixes/ })).toHaveTextContent("task int log_after(input int delay_ns, input string msg);");
 
     fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fix for log_after" })).getByRole("radio", { name: "add automatic" }));
     fireEvent.click(screen.getByRole("button", { name: "Rerun and grade" }));
@@ -498,7 +586,7 @@ describe("SubroutineLab · debug (the kata)", () => {
   it("offers three hints and keeps the worked solution inside its details", () => {
     render(<SubroutineLab mode="debug" />);
     fireEvent.click(screen.getByRole("button", { name: /Need a hint\? \(0\/3\)/ }));
-    expect(screen.getByText(/Two of the three subroutines have no lifetime keyword/)).toBeInTheDocument();
+    expect(screen.getByText(/Two of the three subroutines have no lifetime keyword/)).toHaveTextContent("(§13.3.1, §13.3.2, §13.4.2)");
     fireEvent.click(screen.getByRole("button", { name: /Another hint \(1\/3\)/ }));
     fireEvent.click(screen.getByRole("button", { name: /Another hint \(2\/3\)/ }));
     expect(screen.queryByRole("button", { name: /Another hint/ })).not.toBeInTheDocument();
@@ -512,7 +600,8 @@ describe("SubroutineLab · every prediction has exactly one right answer", () =>
   const lifetimes: Lifetime[] = ["static", "automatic"];
 
   it("send: lifetime × start time × debug prints, and the answer agrees with the model", () => {
-    const answerPattern = { "id=1": /t=10 id=1/, "id=2": /t=10 id=2/, either: /^Either/ };
+    // The option shows the line the code on screen prints, spacing included.
+    const answerPattern = (verdict: "id=1" | "id=2" | "either", debugPrints: boolean) => (verdict === "either" ? /^Either/ : new RegExp(`^t=10 ${debugPrints ? "use   " : ""}${verdict}:`));
     for (const lifetime of lifetimes) {
       for (const at of [2, 10, 12] as SecondCallAt[]) {
         for (const debugPrints of [false, true]) {
@@ -522,7 +611,7 @@ describe("SubroutineLab · every prediction has exactly one right answer", () =>
           if (debugPrints) fireEvent.click(screen.getByRole("checkbox", { name: /debug prints/ }));
           reveal();
           const verdict = sendVerdict(exploreBench(sendBench({ lifetime, secondCallAt: at, debugPrints })));
-          expect(onlyAnswer()).toMatch(answerPattern[verdict]);
+          expect(onlyAnswer()).toMatch(answerPattern(verdict, debugPrints));
           unmount();
         }
       }
@@ -609,16 +698,117 @@ describe("SubroutineLab · every prediction has exactly one right answer", () =>
     }
   });
 
-  it("formals: every signature and every formal", () => {
-    for (const preset of ["split", "wait_cycles", "wait_cycles_ok", "add"]) {
+  it("formals: every signature, through every prompt it asks", () => {
+    const promptsOf = { split: 1, wait_cycles: 2, wait_cycles_ok: 1, add: 1 };
+    for (const [preset, prompts] of Object.entries(promptsOf)) {
       const { unmount } = render(<SubroutineLab mode="formals" preset={preset} />);
-      const formals = within(screen.getByRole("radiogroup", { name: "Formal to predict" })).getAllByRole("radio");
-      formals.forEach((formal) => {
-        fireEvent.click(formal);
+      for (let i = 1; i <= prompts; i += 1) {
         reveal();
-        onlyAnswer();
-      });
+        expect(screen.getAllByLabelText("correct answer")).toHaveLength(i);
+      }
+      expect(screen.queryByRole("button", { name: /reveal without predicting/i })).not.toBeInTheDocument();
       unmount();
+    }
+  });
+
+  it("formals: a formal with its direction and type edited still has one answer, in every return type", () => {
+    for (const direction of ["", "input", "output", "inout", "ref"]) {
+      for (const type of ["", "int", "logic", "logic [7:0]"]) {
+        for (const returnType of ["", "int"]) {
+          const { unmount } = render(<SubroutineLab mode="formals" preset="add" />);
+          fireEvent.change(screen.getByRole("combobox", { name: "Written direction of a" }), { target: { value: direction } });
+          fireEvent.change(screen.getByRole("combobox", { name: "Written type of a" }), { target: { value: type } });
+          fireEvent.change(screen.getByRole("combobox", { name: "Written return type" }), { target: { value: returnType } });
+          let answered = 0;
+          while (screen.queryByRole("button", { name: /reveal without predicting/i })) {
+            reveal();
+            answered += 1;
+            expect(screen.getAllByLabelText("correct answer")).toHaveLength(answered);
+          }
+          expect(answered).toBeGreaterThan(0);
+          unmount();
+        }
+      }
+    }
+  });
+});
+
+describe("SubroutineLab · the right answer's position says nothing", () => {
+  const notBiased = (positions: number[]) => {
+    expect(positions.length).toBeGreaterThan(1);
+    expect(new Set(positions).size).toBeGreaterThan(1);
+    // A learner picking the same slot every time does no better than chance would on three or four options.
+    const counts = [...new Set(positions)].map((p) => positions.filter((x) => x === p).length);
+    expect(Math.max(...counts) / positions.length).toBeLessThan(0.6);
+  };
+
+  it("directions: every combination of the four directions", () => {
+    render(<SubroutineLab mode="directions" />);
+    const dirs: Direction[] = ["input", "output", "inout", "ref"];
+    const positions: number[] = [];
+    for (const a of dirs) {
+      fireEvent.change(screen.getByTestId("direction-a"), { target: { value: a } });
+      for (const b of dirs) {
+        fireEvent.change(screen.getByTestId("direction-b"), { target: { value: b } });
+        for (const c of dirs) {
+          fireEvent.change(screen.getByTestId("direction-c"), { target: { value: c } });
+          for (const d of dirs) {
+            fireEvent.change(screen.getByTestId("direction-d"), { target: { value: d } });
+            reveal();
+            positions.push(answerIndex());
+          }
+        }
+      }
+    }
+    expect(positions).toHaveLength(256);
+    notBiased(positions);
+  }, 60000);
+
+  it("formals: every signature, with each formal's written direction and type edited", () => {
+    const positions: number[] = [];
+    const formalsOf = { split: ["word", "hi", "lo"], wait_cycles: ["n"], wait_cycles_ok: ["n"], add: ["a", "b"] };
+    for (const [preset, formals] of Object.entries(formalsOf)) {
+      for (const formal of formals) {
+        const { unmount } = render(<SubroutineLab mode="formals" preset={preset} />);
+        for (const direction of ["", "input", "output", "inout", "ref"]) {
+          for (const type of ["", "int", "logic", "logic [7:0]"]) {
+            fireEvent.change(screen.getByRole("combobox", { name: `Written direction of ${formal}` }), { target: { value: direction } });
+            fireEvent.change(screen.getByRole("combobox", { name: `Written type of ${formal}` }), { target: { value: type } });
+            if (screen.queryByText(/What direction and type/)) {
+              fireEvent.click(screen.getAllByRole("button", { name: /reveal without predicting/i })[0]);
+              positions.push(answerIndex());
+            }
+          }
+        }
+        unmount();
+      }
+    }
+    notBiased(positions);
+  }, 60000);
+
+  it("the lesson's own formals questions do not all sit in one slot", () => {
+    const positions: number[] = [];
+    for (const preset of ["split", "wait_cycles"]) {
+      const { unmount } = render(<SubroutineLab mode="formals" preset={preset} />);
+      reveal();
+      positions.push(answerIndex());
+      unmount();
+    }
+    expect(new Set(positions).size).toBeGreaterThan(1);
+  });
+
+  it("recursion: the values run in ascending order, with the compile error last", () => {
+    for (const preset of ["fact", "sum_to"]) {
+      for (const lifetime of ["static", "automatic"]) {
+        const { unmount } = render(<SubroutineLab mode="recursion" preset={preset} />);
+        if (lifetime === "automatic") fireEvent.click(screen.getByRole("switch", { name: /is automatic$/ }));
+        const legend = screen.getByText(/^What does/).closest("fieldset") as HTMLElement;
+        const labels = within(legend).getAllByRole("radio").map((r) => (r.closest("label") as HTMLElement).textContent ?? "");
+        const values = labels.slice(0, -1).map((text) => parseInt(text, 10));
+        expect(values).toEqual([...values].sort((x, y) => x - y));
+        expect(labels[labels.length - 1]).toMatch(/compile error/);
+        unmount();
+      }
     }
   });
 });
@@ -633,7 +823,7 @@ describe("SubroutineLab · send with the debug prints", () => {
 
   it("automatic, #10, debug: id=1 is right, and the outcome cards say only the log order differs", () => {
     automaticTieWithDebug();
-    lockIn(/t=10 id=1/);
+    lockIn(/t=10 use\s+id=1/);
     expect(screen.getByText(/Correct\./)).toBeInTheDocument();
     const cards = within(screen.getByRole("group", { name: "Outcomes across orders" })).getAllByRole("button");
     expect(cards).toHaveLength(2);
@@ -679,7 +869,7 @@ describe("SubroutineLab · send with the debug prints", () => {
   it("the log keeps the lesson's spacing", () => {
     render(<SubroutineLab mode="lifetime" />);
     fireEvent.click(screen.getByRole("checkbox", { name: /debug prints/ }));
-    lockIn(/t=10 id=2/);
+    lockIn(/t=10 use\s+id=2/);
     scrubToEnd();
     const line = within(screen.getByTestId("log")).getByText("t=10 use id=2");
     expect(line.textContent).toBe("t=10 use   id=2");
@@ -829,7 +1019,7 @@ describe("SubroutineLab · screen readers", () => {
     fireEvent.click(screen.getByRole("button", { name: "Rerun and grade" }));
     expect(screen.getByTestId("grade-live")).toBe(grade);
     expect(grade).toHaveTextContent(/Not yet/);
-    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fix for pulse" })).getByRole("radio", { name: "ref instead of output" }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fix for pulse" })).getByRole("radio", { name: "pass by ref" }));
     expect(screen.getByTestId("grade-live")).toBe(grade);
     expect(grade).toBeEmptyDOMElement();
   });
@@ -953,10 +1143,17 @@ describe("SubroutineLab · text that follows the learner's edits", () => {
     expect(screen.getByTestId("second-call-note")).toHaveTextContent("v_out=40");
   });
 
-  it("the diagram's caption describes the dashed copy-out it draws", () => {
+  it("the diagram's caption describes the copy-out it draws: an arrow only on the return", () => {
     render(<SubroutineLab mode="directions" />);
     reveal();
-    expect(screen.getByText(/Dashed arrow: a copy out still waiting for the return/)).toBeInTheDocument();
+    expect(screen.getByText(/A copy-out arrow appears only on the return/)).toBeInTheDocument();
+  });
+
+  it("pulse, output: flag is described as the task's own variable, not as a copy of busy (§13.3)", () => {
+    render(<SubroutineLab mode="directions" preset="pulse" />);
+    lockIn(/^Nothing/);
+    expect(screen.getByText(/flag is the task's own variable, not busy/)).toBeInTheDocument();
+    expect(screen.queryByText(/flag is a copy inside/)).not.toBeInTheDocument();
   });
 
   it("pulse, static, output, <=: the copy-out carries the old 1", () => {
@@ -988,9 +1185,12 @@ describe("SubroutineLab · text that follows the learner's edits", () => {
     expect(screen.getByTestId("return-type-strip")).toHaveTextContent(/computes 5 and returns 1'b1, the low bit of 5/);
     fireEvent.change(screen.getByRole("combobox", { name: "Written type of a" }), { target: { value: "" } });
     reveal();
+    reveal();
     const strip = screen.getByTestId("return-type-strip");
     expect(strip).toHaveTextContent(/a = 0 \(2 truncated to a logic, §10.7\) and b = 3, computes 3 and returns 1'b1, the low bit of 3/);
     fireEvent.change(screen.getByRole("combobox", { name: "Written return type" }), { target: { value: "int" } });
+    lockIn(/^3$/);
+    expect(screen.getByText(/^Correct\./)).toBeInTheDocument();
     expect(screen.getByTestId("return-type-strip")).toHaveTextContent(/computes 3 and returns 3\./);
   });
 
@@ -1001,7 +1201,8 @@ describe("SubroutineLab · text that follows the learner's edits", () => {
   ] as const)("add(2, 3) with a as %s is a compile error, %s", (direction, clause) => {
     render(<SubroutineLab mode="formals" preset="add" />);
     fireEvent.change(screen.getByRole("combobox", { name: "Written direction of a" }), { target: { value: direction } });
-    reveal();
+    lockIn(/^A compile error$/);
+    expect(screen.getByText(/^Correct\./).parentElement).toHaveTextContent(clause);
     const strip = screen.getByTestId("return-type-strip");
     expect(within(strip).getByRole("alert")).toHaveTextContent(`Compile error (${clause})`);
     expect(strip).not.toHaveTextContent(/computes/);
@@ -1015,6 +1216,8 @@ describe("SubroutineLab · text that follows the learner's edits", () => {
     render(<SubroutineLab mode="formals" preset="wait_cycles" />);
     fireEvent.change(screen.getByRole("combobox", { name: "Written direction of n" }), { target: { value: direction } });
     reveal();
+    lockIn(/^A compile error$/);
+    expect(screen.getByText(/^Correct\./).parentElement).toHaveTextContent(clause);
     const strip = screen.getByTestId("wait-cycles-strip");
     expect(within(strip).getByRole("alert")).toHaveTextContent(`Compile error (${clause})`);
     expect(strip).not.toHaveTextContent(/waits/);
@@ -1035,6 +1238,7 @@ describe("SubroutineLab · the header and lanes match the lab on screen", () => 
 
   it("the kata's lanes name the task, so log_after's call and pulse's call read apart", () => {
     render(<SubroutineLab mode="debug" />);
+    fireEvent.click(screen.getByRole("button", { name: "Show the run anyway" }));
     const section = screen.getByRole("region", { name: "Step 3: watch the bench run" });
     const slider = within(section).getByRole("slider", { name: /scrubber/i });
     fireEvent.change(slider, { target: { value: slider.getAttribute("max") } });
@@ -1051,5 +1255,476 @@ describe("SubroutineLab · the header and lanes match the lab on screen", () => 
     scrubToEnd();
     const labels = [...screen.getByRole("img", { name: /Call lanes/ }).querySelectorAll("text")].map((t) => t.textContent);
     expect(labels).toEqual(expect.arrayContaining(["call 1", "call 2"]));
+  });
+});
+
+describe("SubroutineLab · a ref formal in the storage panel", () => {
+  const scrubToKind = (kind: RegExp) => {
+    const max = Number(screen.getByRole("slider", { name: /scrubber/i }).getAttribute("max"));
+    for (let i = 0; i <= max; i += 1) {
+      scrubTo(i);
+      if (kind.test(screen.getByTestId("narration").textContent ?? "")) return;
+    }
+    throw new Error(`no step matches ${kind}`);
+  };
+
+  it("pulse with ref: no storage of its own, a box titled as references, and the Why says another activation does reach it", () => {
+    render(<SubroutineLab mode="directions" preset="pulse" />);
+    fireEvent.change(screen.getByTestId("direction-flag"), { target: { value: "ref" } });
+    reveal();
+    scrubToKind(/Call starts/);
+    const narration = screen.getByTestId("narration");
+    expect(narration).toHaveTextContent(/has no storage of its own: flag is busy/);
+    expect(narration).toHaveTextContent("§13.5.2");
+    expect(narration).not.toHaveTextContent(/Nothing another activation does can reach/);
+    const storage = screen.getByTestId("storage");
+    expect(storage).toHaveTextContent(/call 1's references \(pulse\(busy\)\)/);
+    expect(storage).not.toHaveTextContent(/own copy/);
+  });
+
+  it("pulse with ref: the box ends without claiming a copy was dropped", () => {
+    render(<SubroutineLab mode="directions" preset="pulse" />);
+    fireEvent.change(screen.getByTestId("direction-flag"), { target: { value: "ref" } });
+    reveal();
+    scrubToKind(/Returns/);
+    const storage = screen.getByTestId("storage");
+    expect(storage).toHaveTextContent(/ended at return/);
+    expect(storage).not.toHaveTextContent(/dropped at return/);
+  });
+
+  it("pulse with output keeps the own-copy title", () => {
+    render(<SubroutineLab mode="directions" preset="pulse" />);
+    reveal();
+    scrubToKind(/Call starts/);
+    expect(screen.getByTestId("storage")).toHaveTextContent(/call 1's own copy \(pulse\(busy\)\)/);
+  });
+});
+
+describe("SubroutineLab · copy arrows only while a call is open", () => {
+  const diagram = () => screen.getByRole("img", { name: /Caller and task storage/ });
+  const kindOf = () => screen.getByTestId("narration").textContent ?? "";
+  const walk = (visit: (i: number) => void) => {
+    const max = Number(screen.getByRole("slider", { name: /scrubber/i }).getAttribute("max"));
+    for (let i = 0; i <= max; i += 1) {
+      scrubTo(i);
+      visit(i);
+    }
+  };
+
+  it("static: the box and its values stay at the start and after the return, with no arrows", () => {
+    render(<SubroutineLab mode="directions" />);
+    fireEvent.click(screen.getByRole("button", { name: "Static, called twice" }));
+    reveal();
+    scrubTo(0);
+    expect(kindOf()).toMatch(/^Start/);
+    expect(diagram()).not.toHaveTextContent(/copy in|copy out|never copied back/);
+    expect(diagram()).toHaveTextContent("Task: no call open (static)");
+    expect(diagram()).toHaveTextContent("output b = 0");
+
+    let sawReturn = false;
+    let afterReturn = false;
+    let checkedAfter = false;
+    walk(() => {
+      if (afterReturn && !checkedAfter) {
+        checkedAfter = true;
+        if (!/^Call starts/.test(kindOf())) {
+          expect(diagram()).not.toHaveTextContent(/copy in|copy out|never copied back/);
+          expect(diagram()).toHaveTextContent("output b = 20");
+        }
+      }
+      if (/^Returns/.test(kindOf()) && !sawReturn) {
+        sawReturn = true;
+        afterReturn = true;
+        // The return step performs the copy-out, so its arrow is still there, solid and lit.
+        expect(diagram()).toHaveTextContent("copy out at the return");
+        const out = [...diagram().querySelectorAll("line")].filter((l) => (l.getAttribute("marker-end") ?? "").includes("sub-arrow"));
+        expect(out.some((l) => (l.getAttribute("marker-end") ?? "").includes("lit") && !l.getAttribute("stroke-dasharray"))).toBe(true);
+      }
+    });
+    expect(sawReturn && checkedAfter).toBe(true);
+  });
+
+  it("while the call waits, the copy-in is drawn and the copy-out has no arrow yet", () => {
+    render(<SubroutineLab mode="directions" />);
+    reveal();
+    let seen = false;
+    walk(() => {
+      if (!seen && /^Waits/.test(kindOf()) && /show_dirs/.test(kindOf())) {
+        seen = true;
+        expect(diagram()).toHaveTextContent("copy in at the call");
+        expect(diagram()).toHaveTextContent("no copy out yet");
+        expect(diagram()).not.toHaveTextContent("copy out at the return");
+        expect([...diagram().querySelectorAll("line")].filter((l) => l.getAttribute("marker-end")?.includes("lit"))).toHaveLength(0);
+      }
+    });
+    expect(seen).toBe(true);
+  });
+
+  it("automatic: no box and no arrows before the call", () => {
+    render(<SubroutineLab mode="directions" />);
+    reveal();
+    scrubTo(0);
+    expect(diagram()).toHaveTextContent("Task: not running");
+    expect(diagram()).not.toHaveTextContent(/copy in|copy out/);
+  });
+
+  it("the arrowheads have one marker per colour and per lab, so two labs never share an id", () => {
+    render(
+      <>
+        <SubroutineLab mode="directions" />
+        <SubroutineLab mode="directions" />
+      </>,
+    );
+    screen.getAllByRole("button", { name: /reveal without predicting/i }).forEach((b) => fireEvent.click(b));
+    const ids = screen.getAllByRole("img", { name: /Caller and task storage/ }).flatMap((svg) => [...svg.querySelectorAll("marker")].map((m) => m.id));
+    expect(ids).toHaveLength(4);
+    expect(new Set(ids).size).toBe(4);
+    ids.forEach((id) => expect(id).not.toContain(":"));
+  });
+
+  it("the summary for screen readers names a ref as its caller's variable, not a value", () => {
+    render(<SubroutineLab mode="directions" />);
+    reveal();
+    let seen = false;
+    walk(() => {
+      if (!seen && /^Waits/.test(kindOf())) {
+        seen = true;
+        expect(diagram().getAttribute("aria-label")).toContain("d (ref) is v_ref");
+      }
+    });
+    expect(seen).toBe(true);
+  });
+});
+
+describe("SubroutineLab · the control marked invalid is the one that can fix it", () => {
+  const operator = (name: string) => screen.getByRole("switch", { name: `${name} uses a nonblocking assignment` });
+
+  it("pulse, const ref: the direction select is marked and the operator is not", () => {
+    render(<SubroutineLab mode="directions" preset="pulse" />);
+    fireEvent.change(screen.getByTestId("direction-flag"), { target: { value: "const ref" } });
+    expect(screen.getByRole("alert")).toHaveTextContent(/const ref/);
+    expect(screen.getByTestId("direction-flag")).toHaveAttribute("aria-invalid", "true");
+    expect(operator("flag")).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("pulse, const ref with <=: both are wrong, so both are marked", () => {
+    render(<SubroutineLab mode="directions" preset="pulse" />);
+    fireEvent.change(screen.getByTestId("direction-flag"), { target: { value: "const ref" } });
+    fireEvent.click(operator("flag"));
+    expect(screen.getByTestId("direction-flag")).toHaveAttribute("aria-invalid", "true");
+    expect(operator("flag")).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("pulse, <= to an automatic output: the operator is marked and the direction is not", () => {
+    render(<SubroutineLab mode="directions" preset="pulse" />);
+    fireEvent.click(operator("flag"));
+    expect(screen.getByRole("alert")).toHaveTextContent("§13.3.2");
+    expect(operator("flag")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByTestId("direction-flag")).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("pulse, ref in a static task: the direction is marked and the lifetime switch stays usable", () => {
+    render(<SubroutineLab mode="directions" preset="pulse" />);
+    fireEvent.change(screen.getByTestId("direction-flag"), { target: { value: "ref" } });
+    fireEvent.click(screen.getByRole("switch", { name: "pulse is automatic" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("§13.5.2");
+    expect(screen.getByTestId("direction-flag")).toHaveAttribute("aria-invalid", "true");
+    expect(operator("flag")).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("show_dirs, b as const ref: the direction of b is marked and its operator is not", () => {
+    render(<SubroutineLab mode="directions" />);
+    fireEvent.change(screen.getByTestId("direction-b"), { target: { value: "const ref" } });
+    expect(screen.getByTestId("direction-b")).toHaveAttribute("aria-invalid", "true");
+    expect(operator("b")).not.toHaveAttribute("aria-invalid");
+  });
+});
+
+describe("SubroutineLab · layout at narrow widths", () => {
+  it("pulse: flag's direction sits on flag's own line, and the task line carries one control", () => {
+    render(<SubroutineLab mode="directions" preset="pulse" />);
+    const flagLine = screen.getByTestId("direction-flag").closest("li") as HTMLElement;
+    expect(flagLine).toHaveTextContent("output logic flag");
+    expect(flagLine).not.toHaveTextContent("task automatic");
+    const taskLine = screen.getByRole("switch", { name: "pulse is automatic" }).closest("li") as HTMLElement;
+    expect(taskLine).toHaveTextContent("task automatic pulse(");
+    expect(within(taskLine).queryByTestId("direction-flag")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["lifetime", /debug prints/],
+    ["directions", /second time/],
+  ] as const)("%s: the checkbox's label meets the 40 px touch target", (mode, name) => {
+    render(<SubroutineLab mode={mode} />);
+    expect(screen.getByRole("checkbox", { name }).closest("label")).toHaveClass("min-h-10");
+  });
+});
+
+describe("SubroutineLab · the kata's order: read the log, pick, fix, rerun", () => {
+  it("shows the code near the top and no run, narration or playback before the first rerun", () => {
+    const { container } = render(<SubroutineLab mode="debug" />);
+    const code = screen.getByRole("list", { name: /The bench, with your fixes/ });
+    expect(code).toHaveTextContent("task log_after(input int delay_ns, input string msg);");
+    const firstSymptom = screen.getByTestId("symptom-second-twice");
+    expect(code.compareDocumentPosition(firstSymptom) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByTestId("trace-view")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("narration")).not.toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: /scrubber/i })).not.toBeInTheDocument();
+    ["overwriting", "one shared copy", "does not wake", "overwrote the shared copies"].forEach((leak) => expect(container.textContent).not.toContain(leak));
+  });
+
+  it("the code follows the fixes as they are picked, with the run still closed", () => {
+    render(<SubroutineLab mode="debug" />);
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fix for pulse" })).getByRole("radio", { name: "pass by ref" }));
+    expect(screen.getByRole("list", { name: /The bench, with your fixes/ })).toHaveTextContent("task automatic pulse(ref logic flag);");
+    expect(screen.getByTestId("run-closed")).toBeInTheDocument();
+  });
+
+  it("the first rerun opens the run, and it stays open while the fixes change", () => {
+    render(<SubroutineLab mode="debug" />);
+    fireEvent.click(screen.getByRole("button", { name: "Rerun and grade" }));
+    expect(screen.getByTestId("narration")).toBeInTheDocument();
+    expect(screen.queryByTestId("run-closed")).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fix for sum_to" })).getByRole("radio", { name: "add automatic" }));
+    expect(screen.queryByTestId("grade")).not.toBeInTheDocument();
+    expect(screen.getByTestId("narration")).toBeInTheDocument();
+  });
+
+  it("'Show the run anyway' opens it without grading, and moves focus to the step's heading", () => {
+    render(<SubroutineLab mode="debug" />);
+    fireEvent.click(screen.getByRole("button", { name: "Show the run anyway" }));
+    expect(screen.getByTestId("narration")).toBeInTheDocument();
+    expect(screen.queryByTestId("grade")).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: /3\. Watch the bench/ }));
+  });
+
+  it("a bench that does not compile reports it in the open run", () => {
+    render(<SubroutineLab mode="debug" />);
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fix for pulse" })).getByRole("radio", { name: "use <= for the write" }));
+    expect(screen.queryByTestId("bench-issues")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Rerun and grade" }));
+    expect(screen.getByTestId("bench-issues")).toHaveTextContent("§13.3.2");
+  });
+
+  it("hints stay open when a fix changes", () => {
+    render(<SubroutineLab mode="debug" />);
+    fireEvent.click(screen.getByRole("button", { name: /Need a hint\? \(0\/3\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Another hint \(1\/3\)/ }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fix for sum_to" })).getByRole("radio", { name: "add automatic" }));
+    expect(screen.getByText(/Two of the three subroutines have no lifetime keyword/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Another hint \(2\/3\)/ })).toBeInTheDocument();
+  });
+
+  it("the fix is named 'pass by ref' on all three subroutines", () => {
+    render(<SubroutineLab mode="debug" />);
+    ["log_after", "sum_to", "pulse"].forEach((sub) => {
+      const group = screen.getByRole("radiogroup", { name: `Fix for ${sub}` });
+      expect(within(group).getByRole("radio", { name: "pass by ref" })).toBeInTheDocument();
+      expect(within(group).queryByRole("radio", { name: /instead of output/ })).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe("SubroutineLab · send feedback and option labels", () => {
+  it("static #12: the no-overlap feedback is scoped to this bench, and points at count_ones for the rest of the rule", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    fireEvent.click(screen.getByRole("radio", { name: /#12: call 2 starts/ }));
+    lockIn(/t=10 id=1/);
+    const right = screen.getByText(/Call 2 starts at t = 12 ns, after call 1 returned/);
+    expect(right).toHaveTextContent(/Here the overlap is what does the harm: send only reads id, and each call rewrites it at copy-in/);
+    expect(right).toHaveTextContent(/A static local that carries a value between calls still misbehaves without overlap \(see count_ones\)/);
+    expect(right).not.toHaveTextContent(/The static bug needs overlapping calls/);
+  });
+
+  it("static #12: the wrong-answer feedback says the same", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    fireEvent.click(screen.getByRole("radio", { name: /#12: call 2 starts/ }));
+    lockIn(/t=10 id=2/);
+    const wrong = screen.getByText(/By t = 12 ns, when call 2 copies 2 in/);
+    expect(wrong).toHaveTextContent(/still misbehaves without overlap \(see count_ones\)/);
+    expect(wrong).not.toHaveTextContent(/does no harm/);
+  });
+
+  it("static #2: a task with no lifetime keyword cites the default-to-static clause too", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    lockIn(/t=10 id=1/);
+    expect(screen.getByText(/This task has no lifetime keyword, so in a module it is static/)).toHaveTextContent("(§13.3.1, §13.3.2)");
+  });
+
+  it("with the debug prints the options show the line the code prints, and that line appears in the log", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    fireEvent.click(screen.getByRole("checkbox", { name: /debug prints/ }));
+    const legend = screen.getByText("What does call 1 print at t = 10 ns?").closest("fieldset") as HTMLElement;
+    const labels = within(legend).getAllByRole("radio").map((r) => (r.closest("label") as HTMLElement).textContent ?? "");
+    expect(labels.some((text) => text.startsWith("t=10 use   id=1:"))).toBe(true);
+    expect(labels.some((text) => text.startsWith("t=10 use   id=2:"))).toBe(true);
+    expect(labels.some((text) => /t=10 id=/.test(text))).toBe(false);
+    lockIn(/t=10 use\s+id=2/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    scrubToEnd();
+    expect(within(screen.getByTestId("log")).getByText("t=10 use id=2").textContent).toBe("t=10 use   id=2");
+  });
+
+  it("without the debug prints the options keep the plain line", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    lockIn(/t=10 id=2/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+  });
+});
+
+describe("SubroutineLab · the compile-error option tells the truth about the state on screen", () => {
+  const pickN = (n: number) => fireEvent.click(within(screen.getByRole("radiogroup", { name: "n" })).getByRole("radio", { name: String(n) }));
+
+  it("static with differing values: compiles and returns the wrong value", () => {
+    render(<SubroutineLab mode="recursion" />);
+    lockIn(/compile error/);
+    const feedback = screen.getByText(/it does not forbid the static call/);
+    expect(feedback).toHaveTextContent("The code compiles and returns the wrong value: 1, not 24.");
+    expect(feedback).not.toHaveTextContent(/some tools/);
+  });
+
+  it("automatic: compiles and returns the correct value", () => {
+    render(<SubroutineLab mode="recursion" />);
+    fireEvent.click(screen.getByRole("switch", { name: "fact_static is automatic" }));
+    expect(screen.getByLabelText(/A compile error: fact_auto may not call itself/)).toBeInTheDocument();
+    lockIn(/compile error/);
+    const feedback = screen.getByText(/fact_auto is automatic, so it is reentrant/);
+    expect(feedback).toHaveTextContent("It compiles and returns 24, the correct value.");
+    expect(feedback).not.toHaveTextContent(/wrong value/);
+  });
+
+  it.each(["static", "automatic"] as const)("n = 1, %s: the base case compiles and returns the correct value", (lifetime) => {
+    render(<SubroutineLab mode="recursion" />);
+    pickN(1);
+    if (lifetime === "automatic") fireEvent.click(screen.getByRole("switch", { name: "fact_static is automatic" }));
+    lockIn(/compile error/);
+    const feedback = screen.getByText(/n = 1 reaches the base case/);
+    expect(feedback).toHaveTextContent("so it compiles and returns 1, the correct value.");
+    expect(feedback).not.toHaveTextContent(/wrong value/);
+  });
+
+  it("sum_to, static and automatic: the feedback names sum_to's own values", () => {
+    render(<SubroutineLab mode="recursion" preset="sum_to" />);
+    lockIn(/A compile error: sum_to may not call itself/);
+    expect(screen.getByText(/does not forbid the static call/)).toHaveTextContent("returns the wrong value: 0, not 6.");
+    fireEvent.click(screen.getByRole("switch", { name: "sum_to is automatic" }));
+    lockIn(/compile error/);
+    expect(screen.getByText(/sum_to is automatic, so it is reentrant/)).toHaveTextContent("returns 6, the correct value.");
+  });
+});
+
+describe("SubroutineLab · recursion feedback and the table", () => {
+  it("the wrong answers explain themselves: fact's 0 and sum_to's outermost n", () => {
+    const first = render(<SubroutineLab mode="recursion" />);
+    lockIn(/^0$/);
+    expect(screen.getByText(/Nothing produces 0: rest starts at the int default 0 but is assigned from the inner call before it is read/)).toBeInTheDocument();
+    first.unmount();
+    render(<SubroutineLab mode="recursion" preset="sum_to" />);
+    lockIn(/^3$/);
+    expect(screen.getByText(/Only the outermost n would give that/)).toBeInTheDocument();
+  });
+
+  it("a right answer speaks of the levels above the base case, which has no inner call", () => {
+    const first = render(<SubroutineLab mode="recursion" />);
+    lockIn(/^1$/);
+    expect(screen.getByText(/Every level above the base case reads the shared n/)).toBeInTheDocument();
+    first.unmount();
+    render(<SubroutineLab mode="recursion" preset="sum_to" />);
+    lockIn(/^0$/);
+    expect(screen.getByText(/Every level above the base case reads the shared n/)).toBeInTheDocument();
+  });
+
+  it("the table's caption says the base case shares one row", () => {
+    render(<SubroutineLab mode="recursion" />);
+    reveal();
+    expect(within(screen.getByTestId("recursion-table")).getByText(/the base case's entry and return share one row/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["fact", "static", () => factBench({ lifetime: "static", n: 4 })],
+    ["fact", "automatic", () => factBench({ lifetime: "automatic", n: 4 })],
+    ["sum_to", "static", () => sumToBench({ lifetime: "static", n: 3 })],
+    ["sum_to", "automatic", () => sumToBench({ lifetime: "automatic", n: 3 })],
+  ] as const)("%s, %s: on every exec or return step the highlighted row is the running activation", (preset, lifetime, bench) => {
+    render(<SubroutineLab mode="recursion" preset={preset} />);
+    if (lifetime === "automatic") fireEvent.click(screen.getByRole("switch", { name: /is automatic$/ }));
+    reveal();
+    const run = simulateBench(bench());
+    expect(recursionTable(run).length).toBeGreaterThan(0);
+    const table = screen.getByTestId("recursion-table");
+    let checked = 0;
+    run.trace.forEach((step) => {
+      if ((step.kind !== "exec" && step.kind !== "return") || step.activationId === undefined) return;
+      scrubTo(step.index);
+      const current = table.querySelector("tr[aria-current='step']") as HTMLElement;
+      expect(current.querySelectorAll("td")[1].textContent).toBe(run.activations.find((a) => a.id === step.activationId)?.label);
+      checked += 1;
+    });
+    expect(checked).toBeGreaterThan(0);
+  });
+});
+
+describe("SubroutineLab · small things a learner reads or hears", () => {
+  it("the scrubber names its position; the status region alone reads the narration", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    reveal();
+    const slider = screen.getByRole("slider", { name: /scrubber/i });
+    expect(slider.getAttribute("aria-valuetext")).toMatch(/^Simulation step 1 of \d+: Start, t = 0 ns$/);
+    expect(screen.getByTestId("step-live")).toHaveTextContent(/Why:/);
+  });
+
+  it("the single-choice controls show their names, without announcing them twice", () => {
+    const first = render(<SubroutineLab mode="recursion" />);
+    expect(screen.getByText("n =")).toHaveAttribute("aria-hidden", "true");
+    first.unmount();
+    const second = render(<SubroutineLab mode="lifetime" />);
+    expect(screen.getByText("Call 2 starts:")).toHaveAttribute("aria-hidden", "true");
+    second.unmount();
+    render(<SubroutineLab mode="formals" />);
+    expect(screen.getByText("Signature:")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("radiogroup", { name: "Signature" })).toBeInTheDocument();
+  });
+
+  it("'Formal to predict' is visible when there is a choice", () => {
+    render(<SubroutineLab mode="formals" />);
+    const select = screen.getByRole("combobox", { name: "Written direction of word" });
+    fireEvent.change(select, { target: { value: "" } });
+    expect(screen.getByRole("radiogroup", { name: "Formal to predict" })).toBeInTheDocument();
+    expect(screen.getByText("Formal to predict:")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("the buggy log is a finished log, so no line is tinted; the live log tints its newest", () => {
+    render(<SubroutineLab mode="debug" />);
+    expect((within(screen.getByTestId("buggy-log")).getByText("sum_to(3) = 0").closest("li") as HTMLElement).className).not.toContain("text-cyan-200");
+    fireEvent.click(screen.getByRole("button", { name: "Show the run anyway" }));
+    scrubToEnd();
+    expect((within(screen.getByTestId("log")).getByText("sum_to(3) = 0").closest("li") as HTMLElement).className).toContain("text-cyan-200");
+  });
+
+  it("a phone gets the task's values without scrolling the diagram: a compact list, shown only below sm", () => {
+    render(<SubroutineLab mode="directions" />);
+    reveal();
+    const list = screen.getByTestId("formal-values");
+    expect(list).toHaveClass("sm:hidden");
+    expect(list).toHaveAttribute("aria-hidden", "true");
+    scrubToEnd();
+    expect(list).toHaveTextContent("v_out = 20; b (output) = no storage");
+    const walkTo = screen.getByRole("slider", { name: /scrubber/i });
+    const max = Number(walkTo.getAttribute("max"));
+    for (let i = 0; i <= max; i += 1) {
+      scrubTo(i);
+      if (/^Returns/.test(screen.getByTestId("narration").textContent ?? "")) break;
+    }
+    expect(list).toHaveTextContent("v_in = 5; a (input) = 15");
+    expect(list).toHaveTextContent("v_ref = 45; d (ref) is v_ref");
+  });
+
+  it("const ref with <=: the message says the write is the error and offers no cure that fails", () => {
+    render(<SubroutineLab mode="directions" preset="pulse" />);
+    fireEvent.change(screen.getByTestId("direction-flag"), { target: { value: "const ref" } });
+    fireEvent.click(screen.getByRole("switch", { name: "flag uses a nonblocking assignment" }));
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(/const ref, so the write itself is the error/);
+    expect(alert).not.toHaveTextContent(/Use =|ref static/);
   });
 });

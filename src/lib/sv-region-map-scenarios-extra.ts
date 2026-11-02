@@ -12,7 +12,7 @@
  *   watcher runs before the design assign and still sees led = 0.
  * - 'clocking-drive': the existing testbenchDriveScenario('clocking'), asked
  *   as region questions: the clocking drive lands in Re-NBA (§14.16) and the
- *   driver's `cb.q` is the Preponed sample (§14.13).
+ *   driver's `cb.q` is the Preponed sample (§14.13, §4.4.2.1).
  */
 
 import { formatValue, type SimulationResult, type SvScenario } from "./sv-scheduler-model";
@@ -26,7 +26,10 @@ export type AnyRegionMapScenarioId = RegionMapScenarioId | ExtraRegionMapScenari
 export interface AnyRegionMapPreset {
   id: AnyRegionMapScenarioId;
   label: string;
+  /** What the scenario is about, shown from the reveal on. It may name the answer. */
   summary: string;
+  /** Shown instead of `summary` until the last prediction is committed, for a summary that names the answer. */
+  setup?: string;
   build: () => SvScenario;
   /** One or more prediction prompts, graded from the run. */
   predictions: (scenario: SvScenario, result: SimulationResult) => ModelPrediction[];
@@ -42,7 +45,7 @@ export const programWatcherScenario = (): SvScenario => {
   return {
     ...base,
     id: "program-watcher",
-    title: "Two program threads react to one clock edge",
+    title: "A second program thread waits on cmd",
     processes: [
       ...base.processes,
       {
@@ -88,7 +91,7 @@ function programWatcherPredictions(scenario: SvScenario, result: SimulationResul
           label: "Either, in any order: both are ready at the same moment, so it is a race",
           correct: !deterministic,
           feedback:
-            "Processes race only when they are ready in the same region (§4.7). The watcher sits in Reactive and assign led in Active, and §4.5 fixes the order between those two regions.",
+            "The watcher sits in Reactive and assign led in Active, so §4.5 fixes the order between them; a pair ready in one region could go either way (§4.7).",
         },
         {
           id: "next-slot",
@@ -124,11 +127,11 @@ function clockingDrivePredictions(scenario: SvScenario, result: SimulationResult
           label: "NBA, like any <= executed by module code",
           correct: dinRegion === "nba",
           feedback:
-            "That is where a plain din <= 7 from module code would land (§4.4.2.4). A zero-skew clocking drive is scheduled in Re-NBA whatever code executes it (§14.16), after every design NBA update of the slot.",
+            "That is where a plain din <= 7 from module code would land (§4.4.2.4). A zero-skew clocking drive is scheduled in Re-NBA whatever code executes it (§14.16), after the design NBA updates already queued for this edge.",
         },
         {
           id: "reNba",
-          label: "Re-NBA, after every design NBA update of this slot",
+          label: "Re-NBA, after the design NBA updates queued for this edge",
           correct: dinRegion === "reNba",
           feedback:
             "A zero-skew synchronous drive with no cycle delay schedules its update in the Re-NBA region of the same time step (§14.16). The DUT flop read din = 3 in Active long before that, so q becomes 3, not 7.",
@@ -150,13 +153,13 @@ function clockingDrivePredictions(scenario: SvScenario, result: SimulationResult
           label: `${formatValue(finalQ)}: the value after the flop's NBA update`,
           correct: seen === finalQ && finalQ !== initialQ,
           feedback:
-            "That is what a plain read of q would see: @(cb) triggers in Observed (§14.10), after NBA. But cb.q is the #1step sample taken in Preponed (§14.13), so the pre-edge value comes back.",
+            "That is what a plain read of q would see: @(cb) triggers in Observed (§14.10), after NBA. But cb.q is the #1step sample taken in Preponed (§14.13, §4.4.2.1), so the pre-edge value comes back.",
         },
         {
           id: "unknown",
           label: "X: cb.q is not valid until the next clocking event",
           correct: seen === "X",
-          feedback: "The sample is taken at this clocking event, in Preponed (§14.13), so it is valid as soon as the @(cb) process runs in the following Active pass.",
+          feedback: "The sample is taken at this clocking event, in Preponed (§14.13, §4.4.2.1), so it is valid as soon as the @(cb) process runs in the following Active pass.",
         },
       ],
     },
@@ -180,9 +183,14 @@ export const extraRegionMapScenarioPresets: AnyRegionMapPreset[] = [
   },
 ];
 
+/** The base summaries that state their own answer get a neutral sentence until the reveal. */
+const BASE_SETUPS: Partial<Record<RegionMapScenarioId, string>> = {
+  "comb-after-nba": "A flop's q feeds a continuous assignment, whose y feeds an always_comb.",
+};
+
 /** Every region-map preset the visualizer accepts, base presets first. */
 export const allRegionMapScenarioPresets: AnyRegionMapPreset[] = [
-  ...regionMapScenarioPresets.map((p) => ({ ...p, predictions: (scenario: SvScenario, result: SimulationResult) => [regionMapPrediction(scenario, result)] })),
+  ...regionMapScenarioPresets.map((p) => ({ ...p, setup: BASE_SETUPS[p.id], predictions: (scenario: SvScenario, result: SimulationResult) => [regionMapPrediction(scenario, result)] })),
   ...extraRegionMapScenarioPresets,
 ];
 

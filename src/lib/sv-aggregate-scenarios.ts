@@ -20,7 +20,6 @@ import {
   enumMemberReadout,
   enumName,
   fillWhole,
-  formatB,
   formatD,
   formatH,
   formatSizedHex,
@@ -97,9 +96,12 @@ export interface StructPreset {
   members: readonly PackedMember[];
   statements: readonly StructStatement[];
   summary: string;
-  /** Where the preset comes from. */
+  /** Where the preset comes from, in the learner's words: shown beside the typedef, and true on any page that embeds the explorer. */
   source: string;
 }
+
+/** The lesson's title and a section of it. */
+const fromLesson = (section: string): string => `Structs, Unions and Enums: ${section}`;
 
 const logic = (id: string, width: number): PackedMember => ({ id, name: id, width, type: { kind: "logic" } });
 
@@ -173,8 +175,8 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
     typeName: "cmd_t",
     varName: "c",
     members: CMD_T,
-    summary: "The lesson's bus command: op, addr and data on one 32-bit vector. Three writes, each gated by a prediction.",
-    source: "structs-unions-enums.mdx, Packed structs",
+    summary: "The lesson's bus command: op, addr and data on one vector. Three writes, each gated by a prediction.",
+    source: fromLesson("Packed structs"),
     statements: [
       { code: "c = 32'h5ABC_0042;", action: { kind: "whole", value: svHex(32, "5ABC_0042") }, prediction: CMD_T_PREDICTIONS[0], note: "Fields on 4-bit boundaries read straight off the hex: 5 | ABC | 0042." },
       { code: "c.addr = 12'h0FF;", action: { kind: "member", member: "addr", value: svHex(12, "0FF") }, prediction: CMD_T_PREDICTIONS[1], note: "▲ marks the bits whose value changed." },
@@ -187,8 +189,8 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
     typeName: "ctrl_reg_t",
     varName: "ctrl",
     members: CTRL_REG_T,
-    summary: "A register field map: six members of uneven widths. Where does a write to one of them land?",
-    source: "structs-unions-enums.mdx, In a real testbench",
+    summary: "A register field map: six members on one vector. Where does a write to one of them land?",
+    source: fromLesson("In a real testbench"),
     statements: [
       { code: "ctrl = '0;", action: { kind: "whole", value: svHex(1, "0"), fill: true } },
       { code: "ctrl.en = 1'b1;", action: { kind: "member", member: "en", value: svHex(1, "1") } },
@@ -203,7 +205,7 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
             { id: "6401", label: "32'h0000_6401", correct: false, feedback: "That places thresh on a byte boundary, [15:8]. Packed members are contiguous with no alignment padding, so it starts right above the 4 bits below it (§7.2.1)." },
           ],
         },
-        note: "8'd100 is 8'h64: wdata reads 32'h0000_0641.",
+        note: "8'd100 is 8'h64: ctrl reads 32'h0000_0641.",
       },
     ],
   },
@@ -214,7 +216,7 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
     varName: "f",
     members: FRAME_T,
     summary: "The interview question: which byte is hdr?",
-    source: "structs-unions-enums.mdx, Interview: field order",
+    source: fromLesson("Interview: field order"),
     statements: [
       {
         code: "f = 32'hAB00_0001;",
@@ -236,8 +238,8 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
     typeName: "pkt_hdr_t",
     varName: "hdr",
     members: PKT_HDR_T,
-    summary: "The kata header: four members of uneven widths. The kata declares two headers, hdr and rx; the strip follows whichever the statement writes.",
-    source: "structs-unions-enums.mdx, Kata: decode a packet header",
+    summary: "The kata header: four members on one vector. The kata declares two headers, hdr and rx; the strip follows whichever the statement writes.",
+    source: fromLesson("Kata: decode a packet header"),
     statements: [
       {
         code: "hdr = '{kind: PKT_ACK, seq: 6'd5, len: 8'd64, crc: 16'hCAFE};",
@@ -253,10 +255,10 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
         note: "kind and seq share hex digit 7: only len and crc can be read straight off the hex.",
       },
       {
-        code: "rx = 32'hC1FF_0000;  // a whole-vector write: rx.kind is not type-checked",
+        code: "rx = 32'hC1FF_0000;",
         action: { kind: "whole", value: svHex(32, "C1FF_0000") },
         varName: "rx",
-        note: "The strip now shows rx, the kata's second header. 8'hC1 = 8'b1100_0001 splits into kind = 2'b11 (PKT_PING) and seq = 1; len = 8'hFF = 255.",
+        note: "A whole-vector write, so rx.kind is not type-checked (derived from §7.2.1: the struct is one vector). The strip now shows rx, the kata's second header. 8'hC1 = 8'b1100_0001 splits into kind = 2'b11 (PKT_PING) and seq = 1; len = 8'hFF = 255.",
       },
     ],
   },
@@ -267,7 +269,7 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
     varName: "c",
     members: reorderMembers(CMD_T, ["op", "data", "addr"]),
     summary: "The same word as cmd_t, with addr and data swapped in the typedef. What do the names read now?",
-    source: "structs-unions-enums.mdx, Debugging table and Make It Work step 3",
+    source: fromLesson("Debugging: symptom, cause, fix, and Make It Work step 3"),
     statements: [
       {
         code: "c = 32'h5ABC_0042;",
@@ -290,8 +292,8 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
     typeName: "cmd_t",
     varName: "c",
     members: CMD_T,
-    summary: "A 16-bit word assigned to a 32-bit struct. What happens to the members it does not reach?",
-    source: "structs-unions-enums.mdx, Packed structs",
+    summary: "A short word assigned to the whole struct. What happens to the members it does not reach?",
+    source: fromLesson("Packed structs"),
     statements: [{ code: "c = 16'hBEEF;", action: { kind: "whole", value: svHex(16, "BEEF") }, prediction: CMD_T_PREDICTIONS[2], note: "No warning is required (§10.7). Size raw words to $bits(cmd_t)." }],
   },
   {
@@ -301,7 +303,7 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
     varName: "c",
     members: CMD_T_ENUM,
     summary: "A struct with an opcode_e member, written as one whole vector. What does the member's name() report?",
-    source: "structs-unions-enums.mdx, Debugging table",
+    source: fromLesson("Debugging: symptom, cause, fix"),
     statements: [
       {
         code: "c = 32'h7ABC_0042;",
@@ -311,7 +313,7 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
           options: [
             { id: "empty", label: '"" (empty string)', correct: true, feedback: "The vector write stored 4'h7 in op without an enum type check (derived from §7.2.1: the struct is one vector). 7 is not a member, so name() returns \"\" (§6.19.5.6)." },
             { id: "irq", label: '"OP_IRQ"', correct: false, feedback: "OP_IRQ is 4'hF. The top digit of the word is 7, which no member has." },
-            { id: "error", label: "Compile error: an int cannot be assigned to an enum", correct: false, feedback: "The assignment is to the struct, an integral vector, not to the enum member; §6.19.3 is bypassed by writing the containing aggregate." },
+            { id: "error", label: "Compile error: an int cannot be assigned to an enum", correct: false, feedback: "The assignment is to the struct, an integral vector, not to the enum member, so the enum's type check (§6.19.3) does not apply here (derived from §7.2.1: the struct is one vector)." },
           ],
         },
       },
@@ -409,12 +411,12 @@ export const NEST_U: UnionType = {
 export const UNION_PRESETS: readonly UnionPreset[] = [
   {
     id: "cmd_u",
-    label: "cmd_u (hard packed)",
+    label: "cmd_u",
     varName: "u",
     union: CMD_U,
     narrowMember: "raw",
-    summary: "Three names for the same 32 bits: fields, the raw word and four bytes. Hard packed, so every member must be 32 bits.",
-    source: "structs-unions-enums.mdx, Unions",
+    summary: "Three names for the same storage: fields, the raw word and four bytes. What does a write through one read as through the others?",
+    source: fromLesson("Unions"),
     statements: [
       {
         code: "u.raw = 32'h1ABC_0042;",
@@ -423,8 +425,8 @@ export const UNION_PRESETS: readonly UnionPreset[] = [
         prediction: {
           question: "After u.raw = 32'h1ABC_0042, what are u.f.addr and u.bytes[3]?",
           options: [
-            { id: "abc-1a", label: "12'hABC and 8'h1A", correct: true, feedback: "Every member names the same bits, so read them off the hex as 1 | ABC | 0042 and as 1A | BC | 00 | 42 (§7.3.1). bytes[3] is the top byte: [3:0][7:0] puts element 3 at [31:24] (§7.4.4)." },
-            { id: "042-42", label: "12'h042 and 8'h42", correct: false, feedback: "Those are the low bits. addr sits at [27:16] in cmd_t and bytes[3] at [31:24]: element 3 of a [3:0] packed dimension is the most significant (§7.2.1, §7.4.4)." },
+            { id: "abc-1a", label: "12'hABC and 8'h1A", correct: true, feedback: "Every member names the same bits, so read them off the hex as 1 | ABC | 0042 and as 1A | BC | 00 | 42 (§7.3.1). bytes[3] is the top byte: derived from the range, [3:0][7:0] puts element 3 at [31:24], as in the §7.3.1 example, where byte_slice[51] is bit_slice[415:408]." },
+            { id: "042-42", label: "12'h042 and 8'h42", correct: false, feedback: "Those are the low bits. addr sits at [27:16] in cmd_t (§7.2.1) and bytes[3] at [31:24]: derived from the range, element 3 of a [3:0] packed dimension is the most significant, as in the §7.3.1 example." },
             { id: "undef", label: "Undefined: a write through raw is not visible through f", correct: false, feedback: "A packed untagged union is exactly the kind that allows a member written as another member to be read back, independent of the machine's byte order (§7.3.1)." },
           ],
         },
@@ -435,12 +437,12 @@ export const UNION_PRESETS: readonly UnionPreset[] = [
   },
   {
     id: "word_u",
-    label: "word_u (soft)",
+    label: "word_u",
     varName: "w",
     union: WORD_U,
     narrowMember: "half",
-    summary: "A 32-bit word and a 16-bit half share storage in a soft packed union. What survives a write to the half?",
-    source: "structs-unions-enums.mdx, Unions and the quiz",
+    summary: "A word and a half share storage in one union. What survives a write to the half?",
+    source: fromLesson("Unions and the quiz"),
     statements: [
       { code: "w.word = 32'hAAAA_BBBB;", path: "word", value: svHex(32, "AAAA_BBBB") },
       {
@@ -460,12 +462,12 @@ export const UNION_PRESETS: readonly UnionPreset[] = [
   },
   {
     id: "nest_u",
-    label: "nest_u (nested soft)",
+    label: "nest_u",
     varName: "n",
     union: NEST_U,
     narrowMember: "a",
-    summary: "Our own nested example (not the standard's Figure 7-1): a soft union inside a soft union. Where does a write to its narrowest member land?",
-    source: "IEEE 1800-2023 §7.3.1 (recursive rule); the example is ours",
+    summary: "Our own nested example (not the standard's Figure 7-1): a union inside a union. Where does a write to n.inner.b4 land?",
+    source: "our own example, after the recursive rule of IEEE 1800-2023 §7.3.1",
     statements: [
       { code: "n.a = 12'hABC;", path: "a", value: svHex(12, "ABC") },
       {
@@ -494,17 +496,17 @@ export const unionPreset = (id?: string): UnionPreset => UNION_PRESETS.find((p) 
 export const VINT: TaggedUnionType = {
   name: "VInt",
   members: [
-    { name: "Invalid", width: null, typeText: "void" },
-    { name: "Valid", width: 32, typeText: "int" },
+    { name: "Invalid", width: null, typeText: "void", signed: false },
+    { name: "Valid", width: 32, typeText: "int", signed: true },
   ],
 };
 
 /** Our own third member, added to show the tag growing to 2 bits. */
-export const VINT_THIRD_MEMBER: TaggedMember = { name: "Small", width: 8, typeText: "bit [7:0]" };
+export const VINT_THIRD_MEMBER: TaggedMember = { name: "Small", width: 8, typeText: "bit [7:0]", signed: false };
 
 const TAGGED_ASSIGN_VALUES: Readonly<Record<string, { value: number; text: string }>> = {
   Valid: { value: 23, text: "23" },
-  Small: { value: 0xa5, text: "8'hA5" },
+  Small: { value: 0x5a, text: "8'h5A" },
 };
 
 /** The value a preset button assigns to a tagged member, undefined for a void member. */
@@ -514,12 +516,11 @@ export const taggedAssignValue = (m: TaggedMember): number | undefined => (m.wid
 export const taggedAssignStatement = (m: TaggedMember): string => (m.width === null ? `v = tagged ${m.name};` : `v = tagged ${m.name} (${TAGGED_ASSIGN_VALUES[m.name]?.text});`);
 
 /**
- * The predict gate before a tagged read. Three outcomes, each from §11.9: the
- * read is legal when the tag is the member read; it is a run-time error when
- * the tag is a different, defined member; and when the variable was never
- * assigned its tag bits are undefined, so the read has no defined result at
- * all (§11.9 defines the run-time error only for a read inconsistent with a
- * defined tag).
+ * The predict gate before a tagged read. Two outcomes are stated by §11.9: the
+ * read is legal when it is consistent with the tag, and a run-time error when it
+ * is inconsistent with the tag. The third is derived: §11.9 also makes the tag
+ * bits of an uninitialized variable undefined, so whether the check fires is not
+ * defined, and the feedback labels that as derived.
  */
 export const TAGGED_READ_PREDICTION = (memberRead: string, tagName: string | null): Prediction => {
   const matches = tagName !== null && memberRead.endsWith(`.${tagName}`);
@@ -535,7 +536,7 @@ export const TAGGED_READ_PREDICTION = (memberRead: string, tagName: string | nul
         feedback: matches
           ? `The tag is ${tagName}, so the read is consistent with it (§11.9).`
           : undefinedTag
-            ? "The variable was never assigned: its tag bits are undefined, so there is no tag for the read to be consistent with (§11.9)."
+            ? "The variable was never assigned: its tag bits are undefined (§11.9). Derived from that, there is no known tag for the read to be consistent with."
             : `The tag is ${tagName}; a member read must be consistent with the current tag (§11.9).`,
       },
       {
@@ -543,17 +544,17 @@ export const TAGGED_READ_PREDICTION = (memberRead: string, tagName: string | nul
         label: "Run-time error: the tag is another member",
         correct: mismatch,
         feedback: mismatch
-          ? `Reading a member that does not match the current tag (${tagName}) is a run-time error (§11.9). The tag changes only through a tagged expression.`
+          ? `Reading a member that does not match the current tag (${tagName}) is a run-time error (§11.9). The tag changes only through a tagged expression (§7.3.2).`
           : undefinedTag
-            ? "§11.9 defines the run-time error for a read inconsistent with a defined tag. Here the tag bits were never assigned, so they are undefined and the read has no defined result rather than a defined error."
+            ? "The error is for a read inconsistent with the tag, and here the tag bits were never assigned. Derived: §11.9 makes the tag bits undefined, so whether the check fires is not defined."
             : `The tag is ${tagName}, which matches the member being read, so the read is legal (§11.9).`,
       },
       {
         id: "undefined",
-        label: "Undefined: never assigned, no defined result (§11.9)",
+        label: "Undefined: never assigned, so no defined result (derived from §11.9)",
         correct: undefinedTag,
         feedback: undefinedTag
-          ? "An uninitialized tagged union is undefined, its tag bits included (§11.9), so there is no tag to check the read against and no defined result. Assign a tagged expression first."
+          ? "An uninitialized tagged union is undefined, its tag bits included (§11.9). Derived from that, whether the check fires is not defined, so the read has no defined result. Assign a tagged expression first."
           : `The variable has been assigned: its tag is ${tagName}, a defined value, so the read is ${matches ? "legal" : "a run-time error"} (§11.9).`,
       },
     ],
@@ -590,6 +591,8 @@ export interface ClinicRun {
   log: string[];
   /** True when the symptom is gone. */
   fixed: boolean;
+  /** The fix removed the symptom as reported but the bug remains and now shows somewhere else, here at run time. */
+  moved?: boolean;
   verdict: string;
 }
 
@@ -634,11 +637,11 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       { key: "l1", text: "typedef struct packed {", whenPicked: "The struct is packed, which is right for a wire format. Look at the member order." },
       { key: "l2", text: "  logic [15:0] data;   // first member", whenPicked: "This is it: the first member of a packed struct is the most significant (§7.2.1), so data was given bits [31:16] instead of [15:0]." },
       { key: "l3", text: "  logic [11:0] addr;", whenPicked: "addr is 12 bits, as the protocol says. Its position, not its width, is the problem: look at which member comes first." },
-      { key: "l4", text: "  logic [3:0]  op;     // last member", whenPicked: "op is declared last, so it lands at bits [3:0]. The declaration that put it there is the order of the members, starting with the first." },
+      { key: "l4", text: "  logic [3:0]  op;     // last member", whenPicked: "Yes, this is the other half of the same ordering bug: op is declared last, so it lands at bits [3:0] instead of [31:28] (§7.2.1). The whole member order has to change, starting with the first member." },
       { key: "l5", text: "} cmd_t;", whenPicked: "The typedef name is fine. The layout comes from the member order above (§7.2.1)." },
       { key: "l6", text: "c = bus_word;   // 32'h2123_BEEF from the driver", whenPicked: "The whole-vector write is legal and is how a monitor should decode a word. The bits are right; the names on them are wrong." },
     ],
-    suspectKeys: ["l2"],
+    suspectKeys: ["l2", "l4"],
     causes: [
       { id: "order", label: "The members are declared in the wrong order: the first member is the MSB end", correct: true, feedback: "Right. The first member specified is the most significant (§7.2.1). Declared data first, the struct reads the top 16 bits as data." },
       { id: "endian", label: "The simulator uses little-endian byte order for packed structs", correct: false, feedback: "A packed struct's layout is defined by the standard and independent of the host machine (§7.2.1). Only unpacked layouts are implementation-dependent (§7.2.1)." },
@@ -688,7 +691,7 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       { key: "l2", text: "st_e state;", whenPicked: "The variable has no initializer, which is normal. Its initial value comes from the base type of its enum (Table 6-7): look at the typedef." },
       { key: "l3", text: "always_ff @(posedge clk or negedge rst_n)", whenPicked: "The sensitivity list is fine. Before the first edge nothing here has run, so the value you see at time 0 is the variable's default." },
       { key: "l4", text: "  if (!rst_n) state <= IDLE;", whenPicked: "The reset branch is correct and never ran: rst_n was never 0. The log shows IDLE anyway, so IDLE must be the default of the base type." },
-      { key: "l5", text: "$display(\"@%0t state = %s\", $time, state.name());", whenPicked: "name() reports the member the value matches (§6.19.5.6). It is telling the truth: the variable holds 0." },
+      { key: "l5", text: "$display(\"@%0t state.name() = \\\"%s\\\" (value %0d)\", $time, state.name(), state);", whenPicked: "name() reports the member the value matches (§6.19.5.6). It is telling the truth: the variable holds 0." },
     ],
     suspectKeys: ["l1"],
     causes: [
@@ -722,7 +725,7 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       const v = enumInitialValue(spec);
       const name = enumName(spec, v);
       const fixed = name === "";
-      const shown = `state.name() = "${name}" (value ${spec.states === 4 ? `'b${formatB(v)}` : formatD(v)})`;
+      const shown = `state.name() = "${name}" (value ${formatD(v)})`;
       // With rst_n high the only assignment in the code is not taken, so an edge leaves state at its default.
       const log = ["@0 rst_n = 1 (never asserted)", `@0 ${shown}`, `@10 posedge clk: rst_n = 1, so nothing assigns state; ${shown}`];
       return {
@@ -740,8 +743,9 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     symptom: "The monitor prints op = with an empty opcode name for one bus word.",
     clause: "§6.19.4, §6.19.5.6, §6.24.2",
     lines: [
-      { key: "l1", text: "typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;", whenPicked: "The 4-state base is a good choice: it is what made the bad value visible. The declaration is not the bug." },
+      { key: "l1", text: "typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;", whenPicked: "The declaration is not the bug: any 4-bit base holds 7, and name() of a non-member is \"\" (§6.19.5.6). A 4-state base only exposes a never-assigned variable (Table 6-7)." },
       { key: "l2", text: "logic [31:0] raw = 32'h7ABC_0042;   // from the DUT", whenPicked: "The DUT drove 7 in the top digit, which is not an opcode. That is the stimulus, not the monitor's fault; the question is how the monitor stored it." },
+      { key: "l2d", text: "$display(\"raw = %h\", raw);", whenPicked: "This prints the word as it arrived, the first line of the log, and it is correct. The question is what happens to it next." },
       { key: "l3", text: "op = opcode_e'(raw[31:28]);   // static cast", whenPicked: "This is it: a static cast converts to the enum without checking validity (§6.19.4), so op now holds 7 and name() returns \"\" (§6.19.5.6)." },
       { key: "l4", text: "$display(\"op = %s\", op.name());", whenPicked: "name() is honest: \"\" means the value is not a member (§6.19.5.6). Look at how op got that value." },
     ],
@@ -749,14 +753,14 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     causes: [
       { id: "static", label: "A static cast stored a value that is not a member, so name() returns \"\"", correct: true, feedback: "Right. opcode_e'(7) converts without checking (§6.19.4); 7 is no member, and name() of a non-member is the empty string (§6.19.5.6)." },
       { id: "fourstate", label: "name() does not work for enums with a 4-state base", correct: false, feedback: "name() returns the member name whenever the value is a member, whatever the base (§6.19.5.6)." },
-      { id: "unset", label: "op was never assigned", correct: false, feedback: "A never-assigned 4-state enum would print x bits and \"\" too, but here the log shows a decode of a real word: op was assigned 7." },
+      { id: "unset", label: "op was never assigned", correct: false, feedback: "A never-assigned 4-state enum holds x and would print an empty name too (Table 6-7, §6.19.5.6), but the monitor assigns op from the word, so op holds 7." },
       { id: "display", label: "%s cannot print an enum", correct: false, feedback: "name() returns a string, and %s prints it. The string is empty because the value is not a member (§6.19.5.6)." },
     ],
     correctFix: "cast-check",
     fixFeedback: {
       "cast-check": "$cast as a function returns 0 for a non-member and leaves op unchanged (§6.24.2). op starts the decode at a known default, so the monitor reports the bad word instead of printing an empty name.",
       reorder: noChange,
-      "logic-base": "The base is already 4-state, which is why the empty name was visible at all. The symptom stays.",
+      "logic-base": "The base is not the cause: a bit [3:0] base would hold 7 too, and name() would still return \"\" (§6.19.5.6). The symptom stays.",
       "package-typedef": noChange,
       "rand-whole": noChange,
     },
@@ -794,25 +798,26 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     symptom: "The monitor decodes each bus word into a packed struct and, for one word, prints op = with an empty opcode name, with no error from the type system.",
     clause: "§7.2.1 (derived), §6.22.3, §6.19.5.6, §6.24.2",
     lines: [
-      { key: "l1", text: "typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;", whenPicked: "The 4-state base is what made the bad value visible (Table 6-7). The declaration is not the bug." },
+      { key: "l1", text: "typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;", whenPicked: "The declaration is not the bug: any 4-bit base holds 7, and name() of a non-member is \"\" (§6.19.5.6). A 4-state base only exposes a never-assigned variable (Table 6-7)." },
       { key: "l2", text: "typedef struct packed { opcode_e op; logic [11:0] addr; logic [15:0] data; } cmd_t;", whenPicked: "Packed is right for a wire format, and op in the top nibble matches the protocol. The struct is fine; look at how the monitor fills it." },
       { key: "l3", text: "logic [31:0] bus_word = 32'h7ABC_0042;   // from the DUT", whenPicked: "The DUT drove 7 in the top digit, which is not an opcode. That is the stimulus; the question is how the monitor stored it." },
+      { key: "l3d", text: "$display(\"[mon] bus_word = %h\", bus_word);", whenPicked: "This prints the word as it arrived, the first line of the log, and it is correct. The question is how the monitor decodes it." },
       { key: "l4", text: "cmd_t cmd;", whenPicked: "Declaring the struct is fine. Before any write its members are x (4-state), which is not what the log shows." },
-      { key: "l5", text: "cmd = bus_word;   // whole-vector write", whenPicked: "This is it: assigning the word to the packed struct writes every member at once as one vector (§7.2.1, §6.22.3). Nothing checks that bits [31:28] hold an opcode, so op now holds 7 and name() returns \"\" (§6.19.5.6)." },
-      { key: "l6", text: "$display(\"op = %s, addr = %h, data = %h\", cmd.op.name(), cmd.addr, cmd.data);", whenPicked: "name() is honest: \"\" means the value is not a member (§6.19.5.6). Look at how op got that value." },
+      { key: "l5", text: "cmd = bus_word;   // whole-vector write", whenPicked: "This is it: assigning the word to the packed struct writes every member at once as one vector (derived from §7.2.1; §6.22.3 allows the assignment). Nothing checks that bits [31:28] hold an opcode, so op now holds 7 and name() returns \"\" (§6.19.5.6)." },
+      { key: "l6", text: "$display(\"[mon] op = %s, addr = %h, data = %h\", cmd.op.name(), cmd.addr, cmd.data);", whenPicked: "name() is honest: \"\" means the value is not a member (§6.19.5.6). Look at how op got that value." },
     ],
     suspectKeys: ["l5"],
     causes: [
       { id: "backdoor", label: "The whole-vector write stored 4'h7 in op without an enum type check, so name() returns \"\"", correct: true, feedback: "Right. A packed struct written as one vector is not type-checked member by member (derived from §7.2.1: the struct is a single vector, and §6.22.3 makes it assignment compatible with any integral value). 7 is no opcode, and name() of a non-member is \"\" (§6.19.5.6)." },
       { id: "static", label: "A static cast opcode_e'(7) stored the value", correct: false, feedback: "There is no cast in this monitor: the word was assigned to the struct, an integral vector (§6.22.3), and op was written as part of it. The effect matches a static cast, but the line to fix is the struct assignment." },
       { id: "unset", label: "cmd was never assigned, so op holds x", correct: false, feedback: "A never-assigned 4-state enum would print \"\" too (Table 6-7, §6.19.5.6), but addr and data show the bus word was stored: op holds 7, the word's top digit." },
-      { id: "compile", label: "It should not compile: a vector cannot be assigned to a struct that contains an enum", correct: false, feedback: "A packed struct is assignment compatible with any integral value (§6.22.3), enum members included. §6.19.3's type check applies to an assignment to the enum variable itself, not to its containing struct." },
+      { id: "compile", label: "It should not compile: a vector cannot be assigned to a struct that contains an enum", correct: false, feedback: "A packed struct is assignment compatible with any integral value (§6.22.3), enum members included. The type check of §6.19.3 applies to an assignment to the enum variable itself, not to its containing struct (derived from §7.2.1: the struct is one vector)." },
     ],
     correctFix: "cast-check",
     fixFeedback: {
-      "cast-check": "Writing addr and data by member and passing the opcode through $cast restores the enum's type check (§6.19.3): $cast returns 0 for 7, leaves op at its known default and the monitor reports the bad word (§6.24.2).",
+      "cast-check": "Writing addr and data by member and passing the opcode through $cast checks the value: $cast returns 0 for 7, leaves op at its known default and the monitor reports the bad word (§6.24.2).",
       reorder: "The members are already in the protocol's order; the layout is not the problem. The symptom stays.",
-      "logic-base": "The base is already 4-state, which is why the empty name was visible at all. The symptom stays.",
+      "logic-base": "The base is not the cause: a bit [3:0] base would hold 7 too, and name() would still return \"\" (§6.19.5.6). The symptom stays.",
       "package-typedef": noChange,
       "rand-whole": noChange,
     },
@@ -849,7 +854,7 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     id: "two-typedefs",
     title: "Identical structs will not assign",
     symptom: "scb.expected = mon.rec does not compile, although both cmd_rec_t declarations are character for character the same.",
-    clause: "§6.22.1, §6.22.2",
+    clause: "§6.22.1, §6.22.2, §6.22.3",
     lines: [
       { key: "l1", text: "module mon;", whenPicked: "The module is fine. The problem is a declaration inside it." },
       { key: "l2", text: "  typedef struct { cmd_t cmd; string tag; int beat; } cmd_rec_t;   // local", whenPicked: "This is one of the two, with line 5: a typedef of an unpacked struct matches only itself (§6.22.1 d), and no rule of §6.22.2 makes two separate declarations equivalent; (c) covers only packed types." },
@@ -868,10 +873,10 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     ],
     correctFix: "package-typedef",
     fixFeedback: {
-      "package-typedef": "One typedef in a package, imported by both modules, is one type: it matches itself in every scope (§6.22.1), so the assignment compiles.",
+      "package-typedef": "One typedef in a package, imported by both modules, is one type: it always matches itself, regardless of the scope it is imported into (§6.22.1 h), so the assignment compiles.",
       reorder: noChange,
       "logic-base": noChange,
-      "cast-check": "$cast cannot bridge two incompatible unpacked struct types either (§6.24.2). The symptom stays.",
+      "cast-check": "The compile error goes away, because $cast as a function never issues one (§6.24.2). The two types are still not assignment compatible, so the assignment still does not happen: the record is still not copied, and the symptom moves to run time.",
       "rand-whole": noChange,
     },
     fixCode: {
@@ -887,6 +892,14 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       "Move the typedef to a package (bus_pkg) and import it in both modules: one declaration, one type.",
     ],
     run: (fix) => {
+      if (fix === "cast-check") {
+        return {
+          log: ["compile: ok ($cast as a function never issues a compile error, §6.24.2)", "run: $cast returned 0", "ERROR: cast failed; scb.expected unchanged"],
+          fixed: false,
+          moved: true,
+          verdict: "For arguments that are not singular and not assignment compatible, the assignment is invalid, so $cast makes no assignment and returns 0 (§6.24.2).",
+        };
+      }
       const shared = fix === "package-typedef";
       const base = { display: "cmd_rec_t", packed: false, bits: 0, states: 4 as const, signed: false };
       const dst: TypeRef = { ...base, declId: shared ? "bus_pkg.cmd_rec_t" : "scb.cmd_rec_t", display: shared ? "bus_pkg::cmd_rec_t" : "scb.cmd_rec_t" };
@@ -894,7 +907,7 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       const legality = assignmentLegality(dst, src);
       const log = legality.legal
         ? ["compile: ok", `run: expected = '{cmd:'{op:OP_WRITE, addr:255, data:48879}, tag:"first write", beat:0}`]
-        : [`compile error (assign_rec): incompatible types: ${src.display} to ${dst.display}`, `  ${legality.relation}: ${legality.clause}`];
+        : [`compile error (assign_rec): cannot assign ${src.display} to ${dst.display}`, `  ${legality.relation.replace(/-/g, " ")}: ${legality.clause}`];
       return { log, fixed: legality.legal, verdict: legality.message };
     },
   },
@@ -912,10 +925,10 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     ],
     suspectKeys: ["l2"],
     causes: [
-      { id: "unpacked-only", label: "rand is legal only on members of unpacked structs", correct: true, feedback: "Right. Syntax 7-1, footnote 20: a random_qualifier may be declared only within unpacked structures. Randomize the packed struct as a whole from a class." },
+      { id: "unpacked-only", label: "Among struct members, rand is legal only in unpacked structs", correct: true, feedback: "Right. Syntax 7-1, footnote 20: a random_qualifier may be declared only within unpacked structures. Randomize the packed struct as a whole from a class." },
       { id: "class-only", label: "rand is legal only in classes, never in structs", correct: false, feedback: "Unpacked struct members may be rand (§7.2). It is the packed struct that forbids the qualifier." },
       { id: "width", label: "A 4-bit member is too narrow to randomize", correct: false, feedback: "Width is irrelevant; the qualifier is illegal in any packed struct (Syntax 7-1, footnote 20)." },
-      { id: "logic", label: "rand needs a 2-state type such as bit", correct: false, feedback: "rand on 4-state types is legal in classes and unpacked structs; the solver treats them as 2-state. The packed struct is the issue." },
+      { id: "logic", label: "rand needs a 2-state type such as bit", correct: false, feedback: "rand is not limited to 2-state types: the solver can randomize singular variables of any integral type (§18.4), so rand logic is legal in a class. The packed struct is the issue." },
     ],
     correctFix: "rand-whole",
     fixFeedback: {
@@ -947,7 +960,7 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
         };
       }
       // A compiler names the line, not the rule, so the log leaves the diagnosis to the learner; the rule comes in the verdict after a rerun.
-      const card = randMemberCard(true, "op");
+      const card = randMemberCard(true, "op", fix === "logic-base" ? "opcode_e" : "logic [3:0]");
       return { log: [`compile error: ${card.code}`, "  rand not allowed on this member"], fixed, verdict: `${card.message} (${card.clause})` };
     },
   },

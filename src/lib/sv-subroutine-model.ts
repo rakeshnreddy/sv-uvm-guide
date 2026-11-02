@@ -6,8 +6,9 @@
  * together.
  *
  * Rules implemented (IEEE 1800-2023, read from the standard's text):
- * - §13.3: input is copied in when the call starts, output is copied out at
- *   the return, inout both; ref passes a reference (§13.5.2). The default
+ * - §13.3: a task declaration has no return type. Input is copied in when the
+ *   call starts, output is copied out at the return, inout both; ref passes a
+ *   reference (§13.5.2). The default
  *   direction is input until a direction is written; later formals with no
  *   direction take the previous formal's direction. A formal with no data
  *   type is logic (one bit) if it is the first formal or has its own
@@ -18,18 +19,22 @@
  *   concurrent uses; an automatic function is reentrant, which recursion needs.
  * - §13.3.2: a static task has one copy of each variable per module instance,
  *   shared by every concurrent activation; its variables, formals included,
- *   keep their values between calls and start at the §6.8 defaults. An
+ *   keep their values between calls and start at the §6.8 defaults unless a
+ *   static initializer says otherwise (§6.8, §6.21: it is set once, before any
+ *   initial or always procedure starts). An
  *   automatic task replicates its variables per activation and initializes
  *   them, outputs included, to their defaults when execution enters it; inputs
  *   and inouts then take the passed values. Automatic variables may not be
  *   assigned with nonblocking assignments.
  * - §13.4: a function may not contain time controls (#, @, fork-join...); a
- *   function declared with no return type returns a one-bit logic.
+ *   function declared with no return type returns a one-bit logic. Function
+ *   arguments follow the same direction, copy and type rules, stated there for
+ *   functions as §13.3 states them for tasks.
  * - §13.5: an output or inout actual must be assignable; §13.5.2: a ref formal
  *   is the caller's variable, changes are visible at once, ref is illegal in a
- *   static subroutine, only variables (or properties, struct members, unpacked
- *   array elements) may be passed by reference, and a write to a const ref is
- *   a compile error. Because the variable bound to a ref may be automatic, a
+ *   static subroutine, only variables (or class properties, members of unpacked
+ *   structures, unpacked array elements) may be passed by reference, and a write
+ *   to a const ref is a compile error. Because the variable bound to a ref may be automatic, a
  *   ref argument may not be used where an automatic variable may not (so no
  *   nonblocking assignment through it) unless it is declared ref static, which
  *   this model does not offer.
@@ -42,7 +47,10 @@
  *   its value, so writing the value it already holds is no event.
  * - §4.7: processes ready in the same region run in an unspecified order; the
  *   model explores every order of the ready processes (each runs until it
- *   blocks or ends; interleaving is not explored).
+ *   blocks or ends). §4.7 also lets a simulator suspend a process between its
+ *   statements; that interleaving is not explored, so a legal log order can be
+ *   missing (at #10 with the debug prints, call 1's use line before call 2's
+ *   enter line, both id=2), but no value call 1 can print is.
  */
 
 /* ========================================================================= */
@@ -231,6 +239,11 @@ export function signatureToSource(sig: SignatureSpec): string {
   return `${sig.kind} ${lifetime}${ret}${sig.name}(${formalsToSource(sig.formals)});`;
 }
 
+/** Where the direction and type rules of a formal are stated: §13.3 for tasks, §13.4 for functions. */
+export function formalRulesClause(kind: SignatureSpec["kind"]): "§13.3" | "§13.4" {
+  return kind === "function" ? "§13.4" : "§13.3";
+}
+
 /** The lesson's four signatures, exactly as written in tasks-functions.mdx. */
 export const FORMAL_SIGNATURES: Record<"split" | "wait_cycles" | "wait_cycles_ok" | "add", SignatureSpec> = {
   split: {
@@ -268,8 +281,8 @@ export function addReturns(a: number, b: number, returnType?: DataType): Value {
   return coerce(a + b, resolved === "void" ? "int" : resolved);
 }
 
-/** Why a literal cannot be the actual of `formal`, or undefined for an input. §13.5: output and inout need an assignable actual; §13.5.2: only a variable may be passed by reference. */
-function literalActualIssue(sub: string, actual: string, formal: { name: string; direction: Direction }, key?: string, owner?: string): CompileIssue | undefined {
+/** Why something other than a variable cannot be the actual of `formal`, or undefined for an input. §13.5: output and inout need an assignable actual; §13.5.2: only a variable may be passed by reference. */
+function nonVariableActualIssue(sub: string, actual: string, actualKind: "literal" | "expression", formal: { name: string; direction: Direction }, key?: string, owner?: string): CompileIssue | undefined {
   if (formal.direction === "input") return undefined;
   const byRef = formal.direction === "ref" || formal.direction === "const ref";
   return {
@@ -277,7 +290,7 @@ function literalActualIssue(sub: string, actual: string, formal: { name: string;
     sub: owner,
     clause: byRef ? "§13.5.2" : "§13.5",
     message: byRef
-      ? `${sub}(..., ${actual}, ...): only a variable (or a class property, structure member or unpacked array element) may be passed to the ${formal.direction} formal ${formal.name}; a literal cannot.`
+      ? `${sub}(..., ${actual}, ...): only a variable (or a class property, a member of an unpacked structure or an unpacked array element) may be passed to the ${formal.direction} formal ${formal.name}; ${actualKind === "literal" ? "a literal" : `an expression such as ${actual}`} cannot.`
       : `${sub}(..., ${actual}, ...): the actual for the ${formal.direction} formal ${formal.name} must be assignable, such as a variable.`,
   };
 }
@@ -285,7 +298,7 @@ function literalActualIssue(sub: string, actual: string, formal: { name: string;
 /** The compile issues of calling `sub` with literal actuals; empty when every formal is an input. */
 export function literalCallIssues(sub: string, formals: readonly Pick<ResolvedFormal, "name" | "direction">[], actuals: readonly number[]): CompileIssue[] {
   return formals.flatMap((formal, i) => {
-    const issue = literalActualIssue(sub, String(actuals[i]), formal);
+    const issue = nonVariableActualIssue(sub, String(actuals[i]), "literal", formal);
     return issue ? [issue] : [];
   });
 }
@@ -307,6 +320,26 @@ export function addCall(formals: readonly ResolvedFormal[], returnType?: DataTyp
   const args = formals.map((formal, i) => ({ name: formal.name, passed: actuals[i], stored: coerce(actuals[i], formal.type), type: formal.type }));
   const [a, b] = args.map((arg) => (typeof arg.stored === "number" ? arg.stored : 0));
   return { issues, args, sum: a + b, returned: addReturns(a, b, returnType === "void" ? undefined : returnType) };
+}
+
+/**
+ * A prediction's options in an order that depends only on what each option says,
+ * never on which one is right, so the right answer's position teaches nothing.
+ * Pure: the same options come back in the same order on every render. FNV-1a,
+ * with a final mix so that keys differing in one character land far apart.
+ */
+export function stableOptionOrder<T>(options: readonly T[], keyOf: (option: T) => string): T[] {
+  const rank = (text: string) => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i += 1) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+    h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+    h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
+    return (h ^ (h >>> 15)) >>> 0;
+  };
+  return options
+    .map((option) => ({ option, key: keyOf(option) }))
+    .sort((x, y) => rank(x.key) - rank(y.key) || x.key.localeCompare(y.key))
+    .map((entry) => entry.option);
 }
 
 /* ========================================================================= */
@@ -407,7 +440,7 @@ export interface SubroutineDef {
   name: string;
   kind: "task" | "function";
   lifetime: Lifetime;
-  /** Functions only. Omitted: the implicit one-bit logic return type (§13.4). */
+  /** Omitted on a function: the implicit one-bit logic return type (§13.4). Written on a task: printed as written, and a compile error (§13.3). */
   returnType?: DataType | "void";
   formals: Formal[];
   locals: LocalDecl[];
@@ -529,7 +562,7 @@ function stmtLines(stmts: Stmt[], indent: string, lines: SourceLine[], comments:
 
 export function subHeaderSource(sub: SubroutineDef): string {
   const lifetime = sub.lifetime === "automatic" ? "automatic " : "";
-  const ret = sub.kind === "function" && sub.returnType ? `${sub.returnType} ` : "";
+  const ret = sub.returnType ? `${sub.returnType} ` : "";
   return `${sub.kind} ${lifetime}${ret}${sub.name}`;
 }
 
@@ -646,6 +679,8 @@ export interface CompileIssue {
   sub?: string;
   message: string;
   clause: string;
+  /** What the learner would have to change, so a lab can mark the control that can fix it. */
+  cause?: "const-ref-write" | "nba";
 }
 
 function* walkStmts(stmts: Stmt[]): Generator<Stmt> {
@@ -707,6 +742,10 @@ export function compileBench(input: Bench): CompileIssue[] {
   const issues: CompileIssue[] = [];
   const subs = new Map(bench.subs.map((s) => [s.name, s]));
   bench.subs.forEach((sub) => {
+    // §13.3, Syntax 13-1: after the task keyword and the optional lifetime comes the task's name; the grammar has no place for a data type.
+    if (sub.kind === "task" && sub.returnType) {
+      issues.push({ key: `sub:${sub.name}`, sub: sub.name, clause: "§13.3", message: `task ${sub.returnType} ${sub.name}: a task declaration has no return type, so this does not compile. Only a function has one.` });
+    }
     sub.formals.forEach((f) => {
       if ((f.direction === "ref" || f.direction === "const ref") && sub.lifetime === "static") {
         issues.push({
@@ -731,7 +770,7 @@ export function compileBench(input: Bench): CompileIssue[] {
       if (stmt.kind === "assign") {
         const formal = sub.formals.find((f) => f.name === stmt.target);
         if (formal?.direction === "const ref") {
-          issues.push({ key: stmt.key, sub: sub.name, clause: "§13.5.2", message: `${stmt.target} is a const ref: the subroutine may read it but a write is a compile error.` });
+          issues.push({ key: stmt.key, sub: sub.name, clause: "§13.5.2", cause: "const-ref-write", message: `${stmt.target} is a const ref: the subroutine may read it, but a write with = or <= is a compile error.` });
         }
         if (stmt.nba && (formal?.direction === "ref" || formal?.direction === "const ref")) {
           // §13.5.2: the variable bound to a ref may be automatic, so a ref argument may not be used where an automatic variable may not (§6.21, §10.4.2), unless it is ref static.
@@ -739,13 +778,19 @@ export function compileBench(input: Bench): CompileIssue[] {
             key: stmt.key,
             sub: sub.name,
             clause: "§13.5.2",
-            message: `${stmt.target} <= ...: ${stmt.target} is a ${formal.direction} argument, and the variable bound to it may be automatic, so it may not be used where an automatic variable may not: no nonblocking assignment through ${stmt.target} unless the formal is declared ref static. Use = for the write.`,
+            cause: "nba",
+            // A const ref may not be written at all, so neither the operator nor a static qualifier cures this one.
+            message:
+              formal.direction === "const ref"
+                ? `${stmt.target} <= ...: ${stmt.target} is a const ref, so the write itself is the error. Changing the operator does not cure it: change the direction, or remove the write.`
+                : `${stmt.target} <= ...: ${stmt.target} is a ref argument, and the variable bound to it may be automatic, so it may not be used where an automatic variable may not: no nonblocking assignment through ${stmt.target} unless the formal is declared ref static. Use = for the write.`,
           });
         } else if (stmt.nba && isAutomaticItem(sub, stmt.target)) {
           issues.push({
             key: stmt.key,
             sub: sub.name,
             clause: "§13.3.2",
+            cause: "nba",
             message: `${stmt.target} <= ...: an automatic variable is deallocated when the call ends, so it may not be assigned with a nonblocking assignment. Use = for ${sub.name}'s own variables.`,
           });
         }
@@ -762,7 +807,7 @@ export function compileBench(input: Bench): CompileIssue[] {
     callee.formals.forEach((f, i) => {
       const actual = args[i];
       if (actual.kind === "var") return;
-      const issue = literalActualIssue(name, exprToSource(actual), f, key, owner);
+      const issue = nonVariableActualIssue(name, exprToSource(actual), actual.kind === "const" ? "literal" : "expression", f, key, owner);
       if (issue) issues.push(issue);
     });
   };
@@ -949,7 +994,7 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
   /* ---------- storage ---------- */
   const globals: Store = new Map();
   bench.globals.forEach((g) => globals.set(g.name, { value: g.init === undefined ? defaultValue(g.type) : coerce(g.init, g.type), type: g.type, role: "global" }));
-  // §13.3.2 / §6.21: static items exist from time 0 at their §6.8 defaults; `static` initializers run once.
+  // §6.8, §6.21: a static variable is set before any procedure starts, to its initializer if it has one; otherwise to its Table 6-7 default.
   const shared = new Map<string, Store>();
   bench.subs.forEach((sub) => {
     const store: Store = new Map();
@@ -1182,7 +1227,7 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
       if (f.direction === "ref" || f.direction === "const ref") {
         const target = bindingOf(ctx, (actual.expr as { kind: "var"; name: string }).name);
         act.refs.set(f.name, target);
-        notes.push(`${f.name} is bound to ${target.label} (${f.direction}: no copy)`);
+        notes.push(`${f.name} is ${target.label} (${f.direction}: no copy)`);
         return;
       }
       const slot = slotStore.get(f.name) as Slot;
@@ -1212,27 +1257,52 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
     const ownNames = [...act.own.keys()];
     const sharedNames = [...act.shared.keys()];
     const mixed = ownNames.length > 0 && sharedNames.length > 0;
-    const storageText = mixed ? `uses the one shared copy of ${sharedNames.join(", ")} and gets its own ${ownNames.join(", ")}` : def.lifetime === "automatic" ? "gets its own storage" : "uses the one shared copy";
+    // §13.5.2: a ref or const ref formal has no copy in the subroutine, so nothing said about the subroutine's own storage may include it.
+    const refNames = [...act.refs.keys()];
+    const refsOnly = refNames.length > 0 && ownNames.length === 0 && sharedNames.length === 0;
+    const storageText = mixed
+      ? `uses the one shared copy of ${sharedNames.join(", ")} and gets its own ${ownNames.join(", ")}`
+      : refsOnly
+        ? "has no storage of its own"
+        : def.lifetime === "automatic"
+          ? refNames.length
+            ? `gets its own storage for ${ownNames.join(", ")}`
+            : "gets its own storage"
+          : "uses the one shared copy";
+    const unreachable = refNames.length ? "those copies" : "them";
+    const refWhy = refNames
+      .map((name) => {
+        const target = (act.refs.get(name) as Binding).label;
+        return `${name} has no copy here: it is a reference to the caller's ${target}, so a change made through ${name}, or by anything else that writes ${target}, another activation included, is visible to both at once.`;
+      })
+      .join(" ");
     const sharedNotes = def.locals
       .filter((l) => (l.qualifier ?? def.lifetime) === "static")
       .map((l) => `${l.name} is static: it keeps ${formatValue((act.shared.get(l.name) as Slot).value)} across calls`);
     let enterWhy: string;
     let enterClause: string;
-    if (mixed) {
+    if (refsOnly) {
+      enterWhy = refWhy;
+      enterClause = "§13.5.2";
+    } else if (mixed) {
       enterWhy = `${def.name} is a ${def.lifetime} ${def.kind}, but a local can override that lifetime. ${sharedNames.join(", ")} ${isAre(sharedNames)} one shared copy that keeps its value between calls; ${ownNames.join(", ")} ${ownNames.length === 1 ? "belongs" : "belong"} to this activation and ${isAre(ownNames)} initialized on each entry to the call.`;
       enterClause = storageClause(def, [...ownNames, ...sharedNames]);
     } else if (def.kind === "function") {
       enterWhy =
         def.lifetime === "automatic"
-          ? "An automatic function allocates its variables for this call and initializes them to their defaults on each entry to the call; inputs and inouts then take the values passed. Nothing another activation does can reach them."
+          ? `An automatic function allocates its variables for this call and initializes them to their defaults on each entry to the call; inputs and inouts then take the values passed. Nothing another activation does can reach ${unreachable}.`
           : "A static function's variables are statically allocated and shared across all its uses executing concurrently; a copy-in writes that one copy, so an activation still in progress sees the new value too.";
       enterClause = def.lifetime === "automatic" ? "§13.4.2, §6.21" : "§13.4.2";
     } else {
       enterWhy =
         def.lifetime === "automatic"
-          ? "An automatic task allocates its variables for this activation and initializes them, outputs included, to their defaults when execution enters it; inputs and inouts then take the values passed. Nothing another activation does can reach them."
+          ? `An automatic task allocates its variables for this activation and initializes them, outputs included, to their defaults when execution enters it; inputs and inouts then take the values passed. Nothing another activation does can reach ${unreachable}.`
           : "A static task has one copy of each variable per module instance, shared by every activation; a copy-in writes that one copy, so a concurrent activation sees the new value too.";
       enterClause = def.lifetime === "automatic" ? "§13.3.2, §13.3" : "§13.3.2, §13.3.1";
+    }
+    if (refNames.length && !refsOnly) {
+      enterWhy = `${enterWhy} ${refWhy}`;
+      enterClause = `${enterClause}, §13.5.2`;
     }
     emit({
       kind: "enter",
@@ -1262,7 +1332,7 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
     const ownNames = [...act.own.keys()];
     const kept = [...act.shared.entries()].map(([n, s]) => `${n} = ${formatValue(s.value)}`).join(", ");
     if (ownNames.length) notes.push(kept ? `its own ${ownNames.join(", ")} ${ownNames.length === 1 ? "is" : "are"} dropped` : "its storage is dropped");
-    else if (act.def.lifetime === "automatic" && !kept) notes.push("its bindings end");
+    else if (act.def.lifetime === "automatic" && !kept && act.refs.size) notes.push("its references end");
     if (kept) notes.push(`the shared storage keeps ${kept}`);
     else if (act.def.lifetime === "static" && !ownNames.length) notes.push("the shared storage stays");
     act.record.endTime = time;
@@ -1277,18 +1347,29 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
     const recursed = records.some((r) => r.sub === act.def.name && r.depth === act.record.depth + 1 && r.id > act.record.id);
     const nonReentrant =
       act.def.kind === "function" && act.def.lifetime === "static" && returned?.expr && recursed
-        ? " The operands are read now, after the inner calls overwrote the shared copies: a static function is not reentrant."
+        ? "The operands are read now, after the inner calls overwrote the shared copies: a static function is not reentrant."
         : "";
-    const hasOwn = ownNames.length > 0 || act.def.lifetime === "automatic";
+    const hasOwn = ownNames.length > 0;
     const hasShared = act.shared.size > 0 || act.def.lifetime === "static";
+    const refsOnly = act.refs.size > 0 && !hasOwn && !hasShared;
     emit({
       kind: "return",
       pid: ctx.pid,
       activationId: act.record.id,
       lineKey,
       what: `${act.record.label}${returnText} at t = ${time} ns: ${notes.join("; ")}.`,
-      why: `Output and inout values reach the caller's variables once, at the return.${nonReentrant}${hasOwn ? " Automatic storage is deallocated at the end of the invocation." : ""}${hasShared ? " Static variables retain their values between invocations." : ""}`,
-      clause: `§13.3, ${storageClause(act.def, act.def.locals.map((l) => l.name))}`,
+      why: [
+        refsOnly ? "" : "Output and inout values reach the caller's variables once, at the return.",
+        act.refs.size ? "A ref formal has nothing to copy out: every write through it already reached the caller's variable." : "",
+        nonReentrant,
+        hasOwn ? "Automatic storage is deallocated at the end of the invocation." : "",
+        hasShared ? "Static variables retain their values between invocations." : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      // §13.3 states the copy-out for tasks, §13.4 for functions; a call with only ref formals copies nothing, so only §13.5.2 applies.
+      // §13.3.2 states deallocation and retention for tasks only; for a function they follow from the lifetimes of §6.21, so it is cited beside §13.4.2.
+      clause: refsOnly ? "§13.5.2" : [act.def.kind === "function" ? "§13.4" : "§13.3", ...(act.refs.size ? ["§13.5.2"] : []), act.def.kind === "function" ? "§13.4.2, §6.21" : storageClause(act.def, act.def.locals.map((l) => l.name))].join(", "),
       dropped: act,
     });
     copied.forEach(({ co, result }) => fireWatcher(co.target, result.changed, { pid: ctx.pid }));
@@ -1463,7 +1544,14 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
     return proc;
   }
 
-  const branchLabel = (branch: Stmt[]) => (branch.length ? stmtToSource(branch[0]).replace(/;$/, "") : "empty branch");
+  /** A short name for a forked process. A print's format string stays in the code panel: narration read aloud should not carry it. */
+  const branchLabel = (branch: Stmt[]) => {
+    const first = branch[0];
+    if (!first) return "empty branch";
+    if (first.kind === "display") return "the $display branch";
+    if (first.kind === "delay" && first.then?.kind === "display") return `the #${delayAmountSource(first.amount)} $display branch`;
+    return stmtToSource(first).replace(/;$/, "");
+  };
 
   function completeProcess(p: Proc): void {
     p.state = "done";
@@ -1570,13 +1658,33 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
   /* ---------- scheduler ---------- */
 
   bench.processes.forEach((p) => spawn(p.label, p.body));
+  // §6.8, §6.21: an initializer gives a static variable its first value; Table 6-7's defaults apply only where there is none.
+  const initialized: string[] = [];
+  const defaulted: string[] = [];
+  const staticSubs = bench.subs.filter((sub) => (shared.get(sub.name) as Store).size > 0);
+  staticSubs.forEach((sub) => {
+    (shared.get(sub.name) as Store).forEach((slot, name) => {
+      const text = `${name} = ${slot.type === "string" ? quote(formatValue(slot.value)) : formatValue(slot.value)}`;
+      (sub.locals.find((l) => l.name === name)?.init ? initialized : defaulted).push(text);
+    });
+  });
+  const staticText = [...initialized.map((text) => `${text} (static initializer, run once before any process starts)`), ...(defaulted.length ? [`${defaulted.join(", ")} (no initializer, so the type default)`] : [])].join("; ");
+  const staticClauses = staticSubs.length
+    ? [...(staticSubs.some((s) => s.kind === "task") ? ["§13.3.2"] : []), ...(staticSubs.some((s) => s.kind === "function") ? ["§13.4.2"] : []), ...(initialized.length || staticSubs.some((s) => s.kind === "function") ? ["§6.21"] : []), "§6.8"]
+    : [bench.subs.some((s) => s.kind === "task") ? "§13.3.2" : "§13.4.2"];
   emit({
     kind: "start",
     what: `t = 0 ns: ${bench.globals.length ? `${bench.globals.map((g) => `${g.name} = ${formatValue((globals.get(g.name) as Slot).value)}`).join(", ")}; ` : ""}${
-      [...shared.values()].some((store) => store.size > 0) ? "static subroutine storage exists from time 0 at its default values" : "every subroutine is automatic: no storage exists until a call"
+      staticSubs.length ? `static subroutine storage exists from time 0: ${staticText}` : "no subroutine has static storage: nothing is allocated before a call"
     }.`,
-    why: "Static variables are allocated once per module instance and initialized to their type defaults before any call; automatic variables exist only while an activation is running.",
-    clause: bench.subs.some((s) => s.kind === "task") ? "§13.3.2, §6.8" : "§13.4.2, §6.8",
+    why: [
+      initialized.length ? "A static variable's declared initializer is set once, before any initial or always procedure starts." : "",
+      defaulted.length ? "A static variable with no initializer starts at its type's default." : "",
+      "Automatic variables exist only while an activation is running.",
+    ]
+      .filter(Boolean)
+      .join(" "),
+    clause: staticClauses.join(", "),
   });
 
   let choiceIndex = 0;
@@ -1712,7 +1820,8 @@ export function sendBench({ lifetime, secondCallAt, debugPrints = false }: SendB
   const body: Stmt[] = debugPrints
     ? [
         { ...display("t=%0d enter id=%0d", now, v("id")), key: "send-enter" },
-        { ...delay(10, display("t=%0d use   id=%0d", now, v("id"))), key: "send-print", comment: lifetime === "static" ? "if this differs from enter: shared storage" : "same as enter: own storage" },
+        { ...delay(10), key: "send-wait" },
+        { ...display("t=%0d use   id=%0d", now, v("id")), key: "send-print", comment: lifetime === "static" ? "if this differs from enter: shared storage" : "same as enter: own storage" },
       ]
     : [{ ...delay(10, display("t=%0d id=%0d", now, v("id"))), key: "send-print" }];
   return {
@@ -1893,11 +2002,13 @@ export interface RecursionRow {
   does: string;
   nAfter: string;
   restAfter: string;
-  /** Trace index this row describes; the row is current while the scrubber is at or past it and before the next row's index. */
+  /**
+   * First trace step of what this row describes: the entry step, or, for a row that assigns and returns, the step just after the inner call returned, where this activation resumes with that assignment. The row is current from here until the next row's index.
+   */
   traceIndex: number;
 }
 
-/** The lesson's trace table, generated from a run: one row per entry and per return of a recursive activation. */
+/** The lesson's trace table, generated from a run: one row per entry and per return of a recursive activation, except that the base case's entry and return share one row. */
 export function recursionTable(run: SubroutineRun): RecursionRow[] {
   const rows: RecursionRow[] = [];
   const sub = run.activations[0]?.sub;
@@ -1928,13 +2039,14 @@ export function recursionTable(run: SubroutineRun): RecursionRow[] {
     }
     const inner = run.activations.find((a) => a.id === act.id + 1 && a.depth === act.depth + 1);
     if (!inner) return;
+    const innerReturn = run.trace.find((s) => s.kind === "return" && s.activationId === inner.id) as SubStep;
     rows.push({
       step: rows.length + 1,
       running: act.label,
       does: `${localName} = ${formatValue(inner.returnValue)}, returns ${step.what.match(/returns (.*?) at t/)?.[1] ?? formatValue(act.returnValue)}`,
       nAfter: n,
       restAfter: rest,
-      traceIndex: step.index,
+      traceIndex: innerReturn.index + 1,
     });
   });
   return rows;
@@ -2047,7 +2159,8 @@ export function pulseBench({ lifetime, direction, nba = false }: PulseOptions): 
     id: `pulse:${lifetime}:${direction}${nba ? ":nba" : ""}`,
     title: "pulse(busy): output versus ref",
     globals: [{ name: "busy", type: "logic", init: 0, initLabel: "1'b0", key: "busy-decl" }],
-    subs: [pulseDef(lifetime, direction, nba)],
+    // One line per formal, as in show_dirs: the direction control sits on flag's own line, so the task line keeps its width at 390 px.
+    subs: [{ ...pulseDef(lifetime, direction, nba), formalsOnLines: true }],
     watchers: [{ variable: "busy", format: "t=%0d busy=%b", key: "busy-watch" }],
     processes: [{ id: "main", label: "initial", body: [{ ...delay(13, call("pulse", v("busy"))), key: "pulse-call" }] }],
   };
@@ -2079,7 +2192,7 @@ export const KATA_FIXES: readonly KataFix[] = ["none", "automatic", "ref", "nba"
 export const KATA_FIX_LABELS: Record<KataFix, string> = {
   none: "no change",
   automatic: "add automatic",
-  ref: "ref instead of output",
+  ref: "pass by ref",
   nba: "use <= for the write",
   "return-type": "add a return type",
 };
@@ -2109,7 +2222,7 @@ export const KATA_SYMPTOMS: readonly KataSymptom[] = [
     suspect: "sub:log_after",
     sub: "log_after",
     why: "log_after has no lifetime keyword, so it is static: one msg shared by both calls. Call 2 copies \"second\" into it at t = 2 ns while call 1 is still waiting, so call 1 prints \"second\" at t = 10 ns.",
-    clause: "§13.3.2",
+    clause: "§13.3.1, §13.3.2",
   },
   {
     id: "sum-zero",
@@ -2117,7 +2230,7 @@ export const KATA_SYMPTOMS: readonly KataSymptom[] = [
     expected: "sum_to(3) = 6",
     suspect: "sub:sum_to",
     sub: "sum_to",
-    why: "sum_to is static and recursive. Each level reads n after its recursive call returned, and by then the innermost call has set the shared n to 0, so every level returns 0 + 0.",
+    why: "sum_to is static and recursive. Each level reads n after its recursive call returned, and by then the innermost call has set the shared n to 0, so every level above it returns 0 + 0.",
     clause: "§13.4.2",
   },
   {
@@ -2202,14 +2315,12 @@ export const KATA_SUSPECTS: readonly KataSuspectLine[] = [
   },
 ];
 
-/** A decoy fix that changes nothing on this subroutine, explained; undefined when the fix changes the code. */
+/** A decoy fix that changes nothing on this subroutine, explained; undefined when the fix changes the code (a return type on a task does: it stops compiling, §13.3). */
 export function kataFixNote(sub: KataSub, fix: KataFix): string | undefined {
   if (fix === "none") return undefined;
   if (sub === "log_after" && fix === "nba") return "log_after assigns nothing, so there is no write to turn into <=. Nothing changes.";
-  if (sub === "log_after" && fix === "return-type") return "A task has no return type. Nothing changes.";
   if (sub === "sum_to" && fix === "return-type") return "sum_to already returns int; the declared type was never the problem. Nothing changes.";
   if (sub === "pulse" && fix === "automatic") return "pulse is already automatic. Nothing changes.";
-  if (sub === "pulse" && fix === "return-type") return "A task has no return type. Nothing changes.";
   return undefined;
 }
 
@@ -2219,6 +2330,7 @@ export function kataBench(fixes: KataFixes = NO_KATA_FIXES): Bench {
     name: "log_after",
     kind: "task",
     lifetime: fixes.log_after === "automatic" ? "automatic" : "static",
+    returnType: fixes.log_after === "return-type" ? "int" : undefined,
     comment: "Prints msg after delay_ns.",
     formals: [
       { name: "delay_ns", direction: "input", type: "int" },
@@ -2231,7 +2343,7 @@ export function kataBench(fixes: KataFixes = NO_KATA_FIXES): Bench {
     ...sumToDef(fixes.sum_to === "automatic" ? "automatic" : "static", "sum", fixes.sum_to === "nba"),
     formals: [{ name: "n", direction: fixes.sum_to === "ref" ? "ref" : "input", type: "int" }],
   };
-  const pulse = pulseDef("automatic", fixes.pulse === "ref" ? "ref" : "output", fixes.pulse === "nba");
+  const pulse: SubroutineDef = { ...pulseDef("automatic", fixes.pulse === "ref" ? "ref" : "output", fixes.pulse === "nba"), returnType: fixes.pulse === "return-type" ? "int" : undefined };
   return {
     id: `kata:${KATA_SUBS.map((s) => fixes[s]).join(",")}`,
     title: "Kata: fix the bench that lies",
