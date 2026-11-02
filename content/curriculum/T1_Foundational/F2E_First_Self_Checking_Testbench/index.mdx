@@ -23,15 +23,18 @@ sources:
 
 <ArchitectureDiagram
   title="The self-checking loop, with its guards"
-  caption="Every stimulus goes two ways: through model_add() as the expected answer and through the DUT as the actual answer, meeting at a !== compare. Three guards keep the verdict honest: leftovers and zero checks force FAIL, the watchdog ends a hung run, and planting a mutant proves the bench can fail."
+  caption="Every stimulus goes two ways: through a reference model as the expected answer and through the DUT as the actual answer, meeting at a !== compare. Two guards keep the verdict honest: leftovers and zero checks force FAIL, and the watchdog ends a hung run; a planted mutant proves the bench can fail."
+  className="mx-auto max-w-md"
   cellWidth={120}
+  cellHeight={52}
   gapX={48}
+  gapY={44}
   nodes={[
-    { id: "drive", label: "1. drive", sublabel: "send(), with <=", kind: "driver", col: 0, row: 0, colSpan: 2 },
-    { id: "predict", label: "2. predict", sublabel: "model_add()", kind: "model", col: 0, row: 1 },
-    { id: "dut", label: "DUT", sublabel: "adder_reg", kind: "dut", col: 1, row: 1 },
+    { id: "drive", label: "1. drive", sublabel: "stimulus, with <=", kind: "driver", col: 0, row: 0, colSpan: 2 },
+    { id: "predict", label: "2. predict", sublabel: "reference model", kind: "model", col: 0, row: 1 },
+    { id: "dut", label: "DUT", sublabel: "design", kind: "dut", col: 1, row: 1 },
     { id: "compare", label: "3. compare", sublabel: "with !==", kind: "scoreboard", col: 0, row: 2, colSpan: 2 },
-    { id: "count", label: "4. count", sublabel: "pass_cnt, fail_cnt", kind: "generic", col: 0, row: 3 },
+    { id: "count", label: "4. count", sublabel: "counters", kind: "generic", col: 0, row: 3 },
     { id: "leftovers", label: "guard", sublabel: "leftovers, zero checks", kind: "generic", col: 1, row: 3 },
     { id: "report", label: "5. report", sublabel: "PASS=n FAIL=m", kind: "generic", col: 0, row: 4 },
     { id: "watchdog", label: "guard", sublabel: "watchdog", kind: "generic", col: 1, row: 4 }
@@ -41,9 +44,9 @@ sources:
     { from: "drive", to: "dut", style: "data", label: "inputs" },
     { from: "predict", to: "compare", style: "data", label: "expected" },
     { from: "dut", to: "compare", style: "data", label: "actual" },
-    { from: "compare", to: "count" },
+    { from: "compare", to: "count", style: "data", label: "pass or fail" },
     { from: "leftovers", to: "count", style: "causal", label: "FAIL" },
-    { from: "count", to: "report" },
+    { from: "count", to: "report", style: "data", label: "totals" },
     { from: "watchdog", to: "report", style: "causal", label: "ends" }
   ]}
 />
@@ -161,7 +164,7 @@ The initializer matters. A `logic` variable without one starts at x (§6.8, Tabl
 
 <TimingDiagram
   title="Clock and reset: edges 0 to 3"
-  caption={"Edge k is 5 + 10k ns. The second row, bad clk (logic clk; with no initializer), starts at x and stays x forever because ~x is x (§6.8, §11.4.8). At edge 0 (5 ns) the DUT sees rst_n = 0 and clears out_valid and sum (R1). reset_dut() releases rst_n with <= just after edge 1 (15 ns), so on edge 2 (25 ns) the DUT first sees rst_n = 1 and the checker starts comparing and guarding out_valid with $isunknown."}
+  caption="Edge k is the rising clock edge at 5 + 10k ns; bad clk stays x forever when clk has no initializer."
   edges={4}
   signals={[
     { name: "clk", kind: "clock" },
@@ -175,6 +178,8 @@ The initializer matters. A `logic` variable without one starts at x (§6.8, Tabl
     { edge: 2, tone: "info", short: "rst_n=1", label: "Edge 2 (25 ns): the DUT first sees rst_n = 1; the checker's if (rst_n) starts comparing and $isunknown guards out_valid" }
   ]}
 />
+
+In the waveform, the second row (`bad clk`, `logic clk;` with no initializer) starts at x and stays x forever because `~x` is x (§6.8, §11.4.8). At edge 0 (5 ns) the DUT sees `rst_n = 0` and clears `out_valid` and `sum` (R1). `reset_dut()` releases `rst_n` with `<=` just after edge 1 (15 ns), so on edge 2 (25 ns) the DUT first sees `rst_n = 1` and the checker starts comparing and guarding `out_valid` with `$isunknown`.
 
 ### Drive the DUT without a race
 
@@ -195,27 +200,40 @@ Here is why. The DUT's `always_ff` and the bench's `send()` both wake on the sam
 
 </details>
 
-<figure className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4">
+<figure
+  className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4"
+  role="img"
+  aria-label="Two-rung time-slot ladder for one rising clock edge. Rung 1 is Active: the DUT always_ff reads a while a blocking send() with a = 9 writes immediately in an order left open by IEEE 1800-2023 section 4.7, causing a race. Rung 2 is NBA: nonblocking updates a <= 9 and sum <= next_sum land after every Active read (section 4.9.4)."
+>
   <div className="mb-2 text-sm font-semibold text-foreground">
     Inside one rising-edge time slot: why <code>&lt;=</code> separates writes from reads
   </div>
-  <div className="overflow-x-auto">
-    <svg
-      viewBox="0 0 600 184"
-      className="w-full min-w-[600px] h-auto"
-      role="img"
-      aria-label="Two-rung time-slot ladder for one rising clock edge. Rung 1 is Active: the DUT always_ff reads a while a blocking send() with a = 9 writes immediately in an order left open by IEEE 1800-2023 section 4.7, causing a race. Rung 2 is NBA: nonblocking updates a <= 9 and sum <= next_sum land after every process woken by the edge has run (section 4.9.4)."
-    >
-      <rect x="8" y="8" width="584" height="78" rx="8" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
-      <text x="20" y="30" fontSize="12" fontWeight="700" fill="currentColor">1. Active (processes woken by @(posedge clk) run in any order, §4.7)</text>
-      <text x="20" y="52" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">{"▼ DUT always_ff reads a (expects 7)"}</text>
-      <text x="20" y="72" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">{"◆ If send() uses a = 9: writes a at once — order left open (§4.7, §4.8 race)"}</text>
-      <line x1="300" y1="86" x2="300" y2="102" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1.5" strokeDasharray="3 2" />
-      <rect x="8" y="102" width="584" height="74" rx="8" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.3" />
-      <text x="20" y="124" fontSize="12" fontWeight="700" fill="currentColor">2. NBA (after every process woken by the edge has run, §4.9.4)</text>
-      <text x="20" y="146" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">{"◆ send() with a <= 9 updates a here (every Active read already saw 7)"}</text>
-      <text x="20" y="164" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">{"◆ DUT always_ff updates out_valid <= ... and sum <= ... here (§10.4.2)"}</text>
-    </svg>
+  <div className="space-y-2 text-xs">
+    <div className="rounded-lg border border-border/70 bg-background/50 p-3">
+      <div className="font-semibold text-foreground">
+        1. Active (processes woken by <code>@(posedge clk)</code> run in any order, §4.7)
+      </div>
+      <div className="mt-1 font-mono text-foreground">
+        ▼ DUT <code>always_ff</code> reads <code>a</code>
+      </div>
+      <div className="mt-0.5 font-mono text-muted-foreground">
+        ◆ If <code>send()</code> uses <code>a = 9</code>: writes <code>a</code> at once — order left open (§4.7, §4.8 race)
+      </div>
+    </div>
+    <div className="text-center font-mono text-xs text-muted-foreground" aria-hidden="true">
+      ↓
+    </div>
+    <div className="rounded-lg border border-border/80 bg-background/80 p-3">
+      <div className="font-semibold text-foreground">
+        2. NBA (after every process woken by the edge has run, §4.9.4)
+      </div>
+      <div className="mt-1 font-mono text-foreground">
+        ◆ <code>send()</code> with <code>a &lt;= 9</code> updates <code>a</code> here (after every Active read)
+      </div>
+      <div className="mt-0.5 font-mono text-muted-foreground">
+        ◆ DUT <code>always_ff</code> updates <code>out_valid &lt;= ...</code> and <code>sum &lt;= ...</code> here (§10.4.2)
+      </div>
+    </div>
   </div>
   <figcaption className="mt-2 text-xs text-muted-foreground">
     Within one simulation time slot, Active reads and blocking writes share the first rung, while nonblocking (<code>&lt;=</code>) updates wait for the second rung. <a href="/curriculum/T1_Foundational/F3B_Scheduling_Regions/index" className="underline">F3B</a> teaches the full scheduler ladder.
@@ -260,7 +278,7 @@ Inputs then change mid-cycle, which reads well in a waveform. The style breaks w
 
 <TimingDiagram
   title="One checked transaction: +TEST=gaps, edges 0 to 5"
-  caption={"Edge k is the rising edge at 5 + 10k ns, and each value is the one sampled at that edge. The bench drives with <= just after an edge, so its inputs are drawn changing right after that edge and the DUT samples them on the next one. sum and out_valid are x until the first reset edge."}
+  caption="Edge k is the rising edge at 5 + 10k ns, and each value is the one sampled at that edge. The bench drives with <= just after an edge, so its inputs are drawn changing right after that edge and the DUT samples them on the next one. sum and out_valid are x until the first reset edge."
   edges={6}
   signals={[
     { name: "clk", kind: "clock" },
@@ -285,9 +303,9 @@ What the waveform shows:
 - **Edge 3.** The DUT samples `in_valid = 1`, `a = 5` and `b = 5`, and schedules `out_valid <= 1` and `sum <= 10`.
 - **Edge 4.** The checker, woken by the same edge as the DUT, reads `out_valid = 1` and `sum = 10`: the values from before this edge's updates. It pops 10 from `exp_q`, a match.
 
-</details>
-
 A result is therefore checked two edges after it was driven, although the DUT's latency is one cycle: one edge for the DUT to sample the inputs, one for the checker to read the registered result. You count those edges once, here. The queue in the next section means the checker never needs to know the latency.
+
+</details>
 
 ### Expected values: a model and a queue
 
@@ -305,7 +323,7 @@ It is written differently from the RTL on purpose. The RTL relies on its 9-bit t
 
 **Why a queue.** The result for a stimulus arrives after the stimulus, and with back-to-back inputs several results are in flight at once. One `expected` variable cannot hold them: the next `send()` overwrites it before the earlier result arrives. A queue ([F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index)) keeps them in order. `send()` pushes one expectation per transaction with `push_back` (§7.10.2.7), and the checker pops the oldest one for each result with `pop_front` (§7.10.2.4). Each expectation is a struct ([F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums)) that also keeps the inputs, so a failure message can name them. Together, the queue of expectations and the compare that consumes it form a **scoreboard**: the part of a bench that holds expected results and matches each actual result against one of them.
 
-**Predict.** In `+TEST=gaps`, what does `exp_q` hold after edge 6? Trace it:
+**Predict.** In `+TEST=gaps` (`send(5, 5)` on edge 2, `idle` on edges 3 and 4, `send(7, 8)` on edge 5, `send(9, 10)` on edge 6), what does `exp_q` hold after edge 6? Trace it:
 
 <details>
 <summary>Trace it: exp_q edge by edge</summary>
@@ -324,7 +342,7 @@ It is written differently from the RTL on purpose. The RTL relies on its 9-bit t
 
 <TimingDiagram
   title="exp_q over +TEST=gaps, edges 0 to 11"
-  caption={"The exp_q row uses the same sampling convention as the other rows: the value at edge k is what edge k - 1 left behind, whereas the table's rightmost column shows exp_q after edge k. The shaded band across edges 6 and 7 marks the two results in flight ({15, 19}), right where the checker pops 15 at edge 7 and 19 at edge 8."}
+  caption="Edge k is the rising clock edge at 5 + 10k ns; the exp_q row shows what edge k - 1 left behind, whereas the table's rightmost column shows exp_q after edge k."
   edges={12}
   cycleWidth={52}
   signals={[
@@ -343,9 +361,9 @@ It is written differently from the RTL on purpose. The RTL relies on its 9-bit t
   ]}
 />
 
-</details>
+At edge 6 two results are in flight (`{15, 19}`), and the queue absorbs them: the shaded band across edges 6 and 7 marks where the checker pops 15 at edge 7 and 19 at edge 8. Matching on `out_valid` instead of counting cycles is what lets one checker serve any mix of valid and idle cycles.
 
-At edge 6 two results are in flight, and the queue absorbs them. Matching on `out_valid` instead of counting cycles is what lets one checker serve any mix of valid and idle cycles.
+</details>
 
 Three queue pitfalls:
 - **Popping an empty queue.** `pop_front` on an empty queue returns the element type's default value (here, an `exp_t` whose `logic` members are all x; §7.10.2.4, Table 7-1) and may only warn. Check `exp_q.size()` first, and report a result that nobody expected as a failure.
@@ -360,78 +378,71 @@ The checker compares with the **case inequality** operator `!==`, never with `!=
   <div className="mb-2 text-sm font-semibold text-foreground">
     Why <code>9&apos;b0_0000_101x != 9&apos;d10</code> is ambiguous (<code>x</code>) while <code>9&apos;b1_0000_101x != 9&apos;d10</code> is <code>1</code>
   </div>
-  <div className="overflow-x-auto">
-    <svg
-      viewBox="0 0 640 198"
-      className="w-full min-w-[600px] h-auto"
-      role="img"
-      aria-label="Three 9-bit rows comparing expected 9'd10 (0_0000_1010) against two partially unknown actual values. For 9'b0_0000_101x, known bits 8 down to 1 match 10 and bit 0 is unknown X, so != returns x, if takes the else branch and increments pass_cnt (false pass), whereas !== returns 1 and increments fail_cnt. For 9'b1_0000_101x, bit 8 is 1 versus expected 0, so both != and !== return 1 and increment fail_cnt."
-    >
-      <defs>
-        <pattern id="f2e-x-hatch-cmp" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
-          <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" strokeOpacity="0.35" strokeWidth="2" />
-        </pattern>
-      </defs>
-      <text x="162" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[8]</text>
-      <text x="190" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[7]</text>
-      <text x="218" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[6]</text>
-      <text x="246" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[5]</text>
-      <text x="274" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[4]</text>
-      <text x="302" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[3]</text>
-      <text x="330" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[2]</text>
-      <text x="358" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[1]</text>
-      <text x="386" y="18" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[0]</text>
-      <text x="412" y="18" fontSize="11" fontWeight="700" fill="currentColor" opacity="0.8">!= 10 → if/else</text>
-      <text x="542" y="18" fontSize="11" fontWeight="700" fill="currentColor" opacity="0.8">!== 10</text>
+  <svg
+    viewBox="0 0 340 240"
+    className="w-full h-auto"
+    role="img"
+    aria-label="Three 9-bit rows comparing expected 9'd10 (0_0000_1010) against two partially unknown actual values. For 9'b0_0000_101x, known bits 8 down to 1 match 10 and bit 0 is unknown X, so != returns x, if takes the else branch and increments pass_cnt (false pass), whereas !== returns 1 and increments fail_cnt. For 9'b1_0000_101x, bit 8 is 1 versus expected 0, so both != and !== return 1 and increment fail_cnt."
+  >
+    <defs>
+      <pattern id="f2e-x-hatch-cmp" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" strokeOpacity="0.35" strokeWidth="2" />
+      </pattern>
+    </defs>
+    <text x="124" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[8]</text>
+    <text x="148" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[7]</text>
+    <text x="172" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[6]</text>
+    <text x="196" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[5]</text>
+    <text x="220" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[4]</text>
+    <text x="244" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[3]</text>
+    <text x="268" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[2]</text>
+    <text x="292" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[1]</text>
+    <text x="316" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[0]</text>
 
-      <text x="10" y="48" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">Expected 9&apos;d10</text>
-      <rect x="148" y="30" width="252" height="26" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
-      <text x="162" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="190" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="218" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="246" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="274" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="302" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
-      <text x="330" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="358" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
-      <text x="386" y="47" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="412" y="47" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">0 → pass_cnt++ ✓</text>
-      <text x="542" y="47" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">0 → pass ✓</text>
+    <text x="8" y="42" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">Expected 9&apos;d10</text>
+    <rect x="112" y="25" width="216" height="24" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
+    <text x="124" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="148" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="172" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="196" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="220" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="244" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <text x="268" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="292" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <text x="316" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="8" y="64" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">{"!= 10: 0 → pass_cnt++ ✓   |   !== 10: 0 → pass_cnt++ ✓"}</text>
 
-      <text x="10" y="102" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;b0_0000_101x</text>
-      <rect x="148" y="84" width="252" height="26" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
-      <text x="162" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="190" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="218" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="246" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="274" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="302" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
-      <text x="330" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="358" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
-      <rect x="374" y="86" width="24" height="22" rx="3" fill="url(#f2e-x-hatch-cmp)" stroke="currentColor" strokeOpacity="0.55" />
-      <text x="386" y="101" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">X</text>
-      <text x="152" y="124" fontSize="10.5" fill="currentColor" opacity="0.75">{"bits [8:1] match 10; bit [0] is X → relation is ambiguous (§11.4.5)"}</text>
-      <text x="412" y="101" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">x → pass_cnt++ ✕</text>
-      <text x="542" y="101" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1 → fail ✓</text>
+    <text x="8" y="102" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;b0_0000_101x</text>
+    <rect x="112" y="85" width="216" height="24" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
+    <text x="124" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="148" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="172" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="196" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="220" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="244" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <text x="268" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="292" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <rect x="305" y="87" width="22" height="20" rx="3" fill="url(#f2e-x-hatch-cmp)" stroke="currentColor" strokeOpacity="0.55" />
+    <text x="316" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">X</text>
+    <text x="8" y="124" fontSize="10" fill="currentColor" opacity="0.75">{"bits [8:1] match 10; bit [0] is X → relation is ambiguous (§11.4.5)"}</text>
+    <text x="8" y="142" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">{"!= 10: x → pass_cnt++ ✕   |   !== 10: 1 → fail_cnt++ ✓"}</text>
 
-      <text x="10" y="160" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;b1_0000_101x</text>
-      <rect x="148" y="142" width="252" height="26" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
-      <rect x="150" y="144" width="24" height="22" rx="3" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.5" />
-      <text x="162" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1</text>
-      <text x="190" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="218" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="246" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="274" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="302" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
-      <text x="330" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <text x="358" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
-      <rect x="374" y="144" width="24" height="22" rx="3" fill="url(#f2e-x-hatch-cmp)" stroke="currentColor" strokeOpacity="0.55" />
-      <text x="386" y="159" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">X</text>
-      <text x="152" y="182" fontSize="10.5" fill="currentColor" opacity="0.75">{"bit [8] differs (1 vs 0) → definitely unequal regardless of bit [0]"}</text>
-      <text x="412" y="159" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1 → fail_cnt++ ✓</text>
-      <text x="542" y="159" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1 → fail ✓</text>
-    </svg>
-  </div>
+    <text x="8" y="182" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;b1_0000_101x</text>
+    <rect x="112" y="165" width="216" height="24" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
+    <rect x="113" y="167" width="22" height="20" rx="3" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.5" />
+    <text x="124" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1</text>
+    <text x="148" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="172" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="196" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="220" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="244" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <text x="268" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="292" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <rect x="305" y="167" width="22" height="20" rx="3" fill="url(#f2e-x-hatch-cmp)" stroke="currentColor" strokeOpacity="0.55" />
+    <text x="316" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">X</text>
+    <text x="8" y="204" fontSize="10" fill="currentColor" opacity="0.75">{"bit [8] differs (1 vs 0) → unequal regardless of bit [0]"}</text>
+    <text x="8" y="222" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">{"!= 10: 1 → fail_cnt++ ✓   |   !== 10: 1 → fail_cnt++ ✓"}</text>
+  </svg>
   <figcaption className="mt-2 text-xs text-muted-foreground">
     <code>!=</code> asks whether the two numbers could still be equal: in <code>9&apos;b0_0000_101x</code>, if bit 0 were 0 they would match, so <code>!=</code> yields <code>1&apos;bx</code> and <code>if</code> runs its <code>else</code> branch (§11.4.5, §12.4). <code>!==</code> compares bit patterns including <code>x</code> and <code>z</code> and returns <code>1&apos;b1</code> for both rows.
   </figcaption>
@@ -495,46 +506,41 @@ One trap: plusargs match by prefix, so `$test$plusargs("DUMP")` is also true for
 | `gaps` | `PASS=4 FAIL=0` | `PASS=4 FAIL=0`, escapes | `PASS=0 FAIL=4` |
 | `all` | `PASS=14 FAIL=0` | `PASS=11 FAIL=3` | `PASS=0 FAIL=14` |
 
-</details>
-
 The off-by-one is loud: every result is wrong. The stuck carry is quiet: `smoke` and `gaps` never produce a sum of 256 or more, so bit 8 is 0 in every result they check, broken or not. A directed test catches only the bugs its stimulus provokes and its checks observe.
 
 <figure className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4">
   <div className="mb-2 text-sm font-semibold text-foreground">
     Why <code>smoke</code> misses <code>BUG=1</code> (<code>next_sum[8] = 0</code>) while <code>corners</code> catches it
   </div>
-  <div className="overflow-x-auto">
-    <svg
-      viewBox="0 0 640 144"
-      className="w-full min-w-[600px] h-auto"
-      role="img"
-      aria-label="9-bit comparison of the largest sum in smoke (100 + 27 = 127, binary 0_0111_1111) versus the first carry sum in corners (255 + 1 = 256, binary 1_0000_0000). In smoke, carry bit 8 is already 0, so forcing bit 8 to 0 under BUG=1 leaves 127 unchanged and the bug escapes. In corners, bit 8 is 1, so BUG=1 turns 256 into 0 and fails CHK."
-    >
-      <text x="196" y="18" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">carry [8] | low byte [7:0]</text>
-      <text x="412" y="18" fontSize="11" fontWeight="700" fill="currentColor" opacity="0.8">BUG=0 (correct)</text>
-      <text x="516" y="18" fontSize="11" fontWeight="700" fill="currentColor" opacity="0.8">BUG=1 (bit 8 = 0)</text>
+  <svg
+    viewBox="0 0 340 156"
+    className="w-full h-auto"
+    role="img"
+    aria-label="9-bit comparison of the largest sum in smoke (100 + 27 = 127, binary 0_0111_1111) versus the first carry sum in corners (255 + 1 = 256, binary 1_0000_0000). In smoke, carry bit 8 is already 0, so forcing bit 8 to 0 under BUG=1 leaves 127 unchanged and the bug escapes. In corners, bit 8 is 1, so BUG=1 turns 256 into 0 and fails CHK."
+  >
+    <text x="153" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">carry [8]</text>
+    <text x="254" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">low byte [7:0]</text>
 
-      <text x="10" y="54" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">smoke: 100 + 27</text>
-      <rect x="192" y="36" width="34" height="26" rx="4" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" />
-      <text x="209" y="54" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
-      <rect x="232" y="36" width="168" height="26" rx="4" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
-      <text x="242" y="54" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0 1 1 1 1 1 1 1</text>
-      <text x="412" y="54" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">9&apos;d127</text>
-      <text x="516" y="54" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">9&apos;d127 (escapes)</text>
+    <text x="8" y="43" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">smoke: 100 + 27</text>
+    <rect x="136" y="26" width="34" height="24" rx="4" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" />
+    <text x="153" y="42" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <rect x="176" y="26" width="156" height="24" rx="4" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
+    <text x="254" y="42" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0 1 1 1 1 1 1 1</text>
+    <text x="8" y="68" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">{"BUG=0: 9'd127   |   BUG=1 (bit 8 = 0): 9'd127 (escapes)"}</text>
 
-      <text x="10" y="106" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">corners: 255 + 1</text>
-      <rect x="192" y="88" width="34" height="26" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.5" />
-      <text x="209" y="106" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1</text>
-      <rect x="232" y="88" width="168" height="26" rx="4" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
-      <text x="242" y="106" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0 0 0 0 0 0 0 0</text>
-      <text x="412" y="106" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">9&apos;d256</text>
-      <text x="516" y="106" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;d0 (fails ✓)</text>
-    </svg>
-  </div>
+    <text x="8" y="115" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">corners: 255 + 1</text>
+    <rect x="136" y="98" width="34" height="24" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.5" />
+    <text x="153" y="114" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1</text>
+    <rect x="176" y="98" width="156" height="24" rx="4" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
+    <text x="254" y="114" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0 0 0 0 0 0 0 0</text>
+    <text x="8" y="140" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">{"BUG=0: 9'd256   |   BUG=1 (bit 8 = 0): 9'd0 (fails ✓)"}</text>
+  </svg>
   <figcaption className="mt-2 text-xs text-muted-foreground">
     A stuck-at-0 fault on bit 8 is invisible until the stimulus demands a <code>1</code> on bit 8. In <code>smoke</code>, the largest sum is <code>127</code> (<code>9&apos;b0_0111_1111</code>); in <code>corners</code>, <code>255 + 1</code>, <code>255 + 255</code> and <code>128 + 128</code> all set bit 8 and expose <code>BUG=1</code>.
   </figcaption>
 </figure>
+
+</details>
 
 ### End every run with a verdict
 
@@ -651,27 +657,29 @@ A **value change dump (VCD)** is the portable waveform format defined by the sta
 
 <TimingDiagram
   title="Debugging a CHK failure at 75 ns: look one and two edges earlier"
-  caption={"Column c is edge c + 4 (45 + 10c ns) of +TEST=corners with BUG=1; the rose highlight spans the two edges from drive (column 1, 55 ns) to check (column 3, 75 ns). At column 3 (edge 7, 75 ns) the checker reports CHK a=255 b=1: sum=0, expected 256. Look one edge earlier (column 2, edge 6, 65 ns) to see the DUT sample a = 255 and b = 1, and two edges earlier (column 1, edge 5, 55 ns) to see send(255, 1) drive them with <=."}
-  edges={5}
+  caption="Edge k is the rising clock edge at 5 + 10k ns in +TEST=corners with BUG=1; the rose band spans the two edges from drive (edge 5, 55 ns) to the first failing check (edge 7, 75 ns)."
+  edges={9}
   cycleWidth={52}
   signals={[
     { name: "clk", kind: "clock" },
-    { name: "in_valid", kind: "bit", values: [1, 1, 1, 1, 1] },
-    { name: "a", kind: "bus", values: ["255", "0", "255", "255", "128"] },
-    { name: "b", kind: "bus", values: ["0", "255", "1", "255", "128"] },
-    { name: "out_valid", kind: "bit", values: [1, 1, 1, 1, 1] },
-    { name: "sum BUG=1", kind: "bus", values: ["0", "255", "255", "0", "254"] },
-    { name: "expected", kind: "bus", values: ["0", "255", "255", "256", "510"] }
+    { name: "in_valid", kind: "bit", values: [0, 0, 0, 1, 1, 1, 1, 1, 1] },
+    { name: "a", kind: "bus", values: ["0", "0", "0", "0", "255", "0", "255", "255", "128"] },
+    { name: "b", kind: "bus", values: ["0", "0", "0", "0", "0", "255", "1", "255", "128"] },
+    { name: "out_valid", kind: "bit", values: [undefined, 0, 0, 0, 1, 1, 1, 1, 1] },
+    { name: "sum BUG=1", kind: "bus", values: [undefined, "0", "0", "0", "0", "255", "255", "0", "254"] },
+    { name: "expected", kind: "bus", values: ["—", "—", "—", "—", "0", "255", "255", "256", "510"] }
   ]}
   markers={[
-    { edge: 1, tone: "drive", short: "drive", label: "Column 1 (edge 5, 55 ns): two edges earlier, send(255, 1) drives a <= 255 and b <= 1" },
-    { edge: 2, tone: "sample", short: "sample", label: "Column 2 (edge 6, 65 ns): one edge earlier, the DUT samples 255 + 1; BUG=1 clears bit 8" },
-    { edge: 3, tone: "fail", short: "CHK", label: "Column 3 (edge 7, 75 ns): CHK error time — checker reads sum = 0 against expected 256" }
+    { edge: 5, tone: "drive", short: "drive", label: "Edge 5 (55 ns): two edges earlier, send(255, 1) drives a <= 255 and b <= 1" },
+    { edge: 6, tone: "sample", short: "sample", label: "Edge 6 (65 ns): one edge earlier, the DUT samples 255 + 1; BUG=1 clears bit 8" },
+    { edge: 7, tone: "fail", short: "CHK", label: "Edge 7 (75 ns): CHK error time — checker reads sum = 0 against expected 256" }
   ]}
   highlights={[
-    { from: 1, to: 3, tone: "fail", label: "2 edges from drive (55 ns) to check (75 ns)" }
+    { from: 5, to: 7, tone: "fail", label: "2 edges from drive (55 ns) to check (75 ns)" }
   ]}
 />
+
+At edge 7 (75 ns) the checker reports `CHK a=255 b=1: sum=0, expected 256`. Look one edge earlier (edge 6, 65 ns) to see the DUT sample `a = 255` and `b = 1`, and two edges earlier (edge 5, 55 ns) to see `send(255, 1)` drive them with `<=`.
 
 ### Common bugs and how to debug them
 
@@ -1116,11 +1124,11 @@ endtask
 
 - **Where exhaustion ends.** With 16-bit operands there are 2³² (about 4.3 × 10⁹) pairs, about 43 s of simulated time at 10 ns each; with 32-bit operands there are 2⁶⁴ (about 1.8 × 10¹⁹) pairs, far beyond any simulation. Wall-clock time per simulated second depends on the simulator, the design and the machine (tool-dependent).
 
-| Operand width `W` | Input pairs (`2^(2W)`) | Simulated time at 10 ns/pair | Log₁₀(pairs) scale | Fits a simulation run? |
+| W | Pairs (2^2W) | Time (10 ns each) | Log₁₀ scale | Fits a sim run? |
 |---|---|---|---|---|
-| `W = 8` | `65,536` (`2^16`) | `655.36 µs` | `█████░░░░░░░░░░░░░░░` (`~10^4.8`) | Yes (raise `TIMEOUT` above `655.36 µs`) |
-| `W = 16` | `4,294,967,296` (`2^32`, `~4.3 × 10^9`) | `~42.95 s` | `██████████░░░░░░░░░░` (`~10^9.6`) | Borderline (billions of cycles; wall-clock time is tool-dependent) |
-| `W = 32` | `~1.84 × 10^19` (`2^64`) | `~1.84 × 10^11 s` (~5,850 simulated years) | `████████████████████` (`~10^19.3`) | Impossible to exhaust in simulation |
+| W = 8 | 2^16 (65,536) | 655.36 µs | ██░░░░░░ ~10^4.8 | Yes (raise TIMEOUT above 655.36 µs) |
+| W = 16 | 2^32 (~4.3 × 10^9) | ~42.95 s | ████░░░░ ~10^9.6 | Borderline (billions of cycles) |
+| W = 32 | 2^64 (~1.84 × 10^19) | ~1.84 × 10^11 s (~5,850 yr) | ████████ ~10^19.3 | Impossible in simulation |
 
 - **What directed tests buy.** You get exactly the cases you wrote, cheaply, and they are the right tool for bring-up, for known corners such as 255 + 1, and for reproducing a bug. Their cost grows with every feature and corner, and they never find a case nobody imagined.
 - **What constrained-random buys.** The bench chooses the values within constraints ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)). The cost moves into a checker that can predict any input (this bench's model and queue already can) and into functional coverage that measures which cases actually ran ([I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)). Formal tools can prove properties for every input at once ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)).
@@ -1426,26 +1434,28 @@ PASS=1 FAIL=3
 The result 7 is checked at 45 ns. The mutant samples the invalid pair 50 and 60 at 45 ns and the pair 70 and 80 at 55 ns, so the checker sees `sum` = 110 at 55 ns, then 150 at 65 ns and again at 75 ns, the edges `drain()` waits through: three failures. With `.BUG(3)` and no plusargs, only the `hold` test fails, giving `PASS=15 FAIL=3`: the other tests never change `a` or `b` on an idle cycle.
 
 <TimingDiagram
-  title="+TEST=hold: correct DUT (BUG=0) versus mutant 3 (BUG=3), edges 2 to 7"
-  caption={"Column c is edge c + 2 (25 + 10c ns). After send(3, 4) produces sum = 7 at column 2 (edge 4, 45 ns), send_invalid(50, 60) and send_invalid(70, 80) drive new operands with in_valid = 0. The correct DUT (sum BUG=0) holds sum = 7; mutant 3 (sum BUG=3) updates sum to 110 at column 3 (edge 5, 55 ns) and 150 at columns 4 and 5 (edges 6 and 7, 65 and 75 ns)."}
-  edges={6}
+  title="+TEST=hold: correct DUT (BUG=0) versus mutant 3 (BUG=3), edges 0 to 7"
+  caption="Edge k is the rising clock edge at 5 + 10k ns; after edge 4 sets last_sum = 7, edges 5 to 7 compare sum against last_sum while out_valid is 0."
+  edges={8}
   cycleWidth={52}
   signals={[
     { name: "clk", kind: "clock" },
-    { name: "in_valid", kind: "bit", values: [0, 1, 0, 0, 0, 0] },
-    { name: "a", kind: "bus", values: ["0", "3", "50", "70", "70", "70"] },
-    { name: "b", kind: "bus", values: ["0", "4", "60", "80", "80", "80"] },
-    { name: "out_valid", kind: "bit", values: [0, 0, 1, 0, 0, 0] },
-    { name: "sum BUG=0", kind: "bus", values: ["0", "0", "7", "7", "7", "7"] },
-    { name: "sum BUG=3", kind: "bus", values: ["0", "0", "7", "110", "150", "150"] }
+    { name: "in_valid", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0, 0] },
+    { name: "a", kind: "bus", values: ["0", "0", "0", "3", "50", "70", "70", "70"] },
+    { name: "b", kind: "bus", values: ["0", "0", "0", "4", "60", "80", "80", "80"] },
+    { name: "out_valid", kind: "bit", values: [undefined, 0, 0, 0, 1, 0, 0, 0] },
+    { name: "sum BUG=0", kind: "bus", values: [undefined, "0", "0", "0", "7", "7", "7", "7"] },
+    { name: "sum BUG=3", kind: "bus", values: [undefined, "0", "0", "0", "7", "110", "150", "150"] }
   ]}
   markers={[
-    { edge: 2, tone: "pass", short: "CHK 7", label: "Column 2 (edge 4, 45 ns): out_valid = 1, sum = 7 passes; last_sum becomes 7" },
-    { edge: 3, tone: "fail", short: "110!=7", label: "Column 3 (edge 5, 55 ns): out_valid = 0, BUG=3 sum = 110 !== last_sum (7)" },
-    { edge: 4, tone: "fail", short: "150!=7", label: "Column 4 (edge 6, 65 ns): out_valid = 0, BUG=3 sum = 150 !== last_sum (7)" },
-    { edge: 5, tone: "fail", short: "150!=7", label: "Column 5 (edge 7, 75 ns): out_valid = 0, BUG=3 sum = 150 !== last_sum (7)" }
+    { edge: 4, tone: "pass", short: "CHK 7", label: "Edge 4 (45 ns): out_valid = 1, sum = 7 passes; last_sum becomes 7" },
+    { edge: 5, tone: "fail", short: "110!==7", label: "Edge 5 (55 ns): out_valid = 0, BUG=3 sum = 110 !== last_sum (7)" },
+    { edge: 6, tone: "fail", short: "150!==7", label: "Edge 6 (65 ns): out_valid = 0, BUG=3 sum = 150 !== last_sum (7)" },
+    { edge: 7, tone: "fail", short: "150!==7", label: "Edge 7 (75 ns): out_valid = 0, BUG=3 sum = 150 !== last_sum (7)" }
   ]}
 />
+
+After `send(3, 4)` produces `sum = 7` at edge 4 (45 ns), `send_invalid(50, 60)` and `send_invalid(70, 80)` drive new operands with `in_valid = 0`. The correct DUT (`sum BUG=0`) holds `sum = 7`; mutant 3 (`sum BUG=3`) updates `sum` to 110 at edge 5 (55 ns) and 150 at edges 6 and 7 (65 and 75 ns).
 
 **Reflect:** the bug needed both a new stimulus (data that changes while `in_valid` is low) and a new check (stability while `out_valid` is low). Neither alone catches it.
 
