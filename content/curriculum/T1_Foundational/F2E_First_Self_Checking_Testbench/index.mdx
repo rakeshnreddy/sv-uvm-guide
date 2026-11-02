@@ -21,6 +21,36 @@ sources:
 4. Explain why the bench drives DUT inputs with `<=` (or on the opposite clock edge) until you learn clocking blocks, and predict what a blocking drive at the active edge can do.
 5. Debug a first bench from its log: a vacuous pass, an X that slips through `!=`, a check made one cycle too early, and a hang.
 
+<ArchitectureDiagram
+  title="The self-checking loop, with its guards"
+  caption="Every stimulus goes two ways: through a reference model as the expected answer and through the DUT as the actual answer, meeting at a !== compare. Two guards keep the verdict honest: leftovers and zero checks force FAIL, and the watchdog ends a hung run; a planted mutant proves the bench can fail."
+  className="mx-auto max-w-md"
+  cellWidth={120}
+  cellHeight={52}
+  gapX={48}
+  gapY={44}
+  nodes={[
+    { id: "drive", label: "1. drive", sublabel: "stimulus, with <=", kind: "driver", col: 0, row: 0, colSpan: 2 },
+    { id: "predict", label: "2. predict", sublabel: "reference model", kind: "model", col: 0, row: 1 },
+    { id: "dut", label: "DUT", sublabel: "design", kind: "dut", col: 1, row: 1 },
+    { id: "compare", label: "3. compare", sublabel: "with !==", kind: "scoreboard", col: 0, row: 2, colSpan: 2 },
+    { id: "count", label: "4. count", sublabel: "counters", kind: "generic", col: 0, row: 3 },
+    { id: "leftovers", label: "guard", sublabel: "leftovers, zero checks", kind: "generic", col: 1, row: 3 },
+    { id: "report", label: "5. report", sublabel: "PASS=n FAIL=m", kind: "generic", col: 0, row: 4 },
+    { id: "watchdog", label: "guard", sublabel: "watchdog", kind: "generic", col: 1, row: 4 }
+  ]}
+  edges={[
+    { from: "drive", to: "predict", style: "causal", label: "same inputs" },
+    { from: "drive", to: "dut", style: "data", label: "inputs" },
+    { from: "predict", to: "compare", style: "data", label: "expected" },
+    { from: "dut", to: "compare", style: "data", label: "actual" },
+    { from: "compare", to: "count", style: "data", label: "pass or fail" },
+    { from: "leftovers", to: "count", style: "causal", label: "FAIL" },
+    { from: "count", to: "report", style: "data", label: "totals" },
+    { from: "watchdog", to: "report", style: "causal", label: "ends" }
+  ]}
+/>
+
 <BeforeYouStart />
 
 ## Build Your Mental Model
@@ -114,6 +144,12 @@ The whole bench lives in one module, `tb_top`. It has no ports: it is the top of
 
 **Time unit.** `#5` means 5 time units. `timeunit 1ns; timeprecision 1ps;` as the first items of a module set its time unit (1 ns) and the precision that delays are rounded to (1 ps), whatever order the files are compiled in (IEEE 1800-2023 §3.14.2.2). The older `` `timescale 1ns/1ps `` directive applies to every module compiled after it, so a module's unit can change with file order (§3.14.2.1). Mixing is an error: if some design elements have a time unit and precision and others do not, the standard rejects the design (§3.14.2.3), which is why the DUT declares one too. [F3A](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index) covers time units in depth.
 
+| Form | Scope | Depends on file order? | Clause |
+|---|---|---|---|
+| `timeunit 1ns; timeprecision 1ps;` inside a module | that module | no | §3.14.2.2 |
+| `` `timescale 1ns/1ps `` | every design element compiled after it that has no `timeunit` of its own | yes | §3.14.2.1 |
+| Some design elements with a unit and precision, others without | whole design | error ("It shall be an error") | §3.14.2.3 |
+
 **Clock.** A free-running clock is one variable and one `always` procedure:
 
 ```systemverilog
@@ -126,6 +162,25 @@ The initializer matters. A `logic` variable without one starts at x (§6.8, Tabl
 
 **Reset.** `reset_dut()` drives every DUT input to a known value, holds `rst_n` low for two rising edges, then releases it with `<=` just after an edge, so the DUT sees the release on the next edge. Rule R1 needs at least one edge with `rst_n` low; check your design's specification for how many it needs. Until reset is released the checker compares nothing; afterwards it insists that `out_valid` is never x or z, using `$isunknown` (§20.9). If your DUT resets asynchronously, assert reset at any time but release it the same way; [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) explains why reset stays outside clocking blocks.
 
+<TimingDiagram
+  title="Clock and reset: edges 0 to 3"
+  caption="Edge k is the rising clock edge at 5 + 10k ns; bad clk stays x forever when clk has no initializer."
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "bad clk", kind: "bit", values: [undefined, undefined, undefined, undefined] },
+    { name: "rst_n", kind: "bit", values: [0, 0, 1, 1] },
+    { name: "out_valid", kind: "bit", values: [undefined, 0, 0, 0] }
+  ]}
+  markers={[
+    { edge: 0, tone: "sample", short: "R1 clear", label: "Edge 0 (5 ns): the DUT sees rst_n = 0 and clears out_valid and sum (R1)" },
+    { edge: 1, tone: "drive", short: "rst_n<=1", label: "Edge 1 (15 ns): reset_dut() releases with rst_n <= 1" },
+    { edge: 2, tone: "info", short: "rst_n=1", label: "Edge 2 (25 ns): the DUT first sees rst_n = 1; the checker's if (rst_n) starts comparing and $isunknown guards out_valid" }
+  ]}
+/>
+
+In the waveform, the second row (`bad clk`, `logic clk;` with no initializer) starts at x and stays x forever because `~x` is x (§6.8, §11.4.8). At edge 0 (5 ns) the DUT sees `rst_n = 0` and clears `out_valid` and `sum` (R1). `reset_dut()` releases `rst_n` with `<=` just after edge 1 (15 ns), so on edge 2 (25 ns) the DUT first sees `rst_n = 1` and the checker starts comparing and guarding `out_valid` with `$isunknown`.
+
 ### Drive the DUT without a race
 
 **The rule:** drive DUT inputs with `<=` right after the clock edge, or with `=` at the opposite edge. Never use `=` at the edge the DUT samples on, its **active edge**.
@@ -134,11 +189,56 @@ Here is why. The DUT's `always_ff` and the bench's `send()` both wake on the sam
 
 **Predict.** In `+TEST=gaps`, `a` is 7 just before the edge on which `send(9, 10)` runs. On that edge, `send()` drives `a` to 9 while the DUT's flop reads `a`. Which value does the flop capture with each drive style?
 
+<details>
+<summary>Check your prediction: what the flop samples</summary>
+
 | How `send()` drives `a` | Order the simulator picks | Value the DUT samples on this edge |
 |---|---|---|
 | `a = a_val;` (blocking) | the DUT's `always_ff` first | 7, the old value, as intended |
 | `a = a_val;` (blocking) | `send()` first | 9, the new value: one cycle early |
 | `a <= a_val;` (nonblocking) | either order | 7: the update lands after every read |
+
+</details>
+
+<figure
+  className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4"
+  role="img"
+  aria-label="Two-rung time-slot ladder for one rising clock edge. Rung 1 is Active: the DUT always_ff reads a while a blocking send() with a = 9 writes immediately in an order left open by IEEE 1800-2023 section 4.7, causing a race. Rung 2 is NBA: nonblocking updates a <= 9 and sum <= next_sum land after every Active read (section 4.9.4)."
+>
+  <div className="mb-2 text-sm font-semibold text-foreground">
+    Inside one rising-edge time slot: why <code>&lt;=</code> separates writes from reads
+  </div>
+  <div className="space-y-2 text-xs">
+    <div className="rounded-lg border border-border/70 bg-background/50 p-3">
+      <div className="font-semibold text-foreground">
+        1. Active (processes woken by <code>@(posedge clk)</code> run in any order, §4.7)
+      </div>
+      <div className="mt-1 font-mono text-foreground">
+        ▼ DUT <code>always_ff</code> reads <code>a</code>
+      </div>
+      <div className="mt-0.5 font-mono text-muted-foreground">
+        ◆ If <code>send()</code> uses <code>a = 9</code>: writes <code>a</code> at once — order left open (§4.7, §4.8 race)
+      </div>
+    </div>
+    <div className="text-center font-mono text-xs text-muted-foreground" aria-hidden="true">
+      ↓
+    </div>
+    <div className="rounded-lg border border-border/80 bg-background/80 p-3">
+      <div className="font-semibold text-foreground">
+        2. NBA (after every process woken by the edge has run, §4.9.4)
+      </div>
+      <div className="mt-1 font-mono text-foreground">
+        ◆ <code>send()</code> with <code>a &lt;= 9</code> updates <code>a</code> here (after every Active read)
+      </div>
+      <div className="mt-0.5 font-mono text-muted-foreground">
+        ◆ DUT <code>always_ff</code> updates <code>out_valid &lt;= ...</code> and <code>sum &lt;= ...</code> here (§10.4.2)
+      </div>
+    </div>
+  </div>
+  <figcaption className="mt-2 text-xs text-muted-foreground">
+    Within one simulation time slot, Active reads and blocking writes share the first rung, while nonblocking (<code>&lt;=</code>) updates wait for the second rung. <a href="/curriculum/T1_Foundational/F3B_Scheduling_Regions/index" className="underline">F3B</a> teaches the full scheduler ladder.
+  </figcaption>
+</figure>
 
 With blocking drives, the edge on which the DUT sees each input depends on an order the standard leaves open. The same bench can pass on one simulator and fail on another, or change behaviour after an unrelated edit. The reset release has the same problem: `rst_n = 1'b1;` right after `@(posedge clk)` lets the DUT leave reset on that edge or on the next, depending on the order.
 
@@ -173,9 +273,12 @@ Inputs then change mid-cycle, which reads well in a waveform. The style breaks w
 
 **Predict.** In `+TEST=gaps`, `send(5, 5)` runs on edge 2. On which edge does the checker see `sum = 10`?
 
+<details>
+<summary>Check your prediction: the waveform for edges 0 to 5</summary>
+
 <TimingDiagram
   title="One checked transaction: +TEST=gaps, edges 0 to 5"
-  caption={"Edge k is the rising edge at 5 + 10k ns, and each value is the one sampled at that edge. The bench drives with <= just after an edge, so its inputs are drawn changing right after that edge and the DUT samples them on the next one. sum and out_valid are x until the first reset edge."}
+  caption="Edge k is the rising edge at 5 + 10k ns, and each value is the one sampled at that edge. The bench drives with <= just after an edge, so its inputs are drawn changing right after that edge and the DUT samples them on the next one. sum and out_valid are x until the first reset edge."
   edges={6}
   signals={[
     { name: "clk", kind: "clock" },
@@ -187,10 +290,10 @@ Inputs then change mid-cycle, which reads well in a waveform. The style breaks w
     { name: "sum", kind: "bus", values: [undefined, "0", "0", "0", "10", "10"] }
   ]}
   markers={[
-    { edge: 1, tone: "drive", label: "Edge 1 (15 ns): reset_dut() releases reset with rst_n <= 1; the DUT first sees rst_n = 1 on edge 2" },
-    { edge: 2, tone: "drive", label: "Edge 2 (25 ns): send(5, 5) drives in_valid, a and b with <= and pushes the expectation 10 onto exp_q" },
-    { edge: 3, tone: "sample", label: "Edge 3 (35 ns): the DUT samples in_valid = 1, a = 5, b = 5 and schedules out_valid <= 1 and sum <= 10" },
-    { edge: 4, tone: "pass", label: "Edge 4 (45 ns): the checker reads out_valid = 1 and sum = 10, pops 10 from exp_q, and counts a pass" }
+    { edge: 1, tone: "drive", short: "rst_n<=1", label: "Edge 1 (15 ns): reset_dut() releases reset with rst_n <= 1; the DUT first sees rst_n = 1 on edge 2" },
+    { edge: 2, tone: "drive", short: "send(5,5)", label: "Edge 2 (25 ns): send(5, 5) drives in_valid, a and b with <= and pushes the expectation 10 onto exp_q" },
+    { edge: 3, tone: "sample", short: "sample", label: "Edge 3 (35 ns): the DUT samples in_valid = 1, a = 5, b = 5 and schedules out_valid <= 1 and sum <= 10" },
+    { edge: 4, tone: "pass", short: "CHK 10", label: "Edge 4 (45 ns): the checker reads out_valid = 1 and sum = 10, pops 10 from exp_q, and counts a pass" }
   ]}
 />
 
@@ -201,6 +304,8 @@ What the waveform shows:
 - **Edge 4.** The checker, woken by the same edge as the DUT, reads `out_valid = 1` and `sum = 10`: the values from before this edge's updates. It pops 10 from `exp_q`, a match.
 
 A result is therefore checked two edges after it was driven, although the DUT's latency is one cycle: one edge for the DUT to sample the inputs, one for the checker to read the registered result. You count those edges once, here. The queue in the next section means the checker never needs to know the latency.
+
+</details>
 
 ### Expected values: a model and a queue
 
@@ -218,7 +323,10 @@ It is written differently from the RTL on purpose. The RTL relies on its 9-bit t
 
 **Why a queue.** The result for a stimulus arrives after the stimulus, and with back-to-back inputs several results are in flight at once. One `expected` variable cannot hold them: the next `send()` overwrites it before the earlier result arrives. A queue ([F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index)) keeps them in order. `send()` pushes one expectation per transaction with `push_back` (§7.10.2.7), and the checker pops the oldest one for each result with `pop_front` (§7.10.2.4). Each expectation is a struct ([F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums)) that also keeps the inputs, so a failure message can name them. Together, the queue of expectations and the compare that consumes it form a **scoreboard**: the part of a bench that holds expected results and matches each actual result against one of them.
 
-**Predict.** In `+TEST=gaps`, what does `exp_q` hold after edge 6? Trace it:
+**Predict.** In `+TEST=gaps` (`send(5, 5)` on edge 2, `idle` on edges 3 and 4, `send(7, 8)` on edge 5, `send(9, 10)` on edge 6), what does `exp_q` hold after edge 6? Trace it:
+
+<details>
+<summary>Trace it: exp_q edge by edge</summary>
 
 | Edge (time) | Bench | DUT samples | Checker sees | Expected sums in `exp_q` after the edge |
 |---|---|---|---|---|
@@ -232,7 +340,30 @@ It is written differently from the RTL on purpose. The RTL relies on its 9-bit t
 | 9 (95 ns) | `idle` | 11 + 12 | `out_valid = 0` | `{23}` |
 | 10 (105 ns) | (draining) | `in_valid = 0` | `sum = 23`: pop 23 ✓ | `{}` |
 
-At edge 6 two results are in flight, and the queue absorbs them. Matching on `out_valid` instead of counting cycles is what lets one checker serve any mix of valid and idle cycles.
+<TimingDiagram
+  title="exp_q over +TEST=gaps, edges 0 to 11"
+  caption="Edge k is the rising clock edge at 5 + 10k ns; the exp_q row shows what edge k - 1 left behind, whereas the table's rightmost column shows exp_q after edge k."
+  edges={12}
+  cycleWidth={52}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_valid", kind: "bit", values: [0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0] },
+    { name: "out_valid", kind: "bit", values: [undefined, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0] },
+    { name: "sum", kind: "bus", values: [undefined, "0", "0", "0", "10", "10", "10", "15", "19", "19", "23", "23"] },
+    { name: "exp_q", kind: "bus", values: ["{}", "{}", "{}", "{10}", "{10}", "{}", "{15}", "{15,19}", "{19}", "{23}", "{23}", "{}"] }
+  ]}
+  markers={[
+    { edge: 7, tone: "pass", short: "pop 15", label: "Edge 7 (75 ns): sum = 15, pop 15" },
+    { edge: 8, tone: "pass", short: "pop 19", label: "Edge 8 (85 ns): sum = 19, pop 19" }
+  ]}
+  highlights={[
+    { from: 6, to: 7, tone: "attempt", label: "two results in flight" }
+  ]}
+/>
+
+At edge 6 two results are in flight (`{15, 19}`), and the queue absorbs them: the shaded band across edges 6 and 7 marks where the checker pops 15 at edge 7 and 19 at edge 8. Matching on `out_valid` instead of counting cycles is what lets one checker serve any mix of valid and idle cycles.
+
+</details>
 
 Three queue pitfalls:
 - **Popping an empty queue.** `pop_front` on an empty queue returns the element type's default value (here, an `exp_t` whose `logic` members are all x; §7.10.2.4, Table 7-1) and may only warn. Check `exp_q.size()` first, and report a result that nobody expected as a failure.
@@ -242,6 +373,80 @@ Three queue pitfalls:
 ### Compare with `!==` and count
 
 The checker compares with the **case inequality** operator `!==`, never with `!=`. With `!=`, if the bits that are known agree and some bit is x or z, the result is x (§11.4.5). An `if` treats x as false and runs its `else` branch (§12.4). So `if (sum != e.sum) fail_cnt++; else pass_cnt++;` counts an unknown result as a **pass**. `!==` compares x and z as values and always returns 0 or 1.
+
+<figure className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4">
+  <div className="mb-2 text-sm font-semibold text-foreground">
+    Why <code>9&apos;b0_0000_101x != 9&apos;d10</code> is ambiguous (<code>x</code>) while <code>9&apos;b1_0000_101x != 9&apos;d10</code> is <code>1</code>
+  </div>
+  <svg
+    viewBox="0 0 340 240"
+    className="w-full h-auto"
+    role="img"
+    aria-label="Three 9-bit rows comparing expected 9'd10 (0_0000_1010) against two partially unknown actual values. For 9'b0_0000_101x, known bits 8 down to 1 match 10 and bit 0 is unknown X, so != returns x, if takes the else branch and increments pass_cnt (false pass), whereas !== returns 1 and increments fail_cnt. For 9'b1_0000_101x, bit 8 is 1 versus expected 0, so both != and !== return 1 and increment fail_cnt."
+  >
+    <defs>
+      <pattern id="f2e-x-hatch-cmp" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" strokeOpacity="0.35" strokeWidth="2" />
+      </pattern>
+    </defs>
+    <text x="124" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[8]</text>
+    <text x="148" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[7]</text>
+    <text x="172" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[6]</text>
+    <text x="196" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[5]</text>
+    <text x="220" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[4]</text>
+    <text x="244" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[3]</text>
+    <text x="268" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[2]</text>
+    <text x="292" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[1]</text>
+    <text x="316" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">[0]</text>
+
+    <text x="8" y="42" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">Expected 9&apos;d10</text>
+    <rect x="112" y="25" width="216" height="24" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
+    <text x="124" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="148" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="172" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="196" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="220" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="244" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <text x="268" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="292" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <text x="316" y="41" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="8" y="64" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">{"!= 10: 0 → pass_cnt++ ✓   |   !== 10: 0 → pass_cnt++ ✓"}</text>
+
+    <text x="8" y="102" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;b0_0000_101x</text>
+    <rect x="112" y="85" width="216" height="24" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
+    <text x="124" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="148" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="172" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="196" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="220" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="244" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <text x="268" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="292" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <rect x="305" y="87" width="22" height="20" rx="3" fill="url(#f2e-x-hatch-cmp)" stroke="currentColor" strokeOpacity="0.55" />
+    <text x="316" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">X</text>
+    <text x="8" y="124" fontSize="10" fill="currentColor" opacity="0.75">{"bits [8:1] match 10; bit [0] is X → relation is ambiguous (§11.4.5)"}</text>
+    <text x="8" y="142" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">{"!= 10: x → pass_cnt++ ✕   |   !== 10: 1 → fail_cnt++ ✓"}</text>
+
+    <text x="8" y="182" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;b1_0000_101x</text>
+    <rect x="112" y="165" width="216" height="24" rx="5" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.25" />
+    <rect x="113" y="167" width="22" height="20" rx="3" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.5" />
+    <text x="124" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1</text>
+    <text x="148" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="172" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="196" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="220" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="244" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <text x="268" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <text x="292" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
+    <rect x="305" y="167" width="22" height="20" rx="3" fill="url(#f2e-x-hatch-cmp)" stroke="currentColor" strokeOpacity="0.55" />
+    <text x="316" y="181" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">X</text>
+    <text x="8" y="204" fontSize="10" fill="currentColor" opacity="0.75">{"bit [8] differs (1 vs 0) → unequal regardless of bit [0]"}</text>
+    <text x="8" y="222" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">{"!= 10: 1 → fail_cnt++ ✓   |   !== 10: 1 → fail_cnt++ ✓"}</text>
+  </svg>
+  <figcaption className="mt-2 text-xs text-muted-foreground">
+    <code>!=</code> asks whether the two numbers could still be equal: in <code>9&apos;b0_0000_101x</code>, if bit 0 were 0 they would match, so <code>!=</code> yields <code>1&apos;bx</code> and <code>if</code> runs its <code>else</code> branch (§11.4.5, §12.4). <code>!==</code> compares bit patterns including <code>x</code> and <code>z</code> and returns <code>1&apos;b1</code> for both rows.
+  </figcaption>
+</figure>
 
 | `sum` from the DUT | Expected | `sum != 10` | The `if`/`else` counts | `sum !== 10` |
 |---|---|---|---|---|
@@ -254,6 +459,10 @@ The checker compares with the **case inequality** operator `!==`, never with `!=
 Two more ways X hides:
 - **In a control signal.** `if (out_valid)` with `out_valid` at x simply skips the compare: no failure, no pass, nothing. The checker therefore tests `$isunknown(out_valid)` first (§20.9).
 - **In a 2-state copy.** Copying `sum` into an `int` or a `bit` turns x into 0 before any compare ([F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/index)). Keep DUT values in 4-state `logic`.
+
+Choose `a != b` in the explorer below, set `a = 101x` and `b = 1010`, predict `a != b` and reveal; then cycle the top bit of `a` to `0` (`001x` versus `1010`: a known bit differs), and compare `!=` (`1`) with `!==` (`1`).
+
+<OperatorExplorer family="equality" />
 
 Each compare ends in `pass_cnt++` or in `fail_cnt++` plus a `$error` message. `$error` reports and lets the run continue (§20.10), so one run shows every failure, not just the first.
 
@@ -276,9 +485,19 @@ Tests are chosen at run time with a **plusarg**, a `+name` or `+name=value` argu
 if (!$value$plusargs("TEST=%s", test_name)) test_name = "all";
 ```
 
-`+TEST=corners` runs one test; no plusarg runs them all. `$value$plusargs` returns 0 and leaves the variable untouched when the plusarg is missing (§21.6), which is why the default sits in the same line. A misspelled name stops the run with `$fatal`, because a bench that runs nothing must never look like a pass. One trap: plusargs match by prefix, so `$test$plusargs("DUMP")` is also true for `+DUMPALL` (§21.6). Pick names that are not prefixes of each other.
+`+TEST=corners` runs one test; no plusarg runs them all. `$value$plusargs` returns 0 and leaves the variable untouched when the plusarg is missing (§21.6), which is why the default sits in the same line. A misspelled name stops the run with `$fatal`, because a bench that runs nothing must never look like a pass.
+
+<details>
+<summary>Predict: does $test$plusargs("DUMP") return true when the run has +DUMPALL?</summary>
+
+One trap: plusargs match by prefix, so `$test$plusargs("DUMP")` is also true for `+DUMPALL` (§21.6). Pick names that are not prefixes of each other.
+
+</details>
 
 **Predict, then check.** With the carry bit stuck at 0 (`BUG=1`), which tests fail? This matrix comes from a cycle model of the Make It Work code; each cell is the run's summary line:
+
+<details>
+<summary>Check your prediction: the mutant matrix</summary>
 
 | `+TEST=` | `BUG=0` (correct) | `BUG=1` (carry stuck at 0) | `BUG=2` (off by one) |
 |---|---|---|---|
@@ -288,6 +507,40 @@ if (!$value$plusargs("TEST=%s", test_name)) test_name = "all";
 | `all` | `PASS=14 FAIL=0` | `PASS=11 FAIL=3` | `PASS=0 FAIL=14` |
 
 The off-by-one is loud: every result is wrong. The stuck carry is quiet: `smoke` and `gaps` never produce a sum of 256 or more, so bit 8 is 0 in every result they check, broken or not. A directed test catches only the bugs its stimulus provokes and its checks observe.
+
+<figure className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4">
+  <div className="mb-2 text-sm font-semibold text-foreground">
+    Why <code>smoke</code> misses <code>BUG=1</code> (<code>next_sum[8] = 0</code>) while <code>corners</code> catches it
+  </div>
+  <svg
+    viewBox="0 0 340 156"
+    className="w-full h-auto"
+    role="img"
+    aria-label="9-bit comparison of the largest sum in smoke (100 + 27 = 127, binary 0_0111_1111) versus the first carry sum in corners (255 + 1 = 256, binary 1_0000_0000). In smoke, carry bit 8 is already 0, so forcing bit 8 to 0 under BUG=1 leaves 127 unchanged and the bug escapes. In corners, bit 8 is 1, so BUG=1 turns 256 into 0 and fails CHK."
+  >
+    <text x="153" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">carry [8]</text>
+    <text x="254" y="16" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.7">low byte [7:0]</text>
+
+    <text x="8" y="43" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">smoke: 100 + 27</text>
+    <rect x="136" y="26" width="34" height="24" rx="4" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" />
+    <text x="153" y="42" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0</text>
+    <rect x="176" y="26" width="156" height="24" rx="4" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
+    <text x="254" y="42" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0 1 1 1 1 1 1 1</text>
+    <text x="8" y="68" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.85">{"BUG=0: 9'd127   |   BUG=1 (bit 8 = 0): 9'd127 (escapes)"}</text>
+
+    <text x="8" y="115" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">corners: 255 + 1</text>
+    <rect x="136" y="98" width="34" height="24" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.5" />
+    <text x="153" y="114" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">1</text>
+    <rect x="176" y="98" width="156" height="24" rx="4" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
+    <text x="254" y="114" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">0 0 0 0 0 0 0 0</text>
+    <text x="8" y="140" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">{"BUG=0: 9'd256   |   BUG=1 (bit 8 = 0): 9'd0 (fails ✓)"}</text>
+  </svg>
+  <figcaption className="mt-2 text-xs text-muted-foreground">
+    A stuck-at-0 fault on bit 8 is invisible until the stimulus demands a <code>1</code> on bit 8. In <code>smoke</code>, the largest sum is <code>127</code> (<code>9&apos;b0_0111_1111</code>); in <code>corners</code>, <code>255 + 1</code>, <code>255 + 255</code> and <code>128 + 128</code> all set bit 8 and expose <code>BUG=1</code>.
+  </figcaption>
+</figure>
+
+</details>
 
 ### End every run with a verdict
 
@@ -361,6 +614,14 @@ What to take from the race:
 - If the timer wins, the watchdog counts the hang, prints the summary and calls `$fatal`, so even a hung run ends with a verdict line.
 - A delay-based watchdog cannot catch a loop that never lets time advance, such as `while (exp_q.size() != 0);` with nothing inside it: the timer's moment never comes. Every loop that waits needs a clock edge or a delay inside it.
 
+| How the run goes | What prints | Which statement ends the run | Verdict a script reads |
+|---|---|---|---|
+| Normal run (`run` finishes first) | `TEST` lines, any `CHK` errors, then `PASS=n FAIL=m` | `disable fork` kills the watchdog, then `$finish` (§9.6.3, §20.2) | PASS if `^PASS=\d+ FAIL=0$`, else FAIL |
+| Blocked wait or dead clock (`clk` stays x) | Any `TEST` lines reached before the hang (none for a dead clock, which hangs in `reset_dut()`), then `PASS=n FAIL=m` (`m >= 1`), then `WDOG` fatal | `$fatal` in `watchdog` implies `$finish` (§20.10) | FAIL (`FAIL>0`) |
+| `$finish` deleted after `report()` | Summary line prints, then nothing | Never ends: `always #5 clk = ~clk` keeps scheduling events (§9.6.1) and `disable fork` already killed the watchdog | Job hangs until killed by the runner |
+| Zero-delay loop (`while (exp_q.size() != 0);`) | Output up to the loop, then nothing | Never ends: simulation time stops advancing, so `#(TIMEOUT)` never arrives | Job hangs with no summary line (FAIL) |
+| Unknown `+TEST=` name | `TEST` line, then `TEST unknown test` fatal | `$fatal` in `run_one()` implies `$finish` (§20.10) | FAIL (no summary line) |
+
 **Why the checker is an `always`, not an `always_ff`.** `always_comb` and `always_ff` forbid any other process from writing the variables they assign, including variables written by the functions they call (§9.2.2.2, §9.2.2.4). The checker's `check_result()` writes `fail_cnt`, which `report()` and the watchdog also write, so the checker must be a plain `always @(posedge clk)`. Keep `always_ff` for flops.
 
 ### Reporting conventions
@@ -394,6 +655,32 @@ end
 
 A **value change dump (VCD)** is the portable waveform format defined by the standard (§21.7); waveform viewers generally read it, and simulators also offer faster formats of their own (tool-dependent). To debug a failure, rerun the failing test with `+DUMP`, go to the time of the first `CHK` error, and look one and two edges earlier at the inputs that produced that result.
 
+<TimingDiagram
+  title="Debugging a CHK failure at 75 ns: look one and two edges earlier"
+  caption="Edge k is the rising clock edge at 5 + 10k ns in +TEST=corners with BUG=1; the rose band spans the two edges from drive (edge 5, 55 ns) to the first failing check (edge 7, 75 ns)."
+  edges={9}
+  cycleWidth={52}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_valid", kind: "bit", values: [0, 0, 0, 1, 1, 1, 1, 1, 1] },
+    { name: "a", kind: "bus", values: ["0", "0", "0", "0", "255", "0", "255", "255", "128"] },
+    { name: "b", kind: "bus", values: ["0", "0", "0", "0", "0", "255", "1", "255", "128"] },
+    { name: "out_valid", kind: "bit", values: [undefined, 0, 0, 0, 1, 1, 1, 1, 1] },
+    { name: "sum BUG=1", kind: "bus", values: [undefined, "0", "0", "0", "0", "255", "255", "0", "254"] },
+    { name: "expected", kind: "bus", values: ["—", "—", "—", "—", "0", "255", "255", "256", "510"] }
+  ]}
+  markers={[
+    { edge: 5, tone: "drive", short: "drive", label: "Edge 5 (55 ns): two edges earlier, send(255, 1) drives a <= 255 and b <= 1" },
+    { edge: 6, tone: "sample", short: "sample", label: "Edge 6 (65 ns): one edge earlier, the DUT samples 255 + 1; BUG=1 clears bit 8" },
+    { edge: 7, tone: "fail", short: "CHK", label: "Edge 7 (75 ns): CHK error time — checker reads sum = 0 against expected 256" }
+  ]}
+  highlights={[
+    { from: 5, to: 7, tone: "fail", label: "2 edges from drive (55 ns) to check (75 ns)" }
+  ]}
+/>
+
+At edge 7 (75 ns) the checker reports `CHK a=255 b=1: sum=0, expected 256`. Look one edge earlier (edge 6, 65 ns) to see the DUT sample `a = 255` and `b = 1`, and two edges earlier (edge 5, 55 ns) to see `send(255, 1)` drive them with `<=`.
+
 ### Common bugs and how to debug them
 
 | What the log shows | Likely cause | Fix |
@@ -418,6 +705,54 @@ A **value change dump (VCD)** is the portable waveform format defined by the sta
 - Directed tests come from plan rows, and a plusarg picks them at run time.
 - `$error` continues, `$fatal` ends, `$finish` ends, and a watchdog guarantees that every run ends with a verdict.
 - A PASS is evidence only after you have seen the same bench FAIL on a planted bug.
+
+<VisualRecap
+  title="The M0 self-checking loop"
+  rule="Drive inputs with <= after @(posedge clk), push the specification's prediction onto exp_q, pop and compare with !== whenever out_valid is 1 after reset, and end every run with one PASS=<n> FAIL=<m> line guarded by leftovers, zero-check detection, a watchdog and a mutant check."
+  code={`@(posedge clk);
+in_valid <= 1'b1; a <= a_val; b <= b_val;
+exp_q.push_back(exp_t'{a: a_val, b: b_val, sum: model_add(a_val, b_val)});
+// Checker on @(posedge clk) when rst_n && out_valid:
+e = exp_q.pop_front();
+if (sum !== e.sum) begin fail_cnt++; $error(...); end else pass_cnt++;`}
+  mistake="Driving DUT inputs with = at the active clock edge (races the flop's read, §4.7/§4.8), or comparing with != (an X result whose known bits agree evaluates to 1'bx and takes the else branch into pass_cnt++, §11.4.5/§12.4)."
+  inTestbench="In Tier 2 UVM, send() becomes the driver, the checker's sampling becomes the monitor, model_add() becomes the predictor, and exp_q plus check_result() become the scoreboard."
+>
+  <svg
+    viewBox="0 0 260 132"
+    className="w-full h-auto"
+    role="img"
+    aria-label="Compact diagram of the self-checking loop: send() feeds both DUT and model_add() -> exp_q, which meet at the sum !== e.sum checker to update pass_cnt and fail_cnt and print PASS=n FAIL=m."
+  >
+    <defs>
+      <marker id="f2e-recap-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M 0 1 L 7 4 L 0 7 z" fill="currentColor" fillOpacity="0.65" />
+      </marker>
+    </defs>
+    <rect x="8" y="42" width="54" height="32" rx="6" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+    <text x="35" y="57" textAnchor="middle" fontSize="9.5" fontWeight="700" fill="currentColor">send()</text>
+    <text x="35" y="68" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.75">{"with <="}</text>
+
+    <rect x="82" y="10" width="72" height="30" rx="6" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+    <text x="118" y="24" textAnchor="middle" fontSize="9.5" fontWeight="700" fill="currentColor">DUT</text>
+    <text x="118" y="34" textAnchor="middle" fontSize="8" fill="currentColor" opacity="0.75">actual sum</text>
+
+    <rect x="82" y="76" width="72" height="30" rx="6" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+    <text x="118" y="90" textAnchor="middle" fontSize="8.5" fontWeight="700" fill="currentColor">model → exp_q</text>
+    <text x="118" y="100" textAnchor="middle" fontSize="8" fill="currentColor" opacity="0.75">expected sum</text>
+
+    <rect x="174" y="36" width="78" height="44" rx="6" fill="currentColor" fillOpacity="0.1" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="213" y="52" textAnchor="middle" fontSize="8.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">{"sum !== e.sum"}</text>
+    <text x="213" y="64" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">PASS=n</text>
+    <text x="213" y="74" textAnchor="middle" fontSize="8" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.8">FAIL=m</text>
+
+    <line x1="62" y1="50" x2="80" y2="26" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" markerEnd="url(#f2e-recap-arrow)" />
+    <line x1="62" y1="66" x2="80" y2="90" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" markerEnd="url(#f2e-recap-arrow)" />
+    <line x1="154" y1="26" x2="172" y2="50" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" markerEnd="url(#f2e-recap-arrow)" />
+    <line x1="154" y1="90" x2="172" y2="66" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.4" markerEnd="url(#f2e-recap-arrow)" />
+    <text x="130" y="122" textAnchor="middle" fontSize="8" fill="currentColor" opacity="0.75">guards: leftovers • zero checks • watchdog • mutant</text>
+  </svg>
+</VisualRecap>
 
 ## Make It Work
 
@@ -700,14 +1035,21 @@ Without a local simulator, EDA Playground runs the bench in a browser: put `adde
 ### Prove it can fail
 
 1. Change `.BUG(0)` to `.BUG(1)` in `tb_top`: bit 8 of `sum` is now stuck at 0. **Predict** which tests will notice.
-2. Run `+TEST=smoke`. The bug escapes:
+2. Run `+TEST=smoke`.
+3. Run `+TEST=corners`.
+4. Set `.BUG(2)` (off by one) and run `+TEST=smoke`.
+
+<details>
+<summary>Check your prediction: what steps 2–4 print for BUG=1 and BUG=2</summary>
+
+In step 2 (`+TEST=smoke` with `.BUG(1)`), the bug escapes:
 
 ```text
 15 ns TEST smoke
 PASS=3 FAIL=0
 ```
 
-3. Run `+TEST=corners`. The bench catches the bug. Here `[error @ t]` stands for your simulator's own `$error` prefix, which includes the time, file and line (§20.10):
+In step 3 (`+TEST=corners` with `.BUG(1)`), the bench catches the bug. Here `[error @ t]` stands for your simulator's own `$error` prefix, which includes the time, file and line (§20.10):
 
 ```text
 15 ns TEST corners
@@ -717,7 +1059,7 @@ PASS=3 FAIL=0
 PASS=4 FAIL=3
 ```
 
-4. Set `.BUG(2)` (off by one) and run `+TEST=smoke`. Every result fails:
+In step 4 (`+TEST=smoke` with `.BUG(2)`), every result fails:
 
 ```text
 15 ns TEST smoke
@@ -726,6 +1068,8 @@ PASS=4 FAIL=3
 [error @ 65 ns] CHK a=100 b=27: sum=128, expected 127
 PASS=0 FAIL=3
 ```
+
+</details>
 
 5. Set `.BUG(0)` again and rerun with no plusargs: `PASS=14 FAIL=0`. A mutant is a tool for proving the bench; it never stays in.
 
@@ -744,6 +1088,16 @@ These logs are illustrative too, derived from the same cycle model.
 ## Push Further
 
 ### Expert: X and Z in self-checks (`===` versus `==`)
+
+| Checker form | When the DUT output has an x bit | Why (IEEE 1800-2023) |
+|---|---|---|
+| `if (sum != e.sum) fail_cnt++; else pass_cnt++;` | Counted as **pass** when the known bits agree | `!=` returns `1'bx` (§11.4.5); `if` takes `else` (§12.4) |
+| `if (sum !== e.sum) fail_cnt++; else pass_cnt++;` | Counted as **fail** | `!==` compares `x` and `z` as values and returns `1'b1` (§11.4.5) |
+| `assert (sum == e.sum)` | **Fails** (calls `$error` by default) | Immediate `assert` treats `x`, `z` or `0` as a failure (§16.3) |
+| `if (out_valid) check_result(sum);` (no `$isunknown`) | **Skipped** silently when `out_valid` is `x` | `if (1'bx)` is false, so neither counter moves (§12.4) |
+| `int s = sum; if (s !== e.sum) ...` | `x` bits become `0` before the compare | 2-state target converts `x` and `z` to `0` (§6.11.2) |
+| `if (sum === e.sum)` when `e.sum` is also `x` | Counted as **pass** | `===` matches `x` against `x` (§11.4.5); guard `e.sum` with `$isunknown` |
+| `(sum ==? 9'b0_0000_1xxx) !== 1'b1` | `x`/`z` in the **right** operand are wildcards, so an `x` in `sum` at a wildcard bit (here `[2:0]`) is masked and passes; an `x` at a non-wildcard bit gives `x`, and `!== 1'b1` flags it as **fail** | `==?` wildcards only the right operand; a wildcard bit matches `0`, `1`, `z` or `x` (§11.4.6) |
 
 - **Where X hides.** `==` and `!=` return x only when the relation is ambiguous: the bits that are known agree, and at least one bit is x or z (§11.4.5). `9'b1_0000_101x != 9'd10` is 1, because bit 8 differs, while `9'b0_0000_101x != 9'd10` is x. A `!=` check therefore fails some X results loudly and passes others silently, which is the worst kind of check.
 - **Polarity.** An immediate assertion treats x as false and fails (§16.3), so `assert (sum == e.sum)` catches an X result, while `if (sum != e.sum) fail_cnt++;` passes it. Write every check so that an unknown lands on the failing side; `!==` and `===` do that whichever way round you test. Assertions arrive in [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index).
@@ -769,6 +1123,13 @@ endtask
 ```
 
 - **Where exhaustion ends.** With 16-bit operands there are 2³² (about 4.3 × 10⁹) pairs, about 43 s of simulated time at 10 ns each; with 32-bit operands there are 2⁶⁴ (about 1.8 × 10¹⁹) pairs, far beyond any simulation. Wall-clock time per simulated second depends on the simulator, the design and the machine (tool-dependent).
+
+| W | Pairs (2^2W) | Time (10 ns each) | Log₁₀ scale | Fits a sim run? |
+|---|---|---|---|---|
+| W = 8 | 2^16 (65,536) | 655.36 µs | ██░░░░░░ ~10^4.8 | Yes (raise TIMEOUT above 655.36 µs) |
+| W = 16 | 2^32 (~4.3 × 10^9) | ~42.95 s | ████░░░░ ~10^9.6 | Borderline (billions of cycles) |
+| W = 32 | 2^64 (~1.84 × 10^19) | ~1.84 × 10^11 s (~5,850 yr) | ████████ ~10^19.3 | Impossible in simulation |
+
 - **What directed tests buy.** You get exactly the cases you wrote, cheaply, and they are the right tool for bring-up, for known corners such as 255 + 1, and for reproducing a bug. Their cost grows with every feature and corner, and they never find a case nobody imagined.
 - **What constrained-random buys.** The bench chooses the values within constraints ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)). The cost moves into a checker that can predict any input (this bench's model and queue already can) and into functional coverage that measures which cases actually ran ([I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)). Formal tools can prove properties for every input at once ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)).
 
@@ -783,19 +1144,41 @@ endtask
 
 ### Expert: Race-free sampling, a preview
 
+| How the signal is driven | What a read right after `@(posedge clk)` sees | Deterministic? |
+|---|---|---|
+| DUT flop written with `<=` | Value from before the edge | Yes: NBA update lands after Active reads (§4.9.4, §10.4.2) |
+| DUT flop written with `=` | Old or new value, depending on process order | No: Active-region race (§4.7, §4.8) |
+| Combinational output of an input the bench drives with `=` on the same edge | Old or new value | No: depends on when the drive and `always_comb` run |
+| Gate-level netlist with propagation delays | Value before the propagation delay elapses | Depends on the timing model, not the scheduler |
+| Clocking-block input (`cb.sig`, default `#1step` skew) | Preponed value from before the time slot began | Yes (§14.3, §14.13) |
+
 - **Why this bench's sampling works.** The checker reads `out_valid` and `sum` right after `@(posedge clk)`. That is deterministic only because the DUT writes them with `<=`: the update lands after every process woken by the edge has read them (§4.9.4, §10.4.2). F3C proves it by running every legal order.
 - **When it breaks.** The read becomes order-dependent if the RTL writes its flops with `=`, or if an output is combinational logic of inputs that the bench changes with `=` on the same edge. In gate-level simulation with timing, outputs change a propagation delay after the edge instead of in the same time slot, so the delays, not the scheduler, decide what a read at the edge returns; clocking-block input skews (§14.4) make that sampling point an explicit part of the bench.
 - **The queue is shared, too.** `send()` pushes and the checker pops on the same edge, in either order. That is safe here: the expectation a result needs was pushed two edges earlier, and `push_back` and `pop_front` work on opposite ends of the queue. Only a result nobody expected can meet an empty queue at that moment, and it fails in either order, just with a different message. `drain()` sidesteps the question by reading the queue on the falling edge.
 - **What clocking blocks change.** By default a clocking block samples its inputs with a `1step` skew, which returns the value each signal had before the current time slot began, its Preponed value (§14.3, §14.13); it drives its outputs in the Re-NBA region, after the design's NBA updates (§14.16). This bench's `@(posedge clk); a <= a_val;` becomes `@(cb); cb.a <= a_val;`, and the timing rule moves from code review into a declaration. [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) teaches them, together with program blocks (§24.3), another way to separate the bench from the design.
+
+Step through one rising-edge time slot below to compare this bench's plain `<=` drive with a clocking block's `#1step` sampling and Re-NBA drive:
+
+<TimeSlotTraceVisualizer scenario="tb-nba-drive" scenarios={["tb-nba-drive", "tb-clocking-block"]} />
+
 - **Interview angle:** "A monitor reads a DUT output right after `@(posedge clk)`. Does it see the old value or the new one, and what has to be true for that to be guaranteed?"
 
 ### Expert: What an in-order queue cannot see
+
+| Blind spot | Mutant or scenario that slips through | Why `exp_q` alone misses it | What to add |
+|---|---|---|---|
+| Fixed latency | One extra pipeline stage in `adder_reg` | `exp_q` matches values and order whenever `out_valid` is 1 | Store `time sent` in `exp_t` and check `$time - e.sent == 20ns` |
+| Late or extra result at the end | A duplicate result arriving after the last pop | `report()` would run as soon as `exp_q.size() == 0` | `drain()` waits for an empty queue plus two quiet edges |
+| Out-of-order completion | Multi-ID DUT that answers ID 1 before ID 0 | FIFO `pop_front` compares against the oldest expectation | A queue per key: `exp_t exp_q[int][$]` ([F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index), [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)) |
+| Mid-test reset | Reset asserted while expectations are in `exp_q` | Discarded in-flight transactions stay in `exp_q` as false leftovers | Flush `exp_q.delete()` on reset ([A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index)) |
+| Equivalent mutant | `a + b` changed to `b + a` | Addition commutes: outputs are identical for every input | Excluded from the mutation-score denominator |
 
 - **Latency.** The queue matches values and order, not timing. A mutant with one extra pipeline stage passes every test on this page. If the specification fixes the latency, add a `time sent;` field to `exp_t`, store `$time` in `send()`, and fail in `check_result()` when `$time - e.sent` differs from 20 ns, the two edges from drive to check.
 - **The end of the run.** A result that arrives after the summary is never checked. That is why `drain()` waits for an empty queue and then watches two more edges, so a late or duplicated result still fails.
 - **Reordering.** A DUT that may answer out of order (several IDs or channels) needs keyed matching: a queue per key in an associative array ([F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index)), then the scoreboards of [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).
 - **Reset in the middle of traffic.** Expectations for transactions that a reset discards must be flushed, or they are reported as missing; [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) handles this in a UVM bench.
 - **Equivalent mutants.** Swapping `a` and `b` in the RTL changes the code but never the behaviour, because addition commutes, so no test can kill that mutant. A **mutation score** (killed mutants divided by non-equivalent mutants) measures how much a bench really checks; commercial mutation-analysis tools automate it (tool-dependent).
+
 - **Interview angle:** "Your scoreboard passes, but the designers say latency went from one cycle to two. Why did your bench not catch it, and what would you add?"
 
 ### Expert: Pass and fail signals a regression can trust
@@ -804,6 +1187,11 @@ endtask
 - **The contract.** Exactly one summary line per run. A missing summary (a crash, an early `$fatal`, a killed job) is a failure. Match the whole line, `^PASS=\d+ FAIL=0$`; some simulators prefix every transcript line (for example with `# `), so strip the tool's prefix first (tool-dependent).
 - **Errors your counters never see.** A `$error` from an immediate assertion in the RTL, from a vendor model or from someone else's code does not touch `fail_cnt`. Scan the log for the tool's error messages as well, or route every check through one counter. The planned UVM lesson on reporting and pass/fail does the same for UVM's report counts.
 - **Seeds.** A directed bench gives the same result on every run. Once stimulus is random, the seed must be in the log so that a failure can be reproduced ([I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index)).
+
+Test your regression script's rule on six log endings: for each card, pick whether a naive `^PASS=\d+ FAIL=0$` matcher accepts it and whether the run really passed.
+
+<ScenarioSorter deck="regression-log" />
+
 - **Interview angle:** "Your regression marked a test as passed because the simulator exited with status 0. What can go wrong?"
 
 ### Interview angles
@@ -1045,6 +1433,30 @@ PASS=1 FAIL=3
 
 The result 7 is checked at 45 ns. The mutant samples the invalid pair 50 and 60 at 45 ns and the pair 70 and 80 at 55 ns, so the checker sees `sum` = 110 at 55 ns, then 150 at 65 ns and again at 75 ns, the edges `drain()` waits through: three failures. With `.BUG(3)` and no plusargs, only the `hold` test fails, giving `PASS=15 FAIL=3`: the other tests never change `a` or `b` on an idle cycle.
 
+<TimingDiagram
+  title="+TEST=hold: correct DUT (BUG=0) versus mutant 3 (BUG=3), edges 0 to 7"
+  caption="Edge k is the rising clock edge at 5 + 10k ns; after edge 4 sets last_sum = 7, edges 5 to 7 compare sum against last_sum while out_valid is 0."
+  edges={8}
+  cycleWidth={52}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_valid", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0, 0] },
+    { name: "a", kind: "bus", values: ["0", "0", "0", "3", "50", "70", "70", "70"] },
+    { name: "b", kind: "bus", values: ["0", "0", "0", "4", "60", "80", "80", "80"] },
+    { name: "out_valid", kind: "bit", values: [undefined, 0, 0, 0, 1, 0, 0, 0] },
+    { name: "sum BUG=0", kind: "bus", values: [undefined, "0", "0", "0", "7", "7", "7", "7"] },
+    { name: "sum BUG=3", kind: "bus", values: [undefined, "0", "0", "0", "7", "110", "150", "150"] }
+  ]}
+  markers={[
+    { edge: 4, tone: "pass", short: "CHK 7", label: "Edge 4 (45 ns): out_valid = 1, sum = 7 passes; last_sum becomes 7" },
+    { edge: 5, tone: "fail", short: "110!==7", label: "Edge 5 (55 ns): out_valid = 0, BUG=3 sum = 110 !== last_sum (7)" },
+    { edge: 6, tone: "fail", short: "150!==7", label: "Edge 6 (65 ns): out_valid = 0, BUG=3 sum = 150 !== last_sum (7)" },
+    { edge: 7, tone: "fail", short: "150!==7", label: "Edge 7 (75 ns): out_valid = 0, BUG=3 sum = 150 !== last_sum (7)" }
+  ]}
+/>
+
+After `send(3, 4)` produces `sum = 7` at edge 4 (45 ns), `send_invalid(50, 60)` and `send_invalid(70, 80)` drive new operands with `in_valid = 0`. The correct DUT (`sum BUG=0`) holds `sum = 7`; mutant 3 (`sum BUG=3`) updates `sum` to 110 at edge 5 (55 ns) and 150 at edges 6 and 7 (65 and 75 ns).
+
 **Reflect:** the bug needed both a new stimulus (data that changes while `in_valid` is low) and a new check (stability while `out_valid` is low). Neither alone catches it.
 
 </details>
@@ -1054,6 +1466,13 @@ The result 7 is checked at 45 ns. The mutant samples the invalid pair 50 and 60 
 **Objective:** build an M0 bench from a specification alone, for a DUT with state.
 
 **The DUT:** `cnt4`, a 4-bit counter (the one from the planning kata in [F1B](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index)). On each rising edge: if `rst_n` is 0, `count` becomes 0; otherwise, if `ld` is 1, `count` becomes `d` (load has priority over enable); otherwise, if `en` is 1, `count` increments, and 15 wraps to 0; otherwise `count` holds.
+
+| Priority | Condition on `@(posedge clk)` | Next `count` (4-bit) | Plan row / directed test task |
+|---|---|---|---|
+| 1 (highest) | `!rst_n` (`rst_n == 0`) | `4'd0` | `test_reset_mid_count()`, `test_reset_priority()` (`rst_n=0` with `ld=1, en=1`) |
+| 2 | `rst_n && ld` | `d` | `test_load()`, `test_load_priority()` (`ld=1, en=1`, including at `count=15`) |
+| 3 | `rst_n && !ld && en` | `count + 4'd1` (`15` wraps to `0`) | `test_increment()`, `test_wrap()` (`14 -> 15 -> 0`) |
+| 4 (lowest) | `rst_n && !ld && !en` | `count` (holds) | `test_hold()` (`en=0, ld=0` while `d` changes) |
 
 **Requirements:**
 - Write `cnt4` with a `BUG` parameter for two mutants from your plan, for example a wrap at 14 instead of 15, and a load that ignores `d[3]`.
@@ -1072,7 +1491,7 @@ The flashcards below drill the anatomy, the `!==` rule, the drive rule and the e
 **Primary sources** (IEEE 1800-2023):
 - §3.14.2.1–§3.14.2.3: the `` `timescale `` directive, `timeunit` and `timeprecision`, and their precedence (mixing units is an error).
 - §4.7 nondeterminism, §4.8 race conditions, §4.9.4 nonblocking assignment scheduling; §10.4.2 nonblocking procedural assignments.
-- §6.8 variable declarations: initializers run before any procedure starts; Table 6-7 default initial values.
+- §6.8 variable declarations: initializers run before any procedure starts; Table 6-7 default initial values; §6.11.2 4-state to 2-state conversion of `x` and `z` to `0`.
 - §7.10.2 queue methods: §7.10.2.4 `pop_front()` on an empty queue, §7.10.2.7 `push_back()`.
 - §9.2.2.2 and §9.2.2.4: `always_comb` and `always_ff` writer restrictions.
 - §9.3.2 fork–join variants; §9.6.1 automatic termination of a simulation with no activity; §9.6.3 `disable fork`.

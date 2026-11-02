@@ -97,7 +97,10 @@ def process(file, first_prompt, args, stage):
     for attempt in range(3):  # the first pass, then up to two rounds on check failures
         call = call_argon(prompt, args.worktree, args.out, f"{tag}-a{attempt}")
         calls.append(call)
-        if call["status"] != "SUCCESS":
+        # A dropped stream can end an otherwise finished turn with status ERROR; the edits are on disk, so the
+        # checks and Claude's review decide. Anything else (for example a quota error) stops this lesson.
+        raw = (Path(args.out) / f"{tag}-a{attempt}.raw.json").read_text()
+        if call["status"] != "SUCCESS" and "stream was interrupted" not in raw:
             return {"file": file, "state": "argon-failed", "calls": calls}
         with GIT_LOCK:  # the checks read the shared tree
             failures = gates(args.worktree, file)
