@@ -214,12 +214,12 @@ check_q(with_parity(8'h35), "load 35");  // a function call inside a task call`}
 
 When in doubt, prefer a function: the compiler then proves that the code cannot block. UVM relies heavily on this split: time-consuming phases are declared as tasks, whereas configuration and connection phases are functions to guarantee they finish in zero simulation time ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)):
 
-| UVM Phase | Declaration in `uvm_component.svh` (uvm-core 2020.3.1) | Subroutine type | Can consume time? |
-|---|---|---|---|
-| `build_phase` | `extern virtual function void build_phase(uvm_phase phase);` (line 221) | `function void` | No (zero time) |
-| `connect_phase` | `extern virtual function void connect_phase(uvm_phase phase);` (line 230) | `function void` | No (zero time) |
-| `run_phase` | `extern virtual task run_phase(uvm_phase phase);` (line 266) | `task` | Yes (main test phase) |
-| `main_phase` | `extern virtual task main_phase(uvm_phase phase);` (line 434) | `task` | Yes (time-consuming sub-phase) |
+| UVM Phase | Subroutine type | Can consume time? |
+|---|---|---|
+| `build_phase` | `function void` | No (zero time) |
+| `connect_phase` | `function void` | No (zero time) |
+| `run_phase` | `task` | Yes (main test phase) |
+| `main_phase` | `task` | Yes (time-consuming sub-phase) |
 
 <ScenarioSorter deck="task-or-function" />
 
@@ -439,7 +439,7 @@ fact_auto(4)   = 24
 <SequenceDiagram
   title="Nested activations of fact_auto(4)"
   caption="Each recursive activation of fact_auto gets its own per-call storage for n and rest. When the base case returns 1, unwinding multiplies rest by each activation's preserved n: 1 × 2 × 3 × 4 = 24."
-  columnWidth={60}
+  columnWidth={136}
   participants={[
     { id: "tb", label: "tb_top", kind: "generic" },
     { id: "f4", label: "fact(4)", kind: "generic" },
@@ -560,7 +560,7 @@ Two lessons hide in the `output` row: inside an automatic task it starts at its 
 
 </details>
 
-**What this shows.** The caller sees nothing until the return. A task that writes `valid = 1; #10 valid = 0;` to an output argument never shows a pulse to anyone, because only the final 0 is copied out. To make a pin move, a task must write the module signal itself (later, an interface signal), as `write_word` does with `ld` and `d`.
+**What this shows.** With an `output` argument, the caller sees nothing until the return. A task that writes `valid = 1; #10 valid = 0;` to an output argument never shows a pulse to anyone, because only the final 0 is copied out. To make a pin move, a task must write the module signal itself (later, an interface signal), as `write_word` does with `ld` and `d`.
 
 <TimingDiagram
   title="The pulse that never arrives: output versus ref"
@@ -572,7 +572,7 @@ Two lessons hide in the `output` row: inside an automatic task it starts at its 
   ]}
   markers={[
     { edge: 1, tone: "drive", short: "wr 1", label: "Step 1: task writes valid = 1; valid (out) stays 0, valid (ref) rises just after" },
-    { edge: 3, tone: "sample", short: "wr 0", label: "Step 3: task writes valid = 0 and returns; valid (out) copies out 0, valid (ref) falls just after" }
+    { edge: 3, tone: "drive", short: "wr 0", label: "Step 3: task writes valid = 0 and returns; valid (out) copies out 0, valid (ref) falls just after" }
   ]}
 />
 
@@ -596,15 +596,15 @@ task automatic wait_cycles_ok(input int unsigned n);  // fix: always give the ty
 endtask
 ```
 
+Return types have the same trap: a function declared with no return type returns a one-bit `logic` (§13.4). So `function automatic add(input int a, input int b); return a + b; endfunction` returns `1'b1` for `add(2, 3)`, the low bit of 5. Always write the return type, or `void`.
+
 | Subroutine item | Written in declaration | Resolved direction | Resolved data type | Standard rule |
 |---|---|---|---|---|
 | `split.word` | `input logic [15:0] word` | `input` | `logic [15:0]` | Explicit direction and type |
 | `split.hi` | `output logic [7:0] hi` | `output` | `logic [7:0]` | Explicit direction and type |
 | `split.lo` | `lo` | `output` | `logic [7:0]` | Inherits direction and type from `hi` (§13.3) |
 | `wait_cycles.n` | `n` | `input` | 1-bit `logic` | Default direction is `input`; default type is 1-bit `logic` (§13.3) |
-| `add` (return) | `function automatic add(...)` | return value | 1-bit `logic` | Omitted return type defaults to 1-bit `logic`, not `int` (§13.4) |
-
-Return types have the same trap: a function declared with no return type returns a one-bit `logic` (§13.4). So `function automatic add(input int a, input int b); return a + b; endfunction` returns `1'b1` for `add(2, 3)`, the low bit of 5. Always write the return type, or `void`.
+| `add` (return) | `function automatic add(input int a, input int b)` | return value | 1-bit `logic` | Omitted return type defaults to 1-bit `logic`, not `int` (§13.4) |
 
 ### Default values and named binding
 
@@ -668,23 +668,11 @@ Use `const ref` for large inputs that you only read, `ref` when the subroutine m
 
 ### Common pitfalls
 
-| Symptom | Pitfall | Fix |
-|---|---|---|
-| Concurrent calls log the other caller's data | #1: Static task called by multiple threads | Add `automatic` to task (§13.3.2) |
-| Recursive function returns 1 or 0 for all inputs | #2: Static recursive function | Add `automatic` to function (§13.4.2) |
-| Compile error on declaration initializer | #3: Initializer in static scope | Explicit `static` or `automatic` (§6.21) |
-| Local accumulator/counter grows across calls | #4: Static local never resets | Make `automatic` or reset local (§13.3.2) |
-| DUT pin never sees pulse from task | #5: Pin driven through `output` arg | Drive module/interface signal directly (§13.3) |
-| Task waiting `n` cycles finishes too early | #6: Missing type defaults to 1-bit logic | Explicitly declare type (`input int unsigned n`) (§13.3) |
-| Formal unintentionally becomes output | #7: Inherited direction from previous arg | Declare direction on every formal (§13.3) |
-| Compile error on `@`, `#` or task call in function | #8: Wait/task call in function | Convert to task or move wait to caller (§13.4) |
-| Compile error on `ref` argument | #9: `ref` in static subroutine or type mismatch | Add `automatic`; match types exactly (§13.5.2) |
-| Compile error on `<=` inside task | #10: `<=` to automatic variable (`int x; x <= 1;`) | Use `=` for automatic locals (§13.3.2) |
-| Concurrent drivers race despite `automatic` | #11: "Automatic means race-free" myth | One writer per signal per edge; see [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) or [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) |
+For symptoms and fixes at a glance, jump to [Debug it: symptom, cause, fix](#debug-it-symptom-cause-fix).
 
 1. **A static task called by two threads.** Both calls share the arguments and locals (`task send(int id); ...` called concurrently), so the later call overwrites the earlier one's values (§13.3.2). Add `automatic` to the task.
 2. **A static recursive function.** Inner activations overwrite the outer ones' arguments (`function int fact(int n); ...`), returning the wrong constant such as 1 (§13.4.2). Add `automatic` to the function.
-3. **An initializer in static code.** `task t(); int count = 0; ...` is illegal inside a static scope; write explicit `static` (initialized once) or `automatic` (initialized on every call) (§6.21).
+3. **An initializer in static code.** `task t(); int count = 0; ...` is illegal inside a static task, function or procedural block; write explicit `static` (initialized once) or `automatic` (initialized on every call) (§6.21).
 4. **A static local that never restarts.** In a static subroutine (`function int count(); int n; ...`), a local keeps the last call's value, so a counter or accumulator grows from call to call (§13.3.2, §13.4.2). Make the subroutine `automatic`, or reset the variable at the start of each call.
 5. **A pin driven through an `output` argument.** Outputs (`task pulse(output logic sig); sig = 1; #10 sig = 0;`) are copied out only at the return (§13.3), so the pin never sees the intermediate values. Drive the module or interface signal directly.
 6. **A missing type.** A formal or return type that you did not write is a one-bit `logic`, or is inherited (`task wait_cycles(n);`), so `wait_cycles(4)` waits 0 cycles (§13.3, §13.4). Explicitly declare the type: `input int unsigned n`.
@@ -698,10 +686,10 @@ Use `const ref` for large inputs that you only read, `ref` when the subroutine m
 
 <ArchitectureDiagram
   title="Subroutines in a modular testbench"
-  caption="write_word drives ld and d with <=; check_q waits for negedge and samples q; with_parity and report_summary are zero-time functions. Shared helpers such as these can move to a package automatic."
-  cellWidth={140}
+  caption="write_word drives ld and d with <=; check_q waits for negedge and samples q; with_parity and report_summary are zero-time functions. Pure helpers such as with_parity can move to a package automatic; tasks that touch tb_top's signals stay in the module or interface unless the signals are passed in."
+  cellWidth={120}
   cellHeight={56}
-  gapX={84}
+  gapX={52}
   gapY={56}
   nodes={[
     { id: "tb", label: "module tb_top", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
@@ -714,8 +702,7 @@ Use `const ref` for large inputs that you only read, `ref` when the subroutine m
   edges={[
     { from: "drv", to: "dut", style: "data", label: "ld, d" },
     { from: "dut", to: "chk", style: "data", label: "q" },
-    { from: "f_par", to: "chk", style: "data", label: "expected" },
-    { from: "chk", to: "rep", style: "control", label: "results" }
+    { from: "f_par", to: "chk", style: "data", label: "expected" }
   ]}
 />
 
@@ -743,45 +730,50 @@ Use `const ref` for large inputs that you only read, `ref` when the subroutine m
   title="Subroutine lifetime and argument passing at a glance"
   rule="Modules default to static storage; class methods are always automatic. Use automatic on every module subroutine to avoid shared-variable corruption. Use tasks for operations that consume time; use functions for zero-time calculations."
   code={`// Testbench golden rule: automatic everywhere
-task automatic write_word(input logic [7:0] val);
-  @(posedge clk); ld <= 1'b1; d <= val;
+task automatic write_word(input logic [7:0] value, input int unsigned hold = 1);
+  @(posedge clk); ld <= 1'b1; d <= value;
+  repeat (hold) @(posedge clk); ld <= 1'b0;
 endtask
 
-function automatic logic [8:0] with_parity(input logic [7:0] val);
-  return {^val, val}; // zero time
+function automatic logic [8:0] with_parity(input logic [7:0] value);
+  return {^value, value}; // zero time
 endfunction`}
   mistake="Leaving off 'automatic' in module subroutines so concurrent calls or recursion corrupt shared variables, or driving pins through 'output' arguments that copy out only at return."
   inTestbench="Every driver and pin-level task is 'task automatic'; all reference models and scoreboard prediction math are 'function automatic'; large buffers pass via 'const ref'."
 >
-  <svg viewBox="0 0 340 180" role="img" aria-label="Summary of subroutine rules: tasks may consume time and return results via output, inout or ref arguments; functions execute in zero time; static subroutines share memory across activations while automatic subroutines provide per-call storage." style={{ width: "100%", maxWidth: 380 }}>
-    <rect x="10" y="8" width="155" height="74" rx="5" fill="rgba(6,182,212,0.1)" stroke="rgb(6,182,212)" strokeWidth="1.2" />
+  <svg viewBox="0 0 360 210" role="img" aria-label="Summary of subroutine rules: tasks may consume time and return results via output, inout or ref arguments; functions execute in zero time and return a value (also supporting output, inout or ref arguments); static subroutines share memory across activations while automatic subroutines provide per-call storage." style={{ width: "100%", maxWidth: 380 }}>
+    <rect x="10" y="8" width="165" height="74" rx="5" fill="rgba(244,63,94,0.1)" stroke="rgb(244,63,94)" strokeWidth="1.2" />
     <text x="20" y="24" fontSize="11" fontWeight="bold" fill="currentColor">Task · Static</text>
-    <text x="20" y="40" fontSize="10" fill="currentColor">Waits? Yes (#, @, wait)</text>
-    <text x="20" y="54" fontSize="10" fill="currentColor">Results: output/inout/ref</text>
-    <text x="20" y="68" fontSize="10" fill="currentColor" fillOpacity="0.8">Storage: Shared board</text>
+    <text x="20" y="38" fontSize="10" fill="currentColor">Waits? Yes (#, @, wait)</text>
+    <text x="20" y="52" fontSize="10" fill="currentColor">Results: output/inout/ref</text>
+    <text x="20" y="66" fontSize="10" fill="currentColor" fillOpacity="0.8">Storage: Shared board</text>
 
-    <rect x="175" y="8" width="155" height="74" rx="5" fill="rgba(16,185,129,0.1)" stroke="rgb(16,185,129)" strokeWidth="1.2" />
-    <text x="185" y="24" fontSize="11" fontWeight="bold" fill="currentColor">Task · Automatic</text>
-    <text x="185" y="40" fontSize="10" fill="currentColor">Waits? Yes (#, @, wait)</text>
-    <text x="185" y="54" fontSize="10" fill="currentColor">Results: output/inout/ref</text>
-    <text x="185" y="68" fontSize="10" fill="currentColor" fillOpacity="0.8">Storage: Fresh notepad</text>
+    <rect x="185" y="8" width="165" height="74" rx="5" fill="rgba(16,185,129,0.1)" stroke="rgb(16,185,129)" strokeWidth="1.2" />
+    <text x="195" y="24" fontSize="11" fontWeight="bold" fill="currentColor">Task · Automatic</text>
+    <text x="195" y="38" fontSize="10" fill="currentColor">Waits? Yes (#, @, wait)</text>
+    <text x="195" y="52" fontSize="10" fill="currentColor">Results: output/inout/ref</text>
+    <text x="195" y="66" fontSize="10" fill="currentColor" fillOpacity="0.8">Storage: Fresh notepad</text>
 
-    <rect x="10" y="90" width="155" height="50" rx="5" fill="rgba(244,63,94,0.1)" stroke="rgb(244,63,94)" strokeWidth="1.2" />
-    <text x="20" y="106" fontSize="11" fontWeight="bold" fill="currentColor">Function · Static</text>
-    <text x="20" y="122" fontSize="10" fill="currentColor">Waits? Never (0 time)</text>
-    <text x="20" y="134" fontSize="10" fill="currentColor" fillOpacity="0.8">Storage: Shared board</text>
+    <rect x="10" y="88" width="165" height="82" rx="5" fill="rgba(244,63,94,0.1)" stroke="rgb(244,63,94)" strokeWidth="1.2" />
+    <text x="20" y="104" fontSize="11" fontWeight="bold" fill="currentColor">Function · Static</text>
+    <text x="20" y="118" fontSize="10" fill="currentColor">Waits? Never (0 time)</text>
+    <text x="20" y="132" fontSize="10" fill="currentColor">Results: return value</text>
+    <text x="20" y="144" fontSize="9" fill="currentColor" fillOpacity="0.85">(also output/inout/ref)</text>
+    <text x="20" y="158" fontSize="10" fill="currentColor" fillOpacity="0.8">Storage: Shared board</text>
 
-    <rect x="175" y="90" width="155" height="50" rx="5" fill="rgba(139,92,246,0.1)" stroke="rgb(139,92,246)" strokeWidth="1.2" />
-    <text x="185" y="106" fontSize="11" fontWeight="bold" fill="currentColor">Function · Automatic</text>
-    <text x="185" y="122" fontSize="10" fill="currentColor">Waits? Never (0 time)</text>
-    <text x="185" y="134" fontSize="10" fill="currentColor" fillOpacity="0.8">Storage: Fresh notepad</text>
+    <rect x="185" y="88" width="165" height="82" rx="5" fill="rgba(16,185,129,0.1)" stroke="rgb(16,185,129)" strokeWidth="1.2" />
+    <text x="195" y="104" fontSize="11" fontWeight="bold" fill="currentColor">Function · Automatic</text>
+    <text x="195" y="118" fontSize="10" fill="currentColor">Waits? Never (0 time)</text>
+    <text x="195" y="132" fontSize="10" fill="currentColor">Results: return value</text>
+    <text x="195" y="144" fontSize="9" fill="currentColor" fillOpacity="0.85">(also output/inout/ref)</text>
+    <text x="195" y="158" fontSize="10" fill="currentColor" fillOpacity="0.8">Storage: Fresh notepad</text>
 
-    <line x1="10" y1="150" x2="330" y2="150" stroke="currentColor" strokeOpacity="0.2" />
-    <text x="10" y="168" fontSize="10" fill="currentColor" fontWeight="bold">Directions:</text>
-    <text x="75" y="168" fontSize="10" fill="currentColor">input →</text>
-    <text x="125" y="168" fontSize="10" fill="currentColor">← output</text>
-    <text x="185" y="168" fontSize="10" fill="currentColor">↔ inout</text>
-    <text x="240" y="168" fontSize="10" fill="currentColor">= ref (alias)</text>
+    <line x1="10" y1="178" x2="350" y2="178" stroke="currentColor" strokeOpacity="0.2" />
+    <text x="10" y="196" fontSize="10" fill="currentColor" fontWeight="bold">Directions:</text>
+    <text x="80" y="196" fontSize="10" fill="currentColor">input →</text>
+    <text x="135" y="196" fontSize="10" fill="currentColor">← output</text>
+    <text x="200" y="196" fontSize="10" fill="currentColor">↔ inout</text>
+    <text x="260" y="196" fontSize="10" fill="currentColor">= ref (alias)</text>
   </svg>
 </VisualRecap>
 
@@ -922,7 +914,7 @@ PASS=3 FAIL=0
 | What you see | Cause | Fix |
 |---|---|---|
 | Two overlapping calls of one task both log the second caller's values (`t=10 id=2`, `t=12 id=2`) | the task is static, so its arguments and locals are shared (§13.3.2) | `task automatic`, or `module automatic` for the whole module |
-| A recursive function returns 1, or 0, for every input | the function is static, so every activation shares its arguments (§13.4.2) | `function automatic` |
+| A recursive function returns the wrong constant (fact_static(4) = 1) | the function is static, so every activation shares its arguments (§13.4.2) | `function automatic` |
 | A counting function is right on its first call and too large on every later call | a static subroutine's locals keep their values between calls, and an initializer on them runs only once (§13.4.2, §6.21) | `function automatic`, or reset the local at the start of each call |
 | The DUT never sees a pulse that a task writes to an `output` argument | outputs are copied out only at the return (§13.3) | drive the module or interface signal from the task |
 | `wait_cycles(4)` returns at once | the formal `n` has no type, so it is a one-bit `logic` (§13.3) | give every formal a type: `input int unsigned n` |
@@ -966,7 +958,7 @@ $display("t=%0d use   id=%0d", $time, id);   // differs from enter: shared stora
 
 | Execution state | Value in caller's `output` variable | Scheduled nonblocking assignments | Governing clause |
 |---|---|---|---|
-| While task is executing / waiting | Retains previous caller value (copy-out has not occurred) | Normal execution in Active/NBA queue | IEEE 1800-2023 §13.3 |
+| While task is executing / waiting | Retains previous caller value (copy-out has not occurred) | Still scheduled; updates in the NBA region as usual | IEEE 1800-2023 §13.3 |
 | Normal task `return` or `endtask` | Final value of formal is copied out into caller's variable | Committed normally | IEEE 1800-2023 §13.3 |
 | Terminated by `disable <task_name>` | **Unspecified** (copy-out is incomplete / undefined) | Unexecuted assignments are unspecified | IEEE 1800-2023 §9.6.2 |
 
@@ -990,8 +982,29 @@ endtask
 ```
 
 - **`ref static` (IEEE 1800-2023 §13.5.2).** A `ref static` formal accepts only actuals with static lifetime: module variables, static class properties, or another `ref static` argument. In exchange it lifts the two restrictions above, so nonblocking writes and references inside forks become legal. Support for `ref static` varies between tools: tool-dependent.
-- **Outdated references (§13.5.2).** Pass an element of a dynamic array, queue or associative array by `ref`, then resize the dynamic array with `new[]`, `delete()` it, assign to the whole queue or dynamic array, or delete the referenced queue or associative-array element. Under §7.10.3, whole-queue assignment and methods that remove the element (such as `delete`, `pop_front`, `pop_back`) outdate references, whereas queue methods that keep the element (`push_back`, `insert`, and so on) do not outdate it. The element survives inside the subroutine, but its writes no longer reach the container.
+- **Outdated references (§13.5.2).** Pass an element of a dynamic array, queue or associative array by `ref`, then resize the dynamic array with `new[]`, `delete()` it, assign to the whole queue or dynamic array, or delete the referenced queue or associative-array element while the subroutine runs. Under §7.10.3, whole-queue assignment and methods that remove the element (such as `delete`, `pop_front`, `pop_back`) outdate references, whereas queue methods that keep the element (`push_back`, `insert`, and so on) do not outdate it. The element survives inside the subroutine, but its writes no longer reach the container.
 - **`ref` versus `inout`.** An `inout` is copied twice, in and out; a `ref` is never copied. For a class handle, `ref` lets the subroutine replace the caller's handle with a new object ([I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index)).
+
+<figure className="not-prose my-6">
+  <svg viewBox="0 0 380 140" role="img" aria-label="Before and after diagram showing an outdated reference when a dynamic array is resized with new[8]. The ref formal continues pointing to the orphaned old element while the container allocates fresh storage." style={{ width: "100%", maxWidth: 420 }}>
+    <text x="10" y="16" fontSize="11" fontWeight="bold" fill="currentColor">Outdated reference: dynamic array new[N] (§13.5.2)</text>
+    <rect x="10" y="26" width="155" height="50" rx="4" fill="rgba(6,182,212,0.1)" stroke="rgb(6,182,212)" strokeWidth="1" />
+    <text x="18" y="42" fontSize="10" fontWeight="bold" fill="currentColor">Before: dyn_arr</text>
+    <text x="18" y="56" fontSize="10" fill="currentColor">dyn_arr[0] buffer</text>
+    <text x="18" y="68" fontSize="9" fill="currentColor" fillOpacity="0.85">ref formal: bound to element ✓</text>
+    <text x="187" y="44" fontSize="9" fontWeight="bold" fill="currentColor" textAnchor="middle">new[8]</text>
+    <line x1="170" y1="51" x2="204" y2="51" stroke="currentColor" strokeWidth="1.5" />
+    <polygon points="204,48 210,51 204,54" fill="currentColor" />
+    <rect x="215" y="26" width="155" height="50" rx="4" fill="rgba(244,63,94,0.1)" stroke="rgb(244,63,94)" strokeWidth="1" />
+    <text x="223" y="42" fontSize="10" fontWeight="bold" fill="currentColor">After: dyn_arr = new[8]</text>
+    <text x="223" y="56" fontSize="10" fill="currentColor">dyn_arr: new 8-element storage</text>
+    <text x="223" y="68" fontSize="9" fill="rgb(244,63,94)">ref formal: holds orphaned old [0]</text>
+    <rect x="10" y="84" width="360" height="46" rx="4" fill="currentColor" fillOpacity="0.05" />
+    <text x="18" y="101" fontSize="10" fill="currentColor">Writes to the ref formal update only the orphaned old storage.</text>
+    <text x="18" y="117" fontSize="10" fill="currentColor">They never reach the reallocated container dyn_arr.</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">When dyn_arr is resized with new[], the container allocates fresh storage. A ref formal passed before resizing remains bound to the original orphaned element, so subsequent writes do not update the resized array (§13.5.2).</figcaption>
+</figure>
 
 <details>
 <summary>Table: Legal and illegal actual arguments for ref</summary>
@@ -1015,24 +1028,6 @@ endtask
 | Nonblocking assignment (`<=`) | **Illegal** (automatic variable rules apply) | **Legal** |
 | Usage inside `fork...join_none` / `any` | Restricted: only in initializers of fork-local variables (§9.3.2) | **Legal** anywhere inside the fork |
 | Tool support | Standard feature | Support varies between tools (tool-dependent) |
-
-<figure className="not-prose my-6">
-  <svg viewBox="0 0 380 130" role="img" aria-label="Before and after diagram showing an outdated reference when a dynamic array is resized. The ref formal continues pointing to the orphaned buffer while the container allocates fresh storage." style={{ width: "100%", maxWidth: 420 }}>
-    <text x="10" y="16" fontSize="11" fontWeight="bold" fill="currentColor">Outdated reference: dynamic array new[N] (§13.5.2)</text>
-    <rect x="10" y="26" width="165" height="42" rx="4" fill="rgba(6,182,212,0.1)" stroke="rgb(6,182,212)" strokeWidth="1" />
-    <text x="18" y="42" fontSize="10" fill="currentColor">Before: dyn_arr[0]</text>
-    <text x="18" y="58" fontSize="10" fill="currentColor">ref formal: bound to element ✓</text>
-    <line x1="180" y1="47" x2="200" y2="47" stroke="currentColor" strokeWidth="1.5" />
-    <polygon points="200,44 205,47 200,50" fill="currentColor" />
-    <rect x="205" y="26" width="165" height="42" rx="4" fill="rgba(244,63,94,0.1)" stroke="rgb(244,63,94)" strokeWidth="1" />
-    <text x="213" y="42" fontSize="10" fill="currentColor">After: dyn_arr = new[8]</text>
-    <text x="213" y="58" fontSize="10" fill="currentColor">ref formal: stale old storage</text>
-    <rect x="10" y="76" width="360" height="44" rx="4" fill="currentColor" fillOpacity="0.05" />
-    <text x="18" y="93" fontSize="10" fill="currentColor">Writes to the ref formal update the orphaned old storage.</text>
-    <text x="18" y="108" fontSize="10" fill="currentColor">They never reach the reallocated container dyn_arr.</text>
-  </svg>
-  <figcaption className="mt-2 text-sm text-muted-foreground">When dyn_arr is resized with new[], the container allocates fresh storage. A ref formal passed before resizing remains bound to the original orphaned element, so subsequent writes do not update the resized array (§13.5.2).</figcaption>
-</figure>
 
 ### Expert: Functions that schedule work, and constant functions
 
@@ -1064,9 +1059,9 @@ endtask
 | Calling Context | `output` / `inout` / `ref` arguments allowed? | `const ref` / `input` allowed? | Standard Rule |
 |---|---|---|---|
 | Procedural statements (`initial`, `always`, tasks) | **Yes** | **Yes** | Normal procedural execution (§13.4) |
-| Continuous assignment (`assign out = f(in);`) | **No** (compile error) | **Yes** | Expression evaluation cannot write side effects to arguments (§13.4) |
-| Event expression (`@(f(sig))`) | **No** (compile error) | **Yes** | Event expressions must remain side-effect free (§13.4) |
-| Procedural continuous assignment (`assign v = f();`) | **No** (compile error) | **Yes** | Side-effect arguments forbidden (§13.4) |
+| Continuous assignment (`assign out = f(in);`) | **No** (compile error) | **Yes** | Illegal: output, inout or ref arguments here (§13.4); const ref is legal |
+| Event expression (`@(f(sig))`) | **No** (compile error) | **Yes** | Illegal: output, inout or ref arguments here (§13.4); const ref is legal |
+| Procedural continuous assignment (`assign v = f();`) | **No** (compile error) | **Yes** | Illegal: output, inout or ref arguments here (§13.4); const ref is legal |
 
 - **Constant functions (§13.4.3).** A function called with constant arguments where a constant is required, such as a parameter value, is evaluated during elaboration. It may have only `input` arguments, no forks, no hierarchical references and no events scheduled for later, and it may call only other constant functions. Its system task calls are ignored, except the elaboration severity tasks.
 
@@ -1111,7 +1106,7 @@ In practice you would use the built-in `$clog2` here; write a constant function 
 
 <ArchitectureDiagram
   title="Subroutine lifetime resolution tree"
-  caption="How the compiler resolves lifetime. Follow the decision spine: an explicit variable keyword wins first, followed by the subroutine keyword, class method rules (always automatic, §8.6), or container lifetime (§13.3.1). If no keyword is present, module, interface, program and package subroutines default to static."
+  caption="How the compiler resolves lifetime. Follow the decision spine: an explicit variable keyword wins first, followed by class method rules (always automatic; a static lifetime keyword on a class method is a compile error, §8.6, §8.10), subroutine keyword, or container lifetime (§13.3.1). If no keyword is present, module, interface, program, and package subroutines default to static."
   cellWidth={140}
   cellHeight={52}
   gapX={76}
@@ -1120,20 +1115,20 @@ In practice you would use the built-in `$clog2` here; write a constant function 
   nodes={[
     { id: "d1", label: "Variable keyword?", sublabel: "static or automatic local", kind: "generic", col: 0, row: 0 },
     { id: "out_var", label: "Variable's keyword", sublabel: "explicit local lifetime", kind: "generic", col: 1, row: 0, state: "ok" },
-    { id: "d2", label: "Subroutine keyword?", sublabel: "task/function automatic/static", kind: "generic", col: 0, row: 1 },
-    { id: "out_sub", label: "Subroutine's keyword", sublabel: "explicit subroutine lifetime", kind: "generic", col: 1, row: 1, state: "ok" },
-    { id: "d3", label: "Declared in class?", sublabel: "method inside class (§8.6)", kind: "generic", col: 0, row: 2 },
-    { id: "out_cls", label: "automatic", sublabel: "always automatic in classes", kind: "generic", col: 1, row: 2, state: "ok" },
-    { id: "d4", label: "Container automatic?", sublabel: "module/if/prog/pkg automatic", kind: "generic", col: 0, row: 3 },
+    { id: "d2", label: "Declared in class?", sublabel: "method in class (§8.6)", kind: "generic", col: 0, row: 1 },
+    { id: "out_cls", label: "automatic", sublabel: "always automatic in classes", kind: "generic", col: 1, row: 1, state: "ok" },
+    { id: "d3", label: "Subroutine keyword?", sublabel: "on task or function", kind: "generic", col: 0, row: 2 },
+    { id: "out_sub", label: "Subroutine's keyword", sublabel: "explicit subroutine lifetime", kind: "generic", col: 1, row: 2, state: "ok" },
+    { id: "d4", label: "Container automatic?", sublabel: "container keyword", kind: "generic", col: 0, row: 3 },
     { id: "out_cont", label: "automatic", sublabel: "inherited from container", kind: "generic", col: 1, row: 3, state: "ok" },
-    { id: "out_stat", label: "static (default)", sublabel: "module/if/prog/pkg default", kind: "generic", col: 0, row: 4, state: "ok" }
+    { id: "out_stat", label: "static (default)", sublabel: "module / pkg default", kind: "generic", col: 0, row: 4, state: "ok" }
   ]}
   edges={[
     { from: "d1", to: "out_var", style: "data", label: "yes" },
     { from: "d1", to: "d2", style: "control", label: "no" },
-    { from: "d2", to: "out_sub", style: "data", label: "yes" },
+    { from: "d2", to: "out_cls", style: "data", label: "yes" },
     { from: "d2", to: "d3", style: "control", label: "no" },
-    { from: "d3", to: "out_cls", style: "data", label: "yes" },
+    { from: "d3", to: "out_sub", style: "data", label: "yes" },
     { from: "d3", to: "d4", style: "control", label: "no" },
     { from: "d4", to: "out_cont", style: "data", label: "yes" },
     { from: "d4", to: "out_stat", style: "control", label: "no" }
@@ -1143,10 +1138,10 @@ In practice you would use the built-in `$clog2` here; write a constant function 
 <ArchitectureDiagram
   title="Module per-instance static storage versus package global storage"
   caption="Two instances of a module (u1 and u2) each allocate their own copy of static send.id (§13.3.2). In contrast, package tb_pkg exists once: all callers share a single copy of a static function's locals."
-  cellWidth={140}
+  cellWidth={120}
   cellHeight={52}
-  gapX={84}
-  gapY={72}
+  gapX={48}
+  gapY={56}
   nodes={[
     { id: "u1", label: "instance u1", kind: "generic", col: 0, row: 0, colSpan: 1, rowSpan: 2, container: true },
     { id: "u1_t", label: "task send()", sublabel: "static task", kind: "generic", col: 0, row: 0 },
@@ -1159,9 +1154,9 @@ In practice you would use the built-in `$clog2` here; write a constant function 
     { id: "pkg_id", label: "helper.count", sublabel: "one global copy", kind: "generic", col: 2, row: 1 }
   ]}
   edges={[
-    { from: "u1_t", to: "u1_id", style: "data", label: "allocates" },
-    { from: "u2_t", to: "u2_id", style: "data", label: "allocates" },
-    { from: "pkg_f", to: "pkg_id", style: "data", label: "allocates" }
+    { from: "u1_t", to: "u1_id", style: "structural", label: "holds" },
+    { from: "u2_t", to: "u2_id", style: "structural", label: "holds" },
+    { from: "pkg_f", to: "pkg_id", style: "structural", label: "holds" }
   ]}
 />
 
@@ -1171,6 +1166,13 @@ In practice you would use the built-in `$clog2` here; write a constant function 
 - **`static task` versus `task static` (§8.10).** `static task t1();` declares a static method: it belongs to the class, can be called through the class name without an object, cannot use `this`, and its variables are still automatic. `task static t2();` asks for a static lifetime, which is illegal in a class.
 - **Parameterized subroutines (§13.8).** Tasks and functions take no parameters of their own; the standard's way to write a parameterized subroutine is a static method of a parameterized class ([I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index)).
 - **UVM phases.** In uvm-core 2020.3.1 (`src/base/uvm_component.svh`), `build_phase` and `connect_phase` are declared `function void`, while `run_phase` and `main_phase` are `task`s. So you cannot wait in `build_phase`: it is a function, and a function cannot consume time ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+
+| UVM Phase | Declaration in `uvm_component.svh` (uvm-core 2020.3.1) | Subroutine type | Can consume time? |
+|---|---|---|---|
+| `build_phase` | `extern virtual function void build_phase(uvm_phase phase);` (line 221) | `function void` | No (zero time) |
+| `connect_phase` | `extern virtual function void connect_phase(uvm_phase phase);` (line 230) | `function void` | No (zero time) |
+| `run_phase` | `extern virtual task run_phase(uvm_phase phase);` (line 266) | `task` | Yes (main test phase) |
+| `main_phase` | `extern virtual task main_phase(uvm_phase phase);` (line 434) | `task` | Yes (time-consuming sub-phase) |
 
 ### Expert: Interview angles
 

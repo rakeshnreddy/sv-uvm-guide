@@ -6,6 +6,9 @@ sources:
   - title: "IEEE Standard for SystemVerilog"
     type: "standard"
     identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
 ---
 
 ## Quick Take
@@ -49,16 +52,18 @@ while (!reset_done_flag) #1;
 
 <TimingDiagram
   title="Polling loop versus event wake-up"
-  caption="Columns represent 0.5 ns increments from 18.0 ns to 23.5 ns. The polling loop wakes every 1 ns (drawn as pulses) to evaluate !reset_done_flag, consuming simulator cycles and detecting the flag up to 1 ns after it is set at 20.0 ns. By contrast, -> reset_done executes at 20.0 ns as a zero-width instant, waking the @(reset_done) waiter directly in that exact time slot without polling overhead or latency."
-  edges={12}
+  caption="Columns represent 0.5 ns increments from 18.0 ns to 21.5 ns (bottom numbers are column indices). The row 'flag' represents reset_done_flag. The polling loop wakes every 1 ns (drawn as pulses in 'poll wake') to evaluate !reset_done_flag, consuming simulator cycles and detecting the flag at 21.0 ns (edge 6, 'poll sees flag'), a full 1 ns after it was set at 20.0 ns. By contrast, -> reset_done executes at 20.0 ns (edge 4, '-> reset_done') as a zero-width instant, waking the @(reset_done) waiter directly in that exact time slot without polling overhead or latency."
+  edges={8}
+  cycleWidth={36}
   signals={[
-    { name: "time (ns)", kind: "bus", values: ["18.0", "18.5", "19.0", "19.5", "20.0", "20.5", "21.0", "21.5", "22.0", "22.5", "23.0", "23.5"] },
-    { name: "reset_done_flag", kind: "bit", values: [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1] },
-    { name: "poll wake", kind: "bit", values: [1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0] },
-    { name: "event wake", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0] }
+    { name: "time (ns)", kind: "bus", values: ["18.0", "18.5", "19.0", "19.5", "20.0", "20.5", "21.0", "21.5"] },
+    { name: "flag", kind: "bit", values: [0, 0, 0, 0, 1, 1, 1, 1] },
+    { name: "poll wake", kind: "bit", values: [1, 0, 1, 0, 1, 0, 1, 0] },
+    { name: "event wake", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0, 0] }
   ]}
   markers={[
-    { edge: 4, tone: "pass", label: "20.0 ns: -> reset_done instant wakes waiter directly; reset_done_flag set" }
+    { edge: 4, tone: "pass", label: "20.0 ns: -> reset_done instant wakes waiter directly; reset_done_flag set", short: "-> reset_done" },
+    { edge: 6, tone: "info", label: "21.0 ns: polling loop evaluates !reset_done_flag, sees flag high and exits", short: "poll sees flag" }
   ]}
 />
 
@@ -89,31 +94,6 @@ The IPC tools give you **blocking with wake-up**. A call suspends the calling pr
 
 > [!NOTE]
 > **Classes, in one paragraph.** `semaphore` and `mailbox` are built-in **classes** (§15.2), and [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index) teaches classes properly. Until then you need two facts. `new(...)` creates the object, and your variable holds a **handle** that refers to it, so every process that uses the same variable uses the same semaphore or mailbox. Create them where you declare them, at module scope: that runs before any `initial` procedure starts (§6.8). An `event` is not a class, but its variable is also a handle, and a declaration without an initializer creates a fresh event (§6.17).
-
-<ArchitectureDiagram
-  title="Shared object handle versus separate new() instances"
-  caption="Top: declaring and constructing the mailbox at module scope creates one object; gen and drv share the same handle, so put() items reach get(). Bottom: two new() calls construct two separate objects. drv reads an empty mailbox and blocks forever."
-  cellWidth={140}
-  gapX={96}
-  gapY={36}
-  nodes={[
-    { id: "c1", label: "Shared handle: module-scope new(1)", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 1, container: true },
-    { id: "gen_ok", label: "gen", sublabel: "mbx handle", kind: "generic", col: 0, row: 0 },
-    { id: "mbx_ok", label: "mailbox #(int)", sublabel: "new(1): 1 object", kind: "fifo", col: 1, row: 0 },
-    { id: "drv_ok", label: "drv", sublabel: "mbx handle", kind: "driver", col: 2, row: 0 },
-    { id: "c2", label: "Separate new() calls: consumer blocks forever", kind: "generic", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
-    { id: "gen_bad", label: "gen", sublabel: "mbx_a handle", kind: "generic", col: 0, row: 1 },
-    { id: "mbx_a", label: "mailbox A", sublabel: "new(1): gen stalls when full", kind: "fifo", col: 1, row: 1 },
-    { id: "drv_bad", label: "drv", sublabel: "mbx_b handle", kind: "driver", col: 0, row: 2 },
-    { id: "mbx_b", label: "mailbox B", sublabel: "new(1): empty: hangs", kind: "fifo", col: 1, row: 2 }
-  ]}
-  edges={[
-    { from: "gen_ok", to: "mbx_ok", style: "data", label: "put(i)" },
-    { from: "mbx_ok", to: "drv_ok", style: "data", label: "get()" },
-    { from: "gen_bad", to: "mbx_a", style: "data", label: "put(i)" },
-    { from: "mbx_b", to: "drv_bad", style: "data", label: "get()" }
-  ]}
-/>
 
 ### Named events: announce that something happened
 
@@ -208,9 +188,9 @@ wait (done.triggered);        // wakes at 10 ns ✓
     <line x1="20" y1="65" x2="320" y2="65" stroke="currentColor" strokeOpacity="0.3" strokeWidth="2" />
     <circle cx="50" cy="65" r="4" fill="currentColor" />
     <text x="50" y="55" fontSize="10" textAnchor="middle" fill="currentColor">t = 0 ns</text>
-    <rect x="15" y="75" width="70" height="34" rx="6" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" />
-    <text x="50" y="89" fontSize="9.5" textAnchor="middle" fill="currentColor">@(done)</text>
-    <text x="50" y="102" fontSize="9" textAnchor="middle" fill="currentColor">wakes ✓</text>
+    <rect x="8" y="75" width="84" height="34" rx="6" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" />
+    <text x="50" y="89" fontSize="9.5" textAnchor="middle" fill="currentColor">waiting since 0</text>
+    <text x="50" y="102" fontSize="9.5" textAnchor="middle" fill="currentColor">wakes at 10 ✓</text>
 
     <line x1="160" y1="25" x2="160" y2="65" stroke="rgb(245,158,11)" strokeWidth="2" strokeDasharray="3 2" />
     <polygon points="160,65 156,53 164,53" fill="rgb(245,158,11)" />
@@ -356,6 +336,31 @@ The mistakes everyone makes with mailboxes:
 - **Steering on `num()`.** Its value is stale as soon as another process puts or gets (§15.4.2). Let `get()` and `put()` do the waiting.
 - **Two mailboxes where you meant one.** Two calls to `new()` create two separate mailboxes. A consumer that reads one while the producer writes the other waits forever.
 
+<ArchitectureDiagram
+  title="Shared object handle versus separate new() instances"
+  caption="Top: declaring and constructing the mailbox at module scope creates one object; gen and drv share the same handle, so put() items reach get(). Bottom: two new() calls construct two separate objects. drv reads an empty mailbox and blocks forever."
+  cellWidth={140}
+  gapX={96}
+  gapY={36}
+  nodes={[
+    { id: "c1", label: "Shared handle: module-scope new(1)", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 1, container: true },
+    { id: "gen_ok", label: "gen", sublabel: "mbx handle", kind: "generic", col: 0, row: 0 },
+    { id: "mbx_ok", label: "mailbox #(int)", sublabel: "new(1): 1 object", kind: "fifo", col: 1, row: 0 },
+    { id: "drv_ok", label: "drv", sublabel: "mbx handle", kind: "driver", col: 2, row: 0 },
+    { id: "c2", label: "Separate new() calls: consumer blocks forever", kind: "generic", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
+    { id: "gen_bad", label: "gen", sublabel: "mbx_a handle", kind: "generic", col: 0, row: 1 },
+    { id: "mbx_a", label: "mailbox A", sublabel: "new(1): gen stalls when full", kind: "fifo", col: 1, row: 1 },
+    { id: "drv_bad", label: "drv", sublabel: "mbx_b handle", kind: "driver", col: 0, row: 2 },
+    { id: "mbx_b", label: "mailbox B", sublabel: "new(1): empty: hangs", kind: "fifo", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "gen_ok", to: "mbx_ok", style: "data", label: "put(i)" },
+    { from: "mbx_ok", to: "drv_ok", style: "data", label: "get()" },
+    { from: "gen_bad", to: "mbx_a", style: "data", label: "put(i)" },
+    { from: "mbx_b", to: "drv_bad", style: "data", label: "get()" }
+  ]}
+/>
+
 <VisualRecap
   title="A bounded mailbox is a typed FIFO queue with backpressure"
   rule="put() appends messages in strict FIFO order and suspends the caller when a bounded mailbox is full (§15.4.3). get() retrieves the oldest message and suspends when empty (§15.4.5). Neither call drops or overwrites data."
@@ -369,8 +374,8 @@ mbx.get(tx);  // blocks if mailbox is empty`}
 >
   <svg viewBox="0 0 340 130" role="img" aria-label="A bounded mailbox with 2 slots holding messages. The producer blocks in put() when both slots are occupied (backpressure). The consumer retrieves the oldest message from the front via get()." style={{ width: "100%", maxWidth: 360 }}>
     <rect x="10" y="35" width="60" height="36" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
-    <text x="40" y="52" fontSize="10" textAnchor="middle" fill="currentColor">Producer</text>
-    <text x="40" y="64" fontSize="8.5" textAnchor="middle" fill="currentColor">put(msg)</text>
+    <text x="40" y="50" fontSize="10" textAnchor="middle" fill="currentColor">Producer</text>
+    <text x="40" y="63" fontSize="9.5" textAnchor="middle" fill="currentColor">put(msg)</text>
 
     <line x1="70" y1="53" x2="98" y2="53" stroke="currentColor" />
     <polygon points="98,53 90,49 90,57" fill="currentColor" />
@@ -379,19 +384,19 @@ mbx.get(tx);  // blocks if mailbox is empty`}
     <text x="170" y="20" fontSize="10" fontWeight="bold" textAnchor="middle" fill="currentColor">mailbox #(T) · bound = 2</text>
 
     <rect x="108" y="35" width="58" height="36" rx="4" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" />
-    <text x="137" y="50" fontSize="9.5" textAnchor="middle" fill="currentColor">slot 0</text>
-    <text x="137" y="63" fontSize="8.5" textAnchor="middle" fill="currentColor">newest (in)</text>
+    <text x="137" y="49" fontSize="9.5" textAnchor="middle" fill="currentColor">slot 0</text>
+    <text x="137" y="63" fontSize="9.5" textAnchor="middle" fill="currentColor">newest</text>
 
     <rect x="174" y="35" width="58" height="36" rx="4" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" />
-    <text x="203" y="50" fontSize="9.5" textAnchor="middle" fill="currentColor">slot 1</text>
-    <text x="203" y="63" fontSize="8.5" textAnchor="middle" fill="currentColor">oldest (out)</text>
+    <text x="203" y="49" fontSize="9.5" textAnchor="middle" fill="currentColor">slot 1</text>
+    <text x="203" y="63" fontSize="9.5" textAnchor="middle" fill="currentColor">oldest</text>
 
     <line x1="240" y1="53" x2="268" y2="53" stroke="currentColor" />
     <polygon points="268,53 260,49 260,57" fill="currentColor" />
 
     <rect x="270" y="35" width="60" height="36" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
-    <text x="300" y="52" fontSize="10" textAnchor="middle" fill="currentColor">Consumer</text>
-    <text x="300" y="64" fontSize="8.5" textAnchor="middle" fill="currentColor">get(msg)</text>
+    <text x="300" y="50" fontSize="10" textAnchor="middle" fill="currentColor">Consumer</text>
+    <text x="300" y="63" fontSize="9.5" textAnchor="middle" fill="currentColor">get(msg)</text>
 
     <text x="170" y="100" fontSize="9.5" textAnchor="middle" fill="currentColor">Full (2 msgs) → put() blocks (backpressure)</text>
     <text x="170" y="116" fontSize="9.5" textAnchor="middle" fill="currentColor">Empty (0 msgs) → get() blocks until put()</text>
@@ -437,15 +442,15 @@ IPC failures rarely print an error. Nothing in the standard reports a blocked pr
 
 <ArchitectureDiagram
   title="Triage funnel: diagnosing silent IPC failures from symptoms"
-  caption="When a testbench hangs or ends prematurely, first observe the symptom: if simulation time is frozen while the simulator stays busy, suspect a zero-delay loop spinning on a persistent triggered event. If the run ended early or time advances with no progress, identify which call is blocked using tool debug features or log prints."
+  caption="When a testbench hangs or ends prematurely, first observe the symptom: if simulation time is frozen while the simulator stays busy, suspect a zero-delay loop spinning on a persistent triggered event. If the run ended early or time advances with no progress, identify which call is blocked using tool debug features or log prints (tool-dependent). Dotted lines are triage decisions. A process blocked at sem.get() indicates a leaked key, deadlock, or new() with 0 keys."
   cellWidth={170}
-  gapX={96}
+  gapX={128}
   gapY={48}
   legend={false}
   nodes={[
-    { id: "q1", label: "Time frozen with simulator busy?", sublabel: "Check $time in log", kind: "generic", col: 0, row: 0 },
+    { id: "q1", label: "Time frozen, sim busy?", sublabel: "Check $time in log", kind: "generic", col: 0, row: 0 },
     { id: "spin", label: "Spinning on triggered", sublabel: "Zero-delay loop (§15.5.3)", kind: "generic", col: 1, row: 0 },
-    { id: "q2", label: "Which call is blocked?", sublabel: "Tool debug or log prints (tool-dependent)", kind: "generic", col: 0, row: 1 },
+    { id: "q2", label: "Which call is blocked?", sublabel: "Tool debug or log prints", kind: "generic", col: 0, row: 1 },
     { id: "miss", label: "Missed trigger", sublabel: "Blocked at @(ev) (§15.5.2)", kind: "generic", col: 1, row: 1 },
     { id: "sem", label: "Leaked key / Deadlock", sublabel: "Blocked at get() (§15.3.3)", kind: "generic", col: 1, row: 2 },
     { id: "starv", label: "Starved consumer", sublabel: "Blocked at mbx.get() (§15.4.5)", kind: "generic", col: 1, row: 3 }
@@ -454,8 +459,8 @@ IPC failures rarely print an error. Nothing in the standard reports a blocked pr
     { from: "q1", to: "spin", style: "control", label: "yes" },
     { from: "q1", to: "q2", style: "control", label: "no" },
     { from: "q2", to: "miss", style: "control", label: "@(ev)" },
-    { from: "q2", to: "sem", style: "control", label: "get()" },
-    { from: "q2", to: "starv", style: "control", label: "mbx.get()" }
+    { from: "q2", to: "sem", style: "control", label: "sem.get()" },
+    { from: "q2", to: "starv", style: "control", label: "mbx.get() / put()" }
   ]}
 />
 
@@ -628,8 +633,8 @@ endmodule
 
 <SequenceDiagram
   title="Execution trace of tb_top: mailbox backpressure, semaphore queueing and event wake-up"
-  caption="Trace of the Make It Work testbench across simulation time (showing one legal order within each time slot). At 0 ns, chk waits on drv_done, gen fills the mailbox, and put(3) blocks until drv frees a slot at 10 ns (backpressure). At 25 ns, irq blocks in bus.get(1) until drv completes transfer 3 at 30 ns. At 30 ns, -> drv_done wakes chk to verify total items."
-  columnWidth={135}
+  caption="Trace of the Make It Work testbench across simulation time (showing one legal order within each time slot; the diagram scrolls horizontally on narrow screens). At 0 ns, chk waits on drv_done, gen fills the mailbox, and put(3) blocks until drv frees a slot at 10 ns (backpressure). At 25 ns, irq blocks in bus.get(1) until drv completes transfer 3 at 30 ns. At 30 ns, -> drv_done wakes chk to verify total items."
+  columnWidth={100}
   participants={[
     { id: "gen", label: "gen", kind: "generic" },
     { id: "mbx", label: "gen2drv", sublabel: "mailbox(1)", kind: "fifo" },
@@ -736,7 +741,7 @@ Make each change on its own, predict the log, then compare with the result below
    </details>
 
 3. **Change `chk` to wait with `#30 @(drv_done);`.**
-   Both the trigger in `drv` and the wait in `chk` now occur at 30 ns. Will the test reliably pass?
+   When does each statement run, and will the test reliably pass?
 
    <details>
    <summary>Predict the outcome, then reveal</summary>
@@ -850,7 +855,7 @@ A message can be any singular expression, "including object handles" (§15.4.3).
     { from: "mbx", to: "drv", style: "data", label: "get(rx)" },
     { from: "mbx", to: "obj", style: "control", label: "ref" },
     { from: "gen", to: "obj", style: "control", label: "mutates" },
-    { from: "drv", to: "obj", style: "data", label: "reads" }
+    { from: "obj", to: "drv", style: "data", label: "fields" }
   ]}
 />
 
@@ -876,7 +881,7 @@ UVM wraps these primitives in components:
     { id: "sv_ev", label: "event", sublabel: "-> ev / @(ev)", kind: "generic", col: 0, row: 2 },
     { id: "uvm_fifo", label: "uvm_tlm_fifo #(T)", sublabel: "wraps mailbox #(T)", kind: "fifo", col: 1, row: 0 },
     { id: "uvm_sqr", label: "uvm_sequencer", sublabel: "sequence arbitration", kind: "sequencer", col: 1, row: 1 },
-    { id: "uvm_ev", label: "uvm_event / objection", sublabel: "notify (§10.1) / phase (§10.5)", kind: "generic", col: 1, row: 2 }
+    { id: "uvm_ev", label: "uvm_event / objection", sublabel: "1800.2 §10.1 / §10.5", kind: "generic", col: 1, row: 2 }
   ]}
   edges={[
     { from: "sv_mbx", to: "uvm_fifo", style: "data", label: "wrapped" },
@@ -912,48 +917,6 @@ The trade-off: raw events, semaphores and mailboxes stay useful inside one compo
 />
 
 ## Practice & Reinforce
-
-### One-glance recall aid: the three IPC tools
-
-<div className="my-6 grid grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-4">
-  <Card>
-    <CardHeader>
-      <CardTitle className="text-sm font-semibold">Named Event (`event`)</CardTitle>
-    </CardHeader>
-    <CardContent className="text-xs text-muted-foreground space-y-1">
-      <p><strong>Intent:</strong> Broadcast a zero-time signal.</p>
-      <p><strong>Rule:</strong> Wakes all current waiters; lost once time advances if nobody was waiting (§15.5.1, §15.5.3).</p>
-      <p><strong>In testbench:</strong> Reset done, watchdog trip, stimulus complete.</p>
-    </CardContent>
-  </Card>
-  <Card>
-    <CardHeader>
-      <CardTitle className="text-sm font-semibold">Semaphore (`semaphore`)</CardTitle>
-    </CardHeader>
-    <CardContent className="text-xs text-muted-foreground space-y-1">
-      <p><strong>Intent:</strong> Mutual exclusion across resources.</p>
-      <p><strong>Rule:</strong> FIFO wait queue on <code>get()</code>; no ownership tracking on <code>put()</code> (§15.3.1–§15.3.3).</p>
-      <p><strong>In testbench:</strong> Shared bus, single-writer log file, reference model.</p>
-    </CardContent>
-  </Card>
-  <Card>
-    <CardHeader>
-      <CardTitle className="text-sm font-semibold">Mailbox (`mailbox #(T)`)</CardTitle>
-    </CardHeader>
-    <CardContent className="text-xs text-muted-foreground space-y-1">
-      <p><strong>Intent:</strong> Ordered data queue.</p>
-      <p><strong>Rule:</strong> Strict FIFO (§15.4.3); <code>put()</code> blocks when full (backpressure); <code>get()</code> blocks when empty (§15.4.5).</p>
-      <p><strong>In testbench:</strong> Generator-to-driver and monitor-to-scoreboard pipes; request queues.</p>
-    </CardContent>
-  </Card>
-</div>
-
-| Dimension | Named event (`event`) | Semaphore (`semaphore`) | Bounded mailbox (`mailbox #(T)`) |
-|---|---|---|---|
-| **Blocks when…** | `@(ev)` waits for the next trigger | `get(n)` waits for `n` free keys | `get()` waits when empty; `put()` waits when full |
-| **Wakes whom?** | **Every** current waiter (§15.5.1) | Oldest waiter in FIFO queue (§15.3.3) | Oldest waiting get() in FIFO queue (§15.4.5); no order stated for blocked put() callers (§15.4.3) |
-| **Remembers?** | No (`ev.triggered` only in same slot) | Yes: `put()` banks unconsumed keys | Yes: queues every message in strict FIFO order |
-| **Where analogy breaks** | Real bells echo; `->` lasts zero time | Anyone can `put()` keys without owning them | — |
 
 ### Quiz
 
@@ -1038,6 +1001,16 @@ Answer from memory first. Every question maps to one objective. The flashcards u
     objective: 1
   }
 ]} />
+
+### One-glance recall aid: the three IPC tools
+
+| Dimension | Named event (`event`) | Semaphore (`semaphore`) | Bounded mailbox (`mailbox #(T)`) |
+|---|---|---|---|
+| **Blocks when…** | `@(ev)` waits for the next trigger | `get(n)` waits for `n` free keys | `get()` waits when empty; `put()` waits when full |
+| **Wakes whom?** | **Every** current waiter (§15.5.1) | Oldest waiter in FIFO queue (§15.3.3) | Oldest waiting get() in FIFO queue (§15.4.5); no order stated for blocked put() callers (§15.4.3) |
+| **Remembers?** | No (`ev.triggered` only in same slot) | Yes: `put()` banks unconsumed keys | Yes: queues every message in strict FIFO order |
+| **In a testbench** | Reset done, watchdog trip, stimulus complete | Shared bus, single-writer log file, reference model | Generator-to-driver and monitor-to-scoreboard pipes; request queues |
+| **Where analogy breaks** | Real bells echo; `->` lasts zero time | Anyone can `put()` keys without owning them | — |
 
 ### Kata: repair the hand-off
 
@@ -1155,6 +1128,7 @@ Go back to [the lab in Build Your Mental Model](#predict-then-drive-it-yourself)
 - §15.5 named events (§15.5.1 triggering, including `->>`; §15.5.2 waiting with `@`; §15.5.3 the `triggered` method).
 - §20.4.3 `$timeformat` defaults for `%t`.
 - Annex G.3 and G.4: the `semaphore` and `mailbox` prototypes.
+- IEEE 1800.2-2020: §10.1 `uvm_event` event classes; §10.5 UVM objection mechanism.
 - uvm-core 2020.3.1, `src/tlm1/uvm_tlm_fifos.svh`: `uvm_tlm_fifo` and `uvm_tlm_analysis_fifo`.
 
 **Related:**
