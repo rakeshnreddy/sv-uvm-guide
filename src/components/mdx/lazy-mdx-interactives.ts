@@ -89,6 +89,8 @@ export const lazyMdxInteractiveNames = [
   "MultiAgentCoordinationVisualizer",
   "SequencerArbitrationSandbox",
   "ScenarioSorter",
+  "DecisionLab",
+  "SelfCheckBenchLab",
 ] as const;
 
 export type LazyMdxInteractiveName = (typeof lazyMdxInteractiveNames)[number];

@@ -3,72 +3,82 @@
 Written 2026-10-12, when the weekly usage limit paused the program. Read this first in the next session,
 then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASKS.md`.
 
-## Start here (state at the 2026-11-01 pause)
+## Start here (state at the 2026-11-02 pause)
 
-**Live state:** everything reviewed is released through checkpoint 9 (`37e53ff8`, production build succeeded). The
-working tree is clean. Nothing is running.
+**Live state:** everything reviewed is released through checkpoint 14. Nothing is running. Claude paused at 74 % of the
+weekly limit, against the owner's 75 % line.
 
 **Done so far:**
-- the compile-fix pass;
-- four reviewed components: visual primitives, FirstBugHuntGame tally, ProceduralBlocksSimulator time-0, ScenarioSorter;
-- 6a on 8 lessons: F1A, F1B, F1C, the three F2A lessons, and the two F2C lessons.
+- T1 visual enrichment is complete: all 19 T1 lessons are enriched and live. T2 to T4 have not started.
+- 6 of 48 components are live: visual primitives, FirstBugHuntGame tally, ProceduralBlocksSimulator time-0, ScenarioSorter,
+  DecisionLab and SelfCheckBenchLab. DecisionLab and SelfCheckBenchLab are registered but no lesson embeds them yet.
 
-**Not released, safe on `backup/wip-2026-11-01` (`ba9dbe7a`):** 7 components, built and reviewed three rounds, all
-escalated with open findings. Do not merge the branch as it is. Every file was verified byte for byte against the
-branch before the main tree was restored. Findings per component are in
-`docs/curriculum-quality/data/components-batch2-open-findings-2026-11-01.json`.
+**Authors:** Claude only, by owner decision on 2026-11-02. Do not use Gemini Flash. Argon is out of credits, and only the
+owner can say when it returns (see "What the Gemini trial showed" below).
 
-| Component | Open S1 | Open S2 | Note |
-|---|---|---|---|
-| expression-lab-extensions (OperatorExplorer, SignednessVisualizer) | 0 | 1 | Closest to done |
-| decision-lab | 0 | 2 | Accuracy passed in round 3 |
-| selfcheck-bench-lab | 0 | 2 | |
-| timescale-lab | 0 | 3 | |
-| subroutine-lab | 1 | 5 | |
-| packed-layout-explorer | 1 | 7 | |
-| scheduler-model-v2 | 3 | 7 | Its round-2 fixer died when the Mac slept, so 25 of its own tests fail on the branch. Fix those first. |
+**Not released, safe on `components/finish-held`:** 5 components, reviewed by data group. Never merge the branch as it is,
+because the workflow was stopped while fixers for some of these were still running, so their files may hold a fix stopped
+midway. Open findings from each component's last review round are in
+`docs/curriculum-quality/data/components-finish-open-2026-11-02.json`.
 
-**Why it paused:** the owner's 50 % line was reached at 53 %. A Mac sleep of about 5 hours during the run killed one
-fixer (`fix:scheduler-model-v2:r2`), but no work was lost. Every workflow is stopped, so nothing resumes by itself.
+| Component | Last review round | Passed that round | Open S1 | Open S2 |
+|---|---|---|---|---|
+| subroutine-lab | 2 (fix 3 stopped midway) | 4 of 5 | 1 | 1 |
+| timescale-lab | 2 | 3 of 7 | 1 | 7 |
+| expression-lab-extensions | 2 (fix 3 finished, not re-reviewed) | 0 of 4 | 1 | 5 |
+| packed-layout-explorer | 2 (fix 3 stopped midway) | 1 of 6 | 5 | 5 |
+| scheduler-model-v2 | 2 (stopped with 1 of its reviews back) | 1 of 1 | 0 so far | 0 so far |
+
+Run `npx vitest` on each component's own tests first, because a stopped fixer can leave them failing.
 
 **Work left, estimated in % of a weekly limit on Opus 5.5:**
 
 | Work | Left | Cost |
 |---|---|---|
-| Lesson enrichment | 104 of 112 lessons | ~105 % |
-| Finish the held components | 7 | ~5 % |
-| Other planned components | 37 of 48 | ~45 % |
+| Lesson enrichment | 93 of 112 lessons, at the measured 0.9 % per lesson | ~85 % |
+| Finish the held components, then embed the 2 unembedded ones | 5, plus lesson edits | ~8 % |
+| Other planned components | 37 of 48 | ~65 % |
 | Extras: hidden pages, coming-soon labs, M5 lab | 12 | ~20 % |
 | Final review sweep, run fresh | All | ~35 % |
 | Closure checks | All | ~5 % |
-| **Total** | | **~215 %** |
+| **Total** | | **~220 %** |
 
-The lesson figure rests on few Opus measurements, and the component and sweep figures are judgement. Treat all of them
-as rough, and re-measure after the first batch.
+The lesson figure is now measured: 6 lessons cost about 5 % on 2026-11-02. The component figure rose from 45 % because
+finishing already-built components cost about 1.3 % each, and building new ones costs more. The other figures are judgement.
 
 **First steps on resume:**
-1. Ask the owner for this week's pause threshold.
+1. Ask the owner for this week's pause threshold, and whether Argon has credits again.
 2. Confirm the session model is Opus 5.5, because a workflow keeps the model it launched with.
 3. Request keep-awake (`session_idle`), and keep the lid open.
 4. Run `git status`, and confirm `main` = `curriculum-quality-program`.
 
-**Session-only files:** the scratchpad under `/private/tmp` keeps only the two embedded workflow scripts and two status
-scripts. macOS can clear it, and nothing needed lives only there: the helper regenerates the arguments, and the same-session
-cache only saves re-running finished agents. `.claude/launch.json` is a local preview config, excluded through
-`.git/info/exclude`, so a clean `git status` prints nothing.
+**Session-only files:** the scratchpad under `/private/tmp` can be cleared, and nothing needed lives only there. Recreate
+the component worktree with `git worktree add <path> origin/components/finish-held` and link `node_modules` into it.
 
 **Order for the next resume:**
-1. **Finish the 7 components, smallest first.** Check out their files from the backup branch, one fixer per component
-   working from its findings, then re-review with one accuracy reviewer per data group, which is what made
-   ScenarioSorter converge. Register each and release it when clean, then move its id from `componentsHeldOnBackup`
-   to `componentsBuilt` in `progress.json`. Check cross-imports first: later builds may import
-   `sv-expression-model.ts` additions. `time-slot-trace-presets` waits for scheduler-model-v2, and the helper holds it back until then.
-2. **6a on the rest of T1:** F2B and F2E first, then F2D, F3A–F3C, F4A–F4C. The F2B/F2E run (`wf_ac40a627-5d1`) stopped
-   before any author wrote a file. In this session, resume it with
-   `scratchpad/visual-enrichment-batch2-embedded.js`; otherwise regenerate its arguments with the helper.
-   Authors should embed the finished components where the backlog planned them, so do step 1 first where you can.
-3. **The next components batch**, then 6a for T2–T4 plus `phase6a-extras.js`.
+1. **Finish the 5 components.** Generate the workflow with
+   `make-finish-held.py --worktree W --findings docs/curriculum-quality/data/components-finish-open-2026-11-02.json --ids <ids> --out finish.js`,
+   and run it with `Workflow({scriptPath})`. PackedLayoutExplorer imports `sv-expression-model.ts` additions, so release
+   expression-lab-extensions first or together. Register, release, then move each id to `componentsBuilt` in `progress.json`.
+   `time-slot-trace-presets` waits for scheduler-model-v2, and the helper holds it back until then.
+2. **Embed the finished components** in T1 where the backlog planned them: DecisionLab (F2C flow-control, F2A operators) and
+   SelfCheckBenchLab (F2E). Their S3 notes, including one on F2C flow-control wording, are under `released` in the
+   findings file; re-check them while embedding.
+3. **The next components batch**, then 6a for T2 to T4 plus `phase6a-extras.js`, starting with I-SV-1.
 4. **A final 6b sweep, run fresh**, then the closure checks.
+
+**What the Gemini trial showed (2026-11-02):**
+
+| Author | First review, S2s per lesson | Fix rounds to clean | Outcome |
+|---|---|---|---|
+| Argon | 8 to 9 | 2 for F2E, 3 for F2B | Good quality, released. Credits ran out after 3.6M input and 0.55M output tokens |
+| Flash | 15 to 21 | Did not converge in 2 rounds, and added new errors | Claude had to finish the lessons |
+| Claude | Not comparable: the workflow fixes as it goes | Up to 3 | 0.9 % per lesson |
+
+- Claude's review is most of the cost, so Argon saved about a quarter per lesson, not most of it.
+- `gemini-lesson.py` and `make-gemini-review.py` stay in the repo for if Argon returns. `make-gemini-review.py --claude-fix`
+  adds a Claude fixer.
+- The driver works: isolated worktree, no shell for the model, checks run by the driver, every lesson through Claude's review.
 
 **Launch a run** (each command prints the Workflow `args`):
 - `python3 docs/curriculum-quality/workflows/make-workflow-args.py 6a <module> [<module> ...]`, for `visual-enrichment.js`.
@@ -78,6 +88,12 @@ cache only saves re-running finished agents. `.claude/launch.json` is a local pr
 
 **Saved data** (`docs/curriculum-quality/data/`): `lesson-plans-2026-10-28.json` (112 lesson audits),
 `components-backlog-2026-10-28.json` (48 ranked components with specs), `progress.json`, and the open findings above.
+
+**Lessons from 2026-11-02:**
+- **A Workers `success` check can be the branch preview.** The production build starts only after the push to `main`.
+  `checkpoint-release.sh` handles this; a hand-run wait must filter on a completion time after that push.
+- **A quoted `<Word>` in a prop string counts as a tag** in the curriculum coverage audit. `check-mdx` does not catch it.
+- **Bash, not zsh, for command variables:** `$G args` with `G="python3 x.py"` fails under zsh.
 
 **Lessons from this week:**
 - **Check the model before a long run.** A workflow stays on the model it launched with, even after `/model`. On Fable

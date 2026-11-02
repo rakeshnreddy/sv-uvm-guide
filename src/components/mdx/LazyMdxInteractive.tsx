@@ -110,6 +110,8 @@ const loaders = {
   MultiAgentCoordinationVisualizer: () => import("@/components/visuals/MultiAgentCoordinationVisualizer").then(module => asMdxModule(module.default)),
   SequencerArbitrationSandbox: () => import("@/components/exercises/SequencerArbitrationSandbox").then(module => asMdxModule(module.default)),
   ScenarioSorter: () => import("@/components/visuals/ScenarioSorter").then(module => asMdxModule(module.default)),
+  DecisionLab: () => import("@/components/visuals/DecisionLab").then(module => asMdxModule(module.default)),
+  SelfCheckBenchLab: () => import("@/components/visuals/SelfCheckBenchLab").then(module => asMdxModule(module.default)),
 } satisfies Record<LazyMdxInteractiveName, MdxInteractiveLoader>;
 
 const componentCache = new Map<
