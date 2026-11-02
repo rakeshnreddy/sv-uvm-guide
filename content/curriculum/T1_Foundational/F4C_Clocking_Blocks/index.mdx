@@ -14,6 +14,59 @@ sources:
 - **Why it matters:** The testbench (TB) and the design under test (DUT) wake on the same clock edge, and the simulator may run them in any order (§4.7). Through a clocking block, the TB reads the values from just before the edge, and its drives land after the DUT's flops have read their inputs, whichever order the simulator picks. Every bench in this curriculum from milestone M1 onward, including the UVM drivers and monitors of later tiers, drives and samples the DUT this way.
 - **The Analogy:** A clocking block is a photographer and a courier stationed at the clock. Just before each edge the photographer takes a **photo** of every input, and your code reads the photo, never the live signal. The courier takes every value you **drive** and delivers it just after the edge, once the flops have taken their own snapshot. *Where it breaks:* the default photo shows the last value before the edge's time slot, however long ago that value changed, not a picture taken a fixed time earlier. A photo with an explicit `#0` skew is taken at the edge itself, after the design's nonblocking updates. A zero-skew delivery happens in the same time slot as the edge, in the Re-NBA region, not "a little later" in simulated time. And if you hand the courier two parcels for one signal in one cycle, only the last one is delivered (§14.16.2).
 
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <div className="mb-2 text-sm font-semibold text-foreground">One clock edge, one time slot</div>
+  <svg viewBox="0 0 340 322" role="img" aria-label="The order of events inside the time slot of one rising clock edge. Preponed: the #1step photo is taken. Active: the DUT's flops read din, and module code waiting on @(posedge clk) wakes. NBA: the flops' q updates. Observed: the clocking block triggers @(cb), and an explicit #0 photo is taken. A later Active pass: code waiting on @(cb) reads cb.x and issues cb.din <= v. Re-NBA: din changes. Time then advances, and at the next edge the flops read the new din." style={{ width: "100%", maxWidth: 440 }}>
+    <title>One clock edge, one time slot</title>
+    <defs>
+      <marker id="f4c-hero-order" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      </marker>
+    </defs>
+    <text x="22" y="13" fontSize="10.5" fill="currentColor">{"Inside one time slot: $time is the same in every row"}</text>
+    <line x1="13" y1="24" x2="13" y2="262" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" markerEnd="url(#f4c-hero-order)" />
+    <text fontSize="9" fill="currentColor" textAnchor="middle" transform="translate(8 143) rotate(-90)">runs in this order</text>
+    <rect x="18" y="20" width="318" height="244" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.3" />
+
+    <rect x="24" y="24" width="306" height="36" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+    <text x="32" y="46" fontSize="10.5" fontWeight="700" fill="currentColor">Preponed</text>
+    <text x="104" y="39" fontSize="10" fill="currentColor"><tspan className="fill-violet-600 dark:fill-violet-300">▼</tspan>{" #1step photo ①"}</text>
+    <text x="104" y="52" fontSize="10" fill="currentColor" opacity="0.8">the last value before this time slot</text>
+
+    <rect x="24" y="64" width="306" height="36" rx="5" fill="none" stroke="currentColor" className="stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="32" y="86" fontSize="10.5" fontWeight="700" fill="currentColor">Active</text>
+    <text x="104" y="79" fontSize="10" fill="currentColor">DUT flops read din: the old value</text>
+    <text x="104" y="92" fontSize="10" fill="currentColor" opacity="0.8">{"@(posedge clk) module code wakes here"}</text>
+
+    <rect x="24" y="104" width="306" height="36" rx="5" fill="none" stroke="currentColor" className="stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="32" y="126" fontSize="10.5" fontWeight="700" fill="currentColor">NBA</text>
+    <text x="104" y="126" fontSize="10" fill="currentColor">the flops' q updates</text>
+
+    <rect x="24" y="144" width="306" height="36" rx="5" fill="none" stroke="currentColor" className="stroke-sky-600 dark:stroke-sky-400" />
+    <text x="32" y="166" fontSize="10.5" fontWeight="700" fill="currentColor">Observed</text>
+    <text x="104" y="159" fontSize="10" fill="currentColor">{"the block triggers @(cb)"}</text>
+    <text x="104" y="172" fontSize="10" fill="currentColor"><tspan className="fill-violet-600 dark:fill-violet-300">▼</tspan>{" an explicit #0 photo is taken here ②"}</text>
+
+    <rect x="24" y="184" width="306" height="36" rx="5" fill="none" stroke="currentColor" className="stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="32" y="206" fontSize="10.5" fontWeight="700" fill="currentColor">Active again</text>
+    <text x="104" y="199" fontSize="10" fill="currentColor">{"@(cb) code reads cb.x: this edge's sample"}</text>
+    <text x="104" y="212" fontSize="10" fill="currentColor" opacity="0.8">{"and issues cb.din <= v"}</text>
+
+    <rect x="24" y="224" width="306" height="36" rx="5" fill="none" stroke="currentColor" className="stroke-violet-600 dark:stroke-violet-400" />
+    <text x="32" y="246" fontSize="10.5" fontWeight="700" fill="currentColor">Re-NBA</text>
+    <text x="104" y="239" fontSize="10" fill="currentColor"><tspan className="fill-amber-600 dark:fill-amber-300">◆</tspan>{" din changes, after the flops read it ③"}</text>
+    <text x="104" y="252" fontSize="10" fill="currentColor" opacity="0.8">two drives in one cycle: only the last ④</text>
+
+    <text x="177" y="278" fontSize="9.5" fill="currentColor" opacity="0.8" textAnchor="middle">time advances to the next clock edge</text>
+    <rect x="24" y="284" width="306" height="32" rx="5" fill="none" stroke="currentColor" className="stroke-emerald-600 dark:stroke-emerald-400" />
+    <text x="32" y="304" fontSize="10.5" fontWeight="700" fill="currentColor">Next edge</text>
+    <text x="104" y="304" fontSize="10" fill="currentColor"><tspan className="fill-emerald-600 dark:fill-emerald-400">✓</tspan>{" the flops read the new din"}</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">
+    Here <code>cb</code> is the clocking block's name, and <code>#1step</code> is the default photo. Read it from top to bottom; regions with nothing to do at this edge are left out. Where the analogy breaks: ① the age of the photo, ② <code>#0</code> in Observed, ③ the same time slot, ④ the last parcel wins. (§4.4.2.1, §14.4, §14.10, §14.13, §14.16, §14.16.2)
+  </figcaption>
+</figure>
+
 **You will be able to:**
 1. **Predict** when a clocking block samples each input and when each synchronous drive changes its signal, for `#1step`, `#N` and explicit `#0` input skews and for zero and nonzero output skews.
 2. **Predict** where a process that waits on `@(cb)` resumes compared with one that waits on `@(posedge clk)`, and **write** cycle delays that compile: `##N` with a default clocking, and `cb.sig <= ##N v` in a drive.
@@ -50,31 +103,38 @@ end
 | The TB first, then the flop | the new `next_value`, one cycle early | a race: the order is the simulator's choice (§4.7) |
 | The TB waits on `@(cb)` and drives `cb.din <= next_value` | the old `din` in every order: `din` changes in the Re-NBA region, after the flop has read it | race-free (§14.16) |
 
-Reading DUT outputs is a separate question. A read of `q` right after `@(posedge clk)` is deterministic *only* while every writer on that path uses `<=`: the read happens in the Active region, before the NBA update. If any design logic on that path uses blocking assignments, the read races too. A TB that drives with `<=`, as in [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index), already avoids the drive race. A clocking block adds three things on top: reads of the values from before the edge that do not depend on how the DUT is written, explicit skews, and one place in the interface that owns all the timing. To watch this race appear and disappear in every legal order, step through the testbench scenarios in [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index).
+**Watch it.** Step the racy drive in both process orders, then switch to the clocking block and see the same edge with no race.
+
+<TimeSlotTraceVisualizer scenario="tb-blocking-drive" scenarios={["tb-blocking-drive", "tb-clocking-block"]} />
+
+Reading DUT outputs is a separate question. A read of `q` right after `@(posedge clk)` is deterministic *only* while every writer on that path uses `<=`: the read happens in the Active region, before the NBA update. If any design logic on that path uses blocking assignments, the read races too. A TB that drives with `<=`, as in [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index), already avoids the drive race. A clocking block adds three things on top: reads of the values from before the edge that do not depend on how the DUT is written, explicit skews, and one place in the interface that owns all the timing. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) steps through the rest of the testbench scenarios in every legal order, including a `<=` drive.
 
 ### Anatomy of a clocking block
 
-Here is the driver's view of the bench you will build in Make It Work, declared inside its interface:
+Here is the driver's view of the bench you will build in Make It Work, declared inside its interface. The numbers in the comments match the rows of the terms table below it:
 
 ```systemverilog
 // snippet: inside interface pipe_if (the complete code is in Make It Work)
-default clocking cb @(posedge clk);   // block name, then the clocking event
-  default input #1step output #0;     // the default skews, written out
-  output in_vld, in_data;             // the TB drives these: output clockvars
-  input  out_vld, out_data;           // the TB samples these: input clockvars
+default clocking cb @(posedge clk);   // ① block name, then ② the clocking event
+  default input #1step output #0;     // ③ the default skews, written out
+  output in_vld, in_data;             // ④ the TB drives these: output clockvars
+  input  out_vld, out_data;           // ⑤ the TB samples these: input clockvars
 endclocking
 ```
 
+**The terms, as a reference:**
+
 | Term | In the example | Meaning |
 |---|---|---|
-| **Clocking event** | `@(posedge clk)` | The event the block is clocked on. Every skew is measured from it (§14.3, §14.4). |
+| **Block name** | ① `cb` | The name your code uses. The word `default` also makes the block the default clocking of this interface, so `##` in this interface counts its cycles (§14.12). |
+| **Clocking event** | ② `@(posedge clk)` | The event the block is clocked on. Every skew is measured from it (§14.3, §14.4). |
+| **Skew** | ③ `#1step`, `#0` | How long before the clocking event an input is sampled, or how long after it an output is driven (§14.4). |
 | **Clocking signal** | the interface variable `in_vld` | A net or variable in the surrounding scope that the block lists (§14.3). |
-| **Clockvar** | `cb.in_vld` | The block's own view of a clocking signal, reached with a dot (§14.3, §14.7). An input clockvar holds the latest sample; an output clockvar is the target of drives. |
-| **Skew** | `#1step`, `#0` | How long before the clocking event an input is sampled, or how long after it an output is driven (§14.4). |
+| **Clockvar** | ④ `cb.in_vld`, ⑤ `cb.out_vld` | The block's own view of a clocking signal, reached with a dot (§14.3, §14.7). An input clockvar holds the latest sample; an output clockvar is the target of drives. |
 | **Synchronous drive** | `cb.in_vld <= 1'b1;` | The only legal way to write an output clockvar (§14.16). |
 | **Clocking block event** | `@(cb)` | An event named after the block. The block triggers it in the Observed region, after it has processed its clocking event and stored the new samples (§14.10, §14.13). |
 
-Keep the last term apart from the first. The **clocking event** is the clock edge itself; the **clocking block event** is the notification the block sends once it has finished with that edge. Code that waits on `@(cb)` waits for the second.
+Keep the last term apart from the clocking event. The **clocking event** is the clock edge itself; the **clocking block event** is the notification the block sends once it has finished with that edge. Code that waits on `@(cb)` waits for the second.
 
 **Rules you will meet on day one:**
 1. **Directions are checked.** Directions are seen from the TB: `output in_vld` means the TB drives `in_vld` into the DUT (§14.9). Writing an input clockvar or reading an output clockvar is a compile error (§14.3).
@@ -82,6 +142,21 @@ Keep the last term apart from the first. The **clocking event** is the clock edg
 3. **Skew values.** A skew is a time literal such as `2ns`, or a constant expression that evaluates to a non-negative integer, and it may be a parameter (§14.3, §14.4). A plain number uses the time unit of the enclosing scope: `#2` in an interface with `timeunit 1ns` means 2 ns. `1step` is one unit of the global time precision, the finest precision in the whole design (§3.14.3).
 4. **Where it may live.** A clocking block is declared in a module, interface, checker or program. It cannot be declared in a package, class, task or function, and clocking blocks cannot be nested (§14.7). One copy exists per instance of the enclosing block, so every instance of `pipe_if` has its own `cb`. That is why class code reaches a clocking block through a virtual interface handle, `vif.cb` (§25.9.1, [F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index)).
 5. **Several blocks.** A scope may declare several clocking blocks, for different clocks or for different roles on one clock (§14.6, §14.8). Blocks on the same clock share one synchronization event, so `@(bus.cb)` and `@(bus.mon_cb)` fire at the same point of the same time slot (§14.6).
+
+**Predict, then check.** Rule 1 settles `output` and `input`. An `inout` clockvar is both under one name. If `cb` listed `inout in_vld;`, what would `x = cb.in_vld;` read right after `cb.in_vld <= 1'b1;`: the value just driven, or the latest sample?
+
+<details>
+<summary>Check your prediction: what code may do with each clockvar</summary>
+
+| Direction | Read `cb.x` | Write `cb.x` |
+|---|---|---|
+| `input` | returns the latest sample (§14.13) | illegal (§14.3) |
+| `output` | illegal (§14.3) | synchronous drive only (§14.16) |
+| `inout` | returns the input sample (§14.3) | drives the output side; the input side does not change (§14.16.1) |
+
+So with `inout` the read returns the latest sample, not the value just driven. With `output in_vld`, as in the example, `x = cb.in_vld;` does not compile: reading an output clockvar is illegal.
+
+</details>
 
 **Other forms you will meet:**
 
@@ -140,6 +215,47 @@ Every input clockvar is sampled at its clocking event (§14.13). The input skew 
 | `#N`, N > 0 | The value N time units before the edge; a change at exactly that time is included | The Postponed region of the time slot N time units before the edge (§14.13) |
 | Explicit `#0` | The value at the edge itself, after the design's nonblocking updates for that edge | The Observed region of the edge's time slot (§14.4, §14.13) |
 
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <div className="mb-2 text-sm font-semibold text-foreground">Where each input skew takes its photo</div>
+  <svg viewBox="0 0 340 180" role="img" aria-label="Three time slots on a time axis, for a signal dout that changes 1 ns before a clock edge. In the slot 2 ns before the edge, the #2ns photo is taken in the Postponed region and reads the old value. In the slot 1 ns before the edge, dout changes from old to new. In the slot of the edge, the #1step photo is taken in the Preponed region and reads the new value, the flops read their inputs in Active, q updates in NBA, and an explicit #0 photo is taken in Observed and reads the new value." style={{ width: "100%", maxWidth: 440 }}>
+    <title>Where each input skew takes its photo</title>
+    <defs>
+      <marker id="f4c-skew-axis" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 Z" fill="currentColor" />
+      </marker>
+    </defs>
+
+    <text x="66" y="20" fontSize="10.5" fontWeight="700" fill="currentColor" textAnchor="middle">edge - 2 ns</text>
+    <rect x="6" y="28" width="120" height="120" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.35" />
+    <text x="66" y="84" fontSize="9.5" fill="currentColor" opacity="0.8" textAnchor="middle">earlier regions</text>
+    <rect x="10" y="118" width="112" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+    <text x="14" y="133" fontSize="9.5" fill="currentColor">{"Postponed "}<tspan className="fill-violet-600 dark:fill-violet-300">▼</tspan>{" #2ns: old"}</text>
+
+    <text x="164" y="20" fontSize="10.5" fontWeight="700" fill="currentColor" textAnchor="middle">edge - 1 ns</text>
+    <rect x="132" y="28" width="64" height="120" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.35" />
+    <text x="164" y="80" fontSize="10" fontWeight="700" fill="currentColor" textAnchor="middle">dout</text>
+    <text x="164" y="94" fontSize="10" fill="currentColor" textAnchor="middle">changes</text>
+    <text x="164" y="108" fontSize="10" fill="currentColor" textAnchor="middle">old → new</text>
+
+    <text x="268" y="20" fontSize="10.5" fontWeight="700" fill="currentColor" textAnchor="middle">the edge</text>
+    <rect x="202" y="28" width="132" height="120" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.35" />
+    <rect x="206" y="34" width="124" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+    <text x="210" y="49" fontSize="9.5" fill="currentColor">{"Preponed "}<tspan className="fill-violet-600 dark:fill-violet-300">▼</tspan>{" #1step: new"}</text>
+    <rect x="206" y="62" width="124" height="24" rx="4" fill="none" stroke="currentColor" className="stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="210" y="77" fontSize="9.5" fill="currentColor">Active: flops read</text>
+    <rect x="206" y="90" width="124" height="24" rx="4" fill="none" stroke="currentColor" className="stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="210" y="105" fontSize="9.5" fill="currentColor">NBA: flops update</text>
+    <rect x="206" y="118" width="124" height="24" rx="4" fill="none" stroke="currentColor" className="stroke-sky-600 dark:stroke-sky-400" />
+    <text x="210" y="133" fontSize="9.5" fill="currentColor">{"Observed "}<tspan className="fill-violet-600 dark:fill-violet-300">▼</tspan>{" #0: new"}</text>
+
+    <line x1="6" y1="160" x2="334" y2="160" stroke="currentColor" strokeOpacity="0.6" markerEnd="url(#f4c-skew-axis)" />
+    <text x="170" y="175" fontSize="9.5" fill="currentColor" opacity="0.8" textAnchor="middle">simulation time (slots not drawn to scale)</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">
+    Here <code>dout</code> changes 1 ns before the edge. Each ▼ is one skew's photo, and the word after it is the value it reads: old from before the change, new from after it. An explicit <code>#0</code> also reads new here because this path does not change <code>dout</code> at the edge; with a flop that updates at the edge, it is the only photo that sees the update (§4.4.2.1, §14.4, §14.13).
+  </figcaption>
+</figure>
+
 - Between clocking events, an input clockvar keeps returning the sample of the most recent clocking event (§14.13). The photo does not change until the next edge, whatever the live signal does.
 - `@(cb.out_vld)` and `@(posedge cb.out_vld)` wait for a change of the *sampled* value, not of the live signal (§14.15).
 - A nonzero input skew is a setup window: a DUT output that changes inside it is seen one cycle later. In zero-delay RTL simulation, keep the default `#1step`.
@@ -148,11 +264,64 @@ Every input clockvar is sampled at its clocking event (§14.13). The input skew 
 
 ### Driving: the delivery
 
+<details>
+<summary>Predict: the driver runs <code>cb.din &lt;= 8'hA5</code> right after <code>@(cb)</code> at 25 ns, and edges come every 10 ns. Which edge captures A5?</summary>
+
+<TimingDiagram
+  title="One synchronous drive, issued at 25 ns"
+  caption={<>Each value is what a flop reads at that edge, so a change just after edge k first shows at k + 1. Follow A5 from <code>din</code> to <code>q</code>.</>}
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "din", kind: "bus", values: ["00", "00", "A5", "A5"] },
+    { name: "q", kind: "bus", values: ["00", "00", "00", "A5"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "drive", label: "25 ns: cb.din <= A5 issued; din changes in Re-NBA of this time slot, after the flop read 00", short: "25 ns" },
+    { edge: 2, tone: "sample", label: "35 ns: the flop reads din = A5", short: "35 ns" }
+  ]}
+/>
+
+- **The axis.** Axis *k* is the rising edge at 15 + 10*k* ns. The starting value 00 is illustrative.
+- **◆ at axis 1.** The drive is issued at 25 ns, and `din` changes in Re-NBA, after the flop has read 00 there.
+- **▼ at axis 2.** The flop reads A5 at 35 ns, so that is the capture edge, in every process order (§14.16), and `q` shows A5 at axis 3.
+
+</details>
+
+**Predict: which of these six statements compile?**
+
+```systemverilog
+// snippet: sort these before you open the answer
+cb.din <= #4 v;
+cb.din <= v;
+force cb.din = v;
+{cb.a, cb.b} <= v;
+cb.data[3:0] <= 4'h5;
+assign cb.din = v;
+```
+
+<details>
+<summary>Check your prediction</summary>
+
+| Statement | Legal? | Why (all §14.16) |
+|---|---|---|
+| `cb.din <= #4 v;` | no | an ordinary intra-assignment delay |
+| `cb.din <= v;` | yes | the synchronous-drive form |
+| `force cb.din = v;` | no | a procedural continuous assignment to a clockvar |
+| `{cb.a, cb.b} <= v;` | no | a concatenation is not allowed as the target |
+| `cb.data[3:0] <= 4'h5;` | yes | the target may be a bit-select or a slice |
+| `assign cb.din = v;` | no | a continuous assignment to a clockvar |
+
+Only the synchronous-drive form may write a clockvar. `assign` and `force` on a clockvar are illegal, and so is an ordinary intra-assignment delay: `cb.din <= #4 v;` is an error (§14.16). The target may be a bit-select or a slice, as in `cb.data[3:0] <= 4'h5;`, but not a concatenation (§14.16).
+
+One more legal form, `cb.din <= ##1 v;`, waits for "Cycle delays and default clocking" below.
+
+</details>
+
 - A drive with output skew `#0`, executed at the clocking event, updates its signal in the Re-NBA region of that same time slot (§14.16). By then the design has made its nonblocking updates for the edge: the DUT's flops have captured the old value, and they capture the new one at the next edge.
 - With a nonzero output skew, such as `output #2ns`, the signal changes in the Re-NBA region of the time slot that lies the skew after the edge (§14.16).
 - It does not matter which code issues the drive: module, interface, class or program code all land in Re-NBA (§14.16).
 - A drive executed **between** edges does not block. Its right-hand side is evaluated at once, but the drive acts as if it had been executed at the next clocking event (§14.16). That is why the M1 bench's `bus.cb.in_vld <= 1'b0;` at time 0 changes `in_vld` at the first edge, at 5 ns.
-- Only the synchronous-drive form may write a clockvar. `assign` and `force` on a clockvar are illegal, and so is an ordinary intra-assignment delay: `cb.din <= #4 v;` is an error (§14.16). The target may be a bit-select or a slice, as in `cb.data[3:0] <= 4'h5;`, but not a concatenation (§14.16).
 - When the clocking signal is a net, the block creates its own driver on that net, initialized to `'z`, so the net sees nothing from the block until the first drive (§14.16).
 
 **Classic mistake:** thinking that a drive changes the signal at once, like a blocking assignment, or in the NBA region together with the design's flops. A synchronous drive always lands in Re-NBA.
@@ -163,6 +332,37 @@ Every input clockvar is sampled at its clocking event (§14.13). The input skew 
 - So "`@(cb)`, then read `cb.x`" always reads this edge's sample, whatever region the waiting process runs in (§14.13).
 - Module or class code that waits on `@(posedge clk)` resumes in the same Active region as the clock edge. If it then reads `cb.x`, it races the block's own update of its samples and may get the old sample or the new one (§14.13, §14.4 NOTE). Program code is the exception; see "Program blocks" below.
 - The rule for every bench: wait on the clocking block event of the block you read or drive. Never wait on `@(posedge clk)` and then touch a clockvar.
+
+<SequenceDiagram
+  title="Two waiters on one clock edge"
+  caption={"P1 and P2 are module or class code, and both read cb.x after their wait. Each divider is one region of the same time slot, and time does not advance. P2 runs with the edge, so its read may come before or after the block stores the new samples. P1 runs only after @(cb), so it always reads this edge's sample. An explicit #0 input is stored later, at the end of Observed, and P1 still reads it correctly (§14.10, §14.13, §14.4 NOTE)."}
+  columnWidth={132}
+  participants={[
+    { id: "cb", label: "cb", sublabel: "the block" },
+    { id: "p2", label: "P2", sublabel: "@(posedge clk)" },
+    { id: "p1", label: "P1", sublabel: "@(cb)" }
+  ]}
+  messages={[
+    { kind: "divider", label: "Active region of the clk edge (the clocking event)" },
+    { kind: "self", from: "cb", label: "clocking event: store samples" },
+    { kind: "self", from: "p2", label: "the edge wakes P2" },
+    { kind: "self", from: "p2", label: "reads cb.x: old or new sample", tone: "error" },
+    { kind: "note", from: "cb", to: "p2", label: "The order of P2's read and the sample update is not fixed (§14.13, §14.4 NOTE)." },
+    { kind: "divider", label: "NBA region: the design's flops update" },
+    { kind: "divider", label: "Observed region" },
+    { kind: "async", from: "cb", to: "p1", label: "triggers @(cb)" },
+    { kind: "divider", label: "First Active region after Observed (§14.10)" },
+    { kind: "self", from: "p1", label: "reads cb.x: this edge's sample", tone: "active" },
+    { kind: "self", from: "p1", label: "cb.din <= v: lands in Re-NBA" }
+  ]}
+/>
+
+**And in program code?**
+
+| Wait | Resumes in | Then a read of `cb.x` |
+|---|---|---|
+| `@(cb)` in program code | the Reactive region (§24.3.1) | always this edge's sample (§14.13) |
+| `@(posedge clk)` in program code, with the clock made by a module | the Reactive region (§24.3.1) | deterministic (§14.13 NOTE, §14.4 NOTE); see "Program blocks" below |
 
 ### Experiment: move the skews
 
@@ -175,13 +375,42 @@ The visual below runs a tested model of these rules over four clock cycles. ▼ 
 
 <ClockingBlockSkewVisualizer />
 
-What the four runs show:
+What the four runs show. Open each one only after you have made its prediction:
 
-- **Defaults:** `cb.dout` is 2 at edge 3. The photo shows the value from before the edge; the DUT's update to 3 lands later in that time slot.
-- **Explicit `#0`:** 3, because the photo is taken in the Observed region, after the NBA update. It is the only skew whose photo is not taken before the edge.
-- **Setup window:** with the +9 ns path, `dout` becomes 2 at 24 ns. The `#2ns` photo is taken at 23 ns and still shows 1, while `#1step` shows 2. A change inside the input skew is seen one cycle later.
-- **Bad RTL:** "`@(posedge clk)` then `cb.dout`" races in every run, because each edge's photo differs from the last. A raw `@(posedge clk)` read of `dout` races once the DUT writes it with a blocking assignment. "`@(cb)` then `cb.dout`" stays exact throughout.
-- **Drives:** a synchronous drive issued after `@(cb)` at edge *k* reaches the DUT's flops at edge *k* + 1, for any output skew shorter than one clock period.
+<details>
+<summary>Run 1: defaults</summary>
+
+**Defaults:** `cb.dout` is 2 at edge 3. The photo shows the value from before the edge; the DUT's update to 3 lands later in that time slot.
+
+</details>
+
+<details>
+<summary>Run 2: explicit #0</summary>
+
+**Explicit `#0`:** 3, because the photo is taken in the Observed region, after the NBA update. It is the only skew whose photo is not taken before the edge.
+
+</details>
+
+<details>
+<summary>Run 3: setup window</summary>
+
+**Setup window:** with the +9 ns path, `dout` becomes 2 at 24 ns. The `#2ns` photo is taken at 23 ns and still shows 1, while `#1step` shows 2. A change inside the input skew is seen one cycle later.
+
+</details>
+
+<details>
+<summary>Run 4: bad RTL</summary>
+
+**Bad RTL:** "`@(posedge clk)` then `cb.dout`" races in every run, because each edge's photo differs from the last. A raw `@(posedge clk)` read of `dout` races once the DUT writes it with a blocking assignment. "`@(cb)` then `cb.dout`" stays exact throughout.
+
+</details>
+
+<details>
+<summary>All runs: the drives</summary>
+
+**Drives:** a synchronous drive issued after `@(cb)` at edge *k* reaches the DUT's flops at edge *k* + 1, for any output skew shorter than one clock period.
+
+</details>
 
 <VisualRecap
   title="Photo before the edge, delivery after it"
@@ -227,12 +456,60 @@ endtask
 - **One default per scope.** A module, interface, program or checker may declare one default clocking; a second is a compile error. The default applies in that scope and in modules, interfaces and checkers nested in it, but not in other instances (§14.12).
 - **So it does not follow the handle.** The default clocking of `pipe_if` reaches neither `tb_top`, which instantiates the interface, nor a class in a package. `##2;` in either place is a compile error. Use `repeat (2) @(vif.cb);`, or call an interface task such as `wait_cycles()`.
 - **Partial cycles.** `##1` executed between edges waits only for the rest of the current cycle (§14.11).
-- **Not for ordinary assignments.** `x = ##1 y;` and `x <= ##1 y;` are illegal (§14.11). The synchronous drive `cb.x <= ##1 y;` is the only assignment-like form that takes `##` (§14.16).
+- **Not for ordinary assignments.** `x = ##1 y;` and `x <= ##1 y;` are illegal (§14.11). The synchronous drive `cb.x <= ##1 y;` is the only assignment-like form that takes `##` (§14.16). So `cb.din <= ##1 v;` compiles, because a cycle delay is the one delay a drive may hold (§14.16).
 - **Assertions too.** A default clocking also clocks concurrent assertions that have no clock of their own (§16.16; [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)).
+
+<ArchitectureDiagram
+  title="Where does ##2; compile?"
+  caption={"A default clocking reaches its own scope and the modules, interfaces and checkers nested in it, not the code that instantiates it, and it does not travel with a handle (§14.11, §14.12). bus declares cb as its default clocking, so ##2; compiles only inside bus. The two dashed and dotted lines are the legal ways around it: tb_top calls an interface task that uses ##, and the class counts cycles of cb through its handle with repeat (2) @(vif.cb);."}
+  cellWidth={136}
+  gapX={80}
+  gapY={84}
+  nodes={[
+    { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 1, container: true },
+    { id: "bus", label: "bus: pipe_if", sublabel: "##2; compiles", kind: "interface", col: 0, row: 0, state: "ok" },
+    { id: "main", label: "initial main", sublabel: "##2; compile error", kind: "generic", col: 1, row: 0, state: "error" },
+    { id: "pkg", label: "a package", kind: "generic", col: 0, row: 1, colSpan: 2, rowSpan: 1, container: true },
+    { id: "drv", label: "class pipe_drv", sublabel: "##2; compile error", kind: "driver", col: 0, row: 1, state: "error" }
+  ]}
+  edges={[
+    { from: "main", to: "bus", style: "causal", label: "calls" },
+    { from: "drv", to: "bus", style: "control", label: "@(vif.cb)" }
+  ]}
+/>
 
 **Predict with the visual.** Go back to the experiment above, open "Show advanced: ## and default clocking", and untick "Declare cb as default clocking". Before you look at the result: which of the three drive forms stops compiling?
 
+<details>
+<summary>Check your prediction: which form fails, and when each one is captured</summary>
+
 **Debrief.** Only `##1 cb.din <= v;` fails, because its `##1` counts cycles of the default clocking. `cb.din <= ##1 v;` still compiles, because its `##1` counts cycles of `cb` itself. Tick the box again and compare the capture edges: the plain drive is captured at edge 3 and both `##1` forms at edge 4, but only the prefix form blocks the testbench thread until edge 3.
+
+<TimingDiagram
+  title="The three drive forms, each reached at 15 ns"
+  caption={<>Three separate runs, one row of <code>din</code> per form, showing what the flop reads at each edge. The plain row gets A5 one edge sooner, and the bottom row shows the one thing that separates the two <code>##1</code> forms.</>}
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "plain", kind: "bus", values: [undefined, undefined, "A5", "A5"] },
+    { name: "<= ##1", kind: "bus", values: [undefined, undefined, undefined, "A5"] },
+    { name: "##1 <=", kind: "bus", values: [undefined, undefined, undefined, "A5"] },
+    { name: "##1 blocks", kind: "bit", values: [0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "drive", label: "15 ns: all three statements are reached", short: "15 ns" },
+    { edge: 2, tone: "sample", label: "25 ns: the flop captures the plain drive; both ##1 forms change din in Re-NBA", short: "25 ns" },
+    { edge: 3, tone: "pass", label: "35 ns: the flop captures A5 for both ##1 forms", short: "35 ns" }
+  ]}
+/>
+
+- **The rows.** `plain` is `cb.din <= v;`, `<= ##1` is `cb.din <= ##1 v;`, and `##1 <=` is `##1 cb.din <= v;`. Hatching means `din` has not been driven yet. `##1 blocks` is high while the prefix form's thread waits, from 15 to 25 ns.
+- **The axis.** Axis *k* is the rising edge at 5 + 10*k* ns, so axis 1 is the experiment's edge 2 and axis 2 its edge 3.
+- **◆ at axis 1.** All three statements are reached at 15 ns, and the plain drive lands in Re-NBA there.
+- **▼ at axis 2.** At 25 ns the flop captures the plain drive, and the other two change `din` in Re-NBA.
+- **✓ at axis 3.** At 35 ns the flop captures A5 for both `##1` forms. Their waveforms match; only the prefix form holds the thread until 25 ns.
+
+</details>
 
 ### Clocking blocks in an interface: one per role
 
@@ -266,6 +543,31 @@ endtask
 
 The pair keeps a fixed rhythm. `send()` drives after `@(bus.cb)` at edge *k*, the DUT captures the item at edge *k* + 1, and the two-stage pipeline presents the result so that `mon_cb` samples it at edge *k* + 3.
 
+<SequenceDiagram
+  title="One item, from send() to the monitor's check"
+  caption={"Each divider is a rising clock edge. The rhythm is fixed: driven after edge k, captured at edge k + 1, checked at edge k + 3. The monitor reads only mon_cb, so it sees the DUT's new output one edge after the output changes."}
+  columnWidth={132}
+  participants={[
+    { id: "send", label: "send()", kind: "driver" },
+    { id: "cb", label: "cb" },
+    { id: "dut", label: "dut: pipe2", kind: "dut" },
+    { id: "mon", label: "monitor()", sublabel: "reads mon_cb", kind: "monitor" }
+  ]}
+  messages={[
+    { kind: "divider", label: "edge k: send() runs right after @(bus.cb)" },
+    { from: "send", to: "cb", label: "cb.in_vld <= 1, cb.in_data <= data" },
+    { kind: "self", from: "send", label: "pushes data + 1 onto exp_q" },
+    { kind: "async", from: "cb", to: "dut", label: "in_* change in Re-NBA" },
+    { kind: "divider", label: "edge k + 1" },
+    { kind: "self", from: "dut", label: "flops capture the item into stage 1" },
+    { kind: "divider", label: "edge k + 2" },
+    { kind: "self", from: "dut", label: "stage 2 takes it; out_* change after this edge" },
+    { kind: "divider", label: "edge k + 3" },
+    { kind: "async", from: "dut", to: "mon", label: "mon_cb's photo holds the new out_*" },
+    { kind: "self", from: "mon", label: "compares with exp_q", tone: "active" }
+  ]}
+/>
+
 **A preview of the class form ([I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index)).** From Tier 2 on, the driver and monitor become classes. A class cannot contain a clocking block (§14.7), so it holds a virtual interface handle and reaches the blocks through it:
 
 ```systemverilog
@@ -295,7 +597,10 @@ modport mon_mp (clocking mon_cb);    // a monitor reaches mon_cb, so it cannot d
 
 ### Reset stays outside the clocking block
 
-An asynchronous reset must be able to change between clock edges, at the moment the TB decides. A synchronous drive cannot do that: a drive executed between edges acts as if it were executed at the next clocking event, and lands in the Re-NBA region of that time slot (§14.16). The picture compares two ways of asserting `rst_n` at 12 ns, with rising clock edges at 5, 15 and 25 ns.
+An asynchronous reset must be able to change between clock edges, at the moment the TB decides. Can a synchronous drive do that? Open the reveal to compare two ways of asserting `rst_n` at 12 ns, with rising clock edges at 5, 15 and 25 ns.
+
+<details>
+<summary>Predict: <code>cb.rst_n &lt;= 1'b0;</code> executes at 12 ns. When does the DUT reset, and how many extra clock edges does it run through first? Open to compare with a direct write.</summary>
 
 <figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
   <svg viewBox="0 0 340 176" role="img" aria-label="Timeline from 0 to 30 ns with rising clock edges at 5, 15 and 25 ns. Written directly, rst_n falls at 12 ns and the DUT resets at 12 ns. Driven through a clocking block at 12 ns, rst_n stays high until the 15 ns edge and falls in the Re-NBA region of that time slot, after the flops' normal capture at 15 ns." style={{ width: "100%", maxWidth: 420 }}>
@@ -329,11 +634,42 @@ In words:
 - **Direct write**, `bus.rst_n = 1'b0;` at 12 ns: `rst_n` falls at 12 ns, and the DUT's `negedge rst_n` branch resets the flops at 12 ns.
 - **Through a clocking block**, `cb.rst_n <= 1'b0;` executed at 12 ns: nothing happens until the 15 ns edge. At 15 ns the flops first make their normal capture in the Active region; then `rst_n` falls in Re-NBA, and the `negedge rst_n` resets them in a later pass of the same time slot (§14.16, §4.5). The DUT ran through one more clock edge than you asked for.
 
-The M1 bench therefore:
+A synchronous drive cannot do what reset needs: a drive executed between edges acts as if it were executed at the next clocking event, and lands in the Re-NBA region of that time slot (§14.16).
+
+</details>
+
+So reset stays a direct write. The M1 bench therefore:
 1. Declares `rst_n` as a plain interface variable with a declaration initializer, `logic rst_n = 1'b0;`. The initializer runs at time 0, before any `initial` or `always` procedure starts (§6.8), so the DUT is in reset from the start.
 2. Releases it with a direct write between edges: `#12 bus.rst_n = 1'b1;`. This is practice, not a rule of the standard: assert reset whenever you need to, but release it away from the active clock edge. Real cell libraries add recovery and removal checks, whose values are library- and tool-dependent.
 3. Lists `rst_n` as an **input** of `mon_cb`, and the monitor skips every edge whose sample shows reset asserted. Sampling reset through a clocking block is enough here because this bench applies only a power-on reset and its clock runs freely. It is not a general rule: a clocking block samples only at its clocking event (§14.13), so it sees an asynchronous reset that arrives mid-test late, or never. A short pulse between two edges, or a reset held while the clock is gated off, leaves no sample at all. A monitor for such a DUT also watches the raw signal, with `@(negedge bus.rst_n)` in a fork against its sampling loop. A modport-typed handle reaches only what its modport lists (§25.5), so such a monitor also needs the raw reset in its modport: `modport mon_mp (clocking mon_cb, input rst_n);`.
 4. Starts driving only after the release, then synchronizes with `@(bus.cb)`. A reusable driver that does not release reset itself does the same with `wait (bus.rst_n === 1'b1); @(bus.cb);`.
+
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <div className="mb-2 text-sm font-semibold text-foreground">A reset pulse between two edges leaves no sample</div>
+  <svg viewBox="0 0 340 150" role="img" aria-label="Timeline from 0 to 30 ns with rising clock edges at 5, 15 and 25 ns. rst_n goes low at 17 ns and returns high at 22 ns, between the 15 and 25 ns edges. mon_cb samples rst_n only at the three edges and reads 1 each time. A raw @(negedge bus.rst_n) wakes at 17 ns." style={{ width: "100%", maxWidth: 420 }}>
+    <title>A reset pulse between two edges leaves no sample</title>
+    <line x1="85" y1="14" x2="85" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="175" y1="14" x2="175" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="265" y1="14" x2="265" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <text x="4" y="36" fontSize="11" fill="currentColor">clk</text>
+    <polyline points="40,40 85,40 85,24 130,24 130,40 175,40 175,24 220,24 220,40 265,40 265,24 310,24 310,40" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <text x="4" y="80" fontSize="11" fill="currentColor">rst_n</text>
+    <polyline points="40,70 193,70 193,86 238,86 238,70 310,70" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="85" y="64" fontSize="10" fill="currentColor" textAnchor="middle"><tspan className="fill-violet-600 dark:fill-violet-300">▼</tspan>{" 1"}</text>
+    <text x="175" y="64" fontSize="10" fill="currentColor" textAnchor="middle"><tspan className="fill-violet-600 dark:fill-violet-300">▼</tspan>{" 1"}</text>
+    <text x="265" y="64" fontSize="10" fill="currentColor" textAnchor="middle"><tspan className="fill-violet-600 dark:fill-violet-300">▼</tspan>{" 1"}</text>
+    <text x="40" y="108" fontSize="10" fill="currentColor"><tspan className="fill-violet-600 dark:fill-violet-300">▼</tspan>{" mon_cb.rst_n reads 1 at every edge"}</text>
+    <text x="40" y="122" fontSize="10" fill="currentColor">{"@(negedge bus.rst_n) wakes at 17 ns"}</text>
+    <text x="85" y="142" fontSize="10" fill="currentColor" textAnchor="middle">5</text>
+    <text x="175" y="142" fontSize="10" fill="currentColor" textAnchor="middle">15</text>
+    <text x="193" y="142" fontSize="10" fill="currentColor" textAnchor="middle">17</text>
+    <text x="238" y="142" fontSize="10" fill="currentColor" textAnchor="middle">22</text>
+    <text x="265" y="142" fontSize="10" fill="currentColor" textAnchor="middle">25 ns</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">
+    An illustrative mid-test pulse for rule 3; the M1 bench has none. A clocking block samples only at its clocking event (§14.13), so a monitor that reads only <code>mon_cb</code> never sees this reset. The raw watcher does.
+  </figcaption>
+</figure>
 
 Reset in the middle of a test is built in Tier 3 by [A-UVM-9 Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index), with a driver, monitor and scoreboard that flush their state. That bench's DUT resets synchronously; the lesson shows the raw-signal watcher separately, for a DUT with an asynchronous reset.
 
@@ -370,13 +706,59 @@ A second example from §14.16.2 shows how cycle delays count. `cb` is the defaul
 | `#1 cb.v <= ##2 expr3;` | 1 time unit after cycle 1 | cycle 3 |
 | `##1 cb.v <= ##1 expr4;` | cycle 2, after its `##1` | cycle 3 |
 
-In cycle 3 three drives mature in one Re-NBA region, and `expr4`, executed last, is the value `v` takes. A rule that fits every drive in the table: a `<= ##N` drive matures at the *N*-th clocking event after the statement executes, not counting the event of the time slot it executes in; a drive without `##` matures at the clocking event of its own time slot, or at the next one when it executes between edges.
+**Predict.** Three drives mature in cycle 3. Which value does `v` take?
+
+<details>
+<summary>Check your prediction: the value of v, cycle by cycle</summary>
+
+In cycle 3 three drives mature in one Re-NBA region, and `expr4`, executed last, is the value `v` takes.
+
+<TimingDiagram
+  title="The value of v across cycles 1 to 4"
+  caption={<>Each value is what a flop reads at that clocking event, so a drive that matures in a cycle first shows at the next one.</>}
+  edges={4}
+  cycleWidth={52}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "v", kind: "bus", values: ["0", "expr1", "expr1", "expr4"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "drive", label: "Cycle 1: expr1 matures", short: "cycle 1" },
+    { edge: 2, tone: "drive", label: "Cycle 3: expr2, expr3 and expr4 mature in one Re-NBA region; expr4 is driven", short: "cycle 3" }
+  ]}
+/>
+
+- **The axis.** Axis *k* is cycle *k* + 1. `v` is a bit that starts at 0 in the standard's example.
+- **◆ at axis 0.** `expr1` matures in cycle 1.
+- **◆ at axis 2.** `expr2`, `expr3` and `expr4` mature in one Re-NBA region of cycle 3; only `expr4` is driven, so `expr2` and `expr3` never appear (§14.16.2).
+
+</details>
+
+A rule that fits every drive in the table: a `<= ##N` drive matures at the *N*-th clocking event after the statement executes, not counting the event of the time slot it executes in; a drive without `##` matures at the clocking event of its own time slot, or at the next one when it executes between edges.
 
 **Mixing drives with other writes.** An ordinary procedural assignment to a variable that a clocking block lists as an output is legal: it changes the variable at once, and the value holds until the next drive or assignment. If a synchronous drive and a nonblocking assignment write the same variable in one time slot, they take effect in arbitrary order (§14.16.2). Push Further covers glitches, nets and double-data-rate drives.
 
 ### Program blocks
 
 A **program** is a testbench building block with special scheduling. §24.2 gives it three purposes: an entry point for testbench execution, a scope for program-wide data, tasks and functions, and a context whose code is scheduled in the reactive region set.
+
+**Predict before you read the table:** does a program with an `always` procedure compile, and in which region does its `initial` code start?
+
+<details>
+<summary>Check your prediction: module and program compared</summary>
+
+| Aspect | Module | Program |
+|---|---|---|
+| `always` procedures | yes | no (§24.3) |
+| `initial` and `final` procedures | yes | yes (§24.3) |
+| Class definitions | yes | yes (§24.3) |
+| Instances of modules or interfaces | yes | no (§24.3) |
+| `initial` code runs in | Active | Reactive (§24.3.1) |
+| `<=` updates land in | NBA | Re-NBA (§24.3.1) |
+| How the run ends | `$finish`, or nothing left to schedule (§4.5, §20.2) | also an implicit `$finish`, once every thread started by the `initial` procedures of all programs has ended (§24.3) |
+| Listed in Annex C as deprecated? | no | no (C.2, C.4) |
+
+</details>
 
 - **What it may contain** (§24.3): ports declared like module ports, data declarations, class definitions, subroutines, object instances, continuous assignments, concurrent assertions, and `initial` and `final` procedures.
 - **What it may not contain** (§24.3): `always` procedures, primitives, UDPs, and declarations or instances of modules, interfaces or other programs.
@@ -423,6 +805,15 @@ module tb_top;
 endmodule
 ```
 
+**How to work through it:**
+1. Predict both numbers, then run it.
+2. Add a second `@(posedge clk);` before the `$display`, predict again, then check.
+3. Replace `@(posedge clk)` with `@(cb)`. The output does not change: in a program both waits resume after the samples are stored.
+4. If your simulator rejects the nested program, move it after `endmodule` and refer to the module's signals by hierarchical name: `@(posedge tb_top.clk)` in the clocking event and in the `initial`, `input count = tb_top.count;` in the clocking block, and `tb_top.count` for the raw read. A top-level program that nothing instantiates is instantiated implicitly (§24.3).
+
+<details>
+<summary>Check your predictions for steps 1 and 2</summary>
+
 **Expected output** (illustrative: derived from §14.13 and §24.3.1, not captured from a simulator):
 
 ```text
@@ -431,11 +822,14 @@ endmodule
 
 The raw read sees the value after the edge's NBA update; the clockvar holds the photo from before the edge. Both reads are deterministic here, because program code runs after the clocking block event and the clock comes from a module (§14.4 NOTE, §14.13 NOTE). The run then ends at 5 ns by the implicit `$finish`, although `always #5` would run forever.
 
-**How to work through it:**
-1. Predict both numbers, then run it.
-2. Add a second `@(posedge clk);` before the `$display`, predict again, then check: the line becomes `15 ns: count=2 cb.count=1`.
-3. Replace `@(posedge clk)` with `@(cb)`. The output does not change: in a program both waits resume after the samples are stored.
-4. If your simulator rejects the nested program, move it after `endmodule` and refer to the module's signals by hierarchical name: `@(posedge tb_top.clk)` in the clocking event and in the `initial`, `input count = tb_top.count;` in the clocking block, and `tb_top.count` for the raw read. A top-level program that nothing instantiates is instantiated implicitly (§24.3).
+With the second `@(posedge clk);` from step 2, the line becomes `15 ns: count=2 cb.count=1`.
+
+| Program reads at | Raw `count` | `cb.count` | Why |
+|---|---|---|---|
+| 5 ns | 1 | 0 | the raw read comes after this edge's NBA update; the photo comes from before the edge |
+| 15 ns | 2 | 1 | the same, one edge later |
+
+</details>
 
 **Module or program at the top?** Both work. Practice, not a rule of the standard: class-based and UVM benches conventionally put the top in a module, here `tb_top`, and rely on clocking blocks, and that is what this curriculum does from here on. Class code inherits the region set of the thread that calls it (§24.3.1), so when `run_test()` is called from a module, every UVM thread runs in the active region set. Reach for a program when its reactive scheduling buys you something the clocking blocks cannot, such as several simultaneous clocks or clocks generated with nonblocking assignments (§24.4).
 
@@ -480,6 +874,62 @@ Tools word their messages differently, so the symptoms below describe what you s
 - `##N` needs a default clocking in the same scope; `cb.sig <= ##N v` does not.
 - One block per role: `cb` drives, `mon_cb` only samples. Asynchronous reset is written directly.
 - Programs schedule testbench code in the reactive region set and are not deprecated; most benches use a module top with clocking blocks.
+
+<VisualRecap
+  title="One edge, three roles"
+  rule="Wait on the block you touch. @(cb) fires after the photo is stored, and a drive lands in Re-NBA, so the DUT captures it at the next edge. One block per role. ## needs a default clocking in the same scope. Asynchronous reset is written directly, between edges."
+  code={`// in the interface
+default clocking cb @(posedge clk);
+  output din;  input dout;
+endclocking
+clocking mon_cb @(posedge clk);
+  input rst_n, din, dout;
+endclocking
+// driver, monitor, reset
+@(bus.cb)     bus.cb.din <= v;
+@(bus.mon_cb) x = bus.mon_cb.dout;
+#12 bus.rst_n = 1'b1;`}
+  mistake="Treating a clocking block as a cure-all. @(posedge clk) before a clockvar read still races, ##2 in a class still fails to compile, and two drives in one cycle still leave only the last value."
+  inTestbench="Every bench from M1 on: the driver uses cb and the monitor uses mon_cb, reached as vif.cb and vif.mon_cb from classes. Most benches keep a module top; a program block is not deprecated, and it is worth using when reactive scheduling solves a real problem."
+>
+  <svg viewBox="0 0 320 196" role="img" aria-label="One time slot as a row of six cells in order: Preponed takes the photo, Active has the flops read, NBA updates q, Observed fires @(cb), Active again runs your code, and Re-NBA lands the drive. At the next edge the flops read the new value. Below it, three roles: send() drives through cb, monitor() reads only mon_cb, and rst_n is written directly." style={{ width: "100%", maxWidth: 360 }}>
+    <title>One edge and the three roles</title>
+    <text x="4" y="12" fontSize="10" fill="currentColor">{"One time slot, left to right"}</text>
+    <rect x="4" y="20" width="50" height="50" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+    <rect x="56" y="20" width="50" height="50" rx="4" fill="none" stroke="currentColor" className="stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="108" y="20" width="50" height="50" rx="4" fill="none" stroke="currentColor" className="stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="160" y="20" width="50" height="50" rx="4" fill="none" stroke="currentColor" className="stroke-sky-600 dark:stroke-sky-400" />
+    <rect x="212" y="20" width="50" height="50" rx="4" fill="none" stroke="currentColor" className="stroke-cyan-600 dark:stroke-cyan-400" />
+    <rect x="264" y="20" width="52" height="50" rx="4" fill="none" stroke="currentColor" className="stroke-violet-600 dark:stroke-violet-400" />
+    <g fontSize="9.5" fill="currentColor" textAnchor="middle">
+      <text x="29" y="33" fontWeight="700">Preponed</text>
+      <text x="81" y="33" fontWeight="700">Active</text>
+      <text x="133" y="33" fontWeight="700">NBA</text>
+      <text x="185" y="33" fontWeight="700">Observed</text>
+      <text x="237" y="33" fontWeight="700">Active</text>
+      <text x="290" y="33" fontWeight="700">Re-NBA</text>
+      <text x="29" y="50"><tspan className="fill-violet-600 dark:fill-violet-300">▼</tspan>{" photo"}</text>
+      <text x="81" y="50">flops</text>
+      <text x="81" y="61">read din</text>
+      <text x="133" y="50">q</text>
+      <text x="133" y="61">updates</text>
+      <text x="185" y="50">{"@(cb)"}</text>
+      <text x="185" y="61">fires</text>
+      <text x="237" y="50">your</text>
+      <text x="237" y="61">code</text>
+      <text x="290" y="50"><tspan className="fill-amber-600 dark:fill-amber-300">◆</tspan>{" din"}</text>
+      <text x="290" y="61">lands</text>
+    </g>
+    <text x="316" y="86" fontSize="10" fill="currentColor" textAnchor="end"><tspan className="fill-emerald-600 dark:fill-emerald-400">✓</tspan>{" next edge: the flops read the new din"}</text>
+    <text x="4" y="110" fontSize="10" fill="currentColor">Three roles</text>
+    <rect x="4" y="116" width="312" height="22" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+    <text x="10" y="131" fontSize="10" fill="currentColor">{"send(): drives through cb, waits on @(bus.cb)"}</text>
+    <rect x="4" y="142" width="312" height="22" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+    <text x="10" y="157" fontSize="10" fill="currentColor">{"monitor(): reads only mon_cb, waits on @(bus.mon_cb)"}</text>
+    <rect x="4" y="168" width="312" height="22" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+    <text x="10" y="183" fontSize="10" fill="currentColor">rst_n: written directly; mon_cb only samples it</text>
+  </svg>
+</VisualRecap>
 
 ## Make It Work
 
@@ -629,6 +1079,11 @@ module tb_top;
 endmodule
 ```
 
+**The trace.** Predict first: `send(8'h10)` runs right after the 15 ns edge. At which edge does the monitor check `8'h11`?
+
+<details>
+<summary>Check your prediction: the expected output and the trace</summary>
+
 **Expected output** (illustrative: derived by hand from §14.13 and §14.16, not captured from a simulator; your simulator adds its own banner and a line for `$finish`):
 
 ```text
@@ -638,16 +1093,16 @@ endmodule
 PASS=3 FAIL=0
 ```
 
-**The trace.** Predict first: `send(8'h10)` runs right after the 15 ns edge. At which edge does the monitor check `8'h11`?
-
 <TimingDiagram
   title="The M1 bench from 15 ns to 85 ns"
-  caption={"Edge k is the rising edge at 15 + 10k ns. Each value is the #1step sample at that edge, which is also what the DUT's flops read there: a drive through cb lands in Re-NBA just after an edge, so it shows up as the sample at the next edge. Bus values are hexadecimal; hatching means unknown (X). rst_n is left out: it rises at 12 ns, between edges, which a cycle diagram cannot draw, and stays 1."}
+  caption={<>Each value is the <code>#1step</code> sample at that edge, which is also what the DUT's flops read there: a drive through <code>cb</code> lands in Re-NBA just after an edge, so it shows up as the sample at the next edge.</>}
   edges={8}
   signals={[
     { name: "clk", kind: "clock" },
     { name: "in_vld", kind: "bit", values: [0, 1, 1, 1, 0, 0, 0, 0] },
     { name: "in_data", kind: "bus", values: [undefined, "10", "20", "30", "30", "30", "30", "30"] },
+    { name: "vld_q", kind: "bit", values: [0, 0, 1, 1, 1, 0, 0, 0] },
+    { name: "data_q", kind: "bus", values: ["00", undefined, "11", "21", "31", "31", "31", "31"] },
     { name: "out_vld", kind: "bit", values: [0, 0, 0, 1, 1, 1, 0, 0] },
     { name: "out_data", kind: "bus", values: ["00", "00", undefined, "11", "21", "31", "31", "31"] }
   ]}
@@ -660,13 +1115,56 @@ PASS=3 FAIL=0
   ]}
 />
 
-What happens, edge by edge:
-- **Before the window.** The time-0 drive `bus.cb.in_vld <= 1'b0;` lands at the 5 ns edge, where the DUT is still in reset. `rst_n` rises at 12 ns, between edges.
-- **Edge 0, 15 ns (◆).** `main` resumes from `@(bus.cb)` and calls `send(8'h10)`. `in_vld` and `in_data` change in Re-NBA, after the DUT's flops have read their old values.
-- **Edge 1, 25 ns (▼).** The DUT captures `in_vld = 1` and `in_data = 10` into stage 1, the same values `mon_cb` samples. `send(8'h20)` drives the next item.
-- **Edge 2, 35 ns.** Stage 2 takes `11`, so `out_vld` and `out_data` change just after this edge. The X on `out_data` is stage 1's value from 15 ns, when `in_data` had never been driven; `out_vld` is 0, so nobody reads it.
-- **Edges 3 to 5, 45 to 65 ns (✓).** `mon_cb` samples `out_vld = 1` with `11`, `21` and `31`, and the monitor prints a PASS line each time. After the 45 ns edge, `main` drives `in_vld` low.
-- **Edge 7, 85 ns.** `wait_cycles(4)` returns, and `main` prints `PASS=3 FAIL=0` and calls `$finish`.
+Reading the picture:
+- **The axis.** Edge *k* is the rising edge at 15 + 10*k* ns. Bus values are hexadecimal; hatching means unknown (X).
+- **`rst_n`** is left out: it rises at 12 ns, between edges, which a cycle diagram cannot draw, and stays 1.
+- **`vld_q` and `data_q`** are the DUT's stage 1 registers, drawn the same way, so you can follow 11 from `data_q` at edge 2 to `out_data` at edge 3.
+
+What happens, edge by edge. Read each edge off the waveform, then open it to check:
+
+<details>
+<summary>Before the window: what has happened by 15 ns?</summary>
+
+**Before the window.** The time-0 drive `bus.cb.in_vld <= 1'b0;` lands at the 5 ns edge, where the DUT is still in reset. `rst_n` rises at 12 ns, between edges.
+
+</details>
+
+<details>
+<summary>Edge 0, 15 ns (◆): when do in_vld and in_data change?</summary>
+
+**Edge 0, 15 ns (◆).** `main` resumes from `@(bus.cb)` and calls `send(8'h10)`. `in_vld` and `in_data` change in Re-NBA, after the DUT's flops have read their old values.
+
+</details>
+
+<details>
+<summary>Edge 1, 25 ns (▼): what does the DUT capture?</summary>
+
+**Edge 1, 25 ns (▼).** The DUT captures `in_vld = 1` and `in_data = 10` into stage 1, the same values `mon_cb` samples. `send(8'h20)` drives the next item.
+
+</details>
+
+<details>
+<summary>Edge 2, 35 ns: where does the X on out_data come from?</summary>
+
+**Edge 2, 35 ns.** Stage 2 takes `11`, so `out_vld` and `out_data` change just after this edge. The X on `out_data` is stage 1's value from 15 ns, when `in_data` had never been driven; `out_vld` is 0, so nobody reads it.
+
+</details>
+
+<details>
+<summary>Edges 3 to 5, 45 to 65 ns (✓): what does the monitor do?</summary>
+
+**Edges 3 to 5, 45 to 65 ns (✓).** `mon_cb` samples `out_vld = 1` with `11`, `21` and `31`, and the monitor prints a PASS line each time. After the 45 ns edge, `main` drives `in_vld` low.
+
+</details>
+
+<details>
+<summary>Edge 7, 85 ns: how does the run end?</summary>
+
+**Edge 7, 85 ns.** `wait_cycles(4)` returns, and `main` prints `PASS=3 FAIL=0` and calls `$finish`.
+
+</details>
+
+</details>
 
 ### Run it
 
@@ -717,6 +1215,52 @@ Use this whenever you inherit a bench that drives the DUT with raw assignments:
 5. **Asynchronous signals.** Leave reset, and any other asynchronous input, as direct writes made between edges. If an asynchronous reset can arrive mid-test, the monitor also watches the raw signal, as "Reset stays outside the clocking block" describes.
 6. **Verify.** Declare time units in every design element, rerun, compare the log with the old one, and run the mutant: the bench must fail with `.BUG(1)`.
 
+**Before and after.** The racy driver you will use in Kata 1 and a monitor that waits on the clock, then the same two tasks after the six steps. The comments in the second block name the step behind each line; steps 1 and 2 are the two clocking blocks of `pipe_if`, and step 5 leaves `rst_n` out of `cb`.
+
+```systemverilog
+// snippet: before the conversion (do not copy into real benches)
+task automatic send_racy(input logic [7:0] data);
+  @(posedge clk);                    // wakes with the DUT's flops
+  bus.in_vld  = 1'b1;                // raw blocking writes at the active edge
+  bus.in_data = data;
+  exp_q.push_back(data + 8'd1);
+endtask
+
+task automatic monitor();
+  logic [7:0] expected;
+  forever begin
+    @(posedge clk);                  // wakes with the DUT's flops
+    if (bus.rst_n !== 1'b1) continue;
+    if (bus.out_vld === 1'b1) begin  // raw read of a DUT output
+      expected = exp_q.pop_front();
+      // ... compare bus.out_data with expected and count the result
+    end
+  end
+endtask
+```
+
+```systemverilog
+// snippet: after the conversion, as in the M1 bench
+task automatic send(input logic [7:0] data);   // call it right after @(bus.cb)
+  bus.cb.in_vld  <= 1'b1;            // step 3: every drive goes through cb
+  bus.cb.in_data <= data;
+  exp_q.push_back(data + 8'd1);
+  @(bus.cb);                         // step 3: wait on the block you drive
+endtask
+
+task automatic monitor();
+  logic [7:0] expected;
+  forever begin
+    @(bus.mon_cb);                   // step 4: wait on the block you read
+    if (bus.mon_cb.rst_n !== 1'b1) continue;   // step 2: reset is a mon_cb input
+    if (bus.mon_cb.out_vld === 1'b1) begin     // step 4: read only mon_cb
+      expected = exp_q.pop_front();
+      // ... compare bus.mon_cb.out_data with expected and count the result
+    end
+  end
+endtask
+```
+
 **Checklist before moving on:**
 - [ ] Every DUT input except the asynchronous reset is written only through `cb`.
 - [ ] Every clockvar read follows `@(bus.cb)` or `@(bus.mon_cb)`, never `@(posedge clk)`.
@@ -737,6 +1281,43 @@ Use this whenever you inherit a bench that drives the DUT with raw assignments:
 - **`inout` reads.** A drive to an `inout` clockvar does not change its input side: after `cb.a <= c;`, reading `cb.a` still returns the last sample (§14.16.1).
 - **Counting.** The cycle-delay rule in "Several drives to one signal in one cycle" summarizes the examples of §14.16, where `#3 cb.v <= expr1;` matures in cycle 1, and of §14.16.2. It does not follow from applying the general between-edges sentence of §14.16 and then counting the cycle delay, which would put `#1 cb.v <= ##2 expr3;` in cycle 4 instead of cycle 3. `##0` on the right-hand side of a drive has no effect (§14.11).
 
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <div className="mb-2 text-sm font-semibold text-foreground">One variable, two clocking blocks: a double-data-rate drive</div>
+  <svg viewBox="0 0 340 134" role="img" aria-label="Timeline from 0 to 30 ns with rising clock edges at 5, 15 and 25 ns and falling edges at 10, 20 and 30 ns. Block pe drives j to a at 5 ns and to c at 15 ns and to d at 25 ns. Block ne drives j to b at 10 ns and issues no drive at 20 ns, so j holds c from 15 ns to 25 ns." style={{ width: "100%", maxWidth: 420 }}>
+    <title>One variable, two clocking blocks</title>
+    <line x1="85" y1="14" x2="85" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="130" y1="14" x2="130" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="1 3" />
+    <line x1="175" y1="14" x2="175" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="220" y1="14" x2="220" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="1 3" />
+    <line x1="265" y1="14" x2="265" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <text x="4" y="36" fontSize="11" fill="currentColor">clk</text>
+    <polyline points="40,40 85,40 85,24 130,24 130,40 175,40 175,24 220,24 220,40 265,40 265,24 310,24 310,40" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <text x="85" y="58" fontSize="9.5" fill="currentColor" textAnchor="middle"><tspan className="fill-amber-600 dark:fill-amber-300">◆</tspan>{" pe"}</text>
+    <text x="130" y="58" fontSize="9.5" fill="currentColor" textAnchor="middle"><tspan className="fill-amber-600 dark:fill-amber-300">◆</tspan>{" ne"}</text>
+    <text x="175" y="58" fontSize="9.5" fill="currentColor" textAnchor="middle"><tspan className="fill-amber-600 dark:fill-amber-300">◆</tspan>{" pe"}</text>
+    <text x="220" y="58" fontSize="9.5" fill="currentColor" textAnchor="middle">no drive</text>
+    <text x="265" y="58" fontSize="9.5" fill="currentColor" textAnchor="middle"><tspan className="fill-amber-600 dark:fill-amber-300">◆</tspan>{" pe"}</text>
+    <text x="4" y="82" fontSize="11" fill="currentColor">j</text>
+    <rect x="85" y="66" width="45" height="24" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="130" y="66" width="45" height="24" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="175" y="66" width="90" height="24" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="265" y="66" width="45" height="24" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <text x="107" y="82" fontSize="11" fill="currentColor" textAnchor="middle">a</text>
+    <text x="152" y="82" fontSize="11" fill="currentColor" textAnchor="middle">b</text>
+    <text x="220" y="82" fontSize="11" fill="currentColor" textAnchor="middle">c</text>
+    <text x="287" y="82" fontSize="11" fill="currentColor" textAnchor="middle">d</text>
+    <text x="85" y="110" fontSize="10" fill="currentColor" textAnchor="middle">5</text>
+    <text x="130" y="110" fontSize="10" fill="currentColor" textAnchor="middle">10</text>
+    <text x="175" y="110" fontSize="10" fill="currentColor" textAnchor="middle">15</text>
+    <text x="220" y="110" fontSize="10" fill="currentColor" textAnchor="middle">20</text>
+    <text x="265" y="110" fontSize="10" fill="currentColor" textAnchor="middle">25 ns</text>
+    <text x="40" y="128" fontSize="10" fill="currentColor">{"◆: a drive matures, in Re-NBA of that edge's time slot"}</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">
+    The standard's example declares <code>j</code> as an output of <code>pe @(posedge clk)</code> and of <code>ne @(negedge clk)</code> (§14.16.2). <code>j</code> takes the value driven most recently by either block. The block <code>ne</code> issues no drive at 20 ns, so <code>j</code> holds <code>c</code>: a block writes only in cycles in which it is driven. The values and times are illustrative.
+  </figcaption>
+</figure>
+
 ### Expert: cycle-delay and default-clocking corner cases
 
 - **`##0`.** If the clocking block event of the current time slot has already happened, for example right after `@(cb)`, `##0` continues at once; otherwise it waits for that event (§14.11).
@@ -755,6 +1336,17 @@ Use this whenever you inherit a bench that drives the DUT with raw assignments:
 - **What may be named.** A clocking signal may not be a variable restricted to a procedural block (§14.3): an automatic variable, or an element or member of a dynamic variable such as a dynamic array, whose references §6.21 limits to procedural code.
 - **One signal, many blocks.** Each block samples a shared signal with its own clocking event (§14.13).
 
+**One glance: what does a read of `cb.x` return?**
+
+| The read happens | It returns | Clause |
+|---|---|---|
+| Before the first clocking event | tool-dependent; do not rely on it | §14.13 |
+| After `@(cb)` | this edge's sample | §14.13 |
+| After `@(posedge clk)`, in module or class code | the old or the new sample: a race | §14.13, §14.4 NOTE |
+| Between edges | the sample of the most recent clocking event | §14.13 |
+| After a second Observed pass in one time slot, with explicit `#0` | the value from the first pass, unless a new clocking event occurred | §14.13 |
+| Inside a concurrent assertion | the clocking block's sample alone | §16.18 |
+
 ### Expert: several clocks and testbench-internal races
 
 - **Programs and several clocks.** §24.4 states the limit plainly: input sampling addresses a single clocking block. With several clocks, the arbitrary order in which simultaneous or overlapping clocks are processed is still a race source. The program construct addresses it by running after all design events, including clocks driven by nonblocking assignments.
@@ -767,10 +1359,26 @@ Use this whenever you inherit a bench that drives the DUT with raw assignments:
 - **Output skew.** A nonzero output skew models clock-to-output delay and gives the DUT hold margin in gate-level runs, and it makes waveforms easier to read. It also moves every drive into a later time slot (§14.16).
 - **Parameters.** Practice, not a rule: verification IP often exposes skews as parameters, which §14.4 allows, so one agent serves RTL and gate-level runs. The right values depend on your library and tool flow (tool-dependent).
 
+**The setup window as arithmetic.** For an output launched at the 15 ns edge and sampled for the 25 ns edge, the photo is correct when the output's delay plus the input skew is at most the clock period. A change at exactly the sample time is included (§14.13).
+
+| Output settles | Input skew | Photo taken at | Photo shows |
+|---|---|---|---|
+| +7 ns, at 22 ns | `#2ns` | 23 ns | ✓ the new value |
+| +8 ns, at 23 ns | `#2ns` | 23 ns, Postponed | ✓ the new value: 8 + 2 = 10 |
+| +9 ns, at 24 ns | `#2ns` | 23 ns | ✕ last cycle's value, as in the visual |
+| +9 ns, at 24 ns | `#1step` | last value before 25 ns | ✓ the new value, as in the visual |
+
 ### Expert: program blocks in depth
 
 - **Scope.** Code outside every program may not reference program signals, the variables and nets declared in a program. Hierarchical references from one program into another are legal (§24.3). Anonymous programs in a package or compilation unit add tasks, functions and classes to the program-wide space without creating a scope (§24.6).
 - **Calls.** A program may call module tasks and functions; a module task called from a program runs in the reactive region set, and the same task called from a module runs in the active region set (§24.5).
+
+  | Caller | Callee | Result |
+  |---|---|---|
+  | Program thread | Module task | Runs in the reactive region set (§24.5) |
+  | Module thread | The same module task | Runs in the active region set (§24.5) |
+  | Design code | Program subroutine | Illegal (§24.5) |
+
 - **Assertions.** Concurrent assertions in a program are evaluated in the Observed region on Preponed values, exactly as in module code (§24.3.1).
 - **`$exit`.** Called from a thread that originates in an `initial` procedure of a program, it ends all `initial` procedures of that program and their descendants. Called from any other thread, it is ignored, and the tool may warn (§24.7).
 - **Program writes wake the design again.** A program's blocking writes happen in the Reactive region and its nonblocking writes update in Re-NBA (§24.3.1). Any design process sensitive to them runs in a further Active pass of the same time slot (§4.5). A program that exchanges values with the design through plain ports, without clocking blocks, is therefore "more prone to races" (§24.3.2).
@@ -1063,6 +1671,11 @@ end
 
 **Step 3.** In the order where `send_racy()` runs first, the DUT captures `8'h10` at 15 ns, while `mon_cb`'s photo at 15 ns still shows `in_vld = 0`. The result appears at the 35 ns sample, one edge earlier than the check expects, so it reports `CYC` errors from 35 ns on. In the order where the flops run first, both views agree and the check passes. Same code, two outcomes: that is the race.
 
+| Order at each edge | DUT captures `8'h10` at | `out_vld` first sampled as 1 at | Queue monitor | Cycle-accurate check |
+|---|---|---|---|---|
+| `send_racy()` first | 15 ns | 35 ns | right values, right order, no failure | `CYC` errors from 35 ns |
+| The flops first | 25 ns | 45 ns | right values, right order, no failure | passes |
+
 **Step 4.** After the conversion, `send()` drives through `cb` after `@(bus.cb)`. The drive lands in Re-NBA, after the flops have read their inputs, so the DUT always captures at the edge after the drive, and that is the edge at which `mon_cb` samples the same values. The check passes in every order because no read and no write of `in_vld` or `in_data` share a region any more (§4.7, §14.13, §14.16).
 
 </details>
@@ -1106,6 +1719,33 @@ endtask
 ```
 
 **Prediction.** The first burst is driven after the edges at 15, 25, 35 and 45 ns, captured at 25, 35, 45 and 55 ns, and checked by `mon_cb` at 45, 55, 65 and 75 ns. At 45 ns the driver pushes the fourth expectation while the monitor pops the first one, in the same time slot and in either order. That is safe only because the queue already holds three entries, so the pop never depends on the push.
+
+<TimingDiagram
+  title="Kata 2: the first burst and the two idle cycles"
+  caption={<>Each value is the <code>#1step</code> sample at that edge. Follow the first burst from <code>in_data</code> to <code>out_data</code>, then find the two idle cycles on <code>in_vld</code>.</>}
+  edges={8}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_vld", kind: "bit", values: [0, 1, 1, 1, 1, 0, 0, 1] },
+    { name: "in_data", kind: "bus", values: [undefined, "01", "02", "03", "04", "04", "04", "05"] },
+    { name: "out_vld", kind: "bit", values: [0, 0, 0, 1, 1, 1, 1, 0] },
+    { name: "out_data", kind: "bus", values: ["00", "00", undefined, "02", "03", "04", "05", "05"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "drive", label: "15 ns: the first item is driven through cb" },
+    { edge: 1, tone: "sample", label: "25 ns: the DUT captures the first item" },
+    { edge: 3, tone: "pass", label: "45 ns: the monitor checks 02, while the driver pushes the fourth expectation in the same time slot" },
+    { edge: 4, tone: "pass", label: "55 ns: the monitor checks 03" },
+    { edge: 5, tone: "pass", label: "65 ns: the monitor checks 04" },
+    { edge: 6, tone: "pass", label: "75 ns: the monitor checks 05" }
+  ]}
+/>
+
+- **The axis.** Axis *k* is the rising edge at 15 + 10*k* ns. Bus values are hexadecimal; hatching means unknown (X).
+- **◆ at axis 0.** The first item is driven at 15 ns; the others follow at 25, 35 and 45 ns.
+- **▼ at axis 1.** The first capture, at 25 ns; the others follow at 35, 45 and 55 ns.
+- **✓ at axes 3 to 6.** `mon_cb` checks 02, 03, 04 and 05 at 45 to 75 ns.
+- **`in_vld`** is 0 at axes 5 and 6, the two idle cycles, and the second burst starts at axis 7.
 
 **Why one drive per cycle matters.** `send_burst()` drives each clockvar once per loop iteration and then waits on `@(bus.cb)`. Its final `in_vld <= 1'b0` and the first drive of `idle()` fall in the same cycle, but both write 0, so the last-drive-wins rule (§14.16.2) changes nothing; with different values, only the later statement would count.
 

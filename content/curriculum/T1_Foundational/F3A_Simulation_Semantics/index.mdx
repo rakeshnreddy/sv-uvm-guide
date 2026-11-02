@@ -14,6 +14,47 @@ sources:
 - **Why it matters:** The first bugs a new testbench (TB) meets live here: a delay 1000× too long or too short, a log time stamp that disagrees with the waveform, a compile error about missing time units, two prints "at the same time" that show different values, and a first log line that one simulator prints and another does not. Knowing what the standard fixes, and what it leaves to each simulator, is what makes a bench give the same answer on every tool.
 - **The Analogy:** A to-do list sorted by due time. You finish everything due *now*, including new items those tasks add for *now*, then jump straight to the next due time without ticking through the empty minutes in between. *Where it breaks:* "now" is split into ordered stages (the regions of [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)), and the list never says which of two items due at the same stage comes first. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) shows when that order changes the result.
 
+<figure className="my-6">
+<svg viewBox="0 0 360 206" role="img" aria-labelledby="f3a-todo-title f3a-todo-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-todo-title">A to-do list sorted by due time</title>
+  <desc id="f3a-todo-desc">A sparse time axis has work due only at 0, 5, 10 and 15 ns, with no events in the gaps. The list due at t = 5 ns is drained: one task is done, another is done, and that task adds a new item for the same time, which is also done. When the list is empty, a dashed arrow jumps straight to the next due time, 10 ns. A tag notes where the analogy breaks: now has ordered stages, which F3B opens.</desc>
+  <defs>
+    <marker id="f3a-todo-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </marker>
+  </defs>
+  <line x1="20" y1="36" x2="345" y2="36" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="2 3" />
+  <circle cx="40" cy="36" r="4" fill="currentColor" />
+  <circle cx="130" cy="36" r="6" fill="rgb(6,182,212)" stroke="currentColor" />
+  <circle cx="220" cy="36" r="4" fill="currentColor" />
+  <circle cx="310" cy="36" r="4" fill="currentColor" />
+  <text x="40" y="20" fontSize="10.5" textAnchor="middle" fill="currentColor">t = 0</text>
+  <text x="130" y="20" fontSize="10.5" textAnchor="middle" fontWeight="700" fill="currentColor">5 ns</text>
+  <text x="220" y="20" fontSize="10.5" textAnchor="middle" fill="currentColor">10 ns</text>
+  <text x="310" y="20" fontSize="10.5" textAnchor="middle" fill="currentColor">15 ns</text>
+  <text x="85" y="30" fontSize="9.5" textAnchor="middle" fill="currentColor" fillOpacity="0.75">no events</text>
+  <text x="175" y="30" fontSize="9.5" textAnchor="middle" fill="currentColor" fillOpacity="0.75">no events</text>
+  <text x="265" y="30" fontSize="9.5" textAnchor="middle" fill="currentColor" fillOpacity="0.75">no events</text>
+  <line x1="130" y1="43" x2="18" y2="64" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 3" />
+  <line x1="130" y1="43" x2="208" y2="64" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 3" />
+  <rect x="18" y="64" width="190" height="104" rx="8" fill="rgba(6,182,212,0.08)" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="28" y="81" fontSize="10.5" fontWeight="700" fill="currentColor">Due now: t = 5 ns</text>
+  <text x="28" y="100" fontSize="10" fill="currentColor">✓ one task done</text>
+  <text x="28" y="116" fontSize="10" fill="currentColor">✓ another task done</text>
+  <line x1="33" y1="121" x2="33" y2="145" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-todo-arrow)" />
+  <text x="42" y="136" fontSize="9.5" fill="currentColor" fillOpacity="0.85">it adds an item: same time</text>
+  <text x="28" y="158" fontSize="10" fill="currentColor">✓ new item done before the jump</text>
+  <path d="M208,116 C252,116 250,72 225,44" fill="none" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-todo-arrow)" />
+  <text x="258" y="92" fontSize="10" fontWeight="600" fill="currentColor">list empty:</text>
+  <text x="258" y="105" fontSize="10" fill="currentColor">jump straight</text>
+  <text x="258" y="118" fontSize="10" fill="currentColor">to the next</text>
+  <text x="258" y="131" fontSize="10" fill="currentColor">due time</text>
+  <rect x="18" y="178" width="324" height="22" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+  <text x="180" y="193" fontSize="10" textAnchor="middle" fill="currentColor">Where it breaks: "now" has ordered stages (F3B)</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">◇ Conceptual illustration. Simulation time is a list of due times, not a ticking clock. The list due now is emptied first, including anything new it adds for now, and only then does time jump. Nothing is checked in the gaps.</figcaption>
+</figure>
+
 **You will be able to:**
 1. Explain how an event-driven simulator advances time: which update and evaluation events wake a process, why every event of the current time slot runs before time moves, and which execution orders IEEE 1800-2023 leaves open.
 2. Calculate the real delay behind `#d` under `` `timescale `` or `timeunit`/`timeprecision`, including rounding to the precision and the rules that decide which unit applies.
@@ -27,6 +68,19 @@ sources:
 
 The core path runs from processes and events, through the scheduler loop and one traced time slot, to the orders the standard leaves open. Then come time units and reading the time. Debugging and real-testbench practice follow, and the expert layer is in Push Further.
 
+**Predict first.** Commit to an answer before you read on. *The two mistakes everyone makes*, further down, explains it.
+
+<InterviewQuestionPlayground
+  title="Predict: what do the three $display calls print?"
+  question="At t = 0 this block runs: initial begin $display($time); x = 1; $display($time); y = 2; $display($time); end. It has no # and no @. What do the three $display calls print?"
+  options={[
+    { text: "0, then 1, then 2", isCorrect: false, feedback: "That assumes time advances after every statement. A process runs in zero simulated time until it reaches a timing control or ends, and this block has no timing control." },
+    { text: "0, then 0, then 0", isCorrect: true, feedback: "Right. All three statements run in the t = 0 time slot. Time moves only when the current slot is empty (§4.4), and only a delay puts work into a later slot." },
+    { text: "0, then 1, then 1", isCorrect: false, feedback: "An assignment costs no simulated time, and neither does a $display. Only a delay puts work into a later time slot." },
+    { text: "It depends on the simulator", isCorrect: false, feedback: "The standard leaves the order of events open, not their time. Every event of a time slot happens at that slot's time (§4.4)." }
+  ]}
+/>
+
 ### Processes, events and time slots
 
 A design is a set of small programs running side by side. IEEE 1800-2023 calls each one a **process** (§4.3): every `initial`, `always`, `always_comb`, `always_ff` and `always_latch` procedure, every continuous `assign` and every gate primitive. At any moment a process is either running or suspended, waiting for something.
@@ -37,6 +91,29 @@ Two kinds of **event** move the simulation forward (§4.3):
 - An **evaluation event** is one execution of a process, for example because an update it is sensitive to has happened or because its delay has run out. When an update executes, every process sensitive to it is considered for evaluation, in an arbitrary order.
 
 All the events scheduled for one simulation time form a **time slot** (§4.4). The simulator executes and removes every event of the current time slot before it moves on to the next non-empty time slot, in time order. It never goes backwards in time (§4.4).
+
+<ArchitectureDiagram
+  title="One edge, one chain of cause and effect"
+  caption="All five boxes happen at one simulation time, t = 5 ns. ◆ marks an update event (a value changes) and ▶ an evaluation event (a process runs). Follow the dashed arrows: an update wakes a process, and the process schedules the next update. Any process kind can sit in this chain: an initial, an always, a continuous assign or a gate. The same values are traced step by step under One time slot, traced event by event."
+  cellWidth={120}
+  gapX={96}
+  gapY={76}
+  legend={false}
+  nodes={[
+    { id: "slot", label: "one time slot: t = 5 ns", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "clk", label: "◆ clk 0 → 1", sublabel: "update event", col: 0, row: 0 },
+    { id: "ff", label: "▶ always_ff", sublabel: "evaluation event", col: 1, row: 0 },
+    { id: "q", label: "◆ q 0 → 1", sublabel: "update event", col: 1, row: 1 },
+    { id: "asg", label: "▶ assign q_n", sublabel: "evaluation event", col: 0, row: 1 },
+    { id: "qn", label: "◆ q_n 1 → 0", sublabel: "update event", col: 0, row: 2 }
+  ]}
+  edges={[
+    { from: "clk", to: "ff", style: "causal", label: "wakes" },
+    { from: "ff", to: "q", style: "causal", label: "schedules" },
+    { from: "q", to: "asg", style: "causal", label: "wakes" },
+    { from: "asg", to: "qn", style: "causal", label: "schedules" }
+  ]}
+/>
 
 **What wakes a process.** A suspended process waits on a timing control, and each kind wakes on something different:
 
@@ -65,12 +142,59 @@ Only a real change counts. Writing a variable's current value again wakes no `@(
 - At t = 0 the narration showed a **Scheduler choice**: three processes were ready together, and the standard leaves their order open (see *The order the standard leaves open* below).
 - The run ended at t = 22 ns, when the test called `$finish`. The clock had already booked its next toggle for 25 ns, but nothing runs after the end. The `final` report printed `final: count = 2` at that moment, because only the edges at 5 and 15 ns were rising (§9.2.3).
 
-Now switch the program to **@(posedge) vs wait()**. Its own question asks which waiter gets through. Add one of your own before you step: at what time does the run end, and why then?
+<TimingDiagram
+  title="The clocked part of the run"
+  caption={<>The axis counts rising edges: edge 0 is t = 5 ns, edge 1 is 15 ns, edge 2 is 25 ns. The falling edges at 10 and 20 ns wake nothing. count is drawn as sampled at each edge, so it changes just after edges 0 and 1. ● marks an edge that woke the counter. … marks the edge that never ran: $finish at 22 ns ends the run before edge 2, so the drawing past 22 ns shows what was booked, not what ran.</>}
+  edges={3}
+  cycleWidth={72}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "count", kind: "bus", values: [0, 1, 2] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", short: "5 ns", label: "5 ns: the counter wakes" },
+    { edge: 1, tone: "info", short: "15 ns", label: "15 ns: the counter wakes" },
+    { edge: 2, tone: "pending", short: "25 ns", label: "25 ns: booked, never runs, because $finish ends the run at 22 ns" }
+  ]}
+/>
+
+Now go back to the simulator above and switch the program to **@(posedge) vs wait()**. Its own question asks which waiter gets through. Add one of your own before you step: at what time does the run end, and why then?
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Debrief: what the second program showed</summary>
 
 Both waiters begin waiting at t = 20 ns, after `ready` rose at 10 ns. The `wait (ready)` passes at once, because it checks a level; the `@(posedge ready)` waiter would need a new edge and never wakes. The run ends at t = 20 ns with that waiter still blocked: no event is scheduled at any time, so there is nothing left to simulate (§9.6.1). A blocked process does not keep a simulation alive; only scheduled events do.
+
+<figure className="my-4">
+<svg viewBox="0 0 360 170" role="img" aria-labelledby="f3a-edge-title f3a-edge-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-edge-title">Edge or level: what a late waiter sees</title>
+  <desc id="f3a-edge-desc">A time axis from 0 to 20 ns. ready rises at 10 ns. Two waiters sleep on a 20 unit delay and start waiting at 20 ns. wait (ready) passes at once because the level is 1. @(posedge ready) stays blocked because the edge came at 10 ns, before it waited. The run ends at 20 ns because no event is left at any time.</desc>
+  <path d="M220,36 V49 M220,64 V91 M220,106 V136" fill="none" stroke="currentColor" strokeOpacity="0.3" strokeDasharray="2 3" />
+  <path d="M330,18 V49 M330,79 V91 M330,121 V136" fill="none" stroke="currentColor" strokeOpacity="0.3" strokeDasharray="2 3" />
+  <text x="6" y="31" fontSize="10" fontFamily="monospace" fill="currentColor">ready</text>
+  <path d="M110,36 L220,36 L220,18 L345,18" fill="none" stroke="rgb(6,182,212)" strokeWidth="2" />
+  <text x="214" y="29" fontSize="10" textAnchor="end" fill="currentColor">rises at 10 ns</text>
+  <text x="6" y="74" fontSize="10" fontFamily="monospace" fill="currentColor">wait (ready)</text>
+  <line x1="110" y1="70" x2="330" y2="70" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+  <text x="112" y="65" fontSize="10" fill="currentColor" fillOpacity="0.8">asleep on #20</text>
+  <text x="354" y="60" fontSize="10" textAnchor="end" fill="currentColor">passes at once: the level is 1</text>
+  <text x="330" y="75" fontSize="13" fontWeight="700" textAnchor="middle" fill="rgb(16,185,129)">✓</text>
+  <text x="6" y="116" fontSize="10" fontFamily="monospace" fill="currentColor">@(posedge ready)</text>
+  <line x1="110" y1="112" x2="330" y2="112" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+  <text x="112" y="107" fontSize="10" fill="currentColor" fillOpacity="0.8">asleep on #20</text>
+  <text x="354" y="102" fontSize="10" textAnchor="end" fill="currentColor">blocked: the edge came at 10 ns</text>
+  <text x="330" y="117" fontSize="13" fontWeight="700" textAnchor="middle" fill="rgb(244,63,94)">✕</text>
+  <line x1="110" y1="136" x2="345" y2="136" stroke="currentColor" strokeOpacity="0.7" />
+  <line x1="110" y1="132" x2="110" y2="140" stroke="currentColor" strokeOpacity="0.7" />
+  <line x1="220" y1="132" x2="220" y2="140" stroke="currentColor" strokeOpacity="0.7" />
+  <line x1="330" y1="132" x2="330" y2="140" stroke="currentColor" strokeOpacity="0.7" />
+  <text x="110" y="150" fontSize="10" textAnchor="middle" fill="currentColor">0</text>
+  <text x="220" y="150" fontSize="10" textAnchor="middle" fill="currentColor">10</text>
+  <text x="330" y="150" fontSize="10" textAnchor="middle" fill="currentColor">20 ns</text>
+  <text x="180" y="165" fontSize="10" fontWeight="600" textAnchor="middle" fill="currentColor">The run ends at t = 20 ns: no event left at any time (§9.6.1)</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">The axis is simulation time. A level wait checks the value now; an edge wait needs a new change. The blocked waiter is still blocked when the run ends.</figcaption>
+</figure>
 
 </details>
 
@@ -155,12 +279,42 @@ while (some time slot is non-empty) {
 
 In the real algorithm a time slot is emptied region by region, so "any event" means any event of the current region (F3B).
 
+**Predict first.** The loop's last comment says a process may schedule new events "now or at a later time". Sort these six before you open the answer or read on, because rule 3 below gives the reasoning: which ones book an event at a later time? `#10`, `q <= #2 d;`, `q <= d;`, `@(posedge clk)`, `wait (ready)`, `-> done`.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your sort</summary>
+
+| Item | Books an event at a later time? |
+|---|---|
+| `#10` | yes: the process resumes 10 units ahead |
+| `q <= #2 d;` | yes: the update lands 2 units ahead |
+| `q <= d;` | no: the update lands later in this time slot |
+| `@(posedge clk)` | no: it only waits for a change |
+| `wait (ready)` | no: it only waits for a level |
+| `-> done` | no: it wakes its waiters in this time slot |
+
+Two more also book an event at a later time: a gate or net delay, and a clocking-block output skew (F4C).
+
+A process asleep on `@` or `wait` can wake at a later time, but only because a delay somewhere else booked an event there.
+
+</details>
+
 Read four rules off the loop:
 
 1. **Time moves in one place only.** When the current time slot is empty, the simulator jumps to the next non-empty one. There is no fixed step size and no tick in between.
 2. **Work inside a slot can create more work in the same slot.** A write wakes a reader, which may write again. Every extra pass takes zero simulated time.
 3. **Only a delay reaches a later slot.** `#d`, an intra-assignment delay such as `q <= #2 d;`, a gate or net delay, and a clocking-block output skew ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)) schedule events at a future time. `@`, `wait`, `->` and a `<=` without a delay do not.
 4. **The run ends when no event is left at any time** (§9.6.1), or earlier at `$finish` (§20.2). A free-running clock (`always #5 clk = ~clk;`) always has a next event, so a bench with one must call `$finish`. A loop with no timing control at all, such as `always areg = ~areg;`, never empties its time slot: time stops and the simulator hangs. §9.2.2.1 calls this a zero-delay infinite loop. A bench built with program blocks also ends when all of them have finished (§9.6.1); F3B shows why that matters.
+
+**How a run ends, at a glance.** The last two rows are the two "it never stops" symptoms, and the time stamp tells them apart.
+
+| What happens | Does the run end? | Time stamps | Clause |
+|---|---|---|---|
+| no event is left at any time | yes | stop at the last event, and the log simply stops | §9.6.1 |
+| a process calls `$finish` | yes, at that time; `final` procedures run, and nothing booked for later runs | stop at that time | §20.2, §9.2.3 |
+| every program block has finished | yes, by an implicit call to `$finish` | stop at that time | §9.6.1, §24.3 |
+| a free-running clock and no `$finish` | never | keep growing | follows from §9.6.1 |
+| a zero-delay loop, such as `always areg = ~areg;` | never: the simulator hangs | stop changing | §9.2.2.1 |
 
 #### Event-driven versus cycle-based simulation
 
@@ -172,6 +326,31 @@ IEEE 1800-2023 defines simulation as a discrete-event model (§4.3). Cycle-based
 | How time moves | jumps to the next time that has events; any delay value works | one clock cycle at a time |
 | Delays, glitches, order inside a time slot | modelled | abstracted away |
 | Where you meet it | every SystemVerilog simulator | formal tools, and some fast simulation and emulation engines (tool-dependent) |
+
+<figure className="my-6">
+<svg viewBox="0 0 360 204" role="img" aria-labelledby="f3a-cycle-title f3a-cycle-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-cycle-title">The same logic, seen event by event and cycle by cycle</title>
+  <desc id="f3a-cycle-desc">Upper view, event-driven: clk and an output y. y changes a little after a clock edge and has a short glitch between two edges, and every time with a change is a visited time. Lower view, cycle-based: the same clk, with y changing only at clock edges and no glitch. Only the clock edges are visited times.</desc>
+  <text x="6" y="12" fontSize="10.5" fontWeight="700" fill="currentColor">Event-driven: every time that has an event</text>
+  <text x="6" y="36" fontSize="10" fontFamily="monospace" fill="currentColor">clk</text>
+  <path d="M40,38 L70,38 L70,20 L120,20 L120,38 L170,38 L170,20 L220,20 L220,38 L270,38 L270,20 L320,20 L320,38 L350,38" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1.5" />
+  <text x="6" y="72" fontSize="10" fontFamily="monospace" fill="currentColor">y</text>
+  <path d="M40,74 L182,74 L182,56 L200,56 L200,74 L208,74 L208,56 L282,56 L282,74 L350,74" fill="none" stroke="rgb(6,182,212)" strokeWidth="2" />
+  <text x="204" y="52" fontSize="9.5" textAnchor="middle" fontWeight="600" fill="currentColor">glitch</text>
+  <text x="6" y="90" fontSize="9.5" fill="currentColor" fillOpacity="0.8">visited</text>
+  <path d="M70,82 V90 M120,82 V90 M170,82 V90 M182,82 V90 M200,82 V90 M208,82 V90 M220,82 V90 M270,82 V90 M282,82 V90 M320,82 V90" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <line x1="6" y1="104" x2="354" y2="104" stroke="currentColor" strokeOpacity="0.25" />
+  <text x="6" y="120" fontSize="10.5" fontWeight="700" fill="currentColor">Cycle-based: only the values at the clock edges</text>
+  <text x="6" y="144" fontSize="10" fontFamily="monospace" fill="currentColor">clk</text>
+  <path d="M40,146 L70,146 L70,128 L120,128 L120,146 L170,146 L170,128 L220,128 L220,146 L270,146 L270,128 L320,128 L320,146 L350,146" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1.5" />
+  <text x="6" y="180" fontSize="10" fontFamily="monospace" fill="currentColor">y</text>
+  <path d="M40,182 L170,182 L170,164 L270,164 L270,182 L350,182" fill="none" stroke="rgb(6,182,212)" strokeWidth="2" />
+  <text x="220" y="160" fontSize="9.5" textAnchor="middle" fontWeight="600" fill="currentColor">no delay, no glitch</text>
+  <text x="6" y="198" fontSize="9.5" fill="currentColor" fillOpacity="0.8">visited</text>
+  <path d="M70,190 V198 M170,190 V198 M270,190 V198" fill="none" stroke="currentColor" strokeWidth="1.5" />
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">◇ Conceptual illustration. The waveform and the glitch are invented to show the idea, and the x-axis is time with no numbers on it. Cycle-based evaluation abstracts away the timing between clock edges (§16.2). It is a technique some tools use, not a second SystemVerilog semantics.</figcaption>
+</figure>
 
 Your bench runs on an event-driven simulator, where order inside a time slot and fractional delays are real. Write synchronous code whose results are decided at clock edges, the race-free style of F3C and F4C: the intra-cycle details it ignores are exactly what a cycle-based engine discards.
 
@@ -202,6 +381,11 @@ module tb_top;
 endmodule
 ```
 
+**Predict first.** The `initial` block prints two lines at t = 5 ns. Write down the values of `q` and `q_n` in each, then open the answer.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Expected output: check your two lines</summary>
+
 **Expected output** (traced by hand from IEEE 1800-2023; not captured from a simulator run):
 
 ```text
@@ -209,9 +393,14 @@ endmodule
 5 strobe  q=1 q_n=0
 ```
 
+</details>
+
 Your simulator then prints its own `$finish` message at t = 6; its format is tool-dependent.
 
 **The time slot at t = 5 ns, event by event.** ◆ marks an update event and ▶ an evaluation event.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Pass 1, steps 0 to 4: what does $display see, and why?</summary>
 
 | Step | Event | What happens | `clk` | `q` | `q_n` | Printed |
 |---|---|---|---|---|---|---|
@@ -220,12 +409,57 @@ Your simulator then prints its own `$finish` message at t = 6; its format is too
 | 2 | ◆ `clk` 0 → 1 | a rising edge: the `always_ff` and the `initial`, both waiting on `@(posedge clk)`, are scheduled. The clock process goes on to its next `#5`, which books it for t = 10 | 1 | 0 | 1 | |
 | 3 | ▶ `always_ff` | reads `d` = 1 and schedules a nonblocking update of `q`; `q` does not change yet | 1 | 0 | 1 | |
 | 4 | ▶ `initial` | `$display` prints; `$strobe` books a print for the end of the slot; `#1` books the process for t = 6 | 1 | 0 | 1 | `5 display q=0 q_n=1` |
+
+</details>
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Pass 2 and the end of the slot, steps 5 to 8: what wakes the assign, and what does $strobe see?</summary>
+
+| Step | Event | What happens | `clk` | `q` | `q_n` | Printed |
+|---|---|---|---|---|---|---|
 | 5 | ◆ `q` 0 → 1 | the nonblocking update, applied only after steps 3 and 4 have run; it schedules the continuous assignment | 1 | 1 | 1 | |
 | 6 | ▶ `assign q_n` | computes `~q` = 0 | 1 | 1 | 1 | |
 | 7 | ◆ `q_n` 1 → 0 | no process waits on `q_n`; only the booked `$strobe` print is left | 1 | 1 | 0 | |
 | 8 | (end of the slot) | the booked `$strobe` prints, then time jumps to t = 6 | 1 | 1 | 0 | `5 strobe  q=1 q_n=0` |
 
+</details>
+
 Steps 3 and 4 may run in either order (§4.7). The output does not change, because the `always_ff` write waits until step 5. [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) names the regions behind steps 5 and 8 (NBA for the nonblocking update, Postponed for `$strobe`).
+
+<figure className="my-6">
+<svg viewBox="0 0 360 278" role="img" aria-labelledby="f3a-zoom-title f3a-zoom-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-zoom-title">Zooming into a zero-width tick</title>
+  <desc id="f3a-zoom-desc">The tick at t = 5 ns is expanded into a stack, and the time ruler beside it reads 5 ns at the top and at the bottom. Pass 1 holds steps 1 to 4: the clock process runs, clk goes 0 to 1, the always_ff reads d and books the update of q, and the initial prints with $display. Steps 3 and 4 may run in either order. A #0 would resume between the passes, still before q changes. Pass 2 is a delta cycle and holds steps 5 to 7: q goes 0 to 1, the assign computes q_n, and q_n goes 1 to 0. Step 8, at the end of the slot, is the $strobe print. Only then does time jump to t = 6 ns.</desc>
+  <defs>
+    <marker id="f3a-zoom-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </marker>
+  </defs>
+  <text x="30" y="14" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">t = 5 ns</text>
+  <line x1="30" y1="20" x2="30" y2="226" stroke="rgb(6,182,212)" strokeWidth="2" />
+  <text x="24" y="124" fontSize="10" textAnchor="middle" fill="currentColor" transform="rotate(-90 24 124)">no simulated time passes</text>
+  <text x="30" y="240" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">t = 5 ns</text>
+  <line x1="30" y1="245" x2="30" y2="262" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-zoom-arrow)" />
+  <text x="30" y="274" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">t = 6 ns</text>
+  <rect x="64" y="8" width="290" height="88" rx="8" fill="rgba(6,182,212,0.08)" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="74" y="24" fontSize="10.5" fontWeight="700" fill="currentColor">Pass 1</text>
+  <text x="346" y="24" fontSize="9.5" textAnchor="end" fill="currentColor" fillOpacity="0.85">steps 3 and 4: either order</text>
+  <text x="74" y="40" fontSize="10" fill="currentColor">{"1  ▶ clock process runs clk = ~clk"}</text>
+  <text x="74" y="54" fontSize="10" fill="currentColor">2  ◆ clk 0 → 1: wakes always_ff and initial</text>
+  <text x="74" y="68" fontSize="10" fill="currentColor">3  ▶ always_ff reads d, books the update of q</text>
+  <text x="74" y="82" fontSize="10" fill="currentColor">{"4  ▶ initial: $display prints"}</text>
+  <text x="209" y="109" fontSize="9.5" textAnchor="middle" fill="currentColor" fillOpacity="0.85">#0 would resume here: still before q changes</text>
+  <rect x="64" y="116" width="290" height="74" rx="8" fill="rgba(139,92,246,0.08)" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="74" y="132" fontSize="10.5" fontWeight="700" fill="currentColor">Pass 2: engineers call this a delta cycle</text>
+  <text x="74" y="148" fontSize="10" fill="currentColor">5  ◆ q 0 → 1: the nonblocking update lands</text>
+  <text x="74" y="162" fontSize="10" fill="currentColor">{"6  ▶ assign q_n computes ~q"}</text>
+  <text x="74" y="176" fontSize="10" fill="currentColor">7  ◆ q_n 1 → 0: no process waits on it</text>
+  <rect x="64" y="198" width="290" height="28" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="74" y="216" fontSize="10" fill="currentColor">{"8  End of the slot: $strobe prints"}</text>
+  <text x="44" y="258" fontSize="10" fontWeight="600" fill="currentColor">The slot is empty: only now does time jump</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">The numbers match the steps of the tables above. The two passes and the `$strobe` print all sit on one tick, so a waveform viewer draws them at one instant, and `$time` reads 5 throughout. A vertical stack here means order, not time. [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) names the regions behind the passes.</figcaption>
+</figure>
 
 **Zero-time iterations have a name.** Steps 5 to 7 are a second pass through the same time slot, triggered by the nonblocking update. Such passes exist because zero-delay logic still has cause and effect: `q` must change before `q_n` can follow it, and the simulator orders that chain with extra passes instead of inventing a delay. Engineers call each such pass a **delta cycle**. IEEE 1800-2023 never uses the word; it describes iterations of the §4.5 loop. Two facts to keep: a delta cycle takes no simulated time (`$time` is 5 in every step above), and the number of passes a slot needs never shows up in a time stamp. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) traces delta cycles region by region and shows how they create races.
 
@@ -243,6 +477,13 @@ The trace above has one freedom: steps 3 and 4. The standard deliberately leaves
 1. **Processes woken together run in any order.** When an update executes, the processes sensitive to it are considered for evaluation in an arbitrary order (§4.3), and ready events can be taken in any order (§4.7).
 2. **A running process can be paused part-way.** Statements without a timing control do not have to execute as one event: the simulator may suspend a process and run others in between (§4.7). Statements inside one `begin … end` still execute in source order (§4.6).
 3. **`initial` and `always` start in no particular order.** The standard implies no order between `initial` and `always` procedures, and `initial` procedures need not run first (§9.2).
+
+| Fixed by the standard | Left to the simulator |
+|---|---|
+| statements in one `begin … end` run in source order (§4.6 a) | a process may be paused between those statements while others run (§4.7) |
+| nonblocking updates apply in the order the statements executed (§4.6 b) | which process ran first, so updates from two processes can land in either order (§4.7) |
+| declaration initializers run before any `initial` or `always` procedure starts (§6.8) | whether `initial` or `always` starts first (§9.2) |
+| every event of a time slot happens at that slot's time (§4.4) | the order of processes woken together (§4.3, §4.7) |
 
 None of these is a simulator bug. Different tools, versions or optimization switches may choose differently, and the standard expects such differences (§4.3). Here is the classic place this bites, at time 0:
 
@@ -262,6 +503,10 @@ module tb_top;
   end
 endmodule
 ```
+
+**Predict, then run every order.** The simulator below runs this exact program. Say how many lines it prints, then run it and compare the outcome groups. The control inside its code switches to the fix shown further down.
+
+<ProceduralBlocksSimulator scenario="time0-race" scenarios={["time0-race"]} />
 
 Both outputs below are legal. After t = 20 nothing is scheduled, so the run ends by itself (§9.6.1).
 
@@ -290,10 +535,12 @@ Now every simulator prints the same two lines. In a log, this kind of race shows
 
 Each freedom above, and each default the standard leaves to the tool, is a way for one bench to give two answers:
 
-- the order of processes woken together, and of `initial` versus `always` at time 0 (§4.3, §4.7, §9.2);
-- the time unit and precision of a file that declares none (§3.14.2.3, §22.7);
-- which files form one compilation unit, and therefore how far a `` `timescale `` reaches (§3.12.1);
-- the default `%t` format (§20.4.3, Table 20-3).
+| Freedom or tool default | How it shows up in a log | The defence |
+|---|---|---|
+| the order of processes woken together, and of `initial` versus `always` at time 0 (§4.3, §4.7, §9.2) | a first line that appears on one simulator only, or comes and goes when files are reordered | a declaration initializer, and no same-time processes that depend on their order |
+| the time unit and precision of a file that declares none (§3.14.2.3, §22.7) | a delay 10× or 1000× too long or too short | a time unit in every file |
+| which files form one compilation unit, and therefore how far a `` `timescale `` reaches (§3.12.1) | delays that change when the file list is reordered | `timeunit` and `timeprecision` inside each element (§3.14.2.2) |
+| the default `%t` format (§20.4.3, Table 20-3) | time stamps that look scaled, such as `@ 15000` for an event at 15 ns | one `$timeformat` call |
 
 A result that depends on any of these can pass on one simulator and fail on another, or change when someone reorders the file list. Sign-off needs results that do not depend on the tool. So declare a time unit in every file, set `$timeformat` once, use initializers instead of time-0 assignments, and never let two same-time processes depend on their order ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)).
 
@@ -304,7 +551,48 @@ A result that depends on any of these can pass on one simulator and fail on anot
 - the **time unit** says what 1 means: `#10` with a 1 ns unit waits 10 ns;
 - the **time precision** says how finely delays are rounded before they are used (§3.14.1). It must be at least as fine as the unit (§3.14).
 
-Both are written as 1, 10 or 100 of `s`, `ms`, `us`, `ns`, `ps` or `fs` (§3.14). There are two ways to set them:
+<figure className="my-6">
+<svg viewBox="0 0 360 178" role="img" aria-labelledby="f3a-ruler-title f3a-ruler-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-ruler-title">The unit is the length of 1; the precision is the tick marks</title>
+  <desc id="f3a-ruler-desc">Two rulers. With timeunit 1ns and timeprecision 100ps, one unit from 2.0 to 3.0 ns has a tick every 100 ps, and a delay of 2.75 ns falls between two ticks and rounds to 2.8 ns. With timeunit 1ns and timeprecision 1ns, one unit from 0 to 1 ns has ticks only at its ends, and a delay of 0.4 ns rounds to 0 ns, so the statement runs in the same time slot.</desc>
+  <defs>
+    <marker id="f3a-ruler-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </marker>
+  </defs>
+  <text x="6" y="12" fontSize="10" fontFamily="monospace" fontWeight="700" fill="currentColor">timeunit 1ns; timeprecision 100ps;</text>
+  <path d="M30,24 V30 H330 V24" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="180" y="27" fontSize="9.5" textAnchor="middle" fill="currentColor">1 unit = 1 ns</text>
+  <path d="M30,50 V46 H60 V50" fill="none" stroke="rgb(6,182,212)" strokeWidth="1.5" />
+  <text x="66" y="50" fontSize="9.5" fill="currentColor">one precision step = 100 ps</text>
+  <line x1="30" y1="66" x2="330" y2="66" stroke="currentColor" strokeOpacity="0.7" />
+  <path d="M30,58 V74 M60,62 V70 M90,62 V70 M120,62 V70 M150,62 V70 M180,62 V70 M210,62 V70 M240,62 V70 M270,62 V70 M300,62 V70 M330,58 V74" fill="none" stroke="currentColor" strokeOpacity="0.7" />
+  <text x="30" y="85" fontSize="9.5" textAnchor="middle" fill="currentColor">2.0</text>
+  <text x="120" y="85" fontSize="9.5" textAnchor="middle" fill="currentColor">2.3</text>
+  <text x="210" y="85" fontSize="9.5" textAnchor="middle" fill="currentColor">2.6</text>
+  <text x="270" y="85" fontSize="9.5" fontWeight="700" textAnchor="middle" fill="currentColor">2.8</text>
+  <text x="330" y="85" fontSize="9.5" textAnchor="middle" fill="currentColor">3.0 ns</text>
+  <circle cx="255" cy="66" r="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <circle cx="270" cy="66" r="4.5" fill="rgb(6,182,212)" stroke="currentColor" />
+  <path d="M255,60 Q262,52 268,59" fill="none" stroke="currentColor" strokeDasharray="2 2" markerEnd="url(#f3a-ruler-arrow)" />
+  <text x="262" y="49" fontSize="9.5" fontWeight="600" textAnchor="middle" fill="currentColor">#2.75 rounds to 2.8 ns</text>
+  <text x="6" y="108" fontSize="10" fontFamily="monospace" fontWeight="700" fill="currentColor">timeunit 1ns; timeprecision 1ns;</text>
+  <path d="M30,120 V126 H330 V120" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="180" y="123" fontSize="9.5" textAnchor="middle" fill="currentColor">1 unit = 1 precision step = 1 ns</text>
+  <line x1="30" y1="156" x2="330" y2="156" stroke="currentColor" strokeOpacity="0.7" />
+  <path d="M30,148 V164 M330,148 V164" fill="none" stroke="currentColor" strokeOpacity="0.7" />
+  <text x="30" y="175" fontSize="9.5" fontWeight="700" textAnchor="middle" fill="currentColor">0</text>
+  <text x="150" y="175" fontSize="9.5" textAnchor="middle" fill="currentColor">0.4</text>
+  <text x="330" y="175" fontSize="9.5" textAnchor="middle" fill="currentColor">1 ns</text>
+  <circle cx="150" cy="156" r="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <circle cx="30" cy="156" r="4.5" fill="rgb(6,182,212)" stroke="currentColor" />
+  <path d="M148,150 Q90,134 36,150" fill="none" stroke="currentColor" strokeDasharray="2 2" markerEnd="url(#f3a-ruler-arrow)" />
+  <text x="160" y="150" fontSize="9.5" fontWeight="600" fill="currentColor">#0.4 rounds to 0: same time slot</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">A hollow circle is the delay as written, scaled by the unit. A filled circle is where it lands, on the nearest tick of its own element's precision (§3.14.1). Each ruler is zoomed to one unit, so the upper one starts at 2 ns.</figcaption>
+</figure>
+
+Both settings are written as 1, 10 or 100 of `s`, `ms`, `us`, `ns`, `ps` or `fs` (§3.14). There are two ways to set them:
 
 ```systemverilog
 // snippet: three design elements in one file
@@ -385,6 +673,58 @@ A finer precision elsewhere in the design does not help a coarse module: its del
 3. else a `timeunit` declared in the compilation-unit scope (outside every design element) applies;
 4. else the tool's default applies, which the standard leaves implementation-specific.
 
+<figure className="my-6">
+<svg viewBox="0 0 360 272" role="img" aria-labelledby="f3a-ladder-title f3a-ladder-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-ladder-title">Which unit applies: the first yes wins</title>
+  <desc id="f3a-ladder-desc">A decision ladder for a design element with no timeunit of its own. Rule 1: is it a nested module or interface? If yes, it inherits the unit around it. If no, rule 2: was a timescale directive seen earlier in this compilation unit? If yes, the last one applies. If no, rule 3: does the compilation-unit scope declare a timeunit? If yes, that unit applies. If no, rule 4: the tool's default applies, which is implementation-specific. A bar below states the mixed-specification error: some design elements have a unit and precision while others have none.</desc>
+  <defs>
+    <marker id="f3a-ladder-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </marker>
+  </defs>
+  <text x="8" y="12" fontSize="10.5" fontWeight="700" fill="currentColor">A design element with no timeunit of its own:</text>
+  <rect x="8" y="20" width="196" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="106" y="43" fontSize="10" textAnchor="middle" fill="currentColor">1. Nested module or interface?</text>
+  <line x1="204" y1="39" x2="248" y2="39" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-ladder-arrow)" />
+  <text x="225" y="34" fontSize="9.5" textAnchor="middle" fill="currentColor">yes</text>
+  <rect x="250" y="20" width="102" height="38" rx="8" fill="rgba(6,182,212,0.10)" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="301" y="36" fontSize="10" textAnchor="middle" fill="currentColor">inherits the</text>
+  <text x="301" y="49" fontSize="10" textAnchor="middle" fill="currentColor">unit around it</text>
+  <line x1="106" y1="58" x2="106" y2="72" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-ladder-arrow)" />
+  <text x="113" y="69" fontSize="9.5" fill="currentColor">no</text>
+  <rect x="8" y="74" width="196" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="106" y="90" fontSize="10" textAnchor="middle" fill="currentColor">{"2. A `timescale seen earlier"}</text>
+  <text x="106" y="103" fontSize="10" textAnchor="middle" fill="currentColor">in this compilation unit?</text>
+  <line x1="204" y1="93" x2="248" y2="93" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-ladder-arrow)" />
+  <text x="225" y="88" fontSize="9.5" textAnchor="middle" fill="currentColor">yes</text>
+  <rect x="250" y="74" width="102" height="38" rx="8" fill="rgba(6,182,212,0.10)" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="301" y="90" fontSize="10" textAnchor="middle" fill="currentColor">the last one</text>
+  <text x="301" y="103" fontSize="10" textAnchor="middle" fill="currentColor">applies</text>
+  <line x1="106" y1="112" x2="106" y2="126" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-ladder-arrow)" />
+  <text x="113" y="123" fontSize="9.5" fill="currentColor">no</text>
+  <rect x="8" y="128" width="196" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="106" y="144" fontSize="10" textAnchor="middle" fill="currentColor">3. A timeunit in the</text>
+  <text x="106" y="157" fontSize="10" textAnchor="middle" fill="currentColor">compilation-unit scope?</text>
+  <line x1="204" y1="147" x2="248" y2="147" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-ladder-arrow)" />
+  <text x="225" y="142" fontSize="9.5" textAnchor="middle" fill="currentColor">yes</text>
+  <rect x="250" y="128" width="102" height="38" rx="8" fill="rgba(6,182,212,0.10)" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="301" y="151" fontSize="10" textAnchor="middle" fill="currentColor">that unit applies</text>
+  <line x1="76" y1="166" x2="76" y2="180" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-ladder-arrow)" />
+  <text x="83" y="177" fontSize="9.5" fill="currentColor">no</text>
+  <rect x="8" y="182" width="136" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="76" y="205" fontSize="10" textAnchor="middle" fill="currentColor">4. None of these</text>
+  <line x1="144" y1="201" x2="188" y2="201" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-ladder-arrow)" />
+  <text x="165" y="196" fontSize="9.5" textAnchor="middle" fill="currentColor">else</text>
+  <rect x="190" y="182" width="162" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="271" y="198" fontSize="10" textAnchor="middle" fill="currentColor">the tool's default</text>
+  <text x="271" y="211" fontSize="9.5" textAnchor="middle" fill="currentColor">(implementation-specific)</text>
+  <rect x="8" y="230" width="344" height="36" rx="8" fill="rgba(244,63,94,0.10)" stroke="rgb(244,63,94)" strokeWidth="1.5" />
+  <text x="180" y="245" fontSize="10" fontWeight="600" textAnchor="middle" fill="currentColor">✕ Error (§3.14.2.3): some design elements have a unit</text>
+  <text x="180" y="258" fontSize="10" fontWeight="600" textAnchor="middle" fill="currentColor">and precision while others have none</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Read from the top; the first yes decides, and each number matches the list above (§3.14.2.3). A dashed outline marks the only result the standard leaves to the tool. The red bar is a check across the whole design, not one more rung.</figcaption>
+</figure>
+
 The precision follows the same rules. The compilation-unit scope can take its unit only from a `timeunit` declaration, never from a `` `timescale `` (§3.14.2.3). One more rule overrides convenience: it is an **error** for some design elements to have a time unit and precision while others have none (§3.14.2.3). How a tool reports that, as an error or a warning, is tool-dependent.
 
 **The global precision and `1step`.** The **global time precision**, also called the *simulation time unit*, is the finest precision anywhere in the design. It counts every `timeprecision`, every precision written with `timeunit … / …`, and the smallest precision of all the `` `timescale `` directives (§3.14.3). Every simulation time is a whole number of these steps. `$printtimescale($root)` prints it (§20.4.2). The special delay `1step` equals the global precision (§3.14.3); clocking blocks use `#1step` for sampling, as [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) shows.
@@ -435,6 +775,60 @@ $time=3 $realtime=3.2
 | first `#1.55` (15.5 ns, rounded) | 16 ns | 1.6 | 2 | 1.6 |
 | second `#1.55` | 32 ns | 3.2 | 3 | 3.2 |
 
+<figure className="my-6">
+<svg viewBox="0 0 360 188" role="img" aria-labelledby="f3a-read-title f3a-read-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-read-title">One run, three rulers</title>
+  <desc id="f3a-read-desc">Three aligned rulers for the same run. Absolute time: the delays end at 16 ns and 32 ns. In the module's 10 ns unit, which $realtime reports, the same instants read 1.6 and 3.2. $time reports integers: 1.6 rounds up to 2 and 3.2 rounds down to 3.</desc>
+  <defs>
+    <marker id="f3a-read-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </marker>
+  </defs>
+  <text x="6" y="12" fontSize="10.5" fontWeight="700" fill="currentColor">Absolute time: where the delays ended</text>
+  <line x1="30" y1="36" x2="330" y2="36" stroke="currentColor" strokeOpacity="0.7" />
+  <path d="M30,32 V40 M105,32 V40 M180,32 V40 M255,32 V40 M330,32 V40" fill="none" stroke="currentColor" strokeOpacity="0.7" />
+  <text x="30" y="50" fontSize="9.5" textAnchor="middle" fill="currentColor">0</text>
+  <text x="105" y="50" fontSize="9.5" textAnchor="middle" fill="currentColor">10</text>
+  <text x="180" y="50" fontSize="9.5" textAnchor="middle" fill="currentColor">20</text>
+  <text x="255" y="50" fontSize="9.5" textAnchor="middle" fill="currentColor">30</text>
+  <text x="330" y="50" fontSize="9.5" textAnchor="middle" fill="currentColor">40 ns</text>
+  <circle cx="150" cy="36" r="4.5" fill="rgb(6,182,212)" stroke="currentColor" />
+  <circle cx="270" cy="36" r="4.5" fill="rgb(6,182,212)" stroke="currentColor" />
+  <text x="150" y="27" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">16 ns</text>
+  <text x="270" y="27" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">32 ns</text>
+  <path d="M150,41 V52 M150,67 V73" fill="none" stroke="currentColor" strokeOpacity="0.3" strokeDasharray="2 3" />
+  <line x1="270" y1="41" x2="270" y2="73" stroke="currentColor" strokeOpacity="0.3" strokeDasharray="2 3" />
+  <text x="6" y="64" fontSize="10.5" fontWeight="700" fill="currentColor">{"$realtime: the module's 10 ns unit"}</text>
+  <line x1="30" y1="92" x2="330" y2="92" stroke="currentColor" strokeOpacity="0.7" />
+  <path d="M30,88 V96 M105,88 V96 M180,88 V96 M255,88 V96 M330,88 V96" fill="none" stroke="currentColor" strokeOpacity="0.7" />
+  <text x="30" y="106" fontSize="9.5" textAnchor="middle" fill="currentColor">0</text>
+  <text x="105" y="106" fontSize="9.5" textAnchor="middle" fill="currentColor">1</text>
+  <text x="180" y="106" fontSize="9.5" textAnchor="middle" fill="currentColor">2</text>
+  <text x="255" y="106" fontSize="9.5" textAnchor="middle" fill="currentColor">3</text>
+  <text x="330" y="106" fontSize="9.5" textAnchor="middle" fill="currentColor">4</text>
+  <circle cx="150" cy="92" r="4.5" fill="rgb(6,182,212)" stroke="currentColor" />
+  <circle cx="270" cy="92" r="4.5" fill="rgb(6,182,212)" stroke="currentColor" />
+  <text x="150" y="83" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">1.6</text>
+  <text x="270" y="83" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">3.2</text>
+  <text x="6" y="124" fontSize="10.5" fontWeight="700" fill="currentColor">{"$time: an integer, rounded"}</text>
+  <line x1="150" y1="98" x2="178" y2="142" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-read-arrow)" />
+  <text x="172" y="120" fontSize="9.5" fill="currentColor">rounds up</text>
+  <line x1="270" y1="98" x2="257" y2="142" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-read-arrow)" />
+  <text x="272" y="120" fontSize="9.5" fill="currentColor">rounds down</text>
+  <line x1="30" y1="150" x2="330" y2="150" stroke="currentColor" strokeOpacity="0.7" />
+  <path d="M30,146 V154 M105,146 V154 M180,146 V154 M255,146 V154 M330,146 V154" fill="none" stroke="currentColor" strokeOpacity="0.7" />
+  <text x="30" y="164" fontSize="9.5" textAnchor="middle" fill="currentColor">0</text>
+  <text x="105" y="164" fontSize="9.5" textAnchor="middle" fill="currentColor">1</text>
+  <text x="180" y="164" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">2</text>
+  <text x="255" y="164" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">3</text>
+  <text x="330" y="164" fontSize="9.5" textAnchor="middle" fill="currentColor">4</text>
+  <rect x="175" y="145" width="10" height="10" fill="rgb(139,92,246)" stroke="currentColor" />
+  <rect x="250" y="145" width="10" height="10" fill="rgb(139,92,246)" stroke="currentColor" />
+  <text x="180" y="182" fontSize="10" textAnchor="middle" fill="currentColor">{"$time says 2 and 3, but no delay ended at 20 ns or 30 ns"}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">The three rulers are aligned: the dotted lines mark one instant. The values match the table above (§20.3.1, §20.3.3). A square marks `$time` because it has left the true instant behind.</figcaption>
+</figure>
+
 The NOTE in §20.3.1 makes the point: the times `$time` reports (2 and 3) do not match the times the delays ended (16 ns and 32 ns). `$time` is not wrong; it is coarse.
 
 **`%t` and `$timeformat`.** The `%t` format prints a time "in current time format" (§21.2.1.1). It treats its argument as a time in the caller's unit and converts it to the units chosen with `$timeformat` (§20.4.3):
@@ -445,10 +839,16 @@ $timeformat(-9, 3, " ns", 0);   // units, decimals, suffix, minimum field width
 $display("t=%t", $realtime);    // after the first #1.55 above: t=16.000 ns
 ```
 
-- **units_number** is a power of ten from 2 (100 s) down to −15 (1 fs): −9 is ns and −12 is ps (Table 20-2).
-- **precision_number** is the number of digits after the decimal point.
-- **suffix_string** is appended after the number, such as `" ns"`.
-- **minimum_field_width** pads the result to at least that many characters.
+| Argument | What it is | In the call above | Default with no call (Table 20-3) |
+|---|---|---|---|
+| **units_number** | a power of ten from 2 (100 s) down to −15 (1 fs): −9 is ns and −12 is ps (Table 20-2) | `-9` | the smallest precision among the `` `timescale `` directives |
+| **precision_number** | the number of digits after the decimal point | `3` | `0`: no decimals |
+| **suffix_string** | appended after the number, such as `" ns"` | `" ns"` | none |
+| **minimum_field_width** | pads the result to at least that many characters | `0` | `20` |
+
+| `units_number` (Table 20-2) | 0 | −3 | −6 | −9 | −12 | −15 |
+|---|---|---|---|---|---|---|
+| Unit | 1 s | 1 ms | 1 us | 1 ns | 1 ps | 1 fs |
 
 One call sets the format for every `%t` in the design until the next call (§20.4.3). Without any call, the defaults are: units equal to the smallest precision among the `` `timescale `` directives in the source, no decimals, no suffix, and a minimum width of 20 characters (Table 20-3). `timeunit` declarations do not count toward that default, so a design that uses only `timeunit` has a tool-dependent default.
 
@@ -479,6 +879,29 @@ One call sets the format for every `%t` in the design until the next call (§20.
 - **Every file declares its unit.** Put `timeunit 1ns; timeprecision 1ps;` (or your project's agreed values) first in every module, interface, program and package, as the [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) bench does. Packages matter too: a package's delays, and the `$realtime` its classes read, use the package's unit.
 - **One `$timeformat`, at time 0, in `tb_top`.** In a UVM bench, call it before `run_test()`, so every `%t` in the log uses one format.
 - **UVM log time stamps follow it.** uvm-core 2020.3.1 builds the time in every report message with `$swrite(time_str, "%0t", $realtime)` (`compose_report_message` in `src/base/uvm_report_server.svh`), so the `$timeformat` call in `tb_top` controls the `@ …` stamp of every `` `uvm_info `` line.
+
+<ArchitectureDiagram
+  title="Who uses a delay and who waits on an event"
+  caption="A bench has few delays: the three in the left box. Each dashed arrow means the clock's update event wakes that component. The test has no arrow because it waits for a condition of its own."
+  cellWidth={120}
+  gapX={96}
+  legend={false}
+  nodes={[
+    { id: "delays", label: "delays: #d", col: 0, row: 0, rowSpan: 3, container: true },
+    { id: "events", label: "events: @, wait", col: 1, row: 0, rowSpan: 3, container: true },
+    { id: "clock", label: "clock generator", col: 0, row: 0 },
+    { id: "reset", label: "reset sequence", col: 0, row: 1 },
+    { id: "timeout", label: "timeout", col: 0, row: 2 },
+    { id: "drv", label: "driver", kind: "driver", col: 1, row: 0 },
+    { id: "mon", label: "monitor", kind: "monitor", col: 1, row: 1 },
+    { id: "test", label: "test", kind: "test", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "clock", to: "drv", style: "causal", label: "wakes" },
+    { from: "clock", to: "mon", style: "causal", label: "wakes" }
+  ]}
+/>
+
 - **Delays make clocks, resets and timeouts; everything else waits on events.** Drivers and monitors wake on clock edges, and from F4C on clocking blocks. A test waits for a condition with `@` or `wait`, never for a guessed `#delay` that breaks as soon as the design's latency changes.
 - **When not to use a delay:** never use `#0` to put one process after another in the same time slot. It only moves the race (F3C). Drive timing is solved with nonblocking drives and clocking blocks (F3C, F4C).
 
@@ -520,6 +943,54 @@ assign q_n = ~q;                  // woken by an update of q, same time slot`}
     <text x="46" y="160" fontSize="10" fill="currentColor">◆ update</text>
     <text x="126" y="160" fontSize="10" fill="currentColor">q_n 1 → 0</text>
     <text x="150" y="182" fontSize="9.5" textAnchor="middle" fill="currentColor" fillOpacity="0.85">all at t = 5 ns: zero simulated time</text>
+  </svg>
+</VisualRecap>
+
+<VisualRecap
+  title="The unit scales, the precision rounds, the caller's unit reads, %t converts"
+  rule="An element's time unit scales #d and its own precision rounds it. $time, $stime and $realtime read the result in the caller's time unit. %t converts to the units set by one $timeformat call."
+  code={`timeunit 10ns; timeprecision 1ns;  // first items in the element
+#1.55;                              // 15.5 ns, rounded: 16 ns
+$timeformat(-9, 3, " ns", 0);       // once, at time 0, in tb_top
+$display("t=%t", $realtime);        // t=16.000 ns`}
+  mistake="Believing that $time reports in the precision unit. It reports in the caller's time unit, rounded, so two equal $time values from modules with different units may be different moments."
+  inTestbench="timeunit and timeprecision in every file, so no leaked directive can change a delay, and one $timeformat call in tb_top before run_test(), so every %t in the log uses one format."
+>
+  <svg viewBox="0 0 300 226" role="img" aria-labelledby="f3a-recap2-title" style={{ width: "100%", maxWidth: 360 }}>
+    <title id="f3a-recap2-title">From written delay to printed time, in a module with a 10 ns unit and 1 ns precision. #1.55 is scaled by the unit to 15.5 ns, rounded to the precision to 16 ns, and the process wakes at 16 ns. Read in the caller's unit, $time is 2 and $realtime is 1.6. Converted by $timeformat, %t prints 16.000 ns.</title>
+    <defs>
+      <marker id="f3a-recap2-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      </marker>
+    </defs>
+    <rect x="40" y="4" width="220" height="26" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="150" y="21" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">#1.55 in a 10ns / 1ns module</text>
+    <line x1="150" y1="30" x2="150" y2="54" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-recap2-arrow)" />
+    <text x="158" y="46" fontSize="10" fill="currentColor">× unit (§3.14.1)</text>
+    <rect x="40" y="56" width="220" height="26" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="150" y="73" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">15.5 ns</text>
+    <line x1="150" y1="82" x2="150" y2="106" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-recap2-arrow)" />
+    <text x="158" y="98" fontSize="10" fill="currentColor">round to its precision</text>
+    <rect x="40" y="108" width="220" height="26" rx="6" fill="rgba(6,182,212,0.10)" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="150" y="125" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">the process wakes at 16 ns</text>
+    <line x1="60" y1="134" x2="50" y2="160" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-recap2-arrow)" />
+    <line x1="150" y1="134" x2="150" y2="160" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-recap2-arrow)" />
+    <line x1="240" y1="134" x2="250" y2="160" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-recap2-arrow)" />
+    <text x="62" y="151" fontSize="9.5" fill="currentColor">reads</text>
+    <text x="158" y="151" fontSize="9.5" fill="currentColor">reads</text>
+    <text x="238" y="151" fontSize="9.5" textAnchor="end" fill="currentColor">converts</text>
+    <rect x="2" y="162" width="92" height="26" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="48" y="179" fontSize="10" fontWeight="600" textAnchor="middle" fill="currentColor">{"$time = 2"}</text>
+    <rect x="104" y="162" width="92" height="26" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="150" y="179" fontSize="10" fontWeight="600" textAnchor="middle" fill="currentColor">{"$realtime = 1.6"}</text>
+    <rect x="206" y="162" width="92" height="26" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="252" y="179" fontSize="10" fontWeight="600" textAnchor="middle" fill="currentColor">%t = 16.000 ns</text>
+    <text x="48" y="201" fontSize="9.5" textAnchor="middle" fill="currentColor">caller's unit,</text>
+    <text x="48" y="213" fontSize="9.5" textAnchor="middle" fill="currentColor">rounded</text>
+    <text x="150" y="201" fontSize="9.5" textAnchor="middle" fill="currentColor">caller's unit,</text>
+    <text x="150" y="213" fontSize="9.5" textAnchor="middle" fill="currentColor">keeps the fraction</text>
+    <text x="252" y="201" fontSize="9.5" textAnchor="middle" fill="currentColor">the units set by</text>
+    <text x="252" y="213" fontSize="9.5" textAnchor="middle" fill="currentColor">{"$timeformat"}</text>
   </svg>
 </VisualRecap>
 
@@ -616,6 +1087,8 @@ slow_gen $time=3 $realtime=2.60 %t=26.0 ns
 
 How a simulator names the instance in the second line, and the message `$finish` prints at 31.3 ns, are tool-dependent.
 
+**Every delay and print, row by row:**
+
 | Absolute time | Module | After | `$time` | `$realtime` | `%t` |
 |---|---|---|---|---|---|
 | 0 | `tb_top` | `$timeformat` and three `$printtimescale` calls | | | |
@@ -632,6 +1105,17 @@ How a simulator names the instance in the second line, and the message `$finish`
 - Only `%t` shows both as absolute nanoseconds, because one `$timeformat` call set one format for the whole design (§20.4.3).
 - `$root` reports 100ps / 100ps, the finest precision in the design (§3.14.3).
 
+**The same `#1.26`, side by side:**
+
+| | `tb_top` | `u_slow` |
+|---|---|---|
+| Time unit / precision | 1ns / 100ps | 10ns / 1ns |
+| Scaled by the unit | 1.26 ns | 12.6 ns |
+| Rounded to its own precision: wakes at | 1.3 ns | 13 ns |
+| `$time` | 1 | 1 |
+| `$realtime` | 1.30, meaning 1.3 ns | 1.30, meaning 13 ns |
+| `%t` | 1.3 ns | 13.0 ns |
+
 **Run it.** Save both modules in one file, compile the file as one compilation unit and elaborate `tb_top` as the top module. Any SystemVerilog simulator should accept it, for example on EDA Playground. Support for `$printtimescale` and fractional delays in open-source simulators varies, and this example has not been run in this project's CI.
 
 ### How to apply this in your own bench
@@ -642,6 +1126,24 @@ How a simulator names the instance in the second line, and the message `$finish`
 4. When a delay or a time stamp looks wrong, add `$printtimescale;` to the suspect module and `$printtimescale($root);` to `tb_top`.
 5. In shared code (packages and interfaces), write delays as time literals such as `#5ns`, or scale a real argument inside, such as `#(delay_ns * 1ns)`.
 6. Give variables their starting values in their declarations, and make the first real change after a delay.
+
+A bench header that follows these steps:
+
+```systemverilog
+// snippet: the numbered comments match the steps above
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;    // step 1: the first items in the element
+
+  logic clk = 0;                      // step 6: the starting value in the declaration
+
+  initial begin
+    $timeformat(-9, 3, " ns", 0);     // step 2: once, at time 0, before anything prints
+    $printtimescale;                  // step 4: this module's unit and precision
+    $printtimescale($root);           // step 4: the global precision
+    #1 $display("t=%t", $realtime);   // step 3: %t with $realtime, not raw $time
+  end
+endmodule
+```
 
 **Checklist before moving on:**
 
@@ -665,7 +1167,50 @@ Time 0 is the busiest and least ordered time slot of any simulation. The standar
 | `always_comb` | runs once at time 0, after all `initial` and `always` procedures have started | §9.2.2.2 |
 | `always @*` | does not run until something it reads changes | §9.2.2.2.2 |
 
-Consequences an expert uses:
+<figure className="my-6">
+<svg viewBox="0 0 360 240" role="img" aria-labelledby="f3a-t0-title f3a-t0-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-t0-title">Inside the time-0 slot: what is ordered and what is not</title>
+  <desc id="f3a-t0-desc">Top to bottom, all at time 0. First, before any procedure starts, declaration initializers such as logic a = 0 are set. Then initial and always procedures, including always @*, are all enabled, in no implied order. Then always_comb runs once, after all initial and always procedures have started. Beside them, continuous assignments are evaluated at time 0. always @* starts and waits, and does not run until something it reads changes.</desc>
+  <defs>
+    <marker id="f3a-t0-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </marker>
+  </defs>
+  <text x="6" y="12" fontSize="10.5" fontWeight="700" fill="currentColor">{"All of this is t = 0: $time does not move"}</text>
+  <rect x="8" y="20" width="344" height="38" rx="8" fill="rgba(6,182,212,0.10)" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="180" y="35" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">Before any procedure starts</text>
+  <text x="180" y="49" fontSize="10" textAnchor="middle" fill="currentColor">declaration initializers: logic a = 0; (§6.8)</text>
+  <line x1="120" y1="58" x2="120" y2="76" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-t0-arrow)" />
+  <text x="127" y="71" fontSize="9.5" fill="currentColor">then</text>
+  <rect x="8" y="78" width="228" height="66" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="122" y="93" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">All enabled, no implied order (§9.2)</text>
+  <rect x="16" y="104" width="62" height="28" rx="6" fill="currentColor" fillOpacity="0.08" />
+  <text x="47" y="122" fontSize="10" fontFamily="monospace" textAnchor="middle" fill="currentColor">initial</text>
+  <rect x="88" y="104" width="62" height="28" rx="6" fill="currentColor" fillOpacity="0.08" />
+  <text x="119" y="122" fontSize="10" fontFamily="monospace" textAnchor="middle" fill="currentColor">always</text>
+  <rect x="160" y="104" width="68" height="28" rx="6" fill="currentColor" fillOpacity="0.08" />
+  <text x="194" y="122" fontSize="10" fontFamily="monospace" textAnchor="middle" fill="currentColor">always @*</text>
+  <line x1="120" y1="144" x2="120" y2="162" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-t0-arrow)" />
+  <text x="127" y="157" fontSize="9.5" fill="currentColor">then</text>
+  <rect x="8" y="164" width="228" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="122" y="179" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">always_comb runs once</text>
+  <text x="122" y="193" fontSize="9.5" textAnchor="middle" fill="currentColor">after all of them have started (§9.2.2.2)</text>
+  <rect x="246" y="78" width="106" height="124" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="299" y="118" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">continuous</text>
+  <text x="299" y="131" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">assignments</text>
+  <text x="299" y="148" fontSize="9.5" textAnchor="middle" fill="currentColor">evaluated at</text>
+  <text x="299" y="160" fontSize="9.5" textAnchor="middle" fill="currentColor">time 0 (§4.9.1)</text>
+  <text x="180" y="219" fontSize="10" textAnchor="middle" fill="currentColor">always @* starts and waits: it does not run until</text>
+  <text x="180" y="233" fontSize="10" textAnchor="middle" fill="currentColor">something it reads changes (§9.2.2.2.2)</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">The picture adds the before-and-then order. A solid outline is a stage whose place in that order the standard fixes. A dashed outline means no order is promised, between the procedures inside it or against the rest of the slot.</figcaption>
+</figure>
+
+**Try it before you read the consequences.** The `always_comb vs @*` program starts with `a` static: predict what `y1` and `y2` hold when the run ends. Then pick **reset at t = 0** and choose the reset form inside the code. With `=`, run every order and predict first: does the flop always see the reset edge?
+
+<ProceduralBlocksSimulator scenarios={["comb-vs-star", "time0-reset"]} initialVariant="inputs-static" />
+
+Consequences an expert uses (the first two explain what you just ran; with `=`, running every order shows the time-0 race):
 
 - An `always @*` block whose inputs never change after their initializers never computes its output, while `always_comb` does (§9.2.2.2.2). That is one reason RTL style guides prefer `always_comb` (practice, not a rule of the standard).
 - A change from x to 0 is a `negedge` (§9.4.2, Table 9-2). An asynchronous reset driven low by an `initial` block at t = 0 resets a flop at t = 0 only if the flop's process was already waiting, which is a time-0 race. It is usually harmless when reset is held for several clocks, but a check of reset values before the first clock edge inherits the race.
@@ -680,6 +1225,62 @@ The precedence rules (§3.14.2.3) interact with how files are grouped into compi
 - **The mixed-specification error covers packages.** A design element is a module, program, interface, checker, package, primitive or configuration (§3.2), and §3.14.2.3 makes it an error for some to have a unit while others have none. uvm-core 2020.3.1's `src/uvm_pkg.sv` declares no time unit, so UVM takes its unit from a `` `timescale `` earlier in its compilation unit, from a compilation-unit `timeunit`, or from the tool default.
 - **Tool-dependent:** command-line options that give files without a unit a default `timescale`, whether the mixed case is reported as an error or a warning, and the default unit itself.
 
+<figure className="my-6">
+<svg viewBox="0 0 360 296" role="img" aria-labelledby="f3a-order-title f3a-order-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-order-title">How far one timescale directive reaches</title>
+  <desc id="f3a-order-desc">a.sv starts with a timescale directive of 1ns/1ps and holds module a. b.sv holds module b, with #10 delays and no unit of its own. In one compilation unit with a.sv first, the directive reaches b, and #10 waits 10 ns. In one compilation unit with b.sv first, b comes before the directive and has no unit. With each file as its own compilation unit, the directive stops at the end of a.sv and b has no unit. In one compilation unit where b.sv starts with resetall, the directive stops at the resetall and b has no unit.</desc>
+  <defs>
+    <marker id="f3a-order-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M1,1 L9,5 L1,9" fill="none" stroke="rgb(6,182,212)" strokeWidth="2" />
+    </marker>
+  </defs>
+  <text x="8" y="12" fontSize="10" fontFamily="monospace" fill="currentColor">{"a.sv: `timescale 1ns/1ps, then module a"}</text>
+  <text x="8" y="26" fontSize="10" fontFamily="monospace" fill="currentColor">{"b.sv: module b, #10, no unit"}</text>
+  <line x1="8" y1="34" x2="352" y2="34" stroke="currentColor" strokeOpacity="0.2" />
+  <g transform="translate(0 42)">
+  <text x="8" y="12" fontSize="10.5" fontWeight="700" fill="currentColor">One compilation unit: a.sv, then b.sv</text>
+  <rect x="8" y="18" width="66" height="24" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="41" y="34" fontSize="10" fontFamily="monospace" textAnchor="middle" fill="currentColor">a.sv</text>
+  <rect x="84" y="18" width="66" height="24" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="117" y="34" fontSize="10" fontFamily="monospace" textAnchor="middle" fill="currentColor">b.sv</text>
+  <line x1="12" y1="50" x2="150" y2="50" stroke="rgb(6,182,212)" strokeWidth="3" markerEnd="url(#f3a-order-arrow)" />
+  <text x="166" y="30" fontSize="10" fontWeight="600" fill="currentColor">✓ b inherits 1ns/1ps</text>
+  <text x="166" y="44" fontSize="10" fill="currentColor">#10 waits 10 ns</text>
+  <line x1="8" y1="60" x2="352" y2="60" stroke="currentColor" strokeOpacity="0.2" />
+  <text x="8" y="76" fontSize="10.5" fontWeight="700" fill="currentColor">One compilation unit: b.sv, then a.sv</text>
+  <rect x="8" y="82" width="66" height="24" rx="5" fill="none" stroke="rgb(244,63,94)" strokeWidth="1.5" />
+  <text x="41" y="98" fontSize="10" fontFamily="monospace" textAnchor="middle" fill="currentColor">b.sv</text>
+  <rect x="84" y="82" width="66" height="24" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="117" y="98" fontSize="10" fontFamily="monospace" textAnchor="middle" fill="currentColor">a.sv</text>
+  <line x1="88" y1="114" x2="150" y2="114" stroke="rgb(6,182,212)" strokeWidth="3" markerEnd="url(#f3a-order-arrow)" />
+  <text x="166" y="94" fontSize="10" fontWeight="600" fill="currentColor">✕ b comes before the directive</text>
+  <text x="166" y="108" fontSize="10" fill="currentColor">b has no unit</text>
+  <line x1="8" y1="124" x2="352" y2="124" stroke="currentColor" strokeOpacity="0.2" />
+  <text x="8" y="140" fontSize="10.5" fontWeight="700" fill="currentColor">Each file its own compilation unit</text>
+  <rect x="3" y="143" width="76" height="36" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="3 3" />
+  <rect x="79" y="143" width="76" height="36" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="3 3" />
+  <rect x="8" y="146" width="66" height="24" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="41" y="162" fontSize="10" fontFamily="monospace" textAnchor="middle" fill="currentColor">a.sv</text>
+  <rect x="84" y="146" width="66" height="24" rx="5" fill="none" stroke="rgb(244,63,94)" strokeWidth="1.5" />
+  <text x="117" y="162" fontSize="10" fontFamily="monospace" textAnchor="middle" fill="currentColor">b.sv</text>
+  <line x1="12" y1="175" x2="74" y2="175" stroke="rgb(6,182,212)" strokeWidth="3" />
+  <text x="166" y="158" fontSize="10" fontWeight="600" fill="currentColor">✕ the directive stops at a.sv's end</text>
+  <text x="166" y="172" fontSize="10" fill="currentColor">b has no unit</text>
+  <line x1="8" y1="188" x2="352" y2="188" stroke="currentColor" strokeOpacity="0.2" />
+  <text x="8" y="204" fontSize="10.5" fontWeight="700" fill="currentColor">{"One compilation unit: b.sv starts with `resetall"}</text>
+  <rect x="8" y="210" width="66" height="24" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="41" y="226" fontSize="10" fontFamily="monospace" textAnchor="middle" fill="currentColor">a.sv</text>
+  <rect x="84" y="210" width="66" height="24" rx="5" fill="none" stroke="rgb(244,63,94)" strokeWidth="1.5" />
+  <text x="117" y="226" fontSize="10" fontFamily="monospace" textAnchor="middle" fill="currentColor">b.sv</text>
+  <line x1="79" y1="206" x2="79" y2="248" stroke="currentColor" strokeWidth="2" />
+  <line x1="12" y1="242" x2="77" y2="242" stroke="rgb(6,182,212)" strokeWidth="3" />
+  <text x="166" y="222" fontSize="10" fontWeight="600" fill="currentColor">{"✕ `resetall cuts the directive off"}</text>
+  <text x="166" y="236" fontSize="10" fill="currentColor">b has no unit</text>
+  </g>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">The cyan bar is the reach of the `` `timescale `` in `a.sv`. A red outline marks the file it does not reach. "b has no unit" means the mixed-specification error, or the tool's default if the tool only warns, unless the compilation-unit scope declares a `timeunit` (§3.12.1, §3.14.2.1, §3.14.2.3, §22.3).</figcaption>
+</figure>
+
 The robust rule for a team: every design element you own declares `timeunit` and `timeprecision`, and third-party code without them is compiled after a known `` `timescale `` that the build script documents. `$printtimescale($unit)` shows what the compilation-unit scope ended up with (§20.4.2).
 
 ### Expert: global precision and `1step`
@@ -689,15 +1290,59 @@ The robust rule for a team: every design element you own declares `timeunit` and
 - **Cost.** Whether a finer global precision slows a simulation is implementation-dependent; the standard says nothing about speed.
 - **`$stime` wraps.** In a design where every unit and precision is 1 ps, `$stime` passes 32 bits after 2^32 ps, about 4.29 ms of simulated time. At 5 ms it returns the low 32 bits of 5,000,000,000, which is 705,032,704 (§20.3.2). Use `$time` (64 bits) or `$realtime` for long runs.
 
+**What one vendor file under `` `timescale 1ns/1fs `` changes, and what it leaves alone:**
+
+| What | After that file joins the build | Why |
+|---|---|---|
+| `$printtimescale($root)` | 1fs / 1fs | the global precision is the minimum over every precision (§3.14.3) |
+| `1step` | 1 fs | it equals the global precision (§3.14.3) |
+| default `%t` units, with no `$timeformat` call | femtoseconds | the smallest `` `timescale `` precision (Table 20-3) |
+| `%t` after a `$timeformat` call | no change | the call sets the format (§20.4.3) |
+| delays in a module with its own `timeunit` and `timeprecision` | no change | each element rounds to its own precision (§3.14.1) |
+| what `#1step` samples in a clocking block | no change: the values from just before the current time slot | §4.4.2.1 |
+
 ### Expert: time values that cross scopes
 
 - **Numbers carry no unit.** A time literal is converted to a number in the scope where it is written (§5.8). `time`, `realtime` and `int` variables hold plain numbers (`realtime` is the same type as `real`, §6.12). When a value crosses into a scope with another unit, such as a package task, an interface task or a class method compiled in a package, the receiver reads the number in *its* unit.
 - **The 1000× bug.** A package with `timeunit 1ps` exports `task automatic wait_t(time t); #t; endtask`. A 1 ns caller writes `wait_t(5ns)`: the literal becomes 5 in the caller, and the task waits 5 ps. The Debug challenge below walks through it.
+
+<SequenceDiagram
+  title="The 1000× bug, as calls"
+  caption="Follow the number: 5ns becomes a plain 5 in tb_top's 1 ns unit, crosses into the package unchanged, and is read there in 1 ps units. Nothing converts it on the way."
+  participants={[
+    { id: "tb", label: "tb_top", sublabel: "unit 1 ns" },
+    { id: "pkg", label: "util_pkg", sublabel: "unit 1 ps" }
+  ]}
+  messages={[
+    { kind: "note", from: "tb", to: "pkg", label: "in tb_top, the literal 5ns becomes the number 5" },
+    { from: "tb", to: "pkg", label: "wait_t(5)" },
+    { kind: "note", from: "tb", to: "pkg", label: "in util_pkg, #t waits 5 × 1 ps = 5 ps" },
+    { kind: "return", from: "pkg", to: "tb", label: "woke at 0.005 ns", tone: "error" }
+  ]}
+/>
+
 - **Fix patterns.** (1) Scale inside the callee: `#(delay_ns * 1ns)`, where `1ns` is converted in the callee's own unit (§5.8). (2) Agree one time unit for every file in the project. (3) Pass clock-cycle counts instead of times where you can: `repeat (n) @(posedge clk);` needs no unit at all.
 - **Real to integer.** Assigning a real to a `time` argument rounds to the nearest integer, and an exact half rounds away from zero (§6.12.1): `wait_t(1.5ns)` from a 1 ns caller passes 2.
 - **UVM time stamps.** `compose_report_message` in uvm-core 2020.3.1 (`src/base/uvm_report_server.svh`) formats the message time with `"%0t"` and `$realtime`. `$realtime` is in uvm_pkg's unit, and `%t` converts it to the `$timeformat` units, so the stamps are correct in absolute terms once `tb_top` calls `$timeformat` before `run_test()`. Without that call, the units come from the `` `timescale `` directives in the build (Table 20-3), which is how a log ends up printing `@ 15000` for an event at 15 ns.
 
 ### Expert: delay values that are not what they look like
+
+**Predict what each delay becomes:** `#0.4` at 1ns/1ns; a delay that evaluates to x or z; `#(-1)`; `#2.75` at 1ns/100ps; `#2.85` at 1ns/100ps. Answer before you open the table or read on.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your predictions</summary>
+
+| Delay | What the simulator uses | Clause |
+|---|---|---|
+| `#0.4` at 1ns/1ns | 0: the statement runs in the same time slot | §3.14.1 |
+| a delay expression that evaluates to x or z | zero | §9.4.1 |
+| `#(-1)` | an unsigned number as wide as `time`: about 2^64 − 1 units, effectively forever | §9.4.1 |
+| `#2.75` at 1ns/100ps | 2.8 ns: the standard's own example | §3.14.1 |
+| `#2.85` at 1ns/100ps | 28.5 steps, so tool-dependent: 2.9 ns when halves round up, 2.8 ns when they round to even | §3.14.1 states no tie rule |
+
+</details>
+
+The bullets below give the reasoning behind those rows.
 
 - **A delay can round to nothing.** `#0.4` in a 1ns/1ns element becomes 0 (§3.14.1). The statement runs in the same time slot, a classic "my delay did nothing" bug.
 - **x, z and negative delays.** A delay expression that evaluates to x or z is treated as zero. A negative delay is reinterpreted as an unsigned number as wide as `time`, so `#(-1)` waits about 2^64 − 1 units, which is effectively forever (§9.4.1).
@@ -954,6 +1599,56 @@ Call it as `util_pkg::wait_ns(5);`. The log then shows `expected 5 ns, woke at 5
 
 </details>
 
+**The whole page on one card.** Read it once, then look away and say the five rows from memory.
+
+<figure className="my-6">
+<svg viewBox="0 0 360 262" role="img" aria-labelledby="f3a-card-title f3a-card-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-card-title">F3A at a glance</title>
+  <desc id="f3a-card-desc">Five rows. Time jumps: between time slots to the next time that has events. Inside a slot: several passes and a final $strobe, with $time unchanged. Order: source order inside begin-end and initializers first are fixed; same-time processes and initial versus always are open. Delay: #d is scaled by the unit and rounded to the element's own precision. Reading: $time is an integer and $realtime a real, both in the caller's unit, and %t uses the $timeformat units.</desc>
+  <defs>
+    <marker id="f3a-card-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </marker>
+  </defs>
+  <text x="6" y="14" fontSize="10.5" fontWeight="700" fill="currentColor">1. Time jumps</text>
+  <line x1="110" y1="20" x2="350" y2="20" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="2 3" />
+  <circle cx="130" cy="20" r="4" fill="currentColor" />
+  <circle cx="230" cy="20" r="4" fill="currentColor" />
+  <circle cx="330" cy="20" r="4" fill="currentColor" />
+  <text x="180" y="14" fontSize="9.5" textAnchor="middle" fill="currentColor">no ticks</text>
+  <text x="280" y="14" fontSize="9.5" textAnchor="middle" fill="currentColor">no ticks</text>
+  <text x="110" y="38" fontSize="10" fill="currentColor">to the next event time, once the slot is empty</text>
+  <line x1="6" y1="48" x2="354" y2="48" stroke="currentColor" strokeOpacity="0.2" />
+  <text x="6" y="66" fontSize="10.5" fontWeight="700" fill="currentColor">2. Inside a slot</text>
+  <rect x="110" y="56" width="62" height="20" rx="5" fill="rgba(6,182,212,0.10)" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="141" y="70" fontSize="10" textAnchor="middle" fill="currentColor">pass 1</text>
+  <rect x="192" y="56" width="62" height="20" rx="5" fill="rgba(139,92,246,0.10)" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="223" y="70" fontSize="10" textAnchor="middle" fill="currentColor">more (Δ)</text>
+  <rect x="274" y="56" width="62" height="20" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="305" y="70" fontSize="10" textAnchor="middle" fill="currentColor">{"$strobe"}</text>
+  <line x1="172" y1="66" x2="190" y2="66" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-card-arrow)" />
+  <line x1="254" y1="66" x2="272" y2="66" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-card-arrow)" />
+  <text x="110" y="90" fontSize="10" fill="currentColor">{"in that order, and $time does not change"}</text>
+  <line x1="6" y1="100" x2="354" y2="100" stroke="currentColor" strokeOpacity="0.2" />
+  <text x="6" y="118" fontSize="10.5" fontWeight="700" fill="currentColor">3. Order</text>
+  <text x="110" y="116" fontSize="10" fill="currentColor">✓ fixed: begin … end order; initializers first</text>
+  <text x="110" y="132" fontSize="10" fill="currentColor">? open: same-time processes; initial versus always</text>
+  <line x1="6" y1="142" x2="354" y2="142" stroke="currentColor" strokeOpacity="0.2" />
+  <text x="6" y="160" fontSize="10.5" fontWeight="700" fill="currentColor">4. Delay</text>
+  <text x="110" y="160" fontSize="10.5" fontFamily="monospace" fontWeight="700" fill="currentColor">#d × unit</text>
+  <line x1="172" y1="157" x2="196" y2="157" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="3 3" markerEnd="url(#f3a-card-arrow)" />
+  <text x="200" y="160" fontSize="10" fill="currentColor">round to its own precision</text>
+  <text x="110" y="176" fontSize="10" fill="currentColor">each design element has its own unit and precision</text>
+  <line x1="6" y1="186" x2="354" y2="186" stroke="currentColor" strokeOpacity="0.2" />
+  <text x="6" y="204" fontSize="10.5" fontWeight="700" fill="currentColor">5. Reading it</text>
+  <text x="110" y="204" fontSize="10" fill="currentColor">{"$time: integer, in the caller's unit"}</text>
+  <text x="110" y="220" fontSize="10" fill="currentColor">{"$realtime: real, in the caller's unit"}</text>
+  <text x="110" y="236" fontSize="10" fill="currentColor">{"%t: in the $timeformat units"}</text>
+  <text x="110" y="252" fontSize="9.5" fill="currentColor" fillOpacity="0.85">{"use one $timeformat call, and pass $realtime to %t"}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">One row per objective area: how time moves, what shares a time stamp, what the standard leaves open, what a delay means, and how to read the clock.</figcaption>
+</figure>
+
 The flashcards for this module follow. To revisit the event model, go back to the simulator in Build Your Mental Model and pick **fork…join timing**: predict when "join done" prints, then explain it with the scheduler loop.
 
 ## References & Next Topics
@@ -969,6 +1664,7 @@ The flashcards for this module follow. To revisit the event model, go back to th
   - §14.2 Overview, in Clause 14 Clocking blocks (cycle-based methodology); §16.2 Overview, in Clause 16 Assertions (cycle-based semantics).
   - §20.2 Simulation control system tasks; §20.3.1 $time; §20.3.2 $stime; §20.3.3 $realtime; §20.4.1 Timescale retrieval system functions (Table 20-2); §20.4.2 $printtimescale; §20.4.3 $timeformat (Table 20-3).
   - §21.2.1.1 Format specifications (`%t`); §22.2 Overview (scope of compiler directives); §22.3 `` `resetall ``; §22.7 `` `timescale ``.
+  - §24.3 The program construct (implicit `$finish` when every program block has finished).
 - uvm-core 2020.3.1, the Accellera reference implementation of IEEE 1800.2-2020: `src/base/uvm_report_server.svh` (`compose_report_message` formats the message time with `"%0t"` and `$realtime`) and `src/uvm_pkg.sv` (declares no time unit).
 
 **Prerequisites:** [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) for `#`, `@`, `wait` and `=` versus `<=`, and [F2D: System Tasks and File I/O](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index) for `$display`, format specifiers and `$finish`.
