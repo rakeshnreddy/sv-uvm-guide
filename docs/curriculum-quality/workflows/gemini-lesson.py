@@ -6,7 +6,7 @@ blanket permission is granted. Claude reviews the result separately (gemini-revi
 checkpoint-release.sh remains the only way to main. Each lesson runs on the pilot worktree's branch, and the
 driver commits and pushes after every stage so no work is lost.
 
-  gemini-lesson.py author --worktree W --base COMMIT --plans plans.json --extra extra.txt --out DIR
+  gemini-lesson.py author --worktree W --base COMMIT --plans plans.json --extra extra.txt --out DIR [--catalog catalog.json]
   gemini-lesson.py fix    --worktree W --base COMMIT --findings findings.json --round N --extra extra.txt --out DIR
 
 plans.json maps lesson file -> audit plan; findings.json maps lesson file -> list of "Sev line - problem -> fix".
@@ -34,6 +34,21 @@ SCHEMA = {
     "required": ["file", "added", "skipped"],
 }
 GIT_LOCK = threading.Lock()
+# What Claude's reviewers kept finding in Argon's pilot lessons (F2B, F2E): say it up front to save fix rounds.
+ARGON_LESSONS = """KNOWN WEAK SPOTS, check each before you finish:
+- Prefer the diagram kit (ArchitectureDiagram, DiagramFigure and friends) over hand-drawn SVG. Any figure must stay legible at 390 px: no text below about 11 px after scaling, and node labels must fit their boxes.
+- Hand-drawn SVG text must be centred on what it labels and must not overlap lines or other text.
+- A predict-then-check prompt must not be answered by the title, caption, table or figure above it. Put the reveal after the prompt.
+- Recall cards and tables must be exact: do not mix 4-state and 2-state results, and show what the code in the lesson really produces.
+- A new element must teach something at that point. Do not repeat a table the lesson already has, and keep the page uncluttered."""
+AUDIT = ("First audit the lesson: read it fully, its spine card in docs/curriculum-quality/curriculum-spine.md and its "
+         "neighbours for context. Find the text-heavy stretches (long prose with no visual, code, table or interactive) "
+         "and every core concept with no picture. Then make the additions: first reuse what exists (catalog below: embed "
+         "an interactive with the right preset, or link a practice page), then new kit diagrams, tables, step reveals, "
+         "predict-then-check prompts and a summary visual. Aim for a visual or interactive element at least every few "
+         "paragraphs in teaching sections, without cluttering. The notes below come from an earlier read-only audit: "
+         "verify each idea and keep only what teaches. Their 'needs' are planned components, so build on them only "
+         "with what exists today.")
 
 
 def shared_context(worktree, extra):
@@ -70,12 +85,12 @@ def out_of_scope(worktree, allowed, base):
     return [f for f in changed if f not in allowed and f != "node_modules"]
 
 
-def call_argon(prompt, worktree, out_dir, tag):
+def call_argon(prompt, worktree, out_dir, tag, model=MODEL):
     schema_path = Path(out_dir) / "agy-author-schema.json"
     schema_path.write_text(json.dumps(SCHEMA))
     start = time.time()
     result = subprocess.run(
-        ["agy", "--print", prompt, "--model", MODEL, "--mode", "accept-edits", "--add-dir", SOURCES,
+        ["agy", "--print", prompt, "--model", model, "--mode", "accept-edits", "--add-dir", SOURCES,
          "--json-schema", str(schema_path), "--output-format", "json", "--print-timeout", "0"],
         cwd=worktree, capture_output=True, text=True,
     )
@@ -95,7 +110,7 @@ def process(file, first_prompt, args, stage):
     calls, prompt = [], first_prompt
     failures = []
     for attempt in range(3):  # the first pass, then up to two rounds on check failures
-        call = call_argon(prompt, args.worktree, args.out, f"{tag}-a{attempt}")
+        call = call_argon(prompt, args.worktree, args.out, f"{tag}-a{attempt}", args.model)
         calls.append(call)
         # A dropped stream can end an otherwise finished turn with status ERROR; the edits are on disk, so the
         # checks and Claude's review decide. Anything else (for example a quota error) stops this lesson.
@@ -137,9 +152,13 @@ def main():
     parser.add_argument("--findings")
     parser.add_argument("--round", type=int, default=0)
     parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--model", default=MODEL, help="any model from `agy models`; Argon needs AI credits, Flash does not")
+    parser.add_argument("--catalog", help="author mode: catalog JSON; makes Argon audit the lesson itself first")
     args = parser.parse_args()
     Path(args.out).mkdir(parents=True, exist_ok=True)
-    context = shared_context(args.worktree, Path(args.extra).read_text())
+    context = shared_context(args.worktree, Path(args.extra).read_text()) + "\n" + ARGON_LESSONS
+    catalog = f"\nCATALOG: {Path(args.catalog).read_text()[:45000]}" if args.catalog else ""
+    audit = AUDIT if args.catalog else ""
     no_shell = ("You have file read, search and edit tools but NO shell: do not try to run commands. A driver runs "
                 "check-mdx --render and the diagram-kit check when you finish and gives you any failures. The primary "
                 f"sources are in {SOURCES}. RETURN file, added (one line per change), skipped (with reason).")
@@ -153,7 +172,7 @@ def main():
                 "anchor that other pages link to, the template structure and pinned elements (spine §3.5). Verify every "
                 "fact a new visual shows against the primary sources or the lesson's own verified text. If an addition "
                 "would need a component that does not exist, skip it and list it.\n"
-                f"PLAN: {json.dumps(plan)[:12000]}\n{no_shell}")
+                f"{audit}\nPLAN: {json.dumps(plan)[:18000]}{catalog}\n{no_shell}")
     else:
         stage = f"fix-r{args.round}"
         for file, findings in json.loads(Path(args.findings).read_text()).items():
