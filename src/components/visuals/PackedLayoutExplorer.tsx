@@ -21,6 +21,8 @@ import {
   changedReadsText,
   enumDeclarationText,
   enumMemberReadout,
+  enumTrackAfterLayoutEdit,
+  enumTrackAfterWrite,
   formatD,
   formatSizedHex,
   formatUnionP,
@@ -30,15 +32,16 @@ import {
   memberRanges,
   memberTypeText,
   mutationBoard,
+  NEVER_ASSIGNED_TRACK,
   nibbleOverlay,
   rangeText,
   readMember,
   readTagged,
+  readUnionPiece,
   readUnionPath,
   reorderMembers,
   rewidthVector,
   setMemberWidth,
-  slice,
   structBits,
   structInitialValue,
   structStates,
@@ -60,7 +63,7 @@ import {
   writeUnionPath,
   writeXInMember,
   xWriteOffer,
-  type EnumArrival,
+  type EnumTrack,
   type MutationId,
   type NamedRead,
   type PackedMember,
@@ -74,6 +77,7 @@ import {
 } from "@/lib/sv-aggregate-layout-model";
 import {
   CLINIC_FIXES,
+  CLINIC_NOTE_PREFIX,
   CLINIC_SCENARIOS,
   STRUCT_PRESETS,
   TAGGED_READ_PREDICTION,
@@ -117,7 +121,7 @@ export interface PackedLayoutExplorerProps {
 export const PACKED_LAYOUT_ASSUMPTIONS = [
   "Bit layouts follow IEEE 1800-2023 §7.2.1 (packed structs), §7.3.1 (hard and soft packed unions), §7.3.2 and §11.9 (tagged unions); widths and defaults follow §20.6.2, §10.7 and Table 6-7, so a variable nothing has written shows all x when it is 4-state.",
   "Editing a typedef is not a run-time action: when you reorder or resize members, the vector keeps its bits and the names move over it, as a monitor sees a wire. If the total shrinks the top bits go; if it grows the new bits hold the Table 6-7 default.",
-  "White space in %p output is implementation dependent (§21.2.1.6); the model prints one spacing.",
+  "White space in %p output is implementation dependent (§21.2.1.6); the model prints one spacing. For a tagged union §21.2.1.6 gives tag:value but does not say whether '{ } surrounds it, so the model prints it bare; an untagged union's first member is printed as an assignment pattern, '{name:value}, since the output shall be a legal interpretation of the assignment pattern syntax.",
   "The nested soft union and the third tagged member are our own examples, not the standard's Figures 7-1 to 7-3.",
 ];
 
@@ -402,8 +406,8 @@ interface StructRunState {
   voided: "layout" | "write" | null;
   /** Whether anything has written the variable: a statement, an x write or an unpacked member write. A typedef edit alone does not. */
   wrote: boolean;
-  /** How the enum member's current value got there, so the readout can name the path. */
-  enumArrival: EnumArrival;
+  /** How the enum member's current value got there, and the range it was written at, so the readout names the real path (`enumTrackAfterWrite`, `enumTrackAfterLayoutEdit`). */
+  enum: EnumTrack;
   /** About the statement that ran last; shown under it. */
   note: string;
   /** About a change made outside the sequence; shown beside the control that made it. */
@@ -420,7 +424,7 @@ const initialStructState = (p: StructPreset): StructRunState => ({
   changed: [],
   voided: null,
   wrote: false,
-  enumArrival: "never-assigned",
+  enum: NEVER_ASSIGNED_TRACK,
   note: "",
   experiment: null,
   announcement: "",
@@ -461,7 +465,7 @@ function StructMode({ preset: presetId }: { preset?: string }) {
   const enumMember = members.find((m) => m.type.kind === "enum");
   const enumDeclarations = Array.from(new Set(members.flatMap((m) => (m.type.kind === "enum" ? [enumDeclarationText(m.type.spec)] : []))));
   // The readout explains the vector back door, which only a packed struct has. Before a statement runs it would show "" and give away the enum-field prediction.
-  const enumReadout = packed && enumMember && hasWrite ? enumMemberReadout(members, value, enumMember.name, "struct", run.enumArrival) : null;
+  const enumReadout = packed && enumMember && hasWrite ? enumMemberReadout(members, value, enumMember.name, "struct", run.enum.arrival) : null;
   const hasX = bitsOf(value).some((b) => b === "x" || b === "z");
 
   const applyStatement = useCallback(
@@ -479,27 +483,27 @@ function StructMode({ preset: presetId }: { preset?: string }) {
         // The model's member-write note names the bit range, which would answer a prediction that is still open.
         const rangesStillHidden = !prev.voided && firstGate >= 0 && index + 1 <= firstGate;
         let note = presetNote;
-        let enumArrival: EnumArrival = prev.enumArrival;
+        let enumTrack: EnumTrack;
         if (s.action.kind === "member") {
           const written = s.action.member;
           const w = writeMember(prev.members, prev.value, written, s.action.value);
           changed = w.changed;
           note = `${rangesStillHidden ? `${written} is written; the other members keep their bits (§7.2.1).` : w.note} ${presetNote}`.trim();
-          if (prev.members.find((m) => m.name === written)?.type.kind === "enum") enumArrival = "member-write";
+          enumTrack = enumTrackAfterWrite(prev.members, prev.enum, written, "member-write");
         } else if (s.action.kind === "whole") {
           const a = runWholeAction(prev.members, s.action);
           extendedFrom = a.extendedFrom;
           droppedFrom = a.droppedFrom;
-          enumArrival = "whole-vector";
+          enumTrack = enumTrackAfterWrite(prev.members, prev.enum, null, "whole-vector");
           // Truncation marks nothing on the strip (the discarded bits are the source's, above the MSB), so the note carries it.
           if (prev.voided || a.droppedFrom !== undefined) note = `${a.note} ${presetNote}`.trim();
         } else {
-          enumArrival = "member-write";
+          enumTrack = enumTrackAfterWrite(prev.members, prev.enum, null, "member-write");
           if (prev.voided) note = "An assignment pattern by member name writes every member (§10.9.2).";
         }
         const varNext = currentVarName(preset, index + 1);
         const changedText = changedReadsText(memberReads(prev.members, prev.value, next), { name: varNext, value: next });
-        return { ...prev, value: next, varName: varNext, applied: index + 1, changed, extendedFrom, droppedFrom, wrote: true, enumArrival, note, experiment: null, announcement: announcementOf(changedText, note) };
+        return { ...prev, value: next, varName: varNext, applied: index + 1, changed, extendedFrom, droppedFrom, wrote: true, enum: enumTrack, note, experiment: null, announcement: announcementOf(changedText, note) };
       });
     },
     [preset, firstGate],
@@ -517,7 +521,8 @@ function StructMode({ preset: presetId }: { preset?: string }) {
         extendedFrom: undefined,
         droppedFrom: undefined,
         voided: "layout",
-        enumArrival: prev.enumArrival === "never-assigned" ? "never-assigned" : "layout-edit",
+        // Only a move of the enum member's own range puts other bits under it; a reorder that leaves it where it was written keeps the earlier arrival.
+        enum: enumTrackAfterLayoutEdit(nextMembers, prev.enum),
         note: "",
         experiment: { source: "layout", text },
         announcement: `${text} $bits is ${bits}.`,
@@ -528,7 +533,8 @@ function StructMode({ preset: presetId }: { preset?: string }) {
   const writeX = (name: string) => {
     setRun((prev) => {
       const w = writeXInMember(prev.members, prev.value, name);
-      const enumArrival: EnumArrival = xWriteOffer(prev.varName, prev.members, name).partSelect ? "part-select" : prev.enumArrival;
+      // An enum member's x goes in through a part-select (`xWriteOffer`); any other member's write leaves the enum's arrival as it was.
+      const enumTrack = enumTrackAfterWrite(prev.members, prev.enum, name, "part-select");
       const changedText = changedReadsText(memberReads(prev.members, prev.value, w.value), { name: prev.varName, value: w.value });
       return {
         ...prev,
@@ -538,7 +544,7 @@ function StructMode({ preset: presetId }: { preset?: string }) {
         droppedFrom: undefined,
         voided: prev.voided ?? "write",
         wrote: true,
-        enumArrival,
+        enum: enumTrack,
         // A statement's note describes the values it left, which this write has just changed.
         note: "",
         experiment: { source: "x", text: w.note },
@@ -576,7 +582,7 @@ function StructMode({ preset: presetId }: { preset?: string }) {
         droppedFrom: undefined,
         voided: prev.voided ?? "write",
         wrote: true,
-        enumArrival: "member-write",
+        enum: enumTrackAfterWrite(prev.members, prev.enum, s.action.kind === "member" ? s.action.member : null, "member-write"),
         note: "",
         experiment: { source: "unpacked", text: note },
         announcement: announcementOf(changedText, note),
@@ -584,6 +590,10 @@ function StructMode({ preset: presetId }: { preset?: string }) {
     });
   };
 
+  // The editor's limit is the tool's, not the language's: 16 bits, or a preset member's own wider width (frame_t's 24-bit body), which it keeps after a shrink.
+  const widthMax = (m: PackedMember): number => Math.max(MAX_MEMBER_WIDTH, m.width, preset.members.find((p) => p.id === m.id)?.width ?? 0);
+  const wider = members.filter((m) => m.type.kind !== "enum" && widthMax(m) > MAX_MEMBER_WIDTH);
+  const widthLimitsText = `Widths (${MIN_MEMBER_WIDTH} to ${MAX_MEMBER_WIDTH} bits${wider.map((m) => `; ${m.name} up to ${widthMax(m)}`).join("")})`;
   const fieldText = ranges.map((r) => `${r.name} ${rangeText(r)} = ${formatSizedHex(readMember(members, value, r.name))}`).join(", ");
   const memberText = ranges.map((r) => `${r.name} = ${formatSizedHex(readMember(members, value, r.name))}`).join(", ");
   const shownNote = run.experiment?.text ?? run.note;
@@ -859,17 +869,19 @@ function StructMode({ preset: presetId }: { preset?: string }) {
             mono
           />
           <div className="space-y-2">
-            <p className="text-sm font-semibold text-foreground">Widths (1 to {MAX_MEMBER_WIDTH} bits)</p>
+            <p className="text-sm font-semibold text-foreground" data-testid="width-limits">
+              {widthLimitsText}
+            </p>
             {members.map((m) => (
               <label key={m.id} className="flex items-center justify-between gap-3 text-sm">
                 <span className="font-mono [font-variant-ligatures:none]">{m.name}</span>
                 <WidthInput
                   value={m.width}
                   min={MIN_MEMBER_WIDTH}
-                  max={Math.max(MAX_MEMBER_WIDTH, m.width)}
+                  max={widthMax(m)}
                   disabled={m.type.kind === "enum"}
                   label={`Width of ${m.name} in bits`}
-                  onCommit={(w) => editLayout(setMemberWidth(members, m.id, w, Math.max(MAX_MEMBER_WIDTH, m.width)))}
+                  onCommit={(w) => editLayout(setMemberWidth(members, m.id, w, widthMax(m)))}
                 />
               </label>
             ))}
@@ -922,7 +934,7 @@ function UnionRowView({
         {name}
         {row.width === width ? (
           <div className="flex justify-end">
-            <BitStrip bits={toBits(slice(value, row.hi, row.lo))} label={`${varName}.${row.path}`} msbIndex={row.hi} bitNumbers changed={changed} />
+            <BitStrip bits={toBits(readUnionPiece(value, row))} label={`${varName}.${row.path}`} msbIndex={row.hi} bitNumbers changed={changed} />
           </div>
         ) : (
           <p className="sticky left-0 w-fit rounded-[3px] border border-dashed border-slate-400/60 px-2 py-1 text-xs text-muted-foreground">{row.width} bits: where they sit appears once you answer</p>
@@ -951,10 +963,11 @@ function UnionRowView({
             {highlightsUnaffected ? `[${width - 1}:${row.width}] unaffected` : `[${width - 1}:${row.width}] not in ${row.label}`}
           </span>
         ) : null}
+        {/* Each piece is drawn as its member reads it, so a 2-state piece shows 0 where the 4-state union holds x, as the status line does (§7.3.1, §6.11.2). */}
         {row.pieces.map((p) => (
           <BitStrip
             key={p.path}
-            bits={toBits(slice(value, p.hi, p.lo))}
+            bits={toBits(readUnionPiece(value, p))}
             label={`${varName}.${p.path}`}
             msbIndex={p.hi}
             bitNumbers
@@ -1169,13 +1182,20 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
         </div>
       ) : null}
 
-      <StripPanel label={`Rows of ${preset.varName}`} reveal={run.changed} footer={run.changed.length ? <BitStripLegend items={["changed"]} /> : null}>
-        <div className="space-y-3">
-          {rows.map((r) => (
-            <UnionRowView key={r.path} row={r} value={value} width={width} changed={run.changed} unaffected={run.unaffected} varName={preset.varName} positionHidden={positionHidden} />
-          ))}
-        </div>
-      </StripPanel>
+      {/* §7.3.1 gives no layout to a hard packed union whose members differ in size, so while it does not compile no row claims bit positions, as the status, chips and %p panel already do. */}
+      {blocked ? (
+        <p data-testid="union-rows-blocked" className="rounded-xl border border-dashed border-border/80 p-3 text-sm text-muted-foreground">
+          No rows to draw: this declaration does not compile, so its members have no bit positions (§7.3.1). The value is kept and the rows come back once the declaration is legal.
+        </p>
+      ) : (
+        <StripPanel label={`Rows of ${preset.varName}`} reveal={run.changed} footer={run.changed.length ? <BitStripLegend items={["changed"]} /> : null}>
+          <div className="space-y-3">
+            {rows.map((r) => (
+              <UnionRowView key={r.path} row={r} value={value} width={width} changed={run.changed} unaffected={run.unaffected} varName={preset.varName} positionHidden={positionHidden} />
+            ))}
+          </div>
+        </StripPanel>
+      )}
 
       <section aria-label="Statements" className="space-y-2">
         <p className="text-sm font-semibold text-foreground">Statements</p>
@@ -1270,11 +1290,12 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
 
       {blocked ? null : (
         <div role="note" className="rounded-lg border border-border/70 p-3 text-sm" data-testid="union-p">
-          <code className={codeChip}>$display(&quot;%p&quot;, {preset.varName});</code> prints <code className={codeChip}>{pView.text}</code>
+          <code className={codeChip}>$display(&quot;%p&quot;, {preset.varName});</code> under this reading prints <code className={codeChip}>{pView.text}</code>
           <p className="mt-1 text-muted-foreground">This is the first-declared-member reading of §21.2.1.6, here {pView.member}.</p>
           <WhyToolsDiffer>
-            The standard states that rule for unions in its paragraph on aggregates, while its rules for singular values name only packed structures, and a packed union is a singular integral value, so packed-union %p output is tool-dependent. Print the member you need,
-            or the raw view with %h.
+            The aggregate paragraph of §21.2.1.6 says only the first declared element of a union is printed, but a packed union is a singular value (§6.4, §6.11.1), and the rules for singular values end with: all other singular data types print their values as they would unformatted. Tools can
+            therefore print this pattern or the union&apos;s plain decimal value, here <code className={codeChip}>{pView.unformatted}</code> (an unformatted value prints in decimal, §21.2.1.1), so packed-union %p output is tool-dependent. Print the member you need, or the raw view with
+            %h.
           </WhyToolsDiffer>
         </div>
       )}
@@ -1401,7 +1422,8 @@ function TaggedMode() {
             )}
             {pReading.basis === "tool-dependent" ? (
               <WhyToolsDiffer>
-                The standard states tag:value in its paragraph on aggregates, while its rules for singular values name only packed structures, and a packed tagged union is a singular integral value, so its %p output is tool-dependent. Print the member you need by name.
+                The standard states tag:value in its paragraph on aggregates, but a packed tagged union is singular (§6.4, §6.11.1), and its list for singular values sends every type it does not name, packed unions included, to their unformatted value. The two readings differ, so its %p
+                output is tool-dependent. Print the member you need by name.
               </WhyToolsDiffer>
             ) : null}
           </div>
@@ -1421,8 +1443,9 @@ function TaggedMode() {
                       {/* Focus lands here, past the prompt's feedback, so the verdict on the prediction travels with the result. */}
                       {chosen ? <span className="sr-only">{chosen.correct ? "Your prediction was right. " : "Your prediction was wrong. "}</span> : null}
                       <span aria-hidden>{read.ok ? "✓ " : "✕ "}</span>
-                      {/* The statement is %0d, so the printed text is decimal (§21.2.1.3); the value chip above keeps the sized hex. */}
-                      {read.ok ? `$display prints ${read.value.width === 0 ? "nothing" : formatD(read.value)}. ${read.note}` : read.error}
+                      {/* The statement is %0d, so the printed text is decimal (Table 21-1, §21.2.1.1) at minimum width (§21.2.1.2); the value chip above keeps the sized hex. */}
+                      {/* A void member has no read button, and readTagged reports a void read as not stated, so an ok read always has a value. */}
+                      {read.ok ? `$display prints ${formatD(read.value)}. ${read.note}` : read.error}
                     </p>
                   ) : null}
                 </>
@@ -1684,7 +1707,11 @@ function DebugMode({ preset: presetId }: { preset?: string }) {
       title={scenario.title}
       summary={scenario.symptom}
       fidelity="model"
-      assumptions={[...PACKED_LAYOUT_ASSUMPTIONS, "Logs are regenerated by the model for the declaration you choose, so a fix that does not touch the cause keeps the symptom."]}
+      assumptions={[
+        ...PACKED_LAYOUT_ASSUMPTIONS,
+        "Logs are regenerated by the model for the declaration you choose, so a fix that does not touch the cause keeps the symptom.",
+        `In a log, a line that starts with ${CLINIC_NOTE_PREFIX.trim()} is the model's note, not simulator output, and compile or run lines summarise what the tool reports. $error prints a tool-specific message (§20.10), so a note gives only its text.`,
+      ]}
     >
       <SegmentedControl label="Scenario" options={CLINIC_SCENARIOS.map((s) => ({ value: s.id, label: s.title }))} value={scenario.id} onChange={choose} />
 

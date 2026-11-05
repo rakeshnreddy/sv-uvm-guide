@@ -1,9 +1,23 @@
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import TimescaleLab, { TIMESCALE_ASSUMPTIONS } from "@/components/visuals/TimescaleLab";
-import { READ_TIME_PRESETS, ROUNDING_PRESETS, globalPrecisionDesign, gradeCrossScopeSuspects, readTimeOptions, roundDelayText, roundingOptions, runReadTime } from "@/lib/sv-timescale-model";
+import {
+  CROSS_SCOPE_DEFAULT,
+  READ_TIME_PRESETS,
+  ROUNDING_PRESETS,
+  TB_TOP_SCOPE,
+  U_SLOW_SCOPE,
+  formatScale,
+  globalPrecisionDesign,
+  gradeCrossScopeSuspects,
+  readTimeOptions,
+  roundDelayText,
+  roundingOptions,
+  runReadTime,
+  timeunitLine,
+} from "@/lib/sv-timescale-model";
 
 /** Picks an option and locks in the prediction of the prompt that owns it (a page may hold several prompts). */
 const lockIn = (optionText: RegExp | string) => {
@@ -127,11 +141,13 @@ describe("TimescaleLab · two modules", () => {
     expect(shown(/global precision is/)).toHaveTextContent("100 ps");
   });
 
-  it("offers tb_top's result as a distractor for u_slow and explains the unit", () => {
+  it("offers tb_top's result as a distractor for u_slow and explains the unit without naming the other module", () => {
     render(<TimescaleLab mode="two-modules" />);
     lockIn(/^1\.3 ns$/);
     lockIn(/^1\.3 ns, then 2\.6 ns$/);
-    expect(shown(/That is what the same delay becomes in tb_top/)).toBeInTheDocument();
+    const feedback = shown(/The other module's settings play no part here/);
+    expect(feedback).toHaveTextContent("Only this module's own unit and precision decide its wake time");
+    expect(feedback).not.toHaveTextContent(/tb_top|becomes in/);
   });
 
   it("re-runs the model when the delay changes", () => {
@@ -164,7 +180,7 @@ describe("TimescaleLab · two modules", () => {
     expect(axis.querySelectorAll("circle")).toHaveLength(1);
     // A second copy would pass 64 bits of time, for which the sources give no rule: only the first wake is drawn.
     expect(axis.querySelectorAll("path")).toHaveLength(1);
-    expect(shown(/Only the first wake is shown/)).toBeInTheDocument();
+    expect(shown(/Only the wakes below 2\^64 time units are shown/)).toBeInTheDocument();
     for (const marker of Array.from(axis.querySelectorAll("circle"))) {
       expect(Number(marker.getAttribute("cx"))).toBeLessThanOrEqual(360);
     }
@@ -399,8 +415,9 @@ describe("TimescaleLab · cross-scope", () => {
     expect(chip).toHaveTextContent("5.01ns");
     fireEvent.click(screen.getByRole("button", { name: "Next step" }));
     expect(chip).toHaveAttribute("data-lane", "boundary");
-    expect(chip).toHaveTextContent("unit tag dropped");
-    expect(shown(/The unit tag is gone: t is a number/)).toBeInTheDocument();
+    expect(chip).toHaveTextContent("1ns not passed on");
+    expect(chip.querySelector(".line-through")?.textContent).toBe("1ns");
+    expect(shown(/Only the number is passed: 5\.0 meant 5ns because tb_top reads numbers in its 1ns unit/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Next step" }));
     expect(document.querySelector('[aria-current="step"]')?.textContent).toContain("#t;");
     fireEvent.click(screen.getByRole("button", { name: "Next step" }));
@@ -609,11 +626,12 @@ describe("TimescaleLab · nothing outside the options reveals the answer before 
   });
 
   const crossForms: { name: string; values: string[] }[] = [
-    { name: "util_pkg::wait_t(5ns);", values: ["5 ps", "woke at 0.005 ns"] },
-    { name: "util_pkg::wait_t(1.5ns);", values: ["2 ps", "woke at 0.002 ns"] },
+    // "1000" too: a title or summary that speaks of a factor of 1000 rules out 5 ns and the compile error before the commit.
+    { name: "util_pkg::wait_t(5ns);", values: ["5 ps", "woke at 0.005 ns", "1000"] },
+    { name: "util_pkg::wait_t(1.5ns);", values: ["2 ps", "woke at 0.002 ns", "1000"] },
     // Here the answer equals the intent, which the lesson's $display states; the result itself stays hidden.
-    { name: "util_pkg::wait_ns(5);", values: ["5000 ps", "woke at 5.000 ns"] },
-    { name: "repeat (5) @(posedge clk);", values: ["woke at 5.000 ns"] },
+    { name: "util_pkg::wait_ns(5);", values: ["5000 ps", "woke at 5.000 ns", "1000"] },
+    { name: "repeat (5) @(posedge clk);", values: ["woke at 5.000 ns", "1000"] },
   ];
   for (const { name, values } of crossForms) {
     it(`cross-scope, ${name}`, () => {
@@ -996,7 +1014,7 @@ describe("TimescaleLab · the value's unit at every step of every call form", ()
       name: "util_pkg::wait_t(5ns);",
       steps: [
         { state: "tagged", chip: "1ns", sentence: "value 5.0 understood in 1ns" },
-        { state: "dropped", chip: "unit tag dropped", sentence: "value 5, its unit tag dropped" },
+        { state: "dropped", chip: "not passed on", sentence: "value 5; tb_top's 1ns reading is not passed on" },
         { state: "tagged", chip: "1ps", sentence: "value 5 understood in 1ps" },
         { state: "resolved-time", chip: "wake time", sentence: "wake time 5 ps" },
       ],
@@ -1005,7 +1023,7 @@ describe("TimescaleLab · the value's unit at every step of every call form", ()
       name: "util_pkg::wait_t(1.5ns);",
       steps: [
         { state: "tagged", chip: "1ns", sentence: "value 1.5 understood in 1ns" },
-        { state: "dropped", chip: "unit tag dropped", sentence: "value 2, its unit tag dropped" },
+        { state: "dropped", chip: "not passed on", sentence: "value 2; tb_top's 1ns reading is not passed on" },
         { state: "tagged", chip: "1ps", sentence: "value 2 understood in 1ps" },
         { state: "resolved-time", chip: "wake time", sentence: "wake time 2 ps" },
       ],
@@ -1038,7 +1056,8 @@ describe("TimescaleLab · the value's unit at every step of every call form", ()
         const chip = screen.getByTestId("crossing-chip");
         expect(chip, `step ${i + 1}`).toHaveAttribute("data-unit-state", expected.state);
         expect(chip, `step ${i + 1}`).toHaveTextContent(expected.chip);
-        expect(chip.querySelector(".line-through") !== null, `step ${i + 1} strike`).toBe(expected.state === "dropped");
+        // Only the lost unit is struck through; the words that state the loss stay plain.
+        expect(chip.querySelector(".line-through")?.textContent ?? null, `step ${i + 1} strike`).toBe(expected.state === "dropped" ? "1ns" : null);
         const heading = within(screen.getByTestId("crossing-step")).getByText(new RegExp(`^Step ${i + 1}:`));
         expect(heading.textContent, `step ${i + 1}`).toContain(`— ${expected.sentence}`);
         expect(heading.textContent, `step ${i + 1}`).not.toContain("with no unit");
@@ -1048,9 +1067,9 @@ describe("TimescaleLab · the value's unit at every step of every call form", ()
     });
   }
 
-  it("only the wait_t boundary says the tag was dropped", () => {
+  it("only the wait_t boundary says the unit was not passed on", () => {
     for (const { steps } of forms) {
-      for (const step of steps) expect(step.chip === "unit tag dropped").toBe(step.state === "dropped");
+      for (const step of steps) expect(step.chip === "not passed on").toBe(step.state === "dropped");
     }
     expect(forms.flatMap((f) => f.steps).filter((x) => x.state === "dropped")).toHaveLength(2);
   });
@@ -1178,7 +1197,7 @@ describe("TimescaleLab · cross-scope: the hunt comes before the trace", () => {
   it("titles the blocks in words, not in a second numbering beside 'Step 4: Wake'", () => {
     render(<TimescaleLab mode="cross-scope" />);
     skip();
-    expect(screen.getByTestId("reveal-heading")).toHaveTextContent("Find the line");
+    expect(screen.getByTestId("reveal-heading")).toHaveTextContent("The 1000× delay: find the line");
     skipHunt();
     expect(shown(/^Choose a fix\./)).toBeInTheDocument();
     expect(screen.getByTestId("cross-scope-reveal").textContent).not.toMatch(/Step 1 —|Step 2 —/);
@@ -1527,7 +1546,7 @@ describe("TimescaleLab · the tick ruler says what happened", () => {
     expect(ruler()).not.toHaveTextContent("written:");
     const rows = within(screen.getByTestId("rounding-reveal"));
     expect(rows.getByText("Wake time")).toBeInTheDocument();
-    expect(rows.queryByText("Rounded to the precision")).not.toBeInTheDocument();
+    expect(rows.queryByText("On the precision grid")).not.toBeInTheDocument();
   });
 
   it("an x/z delay is interpreted as zero, not scaled and not written as 0 ns", () => {
@@ -1538,7 +1557,7 @@ describe("TimescaleLab · the tick ruler says what happened", () => {
     expect(ruler()).not.toHaveTextContent("scaled:");
     const rows = within(screen.getByTestId("rounding-reveal"));
     expect(rows.getByText("Interpreted as zero")).toBeInTheDocument();
-    expect(rows.queryByText("Scaled by the unit")).not.toBeInTheDocument();
+    expect(rows.queryByText("Exact size: number × unit")).not.toBeInTheDocument();
   });
 
   it("a rounding delay still snaps, its marker names the scaled value, and a literal is converted rather than scaled", () => {
@@ -1546,7 +1565,8 @@ describe("TimescaleLab · the tick ruler says what happened", () => {
     skip();
     expect(ruler()).toHaveAccessibleName("Ruler of 1ns ticks. The scaled delay 12.6 ns sits between ticks and snaps to 13 ns.");
     expect(ruler()).toHaveTextContent("scaled: 12.6 ns");
-    expect(within(screen.getByTestId("rounding-reveal")).getByText("Rounded to the precision")).toBeInTheDocument();
+    expect(within(screen.getByTestId("rounding-reveal")).getByText("On the precision grid")).toBeInTheDocument();
+    expect(within(screen.getByTestId("rounding-reveal")).getByText("Exact size: number × unit")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "literal-2.1ns" } });
     skip();
     expect(within(screen.getByTestId("rounding-reveal")).getByText("Converted to the current unit")).toBeInTheDocument();
@@ -1601,12 +1621,13 @@ describe("TimescaleLab · two-modules gives nothing away before both predictions
   it("the summary does not say the unit scales a time literal", () => {
     const summary = () => screen.getByRole("region", { name: "Timescale lab: one delay, two modules" }).textContent ?? "";
     render(<TimescaleLab mode="two-modules" />);
-    expect(summary()).toContain("The unit scales it differently");
+    expect(summary()).toContain("Each module's unit sets the size of the delay, and its own precision sets the grid it lands on (§3.14, §3.14.1).");
+    expect(summary()).not.toMatch(/scales it differently|then the element's own precision/);
     fireEvent.change(delayInput(), { target: { value: "#2.1ns" } });
-    expect(summary()).not.toContain("The unit scales it differently");
+    expect(summary()).not.toContain("Each module's unit sets the size");
     expect(summary()).toContain("A time literal is the same value before rounding in both (§5.8)");
     lockInWithin(/tb_top \(/, /^2 ns$/);
-    expect(shown(/only each module's own precision differs/)).toBeInTheDocument();
+    expect(shown(/A time literal is the same value before rounding in every module \(§5\.8\); the other module's settings play no part here/)).toBeInTheDocument();
   });
 
   it("a negative delay run twice stops at its first wake and says why", () => {
@@ -2034,10 +2055,258 @@ describe("TimescaleLab · which-unit marks the element the question asked about"
 describe("TimescaleLab · the stated assumptions", () => {
   it("list every clause the labs rely on and the readings the sources leave open", () => {
     const text = TIMESCALE_ASSUMPTIONS.join("\n");
-    for (const clause of ["§3.12.1", "§20.4.1", "§20.4.2", "§20.4.3", "§22.3", "§22.7"]) expect(text, clause).toContain(clause);
+    for (const clause of ["§3.12.1", "§20.4.1", "§20.4.2", "§20.4.3", "§22.3", "§22.7", "§5.6", "§5.7.2", "§6.8", "§6.11", "§6.12 ", "§9.4.2", "§10.8", "§12.7.2", "A.2.2.3", "A.6.5", "A.8.7"]) expect(text, clause).toContain(clause);
+    expect(text).toContain("Neither §3.14.1 nor §22.7 makes an order a rule");
+    expect(text).toMatch(/The lab's reasoning, not a rule of the standard: a real literal is held as an IEEE 754 double \(§5\.7\.2\)/);
+    expect(text).toMatch(/only while its wake times stay below 2\^64 of the element's units/);
     expect(text).toMatch(/\$stime keeps the low 32 bits of the value already scaled/);
     expect(text).toMatch(/an exact decimal tie rounds up/);
     expect(text).toMatch(/Table 20-3 names only the smallest `timescale precision and does not define this case/);
     expect(text).toMatch(/after a `resetall, a compilation-unit timeunit still decides by rule \(c\)/);
   });
+});
+
+describe("TimescaleLab · fix round 1: rounding states no order as the rule", () => {
+  const region = () => screen.getByRole("region", { name: "Timescale lab: rounding a delay" });
+
+  it("the summary names §22.7's order and the equal result, and cites §3.14.1 for no order", () => {
+    render(<TimescaleLab mode="rounding" />);
+    const text = region().textContent ?? "";
+    expect(text).toContain("The time unit sets the size of a delay and the element's own precision sets the grid it lands on (IEEE 1800-2023 §3.14, §3.14.1). §22.7 lists the steps as round, then scale, and either order gives the same wake time.");
+    expect(text).not.toMatch(/scales the number, then|then the element's own precision rounds/);
+  });
+
+  it("the reveal shows §22.7's order beside the ruler, computed for the delay", () => {
+    render(<TimescaleLab mode="rounding" preset="spine-1.55" />);
+    skip();
+    expect(shown(/^§22\.7 lists the steps as round, then scale: 1\.55 rounded to one decimal place is 1\.6, and 1\.6 × 1ns is 1\.6 ns\./)).toBeInTheDocument();
+  });
+});
+
+describe("TimescaleLab · fix round 1: the tool-dependent box", () => {
+  it("#2.85: the binary remark is labelled as the lab's reasoning", () => {
+    render(<TimescaleLab mode="rounding" preset="tie-2.85" />);
+    skip();
+    expect(screen.getByTestId("binary-remark")).toHaveTextContent(/^The lab's reasoning, not a rule of the standard: .*\(§5\.7\.2\), and 2\.85 has no exact binary form/);
+  });
+
+  it("#0.5 at 1ns/1ns: an exact tie in binary gets no binary remark, and one tick is '1 tick'", () => {
+    render(<TimescaleLab mode="rounding" />);
+    fireEvent.change(screen.getByLabelText("Time precision"), { target: { value: "1ns" } });
+    fireEvent.change(delayInput(), { target: { value: "#0.5" } });
+    skip();
+    expect(screen.getByText("Tool-dependent")).toBeInTheDocument();
+    expect(screen.queryByTestId("binary-remark")).not.toBeInTheDocument();
+    expect(shown(/Half away from zero gives 1 tick and half to even gives 0 ticks\./)).toBeInTheDocument();
+    expect(screen.getByTestId("rounding-reveal").textContent).not.toMatch(/\b1 ticks/);
+  });
+});
+
+describe("TimescaleLab · fix round 1: the tick ruler marker past 2^53", () => {
+  it("#12345678901234567.5 at 1ns/1ns: the marker sits half way between its two ticks, 2.5 ticks after the first drawn", () => {
+    render(<TimescaleLab mode="rounding" />);
+    fireEvent.change(screen.getByLabelText("Time precision"), { target: { value: "1ns" } });
+    fireEvent.change(delayInput(), { target: { value: "#12345678901234567.5" } });
+    skip();
+    const ruler = screen.getByRole("img", { name: /^Ruler of/ });
+    const marker = Array.from(ruler.querySelectorAll("circle")).find((c) => c.getAttribute("fill") === "rgb(245,158,11)") as SVGCircleElement;
+    // pad 30 + 2.5 ticks × 60 per tick.
+    expect(Number(marker.getAttribute("cx"))).toBeCloseTo(180, 5);
+  });
+});
+
+describe("TimescaleLab · fix round 1: two modules", () => {
+  const revealBoth = () => {
+    fireEvent.click(screen.getAllByRole("button", { name: "Reveal without predicting" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Reveal without predicting" }));
+  };
+
+  it("a positive delay near 2^64 units lists one wake in u_slow and says why, like a negative one", () => {
+    render(<TimescaleLab mode="two-modules" />);
+    fireEvent.change(delayInput(), { target: { value: "#18446744073709551615" } });
+    const slowGroup = screen.getByRole("group", { name: /u_slow \(/ });
+    for (const radio of within(slowGroup).getAllByRole("radio")) expect(radio.closest("label")?.textContent).not.toContain("then");
+    revealBoth();
+    expect(within(screen.getByRole("list", { name: "Wake times" })).getAllByRole("listitem")[1].textContent).not.toContain("then");
+    expect(shown(/Only the wakes below 2\^64 time units are shown: a later copy of this delay would pass the 64 bits of a time variable/)).toBeInTheDocument();
+    expect(screen.getByTestId("two-modules-axis").textContent).not.toMatch(/then every/);
+  });
+
+  it("a negative delay's summary gives no rule away, like the x/z one", () => {
+    render(<TimescaleLab mode="two-modules" />);
+    fireEvent.change(delayInput(), { target: { value: "#(-1)" } });
+    const text = screen.getByRole("region", { name: "Timescale lab: one delay, two modules" }).textContent ?? "";
+    expect(text).toContain("tb_top and u_slow run the same #d from t = 0. Predict when each one wakes.");
+    expect(text).not.toMatch(/precision rounds|sets the grid/);
+  });
+
+  it("the questions show the model's own timeunit lines", () => {
+    render(<TimescaleLab mode="two-modules" />);
+    expect(screen.getByRole("group", { name: /tb_top \(/ }).textContent).toContain(`tb_top (${timeunitLine(TB_TOP_SCOPE)}) runs`);
+    expect(screen.getByRole("group", { name: /u_slow \(/ }).textContent).toContain(`u_slow (${timeunitLine(U_SLOW_SCOPE)}) runs`);
+  });
+
+  it("u_slow run twice offers the running-total misconception", () => {
+    render(<TimescaleLab mode="two-modules" />);
+    lockInWithin(/u_slow \(/, /^13 ns, then 25 ns$/);
+    expect(shown(/That rounds the running total\./)).toBeInTheDocument();
+  });
+});
+
+describe("TimescaleLab · fix round 1: cross-scope", () => {
+  it("the title and summary before the commit are neutral; the 1000× name comes with the reveal", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    const frame = screen.getByRole("region", { name: "Timescale lab: a time value crosses a scope" });
+    expect(within(frame).getByRole("heading", { level: 3 })).toHaveTextContent("A time value crosses a scope");
+    expect(frame.textContent).not.toMatch(/1000|factor/);
+    lockIn(/^5 ps$/);
+    expect(screen.getByTestId("reveal-heading")).toHaveTextContent("The 1000× delay");
+  });
+
+  it("finding #t, then reading a decoy's verdict, keeps the trace, the fixes and the chosen fix", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    lockIn(/^5 ps$/);
+    fireEvent.click(screen.getByRole("button", { name: "Suspect line: #t;" }));
+    fireEvent.click(screen.getByRole("button", { name: /Scale inside the package/ }));
+    expect(screen.getByTestId("fix-verdict")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Suspect line: \$timeformat/ }));
+    expect(screen.getByTestId("suspect-verdict")).toHaveTextContent(/A decoy\./);
+    expect(screen.getByTestId("crossing-chip")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Fixes" })).toBeInTheDocument();
+    expect(screen.getByTestId("fix-verdict")).toBeInTheDocument();
+    expect(document.querySelector('[aria-current="step"]')).not.toBeNull();
+    expect(screen.getByRole("list", { name: "util_pkg and tb_top" })).toHaveTextContent("THIS package's time unit");
+    expect(screen.queryByRole("button", { name: /Skip the hunt/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Need a hint/ })).not.toBeInTheDocument();
+    // Start over arms the hunt again.
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    lockIn(/^5 ps$/);
+    expect(screen.queryByTestId("crossing-chip")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Skip the hunt/ })).toBeInTheDocument();
+  });
+
+  it("the lane titles come from the model's configuration", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    skipHunt();
+    const lanes = screen.getByRole("region", { name: "The value moving through the scopes" });
+    expect(lanes).toHaveTextContent(`tb_top (${formatScale(CROSS_SCOPE_DEFAULT.callerUnit)})`);
+    expect(lanes).toHaveTextContent(`util_pkg (${formatScale(CROSS_SCOPE_DEFAULT.calleeUnit)})`);
+  });
+
+  it("the cycle-count fix shows both clock lines its results assume", () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    skipHunt();
+    fireEvent.click(screen.getByRole("button", { name: /Pass a cycle count/ }));
+    const verdict = screen.getByTestId("fix-verdict");
+    expect(verdict).toHaveTextContent("logic clk = 1; // set before any procedure starts (§6.8)");
+    expect(verdict).toHaveTextContent("These results assume the two clock lines above");
+  });
+
+  it("the focus stays in the hunt when the last hint removes the hint button", async () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    for (const name of [/Need a hint\?/, /Another hint/, /Another hint/]) {
+      const button = screen.getByRole("button", { name });
+      button.focus();
+      fireEvent.click(button);
+    }
+    expect(screen.queryByRole("button", { name: /Another hint/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("hint-focus")));
+    expect(screen.getByRole("group", { name: "Hints" })).toHaveAttribute("tabindex", "-1");
+  });
+
+  it("a hint that leaves its button in place does not move the focus", async () => {
+    render(<TimescaleLab mode="cross-scope" />);
+    skip();
+    const button = screen.getByRole("button", { name: /Need a hint\?/ });
+    button.focus();
+    fireEvent.click(button);
+    const next = screen.getByRole("button", { name: /Another hint/ });
+    next.focus();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(document.activeElement).toBe(next);
+  });
+});
+
+describe("TimescaleLab · fix round 1: the %t toggle keeps the focus", () => {
+  it("undoing a toggle where the two arguments print alike keeps the control mounted", () => {
+    render(<TimescaleLab mode="read-time" />);
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "%t argument" })).getByRole("radio", { name: "%t of $time" }));
+    chooseTimeformat(/called with/);
+    fireEvent.change(screen.getByLabelText("units_number"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("precision_number"), { target: { value: "0" } });
+    const back = within(screen.getByRole("radiogroup", { name: "%t argument" })).getByRole("radio", { name: "%t of $realtime" });
+    back.focus();
+    fireEvent.click(back);
+    expect(screen.getByRole("radiogroup", { name: "%t argument" })).toBeInTheDocument();
+    expect(back).toBeInTheDocument();
+    expect(back).toHaveAttribute("aria-checked", "true");
+    expect(document.activeElement).toBe(back);
+    skip();
+    expect(screen.getByTestId("percent-t-note")).toHaveTextContent("print the same text at this format");
+  });
+
+  it("a fresh experiment without a toggle in force still shows no toggle where it would change nothing", () => {
+    render(<TimescaleLab mode="read-time" preset="uvm-stamp" />);
+    expect(screen.queryByRole("radiogroup", { name: "%t argument" })).not.toBeInTheDocument();
+  });
+});
+
+describe("TimescaleLab · fix round 1: start over restores each lab's first state", () => {
+  it("rounding: the preset, delay, unit and precision come back", () => {
+    render(<TimescaleLab mode="rounding" preset="tie-2.85" />);
+    fireEvent.change(screen.getByLabelText("Time unit"), { target: { value: "10ns" } });
+    fireEvent.change(screen.getByLabelText("Time precision"), { target: { value: "1ns" } });
+    fireEvent.change(delayInput(), { target: { value: "#7" } });
+    skip();
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(screen.getByLabelText("Preset")).toHaveValue("tie-2.85");
+    expect(screen.getByLabelText("Time unit")).toHaveValue("1ns");
+    expect(screen.getByLabelText("Time precision")).toHaveValue("100ps");
+    expect(delayInput()).toHaveValue("#2.85");
+    expect(screen.queryByTestId("rounding-reveal")).not.toBeInTheDocument();
+  });
+
+  it("two-modules: the delay and both repeat counts come back", () => {
+    render(<TimescaleLab mode="two-modules" />);
+    fireEvent.change(delayInput(), { target: { value: "#5" } });
+    fireEvent.change(screen.getByLabelText("tb_top runs it"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("u_slow runs it"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(delayInput()).toHaveValue("#1.26");
+    expect(screen.getByLabelText("tb_top runs it")).toHaveValue("1");
+    expect(screen.getByLabelText("u_slow runs it")).toHaveValue("2");
+  });
+
+  it("global-precision: the vendor model leaves the build and its column is hidden again", () => {
+    render(<TimescaleLab mode="global-precision" />);
+    fireEvent.click(screen.getByLabelText(/Add vendor_model\.sv/));
+    skip();
+    skip();
+    expect(screen.getByRole("columnheader", { name: /With `timescale/ })).toBeInTheDocument();
+    expect(screen.getByTestId("global-precision-reveal")).toHaveTextContent("1step equals the global precision (§3.14.3), so it moves with it.");
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(screen.getByLabelText(/Add vendor_model\.sv/)).not.toBeChecked();
+    skip();
+    skip();
+    expect(screen.getByTestId("global-precision-reveal")).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /With `timescale/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Changed?" })).not.toBeInTheDocument();
+  });
+});
+
+describe("TimescaleLab · fix round 1: the assumptions disclosure is a touch target", () => {
+  const COARSE_SUMMARY = "[@media(pointer:coarse)]:[&_summary]:min-h-10";
+  for (const mode of ["rounding", "two-modules", "read-time", "which-unit", "global-precision", "cross-scope"] as const) {
+    it(`${mode}: the 'Assumptions and limits' summary gets a 40 px target on touch screens`, () => {
+      const { container } = render(<TimescaleLab mode={mode} />);
+      const summary = container.querySelector("summary") as HTMLElement;
+      expect(summary).toHaveTextContent("Assumptions and limits");
+      const frame = summary.closest("section") as HTMLElement;
+      expect(frame.className).toContain(COARSE_SUMMARY);
+      expect(frame.className).toContain("[@media(pointer:coarse)]:[&_summary]:py-3");
+    });
+  }
 });

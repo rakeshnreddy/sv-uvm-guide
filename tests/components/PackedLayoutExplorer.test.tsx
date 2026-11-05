@@ -123,7 +123,10 @@ describe("PackedLayoutExplorer: struct mode (default, cmd_t)", () => {
     expect(screen.getByTestId("struct-unpacked-view")).toBeInTheDocument();
     expect(screen.getByText("c[31:28]")).toBeInTheDocument();
     expect(screen.getByText("c == 32'h5ABC_0042")).toBeInTheDocument();
-    expect(screen.getByText("(§7.2.1, §6.22.3)")).toBeInTheDocument();
+    // Comparison is not assignment: the card cites §6.11.1 and §11.2.2, not §6.22.3, and labels the error derived.
+    expect(screen.getByText("(§7.2.1, §6.11.1, §11.2.2)")).toBeInTheDocument();
+    expect(screen.queryByText("(§7.2.1, §6.22.3)")).not.toBeInTheDocument();
+    expect(screen.getByText(/^Derived: no clause states this error outright\..*c == another variable of the same type is legal/)).toBeInTheDocument();
     // Both the unpacked view and the part-select card say it.
     expect(screen.getAllByText(/no bit numbering/).length).toBeGreaterThanOrEqual(2);
     // The implementation-dependent-packing sentence is cited to §7.2.1, where it is.
@@ -230,7 +233,8 @@ describe("PackedLayoutExplorer: struct mode (default, cmd_t)", () => {
     // A whole write now reports through the model too, extension included.
     fireEvent.click(screen.getByTestId("run-statement"));
     const whole = screen.getByTestId("struct-status").textContent ?? "";
-    expect(whole).toMatch(/The 16-bit value is zero-extended to 32 bits: bits \[31:16\] are filled with 0\. No warning is required \(§10\.7, §6\.22\.3\)\.$/);
+    expect(whole).toMatch(/The 16-bit value is zero-extended to 32 bits: bits \[31:16\] are filled with 0\. No warning is required \(§10\.7\)\.$/);
+    expect(whole).not.toMatch(/§6\.22\.3/);
     expect(whole).not.toMatch(/zero-filled \(\+\)/);
   });
 
@@ -653,9 +657,23 @@ describe("PackedLayoutExplorer: union mode", () => {
   it("%p of a packed union is labelled as a reading of §21.2.1.6 that is tool-dependent, with the %h advice", () => {
     render(<PackedLayoutExplorer mode="union" />);
     const note = screen.getByTestId("union-p").textContent ?? "";
+    expect(note).toMatch(/under this reading prints/);
     expect(note).toMatch(/first-declared-member reading of §21\.2\.1\.6/);
     expect(note).toMatch(/packed-union %p output is tool-dependent/);
     expect(note).toMatch(/%h/);
+  });
+
+  it("the %p caveat quotes the singular rules' catch-all and shows the other possible output, computed from the live value (§21.2.1.6)", () => {
+    render(<PackedLayoutExplorer mode="union" />);
+    const caveat = () => screen.getByTestId("union-p").querySelector("details")?.textContent ?? "";
+    expect(caveat()).toMatch(/all other singular data types print their values as they would unformatted/);
+    expect(caveat()).toMatch(/a packed union is a singular value \(§6\.4, §6\.11\.1\)/);
+    expect(caveat()).not.toMatch(/name only packed structures/);
+    // Never assigned: the unformatted value is x.
+    expect(caveat()).toMatch(/this pattern or the union's plain decimal value, here x \(an unformatted value prints in decimal, §21\.2\.1\.1\)/);
+    lockIn("12'hABC and 8'h1A");
+    expect(screen.getByTestId("union-p").textContent).toMatch(/under this reading prints '\{f:'\{op:1, addr:2748, data:66\}\}/);
+    expect(caveat()).toMatch(/this pattern or the union's plain decimal value, here 448528450 \(/);
   });
 
   it("the typedef prints f with its own type, cmd_t", () => {
@@ -764,6 +782,19 @@ describe("PackedLayoutExplorer: union mode", () => {
     expect(within(screen.getByTestId("union-row-raw")).getByText("[31:16] unaffected")).toBeInTheDocument();
     expect(screen.getByTestId("union-status").textContent).toMatch(/u\.raw \[15:0\] = 16'h1234/);
     expect(screen.getByTestId("union-status").textContent).toMatch(/bits \[31:16\] are unaffected by the write \(§7\.3\.1\)/);
+  });
+
+  it("while a hard packed declaration does not compile no row is drawn with bit positions; soft brings the rows back with the value kept (§7.3.1)", () => {
+    render(<PackedLayoutExplorer mode="union" preset="cmd_u" />);
+    lockIn("12'hABC and 8'h1A");
+    setWidth("Width of raw in bits", "16");
+    expect(screen.getByTestId("union-rows-blocked").textContent).toMatch(/does not compile, so its members have no bit positions \(§7\.3\.1\)/);
+    for (const row of ["f", "raw", "bytes"]) expect(screen.queryByTestId(`union-row-${row}`)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not in raw/)).not.toBeInTheDocument();
+    radio("Packing", "union soft");
+    expect(screen.queryByTestId("union-rows-blocked")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("union-row-raw")).getByText("[31:16] not in raw")).toBeInTheDocument();
+    expect(screen.getByTestId("union-status").textContent).toMatch(/u\.raw \[15:0\] = 16'h0042/);
   });
 
   it("nest_u: writing inner labels a narrower row's gap 'unaffected' only when every bit of it was left alone (§7.3.1)", () => {
@@ -986,7 +1017,7 @@ describe("PackedLayoutExplorer: tagged mode", () => {
     fireEvent.click(screen.getByRole("button", { name: "v = tagged Valid (23);" }));
     expect(screen.getByTestId("tagged-status").textContent).not.toMatch(/%p prints/);
     fireEvent.click(screen.getByRole("button", { name: '$display("%p", v);' }));
-    expect(screen.getByTestId("tagged-status").textContent).toMatch(/%p prints Valid:23 \(tag:value, §21\.2\.1\.6\)\./);
+    expect(screen.getByTestId("tagged-status").textContent).toMatch(/%p prints Valid:23 \(tag:value, §21\.2\.1\.6, which does not say whether '\{ \} surrounds it\)\./);
     expect(screen.getByTestId("tagged-status")).toHaveAttribute("aria-live", "polite");
   });
 
@@ -1028,7 +1059,10 @@ describe("PackedLayoutExplorer: tagged mode", () => {
     expect(screen.getByTestId("tagged-p").textContent).toMatch(/prints Small:90/);
     // Packed, VInt is a singular integral value, so tag:value is a reading tools can differ on: the same caveat as a packed untagged union.
     expect(screen.getByTestId("tagged-p").textContent).toMatch(/a reading of §21\.2\.1\.6 that tools can implement differently/);
-    expect(screen.getByTestId("tagged-p").querySelector("details")?.textContent).toMatch(/Why tools can differ.*packed tagged union is a singular integral value.*tool-dependent/);
+    const why = screen.getByTestId("tagged-p").querySelector("details")?.textContent ?? "";
+    expect(why).toMatch(/Why tools can differ.*packed tagged union is singular \(§6\.4, §6\.11\.1\)/);
+    expect(why).toMatch(/sends every type it does not name, packed unions included, to their unformatted value\. The two readings differ, so its %p output is tool-dependent/);
+    expect(why).not.toMatch(/name only packed structures/);
     expect(screen.getByTestId("tagged-status").textContent).toMatch(/%p prints Small:90 \(a reading of §21\.2\.1\.6 that tools can implement differently\)\./);
   });
 
@@ -1190,8 +1224,8 @@ describe("PackedLayoutExplorer: debug clinic", () => {
     expect(screen.getByText(/\$cast\(cmd\.op, bus_word\[31:28\]\)/)).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("clinic-rerun"));
     expect(screen.getByTestId("clinic-verdict").textContent).toMatch(/Fixed\./);
-    expect(screen.getByText(/ERROR: bad opcode 7 \(\$cast returned 0\)/)).toBeInTheDocument();
-    expect(screen.getByText(/\[mon\] op = OP_NOP \(unchanged\), addr = abc, data = 0042/)).toBeInTheDocument();
+    expect(screen.getByText(/^\/\/ \$cast returned 0 and left cmd\.op unchanged; \$error reports "bad opcode 7" in a tool-specific message \(§20\.10\)$/)).toBeInTheDocument();
+    expect(screen.getByText(/^\[mon\] op = OP_NOP, addr = abc, data = 0042$/)).toBeInTheDocument();
   });
 
   it("the two-typedefs scenario compiles only with one package typedef", () => {
@@ -1216,7 +1250,8 @@ describe("PackedLayoutExplorer: debug clinic", () => {
     const log = screen.getByRole("list", { name: 'Log after rerun with "$cast with a check"' }).textContent ?? "";
     expect(log).toMatch(/compile: ok \(\$cast as a function never issues a compile error, §6\.24\.2\)/);
     expect(log).toMatch(/run: \$cast returned 0/);
-    expect(log).toMatch(/ERROR: cast failed; scb\.expected unchanged/);
+    expect(log).toMatch(/\/\/ \$error reports "cast failed" in a tool-specific message \(§20\.10\); scb\.expected is unchanged/);
+    expect(log).not.toMatch(/ERROR:/);
     expect(log).not.toMatch(/compile error \(assign_rec\)/);
     const verdict = screen.getByTestId("clinic-verdict").textContent ?? "";
     expect(verdict).toMatch(/The symptom moved\./);
@@ -1249,11 +1284,15 @@ describe("PackedLayoutExplorer: debug clinic", () => {
   it("the empty-name fix gives op a known default, so the rerun's OP_NOP comes from code on screen", () => {
     render(<PackedLayoutExplorer mode="debug" preset="empty-name" />);
     lockIn("A static cast stored a value that is not a member, so name() returns \"\"");
-    fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 4:/ }));
+    // Line 2 declares op, so the static cast is line 5.
+    expect(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 2: opcode_e op;$/ })).toBeInTheDocument();
+    fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 5:/ }));
+    expect(screen.getByTestId("clinic-line-feedback").textContent).toMatch(/^✓ This is it: a static cast/);
     pickFix("$cast with a check");
     expect(screen.getByRole("list", { name: "Change" }).textContent).toMatch(/op = OP_NOP;[\s\S]*\$cast\(op, raw\[31:28\]\)/);
     fireEvent.click(screen.getByTestId("clinic-rerun"));
-    expect(screen.getByText(/^op = OP_NOP \(unchanged\)$/)).toBeInTheDocument();
+    expect(screen.getByText(/^op = OP_NOP$/)).toBeInTheDocument();
+    expect(screen.getByTestId("clinic-verdict").textContent).toMatch(/leaves op unchanged and returns 0 \(§6\.24\.2\)/);
   });
 
   it("the rand scenario keeps the root cause out of the log and in the verdict, and a distractor fix shows this scenario's types", () => {
@@ -1304,7 +1343,14 @@ describe("PackedLayoutExplorer: debug clinic", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show the suspect" }));
     pickFix("4-state enum base");
     fireEvent.click(screen.getByTestId("clinic-rerun"));
-    expect(screen.getByText(/@10 posedge clk: rst_n = 1, so nothing assigns state; state\.name\(\) = "" \(value x\)/)).toBeInTheDocument();
+    expect(screen.getByText(/^@10 state\.name\(\) = "" \(value x\)$/)).toBeInTheDocument();
+    expect(screen.getAllByText(/^\/\/ @10 posedge clk: rst_n is 1, so the always_ff assigns nothing to state$/)).toHaveLength(2);
+  });
+
+  it("the frame says that // lines in a log are the model's notes and that $error's prefix is tool-specific (§20.10)", () => {
+    render(<PackedLayoutExplorer mode="debug" preset="idle-without-reset" />);
+    expect(screen.getByText(/a line that starts with \/\/ is the model's note, not simulator output/)).toBeInTheDocument();
+    expect(screen.getByText(/\$error prints a tool-specific message \(§20\.10\)/)).toBeInTheDocument();
   });
 });
 
@@ -1375,12 +1421,61 @@ describe("PackedLayoutExplorer: experiments", () => {
     expect(screen.getByTestId("struct-cards")).toBeInTheDocument();
   });
 
+  it("a reorder that leaves op where it was written keeps the readout's arrival: swapping addr and data after the whole-vector write (§7.2.1)", () => {
+    render(<PackedLayoutExplorer preset="enum-field" />);
+    lockIn('"" (empty string)');
+    const readout = () => screen.getByTestId("enum-readout").textContent ?? "";
+    expect(readout()).toMatch(/whole-vector write was not type-checked/);
+    fireEvent.click(screen.getByRole("button", { name: "Move up: data" }));
+    expect(screen.getByTestId("layout-live").textContent).toMatch(/^op \[31:28\] \| data \[27:12\] \| addr \[11:0\]/);
+    expect(readout()).toMatch(/op holds 4'h7/);
+    expect(readout()).toMatch(/whole-vector write was not type-checked/);
+    expect(readout()).not.toMatch(/typedef edit moved op/);
+  });
+
+  it("the part-select's explanation also survives a swap that leaves op in place", () => {
+    render(<PackedLayoutExplorer preset="enum-field" />);
+    lockIn('"" (empty string)');
+    fireEvent.click(screen.getByTestId("write-x-op"));
+    expect(screen.getByTestId("enum-readout").textContent).toMatch(/part-select wrote these bits/);
+    fireEvent.click(screen.getByRole("button", { name: "Move up: data" }));
+    expect(screen.getByTestId("enum-readout").textContent).toMatch(/part-select wrote these bits/);
+    expect(screen.getByTestId("enum-readout").textContent).not.toMatch(/typedef edit moved op/);
+  });
+
+  it("moving op away credits the edit, and moving it back restores the whole-vector explanation; a shrink that drops its bits does not", () => {
+    render(<PackedLayoutExplorer preset="enum-field" />);
+    lockIn('"" (empty string)');
+    const readout = () => screen.getByTestId("enum-readout").textContent ?? "";
+    fireEvent.click(screen.getByRole("button", { name: "Move down: op" }));
+    expect(readout()).toMatch(/typedef edit moved op over other bits/);
+    fireEvent.click(screen.getByRole("button", { name: "Move up: op" }));
+    expect(screen.getByTestId("layout-live").textContent).toMatch(/^op \[31:28\]/);
+    expect(readout()).toMatch(/whole-vector write was not type-checked/);
+    // data to 8 bits drops [31:24]; back to 16 the top bits are new, so the write no longer explains them.
+    setWidth("Width of data in bits", "8");
+    setWidth("Width of data in bits", "16");
+    expect(screen.getByTestId("layout-live").textContent).toMatch(/^op \[31:28\]/);
+    expect(readout()).toMatch(/typedef edit moved op over other bits/);
+  });
+
   it("a layout edit after an x write keeps the readout", () => {
     render(<PackedLayoutExplorer preset="enum-field" />);
     fireEvent.click(screen.getByTestId("write-x-addr"));
     expect(screen.getByTestId("enum-readout")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Move down: op" }));
     expect(screen.getByTestId("enum-readout").textContent).toMatch(/never assigned/);
+  });
+
+  it("the widths heading states the editor's real limits: frame_t's 24-bit body may stay 24, and keeps that limit after a shrink", () => {
+    render(<PackedLayoutExplorer preset="frame_t" />);
+    expect(screen.getByTestId("width-limits").textContent).toBe("Widths (1 to 16 bits; body up to 24)");
+    setWidth("Width of body in bits", "10");
+    expect(screen.getByTestId("width-limits").textContent).toBe("Widths (1 to 16 bits; body up to 24)");
+    setWidth("Width of body in bits", "24");
+    expect(screen.getByTestId("layout-live").textContent).toMatch(/\$bits = 32$/);
+    radio("Struct preset", "cmd_t");
+    expect(screen.getByTestId("width-limits").textContent).toBe("Widths (1 to 16 bits)");
   });
 
   it("the 'Run it' focus hook is its own attribute, not a test id", () => {

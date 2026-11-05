@@ -311,6 +311,8 @@ const finishName = (result: SimulationResult) => (result.finished?.cause === "im
 
 const capitalized = (text: string) => `${text[0].toUpperCase()}${text.slice(1)}`;
 
+const listWithAnd = (items: string[]) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`);
+
 /** The question asked at a decision; step numbers count from 1, as the scrubber does. */
 export function decisionQuestion(decision: RegionDecision, result: SimulationResult): string {
   if (decision.answer === "end" && result.finished) return `${capitalized(finishName(result))} executed in step ${result.finished.stepIndex + 1}. What runs next?`;
@@ -351,7 +353,11 @@ export function explainDecision(decision: RegionDecision, result: SimulationResu
   const finished = result.finished;
   const movedRegion = optionRegion[decision.answer];
   if (decision.priority) {
-    return `The update woke a process into Reactive and a design process into Active. The scheduler is inside the reactive loop, and that loop runs until Reactive, Re-Inactive and Re-NBA are all empty, so Reactive runs next and Active waits for the outer loop (§4.5, §24.3.1). ${deltaNote}`;
+    // Named from the queues of the step before the decision, so the sentence cannot claim work that is not there.
+    const before = result.trace[Math.max(0, decision.index - 1)];
+    const reactiveWork = before.queues.reactive.filter((q) => q.kind !== "update").map((q) => q.label);
+    const activeWork = before.queues.active.map((q) => q.label);
+    return `After step ${decision.index}, Reactive holds ${listWithAnd(reactiveWork)} and Active holds ${listWithAnd(activeWork)}. The scheduler is inside the reactive loop, and that loop runs until Reactive, Re-Inactive and Re-NBA are all empty, so Reactive runs next and Active waits for the outer loop (§4.5, §24.3.1). ${deltaNote}`;
   }
   if (decision.alsoCorrect === "reactive-set" && movedRegion) {
     return `The active region set and Observed were all empty, so the scheduler turned to the reactive set. Reactive itself holds nothing, so ${REGION_LABELS[movedRegion]}, the first region of that set with events, moves into Reactive and executes there (${REGION_CLAUSES[movedRegion]}${movedRegion === "reNba" ? ", §14.16" : ""}, §4.5). ${deltaNote}`;
@@ -372,8 +378,10 @@ export function explainDecision(decision: RegionDecision, result: SimulationResu
       return `Reactive ran dry and Re-Inactive holds the program code that executed #0. It moves into Reactive and resumes there, before any Re-NBA update (§4.4.2.7, §4.5). ${deltaNote}`;
     case "reNba":
       return `Reactive and Re-Inactive were empty, so the Re-NBA updates (program-code <= and clocking-block drives) move into Reactive and are applied there (§4.4.2.8, §14.16, §4.5). ${deltaNote}`;
-    case "active":
-      return `The reactive set has drained, but Active holds work again: an update in the reactive set woke design processes. The outer loop therefore returns to Active in the same time slot (§4.5). ${deltaNote}`;
+    case "active": {
+      const activeWork = result.trace[Math.max(0, decision.index - 1)].queues.active.map((q) => q.label);
+      return `The reactive set has drained, but Active holds work again (${listWithAnd(activeWork)}): a change made in the reactive set woke design code. The outer loop therefore returns to Active in the same time slot (§4.5). ${deltaNote}`;
+    }
     case "postponed":
       return `No region from Active to Re-NBA holds anything, so the slot's last region runs once: $strobe and $monitor print the settled values, and nothing may write any more (§4.4.2.9). ${deltaNote}`;
     case "end":
@@ -906,7 +914,7 @@ export function buildRegionQuiz(): RegionQuizQuestion[] {
     scenarioId: prints.id,
     title: prints.title,
     code: regionMapSource(prints),
-    prompt: "This process runs once at the clock edge (d = 5, q = 0 before it). What does the log show, in order?",
+    prompt: `This process runs once at the clock edge (d = ${formatValue(prints.initial.d)}, q = ${formatValue(prints.initial.q)} before it). What does the log show, in order?`,
     options: outputOrderOptions(prints),
     why: "Read the prints against the ladder: Active, then Inactive (after #0), then NBA updates q, then Postponed.",
   };

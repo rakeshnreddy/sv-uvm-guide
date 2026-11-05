@@ -97,7 +97,7 @@ export interface SubroutineLabProps {
 
 const ASSUMPTIONS = [
   "Implements IEEE 1800-2023 §13.3 (copy-in at the call, copy-out at the return, default directions and types), §13.3.1/§13.3.2 and §13.4.2 (static versus automatic storage), §13.5.2 (ref), §13.4 (implicit return type) and §6.21 (initializers). Delays are in ns.",
-  "Each process runs until it blocks or ends. When several are ready at the same time, §4.7 leaves the order open; the model runs every order of the ready processes and groups the outcomes. §4.7 also lets a simulator suspend a process between its statements; that interleaving is not explored, so a legal log order can be missing (at #10 with the debug prints, call 1's use line before call 2's enter line, both id=2), but no value call 1 can print is.",
+  "Each process runs until it blocks or ends. When several are ready at the same time, §4.7 leaves the order open; the model runs every order of the ready processes and groups the outcomes. §4.7 also lets a simulator suspend a process at any point while it evaluates a statement; that interleaving is not explored, so a legal log order can be missing (static, #10, with the debug prints: call 1's use line before call 2's enter line, both id=2), but no value call 1 can print is.",
   "always @(busy) is modelled as a monitor that prints whenever busy changes value (§9.4.2). Not modelled: class methods, default argument values, named binding, disable.",
 ];
 
@@ -584,7 +584,7 @@ function sendOptions(lifetime: Lifetime, at: SecondCallAt, verdict: SendVerdict,
           ? "An automatic task gives every activation its own id; call 2's write lands in call 2's copy only (§13.3.2)."
           : staticNoOverlap
             ? "By t = 12 ns, when call 2 copies 2 in, call 1 has already printed. Here the overlap is what does the harm: send only reads id, and each call rewrites it at copy-in. A static local that carries a value between calls still misbehaves without overlap (see count_ones) (§13.3.2)."
-            : "Possible, but only in one of the two orders §4.7 allows at t = 10 ns.",
+            : "Possible, but only if call 2's copy-in runs before call 1's print; §4.7 leaves that order open.",
     },
     {
       id: "either",
@@ -594,7 +594,11 @@ function sendOptions(lifetime: Lifetime, at: SecondCallAt, verdict: SendVerdict,
         ? "At t = 10 ns two processes are ready at once: call 1 waking to print, and the forked branch calling send(2), which copies 2 into the shared id. §4.7 lets the simulator run them in any order, so id=1 and id=2 are both legal outputs."
         : lifetime === "automatic"
           ? at === 10
-            ? "The order at t = 10 ns can change which log line comes first, but not what call 1 prints: call 1 prints its own copy, which only call 1 ever wrote (§13.3.2)."
+            ? debugPrints
+              ? // Call 2's enter line also prints at t = 10 ns, so the order decides which of the two lines comes first.
+                "The order at t = 10 ns can change which log line comes first, but not what call 1 prints: call 1 prints its own copy, which only call 1 ever wrote (§13.3.2)."
+              : // Without the debug prints, call 2 prints nothing at t = 10 ns: every order gives the same log.
+                "The order of the two processes at t = 10 ns changes nothing here: call 1 prints its own copy, which only call 1 ever wrote, and call 2 prints only at t = 20 ns (§13.3.2)."
             : "No tie here, and the order would not matter: call 1 prints its own copy, which only call 1 ever wrote (§13.3.2)."
           : staticOverlap
             ? "No tie here: the overwrite at t = 2 ns happens 8 ns before the print, in a different time slot."
@@ -2006,7 +2010,7 @@ const modeMeta: Record<SubroutineLabMode, { eyebrow: string; title: string; summ
   lifetime: {
     eyebrow: "Experiment · lifetime",
     title: "Where a task's variables live",
-    summary: "Two overlapping calls of one task, with the lifetime keyword as a switch. Predict what call 1 prints, then watch the storage.",
+    summary: "Two calls of one task, with the lifetime keyword as a switch and a choice of when call 2 starts. Predict what call 1 prints, then watch the storage.",
   },
   recursion: {
     eyebrow: "Experiment · recursion",

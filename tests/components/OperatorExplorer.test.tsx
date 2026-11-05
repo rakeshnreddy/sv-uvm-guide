@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import OperatorExplorer from "@/components/visuals/OperatorExplorer";
+import { operatorCatalog, operatorPresets, type OperatorSpec } from "@/lib/sv-expression-model";
 
 const lockIn = () => fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
 const reveal = () => fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
@@ -144,7 +145,10 @@ describe("OperatorExplorer: conditional family (§11.4.11, Table 11-20, §12.4)"
     render(<OperatorExplorer initialPreset="cond-equal" />);
     fireEvent.click(screen.getByLabelText("4'bxxxx"));
     lockIn();
-    expect(screen.getByText(/Both branches are compared first \(§11\.4\.5\)\. They are equal, so \?: returns either one and no bit becomes x; Table 11-20 is not reached \(§11\.4\.11\)\./)).toBeInTheDocument();
+    // The wrong choice names its slip; the rule gives the path; the detail gives this run's comparison.
+    expect(screen.getByText(/Not quite\./).parentElement).toHaveTextContent(/^Not quite\. That assumes an x\/z condition makes every bit x\.$/);
+    expect(screen.getByText(/Why the answer holds/).parentElement).toHaveTextContent(/compares them with == \(§11\.4\.5\)\. If that gives 1, either one is returned\./);
+    expect(screen.getByText(/so either branch is the result\./).textContent).toMatch(/^sel is x\/z \(ambiguous\)\. a == b is .*, so either branch is the result\.$/);
     expect(screen.queryByText(/At least one pair agrees/)).not.toBeInTheDocument();
     expect(screen.getByText("Table 11-20 for comparison: this run does not use it")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Merge table, scrollable" })).getAllByText("(not used)")).toHaveLength(4);
@@ -164,7 +168,7 @@ describe("OperatorExplorer: conditional family (§11.4.11, Table 11-20, §12.4)"
     fireEvent.click(screen.getByRole("button", { name: "sel = x: equal branches" }));
     reveal();
     expect(screen.getByRole("img", { name: "sel ? a : b result: 4'b1010" })).toBeInTheDocument();
-    expect(screen.getByText(/so either branch is the result and no x appears/)).toBeInTheDocument();
+    expect(screen.getByText(/so either branch is the result\./)).toHaveTextContent(/^sel is x\/z \(ambiguous\)\. a == b is 1, so either branch is the result\.$/);
   });
 
   it("editing the 1-bit condition to a known value picks one branch", () => {
@@ -216,7 +220,8 @@ describe("OperatorExplorer: bit vector functions (§20.9)", () => {
     fireEvent.click(screen.getByLabelText("1'bx"));
     lockIn();
     expect(screen.getByText(/Not quite/)).toBeInTheDocument();
-    expect(screen.getByText(/can never be x/)).toBeInTheDocument();
+    expect(screen.getByText(/That expects x, but a bit result is 2-state: 1'b0 or 1'b1\./)).toBeInTheDocument();
+    expect(screen.getByText(/Returns a bit, never x\./)).toBeInTheDocument();
     expect(screen.getByLabelText("$onehot(state) = 1")).toBeInTheDocument();
     expect(screen.getByText("$countbits(state, 'x, 'z) = 1, and 1 != 0 is true")).toBeInTheDocument();
   });
@@ -227,9 +232,11 @@ describe("OperatorExplorer: bit vector functions (§20.9)", () => {
     expect(screen.queryByRole("radio", { name: /passes with an x bit/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/passes with an x bit/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "01x0 (one 1 and one x)" }));
-    expect(screen.queryByText(/\$onehot passes: the x is not a 1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Only \$isunknown sees the x/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/so 01x0 passes/)).not.toBeInTheDocument();
     reveal();
-    expect(screen.getByText(/\$onehot passes: the x is not a 1/)).toBeInTheDocument();
+    expect(screen.getByText(/Only \$isunknown sees the x/)).toBeInTheDocument();
+    expect(screen.getByText(/An x bit is not a 1, so 01x0 passes\./)).toBeInTheDocument();
   });
 
   it("the guarded form $onehot(state) && !$isunknown(state) rejects 01x0", () => {
@@ -238,7 +245,8 @@ describe("OperatorExplorer: bit vector functions (§20.9)", () => {
     fireEvent.click(screen.getByLabelText("1'b0"));
     lockIn();
     expect(screen.getByText(/Correct\./)).toBeInTheDocument();
-    expect(screen.getByText(/the \$isunknown term is what rejects the x/)).toBeInTheDocument();
+    expect(screen.getByText(/\$onehot\(state\) is 1'b1 and \$isunknown\(state\) is 1'b1, so the guard is false\./)).toBeInTheDocument();
+    expect(screen.getByText(/The \$isunknown term is what rejects this vector\./)).toBeInTheDocument();
   });
 });
 
@@ -250,7 +258,8 @@ describe("OperatorExplorer: concatenation additions (§11.4.12, §11.4.12.1)", (
     fireEvent.click(screen.getByLabelText("hi = 8'hEF, lo = 8'hBE"));
     lockIn();
     expect(screen.getByText(/Not quite/)).toBeInTheDocument();
-    expect(screen.getByText(/The first member of the concatenation takes the most significant bits, exactly as it does when the concatenation is a source/)).toBeInTheDocument();
+    expect(screen.getByText(/That is what \{lo, hi\} = 16'hBEEF would store\./)).toBeInTheDocument();
+    expect(screen.getByText(/the first member taking the most significant bits, as in a source concatenation/)).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /16'hBEEF cut by member width: 16-bit value 16'hBEEF; hi is bits 15 to 8; lo is bits 7 to 0/ })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "hi after: 8'b1011_1110" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "lo after: 8'b1110_1111" })).toBeInTheDocument();
@@ -268,7 +277,7 @@ describe("OperatorExplorer: concatenation additions (§11.4.12, §11.4.12.1)", (
     expect(screen.getByText('$display("%b", {{0{n[3]}}, n});')).toBeInTheDocument();
     reveal();
     expect(screen.getByRole("img", { name: "{{0{n[3]}}, n} result: 4'b1010" })).toBeInTheDocument();
-    expect(screen.getByText(/a zero replication is legal here/)).toBeInTheDocument();
+    expect(screen.getByText(/A zero replication is legal here because/)).toHaveTextContent(/^A zero replication is legal here because n has a positive width \(§11\.4\.12\.1\)\.$/);
   });
 
   it("{R{a}} with a zero count is a compile error (zero replication alone)", () => {
@@ -577,6 +586,53 @@ describe("OperatorExplorer: the rule is stated once", () => {
     expect(screen.getByText(/The same 1 is legal in a \+ 1\./)).toBeInTheDocument();
   });
 
+  it("binary ~&, picking either NAND: the wrong option names the slip and the compiler's message says the rest", () => {
+    for (const pick of [/bitwise NAND/, /reduction NAND of a/]) {
+      const { unmount } = render(<OperatorExplorer />);
+      fireEvent.click(screen.getByRole("button", { name: /Try a ~& b/ }));
+      fireEvent.click(screen.getByLabelText(pick));
+      lockIn();
+      expect(countOf("no binary ~&")).toBe(1);
+      expect(countOf("does not compile")).toBe(0);
+      unmount();
+    }
+  });
+
+  it("{a, 1}, picking a width: 'write 1'b1' and 'not allowed' come from the compiler's message alone", () => {
+    for (const pick of [/1 treated as 1'b1/, /1 treated as 32'd1/]) {
+      const { unmount } = render(<OperatorExplorer family="concat" />);
+      fireEvent.click(screen.getByRole("radio", { name: "{a, 1} (trap)" }));
+      fireEvent.click(screen.getByLabelText(pick));
+      lockIn();
+      expect(countOf("1'b1.")).toBe(1);
+      expect(countOf("needs its size")).toBe(0);
+      expect(screen.getByText(/at least 32/)).toHaveTextContent(/\(§5\.7\.1\)|§5\.7\.1 only promises/);
+      unmount();
+    }
+  });
+
+  it("{hi, lo} = 16'hBEEF, picking Compile error or the swapped members: the rule's sentences appear once", () => {
+    for (const pick of ["Compile error", "hi = 8'hEF, lo = 8'hBE", "hi = 8'h12, lo = 8'h34"]) {
+      const { unmount } = render(<OperatorExplorer initialPreset="concat-target" />);
+      fireEvent.click(screen.getByLabelText(pick));
+      lockIn();
+      expect(countOf("may not be a target"), pick).toBe(1);
+      expect(countOf("most significant bits"), pick).toBe(1);
+      expect(countOf("assignment target"), pick).toBe(1);
+      unmount();
+    }
+  });
+
+  it("{{0{n[3]}}, n}, picking Compile error: the slip, the rule and the legality are each said once", () => {
+    render(<OperatorExplorer initialPreset="concat-sign-extend" />);
+    fireEvent.change(screen.getByLabelText(/Replication count/), { target: { value: "0" } });
+    fireEvent.click(screen.getByLabelText("Compile error"));
+    lockIn();
+    expect(screen.getByText(/That treats \{0\{n\[3\]\}\} as if it stood alone in braces\./)).toBeInTheDocument();
+    expect(countOf("only n remains")).toBe(1);
+    expect(countOf("positive width")).toBe(1);
+  });
+
   it("{0{a}}: the message appears once, with no Rule line", () => {
     render(<OperatorExplorer family="concat" />);
     fireEvent.click(screen.getByRole("radio", { name: "{R{a}}" }));
@@ -725,10 +781,13 @@ describe("OperatorExplorer: a merge table pair is not a condition", () => {
     expect(table.queryByText(/\d \? \d/)).not.toBeInTheDocument();
   });
 
-  it("en = x against 'z: the Notice uses the same wording", () => {
+  it("en = x against 'z: the table names each pair with 'with', and the Notice adds only the consequence", () => {
     render(<OperatorExplorer initialPreset="cond-tristate" />);
     reveal();
-    expect(screen.getByText(/x with z, 0 with z, 1 with z and z with z are all x/)).toBeInTheDocument();
+    const table = within(screen.getByRole("region", { name: "Merge table, scrollable" }));
+    expect(table.getAllByText(/^[01] with z → x$/)).toHaveLength(4);
+    expect(screen.getByText(/Notice:/).parentElement).toHaveTextContent(/^Notice: The bus drives x, not z\.$/);
+    expect(screen.queryByText(/\d \? \d|z\?z/)).not.toBeInTheDocument();
   });
 });
 
@@ -743,5 +802,65 @@ describe("OperatorExplorer: width={1}", () => {
     lockIn();
     expect(screen.getByText(/Correct\./)).toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Prediction verdict" })).toHaveTextContent("Your prediction is right. The answer is 1'bz.");
+  });
+});
+
+describe("OperatorExplorer: no reveal prints the same words twice", () => {
+  // The chosen option names its slip, "Why the answer holds" states the rule, and the detail adds this run's values.
+  // A run of five words printed twice means two of those restate each other. Data tables and bit strips are values, not prose.
+  const RUN = 5;
+  const repeats = (text: string) => {
+    const words = text.split(/\s+/).filter(Boolean).map((w) => w.toLowerCase().replace(/[.,:;()]+$|^[(]+/g, ""));
+    const first = new Map<string, number>();
+    const found = new Set<string>();
+    for (let i = 0; i + RUN <= words.length; i += 1) {
+      const key = words.slice(i, i + RUN).join(" ");
+      const at = first.get(key);
+      if (at === undefined) first.set(key, i);
+      else if (i - at >= RUN) found.add(key);
+    }
+    return [...found];
+  };
+  const prompt = () => screen.getAllByRole("group").find((g) => g.tagName === "FIELDSET")?.parentElement as HTMLElement;
+  const prose = () => {
+    const clone = prompt().cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("fieldset, table, [role='img']").forEach((e) => e.remove());
+    return clone.textContent ?? "";
+  };
+  const pickSpec = (s: OperatorSpec) => () => fireEvent.click(screen.getByRole("radio", { name: s.trap ? `${s.template} (trap)` : s.template }));
+  const setCount = (n: number) => () => fireEvent.change(screen.getByLabelText(/Replication count/), { target: { value: String(n) } });
+  const cycleSel = (presses: number) => () => {
+    for (let i = 0; i < presses; i += 1) fireEvent.click(screen.getAllByRole("button", { name: /^sel bit 0 is/ })[0]);
+  };
+  const ours = operatorCatalog.filter((s) => ["conditional", "bitcount", "concat"].includes(s.family) || s.id === "binary-nand");
+  const cases: [string, () => React.ReactElement, (() => void)?][] = [
+    ...ours.map((s): [string, () => React.ReactElement, () => void] => [s.id, () => <OperatorExplorer family={s.family} />, pickSpec(s)]),
+    ...ours
+      .filter((s) => s.family === "conditional" || s.family === "bitcount")
+      .map((s): [string, () => React.ReactElement, () => void] => [`${s.id} at width 1`, () => <OperatorExplorer family={s.family} width={1} />, pickSpec(s)]),
+    ...operatorPresets.map((p): [string, () => React.ReactElement] => [`preset ${p.id}`, () => <OperatorExplorer initialPreset={p.id} />]),
+    ["{0{a}}", () => <OperatorExplorer family="concat" />, () => (pickSpec(operatorCatalog.find((s) => s.id === "repl-n") as OperatorSpec)(), setCount(0)())],
+    ["{{0{n[3]}}, n}", () => <OperatorExplorer initialPreset="concat-sign-extend" />, setCount(0)],
+    ["sel = 0", () => <OperatorExplorer family="conditional" />, cycleSel(2)],
+    ["sel = 1", () => <OperatorExplorer family="conditional" />, cycleSel(3)],
+  ];
+
+  it.each(cases)("%s: skipped, and with each option locked in", (_name, make, prepare) => {
+    const { unmount } = render(make());
+    prepare?.();
+    const choices = within(prompt()).getAllByRole("radio").length;
+    unmount();
+    for (let k = -1; k < choices; k += 1) {
+      const view = render(make());
+      prepare?.();
+      if (k < 0) {
+        reveal();
+      } else {
+        fireEvent.click(within(prompt()).getAllByRole("radio")[k]);
+        lockIn();
+      }
+      expect(repeats(prose()), k < 0 ? "skipped" : `option ${k}`).toEqual([]);
+      view.unmount();
+    }
   });
 });

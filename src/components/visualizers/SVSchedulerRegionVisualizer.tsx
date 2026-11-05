@@ -206,7 +206,8 @@ function LandingMap({
                       )}
                     >
                       {isCurrent ? <span aria-hidden>▶</span> : null}
-                      <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">Δ{l.delta}</span>
+                      {/* Model time is written "Δ 2" (visual-language §3). */}
+                      <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">Δ {l.delta}</span>
                       <span className="min-w-0 break-words">{l.label}</span>
                     </button>
                   );
@@ -533,7 +534,7 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
               <PlaybackControls playback={gated} stepCount={run.trace.length} stepNoun="Scheduler step" describeStep={(i) => run.trace[i]?.what ?? ""} />
             </div>
             {!nextRegion ? (
-              <p className="text-sm text-muted-foreground">{`In this slot a later region's events moved up into Active or Reactive ${deltaPasses} time${deltaPasses === 1 ? "" : "s"} (Δ ${deltaPasses}) before Postponed.`}</p>
+              <p className="text-sm text-muted-foreground">{`In this slot a later region's events moved up into Active or Reactive ${deltaPasses} time${deltaPasses === 1 ? "" : "s"} (Δ ${deltaPasses}) ${run.finished ? "before the run ended" : "before Postponed"}.`}</p>
             ) : pending && !gateOpen ? (
               <p className="text-sm text-muted-foreground">{`Playback pauses at each point where the loop has to choose its next region (${decisions.length} decision${decisions.length === 1 ? "" : "s"} in this slot); predict where it goes, then continue.`}</p>
             ) : null}

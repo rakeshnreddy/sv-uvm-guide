@@ -215,6 +215,17 @@ describe("Narration reads the operands before the write", () => {
     expect(autos).toContain("0 + 1 = 1");
   });
 
+  it("count_ones narrates the foreach loop the learner sees, never the $countones it is folded into", () => {
+    for (const lifetime of ["static", "automatic"] as const) {
+      const run = simulateBench(countOnesBench(lifetime));
+      run.trace.forEach((s) => expect(`${s.what} ${s.why}`).not.toContain("$countones"));
+      const loop = run.trace.filter((s) => s.lineKey === "count-loop").map((s) => s.what);
+      expect(loop[0]).toBe("count_ones(8'hFF): the foreach adds one to n for each set bit of v; v = 255 has 8, so n = 0 + 8 = 8.");
+      expect(loop[1]).toBe(`count_ones(8'h01): the foreach adds one to n for each set bit of v; v = 1 has 1, so n = ${lifetime === "static" ? "8 + 1 = 9" : "0 + 1 = 1"}.`);
+    }
+    expect(benchSource(countOnesBench("static")).some((l) => l.text.includes("foreach (v[i]) if (v[i]) n++;"))).toBe(true);
+  });
+
   it("count_calls counts up from the value before the write", () => {
     const text = whats(countCallsBench());
     expect(text).toContain("total = total + 1 = 0 + 1 = 1");
@@ -293,7 +304,7 @@ describe("Why and clause follow the variable's own storage, not the subroutine's
 
   it("a plain static task's own variables are still described as the one shared copy", () => {
     const run = simulateBench(sendBench({ lifetime: "static", secondCallAt: 2 }));
-    expect((run.trace.find((s) => s.kind === "print") as (typeof run.trace)[number]).why).toMatch(/whatever the shared copy holds now/);
+    expect((run.trace.find((s) => s.kind === "print") as (typeof run.trace)[number]).why).toMatch(/^id is read from the shared copy/);
     expect((run.trace.find((s) => s.kind === "enter") as (typeof run.trace)[number]).why).toMatch(/one copy of each variable/);
   });
 
@@ -304,6 +315,86 @@ describe("Why and clause follow the variable's own storage, not the subroutine's
   });
 });
 
+describe("A print from shared storage says what this run did, and what static storage only permits", () => {
+  const printsOf = (bench: Bench) => exploreBench(bench).outcomes.flatMap((o) => o.result.trace.filter((s) => s.kind === "print"));
+
+  it("names the activation that overwrote the shared id, and when, only when one did", () => {
+    const [first, second] = printsOf(sendBench({ lifetime: "static", secondCallAt: 2 }));
+    expect(first.what).toMatch(/^send\(1\) prints "t=10 id=2"/);
+    expect(first.why).toBe("id is read from the shared copy, which send(2) wrote at t = 2 ns, after this call started: this call prints another activation's value.");
+    expect(second.what).toMatch(/^send\(2\) prints "t=12 id=2"/);
+    expect(second.why).toBe("id is read from the shared copy, which no other activation has written since this call started (static storage would let an overlapping one).");
+  });
+
+  it("static #12: neither print claims an overwrite, because the calls never overlap", () => {
+    const prints = printsOf(sendBench({ lifetime: "static", secondCallAt: 12 }));
+    expect(prints).toHaveLength(2);
+    prints.forEach((p) => {
+      expect(p.why).toMatch(/no other activation has written since this call started \(static storage would let an overlapping one\)/);
+      expect(p.why).not.toMatch(/wrote at|another activation's value|may have been written/);
+    });
+  });
+
+  it("count_calls runs its calls one after another, so no print claims another activation wrote total", () => {
+    const prints = printsOf(countCallsBench());
+    expect(prints).toHaveLength(3);
+    prints.forEach((p) => expect(p.why).toBe("total is read from the shared copy, which no other activation has written since this call started (static storage would let an overlapping one); this_call is this activation's own copy, which only it has written."));
+  });
+
+  it("in every send bench and every order, a print claims another activation's value exactly when it prints another call's id", () => {
+    for (const lifetime of ["static", "automatic"] as const) {
+      for (const secondCallAt of SECOND_CALL_OPTIONS) {
+        for (const debugPrints of [false, true]) {
+          printsOf(sendBench({ lifetime, secondCallAt, debugPrints })).forEach((p) => {
+            const own = Number(/^send\((\d)\)/.exec(p.what)?.[1]);
+            const printed = Number(/id=(\d)/.exec(p.what)?.[1]);
+            expect(/another activation's value/.test(p.why)).toBe(printed !== own);
+            if (lifetime === "static" && secondCallAt === 10 && printed !== own) expect(p.why).toMatch(/send\(2\) wrote at t = 10 ns/);
+          });
+        }
+      }
+    }
+  });
+
+  it("a static recursion's outer print names the inner call that overwrote n; an automatic one prints its own n", () => {
+    const recursive = (lifetime: "static" | "automatic"): Bench => ({
+      id: `rec-print:${lifetime}`,
+      title: "rec-print",
+      globals: [],
+      subs: [
+        {
+          name: "g",
+          kind: "function",
+          lifetime,
+          returnType: "int",
+          formals: [{ name: "n", direction: "input", type: "int" }],
+          locals: [],
+          body: [
+            { kind: "if", cond: bin(">", v("n"), c(1)), then: [{ kind: "call", sub: "g", args: [bin("-", v("n"), c(1))], key: "inner" }], key: "rec" },
+            { kind: "display", format: "n=%0d", args: [v("n")], key: "p" },
+            { kind: "return", expr: v("n"), key: "r" },
+          ],
+        },
+      ],
+      processes: [{ id: "main", label: "initial", body: [{ kind: "call", sub: "g", args: [c(2)], key: "top" }] }],
+    });
+    const [innerStatic, outerStatic] = printsOf(recursive("static"));
+    expect(innerStatic.what).toMatch(/^g\(1\) prints "n=1"/);
+    expect(innerStatic.why).toMatch(/no other activation has written since this call started/);
+    expect(outerStatic.what).toMatch(/^g\(2\) prints "n=1"/);
+    expect(outerStatic.why).toMatch(/^n is read from the shared copy, which g\(1\) wrote at t = 0 ns, after this call started: this call prints another activation's value\.$/);
+    const [, outerAuto] = printsOf(recursive("automatic"));
+    expect(outerAuto.what).toMatch(/^g\(2\) prints "n=2"/);
+    expect(outerAuto.why).toBe("The value printed is this activation's own copy, which only this activation has written.");
+  });
+
+  it("the kata's first log_after names the second call's write at t = 2 ns", () => {
+    const [first, second] = simulateBench(kataBench()).trace.filter((s) => s.kind === "print" && s.what.startsWith("log_after"));
+    expect(first.why).toMatch(/^msg is read from the shared copy, which log_after\(10, "second"\) wrote at t = 2 ns, after this call started/);
+    expect(second.why).toMatch(/no other activation has written since this call started/);
+  });
+});
+
 describe("Functions cite the function clauses", () => {
   const functionBenches: Bench[] = (["static", "automatic"] as const).flatMap((lifetime) => [countOnesBench(lifetime), factBench({ lifetime, n: 3 }), sumToBench({ lifetime, n: 3 })]);
 
@@ -311,13 +402,20 @@ describe("Functions cite the function clauses", () => {
     functionBenches.forEach((bench) => simulateBench(bench).trace.forEach((s) => expect(s.clause ?? "").not.toContain("§13.3.2")));
   });
 
-  it("an automatic function's enter step cites §13.4.2 and §6.21 and says nothing of outputs; a static one cites §13.4.2", () => {
+  it("an automatic function's enter step cites where each of its claims is stated, and says nothing of outputs", () => {
+    // §13.4.2: allocated per call; §6.21: initialized on each entry; §6.8: the defaults; §13.4: inputs copied in at the beginning.
     const auto = simulateBench(factBench({ lifetime: "automatic", n: 2 })).trace.find((s) => s.kind === "enter");
-    expect(auto?.clause).toBe("§13.4.2, §6.21");
-    expect(auto?.why).toMatch(/on each entry to the call/);
+    expect(auto?.clause).toBe("§13.4.2, §13.4, §6.21, §6.8");
+    expect(auto?.why).toMatch(/initializes them to their defaults on each entry to the call; inputs and inouts then take the values passed/);
     expect(auto?.why).not.toMatch(/outputs included/);
+  });
+
+  it("a static function's enter step cites §6.21 for the static lifetime that keeps a value across calls, beside §13.4.2's sharing", () => {
     const shared = simulateBench(factBench({ lifetime: "static", n: 2 })).trace.find((s) => s.kind === "enter");
-    expect(shared?.clause).toBe("§13.4.2");
+    expect(shared?.clause).toBe("§13.4.2, §6.21");
+    const secondCountOnes = simulateBench(countOnesBench("static")).trace.filter((s) => s.kind === "enter")[1];
+    expect(secondCountOnes.what).toMatch(/n is static: it keeps 8 across calls/);
+    expect(secondCountOnes.clause).toBe("§13.4.2, §6.21");
     expect(simulateBench(factBench({ lifetime: "static", n: 2 })).trace.find((s) => s.kind === "return")?.clause).toBe("§13.4, §13.4.2, §6.21");
   });
 
@@ -337,7 +435,8 @@ describe("Functions cite the function clauses", () => {
 
   it("task steps still cite §13.3.2", () => {
     const run = simulateBench(sendBench({ lifetime: "automatic", secondCallAt: 2 }));
-    expect(run.trace.find((s) => s.kind === "enter")?.clause).toBe("§13.3.2, §13.3");
+    // §6.8 for the defaults the automatic task's variables start at.
+    expect(run.trace.find((s) => s.kind === "enter")?.clause).toBe("§13.3.2, §13.3, §6.8");
     expect(run.trace.find((s) => s.kind === "print")?.clause).toBe("§13.3.2");
     expect(run.trace.find((s) => s.kind === "return")?.clause).toBe("§13.3, §13.3.2");
   });
@@ -380,7 +479,7 @@ describe("§13.5.2 a ref formal is not the subroutine's own storage", () => {
     expect(enter?.what).toMatch(/d is v_ref \(ref: no copy\)/);
     expect(enter?.why).toMatch(/Nothing another activation does can reach those copies\./);
     expect(enter?.why).toMatch(/d has no copy here: it is a reference to the caller's v_ref/);
-    expect(enter?.clause).toBe("§13.3.2, §13.3, §13.5.2");
+    expect(enter?.clause).toBe("§13.3.2, §13.3, §6.8, §13.5.2");
     const done = stepOf(bench, "return");
     expect(done?.why).toMatch(/Output and inout values reach the caller's variables once/);
     expect(done?.why).toMatch(/A ref formal has nothing to copy out/);
@@ -596,6 +695,17 @@ describe("§13.3.2 two callers, one shared variable (the lesson's send bench)", 
     const exploration = exploreBench(sendBench({ lifetime: "automatic", secondCallAt: 10 }));
     expect(exploration.deterministic).toBe(true);
     expect(sendVerdict(exploration)).toBe("id=1");
+  });
+
+  it("automatic #10 without the debug prints: one log in every order, with one line at t = 10 and call 2's at t = 20", () => {
+    // The lab's 'Either' feedback rests on this: with the debug prints off, the order at t = 10 ns changes nothing, not even the log order.
+    const exploration = exploreBench(sendBench({ lifetime: "automatic", secondCallAt: 10 }));
+    expect(exploration.outcomes).toHaveLength(1);
+    expect(exploration.runCount).toBeGreaterThan(1);
+    expect(exploration.outcomes[0].runs).toHaveLength(exploration.runCount);
+    expect(exploration.outcomes[0].result.log.map((l) => `t=${l.time} ${l.text}`)).toEqual(["t=10 t=10 id=1", "t=20 t=20 id=2"]);
+    // With the debug prints on, call 2's enter line shares t = 10 ns with call 1's use line, so the log order does vary.
+    expect(exploreBench(sendBench({ lifetime: "automatic", secondCallAt: 10, debugPrints: true })).outcomes).toHaveLength(2);
   });
 
   it("the storage panel shows one shared box written by both calls, or one box per activation", () => {

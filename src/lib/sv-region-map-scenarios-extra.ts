@@ -15,8 +15,7 @@
  *   driver's `cb.q` is the Preponed sample (§14.13, §4.4.2.1).
  */
 
-import { formatValue, type SimulationResult, type SvScenario } from "./sv-scheduler-model";
-import { exploreOrderings } from "./sv-scheduler-model";
+import { exploreOrderings, formatPrintValue, formatValue, type SimulationResult, type SvScenario } from "./sv-scheduler-model";
 import { regionLandings, regionMapPrediction, type ModelPrediction } from "./sv-region-map-model";
 import { programReactiveScenario, regionMapScenarioPresets, testbenchDriveScenario, type RegionMapScenarioId } from "./sv-scheduler-scenarios";
 
@@ -68,6 +67,9 @@ function programWatcherPredictions(scenario: SvScenario, result: SimulationResul
   const led = wakeIndex(result, "LED");
   const deterministic = exploreOrderings(scenario).deterministic;
   const bothRun = watcher >= 0 && led >= 0;
+  // What the watcher's own print showed for led, read from the run rather than written down.
+  const watcherPrint = result.trace.find((s) => s.kind === "print" && s.processId === "W");
+  const ledSeen = watcherPrint ? ` That is why the watcher prints led = ${formatPrintValue(watcherPrint.values.led)}.` : "";
   return [
     {
       question: "`cmd <= 1` lands in Re-NBA. Its update wakes two processes: the program's `@(cmd)` watcher and the design's `assign led = cmd`. Which runs first?",
@@ -76,8 +78,7 @@ function programWatcherPredictions(scenario: SvScenario, result: SimulationResul
           id: "watcher",
           label: "The watcher: the reactive set drains completely before the loop returns to Active",
           correct: deterministic && bothRun && watcher < led,
-          feedback:
-            "The update of cmd executes inside the reactive loop. It wakes the watcher into Reactive and assign led into Active, but the scheduler keeps iterating Reactive, Re-Inactive and Re-NBA until all three are empty, and only then returns to Active (§4.5, §24.3.1). That is why the watcher prints led = 0.",
+          feedback: `The update of cmd executes inside the reactive loop. It wakes the watcher into Reactive and assign led into Active, but the scheduler keeps iterating Reactive, Re-Inactive and Re-NBA until all three are empty, and only then returns to Active (§4.5, §24.3.1).${ledSeen}`,
         },
         {
           id: "design",
@@ -112,6 +113,13 @@ function clockingDrivePredictions(scenario: SvScenario, result: SimulationResult
   const initialQ = result.trace[0].values.q;
   const finalQ = result.finalValues.q;
   const seen = result.finalValues.seen;
+  const driven = result.finalValues.din;
+  // The din the DUT flop's `q <= din` read: nothing writes din before the Re-NBA drive, so it is din at that statement.
+  const dutRead = result.trace.find((s) => s.kind === "statement" && s.stmtId === "dut1")?.values.din;
+  const flopNote =
+    dutRead === undefined
+      ? ""
+      : ` The DUT flop read din = ${formatValue(dutRead)} in Active long before that, so q becomes ${formatValue(finalQ)}${finalQ !== driven ? `, not ${formatValue(driven)}` : ""}.`;
   return [
     {
       question: "`cb.din <= 7;` is a clocking-block drive executed by module code. In which region does din change?",
@@ -133,8 +141,7 @@ function clockingDrivePredictions(scenario: SvScenario, result: SimulationResult
           id: "reNba",
           label: "Re-NBA, after the design NBA updates queued for this edge",
           correct: dinRegion === "reNba",
-          feedback:
-            "A zero-skew synchronous drive with no cycle delay schedules its update in the Re-NBA region of the same time step (§14.16). The DUT flop read din = 3 in Active long before that, so q becomes 3, not 7.",
+          feedback: `A zero-skew synchronous drive with no cycle delay schedules its update in the Re-NBA region of the same time step (§14.16).${flopNote}`,
         },
       ],
     },

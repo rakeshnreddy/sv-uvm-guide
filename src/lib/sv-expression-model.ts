@@ -3157,7 +3157,7 @@ export const operatorCatalog: OperatorSpec[] = [
     template: "$onehot0(state)",
     operands: ["a"],
     names: { a: "state" },
-    rule: "$countbits(state, '1) <= 1: zero or one bit set. Returns a bit.",
+    rule: "$countbits(state, '1) <= 1: zero or one bit set; x and z bits never count. Returns a bit.",
     clause: "§20.9",
   },
   {
@@ -3211,15 +3211,15 @@ const B = (s: string) => s.split("") as Bit4[];
 export const operatorPresets: OperatorPreset[] = [
   { id: "cond-x-sel", family: "conditional", specId: "cond", label: "sel = x: 1100 vs 1010", note: "The two middle bits differ, so they become x: 1xx0. if/else would give 1010.", inputs: { c: B("x"), a: B("1100"), b: B("1010") } },
   { id: "cond-equal", family: "conditional", specId: "cond", label: "sel = x: equal branches", note: "Both branches hold the same known bits, so no x appears.", inputs: { c: B("x"), a: B("1010"), b: B("1010") } },
-  { id: "cond-tristate", family: "conditional", specId: "cond-z", label: "en = x: data vs 'z", note: "x with z, 0 with z, 1 with z and z with z are all x: the bus drives x, not z.", inputs: { c: B("x"), a: B("1010") } },
+  { id: "cond-tristate", family: "conditional", specId: "cond-z", label: "en = x: data vs 'z", note: "The bus drives x, not z.", inputs: { c: B("x"), a: B("1010") } },
   { id: "bitcount-legal", family: "bitcount", specId: "countones", label: "0100 (legal one-hot)", note: "One bit set, nothing unknown.", inputs: { a: B("0100") } },
   { id: "bitcount-two-hot", family: "bitcount", specId: "onehot", label: "0110 (two-hot)", note: "$onehot fails, $onehot0 fails too: two bits are set.", inputs: { a: B("0110") } },
-  { id: "bitcount-x", family: "bitcount", specId: "onehot", label: "01x0 (one 1 and one x)", note: "$onehot passes: the x is not a 1. Only $isunknown sees it.", inputs: { a: B("01x0") } },
-  { id: "bitcount-x-guarded", family: "bitcount", specId: "onehot-guarded", label: "01x0 with the guard", note: "$onehot alone passes this vector; the $isunknown term is what rejects it.", inputs: { a: B("01x0") } },
+  { id: "bitcount-x", family: "bitcount", specId: "onehot", label: "01x0 (one 1 and one x)", note: "Only $isunknown sees the x.", inputs: { a: B("01x0") } },
+  { id: "bitcount-x-guarded", family: "bitcount", specId: "onehot-guarded", label: "01x0 with the guard", note: "The $isunknown term is what rejects this vector.", inputs: { a: B("01x0") } },
   { id: "bitcount-reset", family: "bitcount", specId: "onehot0", label: "xxxx (before reset)", note: "No bit is 1, so $onehot0 passes while every bit is unknown.", inputs: { a: B("xxxx") } },
   { id: "concat-target", family: "concat", specId: "concat-target", label: "{hi, lo} = 16'hBEEF", note: "hi takes the top byte, lo the bottom byte.", inputs: { a: bitsOf(parseLiteral("8'h12").value), b: bitsOf(parseLiteral("8'h34").value) } },
-  { id: "concat-sign-extend", family: "concat", specId: "sign-extend", label: "{{4{n[3]}}, n} with n = 1010", note: "Set n[3] to 0 and the same braces add zeros: the new bits always copy the sign bit.", inputs: { a: B("1010"), repl: 4 } },
-  { id: "concat-unsized", family: "concat", specId: "concat-unsized", label: "{a, 1}: unsized constant", note: "The same 1 is legal in a + 1. Only a concatenation needs its size up front.", inputs: {} },
+  { id: "concat-sign-extend", family: "concat", specId: "sign-extend", label: "{{4{n[3]}}, n} with n = 1010", note: "Set n[3] to 0 and the same braces add zeros.", inputs: { a: B("1010"), repl: 4 } },
+  { id: "concat-unsized", family: "concat", specId: "concat-unsized", label: "{a, 1}: unsized constant", note: "The same 1 is legal in a + 1.", inputs: {} },
 ];
 
 /** Declarations for the operands a spec uses, with literal initialisers. */
@@ -3378,12 +3378,18 @@ function stableOrder(opts: OperatorOption[], seed: string): OperatorOption[] {
   return [...opts].sort((x, y) => (rank.get(x.id) as number) - (rank.get(y.id) as number) || x.label.localeCompare(y.label));
 }
 
-/** ?: with an x/z condition when the §11.4.5 comparison is 1: the path never reaches Table 11-20. */
-const EQUAL_BRANCHES = "Both branches are compared first (§11.4.5). They are equal, so ?: returns either one and no bit becomes x; Table 11-20 is not reached (§11.4.11).";
+/** The ?: misconception that an x/z condition poisons the whole result. */
+const allXAssumption = (width: number) => (width === 1 ? "That assumes an x/z condition always gives x." : "That assumes an x/z condition makes every bit x.");
 
 /**
  * Prediction options for an operator case. Wrong options come from named
- * misconceptions and say which rule they break.
+ * misconceptions.
+ *
+ * A reveal shows three texts at once: the chosen option's feedback, the correct
+ * option's feedback (as "Why the answer holds") and the component's detail for
+ * the run. Each says its own thing once: the correct option states the rule (for
+ * code that does not compile, the compiler's message); a wrong option names only
+ * what that choice assumed; the detail adds only the values of this run.
  */
 export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorInputs): OperatorOption[] {
   const real = runOperator(spec, inputs);
@@ -3404,18 +3410,18 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
     if (spec.id === "binary-nand") {
       const nand = val("~(a & b)");
       const red = val("~&a");
-      if (nand) add(`${vectorLabel(nand)} (bitwise NAND)`, false, "That is ~(a & b). SystemVerilog has no binary ~&, so this code does not compile.");
-      if (red) add(`${vectorLabel(red)} (reduction NAND of a)`, false, "~& only exists as a unary operator; with an operand on its left the parser has no binary ~& to apply, so this does not compile.");
+      if (nand) add(`${vectorLabel(nand)} (bitwise NAND)`, false, "That reads a ~& b as ~(a & b).");
+      if (red) add(`${vectorLabel(red)} (reduction NAND of a)`, false, "That applies ~& to a alone and drops b.");
     }
     if (spec.id === "concat-unsized") {
       const ok1 = val("{a, 1'b1}");
       const ok32 = val("{a, 32'd1}");
-      if (ok1) add(`${vectorLabel(ok1)} (1 treated as 1'b1)`, false, "An unsized 1 is at least 32 bits, so its size in the concatenation would be ambiguous. The LRM forbids it; write 1'b1.");
-      if (ok32) add(`${ok32.width}-bit value (1 treated as 32'd1)`, false, `Unsized numbers are not allowed in concatenations at all (§11.4.12), so there is no ${ok32.width}-bit result.`);
+      if (ok1) add(`${vectorLabel(ok1)} (1 treated as 1'b1)`, false, "That takes the unsized 1 as 1 bit wide, but an unsized number is at least 32 bits (§5.7.1).");
+      if (ok32) add(`${ok32.width}-bit value (1 treated as 32'd1)`, false, `That takes the unsized 1 as exactly 32 bits, but §5.7.1 only promises at least 32: there is no ${ok32.width}-bit result.`);
     }
     if (spec.id === "repl-n" && real.error.code === "zero-replication-alone") {
-      add("0-bit value (nothing)", false, "A zero replication has size zero, but it may only appear inside a concatenation that also has an operand of positive size, such as {{0{a}}, b}. Alone in braces it is illegal (§11.4.12.1).");
-      add(`${vectorLabel(fromBits(inputs.a))} (a unchanged)`, false, "Zero copies of a is not one copy. The replication has no bits at all, and on its own that is a compile error (§11.4.12.1).");
+      add("0-bit value (nothing)", false, "That expects $display to print an empty value. A zero replication is ignored (§11.4.12.1), so nothing is left here.");
+      add(`${vectorLabel(fromBits(inputs.a))} (a unchanged)`, false, "Zero copies of a is not one copy.");
     }
     return shuffled();
   }
@@ -3431,12 +3437,14 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
           ? `The ${det.rhs.width}-bit value is ${det.rhs.signed ? "sign" : "zero"}-extended to the ${det.total}-bit concatenation first (§11.8.3). `
           : "";
     add(label(det.parts), true, `${spec.rule} ${sizing}(${spec.clause})`);
-    const swapped = [...det.parts].reverse().map((p, i) => ({ name: det.parts[i].name, value: p.value }));
+    // The rule above says which member takes the MSBs and that a replication may not be a target, so these name only the slip.
+    const reversed = [...det.parts].reverse();
+    const swapped = reversed.map((p, i) => ({ name: det.parts[i].name, value: p.value }));
     if (det.parts.length > 1 && det.parts.every((p) => p.width === det.parts[0].width)) {
-      add(label(swapped), false, "The first member of the concatenation takes the most significant bits, exactly as it does when the concatenation is a source (§11.4.12).");
+      add(label(swapped), false, `That is what {${reversed.map((p) => p.name).join(", ")}} = ${spec.targetRhs} would store.`);
     }
-    add(COMPILE_ERROR, false, "A concatenation may be an assignment target; it is treated as a packed vector of the summed widths (§11.4.12). A replication, such as {2{hi}}, may not be a target (§11.4.12.1).");
-    add(label(det.before), false, "The assignment does store into the members: a concatenation on the left-hand side is a legal target (§11.4.12), so hi and lo change.");
+    add(COMPILE_ERROR, false, `It compiles: ${det.parts.map((p) => p.name).join(" and ")} are variables, and the concatenation is treated as one packed vector of the summed widths (§11.4.12).`);
+    add(label(det.before), false, "Those are the old values. The assignment writes every bit of the concatenation, so it overwrites both members.");
     return shuffled();
   }
 
@@ -3448,13 +3456,14 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
     const xz = countbits(a, "x", "z");
     const report = bitVectorReport(a, slotName(spec, "a"));
     add(String(ones), true, `${report[0].arithmetic}. ${spec.rule} (${spec.clause})`);
+    // The rule (the correct option) says which bits count and that the result is an int: these name only the slip.
     if (xz > 0) {
-      add(String(ones + xz), false, `That counts the ${xz} x/z bit${xz === 1 ? "" : "s"} as 1. $countbits(e, '1) counts only bits that are exactly 1; an x or z matches neither '1 nor '0 (§20.9).`);
-      add("x (unknown)", false, "$countones returns an int, a 2-state type: it can never be x. Unknown bits simply do not match the control value '1 (§20.9).");
+      add(String(ones + xz), false, `That counts the ${xz} x/z bit${xz === 1 ? "" : "s"} as 1.`);
+      add("x (unknown)", false, "That expects x, but int is a 2-state type.");
     } else {
-      add(String(a.width - ones), false, "That counts the 0 bits. $countones is $countbits(e, '1): the bits that are exactly 1 (§20.9).");
-      add(String(a.width), false, "That counts every bit. $countones is $countbits(e, '1): only the bits that are exactly 1 (§20.9).");
-      add("x (unknown)", false, "Every bit is known, and $countones returns an int in any case: it can never be x (§20.9).");
+      add(String(a.width - ones), false, "That counts the 0 bits.");
+      add(String(a.width), false, "That counts every bit.");
+      add("x (unknown)", false, "That expects x, but every bit is known, and int is a 2-state type in any case.");
     }
     return shuffled();
   }
@@ -3513,13 +3522,14 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
       const R = replCount(spec, inputs);
       const n = fromBits(inputs.a);
       const zeroExt = fromBits([...Array<Bit4>(R).fill("0"), ...inputs.a]);
+      // The rule and the detail say what the copies are, why 0 copies is legal and how wide the result is: these name only the slip.
       if (!sameValue(reinterpret(zeroExt, false), reinterpret(value, false))) {
-        add(vectorLabel(zeroExt), false, `That zero-extends. The replication copies n[3], the sign bit (${bitAt(n, n.width - 1)}), ${R} time${R === 1 ? "" : "s"} in front of n, so the new bits are all ${bitAt(n, n.width - 1)} (§11.4.12.1).`);
+        add(vectorLabel(zeroExt), false, "That pads with 0 instead of copying n[3].");
       }
       if (R === 0) {
-        add(COMPILE_ERROR, false, "A zero replication is legal inside a concatenation whose other operand has a positive width: {{0{n[3]}}, n} is just n (§11.4.12.1).");
+        add(COMPILE_ERROR, false, "That treats {0{n[3]}} as if it stood alone in braces.");
       } else {
-        add(vectorLabel(n), false, `The replication adds ${R} bit${R === 1 ? "" : "s"}: the result is ${n.width + R} bits wide, not ${n.width}. Set the count to 0 to see the replication vanish.`);
+        add(vectorLabel(n), false, `That leaves out the ${R} replicated bit${R === 1 ? "" : "s"}. Set the count to 0 to see the replication vanish.`);
       }
     }
     if (spec.id === "repl-n") {
@@ -3536,23 +3546,19 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
     const elseSrc = spec.id === "cond-z" ? `${value.width}'bz` : slotName(spec, "b");
     const elseValue = val(elseSrc);
     const same = (v: SvValue | null) => v !== null && sameValue(reinterpret(v, false), reinterpret(value, false));
+    // The rule (the correct option) gives the path, and the reveal's merge table and if/else row show this run, so each option names only its slip.
     if (truth === "x") {
       const zKept = elseValue ? mapBits(value.width, false, (i) => (bitAt(elseValue, i) === "z" ? "z" : bitAt(value, i))) : null;
       if (zKept && !same(zKept)) {
-        add(
-          vectorLabel(zKept),
-          false,
-          `Table 11-20 has no z result: z merged with anything, even with another z, gives x, so a tri-state model drives x, not z, when its enable is unknown.${elseValue && sameValue(zKept, elseValue) ? " An if/else would store this, because if treats an x/z condition as false (§12.4)." : ""}`,
-        );
+        add(vectorLabel(zKept), false, `Table 11-20 has no z result, not even for z with z.${elseValue && sameValue(zKept, elseValue) ? " An if/else would store this." : ""}`);
       }
-      if (!same(elseValue) && elseValue) add(vectorLabel(elseValue), false, "That is what if/else stores: if treats an x/z condition as false and runs the else branch (§12.4). The ?: operator evaluates both branches and merges them with Table 11-20 instead.");
-      if (!same(thenValue) && thenValue) add(vectorLabel(thenValue), false, "That treats the unknown condition as true. With an x/z condition, ?: evaluates both branches and combines them bit by bit (§11.4.11).");
-      const equal = thenValue !== null && elseValue !== null && conditionalDetail(c, thenValue, elseValue).equivalent === "1";
-      if (!same(allX(value.width))) add(vectorLabel(allX(value.width)), false, equal ? EQUAL_BRANCHES : "A bit becomes x unless both branches agree on 0 or 1. At least one pair agrees here, so that bit survives (Table 11-20).");
+      if (!same(elseValue) && elseValue) add(vectorLabel(elseValue), false, "That is what if/else stores.");
+      if (!same(thenValue) && thenValue) add(vectorLabel(thenValue), false, "That treats the unknown condition as true.");
+      if (!same(allX(value.width))) add(vectorLabel(allX(value.width)), false, allXAssumption(value.width));
     } else {
       const other = truth === "1" ? elseValue : thenValue;
-      if (other && !same(other)) add(vectorLabel(other), false, `The condition is ${truth}, so the ${truth === "1" ? "first" : "second"} branch is chosen and the other is not even evaluated (§11.4.11).`);
-      if (!same(allX(value.width))) add(vectorLabel(allX(value.width)), false, "A known condition picks one branch unchanged; nothing is merged. Only an x/z condition reaches Table 11-20.");
+      if (other && !same(other)) add(vectorLabel(other), false, "That is the other branch's value.");
+      if (!same(allX(value.width))) add(vectorLabel(allX(value.width)), false, `That treats the condition as unknown; it is ${truth}.`);
     }
   } else if (spec.family === "stream") {
     const same = val("{>> {a}}");
@@ -3623,27 +3629,51 @@ function oneBitFeedback(spec: OperatorSpec, inputs: OperatorInputs, chosen: Bit4
       const caseNote = det.ifCaseEquality !== det.result ? ` With === you would get ${det.ifCaseEquality}: inside is not case equality.` : "";
       return `${lead}inside compares a with each member using ==?, so x/z bits in a member are don't-cares; the result is 1 if any member matches, x if none match but some comparison is x (§11.4.13).${caseNote}`;
     }
+    // The two families below follow operatorPredictionOptions: the correct option states the rule, which the reveal
+    // shows beside a wrong choice as "Why the answer holds", so a wrong option names only what it assumed.
     case "bitcount": {
       const name = slotName(spec, "a");
-      const report = bitVectorReport(fromBits(inputs.a), name);
-      const xz = countbits(fromBits(inputs.a), "x", "z");
-      if (chosen === "x" && !right) {
-        return `${lead}${spec.id === "onehot-guarded" ? "&& of two bit results is 1'b0 or 1'b1 here" : "This function returns a bit, a 2-state type"}: it can never be x. Unknown bits either match the control value ('x, 'z for $isunknown) or they do not count (§20.9).`;
-      }
-      if (spec.id === "onehot-guarded") {
+      const state = fromBits(inputs.a);
+      const report = bitVectorReport(state, name);
+      const xz = countbits(state, "x", "z");
+      const ones = countbits(state, "1");
+      const item = report.find((r) => r.fn === spec.template.slice(0, spec.template.indexOf("(")));
+      if (right) {
         const oh = report[1];
         const unk = report[3];
-        return `${lead}$onehot(${name}) is ${oh.result} (${oh.arithmetic}) and $isunknown(${name}) is ${unk.result} (${unk.arithmetic}), so the guard is ${truth === "1" ? "true: exactly one 1 and nothing unknown" : "false"}.${xz > 0 && oh.result === "1'b1" ? " $onehot alone would have passed; the $isunknown term is what rejects the x." : ""}`;
+        const computed =
+          spec.id === "onehot-guarded"
+            ? `$onehot(${name}) is ${oh.result} and $isunknown(${name}) is ${unk.result}, so the guard is ${truth === "1" ? "true" : "false"}.`
+            : item
+              ? `${item.arithmetic}, so ${item.fn}(${name}) returns ${item.result}.`
+              : "";
+        return `${computed} ${spec.rule} (${spec.clause})`.trim();
       }
-      const item = report.find((r) => r.fn === spec.template.slice(0, spec.template.indexOf("(")));
-      return `${lead}${item ? `${item.fn} is ${item.definition}: ${item.arithmetic}, so it returns ${item.result} (type ${item.returnType}).` : spec.rule}${xz > 0 && item && item.fn !== "$isunknown" ? " An x or z bit is not a 1, so it does not count." : ""}`;
+      if (chosen === "x") {
+        const twoState = spec.id === "onehot-guarded" ? "&& of two bit results is 1'b0 or 1'b1: neither operand can be x" : "a bit result is 2-state: 1'b0 or 1'b1";
+        return `That expects x, but ${twoState}. Unknown bits either match the control value ('x, 'z for $isunknown) or they do not count (§20.9).`;
+      }
+      const bitsWordXz = `x/z bit${xz === 1 ? "" : "s"}`;
+      if (spec.id === "onehot-guarded") {
+        if (truth === "1") return "That rejects a legal one-hot vector.";
+        return report[1].result === "1'b1" ? `That takes $onehot(${name}) alone.` : `That passes a vector $onehot(${name}) already rejects.`;
+      }
+      if (item?.fn === "$isunknown") return truth === "1" ? `That overlooks the ${bitsWordXz}.` : "That finds an unknown bit where every bit is 0 or 1.";
+      if (xz > 0) return `That lets the ${bitsWordXz} decide the test.`;
+      if (ones === 0) return `That is what ${item?.fn === "$onehot" ? "$onehot0" : "$onehot"}(${name}) returns.`;
+      return "That miscounts the 1 bits.";
     }
     case "conditional": {
+      if (right) return `${spec.rule} (${spec.clause})`;
       const c = fromBits(inputs.c);
-      const t = truthOf(c);
       const otherwise = spec.id === "cond-z" ? fromBits(Array<Bit4>(a.width).fill("z")) : b;
-      if (t === "x" && conditionalDetail(c, a, otherwise).equivalent === "1") return `${lead}${EQUAL_BRANCHES}`;
-      return `${lead}The condition is ${t === "x" ? "x/z, and comparing the branches does not give 1, so they are merged with Table 11-20" : `${t}, so the ${t === "1" ? "first" : "second"} branch is returned`} (§11.4.11).`;
+      const det = conditionalDetail(c, a, otherwise);
+      const row = det.rows[det.rows.length - 1];
+      if (det.truth !== "x") return chosen === (det.truth === "1" ? row.otherwise : row.then) ? "That is the other branch's value." : `Neither branch holds ${chosen}.`;
+      if (chosen === "x") return allXAssumption(1);
+      if (chosen === row.then) return "That treats the unknown condition as true.";
+      if (chosen === row.otherwise) return "That is what if/else stores.";
+      return `Neither branch holds ${chosen}.`;
     }
     default:
       // Why the answer holds shows beside a wrong choice, so the rule is stated by the correct option alone.

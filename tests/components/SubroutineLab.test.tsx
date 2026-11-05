@@ -843,6 +843,37 @@ describe("SubroutineLab · send with the debug prints", () => {
     expect(screen.getByText(/can change which log line comes first, but not what call 1 prints/)).toBeInTheDocument();
   });
 
+  it("automatic, #10, no debug prints: 'Either' says the order changes nothing, as the one outcome beside it shows", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    fireEvent.click(screen.getByRole("switch", { name: "send is automatic" }));
+    fireEvent.click(screen.getByRole("radio", { name: /#10: call 2 starts/ }));
+    expect(screen.getByRole("checkbox", { name: /debug prints/ })).not.toBeChecked();
+    lockIn(/^Either/);
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    expect(screen.queryByText(/which log line comes first/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The order of the two processes at t = 10 ns changes nothing here: call 1 prints its own copy, which only call 1 ever wrote, and call 2 prints only at t = 20 ns (§13.3.2).",
+      ),
+    ).toBeInTheDocument();
+    // The outcome cards agree: one outcome, whatever the order.
+    const group = screen.getByRole("group", { name: "Outcomes across orders" });
+    expect(within(group).getAllByRole("button")).toHaveLength(1);
+    expect(group).not.toHaveTextContent(/log order only/);
+  });
+
+  it("static, #10: the id=2 feedback names the order it needs, with and without the debug prints", () => {
+    for (const debug of [false, true]) {
+      const { unmount } = render(<SubroutineLab mode="lifetime" />);
+      fireEvent.click(screen.getByRole("radio", { name: /#10: call 2 starts/ }));
+      if (debug) fireEvent.click(screen.getByRole("checkbox", { name: /debug prints/ }));
+      lockIn(debug ? /t=10 use\s+id=2/ : /t=10 id=2/);
+      expect(screen.getByText("Possible, but only if call 2's copy-in runs before call 1's print; §4.7 leaves that order open.")).toBeInTheDocument();
+      expect(screen.queryByText(/one of the two orders/)).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it("static, #10, debug: the shared-id note stays, and the cards name id=1 and id=2", () => {
     render(<SubroutineLab mode="lifetime" />);
     fireEvent.click(screen.getByRole("radio", { name: /#10: call 2 starts/ }));
@@ -1247,6 +1278,23 @@ describe("SubroutineLab · the header and lanes match the lab on screen", () => 
     expect(labels).toEqual(expect.arrayContaining(["log_after 1", "log_after 2"]));
     expect(lanes.getAttribute("aria-label")).toContain("log_after 1");
     expect(labels).not.toContain("call 1");
+  });
+
+  it("the lifetime header does not call the calls overlapping, since #12 is one of its choices", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    const region = screen.getByRole("region", { name: "Subroutine lab: Where a task's variables live" });
+    const header = within(region).getByRole("heading", { name: "Where a task's variables live" }).parentElement as HTMLElement;
+    expect(header).toHaveTextContent(/Two calls of one task/);
+    expect(header.textContent).not.toMatch(/overlapping/);
+    expect(screen.getByRole("radio", { name: /#12: call 2 starts/ })).toBeInTheDocument();
+  });
+
+  it("the §4.7 limit uses the clause's breadth: a process may be suspended at any point while it evaluates a statement", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    const limits = screen.getByText("Assumptions and limits").closest("details") as HTMLElement;
+    expect(limits).toHaveTextContent(/§4\.7 also lets a simulator suspend a process at any point while it evaluates a statement/);
+    expect(limits).toHaveTextContent(/static, #10, with the debug prints: call 1's use line before call 2's enter line, both id=2/);
+    expect(limits.textContent).not.toMatch(/between its statements/);
   });
 
   it("the send lab, with one task, keeps the plain call labels", () => {

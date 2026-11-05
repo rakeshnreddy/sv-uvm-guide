@@ -457,7 +457,10 @@ function StreamDetail({ spec, a }: { spec: OperatorSpec; a: SvValue }) {
   );
 }
 
-/** `c ? a : b` next to `if (c) y = a; else y = b;`, one row per bit (§11.4.11, Table 11-20, §12.4). */
+/**
+ * `c ? a : b` next to `if (c) y = a; else y = b;`, one row per bit (§11.4.11, Table 11-20, §12.4).
+ * The rule (in the answer's feedback) gives the path; this adds only the values of this run.
+ */
 function MergeDetail({ spec, c, a, b }: { spec: OperatorSpec; c: SvValue; a: SvValue; b: SvValue }) {
   const det = conditionalDetail(c, a, b);
   const cName = slotName(spec, "c");
@@ -470,8 +473,8 @@ function MergeDetail({ spec, c, a, b }: { spec: OperatorSpec; c: SvValue; a: SvV
         <Code>{cName}</Code> is {condText}.{" "}
         {det.truth === "x" ? (
           <>
-            Both branches are evaluated and compared first: <Code>{`${aName} == ${bName}`}</Code> is <ValueChip value={det.equivalent} />
-            {det.equivalent === "1" ? ", so either branch is the result and no x appears." : ", so they are merged bit by bit with Table 11-20."}
+            <Code>{`${aName} == ${bName}`}</Code> is <ValueChip value={det.equivalent} />
+            {det.equivalent === "1" ? ", so either branch is the result." : ", so the table below merges them."}
           </>
         ) : (
           <>Only the {det.truth === "1" ? "first" : "second"} branch is evaluated and returned.</>
@@ -526,7 +529,7 @@ function MergeDetail({ spec, c, a, b }: { spec: OperatorSpec; c: SvValue; a: SvV
   );
 }
 
-/** The four §20.9 functions on the same vector, with their $countbits arithmetic. */
+/** The four §20.9 functions on the same vector, with their $countbits arithmetic. The rule, in the answer's feedback, says how x and z count. */
 function BitcountDetail({ spec, state }: { spec: OperatorSpec; state: SvValue }) {
   const name = slotName(spec, "a");
   const report = bitVectorReport(state, name);
@@ -566,11 +569,11 @@ function BitcountDetail({ spec, state }: { spec: OperatorSpec; state: SvValue })
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-muted-foreground">
-        x and z bits match only the controls <Code>&apos;x</Code> and <Code>&apos;z</Code>, so they never count as 1: <Code>$onehot</Code> passes a vector such as 01x0. A
-        reset check wants <Code>$onehot(state) &amp;&amp; !$isunknown(state)</Code>. Return types: <Code>int</Code> for a count, <Code>bit</Code> for the three tests, so none of them
-        is ever x.
-      </p>
+      {spec.id !== "onehot-guarded" ? (
+        <p className="text-xs text-muted-foreground">
+          A reset check wants <Code>{`$onehot(${name}) && !$isunknown(${name})`}</Code>.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -600,11 +603,10 @@ function ConcatTargetDetail({ spec, inputs }: { spec: OperatorSpec; inputs: Oper
   );
 }
 
-/** `{{R{n[3]}}, n}`: the sign bit replicated in front of n. */
+/** `{{R{n[3]}}, n}`: the sign bit replicated in front of n. The rule, in the answer's feedback, says what the copies are; this adds width, sign and legality. */
 function SignExtendDetail({ spec, inputs, result }: { spec: OperatorSpec; inputs: OperatorInputs; result: SvValue }) {
   const n = fromBits(inputs.a);
   const R = replCount(spec, inputs);
-  const sign = bitAt(n, n.width - 1);
   return (
     <div className="space-y-2 text-sm">
       <div className="flex flex-wrap items-center gap-3">
@@ -615,12 +617,12 @@ function SignExtendDetail({ spec, inputs, result }: { spec: OperatorSpec; inputs
       <p className="text-xs text-muted-foreground">
         {R === 0 ? (
           <>
-            <Code>{"{0{n[3]}}"}</Code> has no bits, so the result is just <Code>n</Code>: a zero replication is legal here because <Code>n</Code> has a positive width (§11.4.12.1).
+            A zero replication is legal here because <Code>n</Code> has a positive width (§11.4.12.1).
           </>
         ) : (
           <>
-            {R} cop{R === 1 ? "y" : "ies"} of the sign bit n[3] = {sign} sit in front of n: the result is {n.width + R} bits, unsigned as every concatenation is (§11.8.1). Read as a
-            signed number it is {toBigInt(reinterpret(result, true))?.toString() ?? "x"}, the same as <Code>n</Code> ({toBigInt(reinterpret(n, true))?.toString() ?? "x"}).
+            The result is {n.width + R} bits, unsigned as every concatenation is (§11.8.1). Read as a signed number it is {toBigInt(reinterpret(result, true))?.toString() ?? "x"}, the
+            same as <Code>n</Code> ({toBigInt(reinterpret(n, true))?.toString() ?? "x"}).
           </>
         )}
       </p>

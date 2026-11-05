@@ -155,7 +155,7 @@ const CMD_T_PREDICTIONS: Prediction[] = [
         id: "zero",
         label: "op = 4'h0, addr = 12'h000",
         correct: true,
-        feedback: "The 16-bit value is zero-extended to 32 bits (§10.7): BEEF lands in data and the upper 16 bits become 0. No warning is required, so size raw words to $bits(cmd_t) (§6.22.3).",
+        feedback: "The 16-bit value is zero-extended to 32 bits (§10.7): BEEF lands in data and the upper 16 bits become 0. Tools may, but are not required to, warn about the size mismatch (§10.7), so size raw words to $bits(cmd_t).",
       },
       { id: "top", label: "op = 4'hB, addr = 12'hEEF", correct: false, feedback: "That puts the 16 bits at the top. Extension pads the most significant end, so the value stays in the low 16 bits (§10.7)." },
       {
@@ -175,7 +175,7 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
     typeName: "cmd_t",
     varName: "c",
     members: CMD_T,
-    summary: "The lesson's bus command: op, addr and data on one vector. Three writes, each gated by a prediction.",
+    summary: "The lesson's bus command: op, addr and data on one vector, and three writes to predict.",
     source: fromLesson("Packed structs"),
     statements: [
       { code: "c = 32'h5ABC_0042;", action: { kind: "whole", value: svHex(32, "5ABC_0042") }, prediction: CMD_T_PREDICTIONS[0], note: "Fields on 4-bit boundaries read straight off the hex: 5 | ABC | 0042." },
@@ -268,7 +268,7 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
     typeName: "cmd_t",
     varName: "c",
     members: reorderMembers(CMD_T, ["op", "data", "addr"]),
-    summary: "The same word as cmd_t, with addr and data swapped in the typedef. What do the names read now?",
+    summary: "As this preset declares cmd_t, addr and data are swapped. What do the names read now?",
     source: fromLesson("Debugging: symptom, cause, fix, and Make It Work step 3"),
     statements: [
       {
@@ -292,7 +292,7 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
     typeName: "cmd_t",
     varName: "c",
     members: CMD_T,
-    summary: "A short word assigned to the whole struct. What happens to the members it does not reach?",
+    summary: "As this preset declares cmd_t, the word assigned to it is shorter than the struct. What happens to the members it does not reach?",
     source: fromLesson("Packed structs"),
     statements: [{ code: "c = 16'hBEEF;", action: { kind: "whole", value: svHex(16, "BEEF") }, prediction: CMD_T_PREDICTIONS[2], note: "No warning is required (§10.7). Size raw words to $bits(cmd_t)." }],
   },
@@ -496,13 +496,13 @@ export const unionPreset = (id?: string): UnionPreset => UNION_PRESETS.find((p) 
 export const VINT: TaggedUnionType = {
   name: "VInt",
   members: [
-    { name: "Invalid", width: null, typeText: "void", signed: false },
-    { name: "Valid", width: 32, typeText: "int", signed: true },
+    { name: "Invalid", width: null, typeText: "void", signed: false, fourState: false },
+    { name: "Valid", width: 32, typeText: "int", signed: true, fourState: false },
   ],
 };
 
 /** Our own third member, added to show the tag growing to 2 bits. */
-export const VINT_THIRD_MEMBER: TaggedMember = { name: "Small", width: 8, typeText: "bit [7:0]", signed: false };
+export const VINT_THIRD_MEMBER: TaggedMember = { name: "Small", width: 8, typeText: "bit [7:0]", signed: false, fourState: false };
 
 const TAGGED_ASSIGN_VALUES: Readonly<Record<string, { value: number; text: string }>> = {
   Valid: { value: 23, text: "23" },
@@ -627,6 +627,15 @@ const EXPECTED = { op: svHex(4, "2"), addr: svHex(12, "123"), data: svHex(16, "B
 
 const noChange = "This change does not touch the cause, so the symptom stays.";
 
+/**
+ * A log line that starts with this is the model's note, not simulator output:
+ * a log otherwise shows only what a $display in the listing prints.
+ */
+export const CLINIC_NOTE_PREFIX = "// ";
+
+/** $error prints a tool-specific message that includes the user's text (§20.10), so the log names the text and not a prefix. */
+const errorNote = (text: string): string => `$error reports "${text}" in a tool-specific message (§20.10)`;
+
 export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
   {
     id: "swapped-fields",
@@ -727,7 +736,8 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       const fixed = name === "";
       const shown = `state.name() = "${name}" (value ${formatD(v)})`;
       // With rst_n high the only assignment in the code is not taken, so an edge leaves state at its default.
-      const log = ["@0 rst_n = 1 (never asserted)", `@0 ${shown}`, `@10 posedge clk: rst_n = 1, so nothing assigns state; ${shown}`];
+      // The @-lines are what the $display on screen prints; a line that starts with // is the model's note (CLINIC_NOTE_PREFIX).
+      const log = [`${CLINIC_NOTE_PREFIX}rst_n is 1 from time 0: reset is never asserted`, `@0 ${shown}`, `${CLINIC_NOTE_PREFIX}@10 posedge clk: rst_n is 1, so the always_ff assigns nothing to state`, `@10 ${shown}`];
       return {
         log,
         fixed,
@@ -744,6 +754,7 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     clause: "§6.19.4, §6.19.5.6, §6.24.2",
     lines: [
       { key: "l1", text: "typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;", whenPicked: "The declaration is not the bug: any 4-bit base holds 7, and name() of a non-member is \"\" (§6.19.5.6). A 4-state base only exposes a never-assigned variable (Table 6-7)." },
+      { key: "l1v", text: "opcode_e op;", whenPicked: "Declaring op is fine. With no initializer it starts at its 4-state base's default, 'x (Table 6-7); the decode below is what assigns it." },
       { key: "l2", text: "logic [31:0] raw = 32'h7ABC_0042;   // from the DUT", whenPicked: "The DUT drove 7 in the top digit, which is not an opcode. That is the stimulus, not the monitor's fault; the question is how the monitor stored it." },
       { key: "l2d", text: "$display(\"raw = %h\", raw);", whenPicked: "This prints the word as it arrived, the first line of the log, and it is correct. The question is what happens to it next." },
       { key: "l3", text: "op = opcode_e'(raw[31:28]);   // static cast", whenPicked: "This is it: a static cast converts to the enum without checking validity (§6.19.4), so op now holds 7 and name() returns \"\" (§6.19.5.6)." },
@@ -783,8 +794,8 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       const before = fixed ? svDec(4, OPCODE_E.members.find((m) => m.name === "OP_NOP")!.value) : enumInitialValue(OPCODE_E);
       const cast = enumCast(OPCODE_E, before, 7, fixed ? "dynamic" : "static");
       const log = ["raw = 7abc0042"];
-      if (fixed) log.push(`ERROR: bad opcode 7 ($cast returned ${cast.castReturn})`);
-      log.push(`op = ${enumName(OPCODE_E, cast.after)}${fixed ? " (unchanged)" : ""}`);
+      if (fixed) log.push(`${CLINIC_NOTE_PREFIX}$cast returned ${cast.castReturn} and left op unchanged; ${errorNote("bad opcode 7")}`);
+      log.push(`op = ${enumName(OPCODE_E, cast.after)}`);
       return {
         log,
         fixed,
@@ -809,7 +820,7 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     suspectKeys: ["l5"],
     causes: [
       { id: "backdoor", label: "The whole-vector write stored 4'h7 in op without an enum type check, so name() returns \"\"", correct: true, feedback: "Right. A packed struct written as one vector is not type-checked member by member (derived from §7.2.1: the struct is a single vector, and §6.22.3 makes it assignment compatible with any integral value). 7 is no opcode, and name() of a non-member is \"\" (§6.19.5.6)." },
-      { id: "static", label: "A static cast opcode_e'(7) stored the value", correct: false, feedback: "There is no cast in this monitor: the word was assigned to the struct, an integral vector (§6.22.3), and op was written as part of it. The effect matches a static cast, but the line to fix is the struct assignment." },
+      { id: "static", label: "A static cast opcode_e'(7) stored the value", correct: false, feedback: "There is no cast in this monitor: the word was assigned to the struct, which is integral (§6.11.1) and so assignment compatible with it (§6.22.3), and op was written as part of it. The effect matches a static cast, but the line to fix is the struct assignment." },
       { id: "unset", label: "cmd was never assigned, so op holds x", correct: false, feedback: "A never-assigned 4-state enum would print \"\" too (Table 6-7, §6.19.5.6), but addr and data show the bus word was stored: op holds 7, the word's top digit." },
       { id: "compile", label: "It should not compile: a vector cannot be assigned to a struct that contains an enum", correct: false, feedback: "A packed struct is assignment compatible with any integral value (§6.22.3), enum members included. The type check of §6.19.3 applies to an assignment to the enum variable itself, not to its containing struct (derived from §7.2.1: the struct is one vector)." },
     ],
@@ -825,7 +836,8 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       reorder: "typedef struct packed { opcode_e op; logic [11:0] addr; logic [15:0] data; } cmd_t;",
       "logic-base": "typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;",
       "cast-check": "cmd.op   = OP_NOP;             // known default before the decode\ncmd.addr = bus_word[27:16];\ncmd.data = bus_word[15:0];\nif (!$cast(cmd.op, bus_word[31:28])) $error(\"bad opcode %h\", bus_word[31:28]);",
-      "package-typedef": "package bus_pkg; typedef struct packed { opcode_e op; logic [11:0] addr; logic [15:0] data; } cmd_t; endpackage",
+      // A package may refer only to its own items and imported ones (§26.2), so opcode_e moves in with cmd_t.
+      "package-typedef": "package bus_pkg;\n  typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;\n  typedef struct packed { opcode_e op; logic [11:0] addr; logic [15:0] data; } cmd_t;\nendpackage",
       "rand-whole": "class cmd_item; rand cmd_t cmd; endclass",
     },
     hints: [
@@ -841,8 +853,8 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       const log = [`[mon] bus_word = ${formatH(word)}`];
       if (fixed) {
         const cast = enumCast(OPCODE_E, svDec(4, 0), 7, "dynamic");
-        log.push(`ERROR: bad opcode 7 ($cast returned ${cast.castReturn})`);
-        log.push(`[mon] op = ${enumName(OPCODE_E, cast.after)} (unchanged), addr = ${addr}, data = ${data}`);
+        log.push(`${CLINIC_NOTE_PREFIX}$cast returned ${cast.castReturn} and left cmd.op unchanged; ${errorNote("bad opcode 7")}`);
+        log.push(`[mon] op = ${enumName(OPCODE_E, cast.after)}, addr = ${addr}, data = ${data}`);
         return { log, fixed, verdict: `${cast.why} addr and data are written by member, so only the opcode goes through the check.` };
       }
       const readout = enumMemberReadout(CMD_T_ENUM, word, "op");
@@ -883,7 +895,9 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       reorder: "typedef struct { string tag; int beat; cmd_t cmd; } cmd_rec_t;   // in both modules",
       "logic-base": "typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;\n// and in cmd_t: opcode_e op;",
       "cast-check": "if (!$cast(scb.expected, mon.rec)) $error(\"cast failed\");",
-      "package-typedef": "package bus_pkg; typedef struct { cmd_t cmd; string tag; int beat; } cmd_rec_t; endpackage\nimport bus_pkg::*;   // in mon and in scb, instead of their local typedefs",
+      // A package may refer only to its own items and imported ones, never the compilation unit (§26.2), so cmd_t and opcode_e move in too.
+      "package-typedef":
+        "package bus_pkg;\n  typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;\n  typedef struct packed { opcode_e op; logic [11:0] addr; logic [15:0] data; } cmd_t;\n  typedef struct { cmd_t cmd; string tag; int beat; } cmd_rec_t;\nendpackage\n// cmd_t and opcode_e move into the package too: a package refers only to its own and imported items (§26.2)\nimport bus_pkg::*;   // in mon and in scb, instead of their local typedefs",
       "rand-whole": "class rec_item; rand cmd_rec_t rec; endclass",
     },
     hints: [
@@ -894,7 +908,7 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     run: (fix) => {
       if (fix === "cast-check") {
         return {
-          log: ["compile: ok ($cast as a function never issues a compile error, §6.24.2)", "run: $cast returned 0", "ERROR: cast failed; scb.expected unchanged"],
+          log: ["compile: ok ($cast as a function never issues a compile error, §6.24.2)", "run: $cast returned 0", `${CLINIC_NOTE_PREFIX}${errorNote("cast failed")}; scb.expected is unchanged`],
           fixed: false,
           moved: true,
           verdict: "For arguments that are not singular and not assignment compatible, the assignment is invalid, so $cast makes no assignment and returns 0 (§6.24.2).",

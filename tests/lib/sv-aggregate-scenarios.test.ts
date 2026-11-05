@@ -21,6 +21,7 @@ import {
 } from "@/lib/sv-aggregate-layout-model";
 import {
   CLINIC_FIXES,
+  CLINIC_NOTE_PREFIX,
   CLINIC_SCENARIOS,
   CMD_U,
   LESSON_BUS_WORD,
@@ -71,6 +72,10 @@ describe("struct presets: one per lesson use, each prediction agreeing with the 
     const c3 = runStructStatements(p, 3);
     expect(correctOf(p.statements[2].prediction!.options)).toBe(`op = ${formatSizedHex(readMember(p.members, c3, "op"))}, addr = ${formatSizedHex(readMember(p.members, c3, "addr"))}`);
     expect(p.statements[2].prediction!.options.find((o) => o.id === "error")!.feedback).toMatch(/§6\.22\.3/);
+    // The no-warning rule is §10.7's; §6.22.3 says nothing about warnings or sizing.
+    const zero = p.statements[2].prediction!.options.find((o) => o.id === "zero")!.feedback;
+    expect(zero).toMatch(/not required to, warn about the size mismatch \(§10\.7\)/);
+    expect(zero).not.toMatch(/§6\.22\.3/);
   });
 
   it("ctrl_reg_t: the three writes give the lesson's 32'h0000_0641", () => {
@@ -238,6 +243,13 @@ describe("union presets", () => {
     expect(correctOf(p.statements[1].prediction!.options)).toBe("32'hAAAA_1234");
   });
 
+  it("a struct preset's summary describes its declaration as the preset declares it, so a layout edit cannot falsify it", () => {
+    expect(structPreset("reversed").summary).toMatch(/^As this preset declares cmd_t, addr and data are swapped\./);
+    expect(structPreset("narrow-assign").summary).toMatch(/^As this preset declares cmd_t, /);
+    // A layout edit turns the predictions off, so no summary promises that every write is gated.
+    for (const p of STRUCT_PRESETS) expect(p.summary, p.id).not.toMatch(/gated|swapped in the typedef/);
+  });
+
   it("a preset's summary and label name nothing the controls can change, so neither contradicts the status line", () => {
     for (const p of UNION_PRESETS) {
       expect(`${p.label} ${p.summary}`, p.id).not.toMatch(/hard packed|soft|\d+-bit|\d+ bits|narrow|wide|uneven/i);
@@ -357,15 +369,34 @@ describe("debug clinic: the model regenerates the log, so a wrong fix keeps the 
     const s = clinicScenario("idle-without-reset");
     expect(logOf(s, null)).not.toMatch(/RUN/);
     expect(logOf(s, "logic-base")).not.toMatch(/RUN/);
-    expect(logOf(s, null)).toMatch(/@10 posedge clk: rst_n = 1, so nothing assigns state; state\.name\(\) = "IDLE"/);
-    expect(logOf(s, "logic-base")).toMatch(/@10 posedge clk: rst_n = 1, so nothing assigns state; state\.name\(\) = "" \(value x\)/);
+    expect(s.run(null).log).toEqual([
+      "// rst_n is 1 from time 0: reset is never asserted",
+      '@0 state.name() = "IDLE" (value 0)',
+      "// @10 posedge clk: rst_n is 1, so the always_ff assigns nothing to state",
+      '@10 state.name() = "IDLE" (value 0)',
+    ]);
+    expect(s.run("logic-base").log[3]).toBe('@10 state.name() = "" (value x)');
   });
 
   it("empty name: the static cast stores 7; $cast rejects it and leaves op unchanged (§6.19.4, §6.24.2)", () => {
     const s = clinicScenario("empty-name");
     expect(logOf(s, null)).toMatch(/op = $/m);
-    expect(logOf(s, "cast-check")).toMatch(/ERROR: bad opcode 7 \(\$cast returned 0\)/);
-    expect(logOf(s, "cast-check")).toMatch(/op = OP_NOP \(unchanged\)/);
+    // The $display prints only its format; the $cast result and the $error text are the model's note, and $error's prefix is tool-specific (§20.10).
+    expect(s.run("cast-check").log).toEqual([
+      "raw = 7abc0042",
+      '// $cast returned 0 and left op unchanged; $error reports "bad opcode 7" in a tool-specific message (§20.10)',
+      "op = OP_NOP",
+    ]);
+    expect(s.run("cast-check").verdict).toMatch(/leaves op unchanged and returns 0 \(§6\.24\.2\)/);
+  });
+
+  it("empty name: the listing declares op, whose 'x default the cast and its fix depend on (Table 6-7)", () => {
+    const s = clinicScenario("empty-name");
+    const texts = s.lines.map((l) => l.text);
+    expect(texts.indexOf("opcode_e op;")).toBeGreaterThan(0);
+    expect(texts.indexOf("opcode_e op;")).toBeLessThan(texts.findIndex((t) => t.includes("opcode_e'(raw[31:28])")));
+    expect(s.lines.find((l) => l.text === "opcode_e op;")!.whenPicked).toMatch(/'x \(Table 6-7\)/);
+    expect(s.lines.find((l) => l.text === "opcode_e op;")!.whenPicked.length).toBeGreaterThan(10);
   });
 
   it("empty name, both forms: 7 is a known value, so the base has nothing to do with the symptom (§6.19.5.6)", () => {
@@ -391,6 +422,35 @@ describe("debug clinic: the model regenerates the log, so a wrong fix keeps the 
     expect(unset).not.toMatch(/x bits/);
     expect(unset).toMatch(/would print an empty name too \(Table 6-7, §6\.19\.5\.6\)/);
     expect(unset).toMatch(/op holds 7/);
+  });
+
+  /** Each $display format of a listing as a pattern: %h hex digits, %d/%0d/%0t decimal or x/z, %s any text. */
+  const displayPatterns = (s: ClinicScenario): RegExp[] =>
+    s.lines.flatMap((l) => {
+      const m = l.text.match(/\$display\("((?:[^"\\]|\\.)*)"/);
+      if (!m) return [];
+      const format = m[1].replace(/\\"/g, '"');
+      const pattern = format
+        .split(/(%0?[dhst])/)
+        .map((part) => (/^%0?[dt]$/.test(part) ? "[0-9xXzZ-]+" : /^%0?h$/.test(part) ? "[0-9a-fxXzZ]+" : part === "%s" ? ".*" : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+        .join("");
+      return [new RegExp(`^${pattern}$`)];
+    });
+
+  it("in every listing with $display lines, each log line is either what one of them prints or a note marked //", () => {
+    for (const id of ["idle-without-reset", "empty-name", "empty-name-struct"] as const) {
+      const s = clinicScenario(id);
+      const patterns = displayPatterns(s);
+      expect(patterns.length, id).toBeGreaterThan(0);
+      for (const fix of [null, ...fixIds]) {
+        for (const line of s.run(fix).log) {
+          if (line.startsWith(CLINIC_NOTE_PREFIX)) continue;
+          expect(patterns.some((p) => p.test(line)), `${id}/${fix}: ${line}`).toBe(true);
+        }
+      }
+    }
+    // A note never imitates simulator output such as an ERROR prefix.
+    for (const s of CLINIC_SCENARIOS) for (const fix of [null, ...fixIds]) expect(s.run(fix).log.join("\n"), `${s.id}/${fix}`).not.toMatch(/^ERROR|\(unchanged\)/m);
   });
 
   it("every as-found log line that starts a clinic listing's output comes from a $display in the listing", () => {
@@ -467,8 +527,11 @@ describe("debug clinic: the model regenerates the log, so a wrong fix keeps the 
     expect(s.lines.find((l) => l.key === "l5")!.text).toMatch(/^cmd = bus_word;/);
     expect(logOf(s, null)).toMatch(/\[mon\] op = , addr = abc, data = 0042/);
     expect(s.run(null).verdict).toMatch(/not a member of opcode_e.*derived from §7\.2\.1/);
-    expect(logOf(s, "cast-check")).toMatch(/ERROR: bad opcode 7 \(\$cast returned 0\)/);
-    expect(logOf(s, "cast-check")).toMatch(/op = OP_NOP \(unchanged\), addr = abc, data = 0042/);
+    expect(s.run("cast-check").log).toEqual([
+      "[mon] bus_word = 7abc0042",
+      '// $cast returned 0 and left cmd.op unchanged; $error reports "bad opcode 7" in a tool-specific message (§20.10)',
+      "[mon] op = OP_NOP, addr = abc, data = 0042",
+    ]);
     expect(s.fixCode["cast-check"]).toMatch(/\$cast\(cmd\.op, bus_word\[31:28\]\)/);
     expect(logOf(s, "logic-base")).toMatch(/op = , addr/);
     expect(logOf(s, "reorder")).toMatch(/op = , addr/);
@@ -483,12 +546,40 @@ describe("debug clinic: the model regenerates the log, so a wrong fix keeps the 
     expect(logOf(s, "package-typedef")).toMatch(/compile: ok/);
     expect(s.fixFeedback["package-typedef"]).toMatch(/always matches itself, regardless of the scope it is imported into \(§6\.22\.1 h\)/);
     expect(s.fixFeedback["package-typedef"]).not.toMatch(/every scope|§6\.22\.1 d/);
+    // One type on both sides is named once.
+    expect(s.run("package-typedef").verdict).toBe("Both sides are bus_pkg::cmd_rec_t, one typedef, so the types match.");
+  });
+
+  it("every package in a fix declares or imports each type it uses, and declares it first: a package cannot see the compilation unit (§26.2)", () => {
+    const builtins = new Set(["logic", "bit", "reg", "int", "integer", "byte", "shortint", "longint", "time", "string", "real", "void"]);
+    let packages = 0;
+    for (const s of CLINIC_SCENARIOS) {
+      for (const [fix, code] of Object.entries(s.fixCode)) {
+        const body = code.match(/\bpackage\s+\w+\s*;([\s\S]*?)\bendpackage\b/);
+        if (!body) continue;
+        packages += 1;
+        const text = body[1];
+        const declared = new Map<string, number>();
+        for (const m of text.matchAll(/}\s*(\w+)\s*;/g)) declared.set(m[1], m.index ?? 0);
+        const imported = new Set(Array.from(text.matchAll(/\bimport\s+\w+::(\w+|\*)\s*;/g)).map((m) => m[1]));
+        // A lookbehind, so the ";" that ends one member is still there to start the next.
+        for (const m of text.matchAll(/(?<=[{;])\s*(?:rand\s+|randc\s+)?(\w+)\s+(?:\[[^\]]*\]\s*)*\w+\s*;/g)) {
+          const type = m[1];
+          if (builtins.has(type) || imported.has(type) || imported.has("*")) continue;
+          expect(declared.has(type), `${s.id}/${fix}: ${type} is neither declared nor imported in the package`).toBe(true);
+          expect(declared.get(type)!, `${s.id}/${fix}: ${type} is used before its typedef`).toBeLessThan(m.index ?? 0);
+        }
+      }
+    }
+    expect(packages).toBe(CLINIC_SCENARIOS.length);
+    expect(clinicScenario("two-typedefs").fixCode["package-typedef"]).toMatch(/typedef struct packed \{ opcode_e op;[^}]*\} cmd_t;\n  typedef struct \{ cmd_t cmd;/);
+    expect(clinicScenario("empty-name-struct").fixCode["package-typedef"]).toMatch(/\} opcode_e;\n  typedef struct packed \{ opcode_e op;/);
   });
 
   it("two typedefs + $cast: it compiles, because $cast as a function never issues a compile error, and fails at run time without copying (§6.24.2)", () => {
     const s = clinicScenario("two-typedefs");
     const run = s.run("cast-check");
-    expect(run.log).toEqual(["compile: ok ($cast as a function never issues a compile error, §6.24.2)", "run: $cast returned 0", "ERROR: cast failed; scb.expected unchanged"]);
+    expect(run.log).toEqual(["compile: ok ($cast as a function never issues a compile error, §6.24.2)", "run: $cast returned 0", '// $error reports "cast failed" in a tool-specific message (§20.10); scb.expected is unchanged']);
     expect(run.fixed).toBe(false);
     expect(run.moved).toBe(true);
     expect(run.verdict).toMatch(/makes no assignment and returns 0 \(§6\.24\.2\)/);

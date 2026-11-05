@@ -1175,7 +1175,9 @@ describe("operator explorer: conditional, bitcount and concat additions", () => 
     const opts = operatorPredictionOptions(spec("cond"), withDefaults("cond"));
     expect(opts.find((o) => o.correct)?.label).toBe("4'b1xx0");
     expect(opts.find((o) => o.label === "4'b1010")?.feedback).toMatch(/if\/else/);
-    expect(opts.find((o) => o.label === "4'bxxxx")?.feedback).toMatch(/agree on 0 or 1/);
+    // The rule, in the correct option, says where a bit survives; the all-x answer names its own slip.
+    expect(opts.find((o) => o.correct)?.feedback).toMatch(/agree on 0 or 1/);
+    expect(opts.find((o) => o.label === "4'bxxxx")?.feedback).toBe("That assumes an x/z condition makes every bit x.");
   });
   it("en ? data : 'z with en = x is all x; 4'bzzzz is diagnosed with Table 11-20", () => {
     const r = runOperator(spec("cond-z"), withDefaults("cond-z"));
@@ -1191,7 +1193,7 @@ describe("operator explorer: conditional, bitcount and concat additions", () => 
   it("$onehot on 01x0 is 1'b1 and 1'bx is impossible (returns bit)", () => {
     const opts = operatorPredictionOptions(spec("onehot"), inputs("01x0"));
     expect(opts.find((o) => o.correct)?.label).toBe("1'b1");
-    expect(opts.find((o) => o.label === "1'bx")?.feedback).toMatch(/never be x/);
+    expect(opts.find((o) => o.label === "1'bx")?.feedback).toMatch(/a bit result is 2-state: 1'b0 or 1'b1/);
     expect(operatorPredictionOptions(spec("onehot-guarded"), inputs("01x0")).find((o) => o.correct)?.label).toBe("1'b0");
   });
   it("operands can carry lesson names: $countones(state) declares state", () => {
@@ -1203,8 +1205,9 @@ describe("operator explorer: conditional, bitcount and concat additions", () => 
     expect(det.ok && det.parts.map((p) => formatHexLiteral({ ...p.value, signed: false }))).toEqual(["8'hBE", "8'hEF"]);
     const opts = operatorPredictionOptions(spec("concat-target"), withDefaults("concat-target"));
     expect(opts.find((o) => o.correct)?.label).toBe("hi = 8'hBE, lo = 8'hEF");
-    expect(opts.find((o) => o.label === "hi = 8'hEF, lo = 8'hBE")?.feedback).toMatch(/most significant bits/);
-    expect(opts.find((o) => o.label === "Compile error")?.feedback).toMatch(/replication/);
+    expect(opts.find((o) => o.label === "hi = 8'hEF, lo = 8'hBE")?.feedback).toBe("That is what {lo, hi} = 16'hBEEF would store.");
+    expect(opts.find((o) => o.label === "Compile error")?.feedback).toMatch(/^It compiles/);
+    expect(opts.find((o) => o.correct)?.feedback).toMatch(/most significant bits.*A replication such as \{2\{hi\}\} may not be a target/);
   });
   it("the replication count resolves R in the template, defaulting to the spec's count", () => {
     expect(operatorTemplate(spec("sign-extend"), { repl: undefined })).toBe("{{4{n[3]}}, n}");
@@ -1217,7 +1220,7 @@ describe("operator explorer: conditional, bitcount and concat additions", () => 
     const zero = runOperator(spec("sign-extend"), withDefaults("sign-extend", { repl: 0 }));
     expect(zero.ok && lit(zero.value)).toBe("4'b1010");
     const opts = operatorPredictionOptions(spec("sign-extend"), withDefaults("sign-extend", { repl: 4 }));
-    expect(opts.find((o) => o.label === "8'h0A")?.feedback).toMatch(/zero-extends/);
+    expect(opts.find((o) => o.label === "8'h0A")?.feedback).toBe("That pads with 0 instead of copying n[3].");
   });
   it("{R{a}} with R = 0 is a compile error (zero replication alone)", () => {
     const r = runOperator(spec("repl-n"), { ...inputs("1010"), repl: 0 });
@@ -1514,9 +1517,9 @@ describe("?: wording follows Table 11-20: agreement on 0 or 1, not mere agreemen
     ["x with x", "x", "1x10", "1x10"],
     ["z with z", "z", "1z10", "1z10"],
     ["both on one vector", "x", "xz10", "xz10"],
-  ])("%s: the 4'bxxxx feedback does not say disagreement is what makes an x", (_name, c, a, b) => {
+  ])("%s: the 4'bxxxx feedback names the slip and does not say disagreement is what makes an x", (_name, c, a, b) => {
     const feedback = allX(cond(c, a, b))?.feedback;
-    expect(feedback).toBe("A bit becomes x unless both branches agree on 0 or 1. At least one pair agrees here, so that bit survives (Table 11-20).");
+    expect(feedback).toBe("That assumes an x/z condition makes every bit x.");
     expect(feedback).not.toMatch(/disagree/);
   });
   it("the ?: step does not call logically non-equal branches 'different' when the comparison is x", () => {
@@ -1527,16 +1530,20 @@ describe("?: wording follows Table 11-20: agreement on 0 or 1, not mere agreemen
     expect(why).toMatch(/the comparison is not 1 \(it is 0 or x\), so they are combined bit by bit/);
     expect(why).not.toMatch(/they differ/);
   });
-  it("en = z with data vs 'z: the feedback covers a z condition too (§12.4)", () => {
+  it("en = z with data vs 'z: 4'bzzzz is the if/else answer, and the §12.4 reason is left to the if/else row", () => {
     const inputs: OperatorInputs = { a: B("1010"), b: B("0000"), c: B("z"), n: B("001"), signedA: false };
     const z = operatorPredictionOptions(spec("cond-z"), inputs).find((o) => o.label === "4'bzzzz");
-    expect(z?.feedback).toContain("if treats an x/z condition as false (§12.4)");
+    expect(z?.feedback).toBe("Table 11-20 has no z result, not even for z with z. An if/else would store this.");
+    expect(lit(conditionalDetail(fromBits(B("z")), fromBits(B("1010")), fromBits(B("zzzz"))).ifElse)).toBe("4'bzzzz");
   });
   it("the preset notes avoid ?: notation for a table pair, and read a sign-extended value as signed", () => {
     const note = (id: string) => operatorPresets.find((p) => p.id === id)?.note ?? "";
-    expect(note("cond-tristate")).toBe("x with z, 0 with z, 1 with z and z with z are all x: the bus drives x, not z.");
-    expect(note("concat-sign-extend")).toBe("Set n[3] to 0 and the same braces add zeros: the new bits always copy the sign bit.");
-    expect(note("concat-unsized")).toBe("The same 1 is legal in a + 1. Only a concatenation needs its size up front.");
+    // Each note adds only what the rule beside it does not say.
+    expect(note("cond-tristate")).toBe("The bus drives x, not z.");
+    expect(note("concat-sign-extend")).toBe("Set n[3] to 0 and the same braces add zeros.");
+    expect(note("concat-unsized")).toBe("The same 1 is legal in a + 1.");
+    expect(note("bitcount-x")).toBe("Only $isunknown sees the x.");
+    expect(note("bitcount-x-guarded")).toBe("The $isunknown term is what rejects this vector.");
     expect(note("cond-x-sel")).toBe("The two middle bits differ, so they become x: 1xx0. if/else would give 1010.");
   });
 });
@@ -1554,9 +1561,22 @@ describe("operator feedback: widths and the rule", () => {
     expect(option?.label).toBe(`${width}-bit value (1 treated as 32'd1)`);
     expect(option?.feedback).toContain(`there is no ${width}-bit result`);
   });
-  it("binary ~&: the bitwise-NAND option leaves the rule to the compiler message in the correct answer", () => {
+  it("binary ~&: both NAND options leave the rule to the compiler message in the correct answer", () => {
     const opts = operatorPredictionOptions(spec("binary-nand"), inputs("1010"));
-    expect(opts.find((o) => o.label.endsWith("(bitwise NAND)"))?.feedback).toBe("That is ~(a & b). SystemVerilog has no binary ~&, so this code does not compile.");
+    expect(opts.find((o) => o.label.endsWith("(bitwise NAND)"))?.feedback).toBe("That reads a ~& b as ~(a & b).");
+    expect(opts.find((o) => o.label.endsWith("(reduction NAND of a)"))?.feedback).toBe("That applies ~& to a alone and drops b.");
+  });
+  it("{a, 1}: both wrong widths name the slip and cite §5.7.1, leaving 'not allowed' to the compiler message", () => {
+    const opts = operatorPredictionOptions(spec("concat-unsized"), inputs("1010"));
+    expect(opts.find((o) => o.label.endsWith("(1 treated as 1'b1)"))?.feedback).toBe("That takes the unsized 1 as 1 bit wide, but an unsized number is at least 32 bits (§5.7.1).");
+    expect(opts.find((o) => o.label.endsWith("(1 treated as 32'd1)"))?.feedback).toBe("That takes the unsized 1 as exactly 32 bits, but §5.7.1 only promises at least 32: there is no 36-bit result.");
+    for (const o of opts.filter((x) => !x.correct)) expect(o.feedback, o.label).not.toMatch(/not allowed|forbid|1'b1\./);
+  });
+  it("{0{a}}: the wrong options name the slip; the compiler message alone says where a zero replication may appear", () => {
+    const opts = operatorPredictionOptions(spec("repl-n"), inputs("1010", "0110", "x", "001", 0));
+    expect(opts.find((o) => o.label === "0-bit value (nothing)")?.feedback).toBe("That expects $display to print an empty value. A zero replication is ignored (§11.4.12.1), so nothing is left here.");
+    expect(opts.find((o) => o.label.endsWith("(a unchanged)"))?.feedback).toBe("Zero copies of a is not one copy.");
+    for (const o of opts.filter((x) => !x.correct)) expect(o.feedback, o.label).not.toMatch(/positive size/);
   });
 
   const vectors = [
@@ -1770,42 +1790,112 @@ describe("expression wording pins: every sentence a reviewer checked against the
     expect(operatorCatalog.filter((s) => s.rule.includes("§11.4.5")).map((s) => s.id)).toEqual(["cond"]);
   });
 
-  it("?: distractors at a known and at an x/z condition", () => {
+  it("?: distractors at a known and at an x/z condition name only the slip; the rule and the if/else row give the reasons", () => {
     const x = inputs("1100", "1010", "x");
-    expect(feedbackOf("cond", inputs("1100", "1010", "1"), "4'b1010")).toBe("The condition is 1, so the first branch is chosen and the other is not even evaluated (§11.4.11).");
-    expect(feedbackOf("cond", inputs("1100", "1010", "0"), "4'b1100")).toBe("The condition is 0, so the second branch is chosen and the other is not even evaluated (§11.4.11).");
-    expect(feedbackOf("cond", inputs("1100", "1010", "1"), "4'bxxxx")).toBe("A known condition picks one branch unchanged; nothing is merged. Only an x/z condition reaches Table 11-20.");
-    expect(feedbackOf("cond", x, "4'b1100")).toBe("That treats the unknown condition as true. With an x/z condition, ?: evaluates both branches and combines them bit by bit (§11.4.11).");
-    expect(feedbackOf("cond", x, "4'b1010")).toBe("That is what if/else stores: if treats an x/z condition as false and runs the else branch (§12.4). The ?: operator evaluates both branches and merges them with Table 11-20 instead.");
+    expect(feedbackOf("cond", inputs("1100", "1010", "1"), "4'b1010")).toBe("That is the other branch's value.");
+    expect(feedbackOf("cond", inputs("1100", "1010", "0"), "4'b1100")).toBe("That is the other branch's value.");
+    expect(feedbackOf("cond", inputs("1100", "1010", "1"), "4'bxxxx")).toBe("That treats the condition as unknown; it is 1.");
+    expect(feedbackOf("cond", x, "4'b1100")).toBe("That treats the unknown condition as true.");
+    expect(feedbackOf("cond", x, "4'b1010")).toBe("That is what if/else stores.");
+    expect(feedbackOf("cond", x, "4'b1xx0")).toBe(`${spec("cond").rule} (${spec("cond").clause})`);
   });
 
-  const EQUAL = "Both branches are compared first (§11.4.5). They are equal, so ?: returns either one and no bit becomes x; Table 11-20 is not reached (§11.4.11).";
-  it("§11.4.11: equal known branches return one of them, so the feedback never cites Table 11-20 as the path", () => {
-    expect(feedbackOf("cond", inputs("1010", "1010", "x"), "4'bxxxx")).toBe(EQUAL);
-    expect(feedbackOf("cond", inputs("1010", "1010", "z"), "4'bxxxx")).toBe(EQUAL);
+  it("§11.4.11: equal known branches return one of them, so no option says they are merged with Table 11-20", () => {
+    for (const c of ["x", "z"]) {
+      const opts = operatorPredictionOptions(spec("cond"), inputs("1010", "1010", c));
+      expect(opts.find((o) => o.correct)?.label).toBe("4'b1010");
+      expect(opts.find((o) => o.label === "4'bxxxx")?.feedback).toBe("That assumes an x/z condition makes every bit x.");
+      for (const o of opts.filter((y) => !y.correct)) expect(o.feedback, o.label).not.toMatch(/Table 11-20|merge/);
+    }
   });
-  it("§11.4.11: branches with an x bit compare as x, so they do reach the table", () => {
-    expect(feedbackOf("cond", inputs("1x10", "1x10", "x"), "4'bxxxx")).toBe("A bit becomes x unless both branches agree on 0 or 1. At least one pair agrees here, so that bit survives (Table 11-20).");
+  it("§11.4.11: branches with an x bit compare as x and do reach the table; the slip named is the same", () => {
+    expect(conditionalDetail(fromBits(B("x")), fromBits(B("1x10")), fromBits(B("1x10"))).merged).toBe(true);
+    expect(feedbackOf("cond", inputs("1x10", "1x10", "x"), "4'bxxxx")).toBe("That assumes an x/z condition makes every bit x.");
   });
   it.each([
     ["1", "1", "x", "1'b1"],
     ["0", "0", "z", "1'b0"],
-  ])("1-bit: c = %s with a = b: the same path in the 1-bit feedback", (a, b, c, label) => {
-    expect(feedbackOf("cond", inputs(a, b, c), label)).toBe(EQUAL);
-    expect(feedbackOf("cond", inputs(a, b, c), "1'bx")).toBe(`Not this one. ${EQUAL}`);
+  ])("1-bit: c = %s with a = b: the answer states the rule, and 1'bx names the slip without a merge", (a, b, c, label) => {
+    expect(feedbackOf("cond", inputs(a, b, c), label)).toBe(`${spec("cond").rule} (${spec("cond").clause})`);
+    expect(feedbackOf("cond", inputs(a, b, c), "1'bx")).toBe("That assumes an x/z condition always gives x.");
+    expect(feedbackOf("cond", inputs(a, b, c), a === "1" ? "1'b0" : "1'b1")).toBe(`Neither branch holds ${a === "1" ? "0" : "1"}.`);
   });
-  it("1-bit: the branches that do reach the table say so, and 'z is never equal to data", () => {
-    const merged = "The condition is x/z, and comparing the branches does not give 1, so they are merged with Table 11-20 (§11.4.11).";
-    expect(feedbackOf("cond", inputs("1", "0", "x"), "1'bx")).toBe(merged);
-    expect(feedbackOf("cond", inputs("x", "x", "x"), "1'bx")).toBe(merged);
-    expect(feedbackOf("cond-z", inputs("1", "0", "x"), "1'bx")).toBe(merged);
-    expect(feedbackOf("cond-z", inputs("z", "0", "x"), "1'bx")).toBe(merged);
+  it("1-bit: at an x/z condition each wrong bit names which branch it came from", () => {
+    expect(feedbackOf("cond", inputs("1", "0", "x"), "1'b1")).toBe("That treats the unknown condition as true.");
+    expect(feedbackOf("cond", inputs("1", "0", "x"), "1'b0")).toBe("That is what if/else stores.");
+    expect(feedbackOf("cond", inputs("x", "x", "x"), "1'b0")).toBe("Neither branch holds 0.");
+    expect(feedbackOf("cond-z", inputs("1", "0", "x"), "1'b1")).toBe("That treats the unknown condition as true.");
+    expect(feedbackOf("cond-z", inputs("z", "0", "x"), "1'b1")).toBe("Neither branch holds 1.");
+  });
+  it("1-bit: at a known condition the other branch and a value no branch holds are told apart", () => {
+    expect(feedbackOf("cond", inputs("1", "0", "1"), "1'b0")).toBe("That is the other branch's value.");
+    expect(feedbackOf("cond", inputs("1", "0", "1"), "1'bx")).toBe("Neither branch holds x.");
+    expect(feedbackOf("cond-z", inputs("1", "0", "0"), "1'b1")).toBe("That is the other branch's value.");
+  });
+  it("no ?: option at any width repeats another option's sentence or starts with a second verdict", () => {
+    const bits: Bit4[] = ["0", "1", "x", "z"];
+    for (const id of ["cond", "cond-z"]) {
+      for (const a of bits) {
+        for (const b of bits) {
+          for (const c of bits) {
+            const opts = operatorPredictionOptions(spec(id), inputs(a, b, c));
+            const rule = opts.find((o) => o.correct)?.feedback ?? "";
+            for (const o of opts.filter((y) => !y.correct)) {
+              expect(o.feedback, `${id} a=${a} b=${b} c=${c} ${o.label}`).not.toMatch(/^Not this one/);
+              expect(rule, `${id} a=${a} b=${b} c=${c} ${o.label}`).not.toContain(o.feedback);
+            }
+          }
+        }
+      }
+    }
   });
 
-  it("§11.4.12.1: the target distractor names a replication without calling it the only illegal form", () => {
-    expect(feedbackOf("concat-target", { ...inputs("00010010", "00110100"), c: B("0") }, "Compile error")).toBe(
-      "A concatenation may be an assignment target; it is treated as a packed vector of the summed widths (§11.4.12). A replication, such as {2{hi}}, may not be a target (§11.4.12.1).",
-    );
+  it("bit-vector functions at 1 bit: the answer states the computed value and the rule; a wrong bit names only its slip", () => {
+    const at = (id: string, state: string, label: string) => feedbackOf(id, inputs(state), label);
+    expect(at("onehot", "01x0", "1'b1")).toBe("$countbits(state, '1) = 1, and 1 == 1 is true, so $onehot(state) returns 1'b1. $countbits(state, '1) == 1. An x bit is not a 1, so 01x0 passes. Returns a bit, never x. (§20.9)");
+    expect(at("onehot", "01x0", "1'b0")).toBe("That lets the x/z bit decide the test.");
+    expect(at("onehot", "01x0", "1'bx")).toBe("That expects x, but a bit result is 2-state: 1'b0 or 1'b1. Unknown bits either match the control value ('x, 'z for $isunknown) or they do not count (§20.9).");
+    expect(at("onehot", "0110", "1'b1")).toBe("That miscounts the 1 bits.");
+    expect(at("onehot", "0000", "1'b1")).toBe("That is what $onehot0(state) returns.");
+    expect(at("onehot0", "0000", "1'b0")).toBe("That is what $onehot(state) returns.");
+    expect(at("onehot0", "xxxx", "1'b0")).toBe("That lets the x/z bits decide the test.");
+    expect(at("isunknown", "01x0", "1'b0")).toBe("That overlooks the x/z bit.");
+    expect(at("isunknown", "0100", "1'b1")).toBe("That finds an unknown bit where every bit is 0 or 1.");
+    expect(at("onehot-guarded", "01x0", "1'b0")).toBe(`$onehot(state) is 1'b1 and $isunknown(state) is 1'b1, so the guard is false. ${spec("onehot-guarded").rule} (§20.9, §11.4.7)`);
+    expect(at("onehot-guarded", "01x0", "1'b1")).toBe("That takes $onehot(state) alone.");
+    expect(at("onehot-guarded", "0110", "1'b1")).toBe("That passes a vector $onehot(state) already rejects.");
+    expect(at("onehot-guarded", "0100", "1'b0")).toBe("That rejects a legal one-hot vector.");
+    expect(at("onehot-guarded", "0100", "1'bx")).toMatch(/^That expects x, but && of two bit results is 1'b0 or 1'b1: neither operand can be x\./);
+  });
+  it("$countones: the wrong counts name the slip; the rule in the answer says which bits count", () => {
+    expect(feedbackOf("countones", inputs("01x0"), "2")).toBe("That counts the 1 x/z bit as 1.");
+    expect(feedbackOf("countones", inputs("01x0"), "x (unknown)")).toBe("That expects x, but int is a 2-state type.");
+    expect(feedbackOf("countones", inputs("0100"), "3")).toBe("That counts the 0 bits.");
+    expect(feedbackOf("countones", inputs("0100"), "4")).toBe("That counts every bit.");
+    expect(feedbackOf("countones", inputs("0100"), "x (unknown)")).toBe("That expects x, but every bit is known, and int is a 2-state type in any case.");
+  });
+  it("the bit-vector rules state how x and z count", () => {
+    expect(spec("onehot").rule).toBe("$countbits(state, '1) == 1. An x bit is not a 1, so 01x0 passes. Returns a bit, never x.");
+    expect(spec("onehot0").rule).toBe("$countbits(state, '1) <= 1: zero or one bit set; x and z bits never count. Returns a bit.");
+    expect(spec("countones").rule).toBe("$countbits(state, '1): the number of bits that are exactly 1. x and z bits never count. Returns an int.");
+  });
+
+  it("§11.4.12, §11.4.12.1: the target distractors name the slip; the rule alone states MSB order and the replication limit", () => {
+    const opts = operatorPredictionOptions(spec("concat-target"), { ...inputs("00010010", "00110100"), c: B("0") });
+    expect(opts.find((o) => o.label === "Compile error")?.feedback).toBe("It compiles: hi and lo are variables, and the concatenation is treated as one packed vector of the summed widths (§11.4.12).");
+    expect(opts.find((o) => o.label === "hi = 8'hEF, lo = 8'hBE")?.feedback).toBe("That is what {lo, hi} = 16'hBEEF would store.");
+    expect(opts.find((o) => o.label === "hi = 8'h12, lo = 8'h34")?.feedback).toBe("Those are the old values. The assignment writes every bit of the concatenation, so it overwrites both members.");
+    for (const o of opts.filter((x) => !x.correct)) {
+      // No universal: §11.4.12 also bars a select of a concatenation, and §11.4.12.2 a string concatenation, as a target.
+      expect(o.feedback, o.label).not.toMatch(/\bOnly\b|replication|most significant|may not be a target/);
+    }
+    expect(opts.find((o) => o.correct)?.feedback).toContain("A replication such as {2{hi}} may not be a target.");
+  });
+  it("{{R{n[3]}}, n}: the wrong options name the slip; the rule and the detail say the rest", () => {
+    const opts = (repl: number) => operatorPredictionOptions(spec("sign-extend"), inputs("1010", "0000", "x", repl));
+    expect(opts(4).find((o) => o.label === "8'h0A")?.feedback).toBe("That pads with 0 instead of copying n[3].");
+    expect(opts(4).find((o) => o.label === "4'b1010")?.feedback).toBe("That leaves out the 4 replicated bits. Set the count to 0 to see the replication vanish.");
+    expect(opts(0).find((o) => o.label === "Compile error")?.feedback).toBe("That treats {0{n[3]}} as if it stood alone in braces.");
   });
   it("§11.4.12.1: {R{a}} limits its 'only' to the counts on offer", () => {
     expect(feedbackOf("repl-n", inputs("1010", "0000", "0", 2), "Compile error")).toBe(

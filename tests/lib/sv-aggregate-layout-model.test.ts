@@ -5,9 +5,12 @@ import {
   CMD_T_ENUM,
   LESSON_EXPECTED_FAILURES,
   MUTATIONS,
+  NEVER_ASSIGNED_TRACK,
   OPCODE_E,
+  TAGGED_P_STATED_CITATION,
   TB_CHECKS,
   UNDEFINED_TAGGED,
+  UNPACKED_COMPARE_CLAUSE,
   assignPattern,
   assignWhole,
   assignmentLegality,
@@ -18,6 +21,8 @@ import {
   enumMemberReadout,
   enumName,
   enumNext,
+  enumTrackAfterLayoutEdit,
+  enumTrackAfterWrite,
   failingChecks,
   fillWhole,
   formatB,
@@ -36,6 +41,7 @@ import {
   randMemberCard,
   readMember,
   readTagged,
+  readUnionPiece,
   readUnionPath,
   reorderMembers,
   rewidthVector,
@@ -71,7 +77,7 @@ import {
   type UnionType,
 } from "@/lib/sv-aggregate-layout-model";
 import { callEnumMethod, type EnumTypeModel } from "@/lib/sv-enum-string-model";
-import { bitsOf, fromBigInt } from "@/lib/sv-expression-model";
+import { allX, bitsOf, fromBigInt, isKnown } from "@/lib/sv-expression-model";
 
 const PKT_LIKE: PackedMember[] = [
   { id: "kind", name: "kind", width: 2, type: { kind: "logic" } },
@@ -121,6 +127,9 @@ describe("packed struct layout (§7.2.1, §20.6.2)", () => {
     expect(formatSizedHex(a.value)).toBe("32'h0000_BEEF");
     expect(a.extendedFrom).toBe(16);
     expect(a.note).toMatch(/No warning is required/);
+    // §10.7 states the no-warning rule; §6.22.3 is only why the assignment is legal, so the note cites §10.7 alone.
+    expect(a.note).toMatch(/No warning is required \(§10\.7\)\.$/);
+    expect(a.note).not.toMatch(/§6\.22\.3/);
     expect(formatSizedHex(readMember(cmdT, a.value, "op"))).toBe("4'h0");
     expect(formatSizedHex(readMember(cmdT, a.value, "addr"))).toBe("12'h000");
   });
@@ -262,6 +271,17 @@ describe("packed struct layout (§7.2.1, §20.6.2)", () => {
     // The implementation-dependent-packing sentence is §7.2.1's, so that is the clause cited.
     expect(unpacked[0].clause).toBe("§7.2.1");
     expect(unpacked[0].message).toMatch(/normally matching the C compiler \(§7\.2\.1\)/);
+  });
+
+  it("the unpacked comparison card cites the rules it rests on, not §6.22.3, labels the error derived, and says == with an equivalent type is legal (§6.11.1, §11.2.2)", () => {
+    const card = structVectorCards("c", cmdT, false, svHex(32, "50FF_0042"))[1];
+    expect(card.clause).toBe(UNPACKED_COMPARE_CLAUSE);
+    expect(card.clause).toBe("§7.2.1, §6.11.1, §11.2.2");
+    expect(card.clause).not.toMatch(/6\.22\.3/);
+    expect(card.message).toMatch(/^Derived: no clause states this error outright\./);
+    expect(card.message).toMatch(/not an integral type \(§6\.11\.1/);
+    expect(card.message).toMatch(/c == another variable of the same type is legal/);
+    expect(card.message).not.toMatch(/6\.22\.3/);
   });
 
   it("the comparison card uses a known literal of the struct's live width, and warns about x only while the struct holds it (§11.4.5)", () => {
@@ -415,6 +435,39 @@ describe("enums with explicit values (Table 6-7, §6.19.3–§6.19.5, §6.24.2)"
     expect(never.name).toBe("");
   });
 
+  it("a typedef edit credits a move only when the enum member's range changed; back at the range it was written at, the earlier arrival stands (§7.2.1)", () => {
+    const written = enumTrackAfterWrite(CMD_T_ENUM, NEVER_ASSIGNED_TRACK, null, "whole-vector");
+    expect(written).toEqual({ arrival: "whole-vector", source: { hi: 31, lo: 28, arrival: "whole-vector" } });
+    // Swapping addr and data leaves op at [31:28].
+    const swapped = reorderMembers(CMD_T_ENUM, ["op", "data", "addr"]);
+    expect(enumTrackAfterLayoutEdit(swapped, written).arrival).toBe("whole-vector");
+    // Moving op down puts other bits under it; moving it back restores the arrival.
+    const moved = enumTrackAfterLayoutEdit(reorderMembers(CMD_T_ENUM, ["addr", "op", "data"]), written);
+    expect(moved.arrival).toBe("layout-edit");
+    expect(enumTrackAfterLayoutEdit(CMD_T_ENUM, moved).arrival).toBe("whole-vector");
+    // A part-select write keeps its own arrival through a swap too.
+    const partSelect = enumTrackAfterWrite(CMD_T_ENUM, written, "op", "part-select");
+    expect(enumTrackAfterLayoutEdit(swapped, partSelect).arrival).toBe("part-select");
+    // Never assigned stays never assigned.
+    expect(enumTrackAfterLayoutEdit(reorderMembers(CMD_T_ENUM, ["addr", "op", "data"]), NEVER_ASSIGNED_TRACK)).toEqual(NEVER_ASSIGNED_TRACK);
+  });
+
+  it("the earlier arrival does not come back once its bits are gone: a shrink below them, or a write to another member over them", () => {
+    const written = enumTrackAfterWrite(CMD_T_ENUM, NEVER_ASSIGNED_TRACK, null, "whole-vector");
+    // data to 8 bits: the vector is 24 bits, so [31:28] is dropped; growing back does not restore it (rewidthVector).
+    const shrunk = enumTrackAfterLayoutEdit(setMemberWidth(CMD_T_ENUM, "data", 8), written);
+    expect(shrunk).toEqual({ arrival: "layout-edit", source: null });
+    expect(enumTrackAfterLayoutEdit(CMD_T_ENUM, shrunk).arrival).toBe("layout-edit");
+    // op moved down; addr now owns [31:20] and an x write there overwrites what the whole-vector write put in [31:28].
+    const down = reorderMembers(CMD_T_ENUM, ["addr", "op", "data"]);
+    const moved = enumTrackAfterLayoutEdit(down, written);
+    const overwritten = enumTrackAfterWrite(down, moved, "addr", "part-select");
+    expect(overwritten).toEqual({ arrival: "layout-edit", source: null });
+    expect(enumTrackAfterLayoutEdit(CMD_T_ENUM, overwritten).arrival).toBe("layout-edit");
+    // A write to a member that does not overlap the source keeps it.
+    expect(enumTrackAfterWrite(CMD_T_ENUM, written, "addr", "member-write")).toEqual(written);
+  });
+
   it("an enum member's x is offered as a part-select: a direct 'x would need a cast (§6.19.3)", () => {
     expect(xWriteOffer("c", CMD_T_ENUM, "op")).toEqual({ label: "c[31:28] = 4'bx;", partSelect: true });
     expect(xWriteOffer("c", CMD_T_ENUM, "addr")).toEqual({ label: "Write x into addr", partSelect: false });
@@ -451,8 +504,35 @@ describe("type matching and equivalence (§6.22.1, §6.22.2)", () => {
 
   it("packed structs that are not equivalent still assign: all integral types are assignment compatible (§6.22.3)", () => {
     const a: TypeRef = { declId: "a", display: "a_t", packed: true, bits: 32, states: 4, signed: false };
-    expect(assignmentLegality(a, { ...a, declId: "b", display: "b_t", states: 2 })).toMatchObject({ legal: true, relation: "assignment-compatible", clause: "§6.22.3, §10.7" });
-    expect(assignmentLegality(a, { ...a, declId: "c", display: "c_t", bits: 16 })).toMatchObject({ legal: true, relation: "assignment-compatible" });
+    expect(assignmentLegality(a, { ...a, declId: "b", display: "b_t", states: 2 })).toMatchObject({ legal: true, relation: "assignment-compatible", clause: "§6.22.3" });
+    expect(assignmentLegality(a, { ...a, declId: "c", display: "c_t", bits: 16 })).toMatchObject({ legal: true, relation: "assignment-compatible", clause: "§6.22.3, §10.7" });
+  });
+
+  it("at equal widths nothing is resized, so neither the message nor the clause brings in §10.7 (state-ness or signedness differ only)", () => {
+    const a: TypeRef = { declId: "a", display: "a_t", packed: true, bits: 32, states: 4, signed: false };
+    for (const other of [{ states: 2 as const }, { signed: true }]) {
+      const r = assignmentLegality(a, { ...a, ...other, declId: "b", display: "b_t" });
+      expect(r.relation).toBe("assignment-compatible");
+      expect(r.clause).toBe("§6.22.3");
+      expect(r.message).not.toMatch(/extend|truncat|§10\.7/);
+      expect(r.message).toMatch(/Both are 32 bits, so the bits are copied as they are\.$/);
+    }
+    // Into a 2-state type, x and z become 0 (§6.11.2).
+    expect(assignmentLegality({ ...a, states: 2 }, { ...a, declId: "b", display: "b_t" }).message).toMatch(/a_t is 2-state, so x and z bits become 0 \(§6\.11\.2\)\.$/);
+  });
+
+  it("at different widths the message says which way the value is resized, with §10.7", () => {
+    const a: TypeRef = { declId: "a", display: "a_t", packed: true, bits: 32, states: 4, signed: false };
+    expect(assignmentLegality(a, { ...a, declId: "c", display: "c_t", bits: 16 }).message).toMatch(/The 16-bit value is zero-extended to 32 bits, with no required warning \(§10\.7\)\.$/);
+    expect(assignmentLegality(a, { ...a, declId: "c", display: "c_t", bits: 16, signed: true }).message).toMatch(/sign-extended to 32 bits/);
+    expect(assignmentLegality({ ...a, bits: 16 }, { ...a, declId: "c", display: "c_t" }).message).toMatch(/The 32-bit value loses its top 16 bits to fit 16, with no required warning \(§10\.7\)\.$/);
+  });
+
+  it("one typedef on both sides is named once, not twice (§6.22.1)", () => {
+    const pkg: TypeRef = { ...unpackedA, declId: "bus_pkg.cmd_rec_t", display: "bus_pkg::cmd_rec_t" };
+    const r = assignmentLegality(pkg, pkg);
+    expect(r.message).toBe("Both sides are bus_pkg::cmd_rec_t, one typedef, so the types match.");
+    expect(assignmentLegality(pkg, { ...pkg, display: "cmd_rec_t" }).message).toBe("bus_pkg::cmd_rec_t and cmd_rec_t come from the same typedef, so the types match.");
   });
 
   it("a packed and an unpacked struct do not assign, and the message does not call both unpacked (§6.22.3)", () => {
@@ -470,6 +550,16 @@ const cmdU: UnionType = {
     { id: "f", name: "f", width: 32, states: 4, shape: { kind: "struct", typeName: "cmd_t", members: cmdT } },
     { id: "raw", name: "raw", width: 32, states: 4, shape: { kind: "vector" } },
     { id: "bytes", name: "bytes", width: 32, states: 4, shape: { kind: "lanes", laneWidth: 8, count: 4 } },
+  ],
+};
+
+/** A 4-state member l and a 2-state member b share 8 bits (§7.3.1). */
+const MIX_U: UnionType = {
+  name: "mix_u",
+  packing: "packed",
+  members: [
+    { id: "l", name: "l", width: 8, states: 4, shape: { kind: "vector" } },
+    { id: "b", name: "b", width: 8, states: 2, shape: { kind: "vector" } },
   ],
 };
 
@@ -611,6 +701,40 @@ describe("packed untagged unions (§7.3.1, §7.4.1)", () => {
     expect(text).not.toContain("f_t");
   });
 
+  it("a nested hard packed union must have equal sizes too, even inside a soft union, and the error names its members by path (§7.3.1)", () => {
+    const nestedHard: UnionType = {
+      name: "outer_u",
+      packing: "soft",
+      members: [
+        { id: "a", name: "a", width: 12, states: 4, shape: { kind: "vector" } },
+        {
+          id: "inner",
+          name: "inner",
+          width: 8,
+          states: 4,
+          shape: {
+            kind: "union",
+            packing: "packed",
+            members: [
+              { id: "b8", name: "b8", width: 8, states: 4, shape: { kind: "vector" } },
+              { id: "b4", name: "b4", width: 4, states: 4, shape: { kind: "vector" } },
+            ],
+          },
+        },
+      ],
+    };
+    const problems = unionProblems(nestedHard);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatchObject({ legal: false, clause: "§7.3.1", code: "union packed { ... } inner;" });
+    expect(problems[0].message).toMatch(/inner\.b8 is 8 bits, inner\.b4 is 4 bits/);
+    expect(unionTypedef(nestedHard)).toMatch(/} outer_u;  \/\/ does not compile$/);
+    // The same nesting soft is legal, as nest_u is.
+    const inner = nestedHard.members[1];
+    if (inner.shape.kind !== "union") throw new Error("expected a nested union");
+    const soft: UnionType = { ...nestedHard, members: [nestedHard.members[0], { ...inner, shape: { ...inner.shape, packing: "soft" } }] };
+    expect(unionProblems(soft)).toEqual([]);
+  });
+
   it("hard packed members must be the same size, else a compile error (§7.3.1)", () => {
     expect(unionProblems(cmdU)).toEqual([]);
     const narrow: UnionType = { ...cmdU, members: cmdU.members.map((m) => (m.name === "raw" ? { ...m, width: 16 } : m)) };
@@ -675,14 +799,7 @@ describe("packed untagged unions (§7.3.1, §7.4.1)", () => {
   });
 
   it("a 2-state member reads and writes x as 0 (§6.11.2), while the union's 4-state view keeps the x (§7.3.1)", () => {
-    const mixed: UnionType = {
-      name: "mix_u",
-      packing: "packed",
-      members: [
-        { id: "l", name: "l", width: 8, states: 4, shape: { kind: "vector" } },
-        { id: "b", name: "b", width: 8, states: 2, shape: { kind: "vector" } },
-      ],
-    };
+    const mixed = MIX_U;
     expect(unionPathStates(mixed, "b")).toBe(2);
     const v = svHex(8, "xF");
     expect(formatSizedHex(readUnionPath(mixed, v, "l"))).toBe("8'hxF");
@@ -690,6 +807,36 @@ describe("packed untagged unions (§7.3.1, §7.4.1)", () => {
     const written = writeUnionPath(mixed, svHex(8, "00"), "b", svHex(8, "x1")).value;
     expect(formatSizedHex(written)).toBe("8'h01");
     expect(formatSizedHex(writeUnionPath(mixed, svHex(8, "00"), "l", svHex(8, "x1")).value)).toBe("8'hx1");
+  });
+
+  it("the typedef writes a 2-state member as bit and a 4-state one as logic (§6.11.2), so an all 2-state union does not print logic", () => {
+    const text = unionTypedef(MIX_U);
+    expect(text).toContain("  logic [7:0] l;");
+    expect(text).toContain("  bit [7:0] b;");
+    expect(text).toMatch(/} mix_u;  \/\/ 8 bits, 4-state$/);
+    const twoState: UnionType = {
+      name: "t",
+      packing: "packed",
+      members: [
+        { id: "b", name: "b", width: 8, states: 2, shape: { kind: "vector" } },
+        { id: "c", name: "c", width: 8, states: 2, shape: { kind: "lanes", laneWidth: 4, count: 2 } },
+      ],
+    };
+    const two = unionTypedef(twoState);
+    expect(two).toBe("typedef union packed {\n  bit [7:0] b;\n  bit [1:0][3:0] c;\n} t;  // 8 bits, 2-state");
+    expect(two).not.toMatch(/logic/);
+  });
+
+  it("a view that draws a row or piece reads it as the status line does: readUnionPiece agrees with readUnionPath on every path (§7.3.1, §6.11.2)", () => {
+    const v = svHex(8, "xF");
+    for (const row of unionRows(MIX_U)) {
+      expect(formatSizedHex(readUnionPiece(v, row)), row.path).toBe(formatSizedHex(readUnionPath(MIX_U, v, row.path)));
+      for (const piece of row.pieces) expect(formatSizedHex(readUnionPiece(v, piece)), piece.path).toBe(formatSizedHex(readUnionPath(MIX_U, v, piece.path)));
+    }
+    // The 2-state row shows 0 where the union holds x; the raw slice would show x.
+    const b = unionRows(MIX_U).find((r) => r.path === "b")!;
+    expect(formatSizedHex(readUnionPiece(v, b))).toBe("8'h0F");
+    expect(formatSizedHex(readUnionPiece(v, b.pieces[0]))).toBe("8'h0F");
   });
 
   it("a 2-state field of a struct member converts on read too, and a 4-state one does not (§7.2.1, §7.3.1)", () => {
@@ -735,9 +882,17 @@ describe("packed untagged unions (§7.3.1, §7.4.1)", () => {
 
   it("%p under the first-declared-member reading of §21.2.1.6 prints only the first member (tool-dependent for a packed union)", () => {
     const u = svHex(32, "1ABC_0042");
-    expect(formatUnionP(cmdU, u)).toEqual({ text: "'{f:'{op:1, addr:2748, data:66}}", member: "f" });
+    expect(formatUnionP(cmdU, u)).toEqual({ text: "'{f:'{op:1, addr:2748, data:66}}", member: "f", unformatted: "448528450" });
     const rawFirst: UnionType = { ...cmdU, members: [cmdU.members[1], cmdU.members[0], cmdU.members[2]] };
     expect(formatUnionP(rawFirst, u).text).toBe("'{raw:448528450}");
+  });
+
+  it("the singular rules' catch-all gives a packed union its unformatted value, a plain decimal number, computed from the live value (§21.2.1.6, §21.2.1.1)", () => {
+    expect(formatUnionP(cmdU, svHex(32, "1ABC_0042")).unformatted).toBe("448528450");
+    expect(formatUnionP(cmdU, svHex(32, "FFFF_FFFF")).unformatted).toBe("4294967295");
+    // A packed union is unsigned by default (§7.3.1), whatever the value's own flag says.
+    expect(formatUnionP(cmdU, fromBigInt(BigInt(-1), 32, true)).unformatted).toBe("4294967295");
+    expect(formatUnionP(cmdU, unionInitialValue(cmdU)).unformatted).toBe("x");
   });
 });
 
@@ -753,8 +908,8 @@ describe("defaults of unions (Table 6-7, §7.3.1)", () => {
 const vint: TaggedUnionType = {
   name: "VInt",
   members: [
-    { name: "Invalid", width: null, typeText: "void", signed: false },
-    { name: "Valid", width: 32, typeText: "int", signed: true },
+    { name: "Invalid", width: null, typeText: "void", signed: false, fourState: false },
+    { name: "Valid", width: 32, typeText: "int", signed: true, fourState: false },
   ],
 };
 
@@ -776,7 +931,7 @@ describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
     expect(read.ok && formatD(read.value)).toBe("-1");
     expect(read.ok && read.note).toMatch(/returns -1 \(§11\.9\)/);
     expect(formatTaggedP(vint, minusOne)).toBe("Valid:-1");
-    const three: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false }] };
+    const three: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false, fourState: false }] };
     const small = makeTagged(three, "Small", -1);
     expect(small.value?.signed).toBe(false);
     expect(formatTaggedP(three, small)).toBe("Small:255");
@@ -789,6 +944,29 @@ describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
   it("the typedef text follows Syntax 7-2 and the §7.3.2 VInt example, unpacked and packed", () => {
     expect(taggedTypedef(vint)).toBe("typedef union tagged {\n  void  Invalid;\n  int   Valid;\n} VInt;");
     expect(taggedTypedef(vint, true)).toBe("typedef union tagged packed {\n  void  Invalid;\n  int   Valid;\n} VInt;");
+  });
+
+  it("a tagged expression is an assignment-like context: x into a 2-state member becomes 0, into a 4-state one stays x (§10.8, §6.11.2)", () => {
+    const valid = makeTagged(vint, "Valid", allX(8));
+    expect(isKnown(valid.value!)).toBe(true);
+    expect(formatD(valid.value!)).toBe("0");
+    expect(formatTaggedP(vint, valid)).toBe("Valid:0");
+    const read = readTagged(vint, valid, "Valid");
+    expect(read.ok && formatD(read.value)).toBe("0");
+    const three: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false, fourState: false }] };
+    expect(formatTaggedP(three, makeTagged(three, "Small", allX(8)))).toBe("Small:0");
+    const withLogic: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Raw", width: 8, typeText: "logic [7:0]", signed: false, fourState: true }] };
+    expect(formatTaggedP(withLogic, makeTagged(withLogic, "Raw", allX(8)))).toBe("Raw:x");
+  });
+
+  it("a read of a void member whose tag matches claims no value: the standard defines none (§7.3.2, §11.9)", () => {
+    const read = readTagged(vint, makeTagged(vint, "Invalid"), "Invalid");
+    expect(read.ok).toBe(false);
+    if (!read.ok) {
+      expect(read.error).toMatch(/^Not stated: Invalid is a void member, which contains nothing \(§7\.3\.2\)/);
+      expect(read.error).toMatch(/no run-time error is stated \(§11\.9\)/);
+      expect(read.error).not.toMatch(/Run-time error/);
+    }
   });
 
   it("reading a member that does not match the tag is a run-time error (§11.9)", () => {
@@ -824,7 +1002,7 @@ describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
   });
 
   it("a third member grows the tag to 2 bits and leaves the bits between tag and a narrower member undefined (§7.3.2)", () => {
-    const three: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false }] };
+    const three: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false, fourState: false }] };
     expect(tagWidth(3)).toBe(2);
     expect(tagWidth(5)).toBe(3);
     expect(tagWidth(8)).toBe(3);
@@ -841,7 +1019,7 @@ describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
     const two = taggedPackedBits(vint, makeTagged(vint, "Valid", 23)).note;
     expect(two).toMatch(/Tag \[32\] = 1 \(Valid\): the code follows the numbering of Figures 7-2 and 7-3\. Valid is right-justified in \[31:0\] \(§7\.3\.2\)\./);
     expect(two).not.toMatch(/extension/);
-    const three: TaggedUnionType = { name: "VInt", members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false }] };
+    const three: TaggedUnionType = { name: "VInt", members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false, fourState: false }] };
     const small = taggedPackedBits(three, makeTagged(three, "Small", 0x5a)).note;
     expect(small).toMatch(/Tag \[33:32\] = 2 \(Small\): the code follows the numbering of Figures 7-2 and 7-3, and code 2 for a third member is our own extension of it\./);
     expect(small).toMatch(/the 24 bits between are undefined \(§7\.3\.2\)/);
@@ -881,7 +1059,8 @@ describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
   });
 
   it("%p when unpacked is stated for a member with a value, and derived for a void one, on which §21.2.1.6 is silent", () => {
-    expect(taggedPReading(vint, makeTagged(vint, "Valid", 23), false)).toEqual({ text: "Valid:23", basis: "stated", citation: "tag:value, §21.2.1.6", sentence: "%p prints Valid:23 (tag:value, §21.2.1.6)." });
+    // tag:value is stated; whether '{ } surrounds it is not, and the citation says so.
+    expect(taggedPReading(vint, makeTagged(vint, "Valid", 23), false)).toEqual({ text: "Valid:23", basis: "stated", citation: TAGGED_P_STATED_CITATION, sentence: "%p prints Valid:23 (tag:value, §21.2.1.6, which does not say whether '{ } surrounds it)." });
     const v = taggedPReading(vint, makeTagged(vint, "Invalid"), false);
     expect(v).toMatchObject({ text: "Invalid", basis: "derived" });
     expect(v.citation).toMatch(/^derived: .*§21\.2\.1\.6.*§7\.3\.2$/);
@@ -939,7 +1118,7 @@ describe("formatting (§21.2.1.3, §5.7.1)", () => {
     expect(formatH(mixed)).toBe("X0");
   });
 
-  it("%0d of a signed value prints it as signed (§21.2.1.3)", () => {
+  it("%0d of a signed value prints it as signed, of an unsigned one as unsigned (the sign follows the value's type; §21.2.1 does not spell it out)", () => {
     expect(formatD(fromBigInt(BigInt(-1), 32, true))).toBe("-1");
     expect(formatD(fromBigInt(BigInt(-1), 32, false))).toBe("4294967295");
   });

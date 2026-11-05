@@ -70,6 +70,8 @@ describe("SVSchedulerRegionVisualizer (F3B region map, model-driven)", () => {
     const active = regionRow("Active");
     expect(within(active).getByRole("button", { name: /run assign y, delta 1/ })).toBeInTheDocument();
     expect(within(active).getByRole("button", { name: /run always_ff, delta 0/ })).toBeInTheDocument();
+    // Model time is written "Δ 1", with a space (visual-language §3).
+    expect(within(active).getByRole("button", { name: /run assign y, delta 1/ })).toHaveTextContent(/^Δ 1run assign y$/);
     expect(regionRow("Observed")).toHaveTextContent("nothing landed here");
   });
 

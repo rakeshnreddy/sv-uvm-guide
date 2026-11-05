@@ -35,7 +35,15 @@
  *   Reactive.
  * - `$finish` (§20.2) and the implicit `$finish` when the last program
  *   thread ends (§24.3) stop the run at once: no later region of the slot,
- *   Postponed included, executes (§9.2.3).
+ *   Postponed included, executes (§9.2.3). Only a thread that ends can be the
+ *   last to end, so `lastThread` is accepted only on a program `initial` that
+ *   runs once (no `forever`, no trailing wait); anything else throws.
+ * - `sourceTail` lines (a trailing `@(posedge clk);`, say) are shown, never
+ *   run: a process that reaches them is blocked there, has not ended, and is
+ *   not woken again in the slot to re-run its body.
+ * - A concurrent assertion must be clocked by a posedge trigger, the only
+ *   clock the model evaluates; any other trigger throws rather than show a
+ *   clock the model never ticks.
  *
  * - Slot time 0: `initial` stands for static-variable declaration initializers
  *   there, so the Preponed sample equals the default sampled value §16.5.1
@@ -219,14 +227,23 @@ export interface SvProcess {
   trigger: ProcessTrigger;
   body: Statement[];
   /**
-   * 'assertion': a concurrent assertion clocked by `trigger` (a posedge).
-   * `body` is ignored; `assertion` holds the property and action blocks.
+   * 'assertion': a concurrent assertion clocked by `trigger`, which must be a
+   * posedge. `body` is ignored; `assertion` holds the property and action
+   * blocks and is required.
    */
   kind?: "procedural" | "assertion";
   assertion?: AssertionSpec;
-  /** Program process whose end is the end of the last program thread: implicit $finish (§24.3). */
+  /**
+   * Program process whose end is the end of the last program thread: implicit
+   * $finish (§24.3). Only a program `initial` that runs once can end, so the
+   * flag on anything else throws (see `validateScenario`).
+   */
   lastThread?: boolean;
-  /** Display-only source lines rendered after the body, e.g. a trailing `@(posedge clk);`. No scheduling effect. */
+  /**
+   * Display-only source lines rendered after the body, e.g. a trailing
+   * `@(posedge clk);`. None of them runs: a process that reaches them is
+   * blocked there for the rest of the slot, neither ended nor re-armed.
+   */
   sourceTail?: string[];
 }
 
@@ -510,8 +527,34 @@ function assertionActions(process: SvProcess, spec: AssertionSpec, outcome: Asse
   return (outcome === "pass" ? spec.pass : spec.fail) ?? [];
 }
 
-function assertionClock(process: SvProcess, scenario: SvScenario): string {
-  return process.trigger.kind === "posedge" ? process.trigger.signal : scenario.clock;
+/** The clock of a concurrent assertion: its posedge trigger. Any other trigger throws (see the file header). */
+function assertionClock(process: SvProcess): string {
+  if (process.trigger.kind !== "posedge") {
+    throw new Error(`Assertion ${process.id} must be clocked by a posedge trigger: the model evaluates concurrent assertions only on a rising clock edge`);
+  }
+  return process.trigger.signal;
+}
+
+/**
+ * Rejects scenario data the model would otherwise run in a way its own source
+ * contradicts: an assertion with no property or with a clock the model never
+ * ticks, or a "last thread" that never ends and so cannot trigger the
+ * implicit $finish of §24.3.
+ */
+export function validateScenario(scenario: SvScenario): void {
+  for (const process of scenario.processes) {
+    if (process.kind === "assertion") {
+      if (!process.assertion) throw new Error(`Assertion ${process.id} in ${scenario.id} has no property`);
+      assertionClock(process);
+    }
+    if (!process.lastThread) continue;
+    if (process.context !== "program" || process.kind === "assertion") {
+      throw new Error(`${process.id} in ${scenario.id} is flagged lastThread, but only a thread of a program initial procedure counts for the implicit $finish (§24.3)`);
+    }
+    if (!runsOnce(process)) {
+      throw new Error(`${process.id} in ${scenario.id} is flagged lastThread, but its source never ends (forever or a trailing wait), so it cannot trigger the implicit $finish (§24.3)`);
+    }
+  }
 }
 
 /** Renders scenario processes as SystemVerilog-style source, one entry per line. */
@@ -522,7 +565,7 @@ export function scenarioToSource(scenario: SvScenario): SourceLine[] {
     if (process.kind === "assertion" && process.assertion) {
       const spec = process.assertion;
       const hasActions = Boolean(spec.pass?.length || spec.fail?.length);
-      lines.push({ text: `${process.header} (@(posedge ${assertionClock(process, scenario)}) ${exprToSource(spec.property)})${hasActions ? "" : ";"}`, processId: process.id });
+      lines.push({ text: `${process.header} (@(posedge ${assertionClock(process)}) ${exprToSource(spec.property)})${hasActions ? "" : ";"}`, processId: process.id });
       const block = (stmts: Statement[], prefix: string) => {
         if (stmts.length === 1) {
           lines.push({ text: `  ${prefix}${statementToSource(stmts[0])}`, processId: process.id, stmtId: stmts[0].id });
@@ -689,6 +732,7 @@ const CHECK_RESULT_TEXT: Record<ViolationCheckResult, string> = {
  * process). Missing entries default to 0.
  */
 export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): SimulationResult {
+  validateScenario(scenario);
   const processes = new Map(scenario.processes.map((p) => [p.id, p]));
   const declarationIndex = new Map(scenario.processes.map((p, i) => [p.id, i]));
   const queues = emptyQueues();
@@ -1023,6 +1067,18 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
         processId: process.id,
         what: `${process.label} finishes: the procedure has ended.`,
         why: "An initial procedure executes once, and its activity then ceases (§9.2.1). Nothing runs it again.",
+      });
+      return;
+    }
+    const tail = process.sourceTail ?? [];
+    if (tail.length > 0) {
+      // Blocked at its trailing lines, not back at its header: it has not ended, and its trigger does not re-run the body.
+      push({
+        kind: "statement",
+        region,
+        processId: process.id,
+        what: `${process.label} reaches ${tail[0].trim()} and waits there.`,
+        why: "The procedure has not ended: it is blocked at that statement. The model runs none of the lines after the body, so it does not wake this process again in this slot.",
       });
       return;
     }

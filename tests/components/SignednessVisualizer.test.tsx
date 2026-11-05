@@ -413,11 +413,14 @@ describe("SignednessVisualizer: the answer's own explanation reaches the value",
     render(<SignednessVisualizer scenario="casts" initialVariant="type-cast" />);
     fireEvent.click(screen.getByLabelText("v = 240"));
     lockIn();
-    expect(screen.getByText(/Correct\./).parentElement).toHaveTextContent(/`?w`? is unsigned, so it extends with zeros\..*int being signed does not change that: the extension follows the expression inside the cast/);
+    // Feedback is plain text: the model's backtick code markers are stripped, not shown.
+    expect(screen.getByText(/Correct\./).parentElement).toHaveTextContent(/ w is unsigned, so it extends with zeros\..*int being signed does not change that: the extension follows the expression inside the cast/);
+    expect(screen.getByText(/Correct\./).parentElement?.textContent).not.toContain("`");
     fireEvent.click(screen.getByRole("radio", { name: "int v = int'(signed'(w))" }));
     fireEvent.click(screen.getByLabelText("v = -16"));
     lockIn();
-    expect(screen.getByText(/Correct\./).parentElement).toHaveTextContent(/`?signed'\(w\)`? is signed, so it extends with copies of the sign bit\..*The sign cast is what changes the extension: int'\(w\) alone always adds zeros/);
+    expect(screen.getByText(/Correct\./).parentElement).toHaveTextContent(/ signed'\(w\) is signed, so it extends with copies of the sign bit\..*The sign cast is what changes the extension: int'\(w\) alone always adds zeros/);
+    expect(document.body.textContent).not.toContain("`");
   });
 
   it("s[7:0] >>> 1 says why the expression is unsigned", () => {

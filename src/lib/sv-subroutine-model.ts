@@ -47,10 +47,11 @@
  *   its value, so writing the value it already holds is no event.
  * - §4.7: processes ready in the same region run in an unspecified order; the
  *   model explores every order of the ready processes (each runs until it
- *   blocks or ends). §4.7 also lets a simulator suspend a process between its
- *   statements; that interleaving is not explored, so a legal log order can be
- *   missing (at #10 with the debug prints, call 1's use line before call 2's
- *   enter line, both id=2), but no value call 1 can print is.
+ *   blocks or ends). §4.7 also lets a simulator suspend a process at any point
+ *   while it evaluates a statement; that interleaving is not explored, so a
+ *   legal log order can be missing (static, #10, with the debug prints: call
+ *   1's use line before call 2's enter line, both id=2), but no value call 1
+ *   can print is.
  */
 
 /* ========================================================================= */
@@ -917,11 +918,21 @@ export interface SimOptions {
   maxSteps?: number;
 }
 
+/** The last write to a slot: which activation made it, when, and its place in the order of all writes. */
+interface SlotWrite {
+  activationId: number;
+  label: string;
+  time: number;
+  seq: number;
+}
+
 interface Slot {
   value: Value;
   type: DataType;
   role: "formal" | "local" | "global";
   direction?: Direction;
+  /** Absent for a static initializer or default, or a write from outside any subroutine. */
+  lastWrite?: SlotWrite;
 }
 type Store = Map<string, Slot>;
 
@@ -939,6 +950,10 @@ interface Activation {
   shared: Store;
   refs: Map<string, Binding>;
   copyOuts: { formal: string; target: Binding; direction: Direction }[];
+  /** The activation whose statement made this call; undefined when a process outside any subroutine made it. */
+  caller?: Activation;
+  /** The write count when this activation started: a later write by another activation happened during this call. */
+  enteredSeq: number;
 }
 
 interface Frame {
@@ -1018,6 +1033,7 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
   const choiceWidths: number[] = [];
   let pendingChoice: SubStep["choice"];
   let time = 0;
+  let writeSeq = 0;
   const lastBoxValues = new Map<string, Value>();
   let lastGlobals = new Map<string, Value>();
 
@@ -1100,12 +1116,19 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
     return (b.store.get(b.name) as Slot).value;
   };
 
-  /** Writes through a binding; returns the old value and whether a watched global changed. */
-  function store(binding: Binding, value: Value): { old: Value; stored: Value; changed: boolean } {
+  /** Records who made a write, so a print can say whether another activation wrote a shared copy during this call. */
+  function noteWrite(slot: Slot, writer: Activation | undefined): void {
+    writeSeq += 1;
+    slot.lastWrite = writer ? { activationId: writer.record.id, label: writer.record.label, time, seq: writeSeq } : undefined;
+  }
+
+  /** Writes through a binding on behalf of `writer`; returns the old value and whether a watched global changed. */
+  function store(binding: Binding, value: Value, writer: Activation | undefined): { old: Value; stored: Value; changed: boolean } {
     const slot = binding.store.get(binding.name) as Slot;
     const stored = coerce(value, slot.type);
     const old = slot.value;
     slot.value = stored;
+    noteWrite(slot, writer);
     return { old, stored, changed: old !== stored };
   }
 
@@ -1210,7 +1233,7 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
       startTime: time,
     };
     records.push(record);
-    const act: Activation = { record, def, own: new Map(), shared: shared.get(def.name) as Store, refs: new Map(), copyOuts: [] };
+    const act: Activation = { record, def, own: new Map(), shared: shared.get(def.name) as Store, refs: new Map(), copyOuts: [], caller: ctx.act, enteredSeq: writeSeq };
     const notes: string[] = [];
     // §13.3.2: automatic items (outputs included) start at their defaults on every entry.
     if (def.lifetime === "automatic") {
@@ -1234,6 +1257,7 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
       if (f.direction === "input" || f.direction === "inout") {
         const old = slot.value;
         slot.value = coerce(actual.value, f.type);
+        noteWrite(slot, act);
         const overwrote = def.lifetime === "static" && old !== defaultValue(f.type) && old !== slot.value ? `, overwriting ${formatValue(old)}` : "";
         notes.push(`${f.name} ← ${formatValue(slot.value)} (${f.direction}: copied in${overwrote})`);
       } else {
@@ -1292,13 +1316,17 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
         def.lifetime === "automatic"
           ? `An automatic function allocates its variables for this call and initializes them to their defaults on each entry to the call; inputs and inouts then take the values passed. Nothing another activation does can reach ${unreachable}.`
           : "A static function's variables are statically allocated and shared across all its uses executing concurrently; a copy-in writes that one copy, so an activation still in progress sees the new value too.";
-      enterClause = def.lifetime === "automatic" ? "§13.4.2, §6.21" : "§13.4.2";
+      // Automatic: per-call allocation (§13.4.2), initialized on each entry (§6.21) to the Table 6-7 defaults (§6.8), then the inputs and
+      // inouts copied in (§13.4's direction list). Static: shared allocation (§13.4.2) whose variables have a static lifetime and so keep
+      // their values from one call to the next (§6.21); §13.4.2 alone says only that they are shared.
+      enterClause = def.lifetime === "automatic" ? "§13.4.2, §13.4, §6.21, §6.8" : "§13.4.2, §6.21";
     } else {
       enterWhy =
         def.lifetime === "automatic"
           ? `An automatic task allocates its variables for this activation and initializes them, outputs included, to their defaults when execution enters it; inputs and inouts then take the values passed. Nothing another activation does can reach ${unreachable}.`
           : "A static task has one copy of each variable per module instance, shared by every activation; a copy-in writes that one copy, so a concurrent activation sees the new value too.";
-      enterClause = def.lifetime === "automatic" ? "§13.3.2, §13.3" : "§13.3.2, §13.3.1";
+      // §13.3.2 states both cases for tasks, retention between calls included; the defaults it initializes to are §6.8's.
+      enterClause = def.lifetime === "automatic" ? "§13.3.2, §13.3, §6.8" : "§13.3.2, §13.3.1";
     }
     if (refNames.length && !refsOnly) {
       enterWhy = `${enterWhy} ${refWhy}`;
@@ -1320,7 +1348,8 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
     const notes: string[] = [];
     const copied = act.copyOuts.map((co) => {
       const value = ((act.def.lifetime === "automatic" ? act.own : act.shared).get(co.formal) as Slot).value;
-      const result = store(co.target, value);
+      // The copy-out lands in the caller's variable as part of the caller's call statement, so the caller is the writer.
+      const result = store(co.target, value, act.caller);
       let note = `${co.target.label} ← ${formatValue(result.stored)} (${co.direction}: copied out)`;
       if (co.target.store === globals && watchers.has(co.target.name) && !result.changed) {
         note += `; ${co.target.label} was already ${formatValue(result.old)}, so nothing changes and always @(${co.target.label}) does not wake`;
@@ -1444,8 +1473,8 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
       return;
     }
     // The operands are read before the write, or a self-assignment would narrate its own result as its left operand.
-    const narrated = explain(stmt.expr, ctx, coerce(value, slot.type));
-    const result = store(binding, value);
+    const narrated = narrateAssign(stmt, ctx, coerce(value, slot.type));
+    const result = store(binding, value, ctx.act);
     const where = isRef ? ` ${stmt.target} is ${binding.label} itself, so the caller sees ${formatValue(result.stored)} at once.` : "";
     let why = "A blocking assignment updates the variable before the next statement runs.";
     let clause = "§10.4.1";
@@ -1469,11 +1498,26 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
       pid: ctx.pid,
       activationId: ctx.act?.record.id,
       lineKey: stmt.key,
-      what: `${actLabel(ctx)}: ${stmt.target} = ${narrated}.${where}`,
+      what: `${actLabel(ctx)}: ${narrated}.${where}`,
       why,
       clause,
     });
     fireWatcher(binding, result.changed, ctx);
+  }
+
+  /**
+   * `n = n + 10 = 5 + 10 = 15`. The count loop `foreach (v[i]) if (v[i]) n++;` is folded into `n = n + popcount(v)`
+   * (see Expr); its narration speaks of the loop the learner sees, never of the folded expression.
+   */
+  function narrateAssign(stmt: Extract<Stmt, { kind: "assign" }>, ctx: Ctx, result: Value): string {
+    const e = stmt.expr;
+    if (e.kind === "bin" && e.op === "+" && e.left.kind === "var" && e.left.name === stmt.target && e.right.kind === "popcount") {
+      const before = evalExpr(e.left, ctx);
+      const operand = exprToSource(e.right.operand);
+      const bits = evalExpr(e.right, ctx);
+      return `the foreach adds one to ${stmt.target} for each set bit of ${operand}; ${operand} = ${formatValue(evalExpr(e.right.operand, ctx))} has ${formatValue(bits)}, so ${stmt.target} = ${formatValue(before)} + ${formatValue(bits)} = ${formatValue(result)}`;
+    }
+    return `${stmt.target} = ${explain(e, ctx, result)}`;
   }
 
   function execDisplay(stmt: Extract<Stmt, { kind: "display" }>, ctx: Ctx): void {
@@ -1489,10 +1533,26 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
     const ownReads = act ? printedNames.filter((n) => !act.refs.has(n) && act.own.has(n)) : [];
     const sharedReads = act ? printedNames.filter((n) => !act.refs.has(n) && !act.own.has(n) && act.shared.has(n)) : [];
     let why = "$display prints the values as they are at this point of the time slot.";
-    if (ownReads.length && sharedReads.length) {
-      why = `${sharedReads.join(", ")} ${isAre(sharedReads)} read from the shared copy, which another activation may have written since this call started; ${ownReads.join(", ")} ${isAre(ownReads)} this activation's own copy, which only it has written.`;
-    } else if (sharedReads.length) {
-      why = "The value printed is whatever the shared copy holds now, which may have been written by another activation since this call started.";
+    if (act && sharedReads.length) {
+      // Say what happened in this run: whether another activation (an overlapping call, or an inner call of a static
+      // recursion) wrote a shared copy after this call started. What static storage merely permits is said as such, so a
+      // run where nothing overlapped is not described as overwritten.
+      const overwritten = sharedReads.flatMap((name) => {
+        const w = (act.shared.get(name) as Slot).lastWrite;
+        return w && w.activationId !== act.record.id && w.seq > act.enteredSeq ? [{ name, w }] : [];
+      });
+      const kept = sharedReads.filter((name) => !overwritten.some((o) => o.name === name));
+      const parts: string[] = [];
+      if (overwritten.length) {
+        const writes = overwritten.map((o) => `${o.w.label} wrote ${overwritten.length > 1 ? `${o.name} ` : ""}at t = ${o.w.time} ns`).join(" and ");
+        const names = overwritten.map((o) => o.name);
+        parts.push(`${names.join(", ")} ${isAre(names)} read from the shared copy, which ${writes}, after this call started: this call prints another activation's value`);
+      }
+      if (kept.length) {
+        parts.push(`${kept.join(", ")} ${isAre(kept)} read from the shared copy, which no other activation has written since this call started (static storage would let an overlapping one)`);
+      }
+      if (ownReads.length) parts.push(`${ownReads.join(", ")} ${isAre(ownReads)} this activation's own copy, which only it has written`);
+      why = `${parts.join("; ")}.`;
     } else if (ownReads.length) {
       why = "The value printed is this activation's own copy, which only this activation has written.";
     }
@@ -1694,7 +1754,7 @@ export function simulateBench(input: Bench, options: SimOptions = {}): Subroutin
       if (nbaQueue.length) {
         const updates = nbaQueue.splice(0);
         updates.forEach((u) => {
-          const result = store(u.binding, u.value);
+          const result = store(u.binding, u.value, u.act);
           emit({
             kind: "nba",
             pid: u.pid,

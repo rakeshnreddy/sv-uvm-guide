@@ -15,9 +15,10 @@
  *           bit numbering; §6.22.3 defines no implicit cast from an integral
  *           value to it (an explicit bit-stream cast, §6.24.3, is the route).
  * - §20.6.2 $bits is the total width.
- * - §6.22.3, §10.7  an integral value assigned to a packed struct is extended
- *           or truncated with no required warning; an unsigned narrower
- *           source is zero-extended.
+ * - §6.22.3 an integral value can be assigned to a packed struct, because all
+ *           integral types are assignment compatible. §10.7 sizes it: a
+ *           narrower source is extended (an unsigned one with zeros), a wider
+ *           one truncated, and no warning is required.
  * - §7.2, Syntax 7-1 footnote 20  random_qualifier only within unpacked structs.
  * - §6.22.1, §6.22.2  type matching and equivalence: two local typedefs of an
  *           unpacked struct are different types (§6.22.1 d) and no rule of
@@ -55,13 +56,18 @@
  *           an uninitialized tagged union, tag included, is undefined. That
  *           such a read has no defined result, and that %p has no defined
  *           output, are derived from this and labelled so.
- * - §21.2.1.6  %p prints tag:value for a tagged union. It states that, and the
- *           first-declared-member rule for untagged unions, in its paragraph on
- *           aggregates, while its rules for singular values name only packed
- *           structures. A packed union, tagged or not, is a singular integral
- *           value (§6.4, §6.11.1), so the model shows the same reading there and
- *           labels the output tool-dependent. It says nothing about the value
- *           part for a void member, so the bare tag is labelled derived.
+ * - §21.2.1.6  %p. Its paragraph on aggregates says a union prints only its
+ *           first declared element and a tagged union prints tag:value. A
+ *           packed union, tagged or not, is singular and integral (§6.4,
+ *           §6.11.1), and the same subclause's list for singular values ends
+ *           with a catch-all: all other singular data types print their values
+ *           as they would unformatted, which for an integral value is a plain
+ *           decimal number (§21.2.1.1). The two rules pull different ways, so
+ *           for a packed union the model shows the aggregate reading, gives the
+ *           unformatted number beside it, and labels the output tool-dependent.
+ *           The subclause does not say whether '{ } surrounds tag:value, nor
+ *           what stands for a void member's value, and the model says so.
+ * - §21.2.1.1 Table 21-1 radix of %h and %d; §21.2.1.2 %0d at minimum width;
  *           §21.2.1.3 x/z digits in %h and %d.
  *
  * Enums
@@ -188,7 +194,7 @@ function hexDigit(nib: Bit4[]): string {
   return parseInt(nib.join(""), 2).toString(16);
 }
 
-/** `%h`: lower-case hex, one digit per nibble, width/4 digits rounded up (§21.2.1.3). */
+/** `%h`: hex (Table 21-1), lower-case, width/4 digits rounded up with leading zeros kept (§21.2.1.2), one digit per group of 4 bits (§21.2.1.3). */
 export function formatH(v: SvValue): string {
   const bits = bitsOf(v);
   const top = bits.length % 4;
@@ -200,7 +206,11 @@ export function formatH(v: SvValue): string {
 /** `%b`: one character per bit, most significant first. */
 export const formatB = (v: SvValue): string => bitsOf(v).join("");
 
-/** `%0d`: decimal, negative for a signed value with its top bit set, or x / X for all / some unknown bits (§21.2.1.3). */
+/**
+ * `%0d`: decimal (Table 21-1) at minimum width (§21.2.1.2), or x / X for all /
+ * some unknown bits (§21.2.1.3). A signed value with its top bit set prints
+ * negative; §21.2.1 does not spell that out, so it follows the value's type.
+ */
 export function formatD(v: SvValue): string {
   if (isKnown(v)) return (toBigInt(v) ?? ZERO).toString();
   const bits = bitsOf(v);
@@ -519,7 +529,7 @@ export function assignWhole(members: readonly PackedMember[], src: SvValue): Who
     return {
       value,
       extendedFrom: src.width,
-      note: `The ${src.width}-bit value is ${extensionWord(src)}-extended to ${width} bits: bits [${width - 1}:${src.width}] are filled with ${src.signed ? "the sign bit" : "0"}. No warning is required (§10.7, §6.22.3).`,
+      note: `The ${src.width}-bit value is ${extensionWord(src)}-extended to ${width} bits: bits [${width - 1}:${src.width}] are filled with ${src.signed ? "the sign bit" : "0"}. No warning is required (§10.7).`,
     };
   }
   if (src.width > width) {
@@ -643,10 +653,21 @@ export interface RuleCard {
 }
 
 /**
+ * The rules the unpacked `c == literal` card rests on. None states the error
+ * outright, so the card labels it derived: an unpacked struct is not integral
+ * (§6.11.1), only a packed one is a vector (§7.2.1), and §11.2.2 defines ==
+ * on aggregates for operands of equivalent type. §6.22.3 is about assignment,
+ * not comparison, so it is not cited here.
+ */
+export const UNPACKED_COMPARE_CLAUSE = "§7.2.1, §6.11.1, §11.2.2";
+
+/**
  * What a packed/unpacked toggle changes. A packed struct is a vector: it can
  * be part-selected and compared with a number (§7.2.1). An unpacked struct has
  * an implementation-dependent packing (§7.2.1) and no bit numbering, so
  * neither expression compiles; its members are still read by name.
+ *
+ * That the unpacked comparison does not compile is derived (`UNPACKED_COMPARE_CLAUSE`).
  *
  * The comparison is written with a known literal, whatever the struct holds:
  * x bits of the struct become 0 in the literal, since a literal full of x says
@@ -667,7 +688,12 @@ export function structVectorCards(name: string, members: readonly PackedMember[]
   }
   return [
     { code: selectText, legal: false, clause: "§7.2.1", message: "Compile error: only a packed struct is treated as a single vector with bits [n-1:0]. An unpacked struct's packing is implementation-dependent, normally matching the C compiler (§7.2.1), so it has no bit numbering to select." },
-    { code: compareText, legal: false, clause: "§7.2.1, §6.22.3", message: `Compile error: an unpacked struct is not an integral value, so there is nothing to compare with a ${value.width}-bit literal. Compare member by member, or use a packed struct for anything with a bit layout.` },
+    {
+      code: compareText,
+      legal: false,
+      clause: UNPACKED_COMPARE_CLAUSE,
+      message: `Derived: no clause states this error outright. An unpacked struct is not an integral type (§6.11.1 names packed structures, not unpacked ones), so it is not a vector to compare bit for bit with a ${value.width}-bit literal (§7.2.1). §11.2.2 lets == compare aggregate expressions, and when both operands are aggregates they shall be of equivalent type, so ${name} == another variable of the same type is legal. Otherwise compare member by member, or use a packed struct for anything with a bit layout.`,
+    },
   ];
 }
 
@@ -746,6 +772,64 @@ export function enumMemberReadout(members: readonly PackedMember[], value: SvVal
   };
 }
 
+/** Where the bits an enum member reads were written: the member's range at that write, and the write's kind. */
+export interface EnumSource {
+  hi: number;
+  lo: number;
+  arrival: Exclude<EnumArrival, "never-assigned" | "layout-edit">;
+}
+
+/** How the enum member's value got there, with the range it was written at (null when nothing wrote it, or its bits are gone). */
+export interface EnumTrack {
+  arrival: EnumArrival;
+  source: EnumSource | null;
+}
+
+export const NEVER_ASSIGNED_TRACK: EnumTrack = { arrival: "never-assigned", source: null };
+
+const enumMemberOf = (members: readonly PackedMember[]): PackedMember | undefined => members.find((m) => m.type.kind === "enum");
+
+/**
+ * The enum member's track after a write. `written` names the member written, or
+ * is null when the write covers every member (a whole-vector write or an
+ * assignment pattern); `how` is the write's kind. A write that covers the enum
+ * member records its current range as the source. A write to another member
+ * keeps the arrival; it can only overwrite bits the source wrote once a typedef
+ * edit has moved the enum member away from them, and then the source is
+ * dropped, since those bits no longer hold what it wrote (§7.2.1: each member
+ * owns its own bits).
+ */
+export function enumTrackAfterWrite(members: readonly PackedMember[], prev: EnumTrack, written: string | null, how: EnumSource["arrival"]): EnumTrack {
+  const e = enumMemberOf(members);
+  if (!e) return prev;
+  if (written === null || written === e.name) {
+    const r = memberRange(members, e.name);
+    return { arrival: how, source: { hi: r.hi, lo: r.lo, arrival: how } };
+  }
+  const w = memberRange(members, written);
+  const overwritten = prev.source !== null && w.hi >= prev.source.lo && w.lo <= prev.source.hi;
+  return { arrival: prev.arrival, source: overwritten ? null : prev.source };
+}
+
+/**
+ * The enum member's track after a typedef edit. The vector keeps its bits: bit
+ * i stays bit i, a shrink drops the top bits and a grow adds never-assigned
+ * ones (`rewidthVector`). So the member still reads the bits a write put there
+ * when its range is the range they were written at and no shrink has dropped
+ * any of them; the earlier arrival then stands, also when the member comes back
+ * to that range after moving away. Otherwise the edit moved the member over
+ * other bits. A member nothing has written stays never-assigned.
+ */
+export function enumTrackAfterLayoutEdit(members: readonly PackedMember[], prev: EnumTrack): EnumTrack {
+  if (prev.arrival === "never-assigned") return prev;
+  const e = enumMemberOf(members);
+  if (!e) return prev;
+  const source = prev.source && structBits(members) > prev.source.hi ? prev.source : null;
+  const r = memberRange(members, e.name);
+  if (source && r.hi === source.hi && r.lo === source.lo) return { arrival: source.arrival, source };
+  return { arrival: "layout-edit", source };
+}
+
 /** One named read, before and after a write. */
 export interface NamedRead {
   name: string;
@@ -805,7 +889,8 @@ export interface AssignLegality {
  */
 export function assignmentLegality(dst: TypeRef, src: TypeRef): AssignLegality {
   if (dst.declId === src.declId) {
-    return { legal: true, relation: "matching", clause: "§6.22.1", message: `${dst.display} and ${src.display} come from the same typedef, so the types match.` };
+    const sides = dst.display === src.display ? `Both sides are ${dst.display}, one typedef` : `${dst.display} and ${src.display} come from the same typedef`;
+    return { legal: true, relation: "matching", clause: "§6.22.1", message: `${sides}, so the types match.` };
   }
   if (dst.packed && src.packed && dst.bits === src.bits && dst.states === src.states && dst.signed === src.signed) {
     return {
@@ -816,11 +901,19 @@ export function assignmentLegality(dst: TypeRef, src: TypeRef): AssignLegality {
     };
   }
   if (dst.packed && src.packed) {
+    // §10.7 is about a size mismatch, so it is cited only when the widths differ.
+    const resized = dst.bits !== src.bits;
+    const sizing = !resized
+      ? `Both are ${dst.bits} bits, so the bits are copied as they are`
+      : src.bits < dst.bits
+        ? `The ${src.bits}-bit value is ${src.signed ? "sign" : "zero"}-extended to ${dst.bits} bits, with no required warning (§10.7)`
+        : `The ${src.bits}-bit value loses its top ${src.bits - dst.bits} bits to fit ${dst.bits}, with no required warning (§10.7)`;
+    const states = dst.states === 2 && src.states === 4 ? `; ${dst.display} is 2-state, so x and z bits become 0 (§6.11.2)` : "";
     return {
       legal: true,
       relation: "assignment-compatible",
-      clause: "§6.22.3, §10.7",
-      message: `${dst.display} and ${src.display} are not equivalent, but both are packed, and all integral types are assignment compatible. The assignment compiles, and the value is extended or truncated with no required warning.`,
+      clause: resized ? "§6.22.3, §10.7" : "§6.22.3",
+      message: `${dst.display} and ${src.display} are not equivalent, but both are packed, and all integral types are assignment compatible, so the assignment compiles. ${sizing}${states}.`,
     };
   }
   if (dst.packed !== src.packed) {
@@ -904,21 +997,33 @@ export const unionStates = (u: UnionType): 2 | 4 => (u.members.some((m) => union
 /** A union variable with no initializer: all x when any member is 4-state, else all 0 (Table 6-7, §7.3.1). */
 export const unionInitialValue = (u: UnionType): SvValue => defaultVector(unionWidth(u), unionStates(u));
 
-/** Compile errors in the declaration: hard packed members of different sizes (§7.3.1). */
+/**
+ * Compile errors in the declaration: hard packed members of different sizes
+ * (§7.3.1). The rule binds every hard packed union in the declaration, so a
+ * nested `union packed` is checked too, whatever packing holds it; its members
+ * are named by path.
+ */
 export function unionProblems(u: UnionType): RuleCard[] {
   const problems: RuleCard[] = [];
-  if (u.packing === "packed") {
-    const widths = u.members.map((m) => ({ name: m.name, width: unionMemberWidth(m) }));
-    const distinct = new Set(widths.map((w) => w.width));
-    if (distinct.size > 1) {
-      problems.push({
-        code: `typedef union packed { ... } ${u.name};`,
-        legal: false,
-        clause: "§7.3.1",
-        message: `Compile error: members of a hard packed union shall all be the same size, but ${widths.map((w) => `${w.name} is ${w.width} bits`).join(", ")}. Make the widths equal, or declare the union soft to allow different sizes.`,
-      });
+  const visit = (members: readonly UnionMember[], packing: UnionPacking, prefix: string, code: string) => {
+    if (packing === "packed") {
+      const widths = members.map((m) => ({ name: prefix ? `${prefix}.${m.name}` : m.name, width: unionMemberWidth(m) }));
+      if (new Set(widths.map((w) => w.width)).size > 1) {
+        problems.push({
+          code,
+          legal: false,
+          clause: "§7.3.1",
+          message: `Compile error: members of a hard packed union shall all be the same size, but ${widths.map((w) => `${w.name} is ${w.width} bits`).join(", ")}. Make the widths equal, or declare the union soft to allow different sizes.`,
+        });
+      }
     }
-  }
+    for (const m of members) {
+      if (m.shape.kind !== "union") continue;
+      const path = prefix ? `${prefix}.${m.name}` : m.name;
+      visit(m.shape.members, m.shape.packing, path, `union packed { ... } ${path};`);
+    }
+  };
+  visit(u.members, u.packing, "", `typedef union packed { ... } ${u.name};`);
   return problems;
 }
 
@@ -1018,14 +1123,20 @@ export function unionPathStates(u: UnionType, path: string): 2 | 4 {
 }
 
 /**
- * Read through any member path: the bits that path names. A 2-state member of a
- * union that also has a 4-state member is read through a conversion to 2-state
- * (§7.3.1), which turns x/z into 0 (§6.11.2).
+ * The bits of one row or piece as that member reads them: a 2-state member of
+ * a union that also has a 4-state member is read through a conversion to
+ * 2-state (§7.3.1), which turns x/z into 0 (§6.11.2). A view that draws a row
+ * uses this, so the picture and the status line read the same value.
  */
+export function readUnionPiece(value: SvValue, piece: { hi: number; lo: number; states: 2 | 4 }): SvValue {
+  const raw = slice(value, piece.hi, piece.lo);
+  return piece.states === 2 ? toTwoState(raw) : raw;
+}
+
+/** Read through any member path: the bits that path names, converted as `readUnionPiece` does. */
 export function readUnionPath(u: UnionType, value: SvValue, path: string): SvValue {
   const r = unionPathRange(u, path);
-  const raw = slice(value, r.hi, r.lo);
-  return unionPathStates(u, path) === 2 ? toTwoState(raw) : raw;
+  return readUnionPiece(value, { hi: r.hi, lo: r.lo, states: unionPathStates(u, path) });
 }
 
 export interface UnionWrite {
@@ -1102,14 +1213,19 @@ export function writeUnionPath(u: UnionType, value: SvValue, path: string, src: 
 
 /**
  * `%p` of an untagged union under the first-declared-member reading of
- * §21.2.1.6. The standard states that rule in its paragraph on aggregates and
- * its rules for singular values name only packed structures, so for a packed
- * union, a singular integral value, the output is tool-dependent; callers
- * label it so.
+ * §21.2.1.6: its paragraph on aggregates says only the first declared element
+ * of a union is printed. A packed union is also a singular integral value
+ * (§6.4, §6.11.1), and that subclause's list for singular values ends with a
+ * catch-all: all other singular data types print as they would unformatted,
+ * which for an integral value is a plain decimal number (§21.2.1.1). Read that
+ * way the output is `unformatted`. The two readings differ, so the output is
+ * tool-dependent and callers show both.
  */
-export function formatUnionP(u: UnionType, value: SvValue): { text: string; member: string } {
+export function formatUnionP(u: UnionType, value: SvValue): { text: string; member: string; unformatted: string } {
   const first = u.members[0];
   const v = readUnionPath(u, value, first.name);
+  // A packed union is unsigned unless declared signed (§7.3.1), and none here is.
+  const unformatted = formatD({ ...value, signed: false });
   if (first.shape.kind === "struct") {
     const inner = first.shape.members
       .map((m) => {
@@ -1117,22 +1233,26 @@ export function formatUnionP(u: UnionType, value: SvValue): { text: string; memb
         return `${m.name}:${m.type.kind === "enum" ? enumName(m.type.spec, mv) || formatD(mv) : formatD(mv)}`;
       })
       .join(", ");
-    return { text: `'{${first.name}:'{${inner}}}`, member: first.name };
+    return { text: `'{${first.name}:'{${inner}}}`, member: first.name, unformatted };
   }
-  return { text: `'{${first.name}:${formatD(v)}}`, member: first.name };
+  return { text: `'{${first.name}:${formatD(v)}}`, member: first.name, unformatted };
 }
 
-/** The declaration text of a union. */
+/**
+ * The declaration text of a union. A vector or lane member is written `bit`
+ * when it is 2-state and `logic` when it is 4-state (§6.11.2).
+ */
 export function unionTypedef(u: UnionType): string {
   const lines = u.members.map((m) => {
     const w = unionMemberWidth(m);
+    const base = m.states === 2 ? "bit" : "logic";
     switch (m.shape.kind) {
       case "vector":
-        return `  logic [${w - 1}:0] ${m.name};`;
+        return `  ${base} [${w - 1}:0] ${m.name};`;
       case "struct":
         return `  ${m.shape.typeName} ${m.name};  // packed struct, ${w} bits`;
       case "lanes":
-        return `  logic [${m.shape.count - 1}:0][${m.shape.laneWidth - 1}:0] ${m.name};`;
+        return `  ${base} [${m.shape.count - 1}:0][${m.shape.laneWidth - 1}:0] ${m.name};`;
       case "union":
         return `  union ${m.shape.packing === "soft" ? "soft" : "packed"} { ... } ${m.name};  // ${w} bits`;
     }
@@ -1152,6 +1272,12 @@ export interface TaggedMember {
   typeText: string;
   /** Whether the member's type is signed, so a read prints the right number: int is, bit [7:0] is not (§6.11, Table 6-8). False for a void member. */
   signed: boolean;
+  /**
+   * Whether the member's type is 4-state (logic, integer). int and bit are
+   * 2-state (§6.11.2, Table 6-8), so a value tagged into them loses its x and
+   * z bits to 0. False for a void member.
+   */
+  fourState: boolean;
 }
 
 export interface TaggedUnionType {
@@ -1198,24 +1324,34 @@ export function taggedPackedLayout(t: TaggedUnionType): TaggedLayout {
   };
 }
 
-/** `v = tagged Member (value)`: tag and value change together (§7.3.2), in the member's own signedness; a number wraps to its width (§10.7). A void member takes no value. */
+/**
+ * `v = tagged Member (value)`: tag and value change together (§7.3.2). A tagged
+ * union expression is an assignment-like context (§10.8), so the value is
+ * sized to the member as an assignment would size it (§10.7), takes the
+ * member's own signedness, and, for a 2-state member such as int or bit, has
+ * its x and z bits converted to 0 (§6.11.2). A void member takes no value.
+ */
 export function makeTagged(t: TaggedUnionType, memberName: string, value?: SvValue | number): TaggedValue {
   const idx = t.members.findIndex((m) => m.name === memberName);
   if (idx < 0) throw new Error(`no tagged member "${memberName}"`);
   const m = t.members[idx];
   if (m.width === null) return { tagIndex: idx, value: null };
   if (value === undefined) throw new Error(`member ${memberName} needs a value`);
-  const v = typeof value === "number" ? fromBigInt(big(value), m.width, m.signed) : resize(value, m.width, value.signed, m.signed);
-  return { tagIndex: idx, value: v };
+  const sized = typeof value === "number" ? fromBigInt(big(value), m.width, m.signed) : resize(value, m.width, value.signed, m.signed);
+  return { tagIndex: idx, value: m.fourState ? sized : toTwoState(sized) };
 }
 
 export type TaggedRead = { ok: true; value: SvValue; note: string } | { ok: false; error: string };
 
 /**
  * `v.Member`: legal only when the tag is that member; otherwise a run-time
- * error (§11.9). A void member yields no value. An uninitialized variable's tag
- * bits are undefined (§11.9); that whether the check fires is therefore not
- * defined is derived from this, not stated there.
+ * error (§11.9). An uninitialized variable's tag bits are undefined (§11.9);
+ * that whether the check fires is therefore not defined is derived from this,
+ * not stated there.
+ *
+ * A void member "contains nothing" (§7.3.2), and §11.9 defines no value to read
+ * from one, so a read of a void member whose tag matches returns ok: false and
+ * says so, instead of claiming a legal read of an empty value.
  */
 export function readTagged(t: TaggedUnionType, v: TaggedValue, memberName: string): TaggedRead {
   const idx = t.members.findIndex((m) => m.name === memberName);
@@ -1223,7 +1359,12 @@ export function readTagged(t: TaggedUnionType, v: TaggedValue, memberName: strin
   if (v.tagIndex === null) return { ok: false, error: `Undefined: the variable was never assigned, so its tag bits are undefined (§11.9). Derived from that, whether the check fires is not defined, and the read has no defined result. Assign a tagged expression first.` };
   const current = t.members[v.tagIndex];
   if (v.tagIndex !== idx) return { ok: false, error: `Run-time error: the tag is ${current.name}, so reading .${memberName} is inconsistent with the tag (§11.9).` };
-  if (current.width === null || !v.value) return { ok: true, value: fromBigInt(ZERO, 0), note: `${memberName} is a void member: the tag carries the whole message and there is no value to read (§7.3.2).` };
+  if (current.width === null || !v.value) {
+    return {
+      ok: false,
+      error: `Not stated: ${memberName} is a void member, which contains nothing (§7.3.2). The tag matches, so no run-time error is stated (§11.9), but the standard gives no value to read from a void member, so the model reads none; the tag carries the whole message.`,
+    };
+  }
   return { ok: true, value: v.value, note: `The tag is ${memberName}, so the read is consistent with it and returns ${formatD(v.value)} (§11.9).` };
 }
 
@@ -1268,12 +1409,21 @@ export function taggedPackedBits(t: TaggedUnionType, v: TaggedValue): TaggedPack
  * `%p` of a tagged union: tag:value for the valid member; white space is
  * implementation dependent (§21.2.1.6). Null when no output is defined, because a
  * never-assigned variable is undefined, its tag bits included (§11.9).
+ *
+ * §21.2.1.6 gives the text tag:value, and separately asks for output that is "a
+ * legal interpretation of the assignment pattern syntax"; it does not say
+ * whether '{ } surrounds tag:value, so the model prints tag:value bare and the
+ * citation says the wrapper is open. (An untagged union's first member is
+ * printed as an assignment pattern, '{name:value}, by `formatUnionP`.)
  */
 export function formatTaggedP(t: TaggedUnionType, v: TaggedValue): string | null {
   if (v.tagIndex === null) return null;
   const m = t.members[v.tagIndex];
   return m.width === null || !v.value ? `${m.name}` : `${m.name}:${formatD(v.value)}`;
 }
+
+/** The citation of an unpacked tagged union's %p: the text is stated, the '{ } around it is not. */
+export const TAGGED_P_STATED_CITATION = "tag:value, §21.2.1.6, which does not say whether '{ } surrounds it";
 
 export interface TaggedPReading {
   /** The printed text, or null when no output is defined. */
@@ -1288,11 +1438,14 @@ export interface TaggedPReading {
 
 /**
  * What `$display("%p", v)` can honestly be said to print. An unpacked tagged union
- * is the case §21.2.1.6 states. A packed one is a singular integral value (§6.4,
- * §6.11.1), and the tag:value sentence sits in the paragraph on aggregates, so
- * there it is a reading. A void member has no value (§7.3.2) and §21.2.1.6 is silent
- * on what stands for it, so the bare tag is derived. A never-assigned variable
- * has no defined output, which is itself derived from §11.9.
+ * is the case §21.2.1.6 states, as tag:value; whether '{ } surrounds it is not
+ * stated, and the citation says so. A packed one is a singular integral value
+ * (§6.4, §6.11.1): the tag:value sentence sits in the paragraph on aggregates,
+ * while the list for singular values sends every type it does not name, packed
+ * unions included, to its unformatted value, so there the output is
+ * tool-dependent. A void member has no value (§7.3.2) and §21.2.1.6 is silent on
+ * what stands for it, so the bare tag is derived. A never-assigned variable has
+ * no defined output, which is itself derived from §11.9.
  */
 export function taggedPReading(t: TaggedUnionType, v: TaggedValue, packed: boolean): TaggedPReading {
   const text = formatTaggedP(t, v);
@@ -1310,7 +1463,7 @@ export function taggedPReading(t: TaggedUnionType, v: TaggedValue, packed: boole
     ? "a reading of §21.2.1.6 that tools can implement differently"
     : isVoid
       ? "derived: §21.2.1.6 gives tag:value, and a void member has no value, §7.3.2"
-      : "tag:value, §21.2.1.6";
+      : TAGGED_P_STATED_CITATION;
   return { text, basis, citation, sentence: `%p prints ${text} (${citation}).` };
 }
 

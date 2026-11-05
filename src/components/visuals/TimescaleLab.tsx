@@ -12,6 +12,7 @@ import { VisualFrame } from "@/components/visual-system/VisualFrame";
 import {
   ALL_SCALES,
   CALL_FORM_TEXT,
+  CROSS_SCOPE_DEFAULT,
   CROSS_SCOPE_HINTS,
   PRECEDENCE_TEXT,
   READ_TIME_PRESETS,
@@ -23,6 +24,7 @@ import {
   argumentFs,
   arrangeOptions,
   axisForWakes,
+  binaryRemark,
   checkScalePair,
   crossScopeCode,
   crossScopeOptions,
@@ -58,6 +60,7 @@ import {
   setsFormatBeforeFirstPrint,
   splitPadding,
   thenEveryText,
+  tickCount,
   timeunitLine,
   traceCrossScope,
   twoModulesGlobalPrecision,
@@ -91,8 +94,11 @@ export interface TimescaleLabProps {
 }
 
 export const TIMESCALE_ASSUMPTIONS = [
-  "Every value is computed by the sv-timescale-model from IEEE 1800-2023 §3.12.1 (compilation units), §3.14 (units, precision, rounding, precedence, global precision), §5.8 (time literals), §6.12.1 (real to integer), §9.4.1 (x/z and negative delays), §20.3 ($time, $stime, $realtime), §20.4.1 (Table 20-2), §20.4.2 ($printtimescale), §20.4.3 ($timeformat, Table 20-3), §22.3 (`resetall) and §22.7 (`timescale).",
+  "Every value is computed by the sv-timescale-model from IEEE 1800-2023 §3.12.1 (compilation units), §3.14 (units, precision, rounding, precedence, global precision and 1step), §5.6 (identifiers), §5.7.1 and §5.7.2 (integer and real literals), §5.8 (time literals), §6.8 (variable initializers: the clock starts before any procedure), §6.11 (time is an integer type), §6.12 (real and realtime), §6.12.1 (real to integer), §9.4 (delay control), §9.4.1 (x/z and negative delays), §9.4.2 (edge events), §10.8 (passing an argument is assignment-like), §12.7.2 (the repeat loop), §20.3 ($time, $stime, $realtime), §20.4.1 (Table 20-2), §20.4.2 ($printtimescale), §20.4.3 ($timeformat, Table 20-3), §21.2.1 (format specifications), §22.3 (`resetall), §22.7 (`timescale) and Annex A (A.2.2.3 delay values, A.6.5 delay control, A.8.7 numbers, A.9.3 identifiers).",
   "Arithmetic is exact: delays are decimal strings turned into integer femtoseconds (BigInt), so a half tick is detected exactly. §3.14.1 states no tie rule, so at an exact half tick both round-half-away-from-zero and round-half-to-even are computed and both values are shown when they disagree.",
+  "Reading: the model scales a delay by the unit and rounds it to the precision's ticks; §22.7 lists the steps as round, then scale. Neither §3.14.1 nor §22.7 makes an order a rule, and because the precision is relative to the unit (§3.14.1) both orders give the same wake time, which the steps show side by side.",
+  "The lab's reasoning, not a rule of the standard: a real literal is held as an IEEE 754 double (§5.7.2), so a decimal such as 2.85 has no exact binary form. The standard does not say whether rounding to the precision sees the written decimal or the double; the lab rounds the written decimal, and says where a simulator that rounds the double may not see a half tick.",
+  "Assumption: a run is shown only while its wake times stay below 2^64 of the element's units. §9.4.1 sizes a delay like a 64-bit time variable, and the sources give no rule for time beyond that, whatever the sign of the delay as written.",
   "The implementation default unit and precision (§3.14.2.3 rule d) are always shown as 'implementation-specific', never as a number.",
   "Assumption: %0t drops the padding. §20.4.3 and §21.2.1.2 do not settle how a %0t field width interacts with $timeformat's minimum_field_width.",
   "Assumption: $stime keeps the low 32 bits of the value already scaled to the caller's unit. §20.3.2 says the low 32 bits of the current simulation time, without saying whether that means scaled or unscaled time.",
@@ -114,6 +120,12 @@ const promptClass = touchButtons;
 const checkLabelClass = "flex items-center gap-2 text-xs text-foreground [@media(pointer:coarse)]:min-h-10";
 const scrubberClass = "h-2 min-w-[120px] flex-1 cursor-pointer accent-cyan-500 [@media(pointer:coarse)]:h-10";
 const textButtonClass = "inline-flex items-center text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-10";
+/**
+ * The frame's "Assumptions and limits" disclosure is a one-line text-xs summary
+ * inside the shared FidelityBadge: give it a 40 px target on touch screens from
+ * here. Padding rather than flex keeps the summary a list item, so its marker stays.
+ */
+const frameClass = "[@media(pointer:coarse)]:[&_summary]:min-h-10 [@media(pointer:coarse)]:[&_summary]:py-3";
 
 const toPredictionOptions = (options: LabOption[], seed: string): PredictionOption[] => arrangeOptions(options, seed).map((o) => ({ id: o.id, label: o.label, correct: o.correct, feedback: o.feedback }));
 
@@ -238,6 +250,39 @@ function StepButton({ label, atEnd, onClick, children }: { label: string; atEnd:
   );
 }
 
+/**
+ * The shared HintLadder removes its button with the last hint, and the focus
+ * would fall to the page body in the middle of the hunt. Until the primitive
+ * keeps the focus itself, this wrapper takes it when that happens: after a click
+ * inside, once the ladder has no button left and nothing else holds the focus.
+ */
+function HintFocusKeeper({ children, className }: { children: React.ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const timer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    },
+    [],
+  );
+  const keepFocus = () => {
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    // After React has committed the click's update, which may have removed the button.
+    timer.current = window.setTimeout(() => {
+      timer.current = null;
+      const el = ref.current;
+      if (!el || el.querySelector("button")) return;
+      const active = document.activeElement;
+      if (active === null || active === document.body) el.focus();
+    }, 0);
+  };
+  return (
+    <div ref={ref} tabIndex={-1} role="group" aria-label="Hints" data-testid="hint-focus" onClick={keepFocus} className={cn("rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", className)}>
+      {children}
+    </div>
+  );
+}
+
 /** Back to this lab's first state, with the prediction armed again. Stays mounted, so the focus does not fall out of the lab. */
 function StartOver({ onClick }: { onClick: () => void }) {
   return (
@@ -324,7 +369,9 @@ function TickRuler({ rounded }: { rounded: RoundedDelay }) {
   const pad = 30;
   const step = (W - 2 * pad) / (tickCount - 1);
   const xOfTick = (k: bigint) => pad + Number(k - firstTick) * step;
-  const scaledPos = pad + (ratio(rounded.scaledFs.num, rounded.scaledFs.den * precFs) - Number(firstTick)) * step;
+  // The offset from the first drawn tick is taken in BigInt first, so a delay past 2^53 ticks still lands between the right ticks.
+  const tickDen = rounded.scaledFs.den * precFs;
+  const scaledPos = pad + ratio(rounded.scaledFs.num - firstTick * tickDen, tickDen) * step;
   const targets = rounded.candidatesFs.map((fs) => fs / precFs);
   const isXz = rounded.input.kind === "xz";
   const stays = !rounded.ticks.exactHalf && rounded.ticks.down === rounded.ticks.up;
@@ -342,7 +389,7 @@ function TickRuler({ rounded }: { rounded: RoundedDelay }) {
       ? "x/z is interpreted as zero (§9.4.1)"
       : stays
         ? "already on a tick: nothing to round (§3.14.1)"
-        : "rounds to the nearest tick (§3.14.1)";
+        : "rounds to the nearest tick (§3.14.1, §22.7)";
   return (
     <ScrollRegion label="Tick ruler">
       <svg viewBox={`0 0 ${W} 126`} role="img" aria-label={label} className="h-auto min-w-[360px] w-full max-w-[520px] text-foreground">
@@ -382,6 +429,7 @@ function RoundingLab({ preset }: { preset?: string }) {
   const [unit, setUnit] = useState<TimeScale>(initial.unit);
   const [precision, setPrecision] = useState<TimeScale>(initial.precision);
   const rounded = useMemo(() => roundDelayText(delayText, unit, precision), [delayText, unit, precision]);
+  const binaryNote = binaryRemark(rounded);
   const [attempt, setAttempt] = useState(0);
   const resetKey = `${attempt}|${delayText}|${formatScale(unit)}|${formatScale(precision)}`;
   const options = useMemo(() => toPredictionOptions(roundingOptions(rounded), resetKey), [rounded, resetKey]);
@@ -408,9 +456,10 @@ function RoundingLab({ preset }: { preset?: string }) {
       label="Timescale lab: rounding a delay"
       eyebrow="Experiment · predict then reveal"
       title="From #d to a wake time"
-      summary="The time unit scales the number, then the element's own precision rounds it (IEEE 1800-2023 §3.14.1). Pick a unit and precision, write a delay, and predict when the statement runs."
+      summary="The time unit sets the size of a delay and the element's own precision sets the grid it lands on (IEEE 1800-2023 §3.14, §3.14.1). §22.7 lists the steps as round, then scale, and either order gives the same wake time. Pick a unit and precision, write a delay, and predict when the statement runs."
       fidelity="model"
       assumptions={TIMESCALE_ASSUMPTIONS}
+      className={frameClass}
     >
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,150px),1fr))]">
         <Field label="Preset" className="col-span-full">
@@ -459,11 +508,11 @@ function RoundingLab({ preset }: { preset?: string }) {
                   <dd className={mono}>#{delayText.replace(/^#/, "")}</dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{rounded.input.kind === "xz" ? "Interpreted as zero" : rounded.input.kind === "literal" ? "Converted to the current unit" : "Scaled by the unit"}</dt>
+                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{rounded.input.kind === "xz" ? "Interpreted as zero" : rounded.input.kind === "literal" ? "Converted to the current unit" : "Exact size: number × unit"}</dt>
                   <dd className={mono}>{rounded.scaledText}</dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{rounded.ticks && rounded.ticks.down !== rounded.ticks.up ? "Rounded to the precision" : "Wake time"}</dt>
+                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{rounded.ticks && rounded.ticks.down !== rounded.ticks.up ? "On the precision grid" : "Wake time"}</dt>
                   <dd className={cn(mono, "font-semibold")}>{wakeText(rounded)}</dd>
                 </div>
               </dl>
@@ -475,7 +524,8 @@ function RoundingLab({ preset }: { preset?: string }) {
               {rounded.toolDependent ? (
                 <p className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
                   <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider">Tool-dependent</span>
-                  §3.14.1 states no tie rule. Half away from zero gives {rounded.tie?.awayFromZero.toString()} ticks and half to even gives {rounded.tie?.toEven.toString()}; decimal delays are also not exact in binary, so the last bit depends on each simulator&apos;s arithmetic. Keep delays clear of half ticks when two simulators must agree.
+                  §3.14.1 states no tie rule. Half away from zero gives {rounded.tie ? tickCount(rounded.tie.awayFromZero) : ""} and half to even gives {rounded.tie ? tickCount(rounded.tie.toEven) : ""}. Keep delays clear of half ticks when two simulators must agree.
+                  {binaryNote ? <span className="mt-1 block" data-testid="binary-remark">{binaryNote}</span> : null}
                 </p>
               ) : null}
             </div>
@@ -613,12 +663,15 @@ function TwoModulesLab() {
   const errorId = useId();
   const times = (n: number) => (n === 1 ? "once" : n === 2 ? "twice" : `${n} times`);
   const bothRevealed = fastRevealed && slowRevealed;
+  /** x/z and negative delays get no rounding, so the summary names no rule that would hint at the answer. */
   const summary =
     fast.input.kind === "literal"
-      ? "tb_top and u_slow run the same #d from t = 0. A time literal is the same value before rounding in both (§5.8), and each module's own precision rounds it (§3.14.1)."
-      : fast.input.kind === "xz"
-        ? "tb_top and u_slow run the same #d from t = 0. Predict when each one wakes."
-        : "tb_top and u_slow run the same #d from t = 0. The unit scales it differently and each module's own precision rounds it (§3.14.1).";
+      ? `${TB_TOP.name} and ${U_SLOW.name} run the same #d from t = 0. A time literal is the same value before rounding in both (§5.8), and each module's own precision rounds it (§3.14.1).`
+      : fast.input.kind === "xz" || fast.input.kind === "negative"
+        ? `${TB_TOP.name} and ${U_SLOW.name} run the same #d from t = 0. Predict when each one wakes.`
+        : `${TB_TOP.name} and ${U_SLOW.name} run the same #d from t = 0. Each module's unit sets the size of the delay, and its own precision sets the grid it lands on (§3.14, §3.14.1).`;
+  /** Fewer wakes than runs: a later copy would pass 2^64 units (the model's wakesBelow64Bits). */
+  const cutAt64Bits = fastWakes.length < fastRepeats || slowWakes.length < slowRepeats;
 
   return (
     <VisualFrame
@@ -628,6 +681,7 @@ function TwoModulesLab() {
       summary={summary}
       fidelity="model"
       assumptions={TIMESCALE_ASSUMPTIONS}
+      className={frameClass}
     >
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,150px),1fr))]">
         <DelayField label="Delay (#d, run in both modules)" value={delayText} onChange={setDelayText} invalid={Boolean(fast.error)} errorId={errorId} onEditing={setEditingDelay} />
@@ -664,7 +718,7 @@ function TwoModulesLab() {
               resetKey={`fast|${key}`}
               question={
                 <>
-                  <span aria-hidden>● </span>tb_top (<code className={mono}>timeunit 1ns; timeprecision 100ps;</code>) runs <code className={mono}>#{d}</code> {times(fastRepeats)}. When does it wake?
+                  <span aria-hidden>● </span>{TB_TOP.name} (<code className={mono}>{timeunitLine(TB_TOP)}</code>) runs <code className={mono}>#{d}</code> {times(fastRepeats)}. When does it wake?
                 </>
               }
               options={fastOptions}
@@ -686,7 +740,7 @@ function TwoModulesLab() {
               resetKey={`slow|${key}`}
               question={
                 <>
-                  <span aria-hidden>◆ </span>u_slow (<code className={mono}>timeunit 10ns; timeprecision 1ns;</code>) runs the same <code className={mono}>#{d}</code> {times(slowRepeats)}. When does it wake?
+                  <span aria-hidden>◆ </span>{U_SLOW.name} (<code className={mono}>{timeunitLine(U_SLOW)}</code>) runs the same <code className={mono}>#{d}</code> {times(slowRepeats)}. When does it wake?
                 </>
               }
               options={slowOptions}
@@ -721,7 +775,7 @@ function TwoModulesLab() {
           {bothRevealed ? (
             <p className="text-xs text-muted-foreground">
               The design&apos;s global precision is <strong>{global ? `${global.magnitude} ${global.unit}` : "implementation-specific"}</strong>, the finer of the two (§3.14.3). It does not help u_slow: each module rounds with its own precision (§3.14.1).
-              {fast.input.kind === "negative" && Math.max(fastRepeats, slowRepeats) > 1 ? " Only the first wake is shown: a second copy of this delay would pass the 64 bits of a time variable, and the sources give no rule for that." : ""}
+              {cutAt64Bits ? " Only the wakes below 2^64 time units are shown: a later copy of this delay would pass the 64 bits of a time variable, and the sources give no rule for that." : ""}
             </p>
           ) : null}
         </>
@@ -942,6 +996,16 @@ function ReadTimeLab({ preset }: { preset?: string }) {
     setSnapshotIndex(0);
     setMoved(false);
   }
+  /** The %t toggle shows where the two arguments print differently, or while it is away from the preset's own argument, so it can be undone. */
+  const toggleWanted = hasPercentT && (argMatters || arg !== (current?.arg ?? "realtime"));
+  /**
+   * Once shown, it stays for the rest of this experiment: pressing it back to the
+   * preset's argument where the two print alike would otherwise remove the very
+   * control that holds the focus.
+   */
+  const [toggleShownFor, setToggleShownFor] = useState<string | null>(null);
+  if (toggleWanted && toggleShownFor !== experimentKey) setToggleShownFor(experimentKey);
+  const showToggle = hasPercentT && (toggleWanted || toggleShownFor === experimentKey);
 
   const count = trace.snapshots.length;
   const idx = count ? Math.min(snapshotIndex, count - 1) : 0;
@@ -1040,6 +1104,7 @@ function ReadTimeLab({ preset }: { preset?: string }) {
       summary="All three functions report in the caller's time unit (§20.3). %t converts to the $timeformat units (§20.4.3). Predict each line of the code, one print at a time; the log fills in as you go."
       fidelity="model"
       assumptions={TIMESCALE_ASSUMPTIONS}
+      className={frameClass}
     >
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,150px),1fr))]">
         <Field label="Preset" className="col-span-full">
@@ -1268,7 +1333,7 @@ function ReadTimeLab({ preset }: { preset?: string }) {
             </table>
           </ScrollRegion>
           {hasPercentT ? <p className="text-xs text-muted-foreground">The %t columns leave out any padding; the log below shows it.</p> : null}
-          {hasPercentT && (argMatters || arg !== (current?.arg ?? "realtime")) ? (
+          {showToggle ? (
             <div className="space-y-2">
               <SegmentedControl<"realtime" | "time">
                 label="%t argument"
@@ -1283,7 +1348,11 @@ function ReadTimeLab({ preset }: { preset?: string }) {
               />
               {isRevealed(idx) ? (
                 <p className="text-xs text-muted-foreground" data-testid="percent-t-note">
-                  %t of $time has already lost the fraction (§20.3.1); %t of $realtime keeps it (§20.3.3). The toggle rewrites the code and the log, and the last two columns compare both.
+                  {argMatters
+                    ? "%t of $time has already lost the fraction (§20.3.1); %t of $realtime keeps it (§20.3.3). The toggle rewrites the code and the log, and the last two columns compare both."
+                    : trace.lines.some((l) => l.toolDependent)
+                      ? "%t of $time and %t of $realtime print the same text here, because the %t units are tool-dependent either way. The toggle still rewrites the code."
+                      : "%t of $time and %t of $realtime print the same text at this format: every %t line runs at a whole number of the caller's units, or the format's digits hide the fraction. The toggle still rewrites the code."}
                 </p>
               ) : null}
             </div>
@@ -1389,6 +1458,7 @@ function WhichUnitLab() {
       summary="Reorder the files, choose how the tool groups them into compilation units (§3.12.1), and predict b's unit. The model applies the precedence rules of §3.14.2.3 to every design element."
       fidelity="model"
       assumptions={TIMESCALE_ASSUMPTIONS}
+      className={frameClass}
     >
       <div className="flex flex-wrap items-center gap-4">
         <SegmentedControl<Grouping>
@@ -1545,6 +1615,7 @@ function GlobalPrecisionLab() {
       summary="The global precision is the minimum over every timeprecision, every timeunit precision argument and the smallest `timescale precision in the design (§3.14.3). Add one vendor model and predict what moves."
       fidelity="model"
       assumptions={TIMESCALE_ASSUMPTIONS}
+      className={frameClass}
     >
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
         <CodeTrace label="tb.sv (timeunit and timeprecision, no `timescale)" lines={(tbFile?.code ?? []).map((text) => ({ text }))} />
@@ -1628,7 +1699,7 @@ function GlobalPrecisionLab() {
           </ScrollRegion>
           {vendorRevealed ? (
             <p className="text-xs text-muted-foreground">
-              The directive counts toward the global precision even though tb.sv&apos;s modules do not use it (they declare their own timeunit and timeprecision). Only vendor_model does (§3.14.3). Each module still rounds to its own precision (§3.14.1), and an explicit $timeformat still fixes %t (§20.4.3). {report.resolution.errors.length ? "" : "No mixed specification: vendor_model takes its unit and precision from the directive (rule b)."}
+              The directive counts toward the global precision even though tb.sv&apos;s modules do not use it (they declare their own timeunit and timeprecision). Only vendor_model does (§3.14.3). 1step equals the global precision (§3.14.3), so it moves with it. Each module still rounds to its own precision (§3.14.1), and an explicit $timeformat still fixes %t (§20.4.3). {report.resolution.errors.length ? "" : "No mixed specification: vendor_model takes its unit and precision from the directive (rule b)."}
             </p>
           ) : (
             <p className="text-xs text-muted-foreground">Now add the vendor model above and predict again: the comparison opens once you have made both predictions.</p>
@@ -1655,7 +1726,7 @@ const SCOPE_ORDER = ["caller", "boundary", "callee", "log"] as const;
 const CHIP_CAPTION_CLASS: Readonly<Record<UnitState, string>> = {
   tagged: "text-amber-900 dark:text-amber-100",
   count: "text-amber-900 dark:text-amber-100",
-  dropped: "text-muted-foreground line-through",
+  dropped: "text-rose-800 dark:text-rose-200",
   "never-had": "text-muted-foreground",
   "resolved-time": "text-emerald-800 dark:text-emerald-200",
 };
@@ -1671,7 +1742,8 @@ function CrossScopeLab() {
   const [stepIndex, setStepIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [suspectId, setSuspectId] = useState<string | null>(null);
-  const [huntSkipped, setHuntSkipped] = useState(false);
+  /** Latched when the culprit is first found or the hunt is skipped, so reading a decoy's verdict afterwards takes nothing away. */
+  const [huntDone, setHuntDone] = useState(false);
   const [fixId, setFixId] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   /** What the persistent live region should read next: the last thing the learner changed. */
@@ -1692,7 +1764,7 @@ function CrossScopeLab() {
   const fix = fixes.find((f) => f.id === fixId) ?? null;
   const hasHunt = form === FIRST_FORM;
   /** The hunt comes first: the trace, the highlighted line and the fixes would all answer it. */
-  const hunting = hasHunt && suspect?.verdict !== "culprit" && !huntSkipped;
+  const hunting = hasHunt && !huntDone;
   const goToStep = (i: number) => {
     setStepIndex(Math.max(0, Math.min(trace.steps.length - 1, i)));
     setLastAction("step");
@@ -1729,28 +1801,34 @@ function CrossScopeLab() {
   };
   const skipHunt = () => {
     focusTraceHeading.current = true;
-    setHuntSkipped(true);
+    setHuntDone(true);
     setStepIndex(0);
+  };
+  const chooseSuspect = (id: string, verdict: "culprit" | "contributes" | "decoy") => {
+    setSuspectId(id);
+    setLastAction("suspect");
+    if (verdict === "culprit") setHuntDone(true);
   };
   useEffect(() => {
     if (focusTraceHeading.current && traceHeading.current) {
       focusTraceHeading.current = false;
       traceHeading.current.focus();
     }
-  }, [huntSkipped]);
+  }, [huntDone]);
   const startOver = () => {
     setAttempt((n) => n + 1);
     setForm(FIRST_FORM);
     setStepIndex(0);
     setSuspectId(null);
-    setHuntSkipped(false);
+    setHuntDone(false);
     setFixId(null);
     setLastAction(null);
   };
+  /** The lane titles come from the model's configuration, as the code panel does. */
   const lanes: { id: (typeof SCOPE_ORDER)[number]; title: string }[] = [
-    { id: "caller", title: "tb_top (1ns)" },
+    { id: "caller", title: `tb_top (${formatScale(CROSS_SCOPE_DEFAULT.callerUnit)})` },
     { id: "boundary", title: "call boundary" },
-    { id: "callee", title: "util_pkg (1ps)" },
+    { id: "callee", title: `util_pkg (${formatScale(CROSS_SCOPE_DEFAULT.calleeUnit)})` },
     { id: "log", title: "wake / log" },
   ];
   const laneIndex = step ? SCOPE_ORDER.indexOf(step.scope) : 0;
@@ -1808,7 +1886,14 @@ function CrossScopeLab() {
             >
               <div className="mx-auto w-fit max-w-full rounded-lg border border-amber-500/70 bg-amber-500/15 px-2 py-1 text-center">
                 <div className={cn("text-sm font-semibold text-foreground", mono)}>{step.value}</div>
-                <div className={cn("text-[10px]", CHIP_CAPTION_CLASS[step.unitState])}>{unitChipText(step)}</div>
+                <div className={cn("text-[10px]", CHIP_CAPTION_CLASS[step.unitState])}>
+                  {step.unitState === "dropped" && step.lostTag ? (
+                    <>
+                      <span className="text-muted-foreground line-through">{step.lostTag}</span>{" "}
+                    </>
+                  ) : null}
+                  {unitChipText(step)}
+                </div>
               </div>
             </div>
           </div>
@@ -1838,10 +1923,11 @@ function CrossScopeLab() {
     <VisualFrame
       label="Timescale lab: a time value crosses a scope"
       eyebrow="Debug it · predict, find, fix"
-      title="The 1000× delay"
-      summary="A package written in picoseconds exports wait_t(time t). A nanosecond bench calls it. Predict the wake time, find the line that loses the factor of 1000, then follow the value across the boundary and choose a fix."
+      title="A time value crosses a scope"
+      summary="A package written in picoseconds exports wait_t(time t). A nanosecond bench calls it. Predict the wake time, then find the line responsible, follow the value across the boundary and choose a fix."
       fidelity="model"
       assumptions={TIMESCALE_ASSUMPTIONS}
+      className={frameClass}
     >
       <SegmentedControl<CallForm>
         label="Call form"
@@ -1876,7 +1962,7 @@ function CrossScopeLab() {
         <div className="space-y-3" data-testid="cross-scope-reveal">
           {hasHunt ? (
             <>
-              <RevealHeading>Find the line</RevealHeading>
+              <RevealHeading>The 1000× delay: find the line</RevealHeading>
               {logLine}
               <div className="space-y-2">
                 <p className="text-sm font-semibold text-foreground">Which line turns 5 ns into 5 ps?</p>
@@ -1887,10 +1973,7 @@ function CrossScopeLab() {
                       <li key={row.suspect.id}>
                         <button
                           type="button"
-                          onClick={() => {
-                            setSuspectId(row.suspect.id);
-                            setLastAction("suspect");
-                          }}
+                          onClick={() => chooseSuspect(row.suspect.id, row.suspect.verdict)}
                           aria-pressed={pressed}
                           aria-label={`Suspect line: ${row.code}`}
                           aria-describedby={pressed ? suspectVerdictId : undefined}
@@ -1928,7 +2011,9 @@ function CrossScopeLab() {
                 ) : null}
                 {hunting ? (
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <HintLadder hints={[...CROSS_SCOPE_HINTS]} resetKey={promptKey} className={cn("min-w-0 flex-1", touchButtons)} />
+                    <HintFocusKeeper className="min-w-0 flex-1">
+                      <HintLadder hints={[...CROSS_SCOPE_HINTS]} resetKey={promptKey} className={touchButtons} />
+                    </HintFocusKeeper>
                     <button type="button" className={textButtonClass} onClick={skipHunt}>
                       Skip the hunt and show the trace
                     </button>

@@ -11,6 +11,7 @@ import {
   argumentFs,
   arrangeOptions,
   axisForWakes,
+  binaryRemark,
   checkScalePair,
   clockPeriodFs,
   crossScopeCode,
@@ -20,6 +21,7 @@ import {
   defaultUnitsOptions,
   displayCode,
   effectiveFormat,
+  exactInBinary,
   explainLine,
   formatFsAuto,
   formatFsIn,
@@ -54,6 +56,7 @@ import {
   setsFormatBeforeFirstPrint,
   splitPadding,
   thenEveryText,
+  tickCount,
   traceCrossScope,
   twoModulesGlobalPrecision,
   unitChipText,
@@ -61,6 +64,7 @@ import {
   usesPercentT,
   wakeSequenceOptions,
   wakeText,
+  wakesBelow64Bits,
   whichUnitOptions,
   withPercentTArg,
   type SourceFile,
@@ -510,7 +514,9 @@ describe("sv-timescale-model: values that cross a scope (§5.8, §6.12.1, §3.14
     expect(t.printed).toBe("expected 5 ns, woke at 0.005 ns");
     expect(t.steps.map((s) => s.unitTag)).toEqual(["1ns", null, "1ps", null]);
     expect(t.steps.map((s) => s.unitState)).toEqual(["tagged", "dropped", "tagged", "resolved-time"]);
-    expect(t.steps[1].what).toMatch(/unit tag is gone/);
+    expect(t.steps[1].what).toContain("Only the number is passed: 5.0 meant 5ns because tb_top reads numbers in its 1ns unit, and that reading stays in tb_top.");
+    expect(t.steps[1].what).not.toMatch(/unit tag/);
+    expect(t.steps[1].lostTag).toBe("1ns");
   });
 
   it("wait_t(1.5ns): the real 1.5 rounds to 2 when passed to time (§6.12.1), so 2 ps", () => {
@@ -916,10 +922,10 @@ describe("sv-timescale-model: wording tied to the delay as written", () => {
 describe("sv-timescale-model: the value's unit in words", () => {
   it("names the state at every step, and only the wait_t boundary drops a tag", () => {
     const steps = (form: "wait_t_5ns" | "wait_t_1p5ns" | "wait_ns_5" | "repeat_posedge") => traceCrossScope(form).steps;
-    expect(steps("wait_t_5ns").map(unitChipText)).toEqual(["1ns", "unit tag dropped", "1ps", "wake time"]);
+    expect(steps("wait_t_5ns").map(unitChipText)).toEqual(["1ns", "not passed on", "1ps", "wake time"]);
     expect(steps("wait_ns_5").map(unitChipText)).toEqual(["plain number", "plain number", "1ps", "wake time"]);
     expect(steps("repeat_posedge").map(unitChipText)).toEqual(["clock edges", "wake time"]);
-    expect(steps("wait_t_5ns").map(unitSentence)).toEqual(["value 5.0 understood in 1ns", "value 5, its unit tag dropped", "value 5 understood in 1ps", "wake time 5 ps"]);
+    expect(steps("wait_t_5ns").map(unitSentence)).toEqual(["value 5.0 understood in 1ns", "value 5; tb_top's 1ns reading is not passed on", "value 5 understood in 1ps", "wake time 5 ps"]);
     expect(steps("wait_ns_5").map(unitSentence)).toEqual(["plain number 5", "plain number 5.0", "value 5000 understood in 1ps", "wake time 5 ns"]);
     expect(steps("repeat_posedge").map(unitSentence)).toEqual(["5 clock edges", "wake time 5 ns"]);
     for (const form of ["wait_t_5ns", "wait_t_1p5ns", "wait_ns_5", "repeat_posedge"] as const) {
@@ -949,22 +955,51 @@ describe("sv-timescale-model: the value's unit in words", () => {
   });
 });
 
-describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.8.7, §5.8)", () => {
+describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.2.2.3, A.8.7, §5.8)", () => {
   const reasonOf = (text: string) => {
     const parsed = parseDelay(text);
     return parsed.kind === "invalid" ? parsed.reason : `not invalid: ${parsed.kind}`;
   };
 
-  it("a bare x, z or ? is no unknown value: x and z digits exist only inside a based number", () => {
-    for (const text of ["x", "#x", "#(x)", "#(xz)", "(z)", "#(?)", "?", "#(Z)"]) {
+  it("a bare x or z is no unknown value: x and z digits exist only inside a based number, so it would name an identifier", () => {
+    for (const text of ["x", "#x", "#(x)", "#(xz)", "(z)", "#(Z)"]) {
       expect(parseDelay(text).kind, text).toBe("invalid");
-      expect(reasonOf(text), text).toMatch(/A\.8\.7.*#\(1'bx\)/);
+      expect(reasonOf(text), text).toMatch(/^A bare [xXzZ]+ is not an unknown value\. x and z digits exist only inside a based number \(A\.8\.7\), so here it would name an identifier \(§5\.6\)\. Write #\(1'bx\)\.$/);
     }
   });
 
-  it("a based number must carry its base and only x or z digits, and a decimal base takes one such digit", () => {
-    for (const text of ["#(0'bx)", "#(1'dxx)", "#(4'b1x0z)", "#(1'bx1)", "#(1'x)"]) expect(parseDelay(text).kind, text).toBe("invalid");
-    for (const text of ["#(1'dx)", "#(1'sbx)", "#(8'hzz)", "#('Z)"]) expect(parseDelay(text).kind, text).toBe("xz");
+  it("a bare ? is no legal delay: it is a z_digit only inside a based number, and no identifier can hold it", () => {
+    for (const text of ["?", "#?", "#(?)", "#(x?)", "#(z?x)"]) {
+      expect(parseDelay(text).kind, text).toBe("invalid");
+      expect(reasonOf(text), text).toMatch(/^A bare [xXzZ?]+ is not a legal delay\. \? is a z_digit \(A\.8\.7\) only inside a based number, and no identifier can hold it \(§5\.6\)\. Write #\(1'bz\)\.$/);
+      expect(reasonOf(text), text).not.toMatch(/name an identifier/);
+    }
+  });
+
+  it("a based number with only x or z digits is a zero delay; a malformed one is turned away without a verdict on the form", () => {
+    for (const text of ["#(1'dx)", "#(1'sbx)", "#(8'hzz)", "#('Z)", "#(1'b?)", "#(4'bxz_x)"]) expect(parseDelay(text).kind, text).toBe("xz");
+    // A size of 0 (§5.7.1), two x digits after a decimal base, or no base letter: not an integer literal of A.8.7.
+    for (const text of ["#(0'bx)", "#(1'dxx)", "#(1'x)"]) {
+      expect(parseDelay(text).kind, text).toBe("invalid");
+      expect(reasonOf(text), text).toMatch(/^Write a delay as/);
+    }
+  });
+
+  it("legal delays the lab does not compute say they are outside this lab, not that the grammar rejects them", () => {
+    // A based number with known digits (A.8.7), and '0 or '1, in parentheses (A.6.5).
+    for (const text of ["#(4'b1x0z)", "#(1'bx1)", "#(4'd5)", "#(4'b1x)", "#(8'hA_F)", "#('1)"]) {
+      expect(parseDelay(text).kind, text).toBe("invalid");
+      expect(reasonOf(text), text).toMatch(/is a legal delay: an integer literal \(A\.8\.7\) in parentheses \(A\.6\.5\).*outside this lab/);
+    }
+    // A real in scientific notation is a delay_value (A.2.2.3, A.8.7); its plain form is offered when the exponent is small.
+    expect(reasonOf("#1e3")).toBe("1e3 is a real number in scientific notation, a legal delay_value (A.2.2.3, A.8.7), but this lab reads only plain decimals, so it is outside this lab. Write it as #1000 instead.");
+    expect(reasonOf("#1.5e-3")).toMatch(/legal delay_value.*outside this lab\. Write it as #0\.0015 instead\.$/);
+    expect(reasonOf("#2E+2")).toMatch(/Write it as #200 instead\.$/);
+    expect(reasonOf("#1e99999999999")).toMatch(/Write it as a plain decimal instead\.$/);
+    expect(reasonOf("#1step")).toMatch(/^1step is in the delay_value grammar \(A\.2\.2\.3\).*global precision \(§3\.14\.3\).*outside this lab/);
+    // A name may be a parameter: legal, but the lab has no declaration for it.
+    for (const text of ["#abc", "#(delay)", "_1"]) expect(reasonOf(text), text).toMatch(/^If \S+ names a parameter or a variable, it is a legal delay \(A\.2\.2\.3, A\.6\.5\), but this lab has no declaration for it, so it is outside this lab\./);
+    for (const text of ["#1e3", "#(4'd5)", "#abc", "#1step"]) expect(reasonOf(text), text).not.toMatch(/cannot|not accept|needs parentheses/);
   });
 
   it("a time literal has no space before its unit (§5.8)", () => {
@@ -978,11 +1013,11 @@ describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.8.7, §5.8)", (
   it("a negative or based value needs parentheses: delay_value has neither a unary minus nor a based number", () => {
     for (const text of ["-1", "#-1", "#- 1", "-5"]) {
       expect(parseDelay(text).kind, text).toBe("invalid");
-      expect(reasonOf(text), text).toMatch(/no unary minus.*#\(-1\)/);
+      expect(reasonOf(text), text).toMatch(/no unary minus \(A\.2\.2\.3\).*\(§9\.4, A\.6\.5\).*#\(-1\)/);
     }
-    for (const text of ["1'bz", "#1'bz", "4'bx", "#4'bx", "'x", "#'z"]) {
+    for (const text of ["1'bz", "#1'bz", "4'bx", "#4'bx", "'x", "#'z", "#4'd5", "#'1"]) {
       expect(parseDelay(text).kind, text).toBe("invalid");
-      expect(reasonOf(text), text).toMatch(/needs parentheses/);
+      expect(reasonOf(text), text).toMatch(/cannot be a based literal \(A\.2\.2\.3\), so this one needs parentheses \(§9\.4, A\.6\.5\)/);
     }
     expect(parseDelay("#(-1)").kind).toBe("negative");
     expect(parseDelay("#(- 1)").kind).toBe("negative");
@@ -1019,7 +1054,8 @@ describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.8.7, §5.8)", (
       expect(reasonOf(text), text).toMatch(/evaluates to a negative value/);
       expect(reasonOf(text), text).not.toMatch(/with a fraction|negative integer/);
     }
-    expect(reasonOf("#abc")).toBe("Write a delay as #d (for example #2.75), a time literal (#2.1ns), #(1'bx) or #(-1).");
+    expect(reasonOf("#(2+3)")).toBe("Write a delay as #d (for example #2.75), a time literal (#2.1ns), #(1'bx) or #(-1): the forms this lab computes.");
+    expect(reasonOf("#2.")).toBe("Write a delay as #d (for example #2.75), a time literal (#2.1ns), #(1'bx) or #(-1): the forms this lab computes.");
   });
 
   it("the x/z preset writes a form that compiles, and its 'compile error' distractor can honestly say so", () => {
@@ -1071,10 +1107,12 @@ describe("sv-timescale-model: what the feedback says about rounding", () => {
     const contrast = { name: "u_slow", unit: scale(10, "ns"), precision: scale(1, "ns") };
     const literal = wakeSequenceOptions(roundDelayText("#2.1ns", scale(1, "ns"), scale(100, "ps")), 2, contrast).find((o) => o.id === "other-module");
     expect(literal?.label).toBe("2 ns, then 4 ns");
-    expect(literal?.feedback).toContain("A time literal is the same value before rounding in both modules (§5.8); only each module's own precision differs (§3.14.1).");
-    expect(literal?.feedback).not.toContain("The unit scales");
+    expect(literal?.feedback).toBe("Only this module's own 100ps precision rounds the delay it runs (§3.14.1). A time literal is the same value before rounding in every module (§5.8); the other module's settings play no part here.");
+    expect(literal?.feedback).not.toContain("unit sets the size");
     const number = wakeSequenceOptions(roundDelayText("#1.26", scale(1, "ns"), scale(100, "ps")), 1, contrast);
-    expect(number.find((o) => o.id === "other-module")?.feedback).toContain("The unit scales the number");
+    expect(number.find((o) => o.id === "other-module")?.feedback).toBe(
+      "Only this module's own unit and precision decide its wake time: the 1ns unit sets the size of the delay and the 100ps precision rounds it (§3.14, §3.14.1). The other module's settings play no part here.",
+    );
     const tenX = (d: string) => options(d, scale(1, "ns"), scale(1, "ns")).find((o) => o.id === "ten-x")?.feedback;
     expect(tenX("#5ns")).toMatch(/^A time literal is converted to the current unit once \(§5\.8\)/);
     expect(tenX("#3")).toMatch(/^The 1ns unit scales the number once/);
@@ -1278,7 +1316,10 @@ describe("sv-timescale-model: the reasons of the cross-scope trace", () => {
   it("every step of wait_t and wait_ns cites the rule that moves the value", () => {
     const five = traceCrossScope("wait_t_5ns").steps;
     expect(five[0].why).toContain("§5.8");
-    expect(five[1].why).toContain("Nothing converts it when it crosses into another scope");
+    expect(five[1].why).toBe(
+      "Passing a value to a subroutine argument is an assignment-like context (§10.8), so the real 5.0 becomes the integer 5 of the time argument, an integer type (§6.11, §6.12.1). Nothing rescales a number for the new scope's unit, and a realtime argument would pass a plain 5.0 just the same: a real carries no unit (§6.12).",
+    );
+    expect(five[1].why).not.toMatch(/Nothing converts/);
     expect(five[2].why).toContain("§3.14");
     expect(five[3].why).toContain("§20.4.3");
     expect(five[3].why).toContain("never the delay");
@@ -1308,8 +1349,14 @@ describe("sv-timescale-model: the reasons of the cross-scope trace", () => {
       ["1ps", "5 ns", true],
       ["10ns", "5 ns", true],
     ]);
-    expect(fixes.cycles.code).toContain("always #0.5ns clk = ~clk;");
-    expect(fixes.cycles.review).toContain("These results assume the clock line above");
+    // Without the initializer clk is 'x (Table 6-7) and ~x stays x, so no posedge would ever come (§9.4.2).
+    expect(fixes.cycles.code.split("\n")).toEqual([
+      "logic clk = 1;   // set before any procedure starts (§6.8)",
+      "always #0.5ns clk = ~clk;   // a literal: the same period in any unit at this 1ps precision",
+      "repeat (5) @(posedge clk);   // in tb_top: five clock edges; this line has no unit",
+    ]);
+    expect(fixes.cycles.review).toContain("These results assume the two clock lines above: clk starts at 1 before any procedure runs (§6.8), so it first rises one full period in");
+    expect(fixes.cycles.review).toContain("the same period in every caller unit at this 1ps precision (§5.8)");
     expect(fixes.cycles.review).toContain("With a bare #0.5, a caller in 10ns would wake at 50 ns.");
     expect(fixes["wait-ns"].review).toMatch(/^Accepted, and preferred/);
     expect(fixes["project-timeunit"].review).toMatch(/^Works for this bench/);
@@ -1354,5 +1401,195 @@ describe("sv-timescale-model: the reset key alone moves the options", () => {
     for (const slot of [0, 1, 2, 3]) expect(slots.filter((s) => s === slot).length, `slot ${slot}`).toBeGreaterThanOrEqual(60);
     const moved = keys.filter((key, i) => i > 0 && key !== keys[i - 1]).length;
     expect(moved).toBeGreaterThanOrEqual(340);
+  });
+});
+
+describe("sv-timescale-model: fix round 1, the order of scaling and rounding (§3.14.1, §22.7)", () => {
+  const at = (d: string, unit: ReturnType<typeof scale>, precision: ReturnType<typeof scale>) => roundDelayText(d, unit, precision);
+
+  it("no step states an order as the rule; the §22.7 order is shown with the same result, computed for the delay", () => {
+    expect(at("#1.26", scale(10, "ns"), scale(1, "ns")).steps).toContain(
+      "§22.7 lists the steps as round, then scale: 1.26 rounded to one decimal place is 1.3, and 1.3 × 10ns is 13 ns. The wake time is the same either way, because the precision is relative to the unit (§3.14.1).",
+    );
+    expect(at("#2.75", scale(1, "ns"), scale(100, "ps")).steps.join(" ")).toContain("2.75 rounded to one decimal place is 2.8, and 2.8 × 1ns is 2.8 ns.");
+    expect(at("#0.4", scale(1, "ns"), scale(1, "ns")).steps.join(" ")).toContain("0.4 rounded to a whole number is 0, and 0 × 1ns is 0 ns.");
+    expect(at("#1.234", scale(100, "ns"), scale(1, "ns")).steps.join(" ")).toContain("1.234 rounded to 2 decimal places is 1.23, and 1.23 × 100ns is 123 ns.");
+    expect(at("#2.1ns", scale(10, "ns"), scale(1, "ns")).steps.join(" ")).toContain("0.21 rounded to one decimal place is 0.2, and 0.2 × 10ns is 2 ns.");
+    expect(at("#2.85", scale(1, "ns"), scale(100, "ps")).steps.join(" ")).toContain("2.85 rounded to one decimal place is 2.8 or 2.9, and 2.8 or 2.9 × 1ns is 2.8 ns or 2.9 ns.");
+    // Nothing to round, nothing to order.
+    expect(at("#2.5", scale(10, "ns"), scale(1, "ns")).steps.join(" ")).not.toContain("§22.7 lists");
+    for (const d of ["#1.26", "#2.75", "#2.1ns", "#2.85", "#0.4"]) {
+      const text = at(d, scale(1, "ns"), scale(100, "ps")).steps.join(" ");
+      expect(text, d).not.toMatch(/scales the number, then|then the element's own precision rounds/);
+    }
+  });
+
+  it("the nearest-tick step, the truncation and the step distractors cite §22.7 for 'nearest'", () => {
+    expect(at("#1.26", scale(10, "ns"), scale(1, "ns")).steps).toContain("12.6 ticks of the 1ns precision: nearer to 13 than to 12, so it rounds to the nearest tick, 13 ticks (§3.14.1, §22.7).");
+    const options = roundingOptions(at("#2.75", scale(1, "ns"), scale(100, "ps")));
+    expect(options.find((o) => o.id === "truncated")?.feedback).toContain("nearest tick (§22.7; §3.14.1 rounds 2.75 ns up to 2.8 ns)");
+    const three = roundingOptions(at("#3", scale(1, "ns"), scale(1, "ns")));
+    expect(three.find((o) => o.id === "step-later")?.feedback).toMatch(/rounds to the nearest 1ns tick \(§22\.7\)\.$/);
+    const seq = wakeSequenceOptions(at("#1.26", scale(1, "ns"), scale(100, "ps")), 1);
+    expect(seq.find((o) => o.correct)?.feedback).toContain("each time it runs (§3.14.1, §22.7)");
+  });
+});
+
+describe("sv-timescale-model: fix round 1, ticks and ties in words", () => {
+  const at = (d: string, unit: ReturnType<typeof scale>, precision: ReturnType<typeof scale>) => roundDelayText(d, unit, precision);
+
+  it("says '1 tick', never '1 ticks'", () => {
+    expect(tickCount(BigInt(1))).toBe("1 tick");
+    expect(tickCount("27.5")).toBe("27.5 ticks");
+    expect(tickCount(BigInt(0))).toBe("0 ticks");
+    for (const [d, unit, precision] of [
+      ["#0.5", scale(1, "ns"), scale(1, "ns")],
+      ["#50ps", scale(1, "ns"), scale(100, "ps")],
+      ["#1", scale(1, "ns"), scale(1, "ns")],
+      ["#0.8", scale(1, "ns"), scale(1, "ns")],
+    ] as const) {
+      const text = at(d, unit, precision).steps.join(" ");
+      expect(text, d).not.toMatch(/\b1 ticks/);
+    }
+    expect(at("#0.5", scale(1, "ns"), scale(1, "ns")).steps.join(" ")).toContain("Half away from zero gives 1 tick (1 ns); half to even gives 0 ticks (0 ns).");
+    expect(at("#1", scale(1, "ns"), scale(1, "ns")).steps.join(" ")).toContain("1 tick of the 1ns precision: a whole number");
+  });
+
+  it("the tie feedback writes value × unit, and a literal with its written value", () => {
+    const tie = roundingOptions(at("#2.85", scale(1, "ns"), scale(100, "ps"))).find((o) => o.id === "tie")?.feedback;
+    expect(tie).toMatch(/^2\.85 × 1ns is exactly half way between two 100ps ticks/);
+    const literal = at("#2.5ns", scale(10, "ns"), scale(1, "ns"));
+    expect(literal.toolDependent).toBe(true);
+    expect(roundingOptions(literal).find((o) => o.id === "tie")?.feedback).toMatch(/^2\.5ns = 0\.25 × 10ns is exactly half way between two 1ns ticks/);
+    expect(wakeSequenceOptions(literal, 1).find((o) => o.id === "tie")?.feedback).toBe("2.5ns = 0.25 × 10ns sits exactly half way between two 1ns ticks and §3.14.1 states no tie rule.");
+  });
+
+  it("the binary remark is the lab's reasoning, and only for a tool-dependent tie whose value has no exact binary form", () => {
+    expect(exactInBinary({ num: BigInt(5), den: BigInt(10) })).toBe(true);
+    expect(exactInBinary({ num: BigInt(275), den: BigInt(100) })).toBe(true);
+    expect(exactInBinary({ num: BigInt(285), den: BigInt(100) })).toBe(false);
+    expect(exactInBinary({ num: BigInt(15), den: BigInt(100) })).toBe(false);
+    expect(exactInBinary({ num: BigInt(0), den: BigInt(1000) })).toBe(true);
+    expect(binaryRemark(at("#2.85", scale(1, "ns"), scale(100, "ps")))).toBe(
+      "The lab's reasoning, not a rule of the standard: a real literal is held as an IEEE 754 double (§5.7.2), and 2.85 has no exact binary form, so a simulator that rounds the double may not see a half tick here at all.",
+    );
+    // Exact ties in binary: no remark.
+    expect(at("#0.5", scale(1, "ns"), scale(1, "ns")).toolDependent).toBe(true);
+    expect(binaryRemark(at("#0.5", scale(1, "ns"), scale(1, "ns")))).toBeNull();
+    expect(at("#2.5", scale(1, "ns"), scale(1, "ns")).toolDependent).toBe(true);
+    expect(binaryRemark(at("#2.5", scale(1, "ns"), scale(1, "ns")))).toBeNull();
+    // Not tool-dependent: no remark either.
+    expect(binaryRemark(at("#1.55", scale(1, "ns"), scale(100, "ps")))).toBeNull();
+  });
+});
+
+describe("sv-timescale-model: fix round 1, wakes stay below 2^64 units whatever the sign of the delay", () => {
+  const u_slow = { unit: scale(10, "ns"), precision: scale(1, "ns") };
+  const big = "#18446744073709551615";
+
+  it("a positive delay just below 2^64 units lists only its first wake, in the wakes, the options and the 'then every' clause", () => {
+    const r = roundDelayText(big, u_slow.unit, u_slow.precision);
+    expect(r.error).toBeNull();
+    expect(wakesBelow64Bits(r, 2)).toBe(1);
+    expect(repeatedWakes(r, 2).map((w) => w.k)).toEqual([1]);
+    expect(thenEveryText(r, 2)).toBe("");
+    const options = wakeSequenceOptions(r, 2, { name: "tb_top", unit: scale(1, "ns"), precision: scale(100, "ps") });
+    expect(options.find((o) => o.correct)?.label).toBe("184467440737095516150 ns");
+    for (const o of options) expect(o.label, o.id).not.toContain("then");
+  });
+
+  it("a delay whose second wake fits but third does not lists two, and the clause says where it stops", () => {
+    const r = roundDelayText("#9223372036854775807", scale(1, "ns"), scale(1, "ns"));
+    expect(repeatedWakes(r, 3).map((w) => w.k)).toEqual([1, 2]);
+    expect(thenEveryText(r, 3)).toBe(", then every 9223372036854775807 ns more, while the total stays below 2^64 units");
+    expect(thenEveryText(r, 2)).toBe(", then every 9223372036854775807 ns more");
+    expect(wakeSequenceOptions(r, 3).find((o) => o.correct)?.label).toBe("9223372036854775807 ns, then 18446744073709551614 ns");
+  });
+
+  it("the negative delay keeps its single wake by the same rule, and rounding up to 2^64 units is outside the lab", () => {
+    expect(repeatedWakes(roundDelayText("#(-1)", u_slow.unit, u_slow.precision), 3).map((w) => w.k)).toEqual([1]);
+    expect(roundDelayText("#18446744073709551615.6", scale(1, "ns"), scale(1, "ns")).error).toMatch(/2\^64 time units or more/);
+    expect(roundDelayText("#18446744073709551615.4", scale(1, "ns"), scale(1, "ns")).error).toBeNull();
+  });
+});
+
+describe("sv-timescale-model: fix round 1, the second wake rounds each delay, not the total", () => {
+  it("offers the running-total misconception when it differs from the answer, citing §3.14.1 and §22.7's example", () => {
+    const slow = roundDelayText("#1.26", scale(10, "ns"), scale(1, "ns"));
+    const options = wakeSequenceOptions(slow, 2, { name: "tb_top", unit: scale(1, "ns"), precision: scale(100, "ps") });
+    const running = options.find((o) => o.id === "running-total");
+    expect(running?.label).toBe("13 ns, then 25 ns");
+    expect(running?.feedback).toContain("Each #1.26 is rounded on its own when it runs, then added");
+    expect(running?.feedback).toContain("(§3.14.1)");
+    expect(running?.feedback).toContain("§22.7's own example, #1.55 twice at 10ns/1ns, wakes at 16 ns and 32 ns");
+    const spine = wakeSequenceOptions(roundDelayText("#1.55", scale(10, "ns"), scale(1, "ns")), 2);
+    expect(spine.find((o) => o.correct)?.label).toBe("16 ns, then 32 ns");
+    expect(spine.find((o) => o.id === "running-total")?.label).toBe("16 ns, then 31 ns");
+    // A whole-tick delay has no running-total error to show.
+    expect(wakeSequenceOptions(roundDelayText("#2.5", scale(10, "ns"), scale(1, "ns")), 2).some((o) => o.id === "running-total")).toBe(false);
+    expect(wakeSequenceOptions(slow, 1).some((o) => o.id === "running-total")).toBe(false);
+  });
+
+  it("the other-module distractor names neither module nor confirms its value", () => {
+    for (const [d, own, contrast] of [
+      ["#1.26", { unit: scale(1, "ns"), precision: scale(100, "ps") }, { name: "u_slow", unit: scale(10, "ns"), precision: scale(1, "ns") }],
+      ["#2.26ns", { unit: scale(10, "ns"), precision: scale(1, "ns") }, { name: "tb_top", unit: scale(1, "ns"), precision: scale(100, "ps") }],
+    ] as const) {
+      const feedback = wakeSequenceOptions(roundDelayText(d, own.unit, own.precision), 2, contrast).find((o) => o.id === "other-module")?.feedback ?? "";
+      expect(feedback, d).toMatch(/the other module's settings play no part here/i);
+      expect(feedback, d).not.toMatch(/u_slow|tb_top|becomes in|10ns\/1ns|1ns\/100ps/);
+    }
+  });
+});
+
+describe("sv-timescale-model: fix round 1, the cross-scope wording", () => {
+  it("the cycle count distractor: repeat counts, the event control waits for one edge", () => {
+    expect(crossScopeOptions("repeat_posedge").find((o) => o.id === "5ps")?.feedback).toBe(
+      "The repeat loop counts the edges and the event control waits for each one; neither uses a time unit (§12.7.2, §9.4.2). The package's 1 ps unit plays no part.",
+    );
+  });
+
+  it("the compile-error distractor states what the language defines, not what a tool prints", () => {
+    for (const form of ["wait_t_5ns", "wait_t_1p5ns", "wait_ns_5"] as const) {
+      const feedback = crossScopeOptions(form).find((o) => o.id === "error")?.feedback;
+      expect(feedback, form).toBe("It compiles: the language defines no error for this mismatch, and only the log shows it.");
+    }
+  });
+
+  it("the wait_ns boundary names the int-to-real conversion and says nothing rescales the number", () => {
+    const boundary = traceCrossScope("wait_ns_5").steps[1];
+    expect(boundary.what).toBe("Passed to the realtime argument delay_ns, the integer 5 becomes the real 5.0, and arrives in util_pkg as a plain number.");
+    expect(boundary.why).toContain("assignment-like context (§10.8)");
+    expect(boundary.why).toContain("(§6.12.1)");
+    expect(boundary.why).toContain("Nothing rescales a number for the new scope's unit.");
+    expect(boundary.why).not.toMatch(/Nothing converts/);
+    const half = traceCrossScope("wait_t_1p5ns").steps[1];
+    expect(half.why).toContain("(§10.8)");
+    expect(half.why).toContain("a realtime argument would pass a plain number too");
+  });
+
+  it("the call suspect says where 5ns becomes a number read in tb_top's unit, matching the chip at that line", () => {
+    const call = gradeCrossScopeSuspects().find((s) => s.id === "call");
+    expect(call?.feedback).toBe(
+      "Half right. This is where 5ns becomes the real 5.0, read in tb_top's 1ns unit, because a literal is converted where it is written (§5.8); passing it to t keeps only the number. The real defect is the package's #t, which reads that number in a different unit.",
+    );
+    expect(traceCrossScope("wait_t_5ns").steps[0]).toMatchObject({ lineKey: "tb-call", value: "5.0", unitTag: "1ns" });
+  });
+
+  it("the tb_top timeunit decoy's evidence is computed and pinned", () => {
+    const suspects = Object.fromEntries(gradeCrossScopeSuspects().map((s) => [s.id, s]));
+    expect(suspects["tb-timeunit"].evidence).toBe("Recomputed with tb_top in 1ps: the call would pass 5000 and wake at 5 ns.");
+    expect(suspects.timeformat.evidence).toBe('Recomputed with $timeformat(-12, 0, " ps", 0): the process still wakes at 5 ps; only the text changes to "expected 5 ns, woke at 5 ps".');
+  });
+
+  it("the clock period's 'any unit' holds at this precision, and the step says so", () => {
+    expect(traceCrossScope("repeat_posedge").steps[1].why).toContain("so the period stays 1 ns in any unit tb_top uses at this 1ps precision.");
+    // At 1ns/1ns, 0.5 ns is a tool-dependent half tick and has no single value.
+    expect(() => clockPeriodFs({ ...CROSS_SCOPE_DEFAULT, callerUnit: scale(1, "ns"), callerPrecision: scale(1, "ns") })).toThrow(/no single value/);
+  });
+
+  it("1step equals the global precision in the headline feedback", () => {
+    expect(globalPrecisionOptions(true).find((o) => o.correct)?.feedback).toContain("1step equals the global precision, so it is 1 fs too (§3.14.3)");
+    expect(globalPrecisionOptions(false).find((o) => o.correct)?.feedback).toContain("1step equals the global precision, so it is 100 ps too (§3.14.3)");
   });
 });

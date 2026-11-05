@@ -99,6 +99,14 @@ describe("sv-region-map-model: region quiz answer key", () => {
     expect((quiz[0] as RegionQuestion).answer).toBe("active");
   });
 
+  it("the print-order prompt states the scenario's own start values", () => {
+    const prints = zeroDelayPrintsScenario();
+    expect(quiz.find((q) => q.id === "print-order")?.prompt).toBe(
+      `This process runs once at the clock edge (d = ${prints.initial.d}, q = ${prints.initial.q} before it). What does the log show, in order?`,
+    );
+    expect(quiz.find((q) => q.id === "print-order")?.prompt).toMatch(/\(d = 5, q = 0 before it\)/);
+  });
+
   it("matches IEEE 1800-2023 §4.4.2 for every event it asks about", () => {
     expect(region("blocking-write")).toBe("active");
     expect(region("nba-update")).toBe("nba");
@@ -322,6 +330,22 @@ describe("sv-region-map-model: next-region decisions read from the trace (IEEE 1
     expect(decisions.map((d) => d.answer)).toEqual(["nba", "reactive-set", "reNba", "active", "end"]);
     expect(decisions.map((d) => d.from)).toEqual(["active", "active", "reactive", "reactive", "active"]);
     expect(decisions.map((d) => d.delta)).toEqual([1, 1, 2, 2, 2]);
+  });
+
+  it("the return to Active names the work Active holds, read from the queues, not a stock claim (§4.5)", () => {
+    const run = simulateTimeSlot(programReactiveScenario());
+    const back = regionDecisions(run).find((d) => d.answer === "active")!;
+    expect(run.trace[back.index - 1].queues.active.map((q) => q.label)).toEqual(["run assign led"]);
+    expect(explainDecision(back, run)).toMatch(/^The reactive set has drained, but Active holds work again \(run assign led\): a change made in the reactive set woke design code\. /);
+  });
+
+  it("program-watcher: the priority decision names what Reactive and Active each hold after the update (§4.5, §24.3.1)", () => {
+    const run = simulateTimeSlot(programWatcherScenario());
+    const priority = regionDecisions(run).find((d) => d.priority)!;
+    const before = run.trace[priority.index - 1];
+    expect(before.queues.reactive.map((q) => q.label)).toEqual(["run watcher"]);
+    expect(before.queues.active.map((q) => q.label)).toEqual(["run assign led"]);
+    expect(explainDecision(priority, run)).toMatch(new RegExp(`^After step ${priority.index}, Reactive holds run watcher and Active holds run assign led\\. The scheduler is inside the reactive loop`));
   });
 
   it("tb-clocking-block: entering the reactive set through an empty Reactive is one decision, and either name for it is correct", () => {

@@ -207,6 +207,7 @@ import {
   findRaceHazards,
   runsOnce,
   slotTimeLabel,
+  validateScenario,
   withInterleaveNba,
   type Statement,
   type SvScenario,
@@ -973,6 +974,103 @@ describe("sv-scheduler-model: $finish (IEEE 1800-2023 §20.2, §9.2.3) and the i
     expect(run.finished?.cause).toBe("implicit-finish");
     expect(run.trace[run.finished!.stepIndex]).toMatchObject({ endedBy: "implicit-finish", processId: "PR", region: "reactive" });
     expect(run.trace[run.finished!.stepIndex].why).toMatch(/implicit call to \$finish \(§24\.3\)/);
+  });
+
+  /** The worked example with the program thread replaced by `patch` of it. */
+  const withProgramThread = (patch: Partial<SvScenario["processes"][number]>): SvScenario => {
+    const base = workedExample({ lastThread: true });
+    return { ...base, processes: base.processes.map((p) => (p.id === "PR" ? { ...p, ...patch } : p)) };
+  };
+
+  it("only a thread that ends can be the last: lastThread on a forever or on a trailing wait throws instead of inventing an implicit $finish (§24.3)", () => {
+    expect(() => validateScenario(workedExample({ lastThread: true }))).not.toThrow();
+    expect(() => simulateTimeSlot(withProgramThread({ header: "initial forever @(posedge clk)" }))).toThrow(/never ends/);
+    expect(() => simulateTimeSlot(withProgramThread({ sourceTail: ["@(posedge clk);"] }))).toThrow(/never ends/);
+  });
+
+  it("lastThread belongs to a program initial: on module code it throws (§24.3)", () => {
+    expect(() => simulateTimeSlot(withProgramThread({ context: "module" }))).toThrow(/program initial procedure/);
+  });
+});
+
+describe("sv-scheduler-model: a trailing wait is shown, never run", () => {
+  it("the thread reaches its trailing @(posedge clk); and waits there: it has not ended, and the narration does not say it finished", () => {
+    const run = simulateTimeSlot(workedExample(), [0, 0]);
+    const steps = run.trace.filter((s) => s.processId === "PR" && s.kind === "statement");
+    expect(steps.at(-1)).toMatchObject({
+      what: "program thread reaches @(posedge clk); and waits there.",
+      why: "The procedure has not ended: it is blocked at that statement. The model runs none of the lines after the body, so it does not wake this process again in this slot.",
+    });
+    expect(steps.some((s) => /finishes/.test(s.what))).toBe(false);
+  });
+
+  it("a second edge in the slot does not re-run a body that is blocked at its trailing wait", () => {
+    const flop = (id: string, header: string, sourceTail?: string[]): SvScenario["processes"][number] => ({
+      id,
+      label: id,
+      owner: "testbench",
+      context: "module",
+      header,
+      trigger: { kind: "posedge", signal: "clk" },
+      body: [{ kind: "display", id: `${id}1`, signals: ["clk"], label: id }],
+      ...(sourceTail ? { sourceTail } : {}),
+    });
+    const run = simulateTimeSlot({
+      id: "two-edges-tail",
+      title: "two edges, one trailing wait",
+      clock: "clk",
+      clockSource: "process",
+      initial: { clk: 0 },
+      watch: ["clk"],
+      processes: [
+        {
+          id: "GEN",
+          label: "gen",
+          owner: "testbench",
+          context: "module",
+          header: "initial",
+          trigger: { kind: "resume" },
+          body: [
+            { kind: "assign", id: "g1", op: "blocking", target: "clk", expr: { kind: "const", value: 1 } },
+            { kind: "delay0", id: "g2" },
+            { kind: "assign", id: "g3", op: "blocking", target: "clk", expr: { kind: "const", value: 0 } },
+            { kind: "delay0", id: "g4" },
+            { kind: "assign", id: "g5", op: "blocking", target: "clk", expr: { kind: "const", value: 1 } },
+          ],
+        },
+        flop("TAIL", "initial @(posedge clk)", ["@(posedge clk);"]),
+        flop("LOOP", "always @(posedge clk)"),
+      ],
+    });
+    const wakes = (id: string) => run.trace.filter((s) => s.kind === "wake" && s.processId === id).length;
+    expect(wakes("LOOP")).toBe(2);
+    expect(wakes("TAIL")).toBe(1);
+    expect(run.log.filter((l) => / TAIL /.test(` ${l} `))).toHaveLength(1);
+  });
+});
+
+describe("sv-scheduler-model: a concurrent assertion needs a property and a posedge clock", () => {
+  const assertionWith = (patch: Partial<SvScenario["processes"][number]>): SvScenario => ({
+    id: "bad-assertion",
+    title: "bad assertion",
+    clock: "clk",
+    initial: { clk: 0, y: 1 },
+    watch: ["clk", "y"],
+    processes: [{ id: "A", label: "a_y", owner: "design", context: "module", kind: "assertion", header: "a_y: assert property", trigger: { kind: "posedge", signal: "clk" }, body: [], assertion: { property: { kind: "var", name: "y" } }, ...patch }],
+  });
+
+  it("a posedge-clocked assertion is accepted", () => {
+    expect(() => simulateTimeSlot(assertionWith({}))).not.toThrow();
+  });
+
+  it("any other trigger throws, in the run and in the source, rather than show a clock the model never ticks", () => {
+    const changeClocked = assertionWith({ trigger: { kind: "change", signals: ["clk"] } });
+    expect(() => simulateTimeSlot(changeClocked)).toThrow(/posedge/);
+    expect(() => scenarioToSource(changeClocked)).toThrow(/posedge/);
+  });
+
+  it("an assertion with no property throws rather than run as an empty procedure", () => {
+    expect(() => simulateTimeSlot(assertionWith({ assertion: undefined }))).toThrow(/no property/);
   });
 });
 

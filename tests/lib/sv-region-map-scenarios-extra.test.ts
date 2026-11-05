@@ -47,6 +47,8 @@ describe("program-watcher: the reactive set drains before Active resumes (IEEE 1
     expect(prediction.question).toMatch(/Which runs first\?/);
     expect(prediction.options.filter((o) => o.correct).map((o) => o.id)).toEqual(["watcher"]);
     expect(prediction.options).toHaveLength(4);
+    // The led value the feedback quotes is the one the watcher's print showed in this run.
+    expect(prediction.options.find((o) => o.id === "watcher")?.feedback).toMatch(/\(§4\.5, §24\.3\.1\)\. That is why the watcher prints led = 0\.$/);
     // §4.7 lists mid-process suspension too, so the race option must not claim same-region readiness is the only source.
     expect(prediction.options.find((o) => o.id === "race")?.feedback).toBe("The watcher sits in Reactive and assign led in Active, so §4.5 fixes the order between them; a pair ready in one region could go either way (§4.7).");
     expect(scenario.title).toBe("A second program thread waits on cmd");
@@ -78,7 +80,11 @@ describe("clocking-drive: the existing tb-clocking-block scenario with region qu
     expect(run.finalValues.seen).toBe(run.trace[0].values.q);
     // The DUT flop read the old din in Active: q is 3, not the driven 7.
     expect(run.finalValues.q).toBe(3);
-    expect(region.options.find((o) => o.id === "reNba")?.feedback).toMatch(/read din = 3 in Active/);
+    expect(region.options.find((o) => o.id === "reNba")?.feedback).toMatch(/read din = 3 in Active long before that, so q becomes 3, not 7\.$/);
+    // Those numbers are read from the run, so a different start value changes the sentence with the model.
+    const other: typeof scenario = { ...scenario, initial: { ...scenario.initial, din: 5 } };
+    const [otherRegion] = preset.predictions(other, simulateTimeSlot(other));
+    expect(otherRegion.options.find((o) => o.id === "reNba")?.feedback).toMatch(/read din = 5 in Active long before that, so q becomes 5, not 7\.$/);
     // §14.16 places the drive in Re-NBA of this time step; §4.5 can still return to Active after it, so no text claims the last design NBA update of the slot.
     expect(region.options.find((o) => o.id === "reNba")?.label).toBe("Re-NBA, after the design NBA updates queued for this edge");
     expect(region.options.find((o) => o.id === "nba")?.feedback).toMatch(/after the design NBA updates already queued for this edge\.$/);
@@ -121,6 +127,14 @@ describe("the merged preset list", () => {
     expect(before("clocking-drive")).not.toMatch(/Re-NBA|Preponed/);
     expect(before("program-reactive")).not.toMatch(/Reactive|new q/);
     expect(before("program-watcher")).not.toMatch(/drains/);
+  });
+
+  it("every preset has one legal order, as the visualizer's assumptions state: no scheduler choice point at all (§4.7)", () => {
+    for (const preset of allRegionMapScenarioPresets) {
+      const scenario = preset.build();
+      expect(simulateTimeSlot(scenario).choices).toEqual([]);
+      expect(exploreOrderings(scenario)).toMatchObject({ deterministic: true, runCount: 1 });
+    }
   });
 
   it("every preset has exactly one correct option per question and a replayable trace", () => {
