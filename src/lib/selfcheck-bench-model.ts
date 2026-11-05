@@ -710,14 +710,18 @@ export function runBench(config: BenchConfig): RunResult {
   // ---- A clock that never toggles: no edges, the watchdog ends the run (§6.8, §11.4.8, §20.10).
   if (config.clockInit === "none") {
     const events: BenchEvent[] = [];
+    // What the run branch is stuck in: reset_dut() when the bench has one, else the first test's first task.
+    let waiter = "reset_dut() waits forever";
     if (config.reset === "normal") events.push({ kind: "reset-drive" });
     if (config.reset !== "normal") {
-      // run_one() prints at time 0 and send() then waits for an edge that never comes.
+      // run_one() prints at time 0 and the test's first task then waits for an edge that never comes.
       const first = config.tests[0];
       if (first) {
         log.push({ time: 0, kind: "test", text: `TEST ${first}` });
         events.push({ kind: "test-start", test: first, time: 0 });
-      }
+        const firstStim = effectiveStimulus(config, first)[0];
+        waiter = `run_one("${first}") printed "0 ns TEST ${first}", and ${firstStim ? `${firstStim.kind}()` : "drain()"} waits forever`;
+      } else waiter = "drain() waits forever";
     }
     failCnt += 1; // the watchdog counts the hang, then calls report()
     const rawPass = passCnt;
@@ -739,7 +743,7 @@ export function runBench(config: BenchConfig): RunResult {
       node: "wdog",
       alsoNodes: [],
       tokens: [],
-      what: `No rising edge ever happens: logic clk starts at x and ~x is x, so always #5 clk = ~clk; keeps writing x (§6.8, §11.4.8; Table 9-2: no edge). reset_dut() waits forever; at ${formatTime(config.timeoutNs)} the watchdog counts the hang, prints the summary and calls $fatal.`,
+      what: `No rising edge ever happens: logic clk starts at x and ~x is x, so always #5 clk = ~clk; keeps writing x (§6.8, §11.4.8; Table 9-2: no edge). ${waiter}; at ${formatTime(config.timeoutNs)} the watchdog counts the hang, prints the summary and calls $fatal.`,
       why: "$fatal ends the run through an implicit $finish (§20.10). Without the watchdog this run would never end and never print a verdict.",
     });
     return {
@@ -1099,7 +1103,8 @@ function momentStep(kind: MomentStep["kind"], index: number, time: number, event
         ...base,
         kind,
         activeKey: "main-wdog",
-        contextKeys: ["main-report"],
+        // The watchdog calls report() on its own line: main never reaches its report(); line (main-report).
+        contextKeys: ["report-display"],
         node: "wdog",
         what: `${formatTime(time)}: the watchdog's #(TIMEOUT) expired first: fail_cnt++, report() printed PASS=${passCnt} FAIL=${failCnt}, and $fatal ended the run with the WDOG message (test '${config.testName}').`,
         why: "$fatal prints a fatal error and implies $finish (§20.10), so a run that outlasts TIMEOUT still ends with a verdict line.",
@@ -1358,6 +1363,9 @@ function describeChecker(action: CheckerAction, s: Sampled, config: BenchConfig)
  * - before the check: a+b is at the DUT (sampled, or still in its registers) and
  *   the expected sum waits in exp_q, on no wire;
  * - checked: actual (the sum the checker read) meets expected on the checker's two inputs.
+ * On back-to-back sends two a+b tokens share stim-dut: the new one just leaving
+ * send() (t = 0.3) and the older one at the DUT (t = 0.95), far enough apart on
+ * the ANATOMY_GRID layout that the widest labels' pills do not overlap.
  */
 function tokensAt(edge: number, expectations: readonly Expectation[], config: BenchConfig, sampledSum: Val): AnatomyToken[] {
   const tokens: AnatomyToken[] = [];
@@ -1368,12 +1376,12 @@ function tokensAt(edge: number, expectations: readonly Expectation[], config: Be
     const age = edge - e.sentAtEdge;
     const checkAge = e.checkedAtEdge === null ? 2 : e.checkedAtEdge - e.sentAtEdge;
     if (age === 0) {
-      tokens.push({ edgeId: "stim-dut", t: 0.55, label: dataLabel });
+      tokens.push({ edgeId: "stim-dut", t: 0.3, label: dataLabel });
       if (config.checkStyle === "queue") tokens.push({ edgeId: "model-q", t: 0.8, label: expLabel });
       else if (config.checkStyle === "single-expected") tokens.push({ edgeId: "stim-model", t: 0.7, label: expLabel });
     } else if (age < checkAge) {
       // The extra stage's second edge has the result leaving the DUT; the checker still reads it one edge later.
-      tokens.push(age === checkAge - 1 && checkAge > 2 ? { edgeId: "dut-chk", t: 0.08, label: dataLabel } : { edgeId: "stim-dut", t: 0.92, label: dataLabel });
+      tokens.push(age === checkAge - 1 && checkAge > 2 ? { edgeId: "dut-chk", t: 0.08, label: dataLabel } : { edgeId: "stim-dut", t: 0.95, label: dataLabel });
     } else if (e.checkedAtEdge !== null) {
       tokens.push({ edgeId: "dut-chk", t: 0.92, label: formatDec(sampledSum) });
       if (config.checkStyle === "queue") tokens.push({ edgeId: "q-chk", t: 0.88, label: expLabel });
@@ -1407,6 +1415,9 @@ export interface AnatomyEdgeSpec {
   style: "data" | "causal";
   label: string;
 }
+
+/** Grid the anatomy diagram is laid out on (px). The view lays the nodes out with it; the token tests measure on it. */
+export const ANATOMY_GRID = { cellWidth: 150, cellHeight: 56, gapX: 110, gapY: 46 } as const;
 
 export const ANATOMY_NODES: readonly AnatomyNodeSpec[] = [
   { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 5, container: true, codeKey: "tb-module" },
@@ -1844,8 +1855,12 @@ export function queuePrediction(run: RunResult, atEdge = QUEUE_QUESTION_EDGE): P
 
 /**
  * Identity of a prediction: its question and its answer. A gate opened for one
- * key stays open for any run with the same key (BUG=1 or a/b swapped does not
- * move a result), and re-arms when the question or the answer changes.
+ * key stays open, while the gate stays mounted, for any run with the same key
+ * (BUG=1 or a/b swapped does not move a result), and re-arms when the question
+ * or the answer changes. In the two-question view the exp_q question is only
+ * mounted once the edge question is answered, so a re-armed edge gate also
+ * resets the exp_q gate behind it, even when the exp_q key is unchanged (the
+ * extra stage on +TEST=gaps moves the edge answer, not the queue's).
  */
 export function predictionKey(spec: PredictionSpec | null): string {
   return spec ? `${spec.question}|${spec.options.find((o) => o.correct)?.label ?? ""}` : "";
@@ -2065,7 +2080,7 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
   },
   {
     id: "early-check",
-    symptom: "each actual value equals the previous expected value: sum=0 expected 3, sum=3 expected 30, sum=30 expected 127",
+    symptom: "sum=0 expected 3, then each actual value equals the previous expected value: sum=3 expected 30, sum=30 expected 127",
     config: broken("smoke", { checkStyle: "early-inline" }),
     command: "+TEST=smoke",
     runArgs: "+TEST=smoke",
@@ -2097,7 +2112,7 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
         label: "Match results on out_valid with the queue (restore the always checker)",
         apply: (c) => ({ ...c, checkStyle: "queue" }),
         reviewOk: true,
-        review: "Accepted, preferred. Matching results on out_valid with a queue never counts edges: the checker fires when out_valid is 1 and pops the oldest expectation, whatever the latency.",
+        review: "Accepted. Matching results on out_valid with a queue never counts edges: the checker fires when out_valid is 1 and pops the oldest expectation, whatever the latency.",
       },
       {
         id: "idle-each",
@@ -2144,7 +2159,7 @@ export const CLINIC_CASES: readonly ClinicCase[] = [
         label: "Add idle(1) after every send() so one variable is enough",
         apply: (c) => ({ ...c, idleAfterEachSend: true }),
         reviewOk: false,
-        review: "Passes the model, rejected in review. It passes by changing the stimulus: test_gaps no longer drives two results back to back, so the R2 row of the plan is no longer tested. Fix the scoreboard, not the test.",
+        review: "Passes the model, rejected in review. It passes by changing the stimulus: test_gaps no longer drives two results back to back, so the R2 row of the plan loses its back-to-back traffic, the case where more than one result is in flight. Fix the scoreboard, not the test.",
       },
       {
         id: "live-model",

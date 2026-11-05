@@ -16,6 +16,7 @@ import { VisualFrame } from "@/components/visual-system/VisualFrame";
 import {
   ALL_TEST_IDS,
   ANATOMY_EDGES,
+  ANATOMY_GRID,
   BASE_TESTS,
   ANATOMY_NODES,
   CLINIC_CASES,
@@ -64,7 +65,7 @@ export const SELFCHECK_MODEL_ASSUMPTIONS = [
   "Edge k is the rising edge at 5 + 10k ns. Every value shown at edge k is the one sampled there: what the flops and the checker read before that edge's nonblocking updates land (IEEE 1800-2023 §4.9.4, §10.4.2).",
   "The checker, the DUT and the bench tasks all read pre-edge values. The model runs them in a fixed order (checker, DUT, tasks); the lesson's bench does not depend on that order, because its only shared blocking state is exp_q, pushed and popped at opposite ends. Counters and verdicts are the same in every order, but lines printed at the same time by different processes may appear in either order in a simulator (§4.7).",
   "Rules implemented: pop_front on an empty queue (§7.10.2.4), != and if with x (§11.4.5, §12.4), immediate assertions (§16.3), 2-state copies (§6.11.2), $error/$fatal/$finish/$stop (§20.10, §20.2), a run with no activity (§9.6.1), join_any and disable fork (§9.3.2, §9.6.3), uninitialised logic (§6.8) and ~x (§11.4.8).",
-  "Error lines use [error @ t] for the simulator's own prefix. Lines marked (model @ t) and 'still running at the horizon' are this model's notes, not simulator messages.",
+  "Error and fatal lines use [error @ t] and [fatal @ t] in place of the simulator's own message: the standard leaves its format to the tool, which also names the file, line and scope of the call (§20.10). Lines marked (model @ t) and 'still running at the horizon' are this model's notes, not simulator messages.",
 ];
 
 type Mode = "step" | "matrix" | "debug";
@@ -483,10 +484,7 @@ function BenchCode({
 const ANATOMY_LAYOUT = layoutGridDiagram({
   nodes: ANATOMY_NODES.map((n) => ({ id: n.id, label: n.label, sublabel: n.sublabel, kind: n.kind, col: n.col, row: n.row, colSpan: n.colSpan, rowSpan: n.rowSpan, container: n.container })),
   edges: ANATOMY_EDGES.map((e) => ({ id: e.id, from: e.from, to: e.to, style: e.style, label: e.label })),
-  cellWidth: 150,
-  cellHeight: 56,
-  gapX: 110,
-  gapY: 46,
+  ...ANATOMY_GRID,
 });
 
 /* Gating a step before the predictions are locked in. */
@@ -979,8 +977,15 @@ function MatrixLab({ scope }: { scope?: "plan" }) {
             <p className="text-foreground">
               <span className="font-semibold">BUG=3: </span>
               {holdCheck
-                ? `with the hold check, ${bug3Caught.length ? bug3Caught.map((t) => `+TEST=${t}`).join(", ") : "no test"} catches it: only the hold test changes a and b on idle cycles. The mutant needs both the new stimulus and the new check. Your predictions carry over, because no other cell changes with the check; the BUG=3 column is graded on your answer above.`
-                : "no test catches it, however the stimulus looks: the checker never looks at sum while out_valid is 0. The hold row is the kata's stimulus against the original checker: send_invalid() changes a and b on idle cycles, and nothing reads sum there. Add the hold check to see what changes."}
+                ? `with the hold check, ${bug3Caught.length ? bug3Caught.map((t) => `+TEST=${t}`).join(", ") : "no test"} catches it: only the hold test changes a and b on idle cycles. The mutant needs both the new stimulus and the new check. Your predictions carry over, because no other cell changes with the check; ${
+                    holdAnswerId
+                      ? "the BUG=3 column is graded on your answer above."
+                      : "you revealed the question above without an answer, so +TEST=hold against BUG=3, the one cell the check changes, is left ungraded."
+                  }`
+                : // The idle-cycle reasoning answers the hold-check question, so it waits until that question is answered or skipped.
+                  `no test catches it, however the stimulus looks: the checker never looks at sum while out_valid is 0. The hold row is the kata's stimulus against the original checker${
+                    holdGateOpen ? ": send_invalid() changes a and b on idle cycles, and nothing reads sum there. Add the hold check to see what changes." : ". Answer the question above, then add the hold check to see what changes."
+                  }`}
             </p>
             <p className="text-muted-foreground">
               <span className="font-semibold text-foreground">{mutantInfo("swap-ab").label}: </span>
@@ -1035,6 +1040,16 @@ const BUG1_TONE: Record<Bug1Outcome, string> = {
   escaped: "text-rose-700 dark:text-rose-300",
 };
 
+/**
+ * A suspect control's name: the line's text, then its number in the panel and, for a stimulus line, the test it
+ * belongs to. Lines such as "idle(1);" occur in every test, and the gutter numbers are not read out.
+ */
+function suspectName(key: string, text: string, lineNumber: number | undefined): string {
+  const test = /^test-(\w+)-\d+$/.exec(key)?.[1];
+  const where = [lineNumber ? `line ${lineNumber}` : "", test ? `in test_${test}()` : ""].filter(Boolean).join(", ");
+  return `Suspect line: ${text.trim()}${where ? ` (${where})` : ""}`;
+}
+
 function DebugClinic() {
   const [caseId, setCaseId] = useState<ClinicCaseId>(CLINIC_CASES[0].id);
   const [suspect, setSuspect] = useState<string | null>(null);
@@ -1055,6 +1070,9 @@ function DebugClinic() {
   const run = useMemo(() => runBench(kase.config), [kase]);
   const source = useMemo(() => benchSource(kase.config), [kase]);
   const suspects = useMemo(() => new Set(suspectKeys(source, kase)), [source, kase]);
+  // BenchCode shows tb_top alone here (foldDut), so a line's number in the panel is its index in `source` plus one.
+  const lineNumbers = useMemo(() => new Map(source.flatMap((l, i) => (l.key ? [[l.key, i + 1] as const] : []))), [source]);
+  const afterCodeRef = useRef<HTMLDivElement>(null);
   const diagnosis = suspect ? diagnoseSuspect(kase, suspect) : null;
   const found = diagnosis?.culprit ?? false;
   const fix = kase.fixes.find((f) => f.id === fixId) ?? null;
@@ -1149,17 +1167,26 @@ function DebugClinic() {
 
       <div>
         <p className="mb-2 text-sm font-semibold text-foreground">Step 1 — select the tb_top line that causes the symptom, or the line where something is missing</p>
+        {/* Every suspectable line is its own tab stop (about 40 of them): this lets a keyboard user past them to the feedback, hints and Step 2. */}
+        <button
+          type="button"
+          onClick={() => afterCodeRef.current?.focus()}
+          className="sr-only rounded-md border border-border/70 px-3 text-xs text-foreground focus:not-sr-only focus:mb-2 focus:inline-flex focus:min-h-10 focus:items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Skip past the code to the feedback{found ? " and Step 2" : " and hints"}
+        </button>
+        {/* The suspect is lit as context, not as the active line: CodeTrace marks an active line "Executing", and the suspect may be a line that never ran. */}
         <BenchCode
           foldDut
           run={run}
           label="The broken bench (tb_top, generated from the model's data)"
-          activeKey={suspect ?? undefined}
+          contextKeys={suspect ? [suspect] : []}
           renderLineControl={(line) =>
             line.key && suspects.has(line.key) ? (
               <button
                 type="button"
                 aria-pressed={suspect === line.key}
-                aria-label={`Suspect line: ${line.text.trim()}`}
+                aria-label={suspectName(line.key, line.text, lineNumbers.get(line.key))}
                 onClick={() => {
                   setSuspect(line.key as string);
                   setPickedFixId(null);
@@ -1175,15 +1202,17 @@ function DebugClinic() {
             ) : null
           }
         />
-        <div ref={diagnosisRef} aria-live="polite" className="mt-2 text-sm">
-          {diagnosis ? (
-            <p className={found ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>
-              <strong>{found ? "" : "Not this one. "}</strong>
-              {diagnosis.text}
-            </p>
-          ) : null}
+        <div ref={afterCodeRef} tabIndex={-1} role="group" aria-label="Suspect feedback and hints" className="rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <div ref={diagnosisRef} aria-live="polite" className="mt-2 text-sm">
+            {diagnosis ? (
+              <p className={found ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>
+                <strong>{found ? "" : "Not this one. "}</strong>
+                {diagnosis.text}
+              </p>
+            ) : null}
+          </div>
+          {!found ? <HintLadder hints={[...kase.hints]} resetKey={caseId} className="mt-2" /> : null}
         </div>
-        {!found ? <HintLadder hints={[...kase.hints]} resetKey={caseId} className="mt-2" /> : null}
       </div>
 
       {found ? (

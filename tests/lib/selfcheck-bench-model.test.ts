@@ -2,12 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import {
   ALL_TEST_IDS,
+  ANATOMY_EDGES,
+  ANATOMY_GRID,
+  ANATOMY_NODES,
   CLINIC_CASES,
   DEFAULT_CONFIG,
+  HORIZON_EDGES,
   LINE_FACTS,
   MATRIX_MUTANTS,
   PLAN_MUTANTS,
   PRESETS,
+  TESTS,
   benchSource,
   buildMatrix,
   clinicCase,
@@ -18,6 +23,7 @@ import {
   dutStep,
   edgePrediction,
   edgeTime,
+  effectiveStimulus,
   explainEscape,
   expectedResultCount,
   formatDec,
@@ -44,6 +50,7 @@ import {
   type MutantId,
   type RunResult,
 } from "@/lib/selfcheck-bench-model";
+import { layoutGridDiagram, pointAlong, routeEdges } from "@/components/visual-system/diagram-layout";
 import { logicalNot, parseBits } from "@/lib/sv-four-state-model";
 
 const logText = (run: RunResult) => run.log.map(formatLogLine);
@@ -288,7 +295,7 @@ describe("anatomy tokens agree with the other panes", () => {
     const s = stepAt(runBench(presetConfig("gaps", 0)), 3);
     expect(tokenOn(s, "dut-chk")).toEqual([]);
     expect(tokenOn(s, "q-chk")).toEqual([]);
-    expect(tokenOn(s, "stim-dut")).toEqual([{ edgeId: "stim-dut", t: 0.92, label: "5+5" }]);
+    expect(tokenOn(s, "stim-dut")).toEqual([{ edgeId: "stim-dut", t: 0.95, label: "5+5" }]);
     expect(formatQueue(s.queueAfter)).toBe("{10}");
   });
 
@@ -315,6 +322,44 @@ describe("anatomy tokens agree with the other panes", () => {
     expect(tokenOn(stepAt(run, 4), "dut-chk")).toEqual([{ edgeId: "dut-chk", t: 0.08, label: "5+5" }]);
     expect(tokenOn(stepAt(run, 4), "q-chk")).toEqual([]);
     expect(tokenOn(stepAt(run, 5), "dut-chk").map((t) => t.label)).toEqual(["10"]);
+  });
+
+  it("on back-to-back sends the new a+b leaves send() while the older one sits at the DUT, and no two pills overlap in any run", () => {
+    const smoke4 = stepAt(runBench(presetConfig("smoke", 0)), 4);
+    // Oldest transaction first, as the tokens are listed.
+    expect(tokenOn(smoke4, "stim-dut")).toEqual([
+      { edgeId: "stim-dut", t: 0.95, label: "10+20" },
+      { edgeId: "stim-dut", t: 0.3, label: "100+27" },
+    ]);
+    // Measured on the anatomy's own layout. Pill size as BlockDiagram draws a token: 6.4 px per character + 12 wide, 20 high, centred on the point.
+    const layout = layoutGridDiagram({ nodes: ANATOMY_NODES.map((n) => ({ ...n })), edges: ANATOMY_EDGES.map((e) => ({ ...e })), ...ANATOMY_GRID });
+    const routes = routeEdges(layout.nodes, [], layout.edges, { spreadAnchors: true });
+    const pill = (tok: { edgeId: string; t: number; label: string }) => {
+      const [x, y] = pointAlong(routes[layout.edges.findIndex((e) => e.id === tok.edgeId)], tok.t);
+      const w = tok.label.length * 6.4 + 12;
+      return { x0: x - w / 2, x1: x + w / 2, y0: y - 10, y1: y + 10 };
+    };
+    const configs = [
+      ...PRESETS.flatMap((p) => ([0, ...MATRIX_MUTANTS] as MutantId[]).flatMap((m) => [presetConfig(p, m, p === "hold"), presetConfig(p, m, true)])),
+      ...CLINIC_CASES.flatMap((k) => [k.config, ...k.fixes.map((f) => f.apply(k.config))]),
+    ];
+    let pairs = 0;
+    configs.forEach((config) =>
+      edgeSteps(runBench(config)).forEach((s) => {
+        const boxes = s.tokens.map(pill);
+        boxes.forEach((a, i) =>
+          boxes.slice(i + 1).forEach((b) => {
+            pairs += 1;
+            const overlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) > 0 && Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 0;
+            expect(overlap, `${config.testName} ${String(config.mutant)} edge ${s.edge}: ${s.tokens.map((t) => `${t.edgeId}@${t.t} ${t.label}`).join(" | ")}`).toBe(false);
+          }),
+        );
+      }),
+    );
+    expect(pairs).toBeGreaterThan(0);
+    // The case the review measured: +TEST=corners edge 7 carries 255+255 and 128+128, both seven characters.
+    const corners7 = tokenOn(stepAt(runBench(presetConfig("corners", 0)), 7), "stim-dut");
+    expect(corners7.map((t) => t.label).sort()).toEqual(["128+128", "255+255"]);
   });
 
   it("a transaction nobody checked never reaches the checker's wires", () => {
@@ -610,6 +655,20 @@ describe("ending the run", () => {
     const keys = new Set(benchSource(at100.config).map((l) => l.key));
     expect(keys.has(step.activeKey)).toBe(true);
     step.contextKeys.forEach((k) => expect(keys.has(k)).toBe(true));
+    // The watchdog calls report() on its own line; main never reaches its own report(); line, so that line stays unlit.
+    expect(step.activeKey).toBe("main-wdog");
+    expect(step.contextKeys).toEqual(["report-display"]);
+    expect(step.contextKeys).not.toContain("main-report");
+  });
+
+  it("a dead clock is narrated by what the run branch is stuck in: reset_dut() when the bench has it, else the first test's send()", () => {
+    const withReset = runBench({ ...DEFAULT_CONFIG, clockInit: "none" });
+    expect(withReset.steps[0].what).toMatch(/\(§6\.8, §11\.4\.8; Table 9-2: no edge\)\. reset_dut\(\) waits forever; at 10000 ns/);
+    const noReset = runBench({ ...DEFAULT_CONFIG, clockInit: "none", reset: "deleted" });
+    expect(logText(noReset)).toEqual(["0 ns TEST smoke", "PASS=0 FAIL=1", "[fatal @ 10000 ns] WDOG test 'all' still running at 10000 ns"]);
+    expect(noReset.steps[0].what).toMatch(/run_one\("smoke"\) printed "0 ns TEST smoke", and send\(\) waits forever; at 10000 ns the watchdog/);
+    expect(noReset.steps[0].what).not.toMatch(/reset_dut/);
+    expect(runBench({ ...DEFAULT_CONFIG, clockInit: "none", reset: "init-high", tests: ["hold"], testName: "hold" }).steps[0].what).toMatch(/run_one\("hold"\) printed "0 ns TEST hold", and send\(\) waits forever/);
   });
 
   it("near the end of a run the watchdog still wins when TIMEOUT comes before the run branch ends", () => {
@@ -658,6 +717,13 @@ describe("ending the run", () => {
     expect(horizon?.what).toMatch(/there is no \$finish, and disable fork already killed the watchdog/);
     expect(horizon?.what).toMatch(/still running at the horizon \(a model label\)/);
     expect(run.steps.filter((s) => s.kind === "edge").length).toBeGreaterThan(25);
+    // The model shows HORIZON_EDGES (3) more edges of the still-running clock, and nothing prints in them.
+    expect(HORIZON_EDGES).toBe(3);
+    const after = run.steps.slice(run.steps.indexOf(horizon as (typeof run.steps)[number]) + 1);
+    expect(after.map((s) => s.kind)).toEqual(["edge", "edge", "edge"]);
+    after.forEach((s) => expect(s.logCount).toBe(horizon?.logCount));
+    expect(run.log).toHaveLength(horizon?.logCount ?? -1);
+    expect(run.edges).toBe(edgeSteps(run).length);
   });
 
   it("$stop suspends instead of ending (§20.2), and what happens next is marked tool-dependent", () => {
@@ -682,6 +748,44 @@ describe("ending the run", () => {
     expect(end.events.some((e) => e.kind === "watchdog-killed")).toBe(true);
     expect(end.why).toMatch(/§9\.3\.2/);
     expect(end.why).toMatch(/§9\.6\.3/);
+    expect(end.why).toMatch(/disable fork kills every descendant of main, here only the watchdog \(§9\.6\.3\)/);
+    expect(end.why).toMatch(/\$finish returns control to the operating system \(§20\.2\)/);
+  });
+
+  it("the ending texts of the dead-clock and no-$finish cases say what their runs do", () => {
+    const fixReview = (id: Parameters<typeof clinicCase>[0], fixId: string) => clinicCase(id).fixes.find((f) => f.id === fixId)?.review ?? "";
+    const grade = (id: Parameters<typeof clinicCase>[0], fixId: string) => {
+      const kase = clinicCase(id);
+      return gradeFix(kase, kase.fixes.find((f) => f.id === fixId) as (typeof kase.fixes)[number]);
+    };
+    // Dead clock: no TEST line, the watchdog's verdict, and a $fatal; a longer TIMEOUT changes only when.
+    const clkX = clinicCase("clk-x");
+    const dead = runBench(clkX.config);
+    expect(clkX.symptom).toBe("the run ends with the WDOG fatal: no TEST line, PASS=0 FAIL=1");
+    expect(dead.log.some((l) => l.kind === "test")).toBe(false);
+    expect(dead.summary).toBe("PASS=0 FAIL=1");
+    expect(dead.log.some((l) => l.kind === "fatal" && /^WDOG /.test(l.text))).toBe(true);
+    expect(dead.steps[0].why).toMatch(/Without the watchdog this run would never end and never print a verdict\./);
+    expect(clkX.wrong["main-wdog"]).toMatch(/turned a silent hang into a verdict line and a WDOG message/);
+    expect(fixReview("clk-x", "timeout")).toMatch(/no edge ever comes\. The watchdog just fires later with the same PASS=0 FAIL=1\./);
+    const later = grade("clk-x", "timeout").cleanRun;
+    expect(later.summary).toBe("PASS=0 FAIL=1");
+    expect(later.endReason).toBe("fatal");
+    expect(later.endTime).toBeGreaterThan(dead.endTime);
+    // The fixed clock rises at the times the review promises.
+    expect(fixReview("clk-x", "init-zero")).toMatch(new RegExp(`rising edges happen at ${[0, 1, 2].map(edgeTime).join(", ")} ns`));
+    expect(grade("clk-x", "init-zero").cleanRun.edges).toBeGreaterThan(2);
+
+    // No $finish: the summary prints and nothing ends the run; disable fork already killed the watchdog.
+    const noFinish = clinicCase("no-finish");
+    const open = runBench(noFinish.config);
+    expect(noFinish.symptom).toBe(`the summary prints, ${open.summary}, but the run never ends`);
+    expect(open.ended).toBe(false);
+    expect(open.steps.flatMap((s) => s.events).some((e) => e.kind === "watchdog-killed")).toBe(true);
+    expect(open.log.some((l) => l.kind === "fatal")).toBe(false);
+    expect(noFinish.wrong["main-wdog"]).toMatch(/disable fork killed it when the run branch finished, and that is correct, or every clean run would end with a fatal/);
+    expect(fixReview("no-finish", "rely-wdog")).toMatch(/disable fork killed the watchdog when the run branch ended \(§9\.6\.3\); nothing is left to fire/);
+    expect(grade("no-finish", "rely-wdog").cleanRun.endReason).toBe("horizon");
   });
 });
 
@@ -876,6 +980,9 @@ describe("debug clinic: broken benches reproduce the lesson's symptoms", () => {
     const fixed = runBench({ ...kase.config, compareOp: "!==" });
     expect(fixed.summary).toBe("PASS=0 FAIL=7");
     expect(errors(fixed)[0]).toBe("[error @ 45 ns] CHK a=0 b=0: sum=X, expected 0");
+    // The model-add diagnosis lists the run's own expected values, in order.
+    expect(run.expectations.map((e) => formatDec(e.sum)).join(", ")).toBe("0, 255, 255, 256, 510, 256, 255");
+    expect(kase.wrong["model-add"]).toContain(`The expected values are right: ${run.expectations.map((e) => formatDec(e.sum)).join(", ")}.`);
   });
 
   it("a check made one edge early: sum=0 expected 3, sum=3 expected 30, sum=30 expected 127 (quiz)", () => {
@@ -886,6 +993,8 @@ describe("debug clinic: broken benches reproduce the lesson's symptoms", () => {
       "[error @ 75 ns] CHK a=100 b=27: sum=30, expected 127",
     ]);
     expect(run.summary).toBe("PASS=0 FAIL=3");
+    // The first sum=0 has no previous expected value: the symptom lists it before the lesson's "previous expected value" pattern.
+    expect(clinicCase("early-check").symptom).toBe("sum=0 expected 3, then each actual value equals the previous expected value: sum=3 expected 30, sum=30 expected 127");
   });
 
   it("one expected variable overwritten by the next send(): each actual equals the previous expected, and the last result passes", () => {
@@ -983,6 +1092,13 @@ describe("debug clinic: grading a fix reruns the bench", () => {
     expect(g.modelOk).toBe(true);
     expect(g.accepted).toBe(false);
     expect(g.review).toMatch(/rejected in review/);
+    // The plan's R2 row is "valid, two idle, two back to back, idle, valid": the fix keeps the isolated valid cycles and loses the back-to-back pair.
+    expect(g.review).toMatch(/the R2 row of the plan loses its back-to-back traffic, the case where more than one result is in flight/);
+    expect(Math.max(...edgeSteps(runBench(presetConfig("gaps", 0))).map((s) => s.queueAfter.length))).toBe(2);
+    expect(g.review).not.toMatch(/no longer tested/);
+    const gaps = effectiveStimulus({ ...clinicCase("single-expected").config, idleAfterEachSend: true }, "gaps");
+    expect(gaps.some((s, i) => s.kind === "send" && gaps[i + 1]?.kind === "send")).toBe(false);
+    expect(TESTS.gaps.stimulus.some((s, i) => s.kind === "send" && TESTS.gaps.stimulus[i + 1]?.kind === "send")).toBe(true);
     expect(accepted("single-expected", "queue").accepted).toBe(true);
     expect(accepted("single-expected", "live-model").clean).toBe(false);
   });
@@ -991,6 +1107,9 @@ describe("debug clinic: grading a fix reruns the bench", () => {
     expect(accepted("early-check", "queue").accepted).toBe(true);
     expect(accepted("early-check", "live-sig").clean).toBe(false);
     expect(accepted("early-check", "idle-each").clean).toBe(false);
+    // It is the only fix accepted here, so its review claims no preference over another.
+    expect(clinicCase("early-check").fixes.filter((f) => accepted("early-check", f.id).accepted).map((f) => f.id)).toEqual(["queue"]);
+    expect(clinicCase("early-check").fixes.find((f) => f.id === "queue")?.review).toMatch(/^Accepted\. Matching results/);
   });
 
   it("dead clock: only the initializer helps; a longer TIMEOUT or !clk still ends in the WDOG fatal", () => {
@@ -1255,6 +1374,10 @@ describe("prediction gates", () => {
       expect([edgeKeyOf(m, true), queueKeyOf(m, true)]).toEqual(base);
     });
     expect(edgeKeyOf(0, true, "all")).toBe(edgeKeyOf(0, false, "all"));
+    // +TEST=all with the hold check appends test_hold after gaps: nothing before edge 6 moves, so the queue key and its options stay too.
+    expect(queueKeyOf(0, true, "all")).toBe(queueKeyOf(0, false, "all"));
+    const allLabels = (hold: boolean) => queuePrediction(runBench(presetConfig("all", 0, hold)))?.options.map((o) => [o.id, o.label]);
+    expect(allLabels(true)).toEqual(allLabels(false));
   });
 
   it("a new test or the extra stage changes the key, because the question or the answer changes", () => {

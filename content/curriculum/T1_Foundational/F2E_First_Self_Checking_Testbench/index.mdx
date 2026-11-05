@@ -140,6 +140,8 @@ The whole bench lives in one module, `tb_top`. It has no ports: it is the top of
 
 **In a real testbench.** A UVM bench in Tier 2 splits the same jobs into classes: a driver drives, a monitor takes over the checker's reading of `out_valid` and `sum`, a predictor plays `model_add()`, a scoreboard plays `exp_q` and the compare, and a test (with its sequences) chooses the stimulus. The diagram's tags name those roles, so this bench is the skeleton you will recognise later.
 
+Later in this lesson, the lab after the `exp_q` trace runs this diagram edge by edge: each block lights up when it acts, and selecting a block shows its line of `tb_top`.
+
 ### Time, clock and reset
 
 **Time unit.** `#5` means 5 time units. `timeunit 1ns; timeprecision 1ps;` as the first items of a module set its time unit (1 ns) and the precision that delays are rounded to (1 ps), whatever order the files are compiled in (IEEE 1800-2023 §3.14.2.2). The older `` `timescale 1ns/1ps `` directive applies to every module compiled after it, so a module's unit can change with file order (§3.14.2.1). Mixing is an error: if some design elements have a time unit and precision and others do not, the standard rejects the design (§3.14.2.3), which is why the DUT declares one too. [F3A](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index) covers time units in depth.
@@ -365,6 +367,10 @@ At edge 6 two results are in flight (`{15, 19}`), and the queue absorbs them: th
 
 </details>
 
+**Predict, then step: another test.** In `+TEST=smoke` the three sends run back to back from edge 2. Predict on which edge the checker sees the result of `send(1, 2)`, then what `exp_q` holds after edge 6; each answer opens more of the lab (first `out_valid`, `sum` and the log, then the queue), and you can then step the run edge by edge or switch `+TEST=` to `gaps` to replay the trace above.
+
+<SelfCheckBenchLab mode="step" preset="smoke" />
+
 Three queue pitfalls:
 - **Popping an empty queue.** `pop_front` on an empty queue returns the element type's default value (here, an `exp_t` whose `logic` members are all x; §7.10.2.4, Table 7-1) and may only warn. Check `exp_q.size()` first, and report a result that nobody expected as a failure.
 - **Leftovers.** Expectations still in the queue at the end are results that never arrived. Count each one as a failure.
@@ -494,7 +500,11 @@ One trap: plusargs match by prefix, so `$test$plusargs("DUMP")` is also true for
 
 </details>
 
-**Predict, then check.** With the carry bit stuck at 0 (`BUG=1`), which tests fail? This matrix comes from a cycle model of the Make It Work code; each cell is the run's summary line:
+**Predict, then check.** With the carry bit stuck at 0 (`BUG=1`), which tests fail? And with the off-by-one (`BUG=2`)? Press each cell of the lab below to predict whether that test will catch or miss that mutant, then reveal the runs; select a caught cell to step to its first failing edge, or an escaped one to read why the bug got through.
+
+<SelfCheckBenchLab mode="matrix" scope="plan" />
+
+The table below holds the same runs, with the correct DUT (`BUG=0`) and `+TEST=all` added. Like the lab, it comes from a cycle model of the Make It Work code; each cell is the run's summary line:
 
 <details>
 <summary>Check your prediction: the mutant matrix</summary>
@@ -695,6 +705,10 @@ At edge 7 (75 ns) the checker reports `CHK a=255 b=1: sum=0, expected 256`. Look
 | The run ends with the `WDOG` fatal | A wait for a value that never comes, or a clock that never toggles (`logic clk;` starts at x). | Find the blocked process at the timeout time with your simulator's debug commands; look at `clk` first. |
 | Simulation time stops and the watchdog never fires | A zero-delay loop, such as `while (exp_q.size() != 0);`. | Put a clock edge inside every loop that waits. |
 | An error about missing time units | Some modules have a time unit and others do not (§3.14.2.3). | Give every module a `timeunit`, or use your simulator's default time-scale option. |
+
+The clinic below plants seven of these faults, one per bench. For each case, read the log and predict which row of the table it matches before you select the suspect line in `tb_top`; then choose a fix, which is accepted only if the rerun on the correct DUT ends `PASS=<n> FAIL=0` with `$finish`, `+TEST=corners` still catches `BUG=1`, and the fix survives a short code review.
+
+<SelfCheckBenchLab mode="debug" />
 
 ### Recap
 
@@ -1179,6 +1193,8 @@ Step through one rising-edge time slot below to compare this bench's plain `<=` 
 - **Reset in the middle of traffic.** Expectations for transactions that a reset discards must be flushed, or they are reported as missing; [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) handles this in a UVM bench.
 - **Equivalent mutants.** Swapping `a` and `b` in the RTL changes the code but never the behaviour, because addition commutes, so no test can kill that mutant. A **mutation score** (killed mutants divided by non-equivalent mutants) measures how much a bench really checks; commercial mutation-analysis tools automate it (tool-dependent).
 
+**See it run.** In the step lab under [Expected values: a model and a queue](#expected-values-a-model-and-a-queue), open Show advanced and choose the extra stage: the lab asks on which edge the first result now reaches the checker. Predict, then step: every result arrives one edge later than with `BUG=0`, and every check still passes. Choose a/b swapped instead, and the run does not change at all. To run both mutants against every test at once, with `BUG=3` beside them, use the full matrix after the [guided kata](#kata-guided-catch-a-bug-the-bench-cannot-see-yet) in Practice & Reinforce.
+
 - **Interview angle:** "Your scoreboard passes, but the designers say latency went from one cycle to two. Why did your bench not catch it, and what would you add?"
 
 ### Expert: Pass and fail signals a regression can trust
@@ -1460,6 +1476,10 @@ After `send(3, 4)` produces `sum = 7` at edge 4 (45 ns), `send_invalid(50, 60)` 
 **Reflect:** the bug needed both a new stimulus (data that changes while `in_valid` is low) and a new check (stability while `out_valid` is low). Neither alone catches it.
 
 </details>
+
+**Predict, then check: the whole matrix.** This lab extends the matrix under [Directed tests from a plan](#directed-tests-from-a-plan) with the kata's `hold` row (its stimulus, run against the original checker) and three columns: `BUG=3`, an extra pipeline stage and `a` and `b` swapped, the last two from [What an in-order queue cannot see](#expert-what-an-in-order-queue-cannot-see). Predict every new cell before you reveal, then answer the lab's question, *with the hold check on, which rows catch `BUG=3`?*, before you tick the check and watch which cells change.
+
+<SelfCheckBenchLab mode="matrix" />
 
 ### Kata (independent): bench the counter you planned in F1B
 

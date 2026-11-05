@@ -18,10 +18,12 @@ import {
   WILDCARD_ASYMMETRY_NOTE,
   branchWord,
   catchAllWord,
+  chipMarks,
   compareDecisions,
   compareValueNote,
   compareWrapUp,
   decisionSource,
+  drawsChips,
   editedPresetNote,
   evaluateDecision,
   explainReportChoice,
@@ -46,6 +48,7 @@ import {
   runningLineKey,
   triedProgress,
   type BitChip,
+  type ChipMarks,
   type CompareLeftKind,
   type DecisionConfig,
   type DecisionForm,
@@ -334,9 +337,15 @@ function ChipTable({ chips, caption, leftName, rightName, verdictName }: { chips
   );
 }
 
+/** The legend's text: 1 and 0, then only the marks the chip tables draw (the case family never draws x or ?, the ==? forms never skip). */
+function chipLegendText(marks: ChipMarks, rightName: RightName): string {
+  const keys = ["1 match", "0 mismatch", ...(marks.unknown ? ["x unknown (no match)"] : []), ...(marks.skip ? ["– skipped"] : []), ...(marks.wildcard ? [`? wildcard in the ${rightName}`] : [])];
+  return `Chips: ${keys.join(", ")}.${marks.questionMark ? " A ? in the source is written z here (same bit value)." : ""}`;
+}
+
 /** What the chips mean, in words a sighted learner can read too. */
-function ChipLegend({ rightName }: { rightName: RightName }) {
-  return <p className="text-xs text-muted-foreground">Chips: 1 match, 0 mismatch, x unknown (no match), – skipped, ? wildcard in the {rightName}. A ? in the source is written z here (same bit value).</p>;
+function ChipLegend({ rightName, marks }: { rightName: RightName; marks: ChipMarks }) {
+  return <p className="text-xs text-muted-foreground">{chipLegendText(marks, rightName)}</p>;
 }
 
 /** A plain miss keeps its chips inside its fold; any other comparison that did not simply fail shows them. */
@@ -345,15 +354,15 @@ const showsChips = (result: DecisionResult) => result.items.some((v) => !isPlain
 /** The right-hand row of a chip table: an if chain compares with a literal, the case family with an item. */
 const rightNameFor = (form: DecisionForm): RightName => (isIfChain(form) ? "literal" : "item");
 
-/** Holds the reveal's chip tables and their legend. The legend shows only while a chip table is on screen, open folds included. */
-function ChipScope({ visible, rightName, children }: { visible: boolean; rightName: RightName; children: (onFoldToggle: () => void) => React.ReactNode }) {
+/** Holds the reveal's chip tables and their legend. The legend shows only while a chip table is on screen, open folds included, and lists only the marks the tables draw. */
+function ChipScope({ visible, rightName, marks, children }: { visible: boolean; rightName: RightName; marks: ChipMarks; children: (onFoldToggle: () => void) => React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const [foldOpen, setFoldOpen] = useState(false);
   const onFoldToggle = useCallback(() => setFoldOpen(Boolean(ref.current?.querySelector("details[data-chips][open]"))), []);
   return (
     <div ref={ref} className="space-y-3">
       {children(onFoldToggle)}
-      {visible || foldOpen ? <ChipLegend rightName={rightName} /> : null}
+      {visible || foldOpen ? <ChipLegend rightName={rightName} marks={marks} /> : null}
     </div>
   );
 }
@@ -416,7 +425,7 @@ function ItemCard({ verdict, whys, result, expressionName, showOr, onFoldToggle 
   const terms = (
     <div className="space-y-2">
       {verdict.terms.map((t, i) => (
-        <TermDetail key={i} term={t} why={whys[i]} result={result} expressionName={expressionName} showChips={plainMiss || t.result !== "0"} />
+        <TermDetail key={i} term={t} why={whys[i]} result={result} expressionName={expressionName} showChips={drawsChips(verdict, t)} />
       ))}
     </div>
   );
@@ -792,7 +801,7 @@ function QualifierLab({ preset }: { preset?: string }) {
               {edited ? null : <RevealNote label="About this value">{presetValueNote(presetDef, body)}</RevealNote>}
               {progress?.complete ? <RevealNote label="What the values show">{presetDef.wrapUp}</RevealNote> : null}
               <OutcomeGrid result={result} />
-              <ChipScope visible={showsChips(result)} rightName={rightNameFor(config.form)}>
+              <ChipScope visible={showsChips(result)} rightName={rightNameFor(config.form)} marks={chipMarks(result)}>
                 {(onFoldToggle) => (
                   <ItemList
                     result={result}
@@ -857,10 +866,11 @@ function CompareColumn({ title, result, told, expressionName, showOr, onFoldTogg
           (§12.5.1). The bug hides.
         </p>
       ) : null}
+      {/* Only what the prompt and the x stamps do not already say: what makes the unknown visible. */}
       {!ranItem && unknownSelect && result.config.form === "case-inside" ? (
         <p className="rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-100">
-          <span aria-hidden>✓ </span>No real branch runs: every comparison is 0 or x, and x is no match (§12.5.4).{" "}
-          {result.config.catchAll ? "The unknown stays visible: it reaches default, where a testbench can report it." : "To see it, add a default that reports it or a unique or priority qualifier (§12.5.3)."}
+          <span aria-hidden>✓ </span>No real branch runs.{" "}
+          {result.config.catchAll ? "The unknown stays visible: it reaches default, where a testbench can report it." : "To see the unknown, add a default that reports it or a unique or priority qualifier (§12.5.3)."}
         </p>
       ) : null}
     </section>
@@ -917,7 +927,8 @@ function CompareLab({ preset }: { preset?: string }) {
 
   const leftOpts = useMemo(() => runOptions(cmp.left), [cmp.left]);
   const rightOpts = useMemo(() => runOptions(cmp.right), [cmp.right]);
-  const leftNote = cmp.leftExpanded ? `written as ${leftKind} with plain items: a range is legal only in case inside (§12.5.4), so the range is listed value by value` : undefined;
+  // The restriction is the grammar of §12.5 (Syntax 12-3); §12.5.4 defines the range_list comparison.
+  const leftNote = cmp.leftExpanded ? `written as ${leftKind} with plain items: a range is legal only in case inside (§12.5, §12.5.4), so the range is listed value by value` : undefined;
   const leftLines = useMemo(() => sourceLines(cmp.left.config), [cmp.left.config]);
   const rightLines = useMemo(() => sourceLines(cmp.right.config), [cmp.right.config]);
   const liveText = revealed
@@ -1003,7 +1014,7 @@ function CompareLab({ preset }: { preset?: string }) {
                 </RevealNote>
               </Focusable>
               {progress.complete ? <RevealNote label="What the values show">{compareWrapUp(set, leftKind)}</RevealNote> : null}
-              <ChipScope visible={showsChips(cmp.left) || showsChips(cmp.right)} rightName="item">
+              <ChipScope visible={showsChips(cmp.left) || showsChips(cmp.right)} rightName="item" marks={chipMarks(cmp.left, cmp.right)}>
                 {(onFoldToggle) => (
                   <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
                     <CompareColumn title={leftKind} result={cmp.left} told={toldBy(leftOpts, pair.firstChoice)} expressionName={set.selectName} showOr={false} onFoldToggle={onFoldToggle} />
