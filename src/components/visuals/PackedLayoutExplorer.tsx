@@ -121,7 +121,7 @@ export interface PackedLayoutExplorerProps {
 export const PACKED_LAYOUT_ASSUMPTIONS = [
   "Bit layouts follow IEEE 1800-2023 §7.2.1 (packed structs), §7.3.1 (hard and soft packed unions), §7.3.2 and §11.9 (tagged unions); widths and defaults follow §20.6.2, §10.7 and Table 6-7, so a variable nothing has written shows all x when it is 4-state.",
   "Editing a typedef is not a run-time action: when you reorder or resize members, the vector keeps its bits and the names move over it, as a monitor sees a wire. If the total shrinks the top bits go; if it grows the new bits hold the Table 6-7 default.",
-  "White space in %p output is implementation dependent (§21.2.1.6); the model prints one spacing. For a tagged union §21.2.1.6 gives tag:value but does not say whether '{ } surrounds it, so the model prints it bare; an untagged union's first member is printed as an assignment pattern, '{name:value}, since the output shall be a legal interpretation of the assignment pattern syntax.",
+  "White space in %p output is implementation dependent (§21.2.1.6); the model prints one spacing. The output shall be a legal interpretation of the assignment pattern syntax (§21.2.1.6), which is built from braces prefixed with an apostrophe (§10.9), so an untagged union's first member prints as '{name:value} and a tagged union's tag:value as '{tag:value}. A void member has no value (§7.3.2), and what stands for it is not stated, so '{tag} for one is derived.",
   "The nested soft union and the third tagged member are our own examples, not the standard's Figures 7-1 to 7-3.",
 ];
 
@@ -465,7 +465,7 @@ function StructMode({ preset: presetId }: { preset?: string }) {
   const enumMember = members.find((m) => m.type.kind === "enum");
   const enumDeclarations = Array.from(new Set(members.flatMap((m) => (m.type.kind === "enum" ? [enumDeclarationText(m.type.spec)] : []))));
   // The readout explains the vector back door, which only a packed struct has. Before a statement runs it would show "" and give away the enum-field prediction.
-  const enumReadout = packed && enumMember && hasWrite ? enumMemberReadout(members, value, enumMember.name, "struct", run.enum.arrival) : null;
+  const enumReadout = packed && enumMember && hasWrite ? enumMemberReadout(members, value, enumMember.name, run.enum.arrival) : null;
   const hasX = bitsOf(value).some((b) => b === "x" || b === "z");
 
   const applyStatement = useCallback(
@@ -1293,9 +1293,9 @@ function UnionMode({ preset: presetId }: { preset?: string }) {
           <code className={codeChip}>$display(&quot;%p&quot;, {preset.varName});</code> under this reading prints <code className={codeChip}>{pView.text}</code>
           <p className="mt-1 text-muted-foreground">This is the first-declared-member reading of §21.2.1.6, here {pView.member}.</p>
           <WhyToolsDiffer>
-            The aggregate paragraph of §21.2.1.6 says only the first declared element of a union is printed, but a packed union is a singular value (§6.4, §6.11.1), and the rules for singular values end with: all other singular data types print their values as they would unformatted. Tools can
-            therefore print this pattern or the union&apos;s plain decimal value, here <code className={codeChip}>{pView.unformatted}</code> (an unformatted value prints in decimal, §21.2.1.1), so packed-union %p output is tool-dependent. Print the member you need, or the raw view with
-            %h.
+            The aggregate paragraph of §21.2.1.6 says only the first declared element of a union is printed, but a packed union is a singular value (§6.4, §6.11.1). The subclause&apos;s last paragraph says that %p of a singular expression formats it as an element of an aggregate, and
+            the rules for elements end with: all other singular data types print their values as they would unformatted. Tools can therefore print this pattern or the union&apos;s plain decimal value, here <code className={codeChip}>{pView.unformatted}</code> (an unformatted value prints
+            in decimal, §21.2.1.1), so packed-union %p output is tool-dependent. Print the member you need, or the raw view with %h.
           </WhyToolsDiffer>
         </div>
       )}
@@ -1422,8 +1422,8 @@ function TaggedMode() {
             )}
             {pReading.basis === "tool-dependent" ? (
               <WhyToolsDiffer>
-                The standard states tag:value in its paragraph on aggregates, but a packed tagged union is singular (§6.4, §6.11.1), and its list for singular values sends every type it does not name, packed unions included, to their unformatted value. The two readings differ, so its %p
-                output is tool-dependent. Print the member you need by name.
+                The standard states tag:value in its paragraph on aggregates, but a packed tagged union is singular (§6.4, §6.11.1). %p of a singular expression formats it as an element of an aggregate (the last paragraph of §21.2.1.6), and its list for singular values sends every type it
+                does not name, packed unions included, to their unformatted value. The two readings differ, so its %p output is tool-dependent. Print the member you need by name.
               </WhyToolsDiffer>
             ) : null}
           </div>

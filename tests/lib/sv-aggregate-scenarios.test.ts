@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   OPCODE_E,
+  assignmentLegality,
   enumCast,
   enumInitialValue,
   enumMemberReadout,
@@ -14,10 +15,14 @@ import {
   readUnionPath,
   setMemberWidth,
   structBits,
+  svDec,
   svHex,
   unionProblems,
   unionWidth,
+  writeMember,
   writeUnionPath,
+  type PackedMember,
+  type TypeRef,
 } from "@/lib/sv-aggregate-layout-model";
 import {
   CLINIC_FIXES,
@@ -74,8 +79,15 @@ describe("struct presets: one per lesson use, each prediction agreeing with the 
     expect(p.statements[2].prediction!.options.find((o) => o.id === "error")!.feedback).toMatch(/§6\.22\.3/);
     // The no-warning rule is §10.7's; §6.22.3 says nothing about warnings or sizing.
     const zero = p.statements[2].prediction!.options.find((o) => o.id === "zero")!.feedback;
-    expect(zero).toMatch(/not required to, warn about the size mismatch \(§10\.7\)/);
+    // §10.7's own words: implementations "may, but are not required to, warn or report any errors".
+    expect(zero).toMatch(/may, but are not required to, warn or report errors about the size mismatch \(§10\.7\)/);
     expect(zero).not.toMatch(/§6\.22\.3/);
+    // §10.7 sends an unsigned source to §11.6.1, which does not name the fill; the zeros are §6.11.2's.
+    expect(zero).toMatch(/zero-extended to 32 bits \(§10\.7, §6\.11\.2\)/);
+    expect(p.statements[2].note).toMatch(/zero-filled \(\+\) \(§10\.7, §6\.11\.2\)/);
+    const legal = p.statements[2].prediction!.options.find((o) => o.id === "error")!.feedback;
+    expect(legal).toMatch(/warn or report errors about the mismatch \(§10\.7\)/);
+    expect(legal).not.toMatch(/no warning is required/);
   });
 
   it("ctrl_reg_t: the three writes give the lesson's 32'h0000_0641", () => {
@@ -87,6 +99,12 @@ describe("struct presets: one per lesson use, each prediction agreeing with the 
     expect(memberRanges(p.members).map((r) => `${r.name}${r.hi}:${r.lo}`)).toEqual(["rsvd31:16", "prescale15:12", "thresh11:4", "mode3:2", "irq_en1:1", "en0:0"]);
     // The gated question is the register after the thresh write.
     expect(correctOf(p.statements[2].prediction!.options)).toBe(formatSizedHex(runStructStatements(p, 3)));
+    // The "thresh at bit 0" distractor is what that misconception computes: thresh over en at [7:0] overwrites en's 1.
+    const misplaced: PackedMember[] = [{ id: "pad", name: "pad", width: 24, type: { kind: "logic" } }, { id: "thresh", name: "thresh", width: 8, type: { kind: "logic" } }];
+    const atBitZero = writeMember(misplaced, svHex(32, "0000_0001"), "thresh", svDec(8, 100)).value;
+    const distractor = p.statements[2].prediction!.options.find((o) => o.id === "0064")!;
+    expect(distractor.label).toBe(formatSizedHex(atBitZero));
+    expect(distractor.feedback).toMatch(/thresh at bits \[7:0\], over en, so en's 1 would be overwritten/);
   });
 
   it("ctrl_reg_t: ctrl = '0 is a fill literal, so a width edit neither truncates nor extends it (§5.7.1)", () => {
@@ -362,7 +380,9 @@ describe("debug clinic: the model regenerates the log, so a wrong fix keeps the 
     expect(logOf(s, "logic-base")).toMatch(/state\.name\(\) = "" \(value x\)/);
     expect(logOf(s, "reorder")).toMatch(/state\.name\(\) = "IDLE"/);
     // The log's own format comes from the $display on screen.
-    expect(s.lines.find((l) => l.text.startsWith("$display"))!.text).toBe('$display("@%0t state.name() = \\"%s\\" (value %0d)", $time, state.name(), state);');
+    // The listing names the process that prints at 0 and 10, and prints $time with %0d, a count of the module's time units (§20.3.1); %t would depend on $timeformat (§20.4.3).
+    expect(s.lines.find((l) => l.text.includes("$display"))!.text).toBe('initial repeat (2) begin $display("@%0d state.name() = \\"%s\\" (value %0d)", $time, state.name(), state); #10; end');
+    expect(s.lines.find((l) => l.key === "l5")!.whenPicked).toMatch(/\$time counts in the module's time unit \(§20\.3\.1\)/);
   });
 
   it("IDLE without reset: the post-edge line comes from the code shown, so nothing moves to RUN and x stays x (§6.19.5.6)", () => {
@@ -574,6 +594,61 @@ describe("debug clinic: the model regenerates the log, so a wrong fix keeps the 
     expect(packages).toBe(CLINIC_SCENARIOS.length);
     expect(clinicScenario("two-typedefs").fixCode["package-typedef"]).toMatch(/typedef struct packed \{ opcode_e op;[^}]*\} cmd_t;\n  typedef struct \{ cmd_t cmd;/);
     expect(clinicScenario("empty-name-struct").fixCode["package-typedef"]).toMatch(/\} opcode_e;\n  typedef struct packed \{ opcode_e op;/);
+  });
+
+  it("the package snippets name the rule that forces the types in: a package shall not refer to the compilation-unit scope (§26.2)", () => {
+    // §26.2 also lets a package reach another package's items by fully resolved name, so "only its own and imported items" would be wrong.
+    for (const id of ["two-typedefs", "empty-name-struct"] as const) {
+      const code = clinicScenario(id).fixCode["package-typedef"];
+      expect(code, id).not.toMatch(/only its own and imported/);
+    }
+    const snippet = clinicScenario("two-typedefs").fixCode["package-typedef"];
+    expect(snippet).toMatch(/\/\/ cmd_t and opcode_e move into the package too: a package shall not refer to items in the compilation-unit scope \(§26\.2\)/);
+  });
+
+  it("two typedefs: the 'packed' option states all three conditions of §6.22.2 (c), not width alone", () => {
+    const packed = clinicScenario("two-typedefs").causes.find((c) => c.id === "packed")!.feedback;
+    expect(packed).toMatch(/Two packed structs with the same total bits, state-ness and signedness would be equivalent \(§6\.22\.2 c\)/);
+    expect(packed).not.toMatch(/by width/);
+    // The model agrees: equal width alone is not equivalence.
+    const a: TypeRef = { declId: "a", display: "a_t", packed: true, bits: 32, states: 4, signed: false };
+    expect(assignmentLegality(a, { ...a, declId: "b", display: "b_t", states: 2 }).relation).toBe("assignment-compatible");
+  });
+
+  it("two typedefs: no text claims a typedef matches only itself; a renaming typedef matches too (§6.22.1 b, d)", () => {
+    const s = clinicScenario("two-typedefs");
+    const texts = [...s.lines.map((l) => l.whenPicked), ...s.causes.map((c) => c.feedback), s.run(null).verdict];
+    for (const t of texts) expect(t).not.toMatch(/matches only itself|a second typedef statement/);
+    expect(s.causes.find((c) => c.correct)!.feedback).toMatch(/A struct typedef matches itself and the objects declared with it \(§6\.22\.1 d\), never a second typedef struct declaration/);
+  });
+
+  it("in each clinic listing every declaration comes before the first statement, as a begin-end block requires (Syntax 9-2, A.6.3)", () => {
+    // A declaration: an optional typedef, or a type and a name, optionally initialised. A statement: a $display, or an assignment.
+    const isDeclaration = (t: string) => /^\s*typedef\b/.test(t) || /^\s*(?!module\b|if\b|always\w*\b|initial\b)[A-Za-z_]\w*(\s*\[[^\]]*\])*\s+[A-Za-z_]\w*\s*(=[^=][^;]*)?;/.test(t);
+    const isStatement = (t: string) => /\$display\(/.test(t) || /^\s*(\w+:\s*)?[A-Za-z_][\w.]*(\[[^\]]*\])*\s*<?=[^=]/.test(t);
+    for (const s of CLINIC_SCENARIOS) {
+      const texts = s.lines.map((l) => l.text);
+      const firstStatement = texts.findIndex(isStatement);
+      if (firstStatement < 0) continue;
+      texts.forEach((t, i) => {
+        if (isDeclaration(t)) expect(i, `${s.id}: "${t}" is declared after the first statement`).toBeLessThan(firstStatement);
+      });
+    }
+    // The struct back-door listing: cmd_t cmd; is declared before the $display, and cmd = bus_word; stays line 6.
+    const keys = clinicScenario("empty-name-struct").lines.map((l) => l.key);
+    expect(keys).toEqual(["l1", "l2", "l3", "l4", "l3d", "l5", "l6"]);
+    expect(keys.indexOf("l5") + 1).toBe(6);
+  });
+
+  it("the '4-state enum base' snippet in both empty-name listings says the base is already 4-state, so it changes nothing", () => {
+    for (const id of ["empty-name", "empty-name-struct"] as const) {
+      const s = clinicScenario(id);
+      const code = s.fixCode["logic-base"];
+      expect(code, id).toMatch(/^\/\/ unchanged: opcode_e's base is already logic \[3:0\], a 4-state base\n/);
+      // The declaration it repeats is the listing's own first line.
+      expect(code.split("\n")[1], id).toBe(s.lines[0].text);
+      expect(s.fixFeedback["logic-base"], id).toMatch(/The symptom stays\.$/);
+    }
   });
 
   it("two typedefs + $cast: it compiles, because $cast as a function never issues a compile error, and fails at run time without copying (§6.24.2)", () => {

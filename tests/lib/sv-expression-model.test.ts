@@ -894,15 +894,26 @@ describe("§11.8.1 part-selects are unsigned", () => {
     expect(opts.find((o) => o.correct)?.label).toBe("w = 248");
     expect(opts.find((o) => o.label === "w = -8")?.feedback).toMatch(/part-select as signed/);
   });
-  it("the -8 distractor mentions only what the code does: no >>> on sb[7:0], zero extension only into a wider target", () => {
-    const onSelect = trapPredictionOptions(sc.decls, sc.target, "sb[7:0]").find((o) => o.label === "w = -8")?.feedback;
-    expect(onSelect).toMatch(/zero-extended/);
-    expect(onSelect).not.toMatch(/>>>/);
+  it("the -8 distractor names only its slip; the answer's feedback says what the code does: no >>> on sb[7:0], zero extension only into a wider target", () => {
+    const onSelect = trapPredictionOptions(sc.decls, sc.target, "sb[7:0]");
+    expect(onSelect.find((o) => o.label === "w = -8")?.feedback).toBe("That treats the part-select as signed.");
+    expect(onSelect.find((o) => o.correct)?.feedback).toMatch(/zero-extended/);
+    expect(onSelect.find((o) => o.correct)?.feedback).not.toMatch(/>>>/);
     const ashr = trapScenarios.find((s) => s.id === "ashr-unsigned-context")!;
-    const onShift = trapPredictionOptions(ashr.decls, ashr.target, "s[7:0] >>> 1").find((o) => o.label === "r = -4")?.feedback;
-    expect(onShift).toMatch(/part-select as signed/);
-    expect(onShift).toMatch(/>>>/);
-    expect(onShift).not.toMatch(/zero-extended/);
+    const select = ashr.variants.find((v) => v.id === "select")!;
+    const onShift = trapPredictionOptions(ashr.decls, ashr.target, select.expr, select.takeaway);
+    expect(onShift.find((o) => o.label === "r = -4")?.feedback).toBe("That treats the part-select as signed.");
+    const answer = onShift.find((o) => o.correct)?.feedback;
+    expect(answer).toMatch(/>>>/);
+    expect(answer).toMatch(/a part-select is unsigned even when it covers the entire vector/);
+    expect(answer).not.toMatch(/zero-extended/);
+  });
+  it("without the rule in the answer's feedback, the -8 distractor adds it once", () => {
+    // No takeaway: the answer's feedback for s[7:0] >>> 1 is the insight alone, which does not name the part-select rule.
+    const ashr = trapScenarios.find((s) => s.id === "ashr-unsigned-context")!;
+    const opts = trapPredictionOptions(ashr.decls, ashr.target, "s[7:0] >>> 1");
+    expect(opts.find((o) => o.correct)?.feedback).not.toContain("even when it covers the entire vector");
+    expect(opts.find((o) => o.label === "r = -4")?.feedback).toBe("That treats the part-select as signed. A part-select is unsigned even when it covers the entire vector (§11.8.1).");
   });
   it("the insight behind the answer states the §11.8.3 extension, without calling the RHS self-determined", () => {
     const select = assign(sc.decls, sc.target, "sb[7:0]");
@@ -1006,7 +1017,12 @@ describe("each scenario's rule: its clauses and the sentences that carry it", ()
     expect(rule("lost-carry")).toContain("The carry survives only when the target, a cast or a wider context-determined operand makes the context wider than the sum's 8 bits");
     expect(rule("int-vs-logic")).toContain("int is signed and logic [31:0] is not");
     expect(rule("casts")).toContain("A size cast pads or truncates and keeps the signedness; a sign cast keeps the bits");
-    expect(rule("part-select")).toContain("A part-select is unsigned even when it covers the whole of a signed vector");
+    // §11.8.1: unsigned regardless of the operands, even if the part-select specifies the entire vector. Worded apart from the
+    // trace's select sentence ("a part-select is unsigned even when it covers the entire vector"), which the reveal also shows.
+    expect(rule("part-select")).toBe(
+      "A part-select gives an unsigned result whatever the sign of its variable, even when it selects every bit, so it is zero-extended into a wider target; the signed target does not help (§11.8.1).",
+    );
+    expect(rule("int-vs-logic")).toBe("int is signed and logic [31:0] is not, and a comparison with an unsigned operand is unsigned, so a negative i reads as a large positive number (§6.11, §11.4.4, §11.8.1).");
     expect(rule("literal-sign")).toContain("A simple decimal is signed; a based literal is unsigned unless it carries an s");
   });
   it("the casts summary does not claim one bit pattern passes through all three casts", () => {
@@ -1032,6 +1048,24 @@ describe("§11.3.3 literal signedness scenario", () => {
     const opts = trapPredictionOptions(sc.decls, sc.target, "-4'sd12 / 3");
     expect(opts.find((o) => o.correct)?.label).toBe("q = 1");
     expect(opts.find((o) => o.label === "q = -4")?.feedback).toMatch(/by its digits/);
+  });
+  it("§5.7.1: 12 fits in 4 bits, so 4'sd12 is not truncated; only the s changes how its bits are read", () => {
+    const face = trapPredictionOptions(sc.decls, sc.target, "-4'sd12 / 3").find((o) => o.misconception === "literal-face-value");
+    expect(face?.label).toBe("q = -4");
+    expect(face?.feedback).toBe("That reads the sized literal by its digits. 12 is 4'b1100, which fits in 4 bits; the s changes only how those bits are read: as two's complement, -4 (§5.7.1, §11.3.3).");
+    expect(face?.feedback).not.toMatch(/truncat/);
+    // -4'sd8 / 3 is the same case: 8 is 4'b1000, which fits in 4 bits.
+    expect(trapPredictionOptions(sc.decls, sc.target, "-4'sd8 / 3").find((o) => o.misconception === "literal-face-value")?.feedback).not.toMatch(/truncat/);
+  });
+  it("§5.7.1: 20 needs 5 bits, so 4'd20 is truncated from the left and its bits above bit 3 are dropped", () => {
+    const face = trapPredictionOptions(sc.decls, sc.target, "-4'd20 / 3").find((o) => o.misconception === "literal-face-value");
+    expect(face?.label).toBe("q = -6");
+    expect(face?.feedback).toBe("That reads the sized literal by its digits. 20 needs more than 4 bits, so the literal is truncated from the left to its size: the bits above bit 3 are dropped (§5.7.1).");
+    expect(face?.feedback).not.toMatch(/digits are truncated/);
+    // With s as well, the bits that remain are then read as two's complement: 4'sd28 holds 1100, which is -4.
+    expect(trapPredictionOptions(sc.decls, sc.target, "-4'sd28 / 3").find((o) => o.misconception === "literal-face-value")?.feedback).toBe(
+      "That reads the sized literal by its digits. 28 needs more than 4 bits, so the literal is truncated from the left to its size: the bits above bit 3 are dropped (§5.7.1). The s then reads the 4 bits that remain as two's complement (§11.3.3).",
+    );
   });
 });
 
@@ -1283,9 +1317,12 @@ describe("insightOf: a >>> question gets its fill in the feedback", () => {
     expect(feedback).toMatch(/one unsigned context-determined operand makes the whole expression unsigned/);
     expect(feedback).toMatch(/>>> on an unsigned expression fills with 0/);
   });
-  it("every distractor that quotes the insight carries the fill too", () => {
+  it("no distractor quotes the insight: the fill is said once, by the answer the reveal prints beside it", () => {
     const options = trapPredictionOptions(sc.decls, sc.target, "(s >>> 1) + u");
-    expect(options.find((o) => o.label === "r = -3")?.feedback).toMatch(/fills with 0/);
+    const answer = options.find((o) => o.correct)?.feedback ?? "";
+    expect(answer).toMatch(/fills with 0/);
+    expect(options.find((o) => o.label === "r = -3")?.feedback).toBe("That is ordinary integer math: each operand keeps its declared sign and no bit is lost. SystemVerilog does not evaluate that way here.");
+    for (const o of options.filter((x) => !x.correct)) expect(o.feedback, o.label).not.toMatch(/fills with 0/);
   });
   it("(s >>> 1) + $signed(u): nothing is surprising, and the answer still names the sign fill", () => {
     expect(correct("(s >>> 1) + $signed(u)")?.feedback).toMatch(/vacated bits copy the sign bit \(1\)/);
@@ -1324,14 +1361,20 @@ describe("TrapVariant: fixes name their trap, and takeaways reach the correct an
     expect(dec(assign(sc.decls, sc.target, contrast.expr).final)).toBe("22");
     expect(dec(assign(sc.decls, sc.target, fix.expr).final)).toBe("150");
   });
-  it("a takeaway is added to the correct answer only, and it says the wider context keeps the carry", () => {
+  it("a takeaway is added to the correct answer only, and it says the wider context keeps any carry", () => {
     const sc = trapScenarios.find((s) => s.id === "lost-carry")!;
     const fix = sc.variants.find((v) => v.id === "size-cast")!;
     const opts = trapPredictionOptions(sc.decls, sc.target, fix.expr, fix.takeaway);
-    expect(opts.find((o) => o.correct)?.feedback).toMatch(/9-bit context keeps the carry/);
-    for (const o of opts.filter((x) => !x.correct)) expect(o.feedback).not.toMatch(/keeps the carry/);
+    expect(opts.find((o) => o.correct)?.feedback).toMatch(/9-bit context keeps any carry/);
+    for (const o of opts.filter((x) => !x.correct)) expect(o.feedback).not.toMatch(/keeps any carry/);
     const avg = sc.variants.find((v) => v.id === "avg-fix")!;
-    expect(trapPredictionOptions(sc.decls, sc.target, avg.expr, avg.takeaway).find((o) => o.correct)?.feedback).toMatch(/32-bit context keeps the carry/);
+    expect(trapPredictionOptions(sc.decls, sc.target, avg.expr, avg.takeaway).find((o) => o.correct)?.feedback).toMatch(/32-bit context keeps any carry/);
+  });
+  it("the carry takeaways hold when there is no carry: they speak of any carry, not of one that happened", () => {
+    const sc = trapScenarios.find((s) => s.id === "lost-carry")!;
+    const take = (id: string) => sc.variants.find((v) => v.id === id)?.takeaway;
+    expect(take("size-cast")).toBe("The 9-bit context keeps any carry: the sum runs in 9 bits, so a carry into bit 8 survives the add and the shift moves it back into the 8 bits s keeps (§11.6.1).");
+    expect(take("avg-fix")).toBe("The 32-bit context keeps any carry: the unsized 0 widens the sum to 32 bits, so the shift moves a carry back into the 8 bits s keeps (§11.6.1, §11.6.2).");
   });
   it("the carry a takeaway claims is really kept at the extreme operands", () => {
     const sc = trapScenarios.find((s) => s.id === "lost-carry")!;
@@ -1574,7 +1617,7 @@ describe("operator feedback: widths and the rule", () => {
   });
   it("{0{a}}: the wrong options name the slip; the compiler message alone says where a zero replication may appear", () => {
     const opts = operatorPredictionOptions(spec("repl-n"), inputs("1010", "0110", "x", "001", 0));
-    expect(opts.find((o) => o.label === "0-bit value (nothing)")?.feedback).toBe("That expects $display to print an empty value. A zero replication is ignored (§11.4.12.1), so nothing is left here.");
+    expect(opts.find((o) => o.label === "0-bit value (nothing)")?.feedback).toBe("That expects $display to print an empty value, but with nothing else in the braces there is no value to print.");
     expect(opts.find((o) => o.label.endsWith("(a unchanged)"))?.feedback).toBe("Zero copies of a is not one copy.");
     for (const o of opts.filter((x) => !x.correct)) expect(o.feedback, o.label).not.toMatch(/positive size/);
   });
@@ -1615,9 +1658,20 @@ describe("operator feedback: widths and the rule", () => {
     expect(opts.find((o) => o.correct)?.label).toBe("1'bz");
     expect(predictionVerdict(opts, opts.find((o) => !o.correct)?.id ?? null)).toBe("Your prediction is wrong. The answer is 1'bz.");
   });
-  it("a 1-bit result that is not z offers no z option", () => {
-    const opts = operatorPredictionOptions(spec("cond-z"), { a: B("1"), b: B("0"), c: B("1"), n: B("0"), signedA: false });
-    expect(opts.map((o) => o.label).sort()).toEqual(["1'b0", "1'b1", "1'bx"]);
+  it("a 1-bit result that is not z offers z only where a ?: branch holds it", () => {
+    const one = (a: string, b: string, c: string): OperatorInputs => ({ a: B(a), b: B(b), c: B(c), n: B("0"), signedA: false });
+    // en = 1: the 'z branch is the other branch.
+    const en1 = operatorPredictionOptions(spec("cond-z"), one("1", "0", "1"));
+    expect(en1.map((o) => o.label).sort()).toEqual(["1'b0", "1'b1", "1'bx", "1'bz"]);
+    expect(en1.find((o) => o.label === "1'bz")?.feedback).toBe("That is the other branch's value.");
+    // No branch holds z, and the result is not z: no z option.
+    expect(operatorPredictionOptions(spec("cond"), one("1", "0", "1")).map((o) => o.label).sort()).toEqual(["1'b0", "1'b1", "1'bx"]);
+    expect(operatorPredictionOptions(spec("red-and"), one("1", "0", "1")).map((o) => o.label).sort()).toEqual(["1'b0", "1'b1", "1'bx"]);
+  });
+  it("§11.4.11, §12.4: at 1 bit with en = x, 1'bz (what if/else stores) can be picked, and is named as the if/else answer", () => {
+    const opts = operatorPredictionOptions(spec("cond-z"), { a: B("1"), b: B("0"), c: B("x"), n: B("0"), signedA: false });
+    expect(opts.find((o) => o.correct)?.label).toBe("1'bx");
+    expect(opts.find((o) => o.label === "1'bz")?.feedback).toBe("Table 11-20 has no z result, not even for z with z. An if/else would store this.");
   });
 });
 
@@ -1775,7 +1829,12 @@ describe("expression wording pins: every sentence a reviewer checked against the
 
   it.each([
     ["cond", "A known condition picks one branch. An x/z condition evaluates both and compares them with == (§11.4.5). If that gives 1, either one is returned. Otherwise they merge bit by bit: a bit survives only where the branches agree on 0 or 1; every other pair, including x with x and z with z, is x.", "§11.4.11, Table 11-20"],
-    ["cond-z", "'z fills every bit of the else branch. With en unknown, each data bit merges with z, and Table 11-20 makes every such pair x.", "§11.4.11, Table 11-20, §5.7.1"],
+    ["cond-z", "A known en returns one branch: data, or all z, because 'z fills every bit of the else branch. With en unknown, each data bit merges with z, and Table 11-20 makes every such pair x.", "§11.4.11, Table 11-20, §5.7.1"],
+    ["countones", "$countbits(state, '1): the number of bits that are exactly 1. x and z bits never count. Returns an int.", "§20.9"],
+    ["onehot", "$countbits(state, '1) == 1: true when exactly one bit is 1. An x or z bit is not a 1, so 01x0 passes. Returns a bit, never x.", "§20.9"],
+    ["onehot0", "$countbits(state, '1) <= 1: zero or one bit set; x and z bits never count. Returns a bit.", "§20.9"],
+    ["isunknown", "$countbits(state, 'x, 'z) != 0: true when any bit is x or z. Returns a bit.", "§20.9"],
+    ["onehot-guarded", "The guard an assertion needs: exactly one 1 AND no x/z. $onehot alone accepts 01x0.", "§20.9, §11.4.7"],
     ["concat", "Operands are self-determined and joined MSB first; the result is unsigned.", "§11.4.12, §11.8.1"],
     ["concat-target", "A concatenation may be an assignment target: the value is cut by member width, the first member taking the most significant bits, as in a source concatenation. A replication such as {2{hi}} may not be a target.", "§11.4.12, §11.4.12.1"],
     ["sign-extend", "Sign extension by hand: replicate the sign bit n[3] in front of n. The replication count is a constant; with 0 copies the replication has no bits and only n remains.", "§11.4.12.1, §11.8.1"],
@@ -1794,10 +1853,43 @@ describe("expression wording pins: every sentence a reviewer checked against the
     const x = inputs("1100", "1010", "x");
     expect(feedbackOf("cond", inputs("1100", "1010", "1"), "4'b1010")).toBe("That is the other branch's value.");
     expect(feedbackOf("cond", inputs("1100", "1010", "0"), "4'b1100")).toBe("That is the other branch's value.");
-    expect(feedbackOf("cond", inputs("1100", "1010", "1"), "4'bxxxx")).toBe("That treats the condition as unknown; it is 1.");
     expect(feedbackOf("cond", x, "4'b1100")).toBe("That treats the unknown condition as true.");
     expect(feedbackOf("cond", x, "4'b1010")).toBe("That is what if/else stores.");
     expect(feedbackOf("cond", x, "4'b1xx0")).toBe(`${spec("cond").rule} (${spec("cond").clause})`);
+  });
+  it("§11.4.11: at a known condition, 'treats the condition as unknown' names what an x/z condition gives, the merge, not all x", () => {
+    // An x/z sel gives 1xx0 for these branches (the outer bits agree), so 1xx0 is the unknown-condition slip and xxxx is not.
+    for (const c of ["1", "0"]) {
+      const opts = operatorPredictionOptions(spec("cond"), inputs("1100", "1010", c));
+      expect(opts.find((o) => o.label === "4'b1xx0")?.feedback, `sel=${c}`).toBe(`That treats the condition as unknown; it is ${c}.`);
+      expect(opts.find((o) => o.label === "4'bxxxx")?.feedback, `sel=${c}`).toBe(`Nothing here makes every bit x; the condition is ${c}.`);
+    }
+    // Equal known branches compare as 1 (§11.4.5), so an x/z sel returns 1010 too: no option may say the condition was taken as unknown.
+    const equal = operatorPredictionOptions(spec("cond"), inputs("1010", "1010", "1"));
+    expect(equal.find((o) => o.correct)?.label).toBe("4'b1010");
+    expect(equal.find((o) => o.label === "4'bxxxx")?.feedback).toBe("Nothing here makes every bit x; the condition is 1.");
+    for (const o of equal) expect(o.feedback, o.label).not.toMatch(/treats the condition as unknown/);
+    // Data merged with 'z really is x in every bit, so there all x is the unknown-condition slip.
+    expect(feedbackOf("cond-z", inputs("1010", "0000", "1"), "4'bxxxx")).toBe("That treats the condition as unknown; it is 1.");
+    expect(feedbackOf("cond-z", inputs("1010", "0000", "0"), "4'bxxxx")).toBe("That treats the condition as unknown; it is 0.");
+  });
+  it("§11.4.11: every 'treats the condition as unknown' option at a known condition is exactly what an x/z condition returns", () => {
+    const bits: Bit4[] = ["0", "1", "x", "z"];
+    const all = (n: number): string[] => (n === 0 ? [""] : all(n - 1).flatMap((s) => bits.map((b) => s + b)));
+    for (const id of ["cond", "cond-z"]) {
+      for (const a of all(2)) {
+        for (const b of id === "cond" ? all(2) : ["00"]) {
+          for (const c of ["0", "1"]) {
+            const input = inputs(a, b, c);
+            const asUnknown = runOperator(spec(id), { ...input, c: B("x") });
+            if (!asUnknown.ok) throw new Error(`${id} ${a} ${b}`);
+            for (const o of operatorPredictionOptions(spec(id), input).filter((y) => /treats the condition as unknown/.test(y.feedback))) {
+              expect(o.label, `${id} a=${a} b=${b} c=${c}`).toBe(lit(asUnknown.value));
+            }
+          }
+        }
+      }
+    }
   });
 
   it("§11.4.11: equal known branches return one of them, so no option says they are merged with Table 11-20", () => {
@@ -1827,9 +1919,12 @@ describe("expression wording pins: every sentence a reviewer checked against the
     expect(feedbackOf("cond-z", inputs("1", "0", "x"), "1'b1")).toBe("That treats the unknown condition as true.");
     expect(feedbackOf("cond-z", inputs("z", "0", "x"), "1'b1")).toBe("Neither branch holds 1.");
   });
-  it("1-bit: at a known condition the other branch and a value no branch holds are told apart", () => {
+  it("1-bit: at a known condition the other branch, the x/z-condition result and a value no branch holds are told apart", () => {
     expect(feedbackOf("cond", inputs("1", "0", "1"), "1'b0")).toBe("That is the other branch's value.");
-    expect(feedbackOf("cond", inputs("1", "0", "1"), "1'bx")).toBe("Neither branch holds x.");
+    // 1 with 0 merges to x (Table 11-20), so 1'bx is what an unknown condition would give.
+    expect(feedbackOf("cond", inputs("1", "0", "1"), "1'bx")).toBe("That treats the condition as unknown; it is 1.");
+    // 1 with 1 compares equal, so an unknown condition would give 1 as well: 1'bx is just a value no branch holds.
+    expect(feedbackOf("cond", inputs("1", "1", "1"), "1'bx")).toBe("Neither branch holds x.");
     expect(feedbackOf("cond-z", inputs("1", "0", "0"), "1'b1")).toBe("That is the other branch's value.");
   });
   it("no ?: option at any width repeats another option's sentence or starts with a second verdict", () => {
@@ -1852,7 +1947,13 @@ describe("expression wording pins: every sentence a reviewer checked against the
 
   it("bit-vector functions at 1 bit: the answer states the computed value and the rule; a wrong bit names only its slip", () => {
     const at = (id: string, state: string, label: string) => feedbackOf(id, inputs(state), label);
-    expect(at("onehot", "01x0", "1'b1")).toBe("$countbits(state, '1) = 1, and 1 == 1 is true, so $onehot(state) returns 1'b1. $countbits(state, '1) == 1. An x bit is not a 1, so 01x0 passes. Returns a bit, never x. (§20.9)");
+    expect(at("onehot", "01x0", "1'b1")).toBe(
+      "$countbits(state, '1) = 1, and 1 == 1 is true, so $onehot(state) returns 1'b1. $countbits(state, '1) == 1: true when exactly one bit is 1. An x or z bit is not a 1, so 01x0 passes. Returns a bit, never x. (§20.9)",
+    );
+    // 0110 fails: the computed line says 2 == 1 is false, and the rule no longer reads as the bare claim "$countbits(state, '1) == 1."
+    expect(at("onehot", "0110", "1'b0")).toBe(
+      "$countbits(state, '1) = 2, and 2 == 1 is false, so $onehot(state) returns 1'b0. $countbits(state, '1) == 1: true when exactly one bit is 1. An x or z bit is not a 1, so 01x0 passes. Returns a bit, never x. (§20.9)",
+    );
     expect(at("onehot", "01x0", "1'b0")).toBe("That lets the x/z bit decide the test.");
     expect(at("onehot", "01x0", "1'bx")).toBe("That expects x, but a bit result is 2-state: 1'b0 or 1'b1. Unknown bits either match the control value ('x, 'z for $isunknown) or they do not count (§20.9).");
     expect(at("onehot", "0110", "1'b1")).toBe("That miscounts the 1 bits.");
@@ -1861,7 +1962,9 @@ describe("expression wording pins: every sentence a reviewer checked against the
     expect(at("onehot0", "xxxx", "1'b0")).toBe("That lets the x/z bits decide the test.");
     expect(at("isunknown", "01x0", "1'b0")).toBe("That overlooks the x/z bit.");
     expect(at("isunknown", "0100", "1'b1")).toBe("That finds an unknown bit where every bit is 0 or 1.");
-    expect(at("onehot-guarded", "01x0", "1'b0")).toBe(`$onehot(state) is 1'b1 and $isunknown(state) is 1'b1, so the guard is false. ${spec("onehot-guarded").rule} (§20.9, §11.4.7)`);
+    expect(at("onehot-guarded", "01x0", "1'b0")).toBe(
+      "$onehot(state) is 1'b1 and $isunknown(state) is 1'b1, so the guard is false. The guard an assertion needs: exactly one 1 AND no x/z. $onehot alone accepts 01x0. (§20.9, §11.4.7)",
+    );
     expect(at("onehot-guarded", "01x0", "1'b1")).toBe("That takes $onehot(state) alone.");
     expect(at("onehot-guarded", "0110", "1'b1")).toBe("That passes a vector $onehot(state) already rejects.");
     expect(at("onehot-guarded", "0100", "1'b0")).toBe("That rejects a legal one-hot vector.");
@@ -1874,10 +1977,66 @@ describe("expression wording pins: every sentence a reviewer checked against the
     expect(feedbackOf("countones", inputs("0100"), "4")).toBe("That counts every bit.");
     expect(feedbackOf("countones", inputs("0100"), "x (unknown)")).toBe("That expects x, but every bit is known, and int is a 2-state type in any case.");
   });
+  it("§20.9: with two 1 bits already, no x/z bit can change $onehot or $onehot0, so a 1'b1 pick is a miscount", () => {
+    const at = (id: string, state: string, label: string) => feedbackOf(id, inputs(state), label);
+    for (const state of ["11x0", "1x1z", "x110", "11zz", "011x", "11xx"]) {
+      expect(at("onehot", state, "1'b1"), state).toBe("That miscounts the 1 bits.");
+      expect(at("onehot0", state, "1'b1"), state).toBe("That miscounts the 1 bits.");
+    }
+    // One x bit cannot push $onehot0 past 1 when no bit is 1: 000x passes either way, and 1'b0 is what $onehot gives.
+    expect(at("onehot0", "000x", "1'b0")).toBe("That is what $onehot(state) returns.");
+  });
+  it("§20.9 sweep: 'decide the test' appears only where some 0/1 reading of the x/z bits gives the chosen value", () => {
+    const bits: Bit4[] = ["0", "1", "x", "z"];
+    const all = (n: number): string[] => (n === 0 ? [""] : all(n - 1).flatMap((s) => bits.map((b) => s + b)));
+    const tests: Record<string, (count: number) => boolean> = { onehot: (k) => k === 1, onehot0: (k) => k <= 1 };
+    let diagnosed = 0;
+    for (const [id, test] of Object.entries(tests)) {
+      for (const state of all(4)) {
+        const unknown = [...state].map((b, i) => (b === "x" || b === "z" ? i : -1)).filter((i) => i >= 0);
+        for (const o of operatorPredictionOptions(spec(id), inputs(state)).filter((y) => /decide the test/.test(y.feedback))) {
+          diagnosed += 1;
+          const want = o.label === "1'b1";
+          // Every 0/1 assignment of the x/z bits: some must give the chosen value.
+          const reachable = Array.from({ length: 1 << unknown.length }, (_, m) => [...state].map((b, i) => (unknown.includes(i) ? String((m >> unknown.indexOf(i)) & 1) : b)).filter((b) => b === "1").length).some(
+            (count) => test(count) === want,
+          );
+          expect(reachable, `${id} ${state} ${o.label}`).toBe(true);
+        }
+      }
+    }
+    expect(diagnosed).toBeGreaterThan(50);
+  });
   it("the bit-vector rules state how x and z count", () => {
-    expect(spec("onehot").rule).toBe("$countbits(state, '1) == 1. An x bit is not a 1, so 01x0 passes. Returns a bit, never x.");
+    expect(spec("onehot").rule).toBe("$countbits(state, '1) == 1: true when exactly one bit is 1. An x or z bit is not a 1, so 01x0 passes. Returns a bit, never x.");
     expect(spec("onehot0").rule).toBe("$countbits(state, '1) <= 1: zero or one bit set; x and z bits never count. Returns a bit.");
     expect(spec("countones").rule).toBe("$countbits(state, '1): the number of bits that are exactly 1. x and z bits never count. Returns an int.");
+    expect(spec("isunknown").rule).toBe("$countbits(state, 'x, 'z) != 0: true when any bit is x or z. Returns a bit.");
+    expect(spec("onehot-guarded").rule).toBe("The guard an assertion needs: exactly one 1 AND no x/z. $onehot alone accepts 01x0.");
+  });
+  it.each([
+    ["bitcount-legal", "One bit set, nothing unknown."],
+    ["bitcount-two-hot", "$onehot fails, $onehot0 fails too: two bits are set."],
+    ["bitcount-reset", "No bit is 1, so $onehot0 passes while every bit is unknown."],
+    ["cond-equal", "Both branches hold the same known bits, so no x appears."],
+  ])("preset %s: the note is exact", (id, note) => {
+    expect(operatorPresets.find((p) => p.id === id)?.note).toBe(note);
+  });
+  it("§20.9: each preset note holds for its vector", () => {
+    const report = (state: string) => bitVectorReport(fromBits(B(state)), "state");
+    const fn = (state: string, f: string) => report(state).find((r) => r.fn === f)?.result;
+    expect([fn("0100", "$countones"), fn("0100", "$onehot"), fn("0100", "$isunknown")]).toEqual(["1", "1'b1", "1'b0"]);
+    expect([fn("0110", "$onehot"), fn("0110", "$onehot0")]).toEqual(["1'b0", "1'b0"]);
+    expect([fn("xxxx", "$onehot0"), fn("xxxx", "$isunknown")]).toEqual(["1'b1", "1'b1"]);
+  });
+  it("§20.9: x/z bits that no control value names are 'not counted', not counted as 0", () => {
+    const why = (src: string, decls: SvDecl[]) => expr(decls, src).steps.find((s) => s.kind === "op")?.why ?? "";
+    const state = [d("state", "logic", 4, "4'b01x0")];
+    expect(why("$countbits(state, '0)", state)).toBe("$countbits counts the bits of 4'b01x0 equal to '0: $countbits(state, '0) = 2. It returns an int (32 bits, signed). The 1 x/z bit matches none of the control values, so it is not counted.");
+    expect(why("$countbits(state, '0)", state)).not.toMatch(/counts as 0/);
+    // 'x names the x bit, so only the z of 0zx0 goes uncounted.
+    expect(why("$countbits(state, 'x)", [d("state", "logic", 4, "4'b0zx0")])).toMatch(/= 1\. It returns an int \(32 bits, signed\)\. The 1 x\/z bit matches none of the control values, so it is not counted\.$/);
+    expect(why("$isunknown(state)", state)).not.toMatch(/not counted/);
   });
 
   it("§11.4.12, §11.4.12.1: the target distractors name the slip; the rule alone states MSB order and the replication limit", () => {
@@ -1979,7 +2138,83 @@ describe("expression wording pins: every sentence a reviewer checked against the
 
   it("the cast takeaways say what the trace does not", () => {
     const v = (id: string) => trapScenarios.find((s) => s.id === "casts")?.variants.find((x) => x.id === id)?.takeaway;
-    expect(v("type-cast")).toBe("int being signed does not change that: the extension follows the expression inside the cast, not the cast type (§6.24.1).");
-    expect(v("type-cast-signed")).toBe("The sign cast is what changes the extension: int'(w) alone always adds zeros (§6.24.1).");
+    expect(v("type-cast")).toBe("w is unsigned, so int'(w) zero-extends it; int being signed does not change that: the extension follows the expression inside the cast, not the cast type (§6.24.1).");
+    expect(v("type-cast-signed")).toBe("signed'(w) is signed, so int'(signed'(w)) sign-extends it; the sign cast is what changes the extension: int'(w) alone always adds zeros (§6.24.1).");
+  });
+  it("§6.24.1: at w = 15 the type-cast answer names the zero extension itself; the insight there does not", () => {
+    const sc = trapScenarios.find((s) => s.id === "casts")!;
+    const decls = sc.decls.map((x) => ({ ...x, init: "8'd15" }));
+    for (const id of ["type-cast", "type-cast-signed"]) {
+      const variant = sc.variants.find((x) => x.id === id)!;
+      const real = assign(decls, variant.target!, variant.expr);
+      // Nothing is surprising at w = 15, so the insight is the assignment context and the cast result: no extension.
+      expect(real.insight, id).not.toMatch(/extends/);
+      const answer = trapPredictionOptions(decls, variant.target!, variant.expr, variant.takeaway).find((o) => o.correct);
+      expect(answer?.label, id).toBe("v = 15");
+      expect(answer?.feedback, id).toBe(`${real.insight} ${variant.takeaway}`);
+    }
+    expect(trapPredictionOptions(decls, sc.variants[3].target!, sc.variants[3].expr, sc.variants[3].takeaway).find((o) => o.correct)?.feedback).toMatch(
+      /The cast result is 32 bits, signed: 32'sh0000_000F \(15\)\. w is unsigned, so int'\(w\) zero-extends it; int being signed does not change that/,
+    );
+  });
+
+  describe("trap options: a wrong option names only its slip; the insight is the answer's alone (S2)", () => {
+    const variants = trapScenarios.flatMap((sc) => sc.variants.map((v) => ({ sc, v })));
+    it.each(variants.map(({ sc, v }) => [`${sc.id}/${v.id}`, sc, v] as const))("%s", (_name, sc, v) => {
+      const target = v.target ?? sc.target;
+      const real = assign(sc.decls, target, v.expr);
+      const opts = trapPredictionOptions(sc.decls, target, v.expr, v.takeaway, { labelBits: sc.labelBits });
+      expect(opts.filter((o) => o.correct)).toHaveLength(1);
+      for (const o of opts.filter((x) => !x.correct)) {
+        expect(o.feedback, o.label).not.toContain(real.insight);
+        for (const s of real.steps.filter((x) => x.why.length > 40)) expect(o.feedback, `${o.label}: ${s.why}`).not.toContain(s.why);
+        expect(o.feedback, o.label).not.toMatch(/^Not here/);
+      }
+    });
+  });
+  it("1-bit targets: the other truth value is named as the comparison read with the other signedness, or as no reading at all", () => {
+    const compare = trapScenarios.find((s) => s.id === "signed-compare")!;
+    const fix = trapPredictionOptions(compare.decls, compare.target, "a > 0");
+    expect(fix.find((o) => o.correct)?.label).toBe("pos = 0");
+    expect(fix.find((o) => o.label === "pos = 1")?.feedback).toBe("That compares the operands as unsigned numbers.");
+    const positive = compare.decls.map((x) => ({ ...x, init: "3" }));
+    const plain = trapPredictionOptions(positive, compare.target, "a > 0");
+    expect(plain.find((o) => o.correct)?.label).toBe("pos = 1");
+    expect(plain.find((o) => o.label === "pos = 0")?.feedback).toBe("Neither a signed nor an unsigned comparison of these values gives 0.");
+  });
+  it("the casts scenario labels each option with its bit pattern, so 8'hBC and 8'hAB need no hex-to-decimal conversion", () => {
+    const sc = trapScenarios.find((s) => s.id === "casts")!;
+    expect(sc.labelBits).toBe(true);
+    const labels = (id: string) => {
+      const v = sc.variants.find((x) => x.id === id)!;
+      return trapPredictionOptions(sc.decls, v.target ?? sc.target, v.expr, v.takeaway, { labelBits: true }).map((o) => `${o.correct ? "*" : ""}${o.label}`);
+    };
+    expect(labels("size-cast")).toEqual(["v = -68 (8'hBC)", "v = 171 (8'hAB)", "*v = 188 (8'hBC)"]);
+    expect(labels("type-cast")).toEqual(["v = -16 (32'hFFFF_FFF0)", "*v = 240 (32'h0000_00F0)", "v = x"]);
+    // Other scenarios keep plain decimal labels.
+    expect(trapScenarios.filter((s) => s.labelBits).map((s) => s.id)).toEqual(["casts"]);
+  });
+
+  describe("§11.4.11: a known ?: condition evaluates only the branch it picks, and the trace shows only that branch", () => {
+    const decls = [d("s", "logic", 8, "-8", true), d("t", "logic", 8, "5", true)];
+    const run = (src: string, u: string) => assign([...decls, d("u", "logic", 1, u)], d("r", "logic", 8, undefined, true), src);
+    it("u = 0 hides the >>> of the first branch; u = 1 shows it", () => {
+      expect(run("u ? (s >>> 1) : t", "1'b0").steps.some((s) => s.kind === "op" && s.op === ">>>")).toBe(false);
+      expect(run("u ? (s >>> 1) : t", "1'b1").steps.some((s) => s.kind === "op" && s.op === ">>>")).toBe(true);
+    });
+    it("u = 1 hides the addition of the second branch, whose 32-bit size still sets the context", () => {
+      const r = run("u ? s : (t + 1)", "1'b1");
+      expect(r.steps.some((s) => s.kind === "op" && s.op === "+")).toBe(false);
+      expect(r.contextWidth).toBe(32);
+      expect(r.steps.find((s) => s.kind === "op" && s.op === "?:")?.why).toBe(
+        "The condition is 1, so the first branch is the result, already sized to 32 bits; the other branch is not evaluated, but its size still counts toward the context (§11.6.1).",
+      );
+      expect(run("u ? s : (t + 1)", "1'b0").steps.find((s) => s.kind === "op" && s.op === "+")?.why).toBe("Addition in 32 bits, signed: 5 + 1 = 6.");
+    });
+    it("an x condition evaluates and traces both branches", () => {
+      const r = run("u ? (s >>> 1) : (t + 1)", "1'bx");
+      expect(r.steps.some((s) => s.kind === "op" && s.op === ">>>")).toBe(true);
+      expect(r.steps.some((s) => s.kind === "op" && s.op === "+")).toBe(true);
+    });
   });
 });

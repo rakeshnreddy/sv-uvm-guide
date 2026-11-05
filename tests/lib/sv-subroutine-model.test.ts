@@ -56,6 +56,7 @@ import {
   truncateTo,
   v,
   waitCyclesEffect,
+  withArticle,
   type Bench,
   type DirName,
   type Direction,
@@ -297,9 +298,11 @@ describe("Why and clause follow the variable's own storage, not the subroutine's
     expect(seen.clause).toBe("§13.3.1, §6.21");
     const own = run.trace.find((s) => s.lineKey === "own") as (typeof run.trace)[number];
     expect(own.why).toMatch(/this activation's own copy/);
-    expect(own.clause).toBe("§13.3.2");
+    // id is an input: its own copy is §13.3.2's, and "never copied back" is §13.3's direction list.
+    expect(own.clause).toBe("§13.3.2, §13.3");
     const enter = run.trace.find((s) => s.kind === "enter") as (typeof run.trace)[number];
     expect(enter.what).toMatch(/uses the one shared copy of seen and gets its own id/);
+    expect(enter.why).toMatch(/^m is an automatic task, but a local can override that lifetime\./);
   });
 
   it("a plain static task's own variables are still described as the one shared copy", () => {
@@ -310,8 +313,47 @@ describe("Why and clause follow the variable's own storage, not the subroutine's
 
   it("an input's own copy is never copied back; an output's waits for the return", () => {
     const run = simulateBench(showDirsBench({ lifetime: "automatic", directions: DEFAULT_DIRECTIONS }));
-    expect((run.trace.find((s) => s.lineKey === "dir-a") as (typeof run.trace)[number]).why).toMatch(/never copied back/);
-    expect((run.trace.find((s) => s.lineKey === "dir-b") as (typeof run.trace)[number]).why).toMatch(/until the copy-out at the return/);
+    const a = run.trace.find((s) => s.lineKey === "dir-a") as (typeof run.trace)[number];
+    const b = run.trace.find((s) => s.lineKey === "dir-b") as (typeof run.trace)[number];
+    expect(a.why).toMatch(/never copied back/);
+    expect(b.why).toMatch(/until the copy-out at the return/);
+    // §13.3.2 for the activation's own copy; §13.3's direction list for what reaches the caller and when.
+    expect(a.clause).toBe("§13.3.2, §13.3");
+    expect(b.clause).toBe("§13.3.2, §13.3");
+    // An inout says the same as an output, and cites the same.
+    const inout = simulateBench(showDirsBench({ lifetime: "automatic", directions: { ...DEFAULT_DIRECTIONS, b: "inout" } })).trace.find((s) => s.lineKey === "dir-b");
+    expect(inout?.why).toMatch(/until the copy-out at the return/);
+    expect(inout?.clause).toBe("§13.3.2, §13.3");
+    // A local's own copy has no direction, so only the storage clause applies.
+    const local = simulateBench(countCallsBench()).trace.find((s) => s.lineKey === "this-inc");
+    expect(local?.clause).toBe("§13.3.1, §6.21");
+  });
+
+  it("an automatic function's value formal cites §13.4 for its direction, never the tasks clause", () => {
+    const bench: Bench = {
+      id: "fn-formal",
+      title: "fn-formal",
+      globals: [{ name: "r", type: "int" }],
+      subs: [
+        {
+          name: "bump",
+          kind: "function",
+          lifetime: "automatic",
+          returnType: "int",
+          formals: [{ name: "x", direction: "input", type: "int" }],
+          locals: [],
+          body: [
+            { kind: "assign", target: "x", expr: bin("+", v("x"), c(1)), key: "inc" },
+            { kind: "return", expr: v("x"), key: "ret" },
+          ],
+        },
+      ],
+      processes: [{ id: "main", label: "initial", body: [{ kind: "assign", target: "r", expr: { kind: "fcall", fn: "bump", args: [c(1)] }, key: "top" }] }],
+    };
+    expect(compileBench(bench)).toEqual([]);
+    const inc = simulateBench(bench).trace.find((s) => s.lineKey === "inc");
+    expect(inc?.why).toMatch(/never copied back/);
+    expect(inc?.clause).toBe("§13.4.2, §13.4");
   });
 });
 
@@ -388,6 +430,49 @@ describe("A print from shared storage says what this run did, and what static st
     expect(outerAuto.why).toBe("The value printed is this activation's own copy, which only this activation has written.");
   });
 
+  it("a call that wrote the shared copy again after another activation's write says so, rather than that nobody else wrote", () => {
+    // task t(input int id); #5 id = 7; #10 $display(...); called at t = 0 and t = 2. t(1) writes id at t = 5, after t(2)
+    // started at t = 2; t(2) writes it again at t = 7. The last write alone would hide t(1)'s.
+    const rewrite = (lifetime: "static" | "automatic"): Bench => ({
+      id: `rewrite:${lifetime}`,
+      title: "rewrite",
+      globals: [],
+      subs: [
+        {
+          name: "t",
+          kind: "task",
+          lifetime,
+          formals: [{ name: "id", direction: "input", type: "int" }],
+          locals: [],
+          body: [
+            { kind: "delay", amount: c(5), key: "w", then: { kind: "assign", target: "id", expr: c(7) } },
+            { kind: "delay", amount: c(10), key: "p", then: { kind: "display", format: "t=%0d id=%0d", args: [now, v("id")] } },
+          ],
+        },
+      ],
+      processes: [{ id: "main", label: "initial", body: [{ kind: "fork", key: "f", branches: [[{ kind: "call", sub: "t", args: [c(1)], key: "c1" }], [{ kind: "delay", amount: c(2), key: "c2", then: { kind: "call", sub: "t", args: [c(2)] } }]] }] }],
+    });
+    expect(logOf(rewrite("static"))).toEqual(["t=15 id=7", "t=17 id=7"]);
+    const [first, second] = printsOf(rewrite("static"));
+    // t(1)'s print: the last write is t(2)'s at t = 7 ns.
+    expect(first.why).toBe("id is read from the shared copy, which t(2) wrote at t = 7 ns, after this call started: this call prints another activation's value.");
+    // t(2)'s print: t(1) wrote at t = 5 ns, after t(2) started at t = 2 ns, and t(2) wrote again at t = 7 ns.
+    expect(second.why).toBe("id is read from the shared copy, which t(1) wrote at t = 5 ns, after this call started, then this call overwrote it: this call prints the value it wrote.");
+    expect(second.why).not.toMatch(/no other activation has written/);
+    // Automatic: every print is the activation's own copy.
+    printsOf(rewrite("automatic")).forEach((p) => expect(p.why).toBe("The value printed is this activation's own copy, which only this activation has written."));
+  });
+
+  it("send only reads id after its copy-in, so no send print reaches the wrote-again case", () => {
+    for (const lifetime of ["static", "automatic"] as const) {
+      for (const secondCallAt of SECOND_CALL_OPTIONS) {
+        for (const debugPrints of [false, true]) {
+          printsOf(sendBench({ lifetime, secondCallAt, debugPrints })).forEach((p) => expect(p.why).not.toMatch(/then this call overwrote/));
+        }
+      }
+    }
+  });
+
   it("the kata's first log_after names the second call's write at t = 2 ns", () => {
     const [first, second] = simulateBench(kataBench()).trace.filter((s) => s.kind === "print" && s.what.startsWith("log_after"));
     expect(first.why).toMatch(/^msg is read from the shared copy, which log_after\(10, "second"\) wrote at t = 2 ns, after this call started/);
@@ -411,11 +496,13 @@ describe("Functions cite the function clauses", () => {
   });
 
   it("a static function's enter step cites §6.21 for the static lifetime that keeps a value across calls, beside §13.4.2's sharing", () => {
+    // §13.4.2 shares the one copy, §6.21 keeps its value between calls, and only §13.4's direction list states the copy-in the Why describes.
     const shared = simulateBench(factBench({ lifetime: "static", n: 2 })).trace.find((s) => s.kind === "enter");
-    expect(shared?.clause).toBe("§13.4.2, §6.21");
+    expect(shared?.why).toMatch(/a copy-in writes that one copy/);
+    expect(shared?.clause).toBe("§13.4.2, §13.4, §6.21");
     const secondCountOnes = simulateBench(countOnesBench("static")).trace.filter((s) => s.kind === "enter")[1];
     expect(secondCountOnes.what).toMatch(/n is static: it keeps 8 across calls/);
-    expect(secondCountOnes.clause).toBe("§13.4.2, §6.21");
+    expect(secondCountOnes.clause).toBe("§13.4.2, §13.4, §6.21");
     expect(simulateBench(factBench({ lifetime: "static", n: 2 })).trace.find((s) => s.kind === "return")?.clause).toBe("§13.4, §13.4.2, §6.21");
   });
 
@@ -439,6 +526,11 @@ describe("Functions cite the function clauses", () => {
     expect(run.trace.find((s) => s.kind === "enter")?.clause).toBe("§13.3.2, §13.3, §6.8");
     expect(run.trace.find((s) => s.kind === "print")?.clause).toBe("§13.3.2");
     expect(run.trace.find((s) => s.kind === "return")?.clause).toBe("§13.3, §13.3.2");
+    // The static enter step: §13.3.1 shares the items, §13.3.2 keeps one copy per instance, and the copy-in its Why
+    // describes ("a copy-in writes that one copy") is stated only by §13.3's direction list.
+    const staticEnter = simulateBench(sendBench({ lifetime: "static", secondCallAt: 2 })).trace.find((s) => s.kind === "enter");
+    expect(staticEnter?.why).toMatch(/a copy-in writes that one copy/);
+    expect(staticEnter?.clause).toBe("§13.3.2, §13.3.1, §13.3");
   });
 });
 
@@ -1223,5 +1315,15 @@ describe("Source generation", () => {
         if (s.lineKey) expect(keys.has(s.lineKey)).toBe(true);
       });
     }
+  });
+});
+
+describe("Narration grammar", () => {
+  it("the article follows the first letter of the type or lifetime it introduces", () => {
+    expect(withArticle("int unsigned")).toBe("an int unsigned");
+    expect(withArticle("int")).toBe("an int");
+    expect(withArticle("automatic task")).toBe("an automatic task");
+    expect(withArticle("logic [7:0]")).toBe("a logic [7:0]");
+    expect(withArticle("static function")).toBe("a static function");
   });
 });

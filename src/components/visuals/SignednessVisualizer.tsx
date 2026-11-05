@@ -391,7 +391,8 @@ export default function SignednessVisualizer({ scenario: initialScenario, initia
   const target = variant.target ?? scenario.target;
   const decls = useMemo(() => applyEdits(scenario, edits), [scenario, edits]);
   const result = useMemo(() => evaluateAssignment(decls, target, variant.expr), [decls, target, variant.expr]);
-  const options = useMemo(() => trapPredictionOptions(decls, target, variant.expr, variant.takeaway), [decls, target, variant.expr, variant.takeaway]);
+  const labelBits = scenario.labelBits ?? false;
+  const options = useMemo(() => trapPredictionOptions(decls, target, variant.expr, variant.takeaway, { labelBits }), [decls, target, variant.expr, variant.takeaway, labelBits]);
   const contrast = scenario.variants.find((v) => v.id === variant.contrast);
   const contrastResult = useMemo(() => (contrast ? evaluateAssignment(decls, contrast.target ?? scenario.target, contrast.expr) : null), [contrast, decls, scenario.target]);
   const intent = useMemo(() => (scenario.intent ? intendedValue(decls, variant.expr) : null), [scenario.intent, decls, variant.expr]);
@@ -557,7 +558,7 @@ export default function SignednessVisualizer({ scenario: initialScenario, initia
                       <span>Without the fix:</span>
                       <Code>{contrast.label}</Code>
                       <span className={cn("rounded-md border px-2 py-1 font-mono [font-variant-ligatures:none]", comparisonStyles.actual.className)}>
-                        {comparisonStyles.actual.tag} {formatTargetValue(contrastResult.target.name, contrastResult.final)}
+                        {comparisonStyles.actual.tag} {formatTargetValue(contrastResult.target.name, contrastResult.final, labelBits)}
                       </span>
                     </p>
                   ) : null}

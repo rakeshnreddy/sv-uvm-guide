@@ -1419,13 +1419,19 @@ class Evaluator {
       }
       case "cond": {
         const c = truthOf(this.evalSelf(n.cond));
-        const t = this.evalCtx(n.then, W, S);
-        const e = this.evalCtx(n.otherwise, W, S);
+        // §11.4.11: a known condition evaluates only the branch it picks. The other branch still sizes the
+        // context (W already counts it, §11.6.1), but none of its operations run, so they stay out of the trace.
+        // It is still evaluated silently, so code that does not compile there is still reported.
+        const silently = (branch: ExprNode) => new Evaluator(this.env, this.opts).evalCtx(branch, W, S);
+        const t = c === "0" ? silently(n.then) : this.evalCtx(n.then, W, S);
+        const e = c === "1" ? silently(n.otherwise) : this.evalCtx(n.otherwise, W, S);
         const r = c === "1" ? t : c === "0" ? e : mapBits(W, S, (i) => conditionalMergeBit(bitAt(t, i), bitAt(e, i)));
         const why =
           c === "x"
             ? `The condition is x/z, so both branches are evaluated and compared (§11.4.5): ${logicalEquality(t, e) === "1" ? "they are equal, so either one is the result" : "the comparison is not 1 (it is 0 or x), so they are combined bit by bit with Table 11-20: a bit survives only where the branches agree on 0 or 1; every other pair, including x with x and z with z, becomes x"}.`
-            : `The condition is ${c}, so the ${c === "1" ? "first" : "second"} branch is the result, already sized to ${W} bits; the other branch is not evaluated.`;
+            : `The condition is ${c}, so the ${c === "1" ? "first" : "second"} branch is the result, already sized to ${W} bits; the other branch is not evaluated${
+                this.size(c === "1" ? n.otherwise : n.then) > this.size(c === "1" ? n.then : n.otherwise) ? ", but its size still counts toward the context (§11.6.1)" : ""
+              }.`;
         this.push({ kind: "op", text: n.text, op: "?:", inputs: [t, e], result: r, why, clause: "§11.4.11", surprising: c === "x" });
         return r;
       }
@@ -1479,7 +1485,7 @@ class Evaluator {
     } else {
       why = `\`${n.text}\` is already ${bitsWord(W)}; nothing to extend.`;
     }
-    // A sized decimal whose digits do not fit decides the result before anything else happens (§5.7.1).
+    // A sized decimal that does not read as its digits (truncated, or an s literal with bit N-1 set) decides the result before anything else happens (§5.7.1).
     const digits = n.kind === "num" ? faceValueRewrite(n.text) : null;
     if (digits !== null) {
       surprising = true;
@@ -1840,7 +1846,9 @@ class Evaluator {
     }
     const count = countbits(v, ...controls);
     const xz = countbits(v, "x", "z");
-    const unknownNote = xz > 0 && !controls.some(isUnknownBit) ? ` The ${xz} x/z bit${xz === 1 ? "" : "s"} match${xz === 1 ? "es" : ""} none of the control values, so ${xz === 1 ? "it" : "they"} count${xz === 1 ? "s" : ""} as 0, not as 1.` : "";
+    // x and z bits that no control value names are left out of the count (not counted as 0 bits either: $countbits(e, '0) skips them too).
+    const unmatched = bitsOf(v).filter((b) => isUnknownBit(b) && !controls.includes(b)).length;
+    const unknownNote = unmatched > 0 ? ` The ${unmatched} x/z bit${unmatched === 1 ? "" : "s"} match${unmatched === 1 ? "es" : ""} none of the control values, so ${unmatched === 1 ? "it is" : "they are"} not counted.` : "";
     let res: SvValue;
     let why: string;
     if (n.fn === "$countbits" || n.fn === "$countones") {
@@ -2481,6 +2489,8 @@ export interface TrapScenario {
   intent?: string;
   /** The rule the scenario teaches. It answers the prediction, so it is shown only in the reveal; `title` and `summary` must not state it. */
   rule?: string;
+  /** Option labels show the bit pattern beside the number, e.g. `v = 188 (8'hBC)`, where the question is which bits survive. */
+  labelBits?: boolean;
 }
 
 export const trapScenarios: TrapScenario[] = [
@@ -2553,7 +2563,7 @@ export const trapScenarios: TrapScenario[] = [
         role: "fix",
         contrast: "avg8",
         keyStep: { kind: "context", scope: "assignment" },
-        takeaway: "The 32-bit context keeps the carry: the unsized 0 widens the sum to 32 bits, so the shift moves the carry back into the 8 bits s keeps (§11.6.1, §11.6.2).",
+        takeaway: "The 32-bit context keeps any carry: the unsized 0 widens the sum to 32 bits, so the shift moves a carry back into the 8 bits s keeps (§11.6.1, §11.6.2).",
       },
       {
         id: "size-cast",
@@ -2562,7 +2572,7 @@ export const trapScenarios: TrapScenario[] = [
         role: "fix",
         contrast: "avg8",
         keyStep: { kind: "context", scope: "cast" },
-        takeaway: "The 9-bit context keeps the carry: the sum runs in 9 bits, so bit 8 survives the add and the shift moves it back into the 8 bits s keeps (§11.6.1).",
+        takeaway: "The 9-bit context keeps any carry: the sum runs in 9 bits, so a carry into bit 8 survives the add and the shift moves it back into the 8 bits s keeps (§11.6.1).",
       },
     ],
     editable: [
@@ -2591,7 +2601,7 @@ export const trapScenarios: TrapScenario[] = [
       { name: "w", min: 0, max: 1000 },
     ],
     intent: "i compared as a signed number",
-    rule: "int is signed and logic [31:0] is not, and one unsigned operand makes a comparison unsigned, so a negative i reads as a large positive number (§6.11, §11.4.4, §11.8.1).",
+    rule: "int is signed and logic [31:0] is not, and a comparison with an unsigned operand is unsigned, so a negative i reads as a large positive number (§6.11, §11.4.4, §11.8.1).",
   },
   {
     id: "x-arith",
@@ -2625,7 +2635,8 @@ export const trapScenarios: TrapScenario[] = [
         expr: "int'(w)",
         target: { name: "v", type: "int" },
         role: "trap",
-        takeaway: "int being signed does not change that: the extension follows the expression inside the cast, not the cast type (§6.24.1).",
+        // Stands alone: at w < 128 the answer's insight does not mention the extension at all.
+        takeaway: "w is unsigned, so int'(w) zero-extends it; int being signed does not change that: the extension follows the expression inside the cast, not the cast type (§6.24.1).",
       },
       {
         id: "type-cast-signed",
@@ -2635,10 +2646,12 @@ export const trapScenarios: TrapScenario[] = [
         role: "fix",
         contrast: "type-cast",
         keyStep: { kind: "context", scope: "cast" },
-        takeaway: "The sign cast is what changes the extension: int'(w) alone always adds zeros (§6.24.1).",
+        takeaway: "signed'(w) is signed, so int'(signed'(w)) sign-extends it; the sign cast is what changes the extension: int'(w) alone always adds zeros (§6.24.1).",
       },
     ],
     editable: [{ name: "w", min: 0, max: 255 }],
+    // Which bits survive a cast is the question, so each option shows its bit pattern next to the number.
+    labelBits: true,
     rule: "A size cast pads or truncates and keeps the signedness; a sign cast keeps the bits and changes how they are read; a type cast behaves like an assignment to that type (§6.24.1).",
   },
   {
@@ -2654,7 +2667,8 @@ export const trapScenarios: TrapScenario[] = [
     ],
     editable: [{ name: "sb", min: -128, max: 127 }],
     intent: "sb copied as a signed number",
-    rule: "A part-select is unsigned even when it covers the whole of a signed vector, so it is zero-extended into a wider target; the signed target does not help (§11.8.1).",
+    // Worded apart from the trace's select sentence, which the answer's feedback quotes: the reveal shows both.
+    rule: "A part-select gives an unsigned result whatever the sign of its variable, even when it selects every bit, so it is zero-extended into a wider target; the signed target does not help (§11.8.1).",
   },
   {
     id: "literal-sign",
@@ -2746,22 +2760,48 @@ export interface TrapPredictionOption {
     | "plain";
 }
 
+const SIZED_DECIMAL = /(\d[\d_]*)\s*'([sS]?)[dD]\s*(\d[\d_]*)/g;
+
+/** A sized decimal reads differently from its digits when they need more than N bits, or, with s, when they set bit N-1. */
+const faceValueDiffers = (N: number, signed: boolean, n: bigint) => n >= (signed ? ONE << big(N - 1) : ONE << big(N));
+
 /**
- * Sized decimal literals whose digits do not fit their size, rewritten as the
+ * Sized decimal literals that do not read as their digits, rewritten as the
  * plain decimal the digits spell (the "face value" misconception): `4'sd12`
  * holds 1100, which reads as -4, but a learner may read it as twelve.
  */
 function faceValueRewrite(expr: string): string | null {
   let changed = false;
-  const out = expr.replace(/(\d[\d_]*)\s*'([sS]?)[dD]\s*(\d[\d_]*)/g, (m, size: string, s: string, digits: string) => {
-    const N = Number(size.replace(/_/g, ""));
-    const n = BigInt(digits.replace(/_/g, ""));
-    const limit = s ? ONE << big(N - 1) : ONE << big(N);
-    if (n < limit) return m;
+  const out = expr.replace(SIZED_DECIMAL, (m, size: string, s: string, digits: string) => {
+    if (!faceValueDiffers(Number(size.replace(/_/g, "")), s !== "", BigInt(digits.replace(/_/g, "")))) return m;
     changed = true;
     return digits.replace(/_/g, "");
   });
   return changed ? out : null;
+}
+
+/**
+ * Why each sized decimal in `expr` does not hold its face value (§5.7.1). Only
+ * digits that need more than N bits are truncated; digits that fit but set bit
+ * N-1 of an s literal keep every bit, and only the reading changes.
+ */
+function faceValueSlips(expr: string): string[] {
+  const out: string[] = [];
+  for (const m of expr.matchAll(SIZED_DECIMAL)) {
+    const N = Number(m[1].replace(/_/g, ""));
+    const signed = m[2] !== "";
+    const n = BigInt(m[3].replace(/_/g, ""));
+    if (!faceValueDiffers(N, signed, n)) continue;
+    const held = parseLiteral(m[0].replace(/\s+/g, "")).value;
+    if (n >= ONE << big(N)) {
+      out.push(
+        `${n} needs more than ${N} bits, so the literal is truncated from the left to its size: the bits above bit ${N - 1} are dropped (§5.7.1).${signed ? ` The s then reads the ${N} bits that remain as two's complement (§11.3.3).` : ""}`,
+      );
+    } else {
+      out.push(`${n} is ${formatCompact(reinterpret(held, false))}, which fits in ${N} bits; the s changes only how those bits are read: as two's complement, ${formatDecimal(held)} (§5.7.1, §11.3.3).`);
+    }
+  }
+  return out;
 }
 
 /** The option label for code that does not compile. */
@@ -2776,9 +2816,24 @@ export function predictionVerdict(options: { id: string; label: string; correct:
   return `${lead} The answer is ${answer === COMPILE_ERROR ? "a compile error" : answer}.`;
 }
 
-/** How the learner sees a value of the target type in an option. */
-export function formatTargetValue(name: string, v: SvValue): string {
-  return `${name} = ${isKnown(v) ? formatDecimal(v) : formatLiteral(reinterpret(v, false))}`;
+/** How the learner sees a value of the target type in an option. `bits` adds the bit pattern of a known value, e.g. `v = 188 (8'hBC)`. */
+export function formatTargetValue(name: string, v: SvValue, bits = false): string {
+  if (!isKnown(v)) return `${name} = ${formatLiteral(reinterpret(v, false))}`;
+  return `${name} = ${formatDecimal(v)}${bits ? ` (${vectorLabel(v)})` : ""}`;
+}
+
+/**
+ * A comparison's result with its operands read the other way (signed for
+ * unsigned and back), or null when `expr` is not a relational or equality
+ * comparison. The operands are sized to each other as usual (§11.8.2).
+ */
+function otherSignComparison(expr: string, env: SvEnv): { bit: Bit4; signed: boolean } | null {
+  const root = unwrap(parseExpression(expr));
+  if (root.kind !== "binary" || !(RELATIONAL.has(root.op) || EQUALITY.has(root.op))) return null;
+  const ev = new Evaluator(env, {});
+  const W = Math.max(ev.size(root.left), ev.size(root.right));
+  const S = !(ev.sign(root.left) && ev.sign(root.right));
+  return { bit: comparisonBit(root.op, ev.evalCtx(root.left, W, S), ev.evalCtx(root.right, W, S), S), signed: S };
 }
 
 /**
@@ -2786,49 +2841,60 @@ export function formatTargetValue(name: string, v: SvValue): string {
  * answers produced by named misconceptions, each with diagnostic feedback.
  * Options with the same label are merged (the correct one wins). `takeaway` is
  * a code variant's own sentence (`TrapVariant.takeaway`) for the correct answer.
+ *
+ * A reveal shows the chosen option's feedback and then the correct option's
+ * feedback ("Why the answer holds"). The correct option carries the insight; a
+ * wrong option names only what that choice assumed, so no reveal prints the
+ * insight twice. `labelBits` adds the bit pattern to each label (`TrapScenario.labelBits`).
  */
-export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: string, takeaway?: string): TrapPredictionOption[] {
+export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: string, takeaway?: string, { labelBits = false }: { labelBits?: boolean } = {}): TrapPredictionOption[] {
   const real = evaluateAssignment(decls, target, expr);
   if (!real.ok) return [];
   const type = declType(target);
   const name = target.name;
   const env = buildEnv(decls);
   const cands: TrapPredictionOption[] = [];
+  const show = (v: SvValue) => formatTargetValue(name, v, labelBits);
   const add = (label: string, misconception: TrapPredictionOption["misconception"], feedback: string) => {
     if (cands.some((c) => c.label === label)) return;
     cands.push({ id: `${misconception}-${cands.length}`, label, correct: false, feedback, misconception });
   };
-  const correctLabel = formatTargetValue(name, real.final);
-  cands.push({ id: "model", label: correctLabel, correct: true, feedback: takeaway ? `${real.insight} ${takeaway}` : real.insight, misconception: "model" });
+  const answer = takeaway ? `${real.insight} ${takeaway}` : real.insight;
+  cands.push({ id: "model", label: show(real.final), correct: true, feedback: answer, misconception: "model" });
 
   if (/\[\s*\d+\s*(:\s*\d+\s*)?\]/.test(expr)) {
     const signedSelect = evaluateAssignment(decls, target, expr, { selectKeepsSign: true });
     if (signedSelect.ok) {
-      // Say only what this code does: the insight names a zero extension when one happens, and >>> appears only when it is written.
-      const rule = real.insight.includes(SELECT_UNSIGNED) ? "" : ` A part-select is ${SELECT_UNSIGNED}.`;
-      const fill = expr.includes(">>>") && !real.insight.includes(">>>") ? " >>> in an unsigned expression fills with 0 (§11.4.10)." : "";
-      add(formatTargetValue(name, signedSelect.final), "select-signed", `That treats the part-select as signed.${rule}${fill} ${real.insight}`);
+      // The answer's feedback names the zero extension when one happens; add the rule (and the >>> fill, only when >>> is written) only where it does not.
+      const rule = answer.includes(SELECT_UNSIGNED) ? "" : ` A part-select is ${SELECT_UNSIGNED}.`;
+      const fill = expr.includes(">>>") && !answer.includes(">>>") ? " >>> in an unsigned expression fills with 0 (§11.4.10)." : "";
+      add(show(signedSelect.final), "select-signed", `That treats the part-select as signed.${rule}${fill}`);
     }
   }
 
+  // A number the target can hold is labelled like any value of the target; one it cannot hold has no bit pattern to show.
+  const showNumber = (n: bigint) => {
+    const v = fromBigInt(n, type.width, type.signed);
+    return toBigInt(v) === n ? show(v) : `${name} = ${n.toString()}`;
+  };
+
   const math = mathIntuition(expr, env);
   if (math !== null) {
-    const fits = fromBigInt(math, type.width, type.signed);
-    const representable = toBigInt(fits) === math;
+    const representable = toBigInt(fromBigInt(math, type.width, type.signed)) === math;
     const readsXasZero = real.operands.some((o) => !isKnown(o.value));
     const { min, max } = valueRange(target);
     add(
-      `${name} = ${math.toString()}`,
+      showNumber(math),
       "math",
       `${readsXasZero ? "That reads the x bit as 0 and then does ordinary integer math." : "That is ordinary integer math: each operand keeps its declared sign and no bit is lost."} ${
         representable ? "" : `It is not even in range: ${name} holds ${min} to ${max}. `
-      }SystemVerilog does not evaluate that way here. ${real.insight}`,
+      }SystemVerilog does not evaluate that way here.`,
     );
     if (!representable && type.width > 1) {
       add(
-        `${name} = ${math > BigInt(max) ? max : min}`,
+        showNumber(BigInt(math > BigInt(max) ? max : min)),
         "saturate",
-        `SystemVerilog never saturates. An assignment checks no range: ${name} keeps the low ${bitsWord(type.width)} and reads them as ${signWord(type.signed)} (§10.7). ${real.insight}`,
+        `SystemVerilog never saturates. An assignment checks no range: ${name} keeps the low ${bitsWord(type.width)} and reads them as ${signWord(type.signed)} (§10.7).`,
       );
     }
   }
@@ -2836,7 +2902,7 @@ export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: str
   const narrow = evaluateAssignment(decls, target, expr, { ignoreLhsWidth: true });
   if (narrow.ok) {
     add(
-      formatTargetValue(name, narrow.final),
+      show(narrow.final),
       "ignore-lhs",
       `That evaluates \`${expr}\` in only ${real.rhsWidth} bits. The LHS is part of the context (§11.6.1), so the context-determined operands are first extended to ${real.contextWidth} bits and nothing is lost before the assignment.`,
     );
@@ -2846,7 +2912,7 @@ export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: str
     const swapped = evaluateAssignment(decls, target, expr, { swapRightShifts: true });
     if (swapped.ok) {
       add(
-        formatTargetValue(name, swapped.final),
+        show(swapped.final),
         "swap-shift",
         "That is the other right shift. >> always fills the vacated bits with 0; >>> copies the sign bit, and only when the expression is signed (§11.4.10).",
       );
@@ -2856,12 +2922,9 @@ export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: str
   const faceValue = faceValueRewrite(expr);
   if (faceValue !== null) {
     const face = mathIntuition(faceValue, env);
-    if (face !== null) {
-      add(
-        `${name} = ${face.toString()}`,
-        "literal-face-value",
-        `That reads a sized literal by its digits. A literal holds only its declared number of bits (§5.7.1): the digits are truncated from the left, and with s the pattern is read as a two's-complement number (§11.3.3). ${real.insight}`,
-      );
+    const slips = faceValueSlips(expr);
+    if (face !== null && slips.length > 0) {
+      add(showNumber(face), "literal-face-value", `That reads ${slips.length === 1 ? "the sized literal by its digits" : "the sized literals by their digits"}. ${slips.join(" ")}`);
     }
   }
 
@@ -2869,9 +2932,10 @@ export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: str
     const stripped = evaluateAssignment(decls, target, expr, { ignoreCasts: true });
     if (stripped.ok) {
       add(
-        formatTargetValue(name, stripped.final),
+        show(stripped.final),
         "cast-ignored",
-        `That ignores the cast. A size cast pads or truncates to its size before the rest of the expression is evaluated, and a sign cast or $signed changes how the bits are read (§6.24.1, §11.7). ${real.insight}`,
+        // What each cast does is the scenario's rule and the answer's insight; this names the slip only.
+        "That ignores the cast. A cast acts on its operand before the rest of the expression uses it (§6.24.1, §11.7).",
       );
     }
     // Casts the learner might expect to behave the other way round (§6.24.1).
@@ -2884,18 +2948,21 @@ export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: str
         if (inner.width > N) {
           const kept = makeValue(N, inner.signed, inner.aval >> big(inner.width - N), inner.bval >> big(inner.width - N));
           add(
-            formatTargetValue(name, resize(kept, type.width, kept.signed, type.signed)),
+            show(resize(kept, type.width, kept.signed, type.signed)),
             "keep-msbs",
             `That keeps the top ${N} bits. A size cast returns what ${articleFor(N)} ${N}-bit variable would hold after assignment, so the LOW ${N} bits survive and the ${inner.width - N} MSBs are discarded (§6.24.1, §10.7).`,
           );
         } else if (inner.width < N) {
           const other = resize(inner, N, !inner.signed, root.cast.kind === "size" ? inner.signed : INTEGER_TYPES[root.cast.type].signed);
           add(
-            formatTargetValue(name, resize(other, type.width, other.signed, type.signed)),
+            show(resize(other, type.width, other.signed, type.signed)),
             "cast-extend",
+            // The answer's takeaway says which sign decides the extension; these name the assumption only.
             inner.signed
-              ? `That zero-extends. The expression inside the cast is signed, so it is sign-extended to ${N} bits (§6.24.1, §11.8.2).`
-              : `That sign-extends. The cast ${root.cast.kind === "type" ? "type is signed, but the extension follows the expression inside the cast, which" : "keeps the signedness of the expression inside, which"} is unsigned, so it is zero-extended to ${N} bits (§6.24.1, §11.8.2).`,
+              ? "That zero-extends, but the expression inside the cast is signed (§6.24.1)."
+              : root.cast.kind === "type" && INTEGER_TYPES[root.cast.type].signed
+                ? `That sign-extends because ${root.cast.type} is signed.`
+                : "That sign-extends, but the expression inside the cast is unsigned (§6.24.1).",
           );
         }
       }
@@ -2905,7 +2972,7 @@ export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: str
   const optimistic = type.fourState ? optimisticX(decls, target, expr) : null;
   if (optimistic) {
     add(
-      formatTargetValue(name, optimistic),
+      show(optimistic),
       "optimistic-x",
       "That marks only the bits the unknown input can reach, which is what real gates might do. The LRM is pessimistic for arithmetic: any x/z operand bit makes the ENTIRE result x (§11.4.3).",
     );
@@ -2913,38 +2980,49 @@ export function trapPredictionOptions(decls: SvDecl[], target: SvDecl, expr: str
 
   if (!type.fourState && !isKnown(resize(real.rhsValue, type.width, real.rhsSigned, type.signed))) {
     add(
-      formatTargetValue(name, resize(real.rhsValue, type.width, real.rhsSigned, type.signed)),
+      show(resize(real.rhsValue, type.width, real.rhsSigned, type.signed)),
       "plain",
-      `${name} is a 2-state type: it cannot hold x or z. Every x/z bit becomes 0 when the value is stored (§6.11.2).`,
+      // The store step, which the answer's feedback quotes, says what happens to the x/z bits; this names the slip.
+      `That keeps x/z bits in ${name}, which cannot hold them (§6.11.2).`,
     );
   }
 
   if (type.width > 1 && isKnown(real.final)) {
     add(
-      formatTargetValue(name, reinterpret(real.final, !type.signed)),
+      show(reinterpret(real.final, !type.signed)),
       "opposite-sign",
       `Right bits, wrong reading: ${name} is declared ${signWord(type.signed)}, so ${formatLiteral(reinterpret(real.final, false))} reads as ${formatDecimal(real.final)}.`,
     );
   }
 
   if (type.width === 1) {
+    // A truth value the named misconceptions above did not produce: the comparison read with the other signedness, or no reading at all.
+    const flipped = otherSignComparison(expr, env);
     (["0", "1"] as Bit4[]).forEach((b) =>
-      add(`${name} = ${b}`, "plain", `Not here. ${real.insight}`),
+      add(
+        `${name} = ${b}`,
+        "plain",
+        !flipped
+          ? `${expr} does not give ${b} for these values.`
+          : flipped.bit === b
+            ? `That compares the operands as ${signWord(flipped.signed)} numbers.`
+            : `Neither a signed nor an unsigned comparison of these values gives ${b}.`,
+      ),
     );
-    if (type.fourState) add(`${name} = 1'bx`, "plain", `No operand bit is x or z here, so the comparison has a known answer. ${real.insight}`);
+    if (type.fourState) add(`${name} = 1'bx`, "plain", "No operand bit is x or z here, so the comparison has a known answer.");
   }
 
   if (cands.length < 3 && isKnown(real.final) && type.width > 1) {
     add(
       `${name} = x`,
       "plain",
-      `Every operand bit is a known 0 or 1, so the result is known. Mixing widths and signedness is legal and fully defined; it only changes how the bits are extended and read (§11.8). ${real.insight}`,
+      "Every operand bit is a known 0 or 1, so the result is known. Mixing widths and signedness is legal and fully defined; it only changes how the bits are extended and read (§11.8).",
     );
   }
 
   // Stable, value-sorted order so the correct answer is not always first.
   const key = (label: string) => {
-    const m = /= (-?\d+)$/.exec(label);
+    const m = /= (-?\d+)(?: \([^)]*\))?$/.exec(label);
     return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
   };
   return cands.sort((a, b) => key(a.label) - key(b.label) || a.label.localeCompare(b.label));
@@ -3083,7 +3161,7 @@ export const operatorCatalog: OperatorSpec[] = [
     template: "en ? data : 'z",
     operands: ["c", "a"],
     names: { c: "en", a: "data" },
-    rule: "'z fills every bit of the else branch. With en unknown, each data bit merges with z, and Table 11-20 makes every such pair x.",
+    rule: "A known en returns one branch: data, or all z, because 'z fills every bit of the else branch. With en unknown, each data bit merges with z, and Table 11-20 makes every such pair x.",
     clause: "§11.4.11, Table 11-20, §5.7.1",
     defaults: { c: ["x"], a: ["1", "0", "1", "0"] },
     trap: "a tri-state model drives x, not z, when en is unknown",
@@ -3147,7 +3225,7 @@ export const operatorCatalog: OperatorSpec[] = [
     template: "$onehot(state)",
     operands: ["a"],
     names: { a: "state" },
-    rule: "$countbits(state, '1) == 1. An x bit is not a 1, so 01x0 passes. Returns a bit, never x.",
+    rule: "$countbits(state, '1) == 1: true when exactly one bit is 1. An x or z bit is not a 1, so 01x0 passes. Returns a bit, never x.",
     clause: "§20.9",
     trap: "passes with an x bit",
   },
@@ -3420,7 +3498,7 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
       if (ok32) add(`${ok32.width}-bit value (1 treated as 32'd1)`, false, `That takes the unsized 1 as exactly 32 bits, but §5.7.1 only promises at least 32: there is no ${ok32.width}-bit result.`);
     }
     if (spec.id === "repl-n" && real.error.code === "zero-replication-alone") {
-      add("0-bit value (nothing)", false, "That expects $display to print an empty value. A zero replication is ignored (§11.4.12.1), so nothing is left here.");
+      add("0-bit value (nothing)", false, "That expects $display to print an empty value, but with nothing else in the braces there is no value to print.");
       add(`${vectorLabel(fromBits(inputs.a))} (a unchanged)`, false, "Zero copies of a is not one copy.");
     }
     return shuffled();
@@ -3470,8 +3548,10 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
 
   if (value.width === 1) {
     const truth = bitAt(value, 0);
-    // A 1-bit z result (a 1-bit `en ? data : 'z` with en = 0) needs its own option, or no answer is correct.
-    ([...(["0", "1", "x"] as Bit4[]), ...(truth === "z" ? (["z"] as Bit4[]) : [])]).forEach((b) => add(`1'b${b}`, b === truth, oneBitFeedback(spec, inputs, b, truth)));
+    // A 1-bit z result (a 1-bit `en ? data : 'z` with en = 0) needs its own option, or no answer is correct. A ?: branch
+    // that holds z offers it too: with en = x, z is what if/else stores, the answer the tri-state trap is about.
+    const zOption = truth === "z" || (spec.family === "conditional" && (spec.id === "cond-z" || inputs.a.includes("z") || inputs.b.includes("z")));
+    ([...(["0", "1", "x"] as Bit4[]), ...(zOption ? (["z"] as Bit4[]) : [])]).forEach((b) => add(`1'b${b}`, b === truth, oneBitFeedback(spec, inputs, b, truth)));
     return opts;
   }
 
@@ -3558,7 +3638,14 @@ export function operatorPredictionOptions(spec: OperatorSpec, inputs: OperatorIn
     } else {
       const other = truth === "1" ? elseValue : thenValue;
       if (other && !same(other)) add(vectorLabel(other), false, "That is the other branch's value.");
-      if (!same(allX(value.width))) add(vectorLabel(allX(value.width)), false, `That treats the condition as unknown; it is ${truth}.`);
+      // What the same branches give when the condition is x/z (§11.4.11): either branch if they compare equal,
+      // else the Table 11-20 merge. Only that value is "treating the condition as unknown"; all x is that value only
+      // when the merge leaves no known bit, so otherwise all x makes no claim about the merge.
+      const asUnknown = thenValue && elseValue ? conditionalDetail(fromBits(["x"]), thenValue, elseValue).result : null;
+      const unknownSlip = `That treats the condition as unknown; it is ${truth}.`;
+      if (asUnknown && !same(asUnknown)) add(vectorLabel(asUnknown), false, unknownSlip);
+      const xs = allX(value.width);
+      if (!same(xs)) add(vectorLabel(xs), false, asUnknown && bitsOf(asUnknown).every((b) => b === "x") ? unknownSlip : `Nothing here makes every bit x; the condition is ${truth}.`);
     }
   } else if (spec.family === "stream") {
     const same = val("{>> {a}}");
@@ -3659,7 +3746,11 @@ function oneBitFeedback(spec: OperatorSpec, inputs: OperatorInputs, chosen: Bit4
         return report[1].result === "1'b1" ? `That takes $onehot(${name}) alone.` : `That passes a vector $onehot(${name}) already rejects.`;
       }
       if (item?.fn === "$isunknown") return truth === "1" ? `That overlooks the ${bitsWordXz}.` : "That finds an unknown bit where every bit is 0 or 1.";
-      if (xz > 0) return `That lets the ${bitsWordXz} decide the test.`;
+      // The x/z bits decide the test only if reading some of them as 1 gives the chosen value: the count then runs
+      // from ones + 1 to ones + xz. With two 1 bits already, no x/z bit can make $onehot or $onehot0 pass.
+      const test = (count: number) => (item?.fn === "$onehot" ? count === 1 : count <= 1);
+      const xzDecides = Array.from({ length: xz }, (_, k) => ones + k + 1).some((count) => test(count) === (chosen === "1"));
+      if (xzDecides) return `That lets the ${bitsWordXz} decide the test.`;
       if (ones === 0) return `That is what ${item?.fn === "$onehot" ? "$onehot0" : "$onehot"}(${name}) returns.`;
       return "That miscounts the 1 bits.";
     }
@@ -3669,8 +3760,14 @@ function oneBitFeedback(spec: OperatorSpec, inputs: OperatorInputs, chosen: Bit4
       const otherwise = spec.id === "cond-z" ? fromBits(Array<Bit4>(a.width).fill("z")) : b;
       const det = conditionalDetail(c, a, otherwise);
       const row = det.rows[det.rows.length - 1];
-      if (det.truth !== "x") return chosen === (det.truth === "1" ? row.otherwise : row.then) ? "That is the other branch's value." : `Neither branch holds ${chosen}.`;
+      if (det.truth !== "x") {
+        if (chosen === (det.truth === "1" ? row.otherwise : row.then)) return "That is the other branch's value.";
+        // At one bit the x/z-condition result is the Table 11-20 cell (equal known bits compare as 1 and give that bit).
+        if (chosen === row.cell) return `That treats the condition as unknown; it is ${det.truth}.`;
+        return `Neither branch holds ${chosen}.`;
+      }
       if (chosen === "x") return allXAssumption(1);
+      if (chosen === "z" && row.otherwise === "z") return "Table 11-20 has no z result, not even for z with z. An if/else would store this.";
       if (chosen === row.then) return "That treats the unknown condition as true.";
       if (chosen === row.otherwise) return "That is what if/else stores.";
       return `Neither branch holds ${chosen}.`;

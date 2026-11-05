@@ -530,7 +530,13 @@ describe("sv-timescale-model: values that cross a scope (§5.8, §6.12.1, §3.14
     const t = traceCrossScope("wait_ns_5");
     expect(t.wakeFs).toBe(ns(5));
     expect(t.printed).toBe("expected 5 ns, woke at 5.000 ns");
-    expect(t.steps[2].value).toBe("5000");
+    // 1ns is a realtime value (§5.8) and a product with a real operand is real (§11.8.1): both keep the ".0" of a real.
+    expect(t.steps[2].value).toBe("5000.0");
+    expect(t.steps[2].what).toBe("#(delay_ns * 1ns): the literal 1ns is converted in util_pkg's 1ps unit to 1000.0, so the delay is 5.0 × 1000.0 = 5000.0 1ps units.");
+    expect(crossScopeOptions("wait_ns_5").find((o) => o.correct)?.feedback).toBe("Right. 1ns is converted inside util_pkg to 1000.0 of its 1ps units (§5.8), so the task waits 5 ns.");
+    // A callee unit coarser than 1ns keeps the exact fraction instead of a rounded ".0".
+    const coarse = traceCrossScope("wait_ns_5", { ...CROSS_SCOPE_DEFAULT, calleeUnit: scale(100, "ns"), calleePrecision: scale(1, "ps") });
+    expect(coarse.steps[2].what).toContain("to 0.01, so the delay is 5.0 × 0.01 = 0.05 100ns units");
     expect(t.steps.map((s) => s.unitState)).toEqual(["never-had", "never-had", "tagged", "resolved-time"]);
   });
 
@@ -623,6 +629,58 @@ describe("sv-timescale-model: nothing the learner reads first gives the answer a
       expect(p.source, p.id).not.toBe(p.note);
     }
     expect(ROUNDING_PRESETS.map((p) => p.label).join("\n")).not.toMatch(/same slot|tool-dependent/);
+  });
+
+  it("each rounding preset's note names the model's own result, so a hand-written note cannot drift from it", () => {
+    /** The number as a whole token: "2" does not match inside "0.21", and "13" does not match "130". */
+    const names = (note: string, value: string) => new RegExp(`(?<![\\d.])${value.replace(/\./g, "\\.")}(?!\\d|\\.\\d)`).test(note);
+    let checked = 0;
+    for (const p of ROUNDING_PRESETS) {
+      const r = roundDelayText(p.delay, p.unit, p.precision);
+      if (r.input.kind === "xz" || r.input.kind === "negative") continue;
+      expect(r.error, p.id).toBeNull();
+      if (r.toolDependent) {
+        // The tie preset: the note names each candidate's tick count under its rule.
+        expect(r.tie, p.id).not.toBeNull();
+        expect(names(p.note, (r.tie as { awayFromZero: bigint }).awayFromZero.toString()), `${p.id}: away`).toBe(true);
+        expect(names(p.note, (r.tie as { toEven: bigint }).toEven.toString()), `${p.id}: even`).toBe(true);
+      } else if (r.wakeFs === BigInt(0)) {
+        expect(names(p.note, "0"), p.id).toBe(true);
+      } else {
+        // A nonzero wake is named with its unit, exactly as the lab writes it ("2.8 ns", "5000 ps").
+        expect(p.note, p.id).toContain(wakeText(r));
+        expect(names(p.note, wakeText(r).split(" ")[0]), p.id).toBe(true);
+      }
+      checked += 1;
+    }
+    expect(checked).toBe(ROUNDING_PRESETS.length - 2);
+  });
+
+  it("the 'same slot' distractor states no tie rule: it says only that the delay is more than half a tick", () => {
+    const feedbackOf = (id: string) => {
+      const p = ROUNDING_PRESETS.find((x) => x.id === id);
+      return roundingOptions(roundDelayText(p?.delay as string, p?.unit as ReturnType<typeof scale>, p?.precision as ReturnType<typeof scale>)).find((o) => o.id === "same-slot")?.feedback;
+    };
+    expect(feedbackOf("table-2.5")).toBe("25 ns is more than half a 1ns tick, so rounding to the nearest tick (§22.7) cannot reach 0.");
+    expect(feedbackOf("table-5ns")).toBe("5000 ps is more than half a 1ps tick, so rounding to the nearest tick (§22.7) cannot reach 0.");
+    // Wherever it is offered, 0 is no candidate, including at #0.5 at 1ns/1ns, where half to even gives 0 and it is not offered.
+    const inputs = ["#1.5", "#3", "#0.5", "#0.4", "#2.75", "#1.26", "#2.85", "#5ns", "#2.1ns", "#0.6", "#1"];
+    const pairs = [
+      [scale(1, "ns"), scale(1, "ns")],
+      [scale(1, "ns"), scale(100, "ps")],
+      [scale(10, "ns"), scale(1, "ns")],
+      [scale(1, "ps"), scale(1, "ps")],
+    ] as const;
+    for (const d of inputs) {
+      for (const [unit, precision] of pairs) {
+        const r = roundDelayText(d, unit, precision);
+        const option = roundingOptions(r).find((o) => o.id === "same-slot");
+        if (!option) continue;
+        expect(r.candidatesFs, `${d} at ${unit.magnitude}${unit.unit}`).not.toContain(BigInt(0));
+        expect(option.feedback).not.toMatch(/below half|Only a delay/);
+      }
+    }
+    expect(roundingOptions(roundDelayText("#0.5", scale(1, "ns"), scale(1, "ns"))).some((o) => o.id === "same-slot")).toBe(false);
   });
 
   it("a read-time preset's label and summary never contain a value it prints", () => {
@@ -926,7 +984,7 @@ describe("sv-timescale-model: the value's unit in words", () => {
     expect(steps("wait_ns_5").map(unitChipText)).toEqual(["plain number", "plain number", "1ps", "wake time"]);
     expect(steps("repeat_posedge").map(unitChipText)).toEqual(["clock edges", "wake time"]);
     expect(steps("wait_t_5ns").map(unitSentence)).toEqual(["value 5.0 understood in 1ns", "value 5; tb_top's 1ns reading is not passed on", "value 5 understood in 1ps", "wake time 5 ps"]);
-    expect(steps("wait_ns_5").map(unitSentence)).toEqual(["plain number 5", "plain number 5.0", "value 5000 understood in 1ps", "wake time 5 ns"]);
+    expect(steps("wait_ns_5").map(unitSentence)).toEqual(["plain number 5", "plain number 5.0", "value 5000.0 understood in 1ps", "wake time 5 ns"]);
     expect(steps("repeat_posedge").map(unitSentence)).toEqual(["5 clock edges", "wake time 5 ns"]);
     for (const form of ["wait_t_5ns", "wait_t_1p5ns", "wait_ns_5", "repeat_posedge"] as const) {
       for (const s of steps(form)) {
@@ -962,24 +1020,39 @@ describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.2.2.3, A.8.7, �
   };
 
   it("a bare x or z is no unknown value: x and z digits exist only inside a based number, so it would name an identifier", () => {
-    for (const text of ["x", "#x", "#(x)", "#(xz)", "(z)", "#(Z)"]) {
+    // The offered literal keeps the learner's intent: a bare z gets 1'bz, anything with an x gets 1'bx (both zero by §9.4.1).
+    for (const [text, literal] of [
+      ["x", "1'bx"],
+      ["#x", "1'bx"],
+      ["#(x)", "1'bx"],
+      ["#(xz)", "1'bx"],
+      ["(z)", "1'bz"],
+      ["#(Z)", "1'bz"],
+      ["#(zz)", "1'bz"],
+    ] as const) {
       expect(parseDelay(text).kind, text).toBe("invalid");
-      expect(reasonOf(text), text).toMatch(/^A bare [xXzZ]+ is not an unknown value\. x and z digits exist only inside a based number \(A\.8\.7\), so here it would name an identifier \(§5\.6\)\. Write #\(1'bx\)\.$/);
+      expect(reasonOf(text), text).toMatch(/^A bare [xXzZ]+ is not an unknown value\. x and z digits exist only inside a based number \(A\.8\.7\), so here it would name an identifier \(§5\.6\)\. Write #\(1'b[xz]\)\.$/);
+      expect(reasonOf(text), text).toContain(`Write #(${literal}).`);
     }
   });
 
-  it("a bare ? is no legal delay: it is a z_digit only inside a based number, and no identifier can hold it", () => {
+  it("a bare ? is no legal delay: it is a z_digit only inside a based number, and no simple identifier can contain it", () => {
     for (const text of ["?", "#?", "#(?)", "#(x?)", "#(z?x)"]) {
       expect(parseDelay(text).kind, text).toBe("invalid");
-      expect(reasonOf(text), text).toMatch(/^A bare [xXzZ?]+ is not a legal delay\. \? is a z_digit \(A\.8\.7\) only inside a based number, and no identifier can hold it \(§5\.6\)\. Write #\(1'bz\)\.$/);
-      expect(reasonOf(text), text).not.toMatch(/name an identifier/);
+      // §5.6.1: an escaped identifier can hold any printable character, so the claim is about simple identifiers only.
+      expect(reasonOf(text), text).toMatch(/^A bare [xXzZ?]+ is not a legal delay\. \? is a z_digit \(A\.8\.7\) only inside a based number, and no simple identifier can contain it \(§5\.6\)\. Write #\(1'bz\)\.$/);
+      expect(reasonOf(text), text).not.toMatch(/name an identifier|no identifier/);
     }
   });
 
   it("a based number with only x or z digits is a zero delay; a malformed one is turned away without a verdict on the form", () => {
     for (const text of ["#(1'dx)", "#(1'sbx)", "#(8'hzz)", "#('Z)", "#(1'b?)", "#(4'bxz_x)"]) expect(parseDelay(text).kind, text).toBe("xz");
-    // A size of 0 (§5.7.1), two x digits after a decimal base, or no base letter: not an integer literal of A.8.7.
-    for (const text of ["#(0'bx)", "#(1'dxx)", "#(1'x)"]) {
+    // §5.7.1 asks only for a nonzero size (04 is one) and allows white space before the apostrophe and after the base ("5 'D 3", "'h 837FF").
+    for (const text of ["#(04'bx)", "#('h x)", "#(1 'bx)", "#(16 'sd ?)", "#(0_8'hz)"]) expect(parseDelay(text).kind, text).toBe("xz");
+    expect(reasonOf("#(5 'D 3)")).toMatch(/^#\(5 'D 3\) is a legal delay: an integer literal \(A\.8\.7\)/);
+    // A size of 0 (§5.7.1), two x digits after a decimal base, no base letter, white space between the apostrophe and the
+    // base letter (§5.7.1) or after the apostrophe of an unbased literal (A.8.7 footnote 53): not a literal of A.8.7.
+    for (const text of ["#(0'bx)", "#(00'bx)", "#(1'dxx)", "#(1'x)", "#(1' bx)", "#(' x)"]) {
       expect(parseDelay(text).kind, text).toBe("invalid");
       expect(reasonOf(text), text).toMatch(/^Write a delay as/);
     }
@@ -1002,6 +1075,26 @@ describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.2.2.3, A.8.7, �
     for (const text of ["#1e3", "#(4'd5)", "#abc", "#1step"]) expect(reasonOf(text), text).not.toMatch(/cannot|not accept|needs parentheses/);
   });
 
+  it("names and 1step are read as typed: §5.7.1 ignores underscores only in numbers, never in a name (§5.6)", () => {
+    expect(reasonOf("#(d1_ns)")).toMatch(/^If d1_ns names a parameter or a variable, it is a legal delay/);
+    expect(reasonOf("#(d1_ns)")).not.toContain("d1ns");
+    expect(reasonOf("#d_1_0")).toMatch(/^If d_1_0 names a parameter/);
+    // 1_step is not 1step: it is neither a delay_value nor a name, so it gets the list of forms without a verdict.
+    expect(reasonOf("#1_step")).toBe("Write a delay as #d (for example #2.75), a time literal (#2.1ns), #(1'bx) or #(-1): the forms this lab computes.");
+    // A number still drops its underscores, and the reason echoes it as typed.
+    expect(reasonOf("#1_0e3")).toMatch(/^1_0e3 is a real number in scientific notation.*Write it as #10000 instead\.$/);
+    expect(reasonOf("#(8'hA_F)")).toMatch(/^#\(8'hA_F\) is a legal delay/);
+  });
+
+  it("1step is a delay_value only, not a primary (A.8.4), so #(1step) is no legal delay and is not called one", () => {
+    const reason = reasonOf("#(1step)");
+    expect(reason).toBe(
+      "1step takes no parentheses: it appears in the grammar only as a delay_value (A.2.2.3), and it is not a primary (A.8.4), so no parenthesised expression can hold it. #1step is legal, but a step equals the global precision (§3.14.3), which depends on the whole design, so it is outside this lab.",
+    );
+    expect(reason).not.toMatch(/^1step is in the delay_value grammar/);
+    expect(reasonOf("( 1step )")).toBe(reason);
+  });
+
   it("a time literal has no space before its unit (§5.8)", () => {
     for (const text of ["#5 ns", "2.1 ns", "#2.1 ns", "#(5 ns)"]) {
       expect(parseDelay(text).kind, text).toBe("invalid");
@@ -1010,14 +1103,42 @@ describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.2.2.3, A.8.7, �
     expect(parseDelay("#5ns").kind).toBe("literal");
   });
 
-  it("a negative or based value needs parentheses: delay_value has neither a unary minus nor a based number", () => {
-    for (const text of ["-1", "#-1", "#- 1", "-5"]) {
+  it("a minus, a based value or an unbased one needs parentheses: delay_value has none of them", () => {
+    // Any text that starts with a minus and has no parentheses: delay_value has no unary minus (A.2.2.3), and the
+    // other delay_control form starts with a parenthesis (A.6.5). The fix echoes the text as typed.
+    for (const [text, fix] of [
+      ["-1", "#(-1)"],
+      ["#-1", "#(-1)"],
+      ["#- 1", "#(- 1)"],
+      ["-5", "#(-5)"],
+      ["#-5", "#(-5)"],
+      ["-1ns", "#(-1ns)"],
+      ["#-2ns", "#(-2ns)"],
+      ["-1.5", "#(-1.5)"],
+      ["#-1.5", "#(-1.5)"],
+      ["#-a", "#(-a)"],
+      ["#-1'bx", "#(-1'bx)"],
+      ["#-'x", "#(-'x)"],
+      ["#-1_000", "#(-1_000)"],
+    ] as const) {
       expect(parseDelay(text).kind, text).toBe("invalid");
-      expect(reasonOf(text), text).toMatch(/no unary minus \(A\.2\.2\.3\).*\(§9\.4, A\.6\.5\).*#\(-1\)/);
+      expect(reasonOf(text), text).toBe(`A delay_value has no unary minus (A.2.2.3), so a delay written with one needs parentheses (§9.4, A.6.5): write ${fix}.`);
+      expect(reasonOf(text), text).not.toMatch(/outside this lab/);
     }
-    for (const text of ["1'bz", "#1'bz", "4'bx", "#4'bx", "'x", "#'z", "#4'd5", "#'1"]) {
+    // When the operand is not one primary the lab can name, parentheses alone would not make it legal: no fix is offered.
+    for (const text of ["#-1)", "#-1step", "#--1", "#-5 ns"]) {
+      expect(reasonOf(text), text).toBe("A delay_value has no unary minus (A.2.2.3), so a delay written with one needs parentheses (§9.4, A.6.5).");
+    }
+    for (const text of ["1'bz", "#1'bz", "4'bx", "#4'bx", "#4'd5", "#1 'bx"]) {
       expect(parseDelay(text).kind, text).toBe("invalid");
       expect(reasonOf(text), text).toMatch(/cannot be a based literal \(A\.2\.2\.3\), so this one needs parentheses \(§9\.4, A\.6\.5\)/);
+    }
+    expect(reasonOf("#1 'bx")).toMatch(/write #\(1 'bx\)\.$/);
+    // '0, '1, 'x and 'z have an apostrophe but no base specifier (§5.7.1): they are unbased unsized literals, not based ones.
+    for (const text of ["'x", "#'z", "#'1", "'0", "#'X"]) {
+      expect(parseDelay(text).kind, text).toBe("invalid");
+      expect(reasonOf(text), text).toMatch(/^A delay_value cannot be an unbased unsized literal \(§5\.7\.1; not in A\.2\.2\.3\), so this one needs parentheses \(§9\.4, A\.6\.5\): write #\('[01xXzZ]\)\.$/);
+      expect(reasonOf(text), text).not.toMatch(/based literal \(A\.2\.2\.3\)/);
     }
     expect(parseDelay("#(-1)").kind).toBe("negative");
     expect(parseDelay("#(- 1)").kind).toBe("negative");
@@ -1049,13 +1170,22 @@ describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.2.2.3, A.8.7, �
   });
 
   it("the reason for a negative real or literal names what is outside the lab and does not narrow §9.4.1 to integers", () => {
-    for (const text of ["-1ns", "#(-1ns)", "-1.5", "#(-1.5)"]) {
+    for (const text of ["#(-1ns)", "#(-1.5)", "(-0.5ns)", "#( - 2.25 )"]) {
       expect(reasonOf(text), text).toMatch(/^A negative real or time-literal delay is outside this lab/);
       expect(reasonOf(text), text).toMatch(/evaluates to a negative value/);
       expect(reasonOf(text), text).not.toMatch(/with a fraction|negative integer/);
     }
     expect(reasonOf("#(2+3)")).toBe("Write a delay as #d (for example #2.75), a time literal (#2.1ns), #(1'bx) or #(-1): the forms this lab computes.");
     expect(reasonOf("#2.")).toBe("Write a delay as #d (for example #2.75), a time literal (#2.1ns), #(1'bx) or #(-1): the forms this lab computes.");
+  });
+
+  it("a parenthesised minus is called negative only for a real or a time literal with a nonzero value", () => {
+    const neutral = "Write a delay as #d (for example #2.75), a time literal (#2.1ns), #(1'bx) or #(-1): the forms this lab computes.";
+    // -1'bx and -'x are x (§11.4.3), which §9.4.1 makes zero; -a and -(1) are neither a real nor a time literal; -0.0 and -0ns are not negative.
+    for (const text of ["#(-1'bx)", "#(-'x)", "#(-a)", "#(-(1))", "#(-0.0)", "#(-0ns)", "#(-1e3)"]) {
+      expect(parseDelay(text).kind, text).toBe("invalid");
+      expect(reasonOf(text), text).toBe(neutral);
+    }
   });
 
   it("the x/z preset writes a form that compiles, and its 'compile error' distractor can honestly say so", () => {
@@ -1409,13 +1539,17 @@ describe("sv-timescale-model: fix round 1, the order of scaling and rounding (§
 
   it("no step states an order as the rule; the §22.7 order is shown with the same result, computed for the delay", () => {
     expect(at("#1.26", scale(10, "ns"), scale(1, "ns")).steps).toContain(
-      "§22.7 lists the steps as round, then scale: 1.26 rounded to one decimal place is 1.3, and 1.3 × 10ns is 13 ns. The wake time is the same either way, because the precision is relative to the unit (§3.14.1).",
+      "§22.7 lists the steps as round, then scale: 1.26 rounded to one decimal place is 1.3, and 1.3 × 10ns is 13 ns. The wake time is the same in either order, because the precision is relative to the unit (§3.14.1).",
     );
     expect(at("#2.75", scale(1, "ns"), scale(100, "ps")).steps.join(" ")).toContain("2.75 rounded to one decimal place is 2.8, and 2.8 × 1ns is 2.8 ns.");
     expect(at("#0.4", scale(1, "ns"), scale(1, "ns")).steps.join(" ")).toContain("0.4 rounded to a whole number is 0, and 0 × 1ns is 0 ns.");
     expect(at("#1.234", scale(100, "ns"), scale(1, "ns")).steps.join(" ")).toContain("1.234 rounded to 2 decimal places is 1.23, and 1.23 × 100ns is 123 ns.");
     expect(at("#2.1ns", scale(10, "ns"), scale(1, "ns")).steps.join(" ")).toContain("0.21 rounded to one decimal place is 0.2, and 0.2 × 10ns is 2 ns.");
-    expect(at("#2.85", scale(1, "ns"), scale(100, "ps")).steps.join(" ")).toContain("2.85 rounded to one decimal place is 2.8 or 2.9, and 2.8 or 2.9 × 1ns is 2.8 ns or 2.9 ns.");
+    // A tie: each candidate gets its own product, and "in either order" names the order, not the tie rules.
+    expect(at("#2.85", scale(1, "ns"), scale(100, "ps")).steps).toContain(
+      "§22.7 lists the steps as round, then scale: 2.85 rounded to one decimal place is 2.8 or 2.9, and 2.8 × 1ns is 2.8 ns, or 2.9 × 1ns is 2.9 ns. Each wake time is the same in either order, because the precision is relative to the unit (§3.14.1).",
+    );
+    for (const d of ["#1.26", "#2.85", "#0.5", "#2.75"]) expect(at(d, scale(1, "ns"), scale(100, "ps")).steps.join(" "), d).not.toContain("either way");
     // Nothing to round, nothing to order.
     expect(at("#2.5", scale(10, "ns"), scale(1, "ns")).steps.join(" ")).not.toContain("§22.7 lists");
     for (const d of ["#1.26", "#2.75", "#2.1ns", "#2.85", "#0.4"]) {
@@ -1481,6 +1615,19 @@ describe("sv-timescale-model: fix round 1, ticks and ties in words", () => {
     // Not tool-dependent: no remark either.
     expect(binaryRemark(at("#1.55", scale(1, "ns"), scale(100, "ps")))).toBeNull();
   });
+
+  it("the binary remark names a time literal for what it is: a realtime value (§5.8), a real held as IEEE 754 (§6.12)", () => {
+    const literal = at("#5ps", scale(1, "ns"), scale(10, "ps"));
+    expect(literal.toolDependent).toBe(true);
+    expect(binaryRemark(literal)).toBe(
+      "The lab's reasoning, not a rule of the standard: a time literal is a realtime value scaled to the current unit (§5.8), held as an IEEE 754 double (§6.12), and 0.005 has no exact binary form, so a simulator that rounds the double may not see a half tick here at all.",
+    );
+    expect(binaryRemark(literal)).not.toContain("real literal");
+    expect(binaryRemark(at("#0.5ns", scale(10, "ns"), scale(1, "ns")))).toMatch(/a time literal is a realtime value scaled to the current unit \(§5\.8\).*0\.05 has no exact binary form/);
+    // A tie whose value is exact in binary still carries no remark, literal or not: 500ps is 0.5 of 1ns.
+    expect(at("#500ps", scale(1, "ns"), scale(1, "ns")).toolDependent).toBe(true);
+    expect(binaryRemark(at("#500ps", scale(1, "ns"), scale(1, "ns")))).toBeNull();
+  });
 });
 
 describe("sv-timescale-model: fix round 1, wakes stay below 2^64 units whatever the sign of the delay", () => {
@@ -1521,13 +1668,26 @@ describe("sv-timescale-model: fix round 1, the second wake rounds each delay, no
     expect(running?.label).toBe("13 ns, then 25 ns");
     expect(running?.feedback).toContain("Each #1.26 is rounded on its own when it runs, then added");
     expect(running?.feedback).toContain("(§3.14.1)");
-    expect(running?.feedback).toContain("§22.7's own example, #1.55 twice at 10ns/1ns, wakes at 16 ns and 32 ns");
+    // §22.7 writes the example as `parameter d = 1.55;` with `#d set = 0; #d set = 1;`, so the feedback names it that way.
+    expect(running?.feedback).toContain("§22.7's own example, #d twice with d = 1.55 at 10ns/1ns, wakes at 16 ns and 32 ns");
     const spine = wakeSequenceOptions(roundDelayText("#1.55", scale(10, "ns"), scale(1, "ns")), 2);
     expect(spine.find((o) => o.correct)?.label).toBe("16 ns, then 32 ns");
     expect(spine.find((o) => o.id === "running-total")?.label).toBe("16 ns, then 31 ns");
     // A whole-tick delay has no running-total error to show.
     expect(wakeSequenceOptions(roundDelayText("#2.5", scale(10, "ns"), scale(1, "ns")), 2).some((o) => o.id === "running-total")).toBe(false);
     expect(wakeSequenceOptions(slow, 1).some((o) => o.id === "running-total")).toBe(false);
+  });
+
+  it("leaves the running-total option out when a running total is a half tick the tie rules round apart", () => {
+    // #0.125 at 10ns/1ns: 1.25 ns rounds to 1 ns, so the wakes are 1 ns and 2 ns. The running total 2.5 ns is a half tick:
+    // half away from zero gives 3 ns, half to even gives 2 ns, the answer itself (§3.14.1 states no tie rule).
+    const r = roundDelayText("#0.125", scale(10, "ns"), scale(1, "ns"));
+    const options = wakeSequenceOptions(r, 2);
+    expect(options.find((o) => o.correct)?.label).toBe("1 ns, then 2 ns");
+    expect(options.some((o) => o.id === "running-total")).toBe(false);
+    expect(options.map((o) => o.label)).not.toContain("1 ns, then 3 ns");
+    // A half tick both rules round the same way keeps it: §22.7's 15.5 ns gives 16 ns under either rule.
+    expect(wakeSequenceOptions(roundDelayText("#1.55", scale(10, "ns"), scale(1, "ns")), 2).find((o) => o.id === "running-total")?.label).toBe("16 ns, then 31 ns");
   });
 
   it("the other-module distractor names neither module nor confirms its value", () => {

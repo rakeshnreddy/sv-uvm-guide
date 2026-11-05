@@ -155,14 +155,14 @@ const CMD_T_PREDICTIONS: Prediction[] = [
         id: "zero",
         label: "op = 4'h0, addr = 12'h000",
         correct: true,
-        feedback: "The 16-bit value is zero-extended to 32 bits (§10.7): BEEF lands in data and the upper 16 bits become 0. Tools may, but are not required to, warn about the size mismatch (§10.7), so size raw words to $bits(cmd_t).",
+        feedback: "The 16-bit value is zero-extended to 32 bits (§10.7, §6.11.2): BEEF lands in data and the upper 16 bits become 0. Tools may, but are not required to, warn or report errors about the size mismatch (§10.7), so size raw words to $bits(cmd_t).",
       },
       { id: "top", label: "op = 4'hB, addr = 12'hEEF", correct: false, feedback: "That puts the 16 bits at the top. Extension pads the most significant end, so the value stays in the low 16 bits (§10.7)." },
       {
         id: "error",
         label: "Compile error: 16 bits into a 32-bit struct",
         correct: false,
-        feedback: "A packed struct is assignment compatible with every integral type (§6.22.3); the width mismatch is legal and no warning is required (§10.7).",
+        feedback: "A packed struct is assignment compatible with every integral type (§6.22.3), and §10.7 defines how the width mismatch is padded, so the assignment is legal. Tools may, but are not required to, warn or report errors about the mismatch (§10.7).",
       },
     ],
   },
@@ -180,7 +180,7 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
     statements: [
       { code: "c = 32'h5ABC_0042;", action: { kind: "whole", value: svHex(32, "5ABC_0042") }, prediction: CMD_T_PREDICTIONS[0], note: "Fields on 4-bit boundaries read straight off the hex: 5 | ABC | 0042." },
       { code: "c.addr = 12'h0FF;", action: { kind: "member", member: "addr", value: svHex(12, "0FF") }, prediction: CMD_T_PREDICTIONS[1], note: "▲ marks the bits whose value changed." },
-      { code: "c = 16'hBEEF;", action: { kind: "whole", value: svHex(16, "BEEF") }, prediction: CMD_T_PREDICTIONS[2], note: "Bits [31:16] were zero-filled (+). No warning required (§10.7)." },
+      { code: "c = 16'hBEEF;", action: { kind: "whole", value: svHex(16, "BEEF") }, prediction: CMD_T_PREDICTIONS[2], note: "Bits [31:16] were zero-filled (+) (§10.7, §6.11.2). No warning required (§10.7)." },
     ],
   },
   {
@@ -201,7 +201,7 @@ export const STRUCT_PRESETS: readonly StructPreset[] = [
           question: "After ctrl.thresh = 8'd100, what is the whole register?",
           options: [
             { id: "0641", label: "32'h0000_0641", correct: true, feedback: "Below thresh sit only mode, irq_en and en, 4 bits in all, so thresh is [11:4]. 8'd100 is 8'h64, which reads 0x64 shifted up one hex digit, and en still adds the 1 (§7.2.1)." },
-            { id: "0065", label: "32'h0000_0065", correct: false, feedback: "That puts thresh at bit 0, on top of en. Members are numbered from the first member down, so the members declared after thresh sit below it (§7.2.1)." },
+            { id: "0064", label: "32'h0000_0064", correct: false, feedback: "That puts thresh at bits [7:0], over en, so en's 1 would be overwritten. Members are numbered from the first member down, so the members declared after thresh sit below it (§7.2.1)." },
             { id: "6401", label: "32'h0000_6401", correct: false, feedback: "That places thresh on a byte boundary, [15:8]. Packed members are contiguous with no alignment padding, so it starts right above the 4 bits below it (§7.2.1)." },
           ],
         },
@@ -700,7 +700,11 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       { key: "l2", text: "st_e state;", whenPicked: "The variable has no initializer, which is normal. Its initial value comes from the base type of its enum (Table 6-7): look at the typedef." },
       { key: "l3", text: "always_ff @(posedge clk or negedge rst_n)", whenPicked: "The sensitivity list is fine. Before the first edge nothing here has run, so the value you see at time 0 is the variable's default." },
       { key: "l4", text: "  if (!rst_n) state <= IDLE;", whenPicked: "The reset branch is correct and never ran: rst_n was never 0. The log shows IDLE anyway, so IDLE must be the default of the base type." },
-      { key: "l5", text: "$display(\"@%0t state.name() = \\\"%s\\\" (value %0d)\", $time, state.name(), state);", whenPicked: "name() reports the member the value matches (§6.19.5.6). It is telling the truth: the variable holds 0." },
+      {
+        key: "l5",
+        text: "initial repeat (2) begin $display(\"@%0d state.name() = \\\"%s\\\" (value %0d)\", $time, state.name(), state); #10; end",
+        whenPicked: "This process prints the log, at time 0 and again 10 time units later; $time counts in the module's time unit (§20.3.1). name() reports the member the value matches (§6.19.5.6), and it is telling the truth: the variable holds 0.",
+      },
     ],
     suspectKeys: ["l1"],
     causes: [
@@ -777,7 +781,7 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     },
     fixCode: {
       reorder: "typedef enum logic [3:0] { OP_IRQ = 4'hF, OP_WRITE = 4'h2, OP_READ = 4'h1, OP_NOP = 4'h0 } opcode_e;",
-      "logic-base": "typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;",
+      "logic-base": "// unchanged: opcode_e's base is already logic [3:0], a 4-state base\ntypedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;",
       // Without the first line op would stay x and name() would still be "": a failed $cast does not assign (§6.24.2, Table 6-7).
       "cast-check": "op = OP_NOP;   // known default before the decode\nif (!$cast(op, raw[31:28])) $error(\"bad opcode %h\", raw[31:28]);",
       "package-typedef": "package bus_pkg; typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e; endpackage",
@@ -812,8 +816,8 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       { key: "l1", text: "typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;", whenPicked: "The declaration is not the bug: any 4-bit base holds 7, and name() of a non-member is \"\" (§6.19.5.6). A 4-state base only exposes a never-assigned variable (Table 6-7)." },
       { key: "l2", text: "typedef struct packed { opcode_e op; logic [11:0] addr; logic [15:0] data; } cmd_t;", whenPicked: "Packed is right for a wire format, and op in the top nibble matches the protocol. The struct is fine; look at how the monitor fills it." },
       { key: "l3", text: "logic [31:0] bus_word = 32'h7ABC_0042;   // from the DUT", whenPicked: "The DUT drove 7 in the top digit, which is not an opcode. That is the stimulus; the question is how the monitor stored it." },
-      { key: "l3d", text: "$display(\"[mon] bus_word = %h\", bus_word);", whenPicked: "This prints the word as it arrived, the first line of the log, and it is correct. The question is how the monitor decodes it." },
       { key: "l4", text: "cmd_t cmd;", whenPicked: "Declaring the struct is fine. Before any write its members are x (4-state), which is not what the log shows." },
+      { key: "l3d", text: "$display(\"[mon] bus_word = %h\", bus_word);", whenPicked: "This prints the word as it arrived, the first line of the log, and it is correct. The question is how the monitor decodes it." },
       { key: "l5", text: "cmd = bus_word;   // whole-vector write", whenPicked: "This is it: assigning the word to the packed struct writes every member at once as one vector (derived from §7.2.1; §6.22.3 allows the assignment). Nothing checks that bits [31:28] hold an opcode, so op now holds 7 and name() returns \"\" (§6.19.5.6)." },
       { key: "l6", text: "$display(\"[mon] op = %s, addr = %h, data = %h\", cmd.op.name(), cmd.addr, cmd.data);", whenPicked: "name() is honest: \"\" means the value is not a member (§6.19.5.6). Look at how op got that value." },
     ],
@@ -834,9 +838,9 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     },
     fixCode: {
       reorder: "typedef struct packed { opcode_e op; logic [11:0] addr; logic [15:0] data; } cmd_t;",
-      "logic-base": "typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;",
+      "logic-base": "// unchanged: opcode_e's base is already logic [3:0], a 4-state base\ntypedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;",
       "cast-check": "cmd.op   = OP_NOP;             // known default before the decode\ncmd.addr = bus_word[27:16];\ncmd.data = bus_word[15:0];\nif (!$cast(cmd.op, bus_word[31:28])) $error(\"bad opcode %h\", bus_word[31:28]);",
-      // A package may refer only to its own items and imported ones (§26.2), so opcode_e moves in with cmd_t.
+      // cmd_t uses opcode_e, and a package shall not refer to items in the compilation-unit scope (§26.2), so opcode_e moves in with cmd_t.
       "package-typedef": "package bus_pkg;\n  typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;\n  typedef struct packed { opcode_e op; logic [11:0] addr; logic [15:0] data; } cmd_t;\nendpackage",
       "rand-whole": "class cmd_item; rand cmd_t cmd; endclass",
     },
@@ -869,18 +873,18 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
     clause: "§6.22.1, §6.22.2, §6.22.3",
     lines: [
       { key: "l1", text: "module mon;", whenPicked: "The module is fine. The problem is a declaration inside it." },
-      { key: "l2", text: "  typedef struct { cmd_t cmd; string tag; int beat; } cmd_rec_t;   // local", whenPicked: "This is one of the two, with line 5: a typedef of an unpacked struct matches only itself (§6.22.1 d), and no rule of §6.22.2 makes two separate declarations equivalent; (c) covers only packed types." },
+      { key: "l2", text: "  typedef struct { cmd_t cmd; string tag; int beat; } cmd_rec_t;   // local", whenPicked: "This is one of the two, with line 5: a struct typedef matches itself and the objects declared with it (§6.22.1 d), never a second typedef struct declaration, and no rule of §6.22.2 makes two separate declarations equivalent; (c) covers only packed types." },
       { key: "l3", text: "  cmd_rec_t rec;", whenPicked: "Declaring the variable is fine; its type is mon's local cmd_rec_t." },
       { key: "l4", text: "module scb;", whenPicked: "The module is fine. Its own typedef is the second half of the problem." },
-      { key: "l5", text: "  typedef struct { cmd_t cmd; string tag; int beat; } cmd_rec_t;   // local, again", whenPicked: "This is one of the two, with line 2: a second typedef statement is a second type, even with the same text (§6.22.1 d). No rule of §6.22.2 makes them equivalent; (c) covers only packed types." },
+      { key: "l5", text: "  typedef struct { cmd_t cmd; string tag; int beat; } cmd_rec_t;   // local, again", whenPicked: "This is one of the two, with line 2: a second typedef struct declaration is a second type, even with the same text (§6.22.1 d). No rule of §6.22.2 makes them equivalent; (c) covers only packed types." },
       { key: "l6", text: "  cmd_rec_t expected;", whenPicked: "Fine on its own; its type is scb's local cmd_rec_t, which differs from mon's." },
       { key: "l7", text: "assign_rec: scb.expected = mon.rec;", whenPicked: "The assignment is where the error appears, but the cause is the two separate typedefs it joins (§6.22.1)." },
     ],
     suspectKeys: ["l2", "l5"],
     causes: [
-      { id: "two-types", label: "Two separate typedef statements are two different types, however alike their text", correct: true, feedback: "Right. A typedef of a struct matches only itself (§6.22.1 d), and no rule of §6.22.2 makes two separate declarations equivalent ((c) covers only packed types), so there is no implicit conversion." },
+      { id: "two-types", label: "Two separate typedef struct declarations are two different types, however alike their text", correct: true, feedback: "Right. A struct typedef matches itself and the objects declared with it (§6.22.1 d), never a second typedef struct declaration, and no rule of §6.22.2 makes two separate declarations equivalent ((c) covers only packed types), so there is no implicit conversion." },
       { id: "string", label: "A struct containing a string cannot be assigned", correct: false, feedback: "Unpacked structs with strings assign as a whole (§7.2.2). The problem is that the two types are not the same type." },
-      { id: "packed", label: "The struct should be packed to be assignable", correct: false, feedback: "A string cannot live in a packed struct (§7.2.1). Packed structs would be equivalent by width (§6.22.2 c), but that is not available here; share one typedef instead." },
+      { id: "packed", label: "The struct should be packed to be assignable", correct: false, feedback: "A string cannot live in a packed struct (§7.2.1). Two packed structs with the same total bits, state-ness and signedness would be equivalent (§6.22.2 c), but a string cannot be packed, so share one typedef instead." },
       { id: "hier", label: "Hierarchical assignment between modules is illegal", correct: false, feedback: "Hierarchical references are legal in a testbench; the compiler complains about the types, not the path." },
     ],
     correctFix: "package-typedef",
@@ -895,9 +899,9 @@ export const CLINIC_SCENARIOS: readonly ClinicScenario[] = [
       reorder: "typedef struct { string tag; int beat; cmd_t cmd; } cmd_rec_t;   // in both modules",
       "logic-base": "typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;\n// and in cmd_t: opcode_e op;",
       "cast-check": "if (!$cast(scb.expected, mon.rec)) $error(\"cast failed\");",
-      // A package may refer only to its own items and imported ones, never the compilation unit (§26.2), so cmd_t and opcode_e move in too.
+      // cmd_rec_t uses cmd_t, which uses opcode_e, and a package shall not refer to items in the compilation-unit scope (§26.2), so cmd_t and opcode_e move in too.
       "package-typedef":
-        "package bus_pkg;\n  typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;\n  typedef struct packed { opcode_e op; logic [11:0] addr; logic [15:0] data; } cmd_t;\n  typedef struct { cmd_t cmd; string tag; int beat; } cmd_rec_t;\nendpackage\n// cmd_t and opcode_e move into the package too: a package refers only to its own and imported items (§26.2)\nimport bus_pkg::*;   // in mon and in scb, instead of their local typedefs",
+        "package bus_pkg;\n  typedef enum logic [3:0] { OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF } opcode_e;\n  typedef struct packed { opcode_e op; logic [11:0] addr; logic [15:0] data; } cmd_t;\n  typedef struct { cmd_t cmd; string tag; int beat; } cmd_rec_t;\nendpackage\n// cmd_t and opcode_e move into the package too: a package shall not refer to items in the compilation-unit scope (§26.2)\nimport bus_pkg::*;   // in mon and in scb, instead of their local typedefs",
       "rand-whole": "class rec_item; rand cmd_rec_t rec; endclass",
     },
     hints: [

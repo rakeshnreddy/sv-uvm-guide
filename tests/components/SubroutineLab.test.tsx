@@ -1,5 +1,5 @@
 import React from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import SubroutineLab from "@/components/visuals/SubroutineLab";
@@ -1774,5 +1774,190 @@ describe("SubroutineLab · small things a learner reads or hears", () => {
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent(/const ref, so the write itself is the error/);
     expect(alert).not.toHaveTextContent(/Use =|ref static/);
+  });
+});
+
+describe("SubroutineLab · send texts checked against §13.3.1 and §13.3.2", () => {
+  it("default state: the right answer's feedback names call 2's copy-in at t = 2 ns", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    lockIn(/t=10 id=2/);
+    expect(screen.getByText(/Correct\./).parentElement).toHaveTextContent(
+      "Call 2 copied 2 into the one shared id at t = 2 ns while call 1 waited at #10, so call 1 printed another call's argument (§13.3.2).",
+    );
+  });
+
+  it("automatic: the id=2 feedback says call 2's write lands in call 2's copy only", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    fireEvent.click(screen.getByRole("switch", { name: "send is automatic" }));
+    lockIn(/t=10 id=2/);
+    expect(screen.getByText(/Not quite\./).parentElement).toHaveTextContent("An automatic task gives every activation its own id; call 2's write lands in call 2's copy only (§13.3.2).");
+  });
+
+  it.each([
+    [2, "No tie here: the overwrite at t = 2 ns happens 8 ns before the print, in a different time slot."],
+    [12, "No tie here: call 2 starts 2 ns after call 1 printed."],
+  ] as const)("static #%s: the 'Either' feedback says there is no tie", (at, text) => {
+    render(<SubroutineLab mode="lifetime" />);
+    fireEvent.click(screen.getByRole("radio", { name: new RegExp(`#${at}: call 2 starts`) }));
+    lockIn(/^Either/);
+    expect(screen.getByText(/Not quite\./).parentElement).toHaveTextContent(text);
+  });
+
+  it("the static box is titled as the one shared copy, and is badged as shared by both calls once call 2 has entered", () => {
+    render(<SubroutineLab mode="lifetime" />);
+    reveal();
+    expect(screen.getByTestId("box-static:send")).toHaveTextContent("send: the one shared copy");
+    expect(screen.queryByText("shared by 2 activations at once")).not.toBeInTheDocument();
+    const max = Number(screen.getByRole("slider", { name: /scrubber/i }).getAttribute("max"));
+    let entered = -1;
+    for (let i = 0; i <= max && entered < 0; i += 1) {
+      scrubTo(i);
+      if (/send\(2\) starts/.test(screen.getByTestId("narration").textContent ?? "")) entered = i;
+    }
+    expect(entered).toBeGreaterThan(0);
+    expect(screen.getByTestId("narration")).toHaveTextContent("t = 2 ns");
+    const box = screen.getByTestId("box-static:send");
+    expect(box).toHaveTextContent("send: the one shared copy");
+    expect(within(box).getByText("shared by 2 activations at once")).toBeInTheDocument();
+    scrubTo(entered - 1);
+    expect(screen.queryByText("shared by 2 activations at once")).not.toBeInTheDocument();
+  });
+});
+
+describe("SubroutineLab · the compile-error option follows the lifetime and the start time", () => {
+  it("lifetime × start time × debug prints: 'does the wrong thing' only where call 1 can print call 2's id", () => {
+    for (const lifetime of ["static", "automatic"] as Lifetime[]) {
+      for (const at of [2, 10, 12] as SecondCallAt[]) {
+        for (const debugPrints of [false, true]) {
+          const { unmount } = render(<SubroutineLab mode="lifetime" />);
+          if (lifetime === "automatic") fireEvent.click(screen.getByRole("switch", { name: "send is automatic" }));
+          fireEvent.click(screen.getByRole("radio", { name: new RegExp(`#${at}: call 2 starts`) }));
+          if (debugPrints) fireEvent.click(screen.getByRole("checkbox", { name: /debug prints/ }));
+          lockIn(/A compile error: two calls of a static task/);
+          const feedback = screen.getByText(/Not quite\./).parentElement as HTMLElement;
+          const verdict = sendVerdict(exploreBench(sendBench({ lifetime, secondCallAt: at, debugPrints })));
+          expect(/wrong thing/.test(feedback.textContent ?? "")).toBe(verdict !== "id=1");
+          expect(feedback).toHaveTextContent("§13.3.2");
+          if (verdict === "id=1") expect(feedback).toHaveTextContent(/prints id=1,? correctly/);
+          if (verdict === "either") expect(feedback).toHaveTextContent("§4.7");
+          if (lifetime === "automatic") expect(feedback).toHaveTextContent(/each call has its own id/);
+          unmount();
+        }
+      }
+    }
+  });
+});
+
+describe("SubroutineLab · pulse: ref is offered as the cure only where it compiles", () => {
+  const setPulse = (lifetime: Lifetime, direction: Direction, nba: boolean) => {
+    render(<SubroutineLab mode="directions" preset="pulse" />);
+    if (lifetime === "static") fireEvent.click(screen.getByRole("switch", { name: "pulse is automatic" }));
+    fireEvent.change(screen.getByTestId("direction-flag"), { target: { value: direction } });
+    if (nba) fireEvent.click(screen.getByRole("switch", { name: "flag uses a nonblocking assignment" }));
+  };
+
+  it("every legal non-ref state: the 'both lines' feedback says ref gives them only where ref compiles, and why it does not here", () => {
+    let checked = 0;
+    for (const lifetime of ["static", "automatic"] as Lifetime[]) {
+      for (const direction of ["input", "output", "inout"] as Direction[]) {
+        for (const nba of [false, true]) {
+          if (compileBench(pulseBench({ lifetime, direction, nba })).length) continue;
+          checked += 1;
+          setPulse(lifetime, direction, nba);
+          lockIn(/t=13 busy=1\s*then/);
+          const feedback = screen.getByText(/Not quite\./).parentElement as HTMLElement;
+          const refIssues = compileBench(pulseBench({ lifetime, direction: "ref", nba }));
+          if (refIssues.length === 0) {
+            // Only automatic with =: ref compiles and gives both lines.
+            expect(simulateBench(pulseBench({ lifetime, direction: "ref", nba })).log.map((l) => l.text)).toEqual(["t=13 busy=1", "t=23 busy=0"]);
+            expect(feedback).toHaveTextContent("That is what ref would give.");
+            expect(feedback).not.toHaveTextContent(/does not compile/);
+          } else {
+            expect(refIssues.every((i) => i.clause === "§13.5.2")).toBe(true);
+            expect(feedback).not.toHaveTextContent(/That is what ref would give\./);
+            expect(feedback).toHaveTextContent(nba ? "That is what ref would give in an automatic task with =." : "That is what ref would give in an automatic task.");
+            expect(feedback).toHaveTextContent("Here ref does not compile");
+            expect(feedback).toHaveTextContent("§13.5.2");
+            if (lifetime === "static") expect(feedback).toHaveTextContent("pass by reference is illegal in a static task");
+            if (nba) expect(feedback).toHaveTextContent(/a <= through a ref is not allowed.*§13\.3\.2/);
+            else expect(feedback).not.toHaveTextContent(/<= through a ref/);
+          }
+          cleanup();
+        }
+      }
+    }
+    // input, output and inout under = in both lifetimes, and under <= when static.
+    expect(checked).toBe(9);
+  });
+
+  it("automatic with =: the late-1 feedback says the <= it needs is not allowed on an automatic task's flag", () => {
+    setPulse("automatic", "output", false);
+    lockIn(/t=23 busy=1\s*only/);
+    expect(screen.getByText(/Not quite\./).parentElement).toHaveTextContent(/that takes flag <= 1'b0, which an automatic task may not use on its own flag \(§13\.3, §4\.4\.2\.4, §13\.3\.2\)/);
+    cleanup();
+    setPulse("static", "output", false);
+    lockIn(/t=23 busy=1\s*only/);
+    const feedback = screen.getByText(/Not quite\./).parentElement as HTMLElement;
+    expect(feedback).toHaveTextContent(/still waiting in the NBA region/);
+    expect(feedback).not.toHaveTextContent(/automatic task may not/);
+  });
+});
+
+describe("SubroutineLab · the article before a type", () => {
+  it("wait_cycles_ok: n is an int unsigned in the strip and in the feedback", () => {
+    render(<SubroutineLab mode="formals" preset="wait_cycles_ok" />);
+    lockIn(/^1 cycle$/);
+    expect(screen.getByText(/One cycle is what a one-bit n would give/)).toHaveTextContent("This n is an int unsigned, wide enough for 5");
+    const strip = screen.getByTestId("wait-cycles-strip");
+    expect(strip).toHaveTextContent("stores 5 into an int unsigned n");
+    expect(strip).toHaveTextContent("stores 4 into an int unsigned n");
+    expect(strip).not.toHaveTextContent(/\ba int\b/);
+  });
+
+  it("wait_cycles_ok: the 'nothing is lost' feedback says the same", () => {
+    render(<SubroutineLab mode="formals" preset="wait_cycles_ok" />);
+    lockIn(/^0 cycles$/);
+    expect(screen.getByText(/Nothing is lost/)).toHaveTextContent("Nothing is lost: n is an int unsigned, wide enough for 5, so it waits 5 cycles.");
+  });
+
+  it("wait_cycles: a one-bit logic keeps 'a'", () => {
+    render(<SubroutineLab mode="formals" preset="wait_cycles" />);
+    reveal();
+    lockIn(/^1 cycle$/);
+    expect(screen.getByTestId("wait-cycles-strip")).toHaveTextContent("stores 5 into a logic n");
+  });
+});
+
+describe("SubroutineLab · prefers-reduced-motion", () => {
+  const original = window.matchMedia;
+  afterEach(() => {
+    Object.defineProperty(window, "matchMedia", { configurable: true, writable: true, value: original });
+  });
+  const mock = (reduce: boolean) =>
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: (query: string) => ({ matches: reduce && query.includes("prefers-reduced-motion: reduce"), media: query, addEventListener: () => undefined, removeEventListener: () => undefined }),
+    });
+
+  it("the lane bars animate by default and carry no transition class under reduce", () => {
+    mock(false);
+    const first = render(<SubroutineLab mode="lifetime" />);
+    reveal();
+    scrubToEnd();
+    const animated = screen.getAllByTestId("lane-bar");
+    expect(animated).toHaveLength(2);
+    animated.forEach((bar) => expect(bar.getAttribute("class")).toContain("transition-all"));
+    first.unmount();
+
+    mock(true);
+    render(<SubroutineLab mode="lifetime" />);
+    reveal();
+    scrubToEnd();
+    const still = screen.getAllByTestId("lane-bar");
+    expect(still).toHaveLength(2);
+    still.forEach((bar) => expect(bar.getAttribute("class") ?? "").not.toMatch(/transition|duration/));
+    // The storage boxes fade by CSS, and opt out of it under reduce.
+    expect(screen.getByTestId("box-static:send")).toHaveClass("motion-reduce:transition-none");
   });
 });

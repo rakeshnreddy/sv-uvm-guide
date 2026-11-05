@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import SignednessVisualizer from "@/components/visuals/SignednessVisualizer";
+import { trapScenarios } from "@/lib/sv-expression-model";
 
 const lockIn = () => fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
 const reveal = () => fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
@@ -119,7 +120,9 @@ describe("SignednessVisualizer: expression-lab extensions", () => {
   it("casts: 8'(12'hABC) keeps the low byte (188 = 8'hBC); signed'(4'b1100) reads as -4", () => {
     render(<SignednessVisualizer scenario="casts" />);
     expect(code().getByText("v = 8'(12'hABC);")).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("v = 171"));
+    // Each option shows its bit pattern, so the low byte BC and the high byte AB are told apart without converting hex.
+    expect(screen.getByLabelText("v = 188 (8'hBC)")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("v = 171 (8'hAB)"));
     lockIn();
     expect(screen.getByText(/keeps the top 8 bits/)).toBeInTheDocument();
     expect(screen.getByText(/ACT v = 188/)).toBeInTheDocument();
@@ -317,7 +320,7 @@ describe("SignednessVisualizer: what the reveal says about the fill and the carr
     lockIn();
     expect(screen.getByText(/ACT s = 150/)).toBeInTheDocument();
     expect(screen.getByText(/Without the fix/).parentElement).toHaveTextContent(/s = \(a8 \+ b8\) >> 1\s*ACT s = 22/);
-    expect(screen.getByText(/Correct\./).parentElement).toHaveTextContent(/9-bit context keeps the carry/);
+    expect(screen.getByText(/Correct\./).parentElement).toHaveTextContent(/9-bit context keeps any carry/);
   });
 
   it("the contrast follows the edited operands and the target of the variant it names", () => {
@@ -411,16 +414,26 @@ describe("SignednessVisualizer: the answer's own explanation reaches the value",
 
   it("the two int casts say which extension they get", () => {
     render(<SignednessVisualizer scenario="casts" initialVariant="type-cast" />);
-    fireEvent.click(screen.getByLabelText("v = 240"));
+    fireEvent.click(screen.getByLabelText("v = 240 (32'h0000_00F0)"));
     lockIn();
     // Feedback is plain text: the model's backtick code markers are stripped, not shown.
     expect(screen.getByText(/Correct\./).parentElement).toHaveTextContent(/ w is unsigned, so it extends with zeros\..*int being signed does not change that: the extension follows the expression inside the cast/);
     expect(screen.getByText(/Correct\./).parentElement?.textContent).not.toContain("`");
     fireEvent.click(screen.getByRole("radio", { name: "int v = int'(signed'(w))" }));
-    fireEvent.click(screen.getByLabelText("v = -16"));
+    fireEvent.click(screen.getByLabelText("v = -16 (32'hFFFF_FFF0)"));
     lockIn();
-    expect(screen.getByText(/Correct\./).parentElement).toHaveTextContent(/ signed'\(w\) is signed, so it extends with copies of the sign bit\..*The sign cast is what changes the extension: int'\(w\) alone always adds zeros/);
+    expect(screen.getByText(/Correct\./).parentElement).toHaveTextContent(/ signed'\(w\) is signed, so it extends with copies of the sign bit\..*the sign cast is what changes the extension: int'\(w\) alone always adds zeros/);
     expect(document.body.textContent).not.toContain("`");
+  });
+
+  it("int'(w) at w = 15: the answer itself says w is zero-extended, so 'int being signed' cannot read as an unsigned result", () => {
+    render(<SignednessVisualizer scenario="casts" initialVariant="type-cast" />);
+    fireEvent.change(screen.getByLabelText(/Value of w/), { target: { value: "15" } });
+    fireEvent.click(screen.getByLabelText("v = 15 (32'h0000_000F)"));
+    lockIn();
+    expect(screen.getByText(/Correct\./).parentElement).toHaveTextContent(
+      /^Correct\. int'\(w\) is 32 bits, signed \(its own operands are sized separately\), the same width as the 32-bit v\. The cast result is 32 bits, signed: 32'sh0000_000F \(15\)\. w is unsigned, so int'\(w\) zero-extends it; int being signed does not change that: the extension follows the expression inside the cast, not the cast type \(§6\.24\.1\)\.$/,
+    );
   });
 
   it("s[7:0] >>> 1 says why the expression is unsigned", () => {
@@ -536,5 +549,75 @@ describe("SignednessVisualizer: two embeds on one page", () => {
     expect(first.id).not.toBe(second.id);
     expect(first.closest("label")).toHaveAttribute("for", first.id);
     expect(second.closest("label")).toHaveAttribute("for", second.id);
+  });
+});
+
+describe("SignednessVisualizer: no reveal prints the same words twice", () => {
+  // The chosen option names its slip, "Why the answer holds" carries the insight, and the rest of the reveal adds values.
+  // A run of five words printed twice means two of those restate each other. The evaluation steps restate the insight
+  // step by step by design, so they are left out, as are tables and bit strips (values, not prose).
+  const RUN = 5;
+  const repeats = (text: string) => {
+    const words = text.split(/\s+/).filter(Boolean).map((w) => w.toLowerCase().replace(/[.,:;()]+$|^[(]+/g, ""));
+    const first = new Map<string, number>();
+    const found = new Set<string>();
+    for (let i = 0; i + RUN <= words.length; i += 1) {
+      const key = words.slice(i, i + RUN).join(" ");
+      const at = first.get(key);
+      if (at === undefined) first.set(key, i);
+      else if (i - at >= RUN) found.add(key);
+    }
+    return [...found];
+  };
+  // The prediction's own fieldset (its legend starts with "Predict"), not the Operands fieldset above it.
+  const prompt = () => screen.getAllByRole("group").find((g) => g.tagName === "FIELDSET" && /^Predict/.test(g.querySelector("legend")?.textContent ?? ""))?.parentElement as HTMLElement;
+  const prose = () => {
+    const clone = prompt().cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("fieldset, table, [role='img'], ol[aria-label='Evaluation steps']").forEach((e) => e.remove());
+    return clone.textContent ?? "";
+  };
+  // Every code variant of every scenario: casts, part-select, literal-sign, ashr-unsigned-context and lost-carry/size-cast included.
+  const cases = trapScenarios.flatMap((sc) => sc.variants.map((v): [string, string, string] => [sc.id, v.id, v.expr]));
+
+  it("covers the new scenarios and the size-cast variant", () => {
+    const ids = new Set(cases.map(([s, v]) => `${s}/${v}`));
+    for (const id of ["casts/size-cast", "casts/type-cast", "part-select/select", "literal-sign/sized-signed", "ashr-unsigned-context/trap", "lost-carry/size-cast"]) expect(ids.has(id), id).toBe(true);
+  });
+
+  it.each(cases)("%s / %s (%s): skipped, and with each option locked in", (scenario, variant) => {
+    const make = () => render(<SignednessVisualizer scenario={scenario} initialVariant={variant} />);
+    const first = make();
+    const choices = within(prompt()).getAllByRole("radio").length;
+    first.unmount();
+    for (let k = -1; k < choices; k += 1) {
+      const view = make();
+      if (k < 0) {
+        reveal();
+      } else {
+        fireEvent.click(within(prompt()).getAllByRole("radio")[k]);
+        lockIn();
+      }
+      expect(repeats(prose()), k < 0 ? "skipped" : `option ${k}`).toEqual([]);
+      view.unmount();
+    }
+  });
+
+  it("int'(w) at w = 15 and the casts at w = 240 stay free of repeats too", () => {
+    for (const w of ["15", "240"]) {
+      for (const variant of ["type-cast", "type-cast-signed"]) {
+        const view = render(<SignednessVisualizer scenario="casts" initialVariant={variant} />);
+        fireEvent.change(screen.getByLabelText(/Value of w/), { target: { value: w } });
+        const choices = within(prompt()).getAllByRole("radio").length;
+        view.unmount();
+        for (let k = 0; k < choices; k += 1) {
+          const again = render(<SignednessVisualizer scenario="casts" initialVariant={variant} />);
+          fireEvent.change(screen.getByLabelText(/Value of w/), { target: { value: w } });
+          fireEvent.click(within(prompt()).getAllByRole("radio")[k]);
+          lockIn();
+          expect(repeats(prose()), `${variant} w=${w} option ${k}`).toEqual([]);
+          again.unmount();
+        }
+      }
+    }
   });
 });

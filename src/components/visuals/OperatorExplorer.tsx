@@ -529,7 +529,7 @@ function MergeDetail({ spec, c, a, b }: { spec: OperatorSpec; c: SvValue; a: SvV
   );
 }
 
-/** The four §20.9 functions on the same vector, with their $countbits arithmetic. The rule, in the answer's feedback, says how x and z count. */
+/** The four §20.9 convenience functions on the same vector, with their $countbits arithmetic. The rule, in the answer's feedback, says how x and z count. */
 function BitcountDetail({ spec, state }: { spec: OperatorSpec; state: SvValue }) {
   const name = slotName(spec, "a");
   const report = bitVectorReport(state, name);
@@ -539,7 +539,7 @@ function BitcountDetail({ spec, state }: { spec: OperatorSpec; state: SvValue })
       <div className="overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" role="region" aria-label="Bit vector functions table, scrollable" tabIndex={0}>
         <table className="border-collapse text-left font-mono text-xs [font-variant-ligatures:none]">
           <caption className="mb-1 text-left font-sans text-xs text-muted-foreground">
-            Every bit vector function on <Code>{name}</Code> = {formatCompact(reinterpret(state, false))} (§20.9)
+            The four §20.9 convenience functions on <Code>{name}</Code> = {formatCompact(reinterpret(state, false))}
           </caption>
           <thead>
             <tr className="text-muted-foreground">
@@ -571,7 +571,7 @@ function BitcountDetail({ spec, state }: { spec: OperatorSpec; state: SvValue })
       </div>
       {spec.id !== "onehot-guarded" ? (
         <p className="text-xs text-muted-foreground">
-          A reset check wants <Code>{`$onehot(${name}) && !$isunknown(${name})`}</Code>.
+          A one-hot check that must also reject x/z wants <Code>{`$onehot(${name}) && !$isunknown(${name})`}</Code>.
         </p>
       ) : null}
     </div>

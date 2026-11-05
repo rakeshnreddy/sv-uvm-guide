@@ -10,15 +10,23 @@
  *           significant, members are contiguous, the whole can be sliced
  *           [n-1:0] and used with operators; unsigned unless declared signed;
  *           4-state if any member is 4-state (2-state members convert on
- *           read and write). An unpacked struct has an implementation-dependent
- *           packing, normally matching the C compiler (§7.2.1), so it has no
- *           bit numbering; §6.22.3 defines no implicit cast from an integral
- *           value to it (an explicit bit-stream cast, §6.24.3, is the route).
+ *           read and write). With no 4-state member the whole struct is a
+ *           2-state vector (§7.2.1), so x and z written into it become 0
+ *           (§6.11.2), whole-vector writes included. An unpacked struct has an
+ *           implementation-dependent packing, normally matching the C compiler
+ *           (§7.2.1), so it has no bit numbering. It is not integral (§6.11.1),
+ *           and neither §6.22.3 nor the casting rules of §6.24 give an implicit
+ *           cast from an integral value to it, so a whole-vector assignment is
+ *           a compile error; no clause says so outright, so the card labels it
+ *           derived (an explicit bit-stream cast, §6.24.3, is the route).
  * - §20.6.2 $bits is the total width.
  * - §6.22.3 an integral value can be assigned to a packed struct, because all
  *           integral types are assignment compatible. §10.7 sizes it: a
- *           narrower source is extended (an unsigned one with zeros), a wider
- *           one truncated, and no warning is required.
+ *           narrower source is extended, a wider one truncated, and no warning
+ *           is required. §10.7 sign-extends a signed source and sends an
+ *           unsigned one to §11.6.1, which does not name the fill; the zeros
+ *           are stated in §6.11.2 ("zero extensions if unsigned"), so a note
+ *           that names the zero fill cites §10.7 and §6.11.2.
  * - §7.2, Syntax 7-1 footnote 20  random_qualifier only within unpacked structs.
  * - §6.22.1, §6.22.2  type matching and equivalence: two local typedefs of an
  *           unpacked struct are different types (§6.22.1 d) and no rule of
@@ -65,8 +73,15 @@
  *           decimal number (§21.2.1.1). The two rules pull different ways, so
  *           for a packed union the model shows the aggregate reading, gives the
  *           unformatted number beside it, and labels the output tool-dependent.
- *           The subclause does not say whether '{ } surrounds tag:value, nor
- *           what stands for a void member's value, and the model says so.
+ *           The subclause's last paragraph points the same way: %p of a
+ *           singular expression formats it "as an element of an aggregate
+ *           expression", that is, under the singular list.
+ *           The same paragraph that gives tag:value requires the output to be
+ *           "a legal interpretation of the assignment pattern syntax (see
+ *           10.9)", and §10.9 builds a pattern from braces prefixed with an
+ *           apostrophe, so tag:value prints inside '{ }, as an untagged union's
+ *           name:value does. What stands for a void member's value is not
+ *           stated, so '{tag} for one is derived and labelled so.
  * - §21.2.1.1 Table 21-1 radix of %h and %d; §21.2.1.2 %0d at minimum width;
  *           §21.2.1.3 x/z digits in %h and %d.
  *
@@ -318,9 +333,14 @@ export interface EnumCastResult {
 /**
  * Integer into an enum. A static cast `opcode_e'(n)` converts without checking
  * validity (§6.19.4), and the result is held in the base type's width, so an
- * `n` too wide for it loses its upper bits. `$cast(op, n)` as a function tests
- * the value `n` itself, before any narrowing: it assigns only a member value,
- * otherwise it returns 0 and leaves `op` unchanged (§6.24.2).
+ * `n` too wide for it loses its upper bits. `$cast(op, n)` as a function
+ * returns 0 and leaves `op` unchanged when the assignment would be invalid
+ * (§6.24.2). That it tests the value `n` itself, before any narrowing, so 18
+ * does not pass as OP_WRITE (2), is our reading of §6.24.2's descriptive text
+ * ("check whether an expression lies within the enumeration values") and its
+ * examples: the normative sentence ("invalid if ... not cast compatible") does
+ * not address a source wider than the base. No control of the explorer uses
+ * an `n` above 15.
  */
 export function enumCast(spec: EnumSpec, before: SvValue, n: number, form: "static" | "dynamic"): EnumCastResult {
   const value = svDec(spec.width, n);
@@ -478,6 +498,13 @@ export function readMember(members: readonly PackedMember[], value: SvValue, nam
 /** How §10.7 pads a source narrower than its target: a signed one is sign-extended, an unsigned one zero-extended. */
 const extensionWord = (src: SvValue): "sign" | "zero" => (src.signed ? "sign" : "zero");
 
+/**
+ * Where that padding is stated. §10.7 sign-extends a signed source itself; an
+ * unsigned one it pads "according to the rules specified in 11.6.1", which do
+ * not name the fill, and the zeros are §6.11.2's ("zero extensions if unsigned").
+ */
+const extensionClause = (src: SvValue): string => (src.signed ? "§10.7" : "§10.7, §6.11.2");
+
 export interface MemberWrite {
   value: SvValue;
   /** The member's bits: the only bits a member write may touch (§7.2.1). */
@@ -498,7 +525,7 @@ export function writeMember(members: readonly PackedMember[], value: SvValue, na
   const m = members.find((x) => x.name === name)!;
   const fitted = memberStates(m) === 2 ? toTwoState(src) : src;
   const next = splice(value, r.hi, r.lo, fitted);
-  const sized = src.width === r.width ? "" : src.width < r.width ? ` The ${src.width}-bit source is ${extensionWord(src)}-extended to ${r.width} bits (§10.7).` : ` The ${src.width}-bit source is truncated to ${r.width} bits; its upper bits are discarded (§10.7).`;
+  const sized = src.width === r.width ? "" : src.width < r.width ? ` The ${src.width}-bit source is ${extensionWord(src)}-extended to ${r.width} bits (${extensionClause(src)}).` : ` The ${src.width}-bit source is truncated to ${r.width} bits; its upper bits are discarded (§10.7).`;
   return {
     value: next,
     written: bitRange(r.hi, r.lo),
@@ -519,27 +546,33 @@ export interface WholeAssign {
 /**
  * Assign an integral value to the whole struct. A packed struct is assignment
  * compatible with every integral type (§6.22.3); a narrower source is
- * zero-extended, or sign-extended when it is signed, a wider one loses its most
- * significant bits, and no warning is required (§10.7).
+ * zero-extended (§10.7, §6.11.2), or sign-extended when it is signed (§10.7),
+ * a wider one loses its most significant bits, and no warning is required
+ * (§10.7). A struct with no 4-state member is a 2-state vector (§7.2.1), so
+ * the sized value then loses its x and z bits to 0 (§6.11.2), as a member
+ * write into a 2-state member does.
  */
 export function assignWhole(members: readonly PackedMember[], src: SvValue): WholeAssign {
   const width = structBits(members);
-  const value = resize(src, width, src.signed, false);
+  const sized = resize(src, width, src.signed, false);
+  const twoState = structStates(members) === 2;
+  const value = twoState ? toTwoState(sized) : sized;
+  const states = twoState && !isKnown(sized) ? ` With no 4-state member the struct is a 2-state vector (§7.2.1), so its x and z bits become 0 (§6.11.2).` : "";
   if (src.width < width) {
     return {
       value,
       extendedFrom: src.width,
-      note: `The ${src.width}-bit value is ${extensionWord(src)}-extended to ${width} bits: bits [${width - 1}:${src.width}] are filled with ${src.signed ? "the sign bit" : "0"}. No warning is required (§10.7).`,
+      note: `The ${src.width}-bit value is ${extensionWord(src)}-extended to ${width} bits: bits [${width - 1}:${src.width}] are filled with ${src.signed ? "the sign bit" : "0"} (${extensionClause(src)}). No warning is required (§10.7).${states}`,
     };
   }
   if (src.width > width) {
     return {
       value,
       droppedFrom: width,
-      note: `The ${src.width}-bit value is truncated to ${width} bits: bits [${src.width - 1}:${width}] of the source are discarded. No warning is required (§10.7).`,
+      note: `The ${src.width}-bit value is truncated to ${width} bits: bits [${src.width - 1}:${width}] of the source are discarded. No warning is required (§10.7).${states}`,
     };
   }
-  return { value, note: `The ${width}-bit value fills the struct exactly: every member is written at once (§7.2.1).` };
+  return { value, note: `The ${width}-bit value fills the struct exactly: every member is written at once (§7.2.1).${states}` };
 }
 
 /**
@@ -581,6 +614,8 @@ export function xWriteOffer(varName: string, members: readonly PackedMember[], n
  * member. So a 2-state enum in a 4-state struct stores the x in the vector, and
  * only a read through the member converts it (derived from §7.2.1, which treats
  * the struct as one 4-state vector and describes conversion for member accesses).
+ * In a struct with no 4-state member the part-select writes a 2-state vector
+ * (§7.2.1), and that is what turns the x into 0 (§6.11.2).
  */
 export function writeXInMember(members: readonly PackedMember[], value: SvValue, name: string): MemberWrite & { structStates: 2 | 4 } {
   const r = memberRange(members, name);
@@ -596,10 +631,13 @@ export function writeXInMember(members: readonly PackedMember[], value: SvValue,
     };
   }
   const w = writeMember(members, value, name, allX(r.width));
+  // An enum member's x goes in through a part-select of the struct (`xWriteOffer`), not through the member, so for a 2-state enum it is the struct's own state-ness that turns the x into 0.
   const note =
-    memberStates(m) === 2
-      ? `${name} is a 2-state member: x converts to 0 on the way in (§6.11.2), so it cannot hold x.`
-      : `${m.type.kind === "enum" ? `A part-select of bits ${rangeText(r)} writes them as a plain vector, with no enum check (derived from §7.2.1). ` : ""}${name} is a 4-state member, so the struct is a 4-state vector whether or not any bit is x (§7.2.1); read as one vector it now shows x in bits ${rangeText(r)}.`;
+    m.type.kind === "enum" && memberStates(m) === 2
+      ? `A part-select of bits ${rangeText(r)} writes them as a plain vector, with no enum check (derived from §7.2.1). With no 4-state member the struct is a 2-state vector (§7.2.1), so the x converts to 0 on the way in (§6.11.2) and ${name} cannot hold x.`
+      : memberStates(m) === 2
+        ? `${name} is a 2-state member: x converts to 0 on the way in (§6.11.2), so it cannot hold x.`
+        : `${m.type.kind === "enum" ? `A part-select of bits ${rangeText(r)} writes them as a plain vector, with no enum check (derived from §7.2.1). ` : ""}${name} is a 4-state member, so the struct is a 4-state vector whether or not any bit is x (§7.2.1); read as one vector it now shows x in bits ${rangeText(r)}.`;
   return { ...w, note, structStates: structStates(members) };
 }
 
@@ -662,6 +700,24 @@ export interface RuleCard {
 export const UNPACKED_COMPARE_CLAUSE = "§7.2.1, §6.11.1, §11.2.2";
 
 /**
+ * The rules the unpacked part-select card rests on: only a packed struct is a
+ * vector with bits [n-1:0] (§7.2.1), and §11.5.1 lists what a bit-select
+ * applies to, "a vector, packed array, packed structure, parameter, or
+ * concatenation", which leaves out an unpacked structure.
+ */
+export const UNPACKED_SELECT_CLAUSE = "§7.2.1, §11.5.1";
+
+/**
+ * The rules the unpacked whole-vector assignment card rests on. None states
+ * the error outright, so the card labels it derived, as the compare card is:
+ * an unpacked struct is not integral (§6.11.1), and §6.22.3 makes nonequivalent
+ * types assignment compatible only through implicit casting rules, which it
+ * says are "defined in 6.24", and §6.24 defines none from an integral value to
+ * an unpacked struct.
+ */
+export const UNPACKED_WHOLE_ASSIGN_CLAUSE = "§6.11.1, §6.22.3, §6.24";
+
+/**
  * What a packed/unpacked toggle changes. A packed struct is a vector: it can
  * be part-selected and compared with a number (§7.2.1). An unpacked struct has
  * an implementation-dependent packing (§7.2.1) and no bit numbering, so
@@ -687,7 +743,13 @@ export function structVectorCards(name: string, members: readonly PackedMember[]
     ];
   }
   return [
-    { code: selectText, legal: false, clause: "§7.2.1", message: "Compile error: only a packed struct is treated as a single vector with bits [n-1:0]. An unpacked struct's packing is implementation-dependent, normally matching the C compiler (§7.2.1), so it has no bit numbering to select." },
+    {
+      code: selectText,
+      legal: false,
+      clause: UNPACKED_SELECT_CLAUSE,
+      message:
+        "Compile error: only a packed struct is treated as a single vector with bits [n-1:0]. An unpacked struct's packing is implementation-dependent, normally matching the C compiler (§7.2.1), so it has no bit numbering to select. §11.5.1 lists what a bit-select extracts from: a vector, packed array, packed structure, parameter or concatenation, and an unpacked structure is not among them.",
+    },
     {
       code: compareText,
       legal: false,
@@ -707,17 +769,19 @@ export function randMemberCard(packed: boolean, memberName: string, typeText = "
 
 /**
  * A whole-vector statement such as `c = 32'h5ABC_0042;` or `ctrl = '0;` on an
- * unpacked struct. An unpacked struct is not an integral type and §6.22.3
- * defines no implicit cast from an integral value to it, so the statement
- * does not compile; the legal routes are member writes, an assignment pattern
- * (§10.9.2) or an explicit bit-stream cast (§6.24.3).
+ * unpacked struct. An unpacked struct is not an integral type (§6.11.1), and
+ * no implicit casting rule (§6.22.3, §6.24) turns an integral value into one,
+ * so the statement does not compile. No clause states that error outright, so
+ * the card labels it derived (`UNPACKED_WHOLE_ASSIGN_CLAUSE`). The legal routes
+ * are member writes, an assignment pattern (§10.9.2) or an explicit bit-stream
+ * cast (§6.24.3).
  */
 export function unpackedWholeAssignCard(typeName: string, code: string): RuleCard {
   return {
     code,
     legal: false,
-    clause: "§6.22.3",
-    message: `Compile error: an unpacked struct is not an integral type, and there is no implicit cast from an integral value to it (§6.22.3). Write the members by name, use an assignment pattern such as '{default: '0} (§10.9.2), or spell out a bit-stream cast, ${typeName}'(word), with word exactly $bits(${typeName}) bits (§6.24.3).`,
+    clause: UNPACKED_WHOLE_ASSIGN_CLAUSE,
+    message: `Derived: no clause states this error outright. An unpacked struct is not an integral type (§6.11.1 names packed structures, not unpacked ones), and nonequivalent types are assignment compatible only through an implicit casting rule (§6.22.3), none of which (§6.24) turns an integral value into an unpacked struct, so there is no implicit cast from an integral value to it. Write the members by name, use an assignment pattern such as '{default: '0} (§10.9.2), or spell out a bit-stream cast, ${typeName}'(word), with word exactly $bits(${typeName}) bits (§6.24.3).`,
   };
 }
 
@@ -725,8 +789,12 @@ export interface EnumReadout {
   value: SvValue;
   name: string;
   isMember: boolean;
-  /** Where the back door is written down: §6.19.3 names unions; for a packed struct it is derived from §7.2.1. */
-  basis: "§6.19.3" | "derived from §7.2.1";
+  /**
+   * Where the back door is written down. §6.19.3 states it only for an enum
+   * member of a union; this readout reads a packed struct, where it follows
+   * from §7.2.1 (the struct is one vector), so it is always labelled derived.
+   */
+  basis: "derived from §7.2.1";
   /** What the view cites for this result: §6.19.5.6 for name(), plus the back door's basis only when a non-member really came through it. */
   citation: string;
   note: string;
@@ -738,96 +806,139 @@ export type EnumArrival = "never-assigned" | "whole-vector" | "part-select" | "l
 /**
  * Read an enum member of a packed struct. A vector write is not type-checked
  * against the enum, so the member may hold a value that is not a member and
- * name() returns "" (§6.19.5.6). §6.19.3 states the back door for unions; for a
- * packed struct it follows from §7.2.1 (the struct is one vector) and is
- * labelled derived. A never-assigned member is not a back door at all: it holds
- * its base type's default (Table 6-7).
+ * name() returns "" (§6.19.5.6). §6.19.3 states that back door for an enum
+ * member of a union; for a packed struct it follows from §7.2.1 (the struct is
+ * one vector) and is labelled derived. The bits are read with the struct's
+ * member ranges (`readMember`), so this reader is for structs only: a union's
+ * members all start at bit 0 (§7.3.1) and are read with `readUnionPath`.
+ *
+ * A never-assigned member is not a back door at all: it holds its base type's
+ * default (Table 6-7). An assignment to the enum member itself stores a
+ * non-member only through an explicit cast (§6.19.3), and a static cast does
+ * not check validity (§6.19.4).
  */
-export function enumMemberReadout(members: readonly PackedMember[], value: SvValue, name: string, via: "struct" | "union" = "struct", arrival: EnumArrival = "whole-vector"): EnumReadout {
+export function enumMemberReadout(members: readonly PackedMember[], value: SvValue, name: string, arrival: EnumArrival = "whole-vector"): EnumReadout {
   const m = members.find((x) => x.name === name);
   if (!m || m.type.kind !== "enum") throw new Error(`"${name}" is not an enum member`);
   const v = readMember(members, value, name);
   const label = enumName(m.type.spec, v);
   const isMember = label !== "";
-  const basis = via === "union" ? "§6.19.3" : "derived from §7.2.1";
+  const basis = "derived from §7.2.1";
   const held = isKnown(v) ? formatSizedHex(v) : `${v.width}'b${formatB(v)}`;
   const causes: Record<Exclude<EnumArrival, "never-assigned">, string> = {
     "whole-vector": `The whole-vector write was not type-checked (${basis}).`,
     "part-select": `The part-select wrote these bits as a plain vector, with no enum check (${basis}).`,
     "layout-edit": `The typedef edit moved ${name} over other bits, and no assignment to the enum put them there (${basis}).`,
-    "member-write": `No assignment to the enum itself stored this value (${basis}).`,
+    "member-write": `An assignment to ${name} itself stored this value, which takes an explicit cast (§6.19.3); a static cast converts without checking validity (§6.19.4).`,
   };
-  const cause = via === "union" ? `A write through another member of the union was not type-checked (${basis}).` : arrival === "never-assigned" ? "" : causes[arrival];
+  const viaCast = arrival === "member-write";
   return {
     value: v,
     name: label,
     isMember,
     basis,
-    citation: isMember ? "§6.19.5.6" : arrival === "never-assigned" ? "Table 6-7, §6.19.5.6" : `${basis}, §6.19.5.6`,
+    citation: isMember ? "§6.19.5.6" : arrival === "never-assigned" ? "Table 6-7, §6.19.5.6" : viaCast ? "§6.19.3, §6.19.4, §6.19.5.6" : `${basis}, §6.19.5.6`,
     note: isMember
       ? `${name} holds ${formatSizedHex(v)}, the member ${label}; name() returns "${label}" (§6.19.5.6).`
       : arrival === "never-assigned"
         ? `${name} was never assigned, so it holds its base type's default, ${held} (Table 6-7). That is not a member of ${m.type.spec.name}, so name() returns "" (§6.19.5.6).`
-        : `${name} holds ${held}, which is not a member of ${m.type.spec.name}, so name() returns "" (§6.19.5.6). ${cause}`,
+        : `${name} holds ${held}, which is not a member of ${m.type.spec.name}, so name() returns "" (§6.19.5.6). ${causes[arrival]}`,
   };
 }
 
-/** Where the bits an enum member reads were written: the member's range at that write, and the write's kind. */
+/** A write that covered the enum member: the member's range at that write, and the write's kind. */
 export interface EnumSource {
   hi: number;
   lo: number;
   arrival: Exclude<EnumArrival, "never-assigned" | "layout-edit">;
 }
 
-/** How the enum member's value got there, with the range it was written at (null when nothing wrote it, or its bits are gone). */
-export interface EnumTrack {
-  arrival: EnumArrival;
-  source: EnumSource | null;
+/** The last write to one bit of the vector. */
+export interface BitWrite {
+  /** The write's number, so the bits one write set can be told apart from another's. */
+  write: number;
+  /** Set when that write covered the enum member: where the member was, and the write's kind. Null for a write to another member. */
+  enumAt: EnumSource | null;
 }
 
-export const NEVER_ASSIGNED_TRACK: EnumTrack = { arrival: "never-assigned", source: null };
+/**
+ * How the enum member's value got there. `bits[i]` is the last write to bit i
+ * of the vector, or missing (or null) when nothing has written that bit since
+ * it came into being, so it holds the Table 6-7 default. `arrival` is derived
+ * from `bits` by `enumArrivalOf` after every write and typedef edit.
+ */
+export interface EnumTrack {
+  arrival: EnumArrival;
+  bits: readonly (BitWrite | null)[];
+  /** How many writes have run, which numbers the next one. */
+  writes: number;
+  /** Whether any write has covered the enum member: only a member nothing has written is "never assigned". */
+  enumWritten: boolean;
+}
+
+export const NEVER_ASSIGNED_TRACK: EnumTrack = { arrival: "never-assigned", bits: [], writes: 0, enumWritten: false };
 
 const enumMemberOf = (members: readonly PackedMember[]): PackedMember | undefined => members.find((m) => m.type.kind === "enum");
 
 /**
+ * The arrival the readout explains, from the bits under the enum member now.
+ * - Every bit last set by one write that covered the member at this very
+ *   range: that write's kind. This holds after any typedef edit that leaves the
+ *   member over the bits it was written at, also when it comes back to them.
+ * - No bit written, and no write has ever covered the member: never assigned,
+ *   so it holds its base type's default (Table 6-7).
+ * - Anything else: a typedef edit moved the member over bits that no
+ *   assignment to it put there, whether another member's write set them or
+ *   they are new (`rewidthVector`).
+ * Without a typedef edit the last case cannot happen: every write that touches
+ * the member's bits covers the member at its own range (§7.2.1).
+ */
+function enumArrivalOf(members: readonly PackedMember[], track: Omit<EnumTrack, "arrival">): EnumArrival {
+  const e = enumMemberOf(members);
+  if (!e) return "never-assigned";
+  const r = memberRange(members, e.name);
+  const own = bitRange(r.hi, r.lo).map((i) => track.bits[i] ?? null);
+  const first = own[0];
+  if (first?.enumAt && first.enumAt.hi === r.hi && first.enumAt.lo === r.lo && own.every((b) => b !== null && b.write === first.write)) return first.enumAt.arrival;
+  if (!track.enumWritten && own.every((b) => b === null)) return "never-assigned";
+  return "layout-edit";
+}
+
+/**
  * The enum member's track after a write. `written` names the member written, or
  * is null when the write covers every member (a whole-vector write or an
- * assignment pattern); `how` is the write's kind. A write that covers the enum
- * member records its current range as the source. A write to another member
- * keeps the arrival; it can only overwrite bits the source wrote once a typedef
- * edit has moved the enum member away from them, and then the source is
- * dropped, since those bits no longer hold what it wrote (§7.2.1: each member
- * owns its own bits).
+ * assignment pattern); `how` is the write's kind. Every bit the write sets
+ * records it, with the enum member's current range when the write covers the
+ * member. A write to another member sets only that member's bits (§7.2.1), so
+ * it changes the enum's arrival only where a typedef edit has moved the enum
+ * member over those bits.
  */
 export function enumTrackAfterWrite(members: readonly PackedMember[], prev: EnumTrack, written: string | null, how: EnumSource["arrival"]): EnumTrack {
   const e = enumMemberOf(members);
   if (!e) return prev;
-  if (written === null || written === e.name) {
-    const r = memberRange(members, e.name);
-    return { arrival: how, source: { hi: r.hi, lo: r.lo, arrival: how } };
-  }
-  const w = memberRange(members, written);
-  const overwritten = prev.source !== null && w.hi >= prev.source.lo && w.lo <= prev.source.hi;
-  return { arrival: prev.arrival, source: overwritten ? null : prev.source };
+  const coversEnum = written === null || written === e.name;
+  const er = memberRange(members, e.name);
+  const span = written === null ? { hi: structBits(members) - 1, lo: 0 } : memberRange(members, written);
+  const id = prev.writes + 1;
+  const record: BitWrite = { write: id, enumAt: coversEnum ? { hi: er.hi, lo: er.lo, arrival: how } : null };
+  const bits = [...prev.bits];
+  for (let i = span.lo; i <= span.hi; i += 1) bits[i] = record;
+  const next = { bits, writes: id, enumWritten: prev.enumWritten || coversEnum };
+  return { ...next, arrival: enumArrivalOf(members, next) };
 }
 
 /**
  * The enum member's track after a typedef edit. The vector keeps its bits: bit
- * i stays bit i, a shrink drops the top bits and a grow adds never-assigned
- * ones (`rewidthVector`). So the member still reads the bits a write put there
- * when its range is the range they were written at and no shrink has dropped
- * any of them; the earlier arrival then stands, also when the member comes back
- * to that range after moving away. Otherwise the edit moved the member over
- * other bits. A member nothing has written stays never-assigned.
+ * i stays bit i, a shrink drops the top bits and a grow adds new ones that
+ * nothing has written (`rewidthVector`), so the record of each bit moves the
+ * same way, and the arrival is read again under the new layout. A member back
+ * at the range it was written at reads that write's bits again, unless a
+ * shrink or another member's write has replaced some of them since.
  */
 export function enumTrackAfterLayoutEdit(members: readonly PackedMember[], prev: EnumTrack): EnumTrack {
-  if (prev.arrival === "never-assigned") return prev;
-  const e = enumMemberOf(members);
-  if (!e) return prev;
-  const source = prev.source && structBits(members) > prev.source.hi ? prev.source : null;
-  const r = memberRange(members, e.name);
-  if (source && r.hi === source.hi && r.lo === source.lo) return { arrival: source.arrival, source };
-  return { arrival: "layout-edit", source };
+  if (!enumMemberOf(members)) return prev;
+  const next = { bits: prev.bits.slice(0, structBits(members)), writes: prev.writes, enumWritten: prev.enumWritten };
+  return { ...next, arrival: enumArrivalOf(members, next) };
 }
 
 /** One named read, before and after a write. */
@@ -885,7 +996,11 @@ export interface AssignLegality {
  * assignment compatible, because all integral types are (§6.22.3). Two separate
  * typedefs of an unpacked struct do not match (§6.22.1 d) and no rule of §6.22.2
  * makes them equivalent ((c) covers only packed types), so the assignment is a
- * compile error, as is one between a packed and an unpacked struct.
+ * compile error, as the §6.22.2 example's `s1.v5 = s2.v5; // illegal` shows.
+ * One between a packed and an unpacked struct is a compile error too, which no
+ * clause states outright, so its message says it is derived. (§6.22.1 b also
+ * makes a renaming typedef, `typedef cmd_rec_t alias_t;`, match the type it
+ * renames; a TypeRef for one carries the renamed type's declId.)
  */
 export function assignmentLegality(dst: TypeRef, src: TypeRef): AssignLegality {
   if (dst.declId === src.declId) {
@@ -906,7 +1021,7 @@ export function assignmentLegality(dst: TypeRef, src: TypeRef): AssignLegality {
     const sizing = !resized
       ? `Both are ${dst.bits} bits, so the bits are copied as they are`
       : src.bits < dst.bits
-        ? `The ${src.bits}-bit value is ${src.signed ? "sign" : "zero"}-extended to ${dst.bits} bits, with no required warning (§10.7)`
+        ? `The ${src.bits}-bit value is ${src.signed ? "sign-extended" : "zero-extended (§6.11.2)"} to ${dst.bits} bits, with no required warning (§10.7)`
         : `The ${src.bits}-bit value loses its top ${src.bits - dst.bits} bits to fit ${dst.bits}, with no required warning (§10.7)`;
     const states = dst.states === 2 && src.states === 4 ? `; ${dst.display} is 2-state, so x and z bits become 0 (§6.11.2)` : "";
     return {
@@ -917,18 +1032,19 @@ export function assignmentLegality(dst: TypeRef, src: TypeRef): AssignLegality {
     };
   }
   if (dst.packed !== src.packed) {
+    // The same status as `unpackedWholeAssignCard`: no clause states this error outright.
     return {
       legal: false,
       relation: "not-assignment-compatible",
-      clause: "§6.22.3",
-      message: `Compile error: only one of ${dst.display} and ${src.display} is packed. An unpacked struct is not an integral type, and there is no implicit cast between it and a packed one.`,
+      clause: UNPACKED_WHOLE_ASSIGN_CLAUSE,
+      message: `Compile error, derived: no clause states it outright. Only one of ${dst.display} and ${src.display} is packed. An unpacked struct is not an integral type (§6.11.1), and no implicit casting rule (§6.22.3, §6.24) converts between it and a packed one.`,
     };
   }
   return {
     legal: false,
     relation: "not-assignment-compatible",
     clause: "§6.22.3; no match under §6.22.1 (d), not equivalent under §6.22.2",
-    message: `Compile error: ${dst.display} and ${src.display} are two separate declarations of an unpacked struct. Each typedef matches only itself (§6.22.1 d), and no rule of §6.22.2 makes them equivalent ((c) covers only packed types), so there is no implicit conversion.`,
+    message: `Compile error: ${dst.display} and ${src.display} are two separate declarations of an unpacked struct. A struct typedef matches itself and the objects declared with it (§6.22.1 d), never a second typedef struct declaration, even one with the same text; and no rule of §6.22.2 makes them equivalent ((c) covers only packed types), so there is no implicit conversion.`,
   };
 }
 
@@ -1180,7 +1296,7 @@ export function writeUnionPath(u: UnionType, value: SvValue, path: string, src: 
   const next = splice(value, r.hi, r.lo, unionPathStates(u, path) === 2 ? toTwoState(src) : src);
   const width = unionWidth(u);
   const w = r.hi - r.lo + 1;
-  const sized = src.width === w ? "" : src.width < w ? ` The ${src.width}-bit source is ${extensionWord(src)}-extended to ${w} bits (§10.7).` : ` The ${src.width}-bit source is truncated to ${w} bits (§10.7).`;
+  const sized = src.width === w ? "" : src.width < w ? ` The ${src.width}-bit source is ${extensionWord(src)}-extended to ${w} bits (${extensionClause(src)}).` : ` The ${src.width}-bit source is truncated to ${w} bits (§10.7).`;
   const rows = unionRows(u);
   const row = rows.find((x) => x.path === path);
   let unaffected: number[] = [];
@@ -1217,9 +1333,13 @@ export function writeUnionPath(u: UnionType, value: SvValue, path: string, src: 
  * of a union is printed. A packed union is also a singular integral value
  * (§6.4, §6.11.1), and that subclause's list for singular values ends with a
  * catch-all: all other singular data types print as they would unformatted,
- * which for an integral value is a plain decimal number (§21.2.1.1). Read that
- * way the output is `unformatted`. The two readings differ, so the output is
- * tool-dependent and callers show both.
+ * which for an integral value is a plain decimal number (§21.2.1.1). Its last
+ * paragraph is the most direct rule for `$display("%p", u)` on a packed union:
+ * %p of a singular expression formats it "as an element of an aggregate
+ * expression", that is, under that list, which leads to `unformatted`. The
+ * aggregate paragraph names unions without saying packed or unpacked, so the
+ * two readings differ, the output is tool-dependent and callers show both.
+ * The view leads with the pattern because the lesson teaches that reading.
  */
 export function formatUnionP(u: UnionType, value: SvValue): { text: string; member: string; unformatted: string } {
   const first = u.members[0];
@@ -1406,29 +1526,32 @@ export function taggedPackedBits(t: TaggedUnionType, v: TaggedValue): TaggedPack
 }
 
 /**
- * `%p` of a tagged union: tag:value for the valid member; white space is
- * implementation dependent (§21.2.1.6). Null when no output is defined, because a
- * never-assigned variable is undefined, its tag bits included (§11.9).
+ * `%p` of a tagged union: tag:value for the valid member, inside an assignment
+ * pattern. Null when no output is defined, because a never-assigned variable is
+ * undefined, its tag bits included (§11.9).
  *
- * §21.2.1.6 gives the text tag:value, and separately asks for output that is "a
- * legal interpretation of the assignment pattern syntax"; it does not say
- * whether '{ } surrounds tag:value, so the model prints tag:value bare and the
- * citation says the wrapper is open. (An untagged union's first member is
- * printed as an assignment pattern, '{name:value}, by `formatUnionP`.)
+ * The §21.2.1.6 paragraph that gives "tag:value" ends with "the output shall be
+ * a legal interpretation of the assignment pattern syntax (see 10.9)", and
+ * §10.9 builds an assignment pattern from braces, keys and expressions,
+ * prefixed with an apostrophe. A bare tag:value is not one, so the text is
+ * '{Valid:23}, as an untagged union's first member prints '{name:value}
+ * (`formatUnionP`). White space is implementation dependent; the model prints
+ * none. A void member has no value (§7.3.2), and §21.2.1.6 does not say what
+ * stands for it, so '{Invalid} is derived (`taggedPReading` labels it).
  */
 export function formatTaggedP(t: TaggedUnionType, v: TaggedValue): string | null {
   if (v.tagIndex === null) return null;
   const m = t.members[v.tagIndex];
-  return m.width === null || !v.value ? `${m.name}` : `${m.name}:${formatD(v.value)}`;
+  return m.width === null || !v.value ? `'{${m.name}}` : `'{${m.name}:${formatD(v.value)}}`;
 }
 
-/** The citation of an unpacked tagged union's %p: the text is stated, the '{ } around it is not. */
-export const TAGGED_P_STATED_CITATION = "tag:value, §21.2.1.6, which does not say whether '{ } surrounds it";
+/** The citation of an unpacked tagged union's %p with a value: both the tag:value text and the assignment-pattern form around it are stated. */
+export const TAGGED_P_STATED_CITATION = "§21.2.1.6: tag:value, in output that shall be a legal interpretation of the assignment pattern syntax, which is braces prefixed with an apostrophe, §10.9";
 
 export interface TaggedPReading {
   /** The printed text, or null when no output is defined. */
   text: string | null;
-  /** "stated": §21.2.1.6 says it. "derived": our inference from the cited rules. "tool-dependent": a reading that tools can implement differently. */
+  /** "stated": §21.2.1.6 and §10.9 say it. "derived": our inference from the cited rules. "tool-dependent": a reading that tools can implement differently. */
   basis: "stated" | "derived" | "tool-dependent";
   /** Shown beside the output. */
   citation: string;
@@ -1438,14 +1561,16 @@ export interface TaggedPReading {
 
 /**
  * What `$display("%p", v)` can honestly be said to print. An unpacked tagged union
- * is the case §21.2.1.6 states, as tag:value; whether '{ } surrounds it is not
- * stated, and the citation says so. A packed one is a singular integral value
+ * is the case §21.2.1.6 states: tag:value, in output that is a legal assignment
+ * pattern (§10.9), so '{Valid:23}. A packed one is a singular integral value
  * (§6.4, §6.11.1): the tag:value sentence sits in the paragraph on aggregates,
- * while the list for singular values sends every type it does not name, packed
- * unions included, to its unformatted value, so there the output is
- * tool-dependent. A void member has no value (§7.3.2) and §21.2.1.6 is silent on
- * what stands for it, so the bare tag is derived. A never-assigned variable has
- * no defined output, which is itself derived from §11.9.
+ * while %p of a singular expression formats it as an element of an aggregate
+ * (the subclause's last paragraph), and that list sends every type it does not
+ * name, packed unions included, to its unformatted value. So there the model
+ * shows the pattern reading and labels it tool-dependent. A void member has no
+ * value (§7.3.2) and §21.2.1.6 is silent on what stands for it, so '{Invalid}
+ * is derived. A never-assigned variable has no defined output, which is itself
+ * derived from §11.9.
  */
 export function taggedPReading(t: TaggedUnionType, v: TaggedValue, packed: boolean): TaggedPReading {
   const text = formatTaggedP(t, v);
@@ -1462,7 +1587,7 @@ export function taggedPReading(t: TaggedUnionType, v: TaggedValue, packed: boole
   const citation = packed
     ? "a reading of §21.2.1.6 that tools can implement differently"
     : isVoid
-      ? "derived: §21.2.1.6 gives tag:value, and a void member has no value, §7.3.2"
+      ? "derived: §21.2.1.6 gives tag:value inside an assignment pattern, §10.9, and a void member has no value, §7.3.2"
       : TAGGED_P_STATED_CITATION;
   return { text, basis, citation, sentence: `%p prints ${text} (${citation}).` };
 }

@@ -163,6 +163,53 @@ describe("OperatorExplorer: conditional family (§11.4.11, Table 11-20, §12.4)"
     expect(screen.getByText("Table 11-20 for comparison: this run does not use it")).toBeInTheDocument();
   });
 
+  it.each([
+    ["cond-x-sel", "sel is x/z (ambiguous). a == b is 0, so the table below merges them."],
+    ["cond-tristate", "en is x/z (ambiguous). data == 'z is x, so the table below merges them."],
+    ["cond-equal", "sel is x/z (ambiguous). a == b is 1, so either branch is the result."],
+  ])("preset %s: the merge detail states the §11.4.5 comparison and what follows from it, exactly", (id, sentence) => {
+    render(<OperatorExplorer initialPreset={id} />);
+    reveal();
+    expect(screen.getByText(/ \(ambiguous\)\./)).toHaveTextContent(new RegExp(`^${sentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+  });
+
+  it("the cond-equal Notice reads exactly its note", () => {
+    render(<OperatorExplorer initialPreset="cond-equal" />);
+    reveal();
+    expect(screen.getByText(/Notice:/).parentElement).toHaveTextContent(/^Notice: Both branches hold the same known bits, so no x appears\.$/);
+  });
+
+  it.each([
+    ["1", 3, "sel is 1. Only the first branch is evaluated and returned."],
+    ["0", 2, "sel is 0. Only the second branch is evaluated and returned."],
+  ])("sel = %s: the detail names the one branch evaluated, exactly", (_sel, presses, sentence) => {
+    render(<OperatorExplorer family="conditional" />);
+    // sel cycles x → z → 0 → 1.
+    for (let i = 0; i < presses; i += 1) fireEvent.click(screen.getByRole("button", { name: /^sel bit 0 is/ }));
+    reveal();
+    expect(screen.getByText(/branch is evaluated and returned\./)).toHaveTextContent(new RegExp(`^${sentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+  });
+
+  it("en = 1 on `en ? data : 'z`: picking 'z names the other branch, and the rule says why data comes back", () => {
+    render(<OperatorExplorer initialPreset="cond-tristate" />);
+    // en cycles x → z → 0 → 1.
+    for (let i = 0; i < 3; i += 1) fireEvent.click(screen.getByRole("button", { name: /^en bit 0 is/ }));
+    expect(screen.getByText(/logic\s+en = 1'b1;/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("4'bzzzz"));
+    lockIn();
+    expect(screen.getByText(/Not quite\./).parentElement).toHaveTextContent(/^Not quite\. That is the other branch's value\.$/);
+    expect(screen.getByText(/Why the answer holds/).parentElement).toHaveTextContent(/^Why the answer holds: A known en returns one branch: data, or all z, because 'z fills every bit of the else branch\./);
+  });
+
+  it("sel = 1 with 1100 vs 1010: 4'b1xx0 is the unknown-condition slip and 4'bxxxx is not", () => {
+    render(<OperatorExplorer family="conditional" />);
+    for (let i = 0; i < 3; i += 1) fireEvent.click(screen.getByRole("button", { name: /^sel bit 0 is/ }));
+    expect(screen.getByText(/logic\s+sel = 1'b1;/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("4'b1xx0"));
+    lockIn();
+    expect(screen.getByText(/Not quite\./).parentElement).toHaveTextContent(/^Not quite\. That treats the condition as unknown; it is 1\.$/);
+  });
+
   it("the equal-branches preset shows no x even though sel is x", () => {
     render(<OperatorExplorer family="conditional" />);
     fireEvent.click(screen.getByRole("button", { name: "sel = x: equal branches" }));
@@ -206,7 +253,8 @@ describe("OperatorExplorer: bit vector functions (§20.9)", () => {
     fireEvent.click(screen.getByLabelText("1"));
     lockIn();
     expect(screen.getByText(/Correct\./)).toBeInTheDocument();
-    expect(screen.getByText(/Every bit vector function on/)).toBeInTheDocument();
+    expect(screen.getByText(/The four §20\.9 convenience functions on/)).toHaveTextContent(/^The four §20\.9 convenience functions on state = 4'b0100$/);
+    expect(screen.getByText(/must also reject x\/z/)).toHaveTextContent(/^A one-hot check that must also reject x\/z wants \$onehot\(state\) && !\$isunknown\(state\)\.$/);
     expect(screen.getByText("$countbits(state, '1) = 1, and 1 == 1 is true")).toBeInTheDocument();
     expect(screen.getByText("$countbits(state, 'x, 'z) = 0, and 0 != 0 is false")).toBeInTheDocument();
     expect(screen.getByLabelText("$countones(state) = 1")).toBeInTheDocument();
@@ -236,7 +284,29 @@ describe("OperatorExplorer: bit vector functions (§20.9)", () => {
     expect(screen.queryByText(/so 01x0 passes/)).not.toBeInTheDocument();
     reveal();
     expect(screen.getByText(/Only \$isunknown sees the x/)).toBeInTheDocument();
-    expect(screen.getByText(/An x bit is not a 1, so 01x0 passes\./)).toBeInTheDocument();
+    expect(screen.getByText(/An x or z bit is not a 1, so 01x0 passes\./)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["bitcount-legal", "One bit set, nothing unknown."],
+    ["bitcount-two-hot", "$onehot fails, $onehot0 fails too: two bits are set."],
+    ["bitcount-reset", "No bit is 1, so $onehot0 passes while every bit is unknown."],
+  ])("preset %s: the Notice reads exactly its note after the reveal", (id, note) => {
+    render(<OperatorExplorer initialPreset={id} />);
+    expect(screen.queryByText(/Notice:/)).not.toBeInTheDocument();
+    reveal();
+    expect(screen.getByText(/Notice:/).parentElement).toHaveTextContent(`Notice: ${note}`);
+  });
+
+  it("11x0: two 1 bits already fail $onehot whatever the x is, so 1'b1 is named a miscount, not an x slip", () => {
+    render(<OperatorExplorer initialPreset="bitcount-two-hot" />);
+    // 0110 → 1110 → 11x0: bit 1 cycles 1 → x, bit 3 cycles 0 → 1.
+    fireEvent.click(screen.getByRole("button", { name: /^state bit 3 is 0/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^state bit 1 is 1/ }));
+    expect(screen.getByText(/logic \[3:0\] state = 4'b11x0;/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("1'b1"));
+    lockIn();
+    expect(screen.getByText(/Not quite\./).parentElement).toHaveTextContent(/^Not quite\. That miscounts the 1 bits\.$/);
   });
 
   it("the guarded form $onehot(state) && !$isunknown(state) rejects 01x0", () => {
@@ -792,6 +862,16 @@ describe("OperatorExplorer: a merge table pair is not a condition", () => {
 });
 
 describe("OperatorExplorer: width={1}", () => {
+  it("en = x on `en ? data : 'z`: the if/else answer 1'bz can be picked, and is diagnosed with Table 11-20", () => {
+    render(<OperatorExplorer family="conditional" width={1} />);
+    fireEvent.click(screen.getByRole("radio", { name: /en \? data : 'z/ }));
+    expect(screen.getByText(/logic\s+en = 1'bx;/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("1'bz"));
+    lockIn();
+    expect(screen.getByText(/Not quite\./).parentElement).toHaveTextContent(/^Not quite\. Table 11-20 has no z result, not even for z with z\. An if\/else would store this\.$/);
+    expect(screen.getByRole("status", { name: "Prediction verdict" })).toHaveTextContent("Your prediction is wrong. The answer is 1'bx.");
+  });
+
   it("a 1-bit z result can be answered: en = 0 on `en ? data : 'z`", () => {
     render(<OperatorExplorer family="conditional" width={1} />);
     fireEvent.click(screen.getByRole("radio", { name: /en \? data : 'z/ }));

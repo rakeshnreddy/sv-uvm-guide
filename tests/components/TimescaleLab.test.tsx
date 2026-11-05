@@ -1033,7 +1033,7 @@ describe("TimescaleLab · the value's unit at every step of every call form", ()
       steps: [
         { state: "never-had", chip: "plain number", sentence: "plain number 5" },
         { state: "never-had", chip: "plain number", sentence: "plain number 5.0" },
-        { state: "tagged", chip: "1ps", sentence: "value 5000 understood in 1ps" },
+        { state: "tagged", chip: "1ps", sentence: "value 5000.0 understood in 1ps" },
         { state: "resolved-time", chip: "wake time", sentence: "wake time 5 ns" },
       ],
     },
@@ -1514,6 +1514,10 @@ describe("TimescaleLab · the delay field takes only what compiles", () => {
     ["#1'bz", /needs parentheses/],
     ["_1", /Write a delay/],
     ["#(-99999999999999999999)", /does not fit a 64-bit/],
+    ["#-1.5", /no unary minus \(A\.2\.2\.3\).*write #\(-1\.5\)/],
+    ["#'x", /cannot be an unbased unsized literal \(§5\.7\.1; not in A\.2\.2\.3\)/],
+    ["#(1step)", /1step takes no parentheses/],
+    ["#(z)", /Write #\(1'bz\)/],
   ] as const) {
     it(`rounding: ${text} is rejected with its reason and never rendered as code`, () => {
       render(<TimescaleLab mode="rounding" />);
@@ -2059,6 +2063,14 @@ describe("TimescaleLab · the stated assumptions", () => {
     expect(text).toContain("Neither §3.14.1 nor §22.7 makes an order a rule");
     expect(text).toMatch(/The lab's reasoning, not a rule of the standard: a real literal is held as an IEEE 754 double \(§5\.7\.2\)/);
     expect(text).toMatch(/only while its wake times stay below 2\^64 of the element's units/);
+    // The 2^64 limit rests on what the sources say: time is 64-bit (§6.11) and $time counts in the caller's unit (§20.3.1).
+    // §9.4.1 sizes only a negative delay like a time variable, so it is not credited with sizing every delay.
+    expect(text).toContain(
+      "time is a 64-bit unsigned integer (§6.11, Table 6-8), and $time returns a 64-bit time scaled to the calling module's unit (§20.3.1), which is why the limit is counted in the element's own units. §9.4.1 sizes a negative delay like a time variable, and the sources give no rule for time at or beyond 2^64 units",
+    );
+    expect(text).not.toContain("§9.4.1 sizes a delay like");
+    expect(text).toContain("a time literal is a realtime value (§5.8), which is a real too (§6.12)");
+    expect(text).toContain("A.8.4 primaries");
     expect(text).toMatch(/\$stime keeps the low 32 bits of the value already scaled/);
     expect(text).toMatch(/an exact decimal tie rounds up/);
     expect(text).toMatch(/Table 20-3 names only the smallest `timescale precision and does not define this case/);
@@ -2132,13 +2144,15 @@ describe("TimescaleLab · fix round 1: two modules", () => {
     expect(screen.getByTestId("two-modules-axis").textContent).not.toMatch(/then every/);
   });
 
-  it("a negative delay's summary gives no rule away, like the x/z one", () => {
-    render(<TimescaleLab mode="two-modules" />);
-    fireEvent.change(delayInput(), { target: { value: "#(-1)" } });
-    const text = screen.getByRole("region", { name: "Timescale lab: one delay, two modules" }).textContent ?? "";
-    expect(text).toContain("tb_top and u_slow run the same #d from t = 0. Predict when each one wakes.");
-    expect(text).not.toMatch(/precision rounds|sets the grid/);
-  });
+  for (const delay of ["#(1'bx)", "#(-1)"]) {
+    it(`the summary for ${delay} gives no rule away (x/z and negative delays alike)`, () => {
+      render(<TimescaleLab mode="two-modules" />);
+      fireEvent.change(delayInput(), { target: { value: delay } });
+      const text = screen.getByRole("region", { name: "Timescale lab: one delay, two modules" }).textContent ?? "";
+      expect(text).toContain("tb_top and u_slow run the same #d from t = 0. Predict when each one wakes.");
+      expect(text).not.toMatch(/precision rounds|sets the grid/);
+    });
+  }
 
   it("the questions show the model's own timeunit lines", () => {
     render(<TimescaleLab mode="two-modules" />);

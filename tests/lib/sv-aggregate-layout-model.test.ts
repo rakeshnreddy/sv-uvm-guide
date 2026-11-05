@@ -11,6 +11,8 @@ import {
   TB_CHECKS,
   UNDEFINED_TAGGED,
   UNPACKED_COMPARE_CLAUSE,
+  UNPACKED_SELECT_CLAUSE,
+  UNPACKED_WHOLE_ASSIGN_CLAUSE,
   assignPattern,
   assignWhole,
   assignmentLegality,
@@ -66,6 +68,7 @@ import {
   unionTypedef,
   unionWidth,
   unpackedWholeAssignCard,
+  valueFromBits,
   writeMember,
   writeUnionPath,
   writeXInMember,
@@ -173,6 +176,36 @@ describe("packed struct layout (§7.2.1, §20.6.2)", () => {
     expect(twoState.note).not.toMatch(/§7\.2\.1/);
   });
 
+  it("an all-2-state struct is a 2-state vector, so a whole-vector write loses its x and z bits to 0, as a member write does (§7.2.1, §6.11.2)", () => {
+    const allBit: PackedMember[] = [{ id: "a", name: "a", width: 8, type: { kind: "bit" } }];
+    const exact = assignWhole(allBit, svHex(8, "xx"));
+    expect(formatSizedHex(exact.value)).toBe("8'h00");
+    expect(isKnown(exact.value)).toBe(true);
+    expect(exact.note).toMatch(/fills the struct exactly/);
+    expect(exact.note).toMatch(/With no 4-state member the struct is a 2-state vector \(§7\.2\.1\), so its x and z bits become 0 \(§6\.11\.2\)\.$/);
+    const narrow = assignWhole(allBit, svHex(4, "x"));
+    expect(formatSizedHex(narrow.value)).toBe("8'h00");
+    expect(narrow.note).toMatch(/zero-extended to 8 bits.*x and z bits become 0 \(§6\.11\.2\)/);
+    expect(formatSizedHex(assignWhole(allBit, svHex(8, "zz")).value)).toBe("8'h00");
+    // The same rule the member write and the x write already follow for this struct.
+    expect(formatSizedHex(writeMember(allBit, svHex(8, "00"), "a", svHex(8, "xx")).value)).toBe("8'h00");
+    expect(formatSizedHex(writeXInMember(allBit, svHex(8, "5A"), "a").value)).toBe("8'h00");
+    // A 4-state struct keeps them, and a known value in a 2-state struct gets no 2-state sentence.
+    expect(formatSizedHex(assignWhole(cmdT, svHex(4, "x")).value)).toBe("32'h0000_000x");
+    expect(assignWhole(allBit, svHex(8, "5A")).note).not.toMatch(/2-state/);
+    expect(assignWhole(cmdT, svHex(32, "xxxx_xxxx")).note).not.toMatch(/2-state/);
+  });
+
+  it("an x part-select into a 2-state enum of an all-2-state struct becomes 0 because the struct is a 2-state vector, and the note says so, not that the member converts it (§7.2.1, §6.11.2)", () => {
+    const bitOp: EnumSpec = { ...OPCODE_E, baseDecl: "bit [3:0]", states: 2 };
+    const allTwoState: PackedMember[] = [{ id: "op", name: "op", width: 4, type: { kind: "enum", spec: bitOp } }, { id: "d", name: "d", width: 4, type: { kind: "bit" } }];
+    expect(xWriteOffer("c", allTwoState, "op")).toEqual({ label: "c[7:4] = 4'bx;", partSelect: true });
+    const w = writeXInMember(allTwoState, svHex(8, "2A"), "op");
+    expect(formatSizedHex(w.value)).toBe("8'h0A");
+    expect(w.note).toBe("A part-select of bits [7:4] writes them as a plain vector, with no enum check (derived from §7.2.1). With no 4-state member the struct is a 2-state vector (§7.2.1), so the x converts to 0 on the way in (§6.11.2) and op cannot hold x.");
+    expect(w.note).not.toMatch(/is a 2-state member/);
+  });
+
   it("a signed source is sign-extended, in the value and in the note, for a member and for the whole struct (§10.7)", () => {
     const signed8 = fromBigInt(BigInt(-128), 8, true);
     const member = writeMember(cmdT, svHex(32, "0000_0000"), "data", signed8);
@@ -180,10 +213,12 @@ describe("packed struct layout (§7.2.1, §20.6.2)", () => {
     expect(member.note).toMatch(/The 8-bit source is sign-extended to 16 bits \(§10\.7\)\.$/);
     const unsigned = writeMember(cmdT, svHex(32, "0000_0000"), "data", svHex(8, "80"));
     expect(formatSizedHex(unsigned.value)).toBe("32'h0000_0080");
-    expect(unsigned.note).toMatch(/The 8-bit source is zero-extended to 16 bits \(§10\.7\)\.$/);
+    // §10.7 sends an unsigned source to §11.6.1, which does not name the fill; the zeros are §6.11.2's. A signed source is §10.7's alone.
+    expect(unsigned.note).toMatch(/The 8-bit source is zero-extended to 16 bits \(§10\.7, §6\.11\.2\)\.$/);
     const whole = assignWhole(cmdT, signed8);
     expect(formatSizedHex(whole.value)).toBe("32'hFFFF_FF80");
-    expect(whole.note).toMatch(/sign-extended to 32 bits: bits \[31:8\] are filled with the sign bit/);
+    expect(whole.note).toMatch(/sign-extended to 32 bits: bits \[31:8\] are filled with the sign bit \(§10\.7\)\. No warning/);
+    expect(assignWhole(cmdT, svHex(16, "BEEF")).note).toMatch(/bits \[31:16\] are filled with 0 \(§10\.7, §6\.11\.2\)\. No warning is required \(§10\.7\)\.$/);
   });
 
   it("a 2-state enum in a 4-state struct: the part-select the explorer offers stores x, and only a read through the member gives 0 (derived from §7.2.1, §6.11.2)", () => {
@@ -268,9 +303,11 @@ describe("packed struct layout (§7.2.1, §20.6.2)", () => {
     const unpacked = structVectorCards("c", cmdT, false, c);
     expect(unpacked.map((k) => k.legal)).toEqual([false, false]);
     expect(unpacked[1].code).toBe("c == 32'h50FF_0042");
-    // The implementation-dependent-packing sentence is §7.2.1's, so that is the clause cited.
-    expect(unpacked[0].clause).toBe("§7.2.1");
+    // The implementation-dependent-packing sentence is §7.2.1's; §11.5.1's list of what a bit-select applies to leaves out an unpacked structure.
+    expect(unpacked[0].clause).toBe(UNPACKED_SELECT_CLAUSE);
+    expect(unpacked[0].clause).toBe("§7.2.1, §11.5.1");
     expect(unpacked[0].message).toMatch(/normally matching the C compiler \(§7\.2\.1\)/);
+    expect(unpacked[0].message).toMatch(/§11\.5\.1 lists what a bit-select extracts from: a vector, packed array, packed structure, parameter or concatenation, and an unpacked structure is not among them/);
   });
 
   it("the unpacked comparison card cites the rules it rests on, not §6.22.3, labels the error derived, and says == with an equivalent type is legal (§6.11.1, §11.2.2)", () => {
@@ -300,9 +337,14 @@ describe("packed struct layout (§7.2.1, §20.6.2)", () => {
     expect(unpacked[1].message).not.toMatch(/32-bit/);
   });
 
-  it("a whole-vector statement on an unpacked struct is a compile error: no implicit cast from an integral value (§6.22.3)", () => {
+  it("a whole-vector statement on an unpacked struct is a compile error, labelled derived as the compare card is: no implicit cast from an integral value (§6.11.1, §6.22.3, §6.24)", () => {
     const card = unpackedWholeAssignCard("cmd_t", "c = 32'h5ABC_0042;");
-    expect(card).toMatchObject({ legal: false, clause: "§6.22.3", code: "c = 32'h5ABC_0042;" });
+    expect(card).toMatchObject({ legal: false, clause: UNPACKED_WHOLE_ASSIGN_CLAUSE, code: "c = 32'h5ABC_0042;" });
+    expect(card.clause).toBe("§6.11.1, §6.22.3, §6.24");
+    // No clause states this error outright: §6.22.3 defers to the implicit casting rules of §6.24, and "not integral" is §6.11.1.
+    expect(card.message).toMatch(/^Derived: no clause states this error outright\./);
+    expect(card.message).toMatch(/not an integral type \(§6\.11\.1/);
+    expect(card.message).toMatch(/implicit casting rule \(§6\.22\.3\), none of which \(§6\.24\)/);
     expect(card.message).toMatch(/'\{default: '0\} \(§10\.9\.2\)/);
     // §6.24.3 converts through a packed value of the source's own bit count, so the source must have the struct's bits.
     expect(card.message).toMatch(/cmd_t'\(word\), with word exactly \$bits\(cmd_t\) bits \(§6\.24\.3\)/);
@@ -388,7 +430,9 @@ describe("enums with explicit values (Table 6-7, §6.19.3–§6.19.5, §6.24.2)"
     expect(enumCast(OPCODE_E, before, 2, "dynamic")).toMatchObject({ castReturn: 1 });
   });
 
-  it("$cast tests the value itself, so an integer too wide for the base does not pass as the member it would wrap to (§6.24.2)", () => {
+  it("$cast tests the value itself, so an integer too wide for the base does not pass as the member it would wrap to (our reading of §6.24.2)", () => {
+    // A reading of §6.24.2's descriptive text ("check whether an expression lies within the enumeration values") and its examples;
+    // the normative "invalid if ... not cast compatible" does not address a source wider than the base. No control uses n > 15.
     const before = svHex(4, "1");
     const d = enumCast(OPCODE_E, before, 18, "dynamic");
     expect(d.castReturn).toBe(0);
@@ -403,11 +447,25 @@ describe("enums with explicit values (Table 6-7, §6.19.3–§6.19.5, §6.24.2)"
   });
 
   it("the readout cites §6.19.5.6 for name(), and the back door's basis only for a non-member", () => {
-    expect(enumMemberReadout(CMD_T_ENUM, svHex(32, "2ABC_0042"), "op", "struct", "member-write").citation).toBe("§6.19.5.6");
-    expect(enumMemberReadout(CMD_T_ENUM, svHex(32, "2ABC_0042"), "op", "struct", "member-write").note).not.toMatch(/derived/);
+    expect(enumMemberReadout(CMD_T_ENUM, svHex(32, "2ABC_0042"), "op", "member-write").citation).toBe("§6.19.5.6");
+    expect(enumMemberReadout(CMD_T_ENUM, svHex(32, "2ABC_0042"), "op", "member-write").note).not.toMatch(/derived/);
     expect(enumMemberReadout(CMD_T_ENUM, svHex(32, "7ABC_0042"), "op").citation).toBe("derived from §7.2.1, §6.19.5.6");
-    expect(enumMemberReadout(CMD_T_ENUM, svHex(32, "7ABC_0042"), "op", "union").citation).toBe("§6.19.3, §6.19.5.6");
-    expect(enumMemberReadout(CMD_T_ENUM, structInitialValue(CMD_T_ENUM), "op", "struct", "never-assigned").citation).toBe("Table 6-7, §6.19.5.6");
+    expect(enumMemberReadout(CMD_T_ENUM, structInitialValue(CMD_T_ENUM), "op", "never-assigned").citation).toBe("Table 6-7, §6.19.5.6");
+  });
+
+  it("a non-member stored by an assignment to the enum member itself came through an explicit cast, which is not a back door (§6.19.3, §6.19.4)", () => {
+    const r = enumMemberReadout(CMD_T_ENUM, svHex(32, "7ABC_0042"), "op", "member-write");
+    expect(r.note).toMatch(/An assignment to op itself stored this value, which takes an explicit cast \(§6\.19\.3\); a static cast converts without checking validity \(§6\.19\.4\)\.$/);
+    expect(r.note).not.toMatch(/No assignment to the enum/);
+    expect(r.citation).toBe("§6.19.3, §6.19.4, §6.19.5.6");
+  });
+
+  it("the readout reads struct member ranges, so it is a struct reader only, labelled derived from §7.2.1; a union is read through readUnionPath", () => {
+    // The fourth argument is the arrival: there is no union path that would read a union's bits with struct ranges.
+    expect(enumMemberReadout.length).toBe(3);
+    const r = enumMemberReadout(CMD_T_ENUM, svHex(32, "7ABC_0042"), "op", "part-select");
+    expect(r.basis).toBe("derived from §7.2.1");
+    expect(r.note).not.toMatch(/union/);
   });
 
   it("a whole-vector write into a struct stores a non-member opcode, so name() returns \"\" (derived from §7.2.1, §6.19.5.6)", () => {
@@ -418,18 +476,16 @@ describe("enums with explicit values (Table 6-7, §6.19.3–§6.19.5, §6.24.2)"
     expect(r.basis).toBe("derived from §7.2.1");
     const ok = enumMemberReadout(CMD_T_ENUM, svHex(32, "2ABC_0042"), "op");
     expect(ok).toMatchObject({ isMember: true, name: "OP_WRITE" });
-    expect(enumMemberReadout(CMD_T_ENUM, c, "op", "union").basis).toBe("§6.19.3");
   });
 
   it("the readout's note names how the value arrived, not always a whole-vector write", () => {
     const c = svHex(32, "7ABC_0042");
     expect(enumMemberReadout(CMD_T_ENUM, c, "op").note).toMatch(/whole-vector write was not type-checked \(derived from §7\.2\.1\)/);
-    expect(enumMemberReadout(CMD_T_ENUM, c, "op", "union").note).toMatch(/write through another member of the union was not type-checked \(§6\.19\.3\)/);
-    const partSelect = enumMemberReadout(CMD_T_ENUM, writeXInMember(CMD_T_ENUM, c, "op").value, "op", "struct", "part-select");
+    const partSelect = enumMemberReadout(CMD_T_ENUM, writeXInMember(CMD_T_ENUM, c, "op").value, "op", "part-select");
     expect(partSelect.note).toMatch(/holds 4'bxxxx.*part-select wrote these bits as a plain vector, with no enum check/);
     expect(partSelect.note).not.toMatch(/whole-vector/);
-    expect(enumMemberReadout(CMD_T_ENUM, c, "op", "struct", "layout-edit").note).toMatch(/typedef edit moved op over other bits/);
-    const never = enumMemberReadout(CMD_T_ENUM, structInitialValue(CMD_T_ENUM), "op", "struct", "never-assigned");
+    expect(enumMemberReadout(CMD_T_ENUM, c, "op", "layout-edit").note).toMatch(/typedef edit moved op over other bits/);
+    const never = enumMemberReadout(CMD_T_ENUM, structInitialValue(CMD_T_ENUM), "op", "never-assigned");
     expect(never.note).toMatch(/never assigned, so it holds its base type's default, 4'bxxxx \(Table 6-7\)/);
     expect(never.note).not.toMatch(/write/);
     expect(never.name).toBe("");
@@ -437,7 +493,8 @@ describe("enums with explicit values (Table 6-7, §6.19.3–§6.19.5, §6.24.2)"
 
   it("a typedef edit credits a move only when the enum member's range changed; back at the range it was written at, the earlier arrival stands (§7.2.1)", () => {
     const written = enumTrackAfterWrite(CMD_T_ENUM, NEVER_ASSIGNED_TRACK, null, "whole-vector");
-    expect(written).toEqual({ arrival: "whole-vector", source: { hi: 31, lo: 28, arrival: "whole-vector" } });
+    expect(written.arrival).toBe("whole-vector");
+    expect(written.bits[31]).toEqual({ write: 1, enumAt: { hi: 31, lo: 28, arrival: "whole-vector" } });
     // Swapping addr and data leaves op at [31:28].
     const swapped = reorderMembers(CMD_T_ENUM, ["op", "data", "addr"]);
     expect(enumTrackAfterLayoutEdit(swapped, written).arrival).toBe("whole-vector");
@@ -448,7 +505,7 @@ describe("enums with explicit values (Table 6-7, §6.19.3–§6.19.5, §6.24.2)"
     // A part-select write keeps its own arrival through a swap too.
     const partSelect = enumTrackAfterWrite(CMD_T_ENUM, written, "op", "part-select");
     expect(enumTrackAfterLayoutEdit(swapped, partSelect).arrival).toBe("part-select");
-    // Never assigned stays never assigned.
+    // Never assigned stays never assigned while nothing has written any bit.
     expect(enumTrackAfterLayoutEdit(reorderMembers(CMD_T_ENUM, ["addr", "op", "data"]), NEVER_ASSIGNED_TRACK)).toEqual(NEVER_ASSIGNED_TRACK);
   });
 
@@ -456,16 +513,59 @@ describe("enums with explicit values (Table 6-7, §6.19.3–§6.19.5, §6.24.2)"
     const written = enumTrackAfterWrite(CMD_T_ENUM, NEVER_ASSIGNED_TRACK, null, "whole-vector");
     // data to 8 bits: the vector is 24 bits, so [31:28] is dropped; growing back does not restore it (rewidthVector).
     const shrunk = enumTrackAfterLayoutEdit(setMemberWidth(CMD_T_ENUM, "data", 8), written);
-    expect(shrunk).toEqual({ arrival: "layout-edit", source: null });
+    expect(shrunk.arrival).toBe("layout-edit");
+    expect(shrunk.bits).toHaveLength(24);
+    // Back to 32 bits the top bits are new. op was assigned before, so it is not "never assigned": the edits put other bits under it.
     expect(enumTrackAfterLayoutEdit(CMD_T_ENUM, shrunk).arrival).toBe("layout-edit");
     // op moved down; addr now owns [31:20] and an x write there overwrites what the whole-vector write put in [31:28].
     const down = reorderMembers(CMD_T_ENUM, ["addr", "op", "data"]);
     const moved = enumTrackAfterLayoutEdit(down, written);
     const overwritten = enumTrackAfterWrite(down, moved, "addr", "part-select");
-    expect(overwritten).toEqual({ arrival: "layout-edit", source: null });
+    expect(overwritten.arrival).toBe("layout-edit");
     expect(enumTrackAfterLayoutEdit(CMD_T_ENUM, overwritten).arrival).toBe("layout-edit");
-    // A write to a member that does not overlap the source keeps it.
-    expect(enumTrackAfterWrite(CMD_T_ENUM, written, "addr", "member-write")).toEqual(written);
+    // A write to a member that does not overlap the enum's bits keeps the arrival.
+    expect(enumTrackAfterWrite(CMD_T_ENUM, written, "addr", "member-write").arrival).toBe("whole-vector");
+  });
+
+  it("a never-assigned op moved over bits another member's write set is not 'never assigned': the readout credits the typedef edit, not Table 6-7 (§7.2.1)", () => {
+    // addr = 12'h123 with op never written: op still holds its Table 6-7 default.
+    const init = structInitialValue(CMD_T_ENUM);
+    const w = writeMember(CMD_T_ENUM, init, "addr", svHex(12, "123"));
+    const afterAddr = enumTrackAfterWrite(CMD_T_ENUM, NEVER_ASSIGNED_TRACK, "addr", "member-write");
+    expect(afterAddr.arrival).toBe("never-assigned");
+    // Reorder so op covers bits addr's write set: op is now [19:16], which held addr's low digit, 3.
+    const down = reorderMembers(CMD_T_ENUM, ["addr", "op", "data"]);
+    const track = enumTrackAfterLayoutEdit(down, afterAddr);
+    expect(track.arrival).toBe("layout-edit");
+    const r = enumMemberReadout(down, w.value, "op", track.arrival);
+    expect(formatSizedHex(r.value)).toBe("4'h3");
+    expect(r.name).toBe("");
+    expect(r.note).not.toMatch(/Table 6-7|never assigned/);
+    expect(r.note).toMatch(/typedef edit moved op over other bits/);
+    // The same move with nothing written anywhere stays never assigned, and that op does hold the default.
+    expect(enumTrackAfterLayoutEdit(down, NEVER_ASSIGNED_TRACK).arrival).toBe("never-assigned");
+    // An x written into addr first is a write too, though its value equals the default.
+    const xAddr = enumTrackAfterWrite(CMD_T_ENUM, NEVER_ASSIGNED_TRACK, "addr", "part-select");
+    expect(enumTrackAfterLayoutEdit(down, xAddr).arrival).toBe("layout-edit");
+    // New bits from a grow that nothing has written leave a never-assigned op never assigned.
+    const grown = reorderMembers(setMemberWidth(CMD_T_ENUM, "addr", 16), ["op", "addr", "data"]);
+    expect(enumTrackAfterLayoutEdit(grown, afterAddr).arrival).toBe("never-assigned");
+  });
+
+  it("an older write whose bits survive is credited again when op returns to the range it wrote: whole vector, move down, x part-select, move back (§7.2.1)", () => {
+    const whole = enumTrackAfterWrite(CMD_T_ENUM, NEVER_ASSIGNED_TRACK, null, "whole-vector");
+    const down = reorderMembers(CMD_T_ENUM, ["addr", "op", "data"]);
+    const moved = enumTrackAfterLayoutEdit(down, whole);
+    // c[19:16] = 4'bx writes op at its new range.
+    const x = enumTrackAfterWrite(down, moved, "op", "part-select");
+    expect(x.arrival).toBe("part-select");
+    // Back at [31:28], op reads the bits the whole-vector write put there: 4'h7 of 32'h7ABC_0042.
+    const back = enumTrackAfterLayoutEdit(CMD_T_ENUM, x);
+    expect(back.arrival).toBe("whole-vector");
+    let v = assignWhole(CMD_T_ENUM, svHex(32, "7ABC_0042")).value;
+    v = writeXInMember(down, v, "op").value;
+    expect(formatSizedHex(readMember(CMD_T_ENUM, v, "op"))).toBe("4'h7");
+    expect(enumMemberReadout(CMD_T_ENUM, v, "op", back.arrival).note).toMatch(/whole-vector write was not type-checked/);
   });
 
   it("an enum member's x is offered as a part-select: a direct 'x would need a cast (§6.19.3)", () => {
@@ -523,7 +623,7 @@ describe("type matching and equivalence (§6.22.1, §6.22.2)", () => {
 
   it("at different widths the message says which way the value is resized, with §10.7", () => {
     const a: TypeRef = { declId: "a", display: "a_t", packed: true, bits: 32, states: 4, signed: false };
-    expect(assignmentLegality(a, { ...a, declId: "c", display: "c_t", bits: 16 }).message).toMatch(/The 16-bit value is zero-extended to 32 bits, with no required warning \(§10\.7\)\.$/);
+    expect(assignmentLegality(a, { ...a, declId: "c", display: "c_t", bits: 16 }).message).toMatch(/The 16-bit value is zero-extended \(§6\.11\.2\) to 32 bits, with no required warning \(§10\.7\)\.$/);
     expect(assignmentLegality(a, { ...a, declId: "c", display: "c_t", bits: 16, signed: true }).message).toMatch(/sign-extended to 32 bits/);
     expect(assignmentLegality({ ...a, bits: 16 }, { ...a, declId: "c", display: "c_t" }).message).toMatch(/The 32-bit value loses its top 16 bits to fit 16, with no required warning \(§10\.7\)\.$/);
   });
@@ -535,11 +635,20 @@ describe("type matching and equivalence (§6.22.1, §6.22.2)", () => {
     expect(assignmentLegality(pkg, { ...pkg, display: "cmd_rec_t" }).message).toBe("bus_pkg::cmd_rec_t and cmd_rec_t come from the same typedef, so the types match.");
   });
 
-  it("a packed and an unpacked struct do not assign, and the message does not call both unpacked (§6.22.3)", () => {
+  it("a packed and an unpacked struct do not assign, the message does not call both unpacked, and the error is labelled derived (§6.11.1, §6.22.3, §6.24)", () => {
     const a: TypeRef = { declId: "a", display: "a_t", packed: true, bits: 32, states: 4, signed: false };
     const r = assignmentLegality(a, unpackedA);
-    expect(r).toMatchObject({ legal: false, relation: "not-assignment-compatible", clause: "§6.22.3" });
-    expect(r.message).toMatch(/only one of a_t and mon\.cmd_rec_t is packed/);
+    expect(r).toMatchObject({ legal: false, relation: "not-assignment-compatible", clause: UNPACKED_WHOLE_ASSIGN_CLAUSE });
+    expect(r.message).toMatch(/Only one of a_t and mon\.cmd_rec_t is packed/);
+    expect(r.message).toMatch(/^Compile error, derived: no clause states it outright\./);
+    expect(r.message).toMatch(/not an integral type \(§6\.11\.1\)/);
+  });
+
+  it("a struct typedef matches itself and its objects, never a second typedef struct declaration; it does not claim no typedef can match it (§6.22.1 b, d)", () => {
+    const r = assignmentLegality(unpackedA, unpackedB);
+    expect(r.message).toMatch(/A struct typedef matches itself and the objects declared with it \(§6\.22\.1 d\), never a second typedef struct declaration/);
+    // §6.22.1 (b): a renaming typedef matches the type it renames, so "matches only itself" would be too strong.
+    expect(r.message).not.toMatch(/matches only itself/);
   });
 });
 
@@ -668,7 +777,7 @@ describe("packed untagged unions (§7.3.1, §7.4.1)", () => {
   it("openNote, shown while a prediction about the narrower rows is open, says nothing about them", () => {
     const word = writeUnionPath(wordU, svHex(32, "0"), "word", svHex(32, "AAAA_BBBB"));
     expect(word.openNote).toBe("word names bits [31:0].");
-    expect(writeUnionPath(wordU, svHex(32, "0"), "word", svHex(16, "BBBB")).openNote).toBe("word names bits [31:0]. The 16-bit source is zero-extended to 32 bits (§10.7).");
+    expect(writeUnionPath(wordU, svHex(32, "0"), "word", svHex(16, "BBBB")).openNote).toBe("word names bits [31:0]. The 16-bit source is zero-extended to 32 bits (§10.7, §6.11.2).");
     // A narrower row's position is the very thing being asked.
     expect(writeUnionPath(wordU, svHex(32, "0"), "half", svHex(16, "1234")).openNote).toBe("half is written.");
     expect(writeUnionPath(cmdU, svHex(32, "0"), "f.op", svHex(4, "F")).openNote).toBe("f.op is written.");
@@ -689,7 +798,7 @@ describe("packed untagged unions (§7.3.1, §7.4.1)", () => {
   it("a short source is zero-extended and a long one truncated to the path's width; the note says by how much (§10.7)", () => {
     const w = writeUnionPath(wordU, svHex(32, "AAAA_BBBB"), "half", svHex(8, "12"));
     expect(formatSizedHex(readUnionPath(wordU, w.value, "word"))).toBe("32'hAAAA_0012");
-    expect(w.note).toMatch(/The 8-bit source is zero-extended to 16 bits \(§10\.7\)\.$/);
+    expect(w.note).toMatch(/The 8-bit source is zero-extended to 16 bits \(§10\.7, §6\.11\.2\)\.$/);
     const t = writeUnionPath(wordU, svHex(32, "AAAA_BBBB"), "half", svHex(20, "F1234"));
     expect(formatSizedHex(readUnionPath(wordU, t.value, "word"))).toBe("32'hAAAA_1234");
     expect(t.note).toMatch(/The 20-bit source is truncated to 16 bits \(§10\.7\)\.$/);
@@ -930,11 +1039,11 @@ describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
     const read = readTagged(vint, minusOne, "Valid");
     expect(read.ok && formatD(read.value)).toBe("-1");
     expect(read.ok && read.note).toMatch(/returns -1 \(§11\.9\)/);
-    expect(formatTaggedP(vint, minusOne)).toBe("Valid:-1");
+    expect(formatTaggedP(vint, minusOne)).toBe("'{Valid:-1}");
     const three: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false, fourState: false }] };
     const small = makeTagged(three, "Small", -1);
     expect(small.value?.signed).toBe(false);
-    expect(formatTaggedP(three, small)).toBe("Small:255");
+    expect(formatTaggedP(three, small)).toBe("'{Small:255}");
     // An SvValue source takes the member's signedness too.
     expect(makeTagged(vint, "Valid", fromBigInt(BigInt(-1), 8, true)).value?.signed).toBe(true);
     expect(formatD(makeTagged(vint, "Valid", fromBigInt(BigInt(-1), 8, true)).value!)).toBe("-1");
@@ -950,13 +1059,13 @@ describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
     const valid = makeTagged(vint, "Valid", allX(8));
     expect(isKnown(valid.value!)).toBe(true);
     expect(formatD(valid.value!)).toBe("0");
-    expect(formatTaggedP(vint, valid)).toBe("Valid:0");
+    expect(formatTaggedP(vint, valid)).toBe("'{Valid:0}");
     const read = readTagged(vint, valid, "Valid");
     expect(read.ok && formatD(read.value)).toBe("0");
     const three: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Small", width: 8, typeText: "bit [7:0]", signed: false, fourState: false }] };
-    expect(formatTaggedP(three, makeTagged(three, "Small", allX(8)))).toBe("Small:0");
+    expect(formatTaggedP(three, makeTagged(three, "Small", allX(8)))).toBe("'{Small:0}");
     const withLogic: TaggedUnionType = { ...vint, members: [...vint.members, { name: "Raw", width: 8, typeText: "logic [7:0]", signed: false, fourState: true }] };
-    expect(formatTaggedP(withLogic, makeTagged(withLogic, "Raw", allX(8)))).toBe("Raw:x");
+    expect(formatTaggedP(withLogic, makeTagged(withLogic, "Raw", allX(8)))).toBe("'{Raw:x}");
   });
 
   it("a read of a void member whose tag matches claims no value: the standard defines none (§7.3.2, §11.9)", () => {
@@ -1034,9 +1143,11 @@ describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
     }
   });
 
-  it("%p prints tag:value for the valid member (§21.2.1.6)", () => {
-    expect(formatTaggedP(vint, makeTagged(vint, "Valid", 23))).toBe("Valid:23");
-    expect(formatTaggedP(vint, makeTagged(vint, "Invalid"))).toBe("Invalid");
+  it("%p prints tag:value for the valid member inside an assignment pattern, never bare (§21.2.1.6, §10.9)", () => {
+    // §21.2.1.6: "the output shall be a legal interpretation of the assignment pattern syntax (see 10.9)"; §10.9: braces prefixed with an apostrophe.
+    expect(formatTaggedP(vint, makeTagged(vint, "Valid", 23))).toBe("'{Valid:23}");
+    expect(formatTaggedP(vint, makeTagged(vint, "Invalid"))).toBe("'{Invalid}");
+    for (const v of [makeTagged(vint, "Valid", 23), makeTagged(vint, "Invalid")]) expect(formatTaggedP(vint, v)).toMatch(/^'\{.*\}$/);
   });
 
   it("%p of a never-assigned variable states no printed string; 'not defined' is labelled derived from §11.9", () => {
@@ -1055,15 +1166,18 @@ describe("tagged unions (§7.3.2, §11.9, §21.2.1.6)", () => {
       expect(r.basis, member).toBe("tool-dependent");
       expect(r.citation, member).toBe("a reading of §21.2.1.6 that tools can implement differently");
     }
-    expect(taggedPReading(vint, makeTagged(vint, "Valid", 23), true).sentence).toBe("%p prints Valid:23 (a reading of §21.2.1.6 that tools can implement differently).");
+    // Neither reading prints a bare tag:value: the aggregate one needs '{ }, the singular one gives decimal.
+    expect(taggedPReading(vint, makeTagged(vint, "Valid", 23), true).sentence).toBe("%p prints '{Valid:23} (a reading of §21.2.1.6 that tools can implement differently).");
   });
 
   it("%p when unpacked is stated for a member with a value, and derived for a void one, on which §21.2.1.6 is silent", () => {
-    // tag:value is stated; whether '{ } surrounds it is not, and the citation says so.
-    expect(taggedPReading(vint, makeTagged(vint, "Valid", 23), false)).toEqual({ text: "Valid:23", basis: "stated", citation: TAGGED_P_STATED_CITATION, sentence: "%p prints Valid:23 (tag:value, §21.2.1.6, which does not say whether '{ } surrounds it)." });
+    // tag:value and the assignment-pattern form are both stated (§21.2.1.6, §10.9), and the citation names both.
+    expect(TAGGED_P_STATED_CITATION).toBe("§21.2.1.6: tag:value, in output that shall be a legal interpretation of the assignment pattern syntax, which is braces prefixed with an apostrophe, §10.9");
+    expect(taggedPReading(vint, makeTagged(vint, "Valid", 23), false)).toEqual({ text: "'{Valid:23}", basis: "stated", citation: TAGGED_P_STATED_CITATION, sentence: `%p prints '{Valid:23} (${TAGGED_P_STATED_CITATION}).` });
+    expect(TAGGED_P_STATED_CITATION).not.toMatch(/does not say whether/);
     const v = taggedPReading(vint, makeTagged(vint, "Invalid"), false);
-    expect(v).toMatchObject({ text: "Invalid", basis: "derived" });
-    expect(v.citation).toMatch(/^derived: .*§21\.2\.1\.6.*§7\.3\.2$/);
+    expect(v).toMatchObject({ text: "'{Invalid}", basis: "derived" });
+    expect(v.citation).toMatch(/^derived: .*§21\.2\.1\.6.*§10\.9.*§7\.3\.2$/);
   });
 });
 
@@ -1126,6 +1240,35 @@ describe("formatting (§21.2.1.3, §5.7.1)", () => {
   it("%0d prints decimal, or x when every bit is unknown", () => {
     expect(formatD(svHex(16, "BEEF"))).toBe("48879");
     expect(formatD(svHex(4, "x"))).toBe("x");
+  });
+
+  /** A value from a binary string, most significant bit first. */
+  const bin = (text: string) => valueFromBits(text.replace(/_/g, "").split("") as ("0" | "1" | "x" | "z")[]);
+
+  it("%d of x and z follows each rule of §21.2.1.3: x, z, X for some x, Z for some z, and X when both are present", () => {
+    expect(formatD(bin("x"))).toBe("x");
+    expect(formatD(bin("xxxx"))).toBe("x");
+    expect(formatD(bin("zzzz"))).toBe("z");
+    expect(formatD(bin("01x1"))).toBe("X");
+    expect(formatD(bin("01z1"))).toBe("Z");
+    // Some z and some x: X wins.
+    expect(formatD(bin("0z1x"))).toBe("X");
+    // All bits unknown, but a mix of x and z: not all x, not all z, some x, so X.
+    expect(formatD(bin("xzxz"))).toBe("X");
+  });
+
+  it("%h of x and z follows §21.2.1.3 per group of 4 bits: x, z, X, Z, and X for a group that mixes x and z", () => {
+    expect(formatH(bin("xxxx_zzzz_01x0_0z10_xz00"))).toBe("xzXZX");
+    expect(formatH(bin("zzzz_xxzz"))).toBe("zX");
+    // The standard's own examples (§21.2.1.3): 14'bx01010 pads with x on the left (§5.7.1), and 12'b001xxx101x01.
+    expect(formatH(bin("xxxxxxxxx01010"))).toBe("xxXa");
+    expect(formatH(bin("001xxx101x01"))).toBe("XXX");
+  });
+
+  it("the union %p panel shows these rules live: after only w.half is written, word reads X in both readings (§21.2.1.3, §21.2.1.6)", () => {
+    const w = writeUnionPath(wordU, unionInitialValue(wordU), "half", svHex(16, "1234")).value;
+    expect(formatSizedHex(w)).toBe("32'hxxxx_1234");
+    expect(formatUnionP(wordU, w)).toEqual({ text: "'{word:X}", member: "word", unformatted: "X" });
   });
 });
 

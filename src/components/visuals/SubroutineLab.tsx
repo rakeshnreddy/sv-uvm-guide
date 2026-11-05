@@ -58,6 +58,7 @@ import {
   stableOptionOrder,
   sumToBench,
   waitCyclesEffect,
+  withArticle,
   type Bench,
   type BenchExploration,
   type CompileIssue,
@@ -382,6 +383,7 @@ function CallLanes({ run, step }: { run: SubroutineRun; step: SubStep }) {
                 </text>
                 {started ? (
                   <rect
+                    data-testid="lane-bar"
                     x={xOf(a.startTime)}
                     y={y - 5}
                     width={Math.max(3, xOf(end) - xOf(a.startTime))}
@@ -608,9 +610,25 @@ function sendOptions(lifetime: Lifetime, at: SecondCallAt, verdict: SendVerdict,
       id: "error",
       label: "A compile error: two calls of a static task may not overlap",
       correct: false,
-      feedback: "The standard allows it: §13.3.2 describes concurrent activations of a static task and says they share one copy of each variable. The code is legal and does the wrong thing silently.",
+      feedback: sendErrorFeedback(lifetime, at),
     },
   ];
+}
+
+/**
+ * Why the compile-error option is wrong, for the lifetime and start time on screen. Every state compiles, but only a
+ * static task whose calls overlap prints another call's id: "does the wrong thing" is said only where the code does.
+ */
+function sendErrorFeedback(lifetime: Lifetime, at: SecondCallAt): string {
+  const allowed = "§13.3.2 describes concurrent activations of a static task and says they share one copy of each variable";
+  if (lifetime === "automatic") {
+    return `No compile error: a task may be enabled more than once concurrently, whatever its lifetime (§13.3.2). This task is automatic, so each call has its own id${at === 12 ? ", and here the calls do not even overlap" : ""}: call 1 prints id=1, correctly.`;
+  }
+  if (at === 2) return `The standard allows it: ${allowed}. The code is legal and does the wrong thing silently.`;
+  if (at === 10) {
+    return `The standard allows it: ${allowed}. The code is legal, and what call 1 prints depends on an order at t = 10 ns that §4.7 leaves open: in the order that runs call 2's copy-in first, it does the wrong thing silently.`;
+  }
+  return `No compile error, and here no overlap either: call 2 starts at t = 12 ns, after call 1 returned, so the static task prints id=1 correctly. Overlap would be legal too (${allowed}), and once the timing brings the calls together the same code goes wrong silently.`;
 }
 
 function LifetimeSendLab() {
@@ -1317,13 +1335,24 @@ function ShowDirsLab() {
  * The correct one comes from the run's log, so every legal state has exactly one:
  * nothing (input, or a copy-out of 0 into a busy that holds 0), both lines (ref),
  * or t=23 busy=1 only (<= in a static task, so the copy-out runs before the NBA update).
+ * Text that offers ref or <= as the alternative reads the lifetime and the operator on screen: ref gives both lines only
+ * in an automatic task with = (§13.5.2), and <= to flag is legal only in a static task (§13.3.2).
  */
-function pulseOptions(log: string[], direction: Direction): PredictionOption[] {
+function pulseOptions(log: string[], direction: Direction, lifetime: Lifetime, nba: boolean): PredictionOption[] {
   const key = log.join("|");
   const isRef = direction === "ref";
   const isInput = direction === "input";
   const lateHigh = key === "t=23 busy=1";
   const carrier = direction === "inout" ? "An inout" : "An output";
+  // §13.5.2: pass by reference is illegal in a static subroutine, and a ref may not be used where an automatic variable
+  // may not, which rules out a nonblocking assignment through it (§13.3.2).
+  const refBlockers = [
+    lifetime === "static" ? "pass by reference is illegal in a static task" : "",
+    nba ? "a <= through a ref is not allowed, since a ref may not be used where an automatic variable may not" : "",
+  ].filter(Boolean);
+  const refWouldGive = refBlockers.length
+    ? `That is what ref would give in an automatic task${nba ? " with =" : ""}. Here ref does not compile: ${refBlockers.join(", and ")} (§13.5.2${nba ? ", §13.3.2" : ""}).`
+    : "That is what ref would give.";
   const noneFeedback = isRef
     ? "With ref, flag is busy itself, so each write is a change on the module variable and the monitor wakes both times (§13.5.2)."
     : isInput
@@ -1336,8 +1365,8 @@ function pulseOptions(log: string[], direction: Direction): PredictionOption[] {
   const bothFeedback = isRef
     ? "flag is busy itself: the write at t = 13 ns and the write at t = 23 ns each change busy, and always @(busy) prints on every change (§13.5.2, §9.4.2)."
     : isInput
-      ? "That is what ref would give. An input is a one-way copy, so no write reaches busy (§13.3)."
-      : `That is what ref would give. ${carrier} reaches the caller once, at the return, so the pulse never appears on busy (§13.3).`;
+      ? `${refWouldGive} An input is a one-way copy, so no write reaches busy (§13.3).`
+      : `${refWouldGive} ${carrier} reaches the caller once, at the return, so the pulse never appears on busy (§13.3).`;
   const lowOnlyFeedback = isRef
     ? "With ref, the write of 1 at t = 13 ns lands on busy too, so the monitor also prints at t = 13 ns (§13.5.2, §9.4.2)."
     : isInput
@@ -1356,7 +1385,9 @@ function pulseOptions(log: string[], direction: Direction): PredictionOption[] {
       ? "With ref, busy goes to 1 at t = 13 ns, when flag is written, and back to 0 at t = 23 ns (§13.5.2)."
       : isInput
         ? "An input is never copied out, so nothing reaches busy at the return, whatever flag holds then (§13.3)."
-        : "With =, flag is already 0 when the return copies it out. A 1 survives to the copy-out only if the final write is still waiting in the NBA region (§13.3, §4.4.2.4).";
+        : lifetime === "automatic"
+          ? "With =, flag is already 0 when the return copies it out. A 1 survives to the copy-out only if the final write is still waiting in the NBA region, and that takes flag <= 1'b0, which an automatic task may not use on its own flag (§13.3, §4.4.2.4, §13.3.2)."
+          : "With =, flag is already 0 when the return copies it out. A 1 survives to the copy-out only if the final write is still waiting in the NBA region (§13.3, §4.4.2.4).";
   return [
     { id: "none", label: "Nothing: busy never changes", correct: key === "", feedback: noneFeedback },
     {
@@ -1430,7 +1461,7 @@ function PulseLab() {
         resetKey={resetKey}
         controls={controls}
         stepNoun="Simulation step"
-        prediction={run ? { question: "pulse(busy) is called at t = 13 ns. What does always @(busy) print?", options: pulseOptions(run.log.map((l) => l.text), direction) } : undefined}
+        prediction={run ? { question: "pulse(busy) is called at t = 13 ns. What does always @(busy) print?", options: pulseOptions(run.log.map((l) => l.text), direction, lifetime, nba) } : undefined}
       >
         {(step, index) =>
           run ? (
@@ -1535,11 +1566,11 @@ function waitOptions(sub: string, formal: ResolvedFormal, issues: CompileIssue[]
   const answer = `${sub}(${WAIT_PROBE}) stores ${WAIT_PROBE} into the ${formal.type} ${formal.name}: ${formal.name} = ${formatValue(stored)}, so it waits ${cyclesText(cycles)}${truncated ? `. ${WAIT_PROBE} is 3'b101, and only the low bit fits (§10.7)` : ""}.`;
   const wrong = (k: number) => {
     if (blocked) return `Nothing waits, because the call does not compile. ${issuesText(issues)}`;
-    if (k === WAIT_PROBE) return `${WAIT_PROBE} does not fit in a ${formal.type}. Assigning to a narrower variable keeps only the low bits (§10.7): ${formal.name} = ${formatValue(stored)}, so it waits ${cyclesText(cycles)}. The language does not reject the call.`;
+    if (k === WAIT_PROBE) return `${WAIT_PROBE} does not fit in ${withArticle(formal.type)}. Assigning to a narrower variable keeps only the low bits (§10.7): ${formal.name} = ${formatValue(stored)}, so it waits ${cyclesText(cycles)}. The language does not reject the call.`;
     if (truncated) return `${WAIT_PROBE} is 3'b101, so its low bit is 1: ${formal.name} = ${formatValue(stored)} and it waits ${cyclesText(cycles)} (§10.7). ${sub}(4) is the call that waits 0 cycles, because 4 is 3'b100.`;
     return k === 1
-      ? `One cycle is what a one-bit ${formal.name} would give. This ${formal.name} is a ${formal.type}, wide enough for ${WAIT_PROBE}, so it waits ${cyclesText(cycles)}.`
-      : `Nothing is lost: ${formal.name} is a ${formal.type}, wide enough for ${WAIT_PROBE}, so it waits ${cyclesText(cycles)}.`;
+      ? `One cycle is what a one-bit ${formal.name} would give. This ${formal.name} is ${withArticle(formal.type)}, wide enough for ${WAIT_PROBE}, so it waits ${cyclesText(cycles)}.`
+      : `Nothing is lost: ${formal.name} is ${withArticle(formal.type)}, wide enough for ${WAIT_PROBE}, so it waits ${cyclesText(cycles)}.`;
   };
   return [
     ...[0, 1, WAIT_PROBE].map((k) => ({ id: `cycles-${k}`, label: cyclesText(k), correct: !blocked && cycles === k, feedback: !blocked && cycles === k ? answer : wrong(k) })),
@@ -1667,7 +1698,7 @@ function FormalsLab({ preset: initial }: { preset: FormalsPreset }) {
           </p>
           {add?.args ? (
             <p className="mt-1 text-muted-foreground">
-              <code className={code}>add(2, 3)</code> stores {add.args.map((arg) => `${arg.name} = ${formatValue(arg.stored)}${arg.stored === arg.passed ? "" : ` (${arg.passed} truncated to a ${arg.type}, §10.7)`}`).join(" and ")}, computes {add.sum} and returns{" "}
+              <code className={code}>add(2, 3)</code> stores {add.args.map((arg) => `${arg.name} = ${formatValue(arg.stored)}${arg.stored === arg.passed ? "" : ` (${arg.passed} truncated to ${withArticle(arg.type)}, §10.7)`}`).join(" and ")}, computes {add.sum} and returns{" "}
               <code className={code}>{ret.source === "implicit" ? `1'b${formatValue(add.returned)}` : formatValue(add.returned)}</code>
               {ret.source === "implicit" ? `, the low bit of ${add.sum} (§10.7)` : ""}.
             </p>
@@ -1702,7 +1733,7 @@ function FormalsLab({ preset: initial }: { preset: FormalsPreset }) {
                       <code className={code}>
                         {signature.name}({k})
                       </code>{" "}
-                      stores {k} into a {first.type} {first.name}: {first.name} = {formatValue(effect.stored)}, so it waits {effect.cycles} cycle{effect.cycles === 1 ? "" : "s"}
+                      stores {k} into {withArticle(first.type)} {first.name}: {first.name} = {formatValue(effect.stored)}, so it waits {effect.cycles} cycle{effect.cycles === 1 ? "" : "s"}
                       {effect.stored !== k ? " (the upper bits are discarded, §10.7)" : ""}.
                     </li>
                   );

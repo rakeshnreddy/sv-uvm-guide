@@ -126,6 +126,8 @@ describe("PackedLayoutExplorer: struct mode (default, cmd_t)", () => {
     // Comparison is not assignment: the card cites §6.11.1 and §11.2.2, not §6.22.3, and labels the error derived.
     expect(screen.getByText("(§7.2.1, §6.11.1, §11.2.2)")).toBeInTheDocument();
     expect(screen.queryByText("(§7.2.1, §6.22.3)")).not.toBeInTheDocument();
+    // §11.5.1 lists what a bit-select applies to, and an unpacked structure is not among them.
+    expect(screen.getByText("(§7.2.1, §11.5.1)")).toBeInTheDocument();
     expect(screen.getByText(/^Derived: no clause states this error outright\..*c == another variable of the same type is legal/)).toBeInTheDocument();
     // Both the unpacked view and the part-select card say it.
     expect(screen.getAllByText(/no bit numbering/).length).toBeGreaterThanOrEqual(2);
@@ -142,8 +144,9 @@ describe("PackedLayoutExplorer: struct mode (default, cmd_t)", () => {
     expect(statements.getAllByText("Compile error")).toHaveLength(2);
     expect(statements.getByText("c = 32'h5ABC_0042;")).toBeInTheDocument();
     expect(statements.getByText("c = 16'hBEEF;")).toBeInTheDocument();
-    expect(statements.getAllByText("(§6.22.3)")).toHaveLength(2);
-    expect(statements.getAllByText(/no implicit cast from an integral value/)).toHaveLength(2);
+    // No clause states this error outright, so the card is labelled derived and cites the rules it rests on, as the compare card does.
+    expect(statements.getAllByText("(§6.11.1, §6.22.3, §6.24)")).toHaveLength(2);
+    expect(statements.getAllByText(/^Derived: no clause states this error outright\..*no implicit cast from an integral value/)).toHaveLength(2);
     // Predictions and sequence runs are the packed layout's; only the member write can run.
     expect(lockInButtons()).toHaveLength(0);
     expect(statements.getAllByRole("button", { name: "Run it" })).toHaveLength(1);
@@ -233,7 +236,7 @@ describe("PackedLayoutExplorer: struct mode (default, cmd_t)", () => {
     // A whole write now reports through the model too, extension included.
     fireEvent.click(screen.getByTestId("run-statement"));
     const whole = screen.getByTestId("struct-status").textContent ?? "";
-    expect(whole).toMatch(/The 16-bit value is zero-extended to 32 bits: bits \[31:16\] are filled with 0\. No warning is required \(§10\.7\)\.$/);
+    expect(whole).toMatch(/The 16-bit value is zero-extended to 32 bits: bits \[31:16\] are filled with 0 \(§10\.7, §6\.11\.2\)\. No warning is required \(§10\.7\)\.$/);
     expect(whole).not.toMatch(/§6\.22\.3/);
     expect(whole).not.toMatch(/zero-filled \(\+\)/);
   });
@@ -668,6 +671,8 @@ describe("PackedLayoutExplorer: union mode", () => {
     const caveat = () => screen.getByTestId("union-p").querySelector("details")?.textContent ?? "";
     expect(caveat()).toMatch(/all other singular data types print their values as they would unformatted/);
     expect(caveat()).toMatch(/a packed union is a singular value \(§6\.4, §6\.11\.1\)/);
+    // The subclause's last paragraph is the most direct rule for %p of a singular expression.
+    expect(caveat()).toMatch(/last paragraph says that %p of a singular expression formats it as an element of an aggregate/);
     expect(caveat()).not.toMatch(/name only packed structures/);
     // Never assigned: the unformatted value is x.
     expect(caveat()).toMatch(/this pattern or the union's plain decimal value, here x \(an unformatted value prints in decimal, §21\.2\.1\.1\)/);
@@ -700,7 +705,7 @@ describe("PackedLayoutExplorer: union mode", () => {
     fireEvent.change(screen.getByLabelText("Hex value"), { target: { value: "12" } });
     fireEvent.click(screen.getByTestId("union-write"));
     expect(screen.getByTestId("union-status").textContent).toMatch(/w\.half \[15:0\] = 16'h0012/);
-    expect(screen.getByTestId("union-status").textContent).toMatch(/The 8-bit source is zero-extended to 16 bits \(§10\.7\)/);
+    expect(screen.getByTestId("union-status").textContent).toMatch(/The 8-bit source is zero-extended to 16 bits \(§10\.7, §6\.11\.2\)/);
     fireEvent.change(screen.getByLabelText("Hex value"), { target: { value: "F_1234" } });
     fireEvent.click(screen.getByTestId("union-write"));
     expect(screen.getByTestId("union-status").textContent).toMatch(/w\.half \[15:0\] = 16'h1234/);
@@ -974,7 +979,7 @@ describe("PackedLayoutExplorer: tagged mode", () => {
     expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
     expect(screen.getByTestId("tagged-read-result").textContent).toMatch(/Run-time error: the tag is Invalid/);
     fireEvent.click(screen.getByRole("button", { name: '$display("%p", v);' }));
-    expect(screen.getByTestId("tagged-p").textContent).toMatch(/prints Invalid/);
+    expect(screen.getByTestId("tagged-p").textContent).toMatch(/prints '\{Invalid\}/);
   });
 
   it("reading before any assignment: 'undefined' is the correct prediction and the result agrees (§11.9)", () => {
@@ -1017,7 +1022,8 @@ describe("PackedLayoutExplorer: tagged mode", () => {
     fireEvent.click(screen.getByRole("button", { name: "v = tagged Valid (23);" }));
     expect(screen.getByTestId("tagged-status").textContent).not.toMatch(/%p prints/);
     fireEvent.click(screen.getByRole("button", { name: '$display("%p", v);' }));
-    expect(screen.getByTestId("tagged-status").textContent).toMatch(/%p prints Valid:23 \(tag:value, §21\.2\.1\.6, which does not say whether '\{ \} surrounds it\)\./);
+    expect(screen.getByTestId("tagged-status").textContent).toMatch(/%p prints '\{Valid:23\} \(§21\.2\.1\.6: tag:value, in output that shall be a legal interpretation of the assignment pattern syntax, which is braces prefixed with an apostrophe, §10\.9\)\./);
+    expect(screen.getByTestId("tagged-status").textContent).not.toMatch(/surrounds it|prints Valid:23/);
     expect(screen.getByTestId("tagged-status")).toHaveAttribute("aria-live", "polite");
   });
 
@@ -1056,14 +1062,16 @@ describe("PackedLayoutExplorer: tagged mode", () => {
     expect(stripLabel("v, VInt packed")).toMatch(/bits 31 to 8 undefined/);
     expect(screen.getByTestId("tagged-layout-note").textContent).toMatch(/the 24 bits between are undefined/);
     fireEvent.click(screen.getByRole("button", { name: '$display("%p", v);' }));
-    expect(screen.getByTestId("tagged-p").textContent).toMatch(/prints Small:90/);
+    expect(screen.getByTestId("tagged-p").textContent).toMatch(/prints '\{Small:90\}/);
     // Packed, VInt is a singular integral value, so tag:value is a reading tools can differ on: the same caveat as a packed untagged union.
     expect(screen.getByTestId("tagged-p").textContent).toMatch(/a reading of §21\.2\.1\.6 that tools can implement differently/);
     const why = screen.getByTestId("tagged-p").querySelector("details")?.textContent ?? "";
     expect(why).toMatch(/Why tools can differ.*packed tagged union is singular \(§6\.4, §6\.11\.1\)/);
+    // The most direct rule for %p of a singular expression is the subclause's last paragraph.
+    expect(why).toMatch(/%p of a singular expression formats it as an element of an aggregate \(the last paragraph of §21\.2\.1\.6\)/);
     expect(why).toMatch(/sends every type it does not name, packed unions included, to their unformatted value\. The two readings differ, so its %p output is tool-dependent/);
     expect(why).not.toMatch(/name only packed structures/);
-    expect(screen.getByTestId("tagged-status").textContent).toMatch(/%p prints Small:90 \(a reading of §21\.2\.1\.6 that tools can implement differently\)\./);
+    expect(screen.getByTestId("tagged-status").textContent).toMatch(/%p prints '\{Small:90\} \(a reading of §21\.2\.1\.6 that tools can implement differently\)\./);
   });
 
   it("the log prints the statement exactly as its button shows it", () => {
@@ -1233,7 +1241,7 @@ describe("PackedLayoutExplorer: debug clinic", () => {
     expect(screen.getByText(/cannot assign mon\.cmd_rec_t to scb\.cmd_rec_t/)).toBeInTheDocument();
     expect(screen.getByText(/not assignment compatible: §6\.22\.3/)).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Log, as found" }).textContent).not.toMatch(/incompatible/);
-    lockIn("Two separate typedef statements are two different types, however alike their text");
+    lockIn("Two separate typedef struct declarations are two different types, however alike their text");
     fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 5:/ }));
     pickFix("One typedef in a package");
     fireEvent.click(screen.getByTestId("clinic-rerun"));
@@ -1243,7 +1251,7 @@ describe("PackedLayoutExplorer: debug clinic", () => {
 
   it("two typedefs + $cast: the log shows it compiles and fails at run time, and the verdict says the symptom moved (§6.24.2)", () => {
     render(<PackedLayoutExplorer mode="debug" preset="two-typedefs" />);
-    lockIn("Two separate typedef statements are two different types, however alike their text");
+    lockIn("Two separate typedef struct declarations are two different types, however alike their text");
     fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 5:/ }));
     pickFix("$cast with a check");
     fireEvent.click(screen.getByTestId("clinic-rerun"));
@@ -1274,7 +1282,7 @@ describe("PackedLayoutExplorer: debug clinic", () => {
 
   it("two-typedefs: either typedef line unlocks the fix, and its feedback names the other line", () => {
     render(<PackedLayoutExplorer mode="debug" preset="two-typedefs" />);
-    lockIn("Two separate typedef statements are two different types, however alike their text");
+    lockIn("Two separate typedef struct declarations are two different types, however alike their text");
     fireEvent.click(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 2:/ }));
     expect(screen.getByTestId("clinic-line-feedback").textContent).toMatch(/^✓ This is one of the two, with line 5/);
     expect(within(screen.getByTestId("clinic-lines")).getByRole("button", { name: /^Line 2:.*, the suspect$/ })).toBeInTheDocument();
@@ -1459,12 +1467,16 @@ describe("PackedLayoutExplorer: experiments", () => {
     expect(readout()).toMatch(/typedef edit moved op over other bits/);
   });
 
-  it("a layout edit after an x write keeps the readout", () => {
+  it("a layout edit after an x write keeps the readout, and credits the edit once op moves over bits that write set (§7.2.1)", () => {
     render(<PackedLayoutExplorer preset="enum-field" />);
     fireEvent.click(screen.getByTestId("write-x-addr"));
     expect(screen.getByTestId("enum-readout")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Move down: op" }));
+    // op itself is untouched, so it still holds its Table 6-7 default.
     expect(screen.getByTestId("enum-readout").textContent).toMatch(/never assigned/);
+    fireEvent.click(screen.getByRole("button", { name: "Move down: op" }));
+    // op now sits on bits the x write into addr set: the edit put them there, not Table 6-7.
+    expect(screen.getByTestId("enum-readout").textContent).toMatch(/typedef edit moved op over other bits/);
+    expect(screen.getByTestId("enum-readout").textContent).not.toMatch(/never assigned|Table 6-7/);
   });
 
   it("the widths heading states the editor's real limits: frame_t's 24-bit body may stay 24, and keeps that limit after a shrink", () => {
@@ -1612,11 +1624,11 @@ describe("PackedLayoutExplorer: %p of a tagged union says only what the standard
     expect(status).not.toMatch(/%p prints/);
   });
 
-  it("a void member's bare tag is labelled derived, and only a packed union carries the tools caveat", () => {
+  it("a void member's '{tag} is labelled derived, and only a packed union carries the tools caveat", () => {
     render(<PackedLayoutExplorer mode="tagged" />);
     fireEvent.click(screen.getByRole("button", { name: "v = tagged Invalid;" }));
     fireEvent.click(screen.getByRole("button", { name: '$display("%p", v);' }));
-    expect(screen.getByTestId("tagged-p").textContent).toMatch(/prints Invalid \(derived: §21\.2\.1\.6 gives tag:value, and a void member has no value, §7\.3\.2\)/);
+    expect(screen.getByTestId("tagged-p").textContent).toMatch(/prints '\{Invalid\} \(derived: §21\.2\.1\.6 gives tag:value inside an assignment pattern, §10\.9, and a void member has no value, §7\.3\.2\)/);
     expect(screen.getByTestId("tagged-p").querySelector("details")).toBeNull();
     fireEvent.click(screen.getByTestId("tagged-packed"));
     expect(screen.getByTestId("tagged-p").querySelector("details")).not.toBeNull();
