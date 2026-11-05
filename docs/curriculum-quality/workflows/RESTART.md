@@ -60,6 +60,13 @@ agents at a time; the pass needs about 80 agents). Nothing from it is released.
   against these but was never reviewed, so the reviewers must check them again). Then run the finish pass as in step
   1 of "Order for the next resume". Run each component's own tests first.
 
+**Cloud continuation (owner, 2026-11-05: "complete the cloud work till cloud credits are complete").** The session
+kept going after the handoff above, with three workflows in parallel: the finish pass resumed (same run, from cache),
+6a for I-SV-1 (5 lessons) and 6a for I-SV-2A and I-SV-2B (7 lessons). Each release adds a line below and updates
+`progress.json`. Anything not listed below as released did not finish in the cloud: run it locally as planned
+(the finish pass as above; 6a with `make-workflow-args.py 6a <module>`, which skips lessons already in
+`lessonsEnriched`). Cloud work releases only to `curriculum-quality-program-x1gwpt` and PR #393.
+
 ## State at the 2026-11-02 pause
 
 **Live state:** everything reviewed is released through checkpoint 14. Nothing is running. Claude paused at 74 % of the
