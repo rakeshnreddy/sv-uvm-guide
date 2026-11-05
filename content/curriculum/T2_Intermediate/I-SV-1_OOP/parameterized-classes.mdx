@@ -21,6 +21,28 @@ sources:
 - **Why it matters:** Testbench infrastructure is generic. One FIFO, scoreboard or mailbox should work for every transaction type without being copied per type or casting every handle. UVM is built from both ideas: `uvm_driver #(REQ, RSP)`, `uvm_config_db #(T)` and the factory's per-class registries are parameterized classes, and `uvm_object` and `uvm_sequence` are abstract. Many "my value never arrives" bugs are two different specializations that look alike.
 - **The Analogy:** An adjustable cookie cutter. The adjustable frame is the generic class; you cannot cut with it until you lock a setting. Each setting you lock is its own cutter, with its own tally counter on the side (its own static members). An abstract class is a cutter frame with a blank where the shape goes: you must fit a shape (a subclass) before it cuts anything. *Where it breaks:* settings that look different can be the same cutter (`fifo`, `fifo#()` and `fifo#(int, 4)` are one type), and settings that look alike are not (`fifo#(int)` and `fifo#(integer)` are two types).
 
+<ArchitectureDiagram
+  title="Two ideas on this page: a recipe and a blank"
+  caption={<>Conceptual illustration, using the names this page builds. Left: a parameterized class is a recipe; only a specialization such as <code>fifo#(bit [7:0], 2)</code> is a type, each specialization has its own static members, and only a type can build an object (§8.25). Right: a <code>virtual class</code> cannot be constructed; a subclass that implements every pure virtual method can (§8.21). The cookie-cutter analogy breaks where different-looking names are one cutter (<code>fifo</code> = <code>fifo#()</code> = <code>fifo#(int, 4)</code>) and where look-alikes are two (<code>fifo#(int)</code> and <code>fifo#(integer)</code>, §6.22.1). The recap at the end of Build Your Mental Model echoes this picture.</>}
+  legend={false}
+  cellWidth={160}
+  gapX={48}
+  nodes={[
+    { id: "gen", label: "fifo #(T, D)", sublabel: "generic class: a recipe", kind: "generic", col: 0, row: 0, badge: "generic" },
+    { id: "spec", label: "fifo#(bit [7:0], 2)", sublabel: "a type, with its own statics", kind: "generic", col: 0, row: 1, badge: "type" },
+    { id: "bf", label: "object bf", sublabel: "bf = new()", kind: "generic", col: 0, row: 2 },
+    { id: "abs", label: "base_check", sublabel: "virtual class: new() illegal", kind: "generic", col: 1, row: 0, badge: "abstract" },
+    { id: "rc", label: "range_check", sublabel: "implements check()", kind: "generic", col: 1, row: 1, badge: "complete" },
+    { id: "rco", label: "object rc", sublabel: "rc = new(0, 15)", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "gen", to: "spec", style: "structural", label: "specialize" },
+    { from: "spec", to: "bf", style: "causal", label: "new()" },
+    { from: "rc", to: "abs", style: "structural", label: "extends" },
+    { from: "rc", to: "rco", style: "causal", label: "new()" }
+  ]}
+/>
+
 **You will be able to:**
 1. **Write** a parameterized class with type and value parameters, and declare specializations with positional, named and default (`#()`) parameter lists and with a `typedef`.
 2. **Predict** whether two declarations name the same specialization, and what each specialization's static members hold.
@@ -40,9 +62,69 @@ Start from a problem you will have in your first testbench. You need a bounded F
 
 A parameterized class removes both problems. You write the FIFO once, with the item type as a **type parameter** (a parameter whose value is a data type, not a number) and the depth as a **value parameter** (an ordinary constant). The compiler then builds a separate, fully typed class for each combination you use (§8.25). You already know parameters from modules ([F4A: Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index)); classes use the same syntax and the same override rules (§8.25, §23.10).
 
+**Three ways to hold three item types, side by side.** Each cell restates the bullets above or §8.25.
+
+| | Copy the class per type | Store a base-class handle (`base q[$]`) | Parameterized class (`fifo #(T)`) |
+|---|---|---|---|
+| Item type checked at compile time | Yes, in each copy | Only that the item is some subclass of the base; a wrong subclass shows up when the `$cast` fails | Yes, for each specialization |
+| Holds plain values such as `int` or `bit [7:0]` | Yes | No: an `int` is not an object | Yes |
+| Casts on the way out | None | A `$cast` wherever subclass members are needed (§8.16) | None |
+| One container holds several item classes at once | No | Yes | Only if `T` is itself a base class, and then the casts come back |
+| Static members | One set per copy | One set | One set per specialization (§8.25) |
+| A bug is fixed in | Every copy | One place | One place |
+
 ### A generic class and its specializations
 
 Here is the FIFO. It lives in a **package**, a named collection of declarations that a module brings in with `import` (F4A), because that is where shared classes belong (Push Further explains why).
+
+Before the code, read its first line slot by slot. Every declaration on this page fills or skips these slots.
+
+<figure className="my-6">
+  <svg viewBox="0 0 360 218" role="img" aria-labelledby="pc-anat-title" aria-describedby="pc-anat-desc" style={{ width: "100%", maxWidth: 400 }}>
+    <title id="pc-anat-title">{"The header class fifo #(type T = int, int D = 4), slot by slot"}</title>
+    <desc id="pc-anat-desc">{"The header class fifo #(type T = int, int D = 4) with four numbered parts. 1: the parameter list inside #( ), the only part a specialization can override. 2: type T, a type parameter whose value is a data type. 3: int D, a typed value parameter, an ordinary constant of type int. 4: = int and = 4, the defaults used when a declaration leaves a parameter out."}</desc>
+    <path d="M 88 28 L 88 22 L 171 22 M 191 22 L 274 22 L 274 28" fill="none" stroke="currentColor" strokeOpacity="0.7" strokeWidth="1.2" />
+    <circle cx="181" cy="22" r="8" fill="none" stroke="currentColor" strokeOpacity="0.8" />
+    <text x="181" y="26" textAnchor="middle" fontSize="10" fontWeight="bold" fill="currentColor">{"1"}</text>
+    <text x="8" y="46" fontSize="12" fontFamily="monospace" fill="currentColor">{"class fifo"}</text>
+    <text x="87.2" y="46" fontSize="12" fontFamily="monospace" fill="currentColor">{"#("}</text>
+    <text x="101.6" y="46" fontSize="12" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"type T"}</text>
+    <text x="152" y="46" fontSize="12" fontFamily="monospace" fill="currentColor">{"= int"}</text>
+    <text x="188" y="46" fontSize="12" fontFamily="monospace" fill="currentColor">{","}</text>
+    <text x="202.4" y="46" fontSize="12" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"int D"}</text>
+    <text x="245.6" y="46" fontSize="12" fontFamily="monospace" fill="currentColor">{"= 4"}</text>
+    <text x="267.2" y="46" fontSize="12" fontFamily="monospace" fill="currentColor">{");"}</text>
+    <path d="M 101.6 53 L 144.8 53" stroke="rgb(217,119,6)" strokeWidth="2.5" />
+    <path d="M 202.4 53 L 238.4 53" stroke="rgb(99,102,241)" strokeWidth="2.5" />
+    <path d="M 152 53 L 188 53 M 245.6 53 L 267.2 53" stroke="currentColor" strokeOpacity="0.7" strokeWidth="1.5" strokeDasharray="3 2" />
+    <path d="M 123.2 54 L 123.2 61 M 220.4 54 L 220.4 61 M 170 54 L 170 61 M 256.4 54 L 256.4 61" stroke="currentColor" strokeOpacity="0.6" />
+    <circle cx="123.2" cy="68" r="7" fill="none" stroke="rgb(217,119,6)" strokeWidth="1.5" />
+    <text x="123.2" y="72" textAnchor="middle" fontSize="10" fontWeight="bold" fill="currentColor">{"2"}</text>
+    <circle cx="220.4" cy="68" r="7" fill="none" stroke="rgb(99,102,241)" strokeWidth="1.5" />
+    <text x="220.4" y="72" textAnchor="middle" fontSize="10" fontWeight="bold" fill="currentColor">{"3"}</text>
+    <circle cx="170" cy="68" r="7" fill="none" stroke="currentColor" strokeOpacity="0.7" strokeDasharray="3 2" />
+    <text x="170" y="72" textAnchor="middle" fontSize="10" fontWeight="bold" fill="currentColor">{"4"}</text>
+    <circle cx="256.4" cy="68" r="7" fill="none" stroke="currentColor" strokeOpacity="0.7" strokeDasharray="3 2" />
+    <text x="256.4" y="72" textAnchor="middle" fontSize="10" fontWeight="bold" fill="currentColor">{"4"}</text>
+    <circle cx="16" cy="96" r="7" fill="none" stroke="currentColor" strokeOpacity="0.8" />
+    <text x="16" y="100" textAnchor="middle" fontSize="10" fontWeight="bold" fill="currentColor">{"1"}</text>
+    <text x="30" y="100" fontSize="10.5" fontWeight="bold" fill="currentColor">{"#( ... ): the parameter list"}</text>
+    <text x="30" y="113" fontSize="10" fill="currentColor" fillOpacity="0.8">{"the only part a specialization can override (§8.25)"}</text>
+    <circle cx="16" cy="128" r="7" fill="none" stroke="rgb(217,119,6)" strokeWidth="1.5" />
+    <text x="16" y="132" textAnchor="middle" fontSize="10" fontWeight="bold" fill="currentColor">{"2"}</text>
+    <text x="30" y="132" fontSize="10.5" fontWeight="bold" fill="currentColor">{"type T: a type parameter"}</text>
+    <text x="30" y="145" fontSize="10" fill="currentColor" fillOpacity="0.8">{"its value is a data type, such as bit [7:0] (§6.20.3)"}</text>
+    <circle cx="16" cy="160" r="7" fill="none" stroke="rgb(99,102,241)" strokeWidth="1.5" />
+    <text x="16" y="164" textAnchor="middle" fontSize="10" fontWeight="bold" fill="currentColor">{"3"}</text>
+    <text x="30" y="164" fontSize="10.5" fontWeight="bold" fill="currentColor">{"int D: a typed value parameter"}</text>
+    <text x="30" y="177" fontSize="10" fill="currentColor" fillOpacity="0.8">{"an ordinary constant, of type int (§6.20.2)"}</text>
+    <circle cx="16" cy="192" r="7" fill="none" stroke="currentColor" strokeOpacity="0.7" strokeDasharray="3 2" />
+    <text x="16" y="196" textAnchor="middle" fontSize="10" fontWeight="bold" fill="currentColor">{"4"}</text>
+    <text x="30" y="196" fontSize="10.5" fontWeight="bold" fill="currentColor">{"= int, = 4: the defaults"}</text>
+    <text x="30" y="209" fontSize="10" fill="currentColor" fillOpacity="0.8">{"used for any parameter a declaration leaves out (§8.25)"}</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Conceptual illustration of the class header in the code below. A specialization such as <code>fifo #(bit [7:0], 2)</code> fills slots 2 and 3; <code>fifo #()</code> and a bare <code>fifo</code> fill neither, so both take the defaults in slot 4. A <code>parameter</code> declared inside the class body is not in slot 1, so no specialization can change it (Declaring specializations, below).</figcaption>
+</figure>
 
 ```systemverilog
 // compile
@@ -94,6 +176,11 @@ module tb_top;
 endmodule
 ```
 
+**Predict first:** `D` is 2 for `bf`. Which of the three pushes return 1, what are `b1` and `b2`, and what does the `int` FIFO pop? Write all three lines down.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: the three output lines</summary>
+
 Expected output (illustrative, traced by hand):
 
 ```text
@@ -102,9 +189,66 @@ out=a5 then 3c, size now 0
 int fifo popped -5
 ```
 
+</details>
+
 Read the class as a recipe with two blanks. `bf` fills them with `bit [7:0]` and `2`; `nf` fills neither, so both take their **defaults**, the values written after `=` in the parameter list. Each filled-in recipe is a different class, and the compiler checks every use against its `T`. Pushing a class handle, such as a `packet` handle, into `bf`, or assigning `bf.pop()` to a `packet` handle or to a `string` variable without a cast, does not compile, because none of these assignments is legal between those types (an integral value needs an explicit cast to become a `string`, §6.16). A base-handle FIFO cannot give you that check.
 
-The check is not stricter than an ordinary assignment, though. When `T` is integral, the usual implicit conversions still apply: `bf.push(300)` compiles and stores `8'h2c` (300 truncated to 8 bits), and even `bf.push("hello")` compiles, because a string literal used in an assignment is treated as an unsigned integer constant, and when it is wider than the target it is right-justified, so only its rightmost byte, `"o"` (`8'h6f`), is stored (§5.9). Many tools warn about the truncation; the language does not forbid it. The item type here is `bit [7:0]`, not `byte`, on purpose: `byte` is signed, so `8'hA5` would print as -91 with `%0d`.
+**Predict first:** `T` is `bit [7:0]` for `bf`. Do `bf.push(300)` and `bf.push("hello")` compile? If they do, which byte does each one store?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: compile or not, and what is stored</summary>
+
+<figure className="my-6">
+  <svg viewBox="0 0 360 182" role="img" aria-labelledby="pc-bits-title" aria-describedby="pc-bits-desc" style={{ width: "100%", maxWidth: 400 }}>
+    <title id="pc-bits-title">{"What an 8-bit T keeps from 300 and from \"hello\""}</title>
+    <desc id="pc-bits-desc">{"Top: 300 is the 32-bit value 32'h0000_012c, drawn as four bytes 00 00 01 2c. Bits [31:8], including the 1 in bit 8, are dropped; bits [7:0] are kept, so bf stores 8'h2c, which is 44. Bottom: the string literal \"hello\" is five bytes, h 68, e 65, l 6c, l 6c, o 6f. It is right-justified, so the leftmost four characters are truncated and bf stores 8'h6f, the character o."}</desc>
+    <text x="8" y="14" fontSize="11" fill="currentColor"><tspan fontFamily="monospace" fontWeight="bold">{"bf.push(300)"}</tspan>{": 300 is 32'h0000_012c"}</text>
+    <rect x="8" y="22" width="58" height="26" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 2" />
+    <rect x="70" y="22" width="58" height="26" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 2" />
+    <rect x="132" y="22" width="58" height="26" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 2" />
+    <rect x="194" y="22" width="58" height="26" rx="3" fill="rgba(8,145,178,0.12)" stroke="rgb(8,145,178)" strokeWidth="2" />
+    <text x="37" y="40" textAnchor="middle" fontSize="12" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">{"00"}</text>
+    <text x="99" y="40" textAnchor="middle" fontSize="12" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">{"00"}</text>
+    <text x="161" y="40" textAnchor="middle" fontSize="12" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">{"01"}</text>
+    <text x="223" y="40" textAnchor="middle" fontSize="12" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"2c"}</text>
+    <path d="M 8 48 L 66 22 M 70 48 L 128 22 M 132 48 L 190 22" stroke="rgb(225,29,72)" strokeOpacity="0.8" strokeWidth="1.5" />
+    <text x="37" y="61" textAnchor="middle" fontSize="9.5" fontFamily="monospace" fill="currentColor" fillOpacity="0.8">{"[31:24]"}</text>
+    <text x="99" y="61" textAnchor="middle" fontSize="9.5" fontFamily="monospace" fill="currentColor" fillOpacity="0.8">{"[23:16]"}</text>
+    <text x="161" y="61" textAnchor="middle" fontSize="9.5" fontFamily="monospace" fill="currentColor" fillOpacity="0.8">{"[15:8]"}</text>
+    <text x="223" y="61" textAnchor="middle" fontSize="9.5" fontFamily="monospace" fill="currentColor" fillOpacity="0.8">{"[7:0]"}</text>
+    <text x="262" y="34" fontSize="12" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"→ 8'h2c"}</text>
+    <text x="262" y="48" fontSize="10" fill="currentColor">{"kept: 44"}</text>
+    <text x="8" y="76" fontSize="10" fill="currentColor">{"✕ dropped: bits [31:8], including the 1 in bit 8"}</text>
+    <text x="8" y="104" fontSize="11" fill="currentColor"><tspan fontFamily="monospace" fontWeight="bold">{"bf.push(\"hello\")"}</tspan>{": five characters, 40 bits"}</text>
+    <rect x="8" y="112" width="46" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 2" />
+    <rect x="56" y="112" width="46" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 2" />
+    <rect x="104" y="112" width="46" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 2" />
+    <rect x="152" y="112" width="46" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 2" />
+    <rect x="200" y="112" width="46" height="32" rx="3" fill="rgba(8,145,178,0.12)" stroke="rgb(8,145,178)" strokeWidth="2" />
+    <text x="31" y="125" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">{"h"}</text>
+    <text x="79" y="125" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">{"e"}</text>
+    <text x="127" y="125" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">{"l"}</text>
+    <text x="175" y="125" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">{"l"}</text>
+    <text x="223" y="125" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"o"}</text>
+    <text x="31" y="139" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">{"68"}</text>
+    <text x="79" y="139" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">{"65"}</text>
+    <text x="127" y="139" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">{"6c"}</text>
+    <text x="175" y="139" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">{"6c"}</text>
+    <text x="223" y="139" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"6f"}</text>
+    <path d="M 8 144 L 54 112 M 56 144 L 102 112 M 104 144 L 150 112 M 152 144 L 198 112" stroke="rgb(225,29,72)" strokeOpacity="0.8" strokeWidth="1.5" />
+    <text x="258" y="126" fontSize="12" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"→ 8'h6f"}</text>
+    <text x="258" y="140" fontSize="10" fill="currentColor">{"kept: \"o\""}</text>
+    <text x="8" y="160" fontSize="10" fill="currentColor">{"✕ truncated: the leftmost four characters"}</text>
+    <text x="8" y="175" fontSize="10" fill="currentColor" fillOpacity="0.8">{"a string literal is right-justified into the target (§5.9)"}</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Conceptual illustration of the two assignments in the paragraph below; the byte values are ASCII codes. Dashed, struck-through boxes are the bits the 8-bit <code>T</code> cannot hold; the solid box is what <code>bf</code> stores. §6.16 has the same rule in its own example: a 32-bit vector assigned <code>"hello"</code> keeps <code>"ello"</code>.</figcaption>
+</figure>
+
+The check is not stricter than an ordinary assignment, though. When `T` is integral, the usual implicit conversions still apply: `bf.push(300)` compiles and stores `8'h2c` (300 truncated to 8 bits), and even `bf.push("hello")` compiles, because a string literal used in an assignment is treated as an unsigned integer constant, and when it is wider than the target it is right-justified, so only its rightmost byte, `"o"` (`8'h6f`), is stored (§5.9). Many tools warn about the truncation; the language does not forbid it.
+
+</details>
+
+The item type here is `bit [7:0]`, not `byte`, on purpose: `byte` is signed, so `8'hA5` would print as -91 with `%0d`.
 
 **Picture it.** The diagram shows one generic class and the specializations this page uses. The generic class has no objects and no static storage; each specialization below it is a separate type.
 
@@ -148,6 +292,22 @@ byte_fifo_t                   f7;   // the same type as f1 and f2
 - **Named** lists, `#(.T(...), .D(...))`, are clearer once a class has more than one parameter.
 - **`typedef`** gives a specialization one name. §8.25 itself recommends it: "a typedef should be used" rather than repeating the parameter list. Put the `typedef` in the package next to the class, so every file uses the same type.
 
+**Predict first:** group `f1` to `f7` by the type each one names. How many distinct types do the seven declarations make?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your grouping: <code>f1</code> to <code>f7</code> by type</summary>
+
+| Resolved specialization (`T`, `D`) | Declared by |
+|---|---|
+| `fifo #(bit [7:0], 8)` | `f1`, `f2`, `f7` |
+| `fifo #(int, 16)` | `f3` |
+| `fifo #(string, 4)` | `f4` |
+| `fifo #(int, 4)` | `f5`, `f6` |
+
+Four types. A named list may come in any order, an omitted parameter takes its default, and a `typedef` names an existing specialization rather than making a new one (§8.25, §23.10).
+
+</details>
+
 **Only the `#( )` list can be changed.** A `parameter` declared *inside* the class body is a **local parameter**: the keyword `parameter` there means the same as `localparam`, and no specialization can override it (IEEE 1800-2023 §6.20.4 and Annex A, A.10 note 7; the §8.25.1 example marks `parameter int q = 5; // local parameter`). If you want callers to set a value, put it in the `#( )` list.
 
 ### The default specialization, and classes that have none
@@ -172,7 +332,20 @@ Leave a type parameter without a default when no sensible default exists and you
 
 Two specializations are the same type when every parameter matches (§8.25): type parameters must be **matching types** (§6.22.1), and value parameters must have matching types and equal values. Matching is stricter than "fits": `int` (2-state, signed, 32 bits) does not match `integer` (4-state) or `bit [31:0]` (unsigned).
 
-**Predict first:** cover the right-hand columns and decide for each row whether the two declarations name one type.
+**Predict first:** for each numbered pair, decide whether the declarations name one type. Write yes or no for all nine, then open the table.
+
+1. `fifo`, `fifo#()`, `fifo#(int)`, `fifo#(int, 4)`
+2. `fifo#(int, 4)` and `fifo#(int, 2+2)`
+3. `fifo#(int)` and `fifo#(integer)`
+4. `fifo#(int)` and `fifo#(bit [31:0])`
+5. `fifo#(int)` and `fifo#(bit signed [31:0])`
+6. `fifo#(byte_t)` and `fifo#(byte)`, with `typedef byte byte_t;`
+7. `fifo#(byte, 8)` and `fifo#(byte, 4)`
+8. `fifo#(byte)` and `fifo#(bit signed [7:0])`
+9. `fifo#(byte)` and `fifo#(bit signed [0:7])`
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your answers: the nine pairs, in order</summary>
 
 | Declarations | Same type? | Why |
 |---|---|---|
@@ -183,6 +356,10 @@ Two specializations are the same type when every parameter matches (§8.25): typ
 | `fifo#(int)` and `fifo#(bit signed [31:0])` | yes | Same width, both 2-state, both signed, range `[31:0]` (§6.22.1 rule e) |
 | `fifo#(byte_t)` and `fifo#(byte)`, with `typedef byte byte_t;` | yes | A `typedef` that renames a type matches it (§6.22.1 rule b) |
 | `fifo#(byte, 8)` and `fifo#(byte, 4)` | **no** | Different value of `D` |
+| `fifo#(byte)` and `fifo#(bit signed [7:0])` | yes | Same width, both 2-state, both signed, range `[7:0]`: the standard's own example (§6.22.1 rule e) |
+| `fifo#(byte)` and `fifo#(bit signed [0:7])` | **no** | The vector's range must be `[7:0]`; `[0:7]` does not match `byte` (§6.22.1 rule e) |
+
+</details>
 
 **What it means.** Handles of different specializations cannot be assigned to each other, and the compiler reports an illegal assignment. Worse, a lookup keyed by type silently finds nothing (the debugging table in Make It Work shows one). The cure is the same every time: one `typedef` per specialization, in a package, used everywhere.
 
@@ -229,11 +406,16 @@ endmodule
 
 **Predict first:** two `counter#(int)` objects and one `counter#(byte)` object were built. What do the four numbers print?
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: the four numbers</summary>
+
 Expected output (illustrative, traced by hand from §8.25):
 
 ```text
 int=2 byte=1 default=2 total=3
 ```
+
+</details>
 
 <ArchitectureDiagram
   title="Each specialization has its own statics; a plain base class shares one"
@@ -268,6 +450,24 @@ So outside the class, always say which specialization you mean, with `#(...)`, `
 
 - **A bare `C` that is not followed by `::` always means the default specialization**, even inside `C` itself (§8.25). Inside `class C #(type T = int)`, the declaration `C next;` is a handle to `C#(int)`, not to the specialization the code is running in. uvm-core declares `typedef uvm_component_registry #(T, Tname) this_type;` for the current specialization (Push Further has more).
 - **A type parameter cannot be reached through a handle.** With the FIFO above, `fifo #(bit [7:0], 2)::T` is legal and names `bit [7:0]`, but `bf.T` is not; and a value parameter read through a handle, `bf.D`, is legal but is not a constant expression, so it cannot size an array (§8.5).
+
+**Predict first,** using the table's second row. Through an object of `C#(5)`, what does `show()` print?
+
+```systemverilog
+// snippet: which specialization does each name reach?
+class C #(int p = 1);
+  function void show();
+    $display("%0d %0d", C::p, C#()::p);
+  endfunction
+endclass
+```
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: what <code>show()</code> prints</summary>
+
+It prints `5 1`. Inside `C`, `C::p` names the current specialization's `p`, which is 5 for a `C#(5)` object; `C#()::p` always names the default specialization, `C#(1)`, so it reads 1 (§8.25.1). Outside the class the first form would not compile at all. The §8.25.1 example in Push Further relies on the same rule.
+
+</details>
 
 ### Abstract classes and pure virtual methods
 
@@ -361,7 +561,35 @@ failures=1
 
 **The pattern to notice.** `run()` is ordinary, shared code in the base class, and it calls `check()`, which is virtual. So `chk.run(42)` runs `base_check::run`, which calls `range_check::check` because that is the object's class ([Polymorphism Pitfalls](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) explains the dispatch). The base fixes *how* every checker reports; each subclass decides only *what* to check.
 
+<SequenceDiagram
+  title="chk.run(42): the handle picks run(), the object picks check()"
+  caption={<>One <code>range_check</code> object, held in the <code>base_check</code> handle <code>chk</code>; <code>chk.run(7)</code> has already passed, so <code>n_fail</code> is still 0. The non-virtual call binds to the body that <code>chk</code>'s declared class sees; the virtual call inside it dispatches to the object's class (§8.14, §8.20). The same split answers the quiz question about a non-virtual <code>report()</code> redeclared in the subclass.</>}
+  columnWidth={115}
+  participants={[
+    { id: "tb", label: "tb_top", kind: "generic" },
+    { id: "run", label: "base_check::run", sublabel: "non-virtual", kind: "generic" },
+    { id: "chk", label: "range_check::check", sublabel: "virtual override", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tb", to: "run", label: "chk.run(42)" },
+    { kind: "note", from: "tb", to: "run", label: "run() is not virtual: chk's declared class, base_check, picks the body (§8.14)" },
+    { from: "run", to: "chk", label: "check(42)" },
+    { kind: "note", from: "run", to: "chk", label: "check() is virtual: the object's class, range_check, picks the body (§8.20)" },
+    { kind: "return", from: "chk", to: "run", label: "0: 42 is above hi = 15" },
+    { kind: "self", from: "run", label: "n_fail++ (now 1)" },
+    { kind: "self", from: "run", label: "prints: range_check: FAIL value=42" },
+    { kind: "return", from: "run", to: "tb", label: "run returns" }
+  ]}
+/>
+
 **Pure virtual versus an empty body.** `virtual function bit check(int value); endfunction` (an empty body) is *not* pure. It is a complete, callable method that returns its return variable's initial value (§8.21 NOTE, whose example returns `'x` for an `integer`). The class stays constructible, and a subclass that forgets to override it compiles and silently returns 0 here. Use `pure virtual` when every subclass must decide.
+
+| `check()` declared in the base as | `pure virtual` | `virtual`, empty body | `virtual`, with a body |
+|---|---|---|---|
+| Has a body | No: a prototype only | Yes, an empty one | Yes |
+| The base class can be constructed | No: a pure virtual method belongs in a `virtual class` (§8.21) | Yes, unless the base is declared `virtual class`, as `base_check` is (§8.21) | Yes, unless the base is declared `virtual class` (§8.21) |
+| A constructible subclass must override it | Yes (§8.21) | No | No |
+| A subclass forgets the override | Compile error unless the subclass is itself a `virtual class`: it is not complete (§8.21) | Compiles; the call silently returns the return variable's initial value, 0 for `bit` (§8.21 NOTE) | Compiles; the base body runs |
 
 **Where you meet it in a real testbench.** In uvm-core 2020.3.1, `uvm_object`, `uvm_component` and `uvm_sequence` are all declared `virtual class`. You never construct them; you extend them. Your own environments use abstract bases for the same reason: a `base_check` or a protocol-neutral `base_driver` that fixes the shared flow and leaves the protocol-specific step `pure virtual`.
 
@@ -378,15 +606,19 @@ Make It Work builds this registry in about 50 lines. UVM's `my_driver::type_id` 
 
 ### Common pitfalls and misconceptions
 
-- **"`fifo`, `fifo#()` and `fifo#(int)` are three types."** They are one: omitted parameters take their defaults (§8.25).
-- **"`fifo#(int)` and `fifo#(integer)` are the same type."** They are not: 2-state and 4-state types do not match (§6.22.1). Neither do `int` and `bit [31:0]`.
-- **"A static member is shared by every specialization."** Each specialization has its own (§8.25). Share through a non-parameterized base class.
-- **"`C::x` works anywhere."** Outside the class, the bare name before `::` is illegal; write `C#()::x`, `C#(...)::x` or use a `typedef` (§8.25.1).
-- **"A `parameter` in the class body can be overridden."** It is a local parameter (A.10 note 7). Only the `#( )` list is overridable.
-- **"Every class must give every parameter a default."** Defaults are optional; a class without them simply has no default specialization (§8.25).
-- **"`pure virtual` makes the class abstract."** `virtual class` does. Declare both.
-- **"An empty virtual method is the same as a pure one."** It is a real, callable method, and a subclass that forgets to override it compiles (§8.21 NOTE).
-- **"A generic class declared in a module is one class."** Each instance of that module creates a separate generic class (§8.25). Put classes in packages.
+Each belief on the left is false. Before you read the right-hand column, say why. Most rows have a picture on this page: the recipe and its types, the per-specialization statics, the `::` table or the abstract base.
+
+| ✕ The belief | What is actually true |
+|---|---|
+| **"`fifo`, `fifo#()` and `fifo#(int)` are three types."** | They are one: omitted parameters take their defaults (§8.25). |
+| **"`fifo#(int)` and `fifo#(integer)` are the same type."** | They are not: 2-state and 4-state types do not match (§6.22.1). Neither do `int` and `bit [31:0]`. |
+| **"A static member is shared by every specialization."** | Each specialization has its own (§8.25). Share through a non-parameterized base class. |
+| **"`C::x` works anywhere."** | Outside the class, the bare name before `::` is illegal; write `C#()::x`, `C#(...)::x` or use a `typedef` (§8.25.1). |
+| **"A `parameter` in the class body can be overridden."** | It is a local parameter (A.10 note 7). Only the `#( )` list is overridable. |
+| **"Every class must give every parameter a default."** | Defaults are optional; a class without them simply has no default specialization (§8.25). |
+| **"`pure virtual` makes the class abstract."** | `virtual class` does. Declare both. |
+| **"An empty virtual method is the same as a pure one."** | It is a real, callable method, and a subclass that forgets to override it compiles (§8.21 NOTE). |
+| **"A generic class declared in a module is one class."** | Each instance of that module creates a separate generic class (§8.25). Put classes in packages. |
 
 <VisualRecap
   title="A generic class is a recipe; each specialization is its own class"
@@ -399,7 +631,44 @@ virtual class base_check;
 endclass`}
   mistake="Mixing specializations that look alike (int vs integer, int vs bit [31:0]), expecting one static across all specializations, writing C::x outside the class, or calling new on a virtual class."
   inTestbench="Generic FIFOs, scoreboards and mailboxes are parameterized by item type; uvm_driver #(REQ, RSP) and uvm_config_db #(T) are parameterized; uvm_object, uvm_component and uvm_sequence are abstract."
-/>
+>
+  <svg viewBox="0 0 300 226" role="img" aria-labelledby="pc-recap-title" aria-describedby="pc-recap-desc" style={{ width: "100%", maxWidth: 340 }}>
+    <title id="pc-recap-title">{"A recipe and its types; a blank and its complete subclass"}</title>
+    <desc id="pc-recap-desc">{"Top: the generic class fifo #(T, D), drawn dashed, is a recipe with no type and no statics. Specializing it gives two separate types, each with its own static members: fifo#(int, 4), which is also what fifo and fifo#() name, and fifo#(integer), which is a different type from fifo#(int) because integer is 4-state. Bottom: virtual class base_check, drawn dashed, cannot be built; new() on it is a compile error. range_check extends it, has a body for check(), and new(0, 15) on it is legal. A base_check handle may hold a range_check object."}</desc>
+    <defs>
+      <marker id="pc-recap-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" fillOpacity="0.7" />
+      </marker>
+    </defs>
+    <text x="4" y="11" fontSize="9" fontWeight="bold" letterSpacing="1" fill="currentColor" fillOpacity="0.75">{"GENERIC CLASS: A RECIPE"}</text>
+    <rect x="80" y="18" width="140" height="32" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.7" strokeDasharray="5 3" />
+    <text x="150" y="32" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"fifo #(T, D)"}</text>
+    <text x="150" y="44" textAnchor="middle" fontSize="9" fill="currentColor" fillOpacity="0.8">{"no type, no statics"}</text>
+    <path d="M 120 50 L 80 76" fill="none" stroke="currentColor" strokeOpacity="0.7" strokeWidth="1.2" markerEnd="url(#pc-recap-arrow)" />
+    <path d="M 180 50 L 220 76" fill="none" stroke="currentColor" strokeOpacity="0.7" strokeWidth="1.2" markerEnd="url(#pc-recap-arrow)" />
+    <text x="150" y="68" textAnchor="middle" fontSize="9" fill="currentColor" fillOpacity="0.8">{"specialize"}</text>
+    <rect x="4" y="78" width="142" height="46" rx="4" fill="rgba(99,102,241,0.1)" stroke="rgb(99,102,241)" />
+    <text x="75" y="92" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"fifo#(int, 4)"}</text>
+    <text x="75" y="104" textAnchor="middle" fontSize="9" fontFamily="monospace" fill="currentColor">{"= fifo = fifo#()"}</text>
+    <text x="75" y="117" textAnchor="middle" fontSize="9" fill="currentColor" fillOpacity="0.8">{"type · own statics"}</text>
+    <rect x="154" y="78" width="142" height="46" rx="4" fill="rgba(99,102,241,0.1)" stroke="rgb(99,102,241)" />
+    <text x="225" y="92" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"fifo#(integer)"}</text>
+    <text x="225" y="104" textAnchor="middle" fontSize="9" fill="currentColor">{"≠ fifo#(int): 4-state"}</text>
+    <text x="225" y="117" textAnchor="middle" fontSize="9" fill="currentColor" fillOpacity="0.8">{"type · own statics"}</text>
+    <text x="4" y="146" fontSize="9" fontWeight="bold" letterSpacing="1" fill="currentColor" fillOpacity="0.75">{"ABSTRACT CLASS: A BLANK"}</text>
+    <rect x="4" y="154" width="132" height="48" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.7" strokeDasharray="5 3" />
+    <text x="70" y="167" textAnchor="middle" fontSize="9" fill="currentColor" fillOpacity="0.8">{"virtual class"}</text>
+    <text x="70" y="181" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"base_check"}</text>
+    <text x="70" y="195" textAnchor="middle" fontSize="9" fill="currentColor">{"✕ new(): compile error"}</text>
+    <rect x="180" y="154" width="116" height="48" rx="4" fill="rgba(16,185,129,0.1)" stroke="rgb(16,185,129)" />
+    <text x="238" y="167" textAnchor="middle" fontSize="9" fill="currentColor" fillOpacity="0.8">{"check() has a body"}</text>
+    <text x="238" y="181" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"range_check"}</text>
+    <text x="238" y="195" textAnchor="middle" fontSize="9" fill="currentColor">{"✓ new(0, 15): legal"}</text>
+    <path d="M 180 186 L 138 186" fill="none" stroke="currentColor" strokeOpacity="0.7" strokeWidth="1.2" markerEnd="url(#pc-recap-arrow)" />
+    <text x="158" y="181" textAnchor="middle" fontSize="9" fill="currentColor" fillOpacity="0.8">{"extends"}</text>
+    <text x="4" y="220" fontSize="9.5" fill="currentColor">{"A base_check handle may hold a range_check object."}</text>
+  </svg>
+</VisualRecap>
 
 ## Make It Work
 
@@ -483,6 +752,11 @@ module tb_top;
 endmodule
 ```
 
+**Predict first:** `get()` is called three times. How many registry objects exist afterwards, what does each loop iteration print, and what are the three numbers on the last line?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: the registry count and the four output lines</summary>
+
 Expected output (illustrative, traced by hand from §8.21 and §8.25):
 
 ```text
@@ -492,9 +766,13 @@ txn built a txn
 txn=2 err_txn=1 same_proxy=1
 ```
 
+The queue holds three handles, but only two registry objects exist: `w[0]` and `w[2]` are the same `txn` singleton, which is why `same_proxy` prints 1.
+
+</details>
+
 **Run it.** Save the code as `tb_top.sv`, compile it with any IEEE 1800-2023 simulator that supports classes (the package comes first in the file, so it compiles before `tb_top`), and simulate the top module `tb_top`. No UVM library is needed. The output above is traced by hand; no simulator has been run on it yet.
 
-**Trace it.** The queue holds three handles but only two registry objects exist:
+**Trace it.** The queue holds three handles; the table shows how many registry objects stand behind them:
 
 | Step | Call | What happens | `txn` registry | `err_txn` registry |
 |---|---|---|---|---|
@@ -544,7 +822,15 @@ txn=2 err_txn=1 same_proxy=1
   ]}
 />
 
-**How this differs from uvm-core 2020.3.1.** The shape is the same: `virtual class uvm_object_wrapper` is the abstract proxy, and `uvm_component_registry #(type T = uvm_component, string Tname = "<unknown>")` extends it and keeps `static this_type m_inst;` inside its static `get()` (`base/uvm_registry.svh`). The real classes do more: `create_object` is an ordinary virtual function that returns `null` unless overridden (not pure), and each registry also registers itself with the factory so that a test can substitute another class. [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index) covers that part.
+**How this differs from uvm-core 2020.3.1.** The shape is the same, row by row; the real classes do more. [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index) covers the factory part.
+
+| Piece | This page's registry | uvm-core 2020.3.1 |
+|---|---|---|
+| Abstract proxy | `virtual class object_wrapper` | `virtual class uvm_object_wrapper` is the abstract proxy (`base/uvm_factory.svh`) |
+| Parameterized registry | `registry #(type T, string TNAME = "<unknown>")` extends the proxy | `uvm_component_registry #(type T = uvm_component, string Tname = "<unknown>")` extends it (`base/uvm_registry.svh`) |
+| One singleton per specialization | `static this_type m_inst;` inside the static `get()` | The same: it keeps `static this_type m_inst;` inside its static `get()` |
+| `create_object` | `pure virtual` | An ordinary virtual function that returns `null` unless overridden (not pure) |
+| Registration | None | Each registry also registers itself with the factory, so that a test can substitute another class |
 
 ### How to write parameterized and abstract classes
 
@@ -596,11 +882,50 @@ txn=2 err_txn=1 same_proxy=1
 - **Module, program or interface:** "each instance of the scope containing the generic class declaration creates a unique generic class" (§8.25). A generic class declared inside a module that is instantiated twice gives two generic classes, and `fifo#(int)` from one instance cannot be assigned to `fifo#(int)` from the other.
 - **The same source compiled twice:** a class declaration creates its type within the scope where it is declared, and a type matches only itself and its `typedef` renames "within the scope of the data type identifier" (§6.22.1 rule d). A package is its own scope (§26.2, §26.3). So if one class file is `` `include ``d into two packages, or declared in the compilation-unit scope (`$unit`) of two separately compiled files, you get two unrelated types with the same name, and assignments and `$cast` between them fail. Declare each class once, in one package, and import it.
 
+<ArchitectureDiagram
+  title="Same spelling, one type or two: it depends on where the class is declared"
+  caption={<>Each row shows two uses of the spelling <code>fifo#(int)</code>; each dashed box is one declaring scope. Top row: the generic class is in a package, one scope around both uses, so both name one type, and a handle of one can be assigned to the other (§8.25). Middle row: the generic class is declared in a module that is instantiated twice, so there are two scopes: each instance has its own generic class and its own <code>fifo#(int)</code> (§8.25). Bottom row: one class file <code>`include</code>d into two packages, <code>pkg_a</code> and <code>pkg_b</code>, gives two scopes and two unrelated classes with the same name (§6.22.1 rule d, §26.2). In the bottom two rows the two are different types: an assignment between their handles does not compile, and <code>$cast</code> fails.</>}
+  legend={false}
+  cellWidth={130}
+  gapX={80}
+  nodes={[
+    { id: "pkg", label: "package fifo_pkg: one generic class", kind: "generic", col: 0, row: 0, colSpan: 2, container: true },
+    { id: "p1", label: "fifo#(int)", sublabel: "used in module m1", kind: "generic", col: 0, row: 0 },
+    { id: "p2", label: "fifo#(int)", sublabel: "used in module m2", kind: "generic", col: 1, row: 0 },
+    { id: "mod1", label: "module instance u1", kind: "generic", col: 0, row: 1, container: true },
+    { id: "m1", label: "fifo#(int)", sublabel: "u1's own generic class", kind: "generic", col: 0, row: 1 },
+    { id: "mod2", label: "module instance u2", kind: "generic", col: 1, row: 1, container: true },
+    { id: "m2", label: "fifo#(int)", sublabel: "u2's own generic class", kind: "generic", col: 1, row: 1 },
+    { id: "inca", label: "package pkg_a", kind: "generic", col: 0, row: 2, container: true },
+    { id: "i1", label: "pkg_a::fifo#(int)", sublabel: "from the `included file", kind: "generic", col: 0, row: 2 },
+    { id: "incb", label: "package pkg_b", kind: "generic", col: 1, row: 2, container: true },
+    { id: "i2", label: "pkg_b::fifo#(int)", sublabel: "from the same file", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "p1", to: "p2", style: "structural", label: "one type" },
+    { from: "m1", to: "m2", style: "structural", label: "two types" },
+    { from: "i1", to: "i2", style: "structural", label: "two types" }
+  ]}
+/>
+
 ### Expert: names inside a parameterized class
 
 - **Bare name versus `::`.** "Other than as the prefix of the scope resolution operator, use of the unadorned name of a parameterized class shall denote the default specialization" (§8.25), even inside the class. As a `::` prefix inside the class, the bare name "does not denote the default specialization but is used to unambiguously refer to members of the parameterized class", and in an out-of-block method "no specialization is implied" (§8.25.1): either way it reaches the current specialization's members. That is why uvm-core's registries declare `typedef uvm_component_registry #(T, Tname) this_type;` and return `this_type` from `get()`.
 - **`type(this)`.** IEEE 1800-2023 defines `type(this)` as "the type of the enclosing class" (§6.23, §8.11), and its own example is a registry singleton: `static function type(this) get();` with `static type(this) m_inst;` inside. It gives the current specialization without a `typedef`. Check your simulator's support before relying on it (tool-dependent).
 - **Through a handle.** §8.5's example uses `class vector #(parameter width = 7, type T = int);` and a handle `vector #(3) v = new;`. A data type cannot be reached through a handle: `(v.T)'(3.45)` is illegal, while `vector #(3)::T'(3.45)` is legal. A value parameter read through a handle, `v.width`, is legal but "is not a constant expression" (§8.5), so it cannot size an array. The same holds for this page's `bf.T` and `bf.D`.
+
+**The names at a glance.** Every row restates a rule above or in the `::` table in Build Your Mental Model.
+
+| Written as | Where it is legal | What it names |
+|---|---|---|
+| `C` (not before `::`) | Anywhere, including inside `C` (only if every parameter has a default; §8.25) | The default specialization (§8.25) |
+| `C::x` | Only inside `C` and its out-of-block methods | `x` of the current specialization (§8.25.1) |
+| `C#()::x` | Anywhere (only if every parameter has a default; §8.25) | `x` of the default specialization (§8.25.1) |
+| `C#(3)::x`, or a `typedef` name before `::` | Anywhere | `x` of that specialization (§8.25.1) |
+| `this_type`, after `typedef C #(T) this_type;` inside `C` | Inside `C` | The current specialization; uvm-core's registries use it |
+| `type(this)` | Inside the class | The type of the enclosing class, so the current specialization (§6.23, §8.11; tool-dependent support) |
+| `v.width`, a value parameter through a handle | Anywhere the handle is | Legal, but not a constant expression (§8.5) |
+| `v.T`, a type parameter through a handle | Nowhere | Illegal: write `vector #(3)::T` instead (§8.5) |
 
 ### Expert: out-of-block methods of parameterized classes
 
@@ -631,6 +956,30 @@ initial $display("%0d %0d", C#()::f(), C#(5)::f());   // prints "2 10"
 - `class D3 #(type P = real) extends C #(P);` passes its own parameter through to its base. uvm-core does this with `class uvm_sequencer #(type REQ = uvm_sequence_item, RSP = REQ) extends uvm_sequencer_param_base #(REQ, RSP);` (`seq/uvm_sequencer.svh`). (`uvm_driver #(REQ, RSP)` is different: it extends the non-parameterized `uvm_component` and uses `REQ` and `RSP` only for its members, such as its ports.)
 - `class D4 #(type P = C#(real)) extends P;` extends whatever class the parameter names. The name "shall resolve to a class type after elaboration" (the step, after compilation, where the tool resolves every parameter and builds the hierarchy). This **mixin** style adds the same feature to several unrelated bases.
 
+<ArchitectureDiagram
+  title="Which base each form extends, with its default P"
+  caption={<>Each line reads "extends", for the default value of <code>P</code>. D1 and D2 always extend the same specialization. D3's base follows its parameter (<code>D3 #(int)</code> extends <code>C #(int)</code>), the shape of uvm-core's <code>uvm_sequencer #(REQ, RSP)</code>. D4 extends whatever class <code>P</code> names, which "shall resolve to a class type after elaboration" (§8.25); with its default it is <code>C#(real)</code>.</>}
+  legend={false}
+  cellWidth={145}
+  gapX={70}
+  spreadAnchors={true}
+  nodes={[
+    { id: "d1", label: "D1 #(P = real)", sublabel: "extends C", kind: "generic", col: 0, row: 0 },
+    { id: "d2", label: "D2 #(P = real)", sublabel: "extends C #(integer)", kind: "generic", col: 0, row: 1 },
+    { id: "d3", label: "D3 #(P = real)", sublabel: "extends C #(P)", kind: "generic", col: 0, row: 2 },
+    { id: "d4", label: "D4 #(P = C#(real))", sublabel: "extends P: a mixin", kind: "generic", col: 0, row: 3 },
+    { id: "cb", label: "C#(bit)", sublabel: "C's default specialization", kind: "generic", col: 1, row: 0, badge: "type" },
+    { id: "ci", label: "C#(integer)", sublabel: "fixed by D2", kind: "generic", col: 1, row: 1, badge: "type" },
+    { id: "cr", label: "C#(real)", sublabel: "for the default P only", kind: "generic", col: 1, row: 2, rowSpan: 2, badge: "type" }
+  ]}
+  edges={[
+    { from: "d1", to: "cb", style: "structural", label: "extends" },
+    { from: "d2", to: "ci", style: "structural", label: "extends" },
+    { from: "d3", to: "cr", style: "structural", label: "extends" },
+    { from: "d4", to: "cr", style: "structural", label: "extends" }
+  ]}
+/>
+
 Two related rules (IEEE 1800-2023 §6.20.3; check your simulator, tool-dependent):
 
 - **Restricted type parameters.** `#(type class T)` (also `enum`, `struct`, `union`, `interface class`) makes a non-class argument an error, so `D4 #(int)` would be rejected with a clear message. The standard's own `weak_reference` is declared `class weak_reference #(type class T)` (Annex G).
@@ -638,11 +987,13 @@ Two related rules (IEEE 1800-2023 §6.20.3; check your simulator, tool-dependent
 
 ### Expert: abstract-class corner cases
 
-- **Any class may be extended into an abstract class** that declares new pure virtual methods or re-declares inherited ones as pure (§8.21). A complete class can thus have an incomplete subclass.
-- **`pure constraint`.** An abstract class may also declare `pure constraint name;`, an obligation for every non-abstract subclass to supply a constraint of that name. Declaring one in a non-abstract class is an error (§18.5.2). [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index) covers constraint inheritance.
-- **`:final` cannot be used on a pure virtual method or a pure constraint** (Annex A, A.10 note 8). A promise that must be kept cannot also forbid keeping it.
-- **A pure virtual method in a class not declared `virtual`.** §8.21's normative text attaches pure virtual methods to abstract classes, but §8.20's Example 3 declares `pure virtual function void f3();` inside a plain `class base;`. Simulators may differ on whether such a class is accepted or treated as abstract (tool-dependent). Always write `virtual class`.
-- **Partial implementation of an interface class.** A `virtual class` may implement an interface class and leave some of its methods `pure virtual` for the first complete subclass (§8.26.7); the [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) owns interface classes.
+| Corner case | What the standard says | Clause |
+|---|---|---|
+| A complete class extended into an abstract one | **Any class may be extended into an abstract class** that declares new pure virtual methods or re-declares inherited ones as pure. A complete class can thus have an incomplete subclass. | §8.21 |
+| **`pure constraint`** | An abstract class may also declare `pure constraint name;`, an obligation for every non-abstract subclass to supply a constraint of that name. Declaring one in a non-abstract class is an error. [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index) covers constraint inheritance. | §18.5.2 |
+| `:final` on a pure method | **`:final` cannot be used on a pure virtual method or a pure constraint.** A promise that must be kept cannot also forbid keeping it. | Annex A, A.10 note 8 |
+| **A pure virtual method in a class not declared `virtual`** | §8.21's normative text attaches pure virtual methods to abstract classes, but §8.20's Example 3 declares `pure virtual function void f3();` inside a plain `class base;`. Simulators may differ on whether such a class is accepted or treated as abstract (tool-dependent). Always write `virtual class`. | §8.21, §8.20 Example 3; **tool-dependent** |
+| **Partial implementation of an interface class** | A `virtual class` may implement an interface class and leave some of its methods `pure virtual` for the first complete subclass; the [I-SV-1 overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index) owns interface classes. | §8.26.7 |
 
 ### Expert: how UVM combines both
 
@@ -653,7 +1004,30 @@ Every item here is in uvm-core 2020.3.1; the UVM lessons teach how to use them.
 - **Typed configuration lookup.** `class uvm_config_db #(type T = int)` stores and finds entries by type as well as by name: `get` looks the name up with `uvm_resource#(T)::get_type()` (`base/uvm_config_db_implementation.svh`, `base/uvm_resource_pool.svh`; IEEE 1800.2-2020 §C.4.2). So `uvm_config_db#(int)::set(this, "*", "depth", 8)` followed by `uvm_config_db#(bit [31:0])::get(this, "", "depth", d)` returns 0: two specializations, and `int` does not match `bit [31:0]`. [I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) teaches configuration.
 - **A deliberate non-pure hook.** `uvm_sequence_base::body()` is an ordinary `virtual task` that warns "Body definition undefined" when not overridden (`seq/uvm_sequence_base.svh`), not a pure virtual method. Making it pure would force every subclass, including intermediate base sequences, to define it; the library chose a run-time warning over a compile-time error.
 
+**Picture the typed lookup** from the third bullet. It is this page's per-specialization statics at work: `uvm_resource#(T)::get_type()` returns a singleton that each specialization keeps in its own static handle (`base/uvm_resource.svh`), so `int` and `bit [31:0]` entries carry different type handles.
+
+<SequenceDiagram
+  title="A depth set as int is not found as bit [31:0]"
+  caption={<>Traced through uvm-core 2020.3.1 (<code>base/uvm_config_db_implementation.svh</code>, <code>base/uvm_resource_pool.svh</code>). The name and the scope match; only the type handle differs, because <code>int</code> (signed) and <code>bit [31:0]</code> (unsigned) are two specializations (§6.22.1, §8.25). <code>get</code> writes its output argument only when it finds an entry, so <code>d</code> keeps whatever it held. This is the debugging table's <code>store#(int)</code> row, in UVM.</>}
+  columnWidth={115}
+  participants={[
+    { id: "env", label: "env", sublabel: "calls set", kind: "generic" },
+    { id: "pool", label: "resource pool", sublabel: "behind uvm_config_db", kind: "generic" },
+    { id: "agt", label: "env.agt", sublabel: "calls get", kind: "generic" }
+  ]}
+  messages={[
+    { from: "env", to: "pool", label: "uvm_config_db#(int)::set(this, \"*\", \"depth\", 8)" },
+    { kind: "self", from: "pool", label: "store depth as a uvm_resource#(int), scope env.*" },
+    { from: "agt", to: "pool", label: "uvm_config_db#(bit [31:0])::get(this, \"\", \"depth\", d)" },
+    { kind: "self", from: "pool", label: "match name depth and type uvm_resource#(bit [31:0])" },
+    { kind: "note", from: "pool", to: "agt", label: "The depth entry's type handle is uvm_resource#(int)::get_type(): another specialization, so it does not match", tone: "error" },
+    { kind: "return", from: "pool", to: "agt", label: "get returns 0; d is not written" }
+  ]}
+/>
+
 ### Expert: type parameters or base-class handles?
+
+The comparison table in Why generic classes set these two side by side, row by row; this is the trade-off in depth.
 
 Two designs give one container for many item types:
 
@@ -951,14 +1325,40 @@ match=111 packet_checks=2 crc_checks=1
 4. Remove `get_type_name()` from `err_txn`. Does the program still compile? What does `err_txn` now print? Then remove the override from `txn` as well, and explain what changes.
 5. Move the generic `registry` class, together with `txn` and `err_txn`, out of the package and into a module `reg_mod` that a new top module instantiates twice (keep `base_obj` and `object_wrapper` in `reg_pkg`, and import it in `reg_mod`). First predict what happens if you move only `registry` and leave `txn` and `err_txn` in the package. Then explain why the full move is still a bad idea.
 
-<details>
-<summary>Worked solution</summary>
+**Worked solution, one reveal per task.** Write your own answer to a task before you open its reveal.
 
-1. With two `rd_txn` pushes after the original three, the loop prints five lines: the three from Make It Work, then `rd_txn built a rd_txn` twice. Both `rd_txn` entries are one singleton (`w[3] == w[4]`), and the final line is `txn=2 err_txn=1 same_proxy=1`; `rd_txn::type_id::created` would read 2.
-2. `registry r;` names the default specialization, but `T` has no default, so there is none: the compiler reports that `registry` needs a parameter value for `T` (§8.25).
-3. `typedef registry #(.TNAME("txn"), .T(txn)) txn_reg_t;`. Named parameters may come in any order (§8.25, §23.10), so this is `registry #(txn, "txn")`, the same specialization as `txn::type_id`. Then `txn_reg_t::created` and `txn::type_id::created` are one static variable and both read 2.
-4. It still compiles, because `err_txn` inherits `txn::get_type_name()`, which has a body. So `err_txn built a txn` is printed: the registry's own name is still `"err_txn"`, but the object reports its parent's string. If `txn` also loses its override, neither `txn` nor `err_txn` implements `base_obj`'s pure virtual `get_type_name()`. Both are declared as ordinary (non-abstract) classes, and §8.21 requires every pure virtual method to be implemented before a non-abstract class extends it, so the package fails to compile. Declaring them `virtual class` instead would only move the error: `T obj = new();` in their registry specializations would then try to construct an abstract class (§8.21).
-5. **Moving only `registry`:** `reg_pkg` stops compiling first. `txn` and `err_txn` declare `typedef registry #(...) type_id;`, and a package cannot refer to a class declared in a module; items in a package may reference only what the package declares or imports from another package (§26.2). **Moving all three:** it compiles, but each instance of `reg_mod` creates a separate generic class `registry` and a separate `txn` (§8.25). The two instances' `registry #(txn, "txn")` are two different types, each with its own singleton and its own `created` counter, and a handle from one cannot be assigned to the other. Only the shared `object_wrapper` base still lets both be held in one `object_wrapper` handle. Keep generic classes, and the classes that use them, in packages.
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Task 1: predict the output with two <code>rd_txn</code> pushes</summary>
+
+With two `rd_txn` pushes after the original three, the loop prints five lines: the three from Make It Work, then `rd_txn built a rd_txn` twice. Both `rd_txn` entries are one singleton (`w[3] == w[4]`), and the final line is `txn=2 err_txn=1 same_proxy=1`; `rd_txn::type_id::created` would read 2.
+
+</details>
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Task 2: why <code>registry r;</code> is rejected</summary>
+
+`registry r;` names the default specialization, but `T` has no default, so there is none: the compiler reports that `registry` needs a parameter value for `T` (§8.25).
+
+</details>
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Task 3: a <code>typedef</code> with named parameters in a different order</summary>
+
+`typedef registry #(.TNAME("txn"), .T(txn)) txn_reg_t;`. Named parameters may come in any order (§8.25, §23.10), so this is `registry #(txn, "txn")`, the same specialization as `txn::type_id`. Then `txn_reg_t::created` and `txn::type_id::created` are one static variable and both read 2.
+
+</details>
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Task 4: removing <code>get_type_name()</code> from <code>err_txn</code>, then from <code>txn</code></summary>
+
+It still compiles, because `err_txn` inherits `txn::get_type_name()`, which has a body. So `err_txn built a txn` is printed: the registry's own name is still `"err_txn"`, but the object reports its parent's string. If `txn` also loses its override, neither `txn` nor `err_txn` implements `base_obj`'s pure virtual `get_type_name()`. Both are declared as ordinary (non-abstract) classes, and §8.21 requires every pure virtual method to be implemented before a non-abstract class extends it, so the package fails to compile. Declaring them `virtual class` instead would only move the error: `T obj = new();` in their registry specializations would then try to construct an abstract class (§8.21).
+
+</details>
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Task 5: moving the classes into a module instantiated twice</summary>
+
+**Moving only `registry`:** `reg_pkg` stops compiling first. `txn` and `err_txn` declare `typedef registry #(...) type_id;`, and a package cannot refer to a class declared in a module; items in a package may reference only what the package declares or imports from another package (§26.2). **Moving all three:** it compiles, but each instance of `reg_mod` creates a separate generic class `registry` and a separate `txn` (§8.25). The two instances' `registry #(txn, "txn")` are two different types, each with its own singleton and its own `created` counter, and a handle from one cannot be assigned to the other. Only the shared `object_wrapper` base still lets both be held in one `object_wrapper` handle. Keep generic classes, and the classes that use them, in packages. The middle row of the "where a class is declared" diagram in Push Further draws this case.
 
 </details>
 

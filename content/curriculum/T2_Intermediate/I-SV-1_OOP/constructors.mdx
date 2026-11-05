@@ -16,7 +16,75 @@ sources:
 
 - **What it is:** `new` is the **class constructor**: a function with no return type that runs when you write `h = new(...)`. It builds the object and gives it its starting values (IEEE 1800-2023 §8.7). Inside a method, `this` names the object the method is running on (§8.11), and `super` reaches the parent class's version of a member, including the parent's constructor, `super.new` (§8.15).
 - **Why it matters:** every transaction, configuration object and testbench component starts life in a constructor. Three bugs live here. A subclass that forgets `super.new(...)` can compile and silently hand its parent the default arguments. A constructor that writes `addr = addr;` instead of `this.addr = addr;` leaves the field at its default. And a **virtual** method (one whose call runs the version written for the object's actual class, introduced in the [module overview](/curriculum/T2_Intermediate/I-SV-1_OOP/index)) called from a parent's constructor runs the child's version before the child's fields have values.
-- **The Analogy:** a building goes up one floor at a time. The foundation, the root base class, is built first. Each floor gets its fixtures (the initial values written in its variable declarations, such as `int count = 5;`) and then its finishing work (the rest of its constructor code) before the next floor goes on top. *Where it breaks:* in SystemVerilog, a virtual call made while the foundation is being finished already runs the top floor's version of the method, although the top floor has no fixtures yet (§8.17 NOTE 2). A real builder cannot use a floor that does not exist.
+- **The Analogy:** a building goes up one floor at a time. The foundation, the root base class, is built first. Each floor gets its fixtures (the initial values written in its variable declarations, such as `int count = 5;`) and then its finishing work (the rest of its constructor code) before the next floor goes on top. *Where it breaks:* in SystemVerilog, a virtual call made while the foundation is being finished already runs the most-derived version of the method (the top floor's, if the top floor overrides it), although the floors above the foundation have no fixtures yet (§8.17 NOTE 2). A real builder cannot use a floor that does not exist.
+
+<figure className="my-6">
+<svg viewBox="0 0 360 288" role="img" aria-labelledby="ctor-floors-title" aria-describedby="ctor-floors-desc" style={{ width: "100%", maxWidth: 360 }}>
+  <title id="ctor-floors-title">Build from the root up: the order in which a crc_item object is constructed</title>
+  <desc id="ctor-floors-desc">Three floors stacked with the root base class at the bottom: base_item, then bus_item, then crc_item. A dashed arrow on the left points down: super.new calls go down first. A cyan dashed arrow on the right points up: work runs back up, root first. Each floor has two numbered boxes, its initializers and then the rest of its constructor body, and the work runs in this order: 1, base_item initializers; 2, the rest of base_item's body; 3, bus_item initializers, which set addr; 4, the rest of bus_item's body; 5, crc_item initializers, which set crc; 6, the rest of crc_item's body. A flag on box 2 warns that a virtual method called there already dispatches to the most-derived override (crc_item's, if crc_item overrides the method), while addr and crc are still undefined.</desc>
+  <defs>
+    <marker id="ctor-qt-open" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </marker>
+    <marker id="ctor-qt-up" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" />
+    </marker>
+  </defs>
+  <rect x="78" y="12" width="204" height="52" rx="4" fill="rgba(8,145,178,0.07)" stroke="rgb(8,145,178)" />
+  <text x="86" y="26" fontSize="11" fill="currentColor"><tspan fontFamily="monospace" fontWeight="bold">{"crc_item"}</tspan><tspan>{" adds crc"}</tspan></text>
+  <rect x="82" y="32" width="98" height="28" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <circle cx="94" cy="46" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="94" y="50" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"5"}</text>
+  <text x="106" y="44" fontSize="11" fill="currentColor">{"initializers"}</text>
+  <text x="106" y="56" fontSize="11" fill="currentColor" fillOpacity="0.75">{"(fixtures)"}</text>
+  <rect x="184" y="32" width="94" height="28" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <circle cx="196" cy="46" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="196" y="50" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"6"}</text>
+  <text x="208" y="44" fontSize="11" fill="currentColor">{"rest of body"}</text>
+  <text x="208" y="56" fontSize="11" fill="currentColor" fillOpacity="0.75">{"(finishing)"}</text>
+  <rect x="78" y="70" width="204" height="52" rx="4" fill="rgba(8,145,178,0.07)" stroke="rgb(8,145,178)" />
+  <text x="86" y="84" fontSize="11" fill="currentColor"><tspan fontFamily="monospace" fontWeight="bold">{"bus_item"}</tspan><tspan>{" adds addr"}</tspan></text>
+  <rect x="82" y="90" width="98" height="28" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <circle cx="94" cy="104" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="94" y="108" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"3"}</text>
+  <text x="106" y="102" fontSize="11" fill="currentColor">{"initializers"}</text>
+  <text x="106" y="114" fontSize="11" fill="currentColor" fillOpacity="0.75">{"(fixtures)"}</text>
+  <rect x="184" y="90" width="94" height="28" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <circle cx="196" cy="104" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="196" y="108" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"4"}</text>
+  <text x="208" y="102" fontSize="11" fill="currentColor">{"rest of body"}</text>
+  <text x="208" y="114" fontSize="11" fill="currentColor" fillOpacity="0.75">{"(finishing)"}</text>
+  <rect x="78" y="128" width="204" height="52" rx="4" fill="rgba(8,145,178,0.07)" stroke="rgb(8,145,178)" />
+  <text x="86" y="142" fontSize="11" fill="currentColor"><tspan fontFamily="monospace" fontWeight="bold">{"base_item"}</tspan><tspan>{" root base class"}</tspan></text>
+  <rect x="82" y="148" width="98" height="28" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <circle cx="94" cy="162" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="94" y="166" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"1"}</text>
+  <text x="106" y="160" fontSize="11" fill="currentColor">{"initializers"}</text>
+  <text x="106" y="172" fontSize="11" fill="currentColor" fillOpacity="0.75">{"(fixtures)"}</text>
+  <rect x="184" y="148" width="94" height="28" rx="3" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" strokeWidth="1.5" />
+  <circle cx="196" cy="162" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="196" y="166" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"2"}</text>
+  <text x="208" y="160" fontSize="11" fill="currentColor">{"rest of body"}</text>
+  <text x="208" y="172" fontSize="11" fill="currentColor" fillOpacity="0.75">{"(finishing) ⚑"}</text>
+  <line x1="74" y1="186" x2="286" y2="186" stroke="currentColor" strokeOpacity="0.6" strokeWidth="2" />
+  <line x1="70" y1="18" x2="70" y2="174" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 3" markerEnd="url(#ctor-qt-open)" />
+  <text x="4" y="88" fontSize="11" fontFamily="monospace" fill="currentColor">{"super.new"}</text>
+  <text x="4" y="102" fontSize="11" fill="currentColor">{"calls go"}</text>
+  <text x="4" y="116" fontSize="11" fill="currentColor">{"down first"}</text>
+  <line x1="290" y1="174" x2="290" y2="18" stroke="rgb(8,145,178)" strokeWidth="2" strokeDasharray="9 3" markerEnd="url(#ctor-qt-up)" />
+  <text x="296" y="88" fontSize="11" fill="currentColor">{"work runs"}</text>
+  <text x="296" y="102" fontSize="11" fill="currentColor">{"back up,"}</text>
+  <text x="296" y="116" fontSize="11" fill="currentColor">{"root first"}</text>
+  <line x1="231" y1="176" x2="231" y2="198" stroke="rgb(245,158,11)" strokeWidth="1.5" />
+  <rect x="4" y="198" width="352" height="84" rx="6" fill="rgba(245,158,11,0.10)" stroke="rgb(245,158,11)" />
+  <text x="12" y="213" fontSize="11" fill="currentColor">{"⚑ Box 2 hazard: a virtual method called here"}</text>
+  <text x="12" y="227" fontSize="11" fill="currentColor">{"already dispatches to the most-derived override"}</text>
+  <text x="12" y="241" fontSize="11" fill="currentColor">{"(crc_item's, if it overrides it), while addr"}</text>
+  <text x="12" y="255" fontSize="11" fill="currentColor">{"(box 3) and crc (box 5) are still undefined"}</text>
+  <text x="12" y="269" fontSize="11" fill="currentColor">{"(§8.7, §8.17 NOTE 2)."}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Conceptual illustration of §8.7 and §8.17, drawn for the classes you build in Make It Work (<code>crc_item</code> extends <code>bus_item</code>, which extends <code>base_item</code>). The calls go down to the root first; then each floor gets its fixtures (its initializers) and its finishing work (the rest of its constructor body), root first, boxes 1 to 6. Where the analogy breaks: a virtual call made while the foundation is being finished (box 2) already runs the most-derived override of the method (the top floor's, <code>crc_item</code>'s, if <code>crc_item</code> overrides it).</figcaption>
+</figure>
 
 **You will be able to:**
 1. **Predict** every property value after a derived object is constructed, from the order: base-class constructor, then this class's property initializers, then the rest of this class's constructor body (§8.7, §8.17).
@@ -65,6 +133,11 @@ module tb_top;
 endmodule
 ```
 
+**Predict first.** What do the two `$display` lines print? Write both lines exactly as `%0h` prints them.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the expected output</summary>
+
 Expected output (illustrative, traced by hand):
 
 ```text
@@ -72,12 +145,19 @@ addr=10 data=ff
 addr=0 data=3c
 ```
 
+The second call binds `data` by name (§13.5.4), so `addr` takes its default value, 0 (§13.5.3).
+
+</details>
+
 The rules you will rely on, all from §8.7 unless noted:
 
-- **Implicit constructor.** If a class declares no `new`, the compiler provides one. It initializes the properties and does nothing else. In a class that extends another (next section), it first calls the parent's constructor with no arguments, unless an `extends Base(args)` clause supplies them (§8.7, §8.17).
-- **A constructor is a function, so it cannot wait.** It may not contain `#`, `@`, `wait` or any other timing control (§13.4). Anything that must wait for time belongs in a task that runs after construction.
-- **Qualifiers.** A constructor may be `local` or `protected`, which limits who can call it (§8.18). It shall not be `static` or `virtual`.
-- **Shallow copies skip it.** `p2 = new p1;` allocates a copy without running any constructor or property initializer (§8.12). [Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) covers what that copy contains.
+| You write | Allowed? | What happens, and why |
+|---|---|---|
+| A class with no `new` | Yes, if the parent's `new` can be called with no arguments or an `extends Base(args)` clause supplies them | **Implicit constructor.** The compiler provides one. It initializes the properties and does nothing else. In a class that extends another (next section), it first calls the parent's constructor with no arguments, unless an `extends Base(args)` clause supplies them (§8.7, §8.17). |
+| `#`, `@` or `wait` inside `new` | No | **A constructor is a function, so it cannot wait.** It may not contain `#`, `@`, `wait` or any other timing control (§13.4); like any function, `new` "shall be nonblocking" (§8.7). Anything that must wait for time belongs in a task that runs after construction. |
+| `local function new` or `protected function new` | Yes | **Qualifiers.** A constructor may be `local` or `protected`, which limits who can call it (§8.18). |
+| `static function new` or `virtual function new` | No | It shall not be `static` or `virtual` (§8.7). |
+| `p2 = new p1;` | Yes, but no constructor runs | **Shallow copies skip it.** `p2 = new p1;` allocates a copy without running any constructor or property initializer (§8.12). [Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) covers what that copy contains. |
 
 ### Construction order, step by step
 
@@ -86,6 +166,95 @@ When a class **extends** another, the new class (the **subclass**, or derived cl
 1. **The base-class constructor runs first**, completely: your explicit `super.new(...)`, or a call the compiler inserts. Its own base runs before it, so the chain starts at the root base class.
 2. **Then each property declared in this class is initialized**, to its declared initial value (`int count = 5;`) or, if it has none, to its type's default value (Table 6-7).
 3. **Then the rest of this class's constructor body runs.**
+
+Try the rule on a three-level chain: the classes of the [Make It Work](#make-it-work) example below, where `crc_item` extends `bus_item`, which extends `base_item`. Each constructor prints one line. `bus_item` declares `bit [31:0] addr = 32'h100;` and prints `addr`; `crc_item` declares `bit [7:0] crc = 8'h5a;` and prints `crc`.
+
+**Predict first.** After `c = new("pkt0");`, which constructor prints its line first, and what is `addr` when `bus_item::new` prints? Decide, then check your answer against the floors picture below.
+
+Here is the floors picture from the Quick Take again, now with the real contents of each box for `c = new("pkt0");`.
+
+<figure className="my-6">
+<svg viewBox="0 0 360 348" role="img" aria-labelledby="ctor-order-title" aria-describedby="ctor-order-desc" style={{ width: "100%", maxWidth: 400 }}>
+  <title id="ctor-order-title">Construction order for c = new("pkt0"), box by box</title>
+  <desc id="ctor-order-desc">Three floors with the root base class at the bottom. A dashed arrow on the left shows the super.new(name) calls going down first; a cyan dashed arrow on the right shows the work running back up, boxes 1 to 6 in order. Box 1, base_item initializers: none are declared, so id is 0 and name is the empty string. Box 2, the rest of base_item's body: count++; id = count; this.name = name; and a $display. Box 3, bus_item initializer: addr = 32'h100. Box 4, the rest of bus_item's body: a $display of addr. Box 5, crc_item initializer: crc = 8'h5a. Box 6, the rest of crc_item's body: a $display of crc. A note says that on the way down, each super.new(name) argument is evaluated before the calling class's own initializers run, so any of those properties it reads is still undefined (§8.7).</desc>
+  <defs>
+    <marker id="ctor-d-open" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </marker>
+    <marker id="ctor-d-up" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" />
+    </marker>
+  </defs>
+  <line x1="8" y1="14" x2="34" y2="14" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 3" markerEnd="url(#ctor-d-open)" />
+  <text x="42" y="18" fontSize="11" fill="currentColor"><tspan fontFamily="monospace">{"super.new(name)"}</tspan><tspan>{" calls go down first"}</tspan></text>
+  <line x1="8" y1="32" x2="34" y2="32" stroke="rgb(8,145,178)" strokeWidth="2" strokeDasharray="9 3" markerEnd="url(#ctor-d-up)" />
+  <text x="42" y="36" fontSize="11" fill="currentColor">{"work runs back up, root first: boxes 1 to 6"}</text>
+  <rect x="26" y="44" width="308" height="60" rx="4" fill="rgba(8,145,178,0.07)" stroke="rgb(8,145,178)" />
+  <text x="32" y="58" fontSize="11" fill="currentColor"><tspan fontFamily="monospace" fontWeight="bold">{"crc_item"}</tspan><tspan>{" extends bus_item"}</tspan></text>
+  <rect x="32" y="64" width="120" height="34" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <circle cx="44" cy="77" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="44" y="81" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"5"}</text>
+  <text x="58" y="81" fontSize="11" fill="currentColor">{"initializers"}</text>
+  <text x="40" y="94" fontSize="11" fontFamily="monospace" fill="currentColor">{"crc = 8'h5a"}</text>
+  <rect x="158" y="64" width="170" height="34" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <circle cx="170" cy="77" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="170" y="81" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"6"}</text>
+  <text x="184" y="81" fontSize="11" fill="currentColor">{"rest of body"}</text>
+  <text x="166" y="94" fontSize="11" fontFamily="monospace" fill="currentColor">{"$display(..., crc);"}</text>
+  <rect x="26" y="110" width="308" height="60" rx="4" fill="rgba(8,145,178,0.07)" stroke="rgb(8,145,178)" />
+  <text x="32" y="124" fontSize="11" fill="currentColor"><tspan fontFamily="monospace" fontWeight="bold">{"bus_item"}</tspan><tspan>{" extends base_item"}</tspan></text>
+  <rect x="32" y="130" width="120" height="34" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <circle cx="44" cy="143" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="44" y="147" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"3"}</text>
+  <text x="58" y="147" fontSize="11" fill="currentColor">{"initializers"}</text>
+  <text x="40" y="160" fontSize="11" fontFamily="monospace" fill="currentColor">{"addr = 32'h100"}</text>
+  <rect x="158" y="130" width="170" height="34" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <circle cx="170" cy="143" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="170" y="147" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"4"}</text>
+  <text x="184" y="147" fontSize="11" fill="currentColor">{"rest of body"}</text>
+  <text x="166" y="160" fontSize="11" fontFamily="monospace" fill="currentColor">{"$display(..., addr);"}</text>
+  <rect x="26" y="176" width="308" height="86" rx="4" fill="rgba(8,145,178,0.07)" stroke="rgb(8,145,178)" />
+  <text x="32" y="190" fontSize="11" fill="currentColor"><tspan fontFamily="monospace" fontWeight="bold">{"base_item"}</tspan><tspan>{" root base class"}</tspan></text>
+  <rect x="32" y="196" width="120" height="60" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <circle cx="44" cy="209" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="44" y="213" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"1"}</text>
+  <text x="58" y="213" fontSize="11" fill="currentColor">{"initializers"}</text>
+  <text x="40" y="227" fontSize="11" fill="currentColor">{"none, so defaults:"}</text>
+  <text x="40" y="240" fontSize="11" fontFamily="monospace" fill="currentColor">{"id = 0"}</text>
+  <text x="40" y="253" fontSize="11" fontFamily="monospace" fill="currentColor">{"name = \"\""}</text>
+  <rect x="158" y="196" width="170" height="60" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <circle cx="170" cy="209" r="8" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+  <text x="170" y="213" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"2"}</text>
+  <text x="184" y="213" fontSize="11" fill="currentColor">{"rest of body"}</text>
+  <text x="166" y="227" fontSize="11" fontFamily="monospace" fill="currentColor">{"count++; id = count;"}</text>
+  <text x="166" y="240" fontSize="11" fontFamily="monospace" fill="currentColor">{"this.name = name;"}</text>
+  <text x="166" y="253" fontSize="11" fontFamily="monospace" fill="currentColor">{"$display(...);"}</text>
+  <line x1="20" y1="268" x2="340" y2="268" stroke="currentColor" strokeOpacity="0.6" strokeWidth="2" />
+  <line x1="14" y1="48" x2="14" y2="256" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 3" markerEnd="url(#ctor-d-open)" />
+  <line x1="346" y1="256" x2="346" y2="48" stroke="rgb(8,145,178)" strokeWidth="2" strokeDasharray="9 3" markerEnd="url(#ctor-d-up)" />
+  <rect x="4" y="276" width="352" height="66" rx="6" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeOpacity="0.4" />
+  <text x="12" y="292" fontSize="11" fill="currentColor">{"On the way down, each super.new(name) argument is"}</text>
+  <text x="12" y="306" fontSize="11" fill="currentColor">{"evaluated before the calling class's own initializers"}</text>
+  <text x="12" y="320" fontSize="11" fill="currentColor">{"run, so any of those properties it reads is still"}</text>
+  <text x="12" y="334" fontSize="11" fill="currentColor">{"undefined (§8.7)."}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Conceptual illustration of §8.7 and §8.17 for the Make It Work classes. Read the three steps from any floor: step 1 is every floor below it, step 2 is its left box (initializers) and step 3 is its right box (the rest of its body).</figcaption>
+</figure>
+
+**Check yourself.** For a `bus_item` object, which numbered boxes does each of the three steps cover? And for a `crc_item` object?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the mapping</summary>
+
+| Step of the rule | For a `bus_item` object | For a `crc_item` object |
+|---|---|---|
+| 1. The base-class constructor runs first, completely | Boxes 1–2: all of `base_item` | Boxes 1–4: all of `bus_item`, which itself starts with `base_item` |
+| 2. This class's initializers | Box 3: `addr = 32'h100` | Box 5: `crc = 8'h5a` |
+| 3. The rest of this class's body | Box 4: prints `addr` | Box 6: prints `crc` |
+
+The rule repeats on every floor, so a chain of any depth unrolls into one bottom-up sequence: the constructors run "beginning with the root base class and ending with the current class" (§8.17). A `bus_item` object has only the bottom two floors, so it runs boxes 1 to 4.
+
+</details>
 
 Before step 2 reaches a property, its value is **undefined** (§8.7). That matters in one place you might not expect: the arguments of `super.new(...)` are evaluated before this class's initializers have run.
 
@@ -133,9 +302,7 @@ A dash means the value is undefined: the property has not been initialized yet.
 
 </details>
 
-The same rule, drawn for a three-level chain. These are the classes of the [Make It Work](#make-it-work) example below: `crc_item` extends `bus_item`, which extends `base_item`.
-
-**Predict first.** After `c = new("pkt0");`, which constructor prints its line first, and what is `addr` when `bus_item::new` prints?
+The same order as calls and returns, for the same `c = new("pkt0");` on the three-level chain:
 
 <SequenceDiagram
   title="Constructing a crc_item: who runs when"
@@ -164,6 +331,59 @@ The same rule, drawn for a three-level chain. These are the classes of the [Make
 
 **Read the diagram this way:** the numbered arrows are the calls and returns; the boxes on a lifeline are the work that constructor does at that point. All three calls go down before any subclass property has a value. Work happens only on the way back up, one whole class at a time, root first. So `base_item::new` prints first, and when `bus_item::new` prints, `addr` is already `100`: its initializer ran right after `super.new(name)` returned. The two pitfalls on this page follow directly: an argument passed down by `super.new(...)` cannot depend on the caller's own initializers, and a method called while `base_item`'s body runs cannot rely on `bus_item` or `crc_item` fields.
 
+### A virtual call during construction
+
+**Predict first.** `base_chk`'s constructor calls the virtual method `setup()`. `err_chk` overrides `setup()` and has no constructor of its own.
+
+```systemverilog
+// snippet: a virtual call from a base-class constructor
+class base_chk;
+  function new();
+    setup();                      // called from the constructor
+  endfunction
+  virtual function void setup();
+  endfunction
+endclass
+
+class err_chk extends base_chk;
+  int max_errs = 3;
+  // no constructor of its own
+  virtual function void setup();
+    $display("max_errs=%0d", max_errs);
+  endfunction
+endclass
+```
+
+After `k = new;` (`k` is an `err_chk` handle), which `setup` runs, and what does it print? Decide, then open the diagram.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show what happens</summary>
+
+<SequenceDiagram
+  title="A virtual call during construction"
+  caption="Dispatch goes to the object's class (§8.20), but initialization follows §8.7, so the override reads a field whose initializer has not run (§8.17 NOTE 2). Fix: remove setup() from base_chk::new and call k.setup() after new returns; it then prints max_errs=3."
+  participants={[
+    { id: "tb", label: "tb_top", kind: "generic" },
+    { id: "chk", label: "err_chk::new", sublabel: "implicit", kind: "generic" },
+    { id: "base", label: "base_chk::new", kind: "generic" },
+    { id: "setup", label: "err_chk::setup", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tb", to: "chk", label: "k = new" },
+    { from: "chk", to: "base", label: "super.new(), first action (§8.7)" },
+    { from: "base", to: "setup", label: "setup() is virtual: runs err_chk's override (§8.20)", tone: "active" },
+    { kind: "note", from: "base", to: "setup", label: "setup reads max_errs before its initializer has run: undefined (§8.7). Most tools print max_errs=0 (tool-dependent).", tone: "error" },
+    { kind: "return", from: "setup", to: "base", label: "returns" },
+    { kind: "return", from: "base", to: "chk", label: "base_chk part complete" },
+    { kind: "note", from: "chk", label: "initializer sets max_errs = 3, too late" },
+    { kind: "return", from: "chk", to: "tb", label: "handle to the err_chk" }
+  ]}
+/>
+
+This is the third bug from the Quick Take, box 2 in the floors picture. `base_chk::new` makes a virtual call while the object is being built. `err_chk` has no constructor, so its implicit one calls `super.new()` first (§8.7), and `max_errs` is initialized only after `base_chk::new` returns (§8.7). `err_chk::setup` runs, not the empty base version, because the object's class decides which override a virtual call runs. On most tools it prints `max_errs=0` (tool-dependent), but the standard calls the value undefined. Push Further's interview questions come back to this rule and add the C++ comparison.
+
+</details>
+
 ### `this`: the object the method runs on
 
 `this` is a predefined handle to the object that was used to call the current method (§8.11). Its everyday use is to separate a property from an argument or local variable of the same name. An unqualified name always resolves to the innermost scope, which is the argument, so the property must be written `this.addr` (§8.11).
@@ -181,6 +401,39 @@ class Packet;
 endclass
 ```
 
+<figure className="my-6">
+<svg viewBox="0 0 360 212" role="img" aria-labelledby="ctor-scope-title" aria-describedby="ctor-scope-desc" style={{ width: "100%", maxWidth: 400 }}>
+  <title id="ctor-scope-title">Which addr each name reaches inside new, for p = new(5)</title>
+  <desc id="ctor-scope-desc">The outer box is the Packet object, with its property addr, still 0. Inside it, a dashed box is the scope of function new(int addr = 0), called as new(5), which holds the argument addr = 5. In the line addr = addr;, arrows from both names go to the argument: the innermost scope wins (§8.11), so the property is never touched. In the line this.addr = addr;, an arrow from this.addr goes out to the property, and an arrow from the right-hand addr goes to the argument.</desc>
+  <defs>
+    <marker id="ctor-scope-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(8,145,178)" />
+    </marker>
+  </defs>
+  <rect x="4" y="4" width="352" height="204" rx="6" fill="rgba(99,102,241,0.06)" stroke="rgb(99,102,241)" />
+  <text x="12" y="20" fontSize="11" fill="currentColor"><tspan fontFamily="monospace" fontWeight="bold">{"class Packet"}</tspan><tspan>{" (the object this refers to)"}</tspan></text>
+  <rect x="14" y="28" width="172" height="24" rx="3" fill="rgba(99,102,241,0.12)" stroke="rgb(99,102,241)" />
+  <text x="22" y="44" fontSize="11" fontFamily="monospace" fill="currentColor">{"property addr = 0"}</text>
+  <text x="194" y="44" fontSize="11" fill="currentColor">{"← only this.addr reaches it"}</text>
+  <rect x="14" y="62" width="332" height="138" rx="4" fill="rgba(8,145,178,0.05)" stroke="rgb(8,145,178)" strokeDasharray="5 3" />
+  <text x="22" y="78" fontSize="11" fontFamily="monospace" fill="currentColor">{"function new(int addr = 0)"}</text>
+  <text x="202" y="78" fontSize="11" fill="currentColor">{"called as new(5)"}</text>
+  <text x="30" y="110" fontSize="11" fontFamily="monospace" fill="currentColor">{"addr = addr;"}</text>
+  <text x="116" y="110" fontSize="11" fill="currentColor">{"✕ bug"}</text>
+  <rect x="214" y="124" width="124" height="24" rx="3" fill="rgba(8,145,178,0.12)" stroke="rgb(8,145,178)" />
+  <text x="220" y="140" fontSize="11" fontFamily="monospace" fill="currentColor">{"argument addr = 5"}</text>
+  <text x="30" y="166" fontSize="11" fontFamily="monospace" fill="currentColor">{"this.addr = addr;"}</text>
+  <text x="150" y="166" fontSize="11" fill="currentColor">{"✓ fix"}</text>
+  <text x="222" y="166" fontSize="11" fill="currentColor">{"innermost scope"}</text>
+  <text x="222" y="180" fontSize="11" fill="currentColor">{"wins (§8.11)"}</text>
+  <path d="M 43 114 C 43 130, 150 132, 212 130" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" markerEnd="url(#ctor-scope-arrow)" />
+  <path d="M 91 114 C 91 126, 160 134, 212 136" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" markerEnd="url(#ctor-scope-arrow)" />
+  <path d="M 122 156 C 122 146, 180 142, 212 142" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" markerEnd="url(#ctor-scope-arrow)" />
+  <path d="M 27 162 H 20 V 54" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" markerEnd="url(#ctor-scope-arrow)" />
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Conceptual illustration. An unqualified name resolves to the innermost scope, here the argument (§8.11), so <code>addr = addr;</code> never reaches the property. Only <code>this.addr</code> does.</figcaption>
+</figure>
+
 Traced for `p = new(5);`:
 
 | Line in `new` | argument `addr` | property `this.addr` | `p.addr` after `new` |
@@ -196,7 +449,7 @@ Three more facts about `this`:
 - **It is optional when nothing clashes.** Inside a method, `count` and `this.count` mean the same property unless an argument or local variable hides it (§8.11 NOTE).
 - **`this` and null handles.** In legal code, `this` always refers to a real object. Calling a non-static method through a `null` handle is illegal, and the result is indeterminate (§8.4). *Tool-dependent:* most simulators still start a non-virtual method with `this` set to `null` and stop only at its first property access, so the error message can point inside the method rather than at the call.
 
-`this` needs no separate diagram: the trace above is its picture, and the `this.name = name` step in `base_item`'s body in the sequence diagram is the same pattern (there `name` is the argument `"pkt0"`).
+The scope picture and the trace above are the pictures of `this`, and the `this.name = name` step in `base_item`'s body in the "Constructing a crc_item" sequence diagram (box 2 of the floors picture) is the same pattern (there `name` is the argument `"pkt0"`).
 
 ### `super` and constructor chaining
 
@@ -246,6 +499,15 @@ Base id=1
   Child name=pkt
 ```
 
+**Predict first.** Change the example. `Base` declares `function new(int id = 0); this.id = id; endfunction`, now with a default. `Child extends Base` declares `function new(int id); endfunction` and never calls `super.new`. After `c = new(7);`, what is `c.id`?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answer</summary>
+
+`c.id` is **0**. `Child::new` receives 7 but never passes it on. The compiler inserts `super.new()` with no arguments (§8.15), and `Base`'s `id` has a default, so the code compiles and `Base::new` runs with `id = 0`. This is the second row of the table below; the fix is `super.new(id);` as the first statement.
+
+</details>
+
 **The rules of chaining:**
 
 - **`super.new(...)` must be the first executable statement** of the constructor (§8.17). Local variable declarations may come before it, because they are not executable statements (Syntax 8-1, `class_constructor_declaration`).
@@ -261,7 +523,7 @@ Base id=1
 - **`super` reaches one level only.** `super.super.new` or `super.super.count` is not allowed (§8.15).
 - **Constant arguments can go in the `extends` clause.** If a subclass always passes the same arguments, write `class EtherPacket extends Packet(5);`. The compiler then inserts the call, and the subclass constructor **shall not** contain its own `super.new()` (§8.17). Use the clause for fixed values and `super.new(...)` for values computed from the subclass's own arguments.
 
-The sequence diagram in the previous section is the picture of chaining: each `super.new(name)` arrow is one link of the chain.
+The sequence diagram in [Construction order, step by step](#construction-order-step-by-step) is the picture of chaining: each `super.new(name)` arrow is one link of the chain, and each floor of the floors picture is one link too.
 
 ### Constant properties: set once
 
@@ -320,7 +582,104 @@ Exact message wording varies by simulator, so match the symptom, not the text.
 - **Keep constructors short and predictable.** A constructor cannot wait for time, and it should not call virtual methods. Put behaviour in methods that run after construction. Leave randomization to the code that creates the object, after `new` returns ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)).
 - **Preview: UVM constructors have fixed shapes.** In UVM (from [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index)), objects are built by the **factory**, UVM's object-creation service, which calls your constructor with a fixed argument list. Every UVM object therefore declares `function new(string name = "my_item");` and every component declares `function new(string name, uvm_component parent);`, each calling `super.new` with the same arguments. Child components are created later, in the **build phase**, the first step of a UVM test's start-up ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)), not in `new`. Push Further shows the uvm-core source behind these rules.
 
+The second practice, drawn for a plain SystemVerilog bench:
+
+<ArchitectureDiagram
+  title="A plain SystemVerilog bench: what each object needs is passed into new"
+  caption="Conceptual illustration. tb_top builds the configuration object first, then calls drv = new(cfg, bus); and mon = new(cfg, bus);. Each arrow is a constructor argument: it points from the thing passed to the object whose new receives it, not in the direction signals travel (the interface instance bus arrives as a virtual interface handle), so the driver and the monitor are usable the moment new returns. In UVM the factory calls new(name, parent) instead, and components get their configuration and virtual interface after construction (table below)."
+  legend={false}
+  nodes={[
+    { id: "top", label: "tb_top", sublabel: "module", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "bus", label: "bus", sublabel: "interface instance", kind: "interface", col: 0, row: 0, rowSpan: 2 },
+    { id: "drv", label: "drv", sublabel: "driver object", kind: "driver", col: 1, row: 0 },
+    { id: "mon", label: "mon", sublabel: "monitor object", kind: "monitor", col: 1, row: 1 },
+    { id: "cfg", label: "cfg", sublabel: "config object", kind: "generic", col: 2, row: 0, rowSpan: 2 }
+  ]}
+  edges={[
+    { from: "bus", to: "drv", style: "data", label: "vif" },
+    { from: "bus", to: "mon", style: "data", label: "vif" },
+    { from: "cfg", to: "drv", style: "data", label: "cfg" },
+    { from: "cfg", to: "mon", style: "data", label: "cfg" }
+  ]}
+/>
+
+The same idea in the three settings you will meet. The UVM columns are checked against uvm-core 2020.3.1; Push Further shows the calls.
+
+| | Plain SystemVerilog class | `uvm_object` subclass (transaction, configuration) | `uvm_component` subclass (driver, monitor) |
+|---|---|---|---|
+| Constructor you write | Any argument list | `function new(string name = "my_item");` | `function new(string name, uvm_component parent);` |
+| Base constructor it chains to | Your own base class's `new`, if it has a base class | The class it extends: usually `uvm_sequence_item::new(string name = "uvm_sequence_item")` for a transaction, or `uvm_object::new(string name="")` for a configuration object that extends `uvm_object` directly. Every chain ends at `uvm_object::new(string name="")` | The class it extends, such as `uvm_driver::new(string name, uvm_component parent)` or `uvm_monitor::new` with the same arguments, neither with defaults. The chain passes through `uvm_component::new(string name, uvm_component parent)`, which has no defaults, then `uvm_report_object::new(name)`, and ends at `uvm_object::new` like every UVM chain |
+| Who calls `new` | Your code, for example `drv = new(cfg, bus);` | The factory: the registry's `create_object` calls `new()` or `new(name)` | The factory: the registry's `create_component` calls `new(name, parent)` |
+| Extra constructor arguments | Allowed | Only with defaults; pass settings through configuration instead | Only with defaults; pass settings through configuration instead |
+| Child components are built in | `new`, or a build method you write | Not applicable: only components form the component tree | `build_phase`, not `new` ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)) |
+
 ### Recap
+
+<VisualRecap
+  title="Build from the root up"
+  rule="new runs the base-class constructor first, then this class's initializers, then the rest of this class's body, one floor at a time from the root. super.new(...) is the first statement, this.x is the property, and virtual calls belong after new has returned."
+  code={`// first statement of a subclass constructor
+super.new(name);   // the base part is built first
+this.addr = addr;  // the property, not the argument
+// after new returns, never inside it:
+k.setup();         // virtual call on a finished object`}
+  mistake="Leaving out super.new(name) when every base argument has a default: the compiler inserts super.new() with no arguments, so the base silently gets its defaults."
+  inTestbench="A static counter plus a const id gives every transaction a unique, unchangeable id at birth. In UVM the factory calls new with fixed shapes: new(string name) with a default for objects, new(string name, uvm_component parent) for components."
+>
+  <figure className="m-0">
+  <svg viewBox="0 0 280 196" role="img" aria-labelledby="ctor-rc-title" aria-describedby="ctor-rc-desc" style={{ width: "100%", maxWidth: 300 }}>
+    <title id="ctor-rc-title">The floors picture: build from the root up</title>
+    <desc id="ctor-rc-desc">Three floors, root at the bottom: base_item with boxes 1 and 2, bus_item with boxes 3 and 4, crc_item with boxes 5 and 6. On each floor the left box is its initializers and the right box is the rest of its body. Calls to super.new go down first; work runs back up, root first, boxes 1 to 6. Box 2 is flagged: a virtual call there sees undefined subclass fields.</desc>
+    <defs>
+      <marker id="ctor-rc-open" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      </marker>
+      <marker id="ctor-rc-up" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" />
+      </marker>
+    </defs>
+    <rect x="34" y="8" width="212" height="36" rx="4" fill="rgba(8,145,178,0.07)" stroke="rgb(8,145,178)" />
+    <text x="40" y="30" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"crc_item"}</text>
+    <rect x="118" y="14" width="60" height="24" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+    <circle cx="130" cy="26" r="7" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+    <text x="130" y="30" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"5"}</text>
+    <text x="141" y="30" fontSize="11" fill="currentColor">{"init"}</text>
+    <rect x="182" y="14" width="60" height="24" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+    <circle cx="194" cy="26" r="7" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+    <text x="194" y="30" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"6"}</text>
+    <text x="205" y="30" fontSize="11" fill="currentColor">{"body"}</text>
+    <rect x="34" y="48" width="212" height="36" rx="4" fill="rgba(8,145,178,0.07)" stroke="rgb(8,145,178)" />
+    <text x="40" y="70" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"bus_item"}</text>
+    <rect x="118" y="54" width="60" height="24" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+    <circle cx="130" cy="66" r="7" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+    <text x="130" y="70" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"3"}</text>
+    <text x="141" y="70" fontSize="11" fill="currentColor">{"init"}</text>
+    <rect x="182" y="54" width="60" height="24" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+    <circle cx="194" cy="66" r="7" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+    <text x="194" y="70" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"4"}</text>
+    <text x="205" y="70" fontSize="11" fill="currentColor">{"body"}</text>
+    <rect x="34" y="88" width="212" height="36" rx="4" fill="rgba(8,145,178,0.07)" stroke="rgb(8,145,178)" />
+    <text x="40" y="110" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"base_item"}</text>
+    <rect x="118" y="94" width="60" height="24" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+    <circle cx="130" cy="106" r="7" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+    <text x="130" y="110" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"1"}</text>
+    <text x="141" y="110" fontSize="11" fill="currentColor">{"init"}</text>
+    <rect x="182" y="94" width="60" height="24" rx="3" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" strokeWidth="1.5" />
+    <circle cx="194" cy="106" r="7" fill="rgba(8,145,178,0.15)" stroke="rgb(8,145,178)" />
+    <text x="194" y="110" fontSize="11" fontWeight="bold" textAnchor="middle" fill="currentColor">{"2"}</text>
+    <text x="205" y="110" fontSize="11" fill="currentColor">{"body ⚑"}</text>
+    <line x1="30" y1="130" x2="250" y2="130" stroke="currentColor" strokeOpacity="0.6" strokeWidth="2" />
+    <line x1="22" y1="12" x2="22" y2="120" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 3" markerEnd="url(#ctor-rc-open)" />
+    <line x1="258" y1="120" x2="258" y2="12" stroke="rgb(8,145,178)" strokeWidth="2" strokeDasharray="9 3" markerEnd="url(#ctor-rc-up)" />
+    <line x1="4" y1="146" x2="24" y2="146" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 3" markerEnd="url(#ctor-rc-open)" />
+    <text x="30" y="150" fontSize="11" fill="currentColor">{"super.new calls go down first"}</text>
+    <line x1="4" y1="164" x2="24" y2="164" stroke="rgb(8,145,178)" strokeWidth="2" strokeDasharray="9 3" markerEnd="url(#ctor-rc-up)" />
+    <text x="30" y="168" fontSize="11" fill="currentColor">{"work runs back up, root first"}</text>
+    <text x="4" y="188" fontSize="11" fill="currentColor">{"⚑ Box 2: a virtual call sees undefined fields"}</text>
+  </svg>
+  <figcaption className="mt-2 text-xs text-muted-foreground">Conceptual illustration of §8.7 and §8.17: the floors picture from the Quick Take, in brief.</figcaption>
+  </figure>
+</VisualRecap>
 
 - `new` builds the object: base-class constructor first, then this class's initializers, then the rest of this class's body. Values are undefined until their initializer runs.
 - `this.x` is the property and plain `x` is the nearest declaration, usually the argument. `addr = addr;` is a silent bug.
@@ -388,6 +747,11 @@ module tb_top;
 endmodule
 ```
 
+**Predict first.** Write down all seven lines of the log before you open it. Two checks: which constructor prints first for `b = new();`, and what are `b.id` and `b.name`?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the expected output</summary>
+
 Expected output (illustrative, traced by hand against §8.7 and §8.17):
 
 ```text
@@ -399,6 +763,10 @@ bus_item::new   addr=100
 c: id=1 name=pkt0  b: id=2 name=bus_item  count=2
 PASS=2 FAIL=0
 ```
+
+The first three lines are boxes 2, 4 and 6 of the floors picture; `b`, a `bus_item`, runs only boxes 1 to 4, so it prints two lines.
+
+</details>
 
 Why the log has this shape:
 
@@ -435,6 +803,13 @@ Why the log has this shape:
 - **Virtual calls from a constructor dispatch to the most-derived override** (§8.17 NOTE 2, §8.20). This differs from C++, where a virtual call made during a base-class constructor runs the base-class version (ISO C++ [class.cdtor]). Java behaves like SystemVerilog. Engineers moving from C++ expect the safe behaviour and get the unsafe one.
 - **A static counter in `new` does not count copies.** `p2 = new p1;` runs no constructor (§8.12), so `count` stays the same, and the copy keeps the original's instance constant `id`. If ids must be unique per object, copy by constructing a new object and copying fields into it ([Copying and Cloning Objects](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning)).
 
+The virtual-call corner case side by side, as the bullet above states it:
+
+| A virtual call made from a base-class constructor | SystemVerilog | C++ | Java |
+|---|---|---|---|
+| Which version runs | The most-derived override (§8.17 NOTE 2, §8.20) | The base-class version (ISO C++ [class.cdtor]) | As in SystemVerilog |
+| Can it rely on the derived class's initialized fields? | No: they are undefined until their initializers run (§8.7) | Does not arise: the derived override does not run | No: its initializers have not run yet |
+
 ### Expert: constructor qualifiers and the singleton pattern
 
 - A constructor may be `local` or `protected`, and shall not be `static` or `virtual` (§8.7).
@@ -458,6 +833,28 @@ endclass
 // tb_registry r = new;                 // compile error: new is protected
 // tb_registry r = tb_registry::get();  // the only way in
 ```
+
+<SequenceDiagram
+  title="The singleton: two calls to get(), one object"
+  caption="Only tb_registry and its subclasses can call its protected new (§8.18); outside code cannot, so it must go through get(), and every such caller shares one object. uvm_root declares the same pair in uvm-core 2020.3.1 (uvm_root.svh): a protected new and a static get()."
+  columnWidth={140}
+  participants={[
+    { id: "tb", label: "tb_top", kind: "generic" },
+    { id: "get", label: "tb_registry::get()", sublabel: "static", kind: "generic" },
+    { id: "new", label: "tb_registry::new", sublabel: "protected", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tb", to: "get", label: "r1 = tb_registry::get()" },
+    { kind: "note", from: "get", label: "m_inst == null" },
+    { from: "get", to: "new", label: "m_inst = new(): legal inside the class", tone: "active" },
+    { kind: "return", from: "new", to: "get", label: "the one object" },
+    { kind: "return", from: "get", to: "tb", label: "m_inst" },
+    { from: "tb", to: "get", label: "r2 = tb_registry::get()" },
+    { kind: "note", from: "get", label: "m_inst != null: no new" },
+    { kind: "return", from: "get", to: "tb", label: "the same m_inst" },
+    { kind: "note", from: "tb", to: "new", label: "Outside the class, tb_registry r = new; is a compile error: new is protected (§8.18).", tone: "error" }
+  ]}
+/>
 
 - **The real-world example is UVM's root.** In uvm-core 2020.3.1, the Accellera reference implementation of UVM (`uvm_root.svh`), `uvm_root` declares `extern protected function new ();` and `extern static function uvm_root get();`.
 - **A constructor cannot wait for time** because it is a function (§8.7, §13.4). If construction must wait for something, such as a reset, split it into `new` plus a task the caller runs afterwards.
@@ -502,6 +899,30 @@ The UVM factory calls your constructor from generated code, so your constructor 
 - **Objects.** `` `uvm_object_utils(T) `` expands `m_uvm_object_create_func`, which defines `create(string name="")`. It calls `new()` when the name is empty and `new(name)` otherwise (`uvm_object_defines.svh`). So an object's constructor needs one `string` argument with a default: `function new(string name = "my_item"); super.new(name); endfunction`. `uvm_object` itself declares `new (string name="")` (`uvm_object.svh`).
 - **Components.** The component registry's `create_component` executes `obj = new(name, parent);` (`uvm_registry.svh`), and `uvm_component` declares `new (string name, uvm_component parent)` with no defaults (`uvm_component.svh`). So a component subclass needs `function new(string name, uvm_component parent); super.new(name, parent); endfunction`. A component with **no** constructor gets an implicit one that calls `super.new()` with no arguments (§8.7), which does not compile.
 - **Extra arguments must have defaults.** The generated code passes only those arguments, so any extra constructor argument without a default breaks the call. Pass extra settings through configuration instead ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
+
+<SequenceDiagram
+  title="The calls the UVM factory makes into your constructor"
+  caption="Checked against uvm-core 2020.3.1. The factory's create_object_by_type and create_component_by_type (uvm_factory.svh) call the registry that type_id names (when no override is set; otherwise the override's registry, I-UVM-1B); its create_object runs new() or new(name), and its create_component runs new(name, parent) (uvm_registry.svh). The create() that the uvm_object_utils macro defines makes the same two object calls. Your constructor must accept exactly these calls. T::new chains to its UVM base class, such as uvm_sequence_item or uvm_driver, and every chain ends at uvm_object::new; a component's chain passes through uvm_component::new(name, parent) on the way."
+  participants={[
+    { id: "fac", label: "factory", kind: "generic" },
+    { id: "reg", label: "T::type_id", sublabel: "registry of T", kind: "generic" },
+    { id: "t", label: "T::new", sublabel: "your constructor", kind: "generic" },
+    { id: "base", label: "base::new", sublabel: "its UVM base class", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "T is a uvm_object subclass" },
+    { from: "fac", to: "reg", label: "create_object(name)" },
+    { from: "reg", to: "t", label: "new() if name is empty, else new(name)" },
+    { from: "t", to: "base", label: "super.new(name)" },
+    { kind: "return", from: "t", to: "reg", label: "the new object" },
+    { kind: "divider", label: "T is a uvm_component subclass" },
+    { from: "fac", to: "reg", label: "create_component(name, parent)" },
+    { from: "reg", to: "t", label: "new(name, parent)" },
+    { from: "t", to: "base", label: "super.new(name, parent)" },
+    { kind: "return", from: "t", to: "reg", label: "the new component" },
+    { kind: "note", from: "t", to: "base", label: "No constructor in T? The implicit one calls super.new() with no arguments, but uvm_driver::new and uvm_component::new have no defaults: compile error (§8.7).", tone: "error" }
+  ]}
+/>
 
 ### Interview angles
 
