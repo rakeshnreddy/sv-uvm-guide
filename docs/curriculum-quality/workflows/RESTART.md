@@ -3,7 +3,100 @@
 Written 2026-10-12, when the weekly usage limit paused the program. Read this first in the next session,
 then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASKS.md`.
 
-## Start here (state at the 2026-11-02 pause)
+## Start here (state at the 2026-11-05 cloud stop) — resume locally from this list
+
+The cloud credits ran out on 2026-11-05 and the lead stopped every run. Nothing is running.
+
+**Live / released** (PR #393 from `curriculum-quality-program-x1gwpt`, merged into `main` if the CI gate passed; see
+the last line of this block):
+- Checkpoint 15: DecisionLab (F2C, F2A) and SelfCheckBenchLab (F2E) embeds, with the components' S3 fixes.
+- Checkpoint 16: 6a for I-SV-1 index, copying-and-cloning, constructors and parameterized-classes
+  (`lessonsEnriched` in `progress.json` marks them `checkpoint-16`).
+
+**Not released, saved for review-only local passes (do not re-author):**
+1. `backup/wip-2026-11-05` (c04e515): 6a authored, review unfinished. I-SV-1 polymorphism-pitfalls (accuracy passed;
+   pedagogy failed rounds 1 and 2, fix round 2 applied, round-3 review stopped) and all 7 I-SV-2A/2B pages (authored;
+   round-1 reviews stopped, and constraint-blocks accuracy r1 failed). Their audits and the reviews that ran are in
+   `data/6a-cloud-2026-11-05.json`. Resume: copy the 8 files from that branch into the tree, run a review-and-fix
+   loop on them (the review and fix prompts of `visual-enrichment.js`, starting from the saved findings), then
+   release with `checkpoint-release.sh`.
+2. `components/finish-held` (cbaf90b on top of 4c0cfae): the 5 held components after round-1 fixes, all round-1
+   reviews (`data/components-finish-cloud-r1-2026-11-05.json`), and round-2 fixes. Round 2 finished for
+   expression-lab-extensions and packed-layout-explorer; it was stopped mid-edit for subroutine-lab and timescale-lab,
+   and had not started for scheduler-model-v2. Resume as in "Finish pass" below, with the failed round-1 reviews'
+   S1/S2 findings as the findings file. Run each component's tests first.
+
+**Next local order:** (1) the two review-only passes above, (2) 6a for the rest of T2 (I-SV-3A onward), (3) the
+next components batch, extras and the final 6b sweep, as below.
+
+**Week-of-2026-11-09 resume, one line:** `git fetch origin && git checkout curriculum-quality-program &&
+git merge --ff-only origin/main`, then tell Claude "read docs/curriculum-quality/workflows/RESTART.md and resume".
+
+## The 2026-11-05 cloud-session handoff (detail)
+
+**The 2026-11-02 block below is still accurate except where these two blocks update it.**
+
+The owner ran one session in a Claude Code cloud container (paid from cloud-session credits, not the weekly plan)
+and asked it to stop at a logical point and hand back to a local session.
+
+**Released on branch `curriculum-quality-program-x1gwpt`** (pushed; PR into `main` opened for the owner to merge;
+`main` was not touched from the cloud):
+- Checkpoint 15: DecisionLab embedded in F2C flow-control (qualifiers, casex-vs-inside) and F2A operators
+  (opcode-decoder); SelfCheckBenchLab embedded in F2E (step, plan matrix, debug, mutant matrix). The verified S3s
+  from both components' last reviews are applied, and the F2C "a default matches every value" error is fixed.
+  Every item passed accuracy, learning/navigation and render review (`wf_78dcdb3a-ce5`); S3 residue is in
+  `data/embed-released-2026-11-05.json`. `progress.json` records the embeds under `embeds`.
+- `checkpoint-release.sh` is portable: `MAIN` defaults to the repo root, `BRANCH` can be overridden, and
+  `RELEASE_MODE=pr` stops after the branch push (no CI wait, no push to `main`).
+
+**Finish pass for the 5 held components** (`wf_616ab530-a6a`, cloud) ran in a worktree built from `origin/main`
+plus the 28 held files from `components/finish-held` (no other files from that branch). See "Cloud finish pass"
+in the run log at the end of this block for how it ended: it was stopped after round 1 and nothing was released.
+Rerun the finish pass locally as step 1 of "Order for the next resume" below says, starting from the round-1 files.
+Use a worktree from `origin/main` and `git checkout origin/components/finish-held -- <the 28 files>` (list: the
+`files` of the five ids in `data/components-backlog-2026-10-28.json`), not the branch itself, because the branch
+predates checkpoints 13 to 15.
+
+**Before the next local run:**
+1. `git fetch origin && git checkout curriculum-quality-program && git merge --ff-only origin/curriculum-quality-program-x1gwpt`
+   once the owner has merged the PR (or merge the branch locally), so local work starts from checkpoint 15.
+2. Then follow "First steps on resume" below. Next work, in order: finish the held components (if the cloud run did
+   not), then 6a for T2 starting with I-SV-1, the next components batch, the extras, and the final 6b sweep.
+
+**Cloud environment notes** (only needed if another cloud session runs this program):
+- Primary sources: the two IEEE PDFs in the repo root are Git LFS objects. A cloud session cannot fetch LFS through
+  the git proxy, but `https://media.githubusercontent.com/media/rakeshnreddy/sv-uvm-guide/main/<file>.pdf` works.
+  Convert with `pdftotext -layout` into a folder outside the repo, never commit the text. The Arm texts are not
+  reachable from the cloud (developer.arm.com is blocked), so AMBA work must stay local.
+- Verilator: apt has 5.020, which rejects covergroups and uvm-core. Build v5.052 from source (about 15 minutes on
+  4 CPUs); with it, `compile-sv.mjs` matches the repo baseline (297 units, 260 compile, 37 known).
+- The workflow scripts hard-code the Mac paths; the cloud session symlinked `/Users/Rakesh/...` and
+  `~/.claude/projects/-Users-Rakesh-Projects-sv-uvm-guide/sources` to the container copies instead of editing them.
+- A 4-CPU container runs only 2 agents at a time per workflow, so large batches belong on the Mac.
+- Pushing needs the Claude GitHub App with write access to the repo; it failed with 403 until the owner reconnected it.
+
+**Cloud finish pass (run log):** launched 2026-11-05 with `make-finish-held.py --rounds 3` (default) on all five ids.
+The lead stopped it after round 1's five fixers and 7 of its reviews, to save cloud credits (a 4-CPU container runs 2
+agents at a time; the pass needs about 80 agents). Nothing from it is released.
+- The round-1 fixer edits are a WIP commit on top of `components/finish-held` (4c0cfae, "NOT reviewed"), still
+  based on the old ba23a51, so never merge that branch.
+- The 7 reviews that ran (all PackedLayoutExplorer: accuracy groups 1, 2 and 6 failed, groups 3 to 5 and learning
+  passed) and every fixer's notes and data groups are in `data/components-finish-cloud-r1-2026-11-05.json`.
+- **Resume locally:** build the worktree from `origin/main` (checkpoint 15 or later) plus the 28 held files checked
+  out from `origin/components/finish-held` (now the round-1 versions). Write a findings file for
+  `make-finish-held.py --findings` with, per id, the S1/S2 findings of the failed reviews above (PackedLayoutExplorer)
+  and, for the other four ids, their open findings from `data/components-finish-open-2026-11-02.json` (round 1 fixed
+  against these but was never reviewed, so the reviewers must check them again). Then run the finish pass as in step
+  1 of "Order for the next resume". Run each component's own tests first.
+
+**Cloud continuation (owner, 2026-11-05: "complete the cloud work till cloud credits are complete").** The session
+kept going after the handoff above, with three workflows in parallel: the finish pass resumed (same run, from cache),
+6a for I-SV-1 (5 lessons) and 6a for I-SV-2A and I-SV-2B (7 lessons). Each release adds a line below and updates
+`progress.json`. Anything not listed below as released did not finish in the cloud: run it locally as planned
+(the finish pass as above; 6a with `make-workflow-args.py 6a <module>`, which skips lessons already in
+`lessonsEnriched`). Cloud work releases only to `curriculum-quality-program-x1gwpt` and PR #393.
+
+## State at the 2026-11-02 pause
 
 **Live state:** everything reviewed is released through checkpoint 14. Nothing is running. Claude paused at 74 % of the
 weekly limit, against the owner's 75 % line.

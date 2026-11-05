@@ -18,13 +18,18 @@ import {
   OWN_VALUE_NOTE,
   QUALIFIERS,
   RANGE_LIST_LIMIT,
+  REPORT_KINDS,
+  WILDCARD_ASYMMETRY_NOTE,
   bitAt,
   branchWord,
   caseBitChips,
+  chipMarks,
   compareDecisions,
   compareValueNote,
   compareWrapUp,
   decisionSource,
+  deferredReportNote,
+  drawsChips,
   editedPresetNote,
   evaluateDecision,
   expandRange,
@@ -236,7 +241,7 @@ describe("sv-decision-model: inside operator pieces (§11.4.13, §11.4.4)", () =
     expect(rangeListingProblem({ kind: "range", lo: "0", hi: "100" }, 8)).toMatch(/101 values, more than the 64/);
   });
 
-  it("normalizeItems expands ranges for the case family only (§12.5.4: a range is legal only in case inside)", () => {
+  it("normalizeItems expands ranges for the case family only (§12.5, §12.5.4: a range is legal only in case inside)", () => {
     const items: DecisionItem[] = [{ terms: [{ kind: "range", lo: "3'b100", hi: "3'b110" }], label: "ALU" }];
     expect(normalizeItems("casex", items, 3)[0].terms.map((t) => (t.kind === "literal" ? t.text : t.kind))).toEqual(["3'b100", "3'b101", "3'b110"]);
     expect(normalizeItems("case-inside", items, 3)).toEqual(items);
@@ -294,6 +299,15 @@ describe("sv-decision-model: the lesson decoder table (flow-control, unique case
     expect(r.report?.title).toBe("unique case: no case item matches");
     expect(r.column).toBe("none");
     expect(r.items.map((v) => v.status)).toEqual(["no-match", "no-match", "no-match"]);
+  });
+
+  it("the timing line says both halves of §12.4.2.1: the check runs when the statement executes, the report waits for the Observed region", () => {
+    // §12.5.3.1 applies the §12.4.2.1 mechanics to a case, so a case cites both clauses.
+    expect(DEFERRED_REPORT_NOTE).toBe("checked now, reported in the Observed region (§12.4.2.1, §12.5.3.1)");
+    expect(deferredReportNote("casez")).toBe(DEFERRED_REPORT_NOTE);
+    expect(deferredReportNote("case-inside")).toBe(DEFERRED_REPORT_NOTE);
+    // §12.5.3.1 covers only unique-case, unique0-case and priority-case: an if chain cites §12.4.2.1 alone.
+    expect(deferredReportNote("if-else-if")).toBe("checked now, reported in the Observed region (§12.4.2.1)");
   });
 });
 
@@ -402,6 +416,22 @@ describe("sv-decision-model: one-hot unique case (1'b1) and the priority casez e
     expect(outcome({ ...p.config, form: "casex" }, "0x1")).toEqual(["item-0", "overlap"]);
   });
 
+  it("a bit-select against 1'b1: casez treats a z as a don't-care but not an x, casex treats both as don't-cares (§12.5.1, §12.5.2)", () => {
+    const p = findPreset("one-hot");
+    const on = (form: DecisionForm, body: string) => evaluateDecision({ ...withSelect(p.config, body), form });
+    const zUnderCasez = on("casez", "0z0");
+    expect([runOutcomeId(zUnderCasez.runs), zUnderCasez.reportKind]).toEqual(["item-1", "nothing"]);
+    expect(zUnderCasez.items[1].terms[0].why).toBe("gnt[1] is z: casez treats it as a don't-care, so it matches the case expression 1'b1 (§12.5.1).");
+    const xUnderCasez = on("casez", "0x0");
+    expect([runOutcomeId(xUnderCasez.runs), xUnderCasez.reportKind]).toEqual(["nothing", "no-match"]);
+    expect(xUnderCasez.items[1].terms[0].why).toBe("gnt[1] is x, not 1, so it does not match the case expression 1'b1 (§12.5.2); casez skips only z, so x must match exactly (§12.5.1).");
+    const xUnderCasex = on("casex", "0x0");
+    expect([runOutcomeId(xUnderCasex.runs), xUnderCasex.reportKind]).toEqual(["item-1", "nothing"]);
+    expect(xUnderCasex.items[1].terms[0].why).toBe("gnt[1] is x: casex treats it as a don't-care, so it matches the case expression 1'b1 (§12.5.1).");
+    // case compares the x literally (§12.5).
+    expect(on("case", "0x0").items[1].terms[0].why).toBe("gnt[1] is x, not 1, so it does not match the case expression 1'b1 (§12.5.2); case (not casez or casex) compares x and z literally (§12.5).");
+  });
+
   it("req = 4'b0110 runs the 4'b??1? item (idx = 1) silently; req = 0 reports no match (§12.5.3)", () => {
     const p = findPreset("priority-encoder");
     expect(outcome(p.config, "0110")).toEqual(["item-1", "nothing"]);
@@ -442,7 +472,7 @@ describe("sv-decision-model: Kata C steps 1 to 4", () => {
     expect(outcome(findPreset("kata-c-1").config, "xx")).toEqual(["nothing", "no-match"]);
     expect(outcome(findPreset("kata-c-1").config, "01")).toEqual(["item-1", "nothing"]);
   });
-  it("step 2: with a default every value matches something, so the report disappears (§12.5.3)", () => {
+  it("step 2: with a default, the default runs, so the report disappears (§12.5, §12.5.3)", () => {
     expect(outcome(findPreset("kata-c-2").config, "xx")).toEqual(["catch-all", "nothing"]);
   });
   it("step 3: unique0 never reports a missing match", () => {
@@ -685,7 +715,7 @@ describe("sv-decision-model: prediction choices and feedback", () => {
   it("which item runs: marks the running item correct and diagnoses the others", () => {
     const r = evaluateDecision(withSelect({ ...findPreset("casez-overlap").config }, "11"));
     expect(explainRunChoice(r, { kind: "item", index: 0 })).toMatchObject({ correct: true });
-    expect(explainRunChoice(r, { kind: "item", index: 0 }).feedback).toMatch(/first one in source order wins \(§12\.5\); no qualifier changes that\./);
+    expect(explainRunChoice(r, { kind: "item", index: 0 }).feedback).toMatch(/first one in source order wins \(§12\.5, §12\.5\.3\); no qualifier changes that\./);
     const second = explainRunChoice(r, { kind: "item", index: 1 });
     expect(second.correct).toBe(false);
     expect(second.feedback).toBe("2'b?1 does match under casez, but 2'b1? matches earlier in source order; the next question asks what it reports.");
@@ -794,7 +824,11 @@ describe("sv-decision-model: feedback never claims a qualifier changes which ite
       expect(r.matchCount, name).toBeGreaterThan(1);
       const { correct, feedback } = explainRunChoice(r, r.runs);
       expect(correct, `${name} ${qualifier}`).toBe(true);
-      expect(feedback, `${name} ${qualifier}`).toMatch(/first one in source order wins \(§12\.(5|4\.1)\); no qualifier changes that\./);
+      // plain and priority: the linear search (§12.5, §12.4.1). unique and unique0 may compare in any order,
+      // and the rule that the first match in source order runs is in their own clause (§12.5.3, §12.4.2).
+      const chain = r.config.form === "if-else-if";
+      const clause = reportsOverlap(qualifier) ? (chain ? "§12.4.1, §12.4.2" : "§12.5, §12.5.3") : chain ? "§12.4.1" : "§12.5";
+      expect(feedback, `${name} ${qualifier}`).toContain(`first one in source order wins (${clause}); no qualifier changes that.`);
       expect(feedback, `${name} ${qualifier}`).not.toMatch(/\b(unique|unique0|priority) changes that/);
     }
   });
@@ -808,10 +842,12 @@ describe("sv-decision-model: feedback never claims a qualifier changes which ite
     }
     // A plain statement has no qualifier to ask about, and compare mode (always plain) has no report question at all.
     expect(later("plain").feedback).toBe("2'b?1 does match under casez, but 2'b1? matches earlier in source order.");
-    // An if chain says conditions and cites §12.4.1 in the correct answer.
+    // An if chain says conditions and cites §12.4.1 in the correct answer, with §12.4.2 under unique.
     const chain = evaluateDecision(withSelect(findPreset("unique-if").config, "11"));
     expect(explainRunChoice(chain, { kind: "item", index: 1 }).feedback).toMatch(/matches earlier in source order; the next question asks what it reports\.$/);
-    expect(explainRunChoice(chain, chain.runs).feedback).toMatch(/first one in source order wins \(§12\.4\.1\); no qualifier changes that\./);
+    expect(explainRunChoice(chain, chain.runs).feedback).toMatch(/first one in source order wins \(§12\.4\.1, §12\.4\.2\); no qualifier changes that\./);
+    const priorityChain = evaluateDecision({ ...withSelect(findPreset("unique-if").config, "11"), qualifier: "priority" });
+    expect(explainRunChoice(priorityChain, priorityChain.runs).feedback).toMatch(/first one in source order wins \(§12\.4\.1\); no qualifier changes that\./);
   });
 });
 
@@ -827,12 +863,13 @@ describe("sv-decision-model: a range the case family cannot list is flagged, not
     expect(r.items[0].terms[0].unsupported).toBe(true);
     expect(r.items[0].terms[0].result).toBe("0");
     expect(r.items[0].matches).toBe(false);
-    expect(r.items[0].terms[0].why).toMatch(/^Not comparable: a range is legal only in case inside \(§12\.5\.4\), and \[0:100\] cannot be written as plain casex items because it spans 101 values/);
+    // The restriction is Syntax 12-3 in §12.5 (case_item_expression ::= expression; case_inside_item ::= range_list).
+    expect(r.items[0].terms[0].why).toMatch(/^Not comparable: a range is legal only in case inside \(§12\.5, §12\.5\.4\), and \[0:100\] cannot be written as plain casex items because it spans 101 values/);
     expect(r.unsupported).toHaveLength(1);
     expect(r.summary).toMatch(/Caveat: 1 case item could not be compared in this form and was left out of the decision\./);
     expect(runOutcomeId(r.runs)).toBe("item-1");
     const src = decisionSource(r.config).map((l) => l.text);
-    expect(src.find((l) => l.includes("[0:100]:"))).toMatch(/\/\/ not legal here: a range needs case inside \(§12\.5\.4\)$/);
+    expect(src.find((l) => l.includes("[0:100]:"))).toMatch(/\/\/ not legal here: a range needs case inside \(§12\.5, §12\.5\.4\)$/);
     expect(src.find((l) => l.includes("8'b0000_0101:"))).not.toMatch(/not legal here/);
   });
 
@@ -1005,6 +1042,19 @@ describe("sv-decision-model: readable prose", () => {
     sweep((name, r) => {
       expect(r.summary, name).not.toMatch(/, checked now/);
       for (const kind of ["nothing", "no-match", "overlap"] as ReportKind[]) expect(explainReportChoice(r, kind).feedback, name).not.toMatch(/Observed/);
+    });
+  });
+
+  it("an if chain's ticket and live summary cite §12.4.2.1 only: §12.5.3.1 is about case statements", () => {
+    const chain = evaluateDecision(withSelect(findPreset("unique-if").config, "11"));
+    expect(chain.report?.deferred).toBe("checked now, reported in the Observed region (§12.4.2.1)");
+    expect(chain.summary).toContain("unique if: 2 conditions match. Violation reported in the Observed region (§12.4.2, §12.4.2.1).");
+    sweep((name, r) => {
+      if (!r.report) return;
+      const chain = r.config.form === "if-else-if";
+      expect(r.report.deferred, name).toBe(deferredReportNote(r.config.form));
+      if (chain) expect(`${r.report.deferred} ${r.summary}`, name).not.toContain("§12.5.3.1");
+      else expect(r.summary, name).toContain(`(${r.report.clause}, §12.4.2.1, §12.5.3.1).`);
     });
   });
 
@@ -1535,7 +1585,7 @@ describe("sv-decision-model: compare notes hold beyond the listed values (§12.5
     }).map((select) => select.join(""));
   };
 
-  it("in the Flow Control set under casez the columns differ on exactly the values with a z", () => {
+  it("in the Flow Control set under casez the columns differ on exactly 1z, z0, z1 and zz", () => {
     expect(differing("casex-vs-inside", "casez").sort()).toEqual(["1z", "z0", "z1", "zz"]);
   });
 
@@ -1601,5 +1651,158 @@ describe("sv-decision-model: one paragraph says each thing once", () => {
       const inRight = sentences(right);
       for (const sentence of sentences(left)) expect(inRight.has(sentence), `${s.id} ${kind} ${select.join("")}: ${sentence}`).toBe(false);
     }
+  });
+
+  it("a wrong pick on an x condition states the if rule once: a bit or == condition already says x is false (§12.4)", () => {
+    const xx = evaluateDecision(withSelect(findPreset("unique-if").config, "xx"));
+    expect(explainRunChoice(xx, { kind: "item", index: 0 }).feedback).toBe("req[0] does not match. req[0] is x. An x or z condition counts as false, so this branch does not run (§12.4).");
+    const eq = evaluateDecision({ ...withSelect(findPreset("lesson-decoder").config, "xx"), form: "if-else-if" });
+    expect(explainRunChoice(eq, { kind: "item", index: 0 }).feedback).toBe("sel == 2'b00 does not match. sel == 2'b00 is x: bit 1 is x in sel, so == cannot decide (§11.4.5). An if treats x as false (§12.4).");
+    // A ==? condition and a range explain only why the result is x, so the rule is added once.
+    const wild = evaluateDecision({ ...withSelect(findPreset("lrm-priority-inside").config, "xxx"), form: "if-else-if" });
+    expect(wild.items[1].result).toBe("x");
+    expect(explainRunChoice(wild, { kind: "item", index: 1 }).feedback).toMatch(/An x or z on the left is not a wildcard \(§11\.4\.6\)\..* An x condition is false \(§12\.4\)\.$/);
+    const rule = /x or z condition counts as false|An if treats x as false|An x condition is false/;
+    sweep((name, r) => {
+      if (r.config.form !== "if-else-if") return;
+      for (const v of r.items) {
+        if (v.result !== "x") continue;
+        const sentences = splitSentences(explainRunChoice(r, { kind: "item", index: v.index }).feedback);
+        expect(sentences.filter((s) => rule.test(s)).length, `${name} branch ${v.index + 1}: ${sentences.join(" ")}`).toBe(1);
+      }
+    });
+  });
+});
+
+describe("sv-decision-model: later fitting items under plain and priority are not called matches (§12.5, §12.4.1)", () => {
+  it("plain and priority say the items fit the select (in an if chain, hold); unique and unique0 compare them all and say match (§12.5.3, §12.4.2)", () => {
+    const encoder = evaluateDecision({ ...withSelect(findPreset("priority-encoder").config, "1111"), qualifier: "plain" });
+    expect(encoder.silentBecause).toBe("A plain casez has no check: 4'b???1, 4'b??1?, 4'b?1??, 4'b1??? all fit the select, the first one, 4'b???1, runs, and nothing is reported (§12.5).");
+    expect(encoder.summary).toContain("4 case items fit the select (4'b???1, 4'b??1?, 4'b?1??, 4'b1???).");
+    const plainChain = evaluateDecision({ ...withSelect(findPreset("unique-if").config, "11"), qualifier: "plain" });
+    expect(plainChain.silentBecause).toBe("A plain if has no check: req[0], req[1] both hold, the first one, req[0], runs, and nothing is reported (§12.4.1).");
+    expect(plainChain.summary).toContain("2 conditions hold (req[0], req[1]).");
+    const priority = evaluateDecision({ ...findPreset("casez-overlap").config, qualifier: "priority" });
+    expect(priority.summary).toContain("2 case items fit the select (2'b1?, 2'b?1).");
+    expect(explainRunChoice(priority, priority.runs).feedback).toContain("2 casez items fit the select, and the first one in source order wins (§12.5); no qualifier changes that.");
+    // unique: every item is compared, and two of them match.
+    const unique = evaluateDecision(withSelect(findPreset("unique-if").config, "11"));
+    expect(unique.report?.detail).toBe("unique asserts that the conditions do not overlap (§12.4.2). req[0], req[1] both match, so it reports a violation.");
+    expect(unique.summary).toContain("2 conditions match (req[0], req[1]).");
+  });
+
+  it("no reachable text calls the later items matches under plain or priority, and two items are 'both', not 'all'", () => {
+    sweep((name, r) => {
+      if (r.matchCount < 2) return;
+      const said = allTexts(r).join(" ");
+      if (!reportsOverlap(r.config.qualifier)) expect(said, name).not.toMatch(/\b(all|both) match\b|\d (case items|conditions) match \(| items match, and the first| conditions match, and the first/);
+      if (r.matchCount === 2) expect(said, name).not.toMatch(/\ball (match|fit|hold)\b/);
+    });
+  });
+});
+
+describe("sv-decision-model: the chip legend lists only the marks the reveal draws (visual-language: legends)", () => {
+  it("the case family never draws x or a wildcard, only casez and casex draw a skip, and the ==? forms never skip (§12.5, §12.5.1, §11.4.6)", () => {
+    sweep((name, r) => {
+      const marks = chipMarks(r);
+      const { form } = r.config;
+      if (form === "case" || form === "casez" || form === "casex") expect([marks.unknown, marks.wildcard], name).toEqual([false, false]);
+      if (form === "case" || form === "case-inside" || form === "if-else-if") expect(marks.skip, name).toBe(false);
+      // Every drawn chip's mark is in the legend.
+      for (const v of r.items) for (const t of v.terms) if (drawsChips(v, t)) for (const c of t.chips ?? []) {
+        if (c.verdict === "skip") expect(marks.skip, name).toBe(true);
+        if (c.verdict === "x") expect(marks.unknown, name).toBe(true);
+        if (c.wildcard) expect(marks.wildcard, name).toBe(true);
+      }
+    });
+  });
+
+  it("names each mark by what is drawn: a plain case, a casez with ?, case inside with an x select, and the two compare columns together", () => {
+    expect(chipMarks(evaluateDecision(withSelect(findPreset("lesson-decoder").config, "xx")))).toEqual({ skip: false, unknown: false, wildcard: false, questionMark: false });
+    expect(chipMarks(evaluateDecision(findPreset("casez-overlap").config))).toEqual({ skip: true, unknown: false, wildcard: false, questionMark: true });
+    // The finding's case: casez-overlap edited to a plain case compares the ? (a z) literally, so nothing is a wildcard.
+    expect(chipMarks(evaluateDecision({ ...findPreset("casez-overlap").config, form: "case" }))).toEqual({ skip: false, unknown: false, wildcard: false, questionMark: true });
+    expect(chipMarks(evaluateDecision(withSelect(findPreset("kata-c-4").config, "x1")))).toEqual({ skip: false, unknown: true, wildcard: true, questionMark: true });
+    const { left, right } = compareDecisions(findCompareSet("casex-vs-inside"), bits("1x"), "casex");
+    expect(chipMarks(left, right)).toEqual({ skip: true, unknown: true, wildcard: false, questionMark: false });
+    // An if chain of == conditions never draws a wildcard, for any select.
+    for (const select of allSelects(2)) expect(chipMarks(evaluateDecision({ ...findPreset("lesson-decoder").config, form: "if-else-if", select })).wildcard, select.join("")).toBe(false);
+  });
+});
+
+describe("sv-decision-model: compare-set notes cite the clause they describe", () => {
+  it("the opcode decoder's 0x0 line describes casex only, so it cites §12.5.1 alone", () => {
+    const set = findCompareSet("opcode-decoder");
+    expect(compareValueNote(set, bits("0x0"), "casex")).toBe("This is the operators lesson's hazard value: a corrupted opcode quietly takes a real branch under casex (§12.5.1).");
+    expect(compareDecisions(set, bits("0x0"), "casex").left.items[0].terms[0].chips?.map((c) => c.verdict)).toEqual(["1", "skip", "1"]);
+  });
+});
+
+describe("sv-decision-model: the whole reveal says each sentence once, for every pick (model-level sweep)", () => {
+  /** What one prompt shows once revealed: the chosen option's feedback and, unless the pick was right, the correct option's (PredictionPrompt). A skip shows the correct one. */
+  const promptTexts = (chosen: { correct: boolean; feedback: string } | null, correct: string): string[] => (chosen === null ? [correct] : chosen.correct ? [chosen.feedback] : [chosen.feedback, correct]);
+  /** What the cards are told not to repeat: the correct option's feedback and the chosen one's (DecisionLab's toldBy). */
+  const toldBy = (chosen: { feedback: string } | null, correct: string): string[] => (chosen ? [correct, chosen.feedback] : [correct]);
+  const repeats = (texts: readonly string[]): string[] => {
+    const sentences = texts.flatMap(splitSentences);
+    return sentences.filter((s, i) => sentences.indexOf(s) !== i);
+  };
+
+  it("qualifiers mode: both prompts, the outcome line, the caveat, the value note, the wrap-up and the cards", () => {
+    let checked = 0;
+    const visit = (p: (typeof DECISION_PRESETS)[number], config: DecisionConfig, label: string) => {
+      const r = evaluateDecision(config);
+      const edited = isPresetEdited(r.config, p);
+      const body = r.config.select.join("");
+      const runCorrect = explainRunChoice(r, r.runs).feedback;
+      const reportCorrect = explainReportChoice(r, r.reportKind).feedback;
+      // The wrap-up stays on screen once the walk is complete, whatever value is shown; the notes belong to the preset's own statement.
+      const notes = edited ? [] : [presetValueNote(p, body), p.wrapUp];
+      for (const runPick of [null, ...runChoices(r)]) for (const reportPick of [null, ...REPORT_KINDS]) {
+        const run = runPick ? explainRunChoice(r, runPick) : null;
+        const report = reportPick ? explainReportChoice(r, reportPick) : null;
+        const told = [...toldBy(run, runCorrect), ...toldBy(report, reportCorrect)];
+        const texts = [...promptTexts(run, runCorrect), ...promptTexts(report, reportCorrect), r.ranLine, ...r.unsupported, ...notes, ...freshWhys(r, told).flat()];
+        expect(repeats(texts), `${label} run=${runPick ? runOutcomeId(runPick) : "skip"} report=${reportPick ?? "skip"}`).toEqual([]);
+        checked += 1;
+      }
+    };
+    // The preset's own statement at every select value the bit editor can build.
+    for (const p of DECISION_PRESETS) for (const select of allSelects(p.config.select.length)) visit(p, { ...p.config, select }, `${p.id} ${select.join("")}`);
+    const own = checked;
+    // Every form, qualifier and catch-all edit at the listed values.
+    for (const p of DECISION_PRESETS) for (const form of DECISION_FORMS) for (const qualifier of QUALIFIERS) for (const catchAll of [false, true]) for (const body of p.selectOptions) {
+      visit(p, { ...withSelect(p.config, body), form, qualifier, catchAll }, `${p.id} ${form} ${qualifier} ${catchAll} ${body}`);
+    }
+    // At least the combinations the last review swept by hand (14,336), plus the edits.
+    expect(own).toBeGreaterThanOrEqual(14336);
+    expect(checked - own).toBeGreaterThan(40000);
+  });
+
+  it("compare mode: both prompts, the value note with the asymmetry rule, the wrap-up and both columns' cards", () => {
+    let checked = 0;
+    for (const s of COMPARE_SETS) for (const kind of ["casex", "casez"] as const) for (const select of allSelects(s.selectOptions[0].length)) {
+      const { left, right } = compareDecisions(s, select, kind);
+      const leftCorrect = explainRunChoice(left, left.runs).feedback;
+      const rightCorrect = explainRunChoice(right, right.runs).feedback;
+      const notes = [`${compareValueNote(s, select, kind)} ${WILDCARD_ASYMMETRY_NOTE}`, compareWrapUp(s, kind)];
+      for (const leftPick of [null, ...runChoices(left)]) for (const rightPick of [null, ...runChoices(right)]) {
+        const l = leftPick ? explainRunChoice(left, leftPick) : null;
+        const rr = rightPick ? explainRunChoice(right, rightPick) : null;
+        // Each column has its own Result line, so the two ran lines are not compared with each other.
+        const texts = [
+          ...promptTexts(l, leftCorrect),
+          ...promptTexts(rr, rightCorrect),
+          ...notes,
+          ...left.unsupported,
+          ...right.unsupported,
+          ...freshWhys(left, toldBy(l, leftCorrect)).flat(),
+          ...freshWhys(right, toldBy(rr, rightCorrect)).flat(),
+        ];
+        expect(repeats(texts), `${s.id} ${kind} ${select.join("")} left=${leftPick ? runOutcomeId(leftPick) : "skip"} right=${rightPick ? runOutcomeId(rightPick) : "skip"}`).toEqual([]);
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(7072);
   });
 });

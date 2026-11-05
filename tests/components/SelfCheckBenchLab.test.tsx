@@ -248,6 +248,14 @@ describe("SelfCheckBenchLab step mode", () => {
     fireEvent.click(within(screen.getByRole("radiogroup", { name: "DUT" })).getByRole("radio", { name: "extra stage" }));
     expect(screen.getAllByRole("button", { name: /lock in prediction/i })).toHaveLength(1);
     expect(screen.queryByRole("rowheader", { name: "sum" })).not.toBeInTheDocument();
+    // The exp_q answer is still {15, 19}, but its question was unmounted with the outputs, so it is asked again once the new edge answer is in.
+    expect(screen.queryByText(/what does exp_q hold/)).not.toBeInTheDocument();
+    lockIn("Edge 5 (55 ns)");
+    expect(screen.getByText(/what does exp_q hold after edge 6\?/)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /lock in prediction/i })).toHaveLength(1);
+    expect(screen.queryByRole("list", { name: /exp_q after this step/ })).not.toBeInTheDocument();
+    lockIn("{15, 19}", 0);
+    expect(screen.getByRole("list", { name: /exp_q after this step/ })).toBeInTheDocument();
   });
 
   it("the exp_q question stays out of the page until the edge question is answered, so its feedback cannot give that answer away", () => {
@@ -322,6 +330,13 @@ describe("SelfCheckBenchLab step mode", () => {
   it("the model's assumptions say same-time lines from different processes may print in either order", () => {
     render(<SelfCheckBenchLab mode="step" preset="all" />);
     expect(screen.getByText(/may appear in either order in a simulator \(§4\.7\)/)).toBeInTheDocument();
+  });
+
+  it("the legend explains both message prefixes the log uses, [error @ t] and the watchdog's [fatal @ t], as stand-ins for a tool-specific message (§20.10)", () => {
+    render(<SelfCheckBenchLab mode="step" preset="all" />);
+    const legend = screen.getByText(/\[error @ t\] and \[fatal @ t\] in place of the simulator's own message/);
+    expect(legend.textContent).toMatch(/the standard leaves its format to the tool, which also names the file, line and scope of the call \(§20\.10\)/);
+    expect(legend.textContent).toMatch(/\(model @ t\) and 'still running at the horizon' are this model's notes/);
   });
 
   it("the x-carry DUT is the clinic's alone: the bug prop falls back to BUG=0 rather than showing a DUT with no option", () => {
@@ -743,6 +758,31 @@ describe("SelfCheckBenchLab matrix mode", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Add the kata's hold check/ }));
     expect(screen.getByText(/You predicted 1 of 1 cell right\. 19 had no prediction\./)).toBeInTheDocument();
     expect(cell(/\+TEST=hold against BUG=3, sum moves on idle cycles: caught, PASS=1 FAIL=3$/)).toBeInTheDocument();
+    // No answer was given, so the status names the cell left ungraded instead of claiming an answer.
+    const bug3 = screen.getByText(/with the hold check, \+TEST=hold catches it/);
+    expect(bug3.textContent).toMatch(/you revealed the question above without an answer, so \+TEST=hold against BUG=3, the one cell the check changes, is left ungraded\./);
+    expect(bug3.textContent).not.toMatch(/graded on your answer/);
+  });
+
+  it("an answered hold-check question grades the BUG=3 column on that answer, and says so", () => {
+    render(<SelfCheckBenchLab mode="matrix" />);
+    fireEvent.click(screen.getByRole("button", { name: "Reveal the runs" }));
+    lockIn("+TEST=hold only");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Add the kata's hold check/ }));
+    const bug3 = screen.getByText(/with the hold check, \+TEST=hold catches it/);
+    expect(bug3.textContent).toMatch(/the BUG=3 column is graded on your answer above\./);
+    expect(bug3.textContent).not.toMatch(/left ungraded/);
+  });
+
+  it("the note under the open hold-check question keeps its key reasoning back until the question is answered or skipped", () => {
+    render(<SelfCheckBenchLab mode="matrix" />);
+    fireEvent.click(screen.getByRole("button", { name: "Reveal the runs" }));
+    const note = () => screen.getByText(/no test catches it, however the stimulus looks/);
+    expect(note().textContent).toMatch(/the checker never looks at sum while out_valid is 0\. The hold row is the kata's stimulus against the original checker\. Answer the question above, then add the hold check/);
+    expect(note().textContent).not.toMatch(/send_invalid\(\)/);
+    expect(note().textContent).not.toMatch(/idle cycles/);
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    expect(note().textContent).toMatch(/The hold row is the kata's stimulus against the original checker: send_invalid\(\) changes a and b on idle cycles, and nothing reads sum there\. Add the hold check to see what changes\./);
   });
 
   it("the hold-check toggle shows BUG=3 needs both test_hold and the check", () => {
@@ -824,8 +864,8 @@ describe("SelfCheckBenchLab debug mode", () => {
   it("case 6: the last send() of test_smoke is accepted as the line where something is missing, and every stimulus line has a control", () => {
     render(<SelfCheckBenchLab mode="debug" />);
     pickCase(6);
-    expect(screen.getAllByRole("button", { name: "Suspect line: send(8'd1, 8'd2);" })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Suspect line: send(8'd10, 8'd20);" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^Suspect line: send\(8'd1, 8'd2\); \(line \d+, in test_smoke\(\)\)$/ })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /^Suspect line: send\(8'd10, 8'd20\); \(line \d+, in test_smoke\(\)\)$/ })).toBeInTheDocument();
     suspect(/Suspect line: send\(8'd10, 8'd20\);/);
     expect(screen.getByText(/Not this one\./)).toBeInTheDocument();
     suspect(/Suspect line: send\(8'd100, 8'd27\);/);
@@ -854,7 +894,7 @@ describe("SelfCheckBenchLab debug mode", () => {
   it("case 5's code does not promise rising edges next to logic clk;", () => {
     render(<SelfCheckBenchLab mode="debug" />);
     pickCase(5);
-    expect(screen.getByRole("button", { name: "Suspect line: always #5 clk = ~clk;" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Suspect line: always #5 clk = ~clk; \(line \d+\)$/ })).toBeInTheDocument();
     expect(screen.queryByText(/rising edges at 5, 15, 25 ns/)).not.toBeInTheDocument();
   });
 
@@ -888,9 +928,9 @@ describe("SelfCheckBenchLab debug mode", () => {
     render(<SelfCheckBenchLab mode="debug" />);
     expect(screen.queryByRole("button", { name: /Suspect line: \/\/ \(no/ })).not.toBeInTheDocument();
     pickCase(5);
-    expect(screen.getByRole("button", { name: "Suspect line: logic clk;" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Suspect line: logic clk; \(line \d+\)$/ })).toBeInTheDocument();
     pickCase(2);
-    expect(screen.getByRole("button", { name: "Suspect line: if (actual != e.sum) begin" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Suspect line: if \(actual != e\.sum\) begin \(line \d+\)$/ })).toBeInTheDocument();
     pickCase(7);
     expect(screen.queryByRole("button", { name: /Suspect line: \/\/ \(no/ })).not.toBeInTheDocument();
   });
@@ -999,6 +1039,54 @@ describe("SelfCheckBenchLab debug mode", () => {
     expect(screen.getByRole("radio", { name: /^Case 2:/ })).toHaveAttribute("aria-checked", "true");
     expect((document.activeElement as HTMLElement).textContent).toMatch(/^Case 2: /);
     expect(screen.getByRole("radio", { name: /^Case 1: .*\(solved\)$/ })).toBeInTheDocument();
+  });
+
+  it("each suspect control's name carries its line number, as the gutter shows it, and the test a stimulus line belongs to", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    const bench = screen.getByRole("list", { name: /^The broken bench/ });
+    const controls = within(bench).getAllByRole("button", { name: /^Suspect line:/ });
+    expect(controls.length).toBeGreaterThan(30);
+    controls.forEach((button) => {
+      const row = button.closest("li") as HTMLElement;
+      const gutter = row.querySelector("span")?.textContent;
+      expect(button.getAttribute("aria-label"), gutter ?? "").toMatch(new RegExp(`\\(line ${gutter}(, in test_\\w+\\(\\))?\\)$`));
+    });
+    // idle(1); ends every test: the names tell the copies apart.
+    const idles = controls.map((b) => b.getAttribute("aria-label") ?? "").filter((n) => n.startsWith("Suspect line: idle(1);"));
+    expect(idles.length).toBeGreaterThan(2);
+    expect(new Set(idles).size).toBe(idles.length);
+    expect(idles.some((n) => /, in test_smoke\(\)\)$/.test(n))).toBe(true);
+    expect(idles.some((n) => /, in test_gaps\(\)\)$/.test(n))).toBe(true);
+    expect(new Set(controls.map((b) => b.getAttribute("aria-label"))).size).toBe(controls.length);
+  });
+
+  it("a suspected line is lit as context, not announced as executing: the diagnosis may say it never ran", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    // Case 1: check-cmp never ran (rst_n is x, so the guard skips every compare).
+    suspect(/^Suspect line: if \(actual !== e\.sum\) begin/);
+    expect(screen.getByText(/This line never ran in this run/)).toBeInTheDocument();
+    const pressed = screen.getByRole("button", { name: /^Suspect line: if \(actual !== e\.sum\) begin/, pressed: true });
+    const row = pressed.closest("li") as HTMLElement;
+    expect(row).not.toHaveAttribute("aria-current");
+    expect(row.className).toMatch(/border-cyan-400\/30/);
+    expect(document.querySelector('[aria-current="step"]')).toBeNull();
+    expect(screen.queryByText("Executing:")).not.toBeInTheDocument();
+  });
+
+  it("a skip control takes the keyboard past the ~40 suspect controls to the feedback and hints, or to Step 2 once the culprit is found", () => {
+    render(<SelfCheckBenchLab mode="debug" />);
+    const skip = screen.getByRole("button", { name: "Skip past the code to the feedback and hints" });
+    expect(skip.className).toMatch(/(^|\s)sr-only(\s|$)/);
+    expect(skip.className).toMatch(/focus:not-sr-only/);
+    expect(skip.compareDocumentPosition(screen.getByRole("list", { name: /^The broken bench/ })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(skip);
+    const target = screen.getByRole("group", { name: "Suspect feedback and hints" });
+    expect(document.activeElement).toBe(target);
+    expect(within(target).getByRole("button", { name: /Need a hint\?/ })).toBeInTheDocument();
+    suspect(/Suspect line: if \(test_name == "all"\)/);
+    fireEvent.click(screen.getByRole("button", { name: "Skip past the code to the feedback and Step 2" }));
+    expect(document.activeElement).toBe(target);
+    expect(target.compareDocumentPosition(screen.getByRole("group", { name: /Step 2/ })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("the suspect controls meet the 40 px touch target at phone width", () => {

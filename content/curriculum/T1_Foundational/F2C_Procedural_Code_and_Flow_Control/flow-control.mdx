@@ -171,9 +171,13 @@ end
 
 With `req` = `2'b11` both conditions are true. A `unique if` still runs the branch of the first true condition, but it reports that the conditions were not mutually exclusive.
 
+**Predict first.** The lab below loads the decoder traced above: pick `sel` = 11, predict which item runs and what `unique` reports, then try each qualifier and the default item under *Change the statement*, and check every answer against the tables. The *Preset* menu also holds this section's two `casez` items and its `unique if` chain.
+
+<DecisionLab mode="qualifiers" preset="lesson-decoder" />
+
 Rules that follow:
 
-- **A `default` silences the no-match check.** It matches every leftover value, so "no match" can never happen (§12.5.3, NOTE). Leave it out when an unmatched value is a bug, and seed the outputs at the top of the block instead, so that no path infers a latch.
+- **A `default` silences the no-match check.** The `default` takes no part in the comparisons: it is set aside during the search and runs only when every comparison fails (§12.5). So a value that matches no item runs the `default`, and `unique` and `priority` issue no no-match report (§12.5, §12.5.3); for an `if` chain, §12.4.2 states it directly: no report when there is an explicit `else`. You do not need a `default` to trap unexpected values, because `unique` and `priority` already do (§12.5.3, NOTE). Leave it out when an unmatched value is a bug, and seed the outputs at the top of the block instead, so that no path infers a latch.
 - **Not just a synthesis hint.** Simulators must report violations. The wording and severity of the report are tool-specific.
 - **Reports wait for the time slot to settle.** The check runs when the statement executes, but the report is held until the Observed region of that time slot, and is discarded if the procedure runs again first (§12.4.2.1, §12.5.3.1). So a zero-delay glitch that makes an `always_comb` run again within the time slot is not reported, while a bad select seen by the procedure's last run in that time slot is. [Make It Work](#worked-example-a-traffic-light-controller-and-its-self-checking-bench) traces this rule on its worked bench: at time 0 both decoders queue a report, then the reset changes `state`, which makes them run again and discards both reports (see the sequence diagram after *How it works*).
 
@@ -221,7 +225,7 @@ With `gnt` = 3'b011, the `unique case (1'b1)` finds two matching items: it runs 
     2'b10: y = 4'b0100;
   endcase
 end`}
-  mistake="Adding a default to make a unique case quiet. The default matches every leftover value, so the no-match check can never fire again, including for the x select you wanted to catch."
+  mistake="Adding a default to make a unique case quiet. The default runs for every value that matches no item, so the no-match check can never fire again, including for the x select you wanted to catch."
   inTestbench="State and opcode decoders in the DUT, and decode logic in monitors and checkers: a free run-time check that an unexpected value reached the decision."
 >
   <svg viewBox="0 0 330 162" role="img" aria-label="Outcome by number of matching items. No match: plain case is silent, unique reports, unique0 is silent, priority reports. One match: every form runs it. Two or more matches: every form runs the first; unique and unique0 also report." style={{ width: "100%", maxWidth: 380 }}>
@@ -279,6 +283,10 @@ The wildcards are **asymmetric** (§11.4.6). An x, z or `?` in an **item** is a 
 | `2'b1x` | `2'b10` runs (both items match) | no match | `2'b1?` runs |
 | `2'bx1` | `2'b11` runs | no match | no match |
 | `2'bxx` | `2'b10` runs (both items match) | no match | no match |
+
+**Predict first.** The lab below sets this table's `casex` and `case inside` columns side by side, with the same select and items. For `sel` = 1x, x1 and xx, predict the item each column runs before you reveal it, then compare its per-bit results with the next table, and try `sel` = 1z with the left column switched to `casez`.
+
+<DecisionLab mode="compare" preset="casex-vs-inside" />
 
 **Which bits count?** One bit of the select against the same bit of an item, for all four forms:
 
@@ -471,7 +479,7 @@ When you wait for an event instead of polling a level, use the isolation wrapper
 | Misconception | Why it is wrong |
 |---|---|
 | "`unique` is only a synthesis hint." | Simulators must check it and report violations (§12.5.3). |
-| "A `default` makes a `unique case` safer." | The `default` matches every leftover value, so the no-match check can never fire (§12.5.3, NOTE). |
+| "A `default` makes a `unique case` safer." | The `default` runs for every value that matches no item, so the no-match check can never fire, and an unknown select runs the `default` silently (§12.5, §12.5.3). `unique` already traps unexpected values without one (§12.5.3, NOTE). |
 | "`priority` means first match wins, and a plain `case` does not." | A plain `case` also runs the first match (§12.5). `priority` adds the no-match report and allows overlaps. |
 | "A `case` with no matching item reports something." | A plain `case` silently runs nothing (§12.5). |
 | "`if (a)` with `a` = x is undefined." | It is defined: x is false, so `else` runs (§12.4). |
@@ -959,12 +967,12 @@ Answer each one before you look at the feedback.
       question: "The same unique case now has a default item. sel is again 2'b11. What happens?",
       objective: 2,
       answers: [
-        { text: "The default runs, and a violation is still reported", correct: false, feedback: "With a default, every value matches something, so there is no no-match violation to report." },
-        { text: "A violation is reported, and nothing runs", correct: false, feedback: "default runs whenever no other item matches (§12.5)." },
+        { text: "The default runs, and a violation is still reported", correct: false, feedback: "2'b11 still matches no item, but with a default that value runs the default instead, and unique issues no no-match report (§12.5, §12.5.3)." },
+        { text: "A violation is reported, and nothing runs", correct: false, feedback: "The default runs whenever every comparison with the case items fails (§12.5)." },
         { text: "Nothing runs: default only applies to x and z values", correct: false, feedback: "default applies to every unmatched value, 2'b11 included." },
-        { text: "The default item runs, and nothing is reported", correct: true, feedback: "Right: the default matches every value that no other item matches, so the no-match check can never fail (§12.5.3, NOTE)." }
+        { text: "The default item runs, and nothing is reported", correct: true, feedback: "Right: the default takes no part in the comparisons. It runs because every comparison failed, and with a default there is no no-match report (§12.5, §12.5.3)." }
       ],
-      explanation: "A default silences the no-match check. Leave it out when an unmatched value is a bug, and seed every output at the top of the block so that no path infers a latch."
+      explanation: "A default silences the no-match check. unique and priority trap unexpected values without one (§12.5.3, NOTE), so leave it out when an unmatched value is a bug, and seed every output at the top of the block so that no path infers a latch."
     },
     {
       question: "What does the unique keyword add to a case statement in simulation?",
@@ -1053,7 +1061,7 @@ endmodule
 <summary>Worked solution</summary>
 
 1. At t = 0, `always_comb` runs once with `sel` = 2'bxx. A plain comparison treats x literally, so no item matches: no item runs, `y` keeps its seed 4'b0000, and `unique` queues a no-match violation. Nothing runs the block again before time slot 0 ends, so the report appears at t = 0, worded the way your simulator words it. At t = 10 ns `sel` = 01 selects the second item, so the log ends with `t=11 sel=01 y=0010`.
-2. With a `default`, every value matches something, so there is no no-match violation. The report disappears, and so does your detector for an unknown select (§12.5.3).
+2. `sel` = 2'bxx still matches no item. The `default` is not one of the comparisons: it runs because every comparison failed, so `y` = 4'b0000 (§12.5), and with a default there is no no-match violation (§12.5.3). The report disappears, and so does your detector for an unknown select.
 3. `unique0` never reports a missing match, so it is silent too. It would still report an overlap.
 4. `2'b1x` matches `2'b1?`: the item's `?` makes bit 0 a wildcard, so the select's x in that bit is accepted, and `y` = 4'b1100 with no report. For `2'bx1`, bit 1 is x in the select and a fixed 0 or 1 in both items, so both comparisons give 1'bx, which is no match. Nothing runs, `y` stays 4'b0000, and `unique` reports a violation at 20 ns (§12.5.4, §11.4.6). The time-0 report remains too, because 2'bxx matches neither item.
 

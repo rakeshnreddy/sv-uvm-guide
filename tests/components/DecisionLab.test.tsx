@@ -67,9 +67,21 @@ describe("DecisionLab (qualifiers mode)", () => {
     const ticket = screen.getByRole("note", { name: "Violation ticket" });
     expect(ticket).toHaveTextContent("unique case: no case item matches");
     expect(ticket).toHaveTextContent(/§12\.5\.3/);
-    expect(ticket).toHaveTextContent(/reported in the Observed region \(§12\.4\.2\.1, §12\.5\.3\.1\)/);
+    // Both halves of §12.4.2.1: the check is evaluated when the statement executes, the report waits for the Observed region.
+    expect(ticket).toHaveTextContent(/checked now, reported in the Observed region \(§12\.4\.2\.1, §12\.5\.3\.1\)/);
     expect(liveGridCell()?.textContent).toContain("nothing runs, report");
     expect(screen.getAllByText(/no match$/).length).toBe(3);
+  });
+
+  it("an if chain's ticket cites §12.4.2.1 only, since §12.5.3.1 covers case statements", () => {
+    render(<DecisionLab preset="unique-if" />);
+    fireEvent.click(screen.getByRole("button", { name: "req = 2'b11" }));
+    revealBoth();
+    const ticket = screen.getByRole("note", { name: "Violation ticket" });
+    expect(ticket).toHaveTextContent("unique if: 2 conditions match");
+    expect(ticket).toHaveTextContent(/checked now, reported in the Observed region \(§12\.4\.2\.1\)/);
+    expect(ticket).not.toHaveTextContent(/§12\.5\.3\.1/);
+    expect(liveLine()).toHaveTextContent(/Violation reported in the Observed region \(§12\.4\.2, §12\.4\.2\.1\)\./);
   });
 
   it("a wrong prediction is diagnosed: choosing 2'b00 for sel = xx explains the literal x comparison", () => {
@@ -287,10 +299,31 @@ describe("DecisionLab (qualifiers mode)", () => {
     const details = folded[0].parentElement as HTMLDetailsElement;
     details.open = true;
     fireEvent(details, new Event("toggle"));
-    expect(screen.getByText(/1 match, 0 mismatch, x unknown \(no match\), – skipped, \? wildcard in the item/)).toHaveTextContent(/written z here \(same bit value\)/);
+    // A case compares every bit literally (§12.5): its chips are 1 or 0, so the legend lists nothing else.
+    expect(screen.getByText(/1 match, 0 mismatch/).textContent).toBe("Chips: 1 match, 0 mismatch.");
     details.open = false;
     fireEvent(details, new Event("toggle"));
     expect(screen.queryByText(/1 match, 0 mismatch/)).not.toBeInTheDocument();
+  });
+
+  it("the legend lists only the marks the chips draw: casez skips, a ? is noted, and a case edited from casez shows no wildcard", () => {
+    render(<DecisionLab preset="casez-overlap" />);
+    revealBoth();
+    expect(screen.getByText(/1 match, 0 mismatch/).textContent).toBe("Chips: 1 match, 0 mismatch, – skipped. A ? in the source is written z here (same bit value).");
+    // Under case the ? is a z compared literally (§12.5): nothing is skipped and nothing is a wildcard.
+    fireEvent.click(radio("Statement form", "case"));
+    revealBoth();
+    expect(screen.queryByText(/1 match, 0 mismatch/)).not.toBeInTheDocument();
+    const details = screen.getAllByText("fails at bit 0")[0].parentElement as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    expect(screen.getByText(/1 match, 0 mismatch/).textContent).toBe("Chips: 1 match, 0 mismatch. A ? in the source is written z here (same bit value).");
+  });
+
+  it("compare mode's one legend covers both columns: casex skips, case inside gives x", () => {
+    render(<DecisionLab mode="compare" preset="casex-vs-inside" />);
+    revealBoth();
+    expect(screen.getByText(/1 match, 0 mismatch/).textContent).toBe("Chips: 1 match, 0 mismatch, x unknown (no match), – skipped.");
   });
 
   it("a matching item keeps its chips open, and its failed sibling terms carry no chip table", () => {
@@ -341,8 +374,9 @@ describe("DecisionLab (compare mode)", () => {
     expect(within(right).getAllByText("x means no match").length).toBe(2);
     expect(within(right).getAllByText(/unknown, no match/).length).toBeGreaterThan(0);
     // No default and no qualifier: the column is silent, so the banner must not claim the unknown is visible (§12.5, §12.5.4).
+    // The prompt and the x stamps already say x is no match, so the banner keeps only what makes the unknown visible.
     const banner = within(right).getByText(/No real branch runs/);
-    expect(banner).toHaveTextContent(/x is no match \(§12\.5\.4\)\. To see it, add a default that reports it or a unique or priority qualifier \(§12\.5\.3\)\./);
+    expect(banner.textContent).toBe("✓ No real branch runs. To see the unknown, add a default that reports it or a unique or priority qualifier (§12.5.3).");
     expect(within(right).queryByText(/stays visible/)).not.toBeInTheDocument();
     expect(within(right).queryByText(/matches and runs/)).not.toBeInTheDocument();
   });
@@ -421,7 +455,7 @@ describe("DecisionLab (compare mode)", () => {
     expect(within(right).getByText(/runs: no case item matched/)).toBeInTheDocument();
     expect(within(right).getAllByText(/§11\.4\.4/).length).toBeGreaterThan(0);
     // With a default the value does reach a place a testbench can report it.
-    expect(within(right).getByText(/No real branch runs/)).toHaveTextContent(/The unknown stays visible: it reaches default, where a testbench can report it\./);
+    expect(within(right).getByText(/No real branch runs/).textContent).toBe("✓ No real branch runs. The unknown stays visible: it reaches default, where a testbench can report it.");
   });
 
   it("opcode-decoder: 3'b110 runs ALU in both columns; a plain statement stopped there, so JUMP is marked 'would also match'", () => {
@@ -773,15 +807,26 @@ describe("DecisionLab: Try next value", () => {
 });
 
 describe("DecisionLab: one statement of each fact, in the reveal as rendered", () => {
-  /** The sentences a sighted learner reads in the two prompts, with folded cards and screen-reader text left out. */
+  /**
+   * The sentences a sighted learner reads in the two prompts, with folded cards and screen-reader text left out.
+   * The correct answer's paragraph opens with a label (PredictionPrompt), which is stripped so its first sentence compares as itself.
+   */
   const visibleSentences = (root: HTMLElement): string[] => {
     const clone = root.cloneNode(true) as HTMLElement;
     clone.querySelectorAll("details, .sr-only, table, pre, code").forEach((el) => {
       if (el.tagName === "CODE") el.replaceWith(el.textContent ?? "");
       else el.remove();
     });
-    return Array.from(clone.querySelectorAll("p")).flatMap((p) => splitSentences(p.textContent ?? ""));
+    return Array.from(clone.querySelectorAll("p")).flatMap((p) => splitSentences((p.textContent ?? "").replace(/^Why the answer holds: /, "")));
   };
+
+  it("visibleSentences reads the correct answer's first sentence without its label", () => {
+    render(<DecisionLab />);
+    predict(/Which case item runs/, /item 1: 2'b00/);
+    const region = document.querySelector("section[aria-label]") as HTMLElement;
+    expect(visibleSentences(region)).toContain("2'b01 matches bit for bit (§12.5).");
+    expect(visibleSentences(region).some((s) => s.startsWith("Why the answer holds"))).toBe(false);
+  });
 
   const expectNoRepeat = (name: string) => {
     const region = document.querySelector("section[aria-label]") as HTMLElement;

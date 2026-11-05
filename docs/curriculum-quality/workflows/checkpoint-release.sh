@@ -15,13 +15,18 @@
 #    it passes fast-forwards main, which Cloudflare Workers Builds deploys.
 #
 # Stops at the first failing gate and prints why; nothing is committed then.
+#
+# Environment (all optional): MAIN (default: this repo's top level), BRANCH (default: curriculum-quality-program),
+# UVM_HOME, and RELEASE_MODE=pr, which stops after the branch push: no CI wait and no push to main (a cloud
+# session that may only push its own branch; open the PR separately).
 set -euo pipefail
-MAIN=/Users/Rakesh/Projects/sv-uvm-guide
+MAIN=${MAIN:-$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)}
 SCR=${SCR:?set SCR to your session scratchpad directory}
 LIST=${1:?file list}
 MESSAGE=${2:?commit message}
 WT=$SCR/wt-release
-BRANCH=curriculum-quality-program
+BRANCH=${BRANCH:-curriculum-quality-program}
+RELEASE_MODE=${RELEASE_MODE:-main}
 export UVM_HOME=${UVM_HOME:-/Users/Rakesh/Downloads/1800.2-2020.3.1}
 
 cd "$MAIN"
@@ -74,7 +79,8 @@ cd "$MAIN"
 git update-ref "refs/heads/$BRANCH" "$COMMIT"
 git reset -q   # index follows the new HEAD; the working tree is left exactly as the agents have it
 git worktree remove --force "$WT"
-git push -q origin "$BRANCH"
+git push -q -u origin "$BRANCH"
+if [ "$RELEASE_MODE" = "pr" ]; then echo "pushed $(git rev-parse --short "$COMMIT") to $BRANCH (pr mode: open or update the PR; CI runs there)"; exit 0; fi
 echo "pushed $(git rev-parse --short "$COMMIT"); waiting for CI"
 
 RUN=""
