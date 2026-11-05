@@ -3,9 +3,38 @@
 Written 2026-10-12, when the weekly usage limit paused the program. Read this first in the next session,
 then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASKS.md`.
 
-## Start here (state at the 2026-11-05 cloud-session handoff)
+## Start here (state at the 2026-11-05 cloud stop) — resume locally from this list
 
-**Read this block first; the 2026-11-02 block below is still accurate except where this one updates it.**
+The cloud credits ran out on 2026-11-05 and the lead stopped every run. Nothing is running.
+
+**Live / released** (PR #393 from `curriculum-quality-program-x1gwpt`, merged into `main` if the CI gate passed; see
+the last line of this block):
+- Checkpoint 15: DecisionLab (F2C, F2A) and SelfCheckBenchLab (F2E) embeds, with the components' S3 fixes.
+- Checkpoint 16: 6a for I-SV-1 index, copying-and-cloning, constructors and parameterized-classes
+  (`lessonsEnriched` in `progress.json` marks them `checkpoint-16`).
+
+**Not released, saved for review-only local passes (do not re-author):**
+1. `backup/wip-2026-11-05` (c04e515): 6a authored, review unfinished. I-SV-1 polymorphism-pitfalls (accuracy passed;
+   pedagogy failed rounds 1 and 2, fix round 2 applied, round-3 review stopped) and all 7 I-SV-2A/2B pages (authored;
+   round-1 reviews stopped, and constraint-blocks accuracy r1 failed). Their audits and the reviews that ran are in
+   `data/6a-cloud-2026-11-05.json`. Resume: copy the 8 files from that branch into the tree, run a review-and-fix
+   loop on them (the review and fix prompts of `visual-enrichment.js`, starting from the saved findings), then
+   release with `checkpoint-release.sh`.
+2. `components/finish-held` (cbaf90b on top of 4c0cfae): the 5 held components after round-1 fixes, all round-1
+   reviews (`data/components-finish-cloud-r1-2026-11-05.json`), and round-2 fixes. Round 2 finished for
+   expression-lab-extensions and packed-layout-explorer; it was stopped mid-edit for subroutine-lab and timescale-lab,
+   and had not started for scheduler-model-v2. Resume as in "Finish pass" below, with the failed round-1 reviews'
+   S1/S2 findings as the findings file. Run each component's tests first.
+
+**Next local order:** (1) the two review-only passes above, (2) 6a for the rest of T2 (I-SV-3A onward), (3) the
+next components batch, extras and the final 6b sweep, as below.
+
+**Week-of-2026-11-09 resume, one line:** `git fetch origin && git checkout curriculum-quality-program &&
+git merge --ff-only origin/main`, then tell Claude "read docs/curriculum-quality/workflows/RESTART.md and resume".
+
+## The 2026-11-05 cloud-session handoff (detail)
+
+**The 2026-11-02 block below is still accurate except where these two blocks update it.**
 
 The owner ran one session in a Claude Code cloud container (paid from cloud-session credits, not the weekly plan)
 and asked it to stop at a logical point and hand back to a local session.
