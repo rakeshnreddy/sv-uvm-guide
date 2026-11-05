@@ -22,11 +22,11 @@ and asked it to stop at a logical point and hand back to a local session.
 
 **Finish pass for the 5 held components** (`wf_616ab530-a6a`, cloud) ran in a worktree built from `origin/main`
 plus the 28 held files from `components/finish-held` (no other files from that branch). See "Cloud finish pass"
-in the run log at the end of this block for how it ended. If it did not release, nothing is lost:
-`components/finish-held` is unchanged, so rerun the finish pass locally exactly as step 1 of "Order for the next
-resume" below says. Use a worktree from `origin/main` and `git checkout origin/components/finish-held -- <the 28
-files>` (list: the `files` of the five ids in `data/components-backlog-2026-10-28.json`), not the branch itself,
-because the branch predates checkpoints 13 and 14.
+in the run log at the end of this block for how it ended: it was stopped after round 1 and nothing was released.
+Rerun the finish pass locally as step 1 of "Order for the next resume" below says, starting from the round-1 files.
+Use a worktree from `origin/main` and `git checkout origin/components/finish-held -- <the 28 files>` (list: the
+`files` of the five ids in `data/components-backlog-2026-10-28.json`), not the branch itself, because the branch
+predates checkpoints 13 to 15.
 
 **Before the next local run:**
 1. `git fetch origin && git checkout curriculum-quality-program && git merge --ff-only origin/curriculum-quality-program-x1gwpt`
@@ -46,8 +46,19 @@ because the branch predates checkpoints 13 and 14.
 - A 4-CPU container runs only 2 agents at a time per workflow, so large batches belong on the Mac.
 - Pushing needs the Claude GitHub App with write access to the repo; it failed with 403 until the owner reconnected it.
 
-**Cloud finish pass (run log):** launched 2026-11-05 with `make-finish-held.py --rounds 3` (default) on all five ids;
-still running when these notes were first pushed. If no later line here says it was released, treat it as not run.
+**Cloud finish pass (run log):** launched 2026-11-05 with `make-finish-held.py --rounds 3` (default) on all five ids.
+The lead stopped it after round 1's five fixers and 7 of its reviews, to save cloud credits (a 4-CPU container runs 2
+agents at a time; the pass needs about 80 agents). Nothing from it is released.
+- The round-1 fixer edits are a WIP commit on top of `components/finish-held` (4c0cfae, "NOT reviewed"), still
+  based on the old ba23a51, so never merge that branch.
+- The 7 reviews that ran (all PackedLayoutExplorer: accuracy groups 1, 2 and 6 failed, groups 3 to 5 and learning
+  passed) and every fixer's notes and data groups are in `data/components-finish-cloud-r1-2026-11-05.json`.
+- **Resume locally:** build the worktree from `origin/main` (checkpoint 15 or later) plus the 28 held files checked
+  out from `origin/components/finish-held` (now the round-1 versions). Write a findings file for
+  `make-finish-held.py --findings` with, per id, the S1/S2 findings of the failed reviews above (PackedLayoutExplorer)
+  and, for the other four ids, their open findings from `data/components-finish-open-2026-11-02.json` (round 1 fixed
+  against these but was never reviewed, so the reviewers must check them again). Then run the finish pass as in step
+  1 of "Order for the next resume". Run each component's own tests first.
 
 ## State at the 2026-11-02 pause
 
