@@ -145,7 +145,13 @@ export default function VerilogVsSystemVerilog() {
           <pre className={codeClass}>
             <code>{"// legacy.v: legal Verilog-2001\nmodule legacy;\n  reg [7:0] logic;   // 'logic' was an ordinary name\nendmodule"}</code>
           </pre>
-          <PredictionPrompt question="You compile legacy.v as SystemVerilog with no directives. What happens?" options={KEYWORD_OPTIONS}>
+          <p className="text-xs text-muted-foreground">
+            With no directive at all, the keyword set is the tool&apos;s default, which the standard leaves implementation dependent (§22.14).
+          </p>
+          <PredictionPrompt
+            question="You compile legacy.v with an IEEE 1800 (SystemVerilog) keyword set and no directives in the file. What happens?"
+            options={KEYWORD_OPTIONS}
+          >
             <div className="space-y-2 text-sm">
               <p className="text-foreground">The fix that keeps the old name: select the Verilog-2001 keyword set for this file only (§22.14).</p>
               <pre className={codeClass}>
@@ -156,7 +162,7 @@ export default function VerilogVsSystemVerilog() {
         </div>
 
         <p className="text-sm text-muted-foreground">
-          SystemVerilog contains all of Verilog: IEEE 1364-2005 was merged into IEEE 1800-2009. But it is not a drop-in superset for every legacy file.
+          SystemVerilog contains all of Verilog: IEEE 1800-2009 was a merger of IEEE 1364-2005 and IEEE 1800-2005 (IEEE 1800-2023 1.3 NOTE). But it is not a drop-in superset for every legacy file.
           New reserved keywords such as <code className="font-mono [font-variant-ligatures:none]">logic</code>,{" "}
           <code className="font-mono [font-variant-ligatures:none]">bit</code>, <code className="font-mono [font-variant-ligatures:none]">int</code> and{" "}
           <code className="font-mono [font-variant-ligatures:none]">class</code> break old code that used them as names, unless you use{" "}

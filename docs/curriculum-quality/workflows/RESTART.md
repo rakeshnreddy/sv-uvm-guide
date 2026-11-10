@@ -31,10 +31,15 @@ one does not update them.
   keep to about three lesson workflows while a release runs its local gates.
 - checkpoint-19: 6a for I-UVM-3B (9), B-AXI-1 to 6, B-AMBA-F1 to F3 and all 15 T4 lessons (33 lessons). **Every one of the 112
   lessons is now enriched**; no lesson escalated on the v2 flow.
+- checkpoint-20: components batch 3, built from the backlog with `make-finish-held.py --build` (TimeSlotTraceVisualizer presets,
+  KeywordSetExplorer, CounterBenchLab, RunEndingExplorer, FileReadCursorVisualizer, the container-lab extensions, XCheckLab,
+  TimingControlExplorer), and their embeds in ten T1 lessons. 19 of 48 components are built. Measured: about 1.5M worker
+  tokens per new component (101 agents for 8), and none escalated.
 
 **Held:** nothing. `components/finish-2026-11-10` holds the finish-pass history only; everything on it is released.
 
-**Next order:** components batch 3 (8 components, building on `components/batch3-2026-11-10`), its embed pass, `phase6a-extras.js`, a fresh final 6b sweep, closure checks.
+**Next order:** the extras (`phase6a-extras.js`, run `wf_93a61217-ede` started 2026-11-10), components batch 4 from
+`make-workflow-args.py components N` (29 left; build with `make-finish-held.py --build`, then `make-6a-run.py --embed`), `phase6a-extras.js`, a fresh final 6b sweep, closure checks.
 
 ## Start here (state at the 2026-11-05 cloud stop) — resume locally from this list
 

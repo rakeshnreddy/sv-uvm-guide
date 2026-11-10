@@ -115,3 +115,140 @@ describe("TimeSlotRegionMap", () => {
     expect(screen.getByText(/Clocking-block synchronous drives/)).toBeInTheDocument();
   });
 });
+
+describe("TimeSlotTraceVisualizer: folded view and the F3A, F3B, F3C presets", () => {
+  const lock = () => fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+  const toEnd = () => {
+    const slider = screen.getByRole("slider", { name: /scrubber/i });
+    fireEvent.change(slider, { target: { value: Number(slider.getAttribute("max")) } });
+  };
+
+  it("f3a-one-edge hides the trace until both printed lines are predicted, then folds the slot into the lesson's eight events", () => {
+    render(<TimeSlotTraceVisualizer scenario="f3a-one-edge" scenarios={["f3a-one-edge", "f3a-one-edge-zero-delay"]} regionView="folded" />);
+    // Nothing that answers the prediction is on the page yet.
+    expect(screen.queryByRole("group", { name: /event playback controls/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Simulation log")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /this time slot/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/The initial prints two lines at t = 5 ns/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(/^5 display q=0 q_n=1 · 5 strobe q=1 q_n=0$/));
+    lock();
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+
+    const slot = screen.getByRole("region", { name: "This time slot, t = 5 ns" });
+    const events = within(slot).getAllByRole("button");
+    expect(events.map((b) => b.getAttribute("aria-label")?.split(",")[0])).toEqual([
+      "entering the slot",
+      "Event 1: ▶ clock",
+      "Event 2: ◆ clk 0 → 1",
+      "Event 3: ▶ always_ff",
+      "Event 4: ▶ initial",
+      "Event 5: ◆ q 0 → 1",
+      "Event 6: ▶ assign q_n",
+      "Event 7: ◆ q_n 1 → 0",
+      "Event 8: end of slot",
+    ]);
+    expect(screen.getByLabelText("$time is 5 ns for every event of this slot")).toBeInTheDocument();
+
+    toEnd();
+    expect(screen.getByLabelText("Simulation log").textContent?.replace(/\s+/g, " ")).toBe("$display: 5 display q=0 q_n=1$strobe: 5 strobe q=1 q_n=0");
+    expect(screen.getByLabelText(/^Δ 1, model count/)).toBeInTheDocument();
+  });
+
+  it("the Scheduler choice toggle swaps events 3 and 4 and leaves the output unchanged", () => {
+    render(<TimeSlotTraceVisualizer scenario="f3a-one-edge" scenarios={["f3a-one-edge"]} regionView="folded" />);
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    expect(screen.getByText(/Deterministic — all 2 legal orderings end the same way/)).toBeInTheDocument();
+    const group = screen.getByRole("radiogroup", { name: "Scheduler choice" });
+    fireEvent.click(within(group).getByRole("radio", { name: /initial first/ }));
+    const slot = screen.getByRole("region", { name: /this time slot/i });
+    const labels = within(slot).getAllByRole("button").map((b) => b.getAttribute("aria-label")?.split(",")[0]);
+    expect(labels.slice(3, 5)).toEqual(["Event 3: ▶ initial", "Event 4: ▶ always_ff"]);
+    toEnd();
+    const log = screen.getByLabelText("Simulation log").textContent?.replace(/\s+/g, " ");
+    expect(log).toBe("$display: 5 display q=0 q_n=1$strobe: 5 strobe q=1 q_n=0");
+  });
+
+  it("the #0 variant sits behind Show advanced and explains why $display still prints q=0", () => {
+    render(<TimeSlotTraceVisualizer scenario="f3a-one-edge" scenarios={["f3a-one-edge", "f3a-one-edge-zero-delay"]} regionView="folded" />);
+    expect(screen.queryByRole("tab", { name: "#0 before $display" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show advanced" }));
+    fireEvent.click(screen.getByRole("tab", { name: "#0 before $display" }));
+    expect(screen.getByText("With #0 before $display, does $display now print q=1?")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/^Yes: #0 waits/));
+    lock();
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/Inactive \(§4\.4\.2\.3\).*before NBA events/).length).toBeGreaterThan(0);
+  });
+
+  it("comb-after-nba gates y, z, Δ and $time behind one prediction", () => {
+    render(<TimeSlotTraceVisualizer scenario="comb-after-nba" scenarios={["comb-after-nba", "program-drive"]} />);
+    expect(screen.queryByText(/^Δ \d/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/; \$time moves on by one Δ$/));
+    lock();
+    expect(screen.getByText(/Δ is not a unit of time/)).toBeInTheDocument();
+    toEnd();
+    expect(screen.getByText("Δ 1")).toBeInTheDocument();
+    expect(valueChip("z").getAttribute("aria-label")).toBe("z = 1");
+  });
+
+  it("program-drive needs no prediction, and its Δ goes past 1 by the end of the slot", () => {
+    render(<TimeSlotTraceVisualizer scenario="program-drive" scenarios={["comb-after-nba", "program-drive"]} />);
+    expect(screen.queryByRole("button", { name: /lock in prediction/i })).not.toBeInTheDocument();
+    toEnd();
+    expect(screen.getByText("Δ 2")).toBeInTheDocument();
+  });
+
+  it("gclk-interleave asks old, new or either first, then shows two outcome groups that load into the scrubber", () => {
+    render(<TimeSlotTraceVisualizer scenario="gclk-interleave" scenarios={["gclk-interleave", "gclk-enable"]} />);
+    expect(screen.queryByText(/different outcomes/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Race —/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/^The old a \(0\)$/));
+    lock();
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    expect(screen.getByText("2 different outcomes from 3 legal orders: the result depends on the scheduler's choice.")).toBeInTheDocument();
+    const card = screen.getByRole("button", { name: /^b = 0, 1 of 3 orders/ });
+    fireEvent.click(card);
+    expect(card).toHaveAttribute("aria-pressed", "true");
+    toEnd();
+    expect(screen.getAllByLabelText(/^b = 0(, just changed)?$/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByLabelText(/^b = 1(, just changed)?$/)).toHaveLength(0);
+  });
+
+  it("gclk-enable gives one group: b captures the old a in every order", () => {
+    render(<TimeSlotTraceVisualizer scenario="gclk-enable" scenarios={["gclk-interleave", "gclk-enable"]} />);
+    fireEvent.click(screen.getByLabelText(/^The old a \(0\)$/));
+    lock();
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByText(/^1 outcome from 6 legal orders/)).toBeInTheDocument();
+    expect(screen.getByText(/Model limit: The model does not evaluate if/)).toBeInTheDocument();
+  });
+
+  it("existing presets keep their ungated ladder view", () => {
+    render(<TimeSlotTraceVisualizer scenario="display-vs-strobe" scenarios={["display-vs-strobe"]} />);
+    expect(screen.queryByRole("button", { name: /lock in prediction/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/t = 10 ns \(fixed\)/)).toBeInTheDocument();
+  });
+});
+
+describe("RaceConditionDebugger: nba-writers bench (§4.6 vs §4.7)", () => {
+  it("one process is defined; two processes are not, even with <=", () => {
+    render(<RaceConditionDebugger bench="nba-writers" />);
+    expect(screen.queryByText(/outcome/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/^Defined: every legal order/));
+    fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByText(/a ← 0, then a ← 1 is applied\. a = 1 at the end of the slot/)).toBeInTheDocument();
+    expect(screen.getByText(/^1 outcome from 1 legal order/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("radio", { name: /two processes woken by one edge/ }));
+    expect(screen.getByRole("button", { name: /lock in prediction/i })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/^Defined: every legal order/));
+    fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/a = 0 or 1/).length).toBeGreaterThan(0);
+    expect(screen.getByText("2 different outcomes from 2 legal orders: the result depends on the scheduler's choice.")).toBeInTheDocument();
+    // No operator switches on this bench: the point is the writers, not = versus <=.
+    expect(screen.queryByRole("button", { name: /to a blocking/ })).not.toBeInTheDocument();
+  });
+});

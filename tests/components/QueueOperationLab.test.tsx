@@ -55,3 +55,39 @@ describe("QueueOperationLab (q[$] vs q[$:N])", () => {
     expect(screen.getByRole("radio", { name: /\[\$:2\]/ })).toBeDisabled();
   });
 });
+
+describe("QueueOperationLab scenario 'mixed' (§7.10.2)", () => {
+  it("asks for the final queue and popped value before anything runs, and diagnoses insert read as 'after i'", () => {
+    render(<QueueOperationLab initialScenario="mixed" />);
+    expect(screen.queryByTestId("mixed-steps")).not.toBeInTheDocument();
+    lockIn(/^q = '\{0, 1, 2, 9, 7\}; popped v = 3$/);
+    expect(screen.getByText(/Not quite/)).toBeInTheDocument();
+    expect(screen.getByText(/it does not insert after index i/)).toBeInTheDocument();
+    expect(screen.getByTestId("mixed-steps")).toBeInTheDocument();
+  });
+
+  it("scrubs op by op and marks the index shifts of push_front and insert", () => {
+    render(<QueueOperationLab initialScenario="mixed" />);
+    lockIn(/^q = '\{0, 1, 9, 2, 7\}; popped v = 3$/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    const steps = screen.getByTestId("mixed-steps");
+    const controls = within(steps).getByRole("group", { name: /Queue step playback controls/ });
+    fireEvent.keyDown(controls, { key: "ArrowRight" });
+    const shifts = within(steps).getByRole("list", { name: "Index shifts" });
+    expect(within(shifts).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["1: [0] → [1]", "2: [1] → [2]", "3: [2] → [3]"]);
+    fireEvent.keyDown(controls, { key: "ArrowRight" });
+    expect(within(within(steps).getByRole("list", { name: "Index shifts" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["2: [2] → [3]", "3: [3] → [4]"]);
+    fireEvent.keyDown(controls, { key: "ArrowRight" });
+    expect(within(steps).getByText("v = 3")).toBeInTheDocument();
+    expect(within(steps).getByText("No surviving item changed index.")).toBeInTheDocument();
+  });
+
+  it("offers pop_back-as-front and pop-as-peek misreadings, and switches back to the bounded scenarios", () => {
+    render(<QueueOperationLab initialScenario="mixed" />);
+    expect(screen.getByLabelText(/^q = '\{1, 9, 2, 3, 7\}; popped v = 0$/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^q = '\{0, 1, 9, 2, 3, 7\}; popped v = 3$/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Urgent push_front" }));
+    expect(screen.getByRole("radio", { name: /\[\$:3\]/ })).toBeInTheDocument();
+  });
+});
+
