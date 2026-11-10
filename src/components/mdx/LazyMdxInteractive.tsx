@@ -125,6 +125,8 @@ const loaders = {
   IpcSmellClinic: () => import("@/components/visuals/IpcSmellClinic").then(module => asMdxModule(module.default)),
   ArraySelectExplorer: () => import("@/components/visuals/ArraySelectExplorer").then(module => asMdxModule(module.default)),
   ExpressionTreeExplorer: () => import("@/components/visuals/ExpressionTreeExplorer").then(module => asMdxModule(module.default)),
+  VerificationMethodsExplorer: () => import("@/components/curriculum/f1/VerificationMethodsExplorer").then(module => asMdxModule(module.default)),
+  ClosureBudgetLab: () => import("@/components/curriculum/f1/ClosureBudgetLab").then(module => asMdxModule(module.default)),
 } satisfies Record<LazyMdxInteractiveName, MdxInteractiveLoader>;
 
 const componentCache = new Map<

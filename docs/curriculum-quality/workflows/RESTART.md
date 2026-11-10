@@ -3,51 +3,80 @@
 Written 2026-10-12, when the weekly usage limit paused the program. Read this first in the next session,
 then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASKS.md`.
 
-## Current state: the 2026-11-10 local resume
+## Start here: state at the 2026-11-10 pause (current)
 
-The owner resumed on 2026-11-10 with Fable as the lead and a 50 % weekly line. The blocks below stay valid where this
-one does not update them.
+The owner resumed on 2026-11-10 with Fable as the lead and a 50 % weekly line. The run paused near 47 % with everything
+reviewed released. Nothing is running. **This block supersedes the older blocks below** wherever they talk about held
+components, backup branches or the order of work.
+
+**Live through checkpoint 22:**
+- **Lessons:** all 112 are enriched and reviewed (accuracy and pedagogy lenses, no content removed). None escalated.
+- **Components:** 28 of 48 are built, reviewed, registered and embedded in the lessons the backlog planned.
+- **Extras:** done. /resources, /history, /knowledge-hub, /assessment and /projects are rebuilt and public, and seven labs
+  are available (constructs-1, common-1, fifo-1, assertions-1, arbiter-1, dma-1, and the new M5 lab multi-agent-vseq).
+- **Held:** nothing. `backup/wip-2026-11-05`, `components/finish-held`, `components/finish-2026-11-10` and
+  `components/batch3-2026-11-10` hold history only; everything on them is released. Deleting them is the owner's call.
+
+**Checkpoints this session** (`progress.json` marks each file with its label; run journals are in `data/runs/`):
+17 (4 held components, 14 T2 lessons), 18 (TimescaleLab, first embed pass, 42 lessons), 19 (last 33 lessons), 20 (8 new
+components and embeds), 21 (6 components and embeds, the extras; reached main together with 22), 22 (3 components and embeds, the bundle
+baseline, these notes).
+
+**Work left, with costs measured on the v2 flow this week** (Opus workers; 1 % of the weekly limit is about 2.5M worker tokens; the session used about 107M):
+
+| Work | Left | Measured unit cost | Estimate |
+|---|---|---|---|
+| Components | 20 of 48 | about 1.5M tokens to build and review one, 0.3M to embed it | about 17 % |
+| Final 6b sweep, run fresh | 112 lessons | a full two-lens review is about 0.35M tokens a lesson, plus fixes | about 22 to 28 % |
+| Closure checks | all | not measured | about 5 % |
+| **Total** | | | **about 45 to 50 % of a weekly limit** |
+
+**The 20 components left, in backlog order:** shift-left-timeline, stream-pack-lab, fsm-edge-stepper, deferred-report-visualizer, region-trace-exercise, ipc-bench, literal-decoder, scoreboard-plain-sv, process-tree-view, event-memory-matrix, region-sorter-props, enum-declaration-and-casts, data-type-chart-sections, sv-3d-mem-block, printing-lab, cost-graph-delay, hall-of-shame-predict, boundary-probe, loop-tracer, readmem-loader.
 
 **How runs work now (the v2 flow):**
 - **Models:** the lead is Fable and only plans and manages. Every workflow agent names its model: Opus for authors,
-  fixers and reviewers, Sonnet for mechanical steps. An agent with no model would inherit Fable, at about five times the cost.
+  builders, fixers and reviewers, Sonnet for mechanical steps. An agent with no model inherits Fable, at about five times
+  the cost. `phase6-closure-sweep.js`, `visual-components.js`, `visual-enrichment.js`, `compile-fix.js` and
+  `interview-banks.js` still have agents with no model: **add one to every `agent()` call before running any of them.**
 - **Lessons:** `make-6a-run.py --out run.js --snap <dir outside the repo> <module> ...` writes a ready-to-run copy of
-  `visual-enrichment-v2.js`. The author plans from the saved audit and the saved catalog (`data/visual-catalog.json`),
-  then two full review rounds, a closing round that only verifies the fixes, and a delta accuracy check. A lesson that
-  still fails comes back as `escalate`. `--review-only` and `--embed` are the other two modes.
-- **Components:** `make-finish-held.py` (fresh pass, `--resume` after a review round, `--closing` for a last verify-only round).
+  `visual-enrichment-v2.js`: author from the saved audit and catalog, two full review rounds, a closing round that only
+  verifies the fixes, then a delta accuracy check. `--review-only` reviews lessons that are already written, and
+  `--embed <ids> --usage <journal.json>` places released components in the lessons the backlog planned.
+- **Components:** `make-finish-held.py --worktree W --ids a,b --build --out build.js` builds from the backlog specs in
+  a worktree cut from `origin/main`. Per component: builder, one accuracy reviewer per data group plus a learning
+  reviewer, up to three rounds (the last verifies only), a regression check, then one integrator registers the clean ones.
+  Copy the files of the worktree commit into the main tree, run the embed pass, and release both together.
 - **Reading a run:** `wf-journal.py status|open|save <runId>`. Workflows return only a compact summary on purpose.
 - **Releasing:** `prep-release.py --label checkpoint-N --list L.txt [--components ids] [--extra files] <lessons>`, then
-  `checkpoint-release.sh L.txt "<message>"`. The release script refuses to run without a tracked `.gitignore`.
-- **Measured cost:** about 0.6M worker tokens per lesson (6 lessons, 29 agents, 20 minutes), against 1.6M on the old flow.
+  `checkpoint-release.sh L.txt "<message>"`. The script regenerates the lab registry, curriculum data and search index,
+  refuses to run without a tracked `.gitignore`, and reruns timed-out test files one at a time.
 
-**Releases since the resume** (`progress.json` marks each file with its checkpoint label):
-- checkpoint-17: OperatorExplorer and SignednessVisualizer extensions, PackedLayoutExplorer, SubroutineLab and the
-  scheduler model v2 (registered, not embedded yet); 6a for I-SV-1 polymorphism-pitfalls, I-SV-2A, I-SV-2B, I-SV-3A, I-SV-3B.
+**Lessons from this session:**
+- **Keep to about three lesson workflows while a release runs its local gates.** Seven at once put the load average at 71
+  and three tests timed out. The gate now retries timed-out files serially, but a slow machine still wastes a cycle.
+- **Tests that pin a lesson must be run by its author.** B-AXI-1 gained a fourth waveform that
+  `tests/lib/axi-channel-model.test.ts` forbids, and only the release gate caught it. The v2 validation now tells authors
+  and fixers to find and run every test that names their lesson.
+- **Agents that may not run generators will report a stale registry as S1.** After work that adds labs, the lead
+  regenerates (`node scripts/generate-lab-registry.mjs`, `npm run -s generate:curriculum`) before the closing reviews.
+- **Integration edits need their own review.** The extras integrator edited lesson MDX to link the new labs; the item
+  reviews do not cover that, so `extras-closeout` reviewed it and five wording corrections followed.
+- **CI has a bundle-size gate that the local gates do not run.** Checkpoint 21 passed locally and failed in CI: the five
+  rebuilt pages took the total initial JavaScript 7 % over the 2026-10-19 baseline (allowance 5 %). The lead raised
+  `docs/bundle-baseline.json` to the CI-measured total and released it with checkpoint 22. After adding pages, expect
+  this; lazy-loading the /knowledge-hub concept map would win most of it back.
+- **Bounded rounds converged.** With two full rounds, a verify-only closing round and a delta or regression check, all
+  112 lessons, 22 components and 12 extras ended clean; two needed one closing pass (timescale-lab, /projects).
 
-- checkpoint-18: TimescaleLab (clean after one closing pass); the embed pass placed all five finished components in
-  F1B, F2A (3 lessons), F2D (2), F3A and F3B; 6a for all of T2 except I-UVM-3B, and for T3's A-UVM-4A to 9, B-AMBA-1 and 2,
-  B-APB-1 and B-AHB-1 to 3 (42 lessons). Its first attempt failed on test timeouts under machine load (load average 71):
-  keep to about three lesson workflows while a release runs its local gates.
-- checkpoint-19: 6a for I-UVM-3B (9), B-AXI-1 to 6, B-AMBA-F1 to F3 and all 15 T4 lessons (33 lessons). **Every one of the 112
-  lessons is now enriched**; no lesson escalated on the v2 flow.
-- checkpoint-20: components batch 3, built from the backlog with `make-finish-held.py --build` (TimeSlotTraceVisualizer presets,
-  KeywordSetExplorer, CounterBenchLab, RunEndingExplorer, FileReadCursorVisualizer, the container-lab extensions, XCheckLab,
-  TimingControlExplorer), and their embeds in ten T1 lessons. 19 of 48 components are built. Measured: about 1.5M worker
-  tokens per new component (101 agents for 8), and none escalated.
-- checkpoint-21: components batch 4 (FixPathDecisionLab, IpcSmellClinic, ArraySelectExplorer, ExpressionTreeExplorer, the
-  SvaSequenceWaveformVisualizer and LogicStateDiagram extensions) and their embeds in eight T1 lessons. 25 of 48 built.
-  The same checkpoint carries the extras (`phase6a-extras.js`): /resources, /history, /knowledge-hub, /assessment and
-  /projects rebuilt with real content and unhidden, and seven labs made available (constructs-1, common-1, fifo-1,
-  assertions-1, arbiter-1, dma-1, and the new M5 lab multi-agent-vseq). /projects needed one closing pass. The lab links
-  the integration added to lessons were reviewed separately (`extras-closeout`), because the item reviews do not cover them.
+**Next order:** (1) the remaining components in batches of about six, each followed by its embed pass and a release;
+(2) a fresh final 6b sweep over all 112 lessons: write it on the v2 pattern (read-only review per lesson and lens, then
+fix and verify only what fails), never resume `wf_010d0167-550`; (3) the closure checks in `plan.md`. The S3 notes that
+reviewers left on passing work are in `data/runs/*.json` under each review's findings, for the sweep to pick up.
 
-**Held:** nothing. `components/finish-2026-11-10` holds the finish-pass history only; everything on it is released.
+**First steps on resume:** ask the owner for the week's line; confirm the session model and that every workflow script
+you run names its worker models; request keep-awake; `git status` and confirm `main` = `curriculum-quality-program`.
 
-**Next order:** components batch 5 (net-driver-legality, verification-methods-explorer and closure-budget-lab were building on
-`components/batch3-2026-11-10` at the time of writing), then the rest from `make-workflow-args.py components N` (20 left after it; build with `make-finish-held.py --build`, then `make-6a-run.py --embed`), `phase6a-extras.js`, a fresh final 6b sweep, closure checks.
-
-## Start here (state at the 2026-11-05 cloud stop) — resume locally from this list
+## History: state at the 2026-11-05 cloud stop (superseded by the block above)
 
 The cloud credits ran out on 2026-11-05 and the lead stopped every run. Nothing is running.
 

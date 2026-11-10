@@ -1459,6 +1459,10 @@ The same policy as a picture, with the one place where 4-state becomes 2-state:
 - **Implicit nets.** An undeclared name in a port connection, or on the left of a continuous assignment, silently becomes a 1-bit net of the default net type, normally `wire` (§6.10, §22.8). A typo in a port connection therefore compiles into a dangling wire. `` `default_nettype none `` turns it into an error. Input ports also take the default net type (§23.2.2.3), so under `none` give ports an explicit kind (`input wire logic a`); how strictly tools enforce this varies (tool-dependent).
 - **`uwire`** makes "at most one driver" a checked rule for a net (§6.6.2). An undriven `uwire` is legal and reads `z`.
 
+Try the per-bit rule before you read the tables. The lab opens on the bits of `logic [1:0] v`: pick a set of writers, predict whether the tool accepts them, then check. Notice that the verdict depends on which bits each writer touches, not on how many writers the variable has.
+
+<NetResolutionSimulator initialMode="legality" pattern="bitwise" />
+
 Both rules as tables you can check a declaration against. First the per-bit rule on `logic [1:0] v`:
 
 | Drivers of `logic [1:0] v` | `v[1]` | `v[0]` | Legal? |
@@ -1485,6 +1489,11 @@ Then the port-kind rules of §23.2.2.3 for an ANSI port list:
 - The strongest driver dominates; only drivers that tie at the top strength are combined by the net's truth table (§28.12.1). Two equal-strength drivers that disagree give `x` on `wire` and `tri` (Table 6-2), 0 on `wand` and 1 on `wor` (Tables 6-3 and 6-4).
 - `tri0` and `tri1` behave like a `wire` with a constant pull-strength 0 or 1 driver: any strong driver overrides the pull, and with every driver off the net reads the pull value (§6.6.5).
 - A `trireg` never makes a transition to `z`. When all its drivers turn off it keeps its last value at its charge strength, which is `small`, `medium` (the default) or `large` (§6.3.2.1, §6.6.4). If its declaration gives a charge decay time, as the third delay in `trireg #(d1, d2, d3) n;`, a stored 0 or 1 becomes `x` once that time has passed without a driver (§28.16.2). The **trireg holds charge** mode of the [net resolution simulator](#who-may-drive-a-signal-nets-and-variables) shows the stored value.
+
+  The same mode is embedded here. Pick a charge strength and the value `a` drives first, predict what the `trireg` reads at 10 ns once every driver is `z`, then compare it with a `wire` driven the same way. Notice that the `wire` floats to `z` while the `trireg` keeps its stored value.
+
+  <NetResolutionSimulator initialMode="trireg" />
+
 - `supply0` and `supply1` drive at supply strength, the top of the scale (§6.6.6, Table 28-7).
 - **Open-drain lines in a testbench.** Strengths model a pulled-up line with several devices that can only pull it low:
 
@@ -1525,6 +1534,10 @@ The open-drain line as a picture, then its truth table:
 | 1 | 0 | `strong0` | `highz1` | 0 |
 | 0 | 1 | `highz1` | `strong0` | 0 |
 | 1 | 1 | `strong0` | `strong0` | 0: two strong 0s agree |
+
+Now drive the line yourself. Toggle whether `dev_a` and `dev_b` pull low, predict what `sda` reads for each of the four combinations, and check each one. Notice that `sda` reads 1 only when both devices let go, and that it never reads `x`, because a device can only drive a strong 0 or nothing.
+
+<NetResolutionSimulator initialMode="drivers" preset="open-drain" />
 
 ### Expert: Literal and expression-size corner cases
 

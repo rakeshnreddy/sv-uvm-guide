@@ -104,6 +104,8 @@ export const lazyMdxInteractiveNames = [
   "IpcSmellClinic",
   "ArraySelectExplorer",
   "ExpressionTreeExplorer",
+  "VerificationMethodsExplorer",
+  "ClosureBudgetLab",
 ] as const;
 
 export type LazyMdxInteractiveName = (typeof lazyMdxInteractiveNames)[number];
