@@ -55,6 +55,38 @@ Every simulation run has three different clocks, and mixing them up is the most 
 
 The key rule: **a pure performance fix leaves simulated time and every result unchanged, and reduces CPU time.** If `$time` at the end or the scoreboard's counts change, you changed the test's behaviour, not just its speed. That is a bug until proven otherwise.
 
+<figure className="my-6">
+  <p className="mb-2 text-sm font-semibold">Three clocks of one regression job</p>
+  <svg viewBox="0 0 340 265" role="img" aria-label="Illustrative split of one regression job's wall-clock time into four parts, each with the kind of change that shrinks it: waiting for a licence or queue slot shrinks only with more licences or slots; compile and elaborate shrinks by compiling once and running many tests; simulate, the simulator's CPU time, shrinks with the profile-guided fixes of this lesson; waiting for disk and network shrinks with less output, and less output (waves, recording, debug messages off) also cuts the simulate CPU time spent formatting and writing it. Below, simulated time runs on a separate axis from 0 to 20035 nanoseconds and is the same before and after every fix." style={{ width: "100%", maxWidth: 480 }}>
+    <rect x="0" y="10" width="70" height="24" fill="currentColor" fillOpacity="0.1" stroke="currentColor" strokeOpacity="0.7" />
+    <rect x="70" y="10" width="50" height="24" fill="currentColor" fillOpacity="0.2" stroke="currentColor" strokeOpacity="0.7" />
+    <rect x="120" y="10" width="180" height="24" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.7" />
+    <rect x="300" y="10" width="40" height="24" fill="currentColor" fillOpacity="0.1" stroke="currentColor" strokeOpacity="0.7" strokeDasharray="3 2" />
+    <text x="35" y="26" fontSize="10" textAnchor="middle" fill="currentColor">wait</text>
+    <text x="95" y="26" fontSize="10" textAnchor="middle" fill="currentColor">compile</text>
+    <text x="210" y="26" fontSize="10" textAnchor="middle" fill="currentColor">simulate</text>
+    <text x="320" y="26" fontSize="10" textAnchor="middle" fill="currentColor">I/O</text>
+    <text x="0" y="56" fontSize="10" fontWeight="bold" fill="currentColor">wait: for a licence or a queue slot</text>
+    <text x="0" y="69" fontSize="10" fill="currentColor">→ more licences or slots; a CPU fix does not shrink it</text>
+    <text x="0" y="89" fontSize="10" fontWeight="bold" fill="currentColor">compile: compile and elaborate</text>
+    <text x="0" y="102" fontSize="10" fill="currentColor">→ compile once, run many tests from one image</text>
+    <text x="0" y="122" fontSize="10" fontWeight="bold" fill="currentColor">simulate: the simulator's CPU time</text>
+    <text x="0" y="135" fontSize="10" fill="currentColor">→ the profile-guided fixes in this lesson</text>
+    <text x="0" y="155" fontSize="10" fontWeight="bold" fill="currentColor">I/O: waiting for the disk and the network</text>
+    <text x="0" y="168" fontSize="10" fill="currentColor">→ less output: waves, recording, debug messages off</text>
+    <text x="0" y="181" fontSize="10" fill="currentColor">→ also cuts simulate CPU: formatting, dump writes</text>
+    <line x1="0" y1="197" x2="340" y2="197" stroke="currentColor" strokeOpacity="0.3" />
+    <text x="0" y="215" fontSize="10" fontWeight="bold" fill="currentColor">Simulated time ($time), a separate axis</text>
+    <line x1="4" y1="229" x2="300" y2="229" stroke="currentColor" strokeOpacity="0.8" />
+    <line x1="4" y1="224" x2="4" y2="234" stroke="currentColor" strokeOpacity="0.8" />
+    <line x1="300" y1="224" x2="300" y2="234" stroke="currentColor" strokeOpacity="0.8" />
+    <text x="4" y="246" fontSize="10" fill="currentColor">0 ns</text>
+    <text x="300" y="246" fontSize="10" textAnchor="middle" fill="currentColor">20035 ns</text>
+    <text x="0" y="261" fontSize="10" fill="currentColor">the same before and after every fix</text>
+  </svg>
+  <figcaption className="text-sm text-muted-foreground">Illustrative proportions for one regression job. The top bar is its wall-clock time; only the "simulate" part is the simulator's CPU time, the part a performance fix reduces. The wait and compile parts move wall-clock time only. Reducing output (waves, recording, debug messages off) lowers both: the simulate CPU time spent formatting and writing it, and the I/O wait for the disk and network. Simulated time (here the Make It Work bench's 20035 ns) does not move at all.</figcaption>
+</figure>
+
 **The measurement protocol.** Use it every time you claim a speed-up:
 
 1. **Same build, same seed, same plusargs** (command-line options that start with `+`). Compile once and run both versions from the same image where you can, with a plusarg that selects the variant, or rebuild with the same compile options.
@@ -63,6 +95,43 @@ The key rule: **a pure performance fix leaves simulated time and every result un
 4. **Record the tool name and version, the host, and the compile options.** Debug options that keep every signal visible can change the speed of the whole run (tool-dependent).
 5. **Check that the results did not change:** the same report summary, the same scoreboard counts, the same coverage.
 6. **Label every number.** A number from a run carries the tool, version and host; anything else is "illustrative".
+
+**Predict.** Illustrative numbers: five repeated runs of one test, before your change, took 30.1, 31.8, 29.6, 32.4 and 30.9 s of CPU time. After the change, a single run takes 29.7 s, about 4% below the middle of the five. Is the 4% gain real?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+**Not yet.** Sorted, the five runs are 29.6, 30.1, 30.9, 31.8 and 32.4 s: the median is 30.9 s and the spread is 29.6 to 32.4 s, almost 3 s. The single new run, 29.7 s, sits inside that spread, so it may be noise. Run the new version 3 to 5 times as well and compare the two medians; a difference smaller than the spread between repeated runs is no difference.
+
+<figure className="my-4">
+  <p className="mb-2 text-sm font-semibold">Five runs before the change, one after</p>
+  <svg viewBox="0 0 340 96" role="img" aria-label="Dot plot of CPU time in seconds on an axis from 29 to 33. Five runs before the change at 29.6, 30.1, 30.9, 31.8 and 32.4 seconds, median 30.9, spread shaded from 29.6 to 32.4. One run after the change at 29.7 seconds, inside the shaded spread." style={{ width: "100%", maxWidth: 480 }}>
+    <rect x="75" y="14" width="210" height="22" fill="currentColor" fillOpacity="0.1" />
+    <text x="0" y="29" fontSize="10" fill="currentColor">before</text>
+    <circle cx="75" cy="25" r="4" fill="currentColor" />
+    <circle cx="112.5" cy="25" r="4" fill="currentColor" />
+    <circle cx="172.5" cy="25" r="4" fill="currentColor" />
+    <circle cx="240" cy="25" r="4" fill="currentColor" />
+    <circle cx="285" cy="25" r="4" fill="currentColor" />
+    <line x1="172.5" y1="10" x2="172.5" y2="40" stroke="currentColor" strokeWidth="2" />
+    <text x="0" y="57" fontSize="10" fill="currentColor">after</text>
+    <circle cx="82.5" cy="53" r="4" fill="none" stroke="currentColor" strokeWidth="2" />
+    <line x1="30" y1="72" x2="330" y2="72" stroke="currentColor" strokeOpacity="0.8" />
+    <line x1="30" y1="68" x2="30" y2="76" stroke="currentColor" strokeOpacity="0.8" />
+    <line x1="105" y1="68" x2="105" y2="76" stroke="currentColor" strokeOpacity="0.8" />
+    <line x1="180" y1="68" x2="180" y2="76" stroke="currentColor" strokeOpacity="0.8" />
+    <line x1="255" y1="68" x2="255" y2="76" stroke="currentColor" strokeOpacity="0.8" />
+    <line x1="330" y1="68" x2="330" y2="76" stroke="currentColor" strokeOpacity="0.8" />
+    <text x="30" y="89" fontSize="10" textAnchor="middle" fill="currentColor">29 s</text>
+    <text x="105" y="89" fontSize="10" textAnchor="middle" fill="currentColor">30 s</text>
+    <text x="180" y="89" fontSize="10" textAnchor="middle" fill="currentColor">31 s</text>
+    <text x="255" y="89" fontSize="10" textAnchor="middle" fill="currentColor">32 s</text>
+    <text x="330" y="89" fontSize="10" textAnchor="middle" fill="currentColor">33 s</text>
+  </svg>
+  <figcaption className="text-sm text-muted-foreground">Illustrative CPU times. Filled dots: the five runs before the change, with their median (30.9 s, the vertical bar) and their spread (shaded). Open dot: the one run after the change, inside the spread.</figcaption>
+</figure>
+
+</details>
 
 Here is what a correct before-and-after record looks like, for the bench in Make It Work. The first three rows are exact: they follow from the code. The time rows are yours to fill in, because CPU time depends on the simulator, its version and the machine.
 
@@ -151,6 +220,31 @@ Adding up the owner column gives the attribution picture. These are the same ill
   </svg>
   <figcaption className="text-sm text-muted-foreground">Illustrative attribution for the baseline profile above (TB = 41.0 + 5.5; UVM library = 13.0 + 11.0 + 7.0 + 1.0 + 2.5). In this bench most "UVM library" time is caused by three lines of TB code.</figcaption>
 </figure>
+
+A flat profile tells you *which* routine is hot; a **call tree** (most profilers can show one; tool-dependent) tells you *who called it*. Here is the branch behind the two hottest library rows:
+
+<ArchitectureDiagram
+  title="From a hot library row back to the TB line that causes it"
+  caption="A simplified call tree: intermediate uvm-core frames are omitted. Read upward from the hot row. In this profile almost all uvm_is_match calls come from lookup_name (uvm-core also calls it from other places, such as the factory, uvm_component and uvm_root), so lookup_name's total (24%) is its own 13% plus uvm_is_match's 11%. lookup_name is called by uvm_config_db#(int)::get, and that by the TB function get_max_id inside pkt_mon::run_phase, once per item: that TB call is the line to change. run_test sits at the root with a total near 100% only because everything runs under it. Same illustrative numbers as the flat profile above."
+  cellWidth={250}
+  cellHeight={56}
+  gapY={36}
+  nodes={[
+    { id: "rt", label: "uvm_pkg::run_test", sublabel: "total ≈ 100%: everything runs under it", kind: "generic", badge: "UVM", col: 0, row: 0 },
+    { id: "rp", label: "pkt_mon::run_phase", sublabel: "the monitor's forever loop", kind: "monitor", badge: "TB", col: 0, row: 1 },
+    { id: "gm", label: "pkt_mon::get_max_id", sublabel: "2000 calls: one per item", kind: "monitor", badge: "TB", state: "active", col: 0, row: 2 },
+    { id: "cg", label: "uvm_config_db#(int)::get", sublabel: "2000 calls, via uvm_config_db_implementation", kind: "generic", badge: "UVM", col: 0, row: 3 },
+    { id: "ln", label: "uvm_resource_pool::lookup_name", sublabel: "~2000 calls · self 13% · total 24%", kind: "generic", badge: "UVM", col: 0, row: 4 },
+    { id: "im", label: "uvm_pkg::uvm_is_match", sublabel: "~42000 calls · self 11% · total 11%", kind: "generic", badge: "UVM", col: 0, row: 5 }
+  ]}
+  edges={[
+    { from: "rt", to: "rp", style: "causal" },
+    { from: "rp", to: "gm", style: "causal" },
+    { from: "gm", to: "cg", style: "causal" },
+    { from: "cg", to: "ln", style: "causal" },
+    { from: "ln", to: "im", style: "causal" }
+  ]}
+/>
 
 **Pitfalls.** Sorting by total time and fixing the top row: `uvm_pkg::run_test` or your test's `run_phase` always has nearly 100% total time, because everything runs under it. Sort by self time, then use calls to find the cause. And do not trust a profile of a run that is too short to matter: profile a run long enough to reach steady state.
 
@@ -267,6 +361,26 @@ The objection count is kept per object *and* for every ancestor. Follow one item
 
 **What it showed.** Four counts change on the raise (four `m_raise` calls) and four on the drop (four `m_drop` calls), and the drop starts two background drain processes, one for each level whose count reaches zero. None of that does useful work: the test's own objection already keeps the phase open.
 
+<ArchitectureDiagram
+  title="Where one per-item raise and drop lands in the component tree"
+  caption="Each line under a name is that object's total objection count before the raise, after the raise, and after the drop. The raise adds 1 at mon, env, uvm_test_top and uvm_root (four m_raise calls); the drop takes it away again at the same four (four m_drop calls). mon and env fall to 0, so each of them starts a drain process (uvm-core); uvm_test_top and uvm_root stay at 1 because the test holds its own objection. The scoreboard sb is not involved. Per item, in zero simulated time."
+  cellWidth={170}
+  gapX={40}
+  nodes={[
+    { id: "root", label: "uvm_root", sublabel: "1 → 2 → 1", kind: "generic", badge: "+1 −1", col: 0, row: 0 },
+    { id: "top", label: "uvm_test_top", sublabel: "1 → 2 → 1 (test holds 1)", kind: "test", badge: "+1 −1", col: 0, row: 1 },
+    { id: "env", label: "env", sublabel: "0 → 1 → 0: drain 2", kind: "env", badge: "+1 −1", state: "active", col: 0, row: 2 },
+    { id: "mon", label: "mon", sublabel: "0 → 1 → 0: drain 1", kind: "monitor", badge: "+1 −1", state: "active", col: 0, row: 3 },
+    { id: "sb", label: "sb", sublabel: "not involved", kind: "scoreboard", state: "dim", col: 1, row: 3 }
+  ]}
+  edges={[
+    { from: "root", to: "top", style: "structural" },
+    { from: "top", to: "env", style: "structural" },
+    { from: "env", to: "mon", style: "structural" },
+    { from: "env", to: "sb", style: "structural" }
+  ]}
+/>
+
 IEEE 1800.2-2020 §10.5.1.3.3 and §10.5.1.3.4 require the propagation up the hierarchy; the background drain process is how uvm-core implements a drop that reaches zero (`uvm_objection.svh`, `m_drop`, `m_execute_scheduled_forks`, `m_forked_drain`).
 
 **Fix.** Raise one objection for the whole stimulus, in the test or in the top-level sequence, and never in drivers or monitors. A top-level sequence can do it with `set_automatic_phase_objection(1)` (§14.2.4.4), which raises the objection before `pre_start` and drops it after `post_start`, so it spans the whole sequence, `body()` included; the standard's own NOTE warns never to use it for a sequence whose `body()` loops `forever`, because the objection would never drop. **Pitfall:** "the monitor must keep the test alive while it is busy". A monitor's `write()` takes no simulation time, so there is nothing to keep alive; if the test ends too early, the fix is in the test (wait for the expected count, or set a drain time, an extra delay after the last drop before the phase ends, taught in [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)), not a per-item objection. **Debugging:** `+UVM_OBJECTION_TRACE` (uvm-core only) prints every raise and drop; thousands of lines from one monitor are the symptom.
@@ -277,11 +391,57 @@ IEEE 1800.2-2020 §10.5.1.3.3 and §10.5.1.3.4 require the propagation up the hi
 
 **5. Throwaway objects.** `type_id::create` costs a factory override search plus the constructor (uvm-core `uvm_factory.svh`, `create_object_by_type` calls `find_override_by_type`). That cost is worth paying for every object you keep: **a monitor must create a new transaction for every observation**, because subscribers and analysis FIFOs store handles, not copies (IEEE 1800-2023 §8.12: assigning a handle copies the handle, not the object). What you remove are objects nobody keeps: a `clone()` before every compare in a scoreboard that does not store the item, a `copy()` into a temporary, or an unguarded `sprint()`. Replacing `type_id::create` with `new` to save the lookup breaks factory overrides; do it only where a profile shows the factory dominating, and never for objects a test may want to override.
 
+| Object work in a hot path | Keep, remove or guard? | Why |
+|---|---|---|
+| A monitor's `type_id::create` of a new item for every observation | **keep** | subscribers and analysis FIFOs store the handle (IEEE 1800-2023 §8.12) |
+| `clone()` before every compare, in a scoreboard that does not store the item | **remove** | nobody keeps the clone |
+| `copy()` into a temporary | **remove** | nobody keeps the copy |
+| `sprint()` of an item on every transaction | **guard** it (`uvm_report_enabled`) or remove it | the string is built even when nothing prints it |
+| `new` instead of `type_id::create` | only where a profile shows the factory dominating | it breaks factory overrides |
+
 **6. Field automation.** The `` `uvm_field_* `` macros implement `do_execute_op` (IEEE 1800.2-2020 B.2.1.1, §5.3.13): every `copy`, `compare`, `print`, `pack` and `record` walks the registered fields through a policy object at run time. That is convenient and usually affordable. When a profile shows `copy` or `compare` of one item type near the top, hand-written `do_copy` and `do_compare` for that type are the fix, but only if the macro path stops doing the same work: `copy()` first runs `do_execute_op` (the field-macro walk) and then calls `do_copy`, and `compare()` does the same with `do_compare` (§5.3.8.1; uvm-core `uvm_copier.svh`, `copy_object`). Adding hand-written methods while keeping `UVM_ALL_ON` fields does every field twice, which is slower. So either drop the field macros for that type (`` `uvm_object_utils `` plus hand-written `do_copy`, `do_compare` and `convert2string`), or keep them for printing and flag the fields `UVM_ALL_ON | UVM_NOCOPY | UVM_NOCOMPARE`. The gain is tool-dependent, so measure it, and check that copies and compares give the same results ([I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) covers the policy classes).
 
-**7. Coverage sampling.** A covergroup sampled on every clock edge costs one sample per clock, and it also samples idle cycles, which inflates hit counts. Sample per transaction, in the subscriber's `write()`; gate clocked sampling with `iff (valid)`; and `stop()` covergroups the current test does not need (IEEE 1800-2023 §19.8, Table 19-5). Never switch off coverage that the verification plan needs, to save time: that coverage is the point of the run. [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) teaches covergroups.
+What one `copy()` of an item costs under each way of writing the class (`compare()` follows the same pattern with `do_compare`):
+
+| How the item class is written | Step 1: field-macro walk (`do_execute_op`) | Step 2: `do_copy` | Each field copied |
+|---|---|---|---|
+| `` `uvm_field_* `` macros with `UVM_ALL_ON`, no `do_copy` | copies every field | only the base class's (none of your fields) | once, by the macros |
+| `UVM_ALL_ON` macros **and** a hand-written `do_copy` | copies every field | copies every field again | **twice: slower** |
+| `` `uvm_object_utils `` only (no field macros), hand-written `do_copy` | no fields registered | copies every field | once, hand-written |
+| macros with `UVM_ALL_ON \| UVM_NOCOPY \| UVM_NOCOMPARE`, hand-written `do_copy` and `do_compare` | checks each field's flags, copies none | copies every field | once, hand-written; printing still uses the macros |
+
+**7. Coverage sampling.** A covergroup sampled on every clock edge costs one sample per clock, and it also samples idle cycles, which inflates hit counts. Sample per transaction, in the subscriber's `write()`; gate clocked sampling with `iff (valid)` in the covergroup's sampling event, `@(posedge clk iff valid)` (a `coverpoint … iff (valid)` guard still samples the covergroup at every edge and only drops the bin hits); and `stop()` covergroups the current test does not need (IEEE 1800-2023 §19.8, Table 19-5). Never switch off coverage that the verification plan needs, to save time: that coverage is the point of the run. [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) teaches covergroups.
+
+<TimingDiagram
+  title="Sampling every clock edge versus sampling per transaction"
+  caption="The x-axis is eight rising edges of clk; valid is the value sampled at each edge. valid is 1 at edges 1, 2, 5 and 7: four transactions. A covergroup sampled at every edge takes 8 samples, 4 of them idle cycles that inflate its hit counts. Gating the covergroup's sampling event with @(posedge clk iff valid), or calling sample() once per transaction in the subscriber's write(), takes 4 samples, one per transaction. A coverpoint iff (valid) guard is different: the covergroup is still sampled at all 8 edges, and only the bin hits drop to 4."
+  edges={8}
+  cycleWidth={34}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "valid", kind: "bit", values: [0, 1, 1, 0, 0, 1, 0, 1] }
+  ]}
+  markers={[
+    { edge: 0, tone: "vacuous", label: "idle: sampled only by the every-edge form" },
+    { edge: 1, tone: "sample", label: "transaction: sampled by every form" },
+    { edge: 2, tone: "sample", label: "transaction: sampled by every form" },
+    { edge: 3, tone: "vacuous", label: "idle: sampled only by the every-edge form" },
+    { edge: 4, tone: "vacuous", label: "idle: sampled only by the every-edge form" },
+    { edge: 5, tone: "sample", label: "transaction: sampled by every form" },
+    { edge: 6, tone: "vacuous", label: "idle: sampled only by the every-edge form" },
+    { edge: 7, tone: "sample", label: "transaction: sampled by every form" }
+  ]}
+/>
 
 **8. Your own algorithms.** A scoreboard that searches a queue for every incoming item does N² work over N items. An associative array keyed by the field you match on (an id, an address) makes each match one lookup. This is ordinary data-structure work, but in a TB-bound bench it is often the largest single row in the profile.
+
+| Items N | Linear search of every earlier item: N(N−1)/2 comparisons | Associative array: N lookups |
+|---|---|---|
+| 1000 | 499500 | 1000 |
+| 2000 | 1999000 | 2000 |
+| 4000 | 7998000 | 4000 |
+
+Doubling N doubles the associative-array work and roughly quadruples the linear search.
 
 ### Decoupling is not parallelism
 
@@ -296,6 +456,26 @@ The visualizer below runs one analysis-port broadcast. **Before you press play, 
 **Predict:** the coverage subscriber and the logger each spend some CPU in their `write()`. You put a `uvm_tlm_analysis_fifo` in front of each and move their work into `run_phase` loops that `get()` from the FIFO. What happens to the total CPU time of the run?
 
 **Answer: about the same, or slightly more.** The FIFO's `write()` is a zero-time `try_put` of the handle into an unbounded mailbox (uvm-core `uvm_tlm_fifos.svh`; IEEE 1800.2-2020 §12.2.8.3 defines the analysis FIFO as an unbounded `uvm_tlm_fifo` with a `write` interface). The subscriber's `get()` loop then does exactly the same work, later, in another process of the *same* simulation. The scheduler still executes one event at a time (IEEE 1800-2023 §4.5), so the work is moved, not shared out, and the mailbox and the extra process add a little bookkeeping. And because the FIFO stores the handle, a monitor that reuses its transaction object now corrupts every queued item.
+
+<SequenceDiagram
+  title="With an analysis FIFO, the same work runs later, in another process"
+  caption="The monitor's ap.write(t) reaches the FIFO's write(), which stores the handle with try_put and returns at once. The subscriber's own run_phase process later gets the same handle and does the same coverage work it did before in write(). Both processes belong to one simulation, and its scheduler runs one of them at a time (IEEE 1800-2023 §4.5), so the CPU work is moved, not shared out. Names follow uvm-core uvm_tlm_fifos.svh."
+  participants={[
+    { id: "mon", label: "mon", sublabel: "monitor process", kind: "monitor" },
+    { id: "fifo", label: "uvm_tlm_analysis_fifo", kind: "fifo" },
+    { id: "sub", label: "coverage subscriber", sublabel: "its run_phase process", kind: "subscriber" }
+  ]}
+  messages={[
+    { from: "mon", to: "fifo", label: "ap.write(t) calls write(t)" },
+    { kind: "self", from: "fifo", label: "try_put(t): store the handle, zero time" },
+    { kind: "return", from: "fifo", to: "mon", label: "returns at once" },
+    { kind: "divider", from: "mon", label: "the monitor waits for its next clock; the scheduler runs another process" },
+    { from: "sub", to: "fifo", label: "get(t)" },
+    { kind: "return", from: "fifo", to: "sub", label: "t: the same handle" },
+    { kind: "self", from: "sub", label: "the same coverage work as before: the same CPU" },
+    { kind: "note", from: "mon", to: "sub", label: "Total CPU: the old write() work, plus the mailbox and one more process" }
+  ]}
+/>
 
 **When a FIFO is right.** Use an analysis FIFO when a subscriber must *wait for simulation time*, for example a checker that compares each request with a response that arrives cycles later: a function cannot wait, a `get()` loop can. Switch the visualizer above to its **Slow subscriber** view to see that case. A FIFO is a decoupling tool for time, never a speed tool. If one subscriber's `write()` is CPU-heavy, make that `write()` cheaper: that is hotspots 5 to 8.
 
@@ -348,6 +528,16 @@ Two cautions keep this honest. First, (b) and (c) are not identical: (b) does no
 
 **A common misconception.** "Mixing `=` and `<=` causes infinite delta loops." It does not: mixing them causes **races** (results that depend on process order) and simulation/synthesis mismatches. Infinite zero-time activity comes from zero-delay feedback or a loop with no timing control, as above.
 
+Put side by side, each cause leaves a different trace, which is how you tell a slow run from a hang:
+
+| Cause | `$time` | CPU | What you see | Taught in |
+|---|---|---|---|---|
+| Costly work in a hot path (the hotspots above) | advances, slowly in real time | busy | the run ends with the right results, just late | this lesson |
+| A loop with no timing control, such as `while (!done);` | **stops** | 100% | the run never ends and no new log lines appear | this section |
+| Zero-delay feedback, such as a combinational loop | **stops** | 100% | the same as the loop above | [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) |
+| An objection that is never dropped | keeps advancing | busy with the clock | the run ends only at the phase timeout, with `PH_TIMEOUT` (a `` `uvm_fatal `` in uvm-core) | [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) |
+| Mixing `=` and `<=` | advances normally | normal | results that depend on process order (a race), or a simulation/synthesis mismatch; not a hang | [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) |
+
 ### Regression throughput
 
 One fast simulation is not the goal; a regression that finishes in time is. Five practices decide that.
@@ -385,6 +575,13 @@ One fast simulation is not the goal; a regression that finishes in time is. Five
 
 **What may be switched off for speed, and what may not.** Safe to switch off in regressions: waveform dumping, transaction recording, debug-level messages (`UVM_HIGH` and above), and tracing plusargs such as `+UVM_OBJECTION_TRACE` and `+UVM_CONFIG_DB_TRACE` (uvm-core only). Never switched off to save time: scoreboards, protocol assertions, the error checks, and the coverage the verification plan needs. A regression that runs fast because it stopped checking reports false passes. If you dump waves at all, scope them (`$dumpvars` with a level and a scope, IEEE 1800-2023 §21.7.1.2) rather than dumping everything.
 
+| Off in regressions, on in the rerun of a failing seed | Never off to save time |
+|---|---|
+| waveform dumping (scoped when it is on) | scoreboards |
+| transaction recording | protocol assertions |
+| debug-level messages (`UVM_HIGH` and above) | the error checks |
+| `+UVM_OBJECTION_TRACE`, `+UVM_CONFIG_DB_TRACE` (uvm-core only) | the coverage the verification plan needs |
+
 ### Recap
 
 - Measure CPU or wall-clock time outside the simulator; `$time` never shows a speed-up. Same build and seed, one change, median of several runs, every number labelled.
@@ -393,6 +590,46 @@ One fast simulation is not the goal; a regression that finishes in time is. Five
 - An analysis FIFO moves work into another process of the same simulation. It adds no parallelism; use it when a subscriber must wait for time.
 - Every needless process resumption costs CPU: prefer event controls with `iff` to polling, remove `#0`, and never loop without a timing control.
 - Regression throughput: compile once, run many; jobs are bounded by licences and other limits; turn debug aids on only for reruns; never turn checks off for speed.
+
+<VisualRecap
+  title="Measure, profile, fix one thing, measure again"
+  rule="A pure performance fix leaves $time and every result unchanged and lowers CPU time; prove it with the same build, seed and plusargs, one change at a time, and the median of 3 to 5 runs."
+  code={`// hot path: built only when the message will be shown
+\`uvm_info("MON", t.convert2string(), UVM_HIGH)
+// build_phase: one lookup, not one per item
+if (!uvm_config_db#(int)::get(this, "", "max_id", max_id))
+  \`uvm_fatal("NO_CFG", "max_id not set")
+// the test's run_phase: the one objection the run needs
+phase.raise_objection(this);
+// ... wait for the stimulus to finish
+phase.drop_objection(this);`}
+  mistake="Adding an analysis FIFO 'for parallelism': the work moves to another process of the same simulation, so total CPU stays the same or rises, and a monitor that reuses its item now corrupts every queued handle."
+  inTestbench="A CI performance baseline: a few fixed tests and seeds whose CPU time is recorded on every library or TB change, so a slowdown is caught on the day it is introduced."
+>
+  <ArchitectureDiagram
+    title="The performance loop"
+    caption="Follow the arrows: measure CPU and wall-clock time outside the simulator, profile, attribute each hot row to its owner, fix one thing, and re-measure with the same build, seed and plusargs. Then check the behaviour: if $time, the summaries and coverage are unchanged, the fix stays and the new run is the next baseline; if anything changed, the fix altered the test and is a bug to revert."
+    cellWidth={130}
+    gapX={48}
+    nodes={[
+      { id: "meas", label: "measure", sublabel: "CPU + wall, outside the sim", kind: "generic", col: 0, row: 0 },
+      { id: "prof", label: "profile", sublabel: "self time + calls", kind: "generic", col: 1, row: 0 },
+      { id: "attr", label: "attribute", sublabel: "DUT / TB / UVM / kernel", kind: "generic", col: 1, row: 1 },
+      { id: "fix", label: "fix one thing", sublabel: "the TB line behind the row", kind: "generic", state: "active", col: 1, row: 2 },
+      { id: "remeas", label: "re-measure", sublabel: "same build, seed, plusargs", kind: "generic", col: 0, row: 2 },
+      { id: "gate", label: "behaviour same?", sublabel: "$time, summaries, coverage", kind: "generic", col: 0, row: 1 }
+    ]}
+    edges={[
+      { from: "meas", to: "prof", style: "causal" },
+      { from: "prof", to: "attr", style: "causal" },
+      { from: "attr", to: "fix", style: "causal" },
+      { from: "fix", to: "remeas", style: "causal" },
+      { from: "remeas", to: "gate", style: "causal" },
+      { from: "gate", to: "meas", style: "causal", label: "yes" },
+      { from: "gate", to: "fix", style: "causal", label: "no: revert" }
+    ]}
+  />
+</VisualRecap>
 
 ## Make It Work
 
@@ -704,6 +941,25 @@ UVM_ERROR :    0
 UVM_FATAL :    0
 ```
 
+<TimingDiagram
+  title="The first five clock edges of the bench"
+  caption="The x-axis is the rising edges of clk at 5, 15, 25, 35 and 45 ns, which the kit numbers 0 to 4 (edge 0 = 5 ns, edge 1 = 15 ns, edge 2 = 25 ns, edge 3 = 35 ns, edge 4 = 45 ns); each value of valid and id is the one sampled at that edge, as mon_cb sees it, and rst_n is shown at each edge for reference. valid and id are drawn as X before the 5 ns edge, where reset (rst_n = 0) clears the flops: that edge is the first one guaranteed to reset them, because the X-to-0 change of rst_n at time 0 is itself a negedge (IEEE 1800-2023 §9.4.2, Table 9-2), so depending on the order of processes at time 0 they may already be 0. rst_n is released at 12 ns, between edges 0 and 1 (the kit draws the rise just after edge 0), so at the 15 ns edge the DUT drives valid = 1 and id = 0, and mon_cb first samples a packet at 25 ns. One packet follows per edge, so packet 1999 is sampled at 20015 ns, and the test drops its objection at its 2004th edge, 20035 ns."
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [0, 1, 1, 1, 1] },
+    { name: "valid", kind: "bit", values: [undefined, 0, 1, 1, 1] },
+    { name: "id", kind: "bus", values: [undefined, 0, 0, 1, 2] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", label: "5 ns: rst_n = 0, the DUT's flops reset (by this edge at the latest)" },
+    { edge: 1, tone: "drive", label: "15 ns: out of reset, the DUT drives valid = 1, id = 0" },
+    { edge: 2, tone: "sample", label: "25 ns: first mon_cb sample, packet id 0" },
+    { edge: 3, tone: "sample", label: "35 ns: packet id 1" },
+    { edge: 4, tone: "sample", label: "45 ns: packet id 2" }
+  ]}
+/>
+
 Where the numbers come from: the first packet is sampled at the edge at 25 ns and one follows every 10 ns, so packet 1999 is sampled at 20015 ns; the test waits 2004 edges (5 ns, 15 ns, …, 20035 ns) and then drops its objection. `fmt` counts `convert2string` calls (2000 when every item is formatted, 0 when the macro filters them at the default `UVM_MEDIUM`); `raises` is the test's 1 plus 2000 from the monitor; `cmp` is 0 + 1 + … + 1999 = 1999000 for the linear search and one lookup per item for the associative array. The `UVM_INFO` count of 4 is `RNTST`, the release notes, `SCB_SUMMARY` and `PERF_SUMMARY`. `$time` at the end and both summaries are identical in every variant: that is your proof that the fixes changed only the speed.
 
 **Run it.** You need a simulator with UVM 1800.2 support and the uvm-core 2020.3.1 library (or your tool's bundled UVM). Compile `perf_tb.sv` with `tb_top` as the top module; how you name the UVM library and the top is tool-dependent. Every design element in the file declares `timeunit 1ns; timeprecision 1ps;`, because IEEE 1800-2023 §3.14.2.3 makes it an error when some design elements specify a time unit and others do not. The precompiled `uvm_pkg` declares none, so if your tool reports a time-unit mismatch, compile the UVM library with your tool's default-timescale option set to 1ns/1ps (tool-dependent). Then run the same image five times, with no plusarg, then `+FIX_SB`, then `+FIX_SB +FIX_CFG`, and so on. Wrap each run in `/usr/bin/time -p <your run command>` (Linux and macOS) to get `real`, `user` and `sys` seconds. Open-source UVM support is limited, so this example has not been run on an open-source simulator.
@@ -743,17 +999,67 @@ Where the numbers come from: the first packet is sampled at the edge at 25 ns an
 
 IEEE 1800.2-2020 §10.5.1.3.3 and §10.5.1.3.4 require a raise or drop to update the source's counts and to call `raised`/`dropped` for every component up the hierarchy. In uvm-core 2020.3.1 (`src/base/uvm_objection.svh`), `m_raise` and `m_drop` update per-object associative arrays at each level through `m_propagate`. A drop that takes an object's total to zero does not propagate at once: it schedules a context that the static `m_execute_scheduled_forks` task forks into an `m_forked_drain` process, which waits for any drain time, calls `all_dropped`, waits for its callbacks, and only then propagates to the parent. A re-raise during a drain kills that process. So per-item objections cost work at every level plus process creation, all in zero simulated time.
 
+<SequenceDiagram
+  title="A re-raise during a drain, inside uvm-core 2020.3.1"
+  caption="A component's drop takes its count to 0, so m_drop schedules a drain context and m_execute_scheduled_forks forks m_forked_drain for it. Before that drain finishes, the same component raises again: m_raise finds the running drain's context, kills its process, and compares the new raise with the pending drop. Here both are 1, so the difference is 0 and nothing is passed to the parent: the ancestors never saw the drop. Names follow src/base/uvm_objection.svh."
+  participants={[
+    { id: "comp", label: "a component", sublabel: "the source", kind: "generic" },
+    { id: "obj", label: "uvm_objection", kind: "generic" },
+    { id: "drain", label: "m_forked_drain", sublabel: "drain process", kind: "generic" }
+  ]}
+  messages={[
+    { from: "comp", to: "obj", label: "drop_objection(this): count 1 to 0" },
+    { kind: "self", from: "obj", label: "m_drop: schedule a drain context" },
+    { kind: "async", from: "obj", to: "drain", label: "m_execute_scheduled_forks forks the drain" },
+    { kind: "self", from: "drain", label: "waits for the drain time" },
+    { from: "comp", to: "obj", label: "raise_objection(this) before the drain ends" },
+    { kind: "self", from: "obj", label: "m_raise finds the running drain's context" },
+    { kind: "async", from: "obj", to: "drain", label: "kill the drain process", tone: "error" },
+    { kind: "note", from: "obj", to: "drain", label: "raise 1 minus pending drop 1 = 0: nothing propagates to the parent" }
+  ]}
+/>
+
 `set_propagate_mode(0)` (§10.5.1.3.2) skips the intermediate levels: a raise or drop updates only the source and the top. It can be changed only while no objection is raised or draining, and it removes the per-level `raised`/`dropped` callbacks that some benches rely on, so it is a niche tool. The real fix is architectural: one objection per test or per top-level sequence. `set_automatic_phase_objection(1)` (§14.2.4.4) does that for a sequence started with a starting phase (§14.2.4.1), with the NOTE that a `forever` body never drops it.
 
 ### Expert: what a configuration lookup really costs
 
 `uvm_config_db#(T)::get` (IEEE 1800.2-2020 C.4.2.2.2) in uvm-core 2020.3.1 (`uvm_config_db_implementation.svh`) builds the caller's full path, calls `uvm_resource_pool::lookup_name` (C.2.4.4.1), which walks every resource stored under that field name and, for each one of the requested type, calls `uvm_is_match` (F.3.3.1) on its scope (the type is checked first, so entries of another type cost only that check), then calls `get_highest_precedence` on the matches and `read`s the winner. The cost grows with the number of entries that share the field name, not with the number that match. Wildcard scopes are glob patterns that uvm-core converts to regular expressions for matching, so many wildcard `set` calls make every `get` of that name slower.
 
+Counted for `max_id` in the Make It Work bench (only the 21 `max_id` entries; uvm-core's own lookups of other names are not counted):
+
+| Case | Entries named `max_id` | Of type `int` | `uvm_is_match` per `get` | `get`s of `max_id` per run | `uvm_is_match` per run |
+|---|---|---|---|---|---|
+| Baseline: `get` on every item | 21 | 21 | 21 | 2000 | 42000 |
+| `+FIX_CFG`: one `get` in `build_phase` | 21 | 21 | 21 | 1 | 21 |
+| Hypothetical: the 20 other blocks set `max_id` as a `string` | 21 | 1 | 1 (the 20 others fail the type check first) | 2000 | 2000 |
+
+Only the entries that share the field name and the type reach `uvm_is_match`; the one entry that finally matches costs no more than the 20 that do not.
+
 Two more uvm-core details (not in the standard): `read` records an audit entry when auditing is on, which is the default; `uvm_resource_options::turn_off_auditing()` switches it off for the whole database, at the price of losing the audit trail that `print_config` and configuration debugging use. And `+UVM_CONFIG_DB_TRACE` prints one line per `set` and `get`. Better than tuning the database is not hitting it in the hot path: cache values in `build_phase`, or pass one configuration object per agent, so the hot path reads class members.
 
 ### Expert: field automation versus hand-written methods
 
 The `` `uvm_field_* `` macros implement `do_execute_op` (IEEE 1800.2-2020 B.2.1.1, §5.3.13). Every `copy`, `compare`, `print`, `pack`, `unpack` and `record` then visits each registered field through a policy object (`uvm_copier`, `uvm_comparer` and so on, Clause 16), with a check of the field's flags for that operation. Hand-written `do_copy` and `do_compare` (§5.3.8.2, §5.3.9.2) are not an alternative path that bypasses this: `copy()` and `compare()` always call `do_execute_op` first and then the `do_` hook (§5.3.8.1, §16.6.4.1; uvm-core `uvm_copier.svh` `copy_object`, `uvm_comparer.svh` `compare_object`). They save time only when the macro path no longer does that operation. The standard itself notes that field macros may be less run-time efficient than direct `do_*` implementations (B.2.2, NOTE). The usual staff-level answer is: keep the macros for convenience; for item types a profile shows near the top, typically in high-rate scoreboards, either drop the field macros and hand-write `do_copy`, `do_compare` and `convert2string`, or keep the macros for printing with `UVM_NOCOPY | UVM_NOCOMPARE` on every field and hand-write `do_copy` and `do_compare`. The size of the gain is tool-dependent; claims of a fixed speed-up factor have no source.
+
+<SequenceDiagram
+  title="What one copy() runs, in uvm-core 2020.3.1"
+  caption="copy() hands the work to the default uvm_copier, whose copy_object first runs the item's do_execute_op (the field-macro walk over every registered field) and then, with the user hook enabled (the default), its do_copy. The item here is hypothetical: unlike the Make It Work pkt_item, it has UVM_ALL_ON field macros and a hand-written do_copy. With UVM_ALL_ON fields and a hand-written do_copy, both steps copy every field. Names follow uvm_object.svh and uvm_copier.svh."
+  participants={[
+    { id: "sb", label: "scoreboard", kind: "scoreboard" },
+    { id: "item", label: "dst (an item)", sublabel: "UVM_ALL_ON fields + do_copy", kind: "generic" },
+    { id: "cp", label: "uvm_copier", sublabel: "default copier", kind: "generic" }
+  ]}
+  messages={[
+    { from: "sb", to: "item", label: "dst.copy(src)" },
+    { from: "item", to: "cp", label: "copy_object(dst, src)" },
+    { from: "cp", to: "item", label: "do_execute_op(op): the field-macro walk" },
+    { kind: "return", from: "item", to: "cp", label: "macro fields copied" },
+    { from: "cp", to: "item", label: "do_copy(src): your hand-written hook" },
+    { kind: "return", from: "item", to: "cp", label: "hand-written fields copied" },
+    { kind: "return", from: "cp", to: "item", label: "returns" },
+    { kind: "return", from: "item", to: "sb", label: "returns" }
+  ]}
+/>
 
 ### Expert: coverage, constraints and register-model scale
 
@@ -1024,7 +1330,17 @@ Illustrative numbers. Your site has 120 simulator licences, a farm queue that gi
 1. Jobs = min(licences, slots, memory) = min(120, 80, no limit) = **80**. The queue, not the licence count, is the limit here; 40 licences sit idle.
 2. Total work = 450 × 10 + 120 × 25 + 30 × 40 = 4500 + 3000 + 1200 = 8700 job-minutes. Spread over 80 jobs, that is about 8700 ÷ 80 ≈ 109 minutes, if the jobs are packed well. The longest test (40 minutes) is far shorter than that, so good packing is possible: about **1 hour 50 minutes**, plus compile time and queue waits.
 3. **Longest first.** If the 40-minute tests start last, the regression ends with a few jobs running while the rest of the farm is idle. Starting them first lets the short tests fill the gaps.
-4. Any two of: ask for more queue slots (up to 120 would use every licence, about 73 minutes); profile the 40-minute tests and fix their hotspots; move rare long seeds to the weekly run, ranking tests by the coverage they add (tool-dependent); make sure waves, recording and debug verbosity are off. Never turn off scoreboards, assertions or plan coverage.
+
+   Worked out for this mix, assuming every test takes exactly its nominal length and each free slot starts the next test in the list:
+
+   | Start order | 80 jobs | 120 jobs |
+   |---|---|---|
+   | Lower bound: job-minutes ÷ jobs | 108.75 min | 72.5 min |
+   | Longest first | 110 min | 75 min |
+   | Shortest first | 125 min | 95 min |
+
+   With shortest first, the 40-minute tests start last and run on while most slots sit idle.
+4. Any two of: ask for more queue slots (up to 120 would use every licence, about 73 minutes; that is the lower bound, 8700 ÷ 120 = 72.5, and starting the longest tests first finishes at 75, as the table above shows); profile the 40-minute tests and fix their hotspots; move rare long seeds to the weekly run, ranking tests by the coverage they add (tool-dependent); make sure waves, recording and debug verbosity are off. Never turn off scoreboards, assertions or plan coverage.
 
 </details>
 

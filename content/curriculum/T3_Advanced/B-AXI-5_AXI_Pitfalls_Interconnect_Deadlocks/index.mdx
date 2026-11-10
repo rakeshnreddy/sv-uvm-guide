@@ -36,13 +36,53 @@ The checks on this page use SystemVerilog Assertions (`|->`, `|=>`, `$stable`, `
 
 **Words used on this page.** A **source** drives VALID and the information of a channel; the **destination** drives READY ([B-AXI-1](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index) defines both and the five channels AW, W, B, AR and R). A **handshake** is the rising clock edge where VALID and READY are both HIGH. **Backpressure** is a destination holding READY LOW; the source **stalls** with VALID HIGH. This page uses master and slave as IHI0022E issue E does; later Arm issues say manager and subordinate.
 
+**Map of this page.** The three deadlock families and two data bugs from the Quick Take, who owns each one, and where the page treats it.
+
+| Family | Typical example | Who owns the fix | Rule (IHI0022E) | Where on this page |
+|---|---|---|---|---|
+| Waits between the channels of one interface | the master's WVALID waits for AWREADY | the component that drives the illegal wait or path (a source waiting for a READY its partner drives, a missing required dependency, a combinational path) | §A3.3.1, §A3.1.1 | [Wait-for graphs](#wait-for-graphs-how-to-read-a-deadlock), [the three classes](#violation-legal-policy-or-contract) |
+| Interconnect ordering duties | two slaves accept the same masters' addresses in crossed orders, with no write-data buffer | the interconnect's design: every interface is compliant | §A5.3.2, §A5.4.1 | [Interconnect deadlocks](#interconnect-deadlocks) |
+| Incomplete transactions | a burst cut short after an error response | the component that stops early | §A3.4.1, §A3.4.4 | [Completion](#expert-completion-as-a-deadlock-prevention-duty) |
+| 4KB-crossing burst | an INCR burst that runs past a 4KB boundary | the master | §A3.4.1 | [Boundary and strobe bugs](#boundary-and-strobe-bugs-diagnosed-with-b-axi-2s-model) |
+| Wrong write strobe | a WSTRB bit HIGH on a byte lane outside the transfer | the master | §A3.4.1, §A3.4.3 | [Boundary and strobe bugs](#boundary-and-strobe-bugs-diagnosed-with-b-axi-2s-model) |
+
 ### Wait-for graphs: how to read a deadlock
 
 A **wait** is a design decision of the form "I will not raise signal X until I have seen signal Y". Draw it as an arrow from X to Y and say "X waits for Y". A **wait-for graph** is all the waits of the components on a bus drawn together. If you can follow arrows from a signal and come back to the same signal, you have a **closed loop**: every signal in it waits for the next, so no signal in it can be raised first, and no handshake in it ever completes. That is a deadlock.
 
 A long stall is not a deadlock. A slave that holds AWREADY LOW for 500 cycles while it drains a buffer will raise it eventually; nothing waits back on it. A deadlock is a loop, and a loop never ends by itself.
 
+<ArchitectureDiagram
+  title="A long stall is a chain; a deadlock is a loop"
+  caption="Every dashed arrow reads 'waits for'. Left: the chain ends at something that happens by itself (the buffer drains), so the stall ends, however long it takes. Right: following the arrows from WVALID leads back to WVALID, so neither signal can rise first and the write never completes."
+  legend={false}
+  spreadAnchors
+  nodes={[
+    { id: "chain", label: "a long stall: a chain", kind: "generic", col: 0, row: 0, rowSpan: 3, container: true },
+    { id: "awhs", label: "AW handshake", sublabel: "waits for AWREADY", kind: "generic", col: 0, row: 0 },
+    { id: "awr1", label: "AWREADY", sublabel: "slave: waits for its buffer", kind: "generic", col: 0, row: 1 },
+    { id: "buf", label: "buffer drained", sublabel: "happens by itself", kind: "generic", col: 0, row: 2, state: "ok" },
+    { id: "loop", label: "a deadlock: a loop", kind: "generic", col: 1, row: 0, rowSpan: 2, container: true },
+    { id: "wv", label: "WVALID", sublabel: "master: waits for AWREADY", kind: "generic", col: 1, row: 0, state: "error" },
+    { id: "awr2", label: "AWREADY", sublabel: "slave: waits for WVALID", kind: "generic", col: 1, row: 1, state: "error" }
+  ]}
+  edges={[
+    { from: "awhs", to: "awr1", style: "causal" },
+    { from: "awr1", to: "buf", style: "causal" },
+    { from: "wv", to: "awr2", style: "causal" },
+    { from: "awr2", to: "wv", style: "causal" }
+  ]}
+/>
+
 **Arrow direction.** This page's arrows, like the simulator's, point from the waiting signal to the signal it waits for. The figures in IHI0022E §A3.3.1 point the other way: there a single-headed arrow points to a signal that "can be asserted before or after" the signal at its start, and a double-headed arrow to one that "must be asserted only after" it. So a double-headed arrow is a required wait and a single-headed one a wait the later signal may choose; either way the arrow points from the earlier signal to the later one, the opposite of this page's arrows.
+
+Three read-channel rules from §A3.3.1, drawn both ways:
+
+| Rule (§A3.3.1, read transaction) | This page: "X waits for Y" | IHI0022E dependency figure |
+|---|---|---|
+| The slave must wait for both ARVALID and ARREADY before it asserts RVALID (required) | RVALID → ARVALID and ARREADY | ARVALID and ARREADY → RVALID, **double-headed**: "must be asserted only after" |
+| The slave can wait for ARVALID before it asserts ARREADY, or assert ARREADY first (a choice) | ARREADY → ARVALID, drawn only when the slave's design chooses to wait | ARVALID → ARREADY, **single-headed**: "can be asserted before or after" |
+| The master must not wait for ARREADY before it asserts ARVALID (forbidden) | no ARVALID → ARREADY arrow may exist; if your graph has one, that arrow is the violation | no arrow from ARREADY points to ARVALID |
 
 **The classic loop.** IHI0022E §A3.3.1 states the rules "To prevent a deadlock situation": the source's VALID "must not be dependent on" the destination's READY, while a destination "can wait until it detects a VALID signal before it asserts its corresponding READY". Its own Caution gives the example, which B-AXI-1 walks through: a master that waits for AWREADY before driving WVALID deadlocks against a slave that waits for WVALID before asserting AWREADY. The waveform below is that hang as a logic analyzer would show it.
 
@@ -115,6 +155,28 @@ Three rows deserve a sentence each.
 - **The one READY wait that is not free.** For AXI3 interleaving slaves, §A5.3.3 says: "To avoid possible deadlock, a slave interface that supports write data interleaving must continuously accept interleaved write data." It must never stall W to reorder it. AXI4 removed write interleaving, so this applies only to AXI3 components.
 - **Completion is a deadlock rule too.** A master always sends every transfer of a burst and a slave always returns every one, even with an error response (§A3.4.1, §A3.4.4). A component that stops halfway leaves its partner waiting for a WLAST or RLAST that never comes.
 
+<ArchitectureDiagram
+  title="The same legal wait, built legally and illegally"
+  caption="Both slaves wait for WVALID before AWREADY, which §A3.3.1 allows. Left: WVALID is sampled by a flop at an ACLK edge and AWREADY rises for a later edge. Right: an AND gate passes WVALID straight to AWREADY in the same cycle, a combinational input-to-output path that §A3.1.1 forbids. Lint and static timing see the right-hand path; simulation assertions on the pins cannot."
+  legend={false}
+  nodes={[
+    { id: "reg", label: "legal: registered", kind: "generic", col: 0, row: 0, rowSpan: 3, container: true },
+    { id: "wv1", label: "WVALID", sublabel: "input from the master", kind: "generic", col: 0, row: 0 },
+    { id: "ff", label: "flop", sublabel: "samples at an ACLK edge", kind: "generic", col: 0, row: 1, state: "ok" },
+    { id: "awr1", label: "AWREADY", sublabel: "raised for a later edge", kind: "generic", col: 0, row: 2 },
+    { id: "comb", label: "violation: combinational", kind: "generic", col: 1, row: 0, rowSpan: 3, container: true },
+    { id: "wv2", label: "WVALID", sublabel: "input from the master", kind: "generic", col: 1, row: 0 },
+    { id: "and", label: "AND gate", sublabel: "waiting && WVALID", kind: "generic", col: 1, row: 1, state: "error" },
+    { id: "awr2", label: "AWREADY", sublabel: "same cycle as WVALID", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "wv1", to: "ff", style: "data" },
+    { from: "ff", to: "awr1", style: "data" },
+    { from: "wv2", to: "and", style: "data" },
+    { from: "and", to: "awr2", style: "data" }
+  ]}
+/>
+
 **Misconception to drop:** "a slave that waits for WVALID before raising AWREADY violates the protocol". It does not (§A3.3.1). It is the most restrictive legal policy, which is exactly why good verification uses it.
 
 In the simulator, try the custom combinations: give the slave "AWREADY waits for WVALID" and "WREADY waits for AWVALID" with no master waits. The badges show both waits as legal and the write completes: a slave may be that strict. Now add "AWVALID waits for WREADY" on the master and watch the loop close.
@@ -143,7 +205,7 @@ a_aw_bound: assert property (p_bound(AWVALID, AWREADY))
   else $error("[Integration contract] AW stalled more than %0d edges", MAX_WAIT);
 ```
 
-`$rose(valid && !ready)` is true at the first edge of a stall (IEEE 1800-2023 §16.9.3), so each stall starts one attempt and reports at most once. The common form `valid |-> ##[0:N] ready` starts a new attempt at every edge, so one long stall prints a failure on every cycle after the first.
+`$rose(valid && !ready)` is true at the first edge of a stall (IEEE 1800-2023 §16.9.3), so each stall starts one attempt and reports at most once. The common form `valid |-> ##[0:N] ready` starts a new attempt at every edge, so one long stall can print many failures.
 
 <TimingDiagram
   title="Legal backpressure that breaks a contract of MAX_WAIT = 4"
@@ -160,6 +222,34 @@ a_aw_bound: assert property (p_bound(AWVALID, AWREADY))
     { edge: 9, tone: "pass", label: "handshake: legal under AXI, which sets no bound" }
   ]}
 />
+
+**Predict, then check.** Keep the trace above: AWVALID is HIGH at edges 1 to 9, and AWREADY is LOW until edge 9. Replace `p_bound` with the common form `AWVALID |-> ##[0:4] AWREADY`, which starts an attempt at every edge where AWVALID is 1 and needs AWREADY at that edge or one of the next four. At which edges does it fail?
+
+<details>
+<summary>Check your prediction</summary>
+
+Four failures, at edges 5, 6, 7 and 8, for one stall. The attempt that starts at edge 1 needs AWREADY at one of edges 1 to 5 and fails at 5; the attempts from edges 2, 3 and 4 fail at 6, 7 and 8. The attempts from edge 5 onwards see AWREADY at edge 9 and pass. `p_bound` reported this stall once, at edge 5. (Worked out by hand from the implication and cycle-delay range rules of IEEE 1800-2023 §16.12.7 and §16.7.)
+
+<TimingDiagram
+  title="The common form on the same stall: four failures for one stall"
+  caption="x-axis: rising ACLK edges 0 to 10. The shaded window is the first attempt (edges 1 to 5). Every attempt that starts at edges 1 to 4 ends before AWREADY rises, so the single stall prints four failures."
+  edges={11}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0] },
+    { name: "AWREADY", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0] }
+  ]}
+  highlights={[{ from: 1, to: 5, tone: "attempt", label: "attempt from edge 1" }]}
+  markers={[
+    { edge: 5, tone: "fail", label: "attempt from edge 1 fails" },
+    { edge: 6, tone: "fail", label: "attempt from edge 2 fails" },
+    { edge: 7, tone: "fail", label: "attempt from edge 3 fails" },
+    { edge: 8, tone: "fail", label: "attempt from edge 4 fails" },
+    { edge: 9, tone: "pass", label: "attempts from edges 5 to 9 pass" }
+  ]}
+/>
+
+</details>
 
 **Misconception to drop:** "bounded READY latency is an AXI rule". It is a contract you choose and source. Where it lives: in the checker module you attach to the interface, next to the protocol assertions but inside its own generate block switched by a parameter, as in Make It Work.
 
@@ -220,13 +310,39 @@ An **interconnect** connects several masters to several slaves; a **crossbar** i
   ]}
 />
 
+**Predict, then check.** The trace used one of four possible acceptance orders. Keep everything else: M0 sends W_a then W_b, M1 sends W_c then W_d (§A5.4.1), each slave takes write data in the order it accepted the addresses (§A5.3.2), and the interconnect buffers no write data. S0 may accept AW_a or AW_d first, and S1 may accept AW_b or AW_c first. Which of the other three combinations also deadlock?
+
+<details>
+<summary>Check your prediction</summary>
+
+None of them. Only the crossed pair in the trace closes the loop.
+
+| S0 accepts first | S1 accepts first | What happens | Result |
+|---|---|---|---|
+| AW_a | AW_b | W_a goes to S0, then W_b to S1; W_c and W_d follow them | completes |
+| AW_a | AW_c | W_a goes to S0 and W_c to S1; then W_b reaches S1 and W_d reaches S0 | completes |
+| AW_d | AW_c | W_c goes to S1, then W_d to S0; then W_a and W_b follow them | completes |
+| AW_d | AW_b | S0 needs W_d, queued behind the stalled W_c; S1 needs W_b, queued behind the stalled W_a | **deadlock** |
+
+The loop needs each slave to want, first, the *second* burst of a master whose *first* burst is waiting at the other slave. That is why the mitigations below either stop the interconnect from accepting such an order or give it room to park a burst.
+
+</details>
+
 **Who is at fault?** No interface broke §A3.3.1. The interconnect let each slave accept the addresses in an order that the masters' write data could not follow, and then it had nowhere to park a burst. Its duty in §A5.3.2, to forward write data in address order, became impossible to meet. That is why this is called a system deadlock: the fix is in the interconnect's design, not in a master or a slave.
 
 **Mitigations.** IHI0022E states the ordering duties, not how to meet them; these are common implementation choices, so label them as such in a design review:
 
 - **Order the address acceptances.** Forward a master's AW to a slave only when that master's earlier W bursts have been routed, or only when the interconnect can see that the W order and the AW acceptance order agree.
 - **Buffer write data.** With room for one full burst per master port, the interconnect can accept W_a, let M0 send W_b, and break the loop. The hazard is then latent: deeper traffic can need more room.
-- **Accept the address together with its data.** Some slaves and bridges take an AW only when they can take its whole W burst (the legal "wait for both" policy at the slave side).
+- **Accept the address together with its data.** Some slaves and bridges take an AW only when they can take its whole W burst (the legal "wait for both" policy at the slave side). This is an implementation choice, and it breaks the loop only together with the interconnect's forwarding order: the interconnect forwards an AW to a slave only once that burst's W is at the head of its master's W queue, or the bridge buffers the whole burst. On its own it is not enough: once the interconnect has presented AW_d to S0, it cannot withdraw that AWVALID (§A3.2.1); a slave that waits for both VALIDs then waits for W_d, still queued behind W_c, and W_a cannot reach S0 because AW_a was never presented. A slave that accepts an AW once it has room for the whole burst still takes W in AW order (§A5.3.2) and deadlocks the same way.
+
+| Mitigation | Which arrows of the loop it removes | Typical cost | Residual risk |
+|---|---|---|---|
+| Order the address acceptances | "S0 waits for W_d" and "S1 waits for W_b": no slave is left expecting a burst that is queued behind one stalled elsewhere | address latency and less concurrency; the interconnect tracks each master's W order | the ordering logic must cover every master and slave pair |
+| Buffer write data | "W_d after W_c" and "W_b after W_a": a stalled burst is parked so the next one can move | area: storage for a full burst per master port | latent: traffic deeper than the buffer can close the loop again |
+| Accept the address together with its data (an implementation choice) | same as ordering, only with head-of-queue AW forwarding or a burst buffer: the slave never holds an address whose data it cannot take next | address acceptance waits for write data, so latency rises; the slave or bridge must hold a whole burst | a committed AWVALID (§A3.2.1) presented in crossed order still closes the loop, moved onto AW; with head-of-queue forwarding, none for this loop |
+
+These are implementation trade-offs, not IHI0022E rules: the specification states the ordering duties and leaves the design to you.
 
 **Other system deadlocks to recognise.**
 
@@ -237,11 +353,48 @@ An **interconnect** connects several masters to several slaves; a **crossbar** i
 
 **How verification finds them.** Pin checks at one port cannot. You need crossed traffic: every master writing to every slave with several transactions outstanding, random READY delays on every slave port, and a hang watchdog that prints every pending VALID and READY at every port when no handshake has happened for a long time. Bind a protocol checker at every master port and every slave port of the interconnect, so a violation created inside the interconnect is seen where it happens. Formal tools can search for the loop directly; see Push Further.
 
+<ArchitectureDiagram
+  title="A bench that can find interconnect deadlocks"
+  caption="Both master agents write to both slaves with several transactions outstanding, so acceptance orders cross. Both slave responders add random READY delays. CHK marks a protocol checker bound at that port. The hang watchdog (dotted) watches every port and prints each one's VALID and READY when nothing has handshaked for a long time. Arrows show the request direction; responses return on the same links."
+  spreadAnchors
+  nodes={[
+    { id: "m0", label: "M0 agent", sublabel: "writes to S0 and S1", kind: "agent", col: 0, row: 0, badge: "CHK" },
+    { id: "m1", label: "M1 agent", sublabel: "writes to S0 and S1", kind: "agent", col: 1, row: 0, badge: "CHK" },
+    { id: "ic", label: "interconnect", sublabel: "the DUT", kind: "dut", col: 0, row: 1, colSpan: 2 },
+    { id: "s0", label: "S0 responder", sublabel: "random READY delays", kind: "agent", col: 0, row: 2, badge: "CHK" },
+    { id: "s1", label: "S1 responder", sublabel: "random READY delays", kind: "agent", col: 1, row: 2, badge: "CHK" },
+    { id: "wd", label: "hang watchdog", sublabel: "all ports: VALID, READY", kind: "monitor", col: 0, row: 3, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "m0", to: "ic", style: "data", label: "AW, W, AR" },
+    { from: "m1", to: "ic", style: "data", label: "AW, W, AR" },
+    { from: "ic", to: "s0", style: "data" },
+    { from: "ic", to: "s1", style: "data" },
+    { from: "ic", to: "wd", style: "control", label: "observes" }
+  ]}
+/>
+
 ### Boundary and strobe bugs, diagnosed with B-AXI-2's model
 
 [B-AXI-2](/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index) owns the burst equations, the 4KB rule and the byte-lane rules. This section is about diagnosing bugs with them: from a symptom, to the rule, to the check that should have caught it.
 
 **4KB: the symptom.** Part of a burst lands in the wrong place. The interconnect routes a whole burst by its start address, so the transfers past the 4KB boundary still go to the first slave: they alias onto its own addresses, return an error, or corrupt data, depending on that slave, and the slave that owns the next page never sees them. IHI0022E does not define what happens; it simply forbids the burst: "a burst must not cross a 4KB address boundary" (§A3.4.1).
+
+<ArchitectureDiagram
+  title="Illustration: a burst that crosses 4KB is routed by its start address"
+  caption="Slave A owns 0x0000 to 0x0FFF and slave B owns 0x1000 to 0x1FFF. The INCR burst of 8 transfers of 8 bytes from 0x0FE0 carries bytes up to 0x101F, but it is decoded once, by its start address, so all 8 transfers go to slave A. Slave B never sees the four transfers at 0x1000 to 0x101F. What slave A does with them is not defined by IHI0022E: the burst itself is illegal."
+  legend={false}
+  nodes={[
+    { id: "mst", label: "INCR burst", sublabel: "0x0FE0, AxLEN 7, AxSIZE 3", kind: "generic", col: 0, row: 0, state: "error" },
+    { id: "dec", label: "interconnect", sublabel: "decodes the start address", kind: "generic", col: 0, row: 1 },
+    { id: "sa", label: "slave A", sublabel: "0x0000 to 0x0FFF", kind: "generic", col: 0, row: 2 },
+    { id: "sb", label: "slave B", sublabel: "0x1000 to 0x1FFF", kind: "generic", col: 1, row: 2, state: "dim" }
+  ]}
+  edges={[
+    { from: "mst", to: "dec", style: "data", label: "8 transfers" },
+    { from: "dec", to: "sa", style: "data", label: "all 8 transfers" }
+  ]}
+/>
 
 **4KB: the diagnosis.** Only INCR bursts can cross. A legal WRAP stays inside its own window and a FIXED burst repeats one address. Count the last byte from the **aligned** start address:
 
@@ -555,6 +708,28 @@ PASS=4 FAIL=0
 
 **Read the logs.** Reset is released at 35 ns, and the master raises AWVALID just after the edge at 45 ns. The stall starts at the 55 ns edge, so the contract (16 edges) fails at 215 ns. No protocol assertion fires in the buggy run: the master's illegal wait is internal, and every pin it drives is legal. The contract and the watchdog are what turn the hang into a failure, and the wait list says where to look: AW is offered and stalled, W is not offered at all. In the fixed run each write takes five edges: VALIDs raised, READYs raised, both handshakes, BVALID raised, B handshake.
 
+<TimingDiagram
+  title="Write 1 of the fixed run, edge by edge"
+  caption="x-axis: rising ACLK edges 0 to 6, at 35, 45, 55, 65, 75, 85 and 95 ns. Each value is the one sampled at that edge, so a signal driven at an edge shows from the next one. BREADY is tied HIGH by the master. Edge 1: VALIDs driven; 2: READYs driven; 3: AW and W handshakes; 4: BVALID driven; 5: B handshake. Worked out by hand from deadlock_demo.sv, like the logs above."
+  edges={7}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0] },
+    { name: "WVALID", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0] },
+    { name: "AWREADY", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0] },
+    { name: "WREADY", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0] },
+    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 0, 1, 0] },
+    { name: "BREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1] }
+  ]}
+  markers={[
+    { edge: 1, tone: "drive", label: "45 ns: the master drives AWVALID and WVALID" },
+    { edge: 2, tone: "sample", label: "55 ns: the slave samples both VALIDs and drives both READYs" },
+    { edge: 3, tone: "pass", label: "65 ns: AW and W handshakes" },
+    { edge: 4, tone: "drive", label: "75 ns: the slave drives BVALID" },
+    { edge: 5, tone: "pass", label: "85 ns: B handshake, write 1 done" }
+  ]}
+/>
+
 **Run it.** Compile `deadlock_demo.sv` with any simulator that supports IEEE 1800-2023 concurrent assertions and `bind`, with `tb_top` as the top. Run it twice, with and without `+BUGGY_MASTER`. (Open-source simulators' SVA support varies; this example has not been verified on one.)
 
 ### How to triage a hang
@@ -575,11 +750,33 @@ PASS=4 FAIL=0
 - [ ] I can trace the 2x2 write-ordering deadlock and name one mitigation.
 - [ ] I can compute the active lanes and the legal WSTRB values for an unaligned narrow write.
 
+<details>
+<summary>Check item 1: the loop of the buggy run, in the code</summary>
+
+| Arrow | The code that creates it | Class |
+|---|---|---|
+| master's WVALID waits for AWREADY | `if (BUGGY) WVALID <= 1'b1;` sits inside `if (AWVALID && AWREADY)`, and the start of a write drives `WVALID <= !BUGGY;` | **violation** (§A3.3.1): the source waits for READY |
+| slave's AWREADY waits for WVALID | `AWREADY <= 1'b1` only when `both_seen`, and `both_seen` needs `WVALID \|\| w_done` | **legal policy** (§A3.3.1), registered as §A3.1.1 requires |
+
+Two arrows, one loop: AWREADY never rises because WVALID is LOW, and WVALID never rises because AWREADY is LOW. The fix removes the master's arrow, not the slave's.
+
+</details>
+
 ## Push Further
 
 ### Expert: proving deadlock freedom
 
 A `##[1:N]` bound is a **safety** property: a finite trace can violate it. "Every stall ends eventually" is a **liveness** property; IEEE 1800-2023 writes it with `s_eventually` (§16.12.13), for example `$rose(AWVALID && !AWREADY) |-> s_eventually AWREADY`. A finite simulation can never show that a liveness property holds, only that it has not been satisfied yet when the run stops; how simulators report a strong property still pending at the end of a run is tool-dependent.
+
+Three ways to write "the stall ends", side by side:
+
+| Consequent after `$rose(AWVALID && !AWREADY) \|->` | Kind | Can a finite trace fail it? | What a simulation run can show |
+|---|---|---|---|
+| `##[1:MAX_WAIT] AWREADY` | safety | yes, at the edge MAX_WAIT edges after the stall starts | a failure at a definite edge |
+| `##[1:$] AWREADY` | weak by default under `assert property` (IEEE 1800-2023 §16.12.2) | no: a weak sequence fails only when a finite prefix shows it can no longer match, and an unbounded wait can always still match | nothing: a stall that never ends is not a failure, so this check proves nothing about progress |
+| `s_eventually AWREADY` | liveness, strong (§16.12.13) | no finite prefix refutes it; some tools flag an unfinished strong attempt at end of run (tool-dependent) | never a failure that proves a hang; a pending attempt at the end of the run, reported in a tool-dependent way |
+
+Only the first row turns a hang into a failure in simulation. The third is the one a formal tool can prove, under fairness assumptions.
 
 Formal tools can prove liveness, but only with **fairness** assumptions about the environment, written as `assume property` (§16.14.2): for example "the master eventually raises BREADY", or the slave's own protocol rules when you verify a master. Without them the tool finds a trivial counterexample, such as a partner that never responds. Real interconnects also need abstraction (fewer outstanding transactions, narrower data) before a proof converges, and liveness engines and their limits differ between tools (tool-dependent). A practical split: bounded contract checks in simulation and formal; liveness proofs on small configurations of the interconnect's ordering and buffering logic.
 
@@ -595,15 +792,59 @@ AXI4 W follows AW order at every master (§A5.4.1), and the interconnect must fo
 
 In legacy AXI3 systems, write interleaving lets a slave with an interleaving depth above one take W bursts in a different order using WID, but such a slave "must continuously accept interleaved write data" and "must never stall the acceptance of write data in an attempt to change the order of the write data" (§A5.3.3). AXI4 removed WID and interleaving (§A5.4.1), so AXI3-to-AXI4 bridges must serialise W bursts, which is where crossed-order hazards often reappear.
 
+<TimingDiagram
+  title="Two 2-transfer writes, A then B: AXI3 interleaved and AXI4 consecutive"
+  caption="x-axis: rising ACLK edges 0 to 5. Signal names starting A3 are the AXI3 interface and A4 the AXI4 interface. The addresses of A (AWID 0) and B (AWID 1) were accepted in that order, WVALID is HIGH at edges 1 to 4 on both interfaces, and so is the AXI4 WREADY (not drawn). AXI3, at a slave with an interleaving depth above one: WID tells the bursts apart, the first transfer of A arrives before the first of B as the address order requires, and WREADY stays HIGH (§A5.3.3). AXI4: no WID, so each burst's transfers are consecutive, in address order (§A5.4.1)."
+  edges={6}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "A3 WREADY", kind: "bit", values: [0, 1, 1, 1, 1, 0] },
+    { name: "A3 WID", kind: "bus", values: [undefined, 0, 1, 0, 1, undefined] },
+    { name: "A3 WDATA", kind: "bus", values: [undefined, "A0", "B0", "A1", "B1", undefined] },
+    { name: "A3 WLAST", kind: "bit", values: [0, 0, 0, 1, 1, 0] },
+    { name: "A4 WDATA", kind: "bus", values: [undefined, "A0", "A1", "B0", "B1", undefined] },
+    { name: "A4 WLAST", kind: "bit", values: [0, 0, 1, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", label: "both: the first transfer of A comes first" },
+    { edge: 2, tone: "info", label: "AXI3: B0 between A0 and A1, told apart by WID" },
+    { edge: 4, tone: "pass", label: "both: every transfer accepted, WLAST on the last of each burst" }
+  ]}
+/>
+
 ### Expert: latent violations and the most restrictive legal partner
 
-Section §A3.3.1 gives every destination the right to wait for VALID, so the strictest partner a master can meet is a slave that raises AWREADY and WREADY only after it has seen both AWVALID and WVALID, and ARREADY only after ARVALID. Any master that waits for any READY deadlocks against it. Symmetrically, the strictest partner for a slave is a master that raises BREADY and RREADY only after it sees BVALID and RVALID. This is a methodology derived from §A3.3.1, not a requirement of it.
+Section §A3.3.1 gives every destination the right to wait for VALID, so each component has a strictest legal partner, and any wait for READY deadlocks against it. The table pairs them. This is a methodology derived from §A3.3.1, not a requirement of it.
+
+| Component you verify | Its most restrictive legal partner | The latent bug it exposes |
+|---|---|---|
+| a master | a slave that raises AWREADY and WREADY only after it has seen both AWVALID and WVALID, and ARREADY only after ARVALID | any AWVALID, WVALID or ARVALID that waits for a READY: the run hangs |
+| a slave | a master that raises BREADY only after BVALID and RREADY only after RVALID | any BVALID or RVALID that waits for BREADY or RREADY: the run hangs |
 
 Use it in three places: as a mode of your responder (the slave model in your verification IP), alongside random READY delays; as the formal environment, by leaving READY unconstrained so the tool explores the strict choice; and in sign-off reviews, where "passes with our always-ready slave model" is not accepted as evidence. A responder that ties READY HIGH can never expose a master that waits on READY.
 
 ### Expert: completion as a deadlock-prevention duty
 
 IHI0022E ties completion to deadlock explicitly. Bursts never terminate early (§A3.4.1). "The required number of data transfers must be performed, even if an error is reported" (§A3.4.4): a read of 8 transfers that hits an error still returns 8, each with a response. A DECERR default slave must complete every data transfer too (§A3.4.4). A peripheral slave given an unsupported access may stop working correctly, but "Compliant completion of all transaction types is required to prevent system deadlock" (§A4.1; §A10.2.4 asks for completion "in a protocol-compliant fail-safe manner, to prevent system deadlock"), and a protection mechanism that discards transactions "must provide a protocol-compliant error response to prevent deadlock" (§B1.4.2).
+
+<TimingDiagram
+  title="An 8-transfer read with SLVERR on transfer 3 still completes"
+  caption="x-axis: rising ACLK edges 0 to 9; one transfer per edge at edges 1 to 8. RRESP is per transfer in a read, so transfer 3 can be SLVERR while the others are OKAY (§A3.4.4). The slave still returns all 8 transfers and asserts RLAST on the eighth; the master takes every one."
+  edges={10}
+  cycleWidth={52}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "RVALID", kind: "bit", values: [0, 1, 1, 1, 1, 1, 1, 1, 1, 0] },
+    { name: "RREADY", kind: "bit", values: [0, 1, 1, 1, 1, 1, 1, 1, 1, 0] },
+    { name: "transfer", kind: "bus", values: [undefined, "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", undefined] },
+    { name: "RRESP", kind: "bus", values: [undefined, "OKAY", "OKAY", "SLVERR", "OKAY", "OKAY", "OKAY", "OKAY", "OKAY", undefined] },
+    { name: "RLAST", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 3, tone: "info", label: "SLVERR on transfer 3: the burst is not cancelled" },
+    { edge: 8, tone: "pass", label: "transfer 8 with RLAST: the burst completes" }
+  ]}
+/>
 
 For a testbench this means: error injection never shortens a burst; a responder that injects SLVERR still drives RLAST on the right beat; and a monitor counts beats to WLAST and RLAST regardless of the response. Error responses themselves are legal and are scored, not flagged, by the scoreboard; [B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index) owns that policy, and [B-AXI-1](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index) lists the response encodings.
 
@@ -667,6 +908,26 @@ Answer each one before you open the feedback.
 />
 
 ## Practice & Reinforce
+
+<VisualRecap
+  title="AXI deadlocks at a glance"
+  rule="A deadlock is a closed loop of waits. A source never waits for a READY its partner drives (AWVALID/WVALID never wait for AWREADY/WREADY; ARVALID never waits for ARREADY); a destination may wait for VALID, through a register; bursts always complete; and AXI sets no time bound, so any bound is a labelled integration contract."
+  code={`// [Integration contract] MAX_WAIT comes from the product spec, not from AXI.
+$rose(valid && !ready) |-> ##[1:MAX_WAIT] ready;`}
+  mistake="Blaming the slave that waits for WVALID before AWREADY. Its wait is legal (§A3.3.1); the master whose WVALID waits for AWREADY owns the bug."
+  inTestbench="A responder mode that is the most restrictive legal partner, protocol checkers bound at every port, a bounded check labelled [Integration contract], and a hang watchdog that prints every port's VALID and READY."
+>
+  <ArchitectureDiagram
+    title="The one legal wait between VALID and READY"
+    caption="The dashed arrow reads 'may wait for': a destination's READY may wait for the source's VALID (IHI0022E §A3.3.1), at least one edge later through a register (§A3.1.1). An arrow the other way, VALID waiting for a READY the partner drives (on its own channel or another, such as WVALID on AWREADY), is the violation that closes loops. Waits on the slave's own handshakes (RVALID after the AR handshake, AXI4 BVALID after the AW and WLAST handshakes, §A3.3.1) are required, not violations."
+    legend={false}
+    nodes={[
+      { id: "rv", label: "VALID", sublabel: "source: never waits for partner's READY", kind: "generic", col: 0, row: 0 },
+      { id: "rr", label: "READY", sublabel: "destination: may wait", kind: "generic", col: 0, row: 1, state: "ok" }
+    ]}
+    edges={[{ from: "rr", to: "rv", style: "causal", label: "may wait for" }]}
+  />
+</VisualRecap>
 
 ### Retrieval quiz
 

@@ -40,6 +40,38 @@ Words this page uses, in one line each (each links to where it is taught in full
 - The **factory** creates objects by type so a test can swap in a derived type, an **override** ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)). A **callback** is a hook object that a component calls at a point its author chose ([A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index)). The **configuration database** (`uvm_config_db`) passes settings down the tree by path ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
 - **Forking a library** means copying its sources into your project and editing them. It has nothing to do with the SystemVerilog `fork` statement, which this page also uses.
 
+The picture below shows the two domains and their schedules. Most of this page depends on which container holds which phase.
+
+<ArchitectureDiagram
+  title="Two domains, and the container each phase lives in"
+  caption="Dashed arrows are execution order. The outer box is the common domain: the top box stands for build, connect, end_of_elaboration and start_of_simulation, and the bottom box for extract, check, report and final. The inner box is the uvm domain, which is one node inside common, placed beside run_phase (uvm-core 2020.3.1 builds it that way in uvm_domain.svh, get_common_domain). Its schedule, uvm_sched, holds the twelve run-time phases; each box stands for three of them, and pre_ and post_ abbreviate the full names. The arrow from start_of_simulation ends on the uvm domain box: that node starts the domain's schedule, which begins with pre_reset. Every component starts in the uvm domain, so it takes part in both. Later sections add a phase to one of these containers, and which container holds a phase decides where a new phase can be placed next to it."
+  cellWidth={144}
+  cellHeight={52}
+  gapX={32}
+  gapY={40}
+  spreadAnchors
+  nodes={[
+    { id: "dm-common", label: "common domain", col: 0, row: 0, colSpan: 2, rowSpan: 6, container: true },
+    { id: "dm-pre", label: "build … start_of_simulation", sublabel: "function phases: zero time", col: 0, row: 0, colSpan: 2 },
+    { id: "dm-run", label: "run_phase", sublabel: "task phase", col: 0, row: 1, rowSpan: 4 },
+    { id: "dm-uvm", label: "uvm domain", col: 1, row: 1, rowSpan: 4, container: true },
+    { id: "dm-reset", label: "reset", sublabel: "pre_reset, reset, post_reset", col: 1, row: 1 },
+    { id: "dm-cfg", label: "configure", sublabel: "pre_, configure, post_", col: 1, row: 2 },
+    { id: "dm-main", label: "main", sublabel: "pre_main, main, post_main", col: 1, row: 3 },
+    { id: "dm-shut", label: "shutdown", sublabel: "pre_, shutdown, post_", col: 1, row: 4 },
+    { id: "dm-post", label: "extract … final", sublabel: "function phases: zero time", col: 0, row: 5, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "dm-pre", to: "dm-run", style: "causal" },
+    { from: "dm-pre", to: "dm-uvm", style: "causal" },
+    { from: "dm-reset", to: "dm-cfg", style: "causal" },
+    { from: "dm-cfg", to: "dm-main", style: "causal" },
+    { from: "dm-main", to: "dm-shut", style: "causal" },
+    { from: "dm-run", to: "dm-post", style: "causal" },
+    { from: "dm-shut", to: "dm-post", style: "causal" }
+  ]}
+/>
+
 ### Customize without forking
 
 A methodology layer answers one question for a team: "where does project-specific behaviour live?" The answer must never be "inside uvm-core". UVM was designed to be extended from the outside, and IEEE 1800.2-2020 standardizes each extension point. Pick the point by the requirement, not by habit:
@@ -262,6 +294,16 @@ endclass
 
 `uvm_report_server` itself is a virtual class whose methods are pure virtual (§6.5.1.1, §6.5.1.2.15), so you extend `uvm_default_report_server`, which "provides a full implementation" (§6.5.2), and override only what you change.
 
+**Why append, in three lines.** The first line is a stock message, the second is the same message from `proj_report_server` (if Make It Work's `base_test` installed it), and the third is what a server that *prepended* the field would print. The lines are illustrative: the message is the `[ORDER]` error from Break-it row 1 in Make It Work (a normal run prints no such error), and the file and line fields are left out, as in Make It Work's expected output.
+
+```text
+UVM_ERROR @ 50: uvm_test_top.env [ORDER] configure ran before firmware was loaded
+UVM_ERROR @ 50: uvm_test_top.env [ORDER] configure ran before firmware was loaded [test=base_test]
+[test=base_test] UVM_ERROR @ 50: uvm_test_top.env [ORDER] configure ran before firmware was loaded
+```
+
+A parser anchored at the start of the line, such as `^UVM_ERROR`, finds the first two lines and misses the third, so a prepended field would hide every error from it.
+
 **Pitfalls in base classes**, each with why it bites:
 
 - **A forgotten `super.<phase>()`.** If a block driver overrides `end_of_elaboration_phase` without calling `super.end_of_elaboration_phase(phase)`, the base's `apply_project_policy()` call never runs, silently. Make it a lint rule (Governance, below).
@@ -352,6 +394,40 @@ uvm_domain::get_uvm_schedule().add(load_fw_phase_c::get(),
 
 **IMP versus node.** `get()` always returns the same IMP, but every `add()` builds a *new* node that points to it (uvm-core `uvm_phase.svh`, `add()`). Two `add()` calls therefore put two `load_fw` nodes in the schedule, and the phase runs twice. Register once, from one place. A static "already added" bit in the test is the usual guard; the danger is an `add()` placed in a class that has several instances (an env or an agent), or reached from two code paths. (A second *test* is not the danger: one simulation runs one test.)
 
+**Predict first.** The same `add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get()))` call runs twice on the `uvm` schedule. With only `after_phase`, each `add()` moves the anchor's successors at that moment behind the new node. `reset` ends at 50 ns, each run of `load_fw` objects for 20 ns, `configure` objects for 10 ns, and no other phase objects. In what order do the nodes sit after `reset`, and when does `configure` start?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the schedule after two add() calls</summary>
+
+After the first call the schedule is `reset → node 1 → post_reset`. The second call finds `reset`'s successor, now node 1, and moves it behind node 2, so the order is `reset → node 2 → node 1 → post_reset`. Node 2 runs from 50 to 70 ns, node 1 from 70 to 90 ns, `post_reset` and `pre_configure` end at 90 ns, and `configure` starts at 90 ns, 20 ns late. A counter in the env reaches 2.
+
+<ArchitectureDiagram
+  title="One IMP, two nodes after a double add()"
+  caption="Dashed arrows are execution order inside uvm_sched; plain lines join each node to the IMP it refers to. Both nodes refer to the same load_fw_phase_c object, the one get() returns, so both run its exec_task. The node made by the second add() sits first, straight after reset (uvm-core uvm_phase.svh, add()). The times are for the run described in the prompt."
+  cellWidth={150}
+  cellHeight={52}
+  gapX={56}
+  gapY={36}
+  spreadAnchors
+  nodes={[
+    { id: "in-sched", label: "uvm_sched", col: 0, row: 0, rowSpan: 4, container: true },
+    { id: "in-reset", label: "reset", sublabel: "ends at 50 ns", col: 0, row: 0 },
+    { id: "in-n2", label: "load_fw node 2", sublabel: "second add(): 50 to 70 ns", col: 0, row: 1, state: "active" },
+    { id: "in-n1", label: "load_fw node 1", sublabel: "first add(): 70 to 90 ns", col: 0, row: 2, state: "active" },
+    { id: "in-post", label: "post_reset", sublabel: "then configure at 90 ns", col: 0, row: 3 },
+    { id: "in-imp", label: "load_fw_phase_c", sublabel: "the IMP: one object", col: 1, row: 1, rowSpan: 2 }
+  ]}
+  edges={[
+    { from: "in-reset", to: "in-n2", style: "causal" },
+    { from: "in-n2", to: "in-n1", style: "causal" },
+    { from: "in-n1", to: "in-post", style: "causal" },
+    { from: "in-n2", to: "in-imp", style: "structural" },
+    { from: "in-n1", to: "in-imp", style: "structural" }
+  ]}
+/>
+
+</details>
+
 **Classic mistake: no `exec_task`.** The class compiles, `add()` succeeds, the phase starts and ends at once, and nothing in `soc_env` runs. UVM never calls a component method because its *name* matches the phase (`load_fw_phase`); only your `exec_task` makes that call. The built-in phases work the same way: `uvm_main_phase` has an `exec_task` that calls `comp.main_phase(phase)`.
 
 **Why `typedef class soc_env;` is enough here, but not everywhere.** A forward typedef (IEEE 1800-2023 §8.27) lets `exec_task` declare a handle, `$cast` to it and call a method through it before `soc_env` is defined. It does not let other code use `soc_env::type_id` before the definition: selecting a type with `::` through an incomplete forward type is illegal (§6.18, whose own example is `C::T x; // illegal`). So define `soc_env` before any class that calls `soc_env::type_id::create`, as Make It Work does.
@@ -426,9 +502,45 @@ The visual assumes every component is in the default `uvm` domain and does not m
 
 uvm-core also refuses an after/before pair in the wrong order (`PH_BAD_ADD … is not before phase …`) and two predecessor arguments at once.
 
+<ArchitectureDiagram
+  title="A parallel branch: after reset, before configure"
+  caption="Setting 3 from the visualizer: add() with .after_phase(reset) and .before_phase(configure) on the uvm schedule. Dashed arrows are execution order. The new node (highlighted) is an extra path from reset to configure, beside post_reset and pre_configure, so configure now has two predecessors and waits for both. A series splice with .after_phase(reset) alone would instead put load_fw between reset and post_reset on the single path. .with_phase(main) makes the same branch shape around main: the new node shares main's predecessor, pre_main, and its successor, post_main."
+  cellWidth={150}
+  cellHeight={50}
+  gapX={56}
+  gapY={36}
+  spreadAnchors
+  nodes={[
+    { id: "br-reset", label: "reset", col: 0, row: 0, colSpan: 2 },
+    { id: "br-post", label: "post_reset", col: 0, row: 1 },
+    { id: "br-pre", label: "pre_configure", col: 0, row: 2 },
+    { id: "br-fw", label: "load_fw", sublabel: "the new node", col: 1, row: 1, rowSpan: 2, state: "active" },
+    { id: "br-cfg", label: "configure", sublabel: "waits for both paths", col: 0, row: 3, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "br-reset", to: "br-post", style: "causal" },
+    { from: "br-post", to: "br-pre", style: "causal" },
+    { from: "br-pre", to: "br-cfg", style: "causal" },
+    { from: "br-reset", to: "br-fw", style: "causal" },
+    { from: "br-fw", to: "br-cfg", style: "causal" }
+  ]}
+/>
+
 **Edit the schedule in `build_phase`.** The run-time phases start after `start_of_simulation_phase` (§9.8.2), so a schedule edited during `build_phase` is complete before any of them begins. Registering from the test's `build_phase` (or a static function it calls) also gives one obvious owner.
 
 **Time can pass in a phase nobody objects to.** "If two (or more) phases … share a common successor … phase advancement is delayed until all predecessors of the common successor are ready" (§9.6). In setting 3 above, `pre_configure` has nothing to do, yet it cannot finish into `configure` until `load_fw` has ended, so it stays open for 20 ns with no objection. This is the same rule that keeps `run_phase` open until `post_shutdown_phase` ends.
+
+The two settings side by side, with Make It Work's objections (`reset` 50 ns, `load_fw` 20 ns, `configure` 10 ns, nothing else). Times are when each phase starts and ends, in ns; a single number means the phase starts and ends in that time slot:
+
+| Phase | Setting 2: series (`.after_phase(reset)`) | Setting 3: branch (`.after_phase(reset), .before_phase(configure)`) |
+|---|---|---|
+| `reset` | 0 to 50 | 0 to 50 |
+| `load_fw` | 50 to 70 | 50 to 70 |
+| `post_reset` | 70 | 50 |
+| `pre_configure` | 70 | 50 to 70, **open with no objection**, waiting for `load_fw` |
+| `configure` | 70 to 80 | 70 to 80 |
+
+`configure` starts at 70 ns either way, which is why the Break-it table below shows the same `[ORDER]` times for both. Only the phase trace tells the two shapes apart.
 
 **A task phase must not share a successor with a function phase.** §9.6: "A task phase shall not share a successor with a topdown_phase or bottomup_phase, as that setup could try to make the topdown_phase or bottomup_phase consume time." For example, `get_common_domain().add(my_task_phase_c::get(), .with_phase(uvm_extract_phase::get()))` makes a time-consuming phase run beside the zero-time `extract` and share its successor `check`. uvm-core's `add()` does not check for this, so nothing warns you; treat it as a review rule.
 
@@ -508,6 +620,33 @@ Reset strategy in depth (reset-aware drivers, mid-test reset) is taught in [A-UV
   ]}
 />
 
+Two of point 3's conditions exist because a UVM error can be dropped before it is counted, and a third because some errors never reach UVM at all. The diagram follows one error report through the report server, in the order §6.5.1.2.14 fixes.
+
+<ArchitectureDiagram
+  title="Where an error can leave the count"
+  caption="Dashed arrows are the order of processing. A UVM error report first meets every active report catcher: a catcher that returns CAUGHT ends processing, so the report is not added to the UVM_ERROR count (uvm-core still lists it in the catcher summary, which the gate reads). If every catcher returns THROW, the report goes on, possibly changed: a catcher may change its severity (for example demote it), and it is then counted at the new severity. Next, a report whose action is UVM_NO_ACTION also ends processing uncounted. Only a report that passes both is executed and counted (uvm-core increments the counts in execute_report_message). An SVA failure or a $error never enters this path at all, unless the assertion's action block calls uvm_error, which makes it an ordinary UVM report. These are the gate's conditions on assertion and simulator errors, on caught or demoted errors, and on UVM_NO_ACTION."
+  cellWidth={150}
+  cellHeight={52}
+  gapX={64}
+  gapY={48}
+  nodes={[
+    { id: "er-msg", label: "uvm_error report", sublabel: "issued through UVM", col: 0, row: 0 },
+    { id: "er-sva", label: "SVA fail or $error", sublabel: "default action: bypasses UVM", col: 1, row: 0, state: "error" },
+    { id: "er-cat", label: "report catchers", sublabel: "each returns THROW or CAUGHT", col: 0, row: 1, state: "active" },
+    { id: "er-drop1", label: "dropped", sublabel: "CAUGHT: not in the count", col: 1, row: 1, state: "error" },
+    { id: "er-act", label: "NO_ACTION set?", sublabel: "checked after all catchers", col: 0, row: 2, state: "active" },
+    { id: "er-drop2", label: "dropped", sublabel: "UVM_NO_ACTION: not counted", col: 1, row: 2, state: "error" },
+    { id: "er-cnt", label: "counted", sublabel: "at its severity now", col: 0, row: 3, state: "ok" }
+  ]}
+  edges={[
+    { from: "er-msg", to: "er-cat", style: "causal" },
+    { from: "er-cat", to: "er-drop1", style: "causal", label: "CAUGHT" },
+    { from: "er-cat", to: "er-act", style: "causal", label: "THROW" },
+    { from: "er-act", to: "er-drop2", style: "causal", label: "yes" },
+    { from: "er-act", to: "er-cnt", style: "causal", label: "no" }
+  ]}
+/>
+
 ### Diagnosing methodology drift
 
 **Methodology drift** is the slow divergence between what the layer says and what the benches do. It has three common forms, and each leaves evidence you can collect in one run. The trace plusargs below are uvm-core implementation (none of them is in IEEE 1800.2-2020); `print_topology` (F.7.4.2) and the factory `print` (§8.3.1.7.5) are standard.
@@ -541,6 +680,39 @@ A traced log excerpt for the first row (uvm-core 2020.3.1 message IDs and texts;
 - `.after_phase` alone splices in series; non-adjacent anchors or `with_phase` make a parallel branch. The wrong container gives `PH_BAD_ADD`.
 - Most needs fit an existing run-time phase, a sequence or a synchronization object. Custom phases are owned by the methodology team.
 - Governance is guidelines, precise lint rules, an honest CI gate and a pinned uvm-core version checked at run time.
+
+<VisualRecap
+  title="Extend UVM, never fork it"
+  rule="Put project behaviour in standard extension points on a pinned, unmodified uvm-core; a custom task phase needs a singleton IMP, an exec_task that casts each component and calls its method, and exactly one add() on the container that holds its anchor."
+  code={"if (!load_fw_added) begin\n  uvm_domain::get_uvm_schedule().add(load_fw_phase_c::get(),\n                                     .after_phase(uvm_reset_phase::get()));\n  load_fw_added = 1;\nend"}
+  mistake="Leaving out exec_task (the phase starts and is skipped, and no component code runs), calling add() on the common domain with a run-time anchor (UVM_FATAL PH_BAD_ADD at build time), or calling add() twice (two nodes, so the phase runs twice)."
+  inTestbench="proj_pkg holds the role bases and proj_config, and in a real project the phase class too (Make It Work keeps load_fw_phase_c in soc_pkg); proj_base_test::build_phase checks UVM_VERSION_STRING, sets the timeout and installs the configuration, and the project's base test (base_test in Make It Work) makes the one guarded add(); lint and the CI gate keep block teams on the layer."
+>
+  <ArchitectureDiagram
+    title="The three parts of a custom task phase"
+    caption="Dashed arrows are execution order and calls; the plain line joins the IMP to its exec_task method. (1) One load_fw_phase_c object, returned by get(). (2) Its exec_task, forked once per component, casts and calls soc_env. (3) One add() puts one load_fw node into uvm_sched after reset."
+    cellWidth={150}
+    cellHeight={52}
+    gapX={56}
+    gapY={36}
+    nodes={[
+      { id: "rc-imp", label: "load_fw_phase_c", sublabel: "(1) singleton IMP, get()", col: 0, row: 0 },
+      { id: "rc-exec", label: "exec_task", sublabel: "(2) $cast(env, comp)", col: 0, row: 1 },
+      { id: "rc-env", label: "soc_env", sublabel: "load_fw_phase(phase)", kind: "env", col: 0, row: 2 },
+      { id: "rc-sched", label: "uvm_sched", col: 1, row: 0, rowSpan: 3, container: true },
+      { id: "rc-reset", label: "reset", col: 1, row: 0 },
+      { id: "rc-node", label: "load_fw node", sublabel: "(3) one add()", col: 1, row: 1, state: "active" },
+      { id: "rc-post", label: "post_reset", col: 1, row: 2 }
+    ]}
+    edges={[
+      { from: "rc-imp", to: "rc-exec", style: "structural" },
+      { from: "rc-reset", to: "rc-node", style: "causal" },
+      { from: "rc-node", to: "rc-post", style: "causal" },
+      { from: "rc-node", to: "rc-exec", style: "causal", label: "forks" },
+      { from: "rc-exec", to: "rc-env", style: "causal", label: "calls" }
+    ]}
+  />
+</VisualRecap>
 
 ## Make It Work
 
@@ -702,6 +874,25 @@ Predict each log before you run it. Every row was traced through uvm-core's `add
 6. **Make the work idempotent,** because a jump back to `reset` runs it again.
 7. **Prove it:** run with `+UVM_PHASE_TRACE`, read the start and end times of your phase, and keep a counter checked in `check_phase`.
 
+**Which step was skipped?** Each run below uses Make It Work's design with one step of the list done wrong. Name the step from the evidence, then open the answers.
+
+- **Run 1:** with `+UVM_PHASE_TRACE`, `load_fw` starts and is skipped at 50 ns ("No objections raised, skipping phase"), then `UVM_ERROR [ORDER] configure ran before firmware was loaded`.
+- **Run 2:** at time 0, during `build_phase`, `UVM_FATAL [PH_BAD_ADD] cannot find after_phase 'reset' within node 'common'`.
+- **Run 3:** no phase jump in the test; the trace has two start lines for `load_fw`, at 50 and 70 ns, and `check_phase` reports `UVM_ERROR [FW] firmware loaded 2 times, expected 1`.
+- **Run 4:** one `add()` call and one `load_fw` node, but the test jumps from `main` back to `reset`, and `check_phase` reports `UVM_ERROR [FW] firmware loaded 2 times, expected 1`.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show which step each run skipped</summary>
+
+| Run | Step done wrong | Why the evidence points there |
+|---|---|---|
+| 1 | Step 3, the proxy: no `exec_task`, or a `$cast` to the wrong class | The node exists and runs, but no component code raised an objection in it |
+| 2 | Step 4, the container: `add()` called on the common domain | The message names the container it searched, and `reset` is not in it |
+| 3 | Step 5, register once: `add()` ran twice | Two start lines mean two nodes; with no jump, nothing else re-runs the phase |
+| 4 | Step 6, idempotent work | The jump re-ran `reset` and the one `load_fw` node after it; the work, and the counter, were not written to repeat |
+
+</details>
+
 **Checklist before moving on:**
 - [ ] I can map five team requirements to an extension point from the table, without editing uvm-core.
 - [ ] My phase class has a `protected` constructor, a static `get()` and an `exec_task` that casts to the right component.
@@ -726,6 +917,16 @@ doms["uvm"].add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get()));
 
 §9.3.1.6.1 allows `add` on a domain node, and §9.4.2.2 says `domains["uvm"]` "contains the UVM run-time phases". In uvm-core, `find` from the `uvm` domain node descends into its schedule because that schedule belongs to the same domain (`m_find_successor`). This route was traced through the source but not run: confirm the splice with `+UVM_PHASE_TRACE`. Two more standard details: §9.3.1.6.4 declares `get_schedule` as returning `string` while describing a node, which looks like an erratum (uvm-core returns `uvm_phase`), so prefer `get_parent()` (§9.3.1.6.2) in portable code; and `add()` also takes `start_with_phase` and `end_with_phase`, which align a new phase with the start or end of an existing one (§9.3.1.6.1).
 
+The calls of this section in one table, for a portability review:
+
+| Call | Where it is defined | Portable to another IEEE 1800.2-2020 library? |
+|---|---|---|
+| `uvm_domain` `new`, `get_domains`, `add_uvm_phases`, `jump` | IEEE 1800.2-2020 §9.4.2.1–9.4.2.4 | Yes |
+| `uvm_phase` `add`, `find`, `get_parent` | IEEE 1800.2-2020 §9.3.1.6.1, §9.3.1.4.4, §9.3.1.6.2 | Yes |
+| `uvm_phase` `get_schedule` | IEEE 1800.2-2020 §9.3.1.6.4, declared as returning `string` | Doubtful: prefer `get_parent()` |
+| `uvm_domain::get_uvm_schedule`, `get_common_domain`, `get_uvm_domain` | uvm-core only: no `@uvm-ieee` tag in `uvm_domain.svh` | No |
+| `set_phase_imp` | uvm-core, marked `@uvm-compat` | No |
+
 ### Expert: custom phases and separate domains
 
 `set_domain(dom)` (§13.1.4.4.1) moves a component, and by default its subtree, into another domain, and calls `define_domain(dom)` (§13.1.4.4.3), whose default "adds a copy of the uvm phasing schedule to the given domain". In uvm-core that copy is built fresh with `add_uvm_phases` (`uvm_component.svh`, `define_domain`), so it does **not** contain a phase you added to `get_uvm_schedule()`. uvm-core's task-phase traversal also runs a node only for components whose domain is the node's domain or the common domain (`uvm_task_phase.svh`, `traverse`). Consequences:
@@ -746,6 +947,32 @@ vip_dom.find(uvm_reset_phase::get()).get_parent()
 - Components created after `set_domain` inherit their parent's domain (uvm-core `uvm_component::new`). Whether the new domain runs in lockstep with `uvm` is a separate decision: `sync` and `unsync` (§9.3.1.8.1–9.3.1.8.2), taught in [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index).
 
 (The `vip_cal_phase_c` class is written exactly like `load_fw_phase_c`. Traced through uvm-core, not run.)
+
+<ArchitectureDiagram
+  title="A VIP in its own domain gets its own schedule"
+  caption="The two schedules before any add() on vip_dom. Dashed arrows are execution order; plain lines join a domain to its schedule. set_domain(vip_dom) calls define_domain, which in uvm-core builds a fresh uvm_sched with add_uvm_phases and adds vip_dom to the common domain beside run_phase, as the uvm domain already is (uvm_component.svh, define_domain). The load_fw node added to the uvm domain's schedule is not copied, so vip_env takes no part in it. Both schedules start after start_of_simulation, and extract waits for both. Give vip_dom its own phase with one add() on its schedule, never from an overridden define_domain."
+  cellWidth={160}
+  cellHeight={54}
+  gapX={40}
+  gapY={40}
+  spreadAnchors
+  nodes={[
+    { id: "vd-sos", label: "start_of_simulation", sublabel: "common domain", col: 0, row: 0, colSpan: 2 },
+    { id: "vd-uvm", label: "uvm domain", sublabel: "soc_env and its agents", kind: "env", col: 0, row: 1 },
+    { id: "vd-vip", label: "vip_dom", sublabel: "vip_env, after set_domain", kind: "env", col: 1, row: 1 },
+    { id: "vd-usch", label: "uvm_sched", sublabel: "reset → load_fw → post_reset", col: 0, row: 2, state: "active" },
+    { id: "vd-vsch", label: "uvm_sched (copy)", sublabel: "reset → post_reset: no load_fw", col: 1, row: 2 },
+    { id: "vd-ext", label: "extract", sublabel: "common domain", col: 0, row: 3, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "vd-sos", to: "vd-uvm", style: "causal" },
+    { from: "vd-sos", to: "vd-vip", style: "causal" },
+    { from: "vd-uvm", to: "vd-usch", style: "structural" },
+    { from: "vd-vip", to: "vd-vsch", style: "structural" },
+    { from: "vd-usch", to: "vd-ext", style: "causal" },
+    { from: "vd-vsch", to: "vd-ext", style: "causal" }
+  ]}
+/>
 
 ### Expert: jumps re-run custom phases
 
@@ -1092,6 +1319,37 @@ endclass
 (`presetn` must be an `input` of `drv_cb` and the bus signals its `output`s. This minimal driver ignores `PREADY` wait states; real APB timing, with wait states, is taught in [B-APB-1](/curriculum/T3_Advanced/B-APB-1_APB_Protocol_and_Verification/index).) `apb_driver` is a concrete class, so it uses `` `uvm_component_utils ``, while the abstract base uses the abstract macro.
 
 **Step 3, without the fix:** reset is sampled at the item's setup or accept edge, `drive_item` returns, and the base idles the bus and waits for release without calling `item_done`. The sequence that sent the item stays blocked in `finish_item` for the whole reset. When reset is released, the loop calls `get_next_item` again while the first item is still outstanding. uvm-core's sequencer reports `Get_next_item called twice without item_done or get in between` as a `UVM_ERROR` (`uvm_sequencer.svh`) and, because the item is still at the head of its request FIFO, hands the driver the *same* item again (`uvm_sequencer_param_base.svh`, `m_safe_select_item`). So the run shows one `UVM_ERROR` and the item driven twice, once cut short by reset and once complete, which a scoreboard may also flag as a duplicate. (Traced through the uvm-core source, not run.)
+
+<SequenceDiagram
+  title="Step 3 without the fix: reset cuts an item short"
+  caption="The run from Step 3, with reset sampled asserted at the item's setup edge. The driver lifeline is apb_driver running proj_reset_driver's run_phase with the TODO 2 branch left as it was: no item_done for the abandoned item. The sequence stays in finish_item through the whole reset. The second get_next_item reports the error and returns the same item, which is then driven again, this time to completion. The arbitration handshake (start_item, and the grant that get_next_item triggers) is left out, so the diagram starts at finish_item."
+  columnWidth={140}
+  participants={[
+    { id: "seq", label: "sequence", sublabel: "sent the item", kind: "sequence" },
+    { id: "sqr", label: "sequencer", kind: "sequencer" },
+    { id: "drv", label: "apb_driver", sublabel: "base run_phase", kind: "driver" }
+  ]}
+  messages={[
+    { from: "seq", to: "sqr", label: "finish_item(item)" },
+    { from: "drv", to: "sqr", label: "get_next_item(item)" },
+    { kind: "return", from: "sqr", to: "drv", label: "item" },
+    { kind: "self", from: "drv", label: "drive_item: setup edge samples presetn low, returns" },
+    { kind: "self", from: "drv", label: "in_reset(): idle_outputs", tone: "error" },
+    { kind: "self", from: "drv", label: "wait_reset_released; no item_done", tone: "error" },
+    { kind: "note", from: "seq", to: "sqr", label: "the sequence is still blocked in finish_item" },
+    { kind: "divider", label: "presetn released" },
+    { from: "drv", to: "sqr", label: "get_next_item(item) again" },
+    { kind: "note", from: "sqr", to: "drv", label: "UVM_ERROR: Get_next_item called twice without item_done or get in between", tone: "error" },
+    { kind: "return", from: "sqr", to: "drv", label: "the same item, still at the head of the request FIFO" },
+    { kind: "self", from: "drv", label: "drive_item: setup and access, completes" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" }
+  ]}
+/>
+
+The same sequencer behaviour, without reset, is the "no item_done()" preset of the handshake model below: predict the log, then step through it.
+
+<AnimatedUvmSequenceDriverHandshakeDiagram initialPreset="missing_item_done" />
 
 </details>
 

@@ -17,6 +17,16 @@ sources:
 - **Why it matters:** Each sub-lesson of this module taught one tool on its own. Real tests use them together, and most of the bugs live where they meet: data that overtakes configuration, an interrupt service that is interleaved with other traffic, a test that ends while stimulus is still running, or one that never ends. None of these prints an error unless the bench checks for it. This lab is the guided pre-lab for milestone M5 (a multi-agent environment with virtual sequences).
 - **The Analogy:** A stage manager calling a show from a script. The stage manager (the virtual sequence) tells the lighting desk (the configuration agent) and the sound desk (the data agent) what to do, strictly in script order: house lights up before the music starts. An assistant (the translation sequence) turns each line of the script into the individual sound cues. When the fire alarm goes off (the interrupt), the duty electrician takes over the lighting desk for two cues in a row (`grab()`), and the show waits until the alarm is reset. *Where it breaks:* a stage manager watches a clock, but a virtual sequence orders things only by waiting for one step to *finish* before starting the next. A desk operator in UVM (the driver) takes the next cue only when it asks for one. And taking over the desk never interrupts a cue that is already running.
 
+| In the show | In this lab | Where the picture breaks |
+| --- | --- | --- |
+| the stage manager, calling from the script | the virtual sequence | it watches no clock: it starts the next step only when the previous one has *finished* |
+| the lighting desk | the configuration agent | its operator (the driver) also takes the next cue only when it asks for one: the limit covers both desks |
+| the sound desk | the data agent | its operator (the driver) takes the next cue only when it asks for one |
+| the assistant who turns each line into cues | the translation sequence | the picture holds |
+| the fire alarm | the DUT's interrupt | the picture holds |
+| the duty electrician taking over the lighting desk for two cues in a row | `grab()` of the configuration sequencer by the interrupt service | taking over never interrupts a cue that is already running |
+| the show waits until the alarm is reset | the data port stalls until the interrupt is cleared | the picture holds |
+
 **You will be able to:**
 1. **Write** a virtual sequence with a typed `p_sequencer` that configures the DUT before any data is sent, then runs background polling, a layered message stream and an interrupt service together, and ends with nothing left running.
 2. **Predict** when each access completes on each port, for the working virtual sequence and for a mutant, from how `start()` blocks, how `fork…join` behaves, when the layer calls `item_done()`, and what `grab()` blocks.
@@ -42,7 +52,7 @@ Every term below is taught in full elsewhere; here is each one in a sentence.
 - A **virtual sequencer** is a sequencer with no driver that only holds handles to the agents' sequencers. A sequence declares a typed handle to it, `p_sequencer`, with the `` `uvm_declare_p_sequencer `` macro (Annex B.3.3) ([Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences)).
 - A **translation sequence** (or **layer**) runs on a lower agent's sequencer, pulls upper-layer items from a sequencer that has no driver, and sends each one as lower-layer items ([Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences)).
 - `grab()` asks a sequencer for exclusive use, ahead of every waiting request; `ungrab()` gives it back. While a sequence holds a grab, only that sequence and its children are granted (§14.2.5.6, §14.2.5.8).
-- An **interrupt** is a signal the DUT raises to ask for attention; the **interrupt service** is the stimulus that answers it. Here the DUT's interrupt line is a `uvm_event` called `irq`: `trigger()` turns it on, `reset()` turns it off, `wait_on()` waits until it is on and `wait_off()` until it is off (§10.1.1.2).
+- An **interrupt** is a signal the DUT raises to ask for attention; the **interrupt service** is the stimulus that answers it. Here the DUT's interrupt line is a `uvm_event` called `irq`: `trigger()` turns it on, `reset()` turns it off, `wait_on()` waits until it is on and `wait_off()` until it is off (§10.1.1.2; `trigger()` itself is §10.1.2.2.4).
 - A **write-1-to-clear** (W1C) register bit is cleared by writing 1 to it.
 - An **objection** keeps the **run phase** (the part of the test in which simulation time passes) alive; the run phase ends when every raised objection is dropped, and UVM then kills every process still running in it ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
 - An **analysis port** broadcasts a transaction to every connected **analysis imp** with `write()`. The bench's checker receives transactions this way ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
@@ -123,6 +133,20 @@ Before you look at the diagram, predict: which component decides that configurat
 - **The data port has one sequence on it, the layer.** Tests never send beats; they send messages on `msg_sqr`, and `xlate` turns each message into beats.
 - **The checker watches completed accesses**, published by the drivers, not what the sequences intended.
 
+Where each word from the list above lives in this bench (the starter code in Make It Work declares every name):
+
+| Term | In this bench |
+| --- | --- |
+| sequence item | `bus_item` (one access on either port) and `msg_item` (one message) |
+| sequencer and driver | `cfg_agt.sqr` with `cfg_agt.drv`; `data_agt.sqr` with `data_agt.drv` |
+| virtual sequencer | `env.vsqr` (`lab_vsqr`), holding `cfg_sqr`, `data_sqr`, `msg_sqr` and `irq` |
+| virtual sequence | `coordinated_vseq`, started on `env.vsqr` by `atk_test` |
+| translation sequence (layer) | `xlate` (`msg_to_beat_seq`) on `data_agt.sqr`, pulling messages from `msg_sqr` |
+| interrupt line and service | `irq`, one `uvm_event` shared by the env; `isr` (`isr_seq`) on `cfg_agt.sqr` |
+| W1C bit | `STATUS` bit 0 |
+| objection | raised and dropped in `atk_test::run_phase` (TODO 5) |
+| analysis port and imp | each driver's `ap`, connected to `chk.cfg_imp` and `chk.data_imp` |
+
 ### Core idea 1: order across agents comes from `body()`
 
 `start()` returns only when the child's `body()` has finished, and the child's last `finish_item()` returns only when the driver has called `item_done()` (§14.2.3.1, §14.2.6.3). So two statements in a row are already an ordering rule:
@@ -140,11 +164,54 @@ join
 - **"The virtual sequencer will sort it out."** It cannot: it never sees the items. If you write the CTRL write inside the same `fork` as the traffic, both start at 0 ns and the first data beat completes at 4 ns, before CTRL (mutant M1 in the kata).
 - **"Handshake order is pin order."** It is only if the driver calls `item_done()` after the transfer has really finished. A driver that pulls with `get()` (which completes the handshake at once), or a pipelined driver, lets `ctrl.start()` return before the write reaches the DUT. This bench's drivers call `item_done()` after driving, and Push Further explains how to check this in a real bench.
 
+**Try it on a smaller bench.** The explorer below runs the same rule on a two-agent virtual sequence with its own timing (two 20 ns configuration items, three 10 ns data items), so its times differ from this lab's. Predict when the first data item is driven for each dispatch shape, then compare. "One after another" is R1, and `fork … join` is the mistake in mutant M1. Its unassigned-handle switch starts the data sequence with no parent sequence; predict what that does under each shape too.
+
+<VirtualSequencerExplorer />
+
+<details>
+<summary>After you try it: the unassigned-handle switch</summary>
+
+With "one after another" or `fork … join` the switch ends in `UVM_FATAL [SEQ]`; with `fork … join_none` the test ends at 0 ns before any data item, and the explorer only notes that the fatal would follow once the `join_none` is fixed. [Push Further](#expert-handles-from-the-test-and-the-parent-fallback) shows why this lab, which passes `this` as the parent, hangs instead.
+
+</details>
+
 ### Core idea 2: three jobs at once, and nothing left running
 
 After configuration, three jobs overlap: the background poll, the message traffic, and a branch that waits for the interrupt and services it. `fork…join` starts all three and waits until **all three** have finished (IEEE 1800-2023 §9.3.2), so `body()` cannot return while any of them is still running. That matters because the test drops its objection as soon as `body()` returns, and the run phase then kills everything still running.
 
 The layer is different: `xlate`'s `body()` is a `forever` loop, so it never finishes. If it were inside the `join`, the `join` would never complete. It therefore starts in its own `fork…join_none`, which returns at once, and the virtual sequence stops it with `xlate.kill()` once the other three jobs are done (§14.2.5.11). `kill()` removes the layer's requests from its sequencer and ends its `body()` cleanly, so nothing is left for the end of the run phase to kill.
+
+<ArchitectureDiagram
+  title="The shape of coordinated_vseq's body()"
+  caption="Read top to bottom: each box is one statement of body(), and the dashed arrows are the order in which body() reaches them. The fork…join_none statement starts the endless layer and returns at once. The fork…join box holds the three finite jobs, and body() leaves it only when all three have ended. Only then does xlate.kill() stop the layer, and body() returns."
+  cellWidth={104}
+  cellHeight={56}
+  gapX={14}
+  gapY={84}
+  nodes={[
+    { id: "s_ctrl", label: "ctrl.start()", sublabel: "blocks until CTRL is done", kind: "sequence", col: 0, row: 0, colSpan: 3 },
+    { id: "s_jn", label: "fork … join_none", sublabel: "xlate.start(): never returns", kind: "sequence", col: 0, row: 1, colSpan: 3 },
+    { id: "s_fj", label: "fork … join", kind: "generic", col: 0, row: 2, colSpan: 3, container: true },
+    { id: "s_poll", label: "poll.start()", sublabel: "5 STATS reads", kind: "sequence", col: 0, row: 2 },
+    { id: "s_msgs", label: "msgs.start()", sublabel: "3 messages", kind: "sequence", col: 1, row: 2 },
+    { id: "s_irq", label: "irq branch", sublabel: "wait_on(), isr", kind: "sequence", col: 2, row: 2 },
+    { id: "s_kill", label: "xlate.kill()", sublabel: "stops the layer", kind: "sequence", col: 0, row: 3, colSpan: 3 },
+    { id: "s_ret", label: "body() returns", sublabel: "the test drops its objection", kind: "generic", state: "ok", col: 0, row: 4, colSpan: 3 }
+  ]}
+  edges={[
+    { from: "s_ctrl", to: "s_jn", style: "causal", label: "then" },
+    { from: "s_jn", to: "s_fj", style: "causal", label: "at once" },
+    { from: "s_fj", to: "s_kill", style: "causal", label: "all 3 ended" },
+    { from: "s_kill", to: "s_ret", style: "causal", label: "then" }
+  ]}
+/>
+
+| How `body()` waits after `ctrl.start()` | What it waits for | What happens to this test |
+| --- | --- | --- |
+| the layer in its own `fork…join_none`, the three jobs in `fork…join`, then `xlate.kill()` (the solution) | all three finite jobs, not the layer | it ends when the slowest of the three jobs ends, with the layer already stopped |
+| everything, the layer included, in one `fork…join` | every branch, so also the endless layer | the `join` never completes: a hang until the 1 µs timeout |
+| the three jobs in `fork…join_none` | nothing | `body()` returns at once, the objection drops, and the run phase kills every branch (mutant M3) |
+| the solution, with `wait fork` in place of `xlate.kill()` | every immediate child process, the layer included (IEEE 1800-2023 §9.6.1) | `wait fork` never returns: a hang until the 1 µs timeout |
 
 **Pitfalls.**
 - **"`fork…join_none` keeps the test alive."** It does the opposite: `body()` carries on at once, returns, and the test ends at that moment (mutant M3). Only objections keep the run phase alive.
@@ -155,7 +222,49 @@ The layer is different: `xlate`'s `body()` is a `forever` loop, so it never fini
 
 `xlate` plays the driver of `msg_sqr`: it calls `msg_sqr.get_next_item(m)`, sends the header beat and the payload beats on the data port with `start_item()` and `finish_item()`, and only then calls `msg_sqr.item_done()`. So the message sequence's `finish_item()` returns when the **last beat of that message has been driven**, exactly as it would on an agent with a real driver.
 
-**Predict.** The bad-destination message's header completes at 26 ns, and its one payload beat cannot start until the interrupt is cleared. When does `msgs`'s `finish_item()` for that message return? (The trace below gives the answer: 54 ns, after the payload beat, not 26 ns after the header.)
+**Predict.** The bad-destination message's header completes at 26 ns, and its one payload beat cannot start until the interrupt is cleared. When does `msgs`'s `finish_item()` for that message return? You need two more facts: each beat takes 4 ns on the data port, and the interrupt service clears `STATUS` at 50 ns, which lets the data port resume.
+
+<details>
+<summary>Check your prediction: the layer's two handshakes for message 1</summary>
+
+The answer is 54 ns, after the payload beat, not 26 ns after the header; the traced run under [Predict, then trace the whole run](#predict-then-trace-the-whole-run) confirms it.
+
+<SequenceDiagram
+  title="Message 1 through the layer: two handshakes, one stall"
+  caption="Times are from the traced run under Predict, then trace the whole run. xlate is the driver of msg_sqr and a sequence on data_agt.sqr at the same time. The header completes at 26 ns, but xlate calls msg_sqr.item_done() only after the payload beat, which waits in the data driver until the clear at 50 ns and completes at 54 ns. Only then does msgs's finish_item() return."
+  columnWidth={130}
+  participants={[
+    { id: "msgs", label: "msgs", sublabel: "msg_seq", kind: "sequence" },
+    { id: "msqr", label: "msg_sqr", sublabel: "no driver", kind: "sequencer" },
+    { id: "xlate", label: "xlate", sublabel: "msg_to_beat_seq", kind: "sequence" },
+    { id: "dsqr", label: "data_agt.sqr", kind: "sequencer" },
+    { id: "ddrv", label: "data_agt.drv", kind: "driver" }
+  ]}
+  messages={[
+    { kind: "divider", label: "22 ns: message 0's last beat is done" },
+    { from: "xlate", to: "msqr", label: "get_next_item(m)" },
+    { from: "msgs", to: "msqr", label: "start_item, finish_item(m: dest F, 1 word)" },
+    { kind: "return", from: "msqr", to: "xlate", label: "get_next_item returns m" },
+    { from: "xlate", to: "dsqr", label: "start_item, finish_item(HDR)" },
+    { kind: "return", from: "dsqr", to: "ddrv", label: "get_next_item returns HDR" },
+    { kind: "divider", label: "26 ns" },
+    { kind: "self", from: "ddrv", label: "header to dest F done: irq.trigger()" },
+    { kind: "async", from: "ddrv", to: "dsqr", label: "item_done()" },
+    { kind: "return", from: "dsqr", to: "xlate", label: "finish_item(HDR) returns" },
+    { from: "xlate", to: "dsqr", label: "start_item, finish_item(PLD 0xB0)" },
+    { kind: "return", from: "dsqr", to: "ddrv", label: "get_next_item returns PLD" },
+    { kind: "self", from: "ddrv", label: "irq.wait_off(): stalled while irq is on", tone: "error" },
+    { kind: "note", from: "msgs", to: "xlate", label: "msgs is still inside finish_item(m): the message is not delivered yet" },
+    { kind: "divider", label: "50 ns: isr clears STATUS, irq.reset()" },
+    { kind: "divider", label: "54 ns" },
+    { kind: "async", from: "ddrv", to: "dsqr", label: "item_done()" },
+    { kind: "return", from: "dsqr", to: "xlate", label: "finish_item(PLD) returns" },
+    { kind: "async", from: "xlate", to: "msqr", label: "msg_sqr.item_done()" },
+    { kind: "return", from: "msqr", to: "msgs", label: "finish_item(m) returns at 54 ns", tone: "active" }
+  ]}
+/>
+
+</details>
 
 **Pitfall.** Calling `msg_sqr.item_done()` right after `get_next_item()` makes the message sequence run ahead of the wire, so a test that ends when `msgs` returns can end with beats unsent ([Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences) shows the log).
 
@@ -165,9 +274,22 @@ The interrupt branch of `body()` waits with `p_sequencer.irq.wait_on()`. `wait_o
 
 Why the grab? The poll keeps a request waiting on the same sequencer almost all the time. Without the grab, the default arbitration (`UVM_SEQ_ARB_FIFO`) grants the oldest request, and after the service's STATUS read completes, the poll's next read is older than the service's clear. A poll read would land between the read and the clear, which breaks R4. With the grab, the poll's requests are blocked until `ungrab()`, while the service's own items are not.
 
+<details>
+<summary>Step through cfg_agt.sqr's queue at 30, 40 and 50 ns, with and without the grab</summary>
+
+Each row is a moment when the configuration driver asks for its next item. A request's time is when its `start_item()` queued it; under `UVM_SEQ_ARB_FIFO` the oldest request that is not blocked wins.
+
+| Driver asks at | Waiting requests, oldest first | Granted with the grab | Granted without the grab |
+| --- | --- | --- | --- |
+| 30 ns (poll's 2nd read done) | `isr` RD STATUS (26 ns), `poll` RD STATS (30 ns) | `isr`'s read: `poll` is blocked by the grab | `isr`'s read: it is the oldest |
+| 40 ns (the STATUS read done) | `poll` RD STATS (30 ns), `isr` WR STATUS (40 ns) | `isr`'s clear: `poll` is still blocked | `poll`'s read: it is older than the clear |
+| 50 ns (with the grab: the clear done; without it: the poll read done) | With the grab: `poll` RD STATS (30 ns), unblocked by `ungrab()`. Without it: `isr` WR STATUS (40 ns), `poll` RD STATS (50 ns) | `poll`'s 3rd read | `isr`'s clear, which completes at 60 ns; `ATOMIC` has already fired at 50 ns, when the poll read completed between the read and the clear |
+
+</details>
+
 <SequenceDiagram
   title="The interrupt service grabs the configuration sequencer"
-  caption="Times are from the traced run below. The grab is granted at 26 ns because no other sequence holds a lock or grab, but it cannot stop poll's read that is already on the port: the service's first item goes at 30 ns. From then until ungrab() at 50 ns, poll's request waits, and the service's read and clear reach the driver back to back."
+  caption="Times are from the traced run under Predict, then trace the whole run. The grab is granted at 26 ns because no other sequence holds a lock or grab, but it cannot stop poll's read that is already on the port: the service's first item goes at 30 ns. From then until ungrab() at 50 ns, poll's request waits, and the service's read and clear reach the driver back to back."
   participants={[
     { id: "ddrv", label: "data_agt.drv", kind: "driver" },
     { id: "vseq", label: "vseq", sublabel: "interrupt branch", kind: "sequence" },
@@ -216,6 +338,16 @@ Why the grab? The poll keeps a request waiting on the same sequencer almost all 
 - **Forgetting `ungrab()`.** uvm-core 2020.3.1 removes the grab when `isr`'s `start()` finishes and reports `UVM_ERROR [SEQFINERR]`. Until then every other sequence on the sequencer starves. Here `isr` ends right after the clear, so the cost is the error message; in a longer service routine it is a silent stall.
 - **`lock()` versus `grab()`.** In this bench they behave the same, because nothing else holds or waits for a lock. They differ when another lock is held or waiting: a grab goes to the front of the queue (§14.2.5.6). Push Further has the details.
 
+| What `isr` uses | Read and clear back to back here? | Why |
+| --- | --- | --- |
+| nothing (mutant M2) | no | under FIFO the poll's request from 30 ns is older than the clear's from 40 ns |
+| priority 1000, default `UVM_SEQ_ARB_FIFO` | no | FIFO ignores priority, so this is the same as nothing |
+| priority 1000, `UVM_SEQ_ARB_WEIGHTED` | not guaranteed | each grant is a random draw weighted by priority, so the poll can still win between the two |
+| `lock()` and `unlock()` | yes, in this bench | a lock request is arbitrated like any other request (§14.2.5.5); here nothing else holds or waits for a lock, the queue is empty at 26 ns and the lock request (26 ns) is older than poll's next request (30 ns), so uvm-core 2020.3.1 grants it at once (immediate grant is uvm-core impl., `grant_queued_locks()`). Under the LRM wording "granted after all previously arbitrated requests are completed" (§14.2.5.5), the grant could wait until poll's in-flight read completes at 30 ns; the answer still holds, because the lock request queued at 26 ns is older than poll's 30 ns request |
+| `grab()` and `ungrab()` (the solution) | yes | the grab request goes in front of the arbitration queue (§14.2.5.6), ahead of waiting locks too |
+
+None of the five stops the access already on the port: the service's read still waits for the poll read that ends at 30 ns.
+
 ### Core idea 5: the bench proves it
 
 `atk_checker` receives every completed access from both drivers. Each driver publishes an access **after** it completes, just before `item_done()`, so the checker sees what really happened on the port. The checker enforces three rules, each with its own message ID:
@@ -234,6 +366,9 @@ Write down your answers before you read the table. In the working solution:
 1. When does the first data beat complete?
 2. When is `STATUS` cleared, and what was on the configuration port just before the clear?
 3. When does `msgs.start()` return, and when does the test end?
+
+<details>
+<summary>The traced run and its debrief (write your three answers first)</summary>
 
 This is a hand trace of the working solution against the uvm-core 2020.3.1 source (illustrative: no simulator run). Each row is a time at which a driver finishes an access.
 
@@ -257,6 +392,8 @@ This is a hand trace of the working solution against the uvm-core 2020.3.1 sourc
 | 80 | RD STATS (poll 5) | | `poll.start()` returns; the `join` completes; `xlate.kill()`; `body()` returns; the test drops its objection and the run phase ends |
 
 **Debrief.** (1) 14 ns: the data path starts at 10 ns because `ctrl.start()` returned then. (2) At 50 ns, right after the STATUS read at 40 ns; the poll read that "should" have come next waited. (3) `msgs.start()` returns at 66 ns, but the test ends at 80 ns: the `join` waits for the slowest branch, the poll. Counts: 1 + 5 + 2 = 8 configuration accesses, 3 + 2 + 3 = 8 beats, 1 clear, so `COUNT` is silent.
+
+</details>
 
 ### Practitioner depth: reading a failing run
 
@@ -702,7 +839,7 @@ virtual task run_phase(uvm_phase phase);
 endtask
 ```
 
-**Expected output** with the solution (illustrative, traced as above; it matches the trace table row for row):
+**Expected output** with the solution (illustrative, traced as above; it matches the trace table in [the traced run under Predict, then trace the whole run](#predict-then-trace-the-whole-run) row for row):
 
 ```text
 UVM_INFO @ 0: reporter [RNTST] Running test atk_test...
@@ -744,7 +881,7 @@ UVM_FATAL :    0
 
 **Checklist before moving on:**
 - [ ] The starter fails with `COUNT`, and your solution prints no `UVM_ERROR` and no `UVM_FATAL`.
-- [ ] Your log matches the trace table: the first beat at 14 ns, the STATUS read at 40 ns and the clear at 50 ns with no access between them, and the last access at 80 ns.
+- [ ] Your log matches the trace table (open the traced run under [Predict, then trace the whole run](#predict-then-trace-the-whole-run)): the first beat at 14 ns, the STATUS read at 40 ns and the clear at 50 ns with no access between them, and the last access at 80 ns.
 - [ ] Every "before" rule in your `body()` is a sequential `start()` call, never a delay or a priority.
 - [ ] Every `fork` either ends in `join`, or holds only the endless layer, which you `kill()` before `body()` returns.
 - [ ] Every child is started on the sequencer of the port it drives, with `this` as its parent.
@@ -771,6 +908,10 @@ Replace `grab()` and `ungrab()` with `lock()` and `unlock()` and this bench beha
 
 The arbitration sandbox on [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) has a "grab vs lock" scenario that shows the difference.
 
+**Try it here.** In the sandbox below, pick the **grab vs lock** preset: A holds a lock, B asks for a lock and C asks for a grab while they wait. Predict who is granted when A unlocks, then check. The **Forgot unlock()** preset shows, with a lock, the same failure as the forgotten `ungrab()` in the Core idea 4 pitfall: the other sequences starve until the owner's `body()` returns, and then `SEQFINERR` is reported.
+
+<SequencerArbitrationSandbox />
+
 ### Expert: ending a test that has an endless layer
 
 Three ways to stop `xlate`, and what each costs:
@@ -784,6 +925,15 @@ Never use `wait fork` to wait for the other branches while the layer runs: it wa
 
 The bench models the interrupt line as a `uvm_event` used as a **level**: `trigger()` turns it on and it stays on until `reset()` (§10.1.1.2.2, §10.1.1.2.8). That is why the interrupt branch uses `wait_on()`, which returns at once if the line is already on, and the data driver uses `wait_off()`.
 
+In this bench `irq` is triggered at 26 ns and reset at 50 ns. What each wait call does depends on when it is called:
+
+| Call | Called at 20 ns (before the trigger) | Called at 30 ns (the line is already on) |
+| --- | --- | --- |
+| `wait_on()` (§10.1.1.2.2) | returns at 26 ns | returns at once |
+| `wait_trigger()` (§10.1.1.2.4) | returns at 26 ns | waits for the next trigger; none comes, so it hangs |
+| `wait_ptrigger()` (§10.1.1.2.5) | returns at 26 ns | waits for the next trigger: the trigger persists only within its own time slice (26 ns); none comes, so it hangs |
+| `wait_off()` (§10.1.1.2.3), as the data driver uses it | returns at once: the event has not been triggered yet | waits for `reset()` and returns at 50 ns |
+
 `wait_trigger()` would be a mistake here: it waits for the *next* trigger, so it misses one that fired before the call (§10.1.1.2.4 warns about the same-time race too). The level form has its own limit. Two interrupts that arrive while the first is still pending turn the line on only once, so a single `wait_on()` services one of them. A test with several interrupts needs a loop that reads `STATUS` until no bit is pending, or a queue of interrupt transactions from a monitor (`uvm_tlm_analysis_fifo`, §12.2.8.3), as [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling) builds. In a real bench the line is a DUT pin, and an interrupt monitor turns its rising edges into transactions; reaching into a shared event, as this lab does, is a teaching shortcut.
 
 ### Expert: handles from the test, and the parent fallback
@@ -791,6 +941,32 @@ The bench models the interrupt line as a `uvm_event` used as a **level**: `trigg
 The same lab works without a virtual sequencer. Give `coordinated_vseq` its own `cfg_sqr`, `data_sqr`, `msg_sqr` and `irq` fields, let the test assign them from `env`, and call `vseq.start(null)` ([Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) compares the two styles). `p_sequencer` is then null, so every handle must come from the test.
 
 Either way, watch what a **null handle** does. With no parent, `seq.start(null)` followed by `start_item()` stops the test with `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied…`. With `this` as the parent, uvm-core 2020.3.1 `set_item_context()` silently takes the **parent's** sequencer instead (`uvm_sequence_item.svh`; uvm-core impl.). Forget `vsqr.data_sqr = data_agt.sqr;` and `xlate` runs on `vsqr`, which has no driver: no fatal message, no beats, and a `PH_TIMEOUT` at 1 µs. A one-line guard at the top of `body()`, `` if (p_sequencer.data_sqr == null) `uvm_fatal("VSEQ", "data_sqr not set") ``, turns the hang into a clear message.
+
+<ArchitectureDiagram
+  title="Which sequencer does a child sequence run on?"
+  caption="Follow one call, xlate.start(p_sequencer.data_sqr, parent), from the top. A non-null sequencer argument always wins. A null one falls back to the parent's sequencer in uvm-core 2020.3.1 (set_item_context(), uvm-core impl.), which here is vsqr: no driver, so no grant and a hang. With no parent either, the sequence has no sequencer, and its first start_item() is fatal."
+  cellWidth={160}
+  cellHeight={58}
+  gapX={40}
+  gapY={70}
+  nodes={[
+    { id: "f_call", label: "xlate.start(sqr, parent)", sublabel: "sqr = p_sequencer.data_sqr", kind: "sequence", col: 0, row: 0 },
+    { id: "f_sqr", label: "sqr is null?", sublabel: "vsqr.data_sqr never assigned?", kind: "generic", col: 0, row: 1 },
+    { id: "f_ok", label: "runs on sqr", sublabel: "data_agt.sqr: beats flow", kind: "sequencer", state: "ok", col: 1, row: 1 },
+    { id: "f_par", label: "parent passed?", sublabel: "this, in this lab", kind: "generic", col: 0, row: 2 },
+    { id: "f_fatal", label: "no sequencer", sublabel: "start_item(): UVM_FATAL [SEQ]", kind: "generic", state: "error", col: 1, row: 2 },
+    { id: "f_vsqr", label: "runs on parent's sqr", sublabel: "vsqr, uvm-core impl.", kind: "sequencer", col: 0, row: 3 },
+    { id: "f_hang", label: "never granted", sublabel: "no driver: PH_TIMEOUT, 1 µs", kind: "generic", state: "error", col: 1, row: 3 }
+  ]}
+  edges={[
+    { from: "f_call", to: "f_sqr", style: "causal" },
+    { from: "f_sqr", to: "f_ok", style: "causal", label: "no" },
+    { from: "f_sqr", to: "f_par", style: "causal", label: "yes" },
+    { from: "f_par", to: "f_fatal", style: "causal", label: "no" },
+    { from: "f_par", to: "f_vsqr", style: "causal", label: "yes" },
+    { from: "f_vsqr", to: "f_hang", style: "causal" }
+  ]}
+/>
 
 ### Expert: interview angles
 
@@ -830,6 +1006,86 @@ Answer each question before you look at the feedback.
 />
 
 ## Practice & Reinforce
+
+<VisualRecap
+  title="The coordinated run at a glance"
+  rule="Order across ports comes from sequential start() calls in body(); overlap comes from fork…join, which waits for all three finite jobs; the endless layer runs in its own fork…join_none and is stopped with kill(); and the interrupt service holds a grab from before its STATUS read until after its clear."
+  code={`xlate.msg_sqr = p_sequencer.msg_sqr;         // set before any start()
+ctrl.start(p_sequencer.cfg_sqr, this);       // R1
+fork
+  xlate.start(p_sequencer.data_sqr, this);   // R2, endless
+join_none
+fork
+  poll.start(p_sequencer.cfg_sqr, this);     // R3
+  msgs.start(p_sequencer.msg_sqr, this);     // R2
+  begin
+    p_sequencer.irq.wait_on();
+    isr.start(p_sequencer.cfg_sqr, this);    // R4: grab inside
+  end
+join                                         // R5
+xlate.kill();`}
+  mistake="Ending the three-job fork with join_none: body() returns at 10 ns, the test drops its objection and the run phase kills every branch. No ORDER or ATOMIC rule is broken, so only the COUNT check fails the run."
+  inTestbench="Any multi-agent test: a virtual sequence on a virtual sequencer that only holds the agents' sequencer handles, with a checker that watches completed transfers on every port and counts them at the end."
+>
+  <figure className="not-prose my-2">
+    <svg viewBox="0 0 350 152" role="img" aria-label="Timeline of the working run, 0 to 80 ns. Configuration port: CTRL write 0 to 10 ns, poll reads 10 to 30 ns, the STATUS read 30 to 40 ns and its clear 40 to 50 ns back to back, then poll reads 50 to 80 ns. Data port: beats from 10 ns; the header to destination F ends at 26 ns; the port is stalled until 50 ns; the last beat ends at 66 ns. irq is on from 26 to 50 ns, and isr holds the grab from 26 to 50 ns." style={{ width: "100%", maxWidth: 460 }}>
+      <text x="4" y="22" fontSize="10" fill="currentColor">cfg port</text>
+      <text x="4" y="56" fontSize="10" fill="currentColor">data port</text>
+      <text x="4" y="88" fontSize="10" fill="currentColor">irq</text>
+      <text x="4" y="115" fontSize="10" fill="currentColor">grab</text>
+      <rect x="63" y="6" width="33" height="24" rx="3" fill="rgba(6,182,212,0.15)" stroke="rgb(6,182,212)" />
+      <text x="79.5" y="22" fontSize="10" textAnchor="middle" fill="currentColor">CTRL</text>
+      <rect x="98" y="6" width="33" height="24" rx="3" fill="rgba(100,116,139,0.12)" stroke="rgb(100,116,139)" />
+      <text x="114.5" y="22" fontSize="10" textAnchor="middle" fill="currentColor">poll</text>
+      <rect x="133" y="6" width="33" height="24" rx="3" fill="rgba(100,116,139,0.12)" stroke="rgb(100,116,139)" />
+      <text x="149.5" y="22" fontSize="10" textAnchor="middle" fill="currentColor">poll</text>
+      <rect x="168" y="6" width="33" height="24" rx="3" fill="rgba(245,158,11,0.2)" stroke="rgb(245,158,11)" />
+      <text x="184.5" y="22" fontSize="10" textAnchor="middle" fill="currentColor">read</text>
+      <rect x="203" y="6" width="33" height="24" rx="3" fill="rgba(245,158,11,0.2)" stroke="rgb(245,158,11)" />
+      <text x="219.5" y="22" fontSize="10" textAnchor="middle" fill="currentColor">clear</text>
+      <rect x="238" y="6" width="33" height="24" rx="3" fill="rgba(100,116,139,0.12)" stroke="rgb(100,116,139)" />
+      <text x="254.5" y="22" fontSize="10" textAnchor="middle" fill="currentColor">poll</text>
+      <rect x="273" y="6" width="33" height="24" rx="3" fill="rgba(100,116,139,0.12)" stroke="rgb(100,116,139)" />
+      <text x="289.5" y="22" fontSize="10" textAnchor="middle" fill="currentColor">poll</text>
+      <rect x="308" y="6" width="33" height="24" rx="3" fill="rgba(100,116,139,0.12)" stroke="rgb(100,116,139)" />
+      <text x="324.5" y="22" fontSize="10" textAnchor="middle" fill="currentColor">poll</text>
+      <rect x="97.5" y="40" width="13" height="24" rx="2" fill="rgba(99,102,241,0.15)" stroke="rgb(99,102,241)" />
+      <text x="104" y="56" fontSize="10" textAnchor="middle" fill="currentColor">H</text>
+      <rect x="111.5" y="40" width="13" height="24" rx="2" fill="rgba(99,102,241,0.15)" stroke="rgb(99,102,241)" />
+      <text x="118" y="56" fontSize="10" textAnchor="middle" fill="currentColor">P</text>
+      <rect x="125.5" y="40" width="13" height="24" rx="2" fill="rgba(99,102,241,0.15)" stroke="rgb(99,102,241)" />
+      <text x="132" y="56" fontSize="10" textAnchor="middle" fill="currentColor">P</text>
+      <rect x="139.5" y="40" width="13" height="24" rx="2" fill="rgba(244,63,94,0.15)" stroke="rgb(244,63,94)" />
+      <text x="146" y="56" fontSize="10" textAnchor="middle" fill="currentColor">H</text>
+      <rect x="153.5" y="40" width="83" height="24" rx="2" fill="none" stroke="rgb(244,63,94)" strokeDasharray="4 3" />
+      <text x="195" y="56" fontSize="10" textAnchor="middle" fill="currentColor">stalled</text>
+      <rect x="237.5" y="40" width="13" height="24" rx="2" fill="rgba(99,102,241,0.15)" stroke="rgb(99,102,241)" />
+      <text x="244" y="56" fontSize="10" textAnchor="middle" fill="currentColor">P</text>
+      <rect x="251.5" y="40" width="13" height="24" rx="2" fill="rgba(99,102,241,0.15)" stroke="rgb(99,102,241)" />
+      <text x="258" y="56" fontSize="10" textAnchor="middle" fill="currentColor">H</text>
+      <rect x="265.5" y="40" width="13" height="24" rx="2" fill="rgba(99,102,241,0.15)" stroke="rgb(99,102,241)" />
+      <text x="272" y="56" fontSize="10" textAnchor="middle" fill="currentColor">P</text>
+      <rect x="279.5" y="40" width="13" height="24" rx="2" fill="rgba(99,102,241,0.15)" stroke="rgb(99,102,241)" />
+      <text x="286" y="56" fontSize="10" textAnchor="middle" fill="currentColor">P</text>
+      <path d="M62 92 H153 V76 H237 V92 H342" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <text x="195" y="88" fontSize="10" textAnchor="middle" fill="currentColor">on</text>
+      <rect x="153" y="102" width="84" height="18" rx="3" fill="rgba(245,158,11,0.2)" stroke="rgb(245,158,11)" />
+      <text x="195" y="115" fontSize="10" textAnchor="middle" fill="currentColor">isr's grab</text>
+      <path d="M62 132 H342 M62 132 V136 M97 132 V136 M132 132 V136 M167 132 V136 M202 132 V136 M237 132 V136 M272 132 V136 M307 132 V136 M342 132 V136" fill="none" stroke="currentColor" />
+      <text x="4" y="147" fontSize="10" fill="currentColor">t (ns)</text>
+      <text x="62" y="147" fontSize="10" textAnchor="middle" fill="currentColor">0</text>
+      <text x="97" y="147" fontSize="10" textAnchor="middle" fill="currentColor">10</text>
+      <text x="132" y="147" fontSize="10" textAnchor="middle" fill="currentColor">20</text>
+      <text x="167" y="147" fontSize="10" textAnchor="middle" fill="currentColor">30</text>
+      <text x="202" y="147" fontSize="10" textAnchor="middle" fill="currentColor">40</text>
+      <text x="237" y="147" fontSize="10" textAnchor="middle" fill="currentColor">50</text>
+      <text x="272" y="147" fontSize="10" textAnchor="middle" fill="currentColor">60</text>
+      <text x="307" y="147" fontSize="10" textAnchor="middle" fill="currentColor">70</text>
+      <text x="342" y="147" fontSize="10" textAnchor="middle" fill="currentColor">80</text>
+    </svg>
+    <figcaption className="mt-2 text-sm text-muted-foreground">The working run, to scale. The x-axis is simulation time in ns. Each configuration box is one 10 ns access, and each data box is one 4 ns beat (H for a header, P for a payload word; the H just before the dashed stall box is the header to destination F). Three places to look: the data port starts only after CTRL (R1); the STATUS read and its clear touch, with the grab held across them (R4); and the run ends with the last poll read at 80 ns, after the data port has gone idle (R5).</figcaption>
+  </figure>
+</VisualRecap>
 
 ### Quiz
 
@@ -950,6 +1206,20 @@ Make each change to your working solution, **predict the log first** (which chec
 **M4.** Data beats at 14, 18, 22 and 26 ns, then nothing: the data port is stalled. The poll runs undisturbed (20, 30, 40, 50 and 60 ns) and returns. `msgs` never returns, so the `join` never completes, and at 1 µs: `UVM_FATAL [PH_TIMEOUT] Explicit timeout of … hit, indicating a probable testbench issue`. The fatal ends the run, so `check_phase` never reports. **The timeout catches it.**
 
 **M5.** The timeline is unchanged. When `isr`'s `start()` finishes at 50 ns, uvm-core removes the grab it still holds and reports `UVM_ERROR [SEQFINERR] Parent sequence '…isr' should not finish before locks from itself and descedent sequences are removed…` (the spelling is uvm-core's). The poll was blocked for a few delta cycles longer, which no check can see. **uvm-core's own check catches it**; if the service did more work after the clear, the poll would starve for all of it.
+
+**Which check catches which mistake.** The five mutants, plus the two bench mistakes from the practitioner table, against every check. "Silent" means the check ran and found nothing; "never runs" means a fatal ended the run before `check_phase`.
+
+| Mistake | ORDER | ATOMIC | COUNT | PH_TIMEOUT | SEQFINERR |
+| --- | --- | --- | --- | --- | --- |
+| M1: `ctrl` inside the `fork` | **fires** from 4 ns (2 or 4 errors) | silent | silent | silent | silent |
+| M2: no `grab()` | silent | **fires** at 50 ns | silent | silent | silent |
+| M3: `join_none` | silent | silent | **fires** (run ended at 10 ns) | silent | silent |
+| M4: no interrupt branch | silent | silent | never runs | **fires** at 1 µs | silent |
+| M5: no `ungrab()` | silent | silent | silent | silent | **fires** at 50 ns |
+| `vsqr.data_sqr` not assigned | silent | silent | never runs | **fires** at 1 µs | silent |
+| no objection (the starter) | silent | silent | **fires** (run ended at 0 ns) | silent | silent |
+
+Each row has exactly one firing check, and each of the three bench checks owns at least one row. That is the answer to the last item on the Make It Work checklist.
 
 </details>
 

@@ -29,6 +29,27 @@ sources:
 - **Why it matters:** Architecture teams often deliver SystemC models, and algorithm teams deliver C++. Reusing one of those as the **reference model** behind your scoreboard (milestone M3) saves writing a second model that can drift from the first, and a model written by another team exposes ambiguous specifications. The price is a boundary that you have to choose, build and debug, plus libraries whose origin and support status you must check before you depend on them.
 - **The Analogy:** A container port. The generic payload is the standard shipping container that fits every ship; sockets are the berths; a bridge library is the customs office that unpacks a SystemC container and repacks it as a SystemVerilog one. *Where it breaks:* two real ports share one calendar, but two simulation kernels each keep their own clock and their own working days (phases). Someone must decide whose clock counts and who announces the end of the day (end of test), and the container does not carry the clock with it: timing travels as a separate annotation.
 
+<ArchitectureDiagram
+  title="The container-port analogy, and where it breaks"
+  caption="Read the left column top to bottom: the generic payload (the container) leaves a UVM socket (a berth), and the bridge library (the customs office) unpacks it and repacks it for the SystemC socket. The right column is where the analogy breaks. Each kernel has its own scheduler and its own phases, and the timing is not inside the payload: it travels as a separate annotation, the delay argument of b_transport, which the bridge converts too. Someone must still decide whose clock counts and who ends the test."
+  cellWidth={150}
+  gapX={56}
+  nodes={[
+    { id: "qa-sv", label: "SystemVerilog kernel", kind: "env", col: 0, row: 0, colSpan: 2, container: true },
+    { id: "qa-svsock", label: "UVM socket", sublabel: "a berth", kind: "generic", col: 0, row: 0 },
+    { id: "qa-svtime", label: "SV time and phases", sublabel: "own scheduler", kind: "generic", col: 1, row: 0, state: "dim" },
+    { id: "qa-bridge", label: "bridge library", sublabel: "customs: unpack, repack", kind: "generic", col: 0, row: 1, state: "active" },
+    { id: "qa-ann", label: "timing annotation", sublabel: "travels beside the payload", kind: "generic", col: 1, row: 1 },
+    { id: "qa-sc", label: "SystemC kernel", kind: "env", col: 0, row: 2, colSpan: 2, container: true },
+    { id: "qa-scsock", label: "SystemC socket", sublabel: "a berth", kind: "generic", col: 0, row: 2 },
+    { id: "qa-sctime", label: "SC time and phases", sublabel: "own scheduler", kind: "generic", col: 1, row: 2, state: "dim" }
+  ]}
+  edges={[
+    { from: "qa-svsock", to: "qa-bridge", style: "data", label: "payload" },
+    { from: "qa-bridge", to: "qa-scsock", style: "data", label: "payload" }
+  ]}
+/>
+
 **You will be able to:**
 1. Choose DPI, a TLM-2 bridge or co-simulation to connect a C/C++ or SystemC model to a UVM bench, and justify the choice by model type, time ownership, tool support and cost.
 2. Write a blocking UVM TLM-2 transport between an initiator socket and a target socket with the generic payload, and predict the phases and return values of a non-blocking transport (IEEE 1800.2-2020 §12.3).
@@ -81,6 +102,29 @@ Two more terms first:
 
 **Can I get away with DPI alone?** That is the first question to ask, and the answer depends on the model, not on taste.
 
+<ArchitectureDiagram
+  title="The model's shape decides the crossing"
+  caption="Dashed arrows are the order in which to ask the questions; start at the top left. A model that is a function of its inputs and owns no time goes through DPI. A SystemC model with sockets and processes, or an e component, needs its kernel and a bridge (for e, one that supports it: UVM-ML OA). A separate program goes over a co-simulation link, unless it is built as a library and stepped through DPI, as an ISS can be. The two tables below give the full comparison."
+  gapX={72}
+  nodes={[
+    { id: "dq-fn", label: "Function-shaped?", sublabel: "untimed, no sockets", kind: "generic", col: 0, row: 0 },
+    { id: "dq-dpi", label: "DPI", sublabel: "option 1", kind: "generic", col: 1, row: 0, state: "ok" },
+    { id: "dq-sc", label: "SystemC or e?", sublabel: "sockets, processes", kind: "generic", col: 0, row: 1 },
+    { id: "dq-br", label: "bridge", sublabel: "option 2", kind: "generic", col: 1, row: 1, state: "ok" },
+    { id: "dq-lib", label: "Built as a library?", sublabel: "for example an ISS", kind: "generic", col: 0, row: 2 },
+    { id: "dq-dpi2", label: "DPI", sublabel: "option 1, library build", kind: "generic", col: 1, row: 2, state: "ok" },
+    { id: "dq-co", label: "co-simulation", sublabel: "option 3, over a link", kind: "generic", col: 0, row: 3, state: "ok" }
+  ]}
+  edges={[
+    { from: "dq-fn", to: "dq-dpi", style: "causal", label: "yes" },
+    { from: "dq-fn", to: "dq-sc", style: "causal", label: "no" },
+    { from: "dq-sc", to: "dq-br", style: "causal", label: "yes" },
+    { from: "dq-sc", to: "dq-lib", style: "causal", label: "no" },
+    { from: "dq-lib", to: "dq-dpi2", style: "causal", label: "yes" },
+    { from: "dq-lib", to: "dq-co", style: "causal", label: "no" }
+  ]}
+/>
+
 | Situation | Languages | Usual choice |
 |---|---|---|
 | Algorithm check: a C++ codec, CRC or math model computes expected output per transaction | SV + C/C++ | DPI from the predictor. The model is a function of its inputs and owns no time. |
@@ -131,6 +175,33 @@ The response status rule is the one that catches people. `UVM_TLM_INCOMPLETE_RES
 
 `T` defaults to `uvm_tlm_generic_payload` and `P` to `uvm_tlm_phase_e`. Construct sockets with `new` in `build_phase`, like any port. The `imp` argument of a target socket defaults to the parent component (§12.3.5.1.3).
 
+<ArchitectureDiagram
+  title="Socket anatomy: forward and backward paths"
+  caption="Solid arrows are transport calls; ■ is a port and ● an imp. Top row, non-blocking: the initiator socket is a forward port that has a backward imp, and the target socket is a forward imp that has a backward port, so nb_transport_fw goes forward and the target can call nb_transport_bw back (§12.3.5.3, §12.3.5.4). Bottom row, blocking: the initiator socket is a forward port and the target socket a forward imp, with no backward path except the payload contents (§12.3.5.1, §12.3.5.2). You connect the initiator socket to the target socket; calling connect on a target terminator socket is an error (§12.3.5.1.4). Pass-through sockets, not drawn, carry the same paths across a hierarchy boundary."
+  cellWidth={120}
+  cellHeight={76}
+  gapX={150}
+  nodes={[
+    { id: "sk-nbi", label: "initiator", sublabel: "nb initiator socket", kind: "generic", col: 0, row: 0 },
+    { id: "sk-nbt", label: "target", sublabel: "nb target socket", kind: "generic", col: 1, row: 0 },
+    { id: "sk-bi", label: "initiator", sublabel: "b initiator socket", kind: "generic", col: 0, row: 1 },
+    { id: "sk-bt", label: "target", sublabel: "b target socket", kind: "generic", col: 1, row: 1 }
+  ]}
+  ports={[
+    { id: "sk-nbi.fw", node: "sk-nbi", side: "right", at: 0.3, kind: "port" },
+    { id: "sk-nbi.bw", node: "sk-nbi", side: "right", at: 0.7, kind: "imp" },
+    { id: "sk-nbt.fw", node: "sk-nbt", side: "left", at: 0.3, kind: "imp" },
+    { id: "sk-nbt.bw", node: "sk-nbt", side: "left", at: 0.7, kind: "port" },
+    { id: "sk-bi.fw", node: "sk-bi", side: "right", kind: "port" },
+    { id: "sk-bt.fw", node: "sk-bt", side: "left", kind: "imp" }
+  ]}
+  edges={[
+    { from: "sk-nbi.fw", to: "sk-nbt.fw", style: "data", label: "nb_transport_fw" },
+    { from: "sk-nbt.bw", to: "sk-nbi.bw", style: "data", label: "nb_transport_bw" },
+    { from: "sk-bi.fw", to: "sk-bt.fw", style: "data", label: "b_transport" }
+  ]}
+/>
+
 **3. Blocking transport.** `b_transport(t, delay)` executes the whole transaction in one task call (§12.3.2.2.3). The call marks the transaction's first timing point and the return marks its last. The **timing annotation** `delay` "allows the timing points to be offset from the simulation times at which the task call and return are executed". So a target can report "this took 10 ns" by adding to `delay` and return at once, without waiting. This is the **loosely-timed (LT)** style: a model reports its latency instead of spending it. `delay` is a `uvm_tlm_time` object, a class with `incr`, `decr`, `get_realtime` and `get_abstime` (`typedef uvm_time uvm_tlm_time`, §5.6), so the target's change is visible to the caller.
 
 **4. Non-blocking transport** spreads one transaction over several calls, `nb_transport_fw` from initiator to target and `nb_transport_bw` back, each carrying a **TLM phase** (`BEGIN_REQ`, `END_REQ`, `BEGIN_RESP`, `END_RESP`, §12.3.3.1) and returning a **sync value**: `UVM_TLM_ACCEPTED`, `UVM_TLM_UPDATED` or `UVM_TLM_COMPLETED` (§12.3.3.2). A TLM phase is a step in one transaction's protocol; it has nothing to do with UVM phases such as `run_phase`. Push Further walks through it; the blocking form is what most reference models use.
@@ -160,6 +231,60 @@ The response status rule is the one that catches people. `UVM_TLM_INCOMPLETE_RES
 
 **What the diagram shows.** The call and return happen at 0 ns, and so does the DPI call inside it (§35.5.1.1). The annotation is not a wait: `b_transport` may consume time if the target chooses to wait, but this one does not. The caller decides what to do with the 10 ns. This client waits it out, so its log lines are 10 ns apart. A faster, **temporally decoupled** client would keep adding annotations and synchronize later.
 
+**Predict first: waiting versus temporal decoupling.** Keep the same target: it adds 10 ns to `delay` and returns at once. Client A is `ref_client`: it creates a new `delay` for every call and runs `#(delay.get_realtime(1ns))` after each return. Client B, a variant, makes three calls back to back at 0 ns, passes the same `delay` object to all three without resetting it, and waits once, after the third return, for the value `delay` then holds. For each client, at what simulation time is each `b_transport` called, and when does its last wait end?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show both clients on one time axis</summary>
+
+Client A calls at 0, 10 and 20 ns, and its last wait ends at 30 ns. Client B calls three times at 0 ns. Because every `incr` adds to the same object, `delay` reads 10, 20 and 30 ns after the three returns, and B's single wait of 30 ns also ends at 30 ns. Both reach the same annotated end point, but B let simulation time advance once instead of three times: that is **temporal decoupling**. The cost is accuracy: in simulation time, all three of B's transactions happen at 0 ns, so another process that watches the clock sees them together.
+
+<figure className="not-prose my-6">
+<svg viewBox="0 0 340 152" role="img" aria-labelledby="eumlx-dec-title eumlx-dec-desc" style={{ width: "100%", maxWidth: 560, height: "auto" }}>
+  <title id="eumlx-dec-title">Client A waits after every call; client B makes three calls and waits once</title>
+  <desc id="eumlx-dec-desc">A simulation time axis from 0 to 30 ns. Client A: a b_transport call at 0, 10 and 20 ns, each followed by a 10 ns wait, so its last wait ends at 30 ns. Client B: three b_transport calls at 0 ns, then one wait of 30 ns, which also ends at 30 ns.</desc>
+  <g fill="currentColor" fontSize="11" fontWeight="600">
+    <text x="4" y="14">Client A: wait after every call</text>
+    <text x="4" y="66">Client B: three calls, then one wait</text>
+  </g>
+  <g fill="currentColor" fillOpacity="0.12" stroke="currentColor" strokeWidth="1.2">
+    <rect x="40" y="25" width="90" height="18" rx="2" />
+    <rect x="130" y="25" width="90" height="18" rx="2" />
+    <rect x="220" y="25" width="90" height="18" rx="2" />
+    <rect x="40" y="77" width="270" height="18" rx="2" />
+  </g>
+  <g fill="currentColor">
+    <circle cx="40" cy="34" r="4" />
+    <circle cx="130" cy="34" r="4" />
+    <circle cx="220" cy="34" r="4" />
+    <circle cx="40" cy="86" r="4" />
+  </g>
+  <g fill="currentColor" fontSize="10" textAnchor="middle">
+    <text x="88" y="38">wait 10 ns</text>
+    <text x="178" y="38">wait 10 ns</text>
+    <text x="268" y="38">wait 10 ns</text>
+    <text x="190" y="90">one wait of 30 ns</text>
+  </g>
+  <text x="50" y="90" fill="currentColor" fontSize="10">3 calls</text>
+  <g stroke="currentColor" strokeWidth="1">
+    <line x1="40" y1="116" x2="310" y2="116" />
+    <line x1="40" y1="116" x2="40" y2="121" />
+    <line x1="130" y1="116" x2="130" y2="121" />
+    <line x1="220" y1="116" x2="220" y2="121" />
+    <line x1="310" y1="116" x2="310" y2="121" />
+  </g>
+  <g fill="currentColor" fontSize="10" textAnchor="middle">
+    <text x="40" y="133">0</text>
+    <text x="130" y="133">10</text>
+    <text x="220" y="133">20</text>
+    <text x="310" y="133">30</text>
+    <text x="175" y="148">simulation time (ns)</text>
+  </g>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">The x-axis is simulation time in ns. A dot is a b_transport call; a bar is the wait the client runs on its delay. The target is the same in both rows: it adds 10 ns and returns without waiting (§12.3.2.2.3).</figcaption>
+</figure>
+
+</details>
+
 **The classic mistakes.**
 - *Reading the annotation as a delay that already happened.* It is an offset from the call time (§12.3.2.2.3), and somebody must still act on it.
 - *Forgetting the response status.* If the target never calls `set_response_status`, the client sees `INCOMPLETE` even though the data moved. Always check `is_response_ok()` after `b_transport` returns.
@@ -172,6 +297,28 @@ The initiator may reuse one payload object across calls (§12.3.2.2.3), but then
 ### UVM TLM-2 is not SystemC TLM-2.0
 
 IEEE 1800.2-2020 says that UVM's TLM facilities "are based on what was developed by Open SystemC Initiative (OSCI) for SystemC, though they are not an exact replication or re-implementation of the SystemC TLM library" (Introduction). So a UVM socket cannot be bound straight to a SystemC socket: they are different classes in different languages, with different time types. A bridge converts.
+
+<ArchitectureDiagram
+  title="Where read data lands: a copy in UVM, the initiator's memory in SystemC"
+  caption="Solid arrows are data movement during a read; the plain line is a reference. Left: set_data copies the client's array into the payload, and the target writes the read data into that copy, so the client's own array is unchanged until it calls get_data (IEEE 1800-2023 §7.6; 1800.2 §12.3.4.2.9). Right, at awareness level (IEEE 1666, no clause cited): the payload holds only a pointer, set with set_data_ptr, to memory that the initiator owns, and the target writes through it. The Data row of the table below states the same difference; a bridge has to convert between the two."
+  gapX={48}
+  nodes={[
+    { id: "dl-uvm", label: "UVM TLM-2", kind: "env", col: 0, row: 0, rowSpan: 3, container: true },
+    { id: "dl-ubytes", label: "client's bytes[]", sublabel: "unchanged by the read", kind: "generic", col: 0, row: 0 },
+    { id: "dl-ucopy", label: "payload's array", sublabel: "its own copy", kind: "generic", col: 0, row: 1, state: "active" },
+    { id: "dl-utgt", label: "target", sublabel: "in b_transport", kind: "generic", col: 0, row: 2 },
+    { id: "dl-sc", label: "SystemC TLM-2.0", kind: "env", col: 1, row: 0, rowSpan: 3, container: true },
+    { id: "dl-sptr", label: "payload", sublabel: "holds a data pointer", kind: "generic", col: 1, row: 0 },
+    { id: "dl-smem", label: "initiator's memory", sublabel: "owned by the initiator", kind: "generic", col: 1, row: 1, state: "active" },
+    { id: "dl-stgt", label: "target", sublabel: "in b_transport", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "dl-ubytes", to: "dl-ucopy", style: "data", label: "set_data copies" },
+    { from: "dl-utgt", to: "dl-ucopy", style: "data", label: "writes read data" },
+    { from: "dl-sptr", to: "dl-smem", style: "structural", label: "points to" },
+    { from: "dl-stgt", to: "dl-smem", style: "data", label: "writes via pointer" }
+  ]}
+/>
 
 | | UVM TLM-2 (IEEE 1800.2-2020 §12.3) | SystemC TLM-2.0 (IEEE 1666; awareness level) |
 |---|---|---|
@@ -224,6 +371,44 @@ Every TLM bridge does the same four jobs: it **registers** sockets on both sides
 - *Connect:* in `connect_phase`, `void'(uvm_ml::connect(sock.get_full_name(), "<SystemC path>"))`. A call from a time-0 `initial` block runs before the components exist and connects nothing.
 - *Convert:* objects are serialized with packing routines, usually from the UVM field macros; the registration order must match on both sides, and `uvm_ml::set_type_match("sv:...", "sc:...")` pairs classes whose names differ.
 
+**The two libraries' four jobs, side by side** (from the bullets above; both implementation-specific):
+
+| Job | UVM Connect 2.3.x | UVM-ML OA 1.9 |
+|---|---|---|
+| Register and connect, SV side | `uvmc_tlm #(T, CVRT)::connect(port, "lookup")` | `uvm_ml::ml_tlm2#()::register(sock)` in `phase_ended()` of build, then `uvm_ml::connect(...)` in `connect_phase` |
+| Register, SystemC side | `uvmc_connect(port, "lookup")` | `ML_TLM2_REGISTER_TARGET(...)`, which returns the socket's full path |
+| What pairs two sockets | The same global lookup string | The SV socket's full name and the SystemC path passed to `uvm_ml::connect` |
+| When the pair connects | Just before `end_of_elaboration`; traffic waits for `run_phase` | `connect_phase` |
+| Convert | Predefined generic payload converters; a `CVRT` class for other types | Packing routines, same registration order on both sides; `set_type_match` for different class names |
+| Phases and end of test | Command API (`uvmc_wait_for_phase`, `uvmc_raise_objection`, `uvmc_drop_objection`), after `uvmc_init` | Coordinated bring-up and phases; the test starts with `uvm_ml_run_test(tops)` |
+| Languages | SystemC and SystemVerilog | UVM-SV, UVM-SystemC and UVM-*e* |
+
+With UVM-ML OA, *when* each call runs is the part that breaks benches. The diagram follows one bench through bring-up; its first two steps show a common mistake.
+
+<SequenceDiagram
+  title="UVM-ML OA bring-up: register after build, connect in connect_phase"
+  caption="Read top to bottom; dividers are UVM phases. A connect call from a time-0 initial block runs before the components and their sockets exist, so it connects nothing. The working order registers the SV socket in phase_ended of build and connects it in connect_phase (Cadence, DVCon Europe 2018, version 1.9). The SystemC side registers its target with ML_TLM2_REGISTER_TARGET(...), which returns the path used in the connect call; the diagram does not place that call in time."
+  columnWidth={150}
+  participants={[
+    { id: "top", label: "tb_top", sublabel: "initial blocks", kind: "generic" },
+    { id: "env", label: "mlx_env", sublabel: "UVM-SV", kind: "env" },
+    { id: "ml", label: "UVM-ML OA", sublabel: "backplane", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "t = 0: an initial block" },
+    { from: "top", to: "ml", label: "uvm_ml::connect(...)", tone: "error" },
+    { kind: "note", from: "top", to: "ml", label: "Wrong: no component or socket exists yet, so nothing is connected", tone: "error" },
+    { from: "top", to: "ml", label: "uvm_ml_run_test(tops)" },
+    { kind: "divider", label: "build_phase" },
+    { kind: "self", from: "env", label: "create client; sock = new(...)" },
+    { kind: "divider", label: "phase_ended(build)" },
+    { from: "env", to: "ml", label: "ml_tlm2#()::register(client.sock)" },
+    { kind: "divider", label: "connect_phase" },
+    { from: "env", to: "ml", label: "uvm_ml::connect(full name, SystemC path)", tone: "active" },
+    { kind: "divider", label: "run_phase: transactions flow" }
+  ]}
+/>
+
 **Vendor interfaces.** Simulator vendors also ship their own SystemC–SystemVerilog transaction interfaces, for example the VCS TLI described in a Doulos SNUG 2012 paper. Their APIs differ from both libraries above: use the vendor's manual.
 
 **UVM-SystemC is not a bridge.** UVM-SystemC is UVM written *in* SystemC by Accellera's SystemC verification group (reference implementation on GitHub, Apache 2.0, release 1.0-beta6 on 1 July 2024). It lets you write UVM-style components in C++; connecting them to a SystemVerilog bench still needs a bridge. Its components take one constructor argument, a `uvm_component_name`, and its `uvm_analysis_imp<T, IMP>` is a member constructed with `(name, this)`, not a base class.
@@ -235,6 +420,15 @@ A mixed bench has two schedulers. Three questions decide whether it behaves.
 1. **Who owns time?** With DPI, only SystemVerilog does. With a SystemC bridge, both kernels advance one simulated time inside one simulator; how they interleave is tool-dependent. Timing annotations let an LT model report latency without forcing either kernel to stop.
 2. **Which phases are coordinated?** UVM-ML OA coordinates bring-up and phases so that "components are configured then created, and ports are created then connected" (Cadence 2018). Synchronizing the UVM **run-time sub-phases** (`reset_phase` through `shutdown_phase`) with another framework is a different matter: HPE reported it "not supported" up to UVM-ML OA 1.8 and supported in 1.9 only on Cadence Xcelium, and built its own objection-based synchronizer (Pertuit et al., DVCon US 2018). Whether an objection raised on one side holds `run_phase` on the other is a property of the library, its version and the simulator. Check the release notes and test it; do not assume it.
 3. **Who ends the test?** UVM ends `run_phase` when the last objection drops ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). If the SystemC model is still working and nothing on its behalf holds an objection, the SystemVerilog side can end the test under it.
+
+**Predict first.** Two tests each send 100 transactions to a SystemC model through a bridge and then drop their only objection; nothing on the SystemC side raises one. Test A calls `b_transport` for each transaction. Test B calls `nb_transport_fw` with `BEGIN_REQ` for each one; the target returns `UVM_TLM_ACCEPTED` at once, and the responses come back later on the backward path. Which test can end `run_phase` while the model is still working?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answer</summary>
+
+**Test B.** Each of its calls returns as soon as the target accepts the request, so its loop finishes and drops the objection while responses are still outstanding, and `run_phase` ends at that drop. Test A is safe without extra code: once `b_transport` returns, the transaction is presumed executed (1800.2 §12.3.2.2.3), so the last return comes after the model's last result. To make test B safe, count the outstanding transactions and drop the objection only after the last one completes, or let the SystemC side hold objections through the bridge.
+
+</details>
 
 <SequenceDiagram
   title="Phases across a SystemVerilog and SystemC boundary"
@@ -262,6 +456,10 @@ A mixed bench has two schedulers. Three questions decide whether it behaves.
 />
 
 **Debrief.** The diagram puts registration in build and connect, and traffic in `run_phase`, which matches both libraries' documented flows. It deliberately draws no barrier around `run_phase` in both languages: that guarantee is library-, version- and tool-dependent. The robust design gives end-of-test ownership to one side. Either the SystemVerilog test waits for the model's last response before it drops its objection (natural with `b_transport`, which returns only when the model is done), or the SystemC side raises and drops objections through the bridge (UVMC's Command API).
+
+**See the same trap on one kernel.** The end-of-test explorer below is a single-language model of uvm-core 2020.3.1, not a bridge, but the rule it shows is the one question 3 depends on. Choose the **Lost response** scenario: the test drops its objection at 400 ns and the last response reaches the scoreboard 30 ns later. Predict when `run_phase` ends before you look at the timeline, then compare it with **phase_ready_to_end**, where the scoreboard holds the phase open until that response arrives.
+
+<UvmPhasingDiagram />
 
 ### Practitioner depth: planning a mixed-language bench
 
@@ -559,6 +757,20 @@ UVM_FATAL :    0
 
 Each access logs at its call time (0, 10, 20 ns) because the client waits out the 10 ns annotation after each call. The third access is a negative test: the model throws, the wrapper catches the exception and returns 1, and the target turns that into `ADDRESS_ERROR`.
 
+**Where each TLM-2 rule lives in the code.** Every rule from "UVM TLM-2 in one page" is applied by one line of the bench. Use this map to find the line again when you adapt the bench.
+
+| Rule | Line that applies it | Source |
+|---|---|---|
+| The initiator presets the status | `gp.set_response_status(UVM_TLM_INCOMPLETE_RESPONSE);` in `ref_client::access` | 1800.2 §12.3.4.2.11 |
+| A target that does not implement byte enables answers with an error | `if (t.get_byte_enable_length() != 0)` → `UVM_TLM_BYTE_ENABLE_ERROR_RESPONSE` | §12.3.4.2.12 (the recommended status) |
+| Check the length against the array before indexing | `if (t.get_data_length() != 4 \|\| bytes.size() < 4)` → `UVM_TLM_GENERIC_ERROR_RESPONSE` | §12.3.4.2.4, §12.3.4.2.10 |
+| The command decides the direction; ignore executes nothing | `case (t.get_command())` with `default: ;` | §12.3.4.1.1, §12.3.4.2.8 |
+| Read data goes into the payload's own copy | `t.set_data(bytes);` in the read branch | IEEE 1800-2023 §7.6 |
+| Latency is reported, not spent | `delay.incr(10ns, 1ns);` | §12.3.2.2.3 |
+| The target sets the status on every path | the two early `return`s and the final `t.set_response_status(...)` | §12.3.4.2.11 |
+| The initiator checks the status and copies the data out | `ok = gp.is_response_ok();` then `gp.get_data(bytes);` | §12.3.4.2.11 |
+| The initiator decides what the annotation means | `#(delay.get_realtime(1ns));` | §12.3.2.2.3 |
+
 **Run it.** Build the C++ file as a shared library, compile `tb_top.sv` with your simulator's UVM library, and load the shared library at run time. The switch names follow the tool-neutral recommendations of IEEE 1800-2023 Annex J; check your simulator's manual for its exact options ([I-SV-7, Build, load and link](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index#build-load-and-link)).
 
 ```bash
@@ -644,6 +856,25 @@ endfunction
 
 A call to `nb_transport` "always represents a phase transition", while its return may or may not: `UVM_TLM_ACCEPTED` means "no change on this call", `UVM_TLM_UPDATED` means the callee moved the phase and wrote it into the `ref` phase argument, and `UVM_TLM_COMPLETED` is an optional shortcut that ends the transaction (IEEE 1800.2-2020 §12.3.2, §12.3.3.2). The phase belongs to the hop, not to the payload, so it can differ at each hop. The target implements `nb_transport_fw`; the initiator implements `nb_transport_bw` (§12.3.2.2.1, §12.3.2.2.2).
 
+<ArchitectureDiagram
+  title="One nb_transport call, three possible returns"
+  caption="Dashed arrows are the three return values of one call, each labelled with its sync value (§12.3.3.2). The call itself is always a phase transition. UVM_TLM_ACCEPTED: the return leaves the phase as it is, so the next transition comes in a later call. UVM_TLM_UPDATED: the callee changed the phase and wrote the new one into the ref phase argument. UVM_TLM_COMPLETED: the target says the transaction is finished; this shortcut is optional (§12.3.2)."
+  cellWidth={140}
+  gapX={110}
+  spreadAnchors
+  nodes={[
+    { id: "nb-call", label: "nb_transport_fw", sublabel: "call: a phase transition", kind: "generic", col: 0, row: 0, rowSpan: 3 },
+    { id: "nb-acc", label: "phase unchanged", sublabel: "next transition later", kind: "generic", col: 1, row: 0 },
+    { id: "nb-upd", label: "new phase in ph", sublabel: "the callee changed it", kind: "generic", col: 1, row: 1, state: "active" },
+    { id: "nb-cmp", label: "transaction done", sublabel: "optional shortcut", kind: "generic", col: 1, row: 2, state: "ok" }
+  ]}
+  edges={[
+    { from: "nb-call", to: "nb-acc", style: "causal", label: "ACCEPTED" },
+    { from: "nb-call", to: "nb-upd", style: "causal", label: "UPDATED" },
+    { from: "nb-call", to: "nb-cmp", style: "causal", label: "COMPLETED" }
+  ]}
+/>
+
 <SequenceDiagram
   title="The four-phase non-blocking path"
   caption="Each call carries the next phase; each ACCEPTED return leaves the phase unchanged, so the next transition comes from the other side later. The rules for which transitions are legal belong to the protocol: this is the SystemC TLM-2.0 base protocol path, while UVM §12.3 defines only the phase and return values."
@@ -680,6 +911,11 @@ Every bridge converts, and conversion is where silent bugs live.
 
 A traced example. SystemVerilog passes `typedef struct packed { bit [7:0] opcode; bit [23:0] addr; } cmd_t;` with `opcode = 8'h5A` and `addr = 24'h001234` to an import `function void send_cmd(input cmd_t c)`, which C receives as `const svBitVecVal* c`.
 
+**Predict first.** On a little-endian host, the C code copies the four bytes of `c[0]` with `memcpy(&s, c, 4)` into `struct { uint8_t opcode; uint8_t addr[3]; } s;`. What does `s.opcode` hold afterwards, and where did the byte `0x5A` go?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Trace the bytes</summary>
+
 | Step | Value | Why |
 |---|---|---|
 | SV packed vector | `32'h5A00_1234` | `opcode` is the first member, so bits [31:24] (§7.2.1) |
@@ -687,7 +923,73 @@ A traced example. SystemVerilog passes `typedef struct packed { bit [7:0] opcode
 | Wrong: `memcpy(&s, c, 4)` into `struct { uint8_t opcode; uint8_t addr[3]; }` on a little-endian host | `opcode = 0x34`, `addr = {0x12, 0x00, 0x5A}` | The lowest-addressed byte of `c[0]` is bits [7:0], which belong to `addr` |
 | Right: shift and mask | `opcode = (c[0] >> 24) & 0xFF = 0x5A`; `addr = c[0] & 0xFFFFFF = 0x001234` | Field positions come from the SV declaration, not from C's memory layout |
 
+<figure className="not-prose my-6">
+<svg viewBox="0 0 340 204" role="img" aria-labelledby="eumlx-lane-title eumlx-lane-desc" style={{ width: "100%", maxWidth: 560, height: "auto" }}>
+  <title id="eumlx-lane-title">The opcode byte ends up in addr[2] after memcpy on a little-endian host</title>
+  <desc id="eumlx-lane-desc">Three rows of four byte boxes. Row 1, the SV packed vector c[0] from bit 31 down to bit 0: 5A is opcode in bits 31 to 24, then 00, 12 and 34 are addr in bits 23 to 0. Row 2, the same word in host memory, little-endian, byte address 0 to 3: 34, 12, 00, 5A. Row 3, the C struct after memcpy: opcode holds 34, addr[0] holds 12, addr[1] holds 00 and addr[2] holds 5A. The shaded box is the opcode byte 5A in every row.</desc>
+  <g fill="currentColor" fontSize="11" fontWeight="600">
+    <text x="4" y="14">SV vector c[0], bit 31 at the left</text>
+    <text x="4" y="78">Host memory, little-endian, address 0 to 3</text>
+    <text x="4" y="142">C struct after memcpy(&amp;s, c, 4)</text>
+  </g>
+  <g fill="none" stroke="currentColor" strokeWidth="1.2">
+    <rect x="10" y="22" width="74" height="38" rx="3" />
+    <rect x="92" y="22" width="74" height="38" rx="3" />
+    <rect x="174" y="22" width="74" height="38" rx="3" />
+    <rect x="256" y="22" width="74" height="38" rx="3" />
+    <rect x="10" y="86" width="74" height="38" rx="3" />
+    <rect x="92" y="86" width="74" height="38" rx="3" />
+    <rect x="174" y="86" width="74" height="38" rx="3" />
+    <rect x="256" y="86" width="74" height="38" rx="3" />
+    <rect x="10" y="150" width="74" height="38" rx="3" />
+    <rect x="92" y="150" width="74" height="38" rx="3" />
+    <rect x="174" y="150" width="74" height="38" rx="3" />
+    <rect x="256" y="150" width="74" height="38" rx="3" />
+  </g>
+  <g fill="currentColor" fillOpacity="0.18">
+    <rect x="10" y="22" width="74" height="38" rx="3" />
+    <rect x="256" y="86" width="74" height="38" rx="3" />
+    <rect x="256" y="150" width="74" height="38" rx="3" />
+  </g>
+  <g fill="currentColor" fontSize="13" fontWeight="700" textAnchor="middle">
+    <text x="47" y="40">5A</text>
+    <text x="129" y="40">00</text>
+    <text x="211" y="40">12</text>
+    <text x="293" y="40">34</text>
+    <text x="47" y="104">34</text>
+    <text x="129" y="104">12</text>
+    <text x="211" y="104">00</text>
+    <text x="293" y="104">5A</text>
+    <text x="47" y="168">34</text>
+    <text x="129" y="168">12</text>
+    <text x="211" y="168">00</text>
+    <text x="293" y="168">5A</text>
+  </g>
+  <g fill="currentColor" fontSize="10" textAnchor="middle">
+    <text x="47" y="54">opcode</text>
+    <text x="129" y="54">addr 23:16</text>
+    <text x="211" y="54">addr 15:8</text>
+    <text x="293" y="54">addr 7:0</text>
+    <text x="47" y="118">byte 0</text>
+    <text x="129" y="118">byte 1</text>
+    <text x="211" y="118">byte 2</text>
+    <text x="293" y="118">byte 3</text>
+    <text x="47" y="182">opcode ✕</text>
+    <text x="129" y="182">addr[0]</text>
+    <text x="211" y="182">addr[1]</text>
+    <text x="293" y="182">addr[2]</text>
+  </g>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Follow the shaded box, the opcode byte 0x5A. In the SystemVerilog vector it is the most significant byte (§7.2.1); a little-endian host stores the least significant byte of c[0] first, so memcpy puts 0x34 into opcode and 0x5A into addr[2]. The shift-and-mask row of the table reads each field by its bit position instead.</figcaption>
+</figure>
+
+</details>
+
 The rule: convert field by field with shifts and masks, and test the converter with a pattern whose every field differs.
+
+**Check your DPI type instincts.** The explorer below models IEEE 1800-2023 DPI. In its first panel, choose `bit [7:0] x` and predict which C type arrives before you reveal it, then compare the answer with the way `cmd_t` arrived above. In its second panel, the scenario "task blocks on a socket" is the "Simulation freezes" row of the debugging table in Build Your Mental Model.
+
+<DPIBoundaryInspector />
 
 ### Expert: Time and phase alignment
 
@@ -760,6 +1062,30 @@ Answer each one before you open the feedback.
 />
 
 ## Practice & Reinforce
+
+<VisualRecap
+  title="One seam, any language behind it"
+  rule="Choose the crossing by the model's shape (DPI for an untimed function, a bridge for a SystemC model with sockets and processes, co-simulation for a separate program); at a TLM-2 seam the initiator presets UVM_TLM_INCOMPLETE_RESPONSE, the target shall replace it before b_transport returns, and the delay annotation is an offset that the caller acts on, not a wait."
+  code={"gp.set_response_status(UVM_TLM_INCOMPLETE_RESPONSE);\nsock.b_transport(gp, delay);   // delay: an offset, not a wait\nok = gp.is_response_ok();\ngp.get_data(bytes);            // read data is in the payload's copy\n#(delay.get_realtime(1ns));    // the client chooses to honour it"}
+  mistake="Assuming DPI is always enough, reading the annotation as time that already passed, never setting the status in the target (the client sees INCOMPLETE), copying a packed struct with memcpy (fields reversed), or letting the SystemVerilog test drop its last objection while the foreign model is still busy."
+  inTestbench="A C++ or SystemC reference model behind the predictor: the client talks only to a TLM-2 target socket, so ref_mem_target (DPI) can later be swapped for a bridge to a SystemC model without touching the client, and the test owns end of test by waiting for every b_transport to return."
+>
+  <ArchitectureDiagram
+    title="The Make It Work seam"
+    caption="Solid arrows are transport calls. The client sees only its initiator socket. Today ref_mem_target answers through DPI; in Part C a bridge to a SystemC model takes its place, and the client code does not change."
+    cellWidth={140}
+    gapX={100}
+    nodes={[
+      { id: "vr-client", label: "ref_client", sublabel: "initiator socket", kind: "generic", col: 0, row: 0, rowSpan: 2 },
+      { id: "vr-dpi", label: "ref_mem_target", sublabel: "DPI to the C++ model", kind: "generic", col: 1, row: 0, state: "active" },
+      { id: "vr-sc", label: "bridge + SystemC", sublabel: "Part C swap", kind: "model", col: 1, row: 1, state: "dim" }
+    ]}
+    edges={[
+      { from: "vr-client", to: "vr-dpi", style: "data", label: "b_transport" },
+      { from: "vr-client", to: "vr-sc", style: "data", label: "b_transport" }
+    ]}
+  />
+</VisualRecap>
 
 ### Quiz
 
@@ -912,6 +1238,26 @@ endclass
 `write` is a function, so it can call the imported *functions*, which complete in zero time (§35.5.1.1).
 
 Step 2. `write` cannot call `b_transport`, which is a task. Put a `uvm_tlm_analysis_fifo #(bus_item)` between the monitor and the predictor, and give the predictor a `run_phase` that does `fifo.get(t)`, builds a payload exactly as `ref_client::access` does, calls `sock.b_transport(gp, delay)`, and compares `get_data` against `t.data` for reads. The predictor no longer knows what is behind the socket; only `ref_mem_target` calls DPI.
+
+<ArchitectureDiagram
+  title="Kata step 2: why the predictor needs a FIFO and a thread"
+  caption="Solid arrows are data. The monitor's write(t) call must return at once: write is a function, and a function shall not enable a task (IEEE 1800-2023 §13.4), so it cannot call the task b_transport. The analysis FIFO stores each bus_item, and the predictor's own run_phase thread gets it, builds a generic payload and calls b_transport through its initiator socket. Only ref_mem_target calls the C++ model through DPI."
+  cellWidth={140}
+  gapX={100}
+  nodes={[
+    { id: "ks-mon", label: "monitor", sublabel: "analysis port", kind: "monitor", col: 0, row: 0 },
+    { id: "ks-fifo", label: "analysis FIFO", sublabel: "uvm_tlm_analysis_fifo", kind: "fifo", col: 0, row: 1 },
+    { id: "ks-pred", label: "predictor", sublabel: "run_phase thread", kind: "predictor", col: 0, row: 2 },
+    { id: "ks-tgt", label: "ref_mem_target", sublabel: "b target socket", kind: "generic", col: 1, row: 2 },
+    { id: "ks-model", label: "C++ model", sublabel: "RefMem", kind: "model", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "ks-mon", to: "ks-fifo", style: "data", label: "write(t)" },
+    { from: "ks-fifo", to: "ks-pred", style: "data", label: "get(t)" },
+    { from: "ks-pred", to: "ks-tgt", style: "data", label: "b_transport" },
+    { from: "ks-tgt", to: "ks-model", style: "data", label: "DPI call" }
+  ]}
+/>
 
 Step 3. Only `mlx_env::connect_phase` changes on the SystemVerilog side: `uvmc_tlm #()::connect(pred.sock, "ref_mem")` replaces `pred.sock.connect(target.sock)`, and `ref_mem_target` is no longer created. On the SystemC side, `sc_main` builds the model and calls `uvmc_connect(model.sock, "ref_mem")`. The predictor code is unchanged, which is the payoff of step 2.
 

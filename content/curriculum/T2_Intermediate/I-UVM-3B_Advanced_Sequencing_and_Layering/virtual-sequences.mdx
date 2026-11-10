@@ -47,6 +47,30 @@ This lesson's running example has two agents:
 
 The rule: **no data item may start before both configuration writes have completed.** `cfg_seq` cannot enforce that, because it only knows `cfg_sqr`. `data_seq` cannot either. Something above both agents has to say "this, then that".
 
+<ArchitectureDiagram
+  title="The running example: two agents that never see each other"
+  caption="Each sequence sends its items to its own agent's sequencer, and each driver pulls only from its own sequencer. No line joins the two agents, so neither sequence can wait for the other: the configuration-before-data rule needs something above both."
+  cellWidth={130}
+  gapX={44}
+  nodes={[
+    { id: "env", label: "env", kind: "env", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
+    { id: "cfgagt", label: "cfg_agt", kind: "agent", col: 0, row: 1, rowSpan: 2, container: true },
+    { id: "dataagt", label: "data_agt", kind: "agent", col: 1, row: 1, rowSpan: 2, container: true },
+    { id: "cseq", label: "cfg_seq", sublabel: "C1, C2", kind: "sequence", col: 0, row: 0 },
+    { id: "dseq", label: "data_seq", sublabel: "D1 to D3", kind: "sequence", col: 1, row: 0 },
+    { id: "csqr", label: "sqr", sublabel: "cfg_sequencer", kind: "sequencer", col: 0, row: 1 },
+    { id: "dsqr", label: "sqr", sublabel: "data_sequencer", kind: "sequencer", col: 1, row: 1 },
+    { id: "cdrv", label: "drv", sublabel: "cfg_drv, 20 ns each", kind: "driver", col: 0, row: 2 },
+    { id: "ddrv", label: "drv", sublabel: "data_drv, 10 ns each", kind: "driver", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "cseq", to: "csqr", style: "data", label: "items" },
+    { from: "csqr", to: "cdrv", style: "data", label: "item" },
+    { from: "dseq", to: "dsqr", style: "data", label: "items" },
+    { from: "dsqr", to: "ddrv", style: "data", label: "item" }
+  ]}
+/>
+
 ### A virtual sequence starts sequences; it sends no items
 
 A **virtual sequence** is a class derived from `uvm_sequence` (IEEE 1800.2-2020 §14.3) whose `body()` calls `start()` on other sequences, its **children**, and never calls `start_item()` itself. Each child runs on the sequencer passed to its `start()` call and sends its items through that agent's sequencer and driver as usual. The virtual sequence is called *virtual* because it has no physical interface of its own: it coordinates sequences that do.
@@ -144,9 +168,36 @@ Notice what the guarantee is: *the configuration handshakes have completed*. Tha
 The **run phase** (`run_phase`) is a task phase that ends as soon as no component holds an **objection**, a counter that says "I am still busy" ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). A virtual sequence is usually the top of the stimulus, so it is what the objection must cover. Use one of the two patterns you met in I-UVM-3A:
 
 - **The test objects around `vseq.start()`**, as in the walkthrough. Simple and explicit.
-- **The virtual sequence objects for itself:** `vseq.set_starting_phase(phase); vseq.set_automatic_phase_objection(1);` before `vseq.start(...)` (§14.2.4.2, §14.2.4.4). `start()` then raises an objection before `pre_start()` and drops it after `post_start()`.
+- **The virtual sequence objects for itself:** `vseq.set_starting_phase(phase); vseq.set_automatic_phase_objection(1);` before `vseq.start(...)` (§14.2.4.2–§14.2.4.4). `start()` then raises an objection before `pre_start()` and drops it after `post_start()`.
 
 The rule is the same whichever way the handles arrive: `set_automatic_phase_objection(1)` raises nothing unless `set_starting_phase()` was called, because `get_starting_phase()` returns null otherwise (§14.2.4.1). Starting the sequence on a virtual sequencer does not supply a starting phase.
+
+<SequenceDiagram
+  title="Who holds the objection in each pattern"
+  caption="In the first two patterns an objection is held from before body() starts until after it ends; in the third nothing is ever raised. IEEE 1800.2-2020 §14.2.4.3 requires the raise immediately before pre_start() and the drop after post_start(), or at kill(); uvm-core 2020.3.1 start() does exactly this."
+  participants={[
+    { id: "test", label: "soc_test", sublabel: "run_phase", kind: "test" },
+    { id: "vseq", label: "vseq", sublabel: "soc_vseq", kind: "sequence" },
+    { id: "phase", label: "phase", sublabel: "run_phase objection", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "The test objects around vseq.start()" },
+    { from: "test", to: "phase", label: "phase.raise_objection(this)" },
+    { from: "test", to: "vseq", label: "vseq.start(null)" },
+    { kind: "return", from: "vseq", to: "test", label: "returns when body() has finished" },
+    { from: "test", to: "phase", label: "phase.drop_objection(this)" },
+    { kind: "divider", label: "set_starting_phase(phase) and set_automatic_phase_objection(1), then start()" },
+    { from: "test", to: "vseq", label: "vseq.start(...)" },
+    { from: "vseq", to: "phase", label: "raise, before pre_start()" },
+    { kind: "self", from: "vseq", label: "pre_start(), then body(), then post_start()" },
+    { from: "vseq", to: "phase", label: "drop, after post_start() or kill()" },
+    { kind: "return", from: "vseq", to: "test", label: "start() returns" },
+    { kind: "divider", label: "set_automatic_phase_objection(1) only, no set_starting_phase()" },
+    { from: "test", to: "vseq", label: "vseq.start(...)" },
+    { kind: "note", from: "vseq", to: "phase", label: "get_starting_phase() returns null, so nothing is raised", tone: "error" },
+    { kind: "note", from: "test", to: "phase", label: "no objection is held: the run phase ends at 0 ns, with no error", tone: "error" }
+  ]}
+/>
 
 **Children never object.** `cfg_seq` and `data_seq` run inside `vseq.start()`, which is already covered. A child that raises its own objection only adds noise, and a forever-running child that raises one keeps the test alive for ever.
 
@@ -161,7 +212,10 @@ Sequential `start()` calls are the right tool for "this, then that". When two ag
 | `fork … join_any` | when **the first** branch finishes; the others keep running | a race against a watchdog | the losers keep running; stopping them with `disable fork` can kill more than you meant |
 | `fork … join_none` | **at once**; the branches start when the parent next blocks (§9.3.2) | background traffic that the end of the test does not depend on | if nothing waits, `body()` returns, the test drops its objection and the run phase ends |
 
-**Predict first.** With the timings in the table at the top (2 configuration items of 20 ns, 3 data items of 10 ns), write down for each pattern when D1 starts on the data driver and when `body()` returns. Then compare with the three waveforms below. In each one a column is 10 ns, the `10 ns` row is a time grid, not a real clock, and the `cfg_drv` and `data_drv` rows show the item each driver is working on.
+**Predict first.** With the timings in the table at the top (2 configuration items of 20 ns, 3 data items of 10 ns), write down for each pattern when D1 starts on the data driver and when `body()` returns. Then open the waveforms below and compare. In each one a column is 10 ns, the `10 ns` row is a time grid, not a real clock, and the `cfg_drv` and `data_drv` rows show the item each driver is working on.
+
+<details>
+<summary>Check your prediction: the four waveforms</summary>
 
 <TimingDiagram
   title="Pattern 1: one start() after another"
@@ -208,11 +262,28 @@ Sequential `start()` calls are the right tool for "this, then that". When two ag
   ]}
 />
 
+<TimingDiagram
+  title="Pattern 4: fork…join_any with nothing waiting after it"
+  caption="fork c.start(); d.start(); join_any. A column is 10 ns. D1 runs from 0 ns (the order rule is broken), and the data branch finishes first, at 30 ns. join_any then lets body() return, the test drops its objection and the run phase ends at 30 ns (marker 30), while C2 is only half written: from 30 ns on both rows read ended."
+  edges={8}
+  signals={[
+    { name: "10 ns", kind: "clock" },
+    { name: "cfg_drv", kind: "bus", values: ["idle", "C1", "C1", "C2", "ended", "ended", "ended", "ended"] },
+    { name: "data_drv", kind: "bus", values: ["idle", "D1", "D2", "D3", "ended", "ended", "ended", "ended"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "fail", label: "D1 is driven while the configuration is still being written: the order rule is broken", short: "D1" },
+    { edge: 3, tone: "fail", label: "30 ns: D3 completes, join_any lets body() return, the test drops its objection and the run phase ends in the middle of C2", short: "30" }
+  ]}
+/>
+
 **What the waveforms showed.**
 - **One after another** is the only pattern that meets the rule: D1 starts at 40 ns, `body()` returns at 70 ns.
 - **`fork…join` runs the agents in parallel; it does not order them.** D1 runs at 0 ns. The run passes silently unless a checker looks at the order, which is why the [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) adds one. `body()` returns when the longer branch (configuration) ends, at 40 ns.
 - **`fork…join_none` with nothing waiting ends the test.** `vseq.start()` returns at 0 ns, so the test carries on at 0 ns (the Make It Work bench prints its `TEST` line then), drops its objection, and the run phase ends and kills the children. The children do start at 0 ns and the drivers may even print `start C1` and `start D1`; no item completes.
-- **`fork…join_any`** (not drawn) would return at 30 ns, when `data_seq` finishes first, while C2 is still being written. If `body()` then returns, the run ends at 30 ns in the middle of C2.
+- **`fork…join_any`** (Pattern 4) would return at 30 ns, when `data_seq` finishes first, while C2 is still being written. If `body()` then returns, the run ends at 30 ns in the middle of C2.
+
+</details>
 
 The [dispatch explorer on the next page](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) runs the same three patterns on a virtual sequencer, with a timeline you can replay.
 
@@ -237,6 +308,22 @@ d.start(data_sqr, this);
 bg.kill();                           // stop it on purpose before body() returns
 ```
 
+<TimingDiagram
+  title="The background responder beside the ordered foreground"
+  caption="With the running example's timings; a column is 10 ns. join_none returns at once, so bg and c.start() both begin at 0 ns (marker 0). The foreground keeps its order, D1 at 40 ns, because c.start() and d.start() are still two calls in a row. bg.kill() at 70 ns, right after D3 completes (marker kill), stops bg before body() returns, so nothing is left running when the test drops its objection."
+  edges={9}
+  signals={[
+    { name: "10 ns", kind: "clock" },
+    { name: "bg", kind: "bus", values: ["idle", "running", "running", "running", "running", "running", "running", "running", "killed"] },
+    { name: "cfg_drv", kind: "bus", values: ["idle", "C1", "C1", "C2", "C2", "idle", "idle", "idle", "idle"] },
+    { name: "data_drv", kind: "bus", values: ["idle", "idle", "idle", "idle", "idle", "D1", "D2", "D3", "idle"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", label: "0 ns: join_none returns at once; bg starts on rsp_sqr and c.start() starts on cfg_sqr", short: "0" },
+    { edge: 7, tone: "info", label: "70 ns: d.start() returns, then bg.kill() stops the responder before body() returns", short: "kill" }
+  ]}
+/>
+
 ```systemverilog
 // snippet: a watchdog race, isolated so disable fork kills only this race
 fork begin                           // isolation: the race's own parent process
@@ -260,6 +347,28 @@ foreach (ds[i]) begin
 end
 wait fork;                           // waits for every immediate child process
 ```
+
+<ArchitectureDiagram
+  title="Who disable fork and wait fork reach, in one body()"
+  caption="The background-responder and watchdog snippets above, combined in one body(): it forks bg with join_none, then runs the watchdog race inside its isolation wrapper. Each box is a process and each line joins a parent process to a child it forked. disable fork, called in the wrapper, ends every descendant of the wrapper: d.start() and the watchdog, never bg (IEEE 1800-2023 §9.6.3). wait fork, if called in body() after the wrapper, waits for every immediate child of body() still running (§9.6.1): the wrapper is a fork…join, so it has already ended, and wait fork would wait for the endless bg for ever."
+  cellWidth={116}
+  gapX={20}
+  nodes={[
+    { id: "waitset", label: "wait fork in body() waits for these", kind: "generic", col: 0, row: 1, colSpan: 3, container: true },
+    { id: "reach", label: "disable fork in the wrapper ends these", kind: "generic", col: 1, row: 2, colSpan: 2, container: true },
+    { id: "body", label: "body()", sublabel: "soc_vseq", kind: "generic", col: 1, row: 0 },
+    { id: "bgp", label: "bg.start()", sublabel: "endless", kind: "generic", col: 0, row: 1 },
+    { id: "wrap", label: "wrapper", sublabel: "fork begin … end join", kind: "generic", col: 2, row: 1 },
+    { id: "dp", label: "d.start()", sublabel: "join_any branch", kind: "generic", col: 1, row: 2 },
+    { id: "wd", label: "watchdog", sublabel: "#1us, then fatal", kind: "generic", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "body", to: "bgp", style: "structural" },
+    { from: "body", to: "wrap", style: "structural" },
+    { from: "wrap", to: "dp", style: "structural" },
+    { from: "wrap", to: "wd", style: "structural" }
+  ]}
+/>
 
 Why each detail is there:
 - **`bg.kill()`** stops the background sequence explicitly (§14.2.5.11). Without it, the run phase kills the process that started `bg` when the objection drops, and uvm-core 2020.3.1 reacts with a warning (see Push Further).
@@ -359,6 +468,27 @@ Two habits make these quick to find: name every child after its role (`"c"`, `"d
 - **Virtual sequences start other virtual sequences.** A subsystem-level virtual sequence starts block-level virtual sequences as children (`blk.start(null, this)` after copying the handles down), so block scenarios are reused unchanged at subsystem level. Passing `this` keeps the hierarchy in names and lets `kill()` on the top sequence stop everything below it.
 - **A base virtual sequence holds the handles.** Projects that use the `start(null)` style usually write one `base_vseq` with the handle fields and one helper that copies them from the env; every scenario extends it.
 - **When not to use one.** A test that drives a single agent does not need a virtual sequence; start the agent sequence directly. Cross-agent *checking* (for example "no data before configuration") belongs in a scoreboard or checker, not in the virtual sequence; [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) builds both into a multi-agent environment.
+
+<ArchitectureDiagram
+  title="Virtual sequences starting virtual sequences"
+  spreadAnchors={true}
+  caption="Each dashed arrow is a start() call with this as the parent, so the arrows form the sequence hierarchy: full names nest one level per arrow, a child inherits its parent's priority (IEEE 1800.2-2020 §14.2.3.1), and kill() on the top sequence stops everything below it. Only the bottom row sends items. The handles travel down the same tree: a base_vseq helper copies them into each child before its start()."
+  nodes={[
+    { id: "top", label: "top vseq", sublabel: "one per test, started by the test", kind: "sequence", col: 0, row: 0, colSpan: 2 },
+    { id: "sub", label: "subsystem vseq", sublabel: "extends base_vseq", kind: "sequence", col: 0, row: 1, colSpan: 2 },
+    { id: "blka", label: "block vseq A", sublabel: "extends base_vseq", kind: "sequence", col: 0, row: 2 },
+    { id: "blkb", label: "block vseq B", sublabel: "extends base_vseq", kind: "sequence", col: 1, row: 2 },
+    { id: "cs", label: "cfg_seq", sublabel: "items on cfg_sqr", kind: "sequence", col: 0, row: 3 },
+    { id: "ds", label: "data_seq", sublabel: "items on data_sqr", kind: "sequence", col: 1, row: 3 }
+  ]}
+  edges={[
+    { from: "top", to: "sub", style: "causal", label: "start(null, this)" },
+    { from: "sub", to: "blka", style: "causal", label: "start(null, this)" },
+    { from: "sub", to: "blkb", style: "causal", label: "start(null, this)" },
+    { from: "blka", to: "cs", style: "causal", label: "start(cfg_sqr, this)" },
+    { from: "blkb", to: "ds", style: "causal", label: "start(data_sqr, this)" }
+  ]}
+/>
 
 ### Recap
 
@@ -618,12 +748,32 @@ Change one thing at a time in the bench above, predict the log, then open the an
 | 3 | Delete `vseq.data_sqr = env.data_agt.sqr;` from the test, and remove the null check from `body()` | |
 | 4 | Swap the two handles in `body()`: `c.start(data_sqr, this); d.start(cfg_sqr, this);` | |
 
+Open one answer at a time, after you have written that row's prediction.
+
 <details>
-<summary>Answers</summary>
+<summary>Answer 1: fork … join</summary>
 
 1. C1 at 0, D1 at 0, D2 at 10, C2 at 20, D3 at 20; `TEST` at 40 ns. No error: the order rule is broken silently.
+
+</details>
+
+<details>
+<summary>Answer 2: fork … join_none</summary>
+
 2. `vseq.start(null)` returns at 0 ns, so `[TEST] soc_vseq finished` appears at 0 ns, before any item completes. The drivers may also print `start C1` and `start D1` at 0 ns (the children reach their first item before the phase ends). Then the test drops its objection, the run phase ends at 0 ns and the report summary follows; no item completes. Treat any extra warnings about killed sequences as tool and library behaviour (Push Further).
+
+</details>
+
+<details>
+<summary>Answer 3: a deleted data handle</summary>
+
 3. C1 at 0 and C2 at 20, then at 40 ns `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item in vseq.d`. With the null check kept, the fatal is `VSEQ_HANDLES` at 0 ns instead, before any traffic.
+
+</details>
+
+<details>
+<summary>Answer 4: swapped handles</summary>
+
 4. It compiles, because `start()` accepts any `uvm_sequencer_base`. At 0 ns `cfg_seq` is granted on the data sequencer, and its `finish_item()` fails with `UVM_FATAL [SQRSNDREQCAST] send_request failed to cast sequence item`; no `start` line is printed. The typed handle fields catch a different slip at compile time: `vseq.cfg_sqr = env.data_agt.sqr;` in the test is a type error.
 
 </details>
@@ -645,6 +795,13 @@ IEEE 1800.2-2020 §14.2.3.1 says only that `start()` runs the sequence on the gi
 - Inside a virtual sequence running on a virtual sequencer, the same call queues the child's request on a sequencer no driver ever pulls from. Arbitration runs only when a driver asks for an item ([Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)), so `start_item()` waits until `UVM_FATAL [PH_TIMEOUT]`.
 - A nested *virtual* sequence started with `blk.start(null, this)` inherits the parent's virtual sequencer, which is usually what you want: `p_sequencer` then works in the child too.
 
+**The whole matrix at one glance.** The child is `data_seq d`, its handle `h` is null, and the parent is `vseq` (uvm-core 2020.3.1: `set_item_context()` and `get_full_name()` in `uvm_sequence_item.svh`, the `SEQ` fatal in `start_item()`):
+
+| Call | Parent started with `start(null)` | Parent on `soc_vsqr` (no driver) | Parent on a real agent sequencer |
+|---|---|---|---|
+| `d.start(h, this)` | `UVM_FATAL [SEQ]` at the first `start_item()`, naming `vseq.d` | no message: `start_item()` waits for a grant until `UVM_FATAL [PH_TIMEOUT]` | no message: `d` runs on the parent's sequencer (if that sequencer's item type differs, `UVM_FATAL [SQRSNDREQCAST]`) |
+| `d.start(h)`, no parent | `UVM_FATAL [SEQ]` at the first `start_item()`, naming just `d` | `UVM_FATAL [SEQ]`, naming just `d` | `UVM_FATAL [SEQ]`, naming just `d` |
+
 **Interview angle:** "Why does the same forgotten handle crash one testbench and hang another?" The answer is the parent's sequencer.
 
 ### Expert: what `start(null)` changes, and what it does not
@@ -663,12 +820,59 @@ To keep other traffic off an agent while a multi-item scenario runs, the virtual
 - **Children must be started with `this` as parent.** A sequencer blocks every request whose sequence is neither the lock holder nor one of its descendants (`is_blocked()` and `is_child()` in `uvm_sequencer_base.svh`). A child started without a parent is *not* a descendant, so it waits behind its own parent's lock while the parent waits in `c.start()`: a deadlock that ends only at `PH_TIMEOUT`.
 - When locks and grabs are granted relative to queued requests is taught, with the uvm-core details, in [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration).
 
+<SequenceDiagram
+  title="A lock on cfg_sqr, with and without this as the child's parent"
+  caption="The same lock(cfg_sqr) helps or deadlocks depending on one argument. cfg_sqr blocks every request whose sequence is neither the lock holder nor one of its descendants (is_blocked() and is_child() in uvm-core 2020.3.1, uvm_sequencer_base.svh)."
+  participants={[
+    { id: "vseq", label: "vseq", sublabel: "soc_vseq", kind: "sequence" },
+    { id: "c", label: "c", sublabel: "cfg_seq", kind: "sequence" },
+    { id: "sqr", label: "cfg_sqr", sublabel: "agent sequencer", kind: "sequencer" }
+  ]}
+  messages={[
+    { kind: "divider", label: "c started with this as parent" },
+    { from: "vseq", to: "sqr", label: "lock(cfg_sqr)" },
+    { kind: "return", from: "sqr", to: "vseq", label: "lock granted (at the next arbitration)" },
+    { from: "vseq", to: "c", label: "c.start(cfg_sqr, this)" },
+    { from: "c", to: "sqr", label: "start_item(req)" },
+    { kind: "note", from: "c", to: "sqr", label: "is_blocked(c) is 0: c is a descendant of the lock holder" },
+    { kind: "return", from: "sqr", to: "c", label: "granted: C1, then C2" },
+    { kind: "return", from: "c", to: "vseq", label: "c.start() returns" },
+    { from: "vseq", to: "sqr", label: "unlock(cfg_sqr)" },
+    { kind: "divider", label: "c started with no parent" },
+    { from: "vseq", to: "sqr", label: "lock(cfg_sqr)" },
+    { kind: "return", from: "sqr", to: "vseq", label: "lock granted (at the next arbitration)" },
+    { from: "vseq", to: "c", label: "c.start(cfg_sqr)" },
+    { from: "c", to: "sqr", label: "start_item(req)", tone: "error" },
+    { kind: "note", from: "c", to: "sqr", label: "is_blocked(c) is 1: c is neither the lock holder nor its descendant, so its request waits", tone: "error" },
+    { kind: "note", from: "vseq", to: "sqr", label: "vseq waits in c.start(), c waits for vseq's unlock(): a deadlock until UVM_FATAL [PH_TIMEOUT]", tone: "error" }
+  ]}
+/>
+
 ### Expert: handshake order is not pin order
 
 Sequential `start()` calls order *handshakes*: `d.start()` begins after the configuration driver's last `item_done()` (§14.2.6.3). That is "the DUT is configured" only if three things hold:
 - **The driver calls `item_done()` after the transfer is complete.** A driver that uses `get()` instead of `get_next_item()` completes the handshake as soon as it takes the item ([The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake)); a pipelined driver calls `item_done()` when it accepts the next request, not when the write's response returns.
 - **The write takes effect at once in the DUT.** Some configuration needs a response, a settling time or a "ready" status bit. Then `cfg_seq` must wait for it (read the status back, or collect the response) before its `body()` ends.
 - **The checker watches the pins, not the sequences.** An ordering checker fed by the sequences passes even when the bus reordered the transfers. Feed it from the monitors, as the [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) does.
+
+<TimingDiagram
+  title="A get()-then-drive configuration driver: handshakes in order, pins overlapping"
+  caption="The bench's timings (20 ns per write, 10 ns per payload), but cfg_driver takes each item with seq_item_port.get(req), which in uvm-core 2020.3.1 calls item_done() at once (uvm_sequencer::get() in uvm_sequencer.svh), and only then spends 20 ns writing it. A column is 10 ns. soc_vseq is unchanged, yet D1 reaches the data pins at 20 ns while C2 is still being written (highlight)."
+  edges={6}
+  signals={[
+    { name: "10 ns", kind: "clock" },
+    { name: "cfg pins", kind: "bus", values: ["idle", "C1", "C1", "C2", "C2", "idle"] },
+    { name: "data pins", kind: "bus", values: ["idle", "idle", "idle", "D1", "D2", "D3"] }
+  ]}
+  highlights={[
+    { from: 2, to: 4, tone: "fail", label: "20 to 40 ns: C2 and data share the pins" }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", label: "0 ns: get() takes C1 and completes its handshake at once, so finish_item() for C1 returns at 0 ns", short: "0" },
+    { edge: 2, tone: "info", label: "20 ns: get() takes C2 and completes its handshake at once, so cfg_seq's body() ends, c.start() returns and d.start() begins", short: "20" },
+    { edge: 3, tone: "fail", label: "D1 is on the data pins while C2 is still being written: a sequence-fed ordering checker passes, a monitor-fed one fails", short: "D1" }
+  ]}
+/>
 
 **Interview angle:** "The ordering check passes, but the DUT still drops the first packet. Where do you look?" At what `item_done()` means in the configuration driver, and at what the checker observes.
 
@@ -681,6 +885,13 @@ Sequential `start()` calls order *handshakes*: `d.start()` begins after the conf
   - after `sqr.stop_sequences()`, the sequencer also empties its request FIFO, so the driver must abandon the item *without* calling `item_done()`; calling it fires `UVM_FATAL [SQRBADITMDN]`.
   The handshake lesson's "killed and stopped sequences" item and the arbitration lesson's "locks, killed processes and cleanup" item cover the details.
 - **`disable fork` versus `kill()`.** `disable fork` ends processes (IEEE 1800-2023 §9.6.3); `kill()` ends a sequence and removes its requests and locks from the sequencer. Prefer `kill()` for sequences, and keep any `disable fork` inside an isolation wrapper.
+
+**Mid-item kills at one glance** (the two rules of the "Mid-item kills" bullet above):
+
+| Stopped with | The item the driver holds | The driver's rule | If the driver gets it wrong |
+|---|---|---|---|
+| `seq.kill()` | stays in the request FIFO; the sequencer still expects `item_done()` | finish or cut short the item, then call `item_done()`; any response is dropped with a warning | without `item_done()`, the next `get_next_item()` reports "Get_next_item called twice" and returns the same stale item |
+| `sqr.stop_sequences()` | gone: the sequencer empties its request FIFO | abandon the item without calling `item_done()` | calling `item_done()` fires `UVM_FATAL [SQRBADITMDN]` |
 
 ### Expert: virtual sequences at scale
 
@@ -890,6 +1101,24 @@ In `soc_test::run_phase`, write `soc_vseq2 vseq = soc_vseq2::type_id::create("vs
 
 **Predicted log** (illustrative): C1 at 0, C2 at 20; then at 40 both D1 and s's first item (named C1 again, because `cfg_seq` names its items C1 and C2); D2 at 50, D3 at 60; s's C2 at 60; `TEST` at 80 ns. Phase 2 ends at 80 ns, when `s` finishes (40 + 2 × 20), well inside the 100 ns watchdog, which `disable fork` then kills.
 
+<TimingDiagram
+  title="Kata: the predicted log as a waveform"
+  caption="A column is 10 ns. Phase 1 (C1, C2) runs from 0 to 40 ns; phase 2 runs d on data_sqr and s on cfg_sqr together from 40 ns. The highlight is the watchdog's window: started at 40 ns, it would fire at 140 ns. Phase 2 ends at 80 ns when s finishes, so join_any returns, disable fork kills the watchdog and the test prints TEST (marker 80)."
+  edges={9}
+  signals={[
+    { name: "10 ns", kind: "clock" },
+    { name: "cfg_drv", kind: "bus", values: ["idle", "C1", "C1", "C2", "C2", "s.C1", "s.C1", "s.C2", "s.C2"] },
+    { name: "data_drv", kind: "bus", values: ["idle", "idle", "idle", "idle", "idle", "D1", "D2", "D3", "idle"] }
+  ]}
+  highlights={[
+    { from: 4, to: 8, tone: "info", label: "watchdog running from 40 ns" }
+  ]}
+  markers={[
+    { edge: 4, tone: "info", label: "40 ns: c.start() returns; phase 2 starts d, s and the watchdog", short: "40" },
+    { edge: 8, tone: "pass", label: "80 ns: s finishes, phase 2 ends, disable fork kills the watchdog, body() returns and the test prints TEST", short: "80" }
+  ]}
+/>
+
 **Why the shape.** The inner `fork…join` is the "both must finish" rule. The `join_any` races it against the watchdog. The outer `fork begin … end join` gives `disable fork` its own parent process, so it can only reach the watchdog and phase 2, never a background sequence started earlier in `body()` (IEEE 1800-2023 §9.6.3). Using `c` again for the status reads instead of a new `s` would fail with `UVM_FATAL [SEQ_NOT_DONE]` only if `c` were still running; creating a new object keeps the two runs independent and clearly named in the log.
 
 </details>
@@ -898,6 +1127,52 @@ In `soc_test::run_phase`, write `soc_vseq2 vseq = soc_vseq2::type_id::create("vs
 
 - **The dispatch explorer.** On the [next page](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer), keep the data handle wired and predict D1's start time and the end of the run for all three dispatch styles before you run each one. Compare your answers with the waveform on this page.
 - **The lab.** The [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) asks you to write a configure-before-data virtual sequence and prove the order with a self-check.
+
+<VisualRecap
+  title="Order comes from body(), and nothing else"
+  rule="start() returns only when its child has finished, so two start() calls in a row are the only one of the four patterns that orders the agents; fork…join waits for every branch, join_any for the first, and join_none for none."
+  code={`c.start(cfg_sqr, this);   // returns after C2's item_done()
+d.start(data_sqr, this);  // so D1 starts at 40 ns`}
+  mistake="Expecting fork…join to keep the order (D1 then runs at 0 ns, during configuration), or fork…join_none to keep the test alive (the run then ends at 0 ns)."
+  inTestbench="The top virtual sequence of every multi-agent test: the test copies the handles (or uses a virtual sequencer), objects around vseq.start(), and starts every child with this as its parent."
+>
+  <svg viewBox="0 0 340 160" role="img" aria-label="Four mini timelines with the running example, 2 configuration writes of 20 ns and 3 payloads of 10 ns. In order: configuration 0 to 40 ns, data 40 to 70 ns, D1 at 40, body() returns at 70. fork join: configuration 0 to 40, data 0 to 30, D1 at 0, body() returns at 40. join_any: both run from 0, body() returns and the run ends at 30 with C2 half written. join_none: the run ends at 0 ns before any item completes, so no D1 time is shown, and body() returns at 0." className="text-foreground" style={{ width: "100%", maxWidth: 380 }}>
+    <g fill="currentColor" fontSize="10">
+      <text x="4" y="10">top bar: cfg items, bottom bar: data items</text>
+      <text x="4" y="23">tick: body() returns</text>
+      <text x="258" y="23">D1 / body() ns</text>
+      <text x="4" y="45">in order</text>
+      <text x="4" y="73">fork…join</text>
+      <text x="4" y="101">join_any</text>
+      <text x="4" y="129">join_none</text>
+      <text x="258" y="45">40 / 70</text>
+      <text x="258" y="73">0 / 40</text>
+      <text x="258" y="101">0 / 30</text>
+      <text x="258" y="129">– / 0</text>
+      <text x="90" y="129">run ends at 0 ns</text>
+      <text x="160" y="101">ends at 30 ns</text>
+      <text x="82" y="156" textAnchor="middle">0</text>
+      <text x="154" y="156" textAnchor="middle">30</text>
+      <text x="178" y="156" textAnchor="middle">40</text>
+      <text x="250" y="156" textAnchor="middle">70 ns</text>
+    </g>
+    <g fill="currentColor">
+      <rect x="82" y="32" width="96" height="7" fillOpacity="0.3" />
+      <rect x="178" y="42" width="72" height="7" fillOpacity="0.8" />
+      <rect x="82" y="60" width="96" height="7" fillOpacity="0.3" />
+      <rect x="82" y="70" width="72" height="7" fillOpacity="0.8" />
+      <rect x="82" y="88" width="72" height="7" fillOpacity="0.3" />
+      <rect x="82" y="98" width="72" height="7" fillOpacity="0.8" />
+    </g>
+    <g fill="none" stroke="currentColor" strokeWidth="1.5">
+      <line x1="250" y1="29" x2="250" y2="52" />
+      <line x1="178" y1="57" x2="178" y2="80" />
+      <line x1="154" y1="85" x2="154" y2="108" />
+      <line x1="82" y1="113" x2="82" y2="136" />
+      <line x1="82" y1="144" x2="250" y2="144" strokeWidth="1" strokeOpacity="0.5" />
+    </g>
+  </svg>
+</VisualRecap>
 
 ### Flashcards
 

@@ -18,6 +18,15 @@ sources:
 - **Why it matters:** In the [test layers of an SoC plan](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index), the same use case is usually written several times: as a UVM virtual sequence for the subsystem bench, as a firmware C test for SoC simulation, and again for the lab bench on silicon. Each copy drifts. PSS removes the copies of the *scenario*, but it adds a tool, a model and a realization layer someone must own, so the strategy has to say where it pays and where it does not.
 - **The Analogy:** A PSS model is a musical score, and each platform is a different ensemble: a full studio orchestra (simulation, where every signal is visible), a touring band (emulation) and a street quartet (silicon). The score is written once; an arranger writes each ensemble's parts once (the realization layer); the conductor (the PSS tool) decides who plays what, and when. *Where it breaks:* a score never says whether the performance was right, so every platform needs its own plan for checking. And the smallest ensemble cannot play every part: silicon has no scoreboard, no backdoor access and no waveform, so some use cases are only partly portable.
 
+**The analogy at a glance.**
+
+| In the analogy | In an SoC PSS flow | Where it holds, and where it breaks |
+|---|---|---|
+| the score, written once | the PSS model: the use cases | breaks (see above): no verdict, so checking is planned per platform |
+| the arranger, who writes each ensemble's parts once | the realization layer, written once per platform family | holds |
+| the conductor, who decides who plays what, and when | the PSS tool, which solves the scenario and generates the test | holds |
+| the ensembles: studio orchestra, touring band, street quartet | the platforms: simulation, emulation, silicon | breaks (see above): silicon cannot play every part |
+
 **You will be able to:**
 1. Explain which layer of an SoC test a PSS tool generates (the scenario layer) and which layers stay hand-written: the UVM environment and its sequences, the firmware driver and hardware-abstraction layer, and the checks.
 2. Plan how one SoC use case runs on subsystem simulation, SoC simulation, emulation and silicon: the realization each platform needs, what executes each action, and which checks still exist on each.
@@ -40,6 +49,33 @@ This page also assumes [E-PSS-1: Portable Stimulus Standard](/curriculum/T4_Expe
 - **Hardware-abstraction layer (HAL) and driver:** the C functions firmware uses to program a block, such as `dma_copy()`. At SoC level they are usually the product's own driver code.
 - **Bare metal:** C code that runs directly on the chip's processor with no operating system. **Post-silicon** (or silicon validation) means tests run on the manufactured chip in the lab.
 - **Executor:** in PSS 3.0, the agent that actually executes an action's code at run time: a processor core, or a bus-functional model or testbench agent that the tool can drive (§24.6). It is the main PSS idea this page adds to E-PSS-1, because it only matters once a scenario spans a whole chip (Push Further also introduces address spaces and registers).
+
+Here is where most of those words sit in the model this page builds in Make It Work. Keep the picture in mind when you reach the code: every box is a name in it.
+
+<ArchitectureDiagram
+  title="Where the words live: the Make It Work model"
+  cellWidth={130}
+  gapX={48}
+  spreadAnchors={true}
+  caption="Read it top-down. pss_top is the root component. Its compound action dma_under_load_a has an activity that runs two dma_copy_a (c0 and c1) and one ddr_traffic_a in parallel. dma is the instance of the block team's component dma_subsys_c, which holds both atomic actions and the resource pool chan_p: pool [2] dma_chan_r, made available to its actions by bind chan_p *. Each dma_copy_a locks one channel, and that channel's instance_id (0 or 1) picks its DDR window. Below the model, the two realization packages add exec templates to the same actions with extend action: dma_real_c for the C target (it calls dma_driver.h) and dma_real_sv for the SystemVerilog target (it starts UVM sequences). Each generated test uses one of them. Dotted arrows: traversal (do) and the resource claim (lock); plain lines labelled extend: a package adding to existing actions."
+  nodes={[
+    { id: "top", label: "pss_top", sublabel: "root component", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "ula", label: "dma_under_load_a", sublabel: "compound: parallel activity", kind: "generic", col: 0, row: 0, colSpan: 2 },
+    { id: "dma", label: "dma: dma_subsys_c", kind: "generic", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
+    { id: "traffic", label: "ddr_traffic_a", sublabel: "atomic action", kind: "generic", col: 0, row: 1 },
+    { id: "copy", label: "dma_copy_a", sublabel: "atomic action", kind: "generic", col: 1, row: 1 },
+    { id: "chan", label: "chan_p", sublabel: "pool [2] dma_chan_r", kind: "generic", col: 1, row: 2, badge: "resource" },
+    { id: "realc", label: "dma_real_c", sublabel: "package: C templates", kind: "generic", col: 0, row: 3 },
+    { id: "realsv", label: "dma_real_sv", sublabel: "package: SV templates", kind: "generic", col: 1, row: 3 }
+  ]}
+  edges={[
+    { from: "ula", to: "traffic", style: "control", label: "do", via: [[0.5, 1]] },
+    { from: "ula", to: "copy", style: "control", label: "do c0, c1" },
+    { from: "copy", to: "chan", style: "control", label: "lock" },
+    { from: "realc", to: "dma", style: "structural", label: "extend" },
+    { from: "realsv", to: "dma", style: "structural", label: "extend" }
+  ]}
+/>
 
 Section numbers below (§) are from **Accellera PSS 3.0** (August 2024) unless they name another standard.
 
@@ -89,9 +125,21 @@ Before you read the caption, predict: in the picture below, which boxes does the
 
 **What the picture shows.** The tool writes only the middle row: the scenario layer, which says which action runs when, on which channel, with which values. Everything that touches hardware stays hand-written and is written **once per platform family**, not once per test: one set of UVM sequences for the simulation bench, one C driver for everything that runs on the CPU. That is the whole economic argument. A scenario library of 200 use cases needs 200 scenario actions in the model, but only two realizations of `dma_copy_a`. (The emulation row assumes the processor runs the test; a bench made acceleration-ready, as in [E-EMU-1](/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index), could run the SystemVerilog target there instead.)
 
-**The two mistakes everyone makes here.**
-- *"PSS replaces our UVM environment."* The generated SystemVerilog is a sequence that starts your sequences on your agents. Agents, monitors, scoreboards, the register model and coverage are all still yours, and at SoC level they matter more, not less.
-- *"Portable means it runs everywhere for free."* Portable means the *scenario* is shared. Each platform still needs its realization and its own checking, and a use case that depends on simulation-only abilities (backdoor memory loads, forcing an internal signal) is not portable to silicon at all.
+**Two claims to test.** You will hear both on any SoC program. Decide whether each is true, using the picture, before you open its answer.
+
+<details>
+<summary>Claim 1: "PSS replaces our UVM environment." True or false?</summary>
+
+False. It is the first of the two mistakes everyone makes here. The generated SystemVerilog is a sequence that starts your sequences on your agents. Agents, monitors, scoreboards, the register model and coverage are all still yours, and at SoC level they matter more, not less.
+
+</details>
+
+<details>
+<summary>Claim 2: "Portable means it runs everywhere for free." True or false?</summary>
+
+False. It is the second mistake. Portable means the *scenario* is shared. Each platform still needs its realization and its own checking, and a use case that depends on simulation-only abilities (backdoor memory loads, forcing an internal signal) is not portable to silicon at all.
+
+</details>
 
 ### From block to SoC: the model grows like the environment does
 
@@ -133,6 +181,53 @@ The scenario is shared; the evidence is not. The table is the practitioner's ver
 | SoC simulation | C, compiled into the boot image | the RTL CPU running the generated test and the product driver | the C test's own checks (in the SoC build, `test_fail()` writes FW_FAIL to the mailbox), plus the **passive** bench's monitors, scoreboards and assertions | speed: every cycle of the CPU is simulated |
 | Emulation / FPGA | the same C | the CPU in the emulated or prototyped design | the C checks, plus whatever the platform can capture | most internal visibility; scoreboards only if the bench was made acceleration-ready |
 | Silicon | the same C | the manufactured CPU | the C checks only | everything except what software can read |
+
+Picture the two simulation benches before you read the consequences. Look for the same thing in each: an active sequencer that the SystemVerilog target's sequences could be started on.
+
+<ArchitectureDiagram
+  title="Subsystem bench: the SystemVerilog target has an active sequencer"
+  cellWidth={150}
+  gapX={64}
+  caption="The generated virtual sequence starts its sequences on cpu_sqr, the sequencer of the CPU BFM, an active AXI master agent. The BFM's writes cross the interconnect and the AXI-to-APB bridge to the DMA's APB register port. The DMA's APB agent is passive: its monitor only watches, and its analysis port feeds the register predictor. The scoreboards on the AXI side are left out of the picture. Solid arrows: data; dotted arrow: start(); plain line: observation."
+  nodes={[
+    { id: "vseq", label: "generated vseq", sublabel: "SystemVerilog target", kind: "sequence", col: 0, row: 0 },
+    { id: "cpu", label: "CPU BFM", sublabel: "active AXI master agent", kind: "agent", col: 1, row: 0, state: "active", badge: "cpu_sqr" },
+    { id: "dma", label: "DMA engine", sublabel: "APB register port", kind: "dut", col: 0, row: 1 },
+    { id: "ic", label: "interconnect", sublabel: "+ AXI-to-APB bridge", kind: "dut", col: 1, row: 1 },
+    { id: "apb", label: "APB agent", sublabel: "passive: monitor only", kind: "monitor", col: 0, row: 2 },
+    { id: "pred", label: "reg predictor", sublabel: "updates the mirror", kind: "predictor", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "vseq", to: "cpu", style: "control", label: "start()" },
+    { from: "cpu", to: "ic", style: "data", label: "AXI" },
+    { from: "ic", to: "dma", style: "data", label: "APB" },
+    { from: "dma", to: "apb", style: "structural", label: "watches APB" },
+    { from: "apb", to: "pred", style: "data", label: "ap" }
+  ]}
+/>
+
+<ArchitectureDiagram
+  title="SoC bench: the RTL CPU drives, and cpu_sqr was never built"
+  cellWidth={150}
+  gapX={64}
+  caption="The RTL CPU sits where the CPU BFM was and runs the generated C test with the product driver; its register writes reach the DMA through the interconnect and the bridge (not drawn). No agent drives that port, so cpu_sqr was never built and the generated virtual sequence has nothing to start its sequences on: run the C target here. The passive APB monitor feeds the mailbox decoder, which reports the firmware's FW_PASS or FW_FAIL, and the register predictor, which keeps the mirror following the firmware's writes. Solid arrows: data; dotted arrow: start(); plain line: observation."
+  nodes={[
+    { id: "vseq", label: "generated vseq", sublabel: "do not run it here", kind: "sequence", col: 0, row: 0, state: "dim" },
+    { id: "sqr", label: "cpu_sqr", sublabel: "never built: null", kind: "sequencer", col: 1, row: 0, state: "error" },
+    { id: "dma", label: "DMA engine", sublabel: "APB register port", kind: "dut", col: 0, row: 1 },
+    { id: "cpu", label: "RTL CPU", sublabel: "generated C + dma_driver", kind: "dut", col: 1, row: 1 },
+    { id: "apb", label: "APB agent", sublabel: "passive: monitor only", kind: "monitor", col: 0, row: 2 },
+    { id: "mbx", label: "mbx_decoder", sublabel: "FW_PASS or FW_FAIL", kind: "subscriber", col: 1, row: 2 },
+    { id: "pred", label: "reg predictor", sublabel: "follows firmware writes", kind: "predictor", col: 0, row: 3 }
+  ]}
+  edges={[
+    { from: "vseq", to: "sqr", style: "control", label: "start()" },
+    { from: "cpu", to: "dma", style: "data", label: "writes" },
+    { from: "dma", to: "apb", style: "structural", label: "watches APB" },
+    { from: "apb", to: "mbx", style: "data", label: "ap" },
+    { from: "apb", to: "pred", style: "data", label: "ap" }
+  ]}
+/>
 
 Three consequences for the plan:
 - **The C self-check is the only check that survives to silicon.** Write it in the C realization of every action that must be checked on silicon (the `mem_equal()` in Make It Work), and make the simulation scoreboards check the same rule, so a pass means the same thing on every platform. In simulation the scoreboards add what software cannot see: protocol, routing, ordering and interrupt timing.
@@ -179,8 +274,24 @@ PSS is a cost: a tool licence, a model, a realization someone owns, and debuggin
 | Reset in the middle of a transfer, error injection by forcing signals | UVM in simulation ([A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index)) | depends on simulation-only control; not portable to silicon |
 
 **Two worked decisions.** Before you read each answer, decide it yourself from the table: how many platforms, how much of the cost is the scenario layer, and who would own the realizations?
-- *A peripheral subsystem whose tests run only in simulation, with an existing UVM bench and twenty directed-random scenarios.* No PSS. With one platform the multiplier is 1, and the tool, model and training are pure cost.
-- *An application SoC whose use-case library (boot, DMA under load, low-power entry) must run in SoC simulation, on the emulator and on first silicon, owned by one system-validation team.* PSS for the use-case and concurrency categories only. The block teams keep UVM; the system team owns the model, the C realization is the product driver, and the subsystem team owns the SystemVerilog realization of each action it contributes.
+
+**Decision 1.** *A peripheral subsystem whose tests run only in simulation, with an existing UVM bench and twenty directed-random scenarios.*
+
+<details>
+<summary>Answer to decision 1</summary>
+
+No PSS. With one platform the multiplier is 1, and the tool, model and training are pure cost.
+
+</details>
+
+**Decision 2.** *An application SoC whose use-case library (boot, DMA under load, low-power entry) must run in SoC simulation, on the emulator and on first silicon, owned by one system-validation team.*
+
+<details>
+<summary>Answer to decision 2</summary>
+
+PSS for the use-case and concurrency categories only. The block teams keep UVM; the system team owns the model, the C realization is the product driver, and the subsystem team owns the SystemVerilog realization of each action it contributes.
+
+</details>
 
 ### Pitfalls and misconceptions
 
@@ -191,6 +302,33 @@ PSS is a cost: a tool licence, a model, a realization someone owns, and debuggin
 - **"Resources are passed between actions as inputs."** Data flows between actions; resources such as DMA channels are claimed with `lock` or `share` (§14.2). At SoC level, a missing claim lets the tool schedule two copies on one channel.
 - **"Put the C and SV templates side by side in each action."** In one scope, exec blocks of the same kind merge into one block, which maps to at most one language (§22.1.1). The standard puts each language's templates in its own package, never used in the same test (§22.5.1). A tool may accept the side-by-side form, but that is tool behaviour.
 - **Running the SystemVerilog target at SoC level.** Its sequences need the CPU BFM's sequencer, and the SoC bench never built one: the RTL CPU drives that port, so any agent left there is passive. It does not fail cleanly: a sequence started on a null sequencer runs on its parent's sequencer instead (uvm-core 2020.3.1, `uvm_sequence_item::set_item_context`), here the virtual sequencer. A child sequence that declares `p_sequencer` then stops with `UVM_FATAL [DCLPSQ]`; one that does not waits forever in `start_item()`, because no driver pulls from the virtual sequencer, until the phase timeout.
+
+The last pitfall, step by step. It follows the Accellera reference implementation, uvm-core 2020.3.1, because the fallback to the parent's sequencer is an implementation detail you meet in the log, not something this page cites from the standard.
+
+<SequenceDiagram
+  title="The SystemVerilog target at SoC level: two ways to fail"
+  columnWidth={130}
+  caption="Order of events top to bottom; the notes spanning cp and vsqr are steps inside cp. In uvm-core 2020.3.1, uvm_sequence_base::start() calls set_item_context(), which takes the parent sequence's sequencer when the sequencer argument is null; set_sequencer() then calls m_set_p_sequencer(). A child that declares p_sequencer (the uvm_declare_p_sequencer macro) fails the $cast there and stops with UVM_FATAL [DCLPSQ] (case A). A child that does not declare it reaches start_item(), which waits for a grant from the virtual sequencer; no driver pulls from it, so the run hangs until the phase timeout (case B). Had the template passed no parent either, a child that does not declare p_sequencer would reach start_item() with no sequencer at all and report UVM_FATAL [SEQ]."
+  participants={[
+    { id: "vseq", label: "vseq", sublabel: "generated virtual sequence", kind: "sequence" },
+    { id: "cp", label: "cp", sublabel: "dma_copy_seq", kind: "sequence" },
+    { id: "vsqr", label: "vsqr", sublabel: "virtual sequencer, no driver", kind: "sequencer" }
+  ]}
+  messages={[
+    { kind: "divider", label: "SoC bench: the RTL CPU replaced the CPU BFM" },
+    { kind: "note", from: "vseq", to: "vsqr", label: "so p_sequencer.cpu_sqr is null" },
+    { from: "vseq", to: "cp", label: "cp.start()" },
+    { kind: "note", from: "vseq", to: "cp", label: "cp.start(p_sequencer.cpu_sqr, this): the sequencer argument is null" },
+    { kind: "note", from: "cp", to: "vsqr", label: "in cp, set_item_context(): no sequencer given, so take the parent's: vsqr" },
+    { kind: "divider", label: "case A: dma_copy_seq declares p_sequencer" },
+    { kind: "note", from: "cp", to: "vsqr", tone: "error", label: "in cp, m_set_p_sequencer(): $cast of vsqr to the CPU BFM's sequencer type fails: UVM_FATAL [DCLPSQ]" },
+    { kind: "divider", label: "case B: no p_sequencer declared, so body() runs" },
+    { from: "cp", to: "vsqr", label: "start_item(): wait for a grant" },
+    { kind: "note", from: "vsqr", label: "no driver pulls items from vsqr, so the grant never comes" },
+    { kind: "divider", label: "the phase timeout expires" },
+    { kind: "note", from: "vseq", to: "vsqr", tone: "error", label: "UVM_FATAL [PH_TIMEOUT]: the run ends with no copy started" }
+  ]}
+/>
 
 ### Recap
 
@@ -321,11 +459,50 @@ What each piece guarantees, and why it matters at SoC level:
 - **The two realizations do the same thing.** Both program the same channel with the same values. Only the C one checks in code; in simulation the scoreboards check. That split is a decision recorded in the strategy, not an accident.
 - **Almost nothing here is SoC-only syntax.** Everything except the realization packages (`package`, `extend action`) is taught in [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index). What makes it an SoC model is the content: SoC address windows, SoC instance counts and a realization that is the product driver.
 
+**See the locks in the PSS intent map** (the first bullet) in [E-PSS-1's "Try it: what does the tool complete?" section](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index#try-it-what-does-the-tool-complete), whose model also has a `chan_p` pool and a `dma_copy_a` that locks a channel. Pick **Two DMA copies in parallel, pool [2]** and note which channel each copy gets; then pick **Two DMA copies in parallel, pool [1]** and read what the tool reports.
+
+**The wrap in numbers** (the second bullet, the DDR windows). Take channel 0 and a solution the other constraints allow: `dst` = 0xFFFFFF00 (at least 0x80000000, and a multiple of 64) and `len` = 0x200 (512 bytes, in range and a multiple of 64). Compare the two ways of writing the upper bound:
+
+| Step | Bound on `dst + len` (unsafe) | Bound on `dst` itself (the model) |
+|---|---|---|
+| Constraint for channel 0 | `dst + len <= 0x80100000` | `dst <= 0x80100000 - len` |
+| Evaluate the arithmetic in 32 bits | 0xFFFFFF00 + 0x200 = 0x1_0000_0100; the carry out of bit 31 is lost, leaving 0x00000100 | 0x80100000 − 0x200 = 0x800FFE00 |
+| Compare | `0x00000100 <= 0x80100000` is true | `0xFFFFFF00 <= 0x800FFE00` is false |
+| Result | legal: the tool may pick it, and the copy runs past 0xFFFFFFFF, outside every window | rejected: every legal `dst` keeps the whole copy inside the window |
+
 **Run it** (tool-dependent: no vendor switches are shown, and no open-source PSS tool was verified for this page):
 1. **Generate the C test.** Give the tool `dma_soc.pss` and `dma_real_c.pss`, the root action `pss_top::dma_under_load_a` and a seed.
 2. **Build and run it on the CPU.** Compile the generated C with `dma_driver` into the boot image. Run SoC simulation, or load the same image on the emulator or the lab board.
 3. **Generate the SystemVerilog test.** Give the tool `dma_soc.pss` and `dma_real_sv.pss`, the same root action and the same seed. Whether that seed solves to the same schedule as step 1 is tool-dependent, so compare the two solved schedules. Compile the generated virtual sequence into the subsystem bench's test package, and run it.
 4. **Archive** the seed, the tool version, the model revision, the solved schedule and the image hash with every result (Push Further: reproducibility).
+
+<ArchitectureDiagram
+  title="Run it: one model and seed, two realization packages, two runs"
+  cellWidth={150}
+  gapX={64}
+  spreadAnchors={true}
+  caption="Left path, steps 1 and 2: the scenario library with the C package and a seed goes into the tool, which emits C; compiled with dma_driver into the boot image, the same image runs in SoC simulation, on the emulator or on the lab board. Right path, step 3: the same library with the SystemVerilog package and the same seed; the generated virtual sequence goes into the subsystem bench's test package. Compare the two solved schedules the tool reports, because whether one seed solves the same way for both packages is tool-dependent. Step 4: archive the identity of every run; the image hash applies to the C path, which has a boot image. Dashed arrows: the order of the steps."
+  nodes={[
+    { id: "inc", label: "dma_soc.pss", sublabel: "+ dma_real_c.pss + seed", kind: "generic", col: 0, row: 0 },
+    { id: "insv", label: "dma_soc.pss", sublabel: "+ dma_real_sv.pss + seed", kind: "generic", col: 1, row: 0 },
+    { id: "tool", label: "PSS tool", sublabel: "root action pss_top::dma_under_load_a", kind: "generic", col: 0, row: 1, colSpan: 2 },
+    { id: "genc", label: "generated C", sublabel: "+ dma_driver: boot image", kind: "generic", col: 0, row: 2 },
+    { id: "gensv", label: "generated vseq", sublabel: "in the test package", kind: "sequence", col: 1, row: 2 },
+    { id: "runc", label: "run on the CPU", sublabel: "SoC sim, emulator, board", kind: "dut", col: 0, row: 3 },
+    { id: "runsv", label: "subsystem sim", sublabel: "CPU BFM active", kind: "env", col: 1, row: 3 },
+    { id: "arch", label: "archive (step 4)", sublabel: "seed, tool version, model revision, solved schedule, image hash (C)", kind: "generic", col: 0, row: 4, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "inc", to: "tool", style: "causal", label: "step 1" },
+    { from: "insv", to: "tool", style: "causal", label: "step 3" },
+    { from: "tool", to: "genc", style: "causal", label: "emit C" },
+    { from: "tool", to: "gensv", style: "causal", label: "emit SV" },
+    { from: "genc", to: "runc", style: "causal", label: "step 2" },
+    { from: "gensv", to: "runsv", style: "causal", label: "step 3" },
+    { from: "runc", to: "arch", style: "causal", label: "keep" },
+    { from: "runsv", to: "arch", style: "causal", label: "keep" }
+  ]}
+/>
 
 **Expected output** (illustrative: a solved schedule as a PSS tool might report it, and the C the tool would paste for `c1` from `dma_real_c.pss`. Report format and chosen values are tool-dependent; template values are printed in decimal, §22.5.3.2):
 
@@ -344,7 +521,36 @@ Generated C for c1 (from exec body C):
     test_fail("dma copy mismatch");
 ```
 
-Check the solution against the model: `c1` holds channel 0, so its `dst` (0x80000400) lies in its window, 0x80000000 to 0x800FFFFF, and its copy writes 0x80000400 to 0x800004FF; `c0` holds channel 1 and writes 0x80100000 to 0x801003FF. In SoC simulation this test passes when the mailbox decoder reports FW_PASS and the bench ends with `UVM_ERROR :    0` and `UVM_FATAL :    0`; on silicon it passes when the test returns without calling `test_fail()`, reported however the lab harness reports it.
+**Predict, then check.** The channel with `instance_id` n owns the 1 MB DDR window that starts at 0x80000000 + 0x100000 × n. From the schedule above, which window does each copy write, which bytes does it write, and can the two copies overlap?
+
+<details>
+<summary>Check the solved schedule against the windows</summary>
+
+Check the solution against the model: `c1` holds channel 0, so its `dst` (0x80000400) lies in its window, 0x80000000 to 0x800FFFFF, and its copy writes 0x80000400 to 0x800004FF; `c0` holds channel 1 and writes 0x80100000 to 0x801003FF.
+
+<ArchitectureDiagram
+  title="Seed 17 on the DDR map"
+  cellWidth={150}
+  gapX={64}
+  caption="Each copy writes only inside its own channel's window, so the two copies cannot overlap and each mem_equal() check is meaningful. c1 on chan_p[0] writes 256 bytes, 0x8000_0400 to 0x8000_04FF; c0 on chan_p[1] writes 1024 bytes, 0x8010_0000 to 0x8010_03FF. Their sources in SRAM are 0x2000_0000 to 0x2000_00FF (c1) and 0x2000_3C40 to 0x2000_403F (c0). The background traffic loads the separate scratch window at DDR_SCRATCH_BASE, 0x8100_0000. Solid arrows: data written."
+  nodes={[
+    { id: "c1", label: "c1 on chan_p[0]", sublabel: "len=256", kind: "generic", col: 0, row: 0 },
+    { id: "w0", label: "ch0 window", sublabel: "0x8000_0000–0x800F_FFFF", kind: "generic", col: 1, row: 0, state: "ok" },
+    { id: "c0", label: "c0 on chan_p[1]", sublabel: "len=1024", kind: "generic", col: 0, row: 1 },
+    { id: "w1", label: "ch1 window", sublabel: "0x8010_0000–0x801F_FFFF", kind: "generic", col: 1, row: 1, state: "ok" },
+    { id: "tr", label: "ddr_traffic_a", sublabel: "bursts=12", kind: "generic", col: 0, row: 2 },
+    { id: "sc", label: "scratch window", sublabel: "from 0x8100_0000", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "c1", to: "w0", style: "data", label: "writes" },
+    { from: "c0", to: "w1", style: "data", label: "writes" },
+    { from: "tr", to: "sc", style: "data", label: "loads" }
+  ]}
+/>
+
+</details>
+
+In SoC simulation this test passes when the mailbox decoder reports FW_PASS and the bench ends with `UVM_ERROR :    0` and `UVM_FATAL :    0`; on silicon it passes when the test returns without calling `test_fail()`, reported however the lab harness reports it.
 
 ### How to bring a use case into the SoC strategy
 
@@ -394,6 +600,22 @@ Check the solution against the model: `c1` holds channel 0, so its `dst` (0x8000
 
 A real SoC test is rarely one program. Firmware on two CPU clusters, a testbench agent on an external port and a traffic generator on the interconnect may all take part in one use case. PSS 3.0 models this with **executors** (§24.6): an executor may be "an embedded processor core or HW thread in a bare-metal environment", "a BFM instantiated as a master on an interconnect of the DUT", or "a transactor, or testbench agent, connected to an I/O interface". Executors are grouped (`executor_group_c`), and an action claims one through an executor claim, an `executor_claim_s` field, optionally constrained by traits such as the CPU cluster (§24.6.1, §24.6.2.1). Executor and executor-group components are "strictly a test-realization artifact" (§24.6.1): they change where an action runs, not what the scenario means.
 
+<ArchitectureDiagram
+  title="An action claims an executor out of a group"
+  cellWidth={140}
+  gapX={64}
+  caption="Adapted from the standard's Examples 291 and 292: neither example puts an action and this hybrid group together (Example 292 uses the default trait type and a group named eg). my_hybrid_group_c is an executor_group_c parameterized by the trait type master_trait_s; its exec init_down adds four processor-core executors (cores[4], of my_core_executor_c) and two bus-VIP executors (bfms[2], of my_bus_vip_executor_c) with add_executor(). An action that declares a rand executor_claim_s field with the same trait type is matched to the nearest such group in the component tree above it, and assigned to one executor out of that group that satisfies the trait constraints (§24.6.2). The executors in one group are treated symmetrically. A testbench agent on an I/O interface can be an executor too (§24.6). Dotted arrow: the claim."
+  nodes={[
+    { id: "act", label: "an action", sublabel: "rand executor_claim_s<master_trait_s> ec", kind: "generic", col: 0, row: 0, colSpan: 2 },
+    { id: "grp", label: "my_hybrid_group_c", sublabel: "executor group", kind: "generic", col: 0, row: 1, colSpan: 2, container: true },
+    { id: "cores", label: "cores[4]", sublabel: "my_core_executor_c", kind: "generic", col: 0, row: 1 },
+    { id: "bfms", label: "bfms[2]", sublabel: "my_bus_vip_executor_c", kind: "generic", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "act", to: "grp", style: "control", label: "claim" }
+  ]}
+/>
+
 Two consequences for SoC strategy. First, without explicit claims, "PSS tools are free to determine the execution context" (§24.6.2), so a portable test can land on a different core on each platform; claim executors explicitly for use cases where the core matters (interrupt affinity, cache coherence). Second, executors do not limit concurrency: when parallel actions share one executor, "the PSS tool is responsible for employing the means to enable concurrent execution", such as cooperative multitasking (§24.6.2); procedural exec code can hand over control explicitly with the `yield;` statement that PSS 3.0 added (§22.7.14). How a tool coordinates C on the CPU with UVM sequences on the bench in one simulation, typically through a shared memory or mailbox channel, is **tool-dependent**; ask for it before you design mixed scenarios.
 
 ### Expert: address spaces and registers, and the second register model
@@ -402,15 +624,54 @@ PSS 3.0's core library can model SoC memory as **address spaces** made of region
 
 The trade-off is a second description of the memory map and the registers next to the UVM register model ([A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index)) and the firmware headers. Three hand-maintained copies of one map drift. Methodology, not standard: generate all of them from one register and memory-map source, and treat a mismatch between the PSS map and the UVM register model as a build error. Which formats a PSS tool imports is **tool-dependent**.
 
+<ArchitectureDiagram
+  title="One map source, three generated copies (methodology)"
+  cellWidth={108}
+  gapX={20}
+  spreadAnchors={true}
+  caption="A methodology, not a rule of PSS or UVM. One register and memory-map source generates all three descriptions: the PSS model's address spaces and reg_c registers (§24.7, §24.11), the UVM register model, and the firmware's C headers. The build compares the PSS map with the UVM register model and fails on any mismatch, so a change to the map cannot reach one copy without the others. Dashed arrows: generation; solid arrows: the maps sent to the comparison."
+  nodes={[
+    { id: "src", label: "map source", sublabel: "registers + memory map", kind: "generic", col: 0, row: 0, colSpan: 3 },
+    { id: "pss", label: "PSS model", sublabel: "reg_c, addr spaces", kind: "generic", col: 0, row: 1 },
+    { id: "ral", label: "UVM RAL", sublabel: "register model", kind: "reg", col: 1, row: 1 },
+    { id: "hdr", label: "C headers", sublabel: "firmware", kind: "generic", col: 2, row: 1 },
+    { id: "cmp", label: "build check", sublabel: "mismatch = build error", kind: "generic", col: 0, row: 2, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "src", to: "pss", style: "causal", label: "generate" },
+    { from: "src", to: "ral", style: "causal", label: "generate" },
+    { from: "src", to: "hdr", style: "causal", label: "generate" },
+    { from: "pss", to: "cmp", style: "data", label: "map" },
+    { from: "ral", to: "cmp", style: "data", label: "map" }
+  ]}
+/>
+
 ### Expert: coverage and closure evidence across platforms
 
 PSS 3.0 has **data coverage** (covergroups on model fields, Clause 18) and, new in 3.0, **behavioral coverage** (`cover` statements and monitors over the order of executed actions, Clause 19); [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index#expert-coverage-in-pss) shows both. At SoC level they answer "which use-case combinations did we run, and on which platform?", which is exactly what system-validation reviews ask. They do not answer "did the DUT behave?": that is the checks plus the DUT's functional coverage, traced to the verification plan.
 
 Report them side by side, never merged into one number. Whether a tool can merge PSS coverage across simulation, emulation and silicon runs, and how it obtains run-time results from silicon, is **tool-dependent**; the standard provides for sampling run-time values back into the model (§1.4), not for a particular database. A closure gate that reads "100% PSS behavioral coverage" without the linked checks repeats the "union of coverage" mistake at a higher level.
 
+**Four kinds of evidence, side by side.** Each answers a different question, so a closure review shows each one in its own column, per platform, and never adds them into one number.
+
+| Evidence | The question it answers | Where it comes from |
+|---|---|---|
+| PSS data coverage | which values of model fields were generated | covergroups on model fields (Clause 18) |
+| PSS behavioral coverage | which orders of executed actions happened, and on which platform | `cover` statements and monitors (Clause 19, new in 3.0) |
+| Checks | did the DUT behave correctly | the C self-checks on every platform; scoreboards and assertions in simulation |
+| DUT functional coverage traced to the plan | were the system's features exercised | the verification plan and the bench's coverage model |
+
 ### Expert: reproducibility and regression economics
 
 A failure in generated code is only debuggable if you can regenerate it. Archive, with every failing run: the model revision, the tool version, the seed, the solved schedule and, for C targets, the firmware image identity (a hash). PSS names three realization flows: no target-code generation (the tool drives existing environment APIs directly), code generated once per model, and code generated per test (§22.8, Table 25; [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index#expert-realization-flows-and-exec-kinds)). A per-test flow bakes the solved values into the test as constants, so the same image reproduces exactly on every platform. Flows that make choices while the test runs give more variety, but reproduce only with the same seed, model and tool version, and whether a tool can solve on the silicon target at all is tool-dependent. Choose per platform and write it into the regression plan.
+
+| Realization flow (§22.8) | What the tool produces | The solved values | To reproduce a failure, keep |
+|---|---|---|---|
+| No target-code generation | no target code: the tool exercises existing environment APIs directly (Table 25 lists only direct-mapped functions, §22.4, for this flow) | chosen while the test runs | the seed, the model revision and the tool version (whether that is enough is tool-dependent) |
+| Code generated once per model | code for the model's entity types, used to execute scenarios | supplied per scenario; how is tool-dependent | the seed, the model revision, the tool version and the generated code |
+| Code generated per test | dedicated target code for one scenario instance | baked into the test as constants | the generated test, or the image built from it, which reproduces on every platform |
+
+Flows and mechanisms from §22.8 Table 25; the last two columns are this page's methodology.
 
 Economics (methodology, illustrative): PSS saves effort roughly in proportion to scenarios × platforms and adds a fixed cost of tool, model and realization ownership. Plan regression tiers accordingly: a small set of portable use cases in every simulation smoke run, so that a realization break is found the day it happens rather than on first silicon.
 
@@ -423,7 +684,58 @@ Try each before you look anything up; the sections above hold the answers.
 - "What is an executor in PSS, and why does it matter for a multi-cluster SoC?"
 - "A tool datasheet says it implements IEEE P2851. What do you ask the vendor?"
 
+<details>
+<summary>Where each answer lives (open after you have tried them)</summary>
+
+1. Rewriting all block tests: [Which SoC scenarios belong in PSS](#which-soc-scenarios-belong-in-pss), with its two worked decisions.
+2. Passes in simulation, fails on silicon: the last row of [Debugging portable SoC tests](#debugging-portable-soc-tests).
+3. Where checking lives: [What each platform runs, and where checking lives](#what-each-platform-runs-and-where-checking-lives), and its three consequences for the plan.
+4. Executors: [Expert: executors, one scenario across cores and testbench agents](#expert-executors-one-scenario-across-cores-and-testbench-agents).
+5. IEEE P2851: the first bullet of [Pitfalls and misconceptions](#pitfalls-and-misconceptions).
+
+</details>
+
 ## Practice & Reinforce
+
+Before the quiz, the whole page at one glance: what is written once, what the tool generates, what is written once per platform family, and which checks exist where.
+
+<VisualRecap
+  title="Portable stimulus in an SoC plan"
+  rule="PSS writes the scenario layer once; the realization layer is written once per platform family, with one realization package per generated test; and the checks are planned per platform, because the C self-check is the only one that reaches silicon. Cite it as Accellera PSS 3.0 (August 2024), which has no IEEE number."
+  code={`exec body C = """
+  dma_copy({{chan.instance_id}}, {{src}}, {{dst}}, {{len}});
+  if (!dma_wait_irq({{chan.instance_id}}, DMA_TIMEOUT_US))
+    test_fail("dma completion interrupt missing");
+  if (!mem_equal({{src}}, {{dst}}, {{len}}))
+    test_fail("dma copy mismatch");
+""";`}
+  mistake="Treating PSS as a replacement for the UVM environment, or PSS coverage as SoC closure. The tool generates only the scenario layer, and its coverage says what ran, not whether the design behaved."
+  inTestbench="Subsystem simulation runs the SystemVerilog target on the CPU BFM's active sequencer. SoC simulation, emulation and silicon run the same C image on the CPU; in SoC simulation the passive bench watches, and the mailbox decoder reports the firmware's verdict. Pool sizes and DDR windows are SoC facts with an owner."
+>
+  <ArchitectureDiagram
+    title="Three tiers: written once, once per platform family, per platform"
+    cellWidth={130}
+    gapX={48}
+    spreadAnchors={true}
+    caption="Top: the scenario library, written once; the tool solves it and generates each test. Middle: one realization package per platform family; both packages are inputs to the tool next to dma_soc.pss, and each generated test is expanded from one package's templates. Bottom: where the checks live. Only the C self-check, inside the C package's templates, runs on silicon. The scoreboards and assertions belong to the simulation bench, not to a package: they check any simulation run, the SystemVerilog target in subsystem simulation and the C target in SoC simulation, and add protocol, routing, ordering and timing checks. Dashed arrows: generation and the templates each package supplies; plain lines: which checks run with each package's tests."
+    nodes={[
+      { id: "model", label: "dma_soc.pss", sublabel: "written once: the scenarios", kind: "generic", col: 0, row: 0, colSpan: 2, badge: "SoC facts" },
+      { id: "gen", label: "generated tests", sublabel: "the tool solves and emits", kind: "generic", col: 0, row: 1, colSpan: 2 },
+      { id: "realc", label: "dma_real_c.pss", sublabel: "once per family: C", kind: "generic", col: 0, row: 2 },
+      { id: "realsv", label: "dma_real_sv.pss", sublabel: "once per family: SV", kind: "generic", col: 1, row: 2 },
+      { id: "chkc", label: "C self-check", sublabel: "every platform, silicon", kind: "generic", col: 0, row: 3, state: "ok" },
+      { id: "chksv", label: "scoreboards", sublabel: "any simulation run", kind: "scoreboard", col: 1, row: 3 }
+    ]}
+    edges={[
+      { from: "model", to: "gen", style: "causal", label: "solve" },
+      { from: "realc", to: "gen", style: "causal", label: "C templates" },
+      { from: "realsv", to: "gen", style: "causal", label: "SV templates" },
+      { from: "realc", to: "chkc", style: "structural", label: "mem_equal()" },
+      { from: "realc", to: "chksv", style: "structural", label: "in SoC sim" },
+      { from: "realsv", to: "chksv", style: "structural", label: "bench checks" }
+    ]}
+  />
+</VisualRecap>
 
 ### Quiz
 

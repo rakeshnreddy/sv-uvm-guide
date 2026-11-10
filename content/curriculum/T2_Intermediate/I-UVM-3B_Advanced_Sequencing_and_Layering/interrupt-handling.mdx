@@ -20,6 +20,18 @@ sources:
 - **Why it matters:** Interrupts arrive at awkward times: in the middle of a burst, while another interrupt is being serviced, or a clock before the test wants to end. The classic escapes are all silent. One interrupt is serviced three times; a second interrupt is lost because nobody was listening; the recovery waits behind a hundred queued writes; or the service sequence keeps the test alive forever. Each of these looks like a DUT bug in the log.
 - **The Analogy:** A fire alarm and a crew with right of way in a busy corridor. The alarm (the interrupt) is logged in a book (the queue), the crew (the service sequence) reads the book, takes the corridor (`grab()`), resets the alarm (the clear write), and hands the corridor back (`ungrab()`); the normal foot traffic was only paused, not sent home. *Where it breaks:* a real alarm stops ringing when it is reset, but a **level** interrupt keeps "ringing" on every clock until the clear write lands, so a monitor that counts rings counts one fire many times. The crew also cannot push past someone already walking through the door (the item already on the bus) or someone who has already locked the corridor (a held `lock()`). And if nobody writes the alarms in a book, two alarms during one call become one.
 
+**The analogy at a glance.** Each row maps one part of the picture to its testbench piece, with the one point to remember about it; rows marked *Breaks* say where the picture stops being true.
+
+| In the analogy | In the testbench | What to remember |
+|---|---|---|
+| the fire alarm | the interrupt (`irq`) | *Breaks:* a level interrupt keeps "ringing" on every clock until the clear write lands, so a monitor that counts rings counts one fire many times |
+| the book of alarms | the queue | it must hold every alarm: with no book, two alarms during one call become one |
+| the crew | the interrupt service sequence | it runs for the whole test, reading the book one alarm at a time; while it holds the corridor, right of way is exclusive to it and its own children |
+| taking the corridor | `grab()` | *Breaks:* the crew cannot push past the item already on the bus, or past a held `lock()` |
+| resetting the alarm | the clear write | it is ordinary bus stimulus, sent as the crew's child inside the grab |
+| handing the corridor back | `ungrab()` | call it on every path, or the corridor stays closed to everyone |
+| foot traffic, paused but not sent home | background traffic | it needs no code to resume: its waiting request keeps its place in the queue |
+
 **You will be able to:**
 1. Write a monitor that publishes exactly one transaction per interrupt, and a non-blocking path from it to a sequence (`uvm_tlm_analysis_fifo`, or a subscriber that uses `try_put()`).
 2. Write an interrupt service virtual sequence and a recovery sequence that pre-empt background traffic with `grab()`/`ungrab()` and let it resume.
@@ -185,9 +197,36 @@ Two rules make this monitor safe:
 - **A new object for every interrupt.** The FIFO in step 2 stores the handle you pass to `write()`; it does not copy it. Reusing one `irq_tr` would make every queued entry point at the same object, which the next interrupt overwrites.
 - **Know your interrupt's kind.** Ask the DUT specification whether `irq` is a level or a pulse, and whether several sources share one line. Detect edges for a level, and check that a pulse is at least one clock wide, or the clocking block can miss it entirely.
 
+The three kinds of line side by side (the third is explained just below):
+
+| Kind of `irq` line | What the monitor must detect | The classic bug | The check to add |
+|---|---|---|---|
+| Level, one source | The rising edge of the sampled value (`irq && !prev_irq`) | The `iff` loop publishes once per clock while `irq` is high | `irq` falls after the clear write |
+| Pulse | Each edge at which `irq` is sampled 1 (one clock wide: the `iff` loop is correct here) | A pulse narrower than a clock can fall between two edges and be missed | The pulse is exactly one clock wide, as the spec defines it (wider: edge-detect it like a level) |
+| Level, several sources OR'd onto one line | The rising edge (the service routine then re-reads the status register after each clear) | A second source fires while the line is high: no new edge, so it is lost | Re-read the status register until nothing is pending; `irq` falls within N clocks of the clear write |
+
 **The limit of edge detection: shared lines.** Many DUTs OR several sources onto one level `irq`. If source 5 fires while source 3 still holds the line high, there is no new rising edge, and the edge detector publishes nothing for source 5. Duplicates are gone, but now an interrupt can be lost. Two fixes, often used together:
 - The service routine **reads the interrupt status register after each clear and loops until no bit is pending** (see [Expert: register-based service routines](#expert-register-based-service-routines)). The DUT's status register is then the real queue.
 - A check that `irq` falls within N clocks of the clear write. If it does not, something else is pending, and the service routine runs again.
+
+<TimingDiagram
+  title="Two sources on one level irq line: the second makes no new edge"
+  caption="The x-axis is the rising edges of clk. src3 and src5 are the DUT's internal pending bits for sources 3 and 5, not pins; irq is their OR. A 1 in edge_wr marks an edge at which the edge-detecting monitor calls ap.write(). It publishes once, for source 3; source 5 is found only because the service routine re-reads the status register."
+  edges={9}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "src3", kind: "bit", values: [0, 1, 1, 1, 1, 0, 0, 0, 0] },
+    { name: "src5", kind: "bit", values: [0, 0, 0, 1, 1, 1, 1, 0, 0] },
+    { name: "irq", kind: "bit", values: [0, 1, 1, 1, 1, 1, 1, 0, 0] },
+    { name: "edge_wr", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0, 0, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "edge 1: source 3 raises irq; the edge detector publishes one irq_tr", short: "new" },
+    { edge: 3, tone: "fail", label: "edge 3: source 5 fires while irq is already 1; no rising edge, nothing is published", short: "lost" },
+    { edge: 5, tone: "info", label: "edge 5: the clear for source 3 has taken effect, but irq stays 1; the re-read of the status register finds bit 5 set", short: "re-read" },
+    { edge: 7, tone: "pass", label: "edge 7: the clear for source 5 has taken effect; irq is sampled 0 at last", short: "clr" }
+  ]}
+/>
 
 ### Step 2: Queue it without blocking
 
@@ -213,6 +252,26 @@ endfunction
 ```
 
 A sequence holding a handle to `irq_fifo` takes entries with the blocking task `irq_fifo.get(tr)`, or polls with the function `irq_fifo.try_get(tr)`, which returns 0 when the FIFO is empty (§12.2.8.2).
+
+<SequenceDiagram
+  title="The zero-time path from the monitor to the service sequence"
+  caption="Everything on the monitor's side is a function call that returns at once: ap.write() calls irq_fifo's write(), which only does try_put(). The waiting happens on the other side, in svc's own process, inside the task get()."
+  participants={[
+    { id: "irq_mon", label: "irq_mon", kind: "monitor" },
+    { id: "irq_fifo", label: "irq_fifo", kind: "fifo" },
+    { id: "svc", label: "svc", kind: "sequence" }
+  ]}
+  messages={[
+    { from: "svc", to: "irq_fifo", label: "get(tr): a task; blocks while the FIFO is empty" },
+    { kind: "divider", label: "@(vif.mon_cb): irq sampled 1, was 0 at the last edge" },
+    { kind: "self", from: "irq_mon", label: "create a new irq_tr" },
+    { from: "irq_mon", to: "irq_fifo", label: "ap.write(tr) calls write(tr)" },
+    { kind: "self", from: "irq_fifo", label: "void'(try_put(tr))" },
+    { kind: "return", from: "irq_fifo", to: "irq_mon", label: "returns in zero time" },
+    { kind: "note", from: "irq_mon", to: "irq_fifo", label: "function side: no timing control, no task call (IEEE 1800-2023 §13.4)" },
+    { kind: "return", from: "irq_fifo", to: "svc", label: "get(tr) returns the entry; svc wakes", tone: "active" }
+  ]}
+/>
 
 **When you need policy, write a subscriber.** If interrupts must be counted, sampled for coverage, filtered or sorted by priority, put a `uvm_subscriber` between the monitor and the queue (§13.9). Its `write()` follows the same rule:
 
@@ -292,6 +351,26 @@ Three facts about this sequence decide whether the test ends correctly:
 - **It must not hold the test's objection.** Only the test (or the top stimulus) raises and drops the objection; the service sequence runs beside the stimulus. An **objection** is the vote that keeps the run phase alive ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
 - **Stop it on purpose.** Before the test drops its objection, wait until no recovery is in progress (`busy == 0`), then call `svc.kill()` (IEEE 1800.2-2020 §14.2.5.11). In uvm-core 2020.3.1, a sequence whose starting process is killed by the end of the run phase reports `UVM_WARNING [SEQPRTZMB]` and is then killed; that is read from the source and not confirmed by a simulation run ([Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) explains it). Calling `kill()` yourself avoids the question.
 
+<SequenceDiagram
+  title="The test's run phase: who holds the objection, and when svc stops"
+  caption="Read top to bottom; this is the order of irq_test's run_phase in Make It Work. Only the test raises and drops the objection. svc is forked and left running beside bg, and is stopped with kill() only after bg has finished and no recovery is in progress."
+  participants={[
+    { id: "test", label: "irq_test", kind: "test" },
+    { id: "svc", label: "svc", kind: "sequence" },
+    { id: "bg", label: "bg", kind: "sequence" }
+  ]}
+  messages={[
+    { kind: "self", from: "test", label: "phase.raise_objection(this)" },
+    { kind: "async", from: "test", to: "svc", label: "fork svc.start(null); join_none" },
+    { kind: "note", from: "svc", to: "bg", label: "svc loops forever: get(), service, busy back to 0. It never raises the objection." },
+    { from: "test", to: "bg", label: "bg.start(cfg_sqr)" },
+    { kind: "return", from: "bg", to: "test", label: "bg.start() returns: background traffic done" },
+    { kind: "self", from: "test", label: "wait (svc.busy == 0)" },
+    { from: "test", to: "svc", label: "svc.kill()", tone: "active" },
+    { kind: "self", from: "test", label: "phase.drop_objection(this)" }
+  ]}
+/>
+
 ### Step 4: Pre-empt background traffic with grab()
 
 Without help, the recovery's `start_item()` joins the back of the arbitration queue on `cfg_sqr` and waits behind every request already there. `grab()` fixes that. What it does, in uvm-core 2020.3.1 (`m_lock_req()`, `grant_queued_locks()` and `is_blocked()` in `uvm_sequencer_base.svh`), as [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) teaches in full:
@@ -324,6 +403,14 @@ ungrab(cfg_sqr);                   // same sequencer argument as grab()
 ```
 
 Form A is the simplest. Form B, which Make It Work uses, keeps the sequencer for the whole service, so several recovery steps, or several queued interrupts, go out back to back. Form B has two traps, both covered in [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration): a bare `grab()` in a sequence started with `start(null)` stops with `UVM_FATAL [GRAB] Null m_sequencer reference`, and a child started *without* `this` is not a child, so the parent's own grab blocks it and the two wait for each other forever.
+
+| | Form A: the recovery grabs | Form B: the service sequence grabs |
+|---|---|---|
+| Who calls `grab()` | `clear_irq_seq` itself | the service virtual sequence `svc` |
+| The call | `grab()` / `ungrab()` with no argument: the sequencer the sequence runs on | `grab(cfg_sqr)` / `ungrab(cfg_sqr)`: a virtual sequence must name the real sequencer |
+| How the recovery is started | `clr.start(cfg_sqr)` | `clr.start(cfg_sqr, this)`, as a child of `svc` |
+| What one grab covers | one recovery on one sequencer | several recovery steps, or several queued interrupts, back to back |
+| Traps | none specific to this form; still `ungrab()` on every path | bare `grab()` after `start(null)`: `UVM_FATAL [GRAB] Null m_sequencer reference`; child started without `this`: both wait forever |
 
 **Predict.** `bg` (background) sends one 10 ns write after another from 0 ns. An interrupt is queued at 25 ns and `svc` grabs `cfg_sqr` at once. A second interrupt is queued at 27 ns. Which write does the driver receive at 30 ns, and when does `bg`'s fourth write (B4) go out?
 
@@ -379,6 +466,14 @@ Form A is the simplest. Form B, which Make It Work uses, keeps the sequencer for
 - **If the interrupt means "data was lost", replay before you release.** For example, an error interrupt may require the TB to resend the last packet before normal traffic continues. Run the replay sequence inside the grab window, as another child. If the replay is on a *different* sequencer, grab that one too, and always grab several sequencers in the same fixed order everywhere, so two service sequences cannot each hold one and wait for the other.
 - **If the interrupt means "reset", do not resume.** Stop the background sequences with `kill()` or `cfg_sqr.stop_sequences()` (IEEE 1800.2-2020 §15.3.2.14) and restart the stimulus from the beginning.
 
+What the interrupt means decides what happens before the release:
+
+| The interrupt means | Inside the grab window | After it | Does background traffic resume? |
+|---|---|---|---|
+| "Acknowledge and clear me" | the clear write(s) as children | `ungrab()` | Yes, by itself, where the queue left it |
+| "Data was lost" | the recovery and the replay sequence, each as a child; if the replay is on another sequencer, grab that one too, in the same fixed order everywhere | `ungrab()` of every grabbed sequencer | Yes, after the replay |
+| "Reset" | nothing: no grab is needed | `kill()` or `cfg_sqr.stop_sequences()` (§15.3.2.14), then restart the stimulus | No: it starts again from the beginning |
+
 ### Pitfalls and misconceptions
 
 - **"`@(cb iff irq)` waits for the interrupt."** It waits for every clock edge at which `irq` is 1. For a level interrupt that is one transaction per clock (§9.4.2.3).
@@ -405,7 +500,48 @@ Form A is the simplest. Form B, which Make It Work uses, keeps the sequencer for
 
 Set a short run-phase timeout while debugging (`uvm_root::get().set_timeout(...)`, IEEE 1800.2-2020 Annex F.7.3.3), so a hang ends in seconds, and print `cfg_sqr.is_grabbed()` and `cfg_sqr.current_grabber()` (§15.3.2.15, §15.3.2.16) when traffic stops.
 
+**Try the triage.** In the hang simulator below, choose **Stimulus stops after the interrupt**. Its ISR waits on an event rather than a FIFO; the rest is the shape you know. Read the symptom first and, before you read the code panel, predict what `is_grabbed()` and `current_grabber()` will print. Then read the code, probe, name the component that owns the problem, pick a fix, and find the row of the table above that matches.
+
+<DebuggingSimulator scenario="hang" />
+
+<details>
+<summary>Check your table match</summary>
+
+The closest row is "Background traffic stops after an interrupt; later `UVM_ERROR [SEQFINERR]`". `SEQFINERR` appears only if the grabbing sequence ends while it still holds the grab; this ISR loops forever, so there is no error at all, only the timeout.
+
+</details>
+
 ### Where this lives in a real testbench
+
+<ArchitectureDiagram
+  title="Interrupt service in a full environment"
+  cellWidth={90}
+  gapX={64}
+  spreadAnchors
+  caption="The same five steps with real pieces: the DUT drives irq through irq_if, which also holds the SVA latency check; irq_mon sits in a passive interrupt agent; the env owns irq_fifo; irq_cov records each interrupt's vector (crossing it with bus state, as the coverage point below asks, needs a bus-side input this picture leaves out); svc, started by the test, services through the register model, whose bus items go through cfg_sqr to cfg_drv in the register agent."
+  nodes={[
+    { id: "irq_cov", label: "irq_cov", sublabel: "coverage", kind: "subscriber", col: 0, row: 0 },
+    { id: "svc", label: "svc", sublabel: "from test", kind: "sequence", col: 2, row: 0 },
+    { id: "irq_mon", label: "irq_mon", sublabel: "irq agent", kind: "monitor", col: 0, row: 1 },
+    { id: "irq_fifo", label: "irq_fifo", sublabel: "in env", kind: "fifo", col: 1, row: 1 },
+    { id: "regmodel", label: "regmodel", kind: "reg", col: 2, row: 1 },
+    { id: "irq_if", label: "irq_if", sublabel: "+ SVA", kind: "interface", col: 0, row: 2 },
+    { id: "cfg_drv", label: "cfg_drv", sublabel: "reg agent", kind: "driver", col: 1, row: 2 },
+    { id: "cfg_sqr", label: "cfg_sqr", sublabel: "reg agent", kind: "sequencer", col: 2, row: 2 },
+    { id: "dut", label: "DUT", kind: "dut", col: 0, row: 3, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "dut", to: "irq_if", style: "data", label: "irq" },
+    { from: "irq_if", to: "irq_mon", style: "data", label: "mon_cb" },
+    { from: "irq_mon", to: "irq_fifo", style: "data", label: "write" },
+    { from: "irq_mon", to: "irq_cov", style: "data", label: "write" },
+    { from: "irq_fifo", to: "svc", style: "data", label: "get" },
+    { from: "svc", to: "regmodel", style: "causal", label: "read/write" },
+    { from: "regmodel", to: "cfg_sqr", style: "causal", label: "bus items" },
+    { from: "cfg_sqr", to: "cfg_drv", style: "data", label: "req" },
+    { from: "cfg_drv", to: "dut", style: "data", label: "bus" }
+  ]}
+/>
 
 - **The interrupt monitor** sits in a passive interrupt agent (or in the register agent), and the env owns `irq_fifo` and connects it.
 - **The test or the top virtual sequence** starts the service sequence in the background at the start of the run phase and stops it at the end.
@@ -671,6 +807,25 @@ UVM_FATAL :    0
 
 The `IRQ_SVC` lines show `reporter@@svc` because a sequence started with `start(null)` reports through the UVM root, with its own name as the context.
 
+<TimingDiagram
+  title="The expected log as a bus picture: who owns cfg_drv in each 10 ns slot"
+  caption="Each column is a 10 ns step (column 3 = 30 ns), not a clock edge. cfg_bus is the item the driver logs at that time and drives for the next 10 ns. grab is 1 while svc holds the grab on cfg_sqr (25 to 50 ns); fifo_used is the number of interrupts waiting in irq_fifo. Each bit or bus row shows its value at the start of the column's slot: the grab starts at 25 ns and vector 5 is queued at 27 ns, mid-slot (see the 20 ns marker), so both first show in the 30 ns column."
+  edges={11}
+  signals={[
+    { name: "cfg_bus", kind: "bus", values: ["B1", "B2", "B3", "clr 3", "clr 5", "B4", "B5", "B6", "B7", "B8", "-"] },
+    { name: "grab", kind: "bit", values: [0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0] },
+    { name: "fifo_used", kind: "bus", values: ["0", "0", "0", "1", "0", "0", "0", "0", "0", "0", "0"] }
+  ]}
+  highlights={[{ from: 3, to: 4, tone: "attempt", label: "grab held: only svc and its children are granted" }]}
+  markers={[
+    { edge: 2, tone: "info", label: "20 ns: B3 starts; at 25 ns vector 3 arrives and svc's grab is granted at once, but B3 is not interrupted", short: "grab" },
+    { edge: 3, tone: "pass", label: "30 ns: clr for vector 3 (data 0x00000008); B4 is blocked; vector 5 (queued at 27 ns) waits in irq_fifo", short: "clr" },
+    { edge: 4, tone: "pass", label: "40 ns: clr for vector 5 (data 0x00000020), taken with try_get() inside the same grab", short: "clr" },
+    { edge: 5, tone: "info", label: "50 ns: ungrab(cfg_sqr); B4 is granted and background traffic resumes", short: "B4" },
+    { edge: 10, tone: "info", label: "100 ns: bg has ended, svc.busy is 0, svc.kill(), the objection drops", short: "end" }
+  ]}
+/>
+
 Why each line, in short:
 
 | Time | What the driver is doing | Waiting requests | Grant | Reason |
@@ -699,10 +854,55 @@ Why each line, in short:
 
 Predict each result before you run it.
 
-1. **Remove `grab(cfg_sqr)` and `ungrab(cfg_sqr)`.** (The first clear still goes out at 30 ns, because its request, queued at 25 ns, is older than B4's, queued at 30 ns. But the second clear is requested at 40 ns, after B4 has waited since 30 ns, so FIFO order sends B4 at 40 ns and the second clear only at 50 ns. Without `grab()` a recovery's latency depends on whatever else is already queued; with several background sequences it grows with the queue.)
-2. **Start the child without `this`:** `clr.start(cfg_sqr)`. (The last write logged is B3 at 20 ns. `svc` holds the grab and waits in `clr.start()`, while its own grab blocks `clr`, which is not its child. The `IRQ_SRC` lines at 25 and 27 ns and the first `IRQ_SVC` line at 25 ns still print, but no error or warning is reported until the run-phase timeout ends the run with `UVM_FATAL [PH_TIMEOUT]`. In uvm-core 2020.3.1 the default timeout is 9200 s (the standard leaves the default to the implementation), so set a short one with `set_timeout()` before you try this.)
-3. **Replace the `fork … join_none` with a plain `svc.start(null);` before `bg.start()`.** (The test never gets past that line, because `body()` never returns. The two clears go out at once, at 25 and 35 ns, on an idle bus; no background write is ever sent, and the run ends at the run-phase timeout.)
-4. **Delete `wait (svc.busy == 0);` and move the second interrupt from 27 ns to 85 ns** (change `#2ns` to `#60ns` in `irq_src`). (The first clear goes out at 30 ns, so B4 to B8 run from 40 to 90 ns. `svc` grabs at 85 ns and queues the clear, but B8 is on the bus until 90 ns. At 90 ns `bg` returns, the test kills `svc` (and with it its child `clr`) and drops the objection in the same time step, so the second clear never completes; whether it is even handed to the driver depends on delta-cycle order. `check_phase` reports `UVM_ERROR [IRQ_EOT] serviced 1 of 2 interrupts`: the end-of-test check catches what the test forgot.)
+**1.** **Remove `grab(cfg_sqr)` and `ungrab(cfg_sqr)`.** When does each clear go out, and when does B4?
+
+<details>
+<summary>Check your prediction</summary>
+
+The first clear still goes out at 30 ns, because its request, queued at 25 ns, is older than B4's, queued at 30 ns. But the second clear is requested at 40 ns, after B4 has waited since 30 ns, so FIFO order sends B4 at 40 ns and the second clear only at 50 ns. Without `grab()` a recovery's latency depends on whatever else is already queued; with several background sequences it grows with the queue.
+
+<TimingDiagram
+  title="Break it 1: the cfg bus with and without grab()"
+  caption="Each column is a 10 ns step starting at 20 ns (column 0 = 20 ns, column 4 = 60 ns), not a clock edge. Each row is the item the driver logs at that time in one version of the test."
+  edges={5}
+  signals={[
+    { name: "with_grab", kind: "bus", values: ["B3", "clr 3", "clr 5", "B4", "B5"] },
+    { name: "no_grab", kind: "bus", values: ["B3", "clr 3", "B4", "clr 5", "B5"] }
+  ]}
+  markers={[
+    { edge: 2, tone: "fail", label: "40 ns: without grab(), B4 (waiting since 30 ns) is older than the second clear (requested at 40 ns), so FIFO order sends B4 first", short: "B4" },
+    { edge: 3, tone: "info", label: "50 ns: the second clear goes out 10 ns later than with grab()", short: "late" }
+  ]}
+/>
+
+</details>
+
+**2.** **Start the child without `this`:** `clr.start(cfg_sqr)`. What is the last write logged, and how does the run end?
+
+<details>
+<summary>Check your prediction</summary>
+
+The last write logged is B3 at 20 ns. `svc` holds the grab and waits in `clr.start()`, while its own grab blocks `clr`, which is not its child. The `IRQ_SRC` lines at 25 and 27 ns and the first `IRQ_SVC` line at 25 ns still print, but no error or warning is reported until the run-phase timeout ends the run with `UVM_FATAL [PH_TIMEOUT]`. In uvm-core 2020.3.1 the default timeout is 9200 s (the standard leaves the default to the implementation), so set a short one with `set_timeout()` before you try this.
+
+</details>
+
+**3.** **Replace the `fork … join_none` with a plain `svc.start(null);` before `bg.start()`.** What goes out on the bus, and does the test end?
+
+<details>
+<summary>Check your prediction</summary>
+
+The test never gets past that line, because `body()` never returns. The two clears go out at once, at 25 and 35 ns, on an idle bus; no background write is ever sent, and the run ends at the run-phase timeout.
+
+</details>
+
+**4.** **Delete `wait (svc.busy == 0);` and move the second interrupt from 27 ns to 85 ns** (change `#2ns` to `#60ns` in `irq_src`). Is the second interrupt serviced, and what does `check_phase` report?
+
+<details>
+<summary>Check your prediction</summary>
+
+The first clear goes out at 30 ns, so B4 to B8 run from 40 to 90 ns. `svc` grabs at 85 ns and queues the clear, but B8 is on the bus until 90 ns. At 90 ns `bg` returns, the test kills `svc` (and with it its child `clr`) and drops the objection in the same time step, so the second clear never completes; whether it is even handed to the driver depends on delta-cycle order. `check_phase` reports `UVM_ERROR [IRQ_EOT] serviced 1 of 2 interrupts`: the end-of-test check catches what the test forgot.
+
+</details>
 
 **Checklist before moving on:**
 - [ ] My interrupt monitor publishes one new `irq_tr` per interrupt (edge-detected for a level line), and I know whether sources share the line.
@@ -736,6 +936,31 @@ endtask
 ```
 
 Inside one grab window this gives strict priority at every service boundary, and nothing is lost.
+
+<ArchitectureDiagram
+  title="One service sequence, prioritized queues"
+  cellWidth={90}
+  gapX={64}
+  spreadAnchors
+  caption="The subscriber router puts each interrupt in its priority's mailbox and one token in tokens, all with try_put(). svc's next_irq() blocks on tokens.get(), then tries urgent first and normal second (step 3 runs only if urgent is empty), so one decision-maker chooses the order; svc alone grabs cfg_sqr."
+  nodes={[
+    { id: "urgent", label: "urgent", sublabel: "mailbox", kind: "fifo", col: 1, row: 0 },
+    { id: "router", label: "router", sublabel: "subscriber", kind: "subscriber", col: 0, row: 1 },
+    { id: "normal", label: "normal", sublabel: "mailbox", kind: "fifo", col: 1, row: 1 },
+    { id: "svc", label: "svc", sublabel: "next_irq()", kind: "sequence", col: 2, row: 1 },
+    { id: "tokens", label: "tokens", sublabel: "mailbox", kind: "fifo", col: 1, row: 2 },
+    { id: "cfg_sqr", label: "cfg_sqr", kind: "sequencer", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "router", to: "urgent", style: "data", label: "tr" },
+    { from: "router", to: "normal", style: "data", label: "tr" },
+    { from: "router", to: "tokens", style: "data", label: "token" },
+    { from: "tokens", to: "svc", style: "data", label: "1: get" },
+    { from: "urgent", to: "svc", style: "data", label: "2: try" },
+    { from: "normal", to: "svc", style: "data", label: "3: try" },
+    { from: "svc", to: "cfg_sqr", style: "control", label: "grab" }
+  ]}
+/>
 
 ### Expert: alternatives to grab() and when they win
 
@@ -805,6 +1030,29 @@ end
 
 **Pass `.parent(this)`.** A front-door register access creates bus items and starts them from its parent sequence. With no parent, uvm-core 2020.3.1 uses a proxy sequence called `default_parent_seq` (`uvm_reg_map.svh`, `do_write()` and `do_read()`), which is neither the grabber nor its child, so your own grab blocks it and the service routine hangs until the phase timeout. With `.parent(this)`, the bus items come from the grabbing sequence itself and pass.
 
+<SequenceDiagram
+  title="The status-read, W1C clear, re-read loop inside the grab"
+  caption="Top part: with .parent(this), every bus item the register model creates comes from svc, so svc's own grab lets it through, and the loop runs until the status reads 0. Below the divider: the same read with no parent starts its item from default_parent_seq (uvm-core 2020.3.1), which the grab blocks."
+  participants={[
+    { id: "svc", label: "svc", sublabel: "holds grab(cfg_sqr)", kind: "sequence" },
+    { id: "regmodel", label: "regmodel", kind: "reg" },
+    { id: "cfg_sqr", label: "cfg_sqr", kind: "sequencer" }
+  ]}
+  messages={[
+    { from: "svc", to: "regmodel", label: "irq_status.read(…, .parent(this))" },
+    { from: "regmodel", to: "cfg_sqr", label: "read item, parent svc: passes the grab" },
+    { kind: "return", from: "regmodel", to: "svc", label: "pending != 0" },
+    { from: "svc", to: "regmodel", label: "irq_clear.write(status, pending, .parent(this))" },
+    { from: "svc", to: "regmodel", label: "irq_status.read(…, .parent(this)): anything new meanwhile?" },
+    { kind: "note", from: "regmodel", to: "cfg_sqr", label: "the clear write and the re-read: items with parent svc, so they pass the grab" },
+    { kind: "return", from: "regmodel", to: "svc", label: "pending == 0: the loop ends", tone: "active" },
+    { kind: "divider", label: "the same read without .parent(this)" },
+    { from: "svc", to: "regmodel", label: "irq_status.read(status, pending)" },
+    { from: "regmodel", to: "cfg_sqr", label: "read item from default_parent_seq", tone: "error" },
+    { kind: "note", from: "svc", to: "cfg_sqr", label: "blocked: default_parent_seq is neither svc nor its child; svc waits here and never reaches ungrab()", tone: "error" }
+  ]}
+/>
+
 ### Expert: interview angles
 
 Answer each one before you open the feedback.
@@ -843,6 +1091,34 @@ Answer each one before you open the feedback.
 />
 
 ## Practice & Reinforce
+
+<VisualRecap
+  title="Interrupt service on one card"
+  rule="Detect each interrupt once, queue it without blocking, and service it from one forked, endless virtual sequence that grabs the sequencer, starts each recovery as its child and calls ungrab() on every path; the item on the bus always finishes first, and background traffic resumes by itself."
+  code={"forever begin\n  irq_fifo.get(tr);\n  busy = 1;\n  grab(cfg_sqr);\n  do service(tr);              // clr.start(cfg_sqr, this)\n  while (irq_fifo.try_get(tr));\n  ungrab(cfg_sqr);\n  busy = 0;\nend"}
+  mistake="Starting the recovery without this as its parent: the service sequence's own grab blocks it, and the run hangs with no error until the phase timeout."
+  inTestbench="A passive interrupt agent's monitor feeds an env-owned uvm_tlm_analysis_fifo; the test forks the service sequence with join_none, waits for busy == 0, calls kill() and only then drops its objection; check_phase confirms the FIFO is empty and the counts match."
+>
+
+<SequenceDiagram
+  title="One pass of the service loop"
+  caption="One wake-up of svc: take one entry, grab, service it and everything that arrived meanwhile, release."
+  participants={[
+    { id: "irq_fifo", label: "irq_fifo", kind: "fifo" },
+    { id: "svc", label: "svc", kind: "sequence" },
+    { id: "cfg_sqr", label: "cfg_sqr", kind: "sequencer" }
+  ]}
+  messages={[
+    { from: "svc", to: "irq_fifo", label: "get(tr): sleeps until queued" },
+    { kind: "return", from: "irq_fifo", to: "svc", label: "tr" },
+    { from: "svc", to: "cfg_sqr", label: "grab(cfg_sqr)" },
+    { kind: "self", from: "svc", label: "clr.start(cfg_sqr, this) per entry" },
+    { from: "svc", to: "irq_fifo", label: "try_get(tr) until it returns 0" },
+    { from: "svc", to: "cfg_sqr", label: "ungrab(cfg_sqr): bg resumes", tone: "active" }
+  ]}
+/>
+
+</VisualRecap>
 
 ### Retrieval check
 

@@ -55,6 +55,31 @@ Besides the prerequisite below, this lesson uses AxLEN and AxSIZE from [B-AXI-2 
 - **UNPREDICTABLE.** The specification's word for "no result is required": if a rule marked this way is broken, any outcome is allowed, so a checker must flag the cause rather than expect a particular response.
 - **VIP.** Verification IP: a reusable, ready-made agent (driver, monitor, checks) for a protocol such as AXI.
 
+<ArchitectureDiagram
+  title="Where the words live on the path of one request"
+  caption="An illustration of one possible system, not a required topology. A request leaves the master and crosses the interconnect, where a write buffer and a system cache (both intermediate points) and an arbiter may act on it, then a firewall, before it reaches a final destination: a Device peripheral or Normal memory. A sublabel that names a signal says which attribute that element acts on (the memory's exclusive monitor acts on AxLOCK); the sections below explain each one."
+  cellWidth={110}
+  cellHeight={56}
+  gapX={30}
+  gapY={50}
+  nodes={[
+    { id: "mst", label: "master", sublabel: "drives AR or AW", kind: "generic", col: 1, row: 0 },
+    { id: "ic", label: "interconnect", kind: "generic", col: 0, row: 1, colSpan: 3, container: true },
+    { id: "buf", label: "write buffer", sublabel: "AxCACHE[1:0]", kind: "fifo", col: 0, row: 1 },
+    { id: "arb", label: "arbiter", sublabel: "AxQOS hint", kind: "generic", col: 1, row: 1 },
+    { id: "sc", label: "system cache", sublabel: "AxCACHE[3:2]", kind: "generic", col: 2, row: 1 },
+    { id: "fw", label: "firewall", sublabel: "checks AxPROT", kind: "generic", col: 1, row: 2 },
+    { id: "dev", label: "Device", sublabel: "peripheral registers", kind: "dut", col: 0, row: 3 },
+    { id: "mem", label: "Normal memory", sublabel: "AxLOCK: excl. monitor", kind: "dut", col: 2, row: 3 }
+  ]}
+  edges={[
+    { from: "mst", to: "arb", style: "data", label: "request" },
+    { from: "arb", to: "fw", style: "data", label: "request" },
+    { from: "fw", to: "dev", style: "data", label: "Device" },
+    { from: "fw", to: "mem", style: "data", label: "Normal" }
+  ]}
+/>
+
 ### Binding rules and hints
 
 Before decoding any bit, sort the attributes into two groups. Everything in this lesson follows from this table.
@@ -73,6 +98,55 @@ Before decoding any bit, sort the attributes into two groups. Everything in this
 
 AXI3 called the four AxCACHE bits Bufferable, Cacheable, Read-allocate and Write-allocate (IHI0022E Table A4-1). AXI4 renamed bit 1 to **Modifiable** (same function, better name) and redefined the two allocate bits, and it requires AXI4 components to use the new names (§A4.3, §A4.8). The allocate bits now mean different things on the two channels:
 
+<figure className="not-prose my-6">
+<svg viewBox="0 0 352 140" role="img" aria-labelledby="baxi4-bits-title baxi4-bits-desc" style={{ width: "100%", maxWidth: 560, height: "auto" }}>
+  <title id="baxi4-bits-title">The four AxCACHE bits with their AXI4 names on each channel and their old AXI3 names</title>
+  <desc id="baxi4-bits-desc">Four boxes for AxCACHE bits 3, 2, 1 and 0. Above them, the ARCACHE names: bit 3 Other Allocate, bit 2 Allocate, bit 1 Modifiable, bit 0 Bufferable. Below them, the AWCACHE names: bit 3 Allocate, bit 2 Other Allocate, bit 1 Modifiable, bit 0 Bufferable. The bottom row, dimmed, gives the AXI3 names: bit 3 Write-allocate, bit 2 Read-allocate, bit 1 Cacheable, bit 0 Bufferable.</desc>
+  <g fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1.2">
+    <rect x="68" y="34" width="66" height="28" rx="3" />
+    <rect x="138" y="34" width="66" height="28" rx="3" />
+    <rect x="208" y="34" width="66" height="28" rx="3" />
+    <rect x="278" y="34" width="66" height="28" rx="3" />
+  </g>
+  <g fill="currentColor" fontSize="10" fontWeight="600">
+    <text x="4" y="26">ARCACHE</text>
+    <text x="4" y="53">bit</text>
+    <text x="4" y="82">AWCACHE</text>
+  </g>
+  <g fill="currentColor" fontSize="10" fillOpacity="0.65">
+    <text x="4" y="114">AXI3</text>
+    <text x="4" y="126">(old)</text>
+  </g>
+  <g fill="currentColor" fontSize="12" fontWeight="700" textAnchor="middle">
+    <text x="101" y="53">[3]</text>
+    <text x="171" y="53">[2]</text>
+    <text x="241" y="53">[1]</text>
+    <text x="311" y="53">[0]</text>
+  </g>
+  <g fill="currentColor" fontSize="10" textAnchor="middle">
+    <text x="101" y="14">Other</text>
+    <text x="101" y="26">Allocate</text>
+    <text x="171" y="26" fontWeight="700">Allocate</text>
+    <text x="241" y="26">Modifiable</text>
+    <text x="311" y="26">Bufferable</text>
+    <text x="101" y="82" fontWeight="700">Allocate</text>
+    <text x="171" y="82">Other</text>
+    <text x="171" y="94">Allocate</text>
+    <text x="241" y="82">Modifiable</text>
+    <text x="311" y="82">Bufferable</text>
+  </g>
+  <g fill="currentColor" fontSize="10" textAnchor="middle" fillOpacity="0.65">
+    <text x="101" y="114">Write-</text>
+    <text x="101" y="126">allocate</text>
+    <text x="171" y="114">Read-</text>
+    <text x="171" y="126">allocate</text>
+    <text x="241" y="114">Cacheable</text>
+    <text x="311" y="114">Bufferable</text>
+  </g>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Read the strip column by column. Bits [1] and [0] have the same AXI4 name on both channels. The allocate bits swap: the bold "Allocate" (allocate this if you can) is bit [2] on ARCACHE but bit [3] on AWCACHE, and the other bit is Other Allocate. The dimmed row is the AXI3 naming (IHI0022E Table A4-1), shown only so you recognise it in old documents; the table below gives each bit's meaning.</figcaption>
+</figure>
+
 | Bit | ARCACHE (reads) | AWCACHE (writes) | Meaning |
 |---|---|---|---|
 | [0] | Bufferable | Bufferable | Writes with no allocate bit: 1 lets an intermediate point give the write response, 0 makes it come from the final destination. Reads: no effect on Device reads; for Normal Non-cacheable memory, 1 lets the data come from a write still on its way to the final destination. With an allocate bit set, on both channels the bit tells Write-back (1) from Write-through (0); a write of either kind may then be answered early, but a Write-through write must reach memory in a timely manner and a Write-back write need not reach it at all |
@@ -87,6 +161,94 @@ The rule that matters for correctness is the **lookup rule** (§A4.3.3): if AxCA
 ### The twelve memory types
 
 AXI4 names twelve memory types (IHI0022E §A4.4, Table A4-5). Some have different preferred values on AR and AW, and some also accept the old AXI3 value (in brackets). **Every value not in the table is reserved.** A compact way to state the legal set: AxCACHE[1] = 1, or AxCACHE[3:2] = `2'b00`. That rule leaves exactly six reserved values: `4'b0100`, `4'b0101`, `4'b1000`, `4'b1001`, `4'b1100` and `4'b1101` (an allocate bit without Modifiable).
+
+<figure className="not-prose my-6">
+<svg viewBox="0 0 352 222" role="img" aria-labelledby="baxi4-grid-title baxi4-grid-desc" style={{ width: "100%", maxWidth: 560, height: "auto" }}>
+  <title id="baxi4-grid-title">All sixteen AxCACHE values: ten legal, six reserved</title>
+  <desc id="baxi4-grid-desc">A four by four grid. Rows are AxCACHE bits 3 and 2, columns are bits 1 and 0. Row 00: 0000 Device Non-bufferable, 0001 Device Bufferable, 0010 Normal Non-cacheable Non-bufferable, 0011 Normal Non-cacheable Bufferable. Rows 01, 10 and 11: the cells with bits 1 and 0 equal to 00 or 01 (0100, 0101, 1000, 1001, 1100, 1101) are reserved; the cells ending in 10 (0110, 1010, 1110) are Write-through and the cells ending in 11 (0111, 1011, 1111) are Write-back.</desc>
+  <g fill="currentColor" fontSize="10" fontWeight="600" textAnchor="middle">
+    <text x="95" y="14">[1:0] = 00</text>
+    <text x="167" y="14">01</text>
+    <text x="239" y="14">10</text>
+    <text x="311" y="14">11</text>
+  </g>
+  <g fill="currentColor" fontSize="10" fontWeight="600">
+    <text x="2" y="52">[3:2]=00</text>
+    <text x="2" y="100">01</text>
+    <text x="2" y="148">10</text>
+    <text x="2" y="196">11</text>
+  </g>
+  <g fill="currentColor" fillOpacity="0.1" stroke="currentColor" strokeWidth="1.2">
+    <rect x="60" y="22" width="70" height="46" rx="3" />
+    <rect x="132" y="22" width="70" height="46" rx="3" />
+    <rect x="204" y="22" width="70" height="46" rx="3" />
+    <rect x="276" y="22" width="70" height="46" rx="3" />
+    <rect x="204" y="70" width="70" height="46" rx="3" />
+    <rect x="276" y="70" width="70" height="46" rx="3" />
+    <rect x="204" y="118" width="70" height="46" rx="3" />
+    <rect x="276" y="118" width="70" height="46" rx="3" />
+    <rect x="204" y="166" width="70" height="46" rx="3" />
+    <rect x="276" y="166" width="70" height="46" rx="3" />
+  </g>
+  <g fill="none" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1" strokeDasharray="3 3">
+    <rect x="60" y="70" width="70" height="46" rx="3" />
+    <rect x="132" y="70" width="70" height="46" rx="3" />
+    <rect x="60" y="118" width="70" height="46" rx="3" />
+    <rect x="132" y="118" width="70" height="46" rx="3" />
+    <rect x="60" y="166" width="70" height="46" rx="3" />
+    <rect x="132" y="166" width="70" height="46" rx="3" />
+  </g>
+  <g fill="currentColor" fontSize="10" fontFamily="monospace" textAnchor="middle" fillOpacity="0.75">
+    <text x="95" y="36">0000</text>
+    <text x="167" y="36">0001</text>
+    <text x="239" y="36">0010</text>
+    <text x="311" y="36">0011</text>
+    <text x="95" y="84">0100</text>
+    <text x="167" y="84">0101</text>
+    <text x="239" y="84">0110</text>
+    <text x="311" y="84">0111</text>
+    <text x="95" y="132">1000</text>
+    <text x="167" y="132">1001</text>
+    <text x="239" y="132">1010</text>
+    <text x="311" y="132">1011</text>
+    <text x="95" y="180">1100</text>
+    <text x="167" y="180">1101</text>
+    <text x="239" y="180">1110</text>
+    <text x="311" y="180">1111</text>
+  </g>
+  <g fill="currentColor" fontSize="10" fontWeight="600" textAnchor="middle">
+    <text x="95" y="50">Device</text>
+    <text x="95" y="62">NB</text>
+    <text x="167" y="50">Device</text>
+    <text x="167" y="62">B</text>
+    <text x="239" y="50">Normal NC</text>
+    <text x="239" y="62">NB</text>
+    <text x="311" y="50">Normal NC</text>
+    <text x="311" y="62">B</text>
+    <text x="239" y="98">Write-</text>
+    <text x="239" y="110">through</text>
+    <text x="311" y="98">Write-</text>
+    <text x="311" y="110">back</text>
+    <text x="239" y="146">Write-</text>
+    <text x="239" y="158">through</text>
+    <text x="311" y="146">Write-</text>
+    <text x="311" y="158">back</text>
+    <text x="239" y="194">Write-</text>
+    <text x="239" y="206">through</text>
+    <text x="311" y="194">Write-</text>
+    <text x="311" y="206">back</text>
+  </g>
+  <g fill="currentColor" fontSize="10" textAnchor="middle" fillOpacity="0.75">
+    <text x="95" y="102">✕ reserved</text>
+    <text x="167" y="102">✕ reserved</text>
+    <text x="95" y="150">✕ reserved</text>
+    <text x="167" y="150">✕ reserved</text>
+    <text x="95" y="198">✕ reserved</text>
+    <text x="167" y="198">✕ reserved</text>
+  </g>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Rows are AxCACHE[3:2], columns AxCACHE[1:0]; each cell shows the 4-bit value. NB is Non-bufferable, B Bufferable, NC Non-cacheable. The six dashed cells are the reserved values: an allocate bit set while Modifiable (bit 1) is 0. In the Write-through and Write-back cells, bit 0 picks Write-back (1) or Write-through (0); which allocation each value names depends on the channel, and four of them are accepted only as old AXI3 values on one channel (ARCACHE 0110 and 0111, AWCACHE 1010 and 1011), as the table below shows.</figcaption>
+</figure>
 
 | Memory type | ARCACHE | AWCACHE |
 |---|---|---|
@@ -144,6 +306,43 @@ Between a read and a write, "ordered" has a catch for every type: the read and w
 ### Pitfall: a register mapped with the wrong AxCACHE
 
 Peripheral registers often have **side effects**: reading a UART receive FIFO pops a byte, and reading a status register may clear its flags. They therefore need every read to reach the peripheral exactly once, in order. Only the **Device** types promise that: read data from the final destination, no prefetch, no merging, no change of shape (§A4.4.1).
+
+**Predict first.** A polling loop reads a status register twice with the same ARID. Between the two reads the register's flag changes from 0 to 1. A system cache sits between the master and the peripheral. What may the second read return if both reads use `ARCACHE = 4'b0000`, and what if both use `ARCACHE = 4'b1111`? Use the memory-type table above.
+
+<details>
+<summary>Check your prediction</summary>
+
+With `4'b0000` (Device Non-bufferable) read data must come from the final destination, so the second read returns 1. With `4'b1111` (Write-back Read and Write-allocate) the first read may allocate the line in the system cache, and the second read may then be answered from that cached copy: it may return 0. That is permitted, not required (§A4.4.1), which is why such a bug can pass in one system and fail in another.
+
+<SequenceDiagram
+  title="Two polls of a status register with a Device and with a cacheable ARCACHE"
+  caption="Top: with ARCACHE = 4'b0000 both polls reach the register, so poll 2 sees the new flag. Bottom: with ARCACHE = 4'b1111 the system cache may keep the line from poll 1 and answer poll 2 from it, so the loop may still see 0."
+  columnWidth={140}
+  participants={[
+    { id: "cpu", label: "master", sublabel: "polling loop", kind: "generic" },
+    { id: "sc", label: "system cache", kind: "generic" },
+    { id: "reg", label: "status register", sublabel: "peripheral", kind: "dut" }
+  ]}
+  messages={[
+    { kind: "divider", label: "ARCACHE = 4'b0000 (Device Non-bufferable)" },
+    { from: "cpu", to: "reg", label: "poll 1: AR" },
+    { kind: "return", from: "reg", to: "cpu", label: "R: flag = 0" },
+    { kind: "note", from: "reg", label: "flag becomes 1" },
+    { from: "cpu", to: "reg", label: "poll 2: AR" },
+    { kind: "return", from: "reg", to: "cpu", label: "R: flag = 1" },
+    { kind: "divider", label: "ARCACHE = 4'b1111 (Write-back, allocate)" },
+    { from: "cpu", to: "sc", label: "poll 1: AR" },
+    { from: "sc", to: "reg", label: "miss: AR" },
+    { kind: "return", from: "reg", to: "sc", label: "R: flag = 0" },
+    { kind: "self", from: "sc", label: "may allocate the line" },
+    { kind: "return", from: "sc", to: "cpu", label: "R: flag = 0" },
+    { kind: "note", from: "reg", label: "flag becomes 1" },
+    { from: "cpu", to: "sc", label: "poll 2: AR" },
+    { kind: "return", from: "sc", to: "cpu", label: "R: flag = 0, from the cached copy", tone: "error" }
+  ]}
+/>
+
+</details>
 
 If the same register is accessed as Normal memory, the system is allowed to break it. With Modifiable set, an interconnect may serve two polls from one fetch, or widen a read to neighbouring registers and pop a FIFO nobody asked for (§A4.3.1). With an allocate bit set, a system cache may answer from an old copy, and a polling loop never sees the flag change. None of this is a protocol violation: the master asked for Normal memory and got Normal behaviour. The processor's own caches are a separate matter, set by its memory-management attributes, not by AxCACHE.
 
@@ -262,7 +461,87 @@ A semaphore needs a read-modify-write that nobody can interrupt. AXI provides th
 
 **What a checker can assert.** The master must not start the write part of the pair until the read part is complete (§A7.2.2). That is observable at the pins and is checked in Make It Work.
 
+<TimingDiagram
+  title="An exclusive pair in the legal order: the write starts after the read completes"
+  caption="x-axis: rising edges 0 to 6 of ACLK. ARREADY, RREADY and AWREADY are 1 throughout and not drawn, the W channel is not drawn, and ARID, RID and AWID are all 0. RRESP is drawn as X while RVALID is 0. The exclusive read is accepted at edge 1, its only (last) data beat completes at edge 3 with EXOKAY, and only then, at edge 5, is the exclusive AW presented."
+  edges={7}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "ARVALID", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "ARLOCK", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "RVALID", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0] },
+    { name: "RLAST", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0] },
+    { name: "RRESP", kind: "bus", values: [undefined, undefined, undefined, "EXOKAY", undefined, undefined, undefined] },
+    { name: "AWVALID", kind: "bit", values: [0, 0, 0, 0, 0, 1, 0] },
+    { name: "AWLOCK", kind: "bit", values: [0, 0, 0, 0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", label: "exclusive read accepted" },
+    { edge: 3, tone: "info", label: "read complete: last beat, EXOKAY" },
+    { edge: 5, tone: "pass", label: "exclusive AW after the read completed (A7.2.2)" }
+  ]}
+/>
+
+<details>
+<summary>Show the illegal order</summary>
+
+Here the master presents the exclusive AW at edge 2, before the read's last beat at edge 3. That breaks §A7.2.2, and it is exactly what `a_excl_wr_after_rd` in Make It Work flags at edge 2: no read has completed on ID 0 yet.
+
+<TimingDiagram
+  title="An exclusive pair in the illegal order: the write starts before the read completes"
+  caption="x-axis: rising edges 0 to 6 of ACLK, with the same assumptions as the legal picture above (READY signals 1, W not drawn, all IDs 0). The only change is that AWVALID and AWLOCK rise at edge 2, one edge before the read's last beat completes at edge 3."
+  edges={7}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "ARVALID", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "ARLOCK", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "RVALID", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0] },
+    { name: "RLAST", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0] },
+    { name: "RRESP", kind: "bus", values: [undefined, undefined, undefined, "EXOKAY", undefined, undefined, undefined] },
+    { name: "AWVALID", kind: "bit", values: [0, 0, 1, 0, 0, 0, 0] },
+    { name: "AWLOCK", kind: "bit", values: [0, 0, 1, 0, 0, 0, 0] }
+  ]}
+  markers={[
+    { edge: 2, tone: "fail", label: "exclusive AW before the read completed: breaks A7.2.2" },
+    { edge: 3, tone: "info", label: "the read completes only now" }
+  ]}
+/>
+
+</details>
+
 **Spurious failures.** A monitor may watch more bytes than the access, up to 128 (call the watched block its **granule**), so a write to a *neighbouring* byte can fail an exclusive that nobody touched (§A7.2.4). Keep lock words apart from frequently written data.
+
+<figure className="not-prose my-6">
+<svg viewBox="0 0 352 128" role="img" aria-labelledby="baxi4-gran-title baxi4-gran-desc" style={{ width: "100%", maxWidth: 560, height: "auto" }}>
+  <title id="baxi4-gran-title">A 4-byte lock word inside a 128-byte watched block</title>
+  <desc id="baxi4-gran-desc">A strip of eight 16-byte boxes covering 0x1000 to 0x107F, the block this example monitor watches. The lock word, 0x1000 to 0x1003, is filled solid at the left end. Four bytes at 0x1050, filled lightly with a dashed outline, are the target of another master's normal write: outside the lock word but inside the watched block.</desc>
+  <g fill="currentColor" fontSize="10" fontFamily="monospace">
+    <text x="8" y="12">0x1000</text>
+    <text x="92" y="12">0x1020</text>
+    <text x="176" y="12">0x1040</text>
+    <text x="260" y="12">0x1060</text>
+  </g>
+  <g fill="none" stroke="currentColor" strokeOpacity="0.55" strokeWidth="1">
+    <rect x="8" y="18" width="42" height="30" />
+    <rect x="50" y="18" width="42" height="30" />
+    <rect x="92" y="18" width="42" height="30" />
+    <rect x="134" y="18" width="42" height="30" />
+    <rect x="176" y="18" width="42" height="30" />
+    <rect x="218" y="18" width="42" height="30" />
+    <rect x="260" y="18" width="42" height="30" />
+    <rect x="302" y="18" width="42" height="30" />
+  </g>
+  <rect x="8" y="18" width="10.5" height="30" fill="currentColor" fillOpacity="0.7" />
+  <rect x="218" y="18" width="10.5" height="30" fill="currentColor" fillOpacity="0.25" stroke="currentColor" strokeWidth="1.2" strokeDasharray="2 2" />
+  <path d="M8,54 L8,60 L344,60 L344,54" fill="none" stroke="currentColor" strokeWidth="1.2" />
+  <text x="176" y="76" fill="currentColor" fontSize="10" fontWeight="600" textAnchor="middle">watched block: 0x1000 to 0x107F, 128 bytes</text>
+  <rect x="8" y="88" width="12" height="12" fill="currentColor" fillOpacity="0.7" />
+  <text x="26" y="98" fill="currentColor" fontSize="10">0x1000, 4 bytes: the lock word (M0's exclusive pair)</text>
+  <rect x="8" y="108" width="12" height="12" fill="currentColor" fillOpacity="0.25" stroke="currentColor" strokeWidth="1.2" strokeDasharray="2 2" />
+  <text x="26" y="118" fill="currentColor" fontSize="10">0x1050, 4 bytes: M1's normal write</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Each box is 16 bytes. In this example the slave's monitor watches the whole 128-byte aligned block that holds the lock word; how many bytes beyond the access a monitor watches is the slave's choice, up to 128 (IHI0022E §A7.2.4). M1's write touches none of the lock word's bytes but lands inside the watched block, so if it arrives between M0's exclusive read and exclusive write, M0's write fails with OKAY although nobody wrote the lock word.</figcaption>
+</figure>
 
 **Interconnect changes.** An interconnect extends each master's ID with routing bits (§A5.3.5), so the ID the slave's monitor uses is the extended one: two masters that both drive ID 0 are different IDs at the slave, which is what keeps their watches apart. A Non-modifiable exclusive may even have AxSIZE and AxLEN changed by a component, provided the total bytes stay the same (§A4.3.1).
 
@@ -278,6 +557,29 @@ AXI3 had a second kind of atomic access, the **locked transfer**: the interconne
 | `2'b11` | Reserved | — | — |
 
 When AXI3 traffic enters an AXI4 system, a locked access (`2'b10`) is converted to a **normal** access, and the converting component should be able to flag that it did so (§A7.4.1). Software that relied on a locked swap must change: the lock silently stops protecting anything. Exclusive accesses are the AXI4 replacement.
+
+<SequenceDiagram
+  title="An AXI3 locked read-modify-write after conversion to AXI4"
+  caption="An illustration with example values. In AXI3, the locked read would keep every other master out of the slave region until the final unlocking transaction (here the write) completed (§A7.3). After conversion both are normal accesses (§A7.4.1), so M1's write lands between them and M0's write then overwrites it: M1's update is lost and no response reports it."
+  columnWidth={140}
+  participants={[
+    { id: "m0", label: "M0", sublabel: "AXI3 master", kind: "generic" },
+    { id: "br", label: "AXI3 to AXI4", sublabel: "converting component", kind: "generic" },
+    { id: "slv", label: "AXI4 slave", sublabel: "memory", kind: "dut" },
+    { id: "m1", label: "M1", sublabel: "AXI4 master", kind: "generic" }
+  ]}
+  messages={[
+    { from: "m0", to: "br", label: "AR, ARLOCK=2'b10 (locked)" },
+    { from: "br", to: "slv", label: "AR, ARLOCK=0 (normal)" },
+    { kind: "return", from: "slv", to: "m0", label: "R: value 5" },
+    { from: "m1", to: "slv", label: "AW+W: data 9" },
+    { kind: "return", from: "slv", to: "m1", label: "B OKAY: memory = 9" },
+    { kind: "self", from: "m0", label: "compute 5 + 1" },
+    { from: "m0", to: "br", label: "AW+W, AWLOCK=2'b00 (unlocking), data 6" },
+    { from: "br", to: "slv", label: "AW+W, AWLOCK=0, data 6" },
+    { kind: "return", from: "slv", to: "m0", label: "B OKAY: memory = 6, M1's 9 is lost", tone: "error" }
+  ]}
+/>
 
 ### Global and local monitors
 
@@ -382,6 +684,42 @@ The expected responses in the comments are for a slave with a monitor per ID; `e
 | UNPREDICTABLE exclusive results | A §A7.2.4 restriction broken, e.g. 3 beats × 4 bytes | `a_excl_shape_ar` or `a_excl_shape_aw` points at it | §A7.2.4 |
 | Display FIFO underflows although its reads carry ARQOS = 15 | The interconnect replaced the QoS value from its own registers; the arbiter does not honour QoS; or the read waits behind an earlier read with the same ID | Check the interconnect's QoS registers; give latency-critical traffic its own ID; check latency against the integration contract, not against AXI | §A8.1.2, §A8.1.3 |
 | Shared data corrupted after an AXI3 master's locked swap is moved onto an AXI4 interconnect | The bridge converted the locked access (AxLOCK = `2'b10`) to a normal access, so nothing was locked | Move the software to exclusive accesses; read the converting component's detect-and-flag mechanism, if it has the recommended one | §A7.3, §A7.4.1 |
+
+For the most common report, "my exclusive write always gets OKAY", ask the table's questions in a fixed order, at the slave port:
+
+<ArchitectureDiagram
+  title="Triage: an exclusive write keeps getting OKAY"
+  caption="Start at the top with the trace captured at the slave port. A no leads to the cause on its right, with the clause it involves; five yes answers leave the monitor policy or the slave itself. Each question is a row of the debugging table above."
+  cellWidth={160}
+  cellHeight={52}
+  gapX={64}
+  gapY={34}
+  nodes={[
+    { id: "q1", label: "Read got EXOKAY?", sublabel: "RRESP of the exclusive read", kind: "generic", col: 0, row: 0 },
+    { id: "q2", label: "AWID = ARID?", sublabel: "compared at the slave port", kind: "generic", col: 0, row: 1 },
+    { id: "q3", label: "No same-ID AR between?", sublabel: "no newer exclusive read", kind: "generic", col: 0, row: 2 },
+    { id: "q4", label: "No write since the read?", sublabel: "in the bytes the monitor watches", kind: "generic", col: 0, row: 3 },
+    { id: "q5", label: "AxCACHE[3:2] = 00?", sublabel: "non-cacheable", kind: "generic", col: 0, row: 4 },
+    { id: "end", label: "Monitor policy", sublabel: "shared monitor, else DUT bug", kind: "generic", col: 0, row: 5 },
+    { id: "f1", label: "No exclusive support", sublabel: "stop: A7.2.2", kind: "generic", state: "error", col: 1, row: 0 },
+    { id: "f2", label: "ID mismatch", sublabel: "breaks A7.2.4", kind: "generic", state: "error", col: 1, row: 1 },
+    { id: "f3", label: "Monitor moved", sublabel: "A7.2.1", kind: "generic", state: "error", col: 1, row: 2 },
+    { id: "f4", label: "Watch ended", sublabel: "A7.2.3, granule A7.2.4", kind: "generic", state: "error", col: 1, row: 3 },
+    { id: "f5", label: "Cache absorbed it", sublabel: "breaks A7.2.4", kind: "generic", state: "error", col: 1, row: 4 }
+  ]}
+  edges={[
+    { from: "q1", to: "q2", style: "causal", label: "yes" },
+    { from: "q2", to: "q3", style: "causal", label: "yes" },
+    { from: "q3", to: "q4", style: "causal", label: "yes" },
+    { from: "q4", to: "q5", style: "causal", label: "yes" },
+    { from: "q5", to: "end", style: "causal", label: "yes" },
+    { from: "q1", to: "f1", style: "causal", label: "no" },
+    { from: "q2", to: "f2", style: "causal", label: "no" },
+    { from: "q3", to: "f3", style: "causal", label: "no" },
+    { from: "q4", to: "f4", style: "causal", label: "no" },
+    { from: "q5", to: "f5", style: "causal", label: "no" }
+  ]}
+/>
 
 ### Recap
 
@@ -684,6 +1022,16 @@ Exclusive *outcomes* (EXOKAY, OKAY-failed, OKAY on a non-supporting slave, an ab
 8. **Check for legacy locked traffic** if an AXI3 master is attached: an AXI3 locked access (AxLOCK = `2'b10`) must arrive as a normal access (§A7.4.1), and no software flow may rely on it for mutual exclusion.
 9. **Close coverage** per channel, then cross exclusive with AxPROT and with the memory types the DUT supports.
 
+**The plan at a glance.** Each row is one attribute, each column one layer of the testbench; a dash means that layer has nothing to check for it in this lesson's plan.
+
+| Attribute | Item constraint | Pin assertion | Scoreboard or reference model | Coverage | Directed scenario |
+|---|---|---|---|---|---|
+| AxCACHE | Legal Table A4-5 values, one table per channel; Device for register traffic | `a_arcache_legal`, `a_awcache_legal` | — | `cp_cache` per channel; reserved values as `illegal_bins` | Register traffic on a Device type |
+| AxPROT | Values the DUT's permission rules need | — | Expected refusal response, from the DUT specification | `cp_prot`, all 8 values | AxPROT scenarios against the permission rules |
+| AxQOS | Values including `4'b0000` | — | Same-ID data still in order; latency against the integration contract | `cp_qos` bands: none, mid, max | Two masters competing with different AxQOS |
+| Exclusive (AxLOCK = 1) | §A7.2.4 shape; non-cacheable AxCACHE | `a_excl_shape_ar`, `a_excl_shape_aw`, `a_excl_wr_after_rd` | `excl_ref_model`, set to the slave's support, monitor policy and granule, predicts each response and memory value | `cp_lock`, `x_lock_prot`; outcomes counted in the scoreboard | Uncontended, intervening write, race, unpaired write, abandoned pair, neighbour write in the granule |
+| Legacy lock (AXI3 master only) | — | — | — | — | An AXI3 locked access arrives as a normal access (§A7.4.1) |
+
 **Checklist before moving on:**
 - [ ] I can decode any AxCACHE value on AR or AW into a memory type and say whether it may be answered early, merged or served from a cache.
 - [ ] I can give AxPROT for a scenario without inverting bit 1.
@@ -701,6 +1049,20 @@ IHI0022E §A4.3.1 draws the line precisely.
 - **Exceptions:** a Non-modifiable burst longer than 16 beats may be split into shorter bursts with adapted addresses; a Non-modifiable exclusive may change AxSIZE and AxLEN if the total bytes stay the same; and downsizing to a bus narrower than AxSIZE forces modification (the component may flag it).
 - **Modifiable:** a transaction may be split, merged, made to fetch more, or widened with strobes, and AxADDR, AxSIZE, AxLEN and AxBURST may change. AxLOCK and AxPROT never change. AxCACHE may change only in ways that do not reduce visibility.
 - **Never, for any transaction:** a change that reaches into a different 4KB space, or splits a single-copy-atomic access (a block that must be updated all at once; see *single-copy and multi-copy atomicity* below) into several accesses.
+
+The same rules side by side (IHI0022E §A4.3.1, Table A4-2):
+
+| Change on the way | Non-modifiable (AxCACHE[1] = 0) | Modifiable (AxCACHE[1] = 1) |
+|---|---|---|
+| Split into several transactions | No, except a burst longer than 16 beats, split into shorter bursts with adapted addresses | Yes |
+| Merge with other transactions | No | Yes |
+| Read more data than asked, or write a larger range using WSTRB | No | Yes |
+| Change AxADDR, AxSIZE, AxLEN or AxBURST | No (Table A4-2), except the split above, an exclusive's AxSIZE and AxLEN with the same total bytes, and forced downsizing | Yes, in each generated transaction |
+| Change AxCACHE | Only from Bufferable to Non-bufferable | Only without reducing visibility, and consistently for the address range |
+| Change AxLOCK or AxPROT | Never | Never |
+| Change the ID or the QoS value | Yes | Yes |
+| Reach a different 4KB space | Never | Never |
+| Split one single-copy-atomic access into several | Never | Never |
 
 So a checker that compares a transaction before and after an interconnect must allow the listed changes. Comparing every field one to one false-fires on a legal interconnect that splits a 256-beat Device INCR burst.
 
@@ -733,7 +1095,17 @@ How then does software know a Device Bufferable write has *arrived*? Follow it w
 
 ### Expert: mismatched and changing memory attributes
 
-Different masters may use different attributes for the same memory, within rules (§A4.5). All masters must agree on whether a region is cacheable: either all use AxCACHE[3:2] = `2'b00`, or all set at least one of those bits. Allocation hints may differ. A Normal Non-cacheable region may be accessed as Device, and a Bufferable region with non-bufferable transactions, because those only add guarantees. Changing a region's type, for example from Write-through to Normal Non-cacheable, needs a procedure: all masters stop, one performs any cache maintenance, then all restart with the new attributes (§A4.5.1). In a system testbench, a scoreboard that sees one master read cacheable data that another master just wrote as non-cacheable is looking at a break of the §A4.5 rule, which the specification says "must be obeyed" for functional correctness. It is a system-level rule: each interface on its own is legal, so no single-interface protocol checker can see it, and only a check that compares the attributes different masters use for the same region can.
+Different masters may use different attributes for the same memory, within rules (§A4.5). All masters must agree on whether a region is cacheable: either all use AxCACHE[3:2] = `2'b00`, or all set at least one of those bits. Allocation hints may differ. A Normal Non-cacheable region may be accessed as Device, and a Bufferable region with non-bufferable transactions, because those only add guarantees. Changing a region's type, for example from Write-through to Normal Non-cacheable, needs a procedure: all masters stop, one performs any cache maintenance, then all restart with the new attributes (§A4.5.1).
+
+| Two masters access the same region with… | Allowed? (§A4.5) |
+|---|---|
+| One using AxCACHE[3:2] = `2'b00`, the other setting one of those bits | No: all masters must agree on whether the region is cacheable |
+| Different allocation hints | Yes |
+| A Device transaction to a Normal Non-cacheable region | Yes: it only adds guarantees |
+| A transaction that does not permit buffering, to a Bufferable region | Yes: it only adds guarantees |
+| A new memory type for the region (for example Write-through to Normal Non-cacheable) | Only through the procedure: 1. all masters stop accessing the region; 2. one master performs any cache maintenance; 3. all restart with the new attributes (§A4.5.1) |
+
+In a system testbench, a scoreboard that sees one master read cacheable data that another master just wrote as non-cacheable is looking at a break of the §A4.5 rule, which the specification says "must be obeyed" for functional correctness. It is a system-level rule: each interface on its own is legal, so no single-interface protocol checker can see it, and only a check that compares the attributes different masters use for the same region can.
 
 ### Expert: exclusive monitors in real systems
 
@@ -744,9 +1116,53 @@ Different masters may use different attributes for the same memory, within rules
 - **Issue E versus Issue L on mismatched pairs.** In IHI0022E, a write whose size, length, address, ID or control signals differ from the preceding exclusive read breaks §A7.2.4, so the result is UNPREDICTABLE and a checker flags it. IHI0022L softens this: if the signals of its Table A6.5 differ, the exclusive write *might fail* even though nobody wrote the location (§A6.3.3), and §A6.3.4 lists a missing exclusive read with the same attributes among the reasons a write finds its address unmonitored, which ends in OKAY with the location not written. So find out which issue your DUT's specification follows before you decide whether a mismatch is an assertion failure or an OKAY the scoreboard must accept.
 - **Coherent exclusives** (cacheable memory with ACE or CHI) use a different mechanism; see [B-AMBA-F2](/curriculum/T3_Advanced/B-AMBA-F2_Future_Protocols_ACE_CHI/index).
 
+<SequenceDiagram
+  title="An exclusive pair sent through the AXI-to-AXI4-Lite conversion"
+  caption="The conversion discards AxLOCK (§B1.3.1), so the Lite slave sees two normal accesses. The read comes back OKAY, which tells the master there is no exclusive support (§A7.2.2). If the master writes anyway, the write is performed and answered OKAY: the exclusive failed, yet memory changed (§A7.2.5)."
+  columnWidth={150}
+  participants={[
+    { id: "mst", label: "AXI master", kind: "generic" },
+    { id: "cv", label: "AXI to AXI4-Lite", sublabel: "conversion", kind: "generic" },
+    { id: "lite", label: "AXI4-Lite slave", kind: "dut" }
+  ]}
+  messages={[
+    { from: "mst", to: "cv", label: "AR, ARLOCK=1" },
+    { from: "cv", to: "lite", label: "AR, no AxLOCK" },
+    { kind: "return", from: "lite", to: "cv", label: "R, RRESP=OKAY" },
+    { kind: "return", from: "cv", to: "mst", label: "R, OKAY: no exclusive support" },
+    { kind: "divider", label: "if the master issues the write part anyway" },
+    { from: "mst", to: "cv", label: "AW+W, AWLOCK=1" },
+    { from: "cv", to: "lite", label: "AW+W, normal write" },
+    { kind: "note", from: "lite", label: "write performed" },
+    { kind: "return", from: "lite", to: "cv", label: "B OKAY" },
+    { kind: "return", from: "cv", to: "mst", label: "B OKAY: failed, yet written", tone: "error" }
+  ]}
+/>
+
 ### Expert: single-copy and multi-copy atomicity
 
 Chapter A7 of IHI0022E starts before exclusives. The **single-copy atomicity size** is the smallest block a transaction updates atomically: no master may ever see a half-updated block (§A7.1). AXI4 does not fix the size; a system may have, say, a 32-bit group that includes peripherals and a 64-bit group of processor, DSP and memory controller, and every component on a communication path must support the size in use. A transaction never has a guarantee larger than the alignment of its start address, and byte strobes do not change the size. **Multi-copy atomicity** is a system property: all agents see writes to a location in the same order, and a write visible to one other agent is visible to all (§A7.1.1). It needs a single point of serialization per address and no forwarding buffers upstream of agents, and it is required in systems with ARMv8 processors, for their Store-Release instruction. For verification this means two things: a read-after-write check in [B-AXI-3](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index) may only expect whole atomic blocks, and an interconnect's early-forwarding buffers are a multi-copy-atomicity risk to review.
+
+<ArchitectureDiagram
+  title="Two single-copy atomic groups in one example system"
+  caption="Membership, not wiring (redrawn from the example described in IHI0022E §A7.1). Every component in the outer box communicates with 32-bit single-copy atomicity, peripherals and SRAM included. The processor, DSP, DRAM controller and their interconnect also form a 64-bit group, so only they may rely on 64-bit atomic elements among themselves. Even inside the 64-bit group, a burst whose start address is not 8-byte aligned has no 64-bit guarantee."
+  cellWidth={110}
+  cellHeight={52}
+  gapX={30}
+  gapY={44}
+  legend={false}
+  nodes={[
+    { id: "g32", label: "32-bit group", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 3, container: true },
+    { id: "g64", label: "64-bit group", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "cpu", label: "processor", kind: "generic", col: 0, row: 0 },
+    { id: "dsp", label: "DSP", kind: "generic", col: 1, row: 0 },
+    { id: "dram", label: "DRAM controller", kind: "generic", col: 0, row: 1 },
+    { id: "ic", label: "interconnect", kind: "generic", col: 1, row: 1 },
+    { id: "dma", label: "DMA controller", kind: "generic", col: 2, row: 0 },
+    { id: "sram", label: "SRAM", kind: "generic", col: 2, row: 1 },
+    { id: "per", label: "peripherals", sublabel: "for example UART, timer", kind: "generic", col: 0, row: 2, colSpan: 2 }
+  ]}
+/>
 
 ### Expert: AxREGION and AxUSER (awareness)
 
@@ -764,6 +1180,20 @@ AXI5 adds a second, different way to update memory atomically: the **atomic tran
 - **Responses** (§A6.4.7, §A6.4.8). Load, Swap and Compare return the original data on the **read data channel**, with the same ID as the AW, as well as one B response. There is no failure code: to know whether a compare-and-swap took effect, software compares the returned old value with its compare value. A component without atomic support may answer with an error.
 - **IDs** (§A6.4.4). An atomic's ID must be unique in flight: no other outstanding transaction may use it on the channels the atomic uses.
 - **Support** (§A6.4.10). Optional, declared by the Atomic_Transactions property; a component that declares it must support every operation, size and endianness. An atomic must not be passed to a component without support; an interconnect without support must stop its managers issuing atomics. AXI5-Lite does not have atomics (Table B2.4).
+
+The exclusive pair and the four atomic forms side by side, from the bullets above (IHI0022E §A7.2; IHI0022L §A6.4):
+
+| | Exclusive pair | AtomicStore | AtomicLoad | AtomicSwap | AtomicCompare |
+|---|---|---|---|---|---|
+| Transactions | Two: a read, then a write | One | One | One | One |
+| Request | AR, then AW and W | AW and W (operation and operand) | AW and W (operation and operand) | AW and W (new value) | AW and W (compare and swap values) |
+| Data back on R | Old value, from the read | None | Original value, RID = AWID | Original value, RID = AWID | Original value, RID = AWID |
+| Write responses | One B, for the write | One B | One B | One B | One B |
+| Fails under contention | Yes: OKAY, memory unchanged | No | No | No | No |
+| How software knows the result | EXOKAY or OKAY on the write | No outcome is reported | Returned original value | Returned original value | Compares the returned old value with its compare value |
+| AWLOCK | 1 on the write (ARLOCK 1 on the read) | 0 | 0 | 0 | 0 |
+| Bytes | Power of two, at most 128 | 1, 2, 4 or 8 | 1, 2, 4 or 8 | 1, 2, 4 or 8 | Sends 2 to 32, receives half |
+| AWATOP | `6'b000000` (non-atomic), on an AXI5 interface that has AWATOP | `6'b01exxx` | `6'b10exxx` | `6'b110000` | `6'b110001` |
 
 <SequenceDiagram
   title="Exclusive pair versus one AXI5 AtomicLoad"
@@ -849,6 +1279,35 @@ Answer each one before you open the feedback.
 />
 
 ## Practice & Reinforce
+
+Before the quiz, one picture to carry away: the exclusive monitor's state for one ID. The attribute signals are summarised in the Recap table at the end of Build Your Mental Model.
+
+<VisualRecap
+  title="The exclusive monitor, one ID at a time"
+  rule="On a slave with exclusive support, an exclusive write succeeds (EXOKAY, memory written) only if the monitor still watches that address for that ID; otherwise it answers OKAY and leaves memory unchanged. A slave without support answers the exclusive read with OKAY and performs the exclusive write, also with OKAY (IHI0022E §A7.2.2, §A7.2.3, §A7.2.5)."
+  code={`resp_e r;
+r = m.ex_read(M0, LOCK);      // EXOKAY: ID M0 now watches LOCK
+r = m.ex_write(M0, LOCK, 1);  // EXOKAY if still watched, else OKAY`}
+  mistake="Treating an exclusive write without an earlier exclusive read as a protocol error (it is legal and fails with OKAY), or reading OKAY on an exclusive write as not written on every slave (a slave without support writes it)."
+  inTestbench="excl_ref_model in the scoreboard predicts each exclusive response and memory value, configured with the slave's support, monitor policy and granule; the pin assertions check only legal AxCACHE, the exclusive shape and write-after-read."
+>
+  <ArchitectureDiagram
+    title="Exclusive monitor state for one ID on a supporting slave"
+    caption="An exclusive read of address A starts the watch; any write to A, including a successful exclusive write, ends it. A newer exclusive read from the same ID moves the watch to its address (A7.2.1)."
+    cellWidth={150}
+    cellHeight={60}
+    gapX={40}
+    gapY={60}
+    nodes={[
+      { id: "idle", label: "not watching", sublabel: "excl write: OKAY, no write", kind: "generic", col: 0, row: 0 },
+      { id: "watch", label: "watching A", sublabel: "excl write to A: EXOKAY", kind: "generic", state: "ok", col: 1, row: 1 }
+    ]}
+    edges={[
+      { from: "idle", to: "watch", style: "causal", label: "excl read A", via: [[1, 0]] },
+      { from: "watch", to: "idle", style: "causal", label: "write to A", via: [[0, 1]] }
+    ]}
+  />
+</VisualRecap>
 
 ### Retrieval quiz
 

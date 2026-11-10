@@ -11,6 +11,8 @@ export const meta = {
 }
 
 // args (optional): { only: ['page:resources', 'lab:constructs-1', ...] } to run a subset.
+// The lead runs on Fable; every agent names its model so no worker inherits it (owner rule, 2026-11-10).
+const WORKER = 'opus'
 const ROOT = '/Users/Rakesh/Projects/sv-uvm-guide'
 const SRC = '/Users/Rakesh/.claude/projects/-Users-Rakesh-Projects-sv-uvm-guide/sources'
 
@@ -86,7 +88,8 @@ READ-ONLY review of ${it.id} (${it.brief}). Files: ${it.files}. Author report: $
 ${lens === 'accuracy'
   ? 'LENS accuracy: every fact, date, link, code sample and claim is correct and verified (WebFetch links; LRM clauses; uvm-core behaviour labelled as implementation); SystemVerilog compiles with Verilator if it is installed (run it yourself and compare with the author\'s log); expected outputs match what the code does.'
   : 'LENS quality: meets the brief completely with no placeholder left; teaches well (clear goal, steps, planted-bug proof for labs); accessible (labels, keyboard, contrast, text alternatives), readable at 390 px, consistent with the site style; works with no login (learner store, no sign-in copy); tests cover it; tsc/eslint clean for its files.'}
-RETURN pass=true only if no S1/S2 problem remains; findings as "file:line - problem -> fix".`
+Severity: S1 = teaches something false or is broken. S2 = a real defect a learner would hit. S3 = polish. Do not inflate polish to S2, and do not pass over a real S2. From round 2 on, first verify that the earlier findings are resolved.
+RETURN pass=true only if no S1/S2 problem remains; findings as "Sev file:line - problem -> fix".`
 
 const fixPrompt = (it, findings, round) => `${CONTEXT}
 ${it.kind === 'lab' ? LAB_RULES : ''}
@@ -97,19 +100,19 @@ RETURN item, done, filesTouched, sharedFileRequests, verilator, validation.`
 
 const results = await pipeline(
   SELECTED,
-  (it) => agent(authorPrompt(it), { label: `author:${it.id}`, phase: 'Author', schema: AUTHOR_SCHEMA }),
+  (it) => agent(authorPrompt(it), { label: `author:${it.id}`, phase: 'Author', schema: AUTHOR_SCHEMA, model: WORKER }),
   async (author, it) => {
     if (!author) return { id: it.id, status: 'author-failed' }
     let current = author
     const requests = [...author.sharedFileRequests]
     let lenses = ['accuracy', 'quality']
     for (let round = 1; round <= 3; round += 1) {
-      const reviews = await parallel(lenses.map((lens) => () => agent(reviewPrompt(it, lens, current), { label: `review:${it.id}:${lens}:r${round}`, phase: 'Review', schema: REVIEW_SCHEMA })))
+      const reviews = await parallel(lenses.map((lens) => () => agent(reviewPrompt(it, lens, current), { label: `review:${it.id}:${lens}:r${round}`, phase: 'Review', schema: REVIEW_SCHEMA, model: WORKER })))
       const failing = lenses.filter((lens, i) => !reviews[i] || !reviews[i].pass)
       if (!failing.length) return { id: it.id, status: 'clean', rounds: round, author: current, requests }
       const findings = reviews.filter((r) => r && !r.pass).flatMap((r) => r.findings)
       if (round === 3) return { id: it.id, status: 'escalate', author: current, open: findings, requests }
-      const fixed = await agent(fixPrompt(it, findings, round), { label: `fix:${it.id}:r${round}`, phase: 'Fix', schema: AUTHOR_SCHEMA })
+      const fixed = await agent(fixPrompt(it, findings, round), { label: `fix:${it.id}:r${round}`, phase: 'Fix', schema: AUTHOR_SCHEMA, model: WORKER })
       if (fixed) { current = fixed; requests.push(...fixed.sharedFileRequests) }
       lenses = failing
     }
@@ -123,9 +126,10 @@ const integration = await agent(`${CONTEXT}
 You are the integration engineer for phase 6a extras. Each item was built in its own files; now apply the shared-file changes so everything is reachable and consistent. You may edit shared files: src/lib/site-features.ts and the hidden-page gates (unhide the rebuilt pages: remove their notFound() gates), navigation (Navbar, Sidebar, footer, search quick links), src/app/sitemap.ts and tests/app/sitemap.test.ts (move rebuilt pages from HIDDEN_PAGES to public), src/lib/practice-links.ts and its tests (lab-to-lesson links, LAB_LESSON_OVERRIDES), src/lib/learning-paths.ts MILESTONES (constructs-1 for M1 and the new M5 lab), content/curriculum/curriculum.manifest.json only if a lab's owning module needs a lesson link, and any test that pinned a lab as coming_soon or a page as hidden.
 Results and requests: ${JSON.stringify(done.map((r) => ({ id: r.id, status: r.status, requests: r.requests || [], open: r.open || [] }))).slice(0, 25000)}
 Then run the whole suite (NODE_OPTIONS='--require @prisma/client' npx vitest run), npx tsc --noEmit -p ., npx next lint --max-warnings=0, and fix every failure caused by this work. Do not regenerate src/generated/* (the lead does it in a clean worktree).
-RETURN a summary: what you changed, test/tsc/lint results, anything remaining.`, { label: 'integrate', phase: 'Integrate' })
+RETURN a summary: what you changed, test/tsc/lint results, anything remaining.`, { label: 'integrate', phase: 'Integrate', model: WORKER })
 
 return {
-  items: done.map((r) => ({ id: r.id, status: r.status, rounds: r.rounds, open: r.open || [], verilator: r.author ? r.author.verilator : '' })),
-  integration,
+  // Compact on purpose: read open findings and logs from the run journal with wf-journal.py.
+  items: done.map((r) => ({ id: r.id, status: r.status, rounds: r.rounds, openCount: (r.open || []).length })),
+  integration: String(integration || '').slice(0, 1500),
 }

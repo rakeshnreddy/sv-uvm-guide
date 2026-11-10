@@ -29,11 +29,12 @@ one does not update them.
   F1B, F2A (3 lessons), F2D (2), F3A and F3B; 6a for all of T2 except I-UVM-3B, and for T3's A-UVM-4A to 9, B-AMBA-1 and 2,
   B-APB-1 and B-AHB-1 to 3 (42 lessons). Its first attempt failed on test timeouts under machine load (load average 71):
   keep to about three lesson workflows while a release runs its local gates.
+- checkpoint-19: 6a for I-UVM-3B (9), B-AXI-1 to 6, B-AMBA-F1 to F3 and all 15 T4 lessons (33 lessons). **Every one of the 112
+  lessons is now enriched**; no lesson escalated on the v2 flow.
 
 **Held:** nothing. `components/finish-2026-11-10` holds the finish-pass history only; everything on it is released.
 
-**Next order:** 6a for the rest of T2 (I-UVM-2A onward), 6a for T3 and T4,
-the next components batch (`time-slot-trace-presets` is unblocked), `phase6a-extras.js`, a fresh final 6b sweep, closure checks.
+**Next order:** components batch 3 (8 components, building on `components/batch3-2026-11-10`), its embed pass, `phase6a-extras.js`, a fresh final 6b sweep, closure checks.
 
 ## Start here (state at the 2026-11-05 cloud stop) — resume locally from this list
 

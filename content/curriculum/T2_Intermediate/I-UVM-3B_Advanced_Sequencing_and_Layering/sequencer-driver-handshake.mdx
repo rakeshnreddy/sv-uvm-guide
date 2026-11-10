@@ -17,6 +17,25 @@ sources:
 - **Why it matters:** Most "the test hangs until the timeout" bugs are one handshake rule broken on one side: a missing `item_done()`, a response without ids, a sequence waiting for a response that never comes, or a response that was dropped. Each has its own signature in the log. Engineers who know the signatures fix these in minutes; everyone else adds `$display` calls for a day.
 - **The Analogy:** A restaurant kitchen with a ticket rail. A waiter (the sequence) clips an order ticket (the item) on the rail (the sequencer's one-slot request FIFO). The cook (the driver) takes it, cooks, and rings it out (`item_done()`), and only then is the waiter released. A plate (the response) goes back to the table printed on the ticket (`sequence_id`) and is matched by the order number (`transaction_id`). *Where it breaks:* a real rail holds many tickets, but a UVM sequencer holds one item for its driver. A plate with no table number is not guessed at: the kitchen stops (`SQRPUT`). And a busy table that never collects its plates does not get a stack of them on the floor: after eight, new plates go in the bin, silently in uvm-core 2020.3.1.
 
+<ArchitectureDiagram
+  title="The ticket rail in UVM terms"
+  caption="Read it as a loop: the sequence (waiter) puts one item on the one-slot request FIFO (the rail), the driver (cook) takes it, and responses (plates) come back to that sequence's response queue (rsp queue, its shelf of 8), routed there by the sequencer's put_response(), which the sections below teach. Where the analogy breaks: the rail holds one ticket, not many; a plate without a table number (sequence_id) stops the test with SQRPUT; a ninth uncollected plate is dropped, silently in uvm-core 2020.3.1."
+  cellWidth={96}
+  gapX={32}
+  nodes={[
+    { id: "seq", label: "seq", sublabel: "waiter", kind: "sequence", col: 0, row: 0 },
+    { id: "rail", label: "request FIFO", sublabel: "rail: 1 ticket", kind: "fifo", col: 1, row: 0 },
+    { id: "drv", label: "drv", sublabel: "cook", kind: "driver", col: 2, row: 0 },
+    { id: "shelf", label: "rsp queue", sublabel: "shelf: 8 plates", kind: "fifo", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "seq", to: "rail", style: "data" },
+    { from: "rail", to: "drv", style: "data" },
+    { from: "drv", to: "shelf", style: "data", label: "rsp", via: [[2, 1]] },
+    { from: "shelf", to: "seq", style: "data", label: "rsp", via: [[0, 1]] }
+  ]}
+/>
+
 **You will be able to:**
 1. Predict, for `get_next_item()`, `try_next_item()`, `peek()` and `get()`, when the call returns, when the sequence's `finish_item()` returns, and what a second call before `item_done()` does.
 2. Write a driver that returns responses with `item_done(rsp)`, `put_response()`, `put()` or `rsp_port.write()`, each routed by `set_id_info()`.
@@ -44,6 +63,27 @@ You know this loop from [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamen
 | `get_response(rsp)` | sequence | yes | a response in this sequence's response queue |
 
 Two consequences carry the rest of this page. A sequence can never run ahead of its driver, because `finish_item()` waits. And every wait in the table has a partner call on the other side: if the partner never happens, that side hangs, usually without any message.
+
+<SequenceDiagram
+  title="Every wait and the partner call that ends it"
+  caption="Each return arrow is the moment a blocked call wakes up, and the call just before it is its partner on the other side. Take away any partner call and the side waiting for it hangs."
+  participants={[
+    { id: "seq", label: "seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "seq", to: "sqr", label: "start_item(req): waits in wait_for_grant()" },
+    { from: "drv", to: "sqr", label: "get_next_item(req): asks for work" },
+    { kind: "return", from: "sqr", to: "seq", label: "granted: start_item returns" },
+    { from: "seq", to: "sqr", label: "finish_item(req): item into the request FIFO, then waits" },
+    { kind: "return", from: "sqr", to: "drv", label: "get_next_item returns req" },
+    { kind: "self", from: "drv", label: "drive req on the pins" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" },
+    { kind: "note", from: "seq", to: "drv", label: "If the sequence then calls get_response(rsp), its partner is a response from the driver." }
+  ]}
+/>
 
 ### Read a hang in the visual
 
@@ -74,6 +114,24 @@ A driver can fetch an item in four ways (IEEE 1800.2-2020 §15.5.2.3 to §15.5.2
 | `peek(req)` | yes | yes, until `item_done()` or `get()` | at `item_done()` or `get()` | `peek()` again: returns the same item, no message (§15.5.2.7) |
 | `get(req)` | yes | no: `get()` calls `item_done()` itself before it returns | when `get()` returns, **before** the driver drives the item | `get()` again: a normal fetch of the next item |
 
+<TimingDiagram
+  title="When the sequence is released: get_next_item() versus get()"
+  caption="x-axis: driver clock edges 0 to 5. The driver fetches req at edge 0 and drives it for three cycles. Style 1 is get_next_item() plus item_done() after the last drive cycle: the sequence waits in finish_item() until edge 3. Style 2 is get(): it completes the item at the fetch, so finish_item() has returned before driving starts. Markers: at edge 0 the fetch returns req, and in style 2 get() completes the item there; at edge 3 item_done() releases the style 1 sequence."
+  edges={6}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "drv drives", kind: "bit", values: [0, 1, 1, 1, 0, 0] },
+    { name: "seq style 1", kind: "bit", values: [1, 1, 1, 1, 0, 0] },
+    { name: "seq style 2", kind: "bit", values: [1, 0, 0, 0, 0, 0] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", label: "fetch; get() completes item" },
+    { edge: 3, tone: "pass", label: "item_done() releases style 1" }
+  ]}
+/>
+
+In the figure, a sequence row is 1 while the sequence is blocked in `start_item()` or `finish_item()`, and 0 once `finish_item()` has returned.
+
 Three rules fall out of the table:
 - **Only `get()` completes the item for you.** After `get()`, never call `item_done()`: there is no outstanding item, and uvm-core stops with `UVM_FATAL [SQRBADITMDN] Item_done() called with no outstanding requests`.
 - **"The sequence waits while the driver drives" is true only for the first three calls.** With `get()`, the sequence is released as soon as the driver takes the item, so it must wait for a response if it needs the result. This is exactly what makes `get()` the natural call for pipelined drivers.
@@ -103,6 +161,20 @@ Three rules fall out of the table:
     { kind: "note", from: "seq", to: "drv", label: "A delay between start_item and finish_item makes try_next_item report TRY_NEXT_BLOCKED and return null." }
   ]}
 />
+
+**Predict, then check.** Two polling drivers differ in one line. At time 50 ns, in the Active region, driver A calls `has_do_available()`, a function that looks at the requests waiting at that moment and returns at once. Driver B, at the same point, calls `try_next_item(req)`, which (table above) first waits for the NBA region of the time slot. No sequence is waiting yet. Later in the same Active region, still before the NBA region, a sequence calls `start_item()` and then `finish_item()` without consuming time. What does each driver see?
+
+<details>
+<summary>Check your prediction</summary>
+
+| Driver | Call | Result at 50 ns | Why |
+| --- | --- | --- | --- |
+| A | `has_do_available()` | 0: "nothing to do" | it returned before the sequence's `start_item()` queued its request |
+| B | `try_next_item(req)` | the sequence's item, still at 50 ns | it waited for the NBA region, by which time the request was queued, so it granted the sequence and returned its item |
+
+Driver A drives an idle cycle although work was available in the same time slot. That is why the pitfall below calls `has_do_available()` only a hint.
+
+</details>
 
 **Pitfalls.**
 - **A "look-ahead" with two `get_next_item()` calls does not look ahead.** The second item cannot exist yet, because the sequence is still inside `finish_item()` for the first. You get the first item twice and an error.
@@ -156,6 +228,44 @@ There are four ways for a driver to send a response, listed in §15.4.3.1. All f
 
 Each sequence keeps its own **response queue**. `get_response(rsp)` takes the oldest response, and `get_response(rsp, tid)` waits for the response whose `transaction_id` is `tid` and leaves the others where they are (§14.3.3.3). The queue holds at most 8 responses by default (§14.2.7.7); `set_response_queue_depth(-1)` makes it unbounded, at the cost of memory if nobody collects.
 
+<figure className="not-prose my-6">
+  <svg viewBox="0 0 340 210" role="img" aria-label="One sequence's response queue with its default depth of 8. Slots 1 to 8 hold responses 1 to 8, oldest first, and get_response takes from the oldest end. Responses 9 and 10 arrive at the newest end while the queue is full and are dropped. IEEE 1800.2-2020 sections 14.2.7.4 and 14.2.7.5 say an overflow is an error by default; uvm-core 2020.3.1 drops them silently because the report-enable bit starts at 0." style={{ width: "100%", maxWidth: 420 }}>
+    <text x="8" y="16" fontSize="11" fontWeight="600" fill="currentColor">One sequence's response queue (default depth 8)</text>
+    <rect x="8" y="26" width="36" height="30" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="26" y="45" fontSize="11" textAnchor="middle" fill="currentColor">1</text>
+    <rect x="48" y="26" width="36" height="30" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="66" y="45" fontSize="11" textAnchor="middle" fill="currentColor">2</text>
+    <rect x="88" y="26" width="36" height="30" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="106" y="45" fontSize="11" textAnchor="middle" fill="currentColor">3</text>
+    <rect x="128" y="26" width="36" height="30" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="146" y="45" fontSize="11" textAnchor="middle" fill="currentColor">4</text>
+    <rect x="168" y="26" width="36" height="30" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="186" y="45" fontSize="11" textAnchor="middle" fill="currentColor">5</text>
+    <rect x="208" y="26" width="36" height="30" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="226" y="45" fontSize="11" textAnchor="middle" fill="currentColor">6</text>
+    <rect x="248" y="26" width="36" height="30" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="266" y="45" fontSize="11" textAnchor="middle" fill="currentColor">7</text>
+    <rect x="288" y="26" width="36" height="30" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="306" y="45" fontSize="11" textAnchor="middle" fill="currentColor">8</text>
+    <text x="8" y="72" fontSize="11" fill="currentColor">oldest: get_response(rsp) takes it</text>
+    <text x="324" y="72" fontSize="11" textAnchor="end" fill="currentColor">newest</text>
+    <line x1="286" y1="92" x2="286" y2="82" stroke="rgb(244,63,94)" fill="none" />
+    <line x1="281" y1="78" x2="291" y2="88" stroke="rgb(244,63,94)" fill="none" />
+    <line x1="291" y1="78" x2="281" y2="88" stroke="rgb(244,63,94)" fill="none" />
+    <rect x="248" y="94" width="36" height="30" rx="4" fill="none" stroke="rgb(244,63,94)" strokeDasharray="4 3" />
+    <text x="266" y="113" fontSize="11" textAnchor="middle" fill="currentColor">9</text>
+    <rect x="288" y="94" width="36" height="30" rx="4" fill="none" stroke="rgb(244,63,94)" strokeDasharray="4 3" />
+    <text x="306" y="113" fontSize="11" textAnchor="middle" fill="currentColor">10</text>
+    <text x="238" y="106" fontSize="11" textAnchor="end" fill="currentColor">arrive while the queue is full,</text>
+    <text x="238" y="120" fontSize="11" textAnchor="end" fill="currentColor">so they are dropped</text>
+    <rect x="6" y="136" width="328" height="66" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <text x="14" y="154" fontSize="11" fill="currentColor">IEEE 1800.2-2020 §14.2.7.4, §14.2.7.5:</text>
+    <text x="14" y="169" fontSize="11" fill="currentColor">the overflow is an error by default</text>
+    <text x="14" y="190" fontSize="11" fontWeight="600" fill="currentColor">uvm-core 2020.3.1: silent (enable bit = 0)</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The ninth and tenth uncollected responses have nowhere to go. Whether you hear about it depends on the implementation, which the next two points spell out.</figcaption>
+</figure>
+
 What happens to the ninth uncollected response differs between the standard and the implementation:
 - IEEE 1800.2-2020 §14.2.7.4 and §14.2.7.5 say an overflow generates an error by default.
 - uvm-core 2020.3.1 declares the enable bit without initializing it, so it starts at 0 (`uvm_sequence_base.svh`). The response is **dropped silently** unless the sequence calls `set_response_queue_error_report_enabled(1)`, which then reports `UVM_ERROR` "Response queue overflow, response was dropped".
@@ -198,10 +308,22 @@ A sequence has two ways to collect them:
 
 **Pitfalls.**
 - **Handler on, then `get_response()`: the sequence hangs.** With the bit set, responses never reach the queue, so `get_response()` waits forever. Choose one method per sequence.
-- **The handler is a function, and it runs in the driver's thread.** The sequencer calls it inside the driver's `put()` or `item_done()`. It cannot wait, and slow work in it slows the driver. Record, check and count; if something must wait, push the response into a queue that `body()` services.
+- **The handler is a function, and it runs in the driver's thread.** The sequencer calls it inside the driver's `put()` or `item_done()`, and in the same way inside `put_response()` or `rsp_port.write()`: whichever call delivered the response (all four reach the sequencer's `put_response()`). It cannot wait, and slow work in it slows the driver. Record, check and count; if something must wait, push the response into a queue that `body()` services.
 - **`body()` must not return while responses are outstanding.** When a sequence ends, the sequencer forgets its `sequence_id`, and a late response is dropped with `UVM_WARNING [Sequencer] Dropping response for sequence N, sequence not found. Probable cause: sequence exited or has been killed`. End `body()` with a wait for the last response.
 - **Create a new item for every request.** A reused request object keeps the `transaction_id` it got the first time, because `send_request()` assigns one only to an item whose id is still -1 (uvm-core). Worse, with `get()` the sequence re-randomizes the very object the driver is still holding.
 - **Record what the handler needs before it can run.** With a `get()` driver, the handler runs long after `finish_item()` returns. With an `item_done(rsp)` driver, it runs *inside* `item_done()`, before `finish_item()` returns, so anything you record after `finish_item()` is too late.
+
+**The two collection methods side by side.** Pick one per sequence.
+
+| | By id: `get_response(rsp, tid)` | Response handler |
+| --- | --- | --- |
+| Setup | none: the queue is the default | `use_response_handler(1)` before the first request |
+| Where each response goes | the sequence's response queue | a call to `response_handler(response)`; nothing enters the queue |
+| Can the collecting code wait? | yes: `get_response()` is a task and waits for that `tid` | no: the handler is a function |
+| Thread that runs the check | the sequence's own `body()` | the driver's (or a monitor's), inside whichever of the four send calls delivered the response: `item_done(rsp)`, `put()`, `put_response()` or `rsp_port.write()` |
+| Type check | the sequence's `put_response()` casts to `RSP` (`PUTRSP` fatal) | none: `$cast` and check in the handler |
+| Capacity | 8 by default; a response that finds the queue full is dropped (silently in uvm-core) | no queue, so no depth limit |
+| How `body()` ends | after the last `get_response()` returns | with a wait for the last response, for example `wait (n_rsp == n_reads)` |
 
 ### Hang signatures and triage
 
@@ -229,6 +351,53 @@ A **hang** means simulation time keeps advancing (or the phase sits waiting) whi
 2. **Read the log for the signature.** Match it against the table. No message at all points to the silent rows: a missing response, a dropped response, a lock, or a driver stuck in its own code.
 3. **Probe the sequencer.** `sqr.get_current_item()` (§15.4.1) returns the item the driver holds between `get_next_item()` or `peek()` and `item_done()`, and `null` otherwise (always `null` for a `get()` driver). `sqr.last_req()` and `sqr.last_rsp()` (§15.4.2, §15.4.3.2) show the last request sent and the last response received. `sqr.convert2string()` prints the waiting requests and the lock list as index/sequence-id pairs, not names, so print `seq.get_sequence_id()` from your sequences to map them.
 4. **Fix the side that broke the rule,** then rerun with a short explicit timeout so a regression of the fix fails fast.
+
+<figure className="not-prose my-6">
+  <svg viewBox="0 0 340 402" role="img" aria-label="Triage flow, the log-reading branch of the four-step procedure. Is there any UVM message before the timeout? Yes: match it in the signature table, which names the broken rule. No: it is a silent hang, so find the blocked side and probe get_current_item, last_req and last_rsp. Sequence blocked in start_item: no driver is asking, or another sequence holds a lock or grab. Sequence in finish_item while the driver holds the item: the driver is stuck in its own pin-level code. Sequence in get_response: no response was sent, the response handler is on, or the response for that tid was dropped. Every branch then leads to the fix: fix the side that broke the rule and rerun with a short timeout." style={{ width: "100%", maxWidth: 420 }}>
+    <rect x="6" y="8" width="328" height="26" rx="13" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="16" y="25" fontSize="11" fontWeight="600" fill="currentColor">Any UVM message before the timeout?</text>
+    <line x1="74" y1="34" x2="74" y2="46" stroke="currentColor" strokeOpacity="0.6" fill="none" />
+    <polygon points="70,46 78,46 74,52" fill="currentColor" fillOpacity="0.6" />
+    <text x="80" y="47" fontSize="11" fill="currentColor">yes</text>
+    <line x1="248" y1="34" x2="248" y2="46" stroke="currentColor" strokeOpacity="0.6" fill="none" />
+    <polygon points="244,46 252,46 248,52" fill="currentColor" fillOpacity="0.6" />
+    <text x="254" y="47" fontSize="11" fill="currentColor">no</text>
+    <rect x="6" y="52" width="148" height="74" rx="6" fill="rgba(16,185,129,0.10)" stroke="rgb(16,185,129)" />
+    <text x="14" y="70" fontSize="11" fill="currentColor">Match it in the</text>
+    <text x="14" y="85" fontSize="11" fill="currentColor">signature table:</text>
+    <text x="14" y="100" fontSize="11" fill="currentColor">it names the</text>
+    <text x="14" y="115" fontSize="11" fill="currentColor">broken rule</text>
+    <rect x="162" y="52" width="172" height="74" rx="6" fill="rgba(99,102,241,0.10)" stroke="rgb(99,102,241)" />
+    <text x="170" y="70" fontSize="11" fontWeight="600" fill="currentColor">Silent hang:</text>
+    <text x="170" y="85" fontSize="11" fill="currentColor">find the blocked side,</text>
+    <text x="170" y="100" fontSize="11" fill="currentColor">probe get_current_item(),</text>
+    <text x="170" y="115" fontSize="11" fill="currentColor">last_req(), last_rsp()</text>
+    <line x1="248" y1="126" x2="248" y2="144" stroke="currentColor" strokeOpacity="0.6" fill="none" />
+    <polygon points="244,144 252,144 248,150" fill="currentColor" fillOpacity="0.6" />
+    <text x="24" y="143" fontSize="11" fill="currentColor">Blocked side, then likely cause:</text>
+    <rect x="24" y="150" width="310" height="56" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="32" y="166" fontSize="11" fontWeight="600" fill="currentColor">Sequence in start_item()</text>
+    <text x="32" y="181" fontSize="11" fill="currentColor">no driver is asking, or a lock() or</text>
+    <text x="32" y="196" fontSize="11" fill="currentColor">grab() is held</text>
+    <rect x="24" y="212" width="310" height="42" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="32" y="228" fontSize="11" fontWeight="600" fill="currentColor">In finish_item(), driver holds the item</text>
+    <text x="32" y="243" fontSize="11" fill="currentColor">driver stuck in its own pin-level code</text>
+    <rect x="24" y="260" width="310" height="70" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="32" y="276" fontSize="11" fontWeight="600" fill="currentColor">Sequence in get_response()</text>
+    <text x="32" y="291" fontSize="11" fill="currentColor">no response sent, the handler is on, or</text>
+    <text x="32" y="306" fontSize="11" fill="currentColor">the response for that tid was dropped</text>
+    <text x="32" y="321" fontSize="11" fill="currentColor">(queue full)</text>
+    <line x1="12" y1="126" x2="12" y2="344" stroke="currentColor" strokeOpacity="0.6" fill="none" />
+    <line x1="12" y1="178" x2="24" y2="178" stroke="currentColor" strokeOpacity="0.6" fill="none" />
+    <line x1="12" y1="233" x2="24" y2="233" stroke="currentColor" strokeOpacity="0.6" fill="none" />
+    <line x1="12" y1="295" x2="24" y2="295" stroke="currentColor" strokeOpacity="0.6" fill="none" />
+    <polygon points="8,344 16,344 12,350" fill="currentColor" fillOpacity="0.6" />
+    <rect x="6" y="350" width="328" height="44" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <text x="24" y="367" fontSize="11" fontWeight="600" fill="currentColor">Fix the side that broke the rule, then</text>
+    <text x="24" y="382" fontSize="11" fontWeight="600" fill="currentColor">rerun with a short timeout</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The four steps above regrouped as one decision, not a new order: start with the log check from step 2, because a message sends you straight to the signature table, while silence sends you to the blocked side and the probes (steps 1 and 3), where the three silent cases split by the call the sequence is stuck in. Every branch ends in step 4, the fix.</figcaption>
+</figure>
 
 ### Recap
 
@@ -413,12 +582,60 @@ Read the order: tids 2 then 1 at 10 ns, 4 then 3 at 20 ns. The transaction ids s
 
 ### Break it on purpose
 
-Make each change, predict the log, then run.
-1. **Delete `use_response_handler(1);`.** The responses go to the queue instead (4 fit easily), `response_handler()` is never called, and `n_rsp` stays 0. `body()` waits forever and the run ends with `UVM_FATAL [PH_TIMEOUT] Explicit timeout of … hit`. No other message.
-2. **Keep the handler and replace the final `wait` with `repeat (n_reads) get_response(rsp);`.** The handler still checks every response, but `get_response()` waits for a queue that stays empty: the same timeout.
-3. **Move `rd = rd_item::type_id::create("rd");` above the `repeat`.** One object is reused, so it keeps transaction id 1 for all four reads, and the driver's `pending` queue holds two handles to the same object. Each pair of responses comes back as tid 1 twice: the first matches, and the second gives `UVM_ERROR [RSPID] unexpected response tid=1`, once at 10 ns and once at 20 ns.
-4. **Delete `rsp_n.set_id_info(req_n);`.** At 10 ns the first `put()` stops the test with `UVM_FATAL [SQRPUT] Driver put a response with null sequence_id`.
-5. **Delete the final `wait`.** `body()` ends right after the fourth `finish_item()` returns at 10 ns. The test drops its objection, the run phase ends, and the driver is stopped before it answers reads 3 and 4. Only two `RSP` lines appear and the report is clean: two reads were never checked, which is worse than a failure. If something keeps the phase alive, for example `phase.get_objection().set_drain_time(this, 50ns);` before the drop, the driver does answer at 20 ns and both responses are dropped with `UVM_WARNING [Sequencer] Dropping response for sequence …, sequence not found`.
+Make each change, predict the log, then run. Write your prediction for each mutation before you open its reveal.
+
+**1. Delete `use_response_handler(1);`.**
+
+<details>
+<summary>Check mutation 1</summary>
+
+The responses go to the queue instead (4 fit easily), `response_handler()` is never called, and `n_rsp` stays 0. `body()` waits forever and the run ends with `UVM_FATAL [PH_TIMEOUT] Explicit timeout of … hit`. No other message.
+
+</details>
+
+**2. Keep the handler and replace the final `wait` with `repeat (n_reads) get_response(rsp);`.**
+
+<details>
+<summary>Check mutation 2</summary>
+
+The handler still checks every response, but `get_response()` waits for a queue that stays empty: the same timeout.
+
+</details>
+
+**3. Move `rd = rd_item::type_id::create("rd");` above the `repeat`.**
+
+<details>
+<summary>Check mutation 3</summary>
+
+One object is reused, so it keeps transaction id 1 for all four reads, and the driver's `pending` queue holds two handles to the same object. Each pair of responses comes back as tid 1 twice: the first matches, and the second gives `UVM_ERROR [RSPID] unexpected response tid=1`, once at 10 ns and once at 20 ns.
+
+</details>
+
+**4. Delete `rsp_n.set_id_info(req_n);`.**
+
+<details>
+<summary>Check mutation 4</summary>
+
+At 10 ns the first `put()` stops the test with `UVM_FATAL [SQRPUT] Driver put a response with null sequence_id`.
+
+</details>
+
+**5. Delete the final `wait`.** Predict the log twice: as the test is written, and with `phase.get_objection().set_drain_time(this, 50ns);` added before the drop.
+
+<details>
+<summary>Check mutation 5</summary>
+
+`body()` ends right after the fourth `finish_item()` returns at 10 ns. The test drops its objection, the run phase ends, and the driver is stopped before it answers reads 3 and 4. Only two `RSP` lines appear and the report is clean: two reads were never checked, which is worse than a failure. If something keeps the phase alive, for example `phase.get_objection().set_drain_time(this, 50ns);` before the drop, the driver does answer at 20 ns and both responses are dropped with `UVM_WARNING [Sequencer] Dropping response for sequence …, sequence not found`.
+
+| Mutation | What the log shows |
+| --- | --- |
+| 1. no `use_response_handler(1)` | only `PH_TIMEOUT` |
+| 2. handler plus `get_response()` | only `PH_TIMEOUT` |
+| 3. one reused item | `RSPID` "unexpected response tid=1" at 10 ns and at 20 ns |
+| 4. no `set_id_info()` | `SQRPUT` fatal at 10 ns |
+| 5. no final `wait` | two `RSP` lines and a clean report; with a drain time, two "Dropping response" warnings at 20 ns |
+
+</details>
 
 ### How to build a pipelined responder yourself
 
@@ -450,6 +667,14 @@ The driver-facing calls share two flags in `uvm_sequencer`: `sequence_item_reque
 - **The request FIFO holds one item.** If two threads fetch at once, the second granted sequence cannot store its item and `send_request()` stops with `SQRSNDREQGNI`. A pipelined driver therefore fetches from one thread only and hands items to other threads itself.
 - **`try_next_item()`** waits `wait_for_sequences_count` NBA regions, both before choosing and after granting; the count is 1 unless the sequencer's `wait_for_sequences_count` resource is set, a uvm-core feature (`@uvm-accellera` in `uvm_sequencer_base.svh`) that stacked sequencers need.
 
+The whole matrix, read from the same source. Rows are the call that fetched the outstanding item; columns are the next driver call before `item_done()`, plus `item_done()` itself.
+
+| First call | then `get_next_item()` | then `try_next_item()` | then `peek()` | then `get()` | then `item_done()` |
+| --- | --- | --- | --- | --- | --- |
+| `get_next_item()`, or a `try_next_item()` that returned an item (sets both flags) | same item, "Get_next_item called twice…" error | returns at once, "get_next_item/try_next_item called twice…" error | same item, no message | same item, completed, no message | completes the item: the normal loop |
+| `peek()` (sets only `sequence_item_requested`) | same item, no message | no "called twice" check, so it arbitrates again and can grant another sequence while the FIFO is full: avoid. If no other sequence is waiting, it returns `null` even though the peeked item is still outstanding | same item, no message | same item, completed, no message | completes the item |
+| `get()` (nothing outstanding afterwards) | a normal fetch of the next item | a normal poll | a normal fetch of the next item | a normal fetch of the next item | `UVM_FATAL [SQRBADITMDN]` |
+
 IEEE 1800.2-2020 specifies the observable steps of each call (§15.5.2.3 to §15.5.2.7) but not these flags, so treat the combinations above as uvm-core behaviour, not as portable rules.
 
 ### Expert: IEEE 1800.2-2020 versus uvm-core 2020.3.1 on responses
@@ -471,13 +696,65 @@ Real pipelined drivers, for AXI-like buses with several outstanding transactions
 - a **request-phase thread** that drives address phases from that queue;
 - a **response-phase thread** that observes responses on the bus, finds the matching request (for AXI by its bus ID, which is not the UVM `transaction_id`), builds the response with `set_id_info()` and sends it with `put()` or `rsp_port.write()`.
 
+<ArchitectureDiagram
+  title="A three-thread pipelined driver"
+  caption="Solid arrows carry items. The fetch thread alone calls get(req) on the sequencer and fills the request queue (req queue); the request-phase thread (req phase) drives address phases and records each request under its bus ID; the response-phase thread (rsp phase) observes the DUT bus, which sits outside the driver, looks the request up in the map (plain line), and returns the response to the sequencer with put(rsp) or rsp_port.write(rsp)."
+  cellWidth={96}
+  gapX={32}
+  nodes={[
+    { id: "drvbox", label: "pipelined driver", kind: "driver", col: 1, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "sqr", label: "sqr", kind: "sequencer", col: 0, row: 0 },
+    { id: "fetch", label: "fetch thread", sublabel: "only get() caller", kind: "generic", col: 1, row: 0 },
+    { id: "reqq", label: "req queue", sublabel: "request queue", kind: "fifo", col: 2, row: 0 },
+    { id: "map", label: "bus-ID map", sublabel: "bus ID to request", kind: "generic", col: 1, row: 1 },
+    { id: "reqph", label: "req phase", sublabel: "drives addresses", kind: "generic", col: 2, row: 1 },
+    { id: "rspph", label: "rsp phase", sublabel: "sends the rsp", kind: "generic", col: 1, row: 2 },
+    { id: "bus", label: "DUT bus", kind: "dut", col: 2, row: 3 }
+  ]}
+  edges={[
+    { from: "sqr", to: "fetch", style: "data" },
+    { from: "fetch", to: "reqq", style: "data" },
+    { from: "reqq", to: "reqph", style: "data" },
+    { from: "reqph", to: "map", style: "data" },
+    { from: "reqph", to: "bus", style: "data" },
+    { from: "bus", to: "rspph", style: "data", via: [[1, 3]] },
+    { from: "rspph", to: "map", style: "structural" },
+    { from: "rspph", to: "sqr", style: "data", label: "rsp", via: [[0, 2]] }
+  ]}
+/>
+
 The fetch thread is the only caller of `get()`, which avoids `SQRSNDREQGNI`. The bus-ID-to-request map lives in the driver, because the UVM ids say nothing about bus ordering rules; [B-AXI-3](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index) explains those. Back-pressure comes from how often the fetch thread calls `get()`: while it does not call, no sequence is granted. For reusable components the same structure appears in [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index).
 
 ### Expert: killed and stopped sequences
 
 - **`kill()`** (§14.2.5.11) removes a sequence's requests and locks from the sequencer. The standard says `post_body()` and `post_start()` then run; uvm-core kills the process that would run them, so they do not (`uvm_sequence_base.svh`, `m_kill()`).
-- **`sqr.stop_sequences()`** (§15.3.2.14) kills every sequence on the sequencer and, in uvm-core, also empties the request FIFO with the message "Sequences stopped. Removing request from sequencer fifo". A driver that was in the middle of an item and then calls `item_done()` hits `UVM_FATAL [SQRBADITMDN]`, because the item is gone. Reset handling that stops sequences must also make the driver abandon its current item without calling `item_done()`.
+- **`sqr.stop_sequences()`** (§15.3.2.14) kills every sequence on the sequencer and, in uvm-core, also empties the request FIFO with the message "Sequences stopped. Removing request from sequencer fifo" (the source has two spaces after the period, and its message id is the sequencer's full name; it prints only when the FIFO holds an item). A driver that was in the middle of an item and then calls `item_done()` hits `UVM_FATAL [SQRBADITMDN]`, because the item is gone. Reset handling that stops sequences must also make the driver abandon its current item without calling `item_done()`.
 - **Late responses** for a killed or finished sequence are dropped with the "Dropping response … sequence not found" warning, because the sequencer unregisters the sequence id when the sequence exits (`remove_sequence_from_queues()` in `uvm_sequencer_base.svh`).
+
+<SequenceDiagram
+  title="Stopped mid-item, then a late response (uvm-core 2020.3.1)"
+  caption="Above the divider: reset handling stops the sequences while the driver holds an item, the FIFO is emptied, and the driver's item_done() is fatal. Below it: a sequence exits while a pipelined driver still owes it a response, and the late response is dropped with a warning."
+  participants={[
+    { id: "seq", label: "seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req" },
+    { kind: "note", from: "seq", to: "drv", label: "seq waits in finish_item(req); drv is driving req" },
+    { kind: "note", from: "sqr", label: "reset handling calls sqr.stop_sequences()" },
+    { kind: "self", from: "sqr", label: "kill every sequence", tone: "error" },
+    { kind: "self", from: "sqr", label: "UVM_INFO: Sequences stopped. Removing request from sequencer fifo" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "self", from: "sqr", label: "UVM_FATAL SQRBADITMDN: no outstanding request", tone: "error" },
+    { kind: "divider", label: "another run: a pipelined get() driver" },
+    { kind: "self", from: "seq", label: "body() returns with a response still owed" },
+    { kind: "self", from: "sqr", label: "unregister the sequence's id" },
+    { kind: "async", from: "drv", to: "sqr", label: "put(rsp), late" },
+    { kind: "self", from: "sqr", label: "UVM_WARNING: Dropping response, sequence not found" }
+  ]}
+/>
 
 ### Expert: hang triage at regression scale
 
@@ -485,6 +762,15 @@ The fetch thread is the only caller of `get()`, which avoids `SQRSNDREQGNI`. The
 - **Who still objects.** uvm-core's `+UVM_OBJECTION_TRACE` (also not in Annex G) logs every raise and drop, which shows which component or sequence keeps the phase alive.
 - **Probes in a timeout hook.** A test can print `get_current_item()`, `last_req()`, `last_rsp()` and `convert2string()` for each sequencer from `pre_abort()` (§13.1.4.6), which is called on every component when a message with the `UVM_EXIT` action, such as the timeout fatal, ends the run; one log line per sequencer then tells you the blocked side without rerunning.
 - **Method.** [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) turns this into a full debug methodology, and its [hang lab](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab) practises it.
+
+The same knobs as a table, with the trap each one hides:
+
+| Knob | In IEEE 1800.2-2020? | What uvm-core 2020.3.1 does | Trap, or what it gives you |
+| --- | --- | --- | --- |
+| `uvm_root::get().set_timeout(...)` | yes, Annex F.7.3.3; the default value is left implementation specific | default 9200 s; "Explicit timeout of … hit" when set | the `time` value is scaled by the time unit of the code that wrote it: compile your code and `uvm_pkg` with the same timescale |
+| `+UVM_TIMEOUT=<integer>,<YES or NO>` | no, not in Annex G | reads the value with `%d` | `+UVM_TIMEOUT=10us,NO` is read as 10, not 10 µs, and the `NO` is lost |
+| `+UVM_OBJECTION_TRACE` | no, not in Annex G | logs every raise and drop | none: it shows who keeps the phase alive |
+| probes in `pre_abort()` | yes, §13.1.4.6 | called on every component when a `UVM_EXIT` action, such as the timeout fatal, ends the run | none: one line per sequencer names the blocked side without a rerun |
 
 ### Expert: interview angles
 
@@ -699,6 +985,44 @@ endtask
 **Fix 2:** keep the default depth and collect while sending, for example by forking a collector thread at the start of `body()` that calls `get_response(rsp)` twelve times and checks each response by its id against `expected`, then `wait fork` before `body()` returns. Using the response handler from Make It Work is the third option.
 
 </details>
+
+### One-glance summary
+
+<VisualRecap
+  title="The sequencer-driver handshake"
+  rule="Every blocking call waits for a partner call on the other side, and a response reaches its sequence and its request only through the two ids that set_id_info() copies."
+  code={"seq_item_port.get_next_item(req);\n// drive req on the pins\nrsp = rd_item::type_id::create(\"rsp\");\nrsp.set_id_info(req);\nseq_item_port.item_done(rsp);"}
+  mistake="Turning on use_response_handler(1) and then calling get_response(): responses never reach the queue, so the sequence waits until the phase timeout with no other message."
+  inTestbench="The driver owns the fetch loop and the response path, each sequence picks one way to collect responses, and the test sets a short explicit timeout so a hang fails fast."
+>
+  <svg viewBox="0 0 340 390" role="img" aria-label="Four cards. 1, fetch: after get_next_item, try_next_item or peek the item stays in the one-slot FIFO until item_done, or get after peek; get completes the item, so finish_item returns when get returns. 2, route: rsp.set_id_info(req) copies sequence_id, which finds the sequence, and transaction_id, which finds the request; all four send paths end in the sequencer's put_response. 3, collect: the queue holds 8 by default and uvm-core drops the ninth silently; or use response_handler, a function that runs in the driver's thread; never both, and body ends after the last response. 4, triage: blocked side, then log signature, then probe get_current_item, last_req and last_rsp." style={{ width: "100%", maxWidth: 420 }}>
+    <rect x="6" y="8" width="328" height="104" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="14" y="24" fontSize="11" fontWeight="600" fill="currentColor">1 · FETCH</text>
+    <text x="14" y="40" fontSize="11" fill="currentColor">get_next_item, try_next_item, peek:</text>
+    <text x="14" y="54" fontSize="11" fill="currentColor">the item stays in the one-slot FIFO</text>
+    <text x="14" y="68" fontSize="11" fill="currentColor">until item_done() (or get())</text>
+    <text x="14" y="82" fontSize="11" fill="currentColor">get(): completes it; finish_item()</text>
+    <text x="14" y="96" fontSize="11" fill="currentColor">returns then</text>
+    <rect x="6" y="120" width="328" height="68" rx="6" fill="rgba(99,102,241,0.10)" stroke="rgb(99,102,241)" />
+    <text x="14" y="136" fontSize="11" fontWeight="600" fill="currentColor">2 · ROUTE</text>
+    <text x="14" y="152" fontSize="11" fill="currentColor">rsp.set_id_info(req): sequence_id finds the</text>
+    <text x="14" y="166" fontSize="11" fill="currentColor">sequence, transaction_id finds the request</text>
+    <text x="14" y="180" fontSize="11" fill="currentColor">all four send paths end in put_response()</text>
+    <rect x="6" y="196" width="328" height="124" rx="6" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="14" y="212" fontSize="11" fontWeight="600" fill="currentColor">3 · COLLECT</text>
+    <text x="14" y="228" fontSize="11" fill="currentColor">queue: 8 by default; uvm-core drops</text>
+    <text x="14" y="242" fontSize="11" fill="currentColor">the 9th silently</text>
+    <text x="14" y="256" fontSize="11" fill="currentColor">or response_handler(): a function,</text>
+    <text x="14" y="270" fontSize="11" fill="currentColor">in the driver's thread</text>
+    <text x="14" y="284" fontSize="11" fill="currentColor">never both; body() ends after the</text>
+    <text x="14" y="298" fontSize="11" fill="currentColor">last response</text>
+    <text x="14" y="312" fontSize="11" fill="currentColor" opacity="0.85">by id: depth at least the outstanding count</text>
+    <rect x="6" y="328" width="328" height="54" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <text x="14" y="344" fontSize="11" fontWeight="600" fill="currentColor">4 · TRIAGE</text>
+    <text x="14" y="360" fontSize="11" fill="currentColor">blocked side, then log signature, then probe</text>
+    <text x="14" y="374" fontSize="11" fill="currentColor">get_current_item(), last_req(), last_rsp()</text>
+  </svg>
+</VisualRecap>
 
 ### Flashcards
 
